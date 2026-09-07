@@ -1,0 +1,281 @@
+{
+  "version": 1,
+  "generatedAt": "2026-09-07T00:00:00.000Z",
+  "generatedBy": "scripts/capture-tui-screen-renderer-contracts.mjs",
+  "source": "src/tui/screens/subscreen-renderers.test.ts",
+  "sources": [
+    "src/tui/screens/subscreen-renderers.test.ts",
+    "src/tui/screens/subscreen-renderers.ts",
+    "src/multiplexer/graveyard-view-model.ts"
+  ],
+  "subject": "tui subscreen renderers",
+  "description": "Raw ANSI and visible text output captured by running TypeScript TUI subscreen renderer helpers.",
+  "caseCount": 5,
+  "cases": [
+    {
+      "id": "tui-subscreen-renderer-001",
+      "name": "graveyard screen cards and dead agent rows",
+      "source": "src/tui/screens/subscreen-renderers.test.ts",
+      "api": "renderGraveyardScreen",
+      "input": {
+        "now": "2026-09-07T00:00:00.000Z",
+        "graveyardIndex": 0,
+        "viewModel": {
+          "rows": [
+            { "kind": "section", "label": "Worktrees" },
+            {
+              "kind": "worktree",
+              "entry": {
+                "path": "/x/test6",
+                "name": "test6",
+                "branch": "test6",
+                "graveyardedAt": "2026-08-30T00:00:00.000Z",
+                "agents": [
+                  { "id": "claude-ifc0xo", "command": "claude", "tool": "claude", "backendSessionId": "c64917c2aa" }
+                ],
+                "services": []
+              },
+              "attachedAgents": [
+                {
+                  "entry": {
+                    "id": "claude-ifc0xo",
+                    "command": "claude",
+                    "tool": "claude",
+                    "backendSessionId": "c64917c2aa"
+                  },
+                  "source": "worktree",
+                  "lastUsedAt": "2026-08-30T00:00:00.000Z"
+                }
+              ],
+              "visibleAttachedAgents": [
+                {
+                  "entry": {
+                    "id": "claude-ifc0xo",
+                    "command": "claude",
+                    "tool": "claude",
+                    "backendSessionId": "c64917c2aa"
+                  },
+                  "source": "worktree",
+                  "lastUsedAt": "2026-08-30T00:00:00.000Z"
+                }
+              ],
+              "hiddenAttachedAgentCount": 0,
+              "attachedServices": [],
+              "lastUsedAt": "2026-08-30T00:00:00.000Z",
+              "sortAt": "2026-08-30T00:00:00.000Z",
+              "actionIndex": 0,
+              "actionNumber": 1
+            },
+            {
+              "kind": "attached-agent-display",
+              "parentPath": "/x/test6",
+              "agent": {
+                "entry": {
+                  "id": "claude-ifc0xo",
+                  "command": "claude",
+                  "tool": "claude",
+                  "backendSessionId": "c64917c2aa"
+                },
+                "source": "worktree",
+                "lastUsedAt": "2026-08-30T00:00:00.000Z"
+              }
+            },
+            { "kind": "section", "label": "Agents by Worktree" },
+            { "kind": "agent-worktree", "path": "/x/chat-parser", "name": "chat-parser" },
+            {
+              "kind": "standalone-agent",
+              "entry": { "id": "codex-mrh12h", "command": "codex", "tool": "codex", "worktreePath": "/x/chat-parser" },
+              "actionIndex": 1,
+              "actionNumber": 2
+            }
+          ],
+          "selectableRows": [
+            {
+              "kind": "worktree",
+              "entry": {
+                "path": "/x/test6",
+                "name": "test6",
+                "branch": "test6",
+                "graveyardedAt": "2026-08-30T00:00:00.000Z",
+                "agents": [
+                  { "id": "claude-ifc0xo", "command": "claude", "tool": "claude", "backendSessionId": "c64917c2aa" }
+                ],
+                "services": []
+              },
+              "attachedAgents": [
+                {
+                  "entry": {
+                    "id": "claude-ifc0xo",
+                    "command": "claude",
+                    "tool": "claude",
+                    "backendSessionId": "c64917c2aa"
+                  },
+                  "source": "worktree",
+                  "lastUsedAt": "2026-08-30T00:00:00.000Z"
+                }
+              ],
+              "visibleAttachedAgents": [
+                {
+                  "entry": {
+                    "id": "claude-ifc0xo",
+                    "command": "claude",
+                    "tool": "claude",
+                    "backendSessionId": "c64917c2aa"
+                  },
+                  "source": "worktree",
+                  "lastUsedAt": "2026-08-30T00:00:00.000Z"
+                }
+              ],
+              "hiddenAttachedAgentCount": 0,
+              "attachedServices": [],
+              "lastUsedAt": "2026-08-30T00:00:00.000Z",
+              "sortAt": "2026-08-30T00:00:00.000Z",
+              "actionIndex": 0,
+              "actionNumber": 1
+            },
+            {
+              "kind": "standalone-agent",
+              "entry": { "id": "codex-mrh12h", "command": "codex", "tool": "codex", "worktreePath": "/x/chat-parser" },
+              "actionIndex": 1,
+              "actionNumber": 2
+            }
+          ]
+        }
+      },
+      "output": {
+        "rendered": "\u001b[2J\u001b[H\r\n\u001b[1maimux\u001b[0m \u001b[2mv0.1.34\u001b[0m — graveyard  \u001b[32m● tmux\u001b[0m\r\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\r\n\r\n  \u001b[1mWorktrees\u001b[0m\u001b[0m                                                             \u001b[1mDetails\u001b[0m\u001b[0m                                        \r\n                                                                        Worktree: test6                                \r\n\u001b[2m╭ \u001b[0m\u001b[1;33m▸\u001b[0m \u001b[48;5;240;38;5;255m 1 \u001b[0m \u001b[1;33mtest6\u001b[0m \u001b[2m· test6\u001b[0m \u001b[2m────────────────────────────\u001b[0m \u001b[2m1 agent\u001b[0m \u001b[48;5;236;38;5;245m 1w ago \u001b[0m \u001b[2m╮\u001b[0m\u001b[0m   Branch: test6                                  \r\n\u001b[2m│ \u001b[0m  \u001b[2m○\u001b[0m \u001b[2mclaude:claude-ifc0xo (c64917c2…)\u001b[0m \u001b[48;5;236;38;5;245m 1w ago \u001b[0m                    \u001b[2m │\u001b[0m\u001b[0m   Path: /x/test6                                 \r\n\u001b[2m╰\u001b[0m\u001b[2m───────────────────────────────────────────────────────────────────\u001b[0m\u001b[2m╯\u001b[0m\u001b[0m   Status: graveyard                              \r\n                                                                        Graveyarded: 1w ago                            \r\n  \u001b[1mAgents by Worktree\u001b[0m\u001b[0m                                                    Agents: 1                                      \r\n                                                                        Services: 0                                    \r\n\u001b[2m╭ \u001b[0m\u001b[1mchat-parser\u001b[0m \u001b[2m──────────────────────────────────────────────────────\u001b[0m\u001b[2m╮\u001b[0m\u001b[0m   Last Used: 1w ago                              \r\n\u001b[2m│ \u001b[0m  \u001b[48;5;240;38;5;255m 2 \u001b[0m \u001b[2m○\u001b[0m \u001b[2mcodex:codex-mrh12h\u001b[0m                                       \u001b[2m │\u001b[0m\u001b[0m                                                  \r\n\u001b[2m╰\u001b[0m\u001b[2m───────────────────────────────────────────────────────────────────\u001b[0m\u001b[2m╯\u001b[0m\u001b[0m   \u001b[1mAttached Agents\u001b[0m\u001b[0m                                \r\n                                                                        - claude-ifc0xo · 1w ago                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\r\n  \u001b[1;38;5;255m↑↓\u001b[0m \u001b[2mselect\u001b[0m  \u001b[1;38;5;255mTab\u001b[0m \u001b[2mdetails\u001b[0m  \u001b[1;38;5;255md/c/p/L/t/g\u001b[0m \u001b[2mscreens\u001b[0m  \u001b[1;38;5;255m1-9/Enter\u001b[0m \u001b[2mresurrect\u001b[0m  \u001b[1;38;5;255mx\u001b[0m \u001b[2mdelete worktree\u001b[0m  \u001b[1;38;5;255mEsc\u001b[0m \u001b[2mdashboard\u001b[0m  \u001b[1;38;5;255mq\u001b[0m \u001b[2mquit\u001b[0m\u001b[0m",
+        "visibleText": "\r\naimux v0.1.34 — graveyard  ● tmux\r\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\r\n\r\n  Worktrees                                                             Details                                        \r\n                                                                        Worktree: test6                                \r\n╭ ▸  1  test6 · test6 ──────────────────────────── 1 agent  1w ago  ╮   Branch: test6                                  \r\n│   ○ claude:claude-ifc0xo (c64917c2…)  1w ago                      │   Path: /x/test6                                 \r\n╰───────────────────────────────────────────────────────────────────╯   Status: graveyard                              \r\n                                                                        Graveyarded: 1w ago                            \r\n  Agents by Worktree                                                    Agents: 1                                      \r\n                                                                        Services: 0                                    \r\n╭ chat-parser ──────────────────────────────────────────────────────╮   Last Used: 1w ago                              \r\n│    2  ○ codex:codex-mrh12h                                        │                                                  \r\n╰───────────────────────────────────────────────────────────────────╯   Attached Agents                                \r\n                                                                        - claude-ifc0xo · 1w ago                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\r\n  ↑↓ select  Tab details  d/c/p/L/t/g screens  1-9/Enter resurrect  x delete worktree  Esc dashboard  q quit"
+      },
+      "inputSha256": "ea526a021c9f0bb84b82818ef8756a168492c1cb63842afa66d8e2fca1872f8f"
+    },
+    {
+      "id": "tui-subscreen-renderer-002",
+      "name": "graveyard details include graveyard age",
+      "source": "src/tui/screens/subscreen-renderers.test.ts",
+      "api": "renderGraveyardDetails",
+      "input": {
+        "now": "2026-09-07T00:00:00.000Z",
+        "width": 60,
+        "height": 20,
+        "viewModel": {
+          "rows": [
+            { "kind": "section", "label": "Worktrees" },
+            {
+              "kind": "worktree",
+              "entry": {
+                "path": "/x/test6",
+                "name": "test6",
+                "branch": "test6",
+                "graveyardedAt": "2026-08-30T00:00:00.000Z",
+                "agents": [],
+                "services": []
+              },
+              "attachedAgents": [],
+              "visibleAttachedAgents": [],
+              "hiddenAttachedAgentCount": 0,
+              "attachedServices": [],
+              "sortAt": "2026-08-30T00:00:00.000Z",
+              "actionIndex": 0,
+              "actionNumber": 1
+            }
+          ],
+          "selectableRows": [
+            {
+              "kind": "worktree",
+              "entry": {
+                "path": "/x/test6",
+                "name": "test6",
+                "branch": "test6",
+                "graveyardedAt": "2026-08-30T00:00:00.000Z",
+                "agents": [],
+                "services": []
+              },
+              "attachedAgents": [],
+              "visibleAttachedAgents": [],
+              "hiddenAttachedAgentCount": 0,
+              "attachedServices": [],
+              "sortAt": "2026-08-30T00:00:00.000Z",
+              "actionIndex": 0,
+              "actionNumber": 1
+            }
+          ]
+        }
+      },
+      "output": {
+        "rendered": "\u001b[1mDetails\u001b[0m\nWorktree: test6\nBranch: test6\nPath: /x/test6\nStatus: graveyard\nGraveyarded: 1w ago\nAgents: 0\nServices: 0\n\n\u001b[1mAttached Agents\u001b[0m\n\u001b[2m(none)\u001b[0m\n\n\n\n\n\n\n\n\n",
+        "visibleText": "Details\nWorktree: test6\nBranch: test6\nPath: /x/test6\nStatus: graveyard\nGraveyarded: 1w ago\nAgents: 0\nServices: 0\n\nAttached Agents\n(none)\n\n\n\n\n\n\n\n\n"
+      },
+      "inputSha256": "1b6a2f66d6860b9855fe084e721e115c407aa1f00b849788b69a13dd9ea517e8"
+    },
+    {
+      "id": "tui-subscreen-renderer-003",
+      "name": "orphan agents render as loose selectable rows",
+      "source": "src/tui/screens/subscreen-renderers.test.ts",
+      "api": "renderGraveyardScreen",
+      "input": {
+        "now": "2026-09-07T00:00:00.000Z",
+        "graveyardIndex": 0,
+        "viewModel": {
+          "rows": [
+            { "kind": "section", "label": "Orphaned Agents" },
+            {
+              "kind": "orphan-agent",
+              "entry": { "id": "claude-orphan", "command": "claude", "tool": "claude" },
+              "actionIndex": 0,
+              "actionNumber": 1
+            }
+          ],
+          "selectableRows": [
+            {
+              "kind": "orphan-agent",
+              "entry": { "id": "claude-orphan", "command": "claude", "tool": "claude" },
+              "actionIndex": 0,
+              "actionNumber": 1
+            }
+          ]
+        }
+      },
+      "output": {
+        "rendered": "\u001b[2J\u001b[H\r\n\u001b[1maimux\u001b[0m \u001b[2mv0.1.34\u001b[0m — graveyard  \u001b[32m● tmux\u001b[0m\r\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\r\n\r\n  \u001b[1mOrphaned Agents\u001b[0m\u001b[0m                                                       \u001b[1mDetails\u001b[0m\u001b[0m                                        \r\n                                                                        Agent: claude-orphan                           \r\n  \u001b[1;33m▸\u001b[0m \u001b[48;5;240;38;5;255m 1 \u001b[0m \u001b[2m○\u001b[0m \u001b[2mclaude:claude-orphan\u001b[0m\u001b[0m                                          Session: claude-orphan                         \r\n                                                                        Tool: claude                                   \r\n                                                                        Config:                                        \r\n                                                                        Status: offline                                \r\n                                                                        Command: claude                                \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\r\n  \u001b[1;38;5;255m↑↓\u001b[0m \u001b[2mselect\u001b[0m  \u001b[1;38;5;255mTab\u001b[0m \u001b[2mdetails\u001b[0m  \u001b[1;38;5;255md/c/p/L/t/g\u001b[0m \u001b[2mscreens\u001b[0m  \u001b[1;38;5;255m1-9/Enter\u001b[0m \u001b[2mresurrect\u001b[0m  \u001b[1;38;5;255mx\u001b[0m \u001b[2mdelete worktree\u001b[0m  \u001b[1;38;5;255mEsc\u001b[0m \u001b[2mdashboard\u001b[0m  \u001b[1;38;5;255mq\u001b[0m \u001b[2mquit\u001b[0m\u001b[0m",
+        "visibleText": "\r\naimux v0.1.34 — graveyard  ● tmux\r\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\r\n\r\n  Orphaned Agents                                                       Details                                        \r\n                                                                        Agent: claude-orphan                           \r\n  ▸  1  ○ claude:claude-orphan                                          Session: claude-orphan                         \r\n                                                                        Tool: claude                                   \r\n                                                                        Config:                                        \r\n                                                                        Status: offline                                \r\n                                                                        Command: claude                                \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\r\n  ↑↓ select  Tab details  d/c/p/L/t/g screens  1-9/Enter resurrect  x delete worktree  Esc dashboard  q quit"
+      },
+      "inputSha256": "2a875eca2b41cfcb547b91a66a4b3458938687cc0ee8a2d5fab5a588b8af7ea0"
+    },
+    {
+      "id": "tui-subscreen-renderer-004",
+      "name": "project screen loading state",
+      "source": "src/tui/screens/subscreen-renderers.test.ts",
+      "api": "renderProjectScreen",
+      "input": {
+        "ctx": {
+          "projectObservabilityLoaded": false,
+          "projectObservability": null,
+          "dashboardState": { "detailsSidebarVisible": true },
+          "viewport": { "cols": 120, "rows": 40 }
+        }
+      },
+      "output": {
+        "rendered": "\u001b[2J\u001b[H\r\n\u001b[1maimux\u001b[0m \u001b[2mv0.1.34\u001b[0m — project  \u001b[32m● tmux\u001b[0m\r\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\r\n\r\n  \u001b[2mLoading project...\u001b[0m\u001b[0m                                                                                                   \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\r\n  \u001b[1;38;5;255mTab\u001b[0m \u001b[2mdetails\u001b[0m  \u001b[1;38;5;255mr\u001b[0m \u001b[2mrefresh\u001b[0m  \u001b[1;38;5;255md/c/p/L/t/g\u001b[0m \u001b[2mscreens\u001b[0m  \u001b[1;38;5;255mEsc\u001b[0m \u001b[2mdashboard\u001b[0m  \u001b[1;38;5;255mq\u001b[0m \u001b[2mquit\u001b[0m\u001b[0m",
+        "visibleText": "\r\naimux v0.1.34 — project  ● tmux\r\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\r\n\r\n  Loading project...                                                                                                   \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\r\n  Tab details  r refresh  d/c/p/L/t/g screens  Esc dashboard  q quit"
+      },
+      "inputSha256": "3a968efeefa377b85071c191381797bb41968631d4c85c729339843ec8c5e18a"
+    },
+    {
+      "id": "tui-subscreen-renderer-005",
+      "name": "library details include selected entry path flash",
+      "source": "src/tui/screens/subscreen-renderers.test.ts",
+      "api": "renderLibraryScreen",
+      "input": {
+        "path": "/repo/.aimux/plans/codex-1.md",
+        "libraryIndex": 0,
+        "libraryPathFlash": "/repo/.aimux/plans/codex-1.md",
+        "viewport": { "cols": 120, "rows": 40 }
+      },
+      "output": {
+        "rendered": "\u001b[2J\u001b[H\r\n\u001b[1maimux\u001b[0m \u001b[2mv0.1.34\u001b[0m — library  \u001b[32m● tmux\u001b[0m\r\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\r\n\r\n  \u001b[1mLibrary\u001b[0m\u001b[0m                                                               \u001b[1mDetails\u001b[0m\u001b[0m                                        \r\n\u001b[1;33m▸\u001b[0m \u001b[2m[1]\u001b[0m \u001b[36m[plan]\u001b[0m \u001b[1mCodex plan\u001b[0m \u001b[2m(codex-1)\u001b[0m \u001b[2m· 2mo ago\u001b[0m \u001b[1;33m◀\u001b[0m\u001b[0m                           Title: Codex plan                              \r\n                                                                        Kind: plan                                     \r\n                                                                        Session: codex-1                               \r\n                                                                        Updated: 2026-06-20T00:00:00.000Z              \r\n                                                                        Path: /repo/.aimux/plans/codex-1.md            \r\n                                                                                                                       \r\n                                                                        \u001b[1mPreview\u001b[0m\u001b[0m                                        \r\n                                                                        # Plan                                         \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\r\n  \u001b[1;38;5;255m↑↓\u001b[0m \u001b[2mselect\u001b[0m  \u001b[1;38;5;255mTab\u001b[0m \u001b[2mdetails\u001b[0m  \u001b[1;38;5;255md/c/p/L/t/g\u001b[0m \u001b[2mscreens\u001b[0m  \u001b[1;38;5;255mEnter\u001b[0m \u001b[2mshow path\u001b[0m  \u001b[1;38;5;255mr\u001b[0m \u001b[2mrefresh\u001b[0m  \u001b[1;38;5;255mEsc\u001b[0m \u001b[2mdashboard\u001b[0m  \u001b[1;38;5;255mq\u001b[0m \u001b[2mquit\u001b[0m\u001b[0m\r\n  \u001b[2mPath: /repo/.aimux/plans/codex-1.md\u001b[0m\u001b[0m",
+        "visibleText": "\r\naimux v0.1.34 — library  ● tmux\r\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\r\n\r\n  Library                                                               Details                                        \r\n▸ [1] [plan] Codex plan (codex-1) · 2mo ago ◀                           Title: Codex plan                              \r\n                                                                        Kind: plan                                     \r\n                                                                        Session: codex-1                               \r\n                                                                        Updated: 2026-06-20T00:00:00.000Z              \r\n                                                                        Path: /repo/.aimux/plans/codex-1.md            \r\n                                                                                                                       \r\n                                                                        Preview                                        \r\n                                                                        # Plan                                         \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n                                                                                                                       \r\n────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\r\n  ↑↓ select  Tab details  d/c/p/L/t/g screens  Enter show path  r refresh  Esc dashboard  q quit\r\n  Path: /repo/.aimux/plans/codex-1.md"
+      },
+      "inputSha256": "50fb86341f89dd4699d58eda40dc6eff706456544a369e30bd2fa9ec5329dfeb"
+    }
+  ]
+}

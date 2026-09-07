@@ -976,6 +976,11 @@ Priority fixture groups:
   `tui/render/theme` helpers.
 - `tui/dashboard-footer-hints.json`: dashboard footer hint ordering and labels
   captured by running TypeScript `buildDashboardFooterHints`.
+- `tui/screen-overlays.json`: dashboard overlay raw ANSI output and visible
+  text captured by running TypeScript `tui/screens/overlay-renderers` helpers.
+- `tui/subscreen-renderers.json`: dashboard subscreen raw ANSI output and
+  visible text captured by running TypeScript `tui/screens/subscreen-renderers`
+  helpers.
 
 ## Worktree
 
