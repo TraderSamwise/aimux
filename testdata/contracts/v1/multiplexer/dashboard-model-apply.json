@@ -1,0 +1,1114 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/dashboard-model.ts",
+  "generatedBy": "scripts/capture-dashboard-model-apply-contract.mjs",
+  "description": "Dashboard model cache application captured by running TypeScript applyDashboardModel with instrumented host adapters.",
+  "cases": [
+    {
+      "id": "dashboard-model-apply-001",
+      "name": "populates raw and derived caches with composed worktree groups",
+      "source": "src/multiplexer/dashboard-model.ts",
+      "api": "applyDashboardModel",
+      "input": {
+        "name": "populates raw and derived caches with composed worktree groups",
+        "host": { "orderWorktreeGroups": "reverse" },
+        "pending": {
+          "version": 2,
+          "teammateAppend": [
+            {
+              "index": 6,
+              "id": "team-b",
+              "command": "claude",
+              "status": "running",
+              "active": false,
+              "team": { "teamId": "t1", "parentSessionId": "codex-main", "role": "reviewer" }
+            },
+            { "index": 7, "id": "not-a-teammate", "command": "codex", "status": "running", "active": false }
+          ]
+        },
+        "operations": [
+          {
+            "sessions": [
+              {
+                "index": 1,
+                "id": "codex-main",
+                "command": "codex",
+                "status": "running",
+                "active": true,
+                "createdAt": "2026-01-01T10:00:00.000Z"
+              },
+              {
+                "index": 2,
+                "id": "scribe-main",
+                "command": "claude",
+                "status": "running",
+                "active": false,
+                "scribe": true,
+                "createdAt": "2026-01-01T09:00:00.000Z"
+              },
+              {
+                "index": 3,
+                "id": "codex-wt",
+                "command": "codex",
+                "status": "running",
+                "active": false,
+                "worktreePath": "/repo/wt-a",
+                "worktreeName": "wt-a",
+                "createdAt": "2026-01-01T11:00:00.000Z"
+              }
+            ],
+            "teammates": [
+              {
+                "index": 4,
+                "id": "team-a",
+                "command": "codex",
+                "status": "running",
+                "active": false,
+                "team": { "teamId": "t1", "parentSessionId": "codex-main", "role": "coder" }
+              },
+              { "index": 5, "id": "not-team", "command": "codex", "status": "running", "active": false }
+            ],
+            "services": [
+              { "id": "svc-main", "command": "yarn", "args": ["dev"], "status": "running", "active": true },
+              {
+                "id": "svc-wt",
+                "command": "node",
+                "args": ["server.js"],
+                "status": "running",
+                "active": false,
+                "worktreePath": "/repo/wt-a",
+                "worktreeName": "wt-a"
+              }
+            ],
+            "worktreeGroups": [
+              { "name": "Main Checkout", "branch": "master", "status": "offline", "sessions": [], "services": [] },
+              {
+                "name": "wt-a",
+                "branch": "feature/a",
+                "path": "/repo/wt-a",
+                "status": "offline",
+                "createdAt": "2026-01-02T00:00:00.000Z",
+                "sessions": [],
+                "services": []
+              }
+            ],
+            "mainCheckoutInfo": { "name": "Main Checkout", "branch": "master" },
+            "operationFailures": [{ "id": "op-1", "message": "failed" }],
+            "agentRestoreOffer": { "id": "restore-1", "sessionIds": ["codex-main"] }
+          }
+        ]
+      },
+      "output": {
+        "steps": [
+          {
+            "result": true,
+            "calls": [
+              { "method": "listSessionActions", "args": [] },
+              { "method": "listServiceActions", "args": [] },
+              { "method": "getVersion", "args": [] },
+              {
+                "method": "applyToSessions",
+                "args": [{ "includeTeammates": false, "ids": ["codex-main", "scribe-main", "codex-wt"] }]
+              },
+              { "method": "applyToSessions", "args": [{ "includeTeammates": true, "ids": ["team-a", "not-team"] }] },
+              { "method": "applyToServices", "args": [{ "ids": ["svc-main", "svc-wt"] }] },
+              { "method": "applyToWorktrees", "args": [{ "names": ["Main Checkout", "wt-a"] }] },
+              { "method": "orderWorktreeGroups", "args": [{ "names": ["wt-a", "Main Checkout"] }] },
+              { "method": "refreshDashboardScribePreviewEntries", "args": [null] },
+              { "method": "markSelectionDirty", "args": [] }
+            ],
+            "host": {
+              "rawSessions": [
+                {
+                  "index": 1,
+                  "id": "codex-main",
+                  "command": "codex",
+                  "status": "running",
+                  "active": true,
+                  "createdAt": "2026-01-01T10:00:00.000Z"
+                },
+                {
+                  "index": 2,
+                  "id": "scribe-main",
+                  "command": "claude",
+                  "status": "running",
+                  "active": false,
+                  "scribe": true,
+                  "createdAt": "2026-01-01T09:00:00.000Z"
+                },
+                {
+                  "index": 3,
+                  "id": "codex-wt",
+                  "command": "codex",
+                  "status": "running",
+                  "active": false,
+                  "worktreePath": "/repo/wt-a",
+                  "worktreeName": "wt-a",
+                  "createdAt": "2026-01-01T11:00:00.000Z"
+                }
+              ],
+              "rawTeammates": [
+                {
+                  "index": 4,
+                  "id": "team-a",
+                  "command": "codex",
+                  "status": "running",
+                  "active": false,
+                  "team": { "teamId": "t1", "parentSessionId": "codex-main", "role": "coder" }
+                },
+                { "index": 5, "id": "not-team", "command": "codex", "status": "running", "active": false }
+              ],
+              "rawServices": [
+                { "id": "svc-main", "command": "yarn", "args": ["dev"], "status": "running", "active": true },
+                {
+                  "id": "svc-wt",
+                  "command": "node",
+                  "args": ["server.js"],
+                  "status": "running",
+                  "active": false,
+                  "worktreePath": "/repo/wt-a",
+                  "worktreeName": "wt-a"
+                }
+              ],
+              "rawWorktreeGroups": [
+                { "name": "Main Checkout", "branch": "master", "status": "offline", "sessions": [], "services": [] },
+                {
+                  "name": "wt-a",
+                  "branch": "feature/a",
+                  "path": "/repo/wt-a",
+                  "status": "offline",
+                  "createdAt": "2026-01-02T00:00:00.000Z",
+                  "sessions": [],
+                  "services": []
+                }
+              ],
+              "sessions": [
+                {
+                  "index": 1,
+                  "id": "codex-main",
+                  "command": "codex",
+                  "status": "running",
+                  "active": true,
+                  "createdAt": "2026-01-01T10:00:00.000Z"
+                },
+                {
+                  "index": 2,
+                  "id": "scribe-main",
+                  "command": "claude",
+                  "status": "running",
+                  "active": false,
+                  "scribe": true,
+                  "createdAt": "2026-01-01T09:00:00.000Z"
+                },
+                {
+                  "index": 3,
+                  "id": "codex-wt",
+                  "command": "codex",
+                  "status": "running",
+                  "active": false,
+                  "worktreePath": "/repo/wt-a",
+                  "worktreeName": "wt-a",
+                  "createdAt": "2026-01-01T11:00:00.000Z"
+                }
+              ],
+              "teammates": [
+                {
+                  "index": 4,
+                  "id": "team-a",
+                  "command": "codex",
+                  "status": "running",
+                  "active": false,
+                  "team": { "teamId": "t1", "parentSessionId": "codex-main", "role": "coder" }
+                },
+                {
+                  "index": 6,
+                  "id": "team-b",
+                  "command": "claude",
+                  "status": "running",
+                  "active": false,
+                  "team": { "teamId": "t1", "parentSessionId": "codex-main", "role": "reviewer" }
+                }
+              ],
+              "services": [
+                { "id": "svc-main", "command": "yarn", "args": ["dev"], "status": "running", "active": true },
+                {
+                  "id": "svc-wt",
+                  "command": "node",
+                  "args": ["server.js"],
+                  "status": "running",
+                  "active": false,
+                  "worktreePath": "/repo/wt-a",
+                  "worktreeName": "wt-a"
+                }
+              ],
+              "worktreeGroups": [
+                {
+                  "name": "Main Checkout",
+                  "branch": "master",
+                  "status": "active",
+                  "sessions": [
+                    {
+                      "index": 1,
+                      "id": "codex-main",
+                      "command": "codex",
+                      "status": "running",
+                      "active": true,
+                      "createdAt": "2026-01-01T10:00:00.000Z"
+                    }
+                  ],
+                  "services": [
+                    { "id": "svc-main", "command": "yarn", "args": ["dev"], "status": "running", "active": true }
+                  ]
+                },
+                {
+                  "name": "wt-a",
+                  "branch": "feature/a",
+                  "path": "/repo/wt-a",
+                  "status": "active",
+                  "createdAt": "2026-01-02T00:00:00.000Z",
+                  "sessions": [
+                    {
+                      "index": 3,
+                      "id": "codex-wt",
+                      "command": "codex",
+                      "status": "running",
+                      "active": false,
+                      "worktreePath": "/repo/wt-a",
+                      "worktreeName": "wt-a",
+                      "createdAt": "2026-01-01T11:00:00.000Z"
+                    }
+                  ],
+                  "services": [
+                    {
+                      "id": "svc-wt",
+                      "command": "node",
+                      "args": ["server.js"],
+                      "status": "running",
+                      "active": false,
+                      "worktreePath": "/repo/wt-a",
+                      "worktreeName": "wt-a"
+                    }
+                  ]
+                }
+              ],
+              "operationFailures": [{ "id": "op-1", "message": "failed" }],
+              "agentRestoreOffer": { "id": "restore-1", "sessionIds": ["codex-main"] },
+              "mainCheckoutInfo": { "name": "Main Checkout", "branch": "master" },
+              "modelVersion": 1,
+              "refreshedAt": 1700000000000,
+              "pending": { "version": 2, "sessionActions": [], "serviceActions": [] }
+            }
+          }
+        ]
+      },
+      "inputSha256": "f1f983550fbb1c6be23a1d7fc71927cdbe6e87d9b9f044e0334ef98d408e98c8"
+    },
+    {
+      "id": "dashboard-model-apply-002",
+      "name": "returns false for an unchanged snapshot after refreshing timestamp",
+      "source": "src/multiplexer/dashboard-model.ts",
+      "api": "applyDashboardModel",
+      "input": {
+        "name": "returns false for an unchanged snapshot after refreshing timestamp",
+        "pending": { "version": 3 },
+        "operations": [
+          {
+            "sessions": [
+              {
+                "index": 1,
+                "id": "codex-main",
+                "command": "codex",
+                "status": "running",
+                "active": true,
+                "createdAt": "2026-01-01T10:00:00.000Z"
+              }
+            ],
+            "teammates": [],
+            "services": [],
+            "worktreeGroups": [
+              { "name": "Main Checkout", "branch": "master", "status": "offline", "sessions": [], "services": [] }
+            ],
+            "mainCheckoutInfo": { "name": "Main Checkout", "branch": "master" }
+          },
+          {
+            "sessions": [
+              {
+                "index": 1,
+                "id": "codex-main",
+                "command": "codex",
+                "status": "running",
+                "active": true,
+                "createdAt": "2026-01-01T10:00:00.000Z"
+              }
+            ],
+            "teammates": [],
+            "services": [],
+            "worktreeGroups": [
+              { "name": "Main Checkout", "branch": "master", "status": "offline", "sessions": [], "services": [] }
+            ],
+            "mainCheckoutInfo": { "name": "Main Checkout", "branch": "master" }
+          }
+        ]
+      },
+      "output": {
+        "steps": [
+          {
+            "result": true,
+            "calls": [
+              { "method": "listSessionActions", "args": [] },
+              { "method": "listServiceActions", "args": [] },
+              { "method": "getVersion", "args": [] },
+              { "method": "applyToSessions", "args": [{ "includeTeammates": false, "ids": ["codex-main"] }] },
+              { "method": "applyToSessions", "args": [{ "includeTeammates": true, "ids": [] }] },
+              { "method": "applyToServices", "args": [{ "ids": [] }] },
+              { "method": "applyToWorktrees", "args": [{ "names": ["Main Checkout"] }] },
+              { "method": "orderWorktreeGroups", "args": [{ "names": ["Main Checkout"] }] },
+              { "method": "refreshDashboardScribePreviewEntries", "args": [null] },
+              { "method": "markSelectionDirty", "args": [] }
+            ],
+            "host": {
+              "rawSessions": [
+                {
+                  "index": 1,
+                  "id": "codex-main",
+                  "command": "codex",
+                  "status": "running",
+                  "active": true,
+                  "createdAt": "2026-01-01T10:00:00.000Z"
+                }
+              ],
+              "rawTeammates": [],
+              "rawServices": [],
+              "rawWorktreeGroups": [
+                { "name": "Main Checkout", "branch": "master", "status": "offline", "sessions": [], "services": [] }
+              ],
+              "sessions": [
+                {
+                  "index": 1,
+                  "id": "codex-main",
+                  "command": "codex",
+                  "status": "running",
+                  "active": true,
+                  "createdAt": "2026-01-01T10:00:00.000Z"
+                }
+              ],
+              "teammates": [],
+              "services": [],
+              "worktreeGroups": [
+                {
+                  "name": "Main Checkout",
+                  "branch": "master",
+                  "status": "active",
+                  "sessions": [
+                    {
+                      "index": 1,
+                      "id": "codex-main",
+                      "command": "codex",
+                      "status": "running",
+                      "active": true,
+                      "createdAt": "2026-01-01T10:00:00.000Z"
+                    }
+                  ],
+                  "services": []
+                }
+              ],
+              "operationFailures": [],
+              "agentRestoreOffer": null,
+              "mainCheckoutInfo": { "name": "Main Checkout", "branch": "master" },
+              "modelVersion": 1,
+              "refreshedAt": 1700000000000,
+              "pending": { "version": 3, "sessionActions": [], "serviceActions": [] }
+            }
+          },
+          {
+            "result": false,
+            "calls": [
+              { "method": "listSessionActions", "args": [] },
+              { "method": "listServiceActions", "args": [] },
+              { "method": "getVersion", "args": [] }
+            ],
+            "host": {
+              "rawSessions": [
+                {
+                  "index": 1,
+                  "id": "codex-main",
+                  "command": "codex",
+                  "status": "running",
+                  "active": true,
+                  "createdAt": "2026-01-01T10:00:00.000Z"
+                }
+              ],
+              "rawTeammates": [],
+              "rawServices": [],
+              "rawWorktreeGroups": [
+                { "name": "Main Checkout", "branch": "master", "status": "offline", "sessions": [], "services": [] }
+              ],
+              "sessions": [
+                {
+                  "index": 1,
+                  "id": "codex-main",
+                  "command": "codex",
+                  "status": "running",
+                  "active": true,
+                  "createdAt": "2026-01-01T10:00:00.000Z"
+                }
+              ],
+              "teammates": [],
+              "services": [],
+              "worktreeGroups": [
+                {
+                  "name": "Main Checkout",
+                  "branch": "master",
+                  "status": "active",
+                  "sessions": [
+                    {
+                      "index": 1,
+                      "id": "codex-main",
+                      "command": "codex",
+                      "status": "running",
+                      "active": true,
+                      "createdAt": "2026-01-01T10:00:00.000Z"
+                    }
+                  ],
+                  "services": []
+                }
+              ],
+              "operationFailures": [],
+              "agentRestoreOffer": null,
+              "mainCheckoutInfo": { "name": "Main Checkout", "branch": "master" },
+              "modelVersion": 1,
+              "refreshedAt": 1700000000000,
+              "pending": { "version": 3, "sessionActions": [], "serviceActions": [] }
+            }
+          }
+        ]
+      },
+      "inputSha256": "b1c5818d89f133c8c6dec76cdcb5a3d9163f2a436a8150a98ec1e975ecde586b"
+    },
+    {
+      "id": "dashboard-model-apply-003",
+      "name": "pending action version changes force a rebuild for identical raw rows",
+      "source": "src/multiplexer/dashboard-model.ts",
+      "api": "applyDashboardModel",
+      "input": {
+        "name": "pending action version changes force a rebuild for identical raw rows",
+        "pending": { "version": 0, "sessionPatches": { "codex-main": { "headline": "first pass" } } },
+        "operations": [
+          {
+            "sessions": [
+              {
+                "index": 1,
+                "id": "codex-main",
+                "command": "codex",
+                "status": "running",
+                "active": true,
+                "createdAt": "2026-01-01T10:00:00.000Z"
+              }
+            ],
+            "worktreeGroups": [
+              { "name": "Main Checkout", "branch": "master", "status": "offline", "sessions": [], "services": [] }
+            ],
+            "mainCheckoutInfo": { "name": "Main Checkout", "branch": "master" }
+          },
+          {
+            "pendingUpdate": { "version": 1, "sessionPatches": { "codex-main": { "headline": "second pass" } } },
+            "sessions": [
+              {
+                "index": 1,
+                "id": "codex-main",
+                "command": "codex",
+                "status": "running",
+                "active": true,
+                "createdAt": "2026-01-01T10:00:00.000Z"
+              }
+            ],
+            "worktreeGroups": [
+              { "name": "Main Checkout", "branch": "master", "status": "offline", "sessions": [], "services": [] }
+            ],
+            "mainCheckoutInfo": { "name": "Main Checkout", "branch": "master" }
+          }
+        ]
+      },
+      "output": {
+        "steps": [
+          {
+            "result": true,
+            "calls": [
+              { "method": "listSessionActions", "args": [] },
+              { "method": "listServiceActions", "args": [] },
+              { "method": "getVersion", "args": [] },
+              { "method": "applyToSessions", "args": [{ "includeTeammates": false, "ids": ["codex-main"] }] },
+              { "method": "applyToSessions", "args": [{ "includeTeammates": true, "ids": [] }] },
+              { "method": "applyToServices", "args": [{ "ids": [] }] },
+              { "method": "applyToWorktrees", "args": [{ "names": ["Main Checkout"] }] },
+              { "method": "orderWorktreeGroups", "args": [{ "names": ["Main Checkout"] }] },
+              { "method": "refreshDashboardScribePreviewEntries", "args": [null] },
+              { "method": "markSelectionDirty", "args": [] }
+            ],
+            "host": {
+              "rawSessions": [
+                {
+                  "index": 1,
+                  "id": "codex-main",
+                  "command": "codex",
+                  "status": "running",
+                  "active": true,
+                  "createdAt": "2026-01-01T10:00:00.000Z"
+                }
+              ],
+              "rawTeammates": [],
+              "rawServices": [],
+              "rawWorktreeGroups": [
+                { "name": "Main Checkout", "branch": "master", "status": "offline", "sessions": [], "services": [] }
+              ],
+              "sessions": [
+                {
+                  "index": 1,
+                  "id": "codex-main",
+                  "command": "codex",
+                  "status": "running",
+                  "active": true,
+                  "createdAt": "2026-01-01T10:00:00.000Z",
+                  "headline": "first pass"
+                }
+              ],
+              "teammates": [],
+              "services": [],
+              "worktreeGroups": [
+                {
+                  "name": "Main Checkout",
+                  "branch": "master",
+                  "status": "active",
+                  "sessions": [
+                    {
+                      "index": 1,
+                      "id": "codex-main",
+                      "command": "codex",
+                      "status": "running",
+                      "active": true,
+                      "createdAt": "2026-01-01T10:00:00.000Z",
+                      "headline": "first pass"
+                    }
+                  ],
+                  "services": []
+                }
+              ],
+              "operationFailures": [],
+              "agentRestoreOffer": null,
+              "mainCheckoutInfo": { "name": "Main Checkout", "branch": "master" },
+              "modelVersion": 1,
+              "refreshedAt": 1700000000000,
+              "pending": { "version": 0, "sessionActions": [], "serviceActions": [] }
+            }
+          },
+          {
+            "result": true,
+            "calls": [
+              { "method": "listSessionActions", "args": [] },
+              { "method": "listServiceActions", "args": [] },
+              { "method": "getVersion", "args": [] },
+              { "method": "applyToSessions", "args": [{ "includeTeammates": false, "ids": ["codex-main"] }] },
+              { "method": "applyToSessions", "args": [{ "includeTeammates": true, "ids": [] }] },
+              { "method": "applyToServices", "args": [{ "ids": [] }] },
+              { "method": "applyToWorktrees", "args": [{ "names": ["Main Checkout"] }] },
+              { "method": "orderWorktreeGroups", "args": [{ "names": ["Main Checkout"] }] },
+              { "method": "refreshDashboardScribePreviewEntries", "args": [null] },
+              { "method": "markSelectionDirty", "args": [] }
+            ],
+            "host": {
+              "rawSessions": [
+                {
+                  "index": 1,
+                  "id": "codex-main",
+                  "command": "codex",
+                  "status": "running",
+                  "active": true,
+                  "createdAt": "2026-01-01T10:00:00.000Z"
+                }
+              ],
+              "rawTeammates": [],
+              "rawServices": [],
+              "rawWorktreeGroups": [
+                { "name": "Main Checkout", "branch": "master", "status": "offline", "sessions": [], "services": [] }
+              ],
+              "sessions": [
+                {
+                  "index": 1,
+                  "id": "codex-main",
+                  "command": "codex",
+                  "status": "running",
+                  "active": true,
+                  "createdAt": "2026-01-01T10:00:00.000Z",
+                  "headline": "second pass"
+                }
+              ],
+              "teammates": [],
+              "services": [],
+              "worktreeGroups": [
+                {
+                  "name": "Main Checkout",
+                  "branch": "master",
+                  "status": "active",
+                  "sessions": [
+                    {
+                      "index": 1,
+                      "id": "codex-main",
+                      "command": "codex",
+                      "status": "running",
+                      "active": true,
+                      "createdAt": "2026-01-01T10:00:00.000Z",
+                      "headline": "second pass"
+                    }
+                  ],
+                  "services": []
+                }
+              ],
+              "operationFailures": [],
+              "agentRestoreOffer": null,
+              "mainCheckoutInfo": { "name": "Main Checkout", "branch": "master" },
+              "modelVersion": 2,
+              "refreshedAt": 1700000000000,
+              "pending": { "version": 1, "sessionActions": [], "serviceActions": [] }
+            }
+          }
+        ]
+      },
+      "inputSha256": "bddb7c9e279d363bf19e9654ebb8298b30165204da2d242d31f7e1d4d8e6619d"
+    },
+    {
+      "id": "dashboard-model-apply-004",
+      "name": "scribe preview refresh is suppressed when the selected preview is already cached",
+      "source": "src/multiplexer/dashboard-model.ts",
+      "api": "applyDashboardModel",
+      "input": {
+        "name": "scribe preview refresh is suppressed when the selected preview is already cached",
+        "host": {
+          "dashboardState": { "previewSource": "scribe" },
+          "dashboardScribePreviewSessionId": "codex-main",
+          "dashboardScribePreviewEntriesCache": [],
+          "selectedSession": {
+            "index": 1,
+            "id": "codex-main",
+            "command": "codex",
+            "status": "running",
+            "active": true,
+            "createdAt": "2026-01-01T10:00:00.000Z"
+          }
+        },
+        "operations": [
+          {
+            "sessions": [
+              {
+                "index": 1,
+                "id": "codex-main",
+                "command": "codex",
+                "status": "running",
+                "active": true,
+                "createdAt": "2026-01-01T10:00:00.000Z"
+              }
+            ],
+            "worktreeGroups": [
+              { "name": "Main Checkout", "branch": "master", "status": "offline", "sessions": [], "services": [] }
+            ],
+            "mainCheckoutInfo": { "name": "Main Checkout", "branch": "master" }
+          }
+        ]
+      },
+      "output": {
+        "steps": [
+          {
+            "result": true,
+            "calls": [
+              { "method": "listSessionActions", "args": [] },
+              { "method": "listServiceActions", "args": [] },
+              { "method": "getVersion", "args": [] },
+              { "method": "applyToSessions", "args": [{ "includeTeammates": false, "ids": ["codex-main"] }] },
+              { "method": "applyToSessions", "args": [{ "includeTeammates": true, "ids": [] }] },
+              { "method": "applyToServices", "args": [{ "ids": [] }] },
+              { "method": "applyToWorktrees", "args": [{ "names": ["Main Checkout"] }] },
+              { "method": "orderWorktreeGroups", "args": [{ "names": ["Main Checkout"] }] },
+              { "method": "getSelectedDashboardSessionForActions", "args": [] },
+              { "method": "markSelectionDirty", "args": [] }
+            ],
+            "host": {
+              "rawSessions": [
+                {
+                  "index": 1,
+                  "id": "codex-main",
+                  "command": "codex",
+                  "status": "running",
+                  "active": true,
+                  "createdAt": "2026-01-01T10:00:00.000Z"
+                }
+              ],
+              "rawTeammates": [],
+              "rawServices": [],
+              "rawWorktreeGroups": [
+                { "name": "Main Checkout", "branch": "master", "status": "offline", "sessions": [], "services": [] }
+              ],
+              "sessions": [
+                {
+                  "index": 1,
+                  "id": "codex-main",
+                  "command": "codex",
+                  "status": "running",
+                  "active": true,
+                  "createdAt": "2026-01-01T10:00:00.000Z"
+                }
+              ],
+              "teammates": [],
+              "services": [],
+              "worktreeGroups": [
+                {
+                  "name": "Main Checkout",
+                  "branch": "master",
+                  "status": "active",
+                  "sessions": [
+                    {
+                      "index": 1,
+                      "id": "codex-main",
+                      "command": "codex",
+                      "status": "running",
+                      "active": true,
+                      "createdAt": "2026-01-01T10:00:00.000Z"
+                    }
+                  ],
+                  "services": []
+                }
+              ],
+              "operationFailures": [],
+              "agentRestoreOffer": null,
+              "mainCheckoutInfo": { "name": "Main Checkout", "branch": "master" },
+              "modelVersion": 1,
+              "refreshedAt": 1700000000000,
+              "pending": { "version": 0, "sessionActions": [], "serviceActions": [] }
+            }
+          }
+        ]
+      },
+      "inputSha256": "82474dd5af85f5faeb7ec9e76832be9294faabc5fd857c3fae0baf6df2278339"
+    },
+    {
+      "id": "dashboard-model-apply-005",
+      "name": "scribe preview refresh receives the selected session when the cache is stale",
+      "source": "src/multiplexer/dashboard-model.ts",
+      "api": "applyDashboardModel",
+      "input": {
+        "name": "scribe preview refresh receives the selected session when the cache is stale",
+        "host": {
+          "dashboardState": { "previewSource": "scribe" },
+          "dashboardScribePreviewSessionId": "old-session",
+          "dashboardScribePreviewEntriesCache": [],
+          "selectedSession": {
+            "index": 1,
+            "id": "codex-main",
+            "command": "codex",
+            "status": "running",
+            "active": true,
+            "createdAt": "2026-01-01T10:00:00.000Z"
+          }
+        },
+        "operations": [
+          {
+            "sessions": [
+              {
+                "index": 1,
+                "id": "codex-main",
+                "command": "codex",
+                "status": "running",
+                "active": true,
+                "createdAt": "2026-01-01T10:00:00.000Z"
+              }
+            ],
+            "worktreeGroups": [
+              { "name": "Main Checkout", "branch": "master", "status": "offline", "sessions": [], "services": [] }
+            ],
+            "mainCheckoutInfo": { "name": "Main Checkout", "branch": "master" }
+          }
+        ]
+      },
+      "output": {
+        "steps": [
+          {
+            "result": true,
+            "calls": [
+              { "method": "listSessionActions", "args": [] },
+              { "method": "listServiceActions", "args": [] },
+              { "method": "getVersion", "args": [] },
+              { "method": "applyToSessions", "args": [{ "includeTeammates": false, "ids": ["codex-main"] }] },
+              { "method": "applyToSessions", "args": [{ "includeTeammates": true, "ids": [] }] },
+              { "method": "applyToServices", "args": [{ "ids": [] }] },
+              { "method": "applyToWorktrees", "args": [{ "names": ["Main Checkout"] }] },
+              { "method": "orderWorktreeGroups", "args": [{ "names": ["Main Checkout"] }] },
+              { "method": "getSelectedDashboardSessionForActions", "args": [] },
+              { "method": "refreshDashboardScribePreviewEntries", "args": ["codex-main"] },
+              { "method": "markSelectionDirty", "args": [] }
+            ],
+            "host": {
+              "rawSessions": [
+                {
+                  "index": 1,
+                  "id": "codex-main",
+                  "command": "codex",
+                  "status": "running",
+                  "active": true,
+                  "createdAt": "2026-01-01T10:00:00.000Z"
+                }
+              ],
+              "rawTeammates": [],
+              "rawServices": [],
+              "rawWorktreeGroups": [
+                { "name": "Main Checkout", "branch": "master", "status": "offline", "sessions": [], "services": [] }
+              ],
+              "sessions": [
+                {
+                  "index": 1,
+                  "id": "codex-main",
+                  "command": "codex",
+                  "status": "running",
+                  "active": true,
+                  "createdAt": "2026-01-01T10:00:00.000Z"
+                }
+              ],
+              "teammates": [],
+              "services": [],
+              "worktreeGroups": [
+                {
+                  "name": "Main Checkout",
+                  "branch": "master",
+                  "status": "active",
+                  "sessions": [
+                    {
+                      "index": 1,
+                      "id": "codex-main",
+                      "command": "codex",
+                      "status": "running",
+                      "active": true,
+                      "createdAt": "2026-01-01T10:00:00.000Z"
+                    }
+                  ],
+                  "services": []
+                }
+              ],
+              "operationFailures": [],
+              "agentRestoreOffer": null,
+              "mainCheckoutInfo": { "name": "Main Checkout", "branch": "master" },
+              "modelVersion": 1,
+              "refreshedAt": 1700000000000,
+              "pending": { "version": 0, "sessionActions": [], "serviceActions": [] }
+            }
+          }
+        ]
+      },
+      "inputSha256": "55e374c543c943a7d02e3e2ab525de297a3706d8964eed7e42aa1e4761301f57"
+    },
+    {
+      "id": "dashboard-model-apply-006",
+      "name": "non-scribe preview refreshes without a selected session argument",
+      "source": "src/multiplexer/dashboard-model.ts",
+      "api": "applyDashboardModel",
+      "input": {
+        "name": "non-scribe preview refreshes without a selected session argument",
+        "host": { "dashboardState": { "previewSource": "output" } },
+        "operations": [
+          {
+            "sessions": [
+              {
+                "index": 1,
+                "id": "codex-main",
+                "command": "codex",
+                "status": "running",
+                "active": true,
+                "createdAt": "2026-01-01T10:00:00.000Z"
+              }
+            ],
+            "worktreeGroups": [
+              { "name": "Main Checkout", "branch": "master", "status": "offline", "sessions": [], "services": [] }
+            ],
+            "mainCheckoutInfo": { "name": "Main Checkout", "branch": "master" }
+          }
+        ]
+      },
+      "output": {
+        "steps": [
+          {
+            "result": true,
+            "calls": [
+              { "method": "listSessionActions", "args": [] },
+              { "method": "listServiceActions", "args": [] },
+              { "method": "getVersion", "args": [] },
+              { "method": "applyToSessions", "args": [{ "includeTeammates": false, "ids": ["codex-main"] }] },
+              { "method": "applyToSessions", "args": [{ "includeTeammates": true, "ids": [] }] },
+              { "method": "applyToServices", "args": [{ "ids": [] }] },
+              { "method": "applyToWorktrees", "args": [{ "names": ["Main Checkout"] }] },
+              { "method": "orderWorktreeGroups", "args": [{ "names": ["Main Checkout"] }] },
+              { "method": "refreshDashboardScribePreviewEntries", "args": [null] },
+              { "method": "markSelectionDirty", "args": [] }
+            ],
+            "host": {
+              "rawSessions": [
+                {
+                  "index": 1,
+                  "id": "codex-main",
+                  "command": "codex",
+                  "status": "running",
+                  "active": true,
+                  "createdAt": "2026-01-01T10:00:00.000Z"
+                }
+              ],
+              "rawTeammates": [],
+              "rawServices": [],
+              "rawWorktreeGroups": [
+                { "name": "Main Checkout", "branch": "master", "status": "offline", "sessions": [], "services": [] }
+              ],
+              "sessions": [
+                {
+                  "index": 1,
+                  "id": "codex-main",
+                  "command": "codex",
+                  "status": "running",
+                  "active": true,
+                  "createdAt": "2026-01-01T10:00:00.000Z"
+                }
+              ],
+              "teammates": [],
+              "services": [],
+              "worktreeGroups": [
+                {
+                  "name": "Main Checkout",
+                  "branch": "master",
+                  "status": "active",
+                  "sessions": [
+                    {
+                      "index": 1,
+                      "id": "codex-main",
+                      "command": "codex",
+                      "status": "running",
+                      "active": true,
+                      "createdAt": "2026-01-01T10:00:00.000Z"
+                    }
+                  ],
+                  "services": []
+                }
+              ],
+              "operationFailures": [],
+              "agentRestoreOffer": null,
+              "mainCheckoutInfo": { "name": "Main Checkout", "branch": "master" },
+              "modelVersion": 1,
+              "refreshedAt": 1700000000000,
+              "pending": { "version": 0, "sessionActions": [], "serviceActions": [] }
+            }
+          }
+        ]
+      },
+      "inputSha256": "da277cc33c6db2319398282bc8d9f0c542a0461f4568f4bfd52c47a95227c9ae"
+    },
+    {
+      "id": "dashboard-model-apply-007",
+      "name": "reconciled pending clears contribute to snapshot version before caches are built",
+      "source": "src/multiplexer/dashboard-model.ts",
+      "api": "applyDashboardModel",
+      "input": {
+        "name": "reconciled pending clears contribute to snapshot version before caches are built",
+        "pending": {
+          "version": 10,
+          "sessionActions": [
+            { "id": "codex-main", "kind": "creating", "token": 42, "startedAt": "2026-01-01T00:00:00.000Z" }
+          ]
+        },
+        "operations": [
+          {
+            "sessions": [
+              {
+                "index": 1,
+                "id": "codex-main",
+                "command": "codex",
+                "status": "running",
+                "active": true,
+                "createdAt": "2026-01-01T10:00:00.000Z"
+              }
+            ],
+            "worktreeGroups": [
+              { "name": "Main Checkout", "branch": "master", "status": "offline", "sessions": [], "services": [] }
+            ],
+            "mainCheckoutInfo": { "name": "Main Checkout", "branch": "master" }
+          }
+        ]
+      },
+      "output": {
+        "steps": [
+          {
+            "result": true,
+            "calls": [
+              { "method": "listSessionActions", "args": [] },
+              { "method": "clearSessionActionIfToken", "args": ["codex-main", 42] },
+              { "method": "listServiceActions", "args": [] },
+              { "method": "getVersion", "args": [] },
+              { "method": "applyToSessions", "args": [{ "includeTeammates": false, "ids": ["codex-main"] }] },
+              { "method": "applyToSessions", "args": [{ "includeTeammates": true, "ids": [] }] },
+              { "method": "applyToServices", "args": [{ "ids": [] }] },
+              { "method": "applyToWorktrees", "args": [{ "names": ["Main Checkout"] }] },
+              { "method": "orderWorktreeGroups", "args": [{ "names": ["Main Checkout"] }] },
+              { "method": "refreshDashboardScribePreviewEntries", "args": [null] },
+              { "method": "markSelectionDirty", "args": [] }
+            ],
+            "host": {
+              "rawSessions": [
+                {
+                  "index": 1,
+                  "id": "codex-main",
+                  "command": "codex",
+                  "status": "running",
+                  "active": true,
+                  "createdAt": "2026-01-01T10:00:00.000Z"
+                }
+              ],
+              "rawTeammates": [],
+              "rawServices": [],
+              "rawWorktreeGroups": [
+                { "name": "Main Checkout", "branch": "master", "status": "offline", "sessions": [], "services": [] }
+              ],
+              "sessions": [
+                {
+                  "index": 1,
+                  "id": "codex-main",
+                  "command": "codex",
+                  "status": "running",
+                  "active": true,
+                  "createdAt": "2026-01-01T10:00:00.000Z"
+                }
+              ],
+              "teammates": [],
+              "services": [],
+              "worktreeGroups": [
+                {
+                  "name": "Main Checkout",
+                  "branch": "master",
+                  "status": "active",
+                  "sessions": [
+                    {
+                      "index": 1,
+                      "id": "codex-main",
+                      "command": "codex",
+                      "status": "running",
+                      "active": true,
+                      "createdAt": "2026-01-01T10:00:00.000Z"
+                    }
+                  ],
+                  "services": []
+                }
+              ],
+              "operationFailures": [],
+              "agentRestoreOffer": null,
+              "mainCheckoutInfo": { "name": "Main Checkout", "branch": "master" },
+              "modelVersion": 1,
+              "refreshedAt": 1700000000000,
+              "pending": { "version": 11, "sessionActions": [], "serviceActions": [] }
+            }
+          }
+        ]
+      },
+      "inputSha256": "09eb37479a72d15991af80d36615ed6f8ce93f77184d4a66fc5af48467a32983"
+    }
+  ]
+}

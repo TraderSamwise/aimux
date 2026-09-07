@@ -472,6 +472,498 @@ pub fn run_dashboard_model_pending_actions_contract_case(input: &Value) -> Value
     json!({ "result": changed, "calls": calls })
 }
 
+const DASHBOARD_MODEL_APPLY_NOW: i64 = 1_700_000_000_000;
+
+pub fn run_dashboard_model_apply_contract_case(input: &Value) -> Value {
+    let mut host = DashboardModelApplyContractHost::from_input(input);
+    let mut steps = Vec::new();
+    for operation in array_field_value(input, "operations") {
+        host.pending.apply_update(operation.get("pendingUpdate"));
+        let call_start = host.calls.len();
+        let result = host.apply_dashboard_model(&operation);
+        steps.push(json!({
+            "result": result,
+            "calls": host.calls[call_start..].to_vec(),
+            "host": host.output(),
+        }));
+    }
+    json!({ "steps": steps })
+}
+
+#[derive(Debug, Clone)]
+struct DashboardModelApplyContractHost {
+    calls: Vec<Value>,
+    pending: DashboardModelApplyContractPending,
+    order_worktree_groups: Option<String>,
+    dashboard_state: Value,
+    dashboard_scribe_preview_session_id: Option<String>,
+    dashboard_scribe_preview_entries_cache: Option<Value>,
+    has_selected_session_getter: bool,
+    selected_session: Option<Value>,
+    dashboard_model_snapshot_key: Option<Value>,
+    dashboard_raw_sessions_cache: Option<Vec<Value>>,
+    dashboard_raw_teammates_cache: Option<Vec<Value>>,
+    dashboard_raw_services_cache: Option<Vec<Value>>,
+    dashboard_raw_worktree_groups_cache: Option<Vec<Value>>,
+    dashboard_sessions_cache: Option<Vec<Value>>,
+    dashboard_teammates_cache: Option<Vec<Value>>,
+    dashboard_services_cache: Option<Vec<Value>>,
+    dashboard_worktree_groups_cache: Option<Vec<Value>>,
+    dashboard_operation_failures_cache: Option<Vec<Value>>,
+    dashboard_agent_restore_offer_cache: Option<Value>,
+    dashboard_main_checkout_info_cache: Option<Value>,
+    dashboard_model_version: Option<i64>,
+    dashboard_model_refreshed_at: Option<i64>,
+}
+
+impl DashboardModelApplyContractHost {
+    fn from_input(input: &Value) -> Self {
+        let host = input.get("host").unwrap_or(&Value::Null);
+        Self {
+            calls: Vec::new(),
+            pending: DashboardModelApplyContractPending::from_input(input.get("pending")),
+            order_worktree_groups: host
+                .get("orderWorktreeGroups")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            dashboard_state: host
+                .get("dashboardState")
+                .cloned()
+                .unwrap_or_else(|| json!({})),
+            dashboard_scribe_preview_session_id: host
+                .get("dashboardScribePreviewSessionId")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            dashboard_scribe_preview_entries_cache: host
+                .get("dashboardScribePreviewEntriesCache")
+                .cloned(),
+            has_selected_session_getter: host
+                .as_object()
+                .is_some_and(|object| object.contains_key("selectedSession")),
+            selected_session: host.get("selectedSession").cloned(),
+            dashboard_model_snapshot_key: host.get("dashboardModelSnapshotKey").cloned(),
+            dashboard_raw_sessions_cache: None,
+            dashboard_raw_teammates_cache: None,
+            dashboard_raw_services_cache: None,
+            dashboard_raw_worktree_groups_cache: None,
+            dashboard_sessions_cache: None,
+            dashboard_teammates_cache: None,
+            dashboard_services_cache: None,
+            dashboard_worktree_groups_cache: None,
+            dashboard_operation_failures_cache: None,
+            dashboard_agent_restore_offer_cache: None,
+            dashboard_main_checkout_info_cache: None,
+            dashboard_model_version: host.get("dashboardModelVersion").and_then(Value::as_i64),
+            dashboard_model_refreshed_at: None,
+        }
+    }
+
+    fn apply_dashboard_model(&mut self, operation: &Value) -> bool {
+        let sessions = array_field_value(operation, "sessions");
+        let teammates = array_field_value(operation, "teammates");
+        let services = array_field_value(operation, "services");
+        let worktree_groups = array_field_value(operation, "worktreeGroups");
+        let main_checkout_info = operation
+            .get("mainCheckoutInfo")
+            .cloned()
+            .unwrap_or_else(|| json!({ "name": "Main Checkout", "branch": "master" }));
+        let operation_failures = array_field_value(operation, "operationFailures");
+        let agent_restore_offer = operation
+            .get("agentRestoreOffer")
+            .cloned()
+            .unwrap_or(Value::Null);
+
+        self.reconcile_pending_actions(&sessions, &teammates, &services);
+        let pending_actions_version = self.pending.get_version(&mut self.calls);
+        let snapshot_key = json!({
+            "sessions": sessions.clone(),
+            "teammates": teammates.clone(),
+            "services": services.clone(),
+            "worktreeGroups": worktree_groups.clone(),
+            "mainCheckoutInfo": main_checkout_info.clone(),
+            "operationFailures": operation_failures.clone(),
+            "agentRestoreOffer": agent_restore_offer.clone(),
+            "pendingActionsVersion": pending_actions_version,
+        });
+        if self.dashboard_model_snapshot_key.as_ref() == Some(&snapshot_key) {
+            self.dashboard_model_refreshed_at = Some(DASHBOARD_MODEL_APPLY_NOW);
+            return false;
+        }
+
+        self.dashboard_model_snapshot_key = Some(snapshot_key);
+        self.dashboard_raw_sessions_cache = Some(sessions.clone());
+        self.dashboard_raw_teammates_cache = Some(teammates.clone());
+        self.dashboard_raw_services_cache = Some(services.clone());
+        self.dashboard_raw_worktree_groups_cache = Some(worktree_groups.clone());
+        let dashboard_sessions_cache =
+            self.pending
+                .apply_to_sessions(&sessions, false, &mut self.calls);
+        let dashboard_teammates_cache = self
+            .pending
+            .apply_to_sessions(&teammates, true, &mut self.calls)
+            .into_iter()
+            .filter(is_teammate_session_value)
+            .collect::<Vec<_>>();
+        let dashboard_services_cache = self.pending.apply_to_services(&services, &mut self.calls);
+        let pending_worktree_groups = self
+            .pending
+            .apply_to_worktrees(&worktree_groups, &mut self.calls);
+        let composed_worktree_groups = compose_dashboard_worktree_groups_value(
+            &pending_worktree_groups,
+            &dashboard_sessions_cache,
+            &dashboard_services_cache,
+        );
+        let dashboard_worktree_groups_cache = self.order_worktree_groups(composed_worktree_groups);
+
+        self.dashboard_sessions_cache = Some(dashboard_sessions_cache);
+        self.dashboard_teammates_cache = Some(dashboard_teammates_cache);
+        self.dashboard_services_cache = Some(dashboard_services_cache);
+        self.dashboard_worktree_groups_cache = Some(dashboard_worktree_groups_cache);
+        self.dashboard_operation_failures_cache = Some(operation_failures);
+        self.dashboard_agent_restore_offer_cache = Some(agent_restore_offer);
+        self.dashboard_main_checkout_info_cache = Some(main_checkout_info);
+        self.dashboard_model_version = Some(self.dashboard_model_version.unwrap_or(0) + 1);
+        self.dashboard_model_refreshed_at = Some(DASHBOARD_MODEL_APPLY_NOW);
+
+        if self
+            .dashboard_state
+            .get("previewSource")
+            .and_then(Value::as_str)
+            == Some("scribe")
+        {
+            let selected = self.selected_dashboard_session_for_actions();
+            if selected.is_none()
+                || self.dashboard_scribe_preview_session_id.as_deref()
+                    != selected
+                        .as_ref()
+                        .and_then(|session| session.get("id").and_then(Value::as_str))
+                || !self
+                    .dashboard_scribe_preview_entries_cache
+                    .as_ref()
+                    .is_some_and(Value::is_array)
+            {
+                self.refresh_dashboard_scribe_preview_entries(selected.as_ref());
+            }
+        } else {
+            self.refresh_dashboard_scribe_preview_entries(None);
+        }
+        self.mark_selection_dirty();
+        true
+    }
+
+    fn reconcile_pending_actions(
+        &mut self,
+        raw_sessions: &[Value],
+        raw_teammates: &[Value],
+        raw_services: &[Value],
+    ) {
+        self.calls
+            .push(json!({ "method": "listSessionActions", "args": [] }));
+        let mut all_sessions = raw_sessions.to_vec();
+        all_sessions.extend(raw_teammates.to_vec());
+        for action in self.pending.session_actions.clone() {
+            if !session_pending_settled(&action, &all_sessions) {
+                continue;
+            }
+            let id = string_field_value(&action, "id");
+            let token = action
+                .get("token")
+                .and_then(Value::as_i64)
+                .unwrap_or_default();
+            self.pending
+                .clear_session_action_if_token(&id, token, &mut self.calls);
+        }
+
+        self.calls
+            .push(json!({ "method": "listServiceActions", "args": [] }));
+        for action in self.pending.service_actions.clone() {
+            if !service_pending_settled(&action, raw_services) {
+                continue;
+            }
+            let id = string_field_value(&action, "id");
+            let token = action
+                .get("token")
+                .and_then(Value::as_i64)
+                .unwrap_or_default();
+            self.pending
+                .clear_service_action_if_token(&id, token, &mut self.calls);
+        }
+    }
+
+    fn order_worktree_groups(&mut self, groups: Vec<Value>) -> Vec<Value> {
+        self.calls.push(json!({
+            "method": "orderWorktreeGroups",
+            "args": [{ "names": dashboard_group_names(&groups) }],
+        }));
+        if self.order_worktree_groups.as_deref() == Some("reverse") {
+            return groups.into_iter().rev().collect();
+        }
+        groups
+    }
+
+    fn selected_dashboard_session_for_actions(&mut self) -> Option<Value> {
+        if !self.has_selected_session_getter {
+            return None;
+        }
+        self.calls.push(json!({
+            "method": "getSelectedDashboardSessionForActions",
+            "args": [],
+        }));
+        self.selected_session.clone()
+    }
+
+    fn refresh_dashboard_scribe_preview_entries(&mut self, selected: Option<&Value>) {
+        self.calls.push(json!({
+            "method": "refreshDashboardScribePreviewEntries",
+            "args": [selected.and_then(|session| session.get("id").and_then(Value::as_str)).unwrap_or_default_or_null()],
+        }));
+    }
+
+    fn mark_selection_dirty(&mut self) {
+        self.calls
+            .push(json!({ "method": "markSelectionDirty", "args": [] }));
+    }
+
+    fn output(&self) -> Value {
+        json!({
+            "rawSessions": self.dashboard_raw_sessions_cache.clone().map(Value::Array).unwrap_or(Value::Null),
+            "rawTeammates": self.dashboard_raw_teammates_cache.clone().map(Value::Array).unwrap_or(Value::Null),
+            "rawServices": self.dashboard_raw_services_cache.clone().map(Value::Array).unwrap_or(Value::Null),
+            "rawWorktreeGroups": self.dashboard_raw_worktree_groups_cache.clone().map(Value::Array).unwrap_or(Value::Null),
+            "sessions": self.dashboard_sessions_cache.clone().map(Value::Array).unwrap_or(Value::Null),
+            "teammates": self.dashboard_teammates_cache.clone().map(Value::Array).unwrap_or(Value::Null),
+            "services": self.dashboard_services_cache.clone().map(Value::Array).unwrap_or(Value::Null),
+            "worktreeGroups": self.dashboard_worktree_groups_cache.clone().map(Value::Array).unwrap_or(Value::Null),
+            "operationFailures": self.dashboard_operation_failures_cache.clone().map(Value::Array).unwrap_or(Value::Null),
+            "agentRestoreOffer": self.dashboard_agent_restore_offer_cache.clone().unwrap_or(Value::Null),
+            "mainCheckoutInfo": self.dashboard_main_checkout_info_cache.clone().unwrap_or(Value::Null),
+            "modelVersion": self.dashboard_model_version.map(Value::from).unwrap_or(Value::Null),
+            "refreshedAt": self.dashboard_model_refreshed_at.map(Value::from).unwrap_or(Value::Null),
+            "pending": self.pending.output(),
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+struct DashboardModelApplyContractPending {
+    version: i64,
+    session_actions: Vec<Value>,
+    service_actions: Vec<Value>,
+    session_append: Vec<Value>,
+    teammate_append: Vec<Value>,
+    service_append: Vec<Value>,
+    worktree_append: Vec<Value>,
+    session_patches: Map<String, Value>,
+    service_patches: Map<String, Value>,
+    worktree_patches: Map<String, Value>,
+    clear_results: Map<String, Value>,
+}
+
+impl DashboardModelApplyContractPending {
+    fn from_input(input: Option<&Value>) -> Self {
+        let input = input.unwrap_or(&Value::Null);
+        Self {
+            version: input
+                .get("version")
+                .and_then(Value::as_i64)
+                .unwrap_or_default(),
+            session_actions: array_field_value(input, "sessionActions"),
+            service_actions: array_field_value(input, "serviceActions"),
+            session_append: array_field_value(input, "sessionAppend"),
+            teammate_append: array_field_value(input, "teammateAppend"),
+            service_append: array_field_value(input, "serviceAppend"),
+            worktree_append: array_field_value(input, "worktreeAppend"),
+            session_patches: object_field_value(input, "sessionPatches"),
+            service_patches: object_field_value(input, "servicePatches"),
+            worktree_patches: object_field_value(input, "worktreePatches"),
+            clear_results: object_field_value(input, "clearResults"),
+        }
+    }
+
+    fn apply_update(&mut self, update: Option<&Value>) {
+        let Some(update) = update else {
+            return;
+        };
+        if let Some(version) = update.get("version").and_then(Value::as_i64) {
+            self.version = version;
+        }
+        if update.get("sessionActions").is_some() {
+            self.session_actions = array_field_value(update, "sessionActions");
+        }
+        if update.get("serviceActions").is_some() {
+            self.service_actions = array_field_value(update, "serviceActions");
+        }
+        if update.get("sessionAppend").is_some() {
+            self.session_append = array_field_value(update, "sessionAppend");
+        }
+        if update.get("teammateAppend").is_some() {
+            self.teammate_append = array_field_value(update, "teammateAppend");
+        }
+        if update.get("serviceAppend").is_some() {
+            self.service_append = array_field_value(update, "serviceAppend");
+        }
+        if update.get("worktreeAppend").is_some() {
+            self.worktree_append = array_field_value(update, "worktreeAppend");
+        }
+        if update.get("sessionPatches").is_some() {
+            self.session_patches = object_field_value(update, "sessionPatches");
+        }
+        if update.get("servicePatches").is_some() {
+            self.service_patches = object_field_value(update, "servicePatches");
+        }
+        if update.get("worktreePatches").is_some() {
+            self.worktree_patches = object_field_value(update, "worktreePatches");
+        }
+    }
+
+    fn get_version(&self, calls: &mut Vec<Value>) -> i64 {
+        calls.push(json!({ "method": "getVersion", "args": [] }));
+        self.version
+    }
+
+    fn clear_session_action_if_token(&mut self, id: &str, token: i64, calls: &mut Vec<Value>) {
+        calls.push(json!({ "method": "clearSessionActionIfToken", "args": [id, token] }));
+        if self.clear_result("session", id, token) {
+            self.session_actions.retain(|action| {
+                action.get("id").and_then(Value::as_str) != Some(id)
+                    || action.get("token").and_then(Value::as_i64) != Some(token)
+            });
+            self.version += 1;
+        }
+    }
+
+    fn clear_service_action_if_token(&mut self, id: &str, token: i64, calls: &mut Vec<Value>) {
+        calls.push(json!({ "method": "clearServiceActionIfToken", "args": [id, token] }));
+        if self.clear_result("service", id, token) {
+            self.service_actions.retain(|action| {
+                action.get("id").and_then(Value::as_str) != Some(id)
+                    || action.get("token").and_then(Value::as_i64) != Some(token)
+            });
+            self.version += 1;
+        }
+    }
+
+    fn apply_to_sessions(
+        &self,
+        rows: &[Value],
+        include_teammates: bool,
+        calls: &mut Vec<Value>,
+    ) -> Vec<Value> {
+        calls.push(json!({
+            "method": "applyToSessions",
+            "args": [{ "includeTeammates": include_teammates, "ids": entry_ids(rows) }],
+        }));
+        let mut output = rows.to_vec();
+        output.extend(if include_teammates {
+            self.teammate_append.clone()
+        } else {
+            self.session_append.clone()
+        });
+        output
+            .into_iter()
+            .map(|entry| merge_entry_patch(entry, &self.session_patches))
+            .collect()
+    }
+
+    fn apply_to_services(&self, rows: &[Value], calls: &mut Vec<Value>) -> Vec<Value> {
+        calls.push(json!({
+            "method": "applyToServices",
+            "args": [{ "ids": entry_ids(rows) }],
+        }));
+        let mut output = rows.to_vec();
+        output.extend(self.service_append.clone());
+        output
+            .into_iter()
+            .map(|entry| merge_entry_patch(entry, &self.service_patches))
+            .collect()
+    }
+
+    fn apply_to_worktrees(&self, rows: &[Value], calls: &mut Vec<Value>) -> Vec<Value> {
+        calls.push(json!({
+            "method": "applyToWorktrees",
+            "args": [{ "names": dashboard_group_names(rows) }],
+        }));
+        let mut output = rows.to_vec();
+        output.extend(self.worktree_append.clone());
+        output
+            .into_iter()
+            .map(|entry| merge_entry_patch(entry, &self.worktree_patches))
+            .collect()
+    }
+
+    fn clear_result(&self, target: &str, id: &str, token: i64) -> bool {
+        let key = format!("{target}:{id}:{token}");
+        self.clear_results
+            .get(&key)
+            .and_then(Value::as_bool)
+            .unwrap_or(true)
+    }
+
+    fn output(&self) -> Value {
+        json!({
+            "version": self.version,
+            "sessionActions": self.session_actions,
+            "serviceActions": self.service_actions,
+        })
+    }
+}
+
+trait NullString {
+    fn unwrap_or_default_or_null(self) -> Value;
+}
+
+impl NullString for Option<&str> {
+    fn unwrap_or_default_or_null(self) -> Value {
+        self.map(Value::from).unwrap_or(Value::Null)
+    }
+}
+
+fn is_teammate_session_value(session: &Value) -> bool {
+    session
+        .get("team")
+        .and_then(|team| team.get("parentSessionId"))
+        .and_then(Value::as_str)
+        .is_some_and(|parent| !parent.is_empty())
+}
+
+fn merge_entry_patch(mut entry: Value, patches: &Map<String, Value>) -> Value {
+    let Some(id) = entry.get("id").and_then(Value::as_str) else {
+        return entry;
+    };
+    let Some(patch) = patches.get(id).and_then(Value::as_object) else {
+        return entry;
+    };
+    let Some(entry_object) = entry.as_object_mut() else {
+        return entry;
+    };
+    for (key, value) in patch {
+        entry_object.insert(key.clone(), value.clone());
+    }
+    entry
+}
+
+fn entry_ids(rows: &[Value]) -> Vec<Value> {
+    rows.iter()
+        .map(|row| row.get("id").and_then(Value::as_str).unwrap_or_default())
+        .map(Value::from)
+        .collect()
+}
+
+fn dashboard_group_names(rows: &[Value]) -> Vec<Value> {
+    rows.iter()
+        .map(|row| row.get("name").and_then(Value::as_str).unwrap_or_default())
+        .map(Value::from)
+        .collect()
+}
+
+fn object_field_value(value: &Value, key: &str) -> Map<String, Value> {
+    value
+        .get(key)
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default()
+}
+
 fn session_pending_settled(action: &Value, raw_sessions: &[Value]) -> bool {
     let id = string_field_value(action, "id");
     let raw_session = raw_sessions
