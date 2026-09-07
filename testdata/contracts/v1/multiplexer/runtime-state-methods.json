@@ -897,6 +897,125 @@
     },
     {
       "id": "multiplexer-runtime-state-methods-017",
+      "name": "does not replace an existing backend session id",
+      "source": "src/multiplexer/runtime-state.test.ts",
+      "api": "recordSessionBackendSessionId",
+      "input": {
+        "projectRoot": "<repo>",
+        "operations": [{ "sessionId": "claude-1", "backendSessionId": "backend-new" }],
+        "host": {
+          "sessions": [{ "id": "claude-1", "command": "claude", "backendSessionId": "backend-original" }],
+          "offlineSessions": []
+        },
+        "initialTopology": {
+          "sessions": [
+            {
+              "id": "claude-1",
+              "tool": "claude",
+              "toolConfigKey": "claude",
+              "command": "claude",
+              "args": [],
+              "status": "running",
+              "lifecycle": "live",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "backendSessionId": "backend-original"
+            }
+          ]
+        }
+      },
+      "output": {
+        "results": [
+          {
+            "ok": false,
+            "error": "Agent \"claude-1\" already has backend session \"backend-original\", cannot replace with \"backend-new\""
+          }
+        ],
+        "host": {
+          "sessions": [{ "id": "claude-1", "command": "claude", "backendSessionId": "backend-original" }],
+          "offlineSessions": []
+        },
+        "topology": {
+          "sessions": [
+            {
+              "id": "claude-1",
+              "tool": "claude",
+              "toolConfigKey": "claude",
+              "command": "claude",
+              "args": [],
+              "status": "running",
+              "lifecycle": "live",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "backendSessionId": "backend-original"
+            }
+          ]
+        },
+        "calls": []
+      },
+      "inputSha256": "9603d1ded39ba329dac88333c6151afe9f61a9263aee4871a5e30127128929ee"
+    },
+    {
+      "id": "multiplexer-runtime-state-methods-018",
+      "name": "does not let stale metadata override a known runtime backend id",
+      "source": "src/multiplexer/runtime-state.test.ts",
+      "api": "recordSessionBackendSessionId",
+      "input": {
+        "projectRoot": "<repo>",
+        "operations": [{ "sessionId": "claude-1", "backendSessionId": "backend-current" }],
+        "host": {
+          "sessions": [{ "id": "claude-1", "command": "claude", "backendSessionId": "backend-current" }],
+          "offlineSessions": []
+        },
+        "initialTopology": {
+          "sessions": [
+            {
+              "id": "claude-1",
+              "tool": "claude",
+              "toolConfigKey": "claude",
+              "command": "claude",
+              "args": [],
+              "status": "running",
+              "lifecycle": "live",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z"
+            }
+          ]
+        }
+      },
+      "output": {
+        "results": [{ "ok": true, "value": { "sessionId": "claude-1", "backendSessionId": "backend-current" } }],
+        "host": {
+          "sessions": [{ "id": "claude-1", "command": "claude", "backendSessionId": "backend-current" }],
+          "offlineSessions": []
+        },
+        "topology": {
+          "sessions": [
+            {
+              "id": "claude-1",
+              "tool": "claude",
+              "toolConfigKey": "claude",
+              "command": "claude",
+              "args": [],
+              "status": "running",
+              "lifecycle": "live",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "backendSessionId": "backend-current"
+            }
+          ]
+        },
+        "calls": [
+          { "method": "syncTmuxWindowMetadata", "args": ["claude-1"] },
+          { "method": "saveState", "args": [] },
+          { "method": "invalidateDesktopStateSnapshot", "args": [] },
+          { "method": "writeStatuslineFile", "args": [] }
+        ]
+      },
+      "inputSha256": "4fc6e95ef853f74533a086fc813c3639f5fee53b653e231baa101f941621ff6a"
+    },
+    {
+      "id": "multiplexer-runtime-state-methods-019",
       "name": "recordSessionBackendSessionId writes topology when only the runtime holds the id",
       "source": "src/multiplexer/runtime-state.test.ts",
       "api": "recordSessionBackendSessionId",
@@ -955,7 +1074,66 @@
       "inputSha256": "caef175582911eab811272634732a777ba1379a8c3e7ba5e7117f5e12f040146"
     },
     {
-      "id": "multiplexer-runtime-state-methods-018",
+      "id": "multiplexer-runtime-state-methods-020",
+      "name": "still writes when topology is missing an id the runtime already holds",
+      "source": "src/multiplexer/runtime-state.test.ts",
+      "api": "recordSessionBackendSessionId",
+      "input": {
+        "projectRoot": "<repo>",
+        "operations": [{ "sessionId": "claude-1", "backendSessionId": "backend-1" }],
+        "host": {
+          "sessions": [{ "id": "claude-1", "command": "claude", "backendSessionId": "backend-1" }],
+          "offlineSessions": []
+        },
+        "initialTopology": {
+          "sessions": [
+            {
+              "id": "claude-1",
+              "tool": "claude",
+              "toolConfigKey": "claude",
+              "command": "claude",
+              "args": [],
+              "status": "running",
+              "lifecycle": "live",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z"
+            }
+          ]
+        }
+      },
+      "output": {
+        "results": [{ "ok": true, "value": { "sessionId": "claude-1", "backendSessionId": "backend-1" } }],
+        "host": {
+          "sessions": [{ "id": "claude-1", "command": "claude", "backendSessionId": "backend-1" }],
+          "offlineSessions": []
+        },
+        "topology": {
+          "sessions": [
+            {
+              "id": "claude-1",
+              "tool": "claude",
+              "toolConfigKey": "claude",
+              "command": "claude",
+              "args": [],
+              "status": "running",
+              "lifecycle": "live",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "backendSessionId": "backend-1"
+            }
+          ]
+        },
+        "calls": [
+          { "method": "syncTmuxWindowMetadata", "args": ["claude-1"] },
+          { "method": "saveState", "args": [] },
+          { "method": "invalidateDesktopStateSnapshot", "args": [] },
+          { "method": "writeStatuslineFile", "args": [] }
+        ]
+      },
+      "inputSha256": "caef175582911eab811272634732a777ba1379a8c3e7ba5e7117f5e12f040146"
+    },
+    {
+      "id": "multiplexer-runtime-state-methods-021",
       "name": "recordSessionBackendSessionId suppresses writes while still resyncing tmux metadata",
       "source": "src/multiplexer/runtime-state.test.ts",
       "api": "recordSessionBackendSessionId",
@@ -1019,7 +1197,126 @@
       "inputSha256": "45bde4d55e7e35037bcc2c4ff20abdb6cc9ece46a1c42f3007b9a4ff853a4919"
     },
     {
-      "id": "multiplexer-runtime-state-methods-019",
+      "id": "multiplexer-runtime-state-methods-022",
+      "name": "writes nothing when runtime and topology already agree",
+      "source": "src/multiplexer/runtime-state.test.ts",
+      "api": "recordSessionBackendSessionId",
+      "input": {
+        "projectRoot": "<repo>",
+        "operations": [{ "sessionId": "claude-1", "backendSessionId": "backend-1" }],
+        "host": {
+          "sessions": [{ "id": "claude-1", "command": "claude", "backendSessionId": "backend-1" }],
+          "offlineSessions": []
+        },
+        "initialTopology": {
+          "sessions": [
+            {
+              "id": "claude-1",
+              "tool": "claude",
+              "toolConfigKey": "claude",
+              "command": "claude",
+              "args": [],
+              "status": "running",
+              "lifecycle": "live",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "backendSessionId": "backend-1"
+            }
+          ]
+        }
+      },
+      "output": {
+        "results": [{ "ok": true, "value": { "sessionId": "claude-1", "backendSessionId": "backend-1" } }],
+        "host": {
+          "sessions": [{ "id": "claude-1", "command": "claude", "backendSessionId": "backend-1" }],
+          "offlineSessions": []
+        },
+        "topology": {
+          "sessions": [
+            {
+              "id": "claude-1",
+              "tool": "claude",
+              "toolConfigKey": "claude",
+              "command": "claude",
+              "args": [],
+              "status": "running",
+              "lifecycle": "live",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "backendSessionId": "backend-1"
+            }
+          ]
+        },
+        "calls": [{ "method": "syncTmuxWindowMetadata", "args": ["claude-1"] }]
+      },
+      "inputSha256": "1929bd23befb234743963956927e74387d870e7f5d8a944f20012e95b20c007c"
+    },
+    {
+      "id": "multiplexer-runtime-state-methods-023",
+      "name": "keeps resyncing window metadata, which Exposé reads live",
+      "source": "src/multiplexer/runtime-state.test.ts",
+      "api": "recordSessionBackendSessionId",
+      "input": {
+        "projectRoot": "<repo>",
+        "operations": [
+          { "sessionId": "claude-1", "backendSessionId": "backend-1" },
+          { "sessionId": "claude-1", "backendSessionId": "backend-1" }
+        ],
+        "host": {
+          "sessions": [{ "id": "claude-1", "command": "claude", "backendSessionId": "backend-1" }],
+          "offlineSessions": []
+        },
+        "initialTopology": {
+          "sessions": [
+            {
+              "id": "claude-1",
+              "tool": "claude",
+              "toolConfigKey": "claude",
+              "command": "claude",
+              "args": [],
+              "status": "running",
+              "lifecycle": "live",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "backendSessionId": "backend-1"
+            }
+          ]
+        }
+      },
+      "output": {
+        "results": [
+          { "ok": true, "value": { "sessionId": "claude-1", "backendSessionId": "backend-1" } },
+          { "ok": true, "value": { "sessionId": "claude-1", "backendSessionId": "backend-1" } }
+        ],
+        "host": {
+          "sessions": [{ "id": "claude-1", "command": "claude", "backendSessionId": "backend-1" }],
+          "offlineSessions": []
+        },
+        "topology": {
+          "sessions": [
+            {
+              "id": "claude-1",
+              "tool": "claude",
+              "toolConfigKey": "claude",
+              "command": "claude",
+              "args": [],
+              "status": "running",
+              "lifecycle": "live",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "backendSessionId": "backend-1"
+            }
+          ]
+        },
+        "calls": [
+          { "method": "syncTmuxWindowMetadata", "args": ["claude-1"] },
+          { "method": "syncTmuxWindowMetadata", "args": ["claude-1"] }
+        ]
+      },
+      "inputSha256": "45bde4d55e7e35037bcc2c4ff20abdb6cc9ece46a1c42f3007b9a4ff853a4919"
+    },
+    {
+      "id": "multiplexer-runtime-state-methods-024",
       "name": "loadOfflineTopologySessions skips a session with a pending start action",
       "source": "src/multiplexer/runtime-state.test.ts",
       "api": "loadOfflineTopologySessions",
@@ -1075,7 +1372,7 @@
       "inputSha256": "3842ef537801b79d55612b8f7d6d2794802eb3828decb2014d04bd0f72d5a5de"
     },
     {
-      "id": "multiplexer-runtime-state-methods-020",
+      "id": "multiplexer-runtime-state-methods-025",
       "name": "loadOfflineTopologySessions does not confuse same-id pending service actions with sessions",
       "source": "src/multiplexer/runtime-state.test.ts",
       "api": "loadOfflineTopologySessions",
@@ -1148,7 +1445,7 @@
       "inputSha256": "bd9b7ebd2539827bb6fb68e0f4471daf63171d7b1d39e594c344a06c7542be56"
     },
     {
-      "id": "multiplexer-runtime-state-methods-021",
+      "id": "multiplexer-runtime-state-methods-026",
       "name": "loadOfflineTopologySessions clears stale offline cache when topology has no offline sessions",
       "source": "src/multiplexer/runtime-state.test.ts",
       "api": "loadOfflineTopologySessions",
@@ -1171,7 +1468,7 @@
       "inputSha256": "1dc7c70dfb20792d4f70a095a24537d17acf2bc00de168510a8d2c563edad54f"
     },
     {
-      "id": "multiplexer-runtime-state-methods-022",
+      "id": "multiplexer-runtime-state-methods-027",
       "name": "loadOfflineTopologySessions loads valid offline sessions without backend ids",
       "source": "src/multiplexer/runtime-state.test.ts",
       "api": "loadOfflineTopologySessions",
@@ -1240,7 +1537,7 @@
       "inputSha256": "52852aac6e8f98c2487abbeee513ce92cc7e2fdb3962dd2ff1611c76118f1297"
     },
     {
-      "id": "multiplexer-runtime-state-methods-023",
+      "id": "multiplexer-runtime-state-methods-028",
       "name": "loadOfflineTopologySessions ignores metadata-only backend id changes",
       "source": "src/multiplexer/runtime-state.test.ts",
       "api": "loadOfflineTopologySessions",
@@ -1322,7 +1619,7 @@
       "inputSha256": "89e79fde512ddba4fa8f4046e59bc45890ddcb01a7edb6eae214740fcee3e7f8"
     },
     {
-      "id": "multiplexer-runtime-state-methods-024",
+      "id": "multiplexer-runtime-state-methods-029",
       "name": "loadOfflineTopologySessions reports restore blocker changes",
       "source": "src/multiplexer/runtime-state.test.ts",
       "api": "loadOfflineTopologySessions",
@@ -1411,7 +1708,7 @@
       "inputSha256": "92f2fb35f97bb2479526e28cf0bd0ffe7cc3b86ac9a313b0bc9aa78ab49a1506"
     },
     {
-      "id": "multiplexer-runtime-state-methods-025",
+      "id": "multiplexer-runtime-state-methods-030",
       "name": "loadOfflineTopologySessions strips stale tmux targets from explicit offline sessions",
       "source": "src/multiplexer/runtime-state.test.ts",
       "api": "loadOfflineTopologySessions",
@@ -1476,7 +1773,7 @@
       "inputSha256": "9a18ec3179b18cac5e1e7d8da3f9c7870b0fd7551061a4d0a5ba5c88b98607ca"
     },
     {
-      "id": "multiplexer-runtime-state-methods-026",
+      "id": "multiplexer-runtime-state-methods-031",
       "name": "loadOfflineTopologySessions skips offline sessions whose worktree is gone",
       "source": "src/multiplexer/runtime-state.test.ts",
       "api": "loadOfflineTopologySessions",
@@ -1529,7 +1826,7 @@
       "inputSha256": "b654909756ddca90c2ba0e10d3278679e7e71cc79a676eefd1bf25672474c7b2"
     },
     {
-      "id": "multiplexer-runtime-state-methods-027",
+      "id": "multiplexer-runtime-state-methods-032",
       "name": "reconcileOrphanedTopologySessions demotes crash-orphaned running sessions to offline",
       "source": "src/multiplexer/runtime-state.test.ts",
       "api": "reconcileOrphanedTopologySessions",
@@ -1587,7 +1884,7 @@
       "inputSha256": "2633f2d23d05898fc2bd1e32a32cf93b7ce4815510dd4160537b51675bcd56c3"
     },
     {
-      "id": "multiplexer-runtime-state-methods-028",
+      "id": "multiplexer-runtime-state-methods-033",
       "name": "reconcileOrphanedTopologySessions graveyards unrecoverable missing-worktree sessions",
       "source": "src/multiplexer/runtime-state.test.ts",
       "api": "reconcileOrphanedTopologySessions",
@@ -1649,7 +1946,7 @@
       "inputSha256": "b347236c40574044bea8678b8c339ef56c26f04494d7d479d31a3f9dfac33399"
     },
     {
-      "id": "multiplexer-runtime-state-methods-029",
+      "id": "multiplexer-runtime-state-methods-034",
       "name": "reconcileOrphanedTopologySessions demotes stale starting sessions and records restore blocker",
       "source": "src/multiplexer/runtime-state.test.ts",
       "api": "reconcileOrphanedTopologySessions",
@@ -1709,7 +2006,7 @@
       "inputSha256": "bb36b34d7bb8b38136077cb08aa3a4a0cea7dc75fb3f28b6cca8c6ce2a14df06"
     },
     {
-      "id": "multiplexer-runtime-state-methods-030",
+      "id": "multiplexer-runtime-state-methods-035",
       "name": "loadOfflineServices skips a stopped service with a pending start action",
       "source": "src/multiplexer/runtime-state.test.ts",
       "api": "loadOfflineServices",
@@ -1759,7 +2056,7 @@
       "inputSha256": "d8a242f2e58cb7f9fb20ba3d52976abdc31a72e2127b6dd3a6bb2d34c3503da4"
     },
     {
-      "id": "multiplexer-runtime-state-methods-031",
+      "id": "multiplexer-runtime-state-methods-036",
       "name": "loadOfflineServices does not confuse same-id pending session actions with services",
       "source": "src/multiplexer/runtime-state.test.ts",
       "api": "loadOfflineServices",
@@ -1822,7 +2119,7 @@
       "inputSha256": "70030a036106f7e4c9ab009f64a6fee5481c5a9ed04260021269f6ba6deb7582"
     },
     {
-      "id": "multiplexer-runtime-state-methods-032",
+      "id": "multiplexer-runtime-state-methods-037",
       "name": "loadOfflineServices demotes crash-orphaned running services to stopped",
       "source": "src/multiplexer/runtime-state.test.ts",
       "api": "loadOfflineServices",
@@ -1891,7 +2188,69 @@
       "inputSha256": "07fee5bac39f16f976fb8c5baf3372a74d1b1bb9170548c5ca081b6a7cf36692"
     },
     {
-      "id": "multiplexer-runtime-state-methods-033",
+      "id": "multiplexer-runtime-state-methods-038",
+      "name": "loads stopped services from topology",
+      "source": "src/multiplexer/runtime-state.test.ts",
+      "api": "loadOfflineServices",
+      "input": {
+        "projectRoot": "<repo>",
+        "host": { "offlineServices": [] },
+        "initialTopology": {
+          "sessions": [],
+          "services": [
+            {
+              "id": "service-topology",
+              "status": "stopped",
+              "args": [],
+              "launchCommandLine": "yarn web",
+              "worktreePath": "<repo>",
+              "cwd": "<repo>",
+              "label": "web",
+              "createdAt": "2026-06-01T00:00:00.000Z"
+            }
+          ]
+        }
+      },
+      "output": {
+        "changed": true,
+        "host": {
+          "offlineServices": [
+            {
+              "id": "service-topology",
+              "status": "stopped",
+              "args": [],
+              "launchCommandLine": "yarn web",
+              "worktreePath": "<repo>",
+              "cwd": "<repo>",
+              "label": "web",
+              "createdAt": "2026-06-01T00:00:00.000Z"
+            }
+          ]
+        },
+        "topology": {
+          "sessions": [],
+          "services": [
+            {
+              "id": "service-topology",
+              "status": "stopped",
+              "args": [],
+              "launchCommandLine": "yarn web",
+              "worktreePath": "<repo>",
+              "cwd": "<repo>",
+              "label": "web",
+              "createdAt": "2026-06-01T00:00:00.000Z"
+            }
+          ]
+        },
+        "calls": [
+          { "method": "tmuxRuntimeManager.listProjectManagedWindows", "args": ["<repo>"] },
+          { "method": "dashboardPendingActions.getServiceAction", "args": ["service-topology"] }
+        ]
+      },
+      "inputSha256": "76b49ea5ebfafc6937fb2b7c771b64a5dc2a73fff21f184db7fbd89dd0867b06"
+    },
+    {
+      "id": "multiplexer-runtime-state-methods-039",
       "name": "reconcileOrphanedTopologyServices leaves a mid-launch service untouched",
       "source": "src/multiplexer/runtime-state.test.ts",
       "api": "reconcileOrphanedTopologyServices",
@@ -1941,7 +2300,7 @@
       "inputSha256": "e4c0aa6e3ac53f3bb707660cdbbc9d5a9687aee095bf20b64ab37de8019ba0f9"
     },
     {
-      "id": "multiplexer-runtime-state-methods-034",
+      "id": "multiplexer-runtime-state-methods-040",
       "name": "buildLiveServiceStates projects alive service windows and dedupes by service id",
       "source": "src/multiplexer/runtime-state.test.ts",
       "api": "buildLiveServiceStates",
@@ -2013,7 +2372,7 @@
       "inputSha256": "a703c86e24458cff0c45caee6f97d1a7d4421a266ddd3b5e7431be23234876b5"
     },
     {
-      "id": "multiplexer-runtime-state-methods-035",
+      "id": "multiplexer-runtime-state-methods-041",
       "name": "resumeOfflineSession suppresses startup preamble for native backend resume",
       "source": "src/multiplexer/runtime-state.test.ts",
       "api": "resumeOfflineSession",
@@ -2151,7 +2510,7 @@
       "inputSha256": "dcd26abda15165e0aacc4ee295e4e639ddcc1b312e4b0fb2c2a60aa266c8802c"
     },
     {
-      "id": "multiplexer-runtime-state-methods-036",
+      "id": "multiplexer-runtime-state-methods-042",
       "name": "resumeOfflineSession prunes stale offline cache rows without topology authority",
       "source": "src/multiplexer/runtime-state.test.ts",
       "api": "resumeOfflineSession",
@@ -2188,7 +2547,7 @@
       "inputSha256": "8086172bfafcf1d3e2bf90089da23fda4a1860a58105e84ab0d485370c040fd7"
     },
     {
-      "id": "multiplexer-runtime-state-methods-037",
+      "id": "multiplexer-runtime-state-methods-043",
       "name": "resumeOfflineSession settles stale running derived activity to idle",
       "source": "src/multiplexer/runtime-state.test.ts",
       "api": "resumeOfflineSession",
@@ -2339,7 +2698,7 @@
       "inputSha256": "cf5234f8f9a9d45d6608351cf41be0878658bc63fd83284a6947d8f4ea8d2051"
     },
     {
-      "id": "multiplexer-runtime-state-methods-038",
+      "id": "multiplexer-runtime-state-methods-044",
       "name": "resumeOfflineSession preserves waiting needs-input derived state",
       "source": "src/multiplexer/runtime-state.test.ts",
       "api": "resumeOfflineSession",
