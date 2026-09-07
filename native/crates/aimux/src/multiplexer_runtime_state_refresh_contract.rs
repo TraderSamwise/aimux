@@ -19,7 +19,13 @@ struct RefreshRunner {
     status_interval_active: bool,
     sessions: Vec<Value>,
     prev_statuses: Vec<(String, String)>,
+    session_tool_keys: Vec<(String, String)>,
+    session_worktree_paths: Vec<(String, String)>,
+    session_labels: Map<String, Value>,
     idle_since: Map<String, Value>,
+    capture_last_online_snapshot: bool,
+    last_online_snapshot: Option<Value>,
+    last_online_key: Option<String>,
     mode: String,
     dashboard_input_epoch: i64,
     dashboard_next_background_refresh_at: i64,
@@ -67,7 +73,23 @@ impl RefreshRunner {
                 .into_iter()
                 .map(|entry| (string_at(&entry, &[0]), string_at(&entry, &[1])))
                 .collect(),
+            session_tool_keys: array_field(host, "sessionToolKeys")
+                .into_iter()
+                .map(|entry| (string_at(&entry, &[0]), string_at(&entry, &[1])))
+                .collect(),
+            session_worktree_paths: array_field(host, "sessionWorktreePaths")
+                .into_iter()
+                .map(|entry| (string_at(&entry, &[0]), string_at(&entry, &[1])))
+                .collect(),
+            session_labels: host
+                .get("sessionLabels")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default(),
             idle_since: Map::new(),
+            capture_last_online_snapshot: bool_field(input, "withProject"),
+            last_online_snapshot: None,
+            last_online_key: None,
             mode: string_field_default(host, "mode", "agent"),
             dashboard_input_epoch: number_field(host, "dashboardInputEpoch"),
             dashboard_next_background_refresh_at: number_field(
@@ -109,6 +131,17 @@ impl RefreshRunner {
                         if string_field(session, "id") == session_id {
                             set_field(session, "status", json!(status));
                         }
+                    }
+                }
+                "pushSession" => {
+                    let session = step.get("session").cloned().unwrap_or(Value::Null);
+                    let session_id = string_field(&session, "id");
+                    self.sessions.push(session);
+                    if let Some(tool) = step.get("tool").and_then(Value::as_str) {
+                        self.set_pair("tool", &session_id, tool);
+                    }
+                    if let Some(worktree_path) = step.get("worktreePath").and_then(Value::as_str) {
+                        self.set_pair("worktree", &session_id, worktree_path);
                     }
                 }
                 "setMode" => self.mode = string_field(&step, "mode"),
@@ -161,6 +194,119 @@ impl RefreshRunner {
             }
             self.set_prev_status(&session_id, &status);
         }
+        self.record_online_agents_for_restore();
+    }
+
+    fn record_online_agents_for_restore(&mut self) {
+        if !self.capture_last_online_snapshot {
+            return;
+        }
+        let sessions = self
+            .sessions
+            .iter()
+            .filter(|session| {
+                let status = string_field(session, "status");
+                !bool_field(session, "exited")
+                    && status != "offline"
+                    && status != "exited"
+                    && session.get("pendingAction").is_none()
+                    && !bool_field(session, "pending")
+                    && !bool_field(session, "optimistic")
+            })
+            .map(|session| self.restore_session_entry(session))
+            .filter(|session| !string_field(session, "id").is_empty())
+            .collect::<Vec<_>>();
+        let key = serde_json::to_string(&sessions).expect("serialize restore key");
+        if self.last_online_key.as_deref() == Some(key.as_str()) {
+            return;
+        }
+        if sessions.is_empty() && self.last_online_key.is_none() {
+            return;
+        }
+        self.last_online_key = Some(key);
+        if sessions.is_empty() {
+            self.last_online_snapshot = None;
+            return;
+        }
+        let session_ids = sessions
+            .iter()
+            .map(|session| Value::String(string_field(session, "id")))
+            .collect::<Vec<_>>();
+        self.last_online_snapshot = Some(json!({
+            "version": 1,
+            "id": "<online-snapshot-id:1>",
+            "writerInstanceId": "<writer-instance-id:1>",
+            "createdAt": self.now_iso(),
+            "updatedAt": self.now_iso(),
+            "sessionIds": session_ids,
+            "sessions": sessions,
+            "worktreeGroups": self.worktree_groups(&sessions),
+        }));
+    }
+
+    fn restore_session_entry(&self, session: &Value) -> Value {
+        let session_id = string_field(session, "id");
+        let mut object = Map::new();
+        object.insert("id".into(), Value::String(session_id.clone()));
+        insert_string_if_present(&mut object, "tool", self.pair_value("tool", &session_id));
+        insert_string_if_present(
+            &mut object,
+            "command",
+            Some(string_field(session, "command")),
+        );
+        insert_string_if_present(
+            &mut object,
+            "label",
+            self.session_labels
+                .get(&session_id)
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned),
+        );
+        insert_string_if_present(
+            &mut object,
+            "worktreePath",
+            self.pair_value("worktree", &session_id),
+        );
+        Value::Object(object)
+    }
+
+    fn worktree_groups(&self, sessions: &[Value]) -> Vec<Value> {
+        let count = sessions.len();
+        if count == 0 {
+            Vec::new()
+        } else {
+            vec![json!({ "name": "Main Checkout", "count": count })]
+        }
+    }
+
+    fn set_pair(&mut self, kind: &str, session_id: &str, value: &str) {
+        let pairs = if kind == "tool" {
+            &mut self.session_tool_keys
+        } else {
+            &mut self.session_worktree_paths
+        };
+        if let Some((_, existing)) = pairs.iter_mut().find(|(id, _)| id == session_id) {
+            *existing = value.to_owned();
+        } else {
+            pairs.push((session_id.to_owned(), value.to_owned()));
+        }
+    }
+
+    fn pair_value(&self, kind: &str, session_id: &str) -> Option<String> {
+        let pairs = if kind == "tool" {
+            &self.session_tool_keys
+        } else {
+            &self.session_worktree_paths
+        };
+        pairs
+            .iter()
+            .find(|(id, _)| id == session_id)
+            .map(|(_, value)| value.clone())
+    }
+
+    fn now_iso(&self) -> String {
+        let seconds = ((self.now_ms - FIXED_NOW_MS) / 1000).max(0);
+        format!("2026-06-01T00:00:{seconds:02}.000Z")
     }
 
     fn refresh_dashboard(&mut self) {
@@ -311,7 +457,7 @@ impl RefreshRunner {
     }
 
     fn snapshot(self) -> Value {
-        json!({
+        let mut output = json!({
             "statusIntervalActive": self.status_interval_active,
             "sessions": self.sessions,
             "prevStatuses": self.prev_statuses.into_iter().map(|(id, status)| json!([id, status])).collect::<Vec<_>>(),
@@ -330,7 +476,16 @@ impl RefreshRunner {
                 Value::Null
             },
             "calls": self.calls,
-        })
+        });
+        if self.capture_last_online_snapshot
+            && let Value::Object(object) = &mut output
+        {
+            object.insert(
+                "lastOnlineSnapshot".into(),
+                self.last_online_snapshot.unwrap_or(Value::Null),
+            );
+        }
+        output
     }
 }
 
@@ -385,6 +540,12 @@ fn bool_field(value: &Value, field: &str) -> bool {
 
 fn bool_field_default(value: &Value, field: &str, default: bool) -> bool {
     value.get(field).and_then(Value::as_bool).unwrap_or(default)
+}
+
+fn insert_string_if_present(object: &mut Map<String, Value>, key: &str, value: Option<String>) {
+    if let Some(value) = value.filter(|value| !value.is_empty()) {
+        object.insert(key.into(), Value::String(value));
+    }
 }
 
 fn set_field(value: &mut Value, field: &str, replacement: Value) {

@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import prettier from "prettier";
 
 const ROOT = new URL("../", import.meta.url);
@@ -42,6 +45,8 @@ globalThis.clearInterval = (id) => {
 const { DASHBOARD_HIDDEN_VISIBILITY_RECHECK_TICKS, startStatusRefresh, stopStatusRefresh } = await import(
   new URL("dist/multiplexer/runtime-state.js", ROOT)
 );
+const { initPaths } = await import(new URL("dist/paths.js", ROOT));
+const { readLastOnlineAgentsSnapshot } = await import(new URL("dist/runtime-core/agent-restore-state.js", ROOT));
 
 const clone = (value) => (value === undefined ? undefined : JSON.parse(JSON.stringify(value)));
 const hash = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -80,10 +85,15 @@ function hostFor(input) {
   const refreshSteps = [...(input.refreshSteps ?? [])];
   const deferredRefreshes = new Map();
   const host = {
-    projectRoot: "/repo",
+    projectRoot: input.projectRoot ?? "/repo",
     statusInterval: null,
     sessions: clone(input.sessions ?? []),
     prevStatuses: new Map(input.prevStatuses ?? []),
+    sessionToolKeys: new Map(input.sessionToolKeys ?? []),
+    sessionWorktreePaths: new Map(input.sessionWorktreePaths ?? []),
+    getSessionLabel(sessionId) {
+      return input.sessionLabels?.[sessionId];
+    },
     mode: input.mode ?? "agent",
     dashboardInputEpoch: input.dashboardInputEpoch ?? 0,
     dashboardFeedback: {
@@ -123,6 +133,39 @@ function hostFor(input) {
   return { host, calls, deferredRefreshes };
 }
 
+function replaceTokens(value, replacements) {
+  if (typeof value === "string") {
+    let result = value;
+    for (const [from, to] of replacements) result = result.replaceAll(from, to);
+    return result;
+  }
+  if (Array.isArray(value)) return value.map((entry) => replaceTokens(entry, replacements));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, replaceTokens(entry, replacements)]));
+  }
+  return value;
+}
+
+function normalizeGeneratedRestoreIds(value) {
+  const tokens = new Map();
+  let nextSnapshot = 1;
+  let nextWriter = 1;
+  return JSON.parse(
+    JSON.stringify(value, (_key, entry) => {
+      if (typeof entry !== "string") return entry;
+      if (/^online-[0-9a-z]+-[0-9a-f]{8}$/.test(entry)) {
+        if (!tokens.has(entry)) tokens.set(entry, `<online-snapshot-id:${nextSnapshot++}>`);
+        return tokens.get(entry);
+      }
+      if (/^\d+-[0-9a-z]+-[0-9a-f]{8}$/.test(entry)) {
+        if (!tokens.has(entry)) tokens.set(entry, `<writer-instance-id:${nextWriter++}>`);
+        return tokens.get(entry);
+      }
+      return entry;
+    }),
+  );
+}
+
 async function tick(ms) {
   nowMs += ms;
   for (const entry of [...intervals.values()]) {
@@ -146,7 +189,7 @@ function snapshot(host, calls) {
   };
 }
 
-async function run(input) {
+async function runPlain(input) {
   nowMs = FIXED_NOW_MS;
   intervals.clear();
   const { host, calls, deferredRefreshes } = hostFor(input.host ?? {});
@@ -156,6 +199,11 @@ async function run(input) {
     if (step.type === "setSessionStatus") {
       const session = host.sessions.find((item) => item.id === step.sessionId);
       if (session) session.status = step.status;
+    }
+    if (step.type === "pushSession") {
+      host.sessions.push(clone(step.session));
+      if (step.tool) host.sessionToolKeys.set(step.session.id, step.tool);
+      if (step.worktreePath) host.sessionWorktreePaths.set(step.session.id, step.worktreePath);
     }
     if (step.type === "setMode") host.mode = step.mode;
     if (step.type === "setInputEpoch") host.dashboardInputEpoch = step.value;
@@ -169,6 +217,26 @@ async function run(input) {
   }
   if (input.stop !== false) stopStatusRefresh(host);
   return snapshot(host, calls);
+}
+
+async function run(input) {
+  if (!input.withProject) return runPlain(input);
+  const tmpRoot = mkdtempSync(join(tmpdir(), "aimux-runtime-refresh-"));
+  const repoRoot = join(tmpRoot, "repo");
+  const previousAimuxHome = process.env.AIMUX_HOME;
+  try {
+    mkdirSync(join(repoRoot, ".git"), { recursive: true });
+    process.env.AIMUX_HOME = join(tmpRoot, "home");
+    await initPaths(repoRoot);
+    const materialized = replaceTokens(input, [["<repo>", repoRoot]]);
+    const output = await runPlain(materialized);
+    output.lastOnlineSnapshot = readLastOnlineAgentsSnapshot(repoRoot);
+    return normalizeGeneratedRestoreIds(replaceTokens(output, [[repoRoot, "<repo>"], [tmpRoot, "<tmp>"]]));
+  } finally {
+    if (previousAimuxHome === undefined) delete process.env.AIMUX_HOME;
+    else process.env.AIMUX_HOME = previousAimuxHome;
+    rmSync(tmpRoot, { recursive: true, force: true });
+  }
 }
 
 const casesInput = [
@@ -296,6 +364,50 @@ const casesInput = [
       visibilitySequence: [true],
       dashboardNextBackgroundRefreshAt: 9999999999999,
       refreshSteps: [{ type: "resolve", value: true }],
+    },
+    steps: [{ type: "tick", ms: 1000 }],
+  },
+  {
+    name: "records online agents from the refresh loop only when the online set changes",
+    withProject: true,
+    host: {
+      projectRoot: "<repo>",
+      sessions: [{ id: "codex-1", status: "running", command: "codex" }],
+      prevStatuses: [["codex-1", "running"]],
+      sessionToolKeys: [["codex-1", "codex"]],
+      sessionWorktreePaths: [["codex-1", "<repo>"]],
+      sessionLabels: { "codex-1": "Main", "claude-1": "Review" },
+    },
+    steps: [
+      { type: "tick", ms: 1000 },
+      { type: "tick", ms: 5000 },
+      {
+        type: "pushSession",
+        session: { id: "claude-1", status: "idle", command: "claude" },
+        tool: "claude",
+        worktreePath: "<repo>",
+      },
+      { type: "tick", ms: 1000 },
+    ],
+  },
+  {
+    name: "does not record pending optimistic agents as last-online restore candidates",
+    withProject: true,
+    host: {
+      projectRoot: "<repo>",
+      sessions: [
+        {
+          id: "codex-starting",
+          status: "running",
+          command: "codex",
+          pendingAction: "starting",
+          optimistic: true,
+        },
+      ],
+      prevStatuses: [["codex-starting", "running"]],
+      sessionToolKeys: [["codex-starting", "codex"]],
+      sessionWorktreePaths: [["codex-starting", "<repo>"]],
+      sessionLabels: { "codex-starting": "Starting" },
     },
     steps: [{ type: "tick", ms: 1000 }],
   },

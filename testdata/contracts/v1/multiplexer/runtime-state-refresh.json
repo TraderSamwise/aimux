@@ -424,6 +424,136 @@
         }
       },
       "inputSha256": "b770db17217d9eeafcc82a78acdd0ad70e1deaddaab3dc4ae368102041218284"
+    },
+    {
+      "id": "multiplexer-runtime-state-refresh-011",
+      "name": "records online agents from the refresh loop only when the online set changes",
+      "source": "src/multiplexer/runtime-state.test.ts",
+      "api": "startStatusRefresh",
+      "input": {
+        "api": "startStatusRefresh",
+        "name": "records online agents from the refresh loop only when the online set changes",
+        "withProject": true,
+        "host": {
+          "projectRoot": "<repo>",
+          "sessions": [{ "id": "codex-1", "status": "running", "command": "codex" }],
+          "prevStatuses": [["codex-1", "running"]],
+          "sessionToolKeys": [["codex-1", "codex"]],
+          "sessionWorktreePaths": [["codex-1", "<repo>"]],
+          "sessionLabels": { "codex-1": "Main", "claude-1": "Review" }
+        },
+        "steps": [
+          { "type": "tick", "ms": 1000 },
+          { "type": "tick", "ms": 5000 },
+          {
+            "type": "pushSession",
+            "session": { "id": "claude-1", "status": "idle", "command": "claude" },
+            "tool": "claude",
+            "worktreePath": "<repo>"
+          },
+          { "type": "tick", "ms": 1000 }
+        ]
+      },
+      "output": {
+        "statusIntervalActive": false,
+        "sessions": [
+          { "id": "codex-1", "status": "running", "command": "codex" },
+          { "id": "claude-1", "status": "idle", "command": "claude" }
+        ],
+        "prevStatuses": [
+          ["codex-1", "running"],
+          ["claude-1", "idle"]
+        ],
+        "mode": "agent",
+        "dashboardInputEpoch": 0,
+        "dashboardNextBackgroundRefreshAt": 0,
+        "dashboardHiddenVisibilitySkipTicks": null,
+        "dashboardTuiVisibility": null,
+        "dashboardTuiVisibilityWakePending": null,
+        "calls": {
+          "dashboardFeedbackTickFlashVisibilityChanged": [[], [], []],
+          "publishAlert": [],
+          "refreshDashboardModelFromService": [],
+          "refreshCoordinationFromService": [],
+          "renderCurrentDashboardView": [],
+          "isDashboardScreen": [],
+          "isDashboardTuiVisible": [],
+          "invalidateDashboardFrame": []
+        },
+        "lastOnlineSnapshot": {
+          "version": 1,
+          "id": "<online-snapshot-id:1>",
+          "writerInstanceId": "<writer-instance-id:1>",
+          "createdAt": "2026-06-01T00:00:07.000Z",
+          "updatedAt": "2026-06-01T00:00:07.000Z",
+          "sessionIds": ["codex-1", "claude-1"],
+          "sessions": [
+            { "id": "codex-1", "tool": "codex", "command": "codex", "label": "Main", "worktreePath": "<repo>" },
+            { "id": "claude-1", "tool": "claude", "command": "claude", "label": "Review", "worktreePath": "<repo>" }
+          ],
+          "worktreeGroups": [{ "name": "Main Checkout", "count": 2 }]
+        }
+      },
+      "inputSha256": "67905fba741a8171b332aae933f3930295fe1335f1b302e80844c67374e346f7"
+    },
+    {
+      "id": "multiplexer-runtime-state-refresh-012",
+      "name": "does not record pending optimistic agents as last-online restore candidates",
+      "source": "src/multiplexer/runtime-state.test.ts",
+      "api": "startStatusRefresh",
+      "input": {
+        "api": "startStatusRefresh",
+        "name": "does not record pending optimistic agents as last-online restore candidates",
+        "withProject": true,
+        "host": {
+          "projectRoot": "<repo>",
+          "sessions": [
+            {
+              "id": "codex-starting",
+              "status": "running",
+              "command": "codex",
+              "pendingAction": "starting",
+              "optimistic": true
+            }
+          ],
+          "prevStatuses": [["codex-starting", "running"]],
+          "sessionToolKeys": [["codex-starting", "codex"]],
+          "sessionWorktreePaths": [["codex-starting", "<repo>"]],
+          "sessionLabels": { "codex-starting": "Starting" }
+        },
+        "steps": [{ "type": "tick", "ms": 1000 }]
+      },
+      "output": {
+        "statusIntervalActive": false,
+        "sessions": [
+          {
+            "id": "codex-starting",
+            "status": "running",
+            "command": "codex",
+            "pendingAction": "starting",
+            "optimistic": true
+          }
+        ],
+        "prevStatuses": [["codex-starting", "running"]],
+        "mode": "agent",
+        "dashboardInputEpoch": 0,
+        "dashboardNextBackgroundRefreshAt": 0,
+        "dashboardHiddenVisibilitySkipTicks": null,
+        "dashboardTuiVisibility": null,
+        "dashboardTuiVisibilityWakePending": null,
+        "calls": {
+          "dashboardFeedbackTickFlashVisibilityChanged": [[]],
+          "publishAlert": [],
+          "refreshDashboardModelFromService": [],
+          "refreshCoordinationFromService": [],
+          "renderCurrentDashboardView": [],
+          "isDashboardScreen": [],
+          "isDashboardTuiVisible": [],
+          "invalidateDashboardFrame": []
+        },
+        "lastOnlineSnapshot": null
+      },
+      "inputSha256": "289d20de63af187f84a2b041cc43f76ee69a910085e6715b7f7cdf7b44ad408d"
     }
   ]
 }
