@@ -1,5 +1,8 @@
 use crate::dashboard_controller::{DashboardKey, parse_dashboard_keys};
+use serde_json::{Value, json};
 use std::io::{self, IsTerminal, Read, Write};
+
+pub const TERMINAL_RESTORE_SEQUENCE: &str = "\x1b[0m\x1b[?25h\x1b[?1l\x1b>\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1004l\x1b[?1005l\x1b[?1006l\x1b[?1015l\x1b[?2004l\x1b[?1049l";
 
 pub struct DashboardTerminalGuard {
     stdin_fd: i32,
@@ -65,9 +68,24 @@ impl Drop for DashboardTerminalGuard {
             }
         }
         let mut output = io::stdout();
-        let _ = write!(output, "\x1b[?25h\x1b[?1049l");
+        let _ = write!(output, "{TERMINAL_RESTORE_SEQUENCE}");
         let _ = output.flush();
     }
+}
+
+pub fn run_terminal_host_contract_case(input: &Value) -> Value {
+    let writes = match input["op"].as_str().unwrap_or_default() {
+        "enterRawMode" => Vec::new(),
+        "restoreTerminalState" => vec![TERMINAL_RESTORE_SEQUENCE.to_owned()],
+        op => panic!("unknown terminal host contract op: {op}"),
+    };
+    let joined = writes.join("");
+    json!({
+        "writes": writes,
+        "joined": joined,
+        "containsFocusEnable": joined.contains("\x1b[?1004h"),
+        "containsFocusDisable": joined.contains("\x1b[?1004l"),
+    })
 }
 
 pub fn read_dashboard_key(input: &mut impl Read) -> io::Result<Option<DashboardKey>> {
