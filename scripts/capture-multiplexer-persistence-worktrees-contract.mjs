@@ -445,6 +445,47 @@ await record(
 
 await record(
   cases,
+  "removes orphaned generated worktree records when checkout is already missing",
+  "removeDesktopWorktree",
+  "remove-orphaned-missing-checkout",
+  ({ projectRoot, worktreeRoot }) => {
+    const worktreePath = join(worktreeRoot, "orphan");
+    topologyWorktrees.upsertTopologyWorktree(
+      { path: worktreePath, name: "orphan", branch: "orphan", createdAt: "2026-05-01T00:00:00.000Z" },
+      "active",
+    );
+    topologySessions.upsertTopologySession({ id: "codex-orphan", tool: "codex", command: "codex", args: [], worktreePath }, "offline");
+    topologyServices.upsertTopologyService({ id: "service-orphan", command: "zsh", worktreePath }, "stopped");
+    return {
+      projectRoot,
+      path: worktreePath,
+      worktrees: [],
+      sessions: [],
+      sessionWorktreePaths: [],
+      offlineSessions: [{ id: "codex-orphan", worktreePath }],
+      offlineServices: [{ id: "service-orphan", worktreePath }],
+      managedWindows: [],
+    };
+  },
+);
+
+await record(
+  cases,
+  "refuses to remove the main checkout",
+  "removeDesktopWorktree",
+  "remove-main-checkout",
+  ({ projectRoot }) => ({
+    projectRoot,
+    path: projectRoot,
+    worktrees: [{ name: "Main Checkout", branch: "main", path: projectRoot, createdAt: "2026-05-01T00:00:00.000Z" }],
+    sessions: [],
+    sessionWorktreePaths: [],
+    managedWindows: [],
+  }),
+);
+
+await record(
+  cases,
   "blocks removing a worktree while a live agent is attached",
   "removeDesktopWorktree",
   "remove-live-agent",
@@ -462,6 +503,21 @@ await record(
       managedWindows: [],
     };
   },
+);
+
+await record(
+  cases,
+  "refuses to graveyard the main checkout",
+  "graveyardDesktopWorktree",
+  "graveyard-main-checkout",
+  ({ projectRoot }) => ({
+    projectRoot,
+    path: projectRoot,
+    worktrees: [{ name: "Main Checkout", branch: "main", path: projectRoot, createdAt: "2026-05-01T00:00:00.000Z" }],
+    sessions: [],
+    sessionWorktreePaths: [],
+    managedWindows: [],
+  }),
 );
 
 await record(
@@ -493,6 +549,19 @@ await record(
 
 await record(
   cases,
+  "reports missing graveyard entries when deleting a worktree",
+  "deleteGraveyardWorktree",
+  "delete-graveyard-missing-entry",
+  ({ projectRoot, worktreeRoot }) => ({
+    projectRoot,
+    path: join(worktreeRoot, "missing"),
+    offlineSessions: [],
+    offlineServices: [],
+  }),
+);
+
+await record(
+  cases,
   "deletes missing graveyarded worktree topology and dependent assets",
   "deleteGraveyardWorktree",
   "delete-missing",
@@ -507,6 +576,30 @@ await record(
       path: worktreePath,
       offlineSessions: [{ id: "codex-gone", worktreePath }],
       offlineServices: [{ id: "service-gone", worktreePath }],
+    };
+  },
+);
+
+await record(
+  cases,
+  "deletes existing graveyarded worktree checkouts even when hidden from active lists",
+  "deleteGraveyardWorktree",
+  "delete-existing-hidden-checkout",
+  ({ projectRoot, tmpRoot }) => {
+    const externalRoot = join(tmpRoot, "external-worktrees");
+    mkdirSync(externalRoot, { recursive: true });
+    const worktreePath = join(externalRoot, "demo");
+    execFileSync("git", ["worktree", "add", "-q", "-b", "external-demo", worktreePath], { cwd: projectRoot });
+    topologyWorktrees.upsertTopologyWorktree({ path: worktreePath, name: "demo", branch: "external-demo" }, "active");
+    topologySessions.upsertTopologySession({ id: "codex-demo", tool: "codex", command: "codex", args: [], worktreePath }, "offline");
+    topologyServices.upsertTopologyService({ id: "service-demo", command: "zsh", worktreePath }, "stopped");
+    topologyWorktrees.moveTopologyWorktreeToGraveyard(worktreePath);
+    return {
+      projectRoot,
+      path: worktreePath,
+      worktrees: [],
+      offlineSessions: [{ id: "codex-demo", worktreePath }],
+      offlineServices: [{ id: "service-demo", worktreePath }],
     };
   },
 );
@@ -542,6 +635,34 @@ await record(
     return {
       projectRoot,
       sessionId: "claude-parent",
+      offlineSessions: [],
+      mode: "project-service",
+    };
+  },
+);
+
+await record(
+  cases,
+  "blocks graveyard session resurrection when its worktree is missing",
+  "resurrectGraveyardSession",
+  "resurrect-session-missing-worktree",
+  ({ projectRoot }) => {
+    const missingWorktree = join(projectRoot, "deleted-worktree");
+    topologySessions.upsertTopologySession(
+      {
+        id: "codex-missing-worktree",
+        tool: "codex",
+        toolConfigKey: "codex",
+        command: "codex",
+        args: [],
+        lifecycle: "offline",
+        worktreePath: missingWorktree,
+      },
+      "graveyard",
+    );
+    return {
+      projectRoot,
+      sessionId: "codex-missing-worktree",
       offlineSessions: [],
       mode: "project-service",
     };

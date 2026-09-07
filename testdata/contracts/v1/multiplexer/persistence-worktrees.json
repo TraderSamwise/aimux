@@ -655,6 +655,188 @@
     },
     {
       "id": "multiplexer-persistence-worktrees-007",
+      "name": "removes orphaned generated worktree records when checkout is already missing",
+      "source": "src/multiplexer/persistence-methods.test.ts",
+      "api": "removeDesktopWorktree",
+      "input": {
+        "projectRoot": "<repo>",
+        "path": "<repo>/.aimux/worktrees/orphan",
+        "worktrees": [],
+        "sessions": [],
+        "sessionWorktreePaths": [],
+        "offlineSessions": [{ "id": "codex-orphan", "worktreePath": "<repo>/.aimux/worktrees/orphan" }],
+        "offlineServices": [{ "id": "service-orphan", "worktreePath": "<repo>/.aimux/worktrees/orphan" }],
+        "managedWindows": [],
+        "initialTopology": {
+          "worktrees": [
+            {
+              "id": "<worktree-id:<repo>/.aimux/worktrees/orphan>",
+              "path": "<repo>/.aimux/worktrees/orphan",
+              "name": "orphan",
+              "status": "active",
+              "branch": "orphan",
+              "createdAt": "2026-05-01T00:00:00.000Z"
+            }
+          ],
+          "visibleGraveyard": [],
+          "allGraveyard": [],
+          "sessions": [
+            {
+              "id": "codex-orphan",
+              "tool": "codex",
+              "toolConfigKey": "codex",
+              "command": "codex",
+              "args": [],
+              "status": "offline",
+              "lifecycle": "offline",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "worktreePath": "<repo>/.aimux/worktrees/orphan"
+            }
+          ],
+          "services": [
+            {
+              "id": "service-orphan",
+              "status": "stopped",
+              "command": "zsh",
+              "args": [],
+              "worktreePath": "<repo>/.aimux/worktrees/orphan",
+              "cwd": "<repo>/.aimux/worktrees/orphan",
+              "createdAt": "2026-06-01T00:00:00.000Z"
+            }
+          ]
+        },
+        "checkoutExists": false
+      },
+      "output": {
+        "ok": true,
+        "returned": { "path": "<repo>/.aimux/worktrees/orphan", "status": "removed" },
+        "completion": null,
+        "host": {
+          "offlineSessions": [],
+          "offlineServices": [],
+          "footerFlash": null,
+          "footerFlashTicks": null,
+          "pendingWorktreeCreatePaths": [],
+          "pendingWorktreeRemovalPaths": [],
+          "dashboardWorktreeActions": [],
+          "calls": [
+            { "method": "listDesktopWorktrees", "args": [] },
+            {
+              "method": "dashboardPendingActions.setWorktreeAction",
+              "args": ["<repo>/.aimux/worktrees/orphan", "removing", { "timeoutMs": 180000 }]
+            },
+            { "method": "invalidateDesktopStateSnapshot", "args": [] },
+            { "method": "refreshLocalDashboardModel", "args": [] },
+            { "method": "metadataServer.notifyChange", "args": [] },
+            { "method": "syncSessionsFromTopology", "args": [] },
+            { "method": "saveState", "args": [] },
+            { "method": "dashboardPendingActions.clearWorktreeAction", "args": ["<repo>/.aimux/worktrees/orphan"] },
+            { "method": "invalidateDesktopStateSnapshot", "args": [] },
+            { "method": "refreshLocalDashboardModel", "args": [] },
+            { "method": "metadataServer.notifyChange", "args": [] }
+          ]
+        },
+        "topology": { "worktrees": [], "visibleGraveyard": [], "allGraveyard": [], "sessions": [], "services": [] },
+        "operationFailures": []
+      },
+      "inputSha256": "16a6aec461cdce2e023d036f6f0fb3a4c088a74e2bb1e0fd7897b61c92b20646"
+    },
+    {
+      "id": "multiplexer-persistence-worktrees-008",
+      "name": "refuses to remove the main checkout",
+      "source": "src/multiplexer/persistence-methods.test.ts",
+      "api": "removeDesktopWorktree",
+      "input": {
+        "projectRoot": "<repo>",
+        "path": "<repo>",
+        "worktrees": [
+          { "name": "Main Checkout", "branch": "main", "path": "<repo>", "createdAt": "2026-05-01T00:00:00.000Z" }
+        ],
+        "sessions": [],
+        "sessionWorktreePaths": [],
+        "managedWindows": [],
+        "initialTopology": {
+          "worktrees": [],
+          "visibleGraveyard": [],
+          "allGraveyard": [],
+          "sessions": [],
+          "services": []
+        },
+        "checkoutExists": true
+      },
+      "output": {
+        "ok": false,
+        "error": "Cannot remove the main checkout",
+        "host": {
+          "offlineSessions": [],
+          "offlineServices": [],
+          "footerFlash": "Failed: Cannot remove the main checkout",
+          "footerFlashTicks": 5,
+          "pendingWorktreeCreatePaths": [],
+          "pendingWorktreeRemovalPaths": [],
+          "dashboardWorktreeActions": [],
+          "calls": [
+            { "method": "listDesktopWorktrees", "args": [] },
+            {
+              "method": "dashboardPendingActions.setWorktreeAction",
+              "args": [
+                "<repo>",
+                "removing",
+                {
+                  "worktreeSeed": {
+                    "name": "Main Checkout",
+                    "branch": "main",
+                    "path": "<repo>",
+                    "createdAt": "2026-05-01T00:00:00.000Z",
+                    "status": "offline",
+                    "sessions": [],
+                    "services": []
+                  },
+                  "timeoutMs": 180000
+                }
+              ]
+            },
+            { "method": "invalidateDesktopStateSnapshot", "args": [] },
+            { "method": "refreshLocalDashboardModel", "args": [] },
+            { "method": "metadataServer.notifyChange", "args": [] },
+            { "method": "syncSessionsFromTopology", "args": [] },
+            {
+              "method": "publishAlert",
+              "args": [
+                {
+                  "kind": "task_failed",
+                  "title": "Failed to remove worktree \"repo\"",
+                  "message": "Cannot remove the main checkout",
+                  "worktreePath": "<repo>",
+                  "dedupeKey": "dashboard-operation-failed:worktree:remove:<repo>:Cannot remove the main checkout"
+                }
+              ]
+            },
+            { "method": "dashboardPendingActions.clearWorktreeAction", "args": ["<repo>"] },
+            { "method": "invalidateDesktopStateSnapshot", "args": [] },
+            { "method": "refreshLocalDashboardModel", "args": [] },
+            { "method": "metadataServer.notifyChange", "args": [] }
+          ]
+        },
+        "topology": { "worktrees": [], "visibleGraveyard": [], "allGraveyard": [], "sessions": [], "services": [] },
+        "operationFailures": [
+          {
+            "id": "<operation-failure-id:1>",
+            "targetKind": "worktree",
+            "operation": "remove",
+            "title": "Failed to remove worktree \"repo\"",
+            "message": "Cannot remove the main checkout",
+            "worktreePath": "<repo>",
+            "worktreeName": "repo",
+            "createdAt": "2026-06-01T00:00:00.000Z"
+          }
+        ]
+      },
+      "inputSha256": "203dc64f69426a56f1ff8ca524386d2b6a98633e2b34794f04cbd3f1a766de68"
+    },
+    {
+      "id": "multiplexer-persistence-worktrees-009",
       "name": "blocks removing a worktree while a live agent is attached",
       "source": "src/multiplexer/persistence-methods.test.ts",
       "api": "removeDesktopWorktree",
@@ -755,7 +937,48 @@
       "inputSha256": "6ce62f517beef9dec6fbb737903a0b63c10f860a7d7367a8e6b938b4579c15b2"
     },
     {
-      "id": "multiplexer-persistence-worktrees-008",
+      "id": "multiplexer-persistence-worktrees-010",
+      "name": "refuses to graveyard the main checkout",
+      "source": "src/multiplexer/persistence-methods.test.ts",
+      "api": "graveyardDesktopWorktree",
+      "input": {
+        "projectRoot": "<repo>",
+        "path": "<repo>",
+        "worktrees": [
+          { "name": "Main Checkout", "branch": "main", "path": "<repo>", "createdAt": "2026-05-01T00:00:00.000Z" }
+        ],
+        "sessions": [],
+        "sessionWorktreePaths": [],
+        "managedWindows": [],
+        "initialTopology": {
+          "worktrees": [],
+          "visibleGraveyard": [],
+          "allGraveyard": [],
+          "sessions": [],
+          "services": []
+        },
+        "checkoutExists": true
+      },
+      "output": {
+        "ok": false,
+        "error": "Cannot graveyard the main checkout",
+        "host": {
+          "offlineSessions": [],
+          "offlineServices": [],
+          "footerFlash": null,
+          "footerFlashTicks": null,
+          "pendingWorktreeCreatePaths": [],
+          "pendingWorktreeRemovalPaths": [],
+          "dashboardWorktreeActions": [],
+          "calls": []
+        },
+        "topology": { "worktrees": [], "visibleGraveyard": [], "allGraveyard": [], "sessions": [], "services": [] },
+        "operationFailures": []
+      },
+      "inputSha256": "203dc64f69426a56f1ff8ca524386d2b6a98633e2b34794f04cbd3f1a766de68"
+    },
+    {
+      "id": "multiplexer-persistence-worktrees-011",
       "name": "resurrects topology worktree graveyard entries",
       "source": "src/multiplexer/persistence-methods.test.ts",
       "api": "resurrectGraveyardWorktree",
@@ -838,7 +1061,7 @@
       "inputSha256": "93e56701d4fd1e2bcd0bd0c00a4a52a87b42298f04017a8e5d3d4b58750079da"
     },
     {
-      "id": "multiplexer-persistence-worktrees-009",
+      "id": "multiplexer-persistence-worktrees-012",
       "name": "does not resurrect graveyarded worktrees when the checkout is missing",
       "source": "src/multiplexer/persistence-methods.test.ts",
       "api": "resurrectGraveyardWorktree",
@@ -935,7 +1158,44 @@
       "inputSha256": "372a7f151173c39ba3ded8549e77455fa55adf160056d90cbe735481e72b930f"
     },
     {
-      "id": "multiplexer-persistence-worktrees-010",
+      "id": "multiplexer-persistence-worktrees-013",
+      "name": "reports missing graveyard entries when deleting a worktree",
+      "source": "src/multiplexer/persistence-methods.test.ts",
+      "api": "deleteGraveyardWorktree",
+      "input": {
+        "projectRoot": "<repo>",
+        "path": "<repo>/.aimux/worktrees/missing",
+        "offlineSessions": [],
+        "offlineServices": [],
+        "initialTopology": {
+          "worktrees": [],
+          "visibleGraveyard": [],
+          "allGraveyard": [],
+          "sessions": [],
+          "services": []
+        },
+        "checkoutExists": false
+      },
+      "output": {
+        "ok": false,
+        "error": "Graveyard worktree \"<repo>/.aimux/worktrees/missing\" not found",
+        "host": {
+          "offlineSessions": [],
+          "offlineServices": [],
+          "footerFlash": null,
+          "footerFlashTicks": null,
+          "pendingWorktreeCreatePaths": [],
+          "pendingWorktreeRemovalPaths": [],
+          "dashboardWorktreeActions": [],
+          "calls": []
+        },
+        "topology": { "worktrees": [], "visibleGraveyard": [], "allGraveyard": [], "sessions": [], "services": [] },
+        "operationFailures": []
+      },
+      "inputSha256": "97a319a0864880aadd4186c17b59b00479bb22c55e0b3859222b1d8fcb7cdde0"
+    },
+    {
+      "id": "multiplexer-persistence-worktrees-014",
       "name": "deletes missing graveyarded worktree topology and dependent assets",
       "source": "src/multiplexer/persistence-methods.test.ts",
       "api": "deleteGraveyardWorktree",
@@ -1045,7 +1305,118 @@
       "inputSha256": "356280c94e68198cf559d449f9dc90be93ef306cf76cb7fde04ce0872c502933"
     },
     {
-      "id": "multiplexer-persistence-worktrees-011",
+      "id": "multiplexer-persistence-worktrees-015",
+      "name": "deletes existing graveyarded worktree checkouts even when hidden from active lists",
+      "source": "src/multiplexer/persistence-methods.test.ts",
+      "api": "deleteGraveyardWorktree",
+      "input": {
+        "projectRoot": "<repo>",
+        "path": "<tmp>/external-worktrees/demo",
+        "worktrees": [],
+        "offlineSessions": [{ "id": "codex-demo", "worktreePath": "<tmp>/external-worktrees/demo" }],
+        "offlineServices": [{ "id": "service-demo", "worktreePath": "<tmp>/external-worktrees/demo" }],
+        "initialTopology": {
+          "worktrees": [
+            {
+              "id": "<worktree-id:<tmp>/external-worktrees/demo>",
+              "path": "<tmp>/external-worktrees/demo",
+              "name": "demo",
+              "status": "graveyard",
+              "branch": "external-demo",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "removedAt": "2026-06-01T00:00:00.000Z"
+            }
+          ],
+          "visibleGraveyard": [
+            {
+              "id": "<worktree-graveyard-id:<tmp>/external-worktrees/demo>",
+              "worktreeId": "<worktree-id:<tmp>/external-worktrees/demo>",
+              "path": "<tmp>/external-worktrees/demo",
+              "name": "demo",
+              "branch": "external-demo",
+              "graveyardedAt": "2026-06-01T00:00:00.000Z"
+            }
+          ],
+          "allGraveyard": [
+            {
+              "id": "<worktree-graveyard-id:<tmp>/external-worktrees/demo>",
+              "worktreeId": "<worktree-id:<tmp>/external-worktrees/demo>",
+              "path": "<tmp>/external-worktrees/demo",
+              "name": "demo",
+              "branch": "external-demo",
+              "graveyardedAt": "2026-06-01T00:00:00.000Z"
+            }
+          ],
+          "sessions": [
+            {
+              "id": "codex-demo",
+              "tool": "codex",
+              "toolConfigKey": "codex",
+              "command": "codex",
+              "args": [],
+              "status": "offline",
+              "lifecycle": "offline",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "worktreePath": "<tmp>/external-worktrees/demo"
+            }
+          ],
+          "services": [
+            {
+              "id": "service-demo",
+              "status": "stopped",
+              "command": "zsh",
+              "args": [],
+              "worktreePath": "<tmp>/external-worktrees/demo",
+              "cwd": "<tmp>/external-worktrees/demo",
+              "createdAt": "2026-06-01T00:00:00.000Z"
+            }
+          ]
+        },
+        "checkoutExists": true
+      },
+      "output": {
+        "ok": true,
+        "returned": { "path": "<tmp>/external-worktrees/demo", "status": "removed" },
+        "completion": null,
+        "host": {
+          "offlineSessions": [],
+          "offlineServices": [],
+          "footerFlash": null,
+          "footerFlashTicks": null,
+          "pendingWorktreeCreatePaths": [],
+          "pendingWorktreeRemovalPaths": [],
+          "dashboardWorktreeActions": [],
+          "calls": [
+            { "method": "saveState", "args": [] },
+            { "method": "invalidateDesktopStateSnapshot", "args": [] },
+            { "method": "refreshLocalDashboardModel", "args": [] },
+            { "method": "metadataServer.notifyChange", "args": [] }
+          ]
+        },
+        "topology": {
+          "worktrees": [],
+          "visibleGraveyard": [],
+          "allGraveyard": [
+            {
+              "id": "<worktree-graveyard-id:<tmp>/external-worktrees/demo>",
+              "worktreeId": "<worktree-id:<tmp>/external-worktrees/demo>",
+              "path": "<tmp>/external-worktrees/demo",
+              "name": "demo",
+              "branch": "external-demo",
+              "graveyardedAt": "2026-06-01T00:00:00.000Z",
+              "deletedAt": "2026-06-01T00:00:00.000Z"
+            }
+          ],
+          "sessions": [],
+          "services": []
+        },
+        "operationFailures": []
+      },
+      "inputSha256": "b2837a3ad0d276d3192f0595714fd42033b78cbf9d31d18303626e27f49872f5"
+    },
+    {
+      "id": "multiplexer-persistence-worktrees-016",
       "name": "resurrects graveyard sessions into offline topology state",
       "source": "src/multiplexer/persistence-methods.test.ts",
       "api": "resurrectGraveyardSession",
@@ -1188,7 +1559,73 @@
       "inputSha256": "c069e4b8118ca4689fc89a4e90808aa63266f44cd536b9d629f2c749982eec3f"
     },
     {
-      "id": "multiplexer-persistence-worktrees-012",
+      "id": "multiplexer-persistence-worktrees-017",
+      "name": "blocks graveyard session resurrection when its worktree is missing",
+      "source": "src/multiplexer/persistence-methods.test.ts",
+      "api": "resurrectGraveyardSession",
+      "input": {
+        "projectRoot": "<repo>",
+        "sessionId": "codex-missing-worktree",
+        "offlineSessions": [],
+        "mode": "project-service",
+        "initialTopology": {
+          "worktrees": [],
+          "visibleGraveyard": [],
+          "allGraveyard": [],
+          "sessions": [
+            {
+              "id": "codex-missing-worktree",
+              "tool": "codex",
+              "toolConfigKey": "codex",
+              "command": "codex",
+              "args": [],
+              "status": "graveyard",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "worktreePath": "<repo>/deleted-worktree"
+            }
+          ],
+          "services": []
+        }
+      },
+      "output": {
+        "ok": false,
+        "error": "Cannot resurrect agent \"codex-missing-worktree\" because its worktree \"<repo>/deleted-worktree\" is missing; restore the worktree first",
+        "host": {
+          "offlineSessions": [],
+          "offlineServices": [],
+          "footerFlash": null,
+          "footerFlashTicks": null,
+          "pendingWorktreeCreatePaths": [],
+          "pendingWorktreeRemovalPaths": [],
+          "dashboardWorktreeActions": [],
+          "calls": []
+        },
+        "topology": {
+          "worktrees": [],
+          "visibleGraveyard": [],
+          "allGraveyard": [],
+          "sessions": [
+            {
+              "id": "codex-missing-worktree",
+              "tool": "codex",
+              "toolConfigKey": "codex",
+              "command": "codex",
+              "args": [],
+              "status": "graveyard",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "worktreePath": "<repo>/deleted-worktree"
+            }
+          ],
+          "services": []
+        },
+        "operationFailures": []
+      },
+      "inputSha256": "9b29c42e478251f6b45391dc590a25b08d6b4bd92c6eccd07ddc353e07b825eb"
+    },
+    {
+      "id": "multiplexer-persistence-worktrees-018",
       "name": "resurrects teammate graveyard sessions without resurrecting the parent",
       "source": "src/multiplexer/persistence-methods.test.ts",
       "api": "resurrectGraveyardSession",
@@ -1285,7 +1722,7 @@
       "inputSha256": "ce887502c7d0d01e98ac2b2187e8961f8126e0941491a443fa757e3ebf3bdaf2"
     },
     {
-      "id": "multiplexer-persistence-worktrees-013",
+      "id": "multiplexer-persistence-worktrees-019",
       "name": "cleans up expired standalone graveyard agents and refreshes projections",
       "source": "src/multiplexer/persistence-methods.test.ts",
       "api": "cleanupGraveyard",

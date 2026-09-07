@@ -154,6 +154,12 @@ impl<'a> PersistenceWorktreeState<'a> {
         self.set_remove_pending(&path);
         self.call("syncSessionsFromTopology", vec![]);
 
+        if path == project_root {
+            let message = "Cannot remove the main checkout".to_owned();
+            self.finish_remove_failure(&path, &message);
+            return self.error(message);
+        }
+
         if !bool_field(self.input, "checkoutExists") {
             retain_not_path(&mut self.topology["worktrees"], &path);
             retain_not_path(&mut self.topology["sessions"], &path);
@@ -216,6 +222,9 @@ impl<'a> PersistenceWorktreeState<'a> {
     fn graveyard_desktop_worktree(&mut self) -> Value {
         let project_root = string_field(self.input, "projectRoot");
         let path = string_field(self.input, "path");
+        if path == project_root {
+            return self.error("Cannot graveyard the main checkout".to_owned());
+        }
         self.call("listDesktopWorktrees", vec![]);
         let worktrees = array_field(self.input, "worktrees");
         let Some(matching) = worktrees
@@ -325,9 +334,6 @@ impl<'a> PersistenceWorktreeState<'a> {
         {
             return self.error(format!("Graveyard worktree \"{path}\" not found"));
         }
-        if bool_field(self.input, "checkoutExists") {
-            return self.error("existing checkout deletion is outside this fixture".to_owned());
-        }
         self.offline_sessions
             .retain(|session| string_field(session, "worktreePath") != path);
         self.offline_services
@@ -353,6 +359,15 @@ impl<'a> PersistenceWorktreeState<'a> {
         }) else {
             return self.error(format!("Graveyard session \"{session_id}\" not found"));
         };
+        let worktree_path = string_field(&sessions[index], "worktreePath");
+        if !worktree_path.is_empty()
+            && !self.has_graveyard_worktree(&worktree_path)
+            && !is_available_checkout_path(&worktree_path)
+        {
+            return self.error(format!(
+                "Cannot resurrect agent \"{session_id}\" because its worktree \"{worktree_path}\" is missing; restore the worktree first"
+            ));
+        }
         set_string(&mut sessions[index], "status", "offline");
         set_string(&mut sessions[index], "lifecycle", "offline");
         self.topology["sessions"] = Value::Array(sessions);
@@ -548,13 +563,14 @@ impl<'a> PersistenceWorktreeState<'a> {
             "worktreeSeed": worktree_seed,
         });
         self.dashboard_worktree_actions.push(entry);
+        let options = if worktree_seed.is_null() {
+            json!({ "timeoutMs": 180000 })
+        } else {
+            json!({ "worktreeSeed": worktree_seed, "timeoutMs": 180000 })
+        };
         self.call(
             "dashboardPendingActions.setWorktreeAction",
-            vec![
-                json!(path),
-                json!(kind),
-                json!({ "worktreeSeed": worktree_seed, "timeoutMs": 180000 }),
-            ],
+            vec![json!(path), json!(kind), options],
         );
     }
 
@@ -602,7 +618,7 @@ impl<'a> PersistenceWorktreeState<'a> {
     }
 
     fn finish_remove_failure(&mut self, path: &str, message: &str) {
-        let name = path.rsplit('/').next().unwrap_or(path);
+        let name = worktree_name_from_path(path);
         self.record_operation_failure(
             "remove",
             &format!("Failed to remove worktree \"{name}\""),
@@ -626,6 +642,15 @@ impl<'a> PersistenceWorktreeState<'a> {
             .retain(|existing| existing.as_str() != Some(path));
         self.clear_worktree_action(path);
         self.refresh_dashboard_worktree_projection();
+    }
+
+    fn has_graveyard_worktree(&self, path: &str) -> bool {
+        let visible = array_field(&self.topology, "visibleGraveyard");
+        let all = array_field(&self.topology, "allGraveyard");
+        visible
+            .iter()
+            .chain(all.iter())
+            .any(|entry| string_field(entry, "path") == path)
     }
 
     fn record_operation_failure(
@@ -747,6 +772,20 @@ fn mark_graveyard_deleted(array: &mut Value, path: &str) {
                 set_string(row, "deletedAt", NOW);
             }
         }
+    }
+}
+
+fn is_available_checkout_path(path: &str) -> bool {
+    path == "<repo>"
+        || path.starts_with("<repo>/.aimux/worktrees/")
+        || path.starts_with("<tmp>/external-worktrees/")
+}
+
+fn worktree_name_from_path(path: &str) -> &str {
+    if path == "<repo>" {
+        "repo"
+    } else {
+        path.rsplit('/').next().unwrap_or(path)
     }
 }
 
