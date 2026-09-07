@@ -307,6 +307,56 @@
         }
       },
       "inputSha256": "041fa2fa5ee35bc6808c3126fbce197add4290b7a8eb08d020b34006d5973aaa"
+    },
+    {
+      "id": "tool-picker-013",
+      "name": "renders a tool picker overlay with enabled tools and options hint",
+      "source": "src/multiplexer/tool-picker.test.ts",
+      "api": "buildToolPickerOverlayOutput",
+      "input": {
+        "name": "renders a tool picker overlay with enabled tools and options hint",
+        "api": "buildToolPickerOverlayOutput",
+        "host": { "pickerMode": "create", "toolPickerIndex": 0 },
+        "cols": 80,
+        "rows": 24
+      },
+      "output": "\u001b7\u001b[7;17H\u001b[34m╭────────────────────────────────────────────╮\u001b[0m\u001b[8;17H\u001b[34m│\u001b[0m\u001b[1;48;5;24;38;5;195m SELECT TOOL                                \u001b[0m\u001b[34m│\u001b[0m\u001b[9;17H\u001b[34m├────────────────────────────────────────────┤\u001b[0m\u001b[10;17H\u001b[34m│\u001b[0m   \u001b[1;33m▸\u001b[0m \u001b[1;33m[1]\u001b[0m \u001b[1mclaude\u001b[0m                             \u001b[34m│\u001b[0m\u001b[11;17H\u001b[34m│\u001b[0m     \u001b[2m[2]\u001b[0m codex                              \u001b[34m│\u001b[0m\u001b[12;17H\u001b[34m│\u001b[0m     \u001b[2m[3]\u001b[0m aider                              \u001b[34m│\u001b[0m\u001b[13;17H\u001b[34m│\u001b[0m                                            \u001b[34m│\u001b[0m\u001b[14;17H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m ⏎/1-9 \u001b[0m \u001b[2mstart\u001b[0m  \u001b[48;5;240;38;5;255m o \u001b[0m \u001b[2moptions\u001b[0m  \u001b[48;5;240;38;5;255m Esc \u001b[0m \u001b[2mcancel\u001b[0m \u001b[34m│\u001b[0m\u001b[15;17H\u001b[34m╰────────────────────────────────────────────╯\u001b[0m\u001b8",
+      "inputSha256": "40c4134999079bfd11f37e2ecdbe53b35567bd8866a1aea78a0824d582f03e75"
+    },
+    {
+      "id": "tool-picker-014",
+      "name": "explains the empty state when no tools are enabled",
+      "source": "src/multiplexer/tool-picker.test.ts",
+      "api": "buildToolPickerOverlayOutput",
+      "input": {
+        "name": "explains the empty state when no tools are enabled",
+        "api": "buildToolPickerOverlayOutput",
+        "configTools": {
+          "claude": { "command": "claude", "args": ["--base"], "enabled": false },
+          "codex": { "command": "codex", "args": ["--base"], "enabled": false },
+          "aider": { "command": "aider", "args": [], "enabled": false }
+        },
+        "host": { "pickerMode": "create", "toolPickerIndex": 0 },
+        "cols": 80,
+        "rows": 24
+      },
+      "output": "\u001b7\u001b[8;28H\u001b[31m╭──────────────────────╮\u001b[0m\u001b[9;28H\u001b[31m│\u001b[0m\u001b[1;48;5;52;38;5;224m ⚠  SELECT TOOL       \u001b[0m\u001b[31m│\u001b[0m\u001b[10;28H\u001b[31m├──────────────────────┤\u001b[0m\u001b[11;28H\u001b[31m│\u001b[0m   \u001b[2mNo enabled tools\u001b[0m   \u001b[31m│\u001b[0m\u001b[12;28H\u001b[31m│\u001b[0m                      \u001b[31m│\u001b[0m\u001b[13;28H\u001b[31m│\u001b[0m   \u001b[48;5;240;38;5;255m Esc \u001b[0m \u001b[2mcancel\u001b[0m       \u001b[31m│\u001b[0m\u001b[14;28H\u001b[31m╰──────────────────────╯\u001b[0m\u001b8",
+      "inputSha256": "25b6966a613dbaebbfec26fef8a0d812f5fd7ed6285292e68a1ae9d10c0906de"
+    },
+    {
+      "id": "tool-picker-015",
+      "name": "renders the switch source in the tool picker title",
+      "source": "src/multiplexer/tool-picker.test.ts",
+      "api": "buildToolPickerOverlayOutput",
+      "input": {
+        "name": "renders the switch source in the tool picker title",
+        "api": "buildToolPickerOverlayOutput",
+        "host": { "pickerMode": "switch-tool", "switchToolSourceSessionId": "claude-1", "toolPickerIndex": 0 },
+        "cols": 80,
+        "rows": 24
+      },
+      "output": "\u001b7\u001b[7;17H\u001b[34m╭────────────────────────────────────────────╮\u001b[0m\u001b[8;17H\u001b[34m│\u001b[0m\u001b[1;48;5;24;38;5;195m SWITCH CLAUDE-1                            \u001b[0m\u001b[34m│\u001b[0m\u001b[9;17H\u001b[34m├────────────────────────────────────────────┤\u001b[0m\u001b[10;17H\u001b[34m│\u001b[0m   \u001b[1;33m▸\u001b[0m \u001b[1;33m[1]\u001b[0m \u001b[1mclaude\u001b[0m                             \u001b[34m│\u001b[0m\u001b[11;17H\u001b[34m│\u001b[0m     \u001b[2m[2]\u001b[0m codex                              \u001b[34m│\u001b[0m\u001b[12;17H\u001b[34m│\u001b[0m     \u001b[2m[3]\u001b[0m aider                              \u001b[34m│\u001b[0m\u001b[13;17H\u001b[34m│\u001b[0m                                            \u001b[34m│\u001b[0m\u001b[14;17H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m ⏎/1-9 \u001b[0m \u001b[2mstart\u001b[0m  \u001b[48;5;240;38;5;255m o \u001b[0m \u001b[2moptions\u001b[0m  \u001b[48;5;240;38;5;255m Esc \u001b[0m \u001b[2mcancel\u001b[0m \u001b[34m│\u001b[0m\u001b[15;17H\u001b[34m╰────────────────────────────────────────────╯\u001b[0m\u001b8",
+      "inputSha256": "99e86cd99024dfa7826d01bac78418082ba08cd3dd34538aee49d18f02dcab02"
     }
   ]
 }

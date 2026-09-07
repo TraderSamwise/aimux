@@ -1,4 +1,8 @@
-use serde_json::{json, Map, Value};
+use aimux::dashboard_tool_picker::{
+    DashboardToolPickerMode, DashboardToolPickerState, enabled_dashboard_tools,
+    render_tool_picker_overlay,
+};
+use serde_json::{Map, Value, json};
 
 pub fn run_tool_picker_contract_case(input: &Value) -> Value {
     match input.get("api").and_then(Value::as_str).unwrap_or_default() {
@@ -6,8 +10,47 @@ pub fn run_tool_picker_contract_case(input: &Value) -> Value {
         "defaultsLaunchOverride" => defaults_launch_override(value_field(input, "tool")),
         "runSelectedTool" => run_selected_tool(input),
         "showToolPicker" => show_tool_picker(input),
+        "buildToolPickerOverlayOutput" => build_tool_picker_overlay_output(input),
         api => panic!("unknown tool picker api: {api}"),
     }
+}
+
+fn build_tool_picker_overlay_output(input: &Value) -> Value {
+    let tools = enabled_dashboard_tools(&json!({
+        "tools": input.get("configTools").cloned().unwrap_or_else(default_config_tools),
+    }));
+    let host = value_field(input, "host");
+    let mode = match str_field(host, "pickerMode").unwrap_or("create") {
+        "fork" => DashboardToolPickerMode::Fork {
+            source_session_id: str_field(host, "forkSourceSessionId")
+                .unwrap_or_default()
+                .to_owned(),
+        },
+        "switch-tool" => DashboardToolPickerMode::SwitchTool {
+            session_id: str_field(host, "switchToolSourceSessionId")
+                .unwrap_or_default()
+                .to_owned(),
+        },
+        _ => DashboardToolPickerMode::Create,
+    };
+    let mut state = DashboardToolPickerState::with_mode(tools, mode);
+    state.index = host
+        .get("toolPickerIndex")
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as usize;
+    Value::String(render_tool_picker_overlay(
+        &state,
+        int_field(input, "cols", 80),
+        int_field(input, "rows", 24),
+    ))
+}
+
+fn default_config_tools() -> Value {
+    json!({
+        "claude": { "command": "claude", "args": ["--base"], "enabled": true },
+        "codex": { "command": "codex", "args": ["--base"], "enabled": true },
+        "aider": { "command": "aider", "args": [], "enabled": true },
+    })
 }
 
 fn format_env_defaults(env: Option<&Value>) -> String {
@@ -335,4 +378,12 @@ fn value_field<'a>(value: &'a Value, field: &str) -> &'a Value {
 
 fn str_field<'a>(value: &'a Value, field: &str) -> Option<&'a str> {
     value.get(field).and_then(Value::as_str)
+}
+
+fn int_field(value: &Value, field: &str, fallback: usize) -> usize {
+    value
+        .get(field)
+        .and_then(Value::as_u64)
+        .map(|value| value as usize)
+        .unwrap_or(fallback)
 }

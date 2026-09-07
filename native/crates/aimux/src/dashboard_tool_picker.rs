@@ -4,7 +4,7 @@ use crate::dashboard_create::{
 };
 use crate::dashboard_launch_options::LaunchOverride;
 use crate::project_api_contract::routes;
-use crate::tui_render::theme::{Tone, footer_hints, pad_visible, style};
+use crate::tui_render::theme::{Tone, keycap_hint, style};
 use crate::tui_render::{OverlayBoxSpec, OverlayVariant, render_overlay_box};
 use serde_json::{Map, Value};
 
@@ -185,9 +185,9 @@ pub fn render_tool_picker_overlay(
     if state.tools.is_empty() {
         body.push(format!("  {}", style("No enabled tools", Tone::Muted)));
         body.push(String::new());
-        body.push(footer_hints("[Esc] cancel"));
+        body.push(overlay_hints(&[("Esc", "cancel")]));
         return render_overlay_box(&OverlayBoxSpec {
-            title: "Select tool",
+            title: &title,
             body: &body,
             cols,
             rows,
@@ -211,10 +211,14 @@ pub fn render_tool_picker_overlay(
         } else {
             tool.key.clone()
         };
-        body.push(format!("  {marker} {} {name}", pad_visible(&number, 4)));
+        body.push(format!("  {marker} {number} {name}"));
     }
     body.push(String::new());
-    body.push(footer_hints("[Enter/1-9] start  [Esc] cancel"));
+    body.push(overlay_hints(&[
+        ("⏎/1-9", "start"),
+        ("o", "options"),
+        ("Esc", "cancel"),
+    ]));
     render_overlay_box(&OverlayBoxSpec {
         title: &title,
         body: &body,
@@ -223,6 +227,17 @@ pub fn render_tool_picker_overlay(
         variant: OverlayVariant::Blue,
         icon: None,
     })
+}
+
+fn overlay_hints(pairs: &[(&str, &str)]) -> String {
+    format!(
+        "  {}",
+        pairs
+            .iter()
+            .map(|(key, label)| keycap_hint(key, label, None))
+            .collect::<Vec<_>>()
+            .join("  ")
+    )
 }
 
 fn dashboard_agent_tool_request(

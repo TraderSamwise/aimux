@@ -8,9 +8,13 @@ import prettier from "prettier";
 
 const ROOT = new URL("../", import.meta.url);
 const FIXTURE_PATH = new URL("testdata/contracts/v1/multiplexer/tool-picker.json", ROOT);
-const { defaultsLaunchOverride, formatEnvDefaults, runSelectedTool, showToolPicker } = await import(
-  new URL("dist/multiplexer/tool-picker.js", ROOT)
-);
+const {
+  buildToolPickerOverlayOutput,
+  defaultsLaunchOverride,
+  formatEnvDefaults,
+  runSelectedTool,
+  showToolPicker,
+} = await import(new URL("dist/multiplexer/tool-picker.js", ROOT));
 const { getGlobalConfigPath, initPaths } = await import(new URL("dist/paths.js", ROOT));
 
 const hash = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -28,15 +32,17 @@ function run(input) {
     case "defaultsLaunchOverride":
       return defaultsLaunchOverride({ command: "claude", args: ["--base"], enabled: true, ...input.tool }) ?? null;
     case "runSelectedTool":
-      return withTempPaths(() => runSelectedToolCase(input));
+      return withTempPaths(input, () => runSelectedToolCase(input));
     case "showToolPicker":
-      return withTempPaths(() => showToolPickerCase(input));
+      return withTempPaths(input, () => showToolPickerCase(input));
+    case "buildToolPickerOverlayOutput":
+      return withTempPaths(input, () => buildToolPickerOverlayOutput(input.host ?? {}, input.cols ?? 80, input.rows ?? 24));
     default:
       throw new Error(`unknown api ${input.api}`);
   }
 }
 
-async function withTempPaths(callback) {
+async function withTempPaths(input, callback) {
   const root = mkdtempSync(join(tmpdir(), "aimux-tool-picker-contract-"));
   const previous = {
     cwd: process.cwd(),
@@ -49,7 +55,7 @@ async function withTempPaths(callback) {
     writeFileSync(
       getGlobalConfigPath(),
       JSON.stringify({
-        tools: {
+        tools: input.configTools ?? {
           claude: { command: "claude", args: ["--base"], enabled: true },
           codex: { command: "codex", args: ["--base"], enabled: true },
         },
@@ -210,6 +216,32 @@ const inputs = [
       toolPickerOverseer: true,
       launchOptionsState: { stale: true },
     },
+  },
+  {
+    name: "renders a tool picker overlay with enabled tools and options hint",
+    api: "buildToolPickerOverlayOutput",
+    host: { pickerMode: "create", toolPickerIndex: 0 },
+    cols: 80,
+    rows: 24,
+  },
+  {
+    name: "explains the empty state when no tools are enabled",
+    api: "buildToolPickerOverlayOutput",
+    configTools: {
+      claude: { command: "claude", args: ["--base"], enabled: false },
+      codex: { command: "codex", args: ["--base"], enabled: false },
+      aider: { command: "aider", args: [], enabled: false },
+    },
+    host: { pickerMode: "create" },
+    cols: 80,
+    rows: 24,
+  },
+  {
+    name: "renders the switch source in the tool picker title",
+    api: "buildToolPickerOverlayOutput",
+    host: { pickerMode: "switch-tool", switchToolSourceSessionId: "claude-1" },
+    cols: 80,
+    rows: 24,
   },
 ];
 
