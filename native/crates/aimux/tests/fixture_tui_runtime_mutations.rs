@@ -1,5 +1,6 @@
+use aimux::tui_runtime_mutations::run_tui_runtime_mutations_contract_case;
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 const TUI_RUNTIME_MUTATIONS: &str =
     include_str!("../../../../testdata/contracts/v1/runtime-state/tui-runtime-mutations.json");
@@ -20,25 +21,32 @@ struct Case {
 }
 
 #[test]
-#[ignore = "checklist: TUI runtime mutation queue parity belongs to fenced dashboard/TUI runtime implementation"]
-fn fixture_tui_runtime_mutations_contract_is_captured() {
+fn fixture_tui_runtime_mutations_contract_matches_rust() {
     let contract: Contract =
         serde_json::from_str(TUI_RUNTIME_MUTATIONS).expect("TUI runtime mutations fixture parses");
     assert_eq!(contract.cases.len(), 9);
 
+    let mut failures = Vec::new();
     for case in contract.cases {
         assert!(!case.id.is_empty());
         assert_eq!(
             case.api,
             "queueTuiNotificationContext/queueTuiSessionSeen/clearTuiRuntimeMutationQueue"
         );
-        assert!(case.input.get("ops").and_then(Value::as_array).is_some());
-        assert!(case
-            .output
-            .get("calls")
-            .and_then(Value::as_object)
-            .and_then(|calls| calls.get("mutations"))
-            .and_then(Value::as_array)
-            .is_some());
+        let actual = run_tui_runtime_mutations_contract_case(&case.input);
+        if actual != case.output {
+            failures.push(json!({
+                "id": case.id,
+                "expected": case.output,
+                "actual": actual,
+            }));
+        }
     }
+
+    assert!(
+        failures.is_empty(),
+        "{} TUI runtime mutation parity failures:\n{}",
+        failures.len(),
+        serde_json::to_string_pretty(&failures).expect("serialize failures")
+    );
 }

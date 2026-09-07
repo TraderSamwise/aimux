@@ -146,6 +146,7 @@ pub mod tool_hooks_contract;
 pub mod transcript_turn_state;
 pub mod translation_plan;
 pub mod tui_render;
+pub mod tui_runtime_mutations;
 pub mod visual_client_leases_contract;
 pub mod worktree_state_contract;
 
