@@ -254,6 +254,22 @@ fn switch_key_opens_picker_for_selected_live_session() {
 }
 
 #[test]
+fn plain_o_requests_relevant_thread_for_selected_session() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.navigation.level = DashboardNavLevel::Sessions;
+    controller.navigation.worktree_index = 0;
+    controller.navigation.item_index = 1;
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('o')),
+        DashboardControllerEffect::OpenRelevantThread {
+            session_id: "claude-0".into()
+        }
+    );
+}
+
+#[test]
 fn next_attention_key_opens_highest_priority_attention_session() {
     let mut snapshot = snapshot();
     snapshot.sessions[0].tmux_window_id = Some("@blocked".into());

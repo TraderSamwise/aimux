@@ -289,6 +289,19 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                         }
                         render_now = true;
                     }
+                    DashboardControllerEffect::OpenRelevantThread { session_id } => {
+                        if let Some(endpoint) = latest_endpoint.as_ref() {
+                            if let Err(error) =
+                                open_relevant_thread_for_session(endpoint, controller, &session_id)
+                            {
+                                controller.footer_message = Some(error.to_string());
+                            }
+                        } else {
+                            controller.footer_message =
+                                Some("Dashboard action requires a project-service endpoint".into());
+                        }
+                        render_now = true;
+                    }
                     DashboardControllerEffect::OpenAgentToolPicker(mode) => {
                         let config = load_config_for_project(&options.project_root);
                         controller.open_tool_picker(enabled_dashboard_tools(&config), mode);
@@ -734,6 +747,74 @@ fn dashboard_screen_resource_path(screen: DashboardScreen) -> Option<&'static st
     }
 }
 
+fn open_relevant_thread_for_session(
+    endpoint: &ProjectServiceEndpoint,
+    controller: &mut DashboardController,
+    session_id: &str,
+) -> Result<()> {
+    let resource = fetch_dashboard_resource(
+        endpoint,
+        crate::project_api_contract::routes::COORDINATION_WORKLIST,
+    )?;
+    controller.set_subscreen_actions(dashboard_screen_actions(
+        DashboardScreen::Coordination,
+        Some(&resource),
+    ));
+    let Some(index) = preferred_thread_worklist_index(&resource, session_id) else {
+        controller.footer_message = Some(format!("No thread for {session_id}"));
+        return Ok(());
+    };
+    controller.screen = DashboardScreen::Coordination;
+    controller.subscreen_index = index;
+    Ok(())
+}
+
+fn preferred_thread_worklist_index(
+    resource: &serde_json::Value,
+    session_id: &str,
+) -> Option<usize> {
+    let mut candidates = Vec::new();
+    for (index, entry) in json_array(resource, &["threads"]).iter().enumerate() {
+        let thread = entry.get("thread").unwrap_or(&serde_json::Value::Null);
+        if !json_array(thread, &["participants"])
+            .iter()
+            .any(|participant| participant.as_str() == Some(session_id))
+        {
+            continue;
+        }
+        let waiting_on_session = json_array(thread, &["waitingOn"])
+            .iter()
+            .any(|participant| participant.as_str() == Some(session_id));
+        let unread_by_session = json_array(thread, &["unreadBy"])
+            .iter()
+            .any(|participant| participant.as_str() == Some(session_id));
+        let owns_waiting = json_string(thread, &["owner"]).as_deref() == Some(session_id)
+            && !json_array(thread, &["waitingOn"]).is_empty();
+        let score = i64::from(waiting_on_session) * 3
+            + i64::from(unread_by_session) * 2
+            + i64::from(owns_waiting);
+        let thread_id = json_string(thread, &["id"])?;
+        candidates.push((
+            score,
+            json_string(thread, &["updatedAt"]).unwrap_or_default(),
+            index,
+            thread_id,
+        ));
+    }
+    candidates.sort_by(|left, right| {
+        right
+            .0
+            .cmp(&left.0)
+            .then_with(|| right.1.cmp(&left.1))
+            .then_with(|| left.2.cmp(&right.2))
+    });
+    let thread_id = candidates.first()?.3.as_str();
+    json_array(resource, &["worklist"]).iter().position(|row| {
+        json_string(row, &["kind"]).as_deref() == Some("thread")
+            && json_string(row, &["thread", "thread", "id"]).as_deref() == Some(thread_id)
+    })
+}
+
 fn load_dashboard_snapshot(options: &NativeDashboardOptions) -> Result<DashboardSnapshotLoad> {
     if let Some(path) = options.desktop_state_file.as_ref() {
         let contents = fs::read_to_string(path)
@@ -794,4 +875,56 @@ fn parse_desktop_state_snapshot(contents: &str) -> Result<DesktopStateSnapshot> 
             .map(|fixture| fixture.runtime_full)
             .map_err(anyhow::Error::from)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn preferred_thread_worklist_index_uses_typescript_scoring() {
+        let resource = json!({
+            "threads": [
+                {
+                    "thread": {
+                        "id": "older-unread",
+                        "participants": ["codex-1", "user"],
+                        "unreadBy": ["codex-1"],
+                        "waitingOn": [],
+                        "updatedAt": "2026-01-01T00:00:00.000Z"
+                    }
+                },
+                {
+                    "thread": {
+                        "id": "waiting",
+                        "participants": ["codex-1", "user"],
+                        "unreadBy": [],
+                        "waitingOn": ["codex-1"],
+                        "updatedAt": "2026-01-01T00:01:00.000Z"
+                    }
+                },
+                {
+                    "thread": {
+                        "id": "other",
+                        "participants": ["claude-1", "user"],
+                        "unreadBy": ["claude-1"],
+                        "waitingOn": ["claude-1"],
+                        "updatedAt": "2026-01-01T00:02:00.000Z"
+                    }
+                }
+            ],
+            "worklist": [
+                { "kind": "thread", "thread": { "thread": { "id": "older-unread" } } },
+                { "kind": "thread", "thread": { "thread": { "id": "waiting" } } },
+                { "kind": "thread", "thread": { "thread": { "id": "other" } } }
+            ]
+        });
+
+        assert_eq!(
+            preferred_thread_worklist_index(&resource, "codex-1"),
+            Some(1)
+        );
+        assert_eq!(preferred_thread_worklist_index(&resource, "missing"), None);
+    }
 }

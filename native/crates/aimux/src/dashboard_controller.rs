@@ -50,6 +50,9 @@ pub enum DashboardControllerEffect {
         mode: DashboardOrchestrationMode,
         path: String,
     },
+    OpenRelevantThread {
+        session_id: String,
+    },
     OpenAgentToolPicker(DashboardToolPickerMode),
     Quit,
     Ignored,
@@ -290,6 +293,9 @@ impl DashboardController {
                     path: routes::worktree_actions::CACHE_CLEANUP,
                     body: json!({ "dryRun": true, "includeActive": false }),
                 })
+            }
+            DashboardKey::Printable('o') => {
+                self.open_relevant_thread_for_selected_session(snapshot)
             }
             DashboardKey::Printable('e') => self.open_teammate_picker(snapshot),
             DashboardKey::NextAttention => self.activate_next_attention_entry(snapshot),
@@ -1402,6 +1408,18 @@ impl DashboardController {
         })
     }
 
+    fn open_relevant_thread_for_selected_session(
+        &self,
+        snapshot: &DesktopStateSnapshot,
+    ) -> DashboardControllerEffect {
+        let Some(session) = self.selected_session_for_tool_action(snapshot) else {
+            return DashboardControllerEffect::Ignored;
+        };
+        DashboardControllerEffect::OpenRelevantThread {
+            session_id: session.id.clone(),
+        }
+    }
+
     fn selected_session_for_tool_action<'a>(
         &self,
         snapshot: &'a DesktopStateSnapshot,
@@ -1735,7 +1753,6 @@ fn normalize_dashboard_command_key(key: DashboardKey) -> DashboardKey {
         DashboardKey::Printable('v') => DashboardKey::NewService,
         DashboardKey::Printable('f') => DashboardKey::ForkAgent,
         DashboardKey::Printable('S') => DashboardKey::SwitchTool,
-        DashboardKey::Printable('o') => DashboardKey::LaunchOptions,
         DashboardKey::Printable('u') => DashboardKey::NextAttention,
         DashboardKey::Printable('j') => DashboardKey::Down,
         DashboardKey::Printable('k') => DashboardKey::Up,
