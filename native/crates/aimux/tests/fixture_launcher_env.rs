@@ -1,4 +1,4 @@
-use aimux::launcher_env::{cli_entry_for, prepare_stable_cli_env};
+use aimux::launcher_env::{cli_entry_for, launcher_wrapper_contract, prepare_stable_cli_env};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 
@@ -10,7 +10,7 @@ fn fixture_launcher_env_matches_typescript() {
     let contract: Value =
         serde_json::from_str(LAUNCHER_ENV).expect("valid launch/launcher-env fixture");
     let cases = contract["cases"].as_array().expect("launcher env cases");
-    assert_eq!(cases.len(), 6, "unexpected launcher env case count");
+    assert_eq!(cases.len(), 9, "unexpected launcher env case count");
     let mut failures = Vec::new();
     for case in cases {
         let actual = launcher_actual(case);
@@ -38,7 +38,7 @@ fn launcher_actual(case: &Value) -> Value {
             prepare_stable_cli_env(&mut env);
             json!(env)
         }
-        "cliEntryForBatch" => Value::Array(
+        "cliEntryForBatch" | "localCliEntryForBatch" => Value::Array(
             case["input"]["argvs"]
                 .as_array()
                 .into_iter()
@@ -54,6 +54,12 @@ fn launcher_actual(case: &Value) -> Value {
                 })
                 .collect(),
         ),
+        "launcherWrapperCalls" => {
+            let source_path = case["input"]["sourcePath"].as_str().unwrap_or_default();
+            launcher_wrapper_contract(source_path)
+                .map(|value| serde_json::to_value(value).expect("launcher wrapper serializes"))
+                .unwrap_or_else(|| json!(null))
+        }
         api => json!({ "error": format!("unknown launcher env api: {api}") }),
     }
 }

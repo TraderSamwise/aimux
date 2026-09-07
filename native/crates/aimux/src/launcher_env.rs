@@ -65,6 +65,48 @@ pub fn prepare_stable_cli_env(env: &mut BTreeMap<String, String>) {
     }
 }
 
+pub fn prepare_stable_process_env() {
+    let mut env = BTreeMap::new();
+    for key in [
+        "AIMUX_HOME",
+        "AIMUX_DAEMON_PORT",
+        "AIMUX_ENV",
+        "AIMUX_WEB_APP_URL",
+    ] {
+        if let Ok(value) = std::env::var(key) {
+            env.insert(key.to_owned(), value);
+        }
+    }
+    prepare_stable_cli_env(&mut env);
+    for (key, value) in env {
+        // This runs at process startup before Aimux creates worker threads.
+        unsafe {
+            std::env::set_var(key, value);
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LauncherWrapperContract {
+    pub source_path: String,
+    pub dependency_specifier: String,
+    pub calls: Vec<String>,
+}
+
+pub fn launcher_wrapper_contract(source_path: &str) -> Option<LauncherWrapperContract> {
+    let dependency_specifier = match source_path {
+        "src/launcher-bin.ts" => "./launcher-env.js",
+        "src/local-launcher-bin.ts" => "./local-launcher-env.js",
+        _ => return None,
+    };
+    Some(LauncherWrapperContract {
+        source_path: source_path.to_owned(),
+        dependency_specifier: dependency_specifier.to_owned(),
+        calls: vec!["prepareStableCliEnv".to_owned(), "runRoutedCli".to_owned()],
+    })
+}
+
 fn blank(value: Option<&String>) -> bool {
     value.is_none_or(|value| value.trim().is_empty())
 }

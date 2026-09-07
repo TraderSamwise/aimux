@@ -10,7 +10,7 @@ Statuses:
 - `ERROR`: the audit could not prove enforcement because the suite errored outside a fixture assertion.
 - `STATIC`: non-empty active suite observed without dynamic mutation.
 
-Summary: 275 suites, 322 suite/corpus bindings, 3925 cases.
+Summary: 275 suites, 322 suite/corpus bindings, 3928 cases.
 Binding statuses: PROVEN-FAILS 322, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
 
 | Suite | Status | Corpus | Cases | Detail |
@@ -166,7 +166,7 @@ Binding statuses: PROVEN-FAILS 322, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
 | `fixture_interaction_requests` | PROVEN-FAILS | `testdata/contracts/v1/interaction-requests/registry.json` | 7 | mutated fixture output failed owning Rust suite |
 | `fixture_key_parser` | PROVEN-FAILS | `testdata/contracts/v1/terminal/key-parser.json` | 5 | mutated fixture output failed owning Rust suite |
 | `fixture_last_used` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/last-used.json` | 5 | mutated fixture output failed owning Rust suite |
-| `fixture_launcher_env` | PROVEN-FAILS | `testdata/contracts/v1/launch/launcher-env.json` | 6 | mutated fixture output failed owning Rust suite |
+| `fixture_launcher_env` | PROVEN-FAILS | `testdata/contracts/v1/launch/launcher-env.json` | 9 | mutated fixture output failed owning Rust suite |
 | `fixture_library_entries` | PROVEN-FAILS | `testdata/contracts/v1/library/entries.json` | 8 | mutated fixture output failed owning Rust suite |
 | `fixture_lifecycle_orphans` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/lifecycle-orphans.json` | 15 | mutated fixture output failed owning Rust suite |
 | `fixture_line_editor` | PROVEN-FAILS | `testdata/contracts/v1/terminal/line-editor.json` | 14 | mutated fixture output failed owning Rust suite |

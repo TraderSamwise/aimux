@@ -1,13 +1,16 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
-import { homedir } from "node:os";
-import { join } from "node:path";
-import { mkdir, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { basename, join } from "node:path";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
 import prettier from "prettier";
 
 const ROOT = new URL("../", import.meta.url);
 const FIXTURE_PATH = new URL("testdata/contracts/v1/launch/launcher-env.json", ROOT);
 const launcher = await import(new URL("dist/launcher-env.js", ROOT));
+const localLauncher = await import(new URL("dist/local-launcher-env.js", ROOT));
 const { cliEntryFor, prepareStableCliEnv } = launcher;
 
 const hash = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -35,6 +38,32 @@ function prepared(env) {
 }
 function routes(argvs) {
   return argvs.map((argv) => ({ argv, entry: cliEntryFor(argv) }));
+}
+function localRoutes(argvs) {
+  return argvs.map((argv) => ({ argv, entry: localLauncher.cliEntryFor(argv) }));
+}
+async function captureWrapperCalls(distPath, dependencySpecifier, sourcePath) {
+  const tempRoot = await mkdtemp(join(tmpdir(), "aimux-launcher-wrapper-"));
+  const previousCalls = globalThis.__aimuxLauncherWrapperCalls;
+  globalThis.__aimuxLauncherWrapperCalls = [];
+  try {
+    await writeFile(join(tempRoot, "package.json"), JSON.stringify({ type: "module" }));
+    await writeFile(join(tempRoot, basename(distPath)), readFileSync(new URL(distPath, ROOT), "utf8"));
+    await writeFile(
+      join(tempRoot, dependencySpecifier.startsWith("./") ? dependencySpecifier.slice(2) : dependencySpecifier),
+      [
+        "export function prepareStableCliEnv() { globalThis.__aimuxLauncherWrapperCalls.push('prepareStableCliEnv'); }",
+        "export function runRoutedCli() { globalThis.__aimuxLauncherWrapperCalls.push('runRoutedCli'); }",
+        "",
+      ].join("\n"),
+    );
+    await import(`${pathToFileURL(join(tempRoot, basename(distPath))).href}?capture=${Date.now()}-${Math.random()}`);
+    return { sourcePath, dependencySpecifier, calls: [...globalThis.__aimuxLauncherWrapperCalls] };
+  } finally {
+    if (previousCalls === undefined) delete globalThis.__aimuxLauncherWrapperCalls;
+    else globalThis.__aimuxLauncherWrapperCalls = previousCalls;
+    await rm(tempRoot, { recursive: true, force: true });
+  }
 }
 
 record("fills blank aimux defaults", "prepareStableCliEnv", { env: {} }, prepared({}));
@@ -131,6 +160,12 @@ const mainArgvs = [
   ["node", "/p/bin/aimux"],
 ];
 record("keeps runtime and help commands on the full CLI", "cliEntryForBatch", { argvs: mainArgvs }, routes(mainArgvs));
+record(
+  "local source-checkout launcher uses the same core/main/expose routing",
+  "localCliEntryForBatch",
+  { argvs: [...mainArgvs, ["node", "/p/bin/aimux", "daemon", "status"], ["node", "/p/bin/aimux", "expose"]] },
+  localRoutes([...mainArgvs, ["node", "/p/bin/aimux", "daemon", "status"], ["node", "/p/bin/aimux", "expose"]]),
+);
 const repairArgvs = [
   ["node", "/p/bin/aimux", "dashboard-reload"],
   ["node", "/p/bin/aimux", "dashboard-reload", "--open", "--client-tty", "/dev/ttys001"],
@@ -144,12 +179,29 @@ const malformedArgvs = [
   ["node", "/p/bin/aimux", "daemon", "project-ensure", "--project", "--json", "--debug"],
 ];
 record("routes malformed project-ensure to core so it cannot mutate through Commander parsing", "cliEntryForBatch", { argvs: malformedArgvs }, routes(malformedArgvs));
+record(
+  "launcher wrapper prepares the stable environment before routing",
+  "launcherWrapperCalls",
+  { distPath: "dist/launcher-bin.js", dependencySpecifier: "./launcher-env.js", sourcePath: "src/launcher-bin.ts" },
+  await captureWrapperCalls("dist/launcher-bin.js", "./launcher-env.js", "src/launcher-bin.ts"),
+);
+record(
+  "local launcher wrapper prepares the stable environment before routing",
+  "launcherWrapperCalls",
+  {
+    distPath: "dist/local-launcher-bin.js",
+    dependencySpecifier: "./local-launcher-env.js",
+    sourcePath: "src/local-launcher-bin.ts",
+  },
+  await captureWrapperCalls("dist/local-launcher-bin.js", "./local-launcher-env.js", "src/local-launcher-bin.ts"),
+);
 
 await writeContractJson(FIXTURE_PATH, {
   version: 1,
-  source: "src/launcher-env.test.ts",
+  sources: ["src/launcher-env.test.ts", "src/launcher-bin.ts", "src/local-launcher-bin.ts", "src/local-launcher-env.ts"],
   generatedBy: "scripts/capture-launcher-env-contract.mjs",
-  description: "Stable CLI environment defaults and launcher core/main/expose routing captured by running TypeScript.",
+  description:
+    "Stable CLI environment defaults, launcher core/main/expose routing, and entrypoint wrapper side effects captured by running TypeScript.",
   cases,
 });
 console.log(`${FIXTURE_PATH.pathname}: ${cases.length} cases`);

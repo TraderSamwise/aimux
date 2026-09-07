@@ -7,7 +7,7 @@ use aimux::core_command_contract::CORE_COMMAND_NAMES;
 use aimux::daemon::runtime::run_daemon_internal;
 use aimux::daemon_state::get_daemon_base_url;
 use aimux::dashboard_internal::{NativeDashboardOptions, run_native_dashboard_internal};
-use aimux::launcher_env::{CliEntry, cli_entry_for};
+use aimux::launcher_env::{CliEntry, cli_entry_for, prepare_stable_process_env};
 use aimux::local_ui_server::{
     DEFAULT_LOCAL_UI_HOST, DEFAULT_LOCAL_UI_PORT, LocalUiConfig, LocalUiServerOptions,
     open_url_in_browser, resolve_default_local_ui_root, start_local_ui_server,
@@ -121,6 +121,7 @@ enum RewriteCommand {
 }
 
 fn main() -> Result<ExitCode> {
+    prepare_stable_process_env();
     let raw_args = std::env::args().skip(1).collect::<Vec<_>>();
     let stripped_args = core_command_args(&raw_args);
     if is_root_version_request(&stripped_args) {
