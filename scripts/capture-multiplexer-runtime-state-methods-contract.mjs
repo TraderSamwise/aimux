@@ -2303,6 +2303,149 @@ await record(
   (_ctx, input) => runResumeOfflineSession(input),
 );
 
+await record(
+  cases,
+  "startHeartbeat forwards to runtime sync and probes the guard immediately",
+  "startHeartbeat",
+  "start-heartbeat-wrapper",
+  () => ({}),
+  () => {
+    const calls = [];
+    const host = {
+      runtimeSync: { startHeartbeat: callRecorder(calls, "runtimeSync.startHeartbeat") },
+      refreshRuntimeGuard: callRecorder(calls, "refreshRuntimeGuard", async () => undefined),
+    };
+    runtimeState.startHeartbeat(host);
+    return { calls };
+  },
+);
+
+await record(
+  cases,
+  "stopHeartbeat forwards to runtime sync",
+  "stopHeartbeat",
+  "stop-heartbeat-wrapper",
+  () => ({}),
+  () => {
+    const calls = [];
+    const host = { runtimeSync: { stopHeartbeat: callRecorder(calls, "runtimeSync.stopHeartbeat") } };
+    runtimeState.stopHeartbeat(host);
+    return { calls };
+  },
+);
+
+await record(
+  cases,
+  "project service refresh wrappers forward to runtime sync",
+  "projectServiceRefreshWrappers",
+  "project-service-refresh-wrappers",
+  () => ({}),
+  () => {
+    const calls = [];
+    const host = {
+      runtimeSync: {
+        startProjectServiceRefresh: callRecorder(calls, "runtimeSync.startProjectServiceRefresh"),
+        stopProjectServiceRefresh: callRecorder(calls, "runtimeSync.stopProjectServiceRefresh"),
+      },
+    };
+    runtimeState.startProjectServiceRefresh(host);
+    runtimeState.stopProjectServiceRefresh(host);
+    return { calls };
+  },
+);
+
+await record(
+  cases,
+  "renderCurrentDashboardView routes coordination screen renders through reconciliation",
+  "renderCurrentDashboardView",
+  "render-current-coordination",
+  () => ({ screen: "coordination", visible: true }),
+  (_ctx, input) => {
+    const calls = [];
+    const host = {
+      mode: "dashboard",
+      dashboardTuiVisibility: { visible: input.visible },
+      reconcileDashboardRenderState: callRecorder(calls, "reconcileDashboardRenderState"),
+      isDashboardScreen: callRecorder(calls, "isDashboardScreen", (screen) => screen === input.screen),
+      renderCoordination: callRecorder(calls, "renderCoordination"),
+      renderProject: callRecorder(calls, "renderProject"),
+      renderLibrary: callRecorder(calls, "renderLibrary"),
+      renderTopology: callRecorder(calls, "renderTopology"),
+      renderHelp: callRecorder(calls, "renderHelp"),
+      renderGraveyard: callRecorder(calls, "renderGraveyard"),
+      renderDashboard: callRecorder(calls, "renderDashboard"),
+    };
+    runtimeState.renderCurrentDashboardView(host);
+    return { calls };
+  },
+);
+
+await record(
+  cases,
+  "renderCurrentDashboardView suppresses dashboard renders while hidden",
+  "renderCurrentDashboardView",
+  "render-current-hidden",
+  () => ({ screen: null, visible: false }),
+  (_ctx, input) => {
+    const calls = [];
+    const host = {
+      mode: "dashboard",
+      dashboardTuiVisibility: { visible: input.visible },
+      reconcileDashboardRenderState: callRecorder(calls, "reconcileDashboardRenderState"),
+      isDashboardScreen: callRecorder(calls, "isDashboardScreen", (screen) => screen === input.screen),
+      renderDashboard: callRecorder(calls, "renderDashboard"),
+    };
+    runtimeState.renderCurrentDashboardView(host);
+    return { calls };
+  },
+);
+
+await record(
+  cases,
+  "evictZombieSession removes runtime registrations and persists state",
+  "evictZombieSession",
+  "evict-zombie-session",
+  () => ({
+    runtime: { id: "codex-zombie", command: "codex" },
+    host: {
+      sessions: [{ id: "codex-zombie", command: "codex" }, { id: "claude-live", command: "claude" }],
+      stoppingSessionIds: ["codex-zombie"],
+      sessionTmuxTargets: [["codex-zombie", { windowId: "@1" }]],
+      sessionToolKeys: [["codex-zombie", "codex"]],
+      sessionOriginalArgs: [["codex-zombie", []]],
+      sessionWorktreePaths: [["codex-zombie", "<repo>"]],
+      sessionRoles: [["codex-zombie", "worker"]],
+    },
+  }),
+  (_ctx, input) => {
+    const calls = [];
+    const host = {
+      sessions: clone(input.host.sessions),
+      stoppingSessionIds: new Set(input.host.stoppingSessionIds),
+      sessionTmuxTargets: new Map(input.host.sessionTmuxTargets),
+      sessionToolKeys: new Map(input.host.sessionToolKeys),
+      sessionOriginalArgs: new Map(input.host.sessionOriginalArgs),
+      sessionWorktreePaths: new Map(input.host.sessionWorktreePaths),
+      sessionRoles: new Map(input.host.sessionRoles),
+      updateContextWatcherSessions: callRecorder(calls, "updateContextWatcherSessions"),
+      saveState: callRecorder(calls, "saveState"),
+    };
+    runtimeState.evictZombieSession(host, host.sessions[0]);
+    return {
+      host: {
+        sessions: clone(host.sessions),
+        stoppingSessionIds: [...host.stoppingSessionIds],
+        sessionTmuxTargets: mapEntries(host.sessionTmuxTargets),
+        sessionToolKeys: mapEntries(host.sessionToolKeys),
+        sessionOriginalArgs: mapEntries(host.sessionOriginalArgs),
+        sessionWorktreePaths: mapEntries(host.sessionWorktreePaths),
+        sessionRoles: mapEntries(host.sessionRoles),
+      },
+      calls,
+    };
+  },
+);
+
 await writeContractJson(FIXTURE_PATH, {
   version: 1,
   source: "src/multiplexer/runtime-state.test.ts",

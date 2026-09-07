@@ -35,10 +35,15 @@
           "offlineServices": [],
           "footerFlash": null,
           "footerFlashTicks": null,
+          "graveyardCleanupInterval": null,
+          "graveyardCleanupRunning": false,
+          "inboxCleanupInterval": null,
+          "inboxCleanupRunning": false,
           "pendingWorktreeCreatePaths": [],
           "pendingWorktreeRemovalPaths": [],
           "dashboardWorktreeActions": [],
-          "calls": []
+          "calls": [],
+          "timers": []
         },
         "topology": { "worktrees": [], "visibleGraveyard": [], "allGraveyard": [], "sessions": [], "services": [] },
         "operationFailures": []
@@ -106,6 +111,10 @@
           "offlineServices": [],
           "footerFlash": null,
           "footerFlashTicks": null,
+          "graveyardCleanupInterval": null,
+          "graveyardCleanupRunning": false,
+          "inboxCleanupInterval": null,
+          "inboxCleanupRunning": false,
           "pendingWorktreeCreatePaths": [],
           "pendingWorktreeRemovalPaths": [],
           "dashboardWorktreeActions": [],
@@ -116,7 +125,8 @@
             { "method": "invalidateDesktopStateSnapshot", "args": [] },
             { "method": "refreshLocalDashboardModel", "args": [] },
             { "method": "metadataServer.notifyChange", "args": [] }
-          ]
+          ],
+          "timers": []
         },
         "topology": {
           "worktrees": [
@@ -240,6 +250,10 @@
           ],
           "footerFlash": null,
           "footerFlashTicks": null,
+          "graveyardCleanupInterval": null,
+          "graveyardCleanupRunning": false,
+          "inboxCleanupInterval": null,
+          "inboxCleanupRunning": false,
           "pendingWorktreeCreatePaths": [],
           "pendingWorktreeRemovalPaths": [],
           "dashboardWorktreeActions": [],
@@ -255,7 +269,8 @@
             { "method": "invalidateDesktopStateSnapshot", "args": [] },
             { "method": "refreshLocalDashboardModel", "args": [] },
             { "method": "metadataServer.notifyChange", "args": [] }
-          ]
+          ],
+          "timers": []
         },
         "topology": {
           "worktrees": [
@@ -341,13 +356,18 @@
           "offlineServices": [],
           "footerFlash": null,
           "footerFlashTicks": null,
+          "graveyardCleanupInterval": null,
+          "graveyardCleanupRunning": false,
+          "inboxCleanupInterval": null,
+          "inboxCleanupRunning": false,
           "pendingWorktreeCreatePaths": [],
           "pendingWorktreeRemovalPaths": [],
           "dashboardWorktreeActions": [],
           "calls": [
             { "method": "listDesktopWorktrees", "args": [] },
             { "method": "isSessionRuntimeLive", "args": [{ "id": "codex-live", "label": "Codex Live" }] }
-          ]
+          ],
+          "timers": []
         },
         "topology": { "worktrees": [], "visibleGraveyard": [], "allGraveyard": [], "sessions": [], "services": [] },
         "operationFailures": []
@@ -385,6 +405,10 @@
             "offlineServices": [],
             "footerFlash": null,
             "footerFlashTicks": null,
+            "graveyardCleanupInterval": null,
+            "graveyardCleanupRunning": false,
+            "inboxCleanupInterval": null,
+            "inboxCleanupRunning": false,
             "pendingWorktreeCreatePaths": ["<repo>/.aimux/worktrees/demo"],
             "pendingWorktreeRemovalPaths": [],
             "dashboardWorktreeActions": [
@@ -428,7 +452,8 @@
               },
               { "method": "invalidateDesktopStateSnapshot", "args": [] },
               { "method": "refreshLocalDashboardModel", "args": [] }
-            ]
+            ],
+            "timers": []
           },
           "topology": {
             "worktrees": [
@@ -454,6 +479,10 @@
           "offlineServices": [],
           "footerFlash": "Created: demo",
           "footerFlashTicks": 3,
+          "graveyardCleanupInterval": null,
+          "graveyardCleanupRunning": false,
+          "inboxCleanupInterval": null,
+          "inboxCleanupRunning": false,
           "pendingWorktreeCreatePaths": [],
           "pendingWorktreeRemovalPaths": [],
           "dashboardWorktreeActions": [],
@@ -485,7 +514,8 @@
             { "method": "invalidateDesktopStateSnapshot", "args": [] },
             { "method": "refreshLocalDashboardModel", "args": [] },
             { "method": "metadataServer.notifyChange", "args": [] }
-          ]
+          ],
+          "timers": []
         },
         "topology": {
           "worktrees": [
@@ -539,6 +569,10 @@
             "offlineServices": [],
             "footerFlash": null,
             "footerFlashTicks": null,
+            "graveyardCleanupInterval": null,
+            "graveyardCleanupRunning": false,
+            "inboxCleanupInterval": null,
+            "inboxCleanupRunning": false,
             "pendingWorktreeCreatePaths": ["<repo>/.aimux/worktrees/smoke"],
             "pendingWorktreeRemovalPaths": [],
             "dashboardWorktreeActions": [
@@ -582,7 +616,8 @@
               },
               { "method": "invalidateDesktopStateSnapshot", "args": [] },
               { "method": "refreshLocalDashboardModel", "args": [] }
-            ]
+            ],
+            "timers": []
           },
           "topology": {
             "worktrees": [
@@ -608,6 +643,10 @@
           "offlineServices": [],
           "footerFlash": "Created: smoke",
           "footerFlashTicks": 3,
+          "graveyardCleanupInterval": null,
+          "graveyardCleanupRunning": false,
+          "inboxCleanupInterval": null,
+          "inboxCleanupRunning": false,
           "pendingWorktreeCreatePaths": [],
           "pendingWorktreeRemovalPaths": [],
           "dashboardWorktreeActions": [],
@@ -639,7 +678,8 @@
             { "method": "invalidateDesktopStateSnapshot", "args": [] },
             { "method": "refreshLocalDashboardModel", "args": [] },
             { "method": "metadataServer.notifyChange", "args": [] }
-          ]
+          ],
+          "timers": []
         },
         "topology": {
           "worktrees": [
@@ -702,6 +742,10 @@
           "offlineServices": [],
           "footerFlash": null,
           "footerFlashTicks": null,
+          "graveyardCleanupInterval": null,
+          "graveyardCleanupRunning": false,
+          "inboxCleanupInterval": null,
+          "inboxCleanupRunning": false,
           "pendingWorktreeCreatePaths": [],
           "pendingWorktreeRemovalPaths": [],
           "dashboardWorktreeActions": [],
@@ -722,7 +766,8 @@
             { "method": "invalidateDesktopStateSnapshot", "args": [] },
             { "method": "refreshLocalDashboardModel", "args": [] },
             { "method": "metadataServer.notifyChange", "args": [] }
-          ]
+          ],
+          "timers": []
         },
         "topology": { "worktrees": [], "visibleGraveyard": [], "allGraveyard": [], "sessions": [], "services": [] },
         "operationFailures": [
@@ -812,6 +857,10 @@
           "offlineServices": [],
           "footerFlash": null,
           "footerFlashTicks": null,
+          "graveyardCleanupInterval": null,
+          "graveyardCleanupRunning": false,
+          "inboxCleanupInterval": null,
+          "inboxCleanupRunning": false,
           "pendingWorktreeCreatePaths": [],
           "pendingWorktreeRemovalPaths": [],
           "dashboardWorktreeActions": [],
@@ -847,7 +896,8 @@
             { "method": "invalidateDesktopStateSnapshot", "args": [] },
             { "method": "refreshLocalDashboardModel", "args": [] },
             { "method": "metadataServer.notifyChange", "args": [] }
-          ]
+          ],
+          "timers": []
         },
         "topology": { "worktrees": [], "visibleGraveyard": [], "allGraveyard": [], "sessions": [], "services": [] },
         "operationFailures": []
@@ -919,6 +969,10 @@
           "offlineServices": [],
           "footerFlash": null,
           "footerFlashTicks": null,
+          "graveyardCleanupInterval": null,
+          "graveyardCleanupRunning": false,
+          "inboxCleanupInterval": null,
+          "inboxCleanupRunning": false,
           "pendingWorktreeCreatePaths": [],
           "pendingWorktreeRemovalPaths": [],
           "dashboardWorktreeActions": [],
@@ -937,7 +991,8 @@
             { "method": "invalidateDesktopStateSnapshot", "args": [] },
             { "method": "refreshLocalDashboardModel", "args": [] },
             { "method": "metadataServer.notifyChange", "args": [] }
-          ]
+          ],
+          "timers": []
         },
         "topology": { "worktrees": [], "visibleGraveyard": [], "allGraveyard": [], "sessions": [], "services": [] },
         "operationFailures": []
@@ -974,6 +1029,10 @@
           "offlineServices": [],
           "footerFlash": "Failed: Cannot remove the main checkout",
           "footerFlashTicks": 5,
+          "graveyardCleanupInterval": null,
+          "graveyardCleanupRunning": false,
+          "inboxCleanupInterval": null,
+          "inboxCleanupRunning": false,
           "pendingWorktreeCreatePaths": [],
           "pendingWorktreeRemovalPaths": [],
           "dashboardWorktreeActions": [],
@@ -1018,7 +1077,8 @@
             { "method": "invalidateDesktopStateSnapshot", "args": [] },
             { "method": "refreshLocalDashboardModel", "args": [] },
             { "method": "metadataServer.notifyChange", "args": [] }
-          ]
+          ],
+          "timers": []
         },
         "topology": { "worktrees": [], "visibleGraveyard": [], "allGraveyard": [], "sessions": [], "services": [] },
         "operationFailures": [
@@ -1074,6 +1134,10 @@
           "offlineServices": [],
           "footerFlash": "Failed: Cannot remove \"demo\" while agent \"Codex Live\" is attached",
           "footerFlashTicks": 5,
+          "graveyardCleanupInterval": null,
+          "graveyardCleanupRunning": false,
+          "inboxCleanupInterval": null,
+          "inboxCleanupRunning": false,
           "pendingWorktreeCreatePaths": [],
           "pendingWorktreeRemovalPaths": [],
           "dashboardWorktreeActions": [],
@@ -1120,7 +1184,8 @@
             { "method": "invalidateDesktopStateSnapshot", "args": [] },
             { "method": "refreshLocalDashboardModel", "args": [] },
             { "method": "metadataServer.notifyChange", "args": [] }
-          ]
+          ],
+          "timers": []
         },
         "topology": { "worktrees": [], "visibleGraveyard": [], "allGraveyard": [], "sessions": [], "services": [] },
         "operationFailures": [
@@ -1174,6 +1239,10 @@
           "offlineServices": [],
           "footerFlash": null,
           "footerFlashTicks": null,
+          "graveyardCleanupInterval": null,
+          "graveyardCleanupRunning": false,
+          "inboxCleanupInterval": null,
+          "inboxCleanupRunning": false,
           "pendingWorktreeCreatePaths": [],
           "pendingWorktreeRemovalPaths": ["<repo>/.aimux/worktrees/demo"],
           "dashboardWorktreeActions": [
@@ -1188,7 +1257,8 @@
             { "method": "invalidateDesktopStateSnapshot", "args": [] },
             { "method": "refreshLocalDashboardModel", "args": [] },
             { "method": "metadataServer.notifyChange", "args": [] }
-          ]
+          ],
+          "timers": []
         },
         "topology": { "worktrees": [], "visibleGraveyard": [], "allGraveyard": [], "sessions": [], "services": [] },
         "operationFailures": []
@@ -1225,10 +1295,15 @@
           "offlineServices": [],
           "footerFlash": null,
           "footerFlashTicks": null,
+          "graveyardCleanupInterval": null,
+          "graveyardCleanupRunning": false,
+          "inboxCleanupInterval": null,
+          "inboxCleanupRunning": false,
           "pendingWorktreeCreatePaths": [],
           "pendingWorktreeRemovalPaths": [],
           "dashboardWorktreeActions": [],
-          "calls": []
+          "calls": [],
+          "timers": []
         },
         "topology": { "worktrees": [], "visibleGraveyard": [], "allGraveyard": [], "sessions": [], "services": [] },
         "operationFailures": []
@@ -1276,13 +1351,18 @@
           ],
           "footerFlash": null,
           "footerFlashTicks": null,
+          "graveyardCleanupInterval": null,
+          "graveyardCleanupRunning": false,
+          "inboxCleanupInterval": null,
+          "inboxCleanupRunning": false,
           "pendingWorktreeCreatePaths": [],
           "pendingWorktreeRemovalPaths": [],
           "dashboardWorktreeActions": [],
           "calls": [
             { "method": "listDesktopWorktrees", "args": [] },
             { "method": "isSessionRuntimeLive", "args": [{ "id": "claude-1", "command": "claude", "label": "claude" }] }
-          ]
+          ],
+          "timers": []
         },
         "topology": { "worktrees": [], "visibleGraveyard": [], "allGraveyard": [], "sessions": [], "services": [] },
         "operationFailures": []
@@ -1344,6 +1424,10 @@
           "offlineServices": [],
           "footerFlash": null,
           "footerFlashTicks": null,
+          "graveyardCleanupInterval": null,
+          "graveyardCleanupRunning": false,
+          "inboxCleanupInterval": null,
+          "inboxCleanupRunning": false,
           "pendingWorktreeCreatePaths": [],
           "pendingWorktreeRemovalPaths": [],
           "dashboardWorktreeActions": [],
@@ -1351,7 +1435,8 @@
             { "method": "invalidateDesktopStateSnapshot", "args": [] },
             { "method": "refreshLocalDashboardModel", "args": [] },
             { "method": "metadataServer.notifyChange", "args": [] }
-          ]
+          ],
+          "timers": []
         },
         "topology": {
           "worktrees": [
@@ -1427,10 +1512,15 @@
           "offlineServices": [],
           "footerFlash": null,
           "footerFlashTicks": null,
+          "graveyardCleanupInterval": null,
+          "graveyardCleanupRunning": false,
+          "inboxCleanupInterval": null,
+          "inboxCleanupRunning": false,
           "pendingWorktreeCreatePaths": [],
           "pendingWorktreeRemovalPaths": [],
           "dashboardWorktreeActions": [],
-          "calls": []
+          "calls": [],
+          "timers": []
         },
         "topology": {
           "worktrees": [
@@ -1499,10 +1589,15 @@
           "offlineServices": [],
           "footerFlash": null,
           "footerFlashTicks": null,
+          "graveyardCleanupInterval": null,
+          "graveyardCleanupRunning": false,
+          "inboxCleanupInterval": null,
+          "inboxCleanupRunning": false,
           "pendingWorktreeCreatePaths": [],
           "pendingWorktreeRemovalPaths": [],
           "dashboardWorktreeActions": [],
-          "calls": []
+          "calls": [],
+          "timers": []
         },
         "topology": { "worktrees": [], "visibleGraveyard": [], "allGraveyard": [], "sessions": [], "services": [] },
         "operationFailures": []
@@ -1589,6 +1684,10 @@
           "offlineServices": [],
           "footerFlash": null,
           "footerFlashTicks": null,
+          "graveyardCleanupInterval": null,
+          "graveyardCleanupRunning": false,
+          "inboxCleanupInterval": null,
+          "inboxCleanupRunning": false,
           "pendingWorktreeCreatePaths": [],
           "pendingWorktreeRemovalPaths": [],
           "dashboardWorktreeActions": [],
@@ -1597,7 +1696,8 @@
             { "method": "invalidateDesktopStateSnapshot", "args": [] },
             { "method": "refreshLocalDashboardModel", "args": [] },
             { "method": "metadataServer.notifyChange", "args": [] }
-          ]
+          ],
+          "timers": []
         },
         "topology": {
           "worktrees": [],
@@ -1701,6 +1801,10 @@
           "offlineServices": [],
           "footerFlash": null,
           "footerFlashTicks": null,
+          "graveyardCleanupInterval": null,
+          "graveyardCleanupRunning": false,
+          "inboxCleanupInterval": null,
+          "inboxCleanupRunning": false,
           "pendingWorktreeCreatePaths": [],
           "pendingWorktreeRemovalPaths": [],
           "dashboardWorktreeActions": [],
@@ -1709,7 +1813,8 @@
             { "method": "invalidateDesktopStateSnapshot", "args": [] },
             { "method": "refreshLocalDashboardModel", "args": [] },
             { "method": "metadataServer.notifyChange", "args": [] }
-          ]
+          ],
+          "timers": []
         },
         "topology": {
           "worktrees": [],
@@ -1745,7 +1850,7 @@
         "offlineServices": [],
         "checkPaths": [
           { "label": "context", "path": "<repo>/.aimux/context/codex-physical-fails" },
-          { "label": "recording", "path": "<tmp>/home/projects/repo-6a3ef39fb5f0/recordings/codex-physical-fails.log" }
+          { "label": "recording", "path": "<tmp>/home/projects/repo-d22d3ba303c6/recordings/codex-physical-fails.log" }
         ],
         "initialTopology": {
           "worktrees": [
@@ -1808,10 +1913,15 @@
           "offlineServices": [],
           "footerFlash": null,
           "footerFlashTicks": null,
+          "graveyardCleanupInterval": null,
+          "graveyardCleanupRunning": false,
+          "inboxCleanupInterval": null,
+          "inboxCleanupRunning": false,
           "pendingWorktreeCreatePaths": [],
           "pendingWorktreeRemovalPaths": [],
           "dashboardWorktreeActions": [],
-          "calls": []
+          "calls": [],
+          "timers": []
         },
         "topology": {
           "worktrees": [
@@ -1863,7 +1973,7 @@
         },
         "operationFailures": []
       },
-      "inputSha256": "15a67c1918b377a38d9850a3efb5c68fe95fd0379638bff738db8231ec42542a"
+      "inputSha256": "15471381fcc0117af4b18929e5b6b3afeb153e4562bd56d7e802ff36ebc57304"
     },
     {
       "id": "multiplexer-persistence-worktrees-021",
@@ -1940,6 +2050,10 @@
           "offlineServices": [],
           "footerFlash": null,
           "footerFlashTicks": null,
+          "graveyardCleanupInterval": null,
+          "graveyardCleanupRunning": false,
+          "inboxCleanupInterval": null,
+          "inboxCleanupRunning": false,
           "pendingWorktreeCreatePaths": [],
           "pendingWorktreeRemovalPaths": [],
           "dashboardWorktreeActions": [],
@@ -1948,7 +2062,8 @@
             { "method": "invalidateDesktopStateSnapshot", "args": [] },
             { "method": "writeStatuslineFile", "args": [] },
             { "method": "metadataServer.notifyChange", "args": [] }
-          ]
+          ],
+          "timers": []
         },
         "topology": {
           "worktrees": [],
@@ -2048,10 +2163,15 @@
           "offlineServices": [],
           "footerFlash": null,
           "footerFlashTicks": null,
+          "graveyardCleanupInterval": null,
+          "graveyardCleanupRunning": false,
+          "inboxCleanupInterval": null,
+          "inboxCleanupRunning": false,
           "pendingWorktreeCreatePaths": [],
           "pendingWorktreeRemovalPaths": [],
           "dashboardWorktreeActions": [],
-          "calls": []
+          "calls": [],
+          "timers": []
         },
         "topology": {
           "worktrees": [],
@@ -2128,6 +2248,10 @@
           "offlineServices": [],
           "footerFlash": null,
           "footerFlashTicks": null,
+          "graveyardCleanupInterval": null,
+          "graveyardCleanupRunning": false,
+          "inboxCleanupInterval": null,
+          "inboxCleanupRunning": false,
           "pendingWorktreeCreatePaths": [],
           "pendingWorktreeRemovalPaths": [],
           "dashboardWorktreeActions": [],
@@ -2136,7 +2260,8 @@
             { "method": "invalidateDesktopStateSnapshot", "args": [] },
             { "method": "writeStatuslineFile", "args": [] },
             { "method": "metadataServer.notifyChange", "args": [] }
-          ]
+          ],
+          "timers": []
         },
         "topology": {
           "worktrees": [],
@@ -2231,6 +2356,10 @@
           "offlineServices": [],
           "footerFlash": null,
           "footerFlashTicks": null,
+          "graveyardCleanupInterval": null,
+          "graveyardCleanupRunning": false,
+          "inboxCleanupInterval": null,
+          "inboxCleanupRunning": false,
           "pendingWorktreeCreatePaths": [],
           "pendingWorktreeRemovalPaths": [],
           "dashboardWorktreeActions": [],
@@ -2240,7 +2369,8 @@
             { "method": "refreshLocalDashboardModel", "args": [] },
             { "method": "writeStatuslineFile", "args": [{ "force": true }] },
             { "method": "metadataServer.notifyChange", "args": [] }
-          ]
+          ],
+          "timers": []
         },
         "topology": { "worktrees": [], "visibleGraveyard": [], "allGraveyard": [], "sessions": [], "services": [] },
         "operationFailures": []
@@ -2295,10 +2425,15 @@
           "offlineServices": [],
           "footerFlash": null,
           "footerFlashTicks": null,
+          "graveyardCleanupInterval": null,
+          "graveyardCleanupRunning": false,
+          "inboxCleanupInterval": null,
+          "inboxCleanupRunning": false,
           "pendingWorktreeCreatePaths": [],
           "pendingWorktreeRemovalPaths": [],
           "dashboardWorktreeActions": [],
-          "calls": [{ "method": "listDesktopWorktrees", "args": [] }]
+          "calls": [{ "method": "listDesktopWorktrees", "args": [] }],
+          "timers": []
         },
         "topology": { "worktrees": [], "visibleGraveyard": [], "allGraveyard": [], "sessions": [], "services": [] },
         "operationFailures": []
@@ -2366,10 +2501,15 @@
           "offlineServices": [],
           "footerFlash": null,
           "footerFlashTicks": null,
+          "graveyardCleanupInterval": null,
+          "graveyardCleanupRunning": false,
+          "inboxCleanupInterval": null,
+          "inboxCleanupRunning": false,
           "pendingWorktreeCreatePaths": [],
           "pendingWorktreeRemovalPaths": [],
           "dashboardWorktreeActions": [],
-          "calls": [{ "method": "listDesktopWorktrees", "args": [] }]
+          "calls": [{ "method": "listDesktopWorktrees", "args": [] }],
+          "timers": []
         },
         "topology": {
           "worktrees": [],
@@ -2448,18 +2588,273 @@
           "offlineServices": [],
           "footerFlash": null,
           "footerFlashTicks": null,
+          "graveyardCleanupInterval": null,
+          "graveyardCleanupRunning": false,
+          "inboxCleanupInterval": null,
+          "inboxCleanupRunning": false,
           "pendingWorktreeCreatePaths": [],
           "pendingWorktreeRemovalPaths": [],
           "dashboardWorktreeActions": [],
           "calls": [
             { "method": "isSessionRuntimeLive", "args": [{ "id": "codex-host-live", "command": "codex" }] },
             { "method": "listDesktopWorktrees", "args": [] }
-          ]
+          ],
+          "timers": []
         },
         "topology": { "worktrees": [], "visibleGraveyard": [], "allGraveyard": [], "sessions": [], "services": [] },
         "operationFailures": []
       },
       "inputSha256": "454b7e589dc1bb3f7a28cb9cfd21f6945023286cf9f5c021f9c450809a169332"
+    },
+    {
+      "id": "multiplexer-persistence-worktrees-028",
+      "name": "starts scheduled graveyard cleanup with the configured interval",
+      "source": "src/multiplexer/persistence-methods.test.ts",
+      "api": "startGraveyardCleanup",
+      "input": {
+        "initialTopology": {
+          "worktrees": [],
+          "visibleGraveyard": [],
+          "allGraveyard": [],
+          "sessions": [],
+          "services": []
+        }
+      },
+      "output": {
+        "ok": true,
+        "completion": null,
+        "checkedPaths": {},
+        "host": {
+          "offlineSessions": [],
+          "offlineServices": [],
+          "footerFlash": null,
+          "footerFlashTicks": null,
+          "graveyardCleanupInterval": "<interval:1>",
+          "graveyardCleanupRunning": false,
+          "inboxCleanupInterval": null,
+          "inboxCleanupRunning": false,
+          "pendingWorktreeCreatePaths": [],
+          "pendingWorktreeRemovalPaths": [],
+          "dashboardWorktreeActions": [],
+          "calls": [],
+          "timers": [{ "id": "<interval:1>", "delayMs": 86400000, "args": [], "cleared": false, "fired": false }]
+        },
+        "topology": { "worktrees": [], "visibleGraveyard": [], "allGraveyard": [], "sessions": [], "services": [] },
+        "operationFailures": []
+      },
+      "inputSha256": "71ae211d01f34e7921e5ea95994d7435b6d6f145c264d43ba601413da10c0c80"
+    },
+    {
+      "id": "multiplexer-persistence-worktrees-029",
+      "name": "does not start a second scheduled graveyard cleanup interval",
+      "source": "src/multiplexer/persistence-methods.test.ts",
+      "api": "startGraveyardCleanup",
+      "input": {
+        "graveyardCleanupInterval": "<existing-graveyard-interval>",
+        "initialTopology": {
+          "worktrees": [],
+          "visibleGraveyard": [],
+          "allGraveyard": [],
+          "sessions": [],
+          "services": []
+        }
+      },
+      "output": {
+        "ok": true,
+        "completion": null,
+        "checkedPaths": {},
+        "host": {
+          "offlineSessions": [],
+          "offlineServices": [],
+          "footerFlash": null,
+          "footerFlashTicks": null,
+          "graveyardCleanupInterval": "<existing-graveyard-interval>",
+          "graveyardCleanupRunning": false,
+          "inboxCleanupInterval": null,
+          "inboxCleanupRunning": false,
+          "pendingWorktreeCreatePaths": [],
+          "pendingWorktreeRemovalPaths": [],
+          "dashboardWorktreeActions": [],
+          "calls": [],
+          "timers": []
+        },
+        "topology": { "worktrees": [], "visibleGraveyard": [], "allGraveyard": [], "sessions": [], "services": [] },
+        "operationFailures": []
+      },
+      "inputSha256": "0ce592237f7d35bb3f6754f42aca3a6142e9f3f9862ab101fbe7a8ac0b526f41"
+    },
+    {
+      "id": "multiplexer-persistence-worktrees-030",
+      "name": "stops scheduled graveyard cleanup and clears the host interval",
+      "source": "src/multiplexer/persistence-methods.test.ts",
+      "api": "stopGraveyardCleanup",
+      "input": {
+        "graveyardCleanupInterval": "<existing-graveyard-interval>",
+        "initialTopology": {
+          "worktrees": [],
+          "visibleGraveyard": [],
+          "allGraveyard": [],
+          "sessions": [],
+          "services": []
+        }
+      },
+      "output": {
+        "ok": true,
+        "completion": null,
+        "checkedPaths": {},
+        "host": {
+          "offlineSessions": [],
+          "offlineServices": [],
+          "footerFlash": null,
+          "footerFlashTicks": null,
+          "graveyardCleanupInterval": null,
+          "graveyardCleanupRunning": false,
+          "inboxCleanupInterval": null,
+          "inboxCleanupRunning": false,
+          "pendingWorktreeCreatePaths": [],
+          "pendingWorktreeRemovalPaths": [],
+          "dashboardWorktreeActions": [],
+          "calls": [],
+          "timers": [
+            {
+              "id": "<existing-graveyard-interval>",
+              "delayMs": null,
+              "args": [],
+              "cleared": true,
+              "fired": false,
+              "unknown": true
+            }
+          ]
+        },
+        "topology": { "worktrees": [], "visibleGraveyard": [], "allGraveyard": [], "sessions": [], "services": [] },
+        "operationFailures": []
+      },
+      "inputSha256": "0ce592237f7d35bb3f6754f42aca3a6142e9f3f9862ab101fbe7a8ac0b526f41"
+    },
+    {
+      "id": "multiplexer-persistence-worktrees-031",
+      "name": "starts scheduled inbox cleanup with the configured interval",
+      "source": "src/multiplexer/persistence-methods.test.ts",
+      "api": "startInboxCleanup",
+      "input": {
+        "initialTopology": {
+          "worktrees": [],
+          "visibleGraveyard": [],
+          "allGraveyard": [],
+          "sessions": [],
+          "services": []
+        }
+      },
+      "output": {
+        "ok": true,
+        "completion": null,
+        "checkedPaths": {},
+        "host": {
+          "offlineSessions": [],
+          "offlineServices": [],
+          "footerFlash": null,
+          "footerFlashTicks": null,
+          "graveyardCleanupInterval": null,
+          "graveyardCleanupRunning": false,
+          "inboxCleanupInterval": "<interval:1>",
+          "inboxCleanupRunning": false,
+          "pendingWorktreeCreatePaths": [],
+          "pendingWorktreeRemovalPaths": [],
+          "dashboardWorktreeActions": [],
+          "calls": [],
+          "timers": [{ "id": "<interval:1>", "delayMs": 86400000, "args": [], "cleared": false, "fired": false }]
+        },
+        "topology": { "worktrees": [], "visibleGraveyard": [], "allGraveyard": [], "sessions": [], "services": [] },
+        "operationFailures": []
+      },
+      "inputSha256": "71ae211d01f34e7921e5ea95994d7435b6d6f145c264d43ba601413da10c0c80"
+    },
+    {
+      "id": "multiplexer-persistence-worktrees-032",
+      "name": "does not start a second scheduled inbox cleanup interval",
+      "source": "src/multiplexer/persistence-methods.test.ts",
+      "api": "startInboxCleanup",
+      "input": {
+        "inboxCleanupInterval": "<existing-inbox-interval>",
+        "initialTopology": {
+          "worktrees": [],
+          "visibleGraveyard": [],
+          "allGraveyard": [],
+          "sessions": [],
+          "services": []
+        }
+      },
+      "output": {
+        "ok": true,
+        "completion": null,
+        "checkedPaths": {},
+        "host": {
+          "offlineSessions": [],
+          "offlineServices": [],
+          "footerFlash": null,
+          "footerFlashTicks": null,
+          "graveyardCleanupInterval": null,
+          "graveyardCleanupRunning": false,
+          "inboxCleanupInterval": "<existing-inbox-interval>",
+          "inboxCleanupRunning": false,
+          "pendingWorktreeCreatePaths": [],
+          "pendingWorktreeRemovalPaths": [],
+          "dashboardWorktreeActions": [],
+          "calls": [],
+          "timers": []
+        },
+        "topology": { "worktrees": [], "visibleGraveyard": [], "allGraveyard": [], "sessions": [], "services": [] },
+        "operationFailures": []
+      },
+      "inputSha256": "0fb9556614075a5dfb4042ddae7a58d747b0fe1c43f91f9881609d75507eea9c"
+    },
+    {
+      "id": "multiplexer-persistence-worktrees-033",
+      "name": "stops scheduled inbox cleanup and clears the host interval",
+      "source": "src/multiplexer/persistence-methods.test.ts",
+      "api": "stopInboxCleanup",
+      "input": {
+        "inboxCleanupInterval": "<existing-inbox-interval>",
+        "initialTopology": {
+          "worktrees": [],
+          "visibleGraveyard": [],
+          "allGraveyard": [],
+          "sessions": [],
+          "services": []
+        }
+      },
+      "output": {
+        "ok": true,
+        "completion": null,
+        "checkedPaths": {},
+        "host": {
+          "offlineSessions": [],
+          "offlineServices": [],
+          "footerFlash": null,
+          "footerFlashTicks": null,
+          "graveyardCleanupInterval": null,
+          "graveyardCleanupRunning": false,
+          "inboxCleanupInterval": null,
+          "inboxCleanupRunning": false,
+          "pendingWorktreeCreatePaths": [],
+          "pendingWorktreeRemovalPaths": [],
+          "dashboardWorktreeActions": [],
+          "calls": [],
+          "timers": [
+            {
+              "id": "<existing-inbox-interval>",
+              "delayMs": null,
+              "args": [],
+              "cleared": true,
+              "fired": false,
+              "unknown": true
+            }
+          ]
+        },
+        "topology": { "worktrees": [], "visibleGraveyard": [], "allGraveyard": [], "sessions": [], "services": [] },
+        "operationFailures": []
+      },
+      "inputSha256": "0fb9556614075a5dfb4042ddae7a58d747b0fe1c43f91f9881609d75507eea9c"
     }
   ]
 }

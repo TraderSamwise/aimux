@@ -40,6 +40,8 @@ const operationFailures = await import(new URL("dist/dashboard/operation-failure
 
 const hash = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const clone = (value) => JSON.parse(JSON.stringify(value));
+const originalSetInterval = globalThis.setInterval;
+const originalClearInterval = globalThis.clearInterval;
 
 async function writeContractJson(url, contract) {
   await mkdir(new URL("./", url), { recursive: true });
@@ -167,6 +169,10 @@ function hostFor(input) {
   const host = {
     projectRoot: input.projectRoot,
     mode: input.mode ?? "project-service",
+    graveyardCleanupInterval: input.graveyardCleanupInterval ?? null,
+    graveyardCleanupRunning: input.graveyardCleanupRunning ?? false,
+    inboxCleanupInterval: input.inboxCleanupInterval ?? null,
+    inboxCleanupRunning: input.inboxCleanupRunning ?? false,
     sessions: clone(input.sessions ?? []),
     offlineSessions: clone(input.offlineSessions ?? []),
     offlineServices: clone(input.offlineServices ?? []),
@@ -223,17 +229,51 @@ function snapshotTopology() {
   };
 }
 
-function snapshotHost(host, calls) {
+function normalizeIntervalHandle(handle) {
+  if (handle && typeof handle === "object" && typeof handle.id === "string") return handle.id;
+  return handle ?? null;
+}
+
+function snapshotHost(host, calls, timers = []) {
   return {
     offlineSessions: clone(host.offlineSessions ?? []),
     offlineServices: clone(host.offlineServices ?? []),
     footerFlash: host.footerFlash ?? null,
     footerFlashTicks: host.footerFlashTicks ?? null,
+    graveyardCleanupInterval: normalizeIntervalHandle(host.graveyardCleanupInterval),
+    graveyardCleanupRunning: host.graveyardCleanupRunning ?? false,
+    inboxCleanupInterval: normalizeIntervalHandle(host.inboxCleanupInterval),
+    inboxCleanupRunning: host.inboxCleanupRunning ?? false,
     pendingWorktreeCreatePaths: [...(host.pendingWorktreeCreates?.keys?.() ?? [])],
     pendingWorktreeRemovalPaths: [...(host.pendingWorktreeRemovals?.keys?.() ?? [])],
     dashboardWorktreeActions: host.dashboardPendingActions?.snapshot?.() ?? [],
     calls: clone(calls),
+    timers: clone(timers),
   };
+}
+
+async function withTimerCapture(fn) {
+  const timers = [];
+  globalThis.setInterval = (callback, delayMs, ...args) => {
+    const handle = { id: `<interval:${timers.length + 1}>`, callback };
+    timers.push({ id: handle.id, delayMs, args: clone(args), cleared: false, fired: false });
+    return handle;
+  };
+  globalThis.clearInterval = (handle) => {
+    const id = normalizeIntervalHandle(handle);
+    const timer = timers.find((candidate) => candidate.id === id);
+    if (timer) {
+      timer.cleared = true;
+    } else {
+      timers.push({ id, delayMs: null, args: [], cleared: true, fired: false, unknown: true });
+    }
+  };
+  try {
+    return await fn(timers);
+  } finally {
+    globalThis.setInterval = originalSetInterval;
+    globalThis.clearInterval = originalClearInterval;
+  }
 }
 
 async function withFixture(label, fn) {
@@ -256,7 +296,8 @@ async function withFixture(label, fn) {
 async function invoke(api, ctx, input) {
   const actualInput = denormalize(input, ctx);
   const { host, calls } = hostFor(actualInput);
-  try {
+  return withTimerCapture(async (timers) => {
+    try {
     if (api === "listDesktopWorktrees") {
       const returned = persistenceMethods.listDesktopWorktrees.call(host);
       return normalize(
@@ -265,7 +306,7 @@ async function invoke(api, ctx, input) {
           returned,
           completion: null,
           checkedPaths: checkedPaths(actualInput),
-          host: snapshotHost(host, calls),
+          host: snapshotHost(host, calls, timers),
           topology: snapshotTopology(),
           operationFailures: operationFailures.listDashboardOperationFailures(),
         },
@@ -281,12 +322,17 @@ async function invoke(api, ctx, input) {
             ? actualInput.cleanupInput
             : api === "resurrectGraveyardSession"
               ? actualInput.sessionId
-              : actualInput.path;
+              : api === "startGraveyardCleanup" ||
+                  api === "stopGraveyardCleanup" ||
+                  api === "startInboxCleanup" ||
+                  api === "stopInboxCleanup"
+                ? undefined
+                : actualInput.path;
     const returned = await persistenceMethods[api].call(host, arg);
     let immediate;
     let completion = null;
     if (api === "createDesktopWorktree") {
-      immediate = { host: snapshotHost(host, calls), topology: snapshotTopology() };
+      immediate = { host: snapshotHost(host, calls, timers), topology: snapshotTopology() };
       const pending = host.pendingWorktreeCreates.get(returned.path);
       if (pending) {
         try {
@@ -304,25 +350,26 @@ async function invoke(api, ctx, input) {
         immediate,
         completion,
         checkedPaths: checkedPaths(actualInput),
-        host: snapshotHost(host, calls),
+        host: snapshotHost(host, calls, timers),
         topology: snapshotTopology(),
         operationFailures: operationFailures.listDashboardOperationFailures(),
       },
       ctx,
     );
-  } catch (error) {
+    } catch (error) {
     return normalize(
       {
         ok: false,
         error: error instanceof Error ? error.message : String(error),
         checkedPaths: checkedPaths(denormalize(input, ctx)),
-        host: snapshotHost(host, calls),
+        host: snapshotHost(host, calls, timers),
         topology: snapshotTopology(),
         operationFailures: operationFailures.listDashboardOperationFailures(),
       },
       ctx,
     );
-  }
+    }
+  });
 }
 
 function checkedPaths(input) {
@@ -990,6 +1037,54 @@ await record(
       checkPaths: [{ label: "cache", path: cachePath }],
     };
   },
+);
+
+await record(
+  cases,
+  "starts scheduled graveyard cleanup with the configured interval",
+  "startGraveyardCleanup",
+  "start-graveyard-cleanup",
+  () => ({}),
+);
+
+await record(
+  cases,
+  "does not start a second scheduled graveyard cleanup interval",
+  "startGraveyardCleanup",
+  "start-graveyard-cleanup-existing",
+  () => ({ graveyardCleanupInterval: "<existing-graveyard-interval>" }),
+);
+
+await record(
+  cases,
+  "stops scheduled graveyard cleanup and clears the host interval",
+  "stopGraveyardCleanup",
+  "stop-graveyard-cleanup",
+  () => ({ graveyardCleanupInterval: "<existing-graveyard-interval>" }),
+);
+
+await record(
+  cases,
+  "starts scheduled inbox cleanup with the configured interval",
+  "startInboxCleanup",
+  "start-inbox-cleanup",
+  () => ({}),
+);
+
+await record(
+  cases,
+  "does not start a second scheduled inbox cleanup interval",
+  "startInboxCleanup",
+  "start-inbox-cleanup-existing",
+  () => ({ inboxCleanupInterval: "<existing-inbox-interval>" }),
+);
+
+await record(
+  cases,
+  "stops scheduled inbox cleanup and clears the host interval",
+  "stopInboxCleanup",
+  "stop-inbox-cleanup",
+  () => ({ inboxCleanupInterval: "<existing-inbox-interval>" }),
 );
 
 await writeContractJson(FIXTURE_PATH, {

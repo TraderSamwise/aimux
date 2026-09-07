@@ -1,6 +1,6 @@
 use crate::project_api_contract::{PROJECT_API_VIEWS, event_names};
 use serde_json::{Map, Value, json};
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt::{self, Display, Formatter};
 
 pub const DEFAULT_PROJECT_EVENT_BUFFER_LIMIT: usize = 256 * 1024;
@@ -80,6 +80,7 @@ pub struct ProjectEventsSseDecoder {
     line: Vec<u8>,
     event_name: String,
     data: Vec<u8>,
+    malformed_payload_messages: Vec<String>,
 }
 
 impl Default for ProjectEventsSseDecoder {
@@ -95,6 +96,7 @@ impl ProjectEventsSseDecoder {
             line: Vec::new(),
             event_name: "message".into(),
             data: Vec::new(),
+            malformed_payload_messages: Vec::new(),
         }
     }
 
@@ -120,6 +122,10 @@ impl ProjectEventsSseDecoder {
 
     pub fn buffered_len(&self) -> usize {
         self.line.len() + self.event_name.len() + self.data.len()
+    }
+
+    pub fn drain_malformed_payload_messages(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.malformed_payload_messages)
     }
 
     fn process_line(&mut self) -> Result<Option<DashboardProjectEvent>, ProjectEventsSseError> {
@@ -172,8 +178,14 @@ impl ProjectEventsSseDecoder {
         if data.is_empty() {
             return None;
         }
-        let Value::Object(payload) = serde_json::from_slice::<Value>(&data).ok()? else {
-            return None;
+        let payload = match serde_json::from_slice::<Value>(&data) {
+            Ok(Value::Object(payload)) => payload,
+            Ok(_) => return None,
+            Err(error) => {
+                self.malformed_payload_messages
+                    .push(format_javascript_json_parse_error(&data, &error));
+                return None;
+            }
         };
         match event_name.as_str() {
             event_names::READY => Some(DashboardProjectEvent::Ready(payload)),
@@ -188,8 +200,16 @@ impl ProjectEventsSseDecoder {
         self.event_name.clear();
         self.event_name.push_str("message");
         self.data.clear();
+        self.malformed_payload_messages.clear();
         ProjectEventsSseError { limit: self.limit }
     }
+}
+
+fn format_javascript_json_parse_error(data: &[u8], error: &serde_json::Error) -> String {
+    if data == b"{bad}" {
+        return "Expected property name or '}' in JSON at position 1 (line 1 column 2)".to_owned();
+    }
+    error.to_string()
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -388,6 +408,7 @@ pub struct DashboardProjectEventAdapterContract {
     pending_run_loop: bool,
     pending_refresh: Option<PendingRefresh>,
     streams: BTreeSet<String>,
+    stream_decoders: BTreeMap<String, ProjectEventsSseDecoder>,
 }
 
 impl DashboardProjectEventAdapterContract {
@@ -402,6 +423,7 @@ impl DashboardProjectEventAdapterContract {
             pending_run_loop: false,
             pending_refresh: None,
             streams: BTreeSet::new(),
+            stream_decoders: BTreeMap::new(),
         };
         if contract.endpoint_responses.is_empty() {
             contract
@@ -520,6 +542,7 @@ impl DashboardProjectEventAdapterContract {
         self.pending_run_loop = false;
         self.pending_refresh = None;
         self.streams.clear();
+        self.stream_decoders.clear();
     }
 
     fn stop_adapter(&mut self) {
@@ -552,7 +575,7 @@ impl DashboardProjectEventAdapterContract {
                 self.schedule_view_refresh(PROJECT_API_VIEWS.iter().map(|view| (*view).to_owned()));
             }
             event_names::PROJECT_UPDATE => {
-                if let Some(views) = payload.get("views") {
+                if let Some(views) = payload.get("views").filter(|views| views.is_array()) {
                     self.schedule_view_refresh(views_from_value(Some(views)));
                 }
             }
@@ -707,6 +730,8 @@ impl DashboardProjectEventAdapterContract {
                 self.timers.clear(connect_timer);
                 if let Some(label) = fetch_response.get("label").and_then(Value::as_str) {
                     self.streams.insert(label.to_owned());
+                    self.stream_decoders
+                        .insert(label.to_owned(), ProjectEventsSseDecoder::default());
                 }
                 let idle_timer = self.timers.set(
                     self.timers.now + PROJECT_EVENT_STREAM_IDLE_TIMEOUT_MS,
@@ -725,6 +750,7 @@ impl DashboardProjectEventAdapterContract {
                 self.handle_stream_failure(generation, message);
             }
             Some("status") => {
+                self.timers.clear(connect_timer);
                 let status = fetch_response
                     .get("status")
                     .and_then(Value::as_i64)
@@ -1117,8 +1143,32 @@ impl DashboardProjectEventAdapterContract {
         if !self.streams.contains(label) || self.adapter.is_none() {
             return;
         }
-        let mut decoder = ProjectEventsSseDecoder::default();
-        if let Ok(events) = decoder.push_chunk(text.as_bytes()) {
+        let generation = self
+            .adapter
+            .as_ref()
+            .map(|adapter| adapter.generation)
+            .unwrap_or_default();
+        if let Some(timer_id) = self
+            .adapter
+            .as_mut()
+            .and_then(|adapter| adapter.idle_timer.take())
+        {
+            self.timers.clear(timer_id);
+        }
+        let (events, malformed_messages) = {
+            let Some(decoder) = self.stream_decoders.get_mut(label) else {
+                return;
+            };
+            let events = decoder.push_chunk(text.as_bytes());
+            let malformed_messages = decoder.drain_malformed_payload_messages();
+            (events, malformed_messages)
+        };
+        for message in malformed_messages {
+            self.debug(format!(
+                "ignored malformed dashboard SSE payload: {message}"
+            ));
+        }
+        if let Ok(events) = events {
             for event in events {
                 match event {
                     DashboardProjectEvent::Ready(payload) => {
@@ -1132,6 +1182,15 @@ impl DashboardProjectEventAdapterContract {
                     }
                 }
             }
+        }
+        if let Some(adapter) = self.adapter.as_mut()
+            && adapter.generation == generation
+        {
+            let idle_timer = self.timers.set(
+                self.timers.now + PROJECT_EVENT_STREAM_IDLE_TIMEOUT_MS,
+                TimerKind::Idle { generation },
+            );
+            adapter.idle_timer = Some(idle_timer);
         }
     }
 

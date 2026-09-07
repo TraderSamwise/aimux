@@ -1,4 +1,6 @@
-use serde_json::{json, Map, Value};
+use aimux::tui_render::theme::{Tone, keycap_hint, style};
+use aimux::tui_render::{OverlayBoxSpec, OverlayVariant, render_overlay_box};
+use serde_json::{Map, Value, json};
 
 pub fn run_multiplexer_worktrees_contract_case(input: &Value) -> Value {
     match input.get("api").and_then(Value::as_str).unwrap_or_default() {
@@ -14,6 +16,38 @@ pub fn run_multiplexer_worktrees_contract_case(input: &Value) -> Value {
         "showWorktreeCreatePrompt" => {
             let mut host = WorktreeHost::from_input(input);
             host.show_worktree_create_prompt();
+            host.snapshot()
+        }
+        "buildWorktreeInputOverlayOutput" => {
+            let host = WorktreeHost::from_input(input);
+            Value::String(host.build_worktree_input_overlay_output(
+                input.get("cols").and_then(Value::as_u64).unwrap_or(80) as usize,
+                input.get("rows").and_then(Value::as_u64).unwrap_or(24) as usize,
+            ))
+        }
+        "renderWorktreeInput" => {
+            let mut host = WorktreeHost::from_input(input);
+            host.render_worktree_input();
+            host.snapshot()
+        }
+        "showWorktreeList" => {
+            let mut host = WorktreeHost::from_input(input);
+            host.show_worktree_list();
+            host.snapshot()
+        }
+        "renderWorktreeList" => {
+            let mut host = WorktreeHost::from_input(input);
+            host.render_worktree_list();
+            host.snapshot()
+        }
+        "renderWorktreeRemoveConfirm" => {
+            let mut host = WorktreeHost::from_input(input);
+            host.render_worktree_remove_confirm();
+            host.snapshot()
+        }
+        "renderWorktreeCacheCleanupConfirm" => {
+            let mut host = WorktreeHost::from_input(input);
+            host.render_worktree_cache_cleanup_confirm();
             host.snapshot()
         }
         "handleWorktreeInputKey" => {
@@ -234,6 +268,53 @@ impl WorktreeHost {
         self.render_worktree_input();
     }
 
+    fn build_worktree_input_overlay_output(&self, _cols: usize, _rows: usize) -> String {
+        let body = vec![
+            format!(
+                "  {} {}_",
+                style("Name:", Tone::Muted),
+                self.worktree_input_buffer.as_deref().unwrap_or_default()
+            ),
+            String::new(),
+            format!(
+                "  {}  {}",
+                keycap_hint("Enter", "create", None),
+                keycap_hint("Esc", "cancel", None)
+            ),
+        ];
+        render_overlay_box(&OverlayBoxSpec {
+            title: "Create worktree",
+            body: &body,
+            cols: _cols,
+            rows: _rows,
+            variant: OverlayVariant::Blue,
+            icon: None,
+        })
+    }
+
+    fn show_worktree_list(&mut self) {
+        self.call("openDashboardOverlay", vec![json!("worktree-list")]);
+        self.render_worktree_list();
+    }
+
+    fn render_worktree_list(&mut self) {
+        if self.mode == "dashboard" {
+            self.call("redrawDashboardWithOverlay", vec![]);
+        }
+    }
+
+    fn render_worktree_remove_confirm(&mut self) {
+        if self.mode == "dashboard" {
+            self.call("redrawDashboardWithOverlay", vec![]);
+        }
+    }
+
+    fn render_worktree_cache_cleanup_confirm(&mut self) {
+        if self.mode == "dashboard" {
+            self.call("redrawDashboardWithOverlay", vec![]);
+        }
+    }
+
     fn handle_worktree_input_key(&mut self, data: &str) {
         let events = parse_contract_keys(data);
         if events.is_empty() {
@@ -308,7 +389,17 @@ impl WorktreeHost {
                 self.call("restoreDashboardAfterOverlayDismiss", vec![]);
             }
             ContractKey::Text(text) => {
-                if text == "n" {
+                if text == "y" {
+                    let confirm = self.worktree_remove_confirm.clone();
+                    if !confirm.is_null() {
+                        self.worktree_remove_confirm = Value::Null;
+                        self.call("clearDashboardOverlay", vec![]);
+                        let path = string_field(&confirm, "path");
+                        let name = string_field(&confirm, "name");
+                        let old_idx = self.worktree_nav_index(&path).unwrap_or(-1);
+                        self.begin_worktree_removal(&path, &name, old_idx);
+                    }
+                } else if text == "n" {
                     self.worktree_remove_confirm = Value::Null;
                     self.call("clearDashboardOverlay", vec![]);
                     self.call("restoreDashboardAfterOverlayDismiss", vec![]);

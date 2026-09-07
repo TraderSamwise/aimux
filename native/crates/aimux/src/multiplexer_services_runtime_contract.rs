@@ -1,4 +1,4 @@
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 const NOW: &str = "<ts>";
 const REPO: &str = "<repo>";
@@ -571,12 +571,31 @@ fn topology_service_from_launch(
     target: &Value,
 ) -> Value {
     let mut service = base_topology_service(service_id, "running");
-    service.insert("command".into(), Value::String(shell.into()));
-    service.insert("args".into(), json!(["-lc", command_line]));
     service.insert(
-        "launchCommandLine".into(),
-        Value::String(command_line.into()),
+        "command".into(),
+        Value::String(
+            if command_line.is_empty() {
+                "shell"
+            } else {
+                shell
+            }
+            .into(),
+        ),
     );
+    service.insert(
+        "args".into(),
+        if command_line.is_empty() {
+            json!(["-l"])
+        } else {
+            json!(["-lc", command_line])
+        },
+    );
+    if !command_line.is_empty() {
+        service.insert(
+            "launchCommandLine".into(),
+            Value::String(command_line.into()),
+        );
+    }
     copy_if_present(&mut service, input, "worktreePath");
     service.insert("cwd".into(), Value::String(cwd.into()));
     service.insert("label".into(), Value::String(label.into()));
@@ -637,8 +656,25 @@ fn topology_service_from_resume(
 ) -> Value {
     let service_id = string_field(service, "id");
     let mut row = base_topology_service(&service_id, "running");
-    row.insert("command".into(), Value::String(shell.into()));
-    row.insert("args".into(), json!(["-lc", command_line]));
+    row.insert(
+        "command".into(),
+        Value::String(
+            if command_line.is_empty() {
+                "shell"
+            } else {
+                shell
+            }
+            .into(),
+        ),
+    );
+    row.insert(
+        "args".into(),
+        if command_line.is_empty() {
+            json!(["-l"])
+        } else {
+            json!(["-lc", command_line])
+        },
+    );
     if !command_line.is_empty() {
         row.insert(
             "launchCommandLine".into(),
@@ -708,7 +744,9 @@ fn service_wrapped_command(
                 format!(
                     "AIMUX_SHELL_INTEGRATION_SCRIPT={PROJECT_STATE}/shell-integration/aimux-zsh-integration.zsh"
                 ),
-                format!("AIMUX_SHELL_STATE_SUPPRESS_FILE={PROJECT_STATE}/shell-state-suppress/{service_id}"),
+                format!(
+                    "AIMUX_SHELL_STATE_SUPPRESS_FILE={PROJECT_STATE}/shell-state-suppress/{service_id}"
+                ),
                 format!("ZDOTDIR={PROJECT_STATE}/shell-integration"),
                 shell.into(),
                 "-ic".into(),

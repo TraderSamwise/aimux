@@ -1,6 +1,6 @@
 # Phase 8 Multiplexer Owned Lane Audit v1
 
-Audit point: `6ee30d12`
+Audit point: `rust-translation-v1 owned-lane sufficiency pass`
 
 Scope: the six TypeScript modules assigned to this lane before phase-8 deletion:
 `src/multiplexer/persistence-methods.ts`, `src/multiplexer/worktrees.ts`,
@@ -18,10 +18,26 @@ running TypeScript, not hand-written expectations.
 
 Deletion gate status for this lane: ready.
 
-The six modules total 4,879 TypeScript LOC and are covered by 222 direct cases
-from their own test sources, plus adjacent corpora for bound startup methods,
-inbox cleanup, text helpers, and worktree graveyard projection. Current misses:
-0 behavior-level misses found in this audit.
+The six modules total 4,879 TypeScript LOC and are covered by 253 direct cases
+from their own test sources, plus adjacent corpora for inbox cleanup, text
+helpers, and worktree graveyard projection. This pass found 56 behavior-level
+misses in the owned lane and captured all 56 as enforced cases.
+
+Scoped enforcement after the pass:
+
+| Suite | Corpus | Cases | Result |
+| --- | --- | ---: | --- |
+| `fixture_project_event_stream` | `runtime-state/project-event-stream.json` | 39 | PROVEN-FAILS |
+| `fixture_tool_picker` | `multiplexer/tool-picker.json` | 31 | PROVEN-FAILS |
+| `fixture_multiplexer_services` | `multiplexer/services.json` | 8 | PROVEN-FAILS |
+| `fixture_multiplexer_services_runtime` | `multiplexer/services-runtime.json` | 19 | PROVEN-FAILS |
+| `fixture_multiplexer_worktrees` | `multiplexer/worktrees.json` | 33 | PROVEN-FAILS |
+| `fixture_multiplexer_runtime_state_methods` | `multiplexer/runtime-state-methods.json` | 59 | PROVEN-FAILS |
+| `fixture_multiplexer_persistence_worktrees` | `multiplexer/persistence-worktrees.json` | 33 | PROVEN-FAILS |
+
+Current enforcement report after scoped merges:
+325 de-duplicated suite/corpus bindings, 4,048 cases, PROVEN-FAILS 325,
+VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
 
 ## Module Mapping
 
@@ -42,11 +58,14 @@ Corpus:
 - `multiplexer/persistence-statusline-snapshot.json` (4 cases)
 - `multiplexer/persistence-statusline.json` (4 cases)
 - `multiplexer/persistence-worktree-lists.json` (2 cases)
-- `multiplexer/persistence-worktrees.json` (27 cases)
+- `multiplexer/persistence-worktrees.json` (33 cases)
 - `notifications/inbox-cleanup-runtime.json` (2 adjacent cleanup cases)
 - `worktree/state.json` (graveyard projection case)
-- `multiplexer/session-launch-startup.json` (maintenance startup/stop call paths)
 - `multiplexer/dashboard-state-helpers.json` and `tui/render-text.json` (text helper projections)
+
+New misses captured in this pass: 6 maintenance timer cases covering
+start/stop for graveyard and inbox cleanup, guarded double-start behavior, and
+clearInterval side effects.
 
 Recent failures found and closed in this lane: 3 worktree persistence failures.
 
@@ -66,11 +85,14 @@ Behavior families:
   and apply results.
 
 Corpus:
-- `multiplexer/worktrees.json` (26 cases)
+- `multiplexer/worktrees.json` (33 cases)
 - `multiplexer/worktrees-settlement.json` (26 cases)
 
-Recent failures found and closed in this lane: 0 in the latest worktrees audit
-slice; existing worktrees fixtures remain mutation-proven.
+New misses captured in this pass: 7 wrapper/action cases for direct overlay
+render exports, list display, remove/cache confirm renderers, and the `y`
+remove-confirm alias.
+
+Recent failures found and closed in this lane: 1 worktree key-handler failure.
 
 Uncaptured count: 0.
 
@@ -89,14 +111,18 @@ Behavior families:
   restore refusal, fresh relaunch, and transcript-based backend recovery.
 
 Corpus:
-- `multiplexer/runtime-state-methods.json` (53 cases)
+- `multiplexer/runtime-state-methods.json` (59 cases)
 - `multiplexer/runtime-state-refresh.json` (12 cases)
 - `runtime-state/runtime-sync.json` (heartbeat and project-service refresh start/stop)
 - `multiplexer/runtime-guard-repair-start.json` and `runtime-state/runtime-guard.json` (guard repair/sync callers)
 - `multiplexer/session-launch-*.json`, `multiplexer/dashboard-tail-lifecycle.json`, and `multiplexer/tui-api-runtime*.json` (startup and caller-side render/sync paths)
 
-Recent failures found and closed in this lane: 8 runtime-state restore/recovery
-failures.
+New misses captured in this pass: 6 method wrapper/state mutation cases for
+heartbeat forwarding, project-service refresh forwarding, coordination render
+routing, hidden-host render behavior, and zombie eviction side effects.
+
+Recent failures found and closed in this lane: 10 runtime-state
+restore/recovery and method-wrapper failures.
 
 Uncaptured count: 0.
 
@@ -112,11 +138,15 @@ Behavior families:
   suppression, optimistic dashboard rows, and resume-by-id errors/success.
 
 Corpus:
-- `multiplexer/services.json` (7 cases)
-- `multiplexer/services-runtime.json` (14 cases)
+- `multiplexer/services.json` (8 cases)
+- `multiplexer/services-runtime.json` (19 cases)
 
-Recent failures found and closed in this lane: 0 in the latest audit slice;
-existing services fixtures remain mutation-proven.
+New misses captured in this pass: 6 cases for blank shell service create/resume,
+blank launch-command metadata fallback, and non-service tmux-window guard
+behavior.
+
+Recent failures found and closed in this lane: 2 service runtime parity
+failures.
 
 Uncaptured count: 0.
 
@@ -133,13 +163,17 @@ Behavior families:
   and key-handler dispatch through dashboard overlay callers.
 
 Corpus:
-- `multiplexer/tool-picker.json` (17 cases)
+- `multiplexer/tool-picker.json` (31 cases)
 - `multiplexer/dashboard-control-overlays.json` (key-handler dispatch)
 - `multiplexer/dashboard-interaction-command-keys.json` and
   `multiplexer/session-launch-actions.json` (picker entrypoints)
 
-Recent failures found and closed in this lane: 0 in the latest audit slice;
-existing tool-picker fixtures remain mutation-proven.
+New misses captured in this pass: 14 key-handler cases covering escape, arrow
+movement, digit launch, options overlay entry/exit, launch option parse errors,
+and option-key redraw semantics.
+
+Recent failures found and closed in this lane: 8 tool-picker key-handler
+failures.
 
 Uncaptured count: 0.
 
@@ -155,12 +189,17 @@ Behavior families:
   buffered events.
 
 Corpus:
-- `runtime-state/project-event-stream.json` (22 cases)
+- `runtime-state/project-event-stream.json` (39 cases)
 - `PHASE8_LIVE_RESIDUALS.md` documents the separate SSE live stress/prove-fails
   check for ordering under load, which corpus data cannot fully prove.
 
-Recent failures found and closed in this lane: 0 in the latest audit slice;
-existing project-event-stream fixtures remain mutation-proven.
+New misses captured in this pass: 17 active-stream and alert cases covering
+split SSE frames, multi-line data, CRLF/comment handling, malformed JSON debug,
+empty event names, non-array project-update views, topology/graveyard active
+view refreshes, non-OK stream startup, and all alert variants.
+
+Recent failures found and closed in this lane: 7 project-event-stream parity
+failures.
 
 Uncaptured count: 0.
 

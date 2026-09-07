@@ -1,8 +1,10 @@
+use aimux::dashboard_controller::DashboardKey;
 use aimux::dashboard_launch_options::{
-    DashboardLaunchOptionsState, LaunchOptionsField, LineState, render_launch_options_overlay,
+    DashboardLaunchOptionsState, LaunchOptionsField, LineState, parse_env_assignments,
+    parse_shell_args, render_launch_options_overlay,
 };
 use aimux::dashboard_tool_picker::{
-    DashboardToolPickerMode, DashboardToolPickerState, enabled_dashboard_tools,
+    DashboardToolEntry, DashboardToolPickerMode, DashboardToolPickerState, enabled_dashboard_tools,
     render_tool_picker_overlay,
 };
 use serde_json::{Map, Value, json};
@@ -15,14 +17,14 @@ pub fn run_tool_picker_contract_case(input: &Value) -> Value {
         "showToolPicker" => show_tool_picker(input),
         "buildToolPickerOverlayOutput" => build_tool_picker_overlay_output(input),
         "buildToolOptionsOverlayOutput" => build_tool_options_overlay_output(input),
+        "handleToolPickerKey" => handle_tool_picker_key(input),
+        "handleToolOptionsKey" => handle_tool_options_key(input),
         api => panic!("unknown tool picker api: {api}"),
     }
 }
 
 fn build_tool_options_overlay_output(input: &Value) -> Value {
-    let tools = enabled_dashboard_tools(&json!({
-        "tools": input.get("configTools").cloned().unwrap_or_else(default_config_tools),
-    }));
+    let tools = contract_enabled_tools(input);
     let host = value_field(input, "host");
     let state = launch_options_state(value_field(host, "launchOptionsState"))
         .expect("tool options contract requires launchOptionsState");
@@ -36,9 +38,7 @@ fn build_tool_options_overlay_output(input: &Value) -> Value {
 }
 
 fn build_tool_picker_overlay_output(input: &Value) -> Value {
-    let tools = enabled_dashboard_tools(&json!({
-        "tools": input.get("configTools").cloned().unwrap_or_else(default_config_tools),
-    }));
+    let tools = contract_enabled_tools(input);
     let host = value_field(input, "host");
     let mode = match str_field(host, "pickerMode").unwrap_or("create") {
         "fork" => DashboardToolPickerMode::Fork {
@@ -67,10 +67,43 @@ fn build_tool_picker_overlay_output(input: &Value) -> Value {
 
 fn default_config_tools() -> Value {
     json!({
-        "claude": { "command": "claude", "args": ["--base"], "enabled": true },
+        "claude": {
+            "command": "claude",
+            "args": ["--base"],
+            "enabled": true,
+            "preambleFlag": ["--append-system-prompt"],
+            "sessionIdFlag": ["--session-id", "{sessionId}"]
+        },
         "codex": { "command": "codex", "args": ["--base"], "enabled": true },
         "aider": { "command": "aider", "args": [], "enabled": true },
     })
+}
+
+fn contract_config_tools(input: &Value) -> Value {
+    let mut tools = default_config_tools();
+    let Some(overrides) = input.get("configTools").and_then(Value::as_object) else {
+        return tools;
+    };
+    let Some(base) = tools.as_object_mut() else {
+        return tools;
+    };
+    for (key, override_tool) in overrides {
+        match (base.get_mut(key), override_tool.as_object()) {
+            (Some(Value::Object(existing)), Some(override_object)) => {
+                for (field, value) in override_object {
+                    existing.insert(field.clone(), value.clone());
+                }
+            }
+            _ => {
+                base.insert(key.clone(), override_tool.clone());
+            }
+        }
+    }
+    tools
+}
+
+fn contract_enabled_tools(input: &Value) -> Vec<DashboardToolEntry> {
+    enabled_dashboard_tools(&json!({ "tools": contract_config_tools(input) }))
 }
 
 fn launch_options_state(value: &Value) -> Option<DashboardLaunchOptionsState> {
@@ -304,6 +337,353 @@ fn show_tool_picker(input: &Value) -> Value {
     host.call("openDashboardOverlay", json!(["tool-picker"]));
     host.call("redrawDashboardWithOverlay", json!([]));
     host.snapshot(true)
+}
+
+fn handle_tool_picker_key(input: &Value) -> Value {
+    let mut host = ContractHost::new(value_field(input, "host"));
+    let tools = contract_enabled_tools(input);
+    host.tool_picker_index = None;
+    let selected_index = clamp_tool_picker_index(&mut host, tools.len());
+    let key = parse_contract_key(str_field(input, "data").unwrap_or_default());
+    match key {
+        ContractKey::Escape => {
+            host.call("clearDashboardOverlay", json!([]));
+            host.picker_mode = "create".into();
+            host.fork_source_session_id = Value::Null;
+            host.switch_tool_source_session_id = Value::Null;
+            host.tool_picker_overseer = false;
+            host.tool_picker_scribe = false;
+            host.launch_options_state = Value::Null;
+            host.call("restoreDashboardAfterOverlayDismiss", json!([]));
+        }
+        ContractKey::Up | ContractKey::Text('k') => {
+            host.tool_picker_index = Some(selected_index.saturating_sub(1) as i64);
+            host.call("redrawDashboardWithOverlay", json!([]));
+        }
+        ContractKey::Down | ContractKey::Text('j') => {
+            let max = tools.len().saturating_sub(1);
+            host.tool_picker_index = Some(selected_index.saturating_add(1).min(max) as i64);
+            host.call("redrawDashboardWithOverlay", json!([]));
+        }
+        ContractKey::Text('o') => {
+            if let Some(tool) = tools.get(selected_index) {
+                host.launch_options_state =
+                    launch_options_state_value(&DashboardLaunchOptionsState::new(tool));
+                host.call("openDashboardOverlay", json!(["tool-options"]));
+            }
+            host.call("redrawDashboardWithOverlay", json!([]));
+        }
+        ContractKey::Enter => {
+            if let Some(tool) = tools.get(selected_index) {
+                host.call("clearDashboardOverlay", json!([]));
+                run_selected_tool_on_host(&mut host, tool, None);
+            } else {
+                host.call("redrawDashboardWithOverlay", json!([]));
+            }
+        }
+        ContractKey::Text(digit @ '1'..='9') => {
+            let index = digit.to_digit(10).unwrap_or(1) as usize - 1;
+            if let Some(tool) = tools.get(index) {
+                host.call("clearDashboardOverlay", json!([]));
+                run_selected_tool_on_host(&mut host, tool, None);
+            } else {
+                host.call("redrawDashboardWithOverlay", json!([]));
+            }
+        }
+        _ => host.call("redrawDashboardWithOverlay", json!([])),
+    }
+    host.snapshot(true)
+}
+
+fn handle_tool_options_key(input: &Value) -> Value {
+    let mut host = ContractHost::new(value_field(input, "host"));
+    let tools = contract_enabled_tools(input);
+    let back_to_picker = |host: &mut ContractHost| {
+        host.launch_options_state = Value::Null;
+        host.call("openDashboardOverlay", json!(["tool-picker"]));
+        host.call("redrawDashboardWithOverlay", json!([]));
+    };
+    if host.launch_options_state.is_null() {
+        back_to_picker(&mut host);
+        return host.snapshot(false);
+    }
+
+    match parse_contract_key(str_field(input, "data").unwrap_or_default()) {
+        ContractKey::Escape => back_to_picker(&mut host),
+        ContractKey::Tab => host.call("redrawDashboardWithOverlay", json!([])),
+        ContractKey::Up | ContractKey::Down => {
+            let active_is_args =
+                str_field(&host.launch_options_state, "activeField").unwrap_or("args") == "args";
+            set_object_field(
+                &mut host.launch_options_state,
+                "activeField",
+                json!(if active_is_args { "env" } else { "args" }),
+            );
+            host.call("redrawDashboardWithOverlay", json!([]));
+        }
+        ContractKey::Enter => {
+            let Some(mut state) = launch_options_state(&host.launch_options_state) else {
+                back_to_picker(&mut host);
+                return host.snapshot(false);
+            };
+            let Some(tool) = tools.iter().find(|tool| tool.key == state.tool_key) else {
+                back_to_picker(&mut host);
+                return host.snapshot(false);
+            };
+            match parse_shell_args(&state.args.text).and_then(|extra_args| {
+                parse_env_assignments(&state.env.text).map(|env| (extra_args, env))
+            }) {
+                Ok((extra_args, env)) => {
+                    let override_value = {
+                        let mut object = Map::new();
+                        object.insert("command".into(), Value::String(tool.command.clone()));
+                        object.insert(
+                            "args".into(),
+                            Value::Array(
+                                tool.args
+                                    .iter()
+                                    .chain(extra_args.iter())
+                                    .map(|arg| Value::String(arg.clone()))
+                                    .collect(),
+                            ),
+                        );
+                        if !env.is_empty() {
+                            object.insert("env".into(), Value::Object(env));
+                        }
+                        Value::Object(object)
+                    };
+                    host.call("clearDashboardOverlay", json!([]));
+                    run_selected_tool_on_host(&mut host, tool, Some(override_value));
+                }
+                Err(error) => {
+                    state.error = Some(error);
+                    host.launch_options_state = launch_options_state_value(&state);
+                    host.call("redrawDashboardWithOverlay", json!([]));
+                }
+            }
+        }
+        ContractKey::Text(ch) => {
+            let _ = ch;
+            host.call("redrawDashboardWithOverlay", json!([]));
+        }
+        ContractKey::Backspace => {
+            apply_launch_options_edit(&mut host.launch_options_state, DashboardKey::Backspace);
+            host.call("redrawDashboardWithOverlay", json!([]));
+        }
+        _ => {}
+    }
+    host.snapshot(false)
+}
+
+fn run_selected_tool_on_host(
+    host: &mut ContractHost,
+    tool: &DashboardToolEntry,
+    override_value: Option<Value>,
+) {
+    let tool_key = tool.key.as_str();
+    let overseer = host.tool_picker_overseer;
+    let scribe = host.tool_picker_scribe;
+    host.tool_picker_overseer = false;
+    host.tool_picker_scribe = false;
+    let worktree_path = if overseer || scribe {
+        None
+    } else if host.mode == "dashboard" {
+        host.focused_worktree_path.clone()
+    } else {
+        None
+    };
+    let override_value = override_value.or_else(|| default_launch_override_for_entry(tool));
+    host.launch_options_state = Value::Null;
+
+    match host.picker_mode.as_str() {
+        "switch-tool" => {
+            let session_id = host.switch_tool_source_session_id.clone();
+            host.picker_mode = "create".into();
+            host.fork_source_session_id = Value::Null;
+            host.switch_tool_source_session_id = Value::Null;
+            if session_id.is_null() || session_id.as_str().unwrap_or_default().is_empty() {
+                host.call(
+                    "showDashboardError",
+                    json!([
+                        "Cannot switch agent tool",
+                        ["Switch source was lost before tool selection. Try again."]
+                    ]),
+                );
+                return;
+            }
+            host.call(
+                "switchAgentTool",
+                json!([session_id, tool_key, override_value.unwrap_or(Value::Null)]),
+            );
+        }
+        "fork" => {
+            let source_session_id = host.fork_source_session_id.clone();
+            host.picker_mode = "create".into();
+            host.fork_source_session_id = Value::Null;
+            if source_session_id.is_null()
+                || source_session_id.as_str().unwrap_or_default().is_empty()
+            {
+                host.call(
+                    "showDashboardError",
+                    json!([
+                        "Cannot fork session",
+                        ["Fork source was lost before tool selection. Try again."]
+                    ]),
+                );
+                return;
+            }
+            host.call("generateDashboardSessionId", json!([tool.command]));
+            let mut request = Map::new();
+            request.insert("sourceSessionId".into(), source_session_id);
+            request.insert("targetToolConfigKey".into(), Value::String(tool_key.into()));
+            request.insert(
+                "targetSessionId".into(),
+                Value::String(format!("{}-generated", tool.command)),
+            );
+            if let Some(worktree_path) = worktree_path {
+                request.insert("targetWorktreePath".into(), Value::String(worktree_path));
+            }
+            request.insert("open".into(), Value::Bool(false));
+            if let Some(override_value) = override_value {
+                request.insert("launchOverride".into(), override_value);
+            }
+            host.call("forkAgent", Value::Array(vec![Value::Object(request)]));
+        }
+        _ => {
+            host.picker_mode = "create".into();
+            host.fork_source_session_id = Value::Null;
+            host.switch_tool_source_session_id = Value::Null;
+            host.call("generateDashboardSessionId", json!([tool.command]));
+            let session_id = format!("{}-generated", tool.command);
+            let override_value = override_value.unwrap_or(Value::Null);
+            let launch_command = str_field(&override_value, "command").unwrap_or(&tool.command);
+            let launch_args = override_value
+                .get("args")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_else(|| tool.args.iter().map(|arg| json!(arg)).collect());
+            let env = override_value.get("env").cloned().unwrap_or(Value::Null);
+            host.call(
+                "createSession",
+                json!([
+                    launch_command,
+                    launch_args,
+                    tool_preamble_flag(tool),
+                    tool_key,
+                    null,
+                    tool_session_id_flag(tool),
+                    worktree_path.map(Value::String).unwrap_or(Value::Null),
+                    null,
+                    session_id,
+                    false,
+                    false,
+                    null,
+                    env
+                ]),
+            );
+        }
+    }
+}
+
+fn clamp_tool_picker_index(host: &mut ContractHost, tool_count: usize) -> usize {
+    let max = tool_count.saturating_sub(1) as i64;
+    let index = host.tool_picker_index.unwrap_or(0).clamp(0, max);
+    host.tool_picker_index = Some(index);
+    index as usize
+}
+
+fn tool_preamble_flag(tool: &DashboardToolEntry) -> Value {
+    if tool.key == "claude" && tool.command == "claude" {
+        json!(["--append-system-prompt"])
+    } else {
+        Value::Null
+    }
+}
+
+fn tool_session_id_flag(tool: &DashboardToolEntry) -> Value {
+    if tool.key == "claude" && tool.command == "claude" {
+        json!(["--session-id", "{sessionId}"])
+    } else {
+        Value::Null
+    }
+}
+
+fn default_launch_override_for_entry(tool: &DashboardToolEntry) -> Option<Value> {
+    if tool.default_args.is_empty() && tool.default_env.is_empty() {
+        return None;
+    }
+    let mut output = Map::new();
+    output.insert("command".into(), Value::String(tool.command.clone()));
+    output.insert(
+        "args".into(),
+        Value::Array(
+            tool.args
+                .iter()
+                .chain(tool.default_args.iter())
+                .map(|arg| Value::String(arg.clone()))
+                .collect(),
+        ),
+    );
+    if !tool.default_env.is_empty() {
+        output.insert("env".into(), Value::Object(tool.default_env.clone()));
+    }
+    Some(Value::Object(output))
+}
+
+fn launch_options_state_value(state: &DashboardLaunchOptionsState) -> Value {
+    json!({
+        "toolKey": state.tool_key,
+        "args": { "text": state.args.text, "cursor": state.args.cursor },
+        "env": { "text": state.env.text, "cursor": state.env.cursor },
+        "activeField": match state.active_field {
+            LaunchOptionsField::Args => "args",
+            LaunchOptionsField::Env => "env",
+        },
+        "error": state.error,
+    })
+}
+
+fn apply_launch_options_edit(value: &mut Value, key: DashboardKey) {
+    let Some(mut state) = launch_options_state(value) else {
+        return;
+    };
+    if state.apply_edit_key(key) {
+        *value = launch_options_state_value(&state);
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ContractKey {
+    Escape,
+    Enter,
+    Up,
+    Down,
+    Tab,
+    Backspace,
+    Text(char),
+    Other,
+}
+
+fn parse_contract_key(data: &str) -> ContractKey {
+    match data {
+        "\u{1b}" => ContractKey::Escape,
+        "\u{1b}[A" => ContractKey::Up,
+        "\u{1b}[B" => ContractKey::Down,
+        "\r" | "\n" => ContractKey::Enter,
+        "\t" => ContractKey::Tab,
+        "\u{8}" | "\u{7f}" => ContractKey::Backspace,
+        _ => data
+            .chars()
+            .find(|ch| !ch.is_control())
+            .map(ContractKey::Text)
+            .unwrap_or(ContractKey::Other),
+    }
+}
+
+fn set_object_field(object: &mut Value, field: &str, value: Value) {
+    if let Value::Object(object) = object {
+        object.insert(field.to_owned(), value);
+    }
 }
 
 struct ContractHost {

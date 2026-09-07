@@ -92,6 +92,13 @@ const inputs = [
     options: {},
   },
   {
+    name: "falls back from whitespace launchCommandLine metadata to shell args",
+    api: "buildServiceStateFromMetadata",
+    serviceId: "svc-3",
+    metadata: { command: "shell", args: ["-lc", "npm start"], label: "npm", launchCommandLine: "   " },
+    options: {},
+  },
+  {
     name: "labels blank service commands as shell",
     api: "serviceLabelForCommand",
     commandLine: "   ",

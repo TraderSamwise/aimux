@@ -10,8 +10,8 @@ Statuses:
 - `ERROR`: the audit could not prove enforcement because the suite errored outside a fixture assertion.
 - `STATIC`: non-empty active suite observed without dynamic mutation.
 
-Summary: 275 suites, 322 suite/corpus bindings, 3928 cases.
-Binding statuses: PROVEN-FAILS 322, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
+Summary: 278 suites, 325 suite/corpus bindings, 4048 cases.
+Binding statuses: PROVEN-FAILS 325, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
 
 | Suite | Status | Corpus | Cases | Detail |
 | --- | --- | --- | ---: | --- |
@@ -19,6 +19,7 @@ Binding statuses: PROVEN-FAILS 322, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
 | `core_command_contract` | PROVEN-FAILS | `testdata/contracts/v1/core-command/routes.json` | 100 | mutated fixture output failed owning Rust suite |
 | `core_command_contract` | PROVEN-FAILS | `testdata/contracts/v1/core-command/commands.json` | 12 | mutated fixture output failed owning Rust suite |
 | `dashboard_footer_hints_contract` | PROVEN-FAILS | `testdata/contracts/v1/tui/dashboard-footer-hints.json` | 6 | mutated fixture output failed owning Rust suite |
+| `dashboard_session_details_contract` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/dashboard-session-details.json` | 5 | mutated fixture output failed owning Rust suite |
 | `fixture_agent_display` | PROVEN-FAILS | `testdata/contracts/v1/agent-display/labels.json` | 13 | mutated fixture output failed owning Rust suite |
 | `fixture_agent_io_methods` | PROVEN-FAILS | `testdata/contracts/v1/agent-output/io-methods.json` | 1 | mutated fixture output failed owning Rust suite |
 | `fixture_agent_output_io` | PROVEN-FAILS | `testdata/contracts/v1/agent-output/bounds.json` | 11 | mutated fixture output failed owning Rust suite |
@@ -100,20 +101,22 @@ Binding statuses: PROVEN-FAILS 322, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
 | `fixture_dashboard_interaction` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/dashboard-interaction.json` | 13 | mutated fixture output failed owning Rust suite |
 | `fixture_dashboard_interaction_activation` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/dashboard-interaction-activation.json` | 10 | mutated fixture output failed owning Rust suite |
 | `fixture_dashboard_interaction_command_keys` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/dashboard-interaction-command-keys.json` | 12 | mutated fixture output failed owning Rust suite |
+| `fixture_dashboard_interaction_helpers` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/dashboard-interaction-helpers.json` | 12 | mutated fixture output failed owning Rust suite |
 | `fixture_dashboard_interaction_navigation` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/dashboard-interaction-navigation.json` | 10 | mutated fixture output failed owning Rust suite |
 | `fixture_dashboard_interaction_orchestration_submit` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/dashboard-interaction-orchestration-submit.json` | 6 | mutated fixture output failed owning Rust suite |
-| `fixture_dashboard_interaction_overlays` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/dashboard-interaction-overlays.json` | 24 | mutated fixture output failed owning Rust suite |
+| `fixture_dashboard_interaction_overlays` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/dashboard-interaction-overlays.json` | 40 | mutated fixture output failed owning Rust suite |
 | `fixture_dashboard_interaction_review_request` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/dashboard-interaction-review-request.json` | 5 | mutated fixture output failed owning Rust suite |
 | `fixture_dashboard_lifecycle` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/dashboard-lifecycle.json` | 9 | mutated fixture output failed owning Rust suite |
 | `fixture_dashboard_model_apply` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/dashboard-model-apply.json` | 7 | mutated fixture output failed owning Rust suite |
 | `fixture_dashboard_model_metadata_pending` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/dashboard-model-metadata-pending.json` | 6 | mutated fixture output failed owning Rust suite |
 | `fixture_dashboard_model_pending_actions` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/dashboard-model-pending-actions.json` | 6 | mutated fixture output failed owning Rust suite |
+| `fixture_dashboard_model_process_info` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/dashboard-model-process-info.json` | 3 | mutated fixture output failed owning Rust suite |
 | `fixture_dashboard_model_service` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/dashboard-model-service.json` | 11 | mutated fixture output failed owning Rust suite |
 | `fixture_dashboard_model_services_lifecycle` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/dashboard-model-services-lifecycle.json` | 4 | mutated fixture output failed owning Rust suite |
 | `fixture_dashboard_navigation` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/dashboard-navigation.json` | 1 | mutated fixture output failed owning Rust suite |
 | `fixture_dashboard_ops_agent_actions` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/dashboard-ops-agent-actions.json` | 6 | mutated fixture output failed owning Rust suite |
 | `fixture_dashboard_ops_helpers` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/dashboard-ops-helpers.json` | 5 | mutated fixture output failed owning Rust suite |
-| `fixture_dashboard_ops_mutations` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/dashboard-ops-mutations.json` | 16 | mutated fixture output failed owning Rust suite |
+| `fixture_dashboard_ops_mutations` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/dashboard-ops-mutations.json` | 19 | mutated fixture output failed owning Rust suite |
 | `fixture_dashboard_order` | PROVEN-FAILS | `testdata/contracts/v1/dashboard/order.json` | 6 | mutated fixture output failed owning Rust suite |
 | `fixture_dashboard_orphans` | PROVEN-FAILS | `testdata/contracts/v1/dashboard/orphans.json` | 20 | mutated fixture output failed owning Rust suite |
 | `fixture_dashboard_pending_actions` | PROVEN-FAILS | `testdata/contracts/v1/dashboard/pending-actions.json` | 2 | mutated fixture output failed owning Rust suite |
@@ -184,24 +187,24 @@ Binding statuses: PROVEN-FAILS 322, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
 | `fixture_metadata_store` | PROVEN-FAILS | `testdata/contracts/v1/metadata-store/store.json` | 21 | mutated fixture output failed owning Rust suite |
 | `fixture_monitor_capture` | PROVEN-FAILS | `testdata/contracts/v1/monitor/capture.json` | 11 | mutated fixture output failed owning Rust suite |
 | `fixture_monitor_targets` | PROVEN-FAILS | `testdata/contracts/v1/monitor/targets.json` | 12 | mutated fixture output failed owning Rust suite |
-| `fixture_multiplexer_dashboard_state_helpers` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/dashboard-state-helpers.json` | 7 | mutated fixture output failed owning Rust suite |
-| `fixture_multiplexer_index_helpers` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/index-helpers.json` | 10 | mutated fixture output failed owning Rust suite |
+| `fixture_multiplexer_dashboard_state_helpers` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/dashboard-state-helpers.json` | 10 | mutated fixture output failed owning Rust suite |
+| `fixture_multiplexer_index_helpers` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/index-helpers.json` | 11 | mutated fixture output failed owning Rust suite |
 | `fixture_multiplexer_notifications` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/notifications.json` | 5 | mutated fixture output failed owning Rust suite |
 | `fixture_multiplexer_persistence_desktop_projection` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/persistence-desktop-projection.json` | 6 | mutated fixture output failed owning Rust suite |
 | `fixture_multiplexer_persistence_reapply` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/persistence-reapply.json` | 2 | mutated fixture output failed owning Rust suite |
 | `fixture_multiplexer_persistence_statusline` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/persistence-statusline.json` | 4 | mutated fixture output failed owning Rust suite |
 | `fixture_multiplexer_persistence_statusline_snapshot` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/persistence-statusline-snapshot.json` | 4 | mutated fixture output failed owning Rust suite |
 | `fixture_multiplexer_persistence_worktree_lists` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/persistence-worktree-lists.json` | 2 | mutated fixture output failed owning Rust suite |
-| `fixture_multiplexer_persistence_worktrees` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/persistence-worktrees.json` | 27 | mutated fixture output failed owning Rust suite |
+| `fixture_multiplexer_persistence_worktrees` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/persistence-worktrees.json` | 33 | mutated fixture output failed owning Rust suite |
 | `fixture_multiplexer_resource_refresh` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/library-refresh.json` | 6 | mutated fixture output failed owning Rust suite |
 | `fixture_multiplexer_resource_refresh` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/project-refresh.json` | 6 | mutated fixture output failed owning Rust suite |
 | `fixture_multiplexer_resource_refresh` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/topology-refresh.json` | 6 | mutated fixture output failed owning Rust suite |
-| `fixture_multiplexer_runtime_helpers` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/runtime-helpers.json` | 10 | mutated fixture output failed owning Rust suite |
-| `fixture_multiplexer_runtime_state_methods` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/runtime-state-methods.json` | 53 | mutated fixture output failed owning Rust suite |
+| `fixture_multiplexer_runtime_helpers` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/runtime-helpers.json` | 15 | mutated fixture output failed owning Rust suite |
+| `fixture_multiplexer_runtime_state_methods` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/runtime-state-methods.json` | 59 | mutated fixture output failed owning Rust suite |
 | `fixture_multiplexer_runtime_state_refresh` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/runtime-state-refresh.json` | 12 | mutated fixture output failed owning Rust suite |
-| `fixture_multiplexer_services` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/services.json` | 7 | mutated fixture output failed owning Rust suite |
-| `fixture_multiplexer_services_runtime` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/services-runtime.json` | 14 | mutated fixture output failed owning Rust suite |
-| `fixture_multiplexer_worktrees` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/worktrees.json` | 26 | mutated fixture output failed owning Rust suite |
+| `fixture_multiplexer_services` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/services.json` | 8 | mutated fixture output failed owning Rust suite |
+| `fixture_multiplexer_services_runtime` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/services-runtime.json` | 19 | mutated fixture output failed owning Rust suite |
+| `fixture_multiplexer_worktrees` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/worktrees.json` | 33 | mutated fixture output failed owning Rust suite |
 | `fixture_multiplexer_worktrees_settlement` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/worktrees-settlement.json` | 26 | mutated fixture output failed owning Rust suite |
 | `fixture_notification_policy` | PROVEN-FAILS | `testdata/contracts/v1/notifications/policy.json` | 23 | mutated fixture output failed owning Rust suite |
 | `fixture_notifications_orchestration` | PROVEN-FAILS | `testdata/contracts/v1/orchestration/routing.json` | 9 | mutated fixture output failed owning Rust suite |
@@ -223,7 +226,7 @@ Binding statuses: PROVEN-FAILS 322, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
 | `fixture_project_api_refresh` | PROVEN-FAILS | `testdata/contracts/v1/project-api/refresh.json` | 3 | mutated fixture output failed owning Rust suite |
 | `fixture_project_catalog_registry` | PROVEN-FAILS | `testdata/contracts/v1/project-catalog/registry.json` | 4 | mutated fixture output failed owning Rust suite |
 | `fixture_project_connection_display` | PROVEN-FAILS | `testdata/contracts/v1/project-connection/display.json` | 19 | mutated fixture output failed owning Rust suite |
-| `fixture_project_event_stream` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/project-event-stream.json` | 22 | mutated fixture output failed owning Rust suite |
+| `fixture_project_event_stream` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/project-event-stream.json` | 39 | mutated fixture output failed owning Rust suite |
 | `fixture_project_observability` | PROVEN-FAILS | `testdata/contracts/v1/project-observability/observability.json` | 5 | mutated fixture output failed owning Rust suite |
 | `fixture_project_scanner` | PROVEN-FAILS | `testdata/contracts/v1/project-catalog/scanner.json` | 8 | mutated fixture output failed owning Rust suite |
 | `fixture_project_takeover` | PROVEN-FAILS | `testdata/contracts/v1/project-takeover/takeover.json` | 5 | mutated fixture output failed owning Rust suite |
@@ -265,12 +268,12 @@ Binding statuses: PROVEN-FAILS 322, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
 | `fixture_session_launch_actions` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/session-launch-actions.json` | 11 | mutated fixture output failed owning Rust suite |
 | `fixture_session_launch_create` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/session-launch-create.json` | 9 | mutated fixture output failed owning Rust suite |
 | `fixture_session_launch_dashboard` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/session-launch-dashboard.json` | 10 | mutated fixture output failed owning Rust suite |
-| `fixture_session_launch_default_scribe` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/session-launch-default-scribe.json` | 5 | mutated fixture output failed owning Rust suite |
+| `fixture_session_launch_default_scribe` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/session-launch-default-scribe.json` | 8 | mutated fixture output failed owning Rust suite |
 | `fixture_session_launch_migrate_switch` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/session-launch-migrate-switch.json` | 7 | mutated fixture output failed owning Rust suite |
 | `fixture_session_launch_resume` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/session-launch-resume.json` | 7 | mutated fixture output failed owning Rust suite |
 | `fixture_session_launch_startup` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/session-launch-startup.json` | 4 | mutated fixture output failed owning Rust suite |
 | `fixture_session_runtime` | PROVEN-FAILS | `testdata/contracts/v1/session/runtime.json` | 2 | mutated fixture output failed owning Rust suite |
-| `fixture_session_runtime_agent_controls` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/session-runtime-agent-controls.json` | 6 | mutated fixture output failed owning Rust suite |
+| `fixture_session_runtime_agent_controls` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/session-runtime-agent-controls.json` | 10 | mutated fixture output failed owning Rust suite |
 | `fixture_session_runtime_headline` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/session-runtime-headline.json` | 6 | mutated fixture output failed owning Rust suite |
 | `fixture_session_runtime_label_update` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/session-runtime-label-update.json` | 6 | mutated fixture output failed owning Rust suite |
 | `fixture_session_runtime_metadata` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/session-runtime-metadata.json` | 4 | mutated fixture output failed owning Rust suite |
@@ -313,12 +316,12 @@ Binding statuses: PROVEN-FAILS 322, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
 | `fixture_tmux_window_open` | PROVEN-FAILS | `testdata/contracts/v1/tmux/window-open.json` | 8 | mutated fixture output failed owning Rust suite |
 | `fixture_tool_hooks` | PROVEN-FAILS | `testdata/contracts/v1/hooks/tool-hooks.json` | 43 | mutated fixture output failed owning Rust suite |
 | `fixture_tool_output_watchers` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/tool-output-watchers.json` | 7 | mutated fixture output failed owning Rust suite |
-| `fixture_tool_picker` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/tool-picker.json` | 17 | mutated fixture output failed owning Rust suite |
+| `fixture_tool_picker` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/tool-picker.json` | 31 | mutated fixture output failed owning Rust suite |
 | `fixture_transcript_reconciler` | PROVEN-FAILS | `testdata/contracts/v1/agent-output/transcript-reconciler.json` | 13 | mutated fixture output failed owning Rust suite |
 | `fixture_transcript_turn_state` | PROVEN-FAILS | `testdata/contracts/v1/transcript/turn-state.json` | 27 | mutated fixture output failed owning Rust suite |
 | `fixture_transport_security` | PROVEN-FAILS | `testdata/contracts/v1/transport/security.json` | 7 | mutated fixture output failed owning Rust suite |
-| `fixture_tui_api_runtime` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/tui-api-runtime.json` | 19 | mutated fixture output failed owning Rust suite |
-| `fixture_tui_api_runtime_state` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/tui-api-runtime-state.json` | 19 | mutated fixture output failed owning Rust suite |
+| `fixture_tui_api_runtime` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/tui-api-runtime.json` | 24 | mutated fixture output failed owning Rust suite |
+| `fixture_tui_api_runtime_state` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/tui-api-runtime-state.json` | 23 | mutated fixture output failed owning Rust suite |
 | `fixture_tui_render_box` | PROVEN-FAILS | `testdata/contracts/v1/tui/render-box.json` | 6 | mutated fixture output failed owning Rust suite |
 | `fixture_tui_render_text` | PROVEN-FAILS | `testdata/contracts/v1/tui/render-text.json` | 4 | mutated fixture output failed owning Rust suite |
 | `fixture_tui_render_theme` | PROVEN-FAILS | `testdata/contracts/v1/tui/render-theme.json` | 36 | mutated fixture output failed owning Rust suite |

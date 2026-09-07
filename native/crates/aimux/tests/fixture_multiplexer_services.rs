@@ -24,7 +24,7 @@ struct Case {
 fn multiplexer_services_contract_matches_typescript() {
     let contract: Contract =
         serde_json::from_str(FIXTURE).expect("multiplexer services fixture parses");
-    assert_eq!(contract.cases.len(), 7);
+    assert_eq!(contract.cases.len(), 8);
 
     let mut failures = Vec::new();
     for case in contract.cases {

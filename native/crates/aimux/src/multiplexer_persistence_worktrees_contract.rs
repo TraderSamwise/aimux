@@ -14,6 +14,10 @@ pub fn run_multiplexer_persistence_worktrees_contract_case(api: &str, input: &Va
         "resurrectGraveyardSession" => state.resurrect_graveyard_session(),
         "cleanupGraveyard" => state.cleanup_graveyard(),
         "cleanupWorktreeCaches" => state.cleanup_worktree_caches(),
+        "startGraveyardCleanup" => state.start_graveyard_cleanup(),
+        "stopGraveyardCleanup" => state.stop_graveyard_cleanup(),
+        "startInboxCleanup" => state.start_inbox_cleanup(),
+        "stopInboxCleanup" => state.stop_inbox_cleanup(),
         api => panic!("unknown multiplexer persistence worktrees api: {api}"),
     }
 }
@@ -27,10 +31,15 @@ struct PersistenceWorktreeState<'a> {
     pending_worktree_create_paths: Vec<Value>,
     pending_worktree_removal_paths: Vec<Value>,
     dashboard_worktree_actions: Vec<Value>,
+    graveyard_cleanup_interval: Value,
+    graveyard_cleanup_running: bool,
+    inbox_cleanup_interval: Value,
+    inbox_cleanup_running: bool,
     footer_flash: Value,
     footer_flash_ticks: Value,
     operation_failures: Vec<Value>,
     calls: Vec<Value>,
+    timers: Vec<Value>,
     removed_paths: Vec<String>,
 }
 
@@ -55,10 +64,21 @@ impl<'a> PersistenceWorktreeState<'a> {
             pending_worktree_create_paths: Vec::new(),
             pending_worktree_removal_paths: Vec::new(),
             dashboard_worktree_actions: Vec::new(),
+            graveyard_cleanup_interval: input
+                .get("graveyardCleanupInterval")
+                .cloned()
+                .unwrap_or(Value::Null),
+            graveyard_cleanup_running: bool_field(input, "graveyardCleanupRunning"),
+            inbox_cleanup_interval: input
+                .get("inboxCleanupInterval")
+                .cloned()
+                .unwrap_or(Value::Null),
+            inbox_cleanup_running: bool_field(input, "inboxCleanupRunning"),
             footer_flash: Value::Null,
             footer_flash_ticks: Value::Null,
             operation_failures: Vec::new(),
             calls: Vec::new(),
+            timers: Vec::new(),
             removed_paths: Vec::new(),
         }
     }
@@ -554,6 +574,66 @@ impl<'a> PersistenceWorktreeState<'a> {
         }))
     }
 
+    fn start_graveyard_cleanup(&mut self) -> Value {
+        if self.graveyard_cleanup_interval.is_null() {
+            self.graveyard_cleanup_interval = json!("<interval:1>");
+            self.timers.push(json!({
+                "id": "<interval:1>",
+                "delayMs": 86400000,
+                "args": [],
+                "cleared": false,
+                "fired": false,
+            }));
+        }
+        self.void_ok()
+    }
+
+    fn stop_graveyard_cleanup(&mut self) -> Value {
+        if !self.graveyard_cleanup_interval.is_null() {
+            let id = self.graveyard_cleanup_interval.clone();
+            self.graveyard_cleanup_interval = Value::Null;
+            self.timers.push(json!({
+                "id": id,
+                "delayMs": null,
+                "args": [],
+                "cleared": true,
+                "fired": false,
+                "unknown": true,
+            }));
+        }
+        self.void_ok()
+    }
+
+    fn start_inbox_cleanup(&mut self) -> Value {
+        if self.inbox_cleanup_interval.is_null() {
+            self.inbox_cleanup_interval = json!("<interval:1>");
+            self.timers.push(json!({
+                "id": "<interval:1>",
+                "delayMs": 86400000,
+                "args": [],
+                "cleared": false,
+                "fired": false,
+            }));
+        }
+        self.void_ok()
+    }
+
+    fn stop_inbox_cleanup(&mut self) -> Value {
+        if !self.inbox_cleanup_interval.is_null() {
+            let id = self.inbox_cleanup_interval.clone();
+            self.inbox_cleanup_interval = Value::Null;
+            self.timers.push(json!({
+                "id": id,
+                "delayMs": null,
+                "args": [],
+                "cleared": true,
+                "fired": false,
+                "unknown": true,
+            }));
+        }
+        self.void_ok()
+    }
+
     fn protected_worktrees_from_host(&mut self) -> Vec<ProtectedWorktree> {
         let mut protected = Vec::new();
         for session in array_field(&self.topology, "sessions") {
@@ -715,6 +795,17 @@ impl<'a> PersistenceWorktreeState<'a> {
         })
     }
 
+    fn void_ok(&self) -> Value {
+        json!({
+            "ok": true,
+            "completion": Value::Null,
+            "checkedPaths": self.checked_paths(),
+            "host": self.host_snapshot(),
+            "topology": self.topology,
+            "operationFailures": self.operation_failures,
+        })
+    }
+
     fn error(&self, error: String) -> Value {
         json!({
             "ok": false,
@@ -732,10 +823,15 @@ impl<'a> PersistenceWorktreeState<'a> {
             "offlineServices": self.offline_services,
             "footerFlash": self.footer_flash,
             "footerFlashTicks": self.footer_flash_ticks,
+            "graveyardCleanupInterval": self.graveyard_cleanup_interval,
+            "graveyardCleanupRunning": self.graveyard_cleanup_running,
+            "inboxCleanupInterval": self.inbox_cleanup_interval,
+            "inboxCleanupRunning": self.inbox_cleanup_running,
             "pendingWorktreeCreatePaths": self.pending_worktree_create_paths,
             "pendingWorktreeRemovalPaths": self.pending_worktree_removal_paths,
             "dashboardWorktreeActions": self.dashboard_worktree_actions,
             "calls": self.calls,
+            "timers": self.timers,
         })
     }
 

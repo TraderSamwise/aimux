@@ -885,6 +885,722 @@
         "timers": { "now": 0, "pending": [] }
       },
       "inputSha256": "b17781bbe0635baaa407c52e73f4649f246192947d1d8954fbe74a732db0875e"
+    },
+    {
+      "id": "project-event-stream-023",
+      "name": "parses split active SSE project update frames without losing pending data",
+      "source": "src/multiplexer/project-event-stream.test.ts",
+      "sourceName": "parses split active SSE project update frames without losing pending data",
+      "api": "DashboardProjectEventAdapter",
+      "input": {
+        "endpointResponses": [
+          {
+            "type": "endpoint",
+            "endpoint": { "host": "127.0.0.1", "port": 43444, "pid": 1234, "updatedAt": "2026-09-07T00:00:00.000Z" }
+          }
+        ],
+        "fetchResponses": [{ "type": "stream", "label": "split" }],
+        "ops": [
+          { "op": "start" },
+          { "op": "advance", "ms": 0 },
+          { "op": "enqueue", "label": "split", "text": "event: project_update\ndata: {\"type\":\"project" },
+          { "op": "enqueue", "label": "split", "text": "_update\",\"views\":[\"desktop-state\"]}\n\n" },
+          { "op": "advance", "ms": 250 }
+        ]
+      },
+      "output": {
+        "host": {
+          "mode": "dashboard",
+          "screen": null,
+          "visible": true,
+          "calls": [
+            { "kind": "dashboard-model", "force": true, "lifecycle": { "mode": "dashboard" } },
+            { "kind": "render" }
+          ],
+          "renders": 1,
+          "footerFlash": null,
+          "footerFlashTicks": null,
+          "projectStoryTitle": null,
+          "projectObservabilityLoaded": false,
+          "hasAdapter": true
+        },
+        "calls": {
+          "debug": [],
+          "control": [{ "fn": "resolveCurrentProjectServiceEndpointForDashboard", "timeoutMs": 1000 }],
+          "fetch": [
+            { "url": "http://127.0.0.1:43444/events", "headers": { "accept": "text/event-stream" }, "hasSignal": true }
+          ]
+        },
+        "timers": { "now": 250, "pending": [{ "id": 5, "at": 35000 }] }
+      },
+      "inputSha256": "583e6192074506afbbc4d74928b688c9422b59cdb9fd8ad1edfad855919c9024"
+    },
+    {
+      "id": "project-event-stream-024",
+      "name": "joins multi-line SSE data and refreshes the active library view",
+      "source": "src/multiplexer/project-event-stream.test.ts",
+      "sourceName": "joins multi-line SSE data and refreshes the active library view",
+      "api": "DashboardProjectEventAdapter",
+      "input": {
+        "screen": "library",
+        "endpointResponses": [
+          {
+            "type": "endpoint",
+            "endpoint": { "host": "127.0.0.1", "port": 43444, "pid": 1234, "updatedAt": "2026-09-07T00:00:00.000Z" }
+          }
+        ],
+        "fetchResponses": [{ "type": "stream", "label": "multiline" }],
+        "ops": [
+          { "op": "start" },
+          { "op": "advance", "ms": 0 },
+          {
+            "op": "enqueue",
+            "label": "multiline",
+            "text": "event: project_update\ndata: {\"views\":\ndata: [\"library\"]}\n\n"
+          },
+          { "op": "advance", "ms": 250 }
+        ]
+      },
+      "output": {
+        "host": {
+          "mode": "dashboard",
+          "screen": "library",
+          "visible": true,
+          "calls": [
+            { "kind": "library", "force": true, "lifecycle": { "mode": "dashboard", "screen": "library" } },
+            { "kind": "render" }
+          ],
+          "renders": 1,
+          "footerFlash": null,
+          "footerFlashTicks": null,
+          "projectStoryTitle": null,
+          "projectObservabilityLoaded": false,
+          "hasAdapter": true
+        },
+        "calls": {
+          "debug": [],
+          "control": [{ "fn": "resolveCurrentProjectServiceEndpointForDashboard", "timeoutMs": 1000 }],
+          "fetch": [
+            { "url": "http://127.0.0.1:43444/events", "headers": { "accept": "text/event-stream" }, "hasSignal": true }
+          ]
+        },
+        "timers": { "now": 250, "pending": [{ "id": 4, "at": 35000 }] }
+      },
+      "inputSha256": "1e1cc0e434240ddf4297b3950ed80e1dff35a585eb5c83fce63d7adde9557283"
+    },
+    {
+      "id": "project-event-stream-025",
+      "name": "handles CRLF comments and notification alert frames from an active stream",
+      "source": "src/multiplexer/project-event-stream.test.ts",
+      "sourceName": "handles CRLF comments and notification alert frames from an active stream",
+      "api": "DashboardProjectEventAdapter",
+      "input": {
+        "endpointResponses": [
+          {
+            "type": "endpoint",
+            "endpoint": { "host": "127.0.0.1", "port": 43444, "pid": 1234, "updatedAt": "2026-09-07T00:00:00.000Z" }
+          }
+        ],
+        "fetchResponses": [{ "type": "stream", "label": "crlf-alert" }],
+        "ops": [
+          { "op": "start" },
+          { "op": "advance", "ms": 0 },
+          {
+            "op": "enqueue",
+            "label": "crlf-alert",
+            "text": ":keepalive\r\nevent: alert\r\ndata: {\"type\":\"alert\",\"kind\":\"notification\",\"title\":\"Build done\",\"ts\":\"now\"}\r\n\r\n"
+          }
+        ]
+      },
+      "output": {
+        "host": {
+          "mode": "dashboard",
+          "screen": null,
+          "visible": true,
+          "calls": [{ "kind": "render" }],
+          "renders": 1,
+          "footerFlash": "◌ Build done",
+          "footerFlashTicks": 4,
+          "projectStoryTitle": null,
+          "projectObservabilityLoaded": false,
+          "hasAdapter": true
+        },
+        "calls": {
+          "debug": [],
+          "control": [{ "fn": "resolveCurrentProjectServiceEndpointForDashboard", "timeoutMs": 1000 }],
+          "fetch": [
+            { "url": "http://127.0.0.1:43444/events", "headers": { "accept": "text/event-stream" }, "hasSignal": true }
+          ]
+        },
+        "timers": { "now": 0, "pending": [{ "id": 3, "at": 35000 }] }
+      },
+      "inputSha256": "2dec3a5190ba8165d969e3c3d8eb6c159427ec7400e7cf50a71d67e61f4ba10c"
+    },
+    {
+      "id": "project-event-stream-026",
+      "name": "ignores malformed active SSE JSON but records a dashboard debug line",
+      "source": "src/multiplexer/project-event-stream.test.ts",
+      "sourceName": "ignores malformed active SSE JSON but records a dashboard debug line",
+      "api": "DashboardProjectEventAdapter",
+      "input": {
+        "endpointResponses": [
+          {
+            "type": "endpoint",
+            "endpoint": { "host": "127.0.0.1", "port": 43444, "pid": 1234, "updatedAt": "2026-09-07T00:00:00.000Z" }
+          }
+        ],
+        "fetchResponses": [{ "type": "stream", "label": "bad-json" }],
+        "ops": [
+          { "op": "start" },
+          { "op": "advance", "ms": 0 },
+          { "op": "enqueue", "label": "bad-json", "text": "event: alert\ndata: {bad}\n\n" }
+        ]
+      },
+      "output": {
+        "host": {
+          "mode": "dashboard",
+          "screen": null,
+          "visible": true,
+          "calls": [],
+          "renders": 0,
+          "footerFlash": null,
+          "footerFlashTicks": null,
+          "projectStoryTitle": null,
+          "projectObservabilityLoaded": false,
+          "hasAdapter": true
+        },
+        "calls": {
+          "debug": [
+            {
+              "message": "ignored malformed dashboard SSE payload: Expected property name or '}' in JSON at position 1 (line 1 column 2)",
+              "scope": "dashboard"
+            }
+          ],
+          "control": [{ "fn": "resolveCurrentProjectServiceEndpointForDashboard", "timeoutMs": 1000 }],
+          "fetch": [
+            { "url": "http://127.0.0.1:43444/events", "headers": { "accept": "text/event-stream" }, "hasSignal": true }
+          ]
+        },
+        "timers": { "now": 0, "pending": [{ "id": 3, "at": 35000 }] }
+      },
+      "inputSha256": "06877ce7830e8816beece8800f2f55c2528acb8ddb40620dea4b1b41d749cdbf"
+    },
+    {
+      "id": "project-event-stream-027",
+      "name": "ignores active stream events with empty event names",
+      "source": "src/multiplexer/project-event-stream.test.ts",
+      "sourceName": "ignores active stream events with empty event names",
+      "api": "DashboardProjectEventAdapter",
+      "input": {
+        "endpointResponses": [
+          {
+            "type": "endpoint",
+            "endpoint": { "host": "127.0.0.1", "port": 43444, "pid": 1234, "updatedAt": "2026-09-07T00:00:00.000Z" }
+          }
+        ],
+        "fetchResponses": [{ "type": "stream", "label": "message-default" }],
+        "ops": [
+          { "op": "start" },
+          { "op": "advance", "ms": 0 },
+          { "op": "enqueue", "label": "message-default", "text": "event:\ndata: {\"views\":[\"desktop-state\"]}\n\n" },
+          { "op": "advance", "ms": 250 }
+        ]
+      },
+      "output": {
+        "host": {
+          "mode": "dashboard",
+          "screen": null,
+          "visible": true,
+          "calls": [],
+          "renders": 0,
+          "footerFlash": null,
+          "footerFlashTicks": null,
+          "projectStoryTitle": null,
+          "projectObservabilityLoaded": false,
+          "hasAdapter": true
+        },
+        "calls": {
+          "debug": [],
+          "control": [{ "fn": "resolveCurrentProjectServiceEndpointForDashboard", "timeoutMs": 1000 }],
+          "fetch": [
+            { "url": "http://127.0.0.1:43444/events", "headers": { "accept": "text/event-stream" }, "hasSignal": true }
+          ]
+        },
+        "timers": { "now": 250, "pending": [{ "id": 3, "at": 35000 }] }
+      },
+      "inputSha256": "3ca15f4224aeb6ad2bedd8ac4e0d635de91c0e7f067a5ae918f0ac3315b47318"
+    },
+    {
+      "id": "project-event-stream-028",
+      "name": "ignores project update events whose views field is not an array",
+      "source": "src/multiplexer/project-event-stream.test.ts",
+      "sourceName": "ignores project update events whose views field is not an array",
+      "api": "DashboardProjectEventAdapter",
+      "input": {
+        "ops": [
+          {
+            "op": "handle",
+            "name": "project_update",
+            "payload": { "type": "project_update", "views": "desktop-state" }
+          },
+          { "op": "runAll" }
+        ]
+      },
+      "output": {
+        "host": {
+          "mode": "dashboard",
+          "screen": null,
+          "visible": true,
+          "calls": [],
+          "renders": 0,
+          "footerFlash": null,
+          "footerFlashTicks": null,
+          "projectStoryTitle": null,
+          "projectObservabilityLoaded": false,
+          "hasAdapter": true
+        },
+        "calls": { "debug": [], "control": [], "fetch": [] },
+        "timers": { "now": 0, "pending": [] }
+      },
+      "inputSha256": "e575d68561443176d76d8dca1074448b1544b1c472e43bd642bcd501533bbffe"
+    },
+    {
+      "id": "project-event-stream-029",
+      "name": "refreshes topology when project updates name the active topology view",
+      "source": "src/multiplexer/project-event-stream.test.ts",
+      "sourceName": "refreshes topology when project updates name the active topology view",
+      "api": "DashboardProjectEventAdapter",
+      "input": {
+        "screen": "topology",
+        "ops": [
+          { "op": "handle", "name": "project_update", "payload": { "type": "project_update", "views": ["topology"] } },
+          { "op": "runAll" }
+        ]
+      },
+      "output": {
+        "host": {
+          "mode": "dashboard",
+          "screen": "topology",
+          "visible": true,
+          "calls": [
+            { "kind": "topology", "force": true, "lifecycle": { "mode": "dashboard", "screen": "topology" } },
+            { "kind": "render" }
+          ],
+          "renders": 1,
+          "footerFlash": null,
+          "footerFlashTicks": null,
+          "projectStoryTitle": null,
+          "projectObservabilityLoaded": false,
+          "hasAdapter": true
+        },
+        "calls": { "debug": [], "control": [], "fetch": [] },
+        "timers": { "now": 250, "pending": [] }
+      },
+      "inputSha256": "49765554385d6f1e2de03070cc471769bccdaf3d57a913700d59874cc43991c9"
+    },
+    {
+      "id": "project-event-stream-030",
+      "name": "refreshes graveyard when project updates name the active graveyard view",
+      "source": "src/multiplexer/project-event-stream.test.ts",
+      "sourceName": "refreshes graveyard when project updates name the active graveyard view",
+      "api": "DashboardProjectEventAdapter",
+      "input": {
+        "screen": "graveyard",
+        "ops": [
+          { "op": "handle", "name": "project_update", "payload": { "type": "project_update", "views": ["graveyard"] } },
+          { "op": "runAll" }
+        ]
+      },
+      "output": {
+        "host": {
+          "mode": "dashboard",
+          "screen": "graveyard",
+          "visible": true,
+          "calls": [
+            { "kind": "graveyard", "force": true, "lifecycle": { "mode": "dashboard", "screen": "graveyard" } },
+            { "kind": "graveyard-frame" },
+            { "kind": "render" }
+          ],
+          "renders": 1,
+          "footerFlash": null,
+          "footerFlashTicks": null,
+          "projectStoryTitle": null,
+          "projectObservabilityLoaded": false,
+          "hasAdapter": true
+        },
+        "calls": { "debug": [], "control": [], "fetch": [] },
+        "timers": { "now": 250, "pending": [] }
+      },
+      "inputSha256": "4909b5abf0e630ca36a56aac2825d3980199557d4c5c8eabf1a289b963c2ded0"
+    },
+    {
+      "id": "project-event-stream-031",
+      "name": "resyncs cached views when the SSE endpoint returns a non-ok status",
+      "source": "src/multiplexer/project-event-stream.test.ts",
+      "sourceName": "resyncs cached views when the SSE endpoint returns a non-ok status",
+      "api": "DashboardProjectEventAdapter",
+      "input": {
+        "endpointResponses": [
+          {
+            "type": "endpoint",
+            "endpoint": { "host": "127.0.0.1", "port": 43444, "pid": 1234, "updatedAt": "2026-09-07T00:00:00.000Z" }
+          }
+        ],
+        "fetchResponses": [{ "type": "status", "status": 503 }],
+        "ops": [{ "op": "start" }, { "op": "advance", "ms": 250 }, { "op": "advance", "ms": 250 }, { "op": "stop" }]
+      },
+      "output": {
+        "host": {
+          "mode": "dashboard",
+          "screen": null,
+          "visible": true,
+          "calls": [
+            { "kind": "dashboard-model", "force": true, "lifecycle": { "mode": "dashboard" } },
+            { "kind": "render" }
+          ],
+          "renders": 1,
+          "footerFlash": null,
+          "footerFlashTicks": null,
+          "projectStoryTitle": null,
+          "projectObservabilityLoaded": false,
+          "hasAdapter": false
+        },
+        "calls": {
+          "debug": [
+            {
+              "message": "dashboard project event stream reconnecting: event stream request failed: 503",
+              "scope": "dashboard"
+            }
+          ],
+          "control": [
+            { "fn": "resolveCurrentProjectServiceEndpointForDashboard", "timeoutMs": 1000 },
+            { "fn": "invalidateDashboardProjectServiceEndpointHealth" }
+          ],
+          "fetch": [
+            { "url": "http://127.0.0.1:43444/events", "headers": { "accept": "text/event-stream" }, "hasSignal": true }
+          ]
+        },
+        "timers": { "now": 500, "pending": [] }
+      },
+      "inputSha256": "83e97f0665fad85b310fc57a20f1d10010fe126123fff94bfc9c02fa4d88e35e"
+    },
+    {
+      "id": "project-event-stream-032",
+      "name": "applies needs_input alert flashes",
+      "source": "src/multiplexer/project-event-stream.test.ts",
+      "sourceName": "applies needs_input alert flashes",
+      "api": "DashboardProjectEventAdapter",
+      "input": {
+        "ops": [
+          {
+            "op": "applyAlert",
+            "event": {
+              "type": "alert",
+              "kind": "needs_input",
+              "projectId": "project",
+              "title": "Attention",
+              "message": "Message",
+              "ts": "2026-09-07T00:00:00.000Z",
+              "sessionId": "codex-1"
+            }
+          }
+        ]
+      },
+      "output": {
+        "host": {
+          "mode": "dashboard",
+          "screen": null,
+          "visible": true,
+          "calls": [{ "kind": "render" }],
+          "renders": 1,
+          "footerFlash": "◉ codex-1 needs input",
+          "footerFlashTicks": 4,
+          "projectStoryTitle": null,
+          "projectObservabilityLoaded": false,
+          "hasAdapter": false
+        },
+        "calls": { "debug": [], "control": [], "fetch": [] },
+        "timers": { "now": 0, "pending": [] }
+      },
+      "inputSha256": "2a92e45733db87286e5fdebd1551efc732f42e9d85eb42ae0a2f1bf18eb90626"
+    },
+    {
+      "id": "project-event-stream-033",
+      "name": "applies next_step alert flashes",
+      "source": "src/multiplexer/project-event-stream.test.ts",
+      "sourceName": "applies next_step alert flashes",
+      "api": "DashboardProjectEventAdapter",
+      "input": {
+        "ops": [
+          {
+            "op": "applyAlert",
+            "event": {
+              "type": "alert",
+              "kind": "next_step",
+              "projectId": "project",
+              "title": "Attention",
+              "message": "Message",
+              "ts": "2026-09-07T00:00:00.000Z",
+              "sessionId": "codex-1"
+            }
+          }
+        ]
+      },
+      "output": {
+        "host": {
+          "mode": "dashboard",
+          "screen": null,
+          "visible": true,
+          "calls": [{ "kind": "render" }],
+          "renders": 1,
+          "footerFlash": "◉ codex-1 ready for next step",
+          "footerFlashTicks": 4,
+          "projectStoryTitle": null,
+          "projectObservabilityLoaded": false,
+          "hasAdapter": false
+        },
+        "calls": { "debug": [], "control": [], "fetch": [] },
+        "timers": { "now": 0, "pending": [] }
+      },
+      "inputSha256": "5d374db0023dc435400650dcee714d76899e2c90cd039369326ad81a3a36fd75"
+    },
+    {
+      "id": "project-event-stream-034",
+      "name": "applies message_waiting alert flashes",
+      "source": "src/multiplexer/project-event-stream.test.ts",
+      "sourceName": "applies message_waiting alert flashes",
+      "api": "DashboardProjectEventAdapter",
+      "input": {
+        "ops": [
+          {
+            "op": "applyAlert",
+            "event": {
+              "type": "alert",
+              "kind": "message_waiting",
+              "projectId": "project",
+              "title": "Attention",
+              "message": "Message",
+              "ts": "2026-09-07T00:00:00.000Z",
+              "sessionId": "codex-1"
+            }
+          }
+        ]
+      },
+      "output": {
+        "host": {
+          "mode": "dashboard",
+          "screen": null,
+          "visible": true,
+          "calls": [{ "kind": "render" }],
+          "renders": 1,
+          "footerFlash": "✉ Message waiting → codex-1",
+          "footerFlashTicks": 4,
+          "projectStoryTitle": null,
+          "projectObservabilityLoaded": false,
+          "hasAdapter": false
+        },
+        "calls": { "debug": [], "control": [], "fetch": [] },
+        "timers": { "now": 0, "pending": [] }
+      },
+      "inputSha256": "a91af3d304a2abf45d83d91764d0ce9ffe954a4e73393781da35f1456b6a32fb"
+    },
+    {
+      "id": "project-event-stream-035",
+      "name": "applies handoff_waiting alert flashes",
+      "source": "src/multiplexer/project-event-stream.test.ts",
+      "sourceName": "applies handoff_waiting alert flashes",
+      "api": "DashboardProjectEventAdapter",
+      "input": {
+        "ops": [
+          {
+            "op": "applyAlert",
+            "event": {
+              "type": "alert",
+              "kind": "handoff_waiting",
+              "projectId": "project",
+              "title": "Attention",
+              "message": "Message",
+              "ts": "2026-09-07T00:00:00.000Z",
+              "sessionId": "codex-1"
+            }
+          }
+        ]
+      },
+      "output": {
+        "host": {
+          "mode": "dashboard",
+          "screen": null,
+          "visible": true,
+          "calls": [{ "kind": "render" }],
+          "renders": 1,
+          "footerFlash": "⇢ Handoff waiting → codex-1",
+          "footerFlashTicks": 4,
+          "projectStoryTitle": null,
+          "projectObservabilityLoaded": false,
+          "hasAdapter": false
+        },
+        "calls": { "debug": [], "control": [], "fetch": [] },
+        "timers": { "now": 0, "pending": [] }
+      },
+      "inputSha256": "b6ce0b04d6eec5709b02eaa6c880179f339a194cba589c79b46276340e1b60af"
+    },
+    {
+      "id": "project-event-stream-036",
+      "name": "applies task_assigned alert flashes",
+      "source": "src/multiplexer/project-event-stream.test.ts",
+      "sourceName": "applies task_assigned alert flashes",
+      "api": "DashboardProjectEventAdapter",
+      "input": {
+        "ops": [
+          {
+            "op": "applyAlert",
+            "event": {
+              "type": "alert",
+              "kind": "task_assigned",
+              "projectId": "project",
+              "title": "Attention",
+              "message": "Message",
+              "ts": "2026-09-07T00:00:00.000Z",
+              "sessionId": "codex-1"
+            }
+          }
+        ]
+      },
+      "output": {
+        "host": {
+          "mode": "dashboard",
+          "screen": null,
+          "visible": true,
+          "calls": [{ "kind": "render" }],
+          "renders": 1,
+          "footerFlash": "⧫ Task assigned → codex-1",
+          "footerFlashTicks": 4,
+          "projectStoryTitle": null,
+          "projectObservabilityLoaded": false,
+          "hasAdapter": false
+        },
+        "calls": { "debug": [], "control": [], "fetch": [] },
+        "timers": { "now": 0, "pending": [] }
+      },
+      "inputSha256": "04d9032f7c32e9735c449cc79774c2de6c1e4f8f41a024d1a7e93afbb6d3ffb7"
+    },
+    {
+      "id": "project-event-stream-037",
+      "name": "applies review_waiting alert flashes",
+      "source": "src/multiplexer/project-event-stream.test.ts",
+      "sourceName": "applies review_waiting alert flashes",
+      "api": "DashboardProjectEventAdapter",
+      "input": {
+        "ops": [
+          {
+            "op": "applyAlert",
+            "event": {
+              "type": "alert",
+              "kind": "review_waiting",
+              "projectId": "project",
+              "title": "Attention",
+              "message": "Message",
+              "ts": "2026-09-07T00:00:00.000Z",
+              "sessionId": "codex-1"
+            }
+          }
+        ]
+      },
+      "output": {
+        "host": {
+          "mode": "dashboard",
+          "screen": null,
+          "visible": true,
+          "calls": [{ "kind": "render" }],
+          "renders": 1,
+          "footerFlash": "◌ Review waiting → codex-1",
+          "footerFlashTicks": 4,
+          "projectStoryTitle": null,
+          "projectObservabilityLoaded": false,
+          "hasAdapter": false
+        },
+        "calls": { "debug": [], "control": [], "fetch": [] },
+        "timers": { "now": 0, "pending": [] }
+      },
+      "inputSha256": "680fe324aa3b803da2278b6a8c558334173eedf983452ca5a31cf772c06d29e7"
+    },
+    {
+      "id": "project-event-stream-038",
+      "name": "applies blocked alert flashes",
+      "source": "src/multiplexer/project-event-stream.test.ts",
+      "sourceName": "applies blocked alert flashes",
+      "api": "DashboardProjectEventAdapter",
+      "input": {
+        "ops": [
+          {
+            "op": "applyAlert",
+            "event": {
+              "type": "alert",
+              "kind": "blocked",
+              "projectId": "project",
+              "title": "Attention",
+              "message": "Message",
+              "ts": "2026-09-07T00:00:00.000Z"
+            }
+          }
+        ]
+      },
+      "output": {
+        "host": {
+          "mode": "dashboard",
+          "screen": null,
+          "visible": true,
+          "calls": [{ "kind": "render" }],
+          "renders": 1,
+          "footerFlash": "⧗ Attention",
+          "footerFlashTicks": 4,
+          "projectStoryTitle": null,
+          "projectObservabilityLoaded": false,
+          "hasAdapter": false
+        },
+        "calls": { "debug": [], "control": [], "fetch": [] },
+        "timers": { "now": 0, "pending": [] }
+      },
+      "inputSha256": "2735190c8b5faafd8711d6738fb5a8f6698b347679ce9f00fd3afa59dfe60c6e"
+    },
+    {
+      "id": "project-event-stream-039",
+      "name": "applies task_done alert flashes",
+      "source": "src/multiplexer/project-event-stream.test.ts",
+      "sourceName": "applies task_done alert flashes",
+      "api": "DashboardProjectEventAdapter",
+      "input": {
+        "ops": [
+          {
+            "op": "applyAlert",
+            "event": {
+              "type": "alert",
+              "kind": "task_done",
+              "projectId": "project",
+              "title": "Attention",
+              "message": "Message",
+              "ts": "2026-09-07T00:00:00.000Z"
+            }
+          }
+        ]
+      },
+      "output": {
+        "host": {
+          "mode": "dashboard",
+          "screen": null,
+          "visible": true,
+          "calls": [{ "kind": "render" }],
+          "renders": 1,
+          "footerFlash": "✓ Attention",
+          "footerFlashTicks": 4,
+          "projectStoryTitle": null,
+          "projectObservabilityLoaded": false,
+          "hasAdapter": false
+        },
+        "calls": { "debug": [], "control": [], "fetch": [] },
+        "timers": { "now": 0, "pending": [] }
+      },
+      "inputSha256": "6660f53a7f3c28e37c50344c3a0b0210a6ea925377f06854912abdf82352172c"
     }
   ]
 }

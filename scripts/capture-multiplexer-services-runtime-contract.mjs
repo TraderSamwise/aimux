@@ -416,6 +416,53 @@ const inputs = [
     existingWindow: null,
     targets: { created: target("@9", 9, "dev") },
   },
+  {
+    name: "creates a blank interactive shell service",
+    api: "createService",
+    commandLine: "   ",
+    worktreePath: "<repo>",
+    options: { serviceId: "svc-shell" },
+    existingWindow: null,
+    targets: { created: target("@17", 17, "shell") },
+  },
+  {
+    name: "resumes a blank interactive shell service",
+    api: "resumeOfflineService",
+    serviceIndex: 0,
+    offlineServices: [{ id: "svc-shell", label: "shell", worktreePath: "<repo>", launchCommandLine: "   ", createdAt: "" }],
+    existingWindow: null,
+    targets: { created: target("@18", 18, "shell") },
+  },
+  {
+    name: "stop throws when the matching window metadata is not a service",
+    api: "stopService",
+    serviceId: "svc-agent",
+    offlineServices: [],
+    existingWindow: {
+      target: target("@19", 19, "codex"),
+      metadata: { kind: "agent", sessionId: "svc-agent", command: "codex", args: [] },
+    },
+  },
+  {
+    name: "remove skips killing an existing non-service window",
+    api: "removeOfflineService",
+    serviceId: "svc-agent",
+    offlineServices: [{ id: "svc-agent", label: "shell", worktreePath: "<repo>" }],
+    existingWindow: {
+      target: target("@20", 20, "codex"),
+      metadata: { kind: "agent", sessionId: "svc-agent", command: "codex", args: [] },
+    },
+  },
+  {
+    name: "resume by id throws when the matching window metadata is not a service",
+    api: "resumeOfflineServiceById",
+    serviceId: "svc-agent",
+    offlineServices: [],
+    existingWindow: {
+      target: target("@21", 21, "codex"),
+      metadata: { kind: "agent", sessionId: "svc-agent", command: "codex", args: [] },
+    },
+  },
 ];
 
 const cases = [];

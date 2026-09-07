@@ -57,6 +57,18 @@ function includedContracts(source) {
   return [...new Set(contracts)];
 }
 
+function fixtureOwnedContractPaths() {
+  const owned = new Set();
+  for (const testPath of contractTests()) {
+    const suite = basename(testPath, ".rs");
+    if (!suite.startsWith("fixture_")) continue;
+    for (const contractPath of includedContracts(readFileSync(testPath, "utf8"))) {
+      owned.add(contractPath);
+    }
+  }
+  return owned;
+}
+
 function countCases(value) {
   if (Number.isInteger(value?.caseCount)) return value.caseCount;
   if (Array.isArray(value?.cases)) return value.cases.length;
@@ -146,11 +158,15 @@ function runSuite(testPath) {
 
 function audit() {
   const rows = [];
-  for (const testPath of contractTests()) {
+  const testPaths = contractTests();
+  const fixtureOwnedContracts = fixtureOwnedContractPaths();
+  for (const testPath of testPaths) {
     const source = readFileSync(testPath, "utf8");
     const suite = basename(testPath, ".rs");
     if (suiteFilters.length > 0 && !suiteFilters.includes(suite)) continue;
-    const contracts = includedContracts(source);
+    const contracts = includedContracts(source).filter(
+      (contractPath) => suite.startsWith("fixture_") || !fixtureOwnedContracts.has(contractPath),
+    );
     if (contracts.length === 0) continue;
     const ignored = /#\s*\[\s*ignore\b/.test(source);
     const contractResults = [];
@@ -230,11 +246,15 @@ function audit() {
 
 function parseExistingReport() {
   if (!existsSync(REPORT_PATH)) return [];
+  const fixtureOwnedContracts = fixtureOwnedContractPaths();
   return readFileSync(REPORT_PATH, "utf8")
     .split("\n")
     .flatMap((line) => {
       const match = line.match(/^\| `([^`]+)` \| ([A-Z-]+) \| `([^`]+)` \| ([0-9]+) \| (.*) \|$/);
       if (!match) return [];
+      if (!match[1].startsWith("fixture_") && fixtureOwnedContracts.has(join(ROOT, match[3]))) {
+        return [];
+      }
       return [
         {
           suite: match[1],

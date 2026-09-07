@@ -13,6 +13,8 @@ const {
   buildToolPickerOverlayOutput,
   defaultsLaunchOverride,
   formatEnvDefaults,
+  handleToolOptionsKey,
+  handleToolPickerKey,
   runSelectedTool,
   showToolPicker,
 } = await import(new URL("dist/multiplexer/tool-picker.js", ROOT));
@@ -40,6 +42,10 @@ function run(input) {
       return withTempPaths(input, () => buildToolPickerOverlayOutput(input.host ?? {}, input.cols ?? 80, input.rows ?? 24));
     case "buildToolOptionsOverlayOutput":
       return withTempPaths(input, () => buildToolOptionsOverlayOutput(input.host ?? {}, input.cols ?? 80, input.rows ?? 24));
+    case "handleToolPickerKey":
+      return withTempPaths(input, () => handleToolPickerKeyCase(input));
+    case "handleToolOptionsKey":
+      return withTempPaths(input, () => handleToolOptionsKeyCase(input));
     default:
       throw new Error(`unknown api ${input.api}`);
   }
@@ -135,6 +141,20 @@ function showToolPickerCase(input) {
   const { calls, fn } = recorder();
   const host = baseHost(input.host ?? {}, calls, fn);
   showToolPicker(host, input.sourceSessionId, input.options);
+  return hostSnapshot(host, calls);
+}
+
+function handleToolPickerKeyCase(input) {
+  const { calls, fn } = recorder();
+  const host = baseHost(input.host ?? {}, calls, fn);
+  handleToolPickerKey(host, Buffer.from(input.data));
+  return hostSnapshot(host, calls);
+}
+
+function handleToolOptionsKeyCase(input) {
+  const { calls, fn } = recorder();
+  const host = baseHost(input.host ?? {}, calls, fn);
+  handleToolOptionsKey(host, Buffer.from(input.data));
   return hostSnapshot(host, calls);
 }
 
@@ -277,6 +297,157 @@ const inputs = [
     },
     cols: 80,
     rows: 24,
+  },
+  {
+    name: "escape closes the picker and resets transient mode state",
+    api: "handleToolPickerKey",
+    data: "\u001b",
+    host: {
+      pickerMode: "fork",
+      forkSourceSessionId: "claude-1",
+      switchToolSourceSessionId: "stale-switch",
+      toolPickerOverseer: true,
+      toolPickerScribe: true,
+      launchOptionsState: { stale: true },
+      toolPickerIndex: 1,
+    },
+  },
+  {
+    name: "down key moves the picker selection and redraws",
+    api: "handleToolPickerKey",
+    data: "\u001b[B",
+    host: { pickerMode: "create", toolPickerIndex: 0 },
+  },
+  {
+    name: "up key clamps the picker selection at the first tool",
+    api: "handleToolPickerKey",
+    data: "\u001b[A",
+    host: { pickerMode: "create", toolPickerIndex: 0 },
+  },
+  {
+    name: "o opens structured launch options for the selected tool",
+    api: "handleToolPickerKey",
+    data: "o",
+    host: { pickerMode: "create", toolPickerIndex: 1 },
+    configTools: {
+      claude: { command: "claude", args: ["--base"], enabled: true },
+      codex: {
+        command: "codex",
+        args: ["--base"],
+        enabled: true,
+        defaultArgs: ["--model", "gpt-5"],
+        defaultEnv: { AIMUX_LOG: "debug mode" },
+      },
+    },
+  },
+  {
+    name: "enter launches the selected picker tool",
+    api: "handleToolPickerKey",
+    data: "\r",
+    host: { pickerMode: "create", toolPickerIndex: 1 },
+  },
+  {
+    name: "digit launches the numbered picker tool",
+    api: "handleToolPickerKey",
+    data: "2",
+    host: { pickerMode: "create", toolPickerIndex: 0 },
+  },
+  {
+    name: "out of range digit leaves the picker open and redraws",
+    api: "handleToolPickerKey",
+    data: "9",
+    host: { pickerMode: "create", toolPickerIndex: 0 },
+  },
+  {
+    name: "options key with no enabled tools redraws the picker empty state",
+    api: "handleToolPickerKey",
+    data: "o",
+    configTools: {
+      claude: { command: "claude", args: ["--base"], enabled: false },
+      codex: { command: "codex", args: ["--base"], enabled: false },
+    },
+    host: { pickerMode: "create", toolPickerIndex: 0 },
+  },
+  {
+    name: "options handler without state returns to the picker",
+    api: "handleToolOptionsKey",
+    data: "x",
+    host: { pickerMode: "create", launchOptionsState: null },
+  },
+  {
+    name: "escape from options returns to the picker",
+    api: "handleToolOptionsKey",
+    data: "\u001b",
+    host: {
+      pickerMode: "create",
+      launchOptionsState: {
+        toolKey: "claude",
+        args: { text: "--model opus", cursor: 12 },
+        env: { text: "", cursor: 0 },
+        activeField: "args",
+        error: null,
+      },
+    },
+  },
+  {
+    name: "tab toggles the active launch options field",
+    api: "handleToolOptionsKey",
+    data: "\t",
+    host: {
+      pickerMode: "create",
+      launchOptionsState: {
+        toolKey: "claude",
+        args: { text: "--model opus", cursor: 12 },
+        env: { text: "FOO=bar", cursor: 7 },
+        activeField: "args",
+        error: null,
+      },
+    },
+  },
+  {
+    name: "enter from valid launch options starts with parsed override",
+    api: "handleToolOptionsKey",
+    data: "\r",
+    host: {
+      pickerMode: "create",
+      launchOptionsState: {
+        toolKey: "claude",
+        args: { text: "--model opus", cursor: 12 },
+        env: { text: "FOO=bar MSG='hello world'", cursor: 25 },
+        activeField: "env",
+        error: null,
+      },
+    },
+  },
+  {
+    name: "enter from invalid launch options records the parse error",
+    api: "handleToolOptionsKey",
+    data: "\r",
+    host: {
+      pickerMode: "create",
+      launchOptionsState: {
+        toolKey: "claude",
+        args: { text: "'unterminated", cursor: 13 },
+        env: { text: "", cursor: 0 },
+        activeField: "args",
+        error: null,
+      },
+    },
+  },
+  {
+    name: "editing launch options clears stale errors and redraws",
+    api: "handleToolOptionsKey",
+    data: "x",
+    host: {
+      pickerMode: "create",
+      launchOptionsState: {
+        toolKey: "claude",
+        args: { text: "--", cursor: 2 },
+        env: { text: "", cursor: 0 },
+        activeField: "args",
+        error: "stale",
+      },
+    },
   },
 ];
 

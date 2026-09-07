@@ -3881,6 +3881,115 @@
         ]
       },
       "inputSha256": "46aaf19a0595046cc0eb711c48962c91e8089ccdcd8c8157f0114fb052d865b3"
+    },
+    {
+      "id": "multiplexer-runtime-state-methods-054",
+      "name": "startHeartbeat forwards to runtime sync and probes the guard immediately",
+      "source": "src/multiplexer/runtime-state.test.ts",
+      "api": "startHeartbeat",
+      "input": {},
+      "output": {
+        "calls": [
+          { "method": "runtimeSync.startHeartbeat", "args": [] },
+          { "method": "refreshRuntimeGuard", "args": [] }
+        ]
+      },
+      "inputSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "id": "multiplexer-runtime-state-methods-055",
+      "name": "stopHeartbeat forwards to runtime sync",
+      "source": "src/multiplexer/runtime-state.test.ts",
+      "api": "stopHeartbeat",
+      "input": {},
+      "output": { "calls": [{ "method": "runtimeSync.stopHeartbeat", "args": [] }] },
+      "inputSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "id": "multiplexer-runtime-state-methods-056",
+      "name": "project service refresh wrappers forward to runtime sync",
+      "source": "src/multiplexer/runtime-state.test.ts",
+      "api": "projectServiceRefreshWrappers",
+      "input": {},
+      "output": {
+        "calls": [
+          { "method": "runtimeSync.startProjectServiceRefresh", "args": [] },
+          { "method": "runtimeSync.stopProjectServiceRefresh", "args": [] }
+        ]
+      },
+      "inputSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "id": "multiplexer-runtime-state-methods-057",
+      "name": "renderCurrentDashboardView routes coordination screen renders through reconciliation",
+      "source": "src/multiplexer/runtime-state.test.ts",
+      "api": "renderCurrentDashboardView",
+      "input": { "screen": "coordination", "visible": true },
+      "output": {
+        "calls": [
+          { "method": "reconcileDashboardRenderState", "args": [] },
+          { "method": "isDashboardScreen", "args": ["coordination"] },
+          { "method": "renderCoordination", "args": [] }
+        ]
+      },
+      "inputSha256": "6c32dd46ecaf35bc8462a35491066e3641ff960d98cd0c5288c49c9de5844dc0"
+    },
+    {
+      "id": "multiplexer-runtime-state-methods-058",
+      "name": "renderCurrentDashboardView suppresses dashboard renders while hidden",
+      "source": "src/multiplexer/runtime-state.test.ts",
+      "api": "renderCurrentDashboardView",
+      "input": { "screen": null, "visible": false },
+      "output": {
+        "calls": [
+          { "method": "reconcileDashboardRenderState", "args": [] },
+          { "method": "isDashboardScreen", "args": ["coordination"] },
+          { "method": "isDashboardScreen", "args": ["project"] },
+          { "method": "isDashboardScreen", "args": ["library"] },
+          { "method": "isDashboardScreen", "args": ["topology"] },
+          { "method": "isDashboardScreen", "args": ["help"] },
+          { "method": "isDashboardScreen", "args": ["graveyard"] },
+          { "method": "renderDashboard", "args": [] }
+        ]
+      },
+      "inputSha256": "4a074f70afb60972b2765379ce0de4fcab4356cac9d6d187ef3c910af366ed75"
+    },
+    {
+      "id": "multiplexer-runtime-state-methods-059",
+      "name": "evictZombieSession removes runtime registrations and persists state",
+      "source": "src/multiplexer/runtime-state.test.ts",
+      "api": "evictZombieSession",
+      "input": {
+        "runtime": { "id": "codex-zombie", "command": "codex" },
+        "host": {
+          "sessions": [
+            { "id": "codex-zombie", "command": "codex" },
+            { "id": "claude-live", "command": "claude" }
+          ],
+          "stoppingSessionIds": ["codex-zombie"],
+          "sessionTmuxTargets": [["codex-zombie", { "windowId": "@1" }]],
+          "sessionToolKeys": [["codex-zombie", "codex"]],
+          "sessionOriginalArgs": [["codex-zombie", []]],
+          "sessionWorktreePaths": [["codex-zombie", "<repo>"]],
+          "sessionRoles": [["codex-zombie", "worker"]]
+        }
+      },
+      "output": {
+        "host": {
+          "sessions": [{ "id": "claude-live", "command": "claude" }],
+          "stoppingSessionIds": [],
+          "sessionTmuxTargets": [],
+          "sessionToolKeys": [["codex-zombie", "codex"]],
+          "sessionOriginalArgs": [["codex-zombie", []]],
+          "sessionWorktreePaths": [["codex-zombie", "<repo>"]],
+          "sessionRoles": [["codex-zombie", "worker"]]
+        },
+        "calls": [
+          { "method": "updateContextWatcherSessions", "args": [] },
+          { "method": "saveState", "args": [] }
+        ]
+      },
+      "inputSha256": "ed8fa81c948cbdd93e1a8ea04821cb974aa18f0160c0da1866367ab092673366"
     }
   ]
 }

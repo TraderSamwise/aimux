@@ -7,13 +7,19 @@ const ROOT = new URL("../", import.meta.url);
 const FIXTURE_PATH = new URL("testdata/contracts/v1/multiplexer/worktrees.json", ROOT);
 const {
   beginWorktreeRemoval,
+  buildWorktreeInputOverlayOutput,
   finishWorktreeRemoval,
   handleWorktreeCacheCleanupConfirmKey,
   handleWorktreeInputKey,
   handleWorktreeListKey,
   handleWorktreeRemoveConfirmKey,
+  renderWorktreeCacheCleanupConfirm,
+  renderWorktreeInput,
+  renderWorktreeList,
+  renderWorktreeRemoveConfirm,
   showWorktreeCreatePrompt,
   showWorktreeCacheCleanupPreview,
+  showWorktreeList,
   worktreeSettlePollDelay,
 } = await import(new URL("dist/multiplexer/worktrees.js", ROOT));
 
@@ -65,6 +71,18 @@ const inputs = [
     name: "show worktree create prompt opens overlay and clears input",
     api: "showWorktreeCreatePrompt",
     host: { mode: "dashboard", worktreeInputBuffer: "stale" },
+  },
+  {
+    name: "builds worktree input overlay from the current buffer",
+    api: "buildWorktreeInputOverlayOutput",
+    cols: 80,
+    rows: 24,
+    host: { mode: "dashboard", worktreeInputBuffer: "feature/demo" },
+  },
+  {
+    name: "render worktree input redraws dashboard overlays",
+    api: "renderWorktreeInput",
+    host: { mode: "dashboard", worktreeInputBuffer: "demo" },
   },
   {
     name: "worktree input accepts printable text and backspace",
@@ -174,6 +192,32 @@ const inputs = [
     host: { mode: "dashboard" },
   },
   {
+    name: "show worktree list opens overlay and redraws",
+    api: "showWorktreeList",
+    host: { mode: "dashboard" },
+  },
+  {
+    name: "render worktree list redraws dashboard overlays",
+    api: "renderWorktreeList",
+    host: { mode: "dashboard" },
+  },
+  {
+    name: "render worktree remove confirm redraws dashboard overlays",
+    api: "renderWorktreeRemoveConfirm",
+    host: { mode: "dashboard", worktreeRemoveConfirm: { path: "/repo/.aimux/worktrees/demo", name: "demo" } },
+  },
+  {
+    name: "remove confirm y starts the selected graveyard job",
+    api: "handleWorktreeRemoveConfirmKey",
+    data: "y",
+    host: {
+      mode: "session",
+      worktreeRemoveConfirm: { path: "/repo/.aimux/worktrees/demo", name: "demo" },
+      dashboardState: { worktreeNavOrder: ["/repo/.aimux/worktrees/demo"], focusedWorktreePath: "/repo/.aimux/worktrees/demo" },
+      dashboardWorktreeGroupsCache: [{ path: "/repo/.aimux/worktrees/demo", name: "demo" }],
+    },
+  },
+  {
     name: "cache cleanup preview reports project-service requirement outside dashboard mode",
     api: "showWorktreeCacheCleanupPreview",
     host: { mode: "session", dashboardBusyState: null, worktreeCacheCleanupConfirm: null },
@@ -185,6 +229,19 @@ const inputs = [
       mode: "dashboard",
       dashboardBusyState: { title: "Busy", lines: ["  Still working"] },
       worktreeCacheCleanupConfirm: { existing: true },
+    },
+  },
+  {
+    name: "render worktree cache cleanup confirm redraws dashboard overlays",
+    api: "renderWorktreeCacheCleanupConfirm",
+    host: {
+      mode: "dashboard",
+      worktreeCacheCleanupConfirm: {
+        dryRun: true,
+        reclaimedBytes: 0,
+        plan: { reclaimableBytes: 1024, targets: [{ path: "/repo/.aimux/worktrees/old/node_modules", sizeBytes: 1024 }], skipped: [] },
+        results: [{ path: "/repo/.aimux/worktrees/old/node_modules", status: "dry-run", sizeBytes: 1024 }],
+      },
     },
   },
   {
@@ -355,8 +412,25 @@ async function run(input) {
   }
   const { host, calls } = hostFor(structuredClone({ ...(input.host ?? {}), postResponse: input.postResponse }));
   switch (input.api) {
+    case "buildWorktreeInputOverlayOutput":
+      return buildWorktreeInputOverlayOutput(host, input.cols ?? 80, input.rows ?? 24);
     case "showWorktreeCreatePrompt":
       showWorktreeCreatePrompt(host);
+      break;
+    case "renderWorktreeInput":
+      renderWorktreeInput(host);
+      break;
+    case "showWorktreeList":
+      showWorktreeList(host);
+      break;
+    case "renderWorktreeList":
+      renderWorktreeList(host);
+      break;
+    case "renderWorktreeRemoveConfirm":
+      renderWorktreeRemoveConfirm(host);
+      break;
+    case "renderWorktreeCacheCleanupConfirm":
+      renderWorktreeCacheCleanupConfirm(host);
       break;
     case "handleWorktreeInputKey":
       handleWorktreeInputKey(host, Buffer.from(input.data));

@@ -16,8 +16,81 @@ pub fn run_multiplexer_runtime_state_methods_contract_case(api: &str, input: &Va
         "reconcileOrphanedTopologyServices" => reconcile_orphaned_topology_services(input),
         "buildLiveServiceStates" => build_live_service_states(input),
         "resumeOfflineSession" => resume_offline_session(input),
+        "startHeartbeat" => json!({
+            "calls": [
+                call("runtimeSync.startHeartbeat", vec![]),
+                call("refreshRuntimeGuard", vec![]),
+            ],
+        }),
+        "stopHeartbeat" => json!({
+            "calls": [call("runtimeSync.stopHeartbeat", vec![])],
+        }),
+        "projectServiceRefreshWrappers" => json!({
+            "calls": [
+                call("runtimeSync.startProjectServiceRefresh", vec![]),
+                call("runtimeSync.stopProjectServiceRefresh", vec![]),
+            ],
+        }),
+        "renderCurrentDashboardView" => render_current_dashboard_view(input),
+        "evictZombieSession" => evict_zombie_session(input),
         api => panic!("unknown multiplexer runtime-state method api: {api}"),
     }
+}
+
+fn render_current_dashboard_view(input: &Value) -> Value {
+    let screen = string_field(input, "screen");
+    let mut calls = vec![call("reconcileDashboardRenderState", vec![])];
+    for candidate in [
+        "coordination",
+        "project",
+        "library",
+        "topology",
+        "help",
+        "graveyard",
+    ] {
+        calls.push(call("isDashboardScreen", vec![json!(candidate)]));
+        if screen == candidate {
+            let method = match candidate {
+                "coordination" => "renderCoordination",
+                "project" => "renderProject",
+                "library" => "renderLibrary",
+                "topology" => "renderTopology",
+                "help" => "renderHelp",
+                _ => "renderGraveyard",
+            };
+            calls.push(call(method, vec![]));
+            return json!({ "calls": calls });
+        }
+    }
+    calls.push(call("renderDashboard", vec![]));
+    json!({ "calls": calls })
+}
+
+fn evict_zombie_session(input: &Value) -> Value {
+    let runtime_id = string_at(input, &["runtime", "id"]);
+    let mut sessions = array_at(input, &["host", "sessions"]);
+    sessions.retain(|session| string_field(session, "id") != runtime_id);
+    let stopping_session_ids = array_at(input, &["host", "stoppingSessionIds"])
+        .into_iter()
+        .filter(|value| value.as_str() != Some(runtime_id.as_str()))
+        .collect::<Vec<_>>();
+    let mut session_tmux_targets = array_at(input, &["host", "sessionTmuxTargets"]);
+    remove_entry(&mut session_tmux_targets, &runtime_id);
+    json!({
+        "host": {
+            "sessions": sessions,
+            "stoppingSessionIds": stopping_session_ids,
+            "sessionTmuxTargets": session_tmux_targets,
+            "sessionToolKeys": array_at(input, &["host", "sessionToolKeys"]),
+            "sessionOriginalArgs": array_at(input, &["host", "sessionOriginalArgs"]),
+            "sessionWorktreePaths": array_at(input, &["host", "sessionWorktreePaths"]),
+            "sessionRoles": array_at(input, &["host", "sessionRoles"]),
+        },
+        "calls": [
+            call("updateContextWatcherSessions", vec![]),
+            call("saveState", vec![]),
+        ],
+    })
 }
 
 fn adjust_after_remove(input: &Value) -> Value {

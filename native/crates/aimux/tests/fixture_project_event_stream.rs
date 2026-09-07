@@ -25,7 +25,7 @@ struct Case {
 fn fixture_project_event_stream_contract_matches_rust_adapter() {
     let contract: Contract =
         serde_json::from_str(PROJECT_EVENT_STREAM).expect("project event stream fixture parses");
-    assert_eq!(contract.cases.len(), 22);
+    assert_eq!(contract.cases.len(), 39);
 
     let mut failures = Vec::new();
     for case in contract.cases {

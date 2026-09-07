@@ -1624,6 +1624,460 @@
         "topologyServicesStopped": []
       },
       "inputSha256": "7d0cdab61e2a7895e1ffcaecb74db1bd4e8ba7e25b33b067161d3be8c069509d"
+    },
+    {
+      "id": "multiplexer-services-runtime-015",
+      "name": "creates a blank interactive shell service",
+      "source": "src/multiplexer/services.test.ts",
+      "api": "createService",
+      "input": {
+        "name": "creates a blank interactive shell service",
+        "api": "createService",
+        "commandLine": "   ",
+        "worktreePath": "<repo>",
+        "options": { "serviceId": "svc-shell" },
+        "existingWindow": null,
+        "targets": {
+          "created": { "sessionName": "aimux-repo", "windowId": "@17", "windowIndex": 17, "windowName": "shell" }
+        }
+      },
+      "output": {
+        "result": { "serviceId": "svc-shell" },
+        "thrown": null,
+        "host": { "offlineServices": [], "removedServiceIds": [] },
+        "calls": {
+          "tmuxRuntimeManager.getProjectSession": [],
+          "tmuxRuntimeManager.ensureProjectSession": [["<repo>"]],
+          "tmuxRuntimeManager.findManagedWindow": [],
+          "tmuxRuntimeManager.createWindow": [
+            [
+              "aimux-repo",
+              "shell",
+              "<repo>",
+              "env",
+              [
+                "-i",
+                "AIMUX_DAEMON_PORT=43190",
+                "AIMUX_ENV=production",
+                "AIMUX_HOME=<repo>/home",
+                "CLICOLOR=1",
+                "COLORTERM=truecolor",
+                "HOME=<repo>/user-home",
+                "LANG=C.UTF-8",
+                "PATH=/usr/bin:/bin",
+                "SHELL=zsh",
+                "TERM=xterm-256color",
+                "USER=sam",
+                "env",
+                "AIMUX_SESSION_ID=svc-shell",
+                "AIMUX_TOOL=service",
+                "AIMUX_METADATA_ENDPOINT_FILE=<project-state>/metadata-api.txt",
+                "AIMUX_SHELL_INTEGRATION_SCRIPT=<project-state>/shell-integration/aimux-zsh-integration.zsh",
+                "AIMUX_SHELL_STATE_SUPPRESS_FILE=<project-state>/shell-state-suppress/svc-shell",
+                "ZDOTDIR=<project-state>/shell-integration",
+                "zsh",
+                "-i"
+              ],
+              { "detached": true }
+            ]
+          ],
+          "tmuxRuntimeManager.setWindowMetadata": [
+            [
+              { "sessionName": "aimux-repo", "windowId": "@17", "windowIndex": 17, "windowName": "shell" },
+              {
+                "kind": "service",
+                "sessionId": "svc-shell",
+                "command": "shell",
+                "args": ["-l"],
+                "toolConfigKey": "service",
+                "createdAt": "<ts>",
+                "worktreePath": "<repo>",
+                "label": "shell",
+                "launchCommandLine": ""
+              }
+            ]
+          ],
+          "tmuxRuntimeManager.applyManagedAgentWindowPolicy": [
+            [{ "sessionName": "aimux-repo", "windowId": "@17", "windowIndex": 17, "windowName": "shell" }, "service"]
+          ],
+          "tmuxRuntimeManager.killWindow": [],
+          "tmuxRuntimeManager.sendKey": [],
+          "tmuxRuntimeManager.sendText": [],
+          "tmuxRuntimeManager.sendEnter": [],
+          "tmuxRuntimeManager.hasWindow": [],
+          "tmuxRuntimeManager.isWindowAlive": [],
+          "tmuxRuntimeManager.displayMessage": [],
+          "saveState": [],
+          "invalidateDesktopStateSnapshot": [[]],
+          "refreshLocalDashboardModel": [],
+          "updateWorktreeSessions": [],
+          "adjustAfterRemove": [],
+          "noteLastUsedItem": [],
+          "preferDashboardEntrySelection": [["service", "svc-shell", "<repo>"]],
+          "settleDashboardCreatePending": [["svc-shell", "service"]],
+          "setPendingDashboardServiceAction": []
+        },
+        "savedState": {
+          "savedAt": "<ts>",
+          "cwd": "<repo>",
+          "services": [
+            {
+              "id": "svc-shell",
+              "createdAt": "<ts>",
+              "worktreePath": "<repo>",
+              "cwd": "<repo>",
+              "label": "shell",
+              "launchCommandLine": "",
+              "tmuxTarget": { "sessionName": "aimux-repo", "windowId": "@17", "windowIndex": 17, "windowName": "shell" }
+            }
+          ]
+        },
+        "savedServices": [
+          {
+            "id": "svc-shell",
+            "createdAt": "<ts>",
+            "worktreePath": "<repo>",
+            "cwd": "<repo>",
+            "label": "shell",
+            "launchCommandLine": "",
+            "tmuxTarget": { "sessionName": "aimux-repo", "windowId": "@17", "windowIndex": 17, "windowName": "shell" }
+          }
+        ],
+        "topologyServicesAll": [
+          {
+            "id": "svc-shell",
+            "status": "running",
+            "command": "shell",
+            "args": ["-l"],
+            "worktreePath": "<repo>",
+            "cwd": "<repo>",
+            "label": "shell",
+            "createdAt": "<ts>",
+            "lastSeenAt": "<ts>",
+            "tmuxTarget": { "sessionName": "aimux-repo", "windowId": "@17", "windowIndex": 17, "windowName": "shell" }
+          }
+        ],
+        "topologyServicesRunning": [
+          {
+            "id": "svc-shell",
+            "status": "running",
+            "command": "shell",
+            "args": ["-l"],
+            "worktreePath": "<repo>",
+            "cwd": "<repo>",
+            "label": "shell",
+            "createdAt": "<ts>",
+            "lastSeenAt": "<ts>",
+            "tmuxTarget": { "sessionName": "aimux-repo", "windowId": "@17", "windowIndex": 17, "windowName": "shell" }
+          }
+        ],
+        "topologyServicesStopped": []
+      },
+      "inputSha256": "052ba8e31331d48242d85ecfeff6ce7aeb25c9f41b137fb7d8e573273a3808f7"
+    },
+    {
+      "id": "multiplexer-services-runtime-016",
+      "name": "resumes a blank interactive shell service",
+      "source": "src/multiplexer/services.test.ts",
+      "api": "resumeOfflineService",
+      "input": {
+        "name": "resumes a blank interactive shell service",
+        "api": "resumeOfflineService",
+        "serviceIndex": 0,
+        "offlineServices": [
+          { "id": "svc-shell", "label": "shell", "worktreePath": "<repo>", "launchCommandLine": "   ", "createdAt": "" }
+        ],
+        "existingWindow": null,
+        "targets": {
+          "created": { "sessionName": "aimux-repo", "windowId": "@18", "windowIndex": 18, "windowName": "shell" }
+        }
+      },
+      "output": {
+        "result": { "serviceId": "svc-shell", "status": "running" },
+        "thrown": null,
+        "host": { "offlineServices": [], "removedServiceIds": [] },
+        "calls": {
+          "tmuxRuntimeManager.getProjectSession": [["<repo>"]],
+          "tmuxRuntimeManager.ensureProjectSession": [["<repo>"]],
+          "tmuxRuntimeManager.findManagedWindow": [["aimux-repo", { "sessionId": "svc-shell" }]],
+          "tmuxRuntimeManager.createWindow": [
+            [
+              "aimux-repo",
+              "shell",
+              "<repo>",
+              "env",
+              [
+                "-i",
+                "AIMUX_DAEMON_PORT=43190",
+                "AIMUX_ENV=production",
+                "AIMUX_HOME=<repo>/home",
+                "CLICOLOR=1",
+                "COLORTERM=truecolor",
+                "HOME=<repo>/user-home",
+                "LANG=C.UTF-8",
+                "PATH=/usr/bin:/bin",
+                "SHELL=zsh",
+                "TERM=xterm-256color",
+                "USER=sam",
+                "env",
+                "AIMUX_SESSION_ID=svc-shell",
+                "AIMUX_TOOL=service",
+                "AIMUX_METADATA_ENDPOINT_FILE=<project-state>/metadata-api.txt",
+                "AIMUX_SHELL_INTEGRATION_SCRIPT=<project-state>/shell-integration/aimux-zsh-integration.zsh",
+                "AIMUX_SHELL_STATE_SUPPRESS_FILE=<project-state>/shell-state-suppress/svc-shell",
+                "ZDOTDIR=<project-state>/shell-integration",
+                "zsh",
+                "-i"
+              ],
+              { "detached": true }
+            ]
+          ],
+          "tmuxRuntimeManager.setWindowMetadata": [
+            [
+              { "sessionName": "aimux-repo", "windowId": "@18", "windowIndex": 18, "windowName": "shell" },
+              {
+                "kind": "service",
+                "sessionId": "svc-shell",
+                "command": "shell",
+                "args": ["-l"],
+                "launchCommandLine": "",
+                "toolConfigKey": "service",
+                "createdAt": "",
+                "worktreePath": "<repo>",
+                "label": "shell"
+              }
+            ]
+          ],
+          "tmuxRuntimeManager.applyManagedAgentWindowPolicy": [
+            [{ "sessionName": "aimux-repo", "windowId": "@18", "windowIndex": 18, "windowName": "shell" }, "service"]
+          ],
+          "tmuxRuntimeManager.killWindow": [],
+          "tmuxRuntimeManager.sendKey": [],
+          "tmuxRuntimeManager.sendText": [],
+          "tmuxRuntimeManager.sendEnter": [],
+          "tmuxRuntimeManager.hasWindow": [],
+          "tmuxRuntimeManager.isWindowAlive": [],
+          "tmuxRuntimeManager.displayMessage": [],
+          "saveState": [],
+          "invalidateDesktopStateSnapshot": [[]],
+          "refreshLocalDashboardModel": [],
+          "updateWorktreeSessions": [],
+          "adjustAfterRemove": [],
+          "noteLastUsedItem": [["svc-shell"]],
+          "preferDashboardEntrySelection": [["service", "svc-shell", "<repo>"]],
+          "settleDashboardCreatePending": [],
+          "setPendingDashboardServiceAction": []
+        },
+        "savedState": {
+          "savedAt": "<ts>",
+          "cwd": "<repo>",
+          "services": [
+            {
+              "id": "svc-shell",
+              "createdAt": "",
+              "worktreePath": "<repo>",
+              "cwd": "<repo>",
+              "label": "shell",
+              "launchCommandLine": "",
+              "tmuxTarget": { "sessionName": "aimux-repo", "windowId": "@18", "windowIndex": 18, "windowName": "shell" }
+            }
+          ]
+        },
+        "savedServices": [
+          {
+            "id": "svc-shell",
+            "createdAt": "",
+            "worktreePath": "<repo>",
+            "cwd": "<repo>",
+            "label": "shell",
+            "launchCommandLine": "",
+            "tmuxTarget": { "sessionName": "aimux-repo", "windowId": "@18", "windowIndex": 18, "windowName": "shell" }
+          }
+        ],
+        "topologyServicesAll": [
+          {
+            "id": "svc-shell",
+            "status": "running",
+            "command": "shell",
+            "args": ["-l"],
+            "worktreePath": "<repo>",
+            "cwd": "<repo>",
+            "label": "shell",
+            "createdAt": "<ts>",
+            "lastSeenAt": "<ts>",
+            "tmuxTarget": { "sessionName": "aimux-repo", "windowId": "@18", "windowIndex": 18, "windowName": "shell" }
+          }
+        ],
+        "topologyServicesRunning": [
+          {
+            "id": "svc-shell",
+            "status": "running",
+            "command": "shell",
+            "args": ["-l"],
+            "worktreePath": "<repo>",
+            "cwd": "<repo>",
+            "label": "shell",
+            "createdAt": "<ts>",
+            "lastSeenAt": "<ts>",
+            "tmuxTarget": { "sessionName": "aimux-repo", "windowId": "@18", "windowIndex": 18, "windowName": "shell" }
+          }
+        ],
+        "topologyServicesStopped": []
+      },
+      "inputSha256": "66b32b7d95db9ff3a0297838df6180075427605762e32eebd207715a8a39d439"
+    },
+    {
+      "id": "multiplexer-services-runtime-017",
+      "name": "stop throws when the matching window metadata is not a service",
+      "source": "src/multiplexer/services.test.ts",
+      "api": "stopService",
+      "input": {
+        "name": "stop throws when the matching window metadata is not a service",
+        "api": "stopService",
+        "serviceId": "svc-agent",
+        "offlineServices": [],
+        "existingWindow": {
+          "target": { "sessionName": "aimux-repo", "windowId": "@19", "windowIndex": 19, "windowName": "codex" },
+          "metadata": { "kind": "agent", "sessionId": "svc-agent", "command": "codex", "args": [] }
+        }
+      },
+      "output": {
+        "result": null,
+        "thrown": "Service \"svc-agent\" not found",
+        "host": { "offlineServices": [], "removedServiceIds": [] },
+        "calls": {
+          "tmuxRuntimeManager.getProjectSession": [["<repo>"]],
+          "tmuxRuntimeManager.ensureProjectSession": [],
+          "tmuxRuntimeManager.findManagedWindow": [["aimux-repo", { "sessionId": "svc-agent" }]],
+          "tmuxRuntimeManager.createWindow": [],
+          "tmuxRuntimeManager.setWindowMetadata": [],
+          "tmuxRuntimeManager.applyManagedAgentWindowPolicy": [],
+          "tmuxRuntimeManager.killWindow": [],
+          "tmuxRuntimeManager.sendKey": [],
+          "tmuxRuntimeManager.sendText": [],
+          "tmuxRuntimeManager.sendEnter": [],
+          "tmuxRuntimeManager.hasWindow": [],
+          "tmuxRuntimeManager.isWindowAlive": [],
+          "tmuxRuntimeManager.displayMessage": [],
+          "saveState": [],
+          "invalidateDesktopStateSnapshot": [],
+          "refreshLocalDashboardModel": [],
+          "updateWorktreeSessions": [],
+          "adjustAfterRemove": [],
+          "noteLastUsedItem": [],
+          "preferDashboardEntrySelection": [],
+          "settleDashboardCreatePending": [],
+          "setPendingDashboardServiceAction": []
+        },
+        "savedState": null,
+        "savedServices": [],
+        "topologyServicesAll": [],
+        "topologyServicesRunning": [],
+        "topologyServicesStopped": []
+      },
+      "inputSha256": "4e582c0c651cceb68a64d52ce1a2e0ad5e1a7d7fb51017065405ca98efeb1c8d"
+    },
+    {
+      "id": "multiplexer-services-runtime-018",
+      "name": "remove skips killing an existing non-service window",
+      "source": "src/multiplexer/services.test.ts",
+      "api": "removeOfflineService",
+      "input": {
+        "name": "remove skips killing an existing non-service window",
+        "api": "removeOfflineService",
+        "serviceId": "svc-agent",
+        "offlineServices": [{ "id": "svc-agent", "label": "shell", "worktreePath": "<repo>" }],
+        "existingWindow": {
+          "target": { "sessionName": "aimux-repo", "windowId": "@20", "windowIndex": 20, "windowName": "codex" },
+          "metadata": { "kind": "agent", "sessionId": "svc-agent", "command": "codex", "args": [] }
+        }
+      },
+      "output": {
+        "result": { "serviceId": "svc-agent", "status": "removed" },
+        "thrown": null,
+        "host": { "offlineServices": [], "removedServiceIds": ["svc-agent"] },
+        "calls": {
+          "tmuxRuntimeManager.getProjectSession": [["<repo>"]],
+          "tmuxRuntimeManager.ensureProjectSession": [],
+          "tmuxRuntimeManager.findManagedWindow": [["aimux-repo", { "sessionId": "svc-agent" }]],
+          "tmuxRuntimeManager.createWindow": [],
+          "tmuxRuntimeManager.setWindowMetadata": [],
+          "tmuxRuntimeManager.applyManagedAgentWindowPolicy": [],
+          "tmuxRuntimeManager.killWindow": [],
+          "tmuxRuntimeManager.sendKey": [],
+          "tmuxRuntimeManager.sendText": [],
+          "tmuxRuntimeManager.sendEnter": [],
+          "tmuxRuntimeManager.hasWindow": [],
+          "tmuxRuntimeManager.isWindowAlive": [],
+          "tmuxRuntimeManager.displayMessage": [],
+          "saveState": [],
+          "invalidateDesktopStateSnapshot": [[]],
+          "refreshLocalDashboardModel": [],
+          "updateWorktreeSessions": [],
+          "adjustAfterRemove": [],
+          "noteLastUsedItem": [],
+          "preferDashboardEntrySelection": [],
+          "settleDashboardCreatePending": [],
+          "setPendingDashboardServiceAction": []
+        },
+        "savedState": { "savedAt": "<ts>", "cwd": "<repo>", "services": [] },
+        "savedServices": [],
+        "topologyServicesAll": [],
+        "topologyServicesRunning": [],
+        "topologyServicesStopped": []
+      },
+      "inputSha256": "cf1312235aadd45282162368fa82bec70f95e12d2cc4e091067ef45cb29bf3fc"
+    },
+    {
+      "id": "multiplexer-services-runtime-019",
+      "name": "resume by id throws when the matching window metadata is not a service",
+      "source": "src/multiplexer/services.test.ts",
+      "api": "resumeOfflineServiceById",
+      "input": {
+        "name": "resume by id throws when the matching window metadata is not a service",
+        "api": "resumeOfflineServiceById",
+        "serviceId": "svc-agent",
+        "offlineServices": [],
+        "existingWindow": {
+          "target": { "sessionName": "aimux-repo", "windowId": "@21", "windowIndex": 21, "windowName": "codex" },
+          "metadata": { "kind": "agent", "sessionId": "svc-agent", "command": "codex", "args": [] }
+        }
+      },
+      "output": {
+        "result": null,
+        "thrown": "Service \"svc-agent\" not found",
+        "host": { "offlineServices": [], "removedServiceIds": [] },
+        "calls": {
+          "tmuxRuntimeManager.getProjectSession": [["<repo>"]],
+          "tmuxRuntimeManager.ensureProjectSession": [],
+          "tmuxRuntimeManager.findManagedWindow": [["aimux-repo", { "sessionId": "svc-agent" }]],
+          "tmuxRuntimeManager.createWindow": [],
+          "tmuxRuntimeManager.setWindowMetadata": [],
+          "tmuxRuntimeManager.applyManagedAgentWindowPolicy": [],
+          "tmuxRuntimeManager.killWindow": [],
+          "tmuxRuntimeManager.sendKey": [],
+          "tmuxRuntimeManager.sendText": [],
+          "tmuxRuntimeManager.sendEnter": [],
+          "tmuxRuntimeManager.hasWindow": [],
+          "tmuxRuntimeManager.isWindowAlive": [],
+          "tmuxRuntimeManager.displayMessage": [],
+          "saveState": [],
+          "invalidateDesktopStateSnapshot": [],
+          "refreshLocalDashboardModel": [],
+          "updateWorktreeSessions": [],
+          "adjustAfterRemove": [],
+          "noteLastUsedItem": [],
+          "preferDashboardEntrySelection": [],
+          "settleDashboardCreatePending": [],
+          "setPendingDashboardServiceAction": []
+        },
+        "savedState": null,
+        "savedServices": [],
+        "topologyServicesAll": [],
+        "topologyServicesRunning": [],
+        "topologyServicesStopped": []
+      },
+      "inputSha256": "09a44d0db88a72c20724b012baab0591072370bd65780d1d3bde3a8036be9e0d"
     }
   ]
 }

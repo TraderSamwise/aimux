@@ -95,6 +95,21 @@
     },
     {
       "id": "multiplexer-services-006",
+      "name": "falls back from whitespace launchCommandLine metadata to shell args",
+      "source": "src/multiplexer/services.test.ts",
+      "api": "buildServiceStateFromMetadata",
+      "input": {
+        "name": "falls back from whitespace launchCommandLine metadata to shell args",
+        "api": "buildServiceStateFromMetadata",
+        "serviceId": "svc-3",
+        "metadata": { "command": "shell", "args": ["-lc", "npm start"], "label": "npm", "launchCommandLine": "   " },
+        "options": {}
+      },
+      "output": { "id": "svc-3", "label": "npm", "launchCommandLine": "npm start" },
+      "inputSha256": "4595d5abdadd0d5369d44c5d038ec72efa229c2fd831198e9e7191839c4b1aa9"
+    },
+    {
+      "id": "multiplexer-services-007",
       "name": "labels blank service commands as shell",
       "source": "src/multiplexer/services.test.ts",
       "api": "serviceLabelForCommand",
@@ -107,7 +122,7 @@
       "inputSha256": "80796afe1135bea340d473e8f74aeb1ec07cb2f044f4c934ab5263afbdd82f2e"
     },
     {
-      "id": "multiplexer-services-007",
+      "id": "multiplexer-services-008",
       "name": "labels path commands by basename",
       "source": "src/multiplexer/services.test.ts",
       "api": "serviceLabelForCommand",

@@ -628,6 +628,111 @@ const scenarios = [
       { op: "runAll" },
     ],
   },
+  {
+    name: "parses split active SSE project update frames without losing pending data",
+    endpointResponses: [{ type: "endpoint", endpoint }],
+    fetchResponses: [{ type: "stream", label: "split" }],
+    ops: [
+      { op: "start" },
+      { op: "advance", ms: 0 },
+      { op: "enqueue", label: "split", text: 'event: project_update\ndata: {"type":"project' },
+      { op: "enqueue", label: "split", text: '_update","views":["desktop-state"]}\n\n' },
+      { op: "advance", ms: 250 },
+    ],
+  },
+  {
+    name: "joins multi-line SSE data and refreshes the active library view",
+    screen: "library",
+    endpointResponses: [{ type: "endpoint", endpoint }],
+    fetchResponses: [{ type: "stream", label: "multiline" }],
+    ops: [
+      { op: "start" },
+      { op: "advance", ms: 0 },
+      { op: "enqueue", label: "multiline", text: 'event: project_update\ndata: {"views":\ndata: ["library"]}\n\n' },
+      { op: "advance", ms: 250 },
+    ],
+  },
+  {
+    name: "handles CRLF comments and notification alert frames from an active stream",
+    endpointResponses: [{ type: "endpoint", endpoint }],
+    fetchResponses: [{ type: "stream", label: "crlf-alert" }],
+    ops: [
+      { op: "start" },
+      { op: "advance", ms: 0 },
+      {
+        op: "enqueue",
+        label: "crlf-alert",
+        text: ':keepalive\r\nevent: alert\r\ndata: {"type":"alert","kind":"notification","title":"Build done","ts":"now"}\r\n\r\n',
+      },
+    ],
+  },
+  {
+    name: "ignores malformed active SSE JSON but records a dashboard debug line",
+    endpointResponses: [{ type: "endpoint", endpoint }],
+    fetchResponses: [{ type: "stream", label: "bad-json" }],
+    ops: [
+      { op: "start" },
+      { op: "advance", ms: 0 },
+      { op: "enqueue", label: "bad-json", text: "event: alert\ndata: {bad}\n\n" },
+    ],
+  },
+  {
+    name: "ignores active stream events with empty event names",
+    endpointResponses: [{ type: "endpoint", endpoint }],
+    fetchResponses: [{ type: "stream", label: "message-default" }],
+    ops: [
+      { op: "start" },
+      { op: "advance", ms: 0 },
+      { op: "enqueue", label: "message-default", text: 'event:\ndata: {"views":["desktop-state"]}\n\n' },
+      { op: "advance", ms: 250 },
+    ],
+  },
+  {
+    name: "ignores project update events whose views field is not an array",
+    ops: [{ op: "handle", name: "project_update", payload: { type: "project_update", views: "desktop-state" } }, { op: "runAll" }],
+  },
+  {
+    name: "refreshes topology when project updates name the active topology view",
+    screen: "topology",
+    ops: [{ op: "handle", name: "project_update", payload: { type: "project_update", views: ["topology"] } }, { op: "runAll" }],
+  },
+  {
+    name: "refreshes graveyard when project updates name the active graveyard view",
+    screen: "graveyard",
+    ops: [{ op: "handle", name: "project_update", payload: { type: "project_update", views: ["graveyard"] } }, { op: "runAll" }],
+  },
+  {
+    name: "resyncs cached views when the SSE endpoint returns a non-ok status",
+    endpointResponses: [{ type: "endpoint", endpoint }],
+    fetchResponses: [{ type: "status", status: 503 }],
+    ops: [{ op: "start" }, { op: "advance", ms: 250 }, { op: "advance", ms: 250 }, { op: "stop" }],
+  },
+  ...[
+    ["needs_input", "codex-1"],
+    ["next_step", "codex-1"],
+    ["message_waiting", "codex-1"],
+    ["handoff_waiting", "codex-1"],
+    ["task_assigned", "codex-1"],
+    ["review_waiting", "codex-1"],
+    ["blocked", undefined],
+    ["task_done", undefined],
+  ].map(([kind, sessionId]) => ({
+    name: `applies ${kind} alert flashes`,
+    ops: [
+      {
+        op: "applyAlert",
+        event: {
+          type: "alert",
+          kind,
+          projectId: "project",
+          title: "Attention",
+          message: "Message",
+          ts: "2026-09-07T00:00:00.000Z",
+          ...(sessionId ? { sessionId } : {}),
+        },
+      },
+    ],
+  })),
 ];
 
 const cases = [];
