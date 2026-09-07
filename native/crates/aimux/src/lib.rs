@@ -67,6 +67,7 @@ pub mod dashboard_internal;
 pub mod dashboard_launch_options;
 pub mod dashboard_lifecycle;
 pub mod dashboard_model;
+pub mod dashboard_model_services_lifecycle_contract;
 pub mod dashboard_navigation;
 pub mod dashboard_ops_helpers_contract;
 pub mod dashboard_ops_mutations_contract;
