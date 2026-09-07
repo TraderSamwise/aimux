@@ -493,6 +493,7 @@ const cases = [];
 
 {
   const allowedChildProcessFiles = new Set([
+    "scripts/audit-fixture-enforcement.mjs",
     "scripts/captest.mjs",
     "scripts/hosted-check.mjs",
     "src/context/compactor.ts",

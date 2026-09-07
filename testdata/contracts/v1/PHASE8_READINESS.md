@@ -12,7 +12,7 @@ Answer: the checklist gate is clear for captured behavior: all 322 suite/corpus 
 - Enforcement audit: `testdata/contracts/v1/ENFORCEMENT_AUDIT.md`.
 - Live residual suite: `scripts/phase8-live-residuals.py`, reported in `testdata/contracts/v1/PHASE8_LIVE_RESIDUALS.md`.
 - Current binding status: 322 `PROVEN-FAILS`, 0 `CHECKLIST`, 0 `VACUOUS`, 0 `ERROR`, 0 `STATIC`.
-- Current binding case count: 3,922 suite/corpus cases, all mutation-proven.
+- Current binding case count: 3,925 suite/corpus cases, all mutation-proven.
 - Current backlog: `testdata/contracts/v1/UNIMPLEMENTED.md` lists 0 ignored/checklist corpus entries.
 - Coverage definition from `UNIMPLEMENTED.md`: 245 `src/**/*.test.ts` modules, 245 covered by behavior-level corpora, 0 uncovered. This is test-module coverage, not proof that every production TS source file is safe to delete independently.
 

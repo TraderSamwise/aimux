@@ -307,6 +307,7 @@
       "input": {
         "api": "childProcessImportInventory",
         "allowed": [
+          "scripts/audit-fixture-enforcement.mjs",
           "scripts/captest.mjs",
           "scripts/hosted-check.mjs",
           "src/context/compactor.ts",
@@ -330,7 +331,7 @@
         ]
       },
       "output": [],
-      "inputSha256": "532bf9c8adc0997f42b07d77e731c49204ebf163452fc162245265b86303f25c"
+      "inputSha256": "51807cb9a727bf3fdd3802982f1efb300e3c2dd8a56ae02258987767123c7ce4"
     },
     {
       "id": "one-shot-node-inventory-006",
