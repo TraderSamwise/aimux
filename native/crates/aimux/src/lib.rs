@@ -56,6 +56,7 @@ pub mod dashboard_launch_options;
 pub mod dashboard_lifecycle;
 pub mod dashboard_model;
 pub mod dashboard_navigation;
+pub mod dashboard_ops_mutations_contract;
 pub mod dashboard_processes;
 pub mod dashboard_project_events;
 pub mod dashboard_readiness;

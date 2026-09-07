@@ -1,0 +1,554 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/dashboard-ops.ts",
+  "generatedBy": "scripts/capture-dashboard-ops-mutations-contract.mjs",
+  "description": "Dashboard operation mutation feedback, pending-action pressure/coalescing, service lifecycle, and session stop/graveyard side effects captured by running TypeScript dashboard-ops exports.",
+  "cases": [
+    {
+      "id": "dashboard-ops-mutations-001",
+      "name": "creates a shell service through project API and clears pending after live row",
+      "source": "src/multiplexer/dashboard-ops.ts",
+      "api": "createDashboardServiceWithFeedback",
+      "input": {
+        "api": "createDashboardServiceWithFeedback",
+        "commandLine": "",
+        "worktreePath": "/repo",
+        "serviceSnapshots": [
+          [],
+          [{ "id": "<SERVICE_ID>", "status": "running", "pid": 1234, "foregroundCommand": "zsh" }]
+        ]
+      },
+      "output": {
+        "result": null,
+        "footerFlash": "◆ Created service shell",
+        "footerFlashTicks": 3,
+        "pendingSessions": [],
+        "pendingServices": [],
+        "serviceSeed": null,
+        "sessionSeed": null,
+        "rawServices": [{ "id": "<SERVICE_ID>", "status": "running", "pid": 1234, "foregroundCommand": "zsh" }],
+        "rawSessions": [],
+        "calls": [
+          { "method": "getDashboardServices", "args": [] },
+          { "method": "preferDashboardEntrySelection", "args": ["service", "<SERVICE_ID>", "/repo"] },
+          {
+            "method": "setPendingDashboardServiceAction",
+            "args": [
+              "<SERVICE_ID>",
+              "creating",
+              {
+                "serviceSeed": {
+                  "id": "<SERVICE_ID>",
+                  "command": "shell",
+                  "args": ["-l"],
+                  "createdAt": "<ISO_DATE>",
+                  "worktreePath": "/repo",
+                  "status": "running",
+                  "active": false,
+                  "label": "shell",
+                  "optimistic": true
+                }
+              }
+            ]
+          },
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "reconcileDashboardRenderState", "args": [] },
+          { "method": "renderDashboard", "args": [] },
+          {
+            "method": "postToProjectService",
+            "args": [
+              "/services/create",
+              { "serviceId": "<SERVICE_ID>", "command": "", "worktreePath": "/repo" },
+              { "timeoutMs": 10000 }
+            ]
+          },
+          { "method": "refreshDashboardModelFromService", "args": [true, { "lifecycle": { "mode": "dashboard" } }] },
+          { "method": "getDashboardServices", "args": [] },
+          { "method": "setPendingDashboardServiceAction", "args": ["<SERVICE_ID>", null] },
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "reconcileDashboardRenderState", "args": [] },
+          { "method": "renderDashboard", "args": [] }
+        ]
+      },
+      "inputSha256": "dbd2d0bdd483caee0fc3661033581a684ba921692e70c8b1569c3f8c5f4d8582"
+    },
+    {
+      "id": "dashboard-ops-mutations-002",
+      "name": "creates a command service and labels it from the first command token",
+      "source": "src/multiplexer/dashboard-ops.ts",
+      "api": "createDashboardServiceWithFeedback",
+      "input": {
+        "api": "createDashboardServiceWithFeedback",
+        "commandLine": "pnpm dev --host 0.0.0.0",
+        "worktreePath": "/repo/app",
+        "serviceSnapshots": [[], [{ "id": "<SERVICE_ID>", "status": "running", "pid": 2222 }]]
+      },
+      "output": {
+        "result": null,
+        "footerFlash": "◆ Created service pnpm",
+        "footerFlashTicks": 3,
+        "pendingSessions": [],
+        "pendingServices": [],
+        "serviceSeed": null,
+        "sessionSeed": null,
+        "rawServices": [{ "id": "<SERVICE_ID>", "status": "running", "pid": 2222 }],
+        "rawSessions": [],
+        "calls": [
+          { "method": "getDashboardServices", "args": [] },
+          { "method": "preferDashboardEntrySelection", "args": ["service", "<SERVICE_ID>", "/repo/app"] },
+          {
+            "method": "setPendingDashboardServiceAction",
+            "args": [
+              "<SERVICE_ID>",
+              "creating",
+              {
+                "serviceSeed": {
+                  "id": "<SERVICE_ID>",
+                  "command": "/bin/zsh",
+                  "args": ["-lc", "pnpm dev --host 0.0.0.0"],
+                  "createdAt": "<ISO_DATE>",
+                  "worktreePath": "/repo/app",
+                  "status": "running",
+                  "active": false,
+                  "label": "pnpm",
+                  "optimistic": true
+                }
+              }
+            ]
+          },
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "reconcileDashboardRenderState", "args": [] },
+          { "method": "renderDashboard", "args": [] },
+          {
+            "method": "postToProjectService",
+            "args": [
+              "/services/create",
+              { "serviceId": "<SERVICE_ID>", "command": "pnpm dev --host 0.0.0.0", "worktreePath": "/repo/app" },
+              { "timeoutMs": 10000 }
+            ]
+          },
+          { "method": "refreshDashboardModelFromService", "args": [true, { "lifecycle": { "mode": "dashboard" } }] },
+          { "method": "getDashboardServices", "args": [] },
+          { "method": "setPendingDashboardServiceAction", "args": ["<SERVICE_ID>", null] },
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "reconcileDashboardRenderState", "args": [] },
+          { "method": "renderDashboard", "args": [] }
+        ]
+      },
+      "inputSha256": "a0f6f5071c6e2997c0f46392b4e188edadcd2aa3fc59e99316415765ad1fd07a"
+    },
+    {
+      "id": "dashboard-ops-mutations-003",
+      "name": "blocks service create while four dashboard mutations are already in flight",
+      "source": "src/multiplexer/dashboard-ops.ts",
+      "api": "createDashboardServiceWithFeedback",
+      "input": {
+        "api": "createDashboardServiceWithFeedback",
+        "commandLine": "",
+        "pendingActions": [
+          { "targetKind": "session", "id": "sess-a", "kind": "starting", "token": 1 },
+          { "targetKind": "session", "id": "sess-b", "kind": "stopping", "token": 2 },
+          { "targetKind": "service", "id": "svc-a", "kind": "starting", "token": 3 },
+          { "targetKind": "service", "id": "svc-b", "kind": "removing", "token": 4 }
+        ]
+      },
+      "output": {
+        "result": null,
+        "footerFlash": "Lifecycle queue is settling",
+        "footerFlashTicks": 2,
+        "pendingSessions": [
+          { "id": "sess-a", "kind": "starting", "token": 1 },
+          { "id": "sess-b", "kind": "stopping", "token": 2 }
+        ],
+        "pendingServices": [
+          { "id": "svc-a", "kind": "starting", "token": 3 },
+          { "id": "svc-b", "kind": "removing", "token": 4 }
+        ],
+        "serviceSeed": null,
+        "sessionSeed": null,
+        "rawServices": [],
+        "rawSessions": [],
+        "calls": [
+          { "method": "getDashboardServices", "args": [] },
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "reconcileDashboardRenderState", "args": [] },
+          { "method": "renderDashboard", "args": [] }
+        ]
+      },
+      "inputSha256": "2e31c5e351a5b2024349bbd601ae348bfe729b9e0e0b031c5ed1324dd6eb946d"
+    },
+    {
+      "id": "dashboard-ops-mutations-004",
+      "name": "starts an offline service in dashboard mode",
+      "source": "src/multiplexer/dashboard-ops.ts",
+      "api": "resumeOfflineServiceWithFeedback",
+      "input": {
+        "api": "resumeOfflineServiceWithFeedback",
+        "service": { "id": "svc-1", "label": "shell" },
+        "serviceSnapshots": [[], [{ "id": "svc-1", "status": "running" }]]
+      },
+      "output": {
+        "result": "settled",
+        "footerFlash": "◆ Started service shell",
+        "footerFlashTicks": 3,
+        "pendingSessions": [],
+        "pendingServices": [],
+        "serviceSeed": null,
+        "sessionSeed": null,
+        "rawServices": [{ "id": "svc-1", "status": "running" }],
+        "rawSessions": [],
+        "calls": [
+          { "method": "getDashboardServices", "args": [] },
+          { "method": "getDashboardServices", "args": [] },
+          {
+            "method": "setPendingDashboardServiceAction",
+            "args": [
+              "svc-1",
+              "starting",
+              {
+                "serviceSeed": {
+                  "id": "svc-1",
+                  "command": "shell",
+                  "args": [],
+                  "status": "offline",
+                  "active": false,
+                  "label": "shell"
+                }
+              }
+            ]
+          },
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "reconcileDashboardRenderState", "args": [] },
+          { "method": "renderDashboard", "args": [] },
+          {
+            "method": "postToProjectService",
+            "args": ["/services/resume", { "serviceId": "svc-1" }, { "timeoutMs": 10000 }]
+          },
+          { "method": "refreshDashboardModelFromService", "args": [true, { "lifecycle": { "mode": "dashboard" } }] },
+          { "method": "getDashboardServices", "args": [] },
+          { "method": "setPendingDashboardServiceAction", "args": ["svc-1", null] },
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "reconcileDashboardRenderState", "args": [] },
+          { "method": "renderDashboard", "args": [] }
+        ]
+      },
+      "inputSha256": "91970d55d0922883d2eba8b40e6a367dbea06f5afe27987a659c3b34499bb767"
+    },
+    {
+      "id": "dashboard-ops-mutations-005",
+      "name": "local service resume failure clears pending and reports error",
+      "source": "src/multiplexer/dashboard-ops.ts",
+      "api": "resumeOfflineServiceWithFeedback",
+      "input": {
+        "api": "resumeOfflineServiceWithFeedback",
+        "mode": "agent",
+        "service": { "id": "svc-1", "label": "shell" },
+        "localServiceResumeError": "boom"
+      },
+      "output": {
+        "result": "failed",
+        "footerFlash": "Restoring shell",
+        "footerFlashTicks": 3,
+        "pendingSessions": [],
+        "pendingServices": [],
+        "serviceSeed": null,
+        "sessionSeed": null,
+        "rawServices": [],
+        "rawSessions": [],
+        "calls": [
+          { "method": "setPendingDashboardServiceAction", "args": ["svc-1", "starting"] },
+          { "method": "renderDashboard", "args": [] },
+          { "method": "resumeOfflineServiceById", "args": ["svc-1"] },
+          { "method": "setPendingDashboardServiceAction", "args": ["svc-1", null] },
+          { "method": "refreshLocalDashboardModel", "args": [] },
+          { "method": "showDashboardError", "args": ["Failed to start service", ["boom"]] }
+        ]
+      },
+      "inputSha256": "4b5d6aa4f3def667cebab568b8da125aaaade8aa88fcd2f56c39a3ce8fbbb0cd"
+    },
+    {
+      "id": "dashboard-ops-mutations-006",
+      "name": "does not stop a service while model-backed startup is pending",
+      "source": "src/multiplexer/dashboard-ops.ts",
+      "api": "stopDashboardServiceWithFeedback",
+      "input": {
+        "api": "stopDashboardServiceWithFeedback",
+        "service": { "id": "service-starting", "label": "api" },
+        "serviceSnapshots": [
+          [{ "id": "service-starting", "status": "offline", "label": "api", "pendingAction": "creating" }]
+        ]
+      },
+      "output": {
+        "result": null,
+        "footerFlash": "creating is already settling",
+        "footerFlashTicks": 2,
+        "pendingSessions": [],
+        "pendingServices": [],
+        "serviceSeed": null,
+        "sessionSeed": null,
+        "rawServices": [{ "id": "service-starting", "status": "offline", "label": "api", "pendingAction": "creating" }],
+        "rawSessions": [],
+        "calls": [
+          { "method": "getDashboardServices", "args": [] },
+          { "method": "getDashboardServices", "args": [] },
+          { "method": "getDashboardServices", "args": [] },
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "reconcileDashboardRenderState", "args": [] },
+          { "method": "renderDashboard", "args": [] }
+        ]
+      },
+      "inputSha256": "7140e8a377343564af0d22d21148b8170379543b8527e5305e74d1bba4c3fb6d"
+    },
+    {
+      "id": "dashboard-ops-mutations-007",
+      "name": "stops a running service after it settles offline",
+      "source": "src/multiplexer/dashboard-ops.ts",
+      "api": "stopDashboardServiceWithFeedback",
+      "input": {
+        "api": "stopDashboardServiceWithFeedback",
+        "service": { "id": "svc-1", "label": "shell" },
+        "serviceSnapshots": [
+          [{ "id": "svc-1", "status": "running" }],
+          [{ "id": "svc-1", "status": "offline", "foregroundCommand": "zsh", "previewLine": "prompt" }]
+        ]
+      },
+      "output": {
+        "result": null,
+        "footerFlash": "◆ Stopped service shell",
+        "footerFlashTicks": 3,
+        "pendingSessions": [],
+        "pendingServices": [],
+        "serviceSeed": null,
+        "sessionSeed": null,
+        "rawServices": [{ "id": "svc-1", "status": "offline", "foregroundCommand": "zsh", "previewLine": "prompt" }],
+        "rawSessions": [],
+        "calls": [
+          { "method": "getDashboardServices", "args": [] },
+          { "method": "getDashboardServices", "args": [] },
+          { "method": "getDashboardServices", "args": [] },
+          {
+            "method": "setPendingDashboardServiceAction",
+            "args": ["svc-1", "stopping", { "serviceSeed": { "id": "svc-1", "status": "running" } }]
+          },
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "reconcileDashboardRenderState", "args": [] },
+          { "method": "renderDashboard", "args": [] },
+          {
+            "method": "postToProjectService",
+            "args": ["/services/stop", { "serviceId": "svc-1" }, { "timeoutMs": 10000 }]
+          },
+          { "method": "refreshDashboardModelFromService", "args": [true, { "lifecycle": { "mode": "dashboard" } }] },
+          { "method": "getDashboardServices", "args": [] },
+          { "method": "setPendingDashboardServiceAction", "args": ["svc-1", null] },
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "reconcileDashboardRenderState", "args": [] },
+          { "method": "renderDashboard", "args": [] }
+        ]
+      },
+      "inputSha256": "38dbf385dbdfaa6a677382a1e9d78e3933e8a976ccee2ce636c30964f81c07dd"
+    },
+    {
+      "id": "dashboard-ops-mutations-008",
+      "name": "removes an offline service after stable row absence",
+      "source": "src/multiplexer/dashboard-ops.ts",
+      "api": "removeDashboardServiceWithFeedback",
+      "input": {
+        "api": "removeDashboardServiceWithFeedback",
+        "service": { "id": "svc-1", "label": "shell" },
+        "rawServices": [{ "id": "svc-1", "status": "offline" }],
+        "serviceSnapshots": [[{ "id": "svc-1", "status": "offline" }], []]
+      },
+      "output": {
+        "result": null,
+        "footerFlash": "◆ Deleted service shell",
+        "footerFlashTicks": 3,
+        "pendingSessions": [],
+        "pendingServices": [],
+        "serviceSeed": null,
+        "sessionSeed": null,
+        "rawServices": [],
+        "rawSessions": [],
+        "calls": [
+          { "method": "getDashboardServices", "args": [] },
+          { "method": "setPendingDashboardServiceAction", "args": ["svc-1", "removing", {}] },
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "reconcileDashboardRenderState", "args": [] },
+          { "method": "renderDashboard", "args": [] },
+          {
+            "method": "postToProjectService",
+            "args": ["/services/remove", { "serviceId": "svc-1" }, { "timeoutMs": 10000 }]
+          },
+          { "method": "refreshDashboardModelFromService", "args": [true, { "lifecycle": { "mode": "dashboard" } }] },
+          { "method": "refreshDashboardModelFromService", "args": [true, { "lifecycle": { "mode": "dashboard" } }] },
+          { "method": "refreshDashboardModelFromService", "args": [true, { "lifecycle": { "mode": "dashboard" } }] },
+          { "method": "refreshDashboardModelFromService", "args": [true, { "lifecycle": { "mode": "dashboard" } }] },
+          { "method": "setPendingDashboardServiceAction", "args": ["svc-1", null] },
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "reconcileDashboardRenderState", "args": [] },
+          { "method": "renderDashboard", "args": [] }
+        ]
+      },
+      "inputSha256": "2b63e12fc9ce46619c120a8f764ac8aeabf7811a2f3836aebbde2abdac3fa9cc"
+    },
+    {
+      "id": "dashboard-ops-mutations-009",
+      "name": "stops a dashboard agent after session row settles offline",
+      "source": "src/multiplexer/dashboard-ops.ts",
+      "api": "stopSessionToOfflineWithFeedback",
+      "input": {
+        "api": "stopSessionToOfflineWithFeedback",
+        "session": { "id": "sess-1", "command": "claude", "label": "claude" },
+        "sessionLabels": { "sess-1": "claude" },
+        "sessionSnapshots": [
+          [{ "id": "sess-1", "command": "claude", "label": "claude", "status": "running" }],
+          [{ "id": "sess-1", "command": "claude", "label": "claude", "status": "offline" }]
+        ]
+      },
+      "output": {
+        "result": null,
+        "footerFlash": "Stopped claude",
+        "footerFlashTicks": 3,
+        "pendingSessions": [],
+        "pendingServices": [],
+        "serviceSeed": null,
+        "sessionSeed": null,
+        "rawServices": [],
+        "rawSessions": [{ "id": "sess-1", "command": "claude", "label": "claude", "status": "offline" }],
+        "calls": [
+          { "method": "getSessionLabel", "args": ["sess-1"] },
+          { "method": "getDashboardSessions", "args": [] },
+          { "method": "getDashboardSessions", "args": [] },
+          {
+            "method": "setPendingDashboardSessionAction",
+            "args": [
+              "sess-1",
+              "stopping",
+              { "sessionSeed": { "id": "sess-1", "command": "claude", "label": "claude", "status": "running" } }
+            ]
+          },
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "reconcileDashboardRenderState", "args": [] },
+          { "method": "renderDashboard", "args": [] },
+          {
+            "method": "postToProjectService",
+            "args": ["/agents/stop", { "sessionId": "sess-1" }, { "timeoutMs": 10000 }]
+          },
+          { "method": "refreshDashboardModelFromService", "args": [true, { "lifecycle": { "mode": "dashboard" } }] },
+          { "method": "getDashboardSessions", "args": [] },
+          { "method": "setPendingDashboardSessionAction", "args": ["sess-1", null] },
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "reconcileDashboardRenderState", "args": [] },
+          { "method": "renderDashboard", "args": [] }
+        ]
+      },
+      "inputSha256": "c05c8aabf28270643a1e7dab3b6d4fcb92a995b63786afc54f77cddf891844ba"
+    },
+    {
+      "id": "dashboard-ops-mutations-010",
+      "name": "coalesces duplicate session stop",
+      "source": "src/multiplexer/dashboard-ops.ts",
+      "api": "stopSessionToOfflineWithFeedback",
+      "input": {
+        "api": "stopSessionToOfflineWithFeedback",
+        "session": { "id": "sess-1", "command": "codex", "label": "codex" },
+        "sessionLabels": { "sess-1": "codex" },
+        "pendingActions": [{ "targetKind": "session", "id": "sess-1", "kind": "stopping", "token": 1 }],
+        "sessionSnapshots": [[{ "id": "sess-1", "command": "codex", "label": "codex", "status": "running" }]]
+      },
+      "output": {
+        "result": null,
+        "footerFlash": "stopping is already settling",
+        "footerFlashTicks": 2,
+        "pendingSessions": [{ "id": "sess-1", "kind": "stopping", "token": 1 }],
+        "pendingServices": [],
+        "serviceSeed": null,
+        "sessionSeed": null,
+        "rawServices": [],
+        "rawSessions": [{ "id": "sess-1", "command": "codex", "label": "codex", "status": "running" }],
+        "calls": [
+          { "method": "getSessionLabel", "args": ["sess-1"] },
+          { "method": "getDashboardSessions", "args": [] },
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "reconcileDashboardRenderState", "args": [] },
+          { "method": "renderDashboard", "args": [] }
+        ]
+      },
+      "inputSha256": "6d1f75fbf69f85642a147944ad3892bd36048f6cadabef808f20b3393a528132"
+    },
+    {
+      "id": "dashboard-ops-mutations-011",
+      "name": "does not let graveyard supersede pending stop for same agent",
+      "source": "src/multiplexer/dashboard-ops.ts",
+      "api": "graveyardSessionWithFeedback",
+      "input": {
+        "api": "graveyardSessionWithFeedback",
+        "sessionId": "sess-1",
+        "hasWorktrees": true,
+        "sessions": [{ "id": "sess-1", "command": "codex", "label": "codex", "status": "running" }],
+        "sessionLabels": { "sess-1": "codex" },
+        "pendingActions": [{ "targetKind": "session", "id": "sess-1", "kind": "stopping", "token": 1 }],
+        "rawSessions": [{ "id": "sess-1", "command": "codex", "label": "codex", "status": "running" }],
+        "sessionSnapshots": [
+          [
+            {
+              "id": "sess-1",
+              "command": "codex",
+              "label": "codex",
+              "status": "running",
+              "pendingAction": "graveyarding"
+            }
+          ]
+        ]
+      },
+      "output": {
+        "result": null,
+        "footerFlash": "stopping is already settling",
+        "footerFlashTicks": 2,
+        "pendingSessions": [{ "id": "sess-1", "kind": "stopping", "token": 1 }],
+        "pendingServices": [],
+        "serviceSeed": null,
+        "sessionSeed": null,
+        "rawServices": [],
+        "rawSessions": [{ "id": "sess-1", "command": "codex", "label": "codex", "status": "running" }],
+        "calls": [
+          { "method": "getDashboardSessions", "args": [] },
+          { "method": "getSessionLabel", "args": ["sess-1"] },
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "reconcileDashboardRenderState", "args": [] },
+          { "method": "renderDashboard", "args": [] }
+        ]
+      },
+      "inputSha256": "04ea7eebfe6490b3f1ce9f1c81a764fb138f5337ddea587abedecbbe39122ef8"
+    },
+    {
+      "id": "dashboard-ops-mutations-012",
+      "name": "coalesces duplicate service removal",
+      "source": "src/multiplexer/dashboard-ops.ts",
+      "api": "removeDashboardServiceWithFeedback",
+      "input": {
+        "api": "removeDashboardServiceWithFeedback",
+        "service": { "id": "svc-1", "label": "shell" },
+        "pendingActions": [{ "targetKind": "service", "id": "svc-1", "kind": "removing", "token": 1 }],
+        "rawServices": [{ "id": "svc-1", "status": "offline" }],
+        "serviceSnapshots": [[{ "id": "svc-1", "status": "offline", "pendingAction": "removing", "optimistic": true }]]
+      },
+      "output": {
+        "result": null,
+        "footerFlash": "removing is already settling",
+        "footerFlashTicks": 2,
+        "pendingSessions": [],
+        "pendingServices": [{ "id": "svc-1", "kind": "removing", "token": 1 }],
+        "serviceSeed": null,
+        "sessionSeed": null,
+        "rawServices": [{ "id": "svc-1", "status": "offline" }],
+        "rawSessions": [],
+        "calls": [
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "reconcileDashboardRenderState", "args": [] },
+          { "method": "renderDashboard", "args": [] }
+        ]
+      },
+      "inputSha256": "ddd8dab2c4008c3cc7d9d9d43d677cdbbdcaed48f84159ba4550d41f6a6cc2e6"
+    }
+  ]
+}
