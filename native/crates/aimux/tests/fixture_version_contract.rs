@@ -1,6 +1,8 @@
 use serde::Deserialize;
 use serde_json::Value;
 
+use aimux::release_version_contract::run_release_version_contract_case;
+
 const VERSION_CONTRACT: &str =
     include_str!("../../../../testdata/contracts/v1/release/version.json");
 
@@ -21,7 +23,6 @@ struct Case {
 }
 
 #[test]
-#[ignore = "checklist: installed artifact version/build-profile readers are not exposed as a Rust public API yet"]
 fn fixture_version_contract_is_captured() {
     let contract: Contract =
         serde_json::from_str(VERSION_CONTRACT).expect("version fixture parses");
@@ -33,5 +34,12 @@ fn fixture_version_contract_is_captured() {
         assert!(case.api.starts_with("readAimux"));
         assert!(case.input.get("files").and_then(Value::as_object).is_some());
         assert!(case.output.as_str().is_some());
+        assert_eq!(
+            run_release_version_contract_case(&case.input),
+            case.output,
+            "{} ({})",
+            case.id,
+            case.api
+        );
     }
 }
