@@ -766,12 +766,52 @@ fn resume_offline_session(input: &Value) -> Value {
         });
     };
 
-    let backend_session_id = string_field(topology_session, "backendSessionId");
-    calls.push(call(
-        "sessionBootstrap.canResumeWithBackendSessionId",
-        vec![codex_tool_config(), json!(backend_session_id)],
-    ));
-    if derived_activity(&metadata, &session_id).as_deref() == Some("running") {
+    let backend_session_id = optional_string(topology_session, "backendSessionId");
+    let backend_id_json = backend_session_id
+        .as_deref()
+        .map(|id| json!(id))
+        .unwrap_or(Value::Null);
+    let derived_activity = derived_field(&metadata, &session_id, "activity");
+    let derived_attention = derived_field(&metadata, &session_id, "attention");
+    let relaunch_fresh = derived_activity.as_deref() == Some("error")
+        || derived_attention.as_deref() == Some("error")
+        || (backend_session_id.is_none() && bool_field(topology_session, "freshRelaunchAllowed"));
+    let can_resume = if relaunch_fresh {
+        false
+    } else {
+        let tool_key = string_field(topology_session, "toolConfigKey");
+        calls.push(call(
+            "sessionBootstrap.canResumeWithBackendSessionId",
+            vec![tool_config(input, &tool_key), backend_id_json.clone()],
+        ));
+        input
+            .get("canResumeWithBackendSessionId")
+            .and_then(Value::as_bool)
+            .unwrap_or(backend_session_id.is_some())
+    };
+    let use_backend_resume = !relaunch_fresh && can_resume;
+    if !relaunch_fresh && !use_backend_resume {
+        return json!({
+            "thrown": format!(
+                "Cannot restore session \"{session_id}\" without an exact resumable backend session id for \"{}\"",
+                string_field(topology_session, "toolConfigKey")
+            ),
+            "host": {
+                "sessions": array_at(input, &["host", "sessions"]),
+                "offlineSessions": offline_sessions,
+                "sessionLabels": [],
+                "restored": [],
+            },
+            "topology": { "sessions": topology_sessions },
+            "metadata": metadata,
+            "calls": calls,
+        });
+    }
+    if relaunch_fresh {
+        remove_at(&mut metadata, &["sessions", &session_id, "derived"]);
+        remove_at(&mut metadata, &["sessions", &session_id, "status"]);
+        remove_at(&mut metadata, &["sessions", &session_id, "progress"]);
+    } else if use_backend_resume && derived_activity.as_deref() == Some("running") {
         set_at(
             &mut metadata,
             &["sessions", &session_id, "derived", "activity"],
@@ -782,38 +822,59 @@ fn resume_offline_session(input: &Value) -> Value {
     offline_sessions.retain(|candidate| string_field(candidate, "id") != session_id);
     calls.push(call("invalidateDesktopStateSnapshot", vec![]));
     calls.push(call("writeStatuslineFile", vec![]));
+    let backend_debug = backend_session_id.as_deref().unwrap_or("none");
     calls.push(call(
         "debug",
         vec![
             json!(format!(
-                "resuming offline session {session_id} (backend={backend_session_id})"
+                "resuming offline session {session_id} ({})",
+                if relaunch_fresh {
+                    "fresh".to_owned()
+                } else {
+                    format!("backend={backend_debug}")
+                }
             )),
             json!("session"),
         ],
     ));
 
     let team = topology_session.get("team").cloned().unwrap_or(Value::Null);
+    let tool_key = string_field(topology_session, "toolConfigKey");
+    let (launch_args, preamble_flag, persist_args) =
+        compose_restore_launch(&tool_key, backend_session_id.as_deref(), use_backend_resume);
     let create_args = vec![
         json!(string_field(topology_session, "command")),
-        json!([
-            "--dangerously-bypass-approvals-and-sandbox",
-            "resume",
-            backend_session_id
-        ]),
-        Value::Null,
-        json!(string_field(topology_session, "toolConfigKey")),
+        json!(launch_args),
+        preamble_flag,
+        json!(tool_key),
         Value::Null,
         Value::Null,
         json!(project_root_for(input)),
-        json!(backend_session_id),
+        if use_backend_resume {
+            backend_id_json
+        } else {
+            Value::Null
+        },
         json!(session_id),
         json!(true),
-        json!(true),
+        json!(use_backend_resume),
         team,
         Value::Null,
-        json!(["--dangerously-bypass-approvals-and-sandbox"]),
+        json!(persist_args),
     ];
     calls.push(call("createSession", create_args.clone()));
+    let mut restored_session = json!({
+        "id": session_id,
+        "command": string_field(topology_session, "command"),
+        "restoreStartedAt": 1780272000000_i64,
+    });
+    if relaunch_fresh && let Some(backend_session_id) = backend_session_id.as_deref() {
+        set_field(
+            &mut restored_session,
+            "supersededBackendSessionId",
+            json!(backend_session_id),
+        );
+    }
 
     json!({
         "thrown": null,
@@ -823,11 +884,7 @@ fn resume_offline_session(input: &Value) -> Value {
             "sessionLabels": [],
             "restored": [{
                 "args": create_args,
-                "session": {
-                    "id": session_id,
-                    "command": string_field(topology_session, "command"),
-                    "restoreStartedAt": 1780272000000_i64,
-                },
+                "session": restored_session,
             }],
         },
         "topology": { "sessions": topology_sessions },
@@ -840,32 +897,89 @@ fn call(method: &str, args: Vec<Value>) -> Value {
     json!({ "method": method, "args": args })
 }
 
-fn codex_tool_config() -> Value {
-    json!({
-        "command": "codex",
-        "args": ["--dangerously-bypass-approvals-and-sandbox"],
-        "enabled": true,
-        "resumeArgs": ["resume", "{sessionId}"],
-        "forkArgs": ["fork", "{sessionId}"],
-        "resumeByBackendSessionId": true,
-        "resumeFallback": ["resume", "--last"],
-        "developerInstructionsConfigKey": "developer_instructions",
-        "promptPatterns": ["^> $"],
-        "turnPatterns": ["^[>❯]\\s*(.+)"],
-        "startupInterstitials": [{
-            "id": "codex-update-available",
-            "when": ["Update available!", "Press enter to continue"],
-            "choose": "^[\\s›>❯]*(\\d+)\\.\\s+Skip\\s*$",
-        }],
-    })
+fn tool_config(input: &Value, tool_key: &str) -> Value {
+    match tool_key {
+        "claude" => json!({
+            "command": "claude",
+            "args": ["--dangerously-skip-permissions"],
+            "enabled": true,
+            "preambleFlag": ["--append-system-prompt"],
+            "resumeArgs": ["--resume", "{sessionId}"],
+            "forkArgs": ["--fork-session", "{sessionId}"],
+            "resumeByBackendSessionId": true,
+            "developerInstructionsConfigKey": "append_system_prompt",
+            "promptPatterns": ["^> $"],
+            "turnPatterns": ["^[>❯]\\s*(.+)"],
+        }),
+        _ => {
+            let mut config = json!({
+                "command": "codex",
+                "args": ["--dangerously-bypass-approvals-and-sandbox"],
+                "enabled": true,
+                "resumeArgs": ["resume", "{sessionId}"],
+                "forkArgs": ["fork", "{sessionId}"],
+                "resumeByBackendSessionId": true,
+                "resumeFallback": ["resume", "--last"],
+                "developerInstructionsConfigKey": "developer_instructions",
+                "promptPatterns": ["^> $"],
+                "turnPatterns": ["^[>❯]\\s*(.+)"],
+                "startupInterstitials": [{
+                    "id": "codex-update-available",
+                    "when": ["Update available!", "Press enter to continue"],
+                    "choose": "^[\\s›>❯]*(\\d+)\\.\\s+Skip\\s*$",
+                }],
+            });
+            if let Some(session_capture) = input.get("toolConfigSessionCapture") {
+                set_field(&mut config, "sessionCapture", session_capture.clone());
+            }
+            config
+        }
+    }
 }
 
-fn derived_activity(metadata: &Value, session_id: &str) -> Option<String> {
+fn compose_restore_launch(
+    tool_key: &str,
+    backend_session_id: Option<&str>,
+    use_backend_resume: bool,
+) -> (Vec<Value>, Value, Vec<Value>) {
+    match tool_key {
+        "claude" => {
+            let mut args = vec![json!("--dangerously-skip-permissions")];
+            if use_backend_resume {
+                args.extend([
+                    json!("--resume"),
+                    json!(backend_session_id.unwrap_or("undefined")),
+                ]);
+            }
+            (
+                args.clone(),
+                json!(["--append-system-prompt"]),
+                vec![json!("--dangerously-skip-permissions")],
+            )
+        }
+        _ => {
+            let mut args = vec![json!("--dangerously-bypass-approvals-and-sandbox")];
+            if use_backend_resume {
+                args.extend([
+                    json!("resume"),
+                    json!(backend_session_id.unwrap_or("undefined")),
+                ]);
+            }
+            (
+                args,
+                Value::Null,
+                vec![json!("--dangerously-bypass-approvals-and-sandbox")],
+            )
+        }
+    }
+}
+
+fn derived_field(metadata: &Value, session_id: &str, field: &str) -> Option<String> {
     metadata
         .get("sessions")
         .and_then(|sessions| sessions.get(session_id))
         .and_then(|session| session.get("derived"))
-        .and_then(|derived| derived.get("activity"))
+        .and_then(|derived| derived.get(field))
         .and_then(Value::as_str)
         .map(str::to_owned)
 }
@@ -1024,6 +1138,19 @@ fn set_field(value: &mut Value, field: &str, next: Value) {
 fn remove_field(value: &mut Value, field: &str) {
     if let Value::Object(object) = value {
         object.remove(field);
+    }
+}
+
+fn remove_at(value: &mut Value, path: &[&str]) {
+    let mut current = value;
+    for field in &path[..path.len().saturating_sub(1)] {
+        let Some(next_current) = current.get_mut(*field) else {
+            return;
+        };
+        current = next_current;
+    }
+    if let Some(field) = path.last() {
+        remove_field(current, field);
     }
 }
 

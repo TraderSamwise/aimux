@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -103,8 +103,16 @@ async function withFixture(label, fn) {
 
 function pendingActions(input, calls) {
   return {
-    getSessionAction: callRecorder(calls, "dashboardPendingActions.getSessionAction", (id) => input.pendingSessionActions?.[id]),
-    getServiceAction: callRecorder(calls, "dashboardPendingActions.getServiceAction", (id) => input.pendingServiceActions?.[id]),
+    getSessionAction: callRecorder(
+      calls,
+      "dashboardPendingActions.getSessionAction",
+      (id) => input.pendingSessionActions?.[id],
+    ),
+    getServiceAction: callRecorder(
+      calls,
+      "dashboardPendingActions.getServiceAction",
+      (id) => input.pendingServiceActions?.[id],
+    ),
   };
 }
 
@@ -117,7 +125,11 @@ function tmuxRuntimeManager(input, calls) {
       if (!input.deadWindowIds) return true;
       return !input.deadWindowIds.includes(target.windowId);
     }),
-    displayMessage: callRecorder(calls, "tmuxRuntimeManager.displayMessage", (_format, windowId) => input.displayPaths?.[windowId] ?? null),
+    displayMessage: callRecorder(
+      calls,
+      "tmuxRuntimeManager.displayMessage",
+      (_format, windowId) => input.displayPaths?.[windowId] ?? null,
+    ),
   };
 }
 
@@ -226,7 +238,10 @@ function resumeOfflineHost(input, calls) {
       canResumeWithBackendSessionId: callRecorder(
         calls,
         "sessionBootstrap.canResumeWithBackendSessionId",
-        (_tool, backendSessionId) => Boolean(backendSessionId),
+        (_tool, backendSessionId) =>
+          typeof input.canResumeWithBackendSessionId === "boolean"
+            ? input.canResumeWithBackendSessionId
+            : Boolean(backendSessionId),
       ),
     },
     sessionTmuxTargets: new Map(input.host?.sessionTmuxTargets ?? []),
@@ -466,7 +481,9 @@ await record(
   "runtime-live",
   () => ({
     runtime: { id: "codex-1", exited: false },
-    sessionTmuxTargets: [["codex-1", { sessionName: "aimux-repo", windowId: "@1", windowIndex: 1, windowName: "codex" }]],
+    sessionTmuxTargets: [
+      ["codex-1", { sessionName: "aimux-repo", windowId: "@1", windowIndex: 1, windowName: "codex" }],
+    ],
     resolvedTarget: { sessionName: "aimux-repo", windowId: "@1", windowIndex: 1, windowName: "codex" },
     metadata: { kind: "agent", sessionId: "codex-1" },
   }),
@@ -723,9 +740,7 @@ await record(
         { sessionId: "claude-racy", backendSessionId: "backend-new" },
       ],
       host: {
-        sessions: [
-          { id: "claude-racy", command: "claude", supersededBackendSessionId: "backend-stale" },
-        ],
+        sessions: [{ id: "claude-racy", command: "claude", supersededBackendSessionId: "backend-stale" }],
         offlineSessions: [],
       },
       initialTopology: snapshotTopology(),
@@ -1137,7 +1152,12 @@ await record(
     const calls = [];
     const host = runtimeTopologyHost(input, calls);
     const changed = runtimeState.loadOfflineTopologySessions(host);
-    return { changed, host: { offlineSessions: host.offlineSessions }, topology: snapshotSessionServiceTopology(), calls };
+    return {
+      changed,
+      host: { offlineSessions: host.offlineSessions },
+      topology: snapshotSessionServiceTopology(),
+      calls,
+    };
   },
 );
 
@@ -1172,7 +1192,12 @@ await record(
     const calls = [];
     const host = runtimeTopologyHost(input, calls);
     const changed = runtimeState.loadOfflineTopologySessions(host);
-    return { changed, host: { offlineSessions: host.offlineSessions }, topology: snapshotSessionServiceTopology(), calls };
+    return {
+      changed,
+      host: { offlineSessions: host.offlineSessions },
+      topology: snapshotSessionServiceTopology(),
+      calls,
+    };
   },
 );
 
@@ -1193,7 +1218,12 @@ await record(
     const calls = [];
     const host = runtimeTopologyHost(input, calls);
     const changed = runtimeState.loadOfflineTopologySessions(host);
-    return { changed, host: { offlineSessions: host.offlineSessions }, topology: snapshotSessionServiceTopology(), calls };
+    return {
+      changed,
+      host: { offlineSessions: host.offlineSessions },
+      topology: snapshotSessionServiceTopology(),
+      calls,
+    };
   },
 );
 
@@ -1204,17 +1234,34 @@ await record(
   "load-offline-without-backend",
   ({ projectRoot }) => {
     topologySessions.upsertTopologySession(
-      { id: "claude-recoverable", command: "claude", tool: "claude", toolConfigKey: "claude", args: [], lifecycle: "offline", worktreePath: projectRoot },
+      {
+        id: "claude-recoverable",
+        command: "claude",
+        tool: "claude",
+        toolConfigKey: "claude",
+        args: [],
+        lifecycle: "offline",
+        worktreePath: projectRoot,
+      },
       "offline",
       { projectRoot },
     );
-    return { projectRoot, host: { sessions: [], offlineSessions: [] }, initialTopology: snapshotSessionServiceTopology() };
+    return {
+      projectRoot,
+      host: { sessions: [], offlineSessions: [] },
+      initialTopology: snapshotSessionServiceTopology(),
+    };
   },
   (_ctx, input) => {
     const calls = [];
     const host = runtimeTopologyHost(input, calls);
     const changed = runtimeState.loadOfflineTopologySessions(host);
-    return { changed, host: { offlineSessions: host.offlineSessions }, topology: snapshotSessionServiceTopology(), calls };
+    return {
+      changed,
+      host: { offlineSessions: host.offlineSessions },
+      topology: snapshotSessionServiceTopology(),
+      calls,
+    };
   },
 );
 
@@ -1225,7 +1272,15 @@ await record(
   "load-offline-metadata-only-backend-unchanged",
   ({ projectRoot }) => {
     topologySessions.upsertTopologySession(
-      { id: "claude-recoverable", command: "claude", tool: "claude", toolConfigKey: "claude", args: [], lifecycle: "offline", worktreePath: projectRoot },
+      {
+        id: "claude-recoverable",
+        command: "claude",
+        tool: "claude",
+        toolConfigKey: "claude",
+        args: [],
+        lifecycle: "offline",
+        worktreePath: projectRoot,
+      },
       "offline",
       { projectRoot },
     );
@@ -1234,7 +1289,15 @@ await record(
       host: {
         sessions: [],
         offlineSessions: [
-          { id: "claude-recoverable", command: "claude", tool: "claude", toolConfigKey: "claude", args: [], lifecycle: "offline", worktreePath: projectRoot },
+          {
+            id: "claude-recoverable",
+            command: "claude",
+            tool: "claude",
+            toolConfigKey: "claude",
+            args: [],
+            lifecycle: "offline",
+            worktreePath: projectRoot,
+          },
         ],
       },
       initialTopology: snapshotSessionServiceTopology(),
@@ -1244,7 +1307,12 @@ await record(
     const calls = [];
     const host = runtimeTopologyHost(input, calls);
     const changed = runtimeState.loadOfflineTopologySessions(host);
-    return { changed, host: { offlineSessions: host.offlineSessions }, topology: snapshotSessionServiceTopology(), calls };
+    return {
+      changed,
+      host: { offlineSessions: host.offlineSessions },
+      topology: snapshotSessionServiceTopology(),
+      calls,
+    };
   },
 );
 
@@ -1293,7 +1361,12 @@ await record(
     const calls = [];
     const host = runtimeTopologyHost(input, calls);
     const changed = runtimeState.loadOfflineTopologySessions(host);
-    return { changed, host: { offlineSessions: host.offlineSessions }, topology: snapshotSessionServiceTopology(), calls };
+    return {
+      changed,
+      host: { offlineSessions: host.offlineSessions },
+      topology: snapshotSessionServiceTopology(),
+      calls,
+    };
   },
 );
 
@@ -1321,7 +1394,12 @@ await record(
     const calls = [];
     const host = runtimeTopologyHost(input, calls);
     const changed = runtimeState.loadOfflineTopologySessions(host);
-    return { changed, host: { offlineSessions: host.offlineSessions }, topology: snapshotSessionServiceTopology(), calls };
+    return {
+      changed,
+      host: { offlineSessions: host.offlineSessions },
+      topology: snapshotSessionServiceTopology(),
+      calls,
+    };
   },
 );
 
@@ -1344,13 +1422,22 @@ await record(
       "offline",
       { projectRoot },
     );
-    return { projectRoot, host: { sessions: [], offlineSessions: [] }, initialTopology: snapshotSessionServiceTopology() };
+    return {
+      projectRoot,
+      host: { sessions: [], offlineSessions: [] },
+      initialTopology: snapshotSessionServiceTopology(),
+    };
   },
   (_ctx, input) => {
     const calls = [];
     const host = runtimeTopologyHost(input, calls);
     const changed = runtimeState.loadOfflineTopologySessions(host);
-    return { changed, host: { offlineSessions: host.offlineSessions }, topology: snapshotSessionServiceTopology(), calls };
+    return {
+      changed,
+      host: { offlineSessions: host.offlineSessions },
+      topology: snapshotSessionServiceTopology(),
+      calls,
+    };
   },
 );
 
@@ -1374,13 +1461,22 @@ await record(
       "running",
       { projectRoot },
     );
-    return { projectRoot, host: { sessions: [], offlineSessions: [] }, initialTopology: snapshotSessionServiceTopology() };
+    return {
+      projectRoot,
+      host: { sessions: [], offlineSessions: [] },
+      initialTopology: snapshotSessionServiceTopology(),
+    };
   },
   (_ctx, input) => {
     const calls = [];
     const host = runtimeTopologyHost(input, calls);
     const changed = runtimeState.reconcileOrphanedTopologySessions(host, []);
-    return { changed, host: { offlineSessions: host.offlineSessions }, topology: snapshotSessionServiceTopology(), calls };
+    return {
+      changed,
+      host: { offlineSessions: host.offlineSessions },
+      topology: snapshotSessionServiceTopology(),
+      calls,
+    };
   },
 );
 
@@ -1405,13 +1501,22 @@ await record(
       "running",
       { projectRoot },
     );
-    return { projectRoot, host: { sessions: [], offlineSessions: [] }, initialTopology: snapshotSessionServiceTopology() };
+    return {
+      projectRoot,
+      host: { sessions: [], offlineSessions: [] },
+      initialTopology: snapshotSessionServiceTopology(),
+    };
   },
   (_ctx, input) => {
     const calls = [];
     const host = runtimeTopologyHost(input, calls);
     const changed = runtimeState.reconcileOrphanedTopologySessions(host, []);
-    return { changed, host: { offlineSessions: host.offlineSessions }, topology: snapshotSessionServiceTopology(), calls };
+    return {
+      changed,
+      host: { offlineSessions: host.offlineSessions },
+      topology: snapshotSessionServiceTopology(),
+      calls,
+    };
   },
 );
 
@@ -1446,7 +1551,12 @@ await record(
     const calls = [];
     const host = runtimeTopologyHost(input, calls);
     const changed = runtimeState.reconcileOrphanedTopologySessions(host, []);
-    return { changed, host: { offlineSessions: host.offlineSessions }, topology: snapshotSessionServiceTopology(), calls };
+    return {
+      changed,
+      host: { offlineSessions: host.offlineSessions },
+      topology: snapshotSessionServiceTopology(),
+      calls,
+    };
   },
 );
 
@@ -1472,7 +1582,12 @@ await record(
     const calls = [];
     const host = runtimeTopologyHost(input, calls);
     const changed = runtimeState.loadOfflineServices(host);
-    return { changed, host: { offlineServices: host.offlineServices }, topology: snapshotSessionServiceTopology(), calls };
+    return {
+      changed,
+      host: { offlineServices: host.offlineServices },
+      topology: snapshotSessionServiceTopology(),
+      calls,
+    };
   },
 );
 
@@ -1498,7 +1613,12 @@ await record(
     const calls = [];
     const host = runtimeTopologyHost(input, calls);
     const changed = runtimeState.loadOfflineServices(host);
-    return { changed, host: { offlineServices: host.offlineServices }, topology: snapshotSessionServiceTopology(), calls };
+    return {
+      changed,
+      host: { offlineServices: host.offlineServices },
+      topology: snapshotSessionServiceTopology(),
+      calls,
+    };
   },
 );
 
@@ -1525,7 +1645,12 @@ await record(
     const calls = [];
     const host = runtimeTopologyHost(input, calls);
     const changed = runtimeState.loadOfflineServices(host);
-    return { changed, host: { offlineServices: host.offlineServices }, topology: snapshotSessionServiceTopology(), calls };
+    return {
+      changed,
+      host: { offlineServices: host.offlineServices },
+      topology: snapshotSessionServiceTopology(),
+      calls,
+    };
   },
 );
 
@@ -1551,7 +1676,12 @@ await record(
     const calls = [];
     const host = runtimeTopologyHost(input, calls);
     const changed = runtimeState.loadOfflineServices(host);
-    return { changed, host: { offlineServices: host.offlineServices }, topology: snapshotSessionServiceTopology(), calls };
+    return {
+      changed,
+      host: { offlineServices: host.offlineServices },
+      topology: snapshotSessionServiceTopology(),
+      calls,
+    };
   },
 );
 
@@ -1561,9 +1691,13 @@ await record(
   "reconcileOrphanedTopologyServices",
   "reconcile-services-pending",
   ({ projectRoot }) => {
-    topologyServices.upsertTopologyService({ id: "service-starting", label: "web", worktreePath: projectRoot }, "starting", {
-      projectRoot,
-    });
+    topologyServices.upsertTopologyService(
+      { id: "service-starting", label: "web", worktreePath: projectRoot },
+      "starting",
+      {
+        projectRoot,
+      },
+    );
     return {
       projectRoot,
       pendingServiceActions: { "service-starting": "starting" },
@@ -1575,7 +1709,12 @@ await record(
     const calls = [];
     const host = runtimeTopologyHost(input, calls);
     const changed = runtimeState.reconcileOrphanedTopologyServices(host);
-    return { changed, host: { offlineServices: host.offlineServices }, topology: snapshotSessionServiceTopology(), calls };
+    return {
+      changed,
+      host: { offlineServices: host.offlineServices },
+      topology: snapshotSessionServiceTopology(),
+      calls,
+    };
   },
 );
 
@@ -1766,6 +1905,220 @@ await record(
         worktreePath: projectRoot,
       },
       host: { sessions: [], offlineSessions: [{ id: "codex-1" }] },
+      initialTopology: snapshotSessionServiceTopology(),
+      initialMetadata: metadataStore.loadMetadataState(projectRoot),
+    };
+  },
+  (_ctx, input) => runResumeOfflineSession(input),
+);
+
+await record(
+  cases,
+  "does not use display metadata when resuming an incomplete offline row",
+  "resumeOfflineSession",
+  "resume-incomplete-row-no-display-metadata",
+  ({ projectRoot }) => {
+    topologySessions.saveRuntimeTopologySessions({
+      projectRoot,
+      sessions: [
+        {
+          id: "codex-1",
+          command: "codex",
+          tool: "codex",
+          toolConfigKey: "codex",
+          args: [],
+          lifecycle: "offline",
+          worktreePath: projectRoot,
+        },
+      ],
+    });
+    return {
+      projectRoot,
+      canResumeWithBackendSessionId: true,
+      session: { id: "codex-1", command: "codex", toolConfigKey: "codex", args: [], worktreePath: projectRoot },
+      host: { sessions: [], offlineSessions: [{ id: "codex-1" }] },
+      initialTopology: snapshotSessionServiceTopology(),
+      initialMetadata: metadataStore.loadMetadataState(projectRoot),
+    };
+  },
+  (_ctx, input) => runResumeOfflineSession(input),
+);
+
+await record(
+  cases,
+  "refuses restore without a topology-owned backend id instead of repairing from session files",
+  "resumeOfflineSession",
+  "resume-refuses-session-file-repair",
+  ({ projectRoot }) => {
+    const captureDir = join(projectRoot, "codex-sessions");
+    mkdirSync(captureDir, { recursive: true });
+    writeFileSync(
+      join(captureDir, "019e4837-66d5-7ab2-9bf6-bff1f958ecae.jsonl"),
+      '{"message":"This is an aimux-managed session with session ID codex-1"}\n',
+    );
+    mkdirSync(join(projectRoot, ".aimux"), { recursive: true });
+    writeFileSync(
+      join(projectRoot, ".aimux", "config.json"),
+      JSON.stringify({
+        tools: {
+          codex: {
+            sessionCapture: {
+              dir: captureDir,
+              pattern: "([0-9a-f-]+)\\.jsonl$",
+              delayMs: 0,
+            },
+          },
+        },
+      }),
+    );
+    topologySessions.saveRuntimeTopologySessions({
+      projectRoot,
+      sessions: [
+        {
+          id: "codex-1",
+          command: "codex",
+          tool: "codex",
+          toolConfigKey: "codex",
+          args: [],
+          lifecycle: "offline",
+          worktreePath: projectRoot,
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    });
+    return {
+      projectRoot,
+      canResumeWithBackendSessionId: false,
+      toolConfigSessionCapture: {
+        dir: `${projectRoot}/codex-sessions`,
+        pattern: "([0-9a-f-]+)\\.jsonl$",
+        delayMs: 0,
+      },
+      session: {
+        id: "codex-1",
+        command: "codex",
+        toolConfigKey: "codex",
+        args: [],
+        worktreePath: projectRoot,
+        createdAt: new Date().toISOString(),
+      },
+      host: { sessions: [], offlineSessions: [{ id: "codex-1" }] },
+      initialTopology: snapshotSessionServiceTopology(),
+      initialMetadata: metadataStore.loadMetadataState(projectRoot),
+    };
+  },
+  (_ctx, input) => runResumeOfflineSession(input),
+);
+
+await record(
+  cases,
+  "refuses targeted offline restore without exact backend resume",
+  "resumeOfflineSession",
+  "resume-refuses-targeted-without-backend",
+  ({ projectRoot }) => {
+    topologySessions.saveRuntimeTopologySessions({
+      projectRoot,
+      sessions: [
+        {
+          id: "codex-1",
+          command: "codex",
+          tool: "codex",
+          toolConfigKey: "codex",
+          args: [],
+          lifecycle: "offline",
+          worktreePath: projectRoot,
+        },
+      ],
+    });
+    return {
+      projectRoot,
+      canResumeWithBackendSessionId: false,
+      session: { id: "codex-1", command: "codex", toolConfigKey: "codex", args: [], worktreePath: projectRoot },
+      host: { sessions: [], offlineSessions: [{ id: "codex-1" }] },
+      initialTopology: snapshotSessionServiceTopology(),
+      initialMetadata: metadataStore.loadMetadataState(projectRoot),
+    };
+  },
+  (_ctx, input) => runResumeOfflineSession(input),
+);
+
+await record(
+  cases,
+  "marks fresh relaunches with the backend id they supersede",
+  "resumeOfflineSession",
+  "resume-fresh-supersedes-backend",
+  ({ projectRoot }) => {
+    metadataStore.updateSessionMetadata("claude-error", (current) => ({
+      ...current,
+      derived: { activity: "error", attention: "error" },
+    }));
+    topologySessions.saveRuntimeTopologySessions({
+      projectRoot,
+      sessions: [
+        {
+          id: "claude-error",
+          command: "claude",
+          tool: "claude",
+          toolConfigKey: "claude",
+          backendSessionId: "backend-old",
+          args: [],
+          lifecycle: "offline",
+          worktreePath: projectRoot,
+        },
+      ],
+    });
+    return {
+      projectRoot,
+      canResumeWithBackendSessionId: false,
+      session: {
+        id: "claude-error",
+        command: "claude",
+        toolConfigKey: "claude",
+        backendSessionId: "backend-old",
+        args: [],
+        worktreePath: projectRoot,
+      },
+      host: { sessions: [], offlineSessions: [{ id: "claude-error", backendSessionId: "backend-old" }] },
+      initialTopology: snapshotSessionServiceTopology(),
+      initialMetadata: metadataStore.loadMetadataState(projectRoot),
+    };
+  },
+  (_ctx, input) => runResumeOfflineSession(input),
+);
+
+await record(
+  cases,
+  "fresh relaunches backend-less sessions with no user history",
+  "resumeOfflineSession",
+  "resume-fresh-backendless",
+  ({ projectRoot }) => {
+    topologySessions.saveRuntimeTopologySessions({
+      projectRoot,
+      sessions: [
+        {
+          id: "codex-empty",
+          command: "codex",
+          tool: "codex",
+          toolConfigKey: "codex",
+          args: [],
+          lifecycle: "offline",
+          freshRelaunchAllowed: true,
+          worktreePath: projectRoot,
+        },
+      ],
+    });
+    return {
+      projectRoot,
+      canResumeWithBackendSessionId: false,
+      session: {
+        id: "codex-empty",
+        command: "codex",
+        toolConfigKey: "codex",
+        args: [],
+        freshRelaunchAllowed: true,
+        worktreePath: projectRoot,
+      },
+      host: { sessions: [], offlineSessions: [{ id: "codex-empty" }] },
       initialTopology: snapshotSessionServiceTopology(),
       initialMetadata: metadataStore.loadMetadataState(projectRoot),
     };
