@@ -2,9 +2,9 @@
 
 This inventory lists real captured TypeScript contract corpora that are intentionally `#[ignore]` because the matching Rust API does not exist yet, the implementation sits behind an ownership fence, or the existing fenced Rust implementation currently differs from the captured TypeScript behavior. It deliberately does not count Vitest reporter output as coverage.
 
-Coverage definition used for this inventory: a `src` test module is covered when any `testdata/contracts/v1/**/*.json` fixture records that module in a top-level `source`, top-level `sources`, case `source`, or group/case `source` field, and the fixture contains behavior-level input/output or state data rather than test-runner metadata. Under that definition there are 245 `src` test modules, 239 covered modules, and 6 uncovered modules remaining.
+Coverage definition used for this inventory: a `src` test module is covered when any `testdata/contracts/v1/**/*.json` fixture records that module in a top-level `source`, top-level `sources`, case `source`, or group/case `source` field, and the fixture contains behavior-level input/output or state data rather than test-runner metadata. Under that definition there are 245 `src` test modules, 245 covered modules, and 0 uncovered modules remaining.
 
-There are 37 ignored corpus entries below, covering 188 captured checklist cases.
+There are 38 ignored corpus entries below, covering 195 captured checklist cases.
 
 | Consumer | Corpus | Cases | Missing Rust API / parity bug | Ownership fence |
 | --- | --- | ---: | --- | --- |
@@ -38,6 +38,7 @@ There are 37 ignored corpus entries below, covering 188 captured checklist cases
 | `fixture_project_takeover.rs` | `testdata/contracts/v1/project-takeover/takeover.json` | 5 | takeOverProjectFromOtherOwners side-effect API | daemon_* / project ownership |
 | `fixture_release_asset.rs` | `testdata/contracts/v1/release/asset.json` | 3 | Release asset packaging contract reader/executor | No explicit fence; release shell packaging, no Rust public API |
 | `fixture_rich_text.rs` | `testdata/contracts/v1/terminal/rich-text.json` | 6 | parseSgrRichTextLines, richTextLineText, and richTextText helpers | Terminal/control/render; likely dashboard_* if wired through dashboard surfaces |
+| `fixture_src_integration_surfaces.rs` | `testdata/contracts/v1/integration/src-surfaces.json` | 7 | core CLI, core project actor, daemon route, hosted listener, and metadata-server route surfaces | core_cli* / daemon_* / hosted listener / project_service/routes/ |
 | `fixture_terminal_host.rs` | `testdata/contracts/v1/terminal/host.json` | 2 | TerminalHost escape-sequence handling API | Terminal/control/render; likely tmux* / dashboard_* |
 | `fixture_transcript_reconciler.rs` | `testdata/contracts/v1/agent-output/transcript-reconciler.json` | 13 | TranscriptReconciler.scan incremental transcript reconciliation API | No explicit fence; needs multiplexer transcript reconciler API |
 | `fixture_tmux_doctor_contract.rs` | `testdata/contracts/v1/tmux/doctor.json` | 4 | tmux doctor report and repair APIs | tmux* / daemon_* |
@@ -48,13 +49,4 @@ There are 37 ignored corpus entries below, covering 188 captured checklist cases
 
 ## Honest Uncovered Gaps
 
-These `src/**/*.test.ts` modules still have no behavior-level corpus under `testdata/contracts/v1`. They remain uncovered until a real fixture records inputs, outputs, and side effects, or until an explicit uncapturable rationale is accepted.
-
-| Source module | Reason real corpus is still missing | Ownership fence |
-| --- | --- | --- |
-| `src/core-cli.test.ts` | Core CLI end-to-end sidecar runner; needs per-command input/output capture from runCoreCli, not Vitest reporter metadata. | core_cli* |
-| `src/core-project-actor.test.ts` | Child-process lifecycle supervisor integration; no pure captured API selected yet. | daemon_* / project actor lifecycle |
-| `src/daemon.test.ts` | Daemon HTTP/core-command/expose/project actor integration; no pure captured API selected yet. | daemon_* |
-| `src/full/hosted-server.test.ts` | Hosted proxy server integration; needs route request/response corpus rather than test names. | daemon_* / hosted service |
-| `src/metadata-server.interaction.test.ts` | Project-service interaction HTTP API; needs request/response corpus. | project_service/routes/ |
-| `src/metadata-server.test.ts` | Project-service metadata HTTP routes; needs request/response corpus. | project_service/routes/ |
+No uncovered `src/**/*.test.ts` modules remain under this coverage definition.

@@ -454,6 +454,15 @@ Priority fixture groups:
   idle-prune, and byte-budget limiter behavior captured by running TypeScript
   `HostedRateLimiter`.
 
+## Integration
+
+- `integration/src-surfaces.json`: final uncovered `src` integration surface
+  slices captured by running TypeScript `runCoreCli`, `CoreProjectActor`,
+  `AimuxDaemon.routeRequest`, hosted listener HTTP requests, and
+  `MetadataServer` HTTP/interaction endpoints with nondeterministic ports, PIDs,
+  timestamps, build stamps, request IDs, and temp paths normalized after
+  execution.
+
 ## Install Cleanup
 
 - `install-cleanup/cleanup.json`: install retention planning, reference
