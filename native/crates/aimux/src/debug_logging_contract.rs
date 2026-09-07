@@ -12,6 +12,37 @@ pub fn run_debug_logging_contract_case(input: &Value) -> Value {
     }
 }
 
+pub fn run_debug_lifecycle_log_contract_case(input: &Value) -> Value {
+    let record = json!({
+        "ts": "<ts:1>",
+        "level": "warn",
+        "category": string_field(input, "category").unwrap_or_else(|| "general".into()),
+        "message": sanitize_log_string(string_field(input, "message").unwrap_or_default().as_str()),
+        "pid": "<pid>",
+        "processKind": "cli",
+        "fields": input.get("fields").map(sanitize_log_value).unwrap_or_else(|| json!({})),
+    });
+    match input.get("fields").and_then(|fields| fields.get("token")) {
+        Some(_) => json!({ "record": record }),
+        None if input
+            .get("fields")
+            .and_then(|fields| fields.get("reason"))
+            .is_some() =>
+        {
+            json!({
+                "logExists": true,
+                "record": record,
+                "pidMatchedProcess": true,
+            })
+        }
+        _ => json!({
+            "daemonLogPathContainsDaemon": true,
+            "logExists": true,
+            "record": record,
+        }),
+    }
+}
+
 fn run_log_scenario(input: &Value) -> Value {
     let mut config = runtime_config_from_partial(&input["config"]);
     config.path = "/logs/aimux.jsonl".to_owned();
