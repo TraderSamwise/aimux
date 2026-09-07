@@ -2,11 +2,318 @@ use serde_json::{Map, Value, json};
 use std::path::Path;
 
 use crate::atomic_write::write_json_atomic;
-use crate::tmux::{MANAGED_TMUX_AGENT_WINDOW_OPTIONS, TmuxTarget};
+use crate::project_service::dispatcher::ProjectServiceDispatchResponse;
+use crate::project_service::router::ProjectServiceRequestContext;
+use crate::runtime_topology::{
+    read_runtime_topology, runtime_topology_path, update_runtime_topology,
+};
+use crate::shell_hooks::{
+    wrap_command_with_shell_integration, wrap_interactive_shell_with_integration,
+};
+use crate::tmux::{MANAGED_TMUX_AGENT_WINDOW_OPTIONS, TmuxTarget, project_session};
 
 use super::json_helpers::*;
 use super::runtime_adapter::ProjectLifecycleRuntime;
-use super::{ensure_rig, existing_node_created_at, now_iso, read_json_object, upsert_array_item};
+use super::{
+    binding_window_id, ensure_rig, existing_node_created_at, json_error, lifecycle_response,
+    live_window_id_for_service, map_topology_array, now_iso, read_json_object, short_id,
+    suppress_next_shell_reports, upsert_array_item,
+};
+
+pub(super) fn route_service_create(
+    context: &ProjectServiceRequestContext,
+    body: &Value,
+    runtime: &mut impl ProjectLifecycleRuntime,
+) -> ProjectServiceDispatchResponse {
+    let service_id =
+        trimmed_string(body.get("serviceId")).unwrap_or_else(|| format!("service-{}", short_id()));
+    let command_line = trimmed_string(body.get("command"))
+        .or_else(|| trimmed_string(body.get("commandLine")))
+        .unwrap_or_default();
+    launch_service(
+        context,
+        ServiceLaunchInput {
+            service_id,
+            launch_command_line: command_line,
+            worktree_path: trimmed_string(body.get("worktreePath")),
+            cwd: None,
+            label: None,
+            created_at: None,
+        },
+        runtime,
+        "service.create",
+    )
+}
+
+pub(super) fn route_service_resume(
+    context: &ProjectServiceRequestContext,
+    body: &Value,
+    runtime: &mut impl ProjectLifecycleRuntime,
+) -> ProjectServiceDispatchResponse {
+    let Some(service_id) = trimmed_string(body.get("serviceId")) else {
+        return json_error(400, "serviceId is required");
+    };
+    let project_state_dir = context.project_state_dir();
+    let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
+        Ok(topology) => topology,
+        Err(error) => return json_error(500, error),
+    };
+    let Some(service) = find_by_id(&topology, "services", &service_id) else {
+        return json_error(404, format!("Service \"{service_id}\" not found"));
+    };
+    if matches!(
+        string_field(&service, "status").as_str(),
+        "running" | "starting"
+    ) {
+        return lifecycle_response(
+            json!({ "serviceId": service_id, "status": "running" }),
+            "service.resume",
+            "service",
+            Some(&service_id),
+        );
+    }
+    let node = service_node(&topology, &service);
+    let stale_window_id = binding_window_id(&topology, &string_field(&service, "nodeId"));
+    if let Some(window_id) = stale_window_id {
+        let _ = runtime.kill_window(&window_id);
+    }
+    launch_service(
+        context,
+        ServiceLaunchInput {
+            service_id,
+            launch_command_line: trimmed_string(service.get("launchCommandLine"))
+                .or_else(|| service_launch_command_line(&service))
+                .unwrap_or_default(),
+            worktree_path: trimmed_string(service.get("worktreePath")),
+            cwd: trimmed_string(service.get("cwd")).or_else(|| {
+                node.as_ref()
+                    .and_then(|node| trimmed_string(node.get("cwd")))
+            }),
+            label: trimmed_string(service.get("label")).or_else(|| {
+                node.as_ref()
+                    .and_then(|node| trimmed_string(node.get("label")))
+            }),
+            created_at: trimmed_string(service.get("createdAt")),
+        },
+        runtime,
+        "service.resume",
+    )
+}
+
+struct ServiceLaunchInput {
+    service_id: String,
+    launch_command_line: String,
+    worktree_path: Option<String>,
+    cwd: Option<String>,
+    label: Option<String>,
+    created_at: Option<String>,
+}
+
+fn launch_service(
+    context: &ProjectServiceRequestContext,
+    input: ServiceLaunchInput,
+    runtime: &mut impl ProjectLifecycleRuntime,
+    operation: &str,
+) -> ProjectServiceDispatchResponse {
+    let project_root = context.project_root().to_string_lossy().into_owned();
+    let cwd = input
+        .cwd
+        .clone()
+        .or_else(|| input.worktree_path.clone())
+        .unwrap_or_else(|| project_root.clone());
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "zsh".to_owned());
+    let label = input
+        .label
+        .clone()
+        .unwrap_or_else(|| service_label_for_command(&input.launch_command_line));
+    let command = if input.launch_command_line.is_empty() {
+        "shell".to_owned()
+    } else {
+        shell.clone()
+    };
+    let (launch_command, args) = if input.launch_command_line.is_empty() {
+        match wrap_interactive_shell_with_integration(
+            context.project_state_dir(),
+            &input.service_id,
+            "service",
+            &shell,
+        ) {
+            Ok(wrapped) => wrapped,
+            Err(error) => return json_error(500, error),
+        }
+    } else {
+        let launch_args = vec![
+            "-lc".to_owned(),
+            build_service_launch_script(&input.launch_command_line, &shell),
+        ];
+        match wrap_command_with_shell_integration(
+            context.project_state_dir(),
+            &input.service_id,
+            "service",
+            &shell,
+            &launch_args,
+            &shell,
+        ) {
+            Ok(wrapped) => wrapped,
+            Err(error) => return json_error(500, error),
+        }
+    };
+    let metadata_args = if input.launch_command_line.is_empty() {
+        vec!["-l".to_owned()]
+    } else {
+        vec!["-lc".to_owned(), input.launch_command_line.clone()]
+    };
+    let session_name = project_session(&project_root, "aimux").session_name;
+    let target =
+        match runtime.create_window(&session_name, &label, &cwd, &launch_command, &args, true) {
+            Ok(target) => target,
+            Err(error) => return json_error(500, error),
+        };
+    let now = now_iso();
+    let metadata = json!({
+        "kind": "service",
+        "sessionId": input.service_id,
+        "command": command,
+        "args": metadata_args,
+        "toolConfigKey": "service",
+        "createdAt": input.created_at.clone().unwrap_or_else(|| now.clone()),
+        "worktreePath": input.worktree_path,
+        "label": label,
+        "launchCommandLine": input.launch_command_line,
+    });
+    if let Err(error) = runtime.set_window_metadata(&target.window_id, &metadata) {
+        return json_error(500, error);
+    }
+    if let Err(error) = apply_service_window_policy(runtime, &target.window_id) {
+        return json_error(500, error);
+    }
+    let project_state_dir = context.project_state_dir();
+    if let Err(error) =
+        update_runtime_topology(runtime_topology_path(&project_state_dir), |topology| {
+            upsert_service_topology(topology, &metadata, &cwd, &target, "running", &project_root)
+        })
+    {
+        return json_error(500, error);
+    }
+    if let Err(error) = commit_service_state(
+        &project_state_dir,
+        &project_root,
+        Some(service_state_from_metadata(&metadata, &cwd, Some(&target))),
+        &[],
+    ) {
+        return json_error(500, error);
+    }
+    lifecycle_response(
+        json!({ "serviceId": metadata["sessionId"], "status": "running" }),
+        operation,
+        "service",
+        metadata["sessionId"].as_str(),
+    )
+}
+
+pub(super) fn route_service_stop(
+    context: &ProjectServiceRequestContext,
+    body: &Value,
+    runtime: &mut impl ProjectLifecycleRuntime,
+) -> ProjectServiceDispatchResponse {
+    let Some(service_id) = trimmed_string(body.get("serviceId")) else {
+        return json_error(400, "serviceId is required");
+    };
+    let project_state_dir = context.project_state_dir();
+    let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
+        Ok(topology) => topology,
+        Err(error) => return json_error(500, error),
+    };
+    let Some(service) = find_by_id(&topology, "services", &service_id) else {
+        return json_error(404, format!("Service \"{service_id}\" not found"));
+    };
+    let window_id = live_window_id_for_service(&topology, &service);
+    let result = update_runtime_topology(runtime_topology_path(&project_state_dir), |topology| {
+        map_topology_array(topology, "services", |mut current| {
+            if string_field(&current, "id") == service_id {
+                object_insert_mut(&mut current, "status", Value::String("stopped".into()));
+                object_insert_mut(&mut current, "updatedAt", Value::String(now_iso()));
+            }
+            current
+        })
+    });
+    if let Err(error) = result {
+        return json_error(500, error);
+    }
+    if let Err(error) = commit_service_state(
+        &project_state_dir,
+        &context.project_root().to_string_lossy(),
+        Some(service_state_from_topology_service(&service, &topology)),
+        &[],
+    ) {
+        return json_error(500, error);
+    }
+    suppress_next_shell_reports(&project_state_dir, &service_id, 1);
+    if let Some(window_id) = window_id {
+        let _ = runtime.kill_window(&window_id);
+    }
+    lifecycle_response(
+        json!({ "serviceId": service_id, "status": "stopped" }),
+        "service.stop",
+        "service",
+        Some(&service_id),
+    )
+}
+
+pub(super) fn route_service_remove(
+    context: &ProjectServiceRequestContext,
+    body: &Value,
+    runtime: &mut impl ProjectLifecycleRuntime,
+) -> ProjectServiceDispatchResponse {
+    let Some(service_id) = trimmed_string(body.get("serviceId")) else {
+        return json_error(400, "serviceId is required");
+    };
+    let project_state_dir = context.project_state_dir();
+    let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
+        Ok(topology) => topology,
+        Err(error) => return json_error(500, error),
+    };
+    let Some(service) = find_by_id(&topology, "services", &service_id) else {
+        return json_error(404, format!("Service \"{service_id}\" not found"));
+    };
+    let node_id = string_field(&service, "nodeId");
+    let window_id = live_window_id_for_service(&topology, &service)
+        .or_else(|| saved_service_tmux_window_id(&project_state_dir, &service_id));
+    let result =
+        update_runtime_topology(runtime_topology_path(&project_state_dir), |mut topology| {
+            let mut services = array_field(&topology, "services");
+            services.retain(|service| string_field(service, "id") != service_id);
+            object_insert_mut(&mut topology, "services", Value::Array(services));
+            let mut bindings = array_field(&topology, "bindings");
+            bindings.retain(|binding| string_field(binding, "nodeId") != node_id);
+            object_insert_mut(&mut topology, "bindings", Value::Array(bindings));
+            let mut nodes = array_field(&topology, "nodes");
+            nodes.retain(|node| string_field(node, "id") != node_id);
+            object_insert_mut(&mut topology, "nodes", Value::Array(nodes));
+            object_insert_mut(&mut topology, "generatedAt", Value::String(now_iso()));
+            topology
+        });
+    if let Err(error) = result {
+        return json_error(500, error);
+    }
+    if let Err(error) = commit_service_state(
+        &project_state_dir,
+        &context.project_root().to_string_lossy(),
+        None,
+        std::slice::from_ref(&service_id),
+    ) {
+        return json_error(500, error);
+    }
+    if let Some(window_id) = window_id {
+        let _ = runtime.kill_window(&window_id);
+    }
+    lifecycle_response(
+        json!({ "serviceId": service_id, "status": "removed" }),
+        "service.remove",
+        "service",
+        Some(&service_id),
+    )
+}
 
 pub(super) fn apply_service_window_policy(
     runtime: &mut impl ProjectLifecycleRuntime,
