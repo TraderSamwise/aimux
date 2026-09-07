@@ -1,5 +1,6 @@
+use aimux::multiplexer_dashboard_state_helpers::run_multiplexer_dashboard_state_helpers_contract_case;
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 const DASHBOARD_STATE_HELPERS: &str =
     include_str!("../../../../testdata/contracts/v1/multiplexer/dashboard-state-helpers.json");
@@ -24,8 +25,7 @@ struct Case {
 }
 
 #[test]
-#[ignore = "checklist: TypeScript multiplexer dashboard state helpers are behind dashboard_* and tmux* ownership fences"]
-fn fixture_multiplexer_dashboard_state_helpers_contract_is_captured() {
+fn fixture_multiplexer_dashboard_state_helpers_contract_matches_rust() {
     let contract: Contract = serde_json::from_str(DASHBOARD_STATE_HELPERS)
         .expect("multiplexer dashboard-state helpers fixture parses");
     assert_eq!(contract.subject, "multiplexer dashboard state helpers");
@@ -41,6 +41,7 @@ fn fixture_multiplexer_dashboard_state_helpers_contract_is_captured() {
         assert!(contract.sources.contains(&source.to_string()));
     }
 
+    let mut failures = Vec::new();
     for case in contract.cases {
         assert!(!case.id.is_empty());
         assert!(
@@ -52,5 +53,21 @@ fn fixture_multiplexer_dashboard_state_helpers_contract_is_captured() {
         assert!(!case.api.is_empty());
         assert!(!case.input.is_null());
         assert!(!case.output.is_null());
+        let actual = run_multiplexer_dashboard_state_helpers_contract_case(&case.api, &case.input);
+        if actual != case.output {
+            failures.push(json!({
+                "id": case.id,
+                "api": case.api,
+                "expected": case.output,
+                "actual": actual,
+            }));
+        }
     }
+
+    assert!(
+        failures.is_empty(),
+        "{} multiplexer dashboard-state helper parity failures:\n{}",
+        failures.len(),
+        serde_json::to_string_pretty(&failures).expect("serialize failures")
+    );
 }
