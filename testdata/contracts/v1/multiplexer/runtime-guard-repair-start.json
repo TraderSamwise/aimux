@@ -1,0 +1,171 @@
+{
+  "version": 1,
+  "sources": ["src/multiplexer/dashboard-control.test.ts"],
+  "subject": "runtime guard repair start branch",
+  "generatedBy": "scripts/capture-runtime-guard-repair-start-contract.mjs",
+  "caseCount": 1,
+  "cases": [
+    {
+      "id": "runtime-guard-repair-start-001",
+      "name": "captures owned repair start, success reload, and failure cooldown without live restart",
+      "source": "src/multiplexer/dashboard-control.test.ts",
+      "api": "startRuntimeGuardRepairStartBranch",
+      "input": {
+        "scenarios": [
+          {
+            "name": "owned stale repair starts restart and leaves dashboard busy while pending",
+            "projectRoot": "/repo/app",
+            "state": { "kind": "stale", "reason": "service-mismatch" },
+            "restartBehavior": { "kind": "pending" }
+          },
+          {
+            "name": "self drift success reloads dashboard after cleanup",
+            "projectRoot": "/repo/app",
+            "state": { "kind": "stale", "reason": "self-drift" },
+            "restartBehavior": { "kind": "resolve" },
+            "flushMicrotasks": 8
+          },
+          {
+            "name": "restart rejection records failure and retry cooldown",
+            "projectRoot": "/repo/app",
+            "state": { "kind": "runtime-rebuild-required" },
+            "restartBehavior": { "kind": "reject", "message": "repair failed" },
+            "flushMicrotasks": 8
+          }
+        ]
+      },
+      "output": [
+        {
+          "name": "owned stale repair starts restart and leaves dashboard busy while pending",
+          "host": {
+            "runtimeGuardRepairing": true,
+            "runtimeGuardRepairBusy": true,
+            "runtimeGuardRepairFailedKey": null,
+            "runtimeGuardRepairRetryAt": null,
+            "runtimeGuardRepairTimedOutPending": false,
+            "dashboardBusyState": {
+              "title": "Repairing Aimux",
+              "lines": ["Aimux is repairing the local control plane."],
+              "spinnerFrame": 0,
+              "startedAt": 1700000000000
+            },
+            "dashboardErrorState": null,
+            "runtimeGuardState": { "kind": "stale", "reason": "service-mismatch" },
+            "footerFlash": null,
+            "footerFlashTicks": null,
+            "dashboardRepairNotices": [
+              {
+                "kind": "runtime-guard-repair",
+                "phase": "started",
+                "message": "Aimux repair started",
+                "at": 1700000000000
+              }
+            ],
+            "runtimeGuardRepairAttempts": [1700000000000]
+          },
+          "calls": [{ "method": "renderCurrentDashboardView", "args": [] }],
+          "restartCalls": [
+            {
+              "reason": "dashboard-runtime-guard-repair",
+              "projectRoot": "/repo/app",
+              "reloadDashboards": false,
+              "verifyDashboards": false,
+              "abortSignalAborted": false
+            }
+          ],
+          "lockExists": true
+        },
+        {
+          "name": "self drift success reloads dashboard after cleanup",
+          "host": {
+            "runtimeGuardRepairing": false,
+            "runtimeGuardRepairBusy": false,
+            "runtimeGuardRepairFailedKey": null,
+            "runtimeGuardRepairRetryAt": null,
+            "runtimeGuardRepairTimedOutPending": false,
+            "dashboardBusyState": null,
+            "dashboardErrorState": null,
+            "runtimeGuardState": { "kind": "ok" },
+            "footerFlash": null,
+            "footerFlashTicks": null,
+            "dashboardRepairNotices": [
+              {
+                "kind": "runtime-guard-repair",
+                "phase": "started",
+                "message": "Aimux repair started",
+                "at": 1700000000000
+              },
+              {
+                "kind": "runtime-guard-repair",
+                "phase": "succeeded",
+                "message": "Aimux repair complete",
+                "at": 1700000000000
+              }
+            ],
+            "runtimeGuardRepairAttempts": [1700000000000]
+          },
+          "calls": [
+            { "method": "renderCurrentDashboardView", "args": [] },
+            { "method": "reloadDashboardAfterRuntimeGuardRepair", "args": ["/repo/app"] }
+          ],
+          "restartCalls": [
+            {
+              "reason": "dashboard-runtime-guard-repair",
+              "projectRoot": "/repo/app",
+              "reloadDashboards": false,
+              "verifyDashboards": false,
+              "abortSignalAborted": false
+            }
+          ],
+          "lockExists": false
+        },
+        {
+          "name": "restart rejection records failure and retry cooldown",
+          "host": {
+            "runtimeGuardRepairing": false,
+            "runtimeGuardRepairBusy": false,
+            "runtimeGuardRepairFailedKey": "runtime-rebuild-required",
+            "runtimeGuardRepairRetryAt": 1700000005000,
+            "runtimeGuardRepairTimedOutPending": false,
+            "dashboardBusyState": null,
+            "dashboardErrorState": { "title": "Aimux repair failed", "lines": ["repair failed"] },
+            "runtimeGuardState": { "kind": "runtime-rebuild-required" },
+            "footerFlash": null,
+            "footerFlashTicks": null,
+            "dashboardRepairNotices": [
+              {
+                "kind": "runtime-guard-repair",
+                "phase": "started",
+                "message": "Aimux repair started",
+                "at": 1700000000000
+              },
+              {
+                "kind": "runtime-guard-repair",
+                "phase": "failed",
+                "message": "Aimux repair failed",
+                "at": 1700000000000,
+                "error": "repair failed"
+              }
+            ],
+            "runtimeGuardRepairAttempts": [1700000000000]
+          },
+          "calls": [
+            { "method": "renderCurrentDashboardView", "args": [] },
+            { "method": "showDashboardError", "args": ["Aimux repair failed", ["repair failed"]] }
+          ],
+          "restartCalls": [
+            {
+              "reason": "dashboard-runtime-guard-repair",
+              "projectRoot": "/repo/app",
+              "reloadDashboards": false,
+              "verifyDashboards": false,
+              "abortSignalAborted": false
+            }
+          ],
+          "lockExists": false
+        }
+      ],
+      "inputSha256": "5fd9c6771bed5cf4712d9a69f4919da488f9a22e165dd5b80de3a6a38f31e3c8"
+    }
+  ]
+}

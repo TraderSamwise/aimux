@@ -121,17 +121,18 @@ Verification:
 - `cargo test --manifest-path native/Cargo.toml -p aimux --test fixture_dashboard_interaction_overlays`
 - `cargo test --manifest-path native/Cargo.toml -p aimux --test fixture_session_launch_default_scribe`
 - `cargo test --manifest-path native/Cargo.toml -p aimux --test fixture_multiplexer_runtime_helpers`
+- `cargo test --manifest-path native/Cargo.toml -p aimux --test fixture_runtime_guard_repair_start`
 - `cargo test --manifest-path native/Cargo.toml -p aimux --test fixture_session_runtime_agent_controls`
 - `scripts/audit-fixture-enforcement.mjs` for each touched suite above
+- `node scripts/audit-fixture-enforcement.mjs --suite=fixture_runtime_guard_repair_start --corpus=testdata/contracts/v1/multiplexer/runtime-guard-repair-start.json`
 - `cargo test --manifest-path native/Cargo.toml -p aimux --lib`
 
 Parity evidence:
 - `docs/rust-translation/multiplexer-sufficiency-audit-v1.md`
 - Added TypeScript-captured fixtures for direct dashboard interaction helpers,
   async overlay gaps, default-scribe skip/claim-timeout paths, launch helper
-  edge cases, and tmux-backed session controls.
+  edge cases, tmux-backed session controls, and the runtime guard owned-repair
+  start/success/failure branch.
 
 Open gaps:
-- `dashboard-control.ts` `startRuntimeGuardRepair` live restart branch remains
-  intentionally uncaptured because the current gate forbids installed fleet
-  manipulation from this worktree.
+- None for this lane.

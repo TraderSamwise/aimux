@@ -11,13 +11,12 @@ was mutation-proven with `scripts/audit-fixture-enforcement.mjs`.
 
 ## Result
 
-Deletion gate status for this lane: ready, with one recorded exception.
+Deletion gate status for this lane: ready.
 
-Uncaptured branch: `dashboard-control.ts` `startRuntimeGuardRepair` branch that
-calls the real control-plane restart. It is intentionally not fixture-captured
-under the current no-live-fleet rule because executing it would manipulate the
-installed daemon/project-service fleet. Safe pre-restart branches are covered in
-`multiplexer/runtime-helpers.json`.
+The previously recorded `dashboard-control.ts` `startRuntimeGuardRepair`
+owned-repair branch is now captured without touching the live fleet by loading
+the compiled TypeScript with a mocked `runtime-restart.js` dependency. Safe
+pre-restart branches remain covered in `multiplexer/runtime-helpers.json`.
 
 ## Module Mapping
 
@@ -94,6 +93,7 @@ Corpus:
 - `testdata/contracts/v1/multiplexer/dashboard-control-helpers.json` (8 cases)
 - `testdata/contracts/v1/multiplexer/dashboard-control-runtime-guard-keys.json` (14 cases)
 - `testdata/contracts/v1/multiplexer/runtime-helpers.json` (15 cases)
+- `testdata/contracts/v1/multiplexer/runtime-guard-repair-start.json` (1 case / 3 scenarios)
 - `testdata/contracts/v1/multiplexer/dashboard-control-overlays.json` (10 cases)
 - `testdata/contracts/v1/multiplexer/dashboard-control-overlay-output.json` (5 cases)
 - `testdata/contracts/v1/multiplexer/dashboard-control-orchestration.json` (8 cases)
@@ -101,7 +101,7 @@ Corpus:
 - `testdata/contracts/v1/multiplexer/dashboard-control-project-service-request.json` (8 cases)
 - `testdata/contracts/v1/multiplexer/dashboard-control-worktree-sessions.json` (4 cases)
 
-Uncaptured count: 1, the live restart call described in Result.
+Uncaptured count: 0.
 
 ### `src/multiplexer/dashboard-model.ts`
 
@@ -191,3 +191,6 @@ Uncaptured count: 0.
 - `795c8d0e` expanded launch helper edge coverage.
 - `8868e10c` captured tmux-backed session control branches.
 - `9355fc31` captured default-scribe claim timeout.
+- `cc99cba7` wired native plugin statuses into project-service diagnostics.
+- pending commit captures the `startRuntimeGuardRepair` owned-repair branch
+  without live fleet manipulation.
