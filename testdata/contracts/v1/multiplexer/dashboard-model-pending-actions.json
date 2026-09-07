@@ -1,0 +1,169 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/dashboard-model.ts",
+  "generatedBy": "scripts/capture-dashboard-model-pending-actions-contract.mjs",
+  "description": "Dashboard pending-action reconciliation captured by running TypeScript reconcileDashboardPendingActionsFromRawModel with raw session/service snapshots.",
+  "cases": [
+    {
+      "id": "dashboard-model-pending-actions-001",
+      "name": "clears session create and fork actions when raw sessions become running",
+      "source": "src/multiplexer/dashboard-model.ts",
+      "api": "reconcileDashboardPendingActionsFromRawModel",
+      "input": {
+        "name": "clears session create and fork actions when raw sessions become running",
+        "sessionActions": [
+          { "id": "codex-new", "kind": "creating", "token": 1, "startedAt": "2023-11-14T22:13:19.000Z" },
+          { "id": "claude-fork", "kind": "forking", "token": 2, "startedAt": "2023-11-14T22:13:19.000Z" }
+        ],
+        "rawSessions": [
+          { "id": "codex-new", "command": "codex", "status": "running" },
+          { "id": "claude-fork", "command": "claude", "status": "running" }
+        ]
+      },
+      "output": {
+        "result": true,
+        "calls": [
+          { "method": "listSessionActions", "args": [] },
+          { "method": "clearSessionActionIfToken", "args": ["codex-new", 1] },
+          { "method": "clearSessionActionIfToken", "args": ["claude-fork", 2] },
+          { "method": "listServiceActions", "args": [] }
+        ]
+      },
+      "inputSha256": "331e6138cda664008c060f0da1e0069eec4cc394437619a7625dfd8619d7fd93"
+    },
+    {
+      "id": "dashboard-model-pending-actions-002",
+      "name": "keeps fresh starting sessions pending while clearing aged offline starts",
+      "source": "src/multiplexer/dashboard-model.ts",
+      "api": "reconcileDashboardPendingActionsFromRawModel",
+      "input": {
+        "name": "keeps fresh starting sessions pending while clearing aged offline starts",
+        "sessionActions": [
+          { "id": "fresh-start", "kind": "starting", "token": 3, "startedAt": "2023-11-14T22:13:19.000Z" },
+          { "id": "aged-start", "kind": "starting", "token": 4, "startedAt": "2023-11-14T22:13:14.000Z" }
+        ],
+        "rawSessions": [
+          { "id": "fresh-start", "command": "claude", "status": "offline" },
+          { "id": "aged-start", "command": "claude", "status": "offline" }
+        ]
+      },
+      "output": {
+        "result": true,
+        "calls": [
+          { "method": "listSessionActions", "args": [] },
+          { "method": "clearSessionActionIfToken", "args": ["aged-start", 4] },
+          { "method": "listServiceActions", "args": [] }
+        ]
+      },
+      "inputSha256": "70f72196fb8b5e5fc6439238b85bd13feea4a6655e944b6af0fc950865c6e090"
+    },
+    {
+      "id": "dashboard-model-pending-actions-003",
+      "name": "clears stop when a session is absent or no longer running",
+      "source": "src/multiplexer/dashboard-model.ts",
+      "api": "reconcileDashboardPendingActionsFromRawModel",
+      "input": {
+        "name": "clears stop when a session is absent or no longer running",
+        "sessionActions": [
+          { "id": "gone-stop", "kind": "stopping", "token": 5, "startedAt": "2023-11-14T22:13:19.000Z" },
+          { "id": "offline-stop", "kind": "stopping", "token": 6, "startedAt": "2023-11-14T22:13:19.000Z" },
+          { "id": "still-running", "kind": "stopping", "token": 7, "startedAt": "2023-11-14T22:13:19.000Z" }
+        ],
+        "rawSessions": [
+          { "id": "offline-stop", "command": "claude", "status": "offline" },
+          { "id": "still-running", "command": "claude", "status": "running" }
+        ]
+      },
+      "output": {
+        "result": true,
+        "calls": [
+          { "method": "listSessionActions", "args": [] },
+          { "method": "clearSessionActionIfToken", "args": ["gone-stop", 5] },
+          { "method": "clearSessionActionIfToken", "args": ["offline-stop", 6] },
+          { "method": "listServiceActions", "args": [] }
+        ]
+      },
+      "inputSha256": "26a9aad527cc3047c39fe0a6e37aeb2fa7c010a3c46e85a6597751781acb2242"
+    },
+    {
+      "id": "dashboard-model-pending-actions-004",
+      "name": "clears graveyard only after the session disappears",
+      "source": "src/multiplexer/dashboard-model.ts",
+      "api": "reconcileDashboardPendingActionsFromRawModel",
+      "input": {
+        "name": "clears graveyard only after the session disappears",
+        "sessionActions": [
+          { "id": "gone-graveyard", "kind": "graveyarding", "token": 8, "startedAt": "2023-11-14T22:13:19.000Z" },
+          { "id": "visible-graveyard", "kind": "graveyarding", "token": 9, "startedAt": "2023-11-14T22:13:19.000Z" }
+        ],
+        "rawTeammates": [{ "id": "visible-graveyard", "command": "claude", "status": "offline" }]
+      },
+      "output": {
+        "result": true,
+        "calls": [
+          { "method": "listSessionActions", "args": [] },
+          { "method": "clearSessionActionIfToken", "args": ["gone-graveyard", 8] },
+          { "method": "listServiceActions", "args": [] }
+        ]
+      },
+      "inputSha256": "192d1dabf2ca0f253783ae0d134a7410c41a3bf526a56c3f372adac20809bf96"
+    },
+    {
+      "id": "dashboard-model-pending-actions-005",
+      "name": "clears services when raw lifecycle proves create start stop and remove settled",
+      "source": "src/multiplexer/dashboard-model.ts",
+      "api": "reconcileDashboardPendingActionsFromRawModel",
+      "input": {
+        "name": "clears services when raw lifecycle proves create start stop and remove settled",
+        "serviceActions": [
+          { "id": "svc-create", "kind": "creating", "token": 10, "startedAt": "2023-11-14T22:13:19.000Z" },
+          { "id": "svc-start-aged", "kind": "starting", "token": 11, "startedAt": "2023-11-14T22:13:14.000Z" },
+          { "id": "svc-stop", "kind": "stopping", "token": 12, "startedAt": "2023-11-14T22:13:19.000Z" },
+          { "id": "svc-remove", "kind": "removing", "token": 13, "startedAt": "2023-11-14T22:13:19.000Z" },
+          { "id": "svc-start-fresh", "kind": "starting", "token": 14, "startedAt": "2023-11-14T22:13:19.000Z" }
+        ],
+        "rawServices": [
+          { "id": "svc-create", "command": "yarn", "args": [], "status": "running" },
+          { "id": "svc-start-aged", "command": "yarn", "args": [], "status": "offline" },
+          { "id": "svc-stop", "command": "yarn", "args": [], "status": "offline" },
+          { "id": "svc-start-fresh", "command": "yarn", "args": [], "status": "offline" }
+        ]
+      },
+      "output": {
+        "result": true,
+        "calls": [
+          { "method": "listSessionActions", "args": [] },
+          { "method": "listServiceActions", "args": [] },
+          { "method": "clearServiceActionIfToken", "args": ["svc-create", 10] },
+          { "method": "clearServiceActionIfToken", "args": ["svc-start-aged", 11] },
+          { "method": "clearServiceActionIfToken", "args": ["svc-stop", 12] },
+          { "method": "clearServiceActionIfToken", "args": ["svc-remove", 13] }
+        ]
+      },
+      "inputSha256": "f7118fcf1214f2da7551726314d96765f529e2df59134a82f4d1bf9186a29ece"
+    },
+    {
+      "id": "dashboard-model-pending-actions-006",
+      "name": "returns false when matching clear token has already been superseded",
+      "source": "src/multiplexer/dashboard-model.ts",
+      "api": "reconcileDashboardPendingActionsFromRawModel",
+      "input": {
+        "name": "returns false when matching clear token has already been superseded",
+        "sessionActions": [
+          { "id": "codex-new", "kind": "creating", "token": 15, "startedAt": "2023-11-14T22:13:19.000Z" }
+        ],
+        "rawSessions": [{ "id": "codex-new", "command": "codex", "status": "running" }],
+        "clearResults": { "session:codex-new:15": false }
+      },
+      "output": {
+        "result": false,
+        "calls": [
+          { "method": "listSessionActions", "args": [] },
+          { "method": "clearSessionActionIfToken", "args": ["codex-new", 15] },
+          { "method": "listServiceActions", "args": [] }
+        ]
+      },
+      "inputSha256": "d4f820de687d1eb6e47831539cdadadcc0eb670225f1f78a1deb3e9ec838213e"
+    }
+  ]
+}

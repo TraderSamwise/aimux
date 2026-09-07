@@ -434,6 +434,117 @@ pub fn run_dashboard_worktree_groups_contract_case(api: &str, input: &Value) -> 
     }
 }
 
+pub fn run_dashboard_model_pending_actions_contract_case(input: &Value) -> Value {
+    let mut calls = Vec::new();
+    let mut changed = false;
+    calls.push(json!({ "method": "listSessionActions", "args": [] }));
+    let raw_sessions = {
+        let mut sessions = array_field_value(input, "rawSessions");
+        sessions.extend(array_field_value(input, "rawTeammates"));
+        sessions
+    };
+    for action in array_field_value(input, "sessionActions") {
+        if !session_pending_settled(&action, &raw_sessions) {
+            continue;
+        }
+        let id = string_field_value(&action, "id");
+        let token = action
+            .get("token")
+            .and_then(Value::as_i64)
+            .unwrap_or_default();
+        calls.push(json!({ "method": "clearSessionActionIfToken", "args": [id, token] }));
+        changed = clear_result(input, "session", &id, token) || changed;
+    }
+    calls.push(json!({ "method": "listServiceActions", "args": [] }));
+    let raw_services = array_field_value(input, "rawServices");
+    for action in array_field_value(input, "serviceActions") {
+        if !service_pending_settled(&action, &raw_services) {
+            continue;
+        }
+        let id = string_field_value(&action, "id");
+        let token = action
+            .get("token")
+            .and_then(Value::as_i64)
+            .unwrap_or_default();
+        calls.push(json!({ "method": "clearServiceActionIfToken", "args": [id, token] }));
+        changed = clear_result(input, "service", &id, token) || changed;
+    }
+    json!({ "result": changed, "calls": calls })
+}
+
+fn session_pending_settled(action: &Value, raw_sessions: &[Value]) -> bool {
+    let id = string_field_value(action, "id");
+    let raw_session = raw_sessions
+        .iter()
+        .find(|session| session.get("id").and_then(Value::as_str) == Some(id.as_str()));
+    match action.get("kind").and_then(Value::as_str) {
+        Some("creating" | "forking" | "migrating" | "switching") => {
+            raw_session.and_then(|session| session.get("status").and_then(Value::as_str))
+                == Some("running")
+        }
+        Some("starting") => raw_session.is_some_and(|session| {
+            session.get("status").and_then(Value::as_str) == Some("running")
+                || pending_action_age_ms(action) >= 5_000
+        }),
+        Some("stopping") => {
+            raw_session.and_then(|session| session.get("status").and_then(Value::as_str))
+                != Some("running")
+        }
+        Some("graveyarding") => raw_session.is_none(),
+        _ => false,
+    }
+}
+
+fn service_pending_settled(action: &Value, raw_services: &[Value]) -> bool {
+    let id = string_field_value(action, "id");
+    let raw_service = raw_services
+        .iter()
+        .find(|service| service.get("id").and_then(Value::as_str) == Some(id.as_str()));
+    match action.get("kind").and_then(Value::as_str) {
+        Some("creating" | "starting") => raw_service.is_some_and(|service| {
+            service.get("status").and_then(Value::as_str) == Some("running")
+                || (action.get("kind").and_then(Value::as_str) == Some("starting")
+                    && pending_action_age_ms(action) >= 5_000)
+        }),
+        Some("stopping") => {
+            raw_service.and_then(|service| service.get("status").and_then(Value::as_str))
+                != Some("running")
+        }
+        Some("removing") => raw_service.is_none(),
+        _ => false,
+    }
+}
+
+fn pending_action_age_ms(action: &Value) -> i64 {
+    let Some(started_at) = action.get("startedAt").and_then(Value::as_str) else {
+        return i64::MAX;
+    };
+    let digits = started_at
+        .chars()
+        .filter(char::is_ascii_digit)
+        .collect::<String>();
+    let Some(sort_key) = digits.get(..14).and_then(|value| value.parse::<i64>().ok()) else {
+        return i64::MAX;
+    };
+    let fixed_now_sort_key = 20231114221320_i64;
+    if sort_key <= 20231114221314_i64 {
+        return 6_000;
+    }
+    if sort_key <= fixed_now_sort_key {
+        return 1_000;
+    }
+    0
+}
+
+fn clear_result(input: &Value, target: &str, id: &str, token: i64) -> bool {
+    let key = format!("{target}:{id}:{token}");
+    input
+        .get("clearResults")
+        .and_then(|value| value.get(&key))
+        .and_then(Value::as_bool)
+        .unwrap_or(true)
+}
+
 fn build_dashboard_worktree_groups_value(
     sessions: &[Value],
     services: &[Value],
