@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::paths::PathResolver;
+use crate::plugin_api::NativePluginStatus;
 use crate::project_api_contract::{invalidations, project_api_views_for_mutation_route, routes};
 
 use super::agent_output_projection::AgentOutputProjectionCache;
@@ -58,6 +59,7 @@ pub struct ProjectServiceRequestContext {
     pub output_metrics: AgentOutputReadMetrics,
     pub project_events: ProjectEventBus,
     pub visual_clients: ProjectHotSnapshotCoordinator,
+    pub plugin_statuses: Vec<NativePluginStatus>,
 }
 
 impl ProjectServiceRequestContext {
@@ -73,6 +75,7 @@ impl ProjectServiceRequestContext {
             output_metrics: AgentOutputReadMetrics::default(),
             project_events: ProjectEventBus::default(),
             visual_clients: ProjectHotSnapshotCoordinator::default(),
+            plugin_statuses: Vec::new(),
         }
     }
 
@@ -91,6 +94,7 @@ impl ProjectServiceRequestContext {
             output_metrics: AgentOutputReadMetrics::default(),
             project_events: ProjectEventBus::default(),
             visual_clients: ProjectHotSnapshotCoordinator::default(),
+            plugin_statuses: Vec::new(),
         }
     }
 
@@ -110,6 +114,11 @@ impl ProjectServiceRequestContext {
 
     pub fn with_desktop_state(mut self, desktop_state: Value) -> Self {
         self.desktop_state = Some(desktop_state);
+        self
+    }
+
+    pub fn with_plugin_statuses(mut self, plugin_statuses: Vec<NativePluginStatus>) -> Self {
+        self.plugin_statuses = plugin_statuses;
         self
     }
 
@@ -141,6 +150,10 @@ impl ProjectServiceRequestContext {
 
     pub fn session_label(&self, session_id: &str) -> Option<&str> {
         self.session_labels.get(session_id).map(String::as_str)
+    }
+
+    pub fn plugin_statuses_json(&self) -> Value {
+        serde_json::to_value(&self.plugin_statuses).unwrap_or_else(|_| Value::Array(Vec::new()))
     }
 }
 

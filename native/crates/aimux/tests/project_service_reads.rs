@@ -1,3 +1,4 @@
+use aimux::plugin_project_service_host::native_plugin_statuses_for_context;
 use aimux::project_api_contract::routes;
 use aimux::project_service::reads::route_read_request;
 use aimux::project_service::router::ProjectServiceRequestContext;
@@ -54,6 +55,25 @@ fn diagnostics_route_reports_resources_and_runtime_exchange() {
     assert_eq!(response.body["previews"], json!({}));
     assert_eq!(response.body["agentOutputReads"]["total"]["count"], 0);
     assert_eq!(response.body["runtimeExchange"]["exists"], false);
+    cleanup(project);
+}
+
+#[test]
+fn diagnostics_route_reports_native_plugin_statuses() {
+    let project = temp_project("diagnostics-plugins");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).expect("create state dir");
+    let base_context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let plugin_statuses = native_plugin_statuses_for_context(&base_context);
+    let context = base_context.with_plugin_statuses(plugin_statuses);
+    let response = route_read_request(&context, "GET", routes::DIAGNOSTICS).expect("diagnostics");
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["plugins"][0]["name"], "gh-pr-context");
+    assert_eq!(response.body["plugins"][0]["source"], "builtin");
+    assert_eq!(response.body["plugins"][0]["status"], "loaded");
+    assert_eq!(response.body["plugins"][1]["name"], "transcript-length");
+    assert_eq!(response.body["plugins"][1]["source"], "builtin");
+    assert_eq!(response.body["plugins"][1]["status"], "loaded");
     cleanup(project);
 }
 

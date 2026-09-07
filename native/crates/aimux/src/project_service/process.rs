@@ -21,6 +21,8 @@ use crate::expose_socket::{
     publish_expose_socket_path, read_expose_socket_header,
 };
 use crate::paths::{PathResolver, compute_project_id};
+use crate::plugin_api::NativePluginStatus;
+use crate::plugin_project_service_host::native_plugin_statuses_for_context;
 use crate::runtime_lifecycle_methods::write_instruction_files;
 use crate::tmux_expose::{
     SystemExposeHttpClient, run_tmux_expose_with_client, tmux_expose_options_from_socket_header,
@@ -79,8 +81,10 @@ pub fn run_project_service_internal(options: ProjectServiceInternalOptions) -> R
         startup.project_root.clone(),
         startup.project_state_dir.clone(),
     );
+    let plugin_statuses = native_plugin_statuses_for_context(&startup_context);
+    let startup_context = startup_context.with_plugin_statuses(plugin_statuses.clone());
     run_project_service_startup_tasks(&startup, &startup_context, &mut lifecycle_runtime);
-    serve_project_service_listener(listener, startup);
+    serve_project_service_listener(listener, startup, plugin_statuses);
     Ok(())
 }
 
@@ -420,12 +424,17 @@ fn agent_output_stream_fingerprint(payload: &serde_json::Value) -> String {
     .unwrap_or_default()
 }
 
-fn serve_project_service_listener(listener: TcpListener, startup: ProjectServiceStartup) {
+fn serve_project_service_listener(
+    listener: TcpListener,
+    startup: ProjectServiceStartup,
+    plugin_statuses: Vec<NativePluginStatus>,
+) {
     let context = Arc::new(
         ProjectServiceRequestContext::with_project_state_dir(
             startup.project_root,
             startup.project_state_dir,
         )
+        .with_plugin_statuses(plugin_statuses)
         .with_hot_snapshot_background_refresh(),
     );
     for stream in listener.incoming() {

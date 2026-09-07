@@ -52,7 +52,7 @@ pub fn route_read_request(
                 "serviceInfo": service_info_json(),
                 "resources": resource_snapshot(),
                 "recentSlowRequests": [],
-                "plugins": [],
+                "plugins": context.plugin_statuses_json(),
                 "previews": {},
                 "agentOutputReads": context.output_metrics.snapshot(),
                 "runtimeExchange": inspect_runtime_exchange_store(runtime_exchange_path(context.project_state_dir())),
