@@ -1,7 +1,7 @@
 use aimux::daemon_state::load_metadata_state;
 use aimux::project_api_contract::routes;
 use aimux::project_service::lifecycle::{
-    ProjectLifecycleRuntime, route_lifecycle_request_with_runtime,
+    ProjectLifecycleRuntime, ensure_default_scribe_agent, route_lifecycle_request_with_runtime,
 };
 use aimux::project_service::prompt_context::{get_prompt_context_text, set_prompt_context};
 use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
@@ -11,7 +11,7 @@ use aimux::runtime_topology::{
 };
 use aimux::tmux::TmuxTarget;
 use serde_json::{Value, json};
-use std::fs::remove_dir_all;
+use std::fs::{self, remove_dir_all};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -306,6 +306,115 @@ fn agent_spawn_launches_tool_and_records_topology_metadata() {
     assert_eq!(session["status"], "running");
     assert_eq!(session["toolConfigKey"], "mock");
     assert_eq!(session["worktreePath"], worktree.to_string_lossy().as_ref());
+    cleanup(project);
+}
+
+#[test]
+fn default_scribe_startup_launches_configured_agent_and_marks_project_control() {
+    let project = temp_project("default-scribe-create");
+    write_project_scribe_config(&project);
+    let state_dir = project.join("state");
+    fs::create_dir_all(&state_dir).unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = ensure_default_scribe_agent(&context, &mut runtime);
+
+    assert_eq!(response["created"], true);
+    assert_eq!(response["sessionId"], "mock-scribe");
+    assert_eq!(response["toolConfigKey"], "mock");
+    assert_eq!(runtime.created.len(), 1);
+    assert_eq!(runtime.created[0].name, "/bin/mock");
+    assert_eq!(runtime.created[0].cwd, project.to_string_lossy());
+    assert!(runtime.created[0].detached);
+    for expected in [
+        "AIMUX_SCRIBE=1",
+        "AIMUX_TOOL_DEFAULT=1",
+        "AIMUX_TEST_SCRIBE=1",
+    ] {
+        assert!(
+            runtime.created[0].args.iter().any(|arg| arg == expected),
+            "missing launch env {expected:?} in {:?}",
+            runtime.created[0].args
+        );
+    }
+    assert!(
+        runtime.created[0]
+            .args
+            .iter()
+            .any(|arg| arg.contains("--base") && arg.contains("--mode") && arg.contains("scribe"))
+    );
+    let metadata = &runtime.metadata[0].1;
+    assert_eq!(metadata["sessionId"], "mock-scribe");
+    assert_eq!(metadata["scribe"], true);
+    assert_eq!(metadata["projectControl"], true);
+    assert_eq!(metadata["team"]["role"], "scribe");
+    let saved = load_metadata_state(&state_dir);
+    assert_eq!(
+        saved.sessions["mock-scribe"]["scribe"], true,
+        "default scribe marker is persisted"
+    );
+    let topology = read_topology(&state_dir);
+    let session = session(&topology, "mock-scribe");
+    assert_eq!(session["status"], "running");
+    assert_eq!(session["team"]["role"], "scribe");
+    cleanup(project);
+}
+
+#[test]
+fn default_scribe_startup_keeps_existing_live_scribe_without_duplicate_window() {
+    let project = temp_project("default-scribe-existing");
+    write_project_scribe_config(&project);
+    let state_dir = project.join("state");
+    write_agent_resume_topology(
+        &state_dir,
+        json!({
+            "id": "existing-scribe",
+            "nodeId": "agent:existing-scribe",
+            "status": "idle",
+            "tool": "mock",
+            "toolConfigKey": "mock",
+            "command": "/bin/mock",
+            "args": ["--base"],
+            "team": { "teamId": "scribe", "parentSessionId": "", "role": "scribe" },
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+        }),
+    );
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = ensure_default_scribe_agent(&context, &mut runtime);
+
+    assert_eq!(response["created"], false);
+    assert_eq!(response["reason"], "existing");
+    assert_eq!(response["sessionId"], "existing-scribe");
+    assert!(runtime.created.is_empty());
+    let saved = load_metadata_state(&state_dir);
+    assert_eq!(saved.sessions["existing-scribe"]["scribe"], true);
+    cleanup(project);
+}
+
+#[test]
+fn default_scribe_startup_honors_disabled_configuration() {
+    let project = temp_project("default-scribe-disabled");
+    let aimux_dir = project.join(".aimux");
+    fs::create_dir_all(&aimux_dir).unwrap();
+    fs::write(
+        aimux_dir.join("config.json"),
+        serde_json::to_string_pretty(&json!({ "scribe": { "defaultAgent": null } })).unwrap(),
+    )
+    .unwrap();
+    let state_dir = project.join("state");
+    fs::create_dir_all(&state_dir).unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = ensure_default_scribe_agent(&context, &mut runtime);
+
+    assert_eq!(response["created"], false);
+    assert_eq!(response["reason"], "disabled");
+    assert!(runtime.created.is_empty());
     cleanup(project);
 }
 
@@ -2912,6 +3021,34 @@ fn write_project_tool_config(project: &Path) {
                     "resumeArgs": ["--resume", "{sessionId}"],
                     "forkArgs": ["--fork", "{sessionId}"],
                     "resumeByBackendSessionId": true
+                }
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+}
+
+fn write_project_scribe_config(project: &Path) {
+    let aimux_dir = project.join(".aimux");
+    std::fs::create_dir_all(&aimux_dir).unwrap();
+    std::fs::write(
+        aimux_dir.join("config.json"),
+        serde_json::to_string_pretty(&json!({
+            "scribe": {
+                "defaultAgent": {
+                    "tool": "mock",
+                    "extraArgs": ["--mode", "scribe"],
+                    "env": { "AIMUX_TEST_SCRIBE": "1" }
+                }
+            },
+            "tools": {
+                "mock": {
+                    "command": "/bin/mock",
+                    "args": ["--base"],
+                    "defaultEnv": { "AIMUX_TOOL_DEFAULT": "1" },
+                    "enabled": true,
+                    "wrapperEnabled": true
                 }
             }
         }))

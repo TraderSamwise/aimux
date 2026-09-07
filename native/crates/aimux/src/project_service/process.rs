@@ -30,6 +30,7 @@ use super::agent_output::{
 use super::dispatcher::ProjectServiceStreamKind;
 use super::event_streams::{encode_sse_event, encode_sse_keepalive};
 use super::http::PreparedProjectServiceResponse;
+use super::lifecycle::{SystemProjectLifecycleRuntime, ensure_default_scribe_agent};
 use super::output_metrics::AgentOutputReadRecord;
 use super::router::{ProjectServiceRequestContext, route_project_service_request};
 use super::server::{ProjectServiceHttpRequest, handle_project_service_http_request};
@@ -68,6 +69,12 @@ pub fn run_project_service_internal(options: ProjectServiceInternalOptions) -> R
     };
     #[cfg(unix)]
     let _expose_socket_guard = start_project_expose_socket(&startup).ok();
+    let mut lifecycle_runtime = SystemProjectLifecycleRuntime;
+    let startup_context = ProjectServiceRequestContext::with_project_state_dir(
+        startup.project_root.clone(),
+        startup.project_state_dir.clone(),
+    );
+    let _ = ensure_default_scribe_agent(&startup_context, &mut lifecycle_runtime);
     serve_project_service_listener(listener, startup);
     Ok(())
 }
