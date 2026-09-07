@@ -1,3 +1,4 @@
+use aimux::coordination_threads::run_direct_thread_helper_contract_case;
 use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
 use aimux::project_service::runtime_exchange::{read_runtime_exchange, runtime_exchange_path};
 use serde_json::{Map, Value, json};
@@ -53,20 +54,14 @@ fn fixture_orchestration_mutations_match_typescript() {
         6,
         "unexpected coordination mutation case count"
     );
-    let active_cases = cases
-        .iter()
-        .filter(|case| case["input"]["source"] == "orchestration")
-        .collect::<Vec<_>>();
-    assert_eq!(
-        active_cases.len(),
-        2,
-        "unexpected active orchestration cases"
-    );
-
     let mut failures = Vec::new();
-    for case in active_cases {
-        let project = TestProject::new(case["input"]["scenario"].as_str().unwrap_or("case"));
-        let raw = run_case(&project, &case["input"]);
+    for case in cases {
+        let raw = if case["input"]["source"] == "threads" {
+            run_direct_thread_helper_contract_case(&case["input"])
+        } else {
+            let project = TestProject::new(case["input"]["scenario"].as_str().unwrap_or("case"));
+            run_case(&project, &case["input"])
+        };
         assert_dynamic_structure(&raw, case["id"].as_str().unwrap_or("case"));
         let actual = normalize_dynamic(strip_route_only_fields(raw));
         if actual != case["output"] {
@@ -84,23 +79,6 @@ fn fixture_orchestration_mutations_match_typescript() {
         "{} orchestration mutation parity failures:\n{}",
         failures.len(),
         serde_json::to_string_pretty(&failures).expect("serialize failures")
-    );
-}
-
-#[test]
-#[ignore = "direct threads.ts compatibility helpers do not have a Rust public API yet; corpus is captured for the Rust coordination API checklist"]
-fn fixture_direct_thread_helpers_need_rust_api() {
-    let contract: Value =
-        serde_json::from_str(COORDINATION_MUTATIONS).expect("valid coordination fixture");
-    let missing = contract["cases"]
-        .as_array()
-        .expect("coordination mutation cases")
-        .iter()
-        .filter(|case| case["input"]["source"] == "threads")
-        .count();
-    assert_eq!(
-        missing, 4,
-        "unexpected direct thread-helper checklist count"
     );
 }
 
@@ -127,6 +105,17 @@ fn run_case(project: &TestProject, input: &Value) -> Value {
             state.saved.insert(save.to_owned(), response.body.clone());
         }
         match input["scenario"].as_str().unwrap_or_default() {
+            "threads-open" => {
+                results.insert("thread".into(), response.body["thread"].clone());
+            }
+            "threads-send" => {
+                results.insert("thread".into(), response.body["thread"].clone());
+                results.insert("message".into(), response.body["message"].clone());
+                results.insert("messages".into(), response.body["messages"].clone());
+            }
+            "threads-mark-seen" | "threads-status" => {
+                results.insert("thread".into(), response.body["thread"].clone());
+            }
             "direct-reuse" => {
                 results.insert(
                     if index == 0 { "first" } else { "second" }.into(),

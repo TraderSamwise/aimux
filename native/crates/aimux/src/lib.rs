@@ -27,6 +27,7 @@ pub mod context_bridge_contract;
 pub mod context_compactor;
 pub mod contracts;
 pub mod coordination_tasks_threads_contract;
+pub mod coordination_threads;
 pub mod core_cli;
 pub mod core_cli_executor;
 pub mod core_cli_routing;
