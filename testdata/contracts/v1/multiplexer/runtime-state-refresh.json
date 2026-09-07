@@ -1,0 +1,344 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/runtime-state.test.ts",
+  "generatedBy": "scripts/capture-multiplexer-runtime-state-refresh-contract.mjs",
+  "description": "Runtime status refresh idle-alert debounce and dashboard background-refresh lifecycle captured by running TypeScript with a deterministic interval clock.",
+  "constants": { "DASHBOARD_HIDDEN_VISIBILITY_RECHECK_TICKS": 10 },
+  "cases": [
+    {
+      "id": "multiplexer-runtime-state-refresh-001",
+      "name": "does not notify immediately when an agent briefly becomes idle",
+      "source": "src/multiplexer/runtime-state.test.ts",
+      "api": "startStatusRefresh",
+      "input": {
+        "api": "startStatusRefresh",
+        "name": "does not notify immediately when an agent briefly becomes idle",
+        "host": { "sessions": [{ "id": "codex-1", "status": "idle" }], "prevStatuses": [["codex-1", "running"]] },
+        "steps": [{ "type": "tick", "ms": 1000 }]
+      },
+      "output": {
+        "statusIntervalActive": false,
+        "sessions": [{ "id": "codex-1", "status": "idle" }],
+        "prevStatuses": [["codex-1", "idle"]],
+        "mode": "agent",
+        "dashboardInputEpoch": 0,
+        "dashboardNextBackgroundRefreshAt": 0,
+        "dashboardHiddenVisibilitySkipTicks": null,
+        "dashboardTuiVisibility": null,
+        "dashboardTuiVisibilityWakePending": null,
+        "calls": {
+          "dashboardFeedbackTickFlashVisibilityChanged": [[]],
+          "publishAlert": [],
+          "refreshDashboardModelFromService": [],
+          "refreshCoordinationFromService": [],
+          "renderCurrentDashboardView": [],
+          "isDashboardScreen": [],
+          "isDashboardTuiVisible": [],
+          "invalidateDashboardFrame": []
+        }
+      },
+      "inputSha256": "0bddfdd538e4b73eb949b9f73ca617cad3635a3b884e63d32c1a1b42358e89f9"
+    },
+    {
+      "id": "multiplexer-runtime-state-refresh-002",
+      "name": "notifies when an agent stays idle after finishing a turn",
+      "source": "src/multiplexer/runtime-state.test.ts",
+      "api": "startStatusRefresh",
+      "input": {
+        "api": "startStatusRefresh",
+        "name": "notifies when an agent stays idle after finishing a turn",
+        "host": { "sessions": [{ "id": "codex-1", "status": "idle" }], "prevStatuses": [["codex-1", "running"]] },
+        "steps": [
+          { "type": "tick", "ms": 1000 },
+          { "type": "tick", "ms": 10000 }
+        ]
+      },
+      "output": {
+        "statusIntervalActive": false,
+        "sessions": [{ "id": "codex-1", "status": "idle" }],
+        "prevStatuses": [["codex-1", "idle"]],
+        "mode": "agent",
+        "dashboardInputEpoch": 0,
+        "dashboardNextBackgroundRefreshAt": 0,
+        "dashboardHiddenVisibilitySkipTicks": null,
+        "dashboardTuiVisibility": null,
+        "dashboardTuiVisibilityWakePending": null,
+        "calls": {
+          "dashboardFeedbackTickFlashVisibilityChanged": [[], []],
+          "publishAlert": [
+            [
+              {
+                "kind": "next_step",
+                "sessionId": "codex-1",
+                "title": "codex-1 ready for next step",
+                "message": "Agent stopped after a turn.",
+                "dedupeKey": "idle-needs-input:codex-1",
+                "cooldownMs": 15000
+              }
+            ]
+          ],
+          "refreshDashboardModelFromService": [],
+          "refreshCoordinationFromService": [],
+          "renderCurrentDashboardView": [],
+          "isDashboardScreen": [],
+          "isDashboardTuiVisible": [],
+          "invalidateDashboardFrame": []
+        }
+      },
+      "inputSha256": "47795930e6d6d6e9430094da235187b2b384126f925ab002d162179b38c2113f"
+    },
+    {
+      "id": "multiplexer-runtime-state-refresh-003",
+      "name": "cancels idle notification when the agent resumes work before settling",
+      "source": "src/multiplexer/runtime-state.test.ts",
+      "api": "startStatusRefresh",
+      "input": {
+        "api": "startStatusRefresh",
+        "name": "cancels idle notification when the agent resumes work before settling",
+        "host": { "sessions": [{ "id": "codex-1", "status": "idle" }], "prevStatuses": [["codex-1", "running"]] },
+        "steps": [
+          { "type": "tick", "ms": 5000 },
+          { "type": "setSessionStatus", "sessionId": "codex-1", "status": "running" },
+          { "type": "tick", "ms": 1000 },
+          { "type": "setSessionStatus", "sessionId": "codex-1", "status": "idle" },
+          { "type": "tick", "ms": 5000 }
+        ]
+      },
+      "output": {
+        "statusIntervalActive": false,
+        "sessions": [{ "id": "codex-1", "status": "idle" }],
+        "prevStatuses": [["codex-1", "idle"]],
+        "mode": "agent",
+        "dashboardInputEpoch": 0,
+        "dashboardNextBackgroundRefreshAt": 0,
+        "dashboardHiddenVisibilitySkipTicks": null,
+        "dashboardTuiVisibility": null,
+        "dashboardTuiVisibilityWakePending": null,
+        "calls": {
+          "dashboardFeedbackTickFlashVisibilityChanged": [[], [], []],
+          "publishAlert": [],
+          "refreshDashboardModelFromService": [],
+          "refreshCoordinationFromService": [],
+          "renderCurrentDashboardView": [],
+          "isDashboardScreen": [],
+          "isDashboardTuiVisible": [],
+          "invalidateDashboardFrame": []
+        }
+      },
+      "inputSha256": "6cb94461e0c7085b9db6bf59f6dd9b0d48b8ec79ba32b9388bfd3085b5e9da9b"
+    },
+    {
+      "id": "multiplexer-runtime-state-refresh-004",
+      "name": "renders heartbeat-only dashboard feedback without waiting for background refresh",
+      "source": "src/multiplexer/runtime-state.test.ts",
+      "api": "startStatusRefresh",
+      "input": {
+        "api": "startStatusRefresh",
+        "name": "renders heartbeat-only dashboard feedback without waiting for background refresh",
+        "host": {
+          "mode": "dashboard",
+          "feedbackChanged": true,
+          "dashboardNextBackgroundRefreshAt": 0,
+          "refreshSteps": [{ "type": "pending" }]
+        },
+        "steps": [{ "type": "tick", "ms": 1000 }]
+      },
+      "output": {
+        "statusIntervalActive": false,
+        "sessions": [],
+        "prevStatuses": [],
+        "mode": "dashboard",
+        "dashboardInputEpoch": 0,
+        "dashboardNextBackgroundRefreshAt": 1780272003000,
+        "dashboardHiddenVisibilitySkipTicks": 0,
+        "dashboardTuiVisibility": null,
+        "dashboardTuiVisibilityWakePending": false,
+        "calls": {
+          "dashboardFeedbackTickFlashVisibilityChanged": [[]],
+          "publishAlert": [],
+          "refreshDashboardModelFromService": [[false, { "lifecycle": { "mode": "dashboard" } }]],
+          "refreshCoordinationFromService": [],
+          "renderCurrentDashboardView": [[]],
+          "isDashboardScreen": [],
+          "isDashboardTuiVisible": [],
+          "invalidateDashboardFrame": []
+        }
+      },
+      "inputSha256": "5a9cc78cc7aeb82166b33340291f0151b68b4dd4425a24ba47e3d54d39187149"
+    },
+    {
+      "id": "multiplexer-runtime-state-refresh-005",
+      "name": "does not run dashboard background API refresh while startup is priming",
+      "source": "src/multiplexer/runtime-state.test.ts",
+      "api": "startStatusRefresh",
+      "input": {
+        "api": "startStatusRefresh",
+        "name": "does not run dashboard background API refresh while startup is priming",
+        "host": {
+          "mode": "dashboard",
+          "feedbackChanged": true,
+          "dashboardStartupPriming": true,
+          "dashboardNextBackgroundRefreshAt": 0
+        },
+        "steps": [{ "type": "tick", "ms": 1000 }]
+      },
+      "output": {
+        "statusIntervalActive": false,
+        "sessions": [],
+        "prevStatuses": [],
+        "mode": "dashboard",
+        "dashboardInputEpoch": 0,
+        "dashboardNextBackgroundRefreshAt": 0,
+        "dashboardHiddenVisibilitySkipTicks": 0,
+        "dashboardTuiVisibility": null,
+        "dashboardTuiVisibilityWakePending": false,
+        "calls": {
+          "dashboardFeedbackTickFlashVisibilityChanged": [[]],
+          "publishAlert": [],
+          "refreshDashboardModelFromService": [],
+          "refreshCoordinationFromService": [],
+          "renderCurrentDashboardView": [[]],
+          "isDashboardScreen": [],
+          "isDashboardTuiVisible": [],
+          "invalidateDashboardFrame": []
+        }
+      },
+      "inputSha256": "811d7d8690ca983e94c10984c998b212bc1cd882ca4f5337a6ffbe5d89d14657"
+    },
+    {
+      "id": "multiplexer-runtime-state-refresh-006",
+      "name": "does not refresh or render hidden tmux dashboards",
+      "source": "src/multiplexer/runtime-state.test.ts",
+      "api": "startStatusRefresh",
+      "input": {
+        "api": "startStatusRefresh",
+        "name": "does not refresh or render hidden tmux dashboards",
+        "host": {
+          "mode": "dashboard",
+          "startedInDashboard": true,
+          "visibilitySequence": [false],
+          "dashboardNextBackgroundRefreshAt": 0
+        },
+        "steps": [{ "type": "tick", "ms": 1000 }]
+      },
+      "output": {
+        "statusIntervalActive": false,
+        "sessions": [],
+        "prevStatuses": [],
+        "mode": "dashboard",
+        "dashboardInputEpoch": 0,
+        "dashboardNextBackgroundRefreshAt": 0,
+        "dashboardHiddenVisibilitySkipTicks": 10,
+        "dashboardTuiVisibility": { "attached": false, "activeWindow": false, "visible": false, "reason": "hidden" },
+        "dashboardTuiVisibilityWakePending": false,
+        "calls": {
+          "dashboardFeedbackTickFlashVisibilityChanged": [[]],
+          "publishAlert": [],
+          "refreshDashboardModelFromService": [],
+          "refreshCoordinationFromService": [],
+          "renderCurrentDashboardView": [],
+          "isDashboardScreen": [],
+          "isDashboardTuiVisible": [[]],
+          "invalidateDashboardFrame": []
+        }
+      },
+      "inputSha256": "5c7f356e5ba9c57b06c3e531c6b7a08224acd67ae322db82b13d814b5979a848"
+    },
+    {
+      "id": "multiplexer-runtime-state-refresh-007",
+      "name": "backs off visibility checks for hidden tmux dashboards",
+      "source": "src/multiplexer/runtime-state.test.ts",
+      "api": "startStatusRefresh",
+      "input": {
+        "api": "startStatusRefresh",
+        "name": "backs off visibility checks for hidden tmux dashboards",
+        "host": {
+          "mode": "dashboard",
+          "startedInDashboard": true,
+          "dashboardTuiVisibility": { "attached": true, "activeWindow": false, "visible": false, "reason": "hidden" },
+          "dashboardHiddenVisibilitySkipTicks": 2,
+          "dashboardNextBackgroundRefreshAt": 0
+        },
+        "steps": [
+          { "type": "tick", "ms": 1000 },
+          { "type": "tick", "ms": 1000 }
+        ]
+      },
+      "output": {
+        "statusIntervalActive": false,
+        "sessions": [],
+        "prevStatuses": [],
+        "mode": "dashboard",
+        "dashboardInputEpoch": 0,
+        "dashboardNextBackgroundRefreshAt": 0,
+        "dashboardHiddenVisibilitySkipTicks": 0,
+        "dashboardTuiVisibility": { "attached": true, "activeWindow": false, "visible": false, "reason": "hidden" },
+        "dashboardTuiVisibilityWakePending": false,
+        "calls": {
+          "dashboardFeedbackTickFlashVisibilityChanged": [[], []],
+          "publishAlert": [],
+          "refreshDashboardModelFromService": [],
+          "refreshCoordinationFromService": [],
+          "renderCurrentDashboardView": [],
+          "isDashboardScreen": [],
+          "isDashboardTuiVisible": [],
+          "invalidateDashboardFrame": []
+        }
+      },
+      "inputSha256": "9f198aeac8c83f6f28826694956c3c385ef04b5921c3df8f6032304e0e625111"
+    },
+    {
+      "id": "multiplexer-runtime-state-refresh-008",
+      "name": "forces one dashboard model refresh when a hidden dashboard becomes visible",
+      "source": "src/multiplexer/runtime-state.test.ts",
+      "api": "startStatusRefresh",
+      "input": {
+        "api": "startStatusRefresh",
+        "name": "forces one dashboard model refresh when a hidden dashboard becomes visible",
+        "host": {
+          "mode": "dashboard",
+          "startedInDashboard": true,
+          "dashboardTuiVisibility": { "attached": true, "activeWindow": false, "visible": false, "reason": "hidden" },
+          "dashboardTuiVisibilityWakePending": true,
+          "visibilitySequence": [true],
+          "dashboardNextBackgroundRefreshAt": 9999999999999,
+          "refreshSteps": [{ "type": "resolve", "value": true }]
+        },
+        "steps": [{ "type": "tick", "ms": 1000 }]
+      },
+      "output": {
+        "statusIntervalActive": false,
+        "sessions": [],
+        "prevStatuses": [],
+        "mode": "dashboard",
+        "dashboardInputEpoch": 0,
+        "dashboardNextBackgroundRefreshAt": 1780272003000,
+        "dashboardHiddenVisibilitySkipTicks": 0,
+        "dashboardTuiVisibility": { "attached": true, "activeWindow": true, "visible": true, "reason": "visible" },
+        "dashboardTuiVisibilityWakePending": false,
+        "calls": {
+          "dashboardFeedbackTickFlashVisibilityChanged": [[]],
+          "publishAlert": [],
+          "refreshDashboardModelFromService": [[true, { "lifecycle": { "mode": "dashboard" } }]],
+          "refreshCoordinationFromService": [
+            [
+              {
+                "lifecycle": {
+                  "mode": "dashboard",
+                  "inputEpoch": 0,
+                  "requiresInputEpoch": true,
+                  "screen": "coordination"
+                }
+              }
+            ]
+          ],
+          "renderCurrentDashboardView": [[], []],
+          "isDashboardScreen": [["coordination"], ["coordination"], ["coordination"]],
+          "isDashboardTuiVisible": [[]],
+          "invalidateDashboardFrame": [[]]
+        }
+      },
+      "inputSha256": "b770db17217d9eeafcc82a78acdd0ad70e1deaddaab3dc4ae368102041218284"
+    }
+  ]
+}
