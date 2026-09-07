@@ -160,6 +160,7 @@ function hostFor(input) {
     offlineServices: clone(input.offlineServices ?? []),
     sessionWorktreePaths: new Map(input.sessionWorktreePaths ?? []),
     listDesktopWorktrees: callRecorder(calls, "listDesktopWorktrees", () => clone(input.worktrees ?? [])),
+    deleteGraveyardWorktree: callRecorder(calls, "deleteGraveyardWorktree", async (path) => ({ path, status: "removed" })),
     isSessionRuntimeLive: callRecorder(calls, "isSessionRuntimeLive", (session) => input.liveSessionIds?.includes(session.id) ?? false),
     saveState: callRecorder(calls, "saveState"),
     syncSessionsFromTopology: callRecorder(calls, "syncSessionsFromTopology"),
@@ -235,6 +236,8 @@ async function invoke(api, ctx, input) {
     const arg =
       api === "createDesktopWorktree"
         ? actualInput.name
+        : api === "cleanupGraveyard"
+          ? actualInput.cleanupInput
         : api === "resurrectGraveyardSession"
           ? actualInput.sessionId
           : actualInput.path;
@@ -569,6 +572,33 @@ await record(
       projectRoot,
       sessionId: "codex-reviewer",
       offlineSessions: [],
+      mode: "project-service",
+    };
+  },
+);
+
+await record(
+  cases,
+  "cleans up expired standalone graveyard agents and refreshes projections",
+  "cleanupGraveyard",
+  "cleanup-graveyard-agent",
+  () => {
+    topologySessions.upsertTopologySession(
+      {
+        id: "codex-old",
+        tool: "codex",
+        toolConfigKey: "codex",
+        command: "codex",
+        args: [],
+        createdAt: "2026-05-01T00:00:00.000Z",
+      },
+      "offline",
+      { now: "2026-05-01T00:00:00.000Z" },
+    );
+    topologySessions.moveTopologySessionToGraveyard("codex-old", { now: "2026-05-30T00:00:00.000Z" });
+    return {
+      cleanupInput: { now: "2026-06-14T00:00:00.000Z" },
+      offlineSessions: [{ id: "codex-old" }],
       mode: "project-service",
     };
   },

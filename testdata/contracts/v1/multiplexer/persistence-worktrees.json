@@ -1283,6 +1283,78 @@
         "operationFailures": []
       },
       "inputSha256": "ce887502c7d0d01e98ac2b2187e8961f8126e0941491a443fa757e3ebf3bdaf2"
+    },
+    {
+      "id": "multiplexer-persistence-worktrees-013",
+      "name": "cleans up expired standalone graveyard agents and refreshes projections",
+      "source": "src/multiplexer/persistence-methods.test.ts",
+      "api": "cleanupGraveyard",
+      "input": {
+        "cleanupInput": { "now": "2026-06-14T00:00:00.000Z" },
+        "offlineSessions": [{ "id": "codex-old" }],
+        "mode": "project-service",
+        "initialTopology": {
+          "worktrees": [],
+          "visibleGraveyard": [],
+          "allGraveyard": [],
+          "sessions": [
+            {
+              "id": "codex-old",
+              "tool": "codex",
+              "toolConfigKey": "codex",
+              "command": "codex",
+              "args": [],
+              "status": "graveyard",
+              "createdAt": "2026-05-01T00:00:00.000Z",
+              "updatedAt": "2026-05-30T00:00:00.000Z",
+              "graveyardedAt": "2026-05-30T00:00:00.000Z"
+            }
+          ],
+          "services": []
+        }
+      },
+      "output": {
+        "ok": true,
+        "returned": {
+          "dryRun": false,
+          "plan": {
+            "enabled": true,
+            "now": "2026-06-14T00:00:00.000Z",
+            "cutoff": "2026-05-31T00:00:00.000Z",
+            "retentionDays": 14,
+            "agents": [
+              {
+                "kind": "agent",
+                "sessionId": "codex-old",
+                "graveyardedAt": "2026-05-30T00:00:00.000Z",
+                "expiresAt": "2026-06-13T00:00:00.000Z"
+              }
+            ],
+            "worktrees": []
+          },
+          "results": [{ "kind": "agent", "id": "codex-old", "status": "removed", "removedAssets": [] }]
+        },
+        "completion": null,
+        "host": {
+          "offlineSessions": [],
+          "offlineServices": [],
+          "footerFlash": null,
+          "footerFlashTicks": null,
+          "pendingWorktreeCreatePaths": [],
+          "pendingWorktreeRemovalPaths": [],
+          "dashboardWorktreeActions": [],
+          "calls": [
+            { "method": "loadOfflineTopologySessions", "args": [] },
+            { "method": "invalidateDesktopStateSnapshot", "args": [] },
+            { "method": "refreshLocalDashboardModel", "args": [] },
+            { "method": "writeStatuslineFile", "args": [{ "force": true }] },
+            { "method": "metadataServer.notifyChange", "args": [] }
+          ]
+        },
+        "topology": { "worktrees": [], "visibleGraveyard": [], "allGraveyard": [], "sessions": [], "services": [] },
+        "operationFailures": []
+      },
+      "inputSha256": "6bc824c225ebaab008dbcd76eab258b9d86561f849181a9570d7f6c8acdad205"
     }
   ]
 }

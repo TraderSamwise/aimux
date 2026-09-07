@@ -29,7 +29,7 @@ fn multiplexer_persistence_worktrees_contract_matches_typescript() {
         contract.source,
         "src/multiplexer/persistence-methods.test.ts"
     );
-    assert_eq!(contract.cases.len(), 12);
+    assert_eq!(contract.cases.len(), 13);
 
     let mut failures = Vec::new();
     for case in contract.cases {

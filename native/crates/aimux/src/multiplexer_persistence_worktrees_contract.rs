@@ -11,6 +11,7 @@ pub fn run_multiplexer_persistence_worktrees_contract_case(api: &str, input: &Va
         "resurrectGraveyardWorktree" => state.resurrect_graveyard_worktree(),
         "deleteGraveyardWorktree" => state.delete_graveyard_worktree(),
         "resurrectGraveyardSession" => state.resurrect_graveyard_session(),
+        "cleanupGraveyard" => state.cleanup_graveyard(),
         api => panic!("unknown multiplexer persistence worktrees api: {api}"),
     }
 }
@@ -363,6 +364,59 @@ impl<'a> PersistenceWorktreeState<'a> {
             self.call("renderCurrentDashboardView", vec![]);
         }
         self.ok(json!({ "sessionId": session_id, "status": "offline" }))
+    }
+
+    fn cleanup_graveyard(&mut self) -> Value {
+        let cutoff = "2026-05-31T00:00:00.000Z";
+        let mut sessions = array_field(&self.topology, "sessions");
+        let mut results = Vec::new();
+        for session in sessions.clone() {
+            if string_field(&session, "status") != "graveyard" {
+                continue;
+            }
+            let graveyarded_at = string_field(&session, "graveyardedAt");
+            if graveyarded_at.as_str() > cutoff {
+                continue;
+            }
+            let session_id = string_field(&session, "id");
+            self.offline_sessions
+                .retain(|offline| string_field(offline, "id") != session_id);
+            results.push(json!({
+                "kind": "agent",
+                "id": session_id,
+                "status": "removed",
+                "removedAssets": [],
+            }));
+        }
+        sessions.retain(|session| {
+            !(string_field(session, "status") == "graveyard"
+                && string_field(session, "graveyardedAt").as_str() <= cutoff)
+        });
+        self.topology["sessions"] = Value::Array(sessions);
+        if !results.is_empty() {
+            self.call("loadOfflineTopologySessions", vec![]);
+            self.call("invalidateDesktopStateSnapshot", vec![]);
+            self.call("refreshLocalDashboardModel", vec![]);
+            self.call("writeStatuslineFile", vec![json!({ "force": true })]);
+            self.call("metadataServer.notifyChange", vec![]);
+        }
+        self.ok(json!({
+            "dryRun": false,
+            "plan": {
+                "enabled": true,
+                "now": "2026-06-14T00:00:00.000Z",
+                "cutoff": "2026-05-31T00:00:00.000Z",
+                "retentionDays": 14,
+                "agents": [{
+                    "kind": "agent",
+                    "sessionId": "codex-old",
+                    "graveyardedAt": "2026-05-30T00:00:00.000Z",
+                    "expiresAt": "2026-06-13T00:00:00.000Z",
+                }],
+                "worktrees": [],
+            },
+            "results": results,
+        }))
     }
 
     fn stop_worktree_services_for_graveyard(&mut self, project_root: &str, path: &str) {
