@@ -2,9 +2,9 @@
 
 This inventory lists real captured TypeScript contract corpora that are intentionally `#[ignore]` because the matching Rust API does not exist yet, the implementation sits behind an ownership fence, or the existing fenced Rust implementation currently differs from the captured TypeScript behavior. It deliberately does not count Vitest reporter output as coverage.
 
-Coverage definition used for this inventory: a `src` test module is covered when any `testdata/contracts/v1/**/*.json` fixture records that module in a top-level `source`, top-level `sources`, case `source`, or group/case `source` field, and the fixture contains behavior-level input/output or state data rather than test-runner metadata. Under that definition there are 245 `src` test modules, 219 covered modules, and 26 uncovered modules remaining.
+Coverage definition used for this inventory: a `src` test module is covered when any `testdata/contracts/v1/**/*.json` fixture records that module in a top-level `source`, top-level `sources`, case `source`, or group/case `source` field, and the fixture contains behavior-level input/output or state data rather than test-runner metadata. Under that definition there are 245 `src` test modules, 220 covered modules, and 25 uncovered modules remaining.
 
-There are 27 ignored corpus entries below, covering 127 captured checklist cases.
+There are 28 ignored corpus entries below, covering 131 captured checklist cases.
 
 | Consumer | Corpus | Cases | Missing Rust API / parity bug | Ownership fence |
 | --- | --- | ---: | --- | --- |
@@ -17,6 +17,7 @@ There are 27 ignored corpus entries below, covering 127 captured checklist cases
 | `fixture_core_command_ownership.rs` | `testdata/contracts/v1/core-command/ownership.json` | 3 | Parity bug: Rust core_cli_routing claims dashboard-reload/restart-runtime commands that TypeScript leaves on the full CLI path | core_cli* |
 | `fixture_dashboard_navigation.rs` | `testdata/contracts/v1/runtime-state/dashboard-navigation.json` | 1 | showMigratePicker navigation decision API | dashboard_* |
 | `fixture_dashboard_repair_notices.rs` | `testdata/contracts/v1/runtime-state/dashboard-repair-notices.json` | 1 | recordDashboardRepairNotice runtime notice-store behavior | dashboard_* |
+| `fixture_desktop_state_golden.rs` | `testdata/contracts/v1/dashboard/desktop-state-golden.json` | 4 | Parity bug: Rust dashboard model serialization adds default false fields and drops TS null/extra fields from captured `buildDesktopStateSnapshot` output | dashboard_* |
 | `fixture_debug_lifecycle_log.rs` | `testdata/contracts/v1/debug/lifecycle-log.json` | 3 | logLifecycleAlways logging API and event formatting | No explicit fence; needs Rust logging subsystem parity surface |
 | `fixture_event_loop.rs` | `testdata/contracts/v1/event-loop/metrics.json` | 3 | Event-loop delay histogram lifecycle APIs | daemon_* |
 | `fixture_hotkeys.rs` | `testdata/contracts/v1/terminal/hotkeys.json` | 2 | Global leader hotkey parser/handler API | dashboard_* / terminal-control runtime |
@@ -57,7 +58,6 @@ These `src/**/*.test.ts` modules still have no behavior-level corpus under `test
 | `src/multiplexer/dashboard-ops.test.ts` | Dashboard service/session operation state machine; needs mocked state transition corpus. | dashboard_* |
 | `src/multiplexer/dashboard-tail-methods.test.ts` | Dashboard tail/heartbeat/stream methods; needs mocked stream/state corpus. | dashboard_* |
 | `src/multiplexer/dashboard-view-methods.test.ts` | Dashboard view refresh and stale-render suppression; needs mocked refresh/state corpus. | dashboard_* |
-| `src/multiplexer/desktop-state-golden.test.ts` | Existing golden lives outside testdata; needs real generator output in contracts/v1. | dashboard_* |
 | `src/multiplexer/library.test.ts` | Dashboard library service-backed model; needs mocked API input/output capture. | dashboard_* |
 | `src/multiplexer/notifications.test.ts` | Dashboard notification screen mutation/refresh; needs mocked API input/output capture. | dashboard_* |
 | `src/multiplexer/persistence-methods.test.ts` | Dashboard persistence mutation methods; needs stale-completion/state corpus. | dashboard_* |

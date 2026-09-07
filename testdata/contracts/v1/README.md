@@ -33,6 +33,12 @@ Priority fixture groups:
   contextualization cases captured by running TypeScript `alert-display`
   helpers against `src/alert-display.test.ts` scenarios.
 
+## Dashboard
+
+- `dashboard/desktop-state-golden.json`: runtime-light/runtime-full desktop
+  state snapshots and snapshot cost model captured by running TypeScript
+  `buildDesktopStateSnapshot`.
+
 ## ANSI
 
 - `ansi/sgr-spans.json`: ANSI SGR span cases, including adversarial color,
