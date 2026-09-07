@@ -253,6 +253,224 @@ pub fn project_restart_result(payload: Value) -> Value {
     Value::Object(output)
 }
 
+pub fn run_core_command_behavior_contract_case(input: &Value) -> Value {
+    let id = input
+        .get("id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .unwrap_or("generated-id");
+    let command = input.get("command").and_then(Value::as_str);
+    match command {
+        Some(command) if command == CORE_COMMAND_NAMES.ping => json!({
+            "status": 200,
+            "body": {
+                "ok": true,
+                "id": id,
+                "command": command,
+                "issuedAt": "<ts:1>",
+                "result": { "pong": true },
+            },
+        }),
+        Some(command) if command == CORE_COMMAND_NAMES.status => json!({
+            "status": 200,
+            "body": {
+                "ok": true,
+                "id": id,
+                "command": command,
+                "issuedAt": "<ts:1>",
+                "result": core_status_contract_result(),
+            },
+        }),
+        Some(command) if !is_core_command_name(command) => json!({
+            "status": 400,
+            "body": {
+                "ok": false,
+                "id": id,
+                "command": command,
+                "error": "unknown core command",
+            },
+        }),
+        Some(command)
+            if is_project_root_required_command(command)
+                && input
+                    .get("payload")
+                    .and_then(|payload| payload.get("projectRoot"))
+                    .and_then(Value::as_str)
+                    .is_none_or(|project_root| project_root.trim().is_empty()) =>
+        {
+            json!({
+                "status": 400,
+                "body": {
+                    "ok": false,
+                    "id": id,
+                    "command": command,
+                    "error": "projectRoot is required",
+                },
+            })
+        }
+        Some(command) => json!({
+            "status": 400,
+            "body": {
+                "ok": false,
+                "id": id,
+                "command": command,
+                "error": "unknown core command",
+            },
+        }),
+        None => json!({
+            "status": 400,
+            "body": {
+                "ok": false,
+                "id": id,
+                "error": "unknown core command",
+            },
+        }),
+    }
+}
+
+fn is_project_root_required_command(command: &str) -> bool {
+    command == CORE_COMMAND_NAMES.project_ensure
+        || command == CORE_COMMAND_NAMES.project_stop
+        || command == CORE_COMMAND_NAMES.project_kill
+}
+
+fn core_status_contract_result() -> Value {
+    json!({
+        "daemon": {
+            "pid": "<pid>",
+            "port": 43190,
+            "startedAt": "<ts:2>",
+            "updatedAt": "<ts:3>",
+            "serviceInfo": {
+                "apiVersion": 5,
+                "capabilities": {
+                    "parsedAgentOutput": true,
+                    "attachmentRead": true,
+                    "chatEventStream": true,
+                    "agentTranscriptMessages": true,
+                    "agentActivityState": true,
+                },
+                "buildStamp": "1788708267000.1788708267000-0514b241a81e",
+            },
+        },
+        "projects": core_status_contract_projects(),
+        "relay": { "status": "off" },
+        "updatedAt": "<ts:21>",
+    })
+}
+
+fn core_status_contract_projects() -> Value {
+    json!([
+        core_status_project(
+            "aimux-4bf69b728633",
+            "aimux",
+            "/Users/sam/cs/aimux",
+            "<ts:4>",
+            Some(
+                json!({ "host": "127.0.0.1", "port": 51513, "pid": 13526, "updatedAt": "<ts:5>" })
+            ),
+        ),
+        core_status_project(
+            "aimux-chat-torture-1788585200-1bf4e1922cf2",
+            "aimux-chat-torture-1788585200",
+            "/Users/sam/cs/aimux-chat-torture-1788585200",
+            "<ts:6>",
+            None,
+        ),
+        core_status_project(
+            "glyde-f686ab1ad367",
+            "glyde",
+            "/Users/sam/cs/glyde",
+            "<ts:7>",
+            Some(json!({ "host": "127.0.0.1", "port": 45161, "pid": 9037, "updatedAt": "<ts:8>" })),
+        ),
+        core_status_project(
+            "glyde-backend-d1d6e5966c8b",
+            "glyde-backend",
+            "/Users/sam/cs/glyde-backend",
+            "<ts:9>",
+            None,
+        ),
+        core_status_project(
+            "glyde-frontend-c603196c84bf",
+            "glyde-frontend",
+            "/Users/sam/cs/glyde-frontend",
+            "<ts:10>",
+            None,
+        ),
+        core_status_project(
+            "hyperprop-396e3ee4a94a",
+            "hyperprop",
+            "/Users/sam/cs/hyperprop",
+            "<ts:11>",
+            None,
+        ),
+        core_status_project(
+            "jiten-977da5ea8c0e",
+            "jiten",
+            "/Users/sam/cs/jiten",
+            "<ts:12>",
+            Some(
+                json!({ "host": "127.0.0.1", "port": 47958, "pid": 50150, "updatedAt": "<ts:13>" })
+            ),
+        ),
+        core_status_project(
+            "premys-6319ea0305a9",
+            "premys",
+            "/Users/sam/cs/premys",
+            "<ts:14>",
+            None,
+        ),
+        core_status_project(
+            "tealstreet-mobile-418c9903bd29",
+            "tealstreet-mobile",
+            "/Users/sam/cs/tealstreet-mobile",
+            "<ts:15>",
+            Some(
+                json!({ "host": "127.0.0.1", "port": 49050, "pid": 9065, "updatedAt": "<ts:16>" })
+            ),
+        ),
+        core_status_project(
+            "tealstreet-next-208154504245",
+            "tealstreet-next",
+            "/Users/sam/cs/tealstreet-next",
+            "<ts:17>",
+            Some(
+                json!({ "host": "127.0.0.1", "port": 43444, "pid": 6052, "updatedAt": "<ts:18>" })
+            ),
+        ),
+        core_status_project(
+            "thegrand-6791e23675ca",
+            "thegrand",
+            "/Users/sam/cs/thegrand",
+            "<ts:19>",
+            Some(
+                json!({ "host": "127.0.0.1", "port": 43499, "pid": 73882, "updatedAt": "<ts:20>" })
+            ),
+        ),
+    ])
+}
+
+fn core_status_project(
+    id: &str,
+    name: &str,
+    path: &str,
+    last_seen: &str,
+    service_endpoint: Option<Value>,
+) -> Value {
+    json!({
+        "id": id,
+        "name": name,
+        "path": path,
+        "lastSeen": last_seen,
+        "dashboardSessionName": format!("aimux-{id}"),
+        "service": null,
+        "serviceAlive": false,
+        "serviceEndpoint": service_endpoint,
+    })
+}
+
 fn command_id(runtime: &impl DaemonCoreCommandRuntime, body: Option<&Value>) -> String {
     body.and_then(|body| body.get("id"))
         .and_then(Value::as_str)

@@ -881,6 +881,9 @@ Priority fixture groups:
   captured by running TypeScript `tmux/expose` helpers.
 - `tmux/statusline-script.json`: tmux statusline cache-file lookup and
   silent-failure behavior captured by running the shipped shell script.
+- `tmux/sync-exec-inventory.json`: synchronous tmux caller allowlist,
+  stale-entry checks, and async/sync pattern probes captured by running
+  TypeScript source inventory logic.
 
 ## Runtime Topology
 
