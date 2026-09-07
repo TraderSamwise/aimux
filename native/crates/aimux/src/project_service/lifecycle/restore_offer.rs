@@ -3,11 +3,15 @@ use std::path::{Path, PathBuf};
 
 use crate::atomic_write::write_json_atomic;
 use crate::paths::{PathResolver, compute_project_id};
-
-use super::{
-    array_field, now_iso, object_insert_mut, read_json_object, string_field, trimmed_string,
-};
+use crate::project_service::dispatcher::ProjectServiceDispatchResponse;
 use crate::project_service::router::ProjectServiceRequestContext;
+use crate::runtime_topology::{read_runtime_topology, runtime_topology_path};
+
+use super::runtime_adapter::ProjectLifecycleRuntime;
+use super::{
+    array_field, json_error, lifecycle_transition_with_phase, now_iso, object_insert_mut,
+    read_json_object, resume_agent_session, string_array_field, string_field, trimmed_string,
+};
 
 pub(super) fn read_displayable_agent_restore_offer(
     context: &ProjectServiceRequestContext,
@@ -20,6 +24,87 @@ pub(super) fn read_displayable_agent_restore_offer(
         remove_agent_restore_offer(project_state_dir);
         None
     }
+}
+
+pub(super) fn route_agent_restore_previous(
+    context: &ProjectServiceRequestContext,
+    runtime: &mut impl ProjectLifecycleRuntime,
+) -> ProjectServiceDispatchResponse {
+    let project_state_dir = context.project_state_dir();
+    let raw_offer = read_displayable_agent_restore_offer(context, &project_state_dir);
+    let offer = if runtime_topology_path(&project_state_dir).exists() {
+        let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
+            Ok(topology) => topology,
+            Err(error) => return json_error(500, error),
+        };
+        let restorable_ids = array_field(&topology, "sessions")
+            .into_iter()
+            .filter(|session| string_field(session, "status") == "offline")
+            .map(|session| string_field(&session, "id"))
+            .filter(|id| !id.is_empty())
+            .collect::<Vec<_>>();
+        reconcile_agent_restore_offer(context, &project_state_dir, raw_offer, &restorable_ids)
+    } else {
+        raw_offer
+    };
+    let Some(offer) = offer else {
+        return ProjectServiceDispatchResponse::json(
+            200,
+            json!({
+                "ok": true,
+                "accepted": false,
+                "total": 0,
+                "restored": [],
+                "failed": [],
+                "transitions": [],
+                "offer": null,
+            }),
+        );
+    };
+    acknowledge_agent_restore_offer(&project_state_dir);
+    let session_ids = string_array_field(offer.get("sessionIds"));
+    let transitions = session_ids
+        .iter()
+        .map(|session_id| {
+            lifecycle_transition_with_phase("agent.restore", "agent", Some(session_id), "queued")
+        })
+        .collect::<Vec<_>>();
+    let mut restored = Vec::new();
+    let mut failed = Vec::new();
+    for session_id in &session_ids {
+        let response = resume_agent_session(context, session_id, runtime, "agent.restore");
+        if response.status == 200 {
+            restored.push(json!({
+                "sessionId": session_id,
+                "status": response.body.get("status").and_then(Value::as_str).unwrap_or("running"),
+            }));
+        } else {
+            failed.push(json!({
+                "sessionId": session_id,
+                "error": response.body.get("error").and_then(Value::as_str).unwrap_or("restore failed"),
+            }));
+        }
+    }
+    write_agent_restore_retry_offer(&project_state_dir, &offer, &failed);
+    ProjectServiceDispatchResponse::json(
+        200,
+        json!({
+            "ok": true,
+            "accepted": true,
+            "total": session_ids.len(),
+            "restored": restored,
+            "failed": failed,
+            "transitions": transitions,
+            "offer": offer,
+        }),
+    )
+}
+
+pub(super) fn route_agent_dismiss_restore_previous(
+    context: &ProjectServiceRequestContext,
+) -> ProjectServiceDispatchResponse {
+    acknowledge_agent_restore_offer(&context.project_state_dir());
+    ProjectServiceDispatchResponse::json(200, json!({ "ok": true }))
 }
 
 fn read_agent_restore_offer(project_state_dir: &Path) -> Option<Value> {

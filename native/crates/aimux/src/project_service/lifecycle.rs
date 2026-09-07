@@ -39,10 +39,7 @@ mod worktrees;
 pub use default_scribe::ensure_default_scribe_agent;
 use ids::*;
 use json_helpers::*;
-use restore_offer::{
-    acknowledge_agent_restore_offer, read_displayable_agent_restore_offer,
-    reconcile_agent_restore_offer, write_agent_restore_retry_offer,
-};
+use restore_offer::*;
 pub use runtime_adapter::{ProjectLifecycleRuntime, SystemProjectLifecycleRuntime};
 use services::*;
 use teammates::*;
@@ -780,87 +777,6 @@ fn route_agent_resume(
         return json_error(400, "sessionId is required");
     };
     resume_agent_session(context, &session_id, runtime, "agent.resume")
-}
-
-fn route_agent_restore_previous(
-    context: &ProjectServiceRequestContext,
-    runtime: &mut impl ProjectLifecycleRuntime,
-) -> ProjectServiceDispatchResponse {
-    let project_state_dir = context.project_state_dir();
-    let raw_offer = read_displayable_agent_restore_offer(context, &project_state_dir);
-    let offer = if runtime_topology_path(&project_state_dir).exists() {
-        let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
-            Ok(topology) => topology,
-            Err(error) => return json_error(500, error),
-        };
-        let restorable_ids = array_field(&topology, "sessions")
-            .into_iter()
-            .filter(|session| string_field(session, "status") == "offline")
-            .map(|session| string_field(&session, "id"))
-            .filter(|id| !id.is_empty())
-            .collect::<Vec<_>>();
-        reconcile_agent_restore_offer(context, &project_state_dir, raw_offer, &restorable_ids)
-    } else {
-        raw_offer
-    };
-    let Some(offer) = offer else {
-        return ProjectServiceDispatchResponse::json(
-            200,
-            json!({
-                "ok": true,
-                "accepted": false,
-                "total": 0,
-                "restored": [],
-                "failed": [],
-                "transitions": [],
-                "offer": null,
-            }),
-        );
-    };
-    acknowledge_agent_restore_offer(&project_state_dir);
-    let session_ids = string_array_field(offer.get("sessionIds"));
-    let transitions = session_ids
-        .iter()
-        .map(|session_id| {
-            lifecycle_transition_with_phase("agent.restore", "agent", Some(session_id), "queued")
-        })
-        .collect::<Vec<_>>();
-    let mut restored = Vec::new();
-    let mut failed = Vec::new();
-    for session_id in &session_ids {
-        let response = resume_agent_session(context, session_id, runtime, "agent.restore");
-        if response.status == 200 {
-            restored.push(json!({
-                "sessionId": session_id,
-                "status": response.body.get("status").and_then(Value::as_str).unwrap_or("running"),
-            }));
-        } else {
-            failed.push(json!({
-                "sessionId": session_id,
-                "error": response.body.get("error").and_then(Value::as_str).unwrap_or("restore failed"),
-            }));
-        }
-    }
-    write_agent_restore_retry_offer(&project_state_dir, &offer, &failed);
-    ProjectServiceDispatchResponse::json(
-        200,
-        json!({
-            "ok": true,
-            "accepted": true,
-            "total": session_ids.len(),
-            "restored": restored,
-            "failed": failed,
-            "transitions": transitions,
-            "offer": offer,
-        }),
-    )
-}
-
-fn route_agent_dismiss_restore_previous(
-    context: &ProjectServiceRequestContext,
-) -> ProjectServiceDispatchResponse {
-    acknowledge_agent_restore_offer(&context.project_state_dir());
-    ProjectServiceDispatchResponse::json(200, json!({ "ok": true }))
 }
 
 fn resume_agent_session(
