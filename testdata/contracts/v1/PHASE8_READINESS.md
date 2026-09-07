@@ -1,18 +1,18 @@
 # Phase 8 Readiness
 
-Audit point: `5383633d6c912ab6dd4f88e24d0053dbbd077bb3`
+Audit point: `9bd65d2429bd04d1a4856d566b9c43a0d9ce6c44`
 
 Question: what actually breaks if the TypeScript hot path is deleted today?
 
-Answer: the checklist gate is clear for captured behavior: all 274 suite/corpus bindings are mutation-proven `PROVEN-FAILS`, with 0 checklist, 0 vacuous, and 0 error bindings. A local-profile release asset built from clean `HEAD` at `08f2476b` also ran from an installed shim with `dist` withheld and `node` absent from `PATH` for the installed CLI, daemon, project-service, dashboard, tmux statusline/control internal paths, and hook route. Sam has now chosen the plugin strategy: suspend the public/user JS plugin API for phase 8 and port the two built-in plugins to native Rust as real internal plugins. The built-ins now pass the recorded TypeScript corpora through an internal serializable plugin API; project-service startup/diagnostics wiring is prepared as `scripts/project-service-native-plugin-wiring.patch` and must be applied by the shared-file owner before claiming production startup runs the registry. Arbitrary user JS plugin execution remains intentionally unsupported, not silently replaced.
+Answer: the checklist gate is clear for captured behavior: all 321 suite/corpus bindings are mutation-proven `PROVEN-FAILS`, with 0 checklist, 0 vacuous, and 0 error bindings. A local-profile release asset built from clean `HEAD` at `08f2476b` also ran from an installed shim with `dist` withheld and `node` absent from `PATH` for the installed CLI, daemon, project-service, dashboard, tmux statusline/control internal paths, and hook route. Sam has now chosen the plugin strategy: suspend the public/user JS plugin API for phase 8 and port the two built-in plugins to native Rust as real internal plugins. The built-ins now pass the recorded TypeScript corpora through an internal serializable plugin API; project-service startup/diagnostics wiring is prepared as `scripts/project-service-native-plugin-wiring.patch` and must be applied by the shared-file owner before claiming production startup runs the registry. Arbitrary user JS plugin execution remains intentionally unsupported, not silently replaced.
 
 ## Evidence Baseline
 
-- Enforcement inventory: 274 suite/corpus bindings under `testdata/contracts/v1`.
+- Enforcement inventory: 321 suite/corpus bindings under `testdata/contracts/v1`.
 - Enforcement audit: `testdata/contracts/v1/ENFORCEMENT_AUDIT.md`.
 - Live residual suite: `scripts/phase8-live-residuals.py`, reported in `testdata/contracts/v1/PHASE8_LIVE_RESIDUALS.md`.
-- Current binding status: 274 `PROVEN-FAILS`, 0 `CHECKLIST`, 0 `VACUOUS`, 0 `ERROR`, 0 `STATIC`.
-- Current binding case count: 3,511 suite/corpus cases, all mutation-proven.
+- Current binding status: 321 `PROVEN-FAILS`, 0 `CHECKLIST`, 0 `VACUOUS`, 0 `ERROR`, 0 `STATIC`.
+- Current binding case count: 3,904 suite/corpus cases, all mutation-proven.
 - Current backlog: `testdata/contracts/v1/UNIMPLEMENTED.md` lists 0 ignored/checklist corpus entries.
 - Coverage definition from `UNIMPLEMENTED.md`: 245 `src/**/*.test.ts` modules, 245 covered by behavior-level corpora, 0 uncovered. This is test-module coverage, not proof that every production TS source file is safe to delete independently.
 
