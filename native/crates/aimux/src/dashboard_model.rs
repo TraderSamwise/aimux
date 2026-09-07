@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -20,7 +20,6 @@ pub struct DesktopStateSnapshot {
     pub main_checkout_info: MainCheckoutInfo,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub main_checkout_path: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_restore_offer: Option<AgentRestoreOffer>,
     #[serde(default)]
     pub operation_failures: Vec<Value>,
@@ -70,7 +69,7 @@ pub struct DashboardSession {
     pub pending_action: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pending_started_at: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_zero")]
     pub unseen_count: usize,
     #[serde(default)]
     pub thread_unread_count: usize,
@@ -92,9 +91,9 @@ pub struct DashboardSession {
     pub notification_needs_input_unread_count: usize,
     #[serde(default)]
     pub notification_stale: bool,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_false")]
     pub pending: bool,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_false")]
     pub optimistic: bool,
     #[serde(default, flatten)]
     pub extra: BTreeMap<String, Value>,
@@ -140,6 +139,8 @@ pub struct SessionUserState {
     pub label: String,
     #[serde(default = "default_attention")]
     pub attention: String,
+    #[serde(default, flatten)]
+    pub extra: BTreeMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -157,7 +158,6 @@ pub struct SessionNotificationState {
 #[serde(rename_all = "camelCase")]
 pub struct SessionPresentationState {
     pub status_label: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub compact_hint: Option<String>,
     #[serde(default)]
     pub attention_score: usize,
@@ -167,6 +167,14 @@ pub struct SessionPresentationState {
 
 fn default_attention() -> String {
     "none".to_owned()
+}
+
+fn is_zero(value: &usize) -> bool {
+    *value == 0
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -188,9 +196,9 @@ pub struct DashboardService {
     pub worktree_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub worktree_branch: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_false")]
     pub pending: bool,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_false")]
     pub optimistic: bool,
     #[serde(default, flatten)]
     pub extra: BTreeMap<String, Value>,
@@ -214,9 +222,9 @@ pub struct WorktreeGroup {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
     pub status: WorktreeStatus,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_false")]
     pub pending: bool,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_false")]
     pub removing: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pending_action: Option<String>,

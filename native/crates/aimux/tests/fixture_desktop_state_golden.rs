@@ -20,8 +20,17 @@ struct Case {
     output: Value,
 }
 
+#[derive(Debug, Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CostModel {
+    exchange_reads: usize,
+    topology_reads: usize,
+    exchange_parses: usize,
+    topology_parses: usize,
+    git_calls: usize,
+}
+
 #[test]
-#[ignore = "parity bug behind dashboard_*: Rust dashboard model serialization does not reproduce the captured TypeScript desktop-state snapshot shape"]
 fn fixture_desktop_state_golden_snapshots_round_trip_through_rust_model() {
     let contract: Contract =
         serde_json::from_str(DESKTOP_STATE_GOLDEN).expect("desktop-state golden fixture parses");
@@ -41,22 +50,20 @@ fn fixture_desktop_state_golden_snapshots_round_trip_through_rust_model() {
             "runtimeLightFirstSessionPid": runtime_light["sessions"][0].get("pid").cloned().unwrap_or(Value::Null),
     });
     assert_eq!(actual_distinct, *distinct);
-    assert_eq!(
-        *cost_model,
-        json!({
-            "exchangeReads": 1,
-            "topologyReads": 1,
-            "exchangeParses": 1,
-            "topologyParses": 1,
-            "gitCalls": 1,
-        })
-    );
+    assert_cost_model_round_trip(cost_model);
 }
 
 fn assert_snapshot_round_trip(output: &Value) {
     let snapshot: DesktopStateSnapshot =
         serde_json::from_value(output.clone()).expect("fixture snapshot parses as Rust model");
     let actual = serde_json::to_value(snapshot).expect("snapshot serializes");
+    assert_eq!(actual, *output);
+}
+
+fn assert_cost_model_round_trip(output: &Value) {
+    let cost_model: CostModel =
+        serde_json::from_value(output.clone()).expect("fixture cost model parses as Rust model");
+    let actual = serde_json::to_value(cost_model).expect("cost model serializes");
     assert_eq!(actual, *output);
 }
 
