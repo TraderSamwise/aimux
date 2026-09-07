@@ -10,8 +10,8 @@ Statuses:
 - `ERROR`: the audit could not prove enforcement because the suite errored outside a fixture assertion.
 - `STATIC`: non-empty active suite observed without dynamic mutation.
 
-Summary: 234 suites, 281 suite/corpus bindings, 3568 cases.
-Binding statuses: PROVEN-FAILS 281, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
+Summary: 239 suites, 286 suite/corpus bindings, 3606 cases.
+Binding statuses: PROVEN-FAILS 286, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
 
 | Suite | Status | Corpus | Cases | Detail |
 | --- | --- | --- | ---: | --- |
@@ -91,7 +91,9 @@ Binding statuses: PROVEN-FAILS 281, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
 | `fixture_dashboard_index` | PROVEN-FAILS | `testdata/contracts/v1/dashboard/index.json` | 1 | mutated fixture output failed owning Rust suite |
 | `fixture_dashboard_interaction` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/dashboard-interaction.json` | 13 | mutated fixture output failed owning Rust suite |
 | `fixture_dashboard_lifecycle` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/dashboard-lifecycle.json` | 9 | mutated fixture output failed owning Rust suite |
+| `fixture_dashboard_model_metadata_pending` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/dashboard-model-metadata-pending.json` | 6 | mutated fixture output failed owning Rust suite |
 | `fixture_dashboard_model_service` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/dashboard-model-service.json` | 11 | mutated fixture output failed owning Rust suite |
+| `fixture_dashboard_model_services_lifecycle` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/dashboard-model-services-lifecycle.json` | 4 | mutated fixture output failed owning Rust suite |
 | `fixture_dashboard_navigation` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/dashboard-navigation.json` | 1 | mutated fixture output failed owning Rust suite |
 | `fixture_dashboard_order` | PROVEN-FAILS | `testdata/contracts/v1/dashboard/order.json` | 6 | mutated fixture output failed owning Rust suite |
 | `fixture_dashboard_orphans` | PROVEN-FAILS | `testdata/contracts/v1/dashboard/orphans.json` | 20 | mutated fixture output failed owning Rust suite |
@@ -160,6 +162,7 @@ Binding statuses: PROVEN-FAILS 281, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
 | `fixture_monitor_capture` | PROVEN-FAILS | `testdata/contracts/v1/monitor/capture.json` | 11 | mutated fixture output failed owning Rust suite |
 | `fixture_monitor_targets` | PROVEN-FAILS | `testdata/contracts/v1/monitor/targets.json` | 12 | mutated fixture output failed owning Rust suite |
 | `fixture_multiplexer_dashboard_state_helpers` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/dashboard-state-helpers.json` | 7 | mutated fixture output failed owning Rust suite |
+| `fixture_multiplexer_index_helpers` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/index-helpers.json` | 10 | mutated fixture output failed owning Rust suite |
 | `fixture_multiplexer_notifications` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/notifications.json` | 5 | mutated fixture output failed owning Rust suite |
 | `fixture_multiplexer_persistence_desktop_projection` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/persistence-desktop-projection.json` | 6 | mutated fixture output failed owning Rust suite |
 | `fixture_multiplexer_persistence_reapply` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/persistence-reapply.json` | 2 | mutated fixture output failed owning Rust suite |
@@ -235,7 +238,9 @@ Binding statuses: PROVEN-FAILS 281, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
 | `fixture_service_state_snapshot` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/service-state-snapshot.json` | 5 | mutated fixture output failed owning Rust suite |
 | `fixture_session_bootstrap` | PROVEN-FAILS | `testdata/contracts/v1/session-bootstrap/action-args.json` | 9 | mutated fixture output failed owning Rust suite |
 | `fixture_session_bootstrap` | PROVEN-FAILS | `testdata/contracts/v1/session-bootstrap/preamble.json` | 14 | mutated fixture output failed owning Rust suite |
+| `fixture_session_launch_default_scribe` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/session-launch-default-scribe.json` | 5 | mutated fixture output failed owning Rust suite |
 | `fixture_session_runtime` | PROVEN-FAILS | `testdata/contracts/v1/session/runtime.json` | 2 | mutated fixture output failed owning Rust suite |
+| `fixture_session_runtime_headline` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/session-runtime-headline.json` | 6 | mutated fixture output failed owning Rust suite |
 | `fixture_session_semantics` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/session-recency.json` | 13 | mutated fixture output failed owning Rust suite |
 | `fixture_session_semantics` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/session-restorability.json` | 5 | mutated fixture output failed owning Rust suite |
 | `fixture_session_semantics` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/session-semantics.json` | 13 | mutated fixture output failed owning Rust suite |
@@ -277,7 +282,7 @@ Binding statuses: PROVEN-FAILS 281, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
 | `fixture_transcript_reconciler` | PROVEN-FAILS | `testdata/contracts/v1/agent-output/transcript-reconciler.json` | 13 | mutated fixture output failed owning Rust suite |
 | `fixture_transcript_turn_state` | PROVEN-FAILS | `testdata/contracts/v1/transcript/turn-state.json` | 27 | mutated fixture output failed owning Rust suite |
 | `fixture_transport_security` | PROVEN-FAILS | `testdata/contracts/v1/transport/security.json` | 7 | mutated fixture output failed owning Rust suite |
-| `fixture_tui_api_runtime` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/tui-api-runtime.json` | 12 | mutated fixture output failed owning Rust suite |
+| `fixture_tui_api_runtime` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/tui-api-runtime.json` | 19 | mutated fixture output failed owning Rust suite |
 | `fixture_tui_render_box` | PROVEN-FAILS | `testdata/contracts/v1/tui/render-box.json` | 6 | mutated fixture output failed owning Rust suite |
 | `fixture_tui_render_text` | PROVEN-FAILS | `testdata/contracts/v1/tui/render-text.json` | 4 | mutated fixture output failed owning Rust suite |
 | `fixture_tui_render_theme` | PROVEN-FAILS | `testdata/contracts/v1/tui/render-theme.json` | 36 | mutated fixture output failed owning Rust suite |
