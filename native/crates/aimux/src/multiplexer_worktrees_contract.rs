@@ -44,6 +44,20 @@ pub fn run_multiplexer_worktrees_contract_case(input: &Value) -> Value {
             host.finish_worktree_removal(path, code);
             host.snapshot()
         }
+        "beginWorktreeRemoval" => {
+            let mut host = WorktreeHost::from_input(input);
+            let path = input
+                .get("path")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let name = input
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let old_idx = number_field(input, "oldIdx");
+            host.begin_worktree_removal(path, name, old_idx);
+            host.snapshot()
+        }
         "handleWorktreeListKey" => {
             let mut host = WorktreeHost::from_input(input);
             let data = input

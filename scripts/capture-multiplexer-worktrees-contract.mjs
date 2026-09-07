@@ -96,10 +96,29 @@ const inputs = [
     },
   },
   {
+    name: "remove confirm n dismisses and restores dashboard",
+    api: "handleWorktreeRemoveConfirmKey",
+    data: "n",
+    host: { mode: "dashboard", worktreeRemoveConfirm: { path: "/repo/.aimux/worktrees/demo", name: "demo" } },
+  },
+  {
     name: "remove confirm escape dismisses and restores dashboard",
     api: "handleWorktreeRemoveConfirmKey",
     data: "\u001b",
     host: { mode: "dashboard", worktreeRemoveConfirm: { path: "/repo/.aimux/worktrees/demo", name: "demo" } },
+  },
+  {
+    name: "begin removal rejects duplicate active worktree graveyard",
+    api: "beginWorktreeRemoval",
+    path: "/repo/.aimux/worktrees/demo",
+    name: "demo",
+    oldIdx: 0,
+    host: {
+      mode: "dashboard",
+      worktreeRemovalJobs: [{ path: "/repo/.aimux/worktrees/demo", name: "demo", oldIdx: 0, stderr: "" }],
+      dashboardState: { worktreeNavOrder: ["/repo/.aimux/worktrees/demo"], focusedWorktreePath: "/repo/.aimux/worktrees/demo" },
+      dashboardWorktreeGroupsCache: [{ path: "/repo/.aimux/worktrees/demo", name: "demo" }],
+    },
   },
   {
     name: "finish successful removal selects the next available worktree",
@@ -119,10 +138,54 @@ const inputs = [
     },
   },
   {
+    name: "finish failed removal reports first stderr line with details",
+    api: "finishWorktreeRemoval",
+    path: "/repo/.aimux/worktrees/demo",
+    code: 1,
+    host: {
+      worktreeRemovalJobs: [
+        { path: "/repo/.aimux/worktrees/demo", name: "demo", oldIdx: 0, stderr: "\nfirst failure\nsecond detail\n" },
+      ],
+      dashboardState: {
+        worktreeNavOrder: ["/repo/.aimux/worktrees/demo"],
+        focusedWorktreePath: "/repo/.aimux/worktrees/demo",
+      },
+      dashboardWorktreeGroupsCache: [{ path: "/repo/.aimux/worktrees/demo", name: "demo" }],
+    },
+  },
+  {
+    name: "finish removal ignores unknown stale completion",
+    api: "finishWorktreeRemoval",
+    path: "/repo/.aimux/worktrees/missing",
+    code: 0,
+    host: {
+      worktreeRemovalJobs: [{ path: "/repo/.aimux/worktrees/demo", name: "demo", oldIdx: 0, stderr: "" }],
+      dashboardState: {
+        worktreeNavOrder: ["/repo/.aimux/worktrees/demo"],
+        focusedWorktreePath: "/repo/.aimux/worktrees/demo",
+      },
+      dashboardWorktreeGroupsCache: [{ path: "/repo/.aimux/worktrees/demo", name: "demo" }],
+    },
+  },
+  {
     name: "list escape clears overlay and restores dashboard",
     api: "handleWorktreeListKey",
     data: "\u001b",
     host: { mode: "dashboard" },
+  },
+  {
+    name: "cache cleanup preview reports project-service requirement outside dashboard mode",
+    api: "showWorktreeCacheCleanupPreview",
+    host: { mode: "session", dashboardBusyState: null, worktreeCacheCleanupConfirm: null },
+  },
+  {
+    name: "cache cleanup preview does nothing while dashboard is busy",
+    api: "showWorktreeCacheCleanupPreview",
+    host: {
+      mode: "dashboard",
+      dashboardBusyState: { title: "Busy", lines: ["  Still working"] },
+      worktreeCacheCleanupConfirm: { existing: true },
+    },
   },
   {
     name: "previews worktree cache cleanup through a safe dry-run",
@@ -189,6 +252,93 @@ const inputs = [
       },
     },
   },
+  {
+    name: "cache cleanup confirm without preview dismisses overlay",
+    api: "handleWorktreeCacheCleanupConfirmKey",
+    data: "\r",
+    host: { mode: "dashboard", worktreeCacheCleanupConfirm: null },
+  },
+  {
+    name: "cache cleanup confirm with no targets dismisses on enter",
+    api: "handleWorktreeCacheCleanupConfirmKey",
+    data: "\r",
+    host: {
+      mode: "dashboard",
+      worktreeCacheCleanupConfirm: {
+        dryRun: true,
+        reclaimedBytes: 0,
+        plan: { reclaimableBytes: 0, targets: [], skipped: [] },
+        results: [],
+      },
+    },
+  },
+  {
+    name: "cache cleanup confirm cancels target removal on n",
+    api: "handleWorktreeCacheCleanupConfirmKey",
+    data: "n",
+    host: {
+      mode: "dashboard",
+      worktreeCacheCleanupConfirm: {
+        dryRun: true,
+        reclaimedBytes: 0,
+        plan: {
+          reclaimableBytes: 2048,
+          targets: [{ path: "/repo/.aimux/worktrees/old/node_modules", sizeBytes: 2048 }],
+          skipped: [],
+        },
+        results: [{ path: "/repo/.aimux/worktrees/old/node_modules", status: "dry-run", sizeBytes: 2048 }],
+      },
+    },
+  },
+  {
+    name: "cache cleanup apply reports failed removals",
+    api: "handleWorktreeCacheCleanupConfirmKey",
+    data: "\r",
+    postResponse: {
+      ok: true,
+      result: {
+        dryRun: false,
+        reclaimedBytes: 1024,
+        plan: {
+          reclaimableBytes: 4096,
+          targets: [
+            { path: "/repo/.aimux/worktrees/old/node_modules", sizeBytes: 1024 },
+            { path: "/repo/.aimux/worktrees/fail/node_modules", sizeBytes: 3072 },
+          ],
+          skipped: [],
+        },
+        results: [
+          { path: "/repo/.aimux/worktrees/old/node_modules", status: "removed", sizeBytes: 1024 },
+          {
+            path: "/repo/.aimux/worktrees/fail/node_modules",
+            status: "failed",
+            sizeBytes: 3072,
+            error: "permission denied",
+          },
+        ],
+      },
+    },
+    host: {
+      mode: "dashboard",
+      dashboardInputEpoch: 0,
+      worktreeCacheCleanupConfirm: {
+        dryRun: true,
+        reclaimedBytes: 0,
+        plan: {
+          reclaimableBytes: 4096,
+          targets: [
+            { path: "/repo/.aimux/worktrees/old/node_modules", sizeBytes: 1024 },
+            { path: "/repo/.aimux/worktrees/fail/node_modules", sizeBytes: 3072 },
+          ],
+          skipped: [],
+        },
+        results: [
+          { path: "/repo/.aimux/worktrees/old/node_modules", status: "dry-run", sizeBytes: 1024 },
+          { path: "/repo/.aimux/worktrees/fail/node_modules", status: "dry-run", sizeBytes: 3072 },
+        ],
+      },
+    },
+  },
 ];
 
 async function flushAsyncWork() {
@@ -213,6 +363,9 @@ async function run(input) {
       break;
     case "handleWorktreeRemoveConfirmKey":
       handleWorktreeRemoveConfirmKey(host, Buffer.from(input.data));
+      break;
+    case "beginWorktreeRemoval":
+      beginWorktreeRemoval(host, input.path, input.name, input.oldIdx);
       break;
     case "finishWorktreeRemoval":
       finishWorktreeRemoval(host, input.path, input.code);
