@@ -7,6 +7,7 @@ let notificationsConfig: {
   onError: boolean;
   onComplete: boolean;
 };
+const sendDesktopNotificationMock = vi.hoisted(() => vi.fn());
 
 vi.mock("./config.js", () => ({
   loadConfig: () => ({ notifications: notificationsConfig }),
@@ -14,9 +15,8 @@ vi.mock("./config.js", () => ({
 vi.mock("./notification-context.js", () => ({
   shouldSuppressNotification: vi.fn(() => false),
 }));
-vi.mock("node-notifier", () => ({ default: { notify: vi.fn() } }));
-vi.mock("node:child_process", () => ({
-  execFile: vi.fn((_file: string, _args: string[], cb?: (err: Error | null) => void) => cb?.(null)),
+vi.mock("./desktop-notifier.js", () => ({
+  sendDesktopNotification: sendDesktopNotificationMock,
 }));
 
 import { notifyAlert, resetNotifyConfig } from "./notify";
@@ -49,6 +49,32 @@ describe("notifyAlert desktop choke point", () => {
   it("sends desktop alerts when host notification settings allow them", () => {
     const event = alert();
     expect(notifyAlert(event)).toBe(true);
+    expect(sendDesktopNotificationMock).toHaveBeenCalledWith({
+      title: "claude-1 needs input",
+      message: "waiting for input",
+      sound: true,
+      deepLinkUrl: undefined,
+    });
+  });
+
+  it("adds a chat deep link to real notification records", () => {
+    expect(
+      notifyAlert(
+        alert({
+          projectRoot: "/Users/sam/cs/aimux",
+          sessionId: "codex-u1iogs",
+          notificationId: "notice 1",
+        }),
+      ),
+    ).toBe(true);
+
+    expect(sendDesktopNotificationMock).toHaveBeenCalledWith({
+      title: "claude-1 needs input",
+      message: "waiting for input",
+      sound: true,
+      deepLinkUrl:
+        "aimux:///agent/codex-u1iogs/chat?project=%2FUsers%2Fsam%2Fcs%2Faimux&notificationId=notice+1&focusToken=notice+1",
+    });
   });
 
   it("does not send when notifications are disabled", () => {

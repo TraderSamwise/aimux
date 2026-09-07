@@ -10,6 +10,7 @@ export interface DesktopNotificationPayload {
   title: string;
   message: string;
   sound?: boolean;
+  deepLinkUrl?: string;
 }
 
 type ExecFile = typeof nodeExecFile;
@@ -108,6 +109,8 @@ function sendViaNodeNotifier(
 
 function macHelperArgs(payload: DesktopNotificationPayload): string[] {
   const args = ["--title", payload.title, "--message", payload.message];
+  const deepLinkUrl = payload.deepLinkUrl?.trim();
+  if (deepLinkUrl) args.push("--open-url", deepLinkUrl);
   if (payload.sound ?? true) args.push("--sound");
   return args;
 }

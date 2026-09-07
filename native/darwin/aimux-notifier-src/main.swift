@@ -8,6 +8,7 @@ struct Options {
   var subtitle = ""
   var sound = false
   var check = false
+  var openUrl = ""
 }
 
 func stderr(_ message: String) {
@@ -19,7 +20,7 @@ func stdout(_ message: String) {
 }
 
 func usage() -> Never {
-  stderr("usage: aimux-notifier --title <title> --message <message> [--subtitle <subtitle>] [--sound]")
+  stderr("usage: aimux-notifier --title <title> --message <message> [--subtitle <subtitle>] [--open-url <aimux-url>] [--sound]")
   exit(64)
 }
 
@@ -46,6 +47,10 @@ func parseArgs(_ args: [String]) -> Options {
       options.sound = true
     case "--check":
       options.check = true
+    case "--open-url", "--deep-link":
+      index += 1
+      guard index < args.count else { usage() }
+      options.openUrl = args[index]
     case "--help", "-h":
       usage()
     default:
@@ -57,6 +62,15 @@ func parseArgs(_ args: [String]) -> Options {
 
   return options
 }
+
+func aimuxURL(_ raw: String) -> URL? {
+  let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+  guard !trimmed.isEmpty, let url = URL(string: trimmed) else { return nil }
+  guard url.scheme?.lowercased() == "aimux" else { return nil }
+  return url
+}
+
+var activeNotificationDelegate: NotificationDelegate?
 
 final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
   func userNotificationCenter(
@@ -70,6 +84,27 @@ final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
       completionHandler([.alert, .sound])
     }
   }
+
+  func userNotificationCenter(
+    _ center: UNUserNotificationCenter,
+    didReceive response: UNNotificationResponse,
+    withCompletionHandler completionHandler: @escaping () -> Void
+  ) {
+    defer {
+      completionHandler()
+      NSApplication.shared.terminate(nil)
+    }
+
+    let userInfo = response.notification.request.content.userInfo
+    guard let raw = userInfo["openUrl"] as? String, let url = aimuxURL(raw) else { return }
+    NSWorkspace.shared.open(url)
+  }
+}
+
+func installNotificationDelegate(_ center: UNUserNotificationCenter) {
+  let delegate = NotificationDelegate()
+  activeNotificationDelegate = delegate
+  center.delegate = delegate
 }
 
 func authorizationStatusName(_ status: UNAuthorizationStatus) -> String {
@@ -141,12 +176,16 @@ func postNotification(_ options: Options) -> Int32 {
     stderr("missing --message")
     return 64
   }
+  let openUrl = options.openUrl.isEmpty ? nil : aimuxURL(options.openUrl)
+  if !options.openUrl.isEmpty && openUrl == nil {
+    stderr("--open-url must be an aimux: URL")
+    return 64
+  }
 
   NSApplication.shared.setActivationPolicy(.accessory)
 
   let center = UNUserNotificationCenter.current()
-  let delegate = NotificationDelegate()
-  center.delegate = delegate
+  installNotificationDelegate(center)
 
   if let settings = notificationSettings(center) {
     if settings.authorizationStatus == .denied {
@@ -168,6 +207,9 @@ func postNotification(_ options: Options) -> Int32 {
     content.subtitle = options.subtitle
   }
   content.body = options.message
+  if let openUrl {
+    content.userInfo["openUrl"] = openUrl.absoluteString
+  }
   if options.sound {
     content.sound = .default
   }
@@ -189,11 +231,26 @@ func postNotification(_ options: Options) -> Int32 {
   }
 
   Thread.sleep(forTimeInterval: 1.0)
-  _ = delegate
   return 0
 }
 
-let options = parseArgs(Array(CommandLine.arguments.dropFirst()))
+func runNotificationResponseListener() -> Int32 {
+  NSApplication.shared.setActivationPolicy(.accessory)
+  let center = UNUserNotificationCenter.current()
+  installNotificationDelegate(center)
+  DispatchQueue.main.asyncAfter(deadline: .now() + 15) {
+    NSApplication.shared.terminate(nil)
+  }
+  NSApplication.shared.run()
+  return 0
+}
+
+let cliArgs = Array(CommandLine.arguments.dropFirst()).filter { !$0.hasPrefix("-psn_") }
+if cliArgs.isEmpty {
+  exit(runNotificationResponseListener())
+}
+
+let options = parseArgs(cliArgs)
 
 if options.check {
   exit(checkNotifier())

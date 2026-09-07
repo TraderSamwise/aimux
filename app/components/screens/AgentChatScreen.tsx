@@ -80,6 +80,7 @@ import {
   getShare,
   leaveShare,
   listShares,
+  markNotificationsRead,
   removeShareParticipant,
   revokeShareInvite,
   interruptLivePane,
@@ -173,6 +174,7 @@ import {
 import { desktopStateFamily, worktreeGroupsFamily } from "@/stores/desktopState";
 import { selectedSessionIdAtom } from "@/stores/projects";
 import { relayConfiguredAtom, relayStatusAtom } from "@/stores/relay";
+import { markNotificationRecordsReadLocalAtom } from "@/stores/notifications";
 import {
   acceptedSharedSessionsAtom,
   activeSharedSessionAtom,
@@ -499,12 +501,14 @@ function isMultiplexedShare(summary: SharedSessionSummary | null): boolean {
 export default function ChatScreen() {
   const params = useLocalSearchParams<{
     focusToken?: string | string[];
+    notificationId?: string | string[];
     ownerUserId?: string | string[];
     sessionId?: string | string[];
     shareId?: string | string[];
   }>();
   const routeOwnerUserId = singleRouteParam(params.ownerUserId);
   const routeFocusToken = singleRouteParam(params.focusToken) ?? "";
+  const routeNotificationId = singleRouteParam(params.notificationId) ?? "";
   const sessionId = singleRouteParam(params.sessionId);
   const routeShareId = singleRouteParam(params.shareId);
   const sessionKey = sessionId ?? "";
@@ -516,6 +520,7 @@ export default function ChatScreen() {
   const markOutputInterrupted = useSetAtom(markOutputInterruptedAtom);
   const clearLocalInterruptHold = useSetAtom(clearLocalInterruptHoldAtom);
   const setGlobalChatChromeVisible = useSetAtom(chatChromeVisibleAtom);
+  const markNotificationsReadLocal = useSetAtom(markNotificationRecordsReadLocalAtom);
   const transcript = useAtomValue(transcriptFamily(sessionKey));
   const transcriptLastError = useAtomValue(lastErrorFamily(sessionKey));
   const activity = useAtomValue(activityFamily(sessionKey));
@@ -673,6 +678,8 @@ export default function ChatScreen() {
   const composerFocusedRef = useRef(false);
   const nativeChatSendRef = useRef<() => void>(() => {});
   const nativeChatInterruptRef = useRef<() => void>(() => {});
+  const routeNotificationLocalReadKeyRef = useRef<string | null>(null);
+  const routeNotificationServerReadKeyRef = useRef<string | null>(null);
   const sendOperationIdRef = useRef(0);
   const interruptInFlightRef = useRef(false);
   const composerDraftSnapshotRef = useRef<ComposerDraftSnapshot>({
@@ -755,6 +762,29 @@ export default function ChatScreen() {
     if (!sessionId) return;
     selectSession(sessionId);
   }, [sessionId, selectSession]);
+
+  useEffect(() => {
+    if (!routeNotificationId || !stateProjectPath) return;
+    const readKey = `${stateProjectPath}\u0000${routeNotificationId}`;
+
+    if (routeNotificationLocalReadKeyRef.current !== readKey) {
+      routeNotificationLocalReadKeyRef.current = readKey;
+      markNotificationsReadLocal({ projectPath: stateProjectPath, ids: [routeNotificationId] });
+    }
+    if (!serviceEndpoint) return;
+    const serverReadKey = `${readKey}\u0000${token ?? ""}`;
+    if (routeNotificationServerReadKeyRef.current === serverReadKey) return;
+    routeNotificationServerReadKeyRef.current = serverReadKey;
+    void markNotificationsRead(
+      serviceEndpoint,
+      { id: routeNotificationId },
+      { token: token ?? undefined },
+    ).catch(() => {
+      if (routeNotificationServerReadKeyRef.current === serverReadKey) {
+        routeNotificationServerReadKeyRef.current = null;
+      }
+    });
+  }, [markNotificationsReadLocal, routeNotificationId, serviceEndpoint, stateProjectPath, token]);
 
   useEffect(() => {
     let cancelled = false;

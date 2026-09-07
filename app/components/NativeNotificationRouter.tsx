@@ -78,6 +78,7 @@ export function NativeNotificationRouter() {
           pathname: "/agent/[sessionId]/chat",
           params: {
             focusToken: Date.now().toString(36),
+            notificationId,
             project: projectRoot,
             sessionId,
           },

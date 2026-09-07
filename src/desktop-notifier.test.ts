@@ -102,6 +102,27 @@ describe("desktop notifier", () => {
     expect(nodeNotifier.notify).not.toHaveBeenCalled();
   });
 
+  it("passes Aimux deep links to the macOS helper", () => {
+    const execFile = execFileMock();
+    const deepLinkUrl =
+      "aimux:///agent/codex-u1iogs/chat?project=%2FUsers%2Fsam%2Fcs%2Faimux&notificationId=n1&focusToken=n1";
+
+    sendDesktopNotification(
+      { title: "aimux", message: "agent waiting", sound: true, deepLinkUrl },
+      deps({
+        env: { AIMUX_NOTIFIER_HELPER: "/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier" },
+        existsSync: vi.fn((candidate) => candidate === "/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier"),
+        execFile,
+      }),
+    );
+
+    expect(execFile).toHaveBeenCalledWith(
+      "/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier",
+      ["--title", "aimux", "--message", "agent waiting", "--open-url", deepLinkUrl, "--sound"],
+      expect.any(Function),
+    );
+  });
+
   it("falls back to node-notifier when no macOS helper is installed", () => {
     const execFile = execFileMock();
     const nodeNotifier = { notify: vi.fn() };

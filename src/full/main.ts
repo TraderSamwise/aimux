@@ -3459,12 +3459,14 @@ notificationsCmd
   .description("Send a desktop notification test")
   .option("--title <title>", "Notification title", "Aimux notification test")
   .option("--body <body>", "Notification body", "Desktop notification delivery is working.")
+  .option("--open-url <url>", "Aimux URL to open when the notification is clicked")
   .option("--json", "Emit JSON")
-  .action(async (opts: { title: string; body: string; json?: boolean }) => {
+  .action(async (opts: { title: string; body: string; openUrl?: string; json?: boolean }) => {
     const attempt = await sendDesktopNotificationAndWait({
       title: opts.title.trim() || "Aimux notification test",
       message: opts.body.trim() || "Desktop notification delivery is working.",
       sound: true,
+      deepLinkUrl: opts.openUrl?.trim() || undefined,
     });
     if (opts.json) {
       console.log(JSON.stringify({ ok: attempt.ok, attempt }, null, 2));

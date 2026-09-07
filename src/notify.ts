@@ -4,6 +4,7 @@ import type { AlertEvent } from "./project-events.js";
 import { shouldSuppressNotification } from "./notification-context.js";
 import { sendDesktopNotification } from "./desktop-notifier.js";
 import { externalNotificationsDisabled } from "./external-notifications.js";
+import { buildAimuxNotificationDeepLink } from "./notification-deep-link.js";
 
 let cachedConfig: NotificationConfig | null = null;
 
@@ -19,7 +20,7 @@ export function resetNotifyConfig(): void {
   cachedConfig = null;
 }
 
-function send(title: string, message: string): void {
+function send(title: string, message: string, options: { deepLinkUrl?: string } = {}): void {
   const config = getNotifyConfig();
   if (!config.enabled) return;
   if (externalNotificationsDisabled()) {
@@ -27,7 +28,7 @@ function send(title: string, message: string): void {
     return;
   }
 
-  sendDesktopNotification({ title, message, sound: true });
+  sendDesktopNotification({ title, message, sound: true, deepLinkUrl: options.deepLinkUrl });
   debug(`notification: ${message}`, "notify");
 }
 
@@ -80,7 +81,14 @@ export function notifyAlert(event: AlertEvent): boolean {
   if (event.kind === "task_done" && !config.onComplete) return false;
   if ((event.kind === "task_failed" || event.kind === "blocked") && !config.onError) return false;
 
-  send(event.title || "aimux", event.message || event.sessionId || event.kind);
+  const deepLinkUrl = buildAimuxNotificationDeepLink({
+    projectRoot: event.projectRoot,
+    sessionId: event.sessionId,
+    notificationId: event.notificationId,
+  });
+  send(event.title || "aimux", event.message || event.sessionId || event.kind, {
+    deepLinkUrl: deepLinkUrl ?? undefined,
+  });
   return true;
 }
 
