@@ -20,6 +20,7 @@ import { ChatTopEdgeFade } from "@/components/ChatTopEdgeFade";
 import { TopBar } from "@/components/TopBar";
 import { Button } from "@/components/ui/button";
 import { Text } from "@/components/ui/text";
+import { canUsePersistentSidebar } from "@/lib/app-shell-layout";
 import { chatTopBarReserveHeight } from "@/lib/chat-chrome-layout";
 import { isDesktopZoomCommand, subscribeNativeAppCommands } from "@/lib/native-app-commands";
 import { resolveChromeTopInset } from "@/lib/native-safe-area";
@@ -35,7 +36,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const { isDesktopNative, uiScale } = useRuntimeTuning();
-  const usesPersistentSidebar = Platform.OS === "web" && width >= 1024;
+  const usesPersistentSidebar = canUsePersistentSidebar(width);
   const usesDrawerSidebar = !usesPersistentSidebar;
 
   const [sidebarOpen, setSidebarOpen] = useAtom(sidebarOpenAtom);
@@ -65,12 +66,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, [setSidebarOpen, usesPersistentSidebar]);
 
   useEffect(() => {
+    if (!usesDrawerSidebar) return;
     RNAnimated.timing(translateX, {
       toValue: sidebarOpen ? 0 : -DRAWER_WIDTH,
       duration: 250,
       useNativeDriver: true,
     }).start();
-  }, [sidebarOpen, translateX]);
+  }, [sidebarOpen, translateX, usesDrawerSidebar]);
 
   useEffect(() => {
     if (!isDesktopNative) return undefined;
