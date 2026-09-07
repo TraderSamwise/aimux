@@ -2,9 +2,9 @@
 
 This inventory lists real captured TypeScript contract corpora that are intentionally `#[ignore]` because the matching Rust API does not exist yet, the implementation sits behind an ownership fence, or the existing fenced Rust implementation currently differs from the captured TypeScript behavior. It deliberately does not count Vitest reporter output as coverage.
 
-Coverage definition used for this inventory: a `src` test module is covered when any `testdata/contracts/v1/**/*.json` fixture records that module in a top-level `source`, top-level `sources`, case `source`, or group/case `source` field, and the fixture contains behavior-level input/output or state data rather than test-runner metadata. Under that definition there are 245 `src` test modules, 222 covered modules, and 23 uncovered modules remaining.
+Coverage definition used for this inventory: a `src` test module is covered when any `testdata/contracts/v1/**/*.json` fixture records that module in a top-level `source`, top-level `sources`, case `source`, or group/case `source` field, and the fixture contains behavior-level input/output or state data rather than test-runner metadata. Under that definition there are 245 `src` test modules, 225 covered modules, and 20 uncovered modules remaining.
 
-There are 30 ignored corpus entries below, covering 144 captured checklist cases.
+There are 33 ignored corpus entries below, covering 162 captured checklist cases.
 
 | Consumer | Corpus | Cases | Missing Rust API / parity bug | Ownership fence |
 | --- | --- | ---: | --- | --- |
@@ -26,6 +26,9 @@ There are 30 ignored corpus entries below, covering 144 captured checklist cases
 | `fixture_inbox_cleanup_runtime.rs` | `testdata/contracts/v1/notifications/inbox-cleanup-runtime.json` | 2 | persistenceMethods.cleanupInbox dashboard refresh side effects | dashboard_* |
 | `fixture_installed_shim.rs` | `testdata/contracts/v1/release/installed-shim.json` | 3 | Installed shell shim contract reader/executor | No explicit fence; release/install shell artifact, no Rust public API |
 | `fixture_key_parser.rs` | `testdata/contracts/v1/terminal/key-parser.json` | 5 | General terminal parseKeys / KeyEvent parser API | dashboard_* / terminal-control runtime |
+| `fixture_multiplexer_resource_refresh.rs` | `testdata/contracts/v1/multiplexer/library-refresh.json` | 6 | library resource refresh runtime state machine | dashboard_* |
+| `fixture_multiplexer_resource_refresh.rs` | `testdata/contracts/v1/multiplexer/project-refresh.json` | 6 | project observability refresh runtime state machine | dashboard_* |
+| `fixture_multiplexer_resource_refresh.rs` | `testdata/contracts/v1/multiplexer/topology-refresh.json` | 6 | topology refresh runtime state machine | dashboard_* |
 | `fixture_package_manifest.rs` | `testdata/contracts/v1/release/package-manifest.json` | 1 | package.json release file-list contract reader | No explicit fence; release/package metadata, no Rust public API |
 | `fixture_plugin_runtime.rs` | `testdata/contracts/v1/plugin/runtime.json` | 8 | Bundled wrapper seeding and PluginRuntime.start user-plugin startup status APIs | No explicit fence; needs plugin runtime source port |
 | `fixture_project_scanner.rs` | `testdata/contracts/v1/project-catalog/scanner.json` | 8 | scanProject, desktop project registry, and discovery APIs | daemon_* / project catalog |
@@ -58,13 +61,10 @@ These `src/**/*.test.ts` modules still have no behavior-level corpus under `test
 | `src/multiplexer/dashboard-ops.test.ts` | Dashboard service/session operation state machine; needs mocked state transition corpus. | dashboard_* |
 | `src/multiplexer/dashboard-tail-methods.test.ts` | Dashboard tail/heartbeat/stream methods; needs mocked stream/state corpus. | dashboard_* |
 | `src/multiplexer/dashboard-view-methods.test.ts` | Dashboard view refresh and stale-render suppression; needs mocked refresh/state corpus. | dashboard_* |
-| `src/multiplexer/library.test.ts` | Dashboard library service-backed model; needs mocked API input/output capture. | dashboard_* |
 | `src/multiplexer/notifications.test.ts` | Dashboard notification screen mutation/refresh; needs mocked API input/output capture. | dashboard_* |
 | `src/multiplexer/persistence-methods.test.ts` | Dashboard persistence mutation methods; needs stale-completion/state corpus. | dashboard_* |
-| `src/multiplexer/project.test.ts` | Dashboard project service-backed model; needs mocked API input/output capture. | dashboard_* |
 | `src/multiplexer/runtime-state.test.ts` | Runtime-state refresh/restore/backend-id integration; needs targeted state transition corpus. | dashboard_* / tmux* |
 | `src/multiplexer/session-launch.test.ts` | Managed tmux launch/resume/relaunch implementation; needs launch argv/metadata side-effect corpus. | tmux* / session_launch.rs |
 | `src/multiplexer/session-runtime-core.test.ts` | Managed tmux runtime core; needs mocked tmux/metadata state transition corpus. | tmux* |
 | `src/multiplexer/subscreens.test.ts` | Dashboard coordination/archive subscreen state machine; needs input/output event corpus. | dashboard_* |
-| `src/multiplexer/topology.test.ts` | Dashboard topology service-backed model; needs mocked API input/output capture. | dashboard_* |
 | `src/tmux/doctor.test.ts` | tmux doctor compatibility/repair report; needs mocked tmux input/output capture. | tmux* |

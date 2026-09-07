@@ -1005,6 +1005,19 @@ Priority fixture groups:
   projection, and graveyard view-model ordering captured by running TypeScript
   worktree and multiplexer helpers.
 
+## Multiplexer
+
+- `multiplexer/library-refresh.json`: library resource refresh return values,
+  host-state transitions, payload validation, coalescing, and project-service
+  call logs captured by running TypeScript `refreshLibrary`.
+- `multiplexer/project-refresh.json`: project observability refresh return
+  values, host-state transitions, payload validation, coalescing, and
+  project-service call logs captured by running TypeScript
+  `refreshProjectObservability`.
+- `multiplexer/topology-refresh.json`: topology refresh return values,
+  host-state transitions, payload validation, coalescing, and project-service
+  call logs captured by running TypeScript `refreshTopology`.
+
 ## Work Outline
 
 - `work-outline/outline.json`: work outline upsert, filtering, bounds,

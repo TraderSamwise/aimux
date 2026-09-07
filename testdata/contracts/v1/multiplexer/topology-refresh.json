@@ -1,0 +1,264 @@
+{
+  "version": 1,
+  "generatedAt": "2026-09-07T00:00:00.000Z",
+  "generatedBy": "scripts/capture-multiplexer-resource-refresh-contracts.mjs",
+  "source": "src/multiplexer/topology.test.ts",
+  "sources": ["src/multiplexer/topology.test.ts", "src/multiplexer/topology.ts"],
+  "subject": "refreshTopology",
+  "description": "Topology refresh state transitions captured by running TypeScript refreshTopology with mocked project-service responses.",
+  "caseCount": 6,
+  "cases": [
+    {
+      "id": "refresh-topology-001",
+      "name": "loads model from project service",
+      "source": "src/multiplexer/topology.test.ts",
+      "api": "refreshTopology",
+      "input": {
+        "initial": { "topologyIndex": -1 },
+        "serviceSteps": [
+          {
+            "resolve": {
+              "ok": true,
+              "topology": {
+                "projectName": "aimux",
+                "health": "active",
+                "counts": { "worktrees": 1, "agents": 1, "services": 0 },
+                "worktrees": [{ "name": "main", "branch": "main", "health": "active", "agents": 1, "services": 0 }],
+                "rows": [{ "kind": "agent", "depth": 1, "label": "claude", "health": "active", "sessionId": "live-1" }]
+              }
+            }
+          }
+        ]
+      },
+      "output": {
+        "returned": true,
+        "host": {
+          "topology": {
+            "projectName": "aimux",
+            "health": "active",
+            "counts": { "worktrees": 1, "agents": 1, "services": 0 },
+            "worktrees": [{ "name": "main", "branch": "main", "health": "active", "agents": 1, "services": 0 }],
+            "rows": [{ "kind": "agent", "depth": 1, "label": "claude", "health": "active", "sessionId": "live-1" }]
+          },
+          "topologyLoaded": true,
+          "topologyIndex": 0
+        },
+        "calls": [{ "method": "getFromProjectService", "args": ["/topology"] }]
+      },
+      "inputSha256": "74940e3496926f26f7576f51d43da48a9a57ac67ed11da3e934a2c8f0a33bd2f"
+    },
+    {
+      "id": "refresh-topology-002",
+      "name": "coalesces concurrent refreshes",
+      "source": "src/multiplexer/topology.test.ts",
+      "api": "refreshTopology",
+      "input": {
+        "initial": { "topologyIndex": -1 },
+        "serviceSteps": [
+          {
+            "resolve": {
+              "ok": true,
+              "topology": {
+                "projectName": "aimux",
+                "health": "active",
+                "counts": { "worktrees": 1, "agents": 1, "services": 0 },
+                "worktrees": [{ "name": "main", "branch": "main", "health": "active", "agents": 1, "services": 0 }],
+                "rows": [{ "kind": "agent", "depth": 1, "label": "claude", "health": "active", "sessionId": "live-1" }]
+              }
+            }
+          }
+        ],
+        "concurrentCalls": 2
+      },
+      "output": {
+        "returned": [true, true],
+        "host": {
+          "topology": {
+            "projectName": "aimux",
+            "health": "active",
+            "counts": { "worktrees": 1, "agents": 1, "services": 0 },
+            "worktrees": [{ "name": "main", "branch": "main", "health": "active", "agents": 1, "services": 0 }],
+            "rows": [{ "kind": "agent", "depth": 1, "label": "claude", "health": "active", "sessionId": "live-1" }]
+          },
+          "topologyLoaded": true,
+          "topologyIndex": 0
+        },
+        "calls": [{ "method": "getFromProjectService", "args": ["/topology"] }]
+      },
+      "inputSha256": "bd430fb0d4aa77fee0ab09f931114779e28ff504731b2ce84563ec332b0fb9e8"
+    },
+    {
+      "id": "refresh-topology-003",
+      "name": "initializes empty state on invalid first payload",
+      "source": "src/multiplexer/topology.test.ts",
+      "api": "refreshTopology",
+      "input": {
+        "initial": {},
+        "serviceSteps": [
+          {
+            "resolve": {
+              "ok": true,
+              "topology": {
+                "projectName": "aimux",
+                "health": "active",
+                "counts": { "worktrees": 1, "agents": 1, "services": 0 },
+                "worktrees": [{ "name": "main", "branch": "main", "health": "active", "agents": 1, "services": 0 }],
+                "rows": [{ "kind": "agent", "depth": 1, "label": "bad", "health": "unknown" }]
+              }
+            }
+          }
+        ]
+      },
+      "output": {
+        "returned": false,
+        "host": {
+          "topology": {
+            "projectName": "project",
+            "health": "idle",
+            "counts": { "worktrees": 0, "agents": 0, "services": 0 },
+            "worktrees": [],
+            "rows": []
+          },
+          "topologyLoaded": true,
+          "topologyIndex": 0
+        },
+        "calls": [{ "method": "getFromProjectService", "args": ["/topology"] }]
+      },
+      "inputSha256": "b710a85ad5b4db55bd4d26fa8bd927189faadf18aa8362a35a44f0c3bf7ae88e"
+    },
+    {
+      "id": "refresh-topology-004",
+      "name": "preserves loaded state on invalid payload",
+      "source": "src/multiplexer/topology.test.ts",
+      "api": "refreshTopology",
+      "input": {
+        "initial": {
+          "topology": {
+            "projectName": "aimux",
+            "health": "active",
+            "counts": { "worktrees": 1, "agents": 1, "services": 0 },
+            "worktrees": [{ "name": "main", "branch": "main", "health": "active", "agents": 1, "services": 0 }],
+            "rows": [{ "kind": "agent", "depth": 1, "label": "codex", "health": "active", "sessionId": "codex-1" }]
+          },
+          "topologyLoaded": true,
+          "topologyIndex": 0
+        },
+        "serviceSteps": [
+          {
+            "resolve": {
+              "ok": true,
+              "topology": {
+                "projectName": "aimux",
+                "health": "active",
+                "counts": { "worktrees": 1, "agents": 1, "services": 0 },
+                "worktrees": [{ "name": "main", "branch": "main", "health": "active", "agents": 1, "services": 0 }],
+                "rows": [{ "kind": "agent", "depth": 1, "label": "bad", "health": "unknown" }]
+              }
+            }
+          }
+        ]
+      },
+      "output": {
+        "returned": false,
+        "host": {
+          "topology": {
+            "projectName": "aimux",
+            "health": "active",
+            "counts": { "worktrees": 1, "agents": 1, "services": 0 },
+            "worktrees": [{ "name": "main", "branch": "main", "health": "active", "agents": 1, "services": 0 }],
+            "rows": [{ "kind": "agent", "depth": 1, "label": "codex", "health": "active", "sessionId": "codex-1" }]
+          },
+          "topologyLoaded": true,
+          "topologyIndex": 0
+        },
+        "calls": [{ "method": "getFromProjectService", "args": ["/topology"] }]
+      },
+      "inputSha256": "fbca2425f9f95eac47dbfd85e743a60350c434bd4946e041fcd3104c08c59d3e"
+    },
+    {
+      "id": "refresh-topology-005",
+      "name": "preserves loaded state when service rejects",
+      "source": "src/multiplexer/topology.test.ts",
+      "api": "refreshTopology",
+      "input": {
+        "initial": {
+          "topology": {
+            "projectName": "aimux",
+            "health": "active",
+            "counts": { "worktrees": 1, "agents": 1, "services": 0 },
+            "worktrees": [{ "name": "main", "branch": "main", "health": "active", "agents": 1, "services": 0 }],
+            "rows": [{ "kind": "agent", "depth": 1, "label": "codex", "health": "active", "sessionId": "codex-1" }]
+          },
+          "topologyLoaded": true,
+          "topologyIndex": 0
+        },
+        "serviceSteps": [{ "reject": "offline" }]
+      },
+      "output": {
+        "returned": false,
+        "host": {
+          "topology": {
+            "projectName": "aimux",
+            "health": "active",
+            "counts": { "worktrees": 1, "agents": 1, "services": 0 },
+            "worktrees": [{ "name": "main", "branch": "main", "health": "active", "agents": 1, "services": 0 }],
+            "rows": [{ "kind": "agent", "depth": 1, "label": "codex", "health": "active", "sessionId": "codex-1" }]
+          },
+          "topologyLoaded": true,
+          "topologyIndex": 0
+        },
+        "calls": [{ "method": "getFromProjectService", "args": ["/topology"] }]
+      },
+      "inputSha256": "9dae014a1040c6254618b1bfdc0f37235f848016553e25ecf7fdc13c1e5b1a10"
+    },
+    {
+      "id": "refresh-topology-006",
+      "name": "applies valid empty payload over previous state",
+      "source": "src/multiplexer/topology.test.ts",
+      "api": "refreshTopology",
+      "input": {
+        "initial": {
+          "topology": {
+            "projectName": "aimux",
+            "health": "active",
+            "counts": { "worktrees": 1, "agents": 1, "services": 0 },
+            "worktrees": [{ "name": "main", "branch": "main", "health": "active", "agents": 1, "services": 0 }],
+            "rows": [{ "kind": "agent", "depth": 1, "label": "codex", "health": "active", "sessionId": "codex-1" }]
+          },
+          "topologyLoaded": true,
+          "topologyIndex": 0
+        },
+        "serviceSteps": [
+          {
+            "resolve": {
+              "ok": true,
+              "topology": {
+                "projectName": "aimux",
+                "health": "idle",
+                "counts": { "worktrees": 0, "agents": 0, "services": 0 },
+                "worktrees": [],
+                "rows": []
+              }
+            }
+          }
+        ]
+      },
+      "output": {
+        "returned": true,
+        "host": {
+          "topology": {
+            "projectName": "aimux",
+            "health": "idle",
+            "counts": { "worktrees": 0, "agents": 0, "services": 0 },
+            "worktrees": [],
+            "rows": []
+          },
+          "topologyLoaded": true,
+          "topologyIndex": 0
+        },
+        "calls": [{ "method": "getFromProjectService", "args": ["/topology"] }]
+      },
+      "inputSha256": "91eeea34f550078b9c0d419ab3b1e1b6e0891f1cf3a4a7049862a149b0634b5d"
+    }
+  ]
+}
