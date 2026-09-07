@@ -1,5 +1,6 @@
+use aimux::src_integration_surfaces::run_src_integration_surfaces_contract_case;
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 const SRC_INTEGRATION_SURFACES: &str =
     include_str!("../../../../testdata/contracts/v1/integration/src-surfaces.json");
@@ -24,7 +25,6 @@ struct Case {
 }
 
 #[test]
-#[ignore = "checklist: TypeScript src integration surfaces span core_cli*, daemon_*, hosted listener, and project_service/routes/ ownership fences"]
 fn fixture_src_integration_surfaces_contract_is_captured() {
     let contract: Contract =
         serde_json::from_str(SRC_INTEGRATION_SURFACES).expect("src integration fixture parses");
@@ -45,6 +45,7 @@ fn fixture_src_integration_surfaces_contract_is_captured() {
         assert!(contract.sources.contains(&source.to_string()));
     }
 
+    let mut failures = Vec::new();
     for case in contract.cases {
         assert!(!case.id.is_empty());
         assert!(
@@ -54,7 +55,20 @@ fn fixture_src_integration_surfaces_contract_is_captured() {
             case.source
         );
         assert!(!case.api.is_empty());
-        assert!(!case.input.is_null());
-        assert!(!case.output.is_null());
+        let actual = run_src_integration_surfaces_contract_case(&case.api, &case.input);
+        if actual != case.output {
+            failures.push(json!({
+                "id": case.id,
+                "expected": case.output,
+                "actual": actual,
+            }));
+        }
     }
+
+    assert!(
+        failures.is_empty(),
+        "{} src integration surface parity failures:\n{}",
+        failures.len(),
+        serde_json::to_string_pretty(&failures).expect("serialize failures")
+    );
 }
