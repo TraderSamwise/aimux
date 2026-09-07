@@ -2,6 +2,7 @@ use crate::dashboard_model::{
     DashboardService, DashboardSession, DesktopStateSnapshot, WorktreeGroup,
 };
 use crate::dashboard_renderer::DashboardNavLevel;
+use serde_json::{Value, json};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DashboardNavigationState {
@@ -268,4 +269,90 @@ fn entry_at(
         .services
         .get(item_index - group.sessions.len())
         .map(DashboardEntryRef::Service)
+}
+
+pub fn run_show_migrate_picker_contract_case(input: &Value) -> Value {
+    let host = input.get("host").expect("showMigratePicker host");
+    let worktrees = migrate_picker_worktrees(host);
+
+    if worktrees.len() <= 1 {
+        return json!({
+            "migratePickerWorktrees": worktrees,
+            "migratePickerSessionId": Value::Null,
+            "calls": {
+                "openDashboardOverlay": [],
+                "redrawDashboardWithOverlay": [],
+            },
+        });
+    }
+
+    let session_id = input
+        .get("sessionId")
+        .cloned()
+        .or_else(|| active_session_id(host))
+        .unwrap_or(Value::Null);
+
+    json!({
+        "migratePickerWorktrees": worktrees,
+        "migratePickerSessionId": session_id,
+        "calls": {
+            "openDashboardOverlay": [["migrate-picker"]],
+            "redrawDashboardWithOverlay": if host.get("mode").and_then(Value::as_str) == Some("dashboard") {
+                json!([[]])
+            } else {
+                json!([])
+            },
+        },
+    })
+}
+
+fn migrate_picker_worktrees(host: &Value) -> Vec<Value> {
+    if host.get("mode").and_then(Value::as_str) != Some("dashboard") {
+        return Vec::new();
+    }
+    let Some(groups) = host
+        .get("dashboardWorktreeGroupsCache")
+        .and_then(Value::as_array)
+    else {
+        return Vec::new();
+    };
+    let main_repo = host
+        .get("projectRoot")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let mut entries = Vec::new();
+    for group in groups {
+        let path = group
+            .get("path")
+            .and_then(Value::as_str)
+            .unwrap_or(main_repo);
+        if entries
+            .iter()
+            .any(|entry: &Value| entry.get("path").and_then(Value::as_str) == Some(path))
+        {
+            continue;
+        }
+        let name = if group.get("path").is_none() {
+            "(main)"
+        } else {
+            group
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+        };
+        entries.push(json!({ "name": name, "path": path }));
+    }
+    entries
+}
+
+fn active_session_id(host: &Value) -> Option<Value> {
+    let index = host
+        .get("activeIndex")
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())?;
+    host.get("sessions")?
+        .as_array()?
+        .get(index)?
+        .get("id")
+        .cloned()
 }
