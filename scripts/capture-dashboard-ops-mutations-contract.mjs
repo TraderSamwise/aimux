@@ -9,6 +9,7 @@ const FIXTURE_PATH = new URL("testdata/contracts/v1/multiplexer/dashboard-ops-mu
 const {
   createDashboardServiceWithFeedback,
   graveyardSessionWithFeedback,
+  migrateSessionWithFeedback,
   removeDashboardServiceWithFeedback,
   resumeOfflineServiceWithFeedback,
   stopDashboardServiceWithFeedback,
@@ -116,6 +117,21 @@ function makePendingActionsFake(initial = []) {
   };
 }
 
+function makeRuntimeSession(session) {
+  const exitHandlers = [];
+  return {
+    ...clone(session),
+    exited: Boolean(session.exited),
+    onExit(handler) {
+      exitHandlers.push(handler);
+    },
+    triggerExit() {
+      this.exited = true;
+      for (const handler of exitHandlers) handler();
+    },
+  };
+}
+
 function requestTimeoutError() {
   return Object.assign(new Error("request timed out after 9970ms"), { code: "ETIMEDOUT" });
 }
@@ -197,6 +213,10 @@ function makeHost(input) {
     getDashboardServices: rec.fn("getDashboardServices", () => expandGeneratedServiceId(host, services.current())),
     getDashboardSessions: rec.fn("getDashboardSessions", () => sessions.current()),
     showDashboardError: rec.fn("showDashboardError"),
+    migrateAgent: rec.fn("migrateAgent", async () => {
+      if (input.migrateError) throw new Error(input.migrateError);
+      host.activeRuntimeSession?.triggerExit?.();
+    }),
   };
   return { host, calls: rec.calls };
 }
@@ -243,6 +263,14 @@ async function runCase(input) {
     case "graveyardSessionWithFeedback":
       result = await graveyardSessionWithFeedback(host, input.sessionId, input.hasWorktrees);
       break;
+    case "migrateSessionWithFeedback": {
+      const session =
+        host.mode === "dashboard"
+          ? clone(input.session)
+          : (host.activeRuntimeSession = makeRuntimeSession(input.session));
+      result = await migrateSessionWithFeedback(host, session, input.targetPath, input.targetName);
+      break;
+    }
     default:
       throw new Error(`unknown dashboard ops mutation api: ${input.api}`);
   }
@@ -359,7 +387,9 @@ const cases = [
       sessionLabels: { "sess-1": "codex" },
       pendingActions: [{ targetKind: "session", id: "sess-1", kind: "stopping", token: 1 }],
       rawSessions: [{ id: "sess-1", command: "codex", label: "codex", status: "running" }],
-      sessionSnapshots: [[{ id: "sess-1", command: "codex", label: "codex", status: "running", pendingAction: "graveyarding" }]],
+      sessionSnapshots: [
+        [{ id: "sess-1", command: "codex", label: "codex", status: "running", pendingAction: "graveyarding" }],
+      ],
     },
   },
   {
@@ -370,6 +400,64 @@ const cases = [
       pendingActions: [{ targetKind: "service", id: "svc-1", kind: "removing", token: 1 }],
       rawServices: [{ id: "svc-1", status: "offline" }],
       serviceSnapshots: [[{ id: "svc-1", status: "offline", pendingAction: "removing", optimistic: true }]],
+    },
+  },
+  {
+    name: "migrates a dashboard agent through project API and settles when row remains live",
+    input: {
+      api: "migrateSessionWithFeedback",
+      session: { id: "sess-1", command: "codex", label: "codex", worktreePath: "/repo" },
+      targetPath: "/repo/.aimux/worktrees/review",
+      targetName: "review",
+      sessionLabels: { "sess-1": "codex" },
+      sessionSnapshots: [
+        [{ id: "sess-1", command: "codex", label: "codex", status: "running", worktreePath: "/repo" }],
+        [
+          {
+            id: "sess-1",
+            command: "codex",
+            label: "codex",
+            status: "running",
+            worktreePath: "/repo/.aimux/worktrees/review",
+          },
+        ],
+      ],
+    },
+  },
+  {
+    name: "coalesces duplicate dashboard migration",
+    input: {
+      api: "migrateSessionWithFeedback",
+      session: { id: "sess-1", command: "codex", label: "codex", worktreePath: "/repo" },
+      targetPath: "/repo/.aimux/worktrees/review",
+      targetName: "review",
+      pendingActions: [{ targetKind: "session", id: "sess-1", kind: "migrating", token: 1 }],
+      sessionSnapshots: [
+        [{ id: "sess-1", command: "codex", label: "codex", status: "running", pendingAction: "migrating" }],
+      ],
+    },
+  },
+  {
+    name: "migrates through local runtime path and waits for source exit",
+    input: {
+      api: "migrateSessionWithFeedback",
+      mode: "agent",
+      session: { id: "sess-1", command: "claude", label: "claude", worktreePath: "/repo" },
+      targetPath: "/repo/.aimux/worktrees/ui",
+      targetName: "ui",
+      sessionLabels: { "sess-1": "claude" },
+    },
+  },
+  {
+    name: "local migration failure clears pending and reports error",
+    input: {
+      api: "migrateSessionWithFeedback",
+      mode: "agent",
+      session: { id: "sess-1", command: "claude", label: "claude", worktreePath: "/repo" },
+      targetPath: "/repo/.aimux/worktrees/ui",
+      targetName: "ui",
+      sessionLabels: { "sess-1": "claude" },
+      migrateError: "boom",
     },
   },
 ];

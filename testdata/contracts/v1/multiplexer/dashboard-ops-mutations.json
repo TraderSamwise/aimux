@@ -549,6 +549,197 @@
         ]
       },
       "inputSha256": "ddd8dab2c4008c3cc7d9d9d43d677cdbbdcaed48f84159ba4550d41f6a6cc2e6"
+    },
+    {
+      "id": "dashboard-ops-mutations-013",
+      "name": "migrates a dashboard agent through project API and settles when row remains live",
+      "source": "src/multiplexer/dashboard-ops.ts",
+      "api": "migrateSessionWithFeedback",
+      "input": {
+        "api": "migrateSessionWithFeedback",
+        "session": { "id": "sess-1", "command": "codex", "label": "codex", "worktreePath": "/repo" },
+        "targetPath": "/repo/.aimux/worktrees/review",
+        "targetName": "review",
+        "sessionLabels": { "sess-1": "codex" },
+        "sessionSnapshots": [
+          [{ "id": "sess-1", "command": "codex", "label": "codex", "status": "running", "worktreePath": "/repo" }],
+          [
+            {
+              "id": "sess-1",
+              "command": "codex",
+              "label": "codex",
+              "status": "running",
+              "worktreePath": "/repo/.aimux/worktrees/review"
+            }
+          ]
+        ]
+      },
+      "output": {
+        "result": null,
+        "footerFlash": "Migrated codex to review",
+        "footerFlashTicks": 3,
+        "pendingSessions": [],
+        "pendingServices": [],
+        "serviceSeed": null,
+        "sessionSeed": null,
+        "rawServices": [],
+        "rawSessions": [
+          {
+            "id": "sess-1",
+            "command": "codex",
+            "label": "codex",
+            "status": "running",
+            "worktreePath": "/repo/.aimux/worktrees/review"
+          }
+        ],
+        "calls": [
+          { "method": "getSessionLabel", "args": ["sess-1"] },
+          { "method": "getDashboardSessions", "args": [] },
+          { "method": "getDashboardSessions", "args": [] },
+          {
+            "method": "setPendingDashboardSessionAction",
+            "args": [
+              "sess-1",
+              "migrating",
+              {
+                "sessionSeed": {
+                  "id": "sess-1",
+                  "command": "codex",
+                  "label": "codex",
+                  "status": "running",
+                  "worktreePath": "/repo"
+                }
+              }
+            ]
+          },
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "reconcileDashboardRenderState", "args": [] },
+          { "method": "renderDashboard", "args": [] },
+          {
+            "method": "postToProjectService",
+            "args": [
+              "/agents/migrate",
+              { "sessionId": "sess-1", "worktreePath": "/repo/.aimux/worktrees/review" },
+              { "timeoutMs": 10000 }
+            ]
+          },
+          { "method": "refreshDashboardModelFromService", "args": [true, { "lifecycle": { "mode": "dashboard" } }] },
+          { "method": "getDashboardSessions", "args": [] },
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "reconcileDashboardRenderState", "args": [] },
+          { "method": "renderDashboard", "args": [] },
+          { "method": "setPendingDashboardSessionAction", "args": ["sess-1", null] },
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "reconcileDashboardRenderState", "args": [] },
+          { "method": "renderDashboard", "args": [] }
+        ]
+      },
+      "inputSha256": "196ce62161736c83c9a7157db31561323a7bcc7ccded5c3d24a249548568d1d4"
+    },
+    {
+      "id": "dashboard-ops-mutations-014",
+      "name": "coalesces duplicate dashboard migration",
+      "source": "src/multiplexer/dashboard-ops.ts",
+      "api": "migrateSessionWithFeedback",
+      "input": {
+        "api": "migrateSessionWithFeedback",
+        "session": { "id": "sess-1", "command": "codex", "label": "codex", "worktreePath": "/repo" },
+        "targetPath": "/repo/.aimux/worktrees/review",
+        "targetName": "review",
+        "pendingActions": [{ "targetKind": "session", "id": "sess-1", "kind": "migrating", "token": 1 }],
+        "sessionSnapshots": [
+          [{ "id": "sess-1", "command": "codex", "label": "codex", "status": "running", "pendingAction": "migrating" }]
+        ]
+      },
+      "output": {
+        "result": null,
+        "footerFlash": "migrating is already settling",
+        "footerFlashTicks": 2,
+        "pendingSessions": [{ "id": "sess-1", "kind": "migrating", "token": 1 }],
+        "pendingServices": [],
+        "serviceSeed": null,
+        "sessionSeed": null,
+        "rawServices": [],
+        "rawSessions": [
+          { "id": "sess-1", "command": "codex", "label": "codex", "status": "running", "pendingAction": "migrating" }
+        ],
+        "calls": [
+          { "method": "getSessionLabel", "args": ["sess-1"] },
+          { "method": "getDashboardSessions", "args": [] },
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "reconcileDashboardRenderState", "args": [] },
+          { "method": "renderDashboard", "args": [] }
+        ]
+      },
+      "inputSha256": "faf08bae3b033f5d946eeb65bf57b27e48b67f13c9cd2ed1121602edd0001f62"
+    },
+    {
+      "id": "dashboard-ops-mutations-015",
+      "name": "migrates through local runtime path and waits for source exit",
+      "source": "src/multiplexer/dashboard-ops.ts",
+      "api": "migrateSessionWithFeedback",
+      "input": {
+        "api": "migrateSessionWithFeedback",
+        "mode": "agent",
+        "session": { "id": "sess-1", "command": "claude", "label": "claude", "worktreePath": "/repo" },
+        "targetPath": "/repo/.aimux/worktrees/ui",
+        "targetName": "ui",
+        "sessionLabels": { "sess-1": "claude" }
+      },
+      "output": {
+        "result": null,
+        "footerFlash": "Migrated claude to ui",
+        "footerFlashTicks": 3,
+        "pendingSessions": [],
+        "pendingServices": [],
+        "serviceSeed": null,
+        "sessionSeed": null,
+        "rawServices": [],
+        "rawSessions": [],
+        "calls": [
+          { "method": "getSessionLabel", "args": ["sess-1"] },
+          { "method": "setPendingDashboardSessionAction", "args": ["sess-1", "migrating"] },
+          { "method": "migrateAgent", "args": ["sess-1", "/repo/.aimux/worktrees/ui"] },
+          { "method": "setPendingDashboardSessionAction", "args": ["sess-1", null] },
+          { "method": "refreshLocalDashboardModel", "args": [] },
+          { "method": "renderDashboard", "args": [] }
+        ]
+      },
+      "inputSha256": "51a1bf682a800f3a6a25702c7297d3f38a0b08bc7edca6d89b355e83bf34198b"
+    },
+    {
+      "id": "dashboard-ops-mutations-016",
+      "name": "local migration failure clears pending and reports error",
+      "source": "src/multiplexer/dashboard-ops.ts",
+      "api": "migrateSessionWithFeedback",
+      "input": {
+        "api": "migrateSessionWithFeedback",
+        "mode": "agent",
+        "session": { "id": "sess-1", "command": "claude", "label": "claude", "worktreePath": "/repo" },
+        "targetPath": "/repo/.aimux/worktrees/ui",
+        "targetName": "ui",
+        "sessionLabels": { "sess-1": "claude" },
+        "migrateError": "boom"
+      },
+      "output": {
+        "result": null,
+        "footerFlash": "",
+        "footerFlashTicks": 0,
+        "pendingSessions": [],
+        "pendingServices": [],
+        "serviceSeed": null,
+        "sessionSeed": null,
+        "rawServices": [],
+        "rawSessions": [],
+        "calls": [
+          { "method": "getSessionLabel", "args": ["sess-1"] },
+          { "method": "setPendingDashboardSessionAction", "args": ["sess-1", "migrating"] },
+          { "method": "migrateAgent", "args": ["sess-1", "/repo/.aimux/worktrees/ui"] },
+          { "method": "setPendingDashboardSessionAction", "args": ["sess-1", null] },
+          { "method": "showDashboardError", "args": ["Failed to migrate \"claude\"", ["boom"]] }
+        ]
+      },
+      "inputSha256": "946a45ed6dfc731251142eb30ce682f9cec34690dc382f3bb5dc28ec1f46416f"
     }
   ]
 }

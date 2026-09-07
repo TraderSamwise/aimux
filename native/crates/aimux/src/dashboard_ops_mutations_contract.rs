@@ -27,6 +27,15 @@ pub fn run_dashboard_ops_mutations_contract_case(api: &str, input: &Value) -> Va
             graveyard_session_with_feedback(&mut state, string_field(input, "sessionId"));
             Value::Null
         }
+        "migrateSessionWithFeedback" => {
+            migrate_session_with_feedback(
+                &mut state,
+                value_field(input, "session"),
+                string_field(input, "targetPath"),
+                string_field(input, "targetName"),
+            );
+            Value::Null
+        }
         api => panic!("unknown dashboard ops mutation api: {api}"),
     };
     state.summary(result)
@@ -513,6 +522,86 @@ fn graveyard_session_with_feedback(state: &mut OpsState, session_id: String) {
         ],
     );
     state.footer_flash = format!("Sent {label} to graveyard");
+}
+
+fn migrate_session_with_feedback(
+    state: &mut OpsState,
+    session: &Value,
+    target_path: String,
+    target_name: String,
+) {
+    let session_id = string_field(session, "id");
+    let label = state
+        .session_label(&session_id)
+        .unwrap_or_else(|| string_field(session, "command"));
+
+    if state.mode != "dashboard" {
+        state.set_session_action(&session_id, Some("migrating"), None);
+        state.call(
+            "migrateAgent",
+            vec![json!(session_id.clone()), json!(target_path)],
+        );
+        if let Some(message) = optional_string(state.input, "migrateError") {
+            state.set_session_action(&session_id, None, None);
+            state.call(
+                "showDashboardError",
+                vec![
+                    json!(format!("Failed to migrate \"{label}\"")),
+                    json!([message]),
+                ],
+            );
+            return;
+        }
+        state.set_session_action(&session_id, None, None);
+        state.call("refreshLocalDashboardModel", vec![]);
+        state.footer_flash = format!("Migrated {label} to {target_name}");
+        state.footer_flash_ticks = 3;
+        state.call("renderDashboard", vec![]);
+        return;
+    }
+
+    let session_seed = state
+        .get_dashboard_sessions()
+        .into_iter()
+        .find(|entry| string_field(entry, "id") == session_id)
+        .unwrap_or_else(|| {
+            json!({
+                "index": -1,
+                "id": session_id,
+                "command": string_field(session, "command"),
+                "label": label,
+                "status": "running",
+                "active": false,
+                "worktreePath": optional_string(session, "worktreePath"),
+            })
+        });
+    if let Some(existing) = state.existing_session_action(&session_id) {
+        state.footer_flash = format!("{existing} is already settling");
+        state.footer_flash_ticks = 2;
+        state.render_mutation_frame();
+        return;
+    }
+    state.set_session_action(
+        &session_id,
+        Some("migrating"),
+        Some(json!({ "sessionSeed": session_seed })),
+    );
+    state.render_mutation_frame();
+    state.call(
+        "postToProjectService",
+        vec![
+            json!("/agents/migrate"),
+            json!({ "sessionId": session_id, "worktreePath": target_path }),
+            json!({ "timeoutMs": 10000 }),
+        ],
+    );
+    state.refresh_model();
+    state.get_dashboard_sessions();
+    state.render_mutation_frame();
+    state.set_session_action(&session_id, None, None);
+    state.footer_flash = format!("Migrated {label} to {target_name}");
+    state.footer_flash_ticks = 3;
+    state.render_mutation_frame();
 }
 
 #[derive(Clone)]
