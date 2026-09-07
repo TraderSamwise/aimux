@@ -1,0 +1,455 @@
+{
+  "version": 1,
+  "sources": [
+    "src/multiplexer/dashboard-control.test.ts",
+    "src/multiplexer/dashboard-ops.test.ts",
+    "src/multiplexer/session-launch.test.ts",
+    "src/multiplexer/session-runtime-core.test.ts",
+    "src/multiplexer/subscreens.test.ts"
+  ],
+  "subject": "multiplexer dashboard/runtime helper functions",
+  "generatedBy": "scripts/capture-multiplexer-runtime-helper-contracts.mjs",
+  "caseCount": 10,
+  "cases": [
+    {
+      "id": "multiplexer-runtime-helpers-001",
+      "name": "trims explicit project root and falls back to current working directory",
+      "source": "src/multiplexer/dashboard-control.test.ts",
+      "api": "dashboardProjectRoot",
+      "input": { "hosts": [{ "projectRoot": "  /repo/worktree  " }, { "projectRoot": "   " }, {}] },
+      "output": ["/repo/worktree", "<REPO>", "<REPO>"],
+      "inputSha256": "3431eef892d5884536cefb87090fbce608d17580e63ae1c8b97120cc3fe5cf1d"
+    },
+    {
+      "id": "multiplexer-runtime-helpers-002",
+      "name": "keeps only runtime guard repair attempts inside the flap window",
+      "source": "src/multiplexer/dashboard-control.test.ts",
+      "api": "pruneRuntimeGuardRepairAttempts",
+      "input": { "attempts": [1000, 40000, 119999, 120000, 120001, 160000], "now": 160000 },
+      "output": [119999, 120000, 120001, 160000],
+      "inputSha256": "3d7132c1ac6c42ddc2d89222684f77013d6e38b587e41d96b6d97e8dde5b2510"
+    },
+    {
+      "id": "multiplexer-runtime-helpers-003",
+      "name": "routes dashboard subscreen navigation keys and records side effects",
+      "source": "src/multiplexer/dashboard-control.test.ts",
+      "api": "handleDashboardSubscreenNavigationKey",
+      "input": {
+        "scenarios": [
+          { "key": "d", "currentScreen": "coordination" },
+          { "key": "c", "currentScreen": "coordination" },
+          { "key": "c", "currentScreen": "graveyard" },
+          { "key": "p", "currentScreen": "library" },
+          { "key": "l", "currentScreen": "library", "event": { "shift": true, "name": "l", "sequence": "L" } },
+          { "key": "t", "currentScreen": "project" },
+          { "key": "g", "currentScreen": "topology" },
+          { "key": "x", "currentScreen": "topology" }
+        ]
+      },
+      "output": [
+        {
+          "scenario": { "key": "d", "currentScreen": "coordination" },
+          "handled": true,
+          "screen": "dashboard",
+          "calls": [
+            { "method": "dashboardState.setScreen", "args": ["dashboard"] },
+            { "method": "writeDashboardClientStatuslineFile", "args": [] },
+            { "method": "persistDashboardUiState", "args": [] },
+            { "method": "tmuxRuntimeManager.refreshStatus", "args": [] },
+            { "method": "renderDashboard", "args": [] }
+          ]
+        },
+        {
+          "scenario": { "key": "c", "currentScreen": "coordination" },
+          "handled": false,
+          "screen": "coordination",
+          "calls": []
+        },
+        {
+          "scenario": { "key": "c", "currentScreen": "graveyard" },
+          "handled": true,
+          "screen": "graveyard",
+          "calls": [{ "method": "showCoordination", "args": [] }]
+        },
+        {
+          "scenario": { "key": "p", "currentScreen": "library" },
+          "handled": true,
+          "screen": "library",
+          "calls": [{ "method": "showProject", "args": [] }]
+        },
+        {
+          "scenario": {
+            "key": "l",
+            "currentScreen": "library",
+            "event": { "shift": true, "name": "l", "sequence": "L" }
+          },
+          "handled": false,
+          "screen": "library",
+          "calls": []
+        },
+        {
+          "scenario": { "key": "t", "currentScreen": "project" },
+          "handled": true,
+          "screen": "project",
+          "calls": [{ "method": "showTopology", "args": [] }]
+        },
+        {
+          "scenario": { "key": "g", "currentScreen": "topology" },
+          "handled": true,
+          "screen": "topology",
+          "calls": [{ "method": "showGraveyard", "args": [] }]
+        },
+        { "scenario": { "key": "x", "currentScreen": "topology" }, "handled": false, "screen": "topology", "calls": [] }
+      ],
+      "inputSha256": "8ace518c7b97cf96098f752aec944a84214fb8b8a8f6d41d6d5cb746ac3995e7"
+    },
+    {
+      "id": "multiplexer-runtime-helpers-004",
+      "name": "renders session details and terminal-safe text helpers",
+      "source": "src/multiplexer/dashboard-ops.test.ts",
+      "api": "renderSessionDetails+textHelpers",
+      "input": {
+        "session": {
+          "id": "codex-1",
+          "command": "codex",
+          "toolConfigKey": "codex-review",
+          "label": "Reviewer",
+          "backendSessionId": "backend-123",
+          "worktreeName": "feature",
+          "worktreeBranch": "rust-port",
+          "cwd": "/repo/.aimux/worktrees/feature",
+          "prNumber": 42,
+          "prTitle": "Fixture parity",
+          "prUrl": "https://github.example/pull/42",
+          "repoOwner": "sam",
+          "repoName": "aimux",
+          "repoRemote": "git@example.com:sam/aimux.git",
+          "semantic": {
+            "presentation": { "statusLabel": "Needs input" },
+            "user": { "attention": "needs_input" },
+            "notifications": { "unreadCount": 2, "latestText": "approve command" },
+            "activityNewCount": 3
+          },
+          "lastEvent": { "message": "wrote parser fix" },
+          "threadName": "Parser parity",
+          "threadUnreadCount": 1,
+          "threadWaitingOnMeCount": 2,
+          "threadWaitingOnThemCount": 0,
+          "threadPendingCount": 1,
+          "services": [{ "url": "http://localhost:3000" }, { "port": 4317 }]
+        },
+        "width": 44,
+        "height": 18,
+        "text": "This is a long line that should wrap across terminal columns",
+        "ansi": "\u001b[31mred text that truncates\u001b[0m"
+      },
+      "output": {
+        "details": [
+          "\u001b[1mDetails\u001b[0m",
+          "Agent: Reviewer",
+          "Canonical: codex-review",
+          "Aimux ID: codex-1",
+          "Backend ID: backend-123",
+          "Command: codex",
+          "Worktree: feature · rust-port",
+          "CWD: /repo/.aimux/worktrees/feature",
+          "PR: PR #42: Fixture parity",
+          "URL: https://github.example/pull/42",
+          "Repo: sam/aimux",
+          "Remote: git@example.com:sam/aimux.git",
+          "State: Needs input",
+          "Attention: needs_input",
+          "Unread: 2",
+          "Latest: approve command",
+          "New activity: 3",
+          "Last: wrote parser fix"
+        ],
+        "wrapKeyValue": ["Path: /repo/.aimux/worktrees/fe…"],
+        "wrapText": ["This is a long", "line that should", "wrap across", "terminal columns"],
+        "truncatePlain": "This is a long line tha…",
+        "truncateAnsi": "\u001b[31mred text th…\u001b[0m",
+        "basename": "feature"
+      },
+      "inputSha256": "592816644161f24c95ae59a21a9d3108d80b47cfd7f618f2677165aebb6f0c68"
+    },
+    {
+      "id": "multiplexer-runtime-helpers-005",
+      "name": "resolves default scribe launch from config variants",
+      "source": "src/multiplexer/session-launch.test.ts",
+      "api": "resolveDefaultScribeLaunch",
+      "input": {
+        "configs": [
+          { "scribe": { "defaultAgent": null }, "tools": {} },
+          { "scribe": { "defaultAgent": "codex" }, "tools": {} },
+          {
+            "scribe": { "defaultAgent": "codex" },
+            "tools": { "codex": { "command": "codex", "args": ["--model", "gpt-5"], "enabled": false } }
+          },
+          {
+            "scribe": {
+              "defaultAgent": { "tool": "codex", "extraArgs": ["--profile", "scribe"], "env": { "TEAM": "scribe" } }
+            },
+            "tools": {
+              "codex": {
+                "command": "codex",
+                "args": ["--model", "gpt-5"],
+                "enabled": true,
+                "defaultArgs": ["--sandbox", "workspace-write"],
+                "defaultEnv": { "AIMUX_TOOL": "codex" },
+                "sessionIdFlag": ["--session-id", "{sessionId}"],
+                "preambleFlag": ["--append-system-prompt"]
+              }
+            }
+          }
+        ]
+      },
+      "output": [
+        { "created": false, "reason": "disabled" },
+        { "created": false, "reason": "unknown-tool" },
+        { "created": false, "reason": "disabled-tool" },
+        {
+          "toolConfigKey": "codex",
+          "command": "codex",
+          "args": ["--model", "gpt-5", "--sandbox", "workspace-write", "--profile", "scribe"],
+          "sessionIdFlag": ["--session-id", "{sessionId}"],
+          "preambleFlag": ["--append-system-prompt"],
+          "env": { "AIMUX_TOOL": "codex", "TEAM": "scribe" }
+        }
+      ],
+      "inputSha256": "39fbf6d20382aa49470d4a368043e0b01f75c3b9d4c0d9fd6b226895a68bf854"
+    },
+    {
+      "id": "multiplexer-runtime-helpers-006",
+      "name": "derives backend session IDs, redacts launch args, and injects Codex instructions before positional prompts",
+      "source": "src/multiplexer/session-launch.test.ts",
+      "api": "deriveAimuxSessionIdFromBackendSessionId+summarizeLaunchArgs+injectCodexDeveloperInstructions",
+      "input": {
+        "backendCases": [
+          { "command": "/usr/local/bin/codex", "backendSessionId": "ABC-def_123456", "existingIds": [] },
+          {
+            "command": "claude",
+            "backendSessionId": "ABC-def_1234567890abcdef",
+            "existingIds": ["claude-abcdef", "claude-abcdef1", "claude-abcdef12", "claude-abcdef123"]
+          },
+          { "command": "codex", "backendSessionId": "!!!", "existingIds": [] }
+        ],
+        "launchArgs": [
+          "--model",
+          "gpt-5",
+          "--api-token",
+          "super-secret",
+          "AIMUX_TOKEN=abc123",
+          "--password=hunter2",
+          "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        ],
+        "codexArgs": ["--model", "gpt-5", "--sandbox", "workspace-write", "Implement the parser"],
+        "developerKey": "developer_instructions",
+        "instructions": "Follow AGENTS.md"
+      },
+      "output": {
+        "ids": ["codex-abcdef", "claude-abcdef1234", "codex-e84c53"],
+        "summarized": [
+          "--model",
+          "gpt-5",
+          "--api-token",
+          "<redacted>",
+          "AIMUX_TOKEN=<redacted>",
+          "--password=<redacted>",
+          "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..."
+        ],
+        "injected": [
+          "--model",
+          "gpt-5",
+          "--sandbox",
+          "workspace-write",
+          "-c",
+          "developer_instructions=\"Follow AGENTS.md\"",
+          "Implement the parser"
+        ],
+        "blankInjection": ["--model", "gpt-5", "--sandbox", "workspace-write", "Implement the parser"]
+      },
+      "inputSha256": "2f3503bd47a6ebba0ebe7a35b271fe5547dae85271346485c59bc924ab233d67"
+    },
+    {
+      "id": "multiplexer-runtime-helpers-007",
+      "name": "groups launch sessions by worktree and filters project-control sessions",
+      "source": "src/multiplexer/session-launch.test.ts",
+      "api": "getSessionsByWorktree+getScopedSessionEntries+getSessionWorktreePath",
+      "input": {
+        "sessions": [
+          { "id": "codex-1", "command": "codex" },
+          { "id": "overseer-1", "command": "claude", "team": { "role": "overseer", "projectControl": true } },
+          { "id": "claude-1", "command": "claude" },
+          { "id": "scribe-1", "command": "codex", "team": { "role": "scribe", "projectControl": true } }
+        ],
+        "worktreePairs": [
+          ["codex-1", "/repo/.aimux/worktrees/a"],
+          ["overseer-1", "/repo"],
+          ["claude-1", "/repo/.aimux/worktrees/a"]
+        ]
+      },
+      "output": {
+        "worktreePath": "/repo/.aimux/worktrees/a",
+        "groups": [
+          { "path": "/repo/.aimux/worktrees/a", "ids": ["codex-1", "claude-1"] },
+          { "path": "/repo", "ids": ["overseer-1"] },
+          { "path": null, "ids": ["scribe-1"] }
+        ],
+        "scoped": [
+          { "id": "codex-1", "index": 0 },
+          { "id": "claude-1", "index": 2 }
+        ]
+      },
+      "inputSha256": "37106eba0dcc2dae206bd4bf8ce7c49a8f2bf5181163b9d00a647c396a8fd360"
+    },
+    {
+      "id": "multiplexer-runtime-helpers-008",
+      "name": "applies and resolves session labels across live and offline caches",
+      "source": "src/multiplexer/session-runtime-core.test.ts",
+      "api": "getSessionLabel+applySessionLabel+applyDashboardSessionLabel",
+      "input": {
+        "sessionLabels": [["live-1", "Live Label"]],
+        "offlineSessions": [{ "id": "offline-1", "command": "codex", "label": "Old Offline" }],
+        "dashboardSessionsCache": [{ "id": "live-1", "label": "Old Live" }, { "id": "other" }],
+        "dashboardWorktreeGroupsCache": [
+          { "name": "main", "sessions": [{ "id": "live-1", "label": "Old Group" }, { "id": "other" }] }
+        ],
+        "dashboardState": { "worktreeSessions": [{ "id": "live-1", "label": "Old State" }, { "id": "other" }] }
+      },
+      "output": {
+        "before": { "live": "Live Label", "offline": "Old Offline", "missing": null },
+        "labels": { "offline-1": "New Offline" },
+        "offlineSessions": [{ "id": "offline-1", "command": "codex", "label": "New Offline" }],
+        "dashboardSessionsCache": [{ "id": "live-1", "label": "New Dashboard" }, { "id": "other" }],
+        "dashboardWorktreeGroupsCache": [
+          { "name": "main", "sessions": [{ "id": "live-1", "label": "New Dashboard" }, { "id": "other" }] }
+        ],
+        "dashboardState": { "worktreeSessions": [{ "id": "live-1", "label": "New Dashboard" }, { "id": "other" }] }
+      },
+      "inputSha256": "7476cda514567f8096748687c1cea46326e28e4c32d1740d33bfe368ff5cfb23"
+    },
+    {
+      "id": "multiplexer-runtime-helpers-009",
+      "name": "strips SGR, reconciles activity, and rejects missing or exited sessions",
+      "source": "src/multiplexer/session-runtime-core.test.ts",
+      "api": "stripSgr+reconcileAgentActivity+resolveRunningSession",
+      "input": {
+        "text": "plain \u001b[1;31mred\u001b[0m text \u001b[38;2;1;2;3mtruecolor\u001b[0m",
+        "activityCases": [
+          { "reported": "idle", "activityText": "Thinking", "paneState": {} },
+          { "reported": "waiting", "activityText": "Thinking", "paneState": {} },
+          { "reported": "idle", "activityText": "", "paneState": { "interruptedVisible": true } },
+          { "activityText": "Running", "paneState": {} }
+        ],
+        "sessions": [
+          { "id": "live-1", "command": "codex" },
+          { "id": "exited-1", "command": "codex", "exited": true }
+        ]
+      },
+      "output": {
+        "stripped": "plain red text truecolor",
+        "activities": ["running", "waiting", "interrupted", "running"],
+        "resolve": [
+          { "ok": true, "value": "live-1" },
+          { "ok": false, "error": "Session \"exited-1\" is not running" },
+          { "ok": false, "error": "Session \"missing-1\" is not running" }
+        ]
+      },
+      "inputSha256": "6999d0e46f46930104ab0148e6b46c9d936a4602e33d64f2741e733337d786f1"
+    },
+    {
+      "id": "multiplexer-runtime-helpers-010",
+      "name": "scores attention, chooses preferred thread, and describes handoff state",
+      "source": "src/multiplexer/subscreens.test.ts",
+      "api": "attentionScore+getPreferredThreadIndexForParticipant+describeHandoffState",
+      "input": {
+        "attentionInputs": [
+          { "semantic": { "user": { "attention": "error" }, "notifications": {}, "activityNewCount": 0 } },
+          { "semantic": { "user": { "attention": "needs_input" }, "notifications": {}, "activityNewCount": 0 } },
+          {
+            "semantic": { "user": { "attention": "none", "label": "done" }, "notifications": {}, "activityNewCount": 0 }
+          },
+          {
+            "semantic": {
+              "user": { "attention": "none" },
+              "notifications": { "unreadCount": 1 },
+              "activityNewCount": 0
+            }
+          }
+        ],
+        "participant": "codex-1",
+        "entries": [
+          {
+            "displayTitle": "Older unread",
+            "thread": {
+              "id": "thread-1",
+              "participants": ["codex-1", "user"],
+              "owner": "user",
+              "waitingOn": [],
+              "unreadBy": ["codex-1"],
+              "updatedAt": "2026-01-01T00:00:00.000Z"
+            }
+          },
+          {
+            "displayTitle": "Waiting on me",
+            "thread": {
+              "id": "thread-2",
+              "participants": ["codex-1", "user"],
+              "owner": "user",
+              "waitingOn": ["codex-1"],
+              "unreadBy": [],
+              "updatedAt": "2026-01-01T00:00:01.000Z"
+            }
+          },
+          {
+            "displayTitle": "Different participant",
+            "thread": {
+              "id": "thread-3",
+              "participants": ["claude-1", "user"],
+              "owner": "claude-1",
+              "waitingOn": ["user"],
+              "unreadBy": ["user"],
+              "updatedAt": "2026-01-01T00:00:02.000Z"
+            }
+          }
+        ],
+        "handoffs": [
+          {
+            "status": "done",
+            "owner": "codex-1",
+            "createdBy": "user",
+            "participants": ["user", "codex-1"],
+            "waitingOn": []
+          },
+          {
+            "status": "open",
+            "owner": "codex-1",
+            "createdBy": "user",
+            "participants": ["user", "codex-1"],
+            "waitingOn": ["user"]
+          },
+          {
+            "status": "open",
+            "owner": "codex-1",
+            "createdBy": "user",
+            "participants": ["user", "codex-1"],
+            "waitingOn": []
+          },
+          { "status": "open", "createdBy": "user", "participants": ["user", "claude-1"], "waitingOn": [] }
+        ]
+      },
+      "output": {
+        "scores": [5, 4, 1, 2],
+        "preferredIndex": 1,
+        "missingIndex": -1,
+        "handoffStates": [
+          "completed by codex-1",
+          "codex-1 waiting on user",
+          "accepted by codex-1",
+          "awaiting acceptance from claude-1"
+        ]
+      },
+      "inputSha256": "faec32a2790d1f03cf36ffaa404abcdc964ba572ab2e7ac8753c791b87aaaba5"
+    }
+  ]
+}

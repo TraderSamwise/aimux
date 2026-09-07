@@ -1029,6 +1029,10 @@ Priority fixture groups:
   values, host-state transitions, payload validation, coalescing, and
   project-service call logs captured by running TypeScript
   `refreshProjectObservability`.
+- `multiplexer/runtime-helpers.json`: dashboard-control navigation/root helper
+  behavior, session detail text rendering, launch redaction/default-scribe ID
+  helpers, session-runtime label/activity helpers, and subscreen scoring/state
+  text captured by running TypeScript multiplexer helper functions.
 - `multiplexer/topology-refresh.json`: topology refresh return values,
   host-state transitions, payload validation, coalescing, and project-service
   call logs captured by running TypeScript `refreshTopology`.
