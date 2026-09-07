@@ -161,6 +161,7 @@ pub mod session_runtime;
 pub mod session_runtime_agent_controls_contract;
 pub mod session_runtime_label_update_contract;
 pub mod session_runtime_metadata_contract;
+pub mod session_runtime_tmux_metadata_sync_contract;
 pub mod session_viewed;
 pub mod shell_args;
 pub mod shell_hooks;
