@@ -2,7 +2,7 @@
 
 This inventory lists real captured TypeScript contract corpora that are intentionally `#[ignore]` because the matching Rust API does not exist yet, the implementation sits behind an ownership fence, or the existing fenced Rust implementation currently differs from the captured TypeScript behavior. It deliberately does not count Vitest reporter output as coverage.
 
-Coverage definition used for this inventory: a `src` test module is covered when any `testdata/contracts/v1/**/*.json` fixture records that module in a top-level `source`, top-level `sources`, case `source`, or group/case `source` field, and the fixture contains behavior-level input/output or state data rather than test-runner metadata. Under that definition there are 245 `src` test modules, 216 covered modules, and 29 uncovered modules remaining.
+Coverage definition used for this inventory: a `src` test module is covered when any `testdata/contracts/v1/**/*.json` fixture records that module in a top-level `source`, top-level `sources`, case `source`, or group/case `source` field, and the fixture contains behavior-level input/output or state data rather than test-runner metadata. Under that definition there are 245 `src` test modules, 217 covered modules, and 28 uncovered modules remaining.
 
 There are 25 ignored corpus entries below, covering 109 captured checklist cases.
 
@@ -65,7 +65,6 @@ These `src/**/*.test.ts` modules still have no behavior-level corpus under `test
 | `src/multiplexer/session-runtime-core.test.ts` | Managed tmux runtime core; needs mocked tmux/metadata state transition corpus. | tmux* |
 | `src/multiplexer/subscreens.test.ts` | Dashboard coordination/archive subscreen state machine; needs input/output event corpus. | dashboard_* |
 | `src/multiplexer/topology.test.ts` | Dashboard topology service-backed model; needs mocked API input/output capture. | dashboard_* |
-| `src/tmux/attach-terminal-guard.test.ts` | Attach terminal guard has real inputs/outputs; needs direct capture. | tmux* |
 | `src/tmux/doctor.test.ts` | tmux doctor compatibility/repair report; needs mocked tmux input/output capture. | tmux* |
 | `src/tui/screens/overlay-renderers.test.ts` | TUI overlay renderer outputs; needs rendered text corpus. | dashboard_* / terminal/control/render |
 | `src/tui/screens/subscreen-renderers.test.ts` | TUI subscreen renderer outputs; needs rendered text corpus. | dashboard_* / terminal/control/render |

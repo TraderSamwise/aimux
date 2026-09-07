@@ -873,6 +873,9 @@ Priority fixture groups:
 - `tmux/dashboard-tui-visibility.json`: dashboard TUI visibility tmux parsing,
   stale-pane process recovery, host cache, and wake-transition behavior
   captured by running TypeScript `multiplexer/tui-visibility`.
+- `tmux/attach-terminal-guard.json`: interactive-terminal detection,
+  no-terminal attach errors, and attach-session argv behavior captured by
+  running TypeScript `tmux/runtime-manager` helpers.
 - `tmux/expose-layout.json`: expose grid layout, client-size matching, and
   preview row selection captured by running TypeScript `tmux/expose` helpers.
 - `tmux/expose-model.json`: expose scope, request, focus, overseer, and
