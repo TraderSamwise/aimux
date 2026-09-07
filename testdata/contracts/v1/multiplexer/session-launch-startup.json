@@ -1,0 +1,204 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/session-launch.ts",
+  "generatedBy": "scripts/capture-session-launch-startup-contract.mjs",
+  "description": "Session launch startup, project-service startup, and standalone project-service lifetime behavior captured by running TypeScript with deterministic fake hosts.",
+  "cases": [
+    {
+      "id": "session-launch-startup-001",
+      "name": "run initializes a normal session and focuses the created entry",
+      "source": "src/multiplexer/session-launch.ts",
+      "api": "run",
+      "input": {
+        "config": {
+          "defaultTool": "codex",
+          "tools": {
+            "codex": {
+              "command": "codex",
+              "args": ["--model", "gpt-5"],
+              "enabled": true,
+              "preambleFlag": ["--append-system-prompt"],
+              "sessionIdFlag": ["--session-id", "{sessionId}"]
+            }
+          },
+          "scribe": { "defaultAgent": null }
+        },
+        "options": { "command": "codex", "args": ["--model", "gpt-5", "--profile", "dev"] }
+      },
+      "output": {
+        "result": 0,
+        "host": {
+          "mode": "session",
+          "startedInDashboard": false,
+          "defaultCommand": "codex",
+          "defaultArgs": ["--model", "gpt-5", "--profile", "dev"],
+          "sessionCount": 1,
+          "graveyardCleanupRunning": false,
+          "inboxCleanupRunning": false
+        },
+        "calls": [
+          { "method": "startHeartbeat", "args": [] },
+          { "method": "syncSessionsFromTopology", "args": [] },
+          { "method": "writeInstructionFiles", "args": [] },
+          {
+            "method": "createSession",
+            "args": [
+              "codex",
+              ["--model", "gpt-5", "--profile", "dev"],
+              ["--append-system-prompt"],
+              "codex",
+              null,
+              ["--session-id", "{sessionId}"]
+            ]
+          },
+          { "method": "focusSession", "args": [0] }
+        ]
+      },
+      "inputSha256": "4106ef9735350d07e8a9270cee71dc2c5f256c7f37b207b0b92ba3e08b6bd5e4"
+    },
+    {
+      "id": "session-launch-startup-002",
+      "name": "startProjectServiceHost adopts topology before service exposure and starts maintenance",
+      "source": "src/multiplexer/session-launch.ts",
+      "api": "startProjectServiceHost",
+      "input": {
+        "config": {
+          "defaultTool": "codex",
+          "tools": {
+            "codex": {
+              "command": "codex",
+              "args": ["--model", "gpt-5"],
+              "enabled": true,
+              "preambleFlag": ["--append-system-prompt"],
+              "sessionIdFlag": ["--session-id", "{sessionId}"]
+            }
+          },
+          "scribe": { "defaultAgent": null }
+        },
+        "host": { "mode": "dashboard" }
+      },
+      "output": {
+        "result": null,
+        "host": {
+          "mode": "project-service",
+          "startedInDashboard": false,
+          "defaultCommand": null,
+          "defaultArgs": null,
+          "sessionCount": 0,
+          "graveyardCleanupRunning": false,
+          "inboxCleanupRunning": false
+        },
+        "calls": [
+          { "method": "tmuxRuntimeManager.repairLegacyProjectSessionNames", "args": ["<REPO>"] },
+          { "method": "syncSessionsFromTopology", "args": [] },
+          { "method": "writeInstructionFiles", "args": [] },
+          { "method": "refreshDesktopStateSnapshot", "args": [] },
+          { "method": "startProjectServices", "args": [] },
+          { "method": "startStatusRefresh", "args": [] },
+          { "method": "startGraveyardCleanup", "args": [] },
+          { "method": "cleanupGraveyard", "args": [] },
+          { "method": "startInboxCleanup", "args": [] },
+          { "method": "cleanupInbox", "args": [] },
+          { "method": "writeStatuslineFile", "args": [] }
+        ]
+      },
+      "inputSha256": "f13e214d7df08c32242bd692e623a1ff9a9766d3d10a928f4ccd2ac5f0562155"
+    },
+    {
+      "id": "session-launch-startup-003",
+      "name": "startProjectServiceHost respects already-running cleanup jobs",
+      "source": "src/multiplexer/session-launch.ts",
+      "api": "startProjectServiceHost",
+      "input": {
+        "config": {
+          "defaultTool": "codex",
+          "tools": {
+            "codex": {
+              "command": "codex",
+              "args": ["--model", "gpt-5"],
+              "enabled": true,
+              "preambleFlag": ["--append-system-prompt"],
+              "sessionIdFlag": ["--session-id", "{sessionId}"]
+            }
+          },
+          "scribe": { "defaultAgent": null }
+        },
+        "host": { "mode": "dashboard", "graveyardCleanupRunning": true, "inboxCleanupRunning": true }
+      },
+      "output": {
+        "result": null,
+        "host": {
+          "mode": "project-service",
+          "startedInDashboard": false,
+          "defaultCommand": null,
+          "defaultArgs": null,
+          "sessionCount": 0,
+          "graveyardCleanupRunning": true,
+          "inboxCleanupRunning": true
+        },
+        "calls": [
+          { "method": "tmuxRuntimeManager.repairLegacyProjectSessionNames", "args": ["<REPO>"] },
+          { "method": "syncSessionsFromTopology", "args": [] },
+          { "method": "writeInstructionFiles", "args": [] },
+          { "method": "refreshDesktopStateSnapshot", "args": [] },
+          { "method": "startProjectServices", "args": [] },
+          { "method": "startStatusRefresh", "args": [] },
+          { "method": "startGraveyardCleanup", "args": [] },
+          { "method": "startInboxCleanup", "args": [] },
+          { "method": "writeStatuslineFile", "args": [] }
+        ]
+      },
+      "inputSha256": "214385ed6ea86622cd074955a0aae07cc2e1e3030bff677b371c14326c2fc1db"
+    },
+    {
+      "id": "session-launch-startup-004",
+      "name": "runProjectService keeps the host alive until resolveRun then tears down",
+      "source": "src/multiplexer/session-launch.ts",
+      "api": "runProjectService",
+      "input": {
+        "config": {
+          "defaultTool": "codex",
+          "tools": {
+            "codex": {
+              "command": "codex",
+              "args": ["--model", "gpt-5"],
+              "enabled": true,
+              "preambleFlag": ["--append-system-prompt"],
+              "sessionIdFlag": ["--session-id", "{sessionId}"]
+            }
+          },
+          "scribe": { "defaultAgent": null }
+        },
+        "host": { "mode": "dashboard" },
+        "exitCode": 7
+      },
+      "output": {
+        "result": 7,
+        "host": {
+          "mode": "project-service",
+          "startedInDashboard": false,
+          "defaultCommand": null,
+          "defaultArgs": null,
+          "sessionCount": 0,
+          "graveyardCleanupRunning": false,
+          "inboxCleanupRunning": false
+        },
+        "calls": [
+          { "method": "tmuxRuntimeManager.repairLegacyProjectSessionNames", "args": ["<REPO>"] },
+          { "method": "syncSessionsFromTopology", "args": [] },
+          { "method": "writeInstructionFiles", "args": [] },
+          { "method": "refreshDesktopStateSnapshot", "args": [] },
+          { "method": "startProjectServices", "args": [] },
+          { "method": "startStatusRefresh", "args": [] },
+          { "method": "startGraveyardCleanup", "args": [] },
+          { "method": "cleanupGraveyard", "args": [] },
+          { "method": "startInboxCleanup", "args": [] },
+          { "method": "cleanupInbox", "args": [] },
+          { "method": "writeStatuslineFile", "args": [] },
+          { "method": "teardown", "args": [] }
+        ]
+      },
+      "inputSha256": "8abe6e055dfc3353dde71143b62d0e022fc60b5983ef9a77500562b05ee375f3"
+    }
+  ]
+}
