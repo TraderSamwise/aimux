@@ -10,8 +10,8 @@ Statuses:
 - `ERROR`: the audit could not prove enforcement because the suite errored outside a fixture assertion.
 - `STATIC`: non-empty active suite observed without dynamic mutation.
 
-Summary: 273 suites, 320 suite/corpus bindings, 3873 cases.
-Binding statuses: PROVEN-FAILS 320, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
+Summary: 274 suites, 321 suite/corpus bindings, 3892 cases.
+Binding statuses: PROVEN-FAILS 321, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
 
 | Suite | Status | Corpus | Cases | Detail |
 | --- | --- | --- | ---: | --- |
@@ -317,6 +317,7 @@ Binding statuses: PROVEN-FAILS 320, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
 | `fixture_transcript_turn_state` | PROVEN-FAILS | `testdata/contracts/v1/transcript/turn-state.json` | 27 | mutated fixture output failed owning Rust suite |
 | `fixture_transport_security` | PROVEN-FAILS | `testdata/contracts/v1/transport/security.json` | 7 | mutated fixture output failed owning Rust suite |
 | `fixture_tui_api_runtime` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/tui-api-runtime.json` | 19 | mutated fixture output failed owning Rust suite |
+| `fixture_tui_api_runtime_state` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/tui-api-runtime-state.json` | 19 | mutated fixture output failed owning Rust suite |
 | `fixture_tui_render_box` | PROVEN-FAILS | `testdata/contracts/v1/tui/render-box.json` | 6 | mutated fixture output failed owning Rust suite |
 | `fixture_tui_render_text` | PROVEN-FAILS | `testdata/contracts/v1/tui/render-text.json` | 4 | mutated fixture output failed owning Rust suite |
 | `fixture_tui_render_theme` | PROVEN-FAILS | `testdata/contracts/v1/tui/render-theme.json` | 36 | mutated fixture output failed owning Rust suite |
