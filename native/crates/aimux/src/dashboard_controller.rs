@@ -292,6 +292,7 @@ impl DashboardController {
                 })
             }
             DashboardKey::Printable('e') => self.open_teammate_picker(snapshot),
+            DashboardKey::NextAttention => self.activate_next_attention_entry(snapshot),
             DashboardKey::Printable('s') => {
                 self.load_orchestration_routes(snapshot, DashboardOrchestrationMode::Message)
             }
@@ -902,6 +903,7 @@ impl DashboardController {
             | DashboardKey::SwitchTool
             | DashboardKey::ClearFailures
             | DashboardKey::ToggleOfflineAgents
+            | DashboardKey::NextAttention
             | DashboardKey::Backspace
             | DashboardKey::Digit(_)
             | DashboardKey::Tab
@@ -1325,6 +1327,7 @@ impl DashboardController {
             | DashboardKey::ToggleOfflineAgents
             | DashboardKey::LaunchOptions
             | DashboardKey::Quit
+            | DashboardKey::NextAttention
             | DashboardKey::Digit(_)
             | DashboardKey::Tab
             | DashboardKey::Left
@@ -1421,6 +1424,72 @@ impl DashboardController {
             };
         }
         self.handle_action(snapshot, DashboardActionKind::Enter)
+    }
+
+    fn activate_next_attention_entry(
+        &mut self,
+        snapshot: &DesktopStateSnapshot,
+    ) -> DashboardControllerEffect {
+        let ordered = visual_dashboard_session_order(snapshot);
+        let mut scored = ordered
+            .iter()
+            .enumerate()
+            .filter_map(|(index, session)| {
+                let score = attention_score(session);
+                (score > 0).then_some((index, *session, score))
+            })
+            .collect::<Vec<_>>();
+        if scored.is_empty() {
+            return DashboardControllerEffect::Ignored;
+        }
+        scored.sort_by(|left, right| right.2.cmp(&left.2).then_with(|| left.0.cmp(&right.0)));
+
+        let current_session_id = match self.navigation.selected_entry(snapshot) {
+            Some(DashboardEntryRef::Session(session)) => Some(session.id.as_str()),
+            _ => None,
+        };
+        let target_index = current_session_id
+            .and_then(|session_id| {
+                scored
+                    .iter()
+                    .position(|(_, session, _)| session.id == session_id)
+            })
+            .map(|index| (index + 1) % scored.len())
+            .unwrap_or(0);
+        let target = scored[target_index].1;
+        self.focus_session_by_id(snapshot, &target.id);
+        self.handle_action(snapshot, DashboardActionKind::Enter)
+    }
+
+    fn focus_session_by_id(&mut self, snapshot: &DesktopStateSnapshot, session_id: &str) -> bool {
+        if snapshot.worktree_groups.is_empty() {
+            if let Some(index) = snapshot
+                .sessions
+                .iter()
+                .position(|session| session.id == session_id)
+            {
+                self.navigation.level = DashboardNavLevel::Sessions;
+                self.navigation.worktree_index = 0;
+                self.navigation.item_index = index;
+                self.navigation.clear_quick_jump();
+                return true;
+            }
+            return false;
+        }
+        for (worktree_index, group) in snapshot.worktree_groups.iter().enumerate() {
+            if let Some(item_index) = group
+                .sessions
+                .iter()
+                .position(|session| session.id == session_id)
+            {
+                self.navigation.level = DashboardNavLevel::Sessions;
+                self.navigation.worktree_index = worktree_index;
+                self.navigation.item_index = item_index;
+                self.navigation.clear_quick_jump();
+                return true;
+            }
+        }
+        false
     }
 
     fn handle_action(
@@ -1582,6 +1651,7 @@ pub enum DashboardKey {
     ClearFailures,
     ToggleOfflineAgents,
     LaunchOptions,
+    NextAttention,
     Quit,
     Digit(char),
     Backspace,
@@ -1666,6 +1736,7 @@ fn normalize_dashboard_command_key(key: DashboardKey) -> DashboardKey {
         DashboardKey::Printable('f') => DashboardKey::ForkAgent,
         DashboardKey::Printable('S') => DashboardKey::SwitchTool,
         DashboardKey::Printable('o') => DashboardKey::LaunchOptions,
+        DashboardKey::Printable('u') => DashboardKey::NextAttention,
         DashboardKey::Printable('j') => DashboardKey::Down,
         DashboardKey::Printable('k') => DashboardKey::Up,
         DashboardKey::Printable(digit) if digit.is_ascii_digit() => DashboardKey::Digit(digit),
@@ -1678,6 +1749,41 @@ fn is_live_session(session: &DashboardSession) -> bool {
         session.status,
         SessionStatus::Offline | SessionStatus::Exited
     )
+}
+
+fn visual_dashboard_session_order(snapshot: &DesktopStateSnapshot) -> Vec<&DashboardSession> {
+    let mut ordered = snapshot
+        .sessions
+        .iter()
+        .filter(|session| session.worktree_path.is_none())
+        .collect::<Vec<_>>();
+    for group in &snapshot.worktree_groups {
+        for session in &group.sessions {
+            if !ordered.iter().any(|entry| entry.id == session.id) {
+                ordered.push(session);
+            }
+        }
+    }
+    for session in &snapshot.sessions {
+        if !ordered.iter().any(|entry| entry.id == session.id) {
+            ordered.push(session);
+        }
+    }
+    ordered
+}
+
+fn attention_score(session: &DashboardSession) -> usize {
+    let Some(semantic) = session.semantic.as_ref() else {
+        return 0;
+    };
+    match semantic.user.attention.as_str() {
+        "error" => 5,
+        "needs_input" | "needs_response" => 4,
+        "blocked" => 3,
+        _ if semantic.notifications.unread_count > 0 => 2,
+        _ if semantic.activity_new_count > 0 || semantic.user.label == "done" => 1,
+        _ => 0,
+    }
 }
 
 pub fn is_teammate_session(session: &DashboardSession) -> bool {

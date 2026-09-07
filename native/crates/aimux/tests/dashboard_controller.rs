@@ -4,7 +4,7 @@ use aimux::dashboard_controller::{
     parse_dashboard_key, parse_dashboard_keys,
 };
 use aimux::dashboard_model::{
-    DesktopStateGoldenFixture, DesktopStateSnapshot, SessionTeamMetadata,
+    DesktopStateGoldenFixture, DesktopStateSnapshot, SessionSemanticState, SessionTeamMetadata,
 };
 use aimux::dashboard_renderer::DashboardNavLevel;
 use aimux::dashboard_tool_picker::{DashboardToolEntry, DashboardToolPickerMode};
@@ -251,6 +251,60 @@ fn switch_key_opens_picker_for_selected_live_session() {
             session_id: "claude-0".into()
         })
     );
+}
+
+#[test]
+fn next_attention_key_opens_highest_priority_attention_session() {
+    let mut snapshot = snapshot();
+    snapshot.sessions[0].tmux_window_id = Some("@blocked".into());
+    snapshot.sessions[0].semantic = Some(semantic("blocked", "blocked", 0, 0));
+    snapshot.worktree_groups[0].sessions[1].tmux_window_id = Some("@blocked".into());
+    snapshot.worktree_groups[0].sessions[1].semantic = Some(semantic("blocked", "blocked", 0, 0));
+    snapshot.worktree_groups[1].sessions[0].tmux_window_id = Some("@input".into());
+    snapshot.worktree_groups[1].sessions[0].semantic =
+        Some(semantic("needs_input", "needs_input", 0, 0));
+    let mut controller = DashboardController::new(&snapshot);
+
+    let DashboardControllerEffect::Request(request) =
+        controller.handle_key(&snapshot, DashboardKey::Printable('u'))
+    else {
+        panic!("expected attention request");
+    };
+
+    assert_eq!(request.path, routes::controls::FOCUS_WINDOW);
+    assert_eq!(request.body, json!({ "windowId": "@input", "focus": true }));
+    assert_eq!(controller.navigation.level, DashboardNavLevel::Sessions);
+    assert_eq!(controller.navigation.worktree_index, 1);
+    assert_eq!(controller.navigation.item_index, 0);
+}
+
+#[test]
+fn next_attention_key_cycles_from_current_attention_session() {
+    let mut snapshot = snapshot();
+    snapshot.sessions[0].tmux_window_id = Some("@blocked".into());
+    snapshot.sessions[0].semantic = Some(semantic("blocked", "blocked", 0, 0));
+    snapshot.worktree_groups[0].sessions[1].tmux_window_id = Some("@blocked".into());
+    snapshot.worktree_groups[0].sessions[1].semantic = Some(semantic("blocked", "blocked", 0, 0));
+    snapshot.worktree_groups[1].sessions[0].tmux_window_id = Some("@input".into());
+    snapshot.worktree_groups[1].sessions[0].semantic =
+        Some(semantic("needs_input", "needs_input", 0, 0));
+    let mut controller = DashboardController::new(&snapshot);
+    controller.navigation.level = DashboardNavLevel::Sessions;
+    controller.navigation.worktree_index = 1;
+    controller.navigation.item_index = 0;
+
+    let DashboardControllerEffect::Request(request) =
+        controller.handle_key(&snapshot, DashboardKey::Printable('u'))
+    else {
+        panic!("expected attention request");
+    };
+
+    assert_eq!(
+        request.body,
+        json!({ "windowId": "@blocked", "focus": true })
+    );
+    assert_eq!(controller.navigation.worktree_index, 0);
+    assert_eq!(controller.navigation.item_index, 1);
 }
 
 #[test]
@@ -1155,6 +1209,21 @@ fn snapshot() -> DesktopStateSnapshot {
     serde_json::from_str::<DesktopStateGoldenFixture>(GOLDEN)
         .expect("valid fixture")
         .runtime_full
+}
+
+fn semantic(
+    label: &str,
+    attention: &str,
+    unread_count: usize,
+    activity_new_count: usize,
+) -> SessionSemanticState {
+    serde_json::from_value(json!({
+        "user": { "label": label, "attention": attention },
+        "notifications": { "unreadCount": unread_count },
+        "presentation": { "statusLabel": label, "compactHint": null, "attentionScore": 0 },
+        "activityNewCount": activity_new_count
+    }))
+    .unwrap()
 }
 
 fn orchestration_target(label: &str) -> DashboardOrchestrationTarget {
