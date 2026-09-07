@@ -107,6 +107,7 @@ pub mod multiplexer_persistence_worktrees_contract;
 pub mod multiplexer_resource_refresh;
 pub mod multiplexer_runtime_helpers;
 pub mod multiplexer_runtime_state_methods_contract;
+pub mod native_plugin_transcript_length;
 pub mod notification_policy_contract;
 pub mod paths;
 pub mod plugin_api;
