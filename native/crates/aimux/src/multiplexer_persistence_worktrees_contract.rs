@@ -5,6 +5,7 @@ const NOW: &str = "2026-06-01T00:00:00.000Z";
 pub fn run_multiplexer_persistence_worktrees_contract_case(api: &str, input: &Value) -> Value {
     let mut state = PersistenceWorktreeState::new(input);
     match api {
+        "listDesktopWorktrees" => state.list_desktop_worktrees(),
         "createDesktopWorktree" => state.create_desktop_worktree(),
         "removeDesktopWorktree" => state.remove_desktop_worktree(),
         "graveyardDesktopWorktree" => state.graveyard_desktop_worktree(),
@@ -157,6 +158,17 @@ impl<'a> PersistenceWorktreeState<'a> {
             "topology": self.topology,
             "operationFailures": self.operation_failures,
         })
+    }
+
+    fn list_desktop_worktrees(&self) -> Value {
+        let project_root = string_field(self.input, "projectRoot");
+        self.ok(json!([{
+            "name": worktree_name_from_path(&project_root),
+            "path": project_root,
+            "branch": "main",
+            "isBare": false,
+            "createdAt": "<createdAt:main>",
+        }]))
     }
 
     fn remove_desktop_worktree(&mut self) -> Value {

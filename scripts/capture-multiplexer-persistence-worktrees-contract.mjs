@@ -59,13 +59,23 @@ function gitInit(projectRoot) {
 
 function normalize(value, ctx) {
   return normalizeGeneratedIds(
-    JSON.parse(
-      JSON.stringify(value, (_key, nested) => {
-        if (typeof nested !== "string") return nested;
-        return nested.replaceAll(ctx.projectRoot, "<repo>").replaceAll(ctx.tmpRoot, "<tmp>");
-      }),
+    normalizeWorktreeCreatedAt(
+      JSON.parse(
+        JSON.stringify(value, (_key, nested) => {
+          if (typeof nested !== "string") return nested;
+          return nested.replaceAll(ctx.projectRoot, "<repo>").replaceAll(ctx.tmpRoot, "<tmp>");
+        }),
+      ),
     ),
   );
+}
+
+function normalizeWorktreeCreatedAt(value) {
+  if (Array.isArray(value)) return value.map(normalizeWorktreeCreatedAt);
+  if (!value || typeof value !== "object") return value;
+  const out = Object.fromEntries(Object.entries(value).map(([key, nested]) => [key, normalizeWorktreeCreatedAt(nested)]));
+  if (out.path === "<repo>" && typeof out.createdAt === "string") out.createdAt = "<createdAt:main>";
+  return out;
 }
 
 function normalizeGeneratedIds(value) {
@@ -233,6 +243,21 @@ async function invoke(api, ctx, input) {
   const actualInput = denormalize(input, ctx);
   const { host, calls } = hostFor(actualInput);
   try {
+    if (api === "listDesktopWorktrees") {
+      const returned = persistenceMethods.listDesktopWorktrees.call(host);
+      return normalize(
+        {
+          ok: true,
+          returned,
+          completion: null,
+          checkedPaths: checkedPaths(actualInput),
+          host: snapshotHost(host, calls),
+          topology: snapshotTopology(),
+          operationFailures: operationFailures.listDashboardOperationFailures(),
+        },
+        ctx,
+      );
+    }
     const arg =
       api === "createDesktopWorktree"
         ? actualInput.name
@@ -313,6 +338,23 @@ async function record(cases, name, api, label, prepare) {
 }
 
 const cases = [];
+
+await record(
+  cases,
+  "lists desktop worktrees from the host project root",
+  "listDesktopWorktrees",
+  "list-host-root",
+  ({ projectRoot, worktreeRoot }) => {
+    const worktreePath = join(worktreeRoot, "demo");
+    return {
+      projectRoot,
+      worktrees: [
+        { name: "repo", branch: "master", path: projectRoot, isBare: false },
+        { name: "demo", branch: "demo", path: worktreePath, isBare: false },
+      ],
+    };
+  },
+);
 
 await record(cases, "graveyards a worktree into topology", "graveyardDesktopWorktree", "graveyard", ({ projectRoot, worktreeRoot }) => {
   const worktreePath = join(worktreeRoot, "demo");
@@ -395,6 +437,26 @@ await record(cases, "creates a desktop worktree and settles topology active", "c
     managedWindows: [],
   };
 });
+
+await record(
+  cases,
+  "creates worktrees relative to the host project root",
+  "createDesktopWorktree",
+  "create-host-root",
+  ({ projectRoot, worktreeRoot }) => {
+    const worktreePath = join(worktreeRoot, "smoke");
+    mkdirSync(worktreeRoot, { recursive: true });
+    return {
+      projectRoot,
+      name: "smoke",
+      path: worktreePath,
+      worktrees: [],
+      sessions: [],
+      sessionWorktreePaths: [],
+      managedWindows: [],
+    };
+  },
+);
 
 await record(
   cases,

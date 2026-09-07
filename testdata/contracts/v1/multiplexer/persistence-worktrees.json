@@ -6,6 +6,47 @@
   "cases": [
     {
       "id": "multiplexer-persistence-worktrees-001",
+      "name": "lists desktop worktrees from the host project root",
+      "source": "src/multiplexer/persistence-methods.test.ts",
+      "api": "listDesktopWorktrees",
+      "input": {
+        "projectRoot": "<repo>",
+        "worktrees": [
+          { "name": "repo", "branch": "master", "path": "<repo>", "isBare": false },
+          { "name": "demo", "branch": "demo", "path": "<repo>/.aimux/worktrees/demo", "isBare": false }
+        ],
+        "initialTopology": {
+          "worktrees": [],
+          "visibleGraveyard": [],
+          "allGraveyard": [],
+          "sessions": [],
+          "services": []
+        }
+      },
+      "output": {
+        "ok": true,
+        "returned": [
+          { "name": "repo", "path": "<repo>", "branch": "main", "isBare": false, "createdAt": "<createdAt:main>" }
+        ],
+        "completion": null,
+        "checkedPaths": {},
+        "host": {
+          "offlineSessions": [],
+          "offlineServices": [],
+          "footerFlash": null,
+          "footerFlashTicks": null,
+          "pendingWorktreeCreatePaths": [],
+          "pendingWorktreeRemovalPaths": [],
+          "dashboardWorktreeActions": [],
+          "calls": []
+        },
+        "topology": { "worktrees": [], "visibleGraveyard": [], "allGraveyard": [], "sessions": [], "services": [] },
+        "operationFailures": []
+      },
+      "inputSha256": "bbe4c816ccb30a28c0873cc9cdebe860dc4dcc2c7dc4c3232205493074ca8a39"
+    },
+    {
+      "id": "multiplexer-persistence-worktrees-002",
       "name": "graveyards a worktree into topology",
       "source": "src/multiplexer/persistence-methods.test.ts",
       "api": "graveyardDesktopWorktree",
@@ -142,7 +183,7 @@
       "inputSha256": "3713a16931e421e0fa4cd84ced455f396553fb8e780fb4d481ff3c28f444d76f"
     },
     {
-      "id": "multiplexer-persistence-worktrees-002",
+      "id": "multiplexer-persistence-worktrees-003",
       "name": "stops live worktree services without deleting their topology records when graveyarding",
       "source": "src/multiplexer/persistence-methods.test.ts",
       "api": "graveyardDesktopWorktree",
@@ -270,7 +311,7 @@
       "inputSha256": "3be28e1acce25b5098c232c36907d0b13b8128fc71d67a306a746a7b1fd6c9bf"
     },
     {
-      "id": "multiplexer-persistence-worktrees-003",
+      "id": "multiplexer-persistence-worktrees-004",
       "name": "blocks graveyarding while a live agent is attached",
       "source": "src/multiplexer/persistence-methods.test.ts",
       "api": "graveyardDesktopWorktree",
@@ -314,7 +355,7 @@
       "inputSha256": "7b913fb751f52367317fdd746a6a5c279dfba08c5321818c544e5540825aabff"
     },
     {
-      "id": "multiplexer-persistence-worktrees-004",
+      "id": "multiplexer-persistence-worktrees-005",
       "name": "creates a desktop worktree and settles topology active",
       "source": "src/multiplexer/persistence-methods.test.ts",
       "api": "createDesktopWorktree",
@@ -468,7 +509,161 @@
       "inputSha256": "b191a05330ee563d14a8bf9be4b18ac40f5c3797cf33372eea801793eb4a38f8"
     },
     {
-      "id": "multiplexer-persistence-worktrees-005",
+      "id": "multiplexer-persistence-worktrees-006",
+      "name": "creates worktrees relative to the host project root",
+      "source": "src/multiplexer/persistence-methods.test.ts",
+      "api": "createDesktopWorktree",
+      "input": {
+        "projectRoot": "<repo>",
+        "name": "smoke",
+        "path": "<repo>/.aimux/worktrees/smoke",
+        "worktrees": [],
+        "sessions": [],
+        "sessionWorktreePaths": [],
+        "managedWindows": [],
+        "initialTopology": {
+          "worktrees": [],
+          "visibleGraveyard": [],
+          "allGraveyard": [],
+          "sessions": [],
+          "services": []
+        },
+        "checkoutExists": false
+      },
+      "output": {
+        "ok": true,
+        "returned": { "path": "<repo>/.aimux/worktrees/smoke", "status": "creating" },
+        "immediate": {
+          "host": {
+            "offlineSessions": [],
+            "offlineServices": [],
+            "footerFlash": null,
+            "footerFlashTicks": null,
+            "pendingWorktreeCreatePaths": ["<repo>/.aimux/worktrees/smoke"],
+            "pendingWorktreeRemovalPaths": [],
+            "dashboardWorktreeActions": [
+              {
+                "path": "<repo>/.aimux/worktrees/smoke",
+                "kind": "creating",
+                "timeoutMs": 180000,
+                "worktreeSeed": {
+                  "name": "smoke",
+                  "branch": "smoke",
+                  "path": "<repo>/.aimux/worktrees/smoke",
+                  "createdAt": "2026-06-01T00:00:00.000Z",
+                  "status": "offline",
+                  "isBare": false,
+                  "sessions": [],
+                  "services": []
+                }
+              }
+            ],
+            "calls": [
+              { "method": "listDesktopWorktrees", "args": [] },
+              {
+                "method": "dashboardPendingActions.setWorktreeAction",
+                "args": [
+                  "<repo>/.aimux/worktrees/smoke",
+                  "creating",
+                  {
+                    "worktreeSeed": {
+                      "name": "smoke",
+                      "branch": "smoke",
+                      "path": "<repo>/.aimux/worktrees/smoke",
+                      "createdAt": "2026-06-01T00:00:00.000Z",
+                      "status": "offline",
+                      "isBare": false,
+                      "sessions": [],
+                      "services": []
+                    },
+                    "timeoutMs": 180000
+                  }
+                ]
+              },
+              { "method": "invalidateDesktopStateSnapshot", "args": [] },
+              { "method": "refreshLocalDashboardModel", "args": [] }
+            ]
+          },
+          "topology": {
+            "worktrees": [
+              {
+                "id": "<worktree-id:<repo>/.aimux/worktrees/smoke>",
+                "path": "<repo>/.aimux/worktrees/smoke",
+                "name": "smoke",
+                "status": "creating",
+                "branch": "smoke",
+                "createdAt": "2026-06-01T00:00:00.000Z"
+              }
+            ],
+            "visibleGraveyard": [],
+            "allGraveyard": [],
+            "sessions": [],
+            "services": []
+          }
+        },
+        "completion": { "ok": true, "returned": { "path": "<repo>/.aimux/worktrees/smoke", "status": "created" } },
+        "checkedPaths": {},
+        "host": {
+          "offlineSessions": [],
+          "offlineServices": [],
+          "footerFlash": "Created: smoke",
+          "footerFlashTicks": 3,
+          "pendingWorktreeCreatePaths": [],
+          "pendingWorktreeRemovalPaths": [],
+          "dashboardWorktreeActions": [],
+          "calls": [
+            { "method": "listDesktopWorktrees", "args": [] },
+            {
+              "method": "dashboardPendingActions.setWorktreeAction",
+              "args": [
+                "<repo>/.aimux/worktrees/smoke",
+                "creating",
+                {
+                  "worktreeSeed": {
+                    "name": "smoke",
+                    "branch": "smoke",
+                    "path": "<repo>/.aimux/worktrees/smoke",
+                    "createdAt": "2026-06-01T00:00:00.000Z",
+                    "status": "offline",
+                    "isBare": false,
+                    "sessions": [],
+                    "services": []
+                  },
+                  "timeoutMs": 180000
+                }
+              ]
+            },
+            { "method": "invalidateDesktopStateSnapshot", "args": [] },
+            { "method": "refreshLocalDashboardModel", "args": [] },
+            { "method": "dashboardPendingActions.clearWorktreeAction", "args": ["<repo>/.aimux/worktrees/smoke"] },
+            { "method": "invalidateDesktopStateSnapshot", "args": [] },
+            { "method": "refreshLocalDashboardModel", "args": [] },
+            { "method": "metadataServer.notifyChange", "args": [] }
+          ]
+        },
+        "topology": {
+          "worktrees": [
+            {
+              "id": "<worktree-id:<repo>/.aimux/worktrees/smoke>",
+              "path": "<repo>/.aimux/worktrees/smoke",
+              "name": "smoke",
+              "status": "active",
+              "branch": "smoke",
+              "basePath": "<repo>",
+              "createdAt": "2026-06-01T00:00:00.000Z"
+            }
+          ],
+          "visibleGraveyard": [],
+          "allGraveyard": [],
+          "sessions": [],
+          "services": []
+        },
+        "operationFailures": []
+      },
+      "inputSha256": "646b470a5481e68c947021265b3d6bdd9daa3551a6ebcc491e241507ddf19499"
+    },
+    {
+      "id": "multiplexer-persistence-worktrees-007",
       "name": "records duplicate worktree create failures through the service owner",
       "source": "src/multiplexer/persistence-methods.test.ts",
       "api": "createDesktopWorktree",
@@ -546,7 +741,7 @@
       "inputSha256": "af5571520793d0e2332901236213916fbf52fae21285eedd95a4056b268106ab"
     },
     {
-      "id": "multiplexer-persistence-worktrees-006",
+      "id": "multiplexer-persistence-worktrees-008",
       "name": "removes an existing desktop worktree and dependent topology",
       "source": "src/multiplexer/persistence-methods.test.ts",
       "api": "removeDesktopWorktree",
@@ -660,7 +855,7 @@
       "inputSha256": "25f85481e7ee96a05f88d823f3f54b3a7633ff164cae6bdb2d8757c19b0418d2"
     },
     {
-      "id": "multiplexer-persistence-worktrees-007",
+      "id": "multiplexer-persistence-worktrees-009",
       "name": "removes orphaned generated worktree records when checkout is already missing",
       "source": "src/multiplexer/persistence-methods.test.ts",
       "api": "removeDesktopWorktree",
@@ -750,16 +945,14 @@
       "inputSha256": "16a6aec461cdce2e023d036f6f0fb3a4c088a74e2bb1e0fd7897b61c92b20646"
     },
     {
-      "id": "multiplexer-persistence-worktrees-008",
+      "id": "multiplexer-persistence-worktrees-010",
       "name": "refuses to remove the main checkout",
       "source": "src/multiplexer/persistence-methods.test.ts",
       "api": "removeDesktopWorktree",
       "input": {
         "projectRoot": "<repo>",
         "path": "<repo>",
-        "worktrees": [
-          { "name": "Main Checkout", "branch": "main", "path": "<repo>", "createdAt": "2026-05-01T00:00:00.000Z" }
-        ],
+        "worktrees": [{ "name": "Main Checkout", "branch": "main", "path": "<repo>", "createdAt": "<createdAt:main>" }],
         "sessions": [],
         "sessionWorktreePaths": [],
         "managedWindows": [],
@@ -796,7 +989,7 @@
                     "name": "Main Checkout",
                     "branch": "main",
                     "path": "<repo>",
-                    "createdAt": "2026-05-01T00:00:00.000Z",
+                    "createdAt": "<createdAt:main>",
                     "status": "offline",
                     "sessions": [],
                     "services": []
@@ -841,10 +1034,10 @@
           }
         ]
       },
-      "inputSha256": "203dc64f69426a56f1ff8ca524386d2b6a98633e2b34794f04cbd3f1a766de68"
+      "inputSha256": "306360d79cb5ebd16961ccfbe9d40435e33084786c43130fed41168a90beade7"
     },
     {
-      "id": "multiplexer-persistence-worktrees-009",
+      "id": "multiplexer-persistence-worktrees-011",
       "name": "blocks removing a worktree while a live agent is attached",
       "source": "src/multiplexer/persistence-methods.test.ts",
       "api": "removeDesktopWorktree",
@@ -946,16 +1139,14 @@
       "inputSha256": "6ce62f517beef9dec6fbb737903a0b63c10f860a7d7367a8e6b938b4579c15b2"
     },
     {
-      "id": "multiplexer-persistence-worktrees-010",
+      "id": "multiplexer-persistence-worktrees-012",
       "name": "refuses to graveyard the main checkout",
       "source": "src/multiplexer/persistence-methods.test.ts",
       "api": "graveyardDesktopWorktree",
       "input": {
         "projectRoot": "<repo>",
         "path": "<repo>",
-        "worktrees": [
-          { "name": "Main Checkout", "branch": "main", "path": "<repo>", "createdAt": "2026-05-01T00:00:00.000Z" }
-        ],
+        "worktrees": [{ "name": "Main Checkout", "branch": "main", "path": "<repo>", "createdAt": "<createdAt:main>" }],
         "sessions": [],
         "sessionWorktreePaths": [],
         "managedWindows": [],
@@ -985,10 +1176,10 @@
         "topology": { "worktrees": [], "visibleGraveyard": [], "allGraveyard": [], "sessions": [], "services": [] },
         "operationFailures": []
       },
-      "inputSha256": "203dc64f69426a56f1ff8ca524386d2b6a98633e2b34794f04cbd3f1a766de68"
+      "inputSha256": "306360d79cb5ebd16961ccfbe9d40435e33084786c43130fed41168a90beade7"
     },
     {
-      "id": "multiplexer-persistence-worktrees-011",
+      "id": "multiplexer-persistence-worktrees-013",
       "name": "resurrects topology worktree graveyard entries",
       "source": "src/multiplexer/persistence-methods.test.ts",
       "api": "resurrectGraveyardWorktree",
@@ -1072,7 +1263,7 @@
       "inputSha256": "93e56701d4fd1e2bcd0bd0c00a4a52a87b42298f04017a8e5d3d4b58750079da"
     },
     {
-      "id": "multiplexer-persistence-worktrees-012",
+      "id": "multiplexer-persistence-worktrees-014",
       "name": "does not resurrect graveyarded worktrees when the checkout is missing",
       "source": "src/multiplexer/persistence-methods.test.ts",
       "api": "resurrectGraveyardWorktree",
@@ -1170,7 +1361,7 @@
       "inputSha256": "372a7f151173c39ba3ded8549e77455fa55adf160056d90cbe735481e72b930f"
     },
     {
-      "id": "multiplexer-persistence-worktrees-013",
+      "id": "multiplexer-persistence-worktrees-015",
       "name": "reports missing graveyard entries when deleting a worktree",
       "source": "src/multiplexer/persistence-methods.test.ts",
       "api": "deleteGraveyardWorktree",
@@ -1208,7 +1399,7 @@
       "inputSha256": "97a319a0864880aadd4186c17b59b00479bb22c55e0b3859222b1d8fcb7cdde0"
     },
     {
-      "id": "multiplexer-persistence-worktrees-014",
+      "id": "multiplexer-persistence-worktrees-016",
       "name": "deletes missing graveyarded worktree topology and dependent assets",
       "source": "src/multiplexer/persistence-methods.test.ts",
       "api": "deleteGraveyardWorktree",
@@ -1319,7 +1510,7 @@
       "inputSha256": "356280c94e68198cf559d449f9dc90be93ef306cf76cb7fde04ce0872c502933"
     },
     {
-      "id": "multiplexer-persistence-worktrees-015",
+      "id": "multiplexer-persistence-worktrees-017",
       "name": "deletes existing graveyarded worktree checkouts even when hidden from active lists",
       "source": "src/multiplexer/persistence-methods.test.ts",
       "api": "deleteGraveyardWorktree",
@@ -1431,7 +1622,7 @@
       "inputSha256": "b2837a3ad0d276d3192f0595714fd42033b78cbf9d31d18303626e27f49872f5"
     },
     {
-      "id": "multiplexer-persistence-worktrees-016",
+      "id": "multiplexer-persistence-worktrees-018",
       "name": "resurrects graveyard sessions into offline topology state",
       "source": "src/multiplexer/persistence-methods.test.ts",
       "api": "resurrectGraveyardSession",
@@ -1575,7 +1766,7 @@
       "inputSha256": "c069e4b8118ca4689fc89a4e90808aa63266f44cd536b9d629f2c749982eec3f"
     },
     {
-      "id": "multiplexer-persistence-worktrees-017",
+      "id": "multiplexer-persistence-worktrees-019",
       "name": "blocks graveyard session resurrection when its worktree is missing",
       "source": "src/multiplexer/persistence-methods.test.ts",
       "api": "resurrectGraveyardSession",
@@ -1642,7 +1833,7 @@
       "inputSha256": "9b29c42e478251f6b45391dc590a25b08d6b4bd92c6eccd07ddc353e07b825eb"
     },
     {
-      "id": "multiplexer-persistence-worktrees-018",
+      "id": "multiplexer-persistence-worktrees-020",
       "name": "resurrects teammate graveyard sessions without resurrecting the parent",
       "source": "src/multiplexer/persistence-methods.test.ts",
       "api": "resurrectGraveyardSession",
@@ -1740,7 +1931,7 @@
       "inputSha256": "ce887502c7d0d01e98ac2b2187e8961f8126e0941491a443fa757e3ebf3bdaf2"
     },
     {
-      "id": "multiplexer-persistence-worktrees-019",
+      "id": "multiplexer-persistence-worktrees-021",
       "name": "cleans up expired standalone graveyard agents and refreshes projections",
       "source": "src/multiplexer/persistence-methods.test.ts",
       "api": "cleanupGraveyard",
@@ -1813,7 +2004,7 @@
       "inputSha256": "6bc824c225ebaab008dbcd76eab258b9d86561f849181a9570d7f6c8acdad205"
     },
     {
-      "id": "multiplexer-persistence-worktrees-020",
+      "id": "multiplexer-persistence-worktrees-022",
       "name": "cleans generated cache directories from inactive Aimux worktrees",
       "source": "src/multiplexer/persistence-methods.test.ts",
       "api": "cleanupWorktreeCaches",
@@ -1871,7 +2062,7 @@
       "inputSha256": "85f28f9f010d308b3bca5f27e5948a9977544e18823137aa8e7f0fc6acddec75"
     },
     {
-      "id": "multiplexer-persistence-worktrees-021",
+      "id": "multiplexer-persistence-worktrees-023",
       "name": "skips cache cleanup for worktrees with active runtime",
       "source": "src/multiplexer/persistence-methods.test.ts",
       "api": "cleanupWorktreeCaches",
@@ -1961,7 +2152,7 @@
       "inputSha256": "03ae21d604798eff9396df989b3ba6603716eb8eee912cfe5f385e09c4889a67"
     },
     {
-      "id": "multiplexer-persistence-worktrees-022",
+      "id": "multiplexer-persistence-worktrees-024",
       "name": "skips cache cleanup when host-local live sessions have not reached topology yet",
       "source": "src/multiplexer/persistence-methods.test.ts",
       "api": "cleanupWorktreeCaches",
