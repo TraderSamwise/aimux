@@ -1,0 +1,576 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/persistence-methods.test.ts",
+  "generatedBy": "scripts/capture-multiplexer-persistence-worktrees-contract.mjs",
+  "description": "Multiplexer persistence worktree graveyard, resurrection, deletion, host side effects, and topology transitions captured by running TypeScript persistenceMethods against temp git repos and topology state.",
+  "cases": [
+    {
+      "id": "multiplexer-persistence-worktrees-001",
+      "name": "graveyards a worktree into topology",
+      "source": "src/multiplexer/persistence-methods.test.ts",
+      "api": "graveyardDesktopWorktree",
+      "input": {
+        "projectRoot": "<repo>",
+        "path": "<repo>/.aimux/worktrees/demo",
+        "worktrees": [
+          {
+            "name": "demo",
+            "branch": "demo",
+            "path": "<repo>/.aimux/worktrees/demo",
+            "createdAt": "2026-05-01T00:00:00.000Z"
+          }
+        ],
+        "sessions": [],
+        "sessionWorktreePaths": [],
+        "managedWindows": [],
+        "initialTopology": {
+          "worktrees": [],
+          "visibleGraveyard": [],
+          "allGraveyard": [],
+          "sessions": [
+            {
+              "id": "codex-demo",
+              "tool": "codex",
+              "toolConfigKey": "codex",
+              "command": "codex",
+              "args": [],
+              "status": "offline",
+              "lifecycle": "offline",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "worktreePath": "<repo>/.aimux/worktrees/demo"
+            }
+          ],
+          "services": [
+            {
+              "id": "service-demo",
+              "status": "stopped",
+              "command": "zsh",
+              "args": [],
+              "worktreePath": "<repo>/.aimux/worktrees/demo",
+              "cwd": "<repo>/.aimux/worktrees/demo",
+              "createdAt": "2026-06-01T00:00:00.000Z"
+            }
+          ]
+        },
+        "checkoutExists": false
+      },
+      "output": {
+        "ok": true,
+        "returned": { "path": "<repo>/.aimux/worktrees/demo", "status": "graveyarded" },
+        "host": {
+          "offlineSessions": [],
+          "offlineServices": [],
+          "footerFlash": null,
+          "footerFlashTicks": null,
+          "calls": [
+            { "method": "listDesktopWorktrees", "args": [] },
+            { "method": "tmuxRuntimeManager.listProjectManagedWindows", "args": ["<repo>"] },
+            { "method": "saveState", "args": [] },
+            { "method": "invalidateDesktopStateSnapshot", "args": [] },
+            { "method": "refreshLocalDashboardModel", "args": [] },
+            { "method": "metadataServer.notifyChange", "args": [] }
+          ]
+        },
+        "topology": {
+          "worktrees": [
+            {
+              "id": "<worktree-id:<repo>/.aimux/worktrees/demo>",
+              "path": "<repo>/.aimux/worktrees/demo",
+              "name": "demo",
+              "status": "graveyard",
+              "branch": "demo",
+              "createdAt": "2026-05-01T00:00:00.000Z",
+              "removedAt": "2026-06-01T00:00:00.000Z"
+            }
+          ],
+          "visibleGraveyard": [
+            {
+              "id": "<worktree-graveyard-id:<repo>/.aimux/worktrees/demo>",
+              "worktreeId": "<worktree-id:<repo>/.aimux/worktrees/demo>",
+              "path": "<repo>/.aimux/worktrees/demo",
+              "name": "demo",
+              "branch": "demo",
+              "graveyardedAt": "2026-06-01T00:00:00.000Z",
+              "reason": "user-requested"
+            }
+          ],
+          "allGraveyard": [
+            {
+              "id": "<worktree-graveyard-id:<repo>/.aimux/worktrees/demo>",
+              "worktreeId": "<worktree-id:<repo>/.aimux/worktrees/demo>",
+              "path": "<repo>/.aimux/worktrees/demo",
+              "name": "demo",
+              "branch": "demo",
+              "graveyardedAt": "2026-06-01T00:00:00.000Z",
+              "reason": "user-requested"
+            }
+          ],
+          "sessions": [
+            {
+              "id": "codex-demo",
+              "tool": "codex",
+              "toolConfigKey": "codex",
+              "command": "codex",
+              "args": [],
+              "status": "offline",
+              "lifecycle": "offline",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "worktreePath": "<repo>/.aimux/worktrees/demo"
+            }
+          ],
+          "services": [
+            {
+              "id": "service-demo",
+              "status": "stopped",
+              "command": "zsh",
+              "args": [],
+              "worktreePath": "<repo>/.aimux/worktrees/demo",
+              "cwd": "<repo>/.aimux/worktrees/demo",
+              "createdAt": "2026-06-01T00:00:00.000Z"
+            }
+          ]
+        }
+      },
+      "inputSha256": "3713a16931e421e0fa4cd84ced455f396553fb8e780fb4d481ff3c28f444d76f"
+    },
+    {
+      "id": "multiplexer-persistence-worktrees-002",
+      "name": "stops live worktree services without deleting their topology records when graveyarding",
+      "source": "src/multiplexer/persistence-methods.test.ts",
+      "api": "graveyardDesktopWorktree",
+      "input": {
+        "projectRoot": "<repo>",
+        "path": "<repo>/.aimux/worktrees/demo",
+        "worktrees": [{ "name": "demo", "branch": "demo", "path": "<repo>/.aimux/worktrees/demo" }],
+        "sessions": [],
+        "sessionWorktreePaths": [],
+        "offlineServices": [],
+        "managedWindows": [
+          {
+            "target": { "sessionName": "aimux-test", "windowId": "@service", "windowIndex": 1, "windowName": "shell" },
+            "metadata": {
+              "kind": "service",
+              "sessionId": "service-demo",
+              "command": "zsh",
+              "args": ["-l"],
+              "toolConfigKey": "service",
+              "createdAt": "2026-05-01T00:00:00.000Z",
+              "worktreePath": "<repo>/.aimux/worktrees/demo",
+              "label": "shell",
+              "launchCommandLine": "yarn web"
+            }
+          }
+        ],
+        "initialTopology": {
+          "worktrees": [],
+          "visibleGraveyard": [],
+          "allGraveyard": [],
+          "sessions": [],
+          "services": []
+        },
+        "checkoutExists": false
+      },
+      "output": {
+        "ok": true,
+        "returned": { "path": "<repo>/.aimux/worktrees/demo", "status": "graveyarded" },
+        "host": {
+          "offlineSessions": [],
+          "offlineServices": [
+            {
+              "id": "service-demo",
+              "command": "zsh",
+              "args": ["-l"],
+              "launchCommandLine": "yarn web",
+              "worktreePath": "<repo>/.aimux/worktrees/demo",
+              "cwd": "<repo>/.aimux/worktrees/demo",
+              "label": "shell",
+              "createdAt": "2026-05-01T00:00:00.000Z"
+            }
+          ],
+          "footerFlash": null,
+          "footerFlashTicks": null,
+          "calls": [
+            { "method": "listDesktopWorktrees", "args": [] },
+            { "method": "tmuxRuntimeManager.listProjectManagedWindows", "args": ["<repo>"] },
+            { "method": "noteLastUsedItem", "args": ["service-demo"] },
+            {
+              "method": "tmuxRuntimeManager.killWindow",
+              "args": [{ "sessionName": "aimux-test", "windowId": "@service", "windowIndex": 1, "windowName": "shell" }]
+            },
+            { "method": "saveState", "args": [] },
+            { "method": "invalidateDesktopStateSnapshot", "args": [] },
+            { "method": "refreshLocalDashboardModel", "args": [] },
+            { "method": "metadataServer.notifyChange", "args": [] }
+          ]
+        },
+        "topology": {
+          "worktrees": [
+            {
+              "id": "<worktree-id:<repo>/.aimux/worktrees/demo>",
+              "path": "<repo>/.aimux/worktrees/demo",
+              "name": "demo",
+              "status": "graveyard",
+              "branch": "demo",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "removedAt": "2026-06-01T00:00:00.000Z"
+            }
+          ],
+          "visibleGraveyard": [
+            {
+              "id": "<worktree-graveyard-id:<repo>/.aimux/worktrees/demo>",
+              "worktreeId": "<worktree-id:<repo>/.aimux/worktrees/demo>",
+              "path": "<repo>/.aimux/worktrees/demo",
+              "name": "demo",
+              "branch": "demo",
+              "graveyardedAt": "2026-06-01T00:00:00.000Z",
+              "reason": "user-requested"
+            }
+          ],
+          "allGraveyard": [
+            {
+              "id": "<worktree-graveyard-id:<repo>/.aimux/worktrees/demo>",
+              "worktreeId": "<worktree-id:<repo>/.aimux/worktrees/demo>",
+              "path": "<repo>/.aimux/worktrees/demo",
+              "name": "demo",
+              "branch": "demo",
+              "graveyardedAt": "2026-06-01T00:00:00.000Z",
+              "reason": "user-requested"
+            }
+          ],
+          "sessions": [],
+          "services": [
+            {
+              "id": "service-demo",
+              "status": "stopped",
+              "command": "zsh",
+              "args": ["-l"],
+              "launchCommandLine": "yarn web",
+              "worktreePath": "<repo>/.aimux/worktrees/demo",
+              "cwd": "<repo>/.aimux/worktrees/demo",
+              "label": "shell",
+              "createdAt": "2026-05-01T00:00:00.000Z"
+            }
+          ]
+        }
+      },
+      "inputSha256": "3be28e1acce25b5098c232c36907d0b13b8128fc71d67a306a746a7b1fd6c9bf"
+    },
+    {
+      "id": "multiplexer-persistence-worktrees-003",
+      "name": "blocks graveyarding while a live agent is attached",
+      "source": "src/multiplexer/persistence-methods.test.ts",
+      "api": "graveyardDesktopWorktree",
+      "input": {
+        "projectRoot": "<repo>",
+        "path": "<repo>/.aimux/worktrees/demo",
+        "worktrees": [{ "name": "demo", "branch": "demo", "path": "<repo>/.aimux/worktrees/demo" }],
+        "sessions": [{ "id": "codex-live", "label": "Codex Live" }],
+        "liveSessionIds": ["codex-live"],
+        "sessionWorktreePaths": [["codex-live", "<repo>/.aimux/worktrees/demo"]],
+        "managedWindows": [],
+        "initialTopology": {
+          "worktrees": [],
+          "visibleGraveyard": [],
+          "allGraveyard": [],
+          "sessions": [],
+          "services": []
+        },
+        "checkoutExists": false
+      },
+      "output": {
+        "ok": false,
+        "error": "Cannot graveyard \"demo\" while agent \"Codex Live\" is attached",
+        "host": {
+          "offlineSessions": [],
+          "offlineServices": [],
+          "footerFlash": null,
+          "footerFlashTicks": null,
+          "calls": [
+            { "method": "listDesktopWorktrees", "args": [] },
+            { "method": "isSessionRuntimeLive", "args": [{ "id": "codex-live", "label": "Codex Live" }] }
+          ]
+        },
+        "topology": { "worktrees": [], "visibleGraveyard": [], "allGraveyard": [], "sessions": [], "services": [] }
+      },
+      "inputSha256": "7b913fb751f52367317fdd746a6a5c279dfba08c5321818c544e5540825aabff"
+    },
+    {
+      "id": "multiplexer-persistence-worktrees-004",
+      "name": "resurrects topology worktree graveyard entries",
+      "source": "src/multiplexer/persistence-methods.test.ts",
+      "api": "resurrectGraveyardWorktree",
+      "input": {
+        "projectRoot": "<repo>",
+        "path": "<repo>/.aimux/worktrees/demo",
+        "initialTopology": {
+          "worktrees": [
+            {
+              "id": "<worktree-id:<repo>/.aimux/worktrees/demo>",
+              "path": "<repo>/.aimux/worktrees/demo",
+              "name": "demo",
+              "status": "graveyard",
+              "branch": "demo",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "removedAt": "2026-06-01T00:00:00.000Z"
+            }
+          ],
+          "visibleGraveyard": [
+            {
+              "id": "<worktree-graveyard-id:<repo>/.aimux/worktrees/demo>",
+              "worktreeId": "<worktree-id:<repo>/.aimux/worktrees/demo>",
+              "path": "<repo>/.aimux/worktrees/demo",
+              "name": "demo",
+              "branch": "demo",
+              "graveyardedAt": "2026-06-01T00:00:00.000Z"
+            }
+          ],
+          "allGraveyard": [
+            {
+              "id": "<worktree-graveyard-id:<repo>/.aimux/worktrees/demo>",
+              "worktreeId": "<worktree-id:<repo>/.aimux/worktrees/demo>",
+              "path": "<repo>/.aimux/worktrees/demo",
+              "name": "demo",
+              "branch": "demo",
+              "graveyardedAt": "2026-06-01T00:00:00.000Z"
+            }
+          ],
+          "sessions": [],
+          "services": []
+        },
+        "checkoutExists": true
+      },
+      "output": {
+        "ok": true,
+        "returned": { "path": "<repo>/.aimux/worktrees/demo", "status": "active" },
+        "host": {
+          "offlineSessions": [],
+          "offlineServices": [],
+          "footerFlash": null,
+          "footerFlashTicks": null,
+          "calls": [
+            { "method": "invalidateDesktopStateSnapshot", "args": [] },
+            { "method": "refreshLocalDashboardModel", "args": [] },
+            { "method": "metadataServer.notifyChange", "args": [] }
+          ]
+        },
+        "topology": {
+          "worktrees": [
+            {
+              "id": "<worktree-id:<repo>/.aimux/worktrees/demo>",
+              "path": "<repo>/.aimux/worktrees/demo",
+              "name": "demo",
+              "status": "active",
+              "branch": "demo",
+              "createdAt": "2026-06-01T00:00:00.000Z"
+            }
+          ],
+          "visibleGraveyard": [],
+          "allGraveyard": [],
+          "sessions": [],
+          "services": []
+        }
+      },
+      "inputSha256": "93e56701d4fd1e2bcd0bd0c00a4a52a87b42298f04017a8e5d3d4b58750079da"
+    },
+    {
+      "id": "multiplexer-persistence-worktrees-005",
+      "name": "does not resurrect graveyarded worktrees when the checkout is missing",
+      "source": "src/multiplexer/persistence-methods.test.ts",
+      "api": "resurrectGraveyardWorktree",
+      "input": {
+        "projectRoot": "<repo>",
+        "path": "<repo>/.aimux/worktrees/missing",
+        "initialTopology": {
+          "worktrees": [
+            {
+              "id": "<worktree-id:<repo>/.aimux/worktrees/missing>",
+              "path": "<repo>/.aimux/worktrees/missing",
+              "name": "missing",
+              "status": "graveyard",
+              "branch": "missing",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "removedAt": "2026-06-01T00:00:00.000Z"
+            }
+          ],
+          "visibleGraveyard": [
+            {
+              "id": "<worktree-graveyard-id:<repo>/.aimux/worktrees/missing>",
+              "worktreeId": "<worktree-id:<repo>/.aimux/worktrees/missing>",
+              "path": "<repo>/.aimux/worktrees/missing",
+              "name": "missing",
+              "branch": "missing",
+              "graveyardedAt": "2026-06-01T00:00:00.000Z"
+            }
+          ],
+          "allGraveyard": [
+            {
+              "id": "<worktree-graveyard-id:<repo>/.aimux/worktrees/missing>",
+              "worktreeId": "<worktree-id:<repo>/.aimux/worktrees/missing>",
+              "path": "<repo>/.aimux/worktrees/missing",
+              "name": "missing",
+              "branch": "missing",
+              "graveyardedAt": "2026-06-01T00:00:00.000Z"
+            }
+          ],
+          "sessions": [],
+          "services": []
+        },
+        "checkoutExists": false
+      },
+      "output": {
+        "ok": false,
+        "error": "Cannot resurrect worktree \"<repo>/.aimux/worktrees/missing\" because the checkout is missing",
+        "host": {
+          "offlineSessions": [],
+          "offlineServices": [],
+          "footerFlash": null,
+          "footerFlashTicks": null,
+          "calls": []
+        },
+        "topology": {
+          "worktrees": [
+            {
+              "id": "<worktree-id:<repo>/.aimux/worktrees/missing>",
+              "path": "<repo>/.aimux/worktrees/missing",
+              "name": "missing",
+              "status": "graveyard",
+              "branch": "missing",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "removedAt": "2026-06-01T00:00:00.000Z"
+            }
+          ],
+          "visibleGraveyard": [
+            {
+              "id": "<worktree-graveyard-id:<repo>/.aimux/worktrees/missing>",
+              "worktreeId": "<worktree-id:<repo>/.aimux/worktrees/missing>",
+              "path": "<repo>/.aimux/worktrees/missing",
+              "name": "missing",
+              "branch": "missing",
+              "graveyardedAt": "2026-06-01T00:00:00.000Z"
+            }
+          ],
+          "allGraveyard": [
+            {
+              "id": "<worktree-graveyard-id:<repo>/.aimux/worktrees/missing>",
+              "worktreeId": "<worktree-id:<repo>/.aimux/worktrees/missing>",
+              "path": "<repo>/.aimux/worktrees/missing",
+              "name": "missing",
+              "branch": "missing",
+              "graveyardedAt": "2026-06-01T00:00:00.000Z"
+            }
+          ],
+          "sessions": [],
+          "services": []
+        }
+      },
+      "inputSha256": "372a7f151173c39ba3ded8549e77455fa55adf160056d90cbe735481e72b930f"
+    },
+    {
+      "id": "multiplexer-persistence-worktrees-006",
+      "name": "deletes missing graveyarded worktree topology and dependent assets",
+      "source": "src/multiplexer/persistence-methods.test.ts",
+      "api": "deleteGraveyardWorktree",
+      "input": {
+        "projectRoot": "<repo>",
+        "path": "<repo>/.aimux/worktrees/gone",
+        "offlineSessions": [{ "id": "codex-gone", "worktreePath": "<repo>/.aimux/worktrees/gone" }],
+        "offlineServices": [{ "id": "service-gone", "worktreePath": "<repo>/.aimux/worktrees/gone" }],
+        "initialTopology": {
+          "worktrees": [
+            {
+              "id": "<worktree-id:<repo>/.aimux/worktrees/gone>",
+              "path": "<repo>/.aimux/worktrees/gone",
+              "name": "gone",
+              "status": "graveyard",
+              "branch": "gone",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "removedAt": "2026-06-01T00:00:00.000Z"
+            }
+          ],
+          "visibleGraveyard": [
+            {
+              "id": "<worktree-graveyard-id:<repo>/.aimux/worktrees/gone>",
+              "worktreeId": "<worktree-id:<repo>/.aimux/worktrees/gone>",
+              "path": "<repo>/.aimux/worktrees/gone",
+              "name": "gone",
+              "branch": "gone",
+              "graveyardedAt": "2026-06-01T00:00:00.000Z"
+            }
+          ],
+          "allGraveyard": [
+            {
+              "id": "<worktree-graveyard-id:<repo>/.aimux/worktrees/gone>",
+              "worktreeId": "<worktree-id:<repo>/.aimux/worktrees/gone>",
+              "path": "<repo>/.aimux/worktrees/gone",
+              "name": "gone",
+              "branch": "gone",
+              "graveyardedAt": "2026-06-01T00:00:00.000Z"
+            }
+          ],
+          "sessions": [
+            {
+              "id": "codex-gone",
+              "tool": "codex",
+              "toolConfigKey": "codex",
+              "command": "codex",
+              "args": [],
+              "status": "offline",
+              "lifecycle": "offline",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "worktreePath": "<repo>/.aimux/worktrees/gone"
+            }
+          ],
+          "services": [
+            {
+              "id": "service-gone",
+              "status": "stopped",
+              "command": "zsh",
+              "args": [],
+              "worktreePath": "<repo>/.aimux/worktrees/gone",
+              "cwd": "<repo>/.aimux/worktrees/gone",
+              "createdAt": "2026-06-01T00:00:00.000Z"
+            }
+          ]
+        },
+        "checkoutExists": false
+      },
+      "output": {
+        "ok": true,
+        "returned": { "path": "<repo>/.aimux/worktrees/gone", "status": "removed" },
+        "host": {
+          "offlineSessions": [],
+          "offlineServices": [],
+          "footerFlash": null,
+          "footerFlashTicks": null,
+          "calls": [
+            { "method": "saveState", "args": [] },
+            { "method": "invalidateDesktopStateSnapshot", "args": [] },
+            { "method": "refreshLocalDashboardModel", "args": [] },
+            { "method": "metadataServer.notifyChange", "args": [] }
+          ]
+        },
+        "topology": {
+          "worktrees": [],
+          "visibleGraveyard": [],
+          "allGraveyard": [
+            {
+              "id": "<worktree-graveyard-id:<repo>/.aimux/worktrees/gone>",
+              "worktreeId": "<worktree-id:<repo>/.aimux/worktrees/gone>",
+              "path": "<repo>/.aimux/worktrees/gone",
+              "name": "gone",
+              "branch": "gone",
+              "graveyardedAt": "2026-06-01T00:00:00.000Z",
+              "deletedAt": "2026-06-01T00:00:00.000Z"
+            }
+          ],
+          "sessions": [],
+          "services": []
+        }
+      },
+      "inputSha256": "356280c94e68198cf559d449f9dc90be93ef306cf76cb7fde04ce0872c502933"
+    }
+  ]
+}
