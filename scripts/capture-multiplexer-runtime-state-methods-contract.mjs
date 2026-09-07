@@ -189,6 +189,43 @@ function restoreTmuxHost(input, calls) {
   return host;
 }
 
+function recordBackendHost(input, calls) {
+  return {
+    projectRoot: input.projectRoot,
+    sessions: clone(input.host?.sessions ?? []),
+    offlineSessions: clone(input.host?.offlineSessions ?? []),
+    syncTmuxWindowMetadata: callRecorder(calls, "syncTmuxWindowMetadata"),
+    saveState: callRecorder(calls, "saveState"),
+    invalidateDesktopStateSnapshot: callRecorder(calls, "invalidateDesktopStateSnapshot"),
+    writeStatuslineFile: callRecorder(calls, "writeStatuslineFile"),
+  };
+}
+
+function runRecordBackendOperations(input) {
+  const calls = [];
+  const host = recordBackendHost(input, calls);
+  const results = [];
+  for (const operation of input.operations ?? []) {
+    try {
+      results.push({
+        ok: true,
+        value: runtimeState.recordSessionBackendSessionId(host, operation.sessionId, operation.backendSessionId),
+      });
+    } catch (error) {
+      results.push({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  return {
+    results,
+    host: {
+      sessions: clone(host.sessions),
+      offlineSessions: clone(host.offlineSessions),
+    },
+    topology: snapshotTopology(),
+    calls,
+  };
+}
+
 async function record(cases, name, api, label, input, run) {
   await withFixture(label, async (ctx) => {
     const normalizedInput = normalize(input(ctx), ctx);
@@ -556,6 +593,294 @@ await record(
       calls,
     };
   },
+);
+
+await record(
+  cases,
+  "recordSessionBackendSessionId records live and offline host rows",
+  "recordSessionBackendSessionId",
+  "record-backend-live-offline",
+  ({ projectRoot }) => {
+    topologySessions.saveRuntimeTopologySessions({
+      projectRoot,
+      sessions: [
+        { id: "claude-1", command: "claude", tool: "claude", toolConfigKey: "claude", args: [], lifecycle: "live" },
+        { id: "claude-2", command: "claude", tool: "claude", toolConfigKey: "claude", args: [], lifecycle: "offline" },
+      ],
+    });
+    return {
+      projectRoot,
+      operations: [
+        { sessionId: "claude-1", backendSessionId: " backend-live " },
+        { sessionId: "claude-2", backendSessionId: "backend-offline" },
+      ],
+      host: {
+        sessions: [{ id: "claude-1", command: "claude" }],
+        offlineSessions: [{ id: "claude-2", command: "claude" }],
+      },
+      initialTopology: snapshotTopology(),
+    };
+  },
+  (_ctx, input) => runRecordBackendOperations(input),
+);
+
+await record(
+  cases,
+  "recordSessionBackendSessionId rejects superseded stale ids before accepting the fresh id",
+  "recordSessionBackendSessionId",
+  "record-backend-superseded-stale",
+  ({ projectRoot }) => {
+    topologySessions.saveRuntimeTopologySessions({
+      projectRoot,
+      sessions: [
+        {
+          id: "claude-racy",
+          command: "claude",
+          tool: "claude",
+          toolConfigKey: "claude",
+          args: [],
+          backendSessionId: "backend-stale",
+          lifecycle: "offline",
+          worktreePath: projectRoot,
+        },
+      ],
+    });
+    return {
+      projectRoot,
+      operations: [
+        { sessionId: "claude-racy", backendSessionId: "backend-stale" },
+        { sessionId: "claude-racy", backendSessionId: "backend-new" },
+      ],
+      host: {
+        sessions: [
+          { id: "claude-racy", command: "claude", supersededBackendSessionId: "backend-stale" },
+        ],
+        offlineSessions: [],
+      },
+      initialTopology: snapshotTopology(),
+    };
+  },
+  (_ctx, input) => runRecordBackendOperations(input),
+);
+
+await record(
+  cases,
+  "recordSessionBackendSessionId records hook-discovered ids without a loaded host row",
+  "recordSessionBackendSessionId",
+  "record-backend-hook-topology-only",
+  ({ projectRoot }) => {
+    topologySessions.saveRuntimeTopologySessions({
+      projectRoot,
+      sessions: [
+        {
+          id: "claude-racy",
+          command: "claude",
+          tool: "claude",
+          toolConfigKey: "claude",
+          args: ["--resume"],
+          lifecycle: "live",
+          worktreePath: projectRoot,
+        },
+      ],
+    });
+    return {
+      projectRoot,
+      operations: [{ sessionId: "claude-racy", backendSessionId: "backend-racy" }],
+      host: { sessions: [], offlineSessions: [] },
+      initialTopology: snapshotTopology(),
+    };
+  },
+  (_ctx, input) => runRecordBackendOperations(input),
+);
+
+await record(
+  cases,
+  "recordSessionBackendSessionId rejects conflicting hook fallback ids without a loaded row",
+  "recordSessionBackendSessionId",
+  "record-backend-hook-conflict",
+  ({ projectRoot }) => {
+    topologySessions.saveRuntimeTopologySessions({
+      projectRoot,
+      sessions: [
+        {
+          id: "claude-racy",
+          command: "claude",
+          tool: "claude",
+          toolConfigKey: "claude",
+          args: [],
+          backendSessionId: "backend-saved",
+          lifecycle: "offline",
+          worktreePath: projectRoot,
+        },
+      ],
+    });
+    return {
+      projectRoot,
+      operations: [{ sessionId: "claude-racy", backendSessionId: "backend-new" }],
+      host: { sessions: [], offlineSessions: [] },
+      initialTopology: snapshotTopology(),
+    };
+  },
+  (_ctx, input) => runRecordBackendOperations(input),
+);
+
+await record(
+  cases,
+  "recordSessionBackendSessionId accepts matching hook fallback ids from topology",
+  "recordSessionBackendSessionId",
+  "record-backend-hook-match",
+  ({ projectRoot }) => {
+    topologySessions.saveRuntimeTopologySessions({
+      projectRoot,
+      sessions: [
+        {
+          id: "claude-racy",
+          command: "claude",
+          tool: "claude",
+          toolConfigKey: "claude",
+          args: [],
+          backendSessionId: "backend-saved",
+          lifecycle: "offline",
+          worktreePath: projectRoot,
+        },
+      ],
+    });
+    return {
+      projectRoot,
+      operations: [{ sessionId: "claude-racy", backendSessionId: "backend-saved" }],
+      host: { sessions: [], offlineSessions: [] },
+      initialTopology: snapshotTopology(),
+    };
+  },
+  (_ctx, input) => runRecordBackendOperations(input),
+);
+
+await record(
+  cases,
+  "recordSessionBackendSessionId lets live runtimes replace stale topology ids",
+  "recordSessionBackendSessionId",
+  "record-backend-live-replaces-stale-topology",
+  ({ projectRoot }) => {
+    topologySessions.saveRuntimeTopologySessions({
+      projectRoot,
+      sessions: [
+        {
+          id: "claude-racy",
+          command: "claude",
+          tool: "claude",
+          toolConfigKey: "claude",
+          args: [],
+          backendSessionId: "backend-stale",
+          lifecycle: "offline",
+          worktreePath: projectRoot,
+        },
+      ],
+    });
+    return {
+      projectRoot,
+      operations: [{ sessionId: "claude-racy", backendSessionId: "backend-new" }],
+      host: {
+        sessions: [{ id: "claude-racy", command: "claude" }],
+        offlineSessions: [],
+      },
+      initialTopology: snapshotTopology(),
+    };
+  },
+  (_ctx, input) => runRecordBackendOperations(input),
+);
+
+await record(
+  cases,
+  "recordSessionBackendSessionId refuses replacing an existing runtime backend id",
+  "recordSessionBackendSessionId",
+  "record-backend-runtime-conflict",
+  ({ projectRoot }) => {
+    topologySessions.saveRuntimeTopologySessions({
+      projectRoot,
+      sessions: [
+        {
+          id: "claude-1",
+          command: "claude",
+          tool: "claude",
+          toolConfigKey: "claude",
+          args: [],
+          backendSessionId: "backend-original",
+          lifecycle: "live",
+        },
+      ],
+    });
+    return {
+      projectRoot,
+      operations: [{ sessionId: "claude-1", backendSessionId: "backend-new" }],
+      host: {
+        sessions: [{ id: "claude-1", command: "claude", backendSessionId: "backend-original" }],
+        offlineSessions: [],
+      },
+      initialTopology: snapshotTopology(),
+    };
+  },
+  (_ctx, input) => runRecordBackendOperations(input),
+);
+
+await record(
+  cases,
+  "recordSessionBackendSessionId writes topology when only the runtime holds the id",
+  "recordSessionBackendSessionId",
+  "record-backend-runtime-only",
+  ({ projectRoot }) => {
+    topologySessions.saveRuntimeTopologySessions({
+      projectRoot,
+      sessions: [
+        { id: "claude-1", command: "claude", tool: "claude", toolConfigKey: "claude", args: [], lifecycle: "live" },
+      ],
+    });
+    return {
+      projectRoot,
+      operations: [{ sessionId: "claude-1", backendSessionId: "backend-1" }],
+      host: {
+        sessions: [{ id: "claude-1", command: "claude", backendSessionId: "backend-1" }],
+        offlineSessions: [],
+      },
+      initialTopology: snapshotTopology(),
+    };
+  },
+  (_ctx, input) => runRecordBackendOperations(input),
+);
+
+await record(
+  cases,
+  "recordSessionBackendSessionId suppresses writes while still resyncing tmux metadata",
+  "recordSessionBackendSessionId",
+  "record-backend-noop-resync",
+  ({ projectRoot }) => {
+    topologySessions.saveRuntimeTopologySessions({
+      projectRoot,
+      sessions: [
+        {
+          id: "claude-1",
+          command: "claude",
+          tool: "claude",
+          toolConfigKey: "claude",
+          args: [],
+          backendSessionId: "backend-1",
+          lifecycle: "live",
+        },
+      ],
+    });
+    return {
+      projectRoot,
+      operations: [
+        { sessionId: "claude-1", backendSessionId: "backend-1" },
+        { sessionId: "claude-1", backendSessionId: "backend-1" },
+      ],
+      host: {
+        sessions: [{ id: "claude-1", command: "claude", backendSessionId: "backend-1" }],
+        offlineSessions: [],
+      },
+      initialTopology: snapshotTopology(),
+    };
+  },
+  (_ctx, input) => runRecordBackendOperations(input),
 );
 
 await record(

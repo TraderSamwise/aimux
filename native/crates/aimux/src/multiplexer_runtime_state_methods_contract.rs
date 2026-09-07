@@ -9,6 +9,7 @@ pub fn run_multiplexer_runtime_state_methods_contract_case(api: &str, input: &Va
         "graveyardSession" => graveyard_session(input),
         "isSessionRuntimeLive" => is_session_runtime_live(input),
         "restoreTmuxSessionsFromTopology" => restore_tmux_sessions_from_topology(input),
+        "recordSessionBackendSessionId" => record_session_backend_session_id(input),
         "loadOfflineTopologySessions" => load_offline_topology_sessions(input),
         "reconcileOrphanedTopologySessions" => reconcile_orphaned_topology_sessions(input),
         "loadOfflineServices" => load_offline_services(input),
@@ -284,6 +285,159 @@ fn restore_tmux_sessions_from_topology(input: &Value) -> Value {
         },
         "calls": calls,
     })
+}
+
+fn record_session_backend_session_id(input: &Value) -> Value {
+    let mut host_sessions = array_at(input, &["host", "sessions"]);
+    let mut offline_sessions = array_at(input, &["host", "offlineSessions"]);
+    let mut topology_sessions = array_at(input, &["initialTopology", "sessions"]);
+    let mut results = Vec::new();
+    let mut calls = Vec::new();
+
+    for operation in array_field(input, "operations") {
+        let session_id = string_field(&operation, "sessionId");
+        let backend_session_id = string_field(&operation, "backendSessionId")
+            .trim()
+            .to_owned();
+        match record_backend_session_id_operation(
+            &mut host_sessions,
+            &mut offline_sessions,
+            &mut topology_sessions,
+            &mut calls,
+            &session_id,
+            &backend_session_id,
+        ) {
+            Ok(value) => results.push(json!({ "ok": true, "value": value })),
+            Err(error) => results.push(json!({ "ok": false, "error": error })),
+        }
+    }
+
+    json!({
+        "results": results,
+        "host": {
+            "sessions": host_sessions,
+            "offlineSessions": offline_sessions,
+        },
+        "topology": { "sessions": topology_sessions },
+        "calls": calls,
+    })
+}
+
+fn record_backend_session_id_operation(
+    host_sessions: &mut [Value],
+    offline_sessions: &mut [Value],
+    topology_sessions: &mut Vec<Value>,
+    calls: &mut Vec<Value>,
+    session_id: &str,
+    backend_session_id: &str,
+) -> Result<Value, String> {
+    if backend_session_id.is_empty() {
+        return Err("backendSessionId is required".to_owned());
+    }
+    let runtime_index = host_sessions
+        .iter()
+        .position(|session| string_field(session, "id") == session_id);
+    let offline_index = offline_sessions
+        .iter()
+        .position(|session| string_field(session, "id") == session_id);
+
+    if let Some(index) = runtime_index {
+        let runtime_backend = optional_string(&host_sessions[index], "backendSessionId");
+        if runtime_backend.is_none()
+            && optional_string(&host_sessions[index], "supersededBackendSessionId").as_deref()
+                == Some(backend_session_id)
+        {
+            return Err(format!(
+                "Agent \"{session_id}\" ignored stale backend session \"{backend_session_id}\" from a superseded launch"
+            ));
+        }
+        if runtime_backend
+            .as_deref()
+            .is_some_and(|existing| existing != backend_session_id)
+        {
+            let existing = runtime_backend.as_deref().unwrap_or_default();
+            return Err(format!(
+                "Agent \"{session_id}\" already has backend session \"{existing}\", cannot replace with \"{backend_session_id}\""
+            ));
+        }
+        let Some(topology_index) = topology_sessions
+            .iter()
+            .position(|session| string_field(session, "id") == session_id)
+        else {
+            return Err(format!(
+                "Agent \"{session_id}\" is not managed in runtime topology"
+            ));
+        };
+        let topology_backend =
+            optional_string(&topology_sessions[topology_index], "backendSessionId");
+        let offline_backend = offline_index
+            .and_then(|idx| optional_string(&offline_sessions[idx], "backendSessionId"));
+        if runtime_backend.as_deref() == Some(backend_session_id)
+            && topology_backend.as_deref() == Some(backend_session_id)
+            && offline_index.is_none_or(|_| offline_backend.as_deref() == Some(backend_session_id))
+        {
+            calls.push(call("syncTmuxWindowMetadata", vec![json!(session_id)]));
+            return Ok(json!({ "sessionId": session_id, "backendSessionId": backend_session_id }));
+        }
+
+        let mut topology_session = topology_sessions.remove(topology_index);
+        set_field(
+            &mut topology_session,
+            "backendSessionId",
+            json!(backend_session_id),
+        );
+        set_field(&mut topology_session, "status", json!("running"));
+        set_field(&mut topology_session, "lifecycle", json!("live"));
+        set_field(&mut topology_session, "updatedAt", json!(NOW));
+        topology_sessions.push(topology_session);
+        set_field(
+            &mut host_sessions[index],
+            "backendSessionId",
+            json!(backend_session_id),
+        );
+        calls.push(call("syncTmuxWindowMetadata", vec![json!(session_id)]));
+    } else {
+        let Some(topology_index) = topology_sessions
+            .iter()
+            .position(|session| string_field(session, "id") == session_id)
+        else {
+            return Err(format!(
+                "Agent \"{session_id}\" is not managed in runtime topology"
+            ));
+        };
+        if let Some(existing) =
+            optional_string(&topology_sessions[topology_index], "backendSessionId")
+        {
+            if existing != backend_session_id {
+                return Err(format!(
+                    "Agent \"{session_id}\" already has backend session \"{existing}\", cannot replace with \"{backend_session_id}\""
+                ));
+            }
+        } else {
+            set_field(
+                &mut topology_sessions[topology_index],
+                "backendSessionId",
+                json!(backend_session_id),
+            );
+            set_field(
+                &mut topology_sessions[topology_index],
+                "updatedAt",
+                json!(NOW),
+            );
+        }
+    }
+
+    if let Some(index) = offline_index {
+        set_field(
+            &mut offline_sessions[index],
+            "backendSessionId",
+            json!(backend_session_id),
+        );
+    }
+    calls.push(call("saveState", vec![]));
+    calls.push(call("invalidateDesktopStateSnapshot", vec![]));
+    calls.push(call("writeStatuslineFile", vec![]));
+    Ok(json!({ "sessionId": session_id, "backendSessionId": backend_session_id }))
 }
 
 fn load_offline_topology_sessions(input: &Value) -> Value {
