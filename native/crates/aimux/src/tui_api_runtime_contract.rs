@@ -137,6 +137,23 @@ fn schedule_tui_api_recovery(input: &Value) -> Value {
     }
 
     let initial_delay = recovery_delay(input, option_bool(input, "immediate"));
+    let due_at = NOW + initial_delay;
+    if input.get("existingTimerDelay").is_some()
+        && input
+            .get("existingDueAt")
+            .and_then(Value::as_i64)
+            .unwrap_or(i64::MAX)
+            <= due_at
+    {
+        return json!({
+            "host": existing_timer_host(input),
+            "timers": [],
+            "cleared": [],
+            "unref": [],
+            "calls": [],
+        });
+    }
+
     let mut timers = vec![json!({ "id": 1, "delay": initial_delay })];
     let mut cleared = Vec::new();
     if input.get("existingTimerDelay").is_some()
@@ -156,6 +173,24 @@ fn schedule_tui_api_recovery(input: &Value) -> Value {
     {
         return json!({
             "host": scheduled_host(input, NOW + initial_delay, initial_delay),
+            "timers": timers,
+            "cleared": cleared,
+            "unref": unref,
+            "calls": [],
+        });
+    }
+
+    if input.get("runtimeGuardProbing").and_then(Value::as_bool) == Some(true) {
+        timers.push(json!({ "id": 2, "delay": RECOVERY_DEBOUNCE_MS }));
+        unref.push(json!(2));
+        return json!({
+            "host": {
+                "tuiApiRecoveryPending": true,
+                "tuiApiRecoveryInFlight": false,
+                "tuiApiRecoveryDueAt": NOW + RECOVERY_DEBOUNCE_MS,
+                "tuiApiRecoveryTimer": { "id": 2, "delay": RECOVERY_DEBOUNCE_MS },
+                "dashboardRepairNotices": [],
+            },
             "timers": timers,
             "cleared": cleared,
             "unref": unref,
@@ -280,6 +315,19 @@ fn schedule_tui_api_recovery(input: &Value) -> Value {
         "cleared": cleared,
         "unref": unref,
         "calls": calls,
+    })
+}
+
+fn existing_timer_host(input: &Value) -> Value {
+    json!({
+        "tuiApiRecoveryPending": true,
+        "tuiApiRecoveryInFlight": false,
+        "tuiApiRecoveryDueAt": input.get("existingDueAt").cloned().unwrap_or(Value::Null),
+        "tuiApiRecoveryTimer": {
+            "id": 0,
+            "delay": input.get("existingTimerDelay").cloned().unwrap_or(Value::Null),
+        },
+        "dashboardRepairNotices": [],
     })
 }
 

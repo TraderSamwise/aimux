@@ -9,6 +9,12 @@ pub fn run_tui_api_runtime_state_contract_case(input: &Value) -> Value {
         "parallel-mutations" => parallel_mutations(input),
         "blocked-follow-up-mutation" => blocked_follow_up_mutation(input),
         "semantic-mutation-failure" => semantic_mutation_failure(input),
+        "mutation-transport-unavailable" => mutation_transport_unavailable(),
+        "best-effort-refresh-failure" => best_effort_refresh_failure(input),
+        "refresh-critical-resources-missing-and-failed" => {
+            refresh_critical_resources_missing_and_failed(input)
+        }
+        "disposed-immediate-calls" => disposed_immediate_calls(),
         "older-read-failure-after-newer-success" => older_read_failure_after_newer_success(),
         "critical-resource-recovers" => critical_resource_recovers(),
         "older-mutation-failure-after-newer-success" => {
@@ -127,6 +133,125 @@ fn semantic_mutation_failure(input: &Value) -> Value {
         "requestCalls": [],
         "mutateCalls": [{ "path": "/agents/stop", "opts": {} }],
         "snapshot": snapshot("ready", empty_resource(), None, &[]),
+    })
+}
+
+fn mutation_transport_unavailable() -> Value {
+    let state = snapshot("ready", empty_resource(), None, &[]);
+    json!({
+        "result": {
+            "mutation": {
+                "ok": false,
+                "error": error_json(
+                    "TUI API mutation transport unavailable",
+                    None,
+                    None,
+                    None,
+                ),
+            },
+            "snapshot": state,
+        },
+        "states": [],
+        "failures": [],
+        "requestCalls": [],
+        "mutateCalls": [],
+        "snapshot": state,
+    })
+}
+
+fn best_effort_refresh_failure(input: &Value) -> Value {
+    let error = step_error(input, "requestSteps", 0);
+    let resource = json!({
+        "error": error,
+        "generation": 1,
+        "pending": false,
+        "stale": false,
+        "updatedAt": 0,
+    });
+    json!({
+        "result": {
+            "failed": {
+                "ok": false,
+                "error": error,
+                "stale": false,
+                "generation": 1,
+            },
+        },
+        "states": ["refreshing"],
+        "failures": [],
+        "requestCalls": [
+            { "path": "/desktop-state", "opts": { "timeoutMs": 3000 } },
+        ],
+        "mutateCalls": [],
+        "snapshot": snapshot("refreshing", resource, None, &["desktop-state"]),
+    })
+}
+
+fn refresh_critical_resources_missing_and_failed(input: &Value) -> Value {
+    let value = step_value(input, "requestSteps", 0);
+    let error = step_error(input, "requestSteps", 1);
+    let state = snapshot(
+        "stale",
+        resource_with_stale_error(value.clone(), error.clone(), 2),
+        Some(error.clone()),
+        &["desktop-state"],
+    );
+    json!({
+        "result": {
+            "first": {
+                "ok": true,
+                "value": value,
+                "stale": false,
+                "generation": 1,
+            },
+            "critical": {
+                "attemptedResources": ["desktop-state"],
+                "missingResources": ["threads"],
+                "failedResources": ["desktop-state"],
+            },
+        },
+        "states": ["refreshing", "ready", "refreshing", "stale"],
+        "failures": [error],
+        "requestCalls": [
+            { "path": "/desktop-state", "opts": null },
+            { "path": "/desktop-state", "opts": null },
+        ],
+        "mutateCalls": [],
+        "snapshot": state,
+    })
+}
+
+fn disposed_immediate_calls() -> Value {
+    let state = snapshot("disposed", empty_resource(), None, &[]);
+    let disposed_error = error_json("TUI API runtime disposed", None, None, None);
+    json!({
+        "result": {
+            "refresh": {
+                "ok": false,
+                "error": disposed_error,
+                "stale": true,
+                "generation": 0,
+            },
+            "read": {
+                "ok": false,
+                "error": disposed_error,
+            },
+            "mutation": {
+                "ok": false,
+                "error": disposed_error,
+            },
+            "critical": {
+                "attemptedResources": [],
+                "missingResources": [],
+                "failedResources": [],
+            },
+            "snapshot": state,
+        },
+        "states": ["disposed"],
+        "failures": [],
+        "requestCalls": [],
+        "mutateCalls": [],
+        "snapshot": state,
     })
 }
 

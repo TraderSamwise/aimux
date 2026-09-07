@@ -26,7 +26,7 @@ fn fixture_tui_api_runtime_state_matches_typescript() {
     let contract: Contract =
         serde_json::from_str(FIXTURE).expect("tui api runtime state fixture parses");
     assert_eq!(contract.source, "src/multiplexer/tui-api-runtime.ts");
-    assert_eq!(contract.cases.len(), 19);
+    assert_eq!(contract.cases.len(), 23);
 
     let mut failures = Vec::new();
     for case in contract.cases {

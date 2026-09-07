@@ -135,6 +135,41 @@ async function runCase(input) {
       result.failed = normalize(await runtime.mutateJson("/agents/stop", {}, (value) => value));
       break;
     }
+    case "mutation-transport-unavailable": {
+      const noMutationRuntime = new TuiApiRuntime({ request });
+      result.mutation = normalize(await noMutationRuntime.mutateJson("/agents/stop", {}, (value) => value));
+      result.snapshot = snapshot(noMutationRuntime);
+      return { result, states, failures, requestCalls, mutateCalls, snapshot: result.snapshot };
+    }
+    case "best-effort-refresh-failure": {
+      result.failed = normalize(
+        await runtime.refreshJson("desktop-state", "/desktop-state", (value) => value, {
+          timeoutMs: 3000,
+          recoverOnFailure: false,
+        }),
+      );
+      break;
+    }
+    case "refresh-critical-resources-missing-and-failed": {
+      result.first = normalize(await runtime.refreshJson("desktop-state", "/desktop-state", (value) => value));
+      result.critical = normalize(await runtime.refreshCriticalResources());
+      break;
+    }
+    case "disposed-immediate-calls": {
+      const disposedRuntime = new TuiApiRuntime({
+        request,
+        mutate,
+        criticalResources: ["desktop-state"],
+        onConnectionStateChange: (state) => states.push(state),
+      });
+      disposedRuntime.dispose();
+      result.refresh = normalize(await disposedRuntime.refreshJson("desktop-state", "/desktop-state", (value) => value));
+      result.read = normalize(await disposedRuntime.requestJson("/desktop-state", (value) => value));
+      result.mutation = normalize(await disposedRuntime.mutateJson("/agents/stop", {}, (value) => value));
+      result.critical = normalize(await disposedRuntime.refreshCriticalResources());
+      result.snapshot = snapshot(disposedRuntime);
+      return { result, states, failures, requestCalls, mutateCalls, snapshot: result.snapshot };
+    }
     case "older-read-failure-after-newer-success": {
       const slow = deferred();
       const fast = deferred();
@@ -397,6 +432,30 @@ const cases = [
       scenario: "semantic-mutation-failure",
       mutateSteps: [{ throw: { message: "session is already stopped", status: 400, tuiApiRecoverable: false } }],
     },
+  },
+  {
+    name: "missing mutation transport fails without reconnecting",
+    input: { scenario: "mutation-transport-unavailable" },
+  },
+  {
+    name: "best effort refresh failures do not enter reconnecting state",
+    input: {
+      scenario: "best-effort-refresh-failure",
+      criticalResources: ["desktop-state"],
+      requestSteps: [{ throw: { message: "telemetry refresh timeout" } }],
+    },
+  },
+  {
+    name: "critical refresh reports missing resources and failed replay",
+    input: {
+      scenario: "refresh-critical-resources-missing-and-failed",
+      criticalResources: ["desktop-state", "threads"],
+      requestSteps: [{ value: { ok: true, value: 1 } }, { throw: { message: "desktop-state retry failed" } }],
+    },
+  },
+  {
+    name: "disposed runtime rejects immediate operations without transports",
+    input: { scenario: "disposed-immediate-calls" },
   },
   {
     name: "older wrapper read failure does not degrade newer success",

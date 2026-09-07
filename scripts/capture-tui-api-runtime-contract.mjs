@@ -228,9 +228,23 @@ const inputs = [
     errors: [{ code: "ETIMEDOUT" }, { code: "ECONNREFUSED" }, { code: "ECONNRESET" }, { code: "EPIPE" }],
   },
   {
+    name: "treats nullish thrown values as recoverable",
+    api: "isRecoverableTuiApiError",
+    errorKind: "null",
+  },
+  {
     name: "defaults unknown errors to recoverable",
     api: "isRecoverableTuiApiError",
     errors: [{ code: "UNKNOWN" }, {}, null],
+  },
+  {
+    name: "allows mutations while refreshing repaired and disposed without critical failures",
+    api: "isTuiApiConnectionMutationBlocked",
+    snapshots: [
+      { state: "refreshing", failedCriticalResources: [] },
+      { state: "repaired", failedCriticalResources: [] },
+      { state: "disposed", failedCriticalResources: [] },
+    ],
   },
   {
     name: "detects host read transport presence",
@@ -262,6 +276,27 @@ const inputs = [
     options: { immediate: true },
     failureStreak: 2,
     lastRecoveryAt: FIXED_NOW - 100,
+  },
+  {
+    name: "keeps earlier scheduled recovery timer",
+    api: "scheduleTuiApiRecovery",
+    mode: "dashboard",
+    existingTimerDelay: 100,
+    existingDueAt: FIXED_NOW + 100,
+  },
+  {
+    name: "marks pending without scheduling while recovery is already in flight",
+    api: "scheduleTuiApiRecovery",
+    mode: "dashboard",
+    inFlight: true,
+  },
+  {
+    name: "scheduled recovery waits behind runtime guard probing",
+    api: "scheduleTuiApiRecovery",
+    mode: "dashboard",
+    options: { immediate: true },
+    fireScheduled: true,
+    runtimeGuardProbing: true,
   },
   {
     name: "scheduled recovery success clears pending retry state",

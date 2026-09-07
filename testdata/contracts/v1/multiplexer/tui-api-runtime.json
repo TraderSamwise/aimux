@@ -168,6 +168,19 @@
     },
     {
       "id": "tui-api-runtime-011",
+      "name": "treats nullish thrown values as recoverable",
+      "source": "src/multiplexer/tui-api-runtime.test.ts",
+      "api": "isRecoverableTuiApiError",
+      "input": {
+        "name": "treats nullish thrown values as recoverable",
+        "api": "isRecoverableTuiApiError",
+        "errorKind": "null"
+      },
+      "output": true,
+      "inputSha256": "482d8caed06c7f278f5a2092d81f090b68ab9394470a3c3665464375bd5d0415"
+    },
+    {
+      "id": "tui-api-runtime-012",
       "name": "defaults unknown errors to recoverable",
       "source": "src/multiplexer/tui-api-runtime.test.ts",
       "api": "isRecoverableTuiApiError",
@@ -184,7 +197,28 @@
       "inputSha256": "da5fd3e49699cac906aa37f5a402659dfecbe00cf2e27496c5ab31be70f5fd79"
     },
     {
-      "id": "tui-api-runtime-012",
+      "id": "tui-api-runtime-013",
+      "name": "allows mutations while refreshing repaired and disposed without critical failures",
+      "source": "src/multiplexer/tui-api-runtime.test.ts",
+      "api": "isTuiApiConnectionMutationBlocked",
+      "input": {
+        "name": "allows mutations while refreshing repaired and disposed without critical failures",
+        "api": "isTuiApiConnectionMutationBlocked",
+        "snapshots": [
+          { "state": "refreshing", "failedCriticalResources": [] },
+          { "state": "repaired", "failedCriticalResources": [] },
+          { "state": "disposed", "failedCriticalResources": [] }
+        ]
+      },
+      "output": [
+        { "snapshot": { "state": "refreshing", "failedCriticalResources": [] }, "blocked": false },
+        { "snapshot": { "state": "repaired", "failedCriticalResources": [] }, "blocked": false },
+        { "snapshot": { "state": "disposed", "failedCriticalResources": [] }, "blocked": false }
+      ],
+      "inputSha256": "24245a31725b512d7295fd16be9c5776d2a0214c8f49a994fa1df682362d966a"
+    },
+    {
+      "id": "tui-api-runtime-014",
       "name": "detects host read transport presence",
       "source": "src/multiplexer/tui-api-runtime.test.ts",
       "api": "hasTuiApiRuntimeReadTransport",
@@ -201,7 +235,7 @@
       "inputSha256": "cbcc9b6812291b17dbdadbf37b0424188de184569037f31bb643df89e514d186"
     },
     {
-      "id": "tui-api-runtime-013",
+      "id": "tui-api-runtime-015",
       "name": "does not schedule recovery outside dashboard mode",
       "source": "src/multiplexer/tui-api-runtime.ts",
       "api": "scheduleTuiApiRecovery",
@@ -225,7 +259,7 @@
       "inputSha256": "0413dcdbf3bb74d7c4728479bbbce1e646b62212b977db4b3f70d31b9d96a95c"
     },
     {
-      "id": "tui-api-runtime-014",
+      "id": "tui-api-runtime-016",
       "name": "debounces first dashboard recovery request",
       "source": "src/multiplexer/tui-api-runtime.ts",
       "api": "scheduleTuiApiRecovery",
@@ -250,7 +284,7 @@
       "inputSha256": "45549e8663fc00c42e7a7902d9521a7e3fe5e7045d21973bd350f98fe860b905"
     },
     {
-      "id": "tui-api-runtime-015",
+      "id": "tui-api-runtime-017",
       "name": "immediate recovery replaces later pending timer",
       "source": "src/multiplexer/tui-api-runtime.ts",
       "api": "scheduleTuiApiRecovery",
@@ -278,7 +312,7 @@
       "inputSha256": "b01a31c941bdc74c61d10ae3f4eb4c1db1a1474ced5540f2d26ee20581bf3c02"
     },
     {
-      "id": "tui-api-runtime-016",
+      "id": "tui-api-runtime-018",
       "name": "failure streak and last recovery time throttle retries",
       "source": "src/multiplexer/tui-api-runtime.ts",
       "api": "scheduleTuiApiRecovery",
@@ -308,7 +342,90 @@
       "inputSha256": "ea1d2da1c816d7b7091c5e0bb3f5b6808bfb52e7783d890797e89d16b9fa3bc7"
     },
     {
-      "id": "tui-api-runtime-017",
+      "id": "tui-api-runtime-019",
+      "name": "keeps earlier scheduled recovery timer",
+      "source": "src/multiplexer/tui-api-runtime.ts",
+      "api": "scheduleTuiApiRecovery",
+      "input": {
+        "name": "keeps earlier scheduled recovery timer",
+        "api": "scheduleTuiApiRecovery",
+        "mode": "dashboard",
+        "existingTimerDelay": 100,
+        "existingDueAt": 1700000000100
+      },
+      "output": {
+        "host": {
+          "tuiApiRecoveryPending": true,
+          "tuiApiRecoveryInFlight": false,
+          "tuiApiRecoveryDueAt": 1700000000100,
+          "tuiApiRecoveryTimer": { "id": 0, "delay": 100 },
+          "dashboardRepairNotices": []
+        },
+        "timers": [],
+        "cleared": [],
+        "unref": [],
+        "calls": []
+      },
+      "inputSha256": "3d89ef61f15f84129b80f7058f017d0c29e300e681f80eaf0291fc7e0edca1db"
+    },
+    {
+      "id": "tui-api-runtime-020",
+      "name": "marks pending without scheduling while recovery is already in flight",
+      "source": "src/multiplexer/tui-api-runtime.ts",
+      "api": "scheduleTuiApiRecovery",
+      "input": {
+        "name": "marks pending without scheduling while recovery is already in flight",
+        "api": "scheduleTuiApiRecovery",
+        "mode": "dashboard",
+        "inFlight": true
+      },
+      "output": {
+        "host": {
+          "tuiApiRecoveryPending": true,
+          "tuiApiRecoveryInFlight": true,
+          "tuiApiRecoveryTimer": null,
+          "dashboardRepairNotices": []
+        },
+        "timers": [],
+        "cleared": [],
+        "unref": [],
+        "calls": []
+      },
+      "inputSha256": "9468c33ced9c8c841f60c2190fb2d3fdef4554a8f330de32a9bb1c4d39887bd7"
+    },
+    {
+      "id": "tui-api-runtime-021",
+      "name": "scheduled recovery waits behind runtime guard probing",
+      "source": "src/multiplexer/tui-api-runtime.ts",
+      "api": "scheduleTuiApiRecovery",
+      "input": {
+        "name": "scheduled recovery waits behind runtime guard probing",
+        "api": "scheduleTuiApiRecovery",
+        "mode": "dashboard",
+        "options": { "immediate": true },
+        "fireScheduled": true,
+        "runtimeGuardProbing": true
+      },
+      "output": {
+        "host": {
+          "tuiApiRecoveryPending": true,
+          "tuiApiRecoveryInFlight": false,
+          "tuiApiRecoveryDueAt": 1700000000250,
+          "tuiApiRecoveryTimer": { "id": 2, "delay": 250 },
+          "dashboardRepairNotices": []
+        },
+        "timers": [
+          { "id": 1, "delay": 0 },
+          { "id": 2, "delay": 250 }
+        ],
+        "cleared": [],
+        "unref": [1, 2],
+        "calls": []
+      },
+      "inputSha256": "6c2dff44054c6a508e838ed1c575051330360e598c176e71187a53bb8307aa52"
+    },
+    {
+      "id": "tui-api-runtime-022",
       "name": "scheduled recovery success clears pending retry state",
       "source": "src/multiplexer/tui-api-runtime.ts",
       "api": "scheduleTuiApiRecovery",
@@ -359,7 +476,7 @@
       "inputSha256": "be7179f0c7cdba0c7a54cb23a361579b1269d03ef6b7beecaa3de5606d337df0"
     },
     {
-      "id": "tui-api-runtime-018",
+      "id": "tui-api-runtime-023",
       "name": "scheduled recovery waits and reschedules when critical resources are unverified",
       "source": "src/multiplexer/tui-api-runtime.ts",
       "api": "scheduleTuiApiRecovery",
@@ -424,7 +541,7 @@
       "inputSha256": "c8a31920873f865ff33e3e3569fe2ea6b167dd9a2f2ccc337956994c4d2623c2"
     },
     {
-      "id": "tui-api-runtime-019",
+      "id": "tui-api-runtime-024",
       "name": "scheduled recovery failure records error and backs off",
       "source": "src/multiplexer/tui-api-runtime.ts",
       "api": "scheduleTuiApiRecovery",

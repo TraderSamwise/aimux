@@ -229,6 +229,195 @@
     },
     {
       "id": "tui-api-runtime-state-006",
+      "name": "missing mutation transport fails without reconnecting",
+      "source": "src/multiplexer/tui-api-runtime.ts",
+      "api": "TuiApiRuntime",
+      "input": { "scenario": "mutation-transport-unavailable" },
+      "output": {
+        "result": {
+          "mutation": {
+            "ok": false,
+            "error": { "name": "Error", "message": "TUI API mutation transport unavailable" }
+          },
+          "snapshot": {
+            "state": "ready",
+            "connection": {
+              "state": "ready",
+              "updatedAt": 1700000000000,
+              "pendingResources": [],
+              "staleResources": [],
+              "failedResources": [],
+              "failedCriticalResources": []
+            },
+            "resource": { "generation": 0, "pending": false, "stale": false, "updatedAt": 0 }
+          }
+        },
+        "states": [],
+        "failures": [],
+        "requestCalls": [],
+        "mutateCalls": [],
+        "snapshot": {
+          "state": "ready",
+          "connection": {
+            "state": "ready",
+            "updatedAt": 1700000000000,
+            "pendingResources": [],
+            "staleResources": [],
+            "failedResources": [],
+            "failedCriticalResources": []
+          },
+          "resource": { "generation": 0, "pending": false, "stale": false, "updatedAt": 0 }
+        }
+      },
+      "inputSha256": "235ea3cad27e8a587b8af21d1a796ba1a2ec43f15bca6377ed378069628f4b93"
+    },
+    {
+      "id": "tui-api-runtime-state-007",
+      "name": "best effort refresh failures do not enter reconnecting state",
+      "source": "src/multiplexer/tui-api-runtime.ts",
+      "api": "TuiApiRuntime",
+      "input": {
+        "scenario": "best-effort-refresh-failure",
+        "criticalResources": ["desktop-state"],
+        "requestSteps": [{ "throw": { "message": "telemetry refresh timeout" } }]
+      },
+      "output": {
+        "result": {
+          "failed": {
+            "ok": false,
+            "error": { "name": "Error", "message": "telemetry refresh timeout" },
+            "stale": false,
+            "generation": 1
+          }
+        },
+        "states": ["refreshing"],
+        "failures": [],
+        "requestCalls": [{ "path": "/desktop-state", "opts": { "timeoutMs": 3000 } }],
+        "mutateCalls": [],
+        "snapshot": {
+          "state": "refreshing",
+          "connection": {
+            "state": "refreshing",
+            "updatedAt": 1700000000000,
+            "pendingResources": [],
+            "staleResources": [],
+            "failedResources": ["desktop-state"],
+            "failedCriticalResources": ["desktop-state"]
+          },
+          "resource": {
+            "error": { "name": "Error", "message": "telemetry refresh timeout" },
+            "generation": 1,
+            "pending": false,
+            "stale": false,
+            "updatedAt": 0
+          }
+        }
+      },
+      "inputSha256": "9e14d8995f3c7c687bbc44c4ccab9c833ad424039650c1f6af87ea39f9641c54"
+    },
+    {
+      "id": "tui-api-runtime-state-008",
+      "name": "critical refresh reports missing resources and failed replay",
+      "source": "src/multiplexer/tui-api-runtime.ts",
+      "api": "TuiApiRuntime",
+      "input": {
+        "scenario": "refresh-critical-resources-missing-and-failed",
+        "criticalResources": ["desktop-state", "threads"],
+        "requestSteps": [
+          { "value": { "ok": true, "value": 1 } },
+          { "throw": { "message": "desktop-state retry failed" } }
+        ]
+      },
+      "output": {
+        "result": {
+          "first": { "ok": true, "value": { "ok": true, "value": 1 }, "stale": false, "generation": 1 },
+          "critical": {
+            "attemptedResources": ["desktop-state"],
+            "missingResources": ["threads"],
+            "failedResources": ["desktop-state"]
+          }
+        },
+        "states": ["refreshing", "ready", "refreshing", "stale"],
+        "failures": [{ "name": "Error", "message": "desktop-state retry failed" }],
+        "requestCalls": [
+          { "path": "/desktop-state", "opts": null },
+          { "path": "/desktop-state", "opts": null }
+        ],
+        "mutateCalls": [],
+        "snapshot": {
+          "state": "stale",
+          "connection": {
+            "state": "stale",
+            "updatedAt": 1700000000000,
+            "pendingResources": [],
+            "staleResources": ["desktop-state"],
+            "failedResources": ["desktop-state"],
+            "failedCriticalResources": ["desktop-state"],
+            "lastError": { "name": "Error", "message": "desktop-state retry failed" }
+          },
+          "resource": {
+            "value": { "ok": true, "value": 1 },
+            "error": { "name": "Error", "message": "desktop-state retry failed" },
+            "generation": 2,
+            "pending": false,
+            "stale": true,
+            "updatedAt": 1700000000000
+          }
+        }
+      },
+      "inputSha256": "0e6b8937b224b8ea9e1fea29d87d3ae5c194cf0802b6befdf8a68b1f33c879e1"
+    },
+    {
+      "id": "tui-api-runtime-state-009",
+      "name": "disposed runtime rejects immediate operations without transports",
+      "source": "src/multiplexer/tui-api-runtime.ts",
+      "api": "TuiApiRuntime",
+      "input": { "scenario": "disposed-immediate-calls" },
+      "output": {
+        "result": {
+          "refresh": {
+            "ok": false,
+            "error": { "name": "Error", "message": "TUI API runtime disposed" },
+            "stale": true,
+            "generation": 0
+          },
+          "read": { "ok": false, "error": { "name": "Error", "message": "TUI API runtime disposed" } },
+          "mutation": { "ok": false, "error": { "name": "Error", "message": "TUI API runtime disposed" } },
+          "critical": { "attemptedResources": [], "missingResources": [], "failedResources": [] },
+          "snapshot": {
+            "state": "disposed",
+            "connection": {
+              "state": "disposed",
+              "updatedAt": 1700000000000,
+              "pendingResources": [],
+              "staleResources": [],
+              "failedResources": [],
+              "failedCriticalResources": []
+            },
+            "resource": { "generation": 0, "pending": false, "stale": false, "updatedAt": 0 }
+          }
+        },
+        "states": ["disposed"],
+        "failures": [],
+        "requestCalls": [],
+        "mutateCalls": [],
+        "snapshot": {
+          "state": "disposed",
+          "connection": {
+            "state": "disposed",
+            "updatedAt": 1700000000000,
+            "pendingResources": [],
+            "staleResources": [],
+            "failedResources": [],
+            "failedCriticalResources": []
+          },
+          "resource": { "generation": 0, "pending": false, "stale": false, "updatedAt": 0 }
+        }
+      },
+      "inputSha256": "211004d6dd1f9bf31479800b616d5d68d460bdd09be8981e2bbc2e6b838e0461"
+    },
+    {
+      "id": "tui-api-runtime-state-010",
       "name": "older wrapper read failure does not degrade newer success",
       "source": "src/multiplexer/tui-api-runtime.ts",
       "api": "TuiApiRuntime",
@@ -274,7 +463,7 @@
       "inputSha256": "5bb915a6113b552f4afbf40b2785a338a8ed3de9b927191abe0be228ac54b05d"
     },
     {
-      "id": "tui-api-runtime-state-007",
+      "id": "tui-api-runtime-state-011",
       "name": "critical resource failures keep reconnecting until the resource refreshes",
       "source": "src/multiplexer/tui-api-runtime.ts",
       "api": "TuiApiRuntime",
@@ -357,7 +546,7 @@
       "inputSha256": "e285d3479291c4d259a007ed6051a35c450371c372c62d636b4c13cf89fc41b8"
     },
     {
-      "id": "tui-api-runtime-state-008",
+      "id": "tui-api-runtime-state-012",
       "name": "older wrapper mutation failure does not degrade newer success",
       "source": "src/multiplexer/tui-api-runtime.ts",
       "api": "TuiApiRuntime",
@@ -402,7 +591,7 @@
       "inputSha256": "155b172b0de5899cbb18f6612672b8d71a77ca1d7840faab338815eb7101eaeb"
     },
     {
-      "id": "tui-api-runtime-state-009",
+      "id": "tui-api-runtime-state-013",
       "name": "older resource refresh failure does not degrade newer direct success",
       "source": "src/multiplexer/tui-api-runtime.ts",
       "api": "TuiApiRuntime",
@@ -464,7 +653,7 @@
       "inputSha256": "91788a98746a49f9a750fa25abac741717965ad03686b1d669c754333a4de809"
     },
     {
-      "id": "tui-api-runtime-state-010",
+      "id": "tui-api-runtime-state-014",
       "name": "best effort mutation failures do not enter reconnecting state",
       "source": "src/multiplexer/tui-api-runtime.ts",
       "api": "TuiApiRuntime",
@@ -496,7 +685,7 @@
       "inputSha256": "5a2d5a5ae304a84d8315e0a764750279a2374dda86152ad9a159965cf82939f4"
     },
     {
-      "id": "tui-api-runtime-state-011",
+      "id": "tui-api-runtime-state-015",
       "name": "newer superseded refresh response owns the resource snapshot",
       "source": "src/multiplexer/tui-api-runtime.ts",
       "api": "TuiApiRuntime",
@@ -553,7 +742,7 @@
       "inputSha256": "2b785e30865c59b7339de1c126e3097b9bc7243736fb7cc0b06f2c05a194c370"
     },
     {
-      "id": "tui-api-runtime-state-012",
+      "id": "tui-api-runtime-state-016",
       "name": "pending refresh success is ignored after disposal",
       "source": "src/multiplexer/tui-api-runtime.ts",
       "api": "TuiApiRuntime",
@@ -594,7 +783,7 @@
       "inputSha256": "1d9c190b4a0fe2c1a9f69256a80a574d94ede0d1e16e668ab343bd3d909198a4"
     },
     {
-      "id": "tui-api-runtime-state-013",
+      "id": "tui-api-runtime-state-017",
       "name": "pending refresh failure is ignored after disposal",
       "source": "src/multiplexer/tui-api-runtime.ts",
       "api": "TuiApiRuntime",
@@ -635,7 +824,7 @@
       "inputSha256": "70842a25e977df56e1a5f86da2484897fba9702a6c8e0c0c9cde07af6c9215c5"
     },
     {
-      "id": "tui-api-runtime-state-014",
+      "id": "tui-api-runtime-state-018",
       "name": "direct read success is ignored after disposal",
       "source": "src/multiplexer/tui-api-runtime.ts",
       "api": "TuiApiRuntime",
@@ -676,7 +865,7 @@
       "inputSha256": "9ea97c99d2d44c86e4f3ee5210b3ea59f32b9296451f5dd3313e2c8b753cf3cc"
     },
     {
-      "id": "tui-api-runtime-state-015",
+      "id": "tui-api-runtime-state-019",
       "name": "mutation success is ignored after disposal",
       "source": "src/multiplexer/tui-api-runtime.ts",
       "api": "TuiApiRuntime",
@@ -717,7 +906,7 @@
       "inputSha256": "4508395668a14c9cad485e67ada7838d599bec3349e2ece25a75db77157a863d"
     },
     {
-      "id": "tui-api-runtime-state-016",
+      "id": "tui-api-runtime-state-020",
       "name": "wrapper reads route through the shared runtime transport",
       "source": "src/multiplexer/tui-api-runtime.ts",
       "api": "TuiApiRuntime",
@@ -744,7 +933,7 @@
       "inputSha256": "f783598b547a3d6eb9ebfed78d3bf990e00e3fb9b415862eed30f1ec074b9675"
     },
     {
-      "id": "tui-api-runtime-state-017",
+      "id": "tui-api-runtime-state-021",
       "name": "wrapper read failures stay thrown for existing callers",
       "source": "src/multiplexer/tui-api-runtime.ts",
       "api": "TuiApiRuntime",
@@ -772,7 +961,7 @@
       "inputSha256": "df1a854e460f9f0c28e6f927c9408498811b269899453eb0dd61689707945103"
     },
     {
-      "id": "tui-api-runtime-state-018",
+      "id": "tui-api-runtime-state-022",
       "name": "wrapper mutations route through the shared runtime transport",
       "source": "src/multiplexer/tui-api-runtime.ts",
       "api": "TuiApiRuntime",
@@ -806,7 +995,7 @@
       "inputSha256": "ab84f7d37c5059f5961aa9fa849906330db1d8ae1ff6993b065414a469b67a15"
     },
     {
-      "id": "tui-api-runtime-state-019",
+      "id": "tui-api-runtime-state-023",
       "name": "wrapper mutation failures stay thrown for existing callers",
       "source": "src/multiplexer/tui-api-runtime.ts",
       "api": "TuiApiRuntime",
