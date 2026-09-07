@@ -141,8 +141,7 @@ fn last_meaningful_line(text: &str) -> String {
     tail_lines(text, 20)
         .into_iter()
         .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .next_back()
+        .rfind(|line| !line.is_empty())
         .unwrap_or_default()
         .to_string()
 }
