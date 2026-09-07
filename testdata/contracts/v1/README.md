@@ -41,6 +41,9 @@ Priority fixture groups:
 - `dashboard/desktop-state-golden.json`: runtime-light/runtime-full desktop
   state snapshots and snapshot cost model captured by running TypeScript
   `buildDesktopStateSnapshot`.
+- `dashboard/desktop-state-counts.json`: hidden-offline count and visible row
+  projection behavior captured by running the TypeScript dashboard visibility
+  helpers used by `renderDashboard`.
 - `dashboard/targets.json`: dashboard target discovery/replacement return
   values and mocked tmux side-effect call logs captured by running TypeScript
   `findLiveDashboardTarget` and `resolveDashboardTarget`.
@@ -324,6 +327,9 @@ Priority fixture groups:
   with a temporary `AIMUX_HOME`. This is currently a Rust checklist corpus
   because there is no public scanner API outside the daemon/project catalog
   implementation.
+- `project-catalog/registry.json`: registered project discovery, desktop
+  filtering, and dashboard session-name contracts captured by running
+  TypeScript `project-scanner` registry helpers with a temporary `AIMUX_HOME`.
 
 ## Project Connection
 

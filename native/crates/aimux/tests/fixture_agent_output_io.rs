@@ -1,10 +1,10 @@
 use aimux::daemon::text::host_agent::AgentOutputSseTextHandler;
 use aimux::project_service::agent_output::{
-    AgentOutputCaptureWindow, agent_output_capture_window, bounded_agent_output_end_line,
-    bounded_agent_output_start_line,
+    agent_output_capture_window, bounded_agent_output_end_line, bounded_agent_output_start_line,
+    AgentOutputCaptureWindow,
 };
 use aimux::project_service::output_metrics::{AgentOutputReadMetricRecord, AgentOutputReadMetrics};
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 
 const BOUNDS: &str = include_str!("../../../../testdata/contracts/v1/agent-output/bounds.json");
 const STREAM: &str = include_str!("../../../../testdata/contracts/v1/agent-output/stream.json");
@@ -100,14 +100,41 @@ fn fixture_agent_output_read_metrics_matches_typescript() {
     let mut failures = Vec::new();
     for case in cases {
         let metrics = AgentOutputReadMetrics::default();
-        for record in case["input"]["records"].as_array().expect("metric records") {
+        let snapshot_indices = case["output"]["snapshots"]
+            .as_array()
+            .expect("expected read metric snapshots")
+            .iter()
+            .filter_map(|snapshot| {
+                snapshot
+                    .get("afterRecordIndex")
+                    .and_then(Value::as_u64)
+                    .map(|index| index as usize)
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+        let mut snapshots = Vec::new();
+        for (index, record) in case["input"]["records"]
+            .as_array()
+            .expect("metric records")
+            .iter()
+            .enumerate()
+        {
             metrics.record_metric_at(
                 read_metric_record(&record["input"]),
                 record["at"].as_str().expect("metric timestamp").to_owned(),
             );
+            if snapshot_indices.contains(&index) {
+                snapshots.push(json!({
+                    "afterRecordIndex": index,
+                    "after": record,
+                    "metrics": metrics.snapshot(),
+                }));
+            }
         }
-        let actual = metrics.snapshot();
-        let expected = case["output"]["finalMetrics"].clone();
+        let actual = json!({
+            "snapshots": snapshots,
+            "finalMetrics": metrics.snapshot(),
+        });
+        let expected = case["output"].clone();
         if actual != expected {
             failures.push(json!({
                 "id": case["id"],
