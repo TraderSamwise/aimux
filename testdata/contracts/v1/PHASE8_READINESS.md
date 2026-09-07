@@ -1,6 +1,6 @@
 # Phase 8 Readiness
 
-Audit point: `e9e4f530cdcd4e3fe9d6c381b9ef9f62881c1d20`
+Audit point: `08f2476bfe74cc82d3b365a68d6110fc541c545c`
 
 Question: what actually breaks if the TypeScript hot path is deleted today?
 
@@ -17,9 +17,9 @@ Answer: the checklist gate is now clear for captured behavior: all 269 suite/cor
 
 ## No-Node Smoke
 
-Smoke root: `/tmp/aimux-phase8-smoke.318rh9`
+Smoke root: `/tmp/aimux-phase8-smoke.qLJElN`
 
-Method: built `AIMUX_BUILD_PROFILE=local` from a detached clean worktree at `e9e4f530`, installed with `AIMUX_INSTALL_ROOT=/tmp/aimux-phase8-smoke.318rh9/install-root` and `AIMUX_BIN_DIR=/tmp/aimux-phase8-smoke.318rh9/bin`, then ran the installed shim with `PATH=/tmp/aimux-phase8-smoke.318rh9/bin:/tmp/aimux-phase8-smoke.318rh9/tools:/usr/bin:/bin:/usr/sbin:/sbin`. That `PATH` had `tmux` available via a temp symlink and no `node`.
+Method: built `AIMUX_BUILD_PROFILE=local` from a detached clean worktree at `08f2476b`, installed with `AIMUX_INSTALL_ROOT=/tmp/aimux-phase8-smoke.qLJElN/install-root` and `AIMUX_BIN_DIR=/tmp/aimux-phase8-smoke.qLJElN/bin`, then ran the installed shim with `PATH=/tmp/aimux-phase8-smoke.qLJElN/bin:/tmp/aimux-phase8-smoke.qLJElN/tools:/usr/bin:/bin:/usr/sbin:/sbin`. That `PATH` had `tmux` available via a temp symlink and no `node`.
 
 Results:
 
@@ -27,9 +27,9 @@ Results:
 | --- | --- | --- |
 | `node` absent from runtime `PATH` | Pass | `nodePresentInSmokePath: false` |
 | Release install with `dist` withheld | Pass | local-profile archive installed; `find install-root -path '*/dist/*'` returned none |
-| `aimux --version` | Pass | printed `phase8-smoke-e9e4f530` |
+| `aimux --version` | Pass | printed `phase8-smoke-08f2476b` |
 | `aimux build-info --json` | Pass | reported `profile: "local"` and `zero_node_cli_target: true` |
-| `aimux daemon run` | Pass | temp daemon served `/health` on isolated port `52639` |
+| `aimux daemon run` | Pass | temp daemon served `/health` on isolated port `55262` |
 | Project-service startup | Pass | temp service published `metadata-api.txt` and served `/health` |
 | Hooks | Pass | POST `/hooks/codex?action=stop&sessionId=codex-smoke` returned `{}` through the temp project-service |
 | Dashboard launch | Pass | `__dashboard-internal-native --once` rendered from a temp desktop-state snapshot |
