@@ -1,3 +1,5 @@
+use crate::native_plugin_gh_pr_context::GithubPrContextPlugin;
+use crate::native_plugin_transcript_length::TranscriptLengthPlugin;
 use crate::plugin_api::{NativePlugin, NativePluginApi, NativePluginHost, NativePluginStatus};
 use serde_json::Value;
 
@@ -6,6 +8,13 @@ pub struct NativePluginRegistry {
 }
 
 impl NativePluginRegistry {
+    pub fn builtins() -> Self {
+        Self::new(vec![
+            Box::new(GithubPrContextPlugin),
+            Box::new(TranscriptLengthPlugin::new("top")),
+        ])
+    }
+
     pub fn new(plugins: Vec<Box<dyn NativePlugin>>) -> Self {
         Self { plugins }
     }
