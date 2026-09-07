@@ -44,18 +44,17 @@ fn resolve_aimux_cli_launch_command(
     let stable_shim_path =
         string_field_opt(env, "AIMUX_CLI_BIN").unwrap_or_else(|| "~/.local/bin/aimux".to_owned());
     let current_argv_entry = string_field(options, "currentArgvEntry");
-    if prefer_native_binary {
-        if let Some(native_binary) =
+    if prefer_native_binary
+        && let Some(native_binary) =
             resolve_installed_native_binary(current_argv_entry, env, &stable_shim_path)
-        {
-            return launch_command(
-                &native_binary,
-                args,
-                "native-binary",
-                &native_binary,
-                &stable_shim_path,
-            );
-        }
+    {
+        return launch_command(
+            &native_binary,
+            args,
+            "native-binary",
+            &native_binary,
+            &stable_shim_path,
+        );
     }
     if should_use_stable_shim(current_argv_entry, env, &stable_shim_path) {
         return launch_command(
