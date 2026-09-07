@@ -47,6 +47,7 @@ pub mod dashboard_client;
 pub mod dashboard_command_spec;
 pub mod dashboard_control_activation_contract;
 pub mod dashboard_control_helpers_contract;
+pub mod dashboard_control_overlay_output_contract;
 pub mod dashboard_control_orchestration_contract;
 pub mod dashboard_control_overlays_contract;
 pub mod dashboard_control_runtime_guard_keys_contract;

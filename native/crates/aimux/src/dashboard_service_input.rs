@@ -1,11 +1,12 @@
 use crate::dashboard_controller::{
-    DashboardOrchestrationInputState, DashboardOrchestrationRoutePickerState,
+    DashboardOrchestrationInputState, DashboardOrchestrationMode,
+    DashboardOrchestrationRoutePickerState,
 };
 use crate::dashboard_create::{
     DashboardCreateIntent, DashboardCreatePlan, DashboardServiceCreateIntent, plan_dashboard_create,
 };
 use crate::dashboard_model::{DashboardSession, WorktreeGroup};
-use crate::tui_render::theme::{Tone, footer_hints, style};
+use crate::tui_render::theme::{Tone, footer_hints, keycap, keycap_hints, style};
 use crate::tui_render::{OverlayBoxSpec, OverlayVariant, render_overlay_box};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -219,51 +220,25 @@ pub fn render_orchestration_route_picker_overlay(
     cols: usize,
     rows: usize,
 ) -> String {
-    let visible_count = state
-        .options
-        .len()
-        .min(usize::max(3, rows.saturating_sub(10)));
+    let visible_count = state.options.len().min(9);
     let mut body = state
         .options
         .iter()
         .take(visible_count)
         .enumerate()
         .map(|(index, target)| {
-            let number = if index < 9 {
-                format!("[{}]", index + 1)
-            } else {
-                "   ".into()
-            };
-            let recipients = if target.recipient_ids.len() > 1 {
-                format!(
-                    " {}",
-                    style(
-                        &format!("({} recipients)", target.recipient_ids.len()),
-                        Tone::Muted
-                    )
-                )
-            } else {
-                String::new()
-            };
             format!(
-                "  {} {}{}",
-                style(&number, Tone::Muted),
-                style(&target.label, Tone::Strong),
-                recipients
+                "  {} {}",
+                keycap(&(index + 1).to_string(), None),
+                target.label
             )
         })
         .collect::<Vec<_>>();
     if state.options.len() > visible_count {
-        body.push(format!(
-            "  {}",
-            style(
-                &format!("{} more", state.options.len() - visible_count),
-                Tone::Muted
-            )
-        ));
+        body.push(format!("  {}", style("...", Tone::Muted)));
     }
     body.push(String::new());
-    body.push(footer_hints("[1-9] choose  [Esc] cancel"));
+    body.push(format!("  {}", keycap_hints("[Esc] cancel")));
     render_overlay_box(&OverlayBoxSpec {
         title: &format!("{}: choose target", state.mode.title()),
         body: &body,
@@ -282,7 +257,7 @@ pub fn render_orchestration_input_overlay(
     let mut body = vec![format!(
         "  {} {}",
         style("To:", Tone::Muted),
-        style(&state.target.label, Tone::Strong)
+        &state.target.label
     )];
     if let Some(worktree_path) = state.target.worktree_path.as_ref() {
         body.push(format!(
@@ -290,24 +265,55 @@ pub fn render_orchestration_input_overlay(
             style("Worktree:", Tone::Muted)
         ));
     }
-    if !state.target.recipient_ids.is_empty() {
-        body.push(format!(
-            "  {} {}",
-            style("Recipients:", Tone::Muted),
-            state.target.recipient_ids.join(", ")
-        ));
+    let recipient_count = if state.target.session_id.is_some() {
+        1
+    } else {
+        state.target.recipient_ids.len()
+    };
+    if state.target.session_id.is_none() && recipient_count > 0 {
+        if matches!(state.mode, DashboardOrchestrationMode::Task) {
+            body.push(format!(
+                "  {} best match from {recipient_count} live agent{}",
+                style("Route:", Tone::Muted),
+                if recipient_count == 1 { "" } else { "s" }
+            ));
+        } else {
+            let preview = if state.target.recipient_ids.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    " ({})",
+                    state
+                        .target
+                        .recipient_ids
+                        .iter()
+                        .take(3)
+                        .cloned()
+                        .chain((state.target.recipient_ids.len() > 3).then(|| "...".to_owned()))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            };
+            body.push(format!(
+                "  {} {recipient_count} live agent{}{preview}",
+                style("Recipients:", Tone::Muted),
+                if recipient_count == 1 { "" } else { "s" },
+            ));
+        }
     }
-    body.push(String::new());
     body.push(format!(
         "  {} {}_",
         style("Text:", Tone::Muted),
         state.buffer
     ));
     body.push(String::new());
-    body.push(footer_hints(&format!(
-        "[Enter] {}  [Esc] cancel",
-        state.mode.action_label()
-    )));
+    body.push(format!(
+        "  {}",
+        keycap_hints(&format!(
+            "[Enter] {}  [Esc] cancel",
+            state.mode.action_label()
+        ))
+    ));
     render_overlay_box(&OverlayBoxSpec {
         title: state.mode.title(),
         body: &body,
