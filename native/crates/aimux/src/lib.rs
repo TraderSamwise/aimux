@@ -158,6 +158,7 @@ pub mod session_launch_actions_contract;
 pub mod session_launch_resume_contract;
 pub mod session_recency;
 pub mod session_runtime;
+pub mod session_runtime_agent_controls_contract;
 pub mod session_runtime_label_update_contract;
 pub mod session_runtime_metadata_contract;
 pub mod session_viewed;

@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/session-runtime-core.ts",
+  "generatedBy": "scripts/capture-session-runtime-agent-controls-contract.mjs",
+  "description": "Session-runtime non-tmux interrupt, resize, and input helper behavior captured by running TypeScript.",
+  "cases": [
+    {
+      "id": "session-runtime-agent-controls-001",
+      "name": "interrupts a running plain session and updates metadata observers",
+      "source": "src/multiplexer/session-runtime-core.ts",
+      "api": "interruptAgent",
+      "input": { "api": "interruptAgent", "sessionId": "plain-1" },
+      "output": {
+        "result": { "sessionId": "plain-1" },
+        "error": null,
+        "writes": ["\u001b"],
+        "calls": [
+          { "method": "session.write", "args": ["\u001b"] },
+          { "method": "writeStatuslineFile", "args": [] },
+          { "method": "metadataServer.notifyChange", "args": [] }
+        ]
+      },
+      "inputSha256": "620dd1c42f902d3b4a71a9f6d01c6eb39ef49e40dfa0477a323dc4bf8d06c7f4"
+    },
+    {
+      "id": "session-runtime-agent-controls-002",
+      "name": "interrupt rejects a missing session",
+      "source": "src/multiplexer/session-runtime-core.ts",
+      "api": "interruptAgent",
+      "input": { "api": "interruptAgent", "sessionId": "missing-1", "missing": true },
+      "output": {
+        "result": null,
+        "error": { "name": "Error", "message": "Session \"missing-1\" is not running" },
+        "writes": [],
+        "calls": []
+      },
+      "inputSha256": "e9822025ad9835957efdd69ffb55c19fbde4c2b6309a16d214a21da713f33596"
+    },
+    {
+      "id": "session-runtime-agent-controls-003",
+      "name": "resize rejects invalid cols before resolving the session",
+      "source": "src/multiplexer/session-runtime-core.ts",
+      "api": "resizeAgentPane",
+      "input": { "api": "resizeAgentPane", "sessionId": "plain-1", "cols": 0, "rows": 24 },
+      "output": {
+        "result": null,
+        "error": { "name": "Error", "message": "cols must be a positive integer" },
+        "writes": [],
+        "calls": []
+      },
+      "inputSha256": "49295a2d0b422c5c3fdfcfbdc1ab86e72fbf05d39651beaaab2e72b52aa57ea9"
+    },
+    {
+      "id": "session-runtime-agent-controls-004",
+      "name": "resizes a running plain session",
+      "source": "src/multiplexer/session-runtime-core.ts",
+      "api": "resizeAgentPane",
+      "input": { "api": "resizeAgentPane", "sessionId": "plain-1", "cols": 120, "rows": 40 },
+      "output": {
+        "result": { "sessionId": "plain-1", "cols": 120, "rows": 40 },
+        "error": null,
+        "writes": [],
+        "calls": [{ "method": "session.resize", "args": [120, 40] }]
+      },
+      "inputSha256": "5d18eba4221f56c8e2312b23f09c955341b62a627ac7b6989b786c6c838caebe"
+    },
+    {
+      "id": "session-runtime-agent-controls-005",
+      "name": "send input writes text and carriage return to a plain session",
+      "source": "src/multiplexer/session-runtime-core.ts",
+      "api": "sendAgentInput",
+      "input": { "api": "sendAgentInput", "sessionId": "plain-1", "text": "hello agent" },
+      "output": {
+        "result": { "sessionId": "plain-1", "accepted": true },
+        "error": null,
+        "writes": ["hello agent", "\r"],
+        "calls": [
+          { "method": "session.write", "args": ["hello agent"] },
+          { "method": "session.write", "args": ["\r"] }
+        ]
+      },
+      "inputSha256": "fcf70d645a3323ba95b0abbec4fbc2896a80bf7ee44b44965d79ca88931784ee"
+    },
+    {
+      "id": "session-runtime-agent-controls-006",
+      "name": "send input rejects an exited plain session",
+      "source": "src/multiplexer/session-runtime-core.ts",
+      "api": "sendAgentInput",
+      "input": { "api": "sendAgentInput", "sessionId": "plain-1", "text": "hello", "exited": true },
+      "output": {
+        "result": null,
+        "error": { "name": "Error", "message": "Session \"plain-1\" is not running" },
+        "writes": [],
+        "calls": []
+      },
+      "inputSha256": "f7ae9f0dd48496a486198e30763b3e6b6c42884cf3c13c666a138fd16861fa6e"
+    }
+  ]
+}
