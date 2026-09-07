@@ -9,6 +9,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::backend_session_ids::reconcile_offline_backend_session_ids;
+use crate::config::load_config_for_project;
 use crate::daemon::http::PreparedDaemonResponse;
 use crate::daemon::listener::{
     DaemonListenerError, parse_daemon_http_request, prepared_response_bytes, read_http_request,
@@ -20,6 +21,7 @@ use crate::expose_socket::{
     publish_expose_socket_path, read_expose_socket_header,
 };
 use crate::paths::{PathResolver, compute_project_id};
+use crate::runtime_lifecycle_methods::write_instruction_files;
 use crate::tmux_expose::{
     SystemExposeHttpClient, run_tmux_expose_with_client, tmux_expose_options_from_socket_header,
 };
@@ -77,6 +79,8 @@ pub fn run_project_service_internal(options: ProjectServiceInternalOptions) -> R
     );
     let _ =
         reconcile_offline_backend_session_ids(&startup.project_root, &startup.project_state_dir);
+    let config = load_config_for_project(&startup.project_root);
+    write_instruction_files(&startup.project_root, &config);
     let _ = ensure_default_scribe_agent(&startup_context, &mut lifecycle_runtime);
     serve_project_service_listener(listener, startup);
     Ok(())

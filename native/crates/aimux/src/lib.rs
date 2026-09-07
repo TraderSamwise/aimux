@@ -120,6 +120,7 @@ pub mod runtime_coherence;
 pub mod runtime_drift;
 pub mod runtime_exchange_import;
 pub mod runtime_guard_repair_history;
+pub mod runtime_lifecycle_methods;
 pub mod runtime_migration;
 pub mod runtime_restart_render_contract;
 pub mod runtime_topology;
