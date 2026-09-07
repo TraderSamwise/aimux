@@ -33,7 +33,9 @@ use super::agent_output::{
 use super::dispatcher::ProjectServiceStreamKind;
 use super::event_streams::{encode_sse_event, encode_sse_keepalive};
 use super::http::PreparedProjectServiceResponse;
-use super::lifecycle::{SystemProjectLifecycleRuntime, ensure_default_scribe_agent};
+use super::lifecycle::{
+    ProjectLifecycleRuntime, SystemProjectLifecycleRuntime, ensure_default_scribe_agent,
+};
 use super::output_metrics::AgentOutputReadRecord;
 use super::router::{ProjectServiceRequestContext, route_project_service_request};
 use super::server::{ProjectServiceHttpRequest, handle_project_service_http_request};
@@ -77,13 +79,22 @@ pub fn run_project_service_internal(options: ProjectServiceInternalOptions) -> R
         startup.project_root.clone(),
         startup.project_state_dir.clone(),
     );
+    run_project_service_startup_tasks(&startup, &startup_context, &mut lifecycle_runtime);
+    serve_project_service_listener(listener, startup);
+    Ok(())
+}
+
+pub fn run_project_service_startup_tasks(
+    startup: &ProjectServiceStartup,
+    context: &ProjectServiceRequestContext,
+    runtime: &mut impl ProjectLifecycleRuntime,
+) {
+    let _ = runtime.repair_legacy_project_session_names(&startup.project_root);
     let _ =
         reconcile_offline_backend_session_ids(&startup.project_root, &startup.project_state_dir);
     let config = load_config_for_project(&startup.project_root);
     write_instruction_files(&startup.project_root, &config);
-    let _ = ensure_default_scribe_agent(&startup_context, &mut lifecycle_runtime);
-    serve_project_service_listener(listener, startup);
-    Ok(())
+    let _ = ensure_default_scribe_agent(context, runtime);
 }
 
 pub fn prepare_project_service_startup(

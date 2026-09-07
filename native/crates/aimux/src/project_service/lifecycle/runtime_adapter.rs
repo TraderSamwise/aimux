@@ -1,13 +1,15 @@
+use std::path::Path;
 use std::process::Command;
 
 use serde_json::Value;
 
 use crate::tmux::{
-    TmuxTarget, clear_history_argv, kill_window_argv, new_window_argv, rename_window_argv,
-    set_window_option_argv,
+    TmuxRuntimeManager, TmuxTarget, clear_history_argv, kill_window_argv, new_window_argv,
+    rename_window_argv, set_window_option_argv,
 };
 
 pub trait ProjectLifecycleRuntime {
+    fn repair_legacy_project_session_names(&mut self, project_root: &Path) -> Result<(), String>;
     fn find_main_repo(&mut self, cwd: &str) -> Result<String, String>;
     fn create_worktree(
         &mut self,
@@ -34,6 +36,11 @@ pub trait ProjectLifecycleRuntime {
 pub struct SystemProjectLifecycleRuntime;
 
 impl ProjectLifecycleRuntime for SystemProjectLifecycleRuntime {
+    fn repair_legacy_project_session_names(&mut self, project_root: &Path) -> Result<(), String> {
+        TmuxRuntimeManager::new().repair_legacy_project_session_names(project_root, None);
+        Ok(())
+    }
+
     fn find_main_repo(&mut self, cwd: &str) -> Result<String, String> {
         find_git_main_repo(cwd)
     }

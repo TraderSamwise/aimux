@@ -3,6 +3,7 @@ use aimux::project_api_contract::routes;
 use aimux::project_service::lifecycle::{
     ProjectLifecycleRuntime, ensure_default_scribe_agent, route_lifecycle_request_with_runtime,
 };
+use aimux::project_service::process::{ProjectServiceStartup, run_project_service_startup_tasks};
 use aimux::project_service::prompt_context::{get_prompt_context_text, set_prompt_context};
 use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
 use aimux::project_service::runtime_exchange::runtime_exchange_path;
@@ -19,6 +20,7 @@ static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Default)]
 struct FakeLifecycleRuntime {
+    legacy_repairs: Vec<PathBuf>,
     created: Vec<FakeCreateWindow>,
     cleared: Vec<String>,
     metadata: Vec<(String, Value)>,
@@ -48,6 +50,11 @@ struct FakeCreateWorktree {
 }
 
 impl ProjectLifecycleRuntime for FakeLifecycleRuntime {
+    fn repair_legacy_project_session_names(&mut self, project_root: &Path) -> Result<(), String> {
+        self.legacy_repairs.push(project_root.to_owned());
+        Ok(())
+    }
+
     fn find_main_repo(&mut self, cwd: &str) -> Result<String, String> {
         Ok(self.main_repo.clone().unwrap_or_else(|| cwd.to_owned()))
     }
@@ -414,6 +421,34 @@ fn default_scribe_startup_honors_disabled_configuration() {
 
     assert_eq!(response["created"], false);
     assert_eq!(response["reason"], "disabled");
+    assert!(runtime.created.is_empty());
+    cleanup(project);
+}
+
+#[test]
+fn project_service_startup_repairs_legacy_tmux_session_names() {
+    let project = temp_project("startup-repair-legacy-tmux");
+    let aimux_dir = project.join(".aimux");
+    fs::create_dir_all(&aimux_dir).unwrap();
+    fs::write(
+        aimux_dir.join("config.json"),
+        serde_json::to_string_pretty(&json!({ "scribe": { "defaultAgent": null } })).unwrap(),
+    )
+    .unwrap();
+    let state_dir = project.join("state");
+    fs::create_dir_all(&state_dir).unwrap();
+    let startup = ProjectServiceStartup {
+        project_id: "startup-repair-legacy-tmux".to_owned(),
+        project_root: project.clone(),
+        project_state_dir: state_dir.clone(),
+        desired_port: 43_001,
+    };
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    run_project_service_startup_tasks(&startup, &context, &mut runtime);
+
+    assert_eq!(runtime.legacy_repairs, vec![project.clone()]);
     assert!(runtime.created.is_empty());
     cleanup(project);
 }
