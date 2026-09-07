@@ -1,0 +1,184 @@
+{
+  "version": 1,
+  "generatedAt": "2026-09-07T00:00:00.000Z",
+  "generatedBy": "scripts/capture-dashboard-session-details-contract.mjs",
+  "source": "src/multiplexer/dashboard-ops.ts",
+  "subject": "renderSessionDetails",
+  "description": "Dashboard session details rendering captured by running TypeScript.",
+  "caseCount": 5,
+  "cases": [
+    {
+      "id": "dashboard-session-details-001",
+      "name": "empty selection renders blank fixed height",
+      "source": "src/multiplexer/dashboard-ops.ts",
+      "api": "renderSessionDetails",
+      "input": { "name": "empty selection renders blank fixed height", "width": 32, "height": 4, "session": null },
+      "output": { "lines": ["", "", "", ""] },
+      "inputSha256": "57ea857fd0f22472519ccc160a0ef5197d4722fb682343e975fcbf0ba14535be"
+    },
+    {
+      "id": "dashboard-session-details-002",
+      "name": "minimal session renders identity",
+      "source": "src/multiplexer/dashboard-ops.ts",
+      "api": "renderSessionDetails",
+      "input": {
+        "name": "minimal session renders identity",
+        "width": 44,
+        "height": 8,
+        "session": { "id": "codex-1234", "command": "codex" }
+      },
+      "output": {
+        "lines": [
+          "\u001b[1mDetails\u001b[0m",
+          "Agent: codex",
+          "Canonical: codex",
+          "Aimux ID: codex-1234",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      "inputSha256": "6577f4671b11b5d85bf71f28bc6a8246cb0c231fe663097a2ebe0fb5cc00b2f1"
+    },
+    {
+      "id": "dashboard-session-details-003",
+      "name": "rich session renders all detail groups",
+      "source": "src/multiplexer/dashboard-ops.ts",
+      "api": "renderSessionDetails",
+      "input": {
+        "name": "rich session renders all detail groups",
+        "width": 56,
+        "height": 22,
+        "session": {
+          "id": "claude-main",
+          "command": "claude",
+          "toolConfigKey": "claude-opus",
+          "label": "Research lead",
+          "backendSessionId": "backend-abc",
+          "worktreeName": "feature/native",
+          "worktreeBranch": "feature/native",
+          "cwd": "/repo/.aimux/worktrees/native",
+          "prNumber": 42,
+          "prTitle": "Port dashboard details to Rust",
+          "prUrl": "https://github.com/example/aimux/pull/42",
+          "repoOwner": "example",
+          "repoName": "aimux",
+          "repoRemote": "git@github.com:example/aimux.git",
+          "semantic": {
+            "presentation": { "statusLabel": "needs input" },
+            "user": { "attention": "high" },
+            "notifications": { "unreadCount": 3, "latestText": "Review fixture deltas before commit" },
+            "activityNewCount": 2
+          },
+          "lastEvent": { "message": "Waiting on tmux capture output" },
+          "threadName": "Dashboard rewrite",
+          "threadUnreadCount": 4,
+          "threadWaitingOnMeCount": 1,
+          "threadWaitingOnThemCount": 2,
+          "threadPendingCount": 3,
+          "services": [{ "url": "http://localhost:3000" }, { "port": 5173 }]
+        }
+      },
+      "output": {
+        "lines": [
+          "\u001b[1mDetails\u001b[0m",
+          "Agent: Research lead",
+          "Canonical: claude-opus",
+          "Aimux ID: claude-main",
+          "Backend ID: backend-abc",
+          "Command: claude",
+          "Worktree: feature/native · feature/native",
+          "CWD: /repo/.aimux/worktrees/native",
+          "PR: PR #42: Port dashboard details to Rust",
+          "URL: https://github.com/example/aimux/pull/42",
+          "Repo: example/aimux",
+          "Remote: git@github.com:example/aimux.git",
+          "State: needs input",
+          "Attention: high",
+          "Unread: 3",
+          "Latest: Review fixture deltas before commit",
+          "New activity: 2",
+          "Last: Waiting on tmux capture output",
+          "Thread: Dashboard rewrite",
+          "Threads: 4 unread · 1 on me · 2 on them · 3 pending",
+          "Services: http://localhost:3000, :5173",
+          ""
+        ]
+      },
+      "inputSha256": "3a101d59cae36a8f989e90d0bff9ca081f58ec3768e4c5418efdc3289272baf0"
+    },
+    {
+      "id": "dashboard-session-details-004",
+      "name": "narrow width wraps and truncates long words",
+      "source": "src/multiplexer/dashboard-ops.ts",
+      "api": "renderSessionDetails",
+      "input": {
+        "name": "narrow width wraps and truncates long words",
+        "width": 16,
+        "height": 18,
+        "session": {
+          "id": "aider-very-long-session-id",
+          "command": "aider",
+          "label": "Aider with a deliberately long display label",
+          "toolConfigKey": "aider-pro",
+          "backendSessionId": "backend-with-a-very-long-unbroken-token",
+          "semantic": {
+            "presentation": { "statusLabel": "working through the migration queue" },
+            "user": { "attention": "none" },
+            "notifications": { "unreadCount": 12, "latestText": "supercalifragilisticexpialidocious" },
+            "activityNewCount": 9
+          }
+        }
+      },
+      "output": {
+        "lines": [
+          "\u001b[1mDetails\u001b[0m",
+          "Agent: Aider",
+          "       with a",
+          "       delibera…",
+          "       long",
+          "       display",
+          "       label",
+          "Canonical: aider-p…",
+          "Aimux ID: aider-v…",
+          "Backend ID: backend…",
+          "Command: aider",
+          "State: working",
+          "       through",
+          "       the",
+          "       migration",
+          "       queue",
+          "Unread: 12",
+          "Latest: superca…"
+        ]
+      },
+      "inputSha256": "870337e2fdc59ec34d7e59302f1543ebe0817d95e15f728564c1b4110d3adc7f"
+    },
+    {
+      "id": "dashboard-session-details-005",
+      "name": "tiny width uses hard truncation",
+      "source": "src/multiplexer/dashboard-ops.ts",
+      "api": "renderSessionDetails",
+      "input": {
+        "name": "tiny width uses hard truncation",
+        "width": 6,
+        "height": 8,
+        "session": { "id": "shell-1", "command": "shell", "label": "Tiny Width" }
+      },
+      "output": {
+        "lines": [
+          "\u001b[1mDetails\u001b[0m",
+          "Agent: Tiny Wi…",
+          "Canonical: shell",
+          "Aimux ID: shell-1",
+          "",
+          "",
+          "",
+          ""
+        ]
+      },
+      "inputSha256": "03752de199453c42ae05d02fb3a8c7b79f9c760b401ccb4b3c7593cf64a46dfa"
+    }
+  ]
+}

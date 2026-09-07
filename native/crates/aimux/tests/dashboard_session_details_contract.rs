@@ -2,7 +2,7 @@ use aimux::dashboard_session_details::render_session_details_contract_case;
 use serde_json::{Value, json};
 
 const CONTRACT: &str =
-    include_str!("../../../../src/multiplexer/dashboard-session-details.contract.v1.json");
+    include_str!("../../../../testdata/contracts/v1/multiplexer/dashboard-session-details.json");
 
 #[test]
 fn dashboard_session_details_match_typescript_contract() {

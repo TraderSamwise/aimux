@@ -4,7 +4,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import prettier from "prettier";
 
 const ROOT = new URL("../", import.meta.url);
-const FIXTURE_PATH = new URL("src/multiplexer/dashboard-session-details.contract.v1.json", ROOT);
+const FIXTURE_PATH = new URL("testdata/contracts/v1/multiplexer/dashboard-session-details.json", ROOT);
 const { renderSessionDetails } = await import(new URL("dist/multiplexer/dashboard-ops.js", ROOT));
 
 const hash = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
