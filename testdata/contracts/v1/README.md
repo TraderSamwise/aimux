@@ -955,12 +955,6 @@ Priority fixture groups:
   proof signing-message and public-key encoding behavior captured by running
   TypeScript transport/security helpers.
 
-## Unimplemented
-
-- `unimplemented/src-modules.json`: normalized Vitest JSON output for the
-  remaining fenced src test modules, captured by running each TypeScript module
-  so the missing Rust APIs have a case-counted phase-8 checklist.
-
 ## TUI
 
 - `tui/render-text.json`: two-pane composition and SGR stripping behavior
