@@ -1,0 +1,270 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/dashboard-interaction.ts",
+  "generatedBy": "scripts/capture-dashboard-interaction-helpers-contract.mjs",
+  "description": "Dashboard interaction direct overlay helpers and route preview formatting captured by running TypeScript.",
+  "cases": [
+    {
+      "id": "dashboard-interaction-helpers-001",
+      "name": "showOverseerOverlay opens overseer overlay and renders it",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "showOverseerOverlay",
+      "input": { "method": "showOverseerOverlay" },
+      "output": {
+        "returnValue": null,
+        "overlayKind": "overseer",
+        "overseerWatchInstructionsTarget": null,
+        "overseerWatchInstructionsBuffer": "draft",
+        "workOutlineOverlaySessionId": null,
+        "workOutlineOverlayOffset": 7,
+        "workOutlineOverlayEntries": [],
+        "footerFlash": null,
+        "footerFlashTicks": 0,
+        "calls": [
+          { "method": "openDashboardOverlay", "args": ["overseer"] },
+          { "method": "renderOverseerOverlay", "args": [] }
+        ]
+      },
+      "inputSha256": "6bf59864dcbfa0798cdf11a0156e465837de8ea7c1f5c1746048eea6685bc5de"
+    },
+    {
+      "id": "dashboard-interaction-helpers-002",
+      "name": "renderOverseerOverlay redraws dashboard with overlay",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "renderOverseerOverlay",
+      "input": { "method": "renderOverseerOverlay" },
+      "output": {
+        "returnValue": null,
+        "overlayKind": null,
+        "overseerWatchInstructionsTarget": null,
+        "overseerWatchInstructionsBuffer": "draft",
+        "workOutlineOverlaySessionId": null,
+        "workOutlineOverlayOffset": 7,
+        "workOutlineOverlayEntries": [],
+        "footerFlash": null,
+        "footerFlashTicks": 0,
+        "calls": [{ "method": "redrawDashboardWithOverlay", "args": [] }]
+      },
+      "inputSha256": "3927487bab779b8f3bfc0c30b9a2dc4373dd2c3fb1058639f65e856e3f877a7a"
+    },
+    {
+      "id": "dashboard-interaction-helpers-003",
+      "name": "showOverseerWatchInstructions stores target clears buffer and opens input overlay",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "showOverseerWatchInstructions",
+      "input": { "method": "showOverseerWatchInstructions", "selected": { "id": "codex-1", "label": "Codex" } },
+      "output": {
+        "returnValue": null,
+        "overlayKind": "overseer-watch-instructions",
+        "overseerWatchInstructionsTarget": { "id": "codex-1", "label": "Codex" },
+        "overseerWatchInstructionsBuffer": "",
+        "workOutlineOverlaySessionId": null,
+        "workOutlineOverlayOffset": 7,
+        "workOutlineOverlayEntries": [],
+        "footerFlash": null,
+        "footerFlashTicks": 0,
+        "calls": [
+          { "method": "openDashboardOverlay", "args": ["overseer-watch-instructions"] },
+          { "method": "renderOverseerWatchInstructions", "args": [] }
+        ]
+      },
+      "inputSha256": "56447fa1bf3827384076beef109d51811c653dac334239cf3f8ae124664d7a52"
+    },
+    {
+      "id": "dashboard-interaction-helpers-004",
+      "name": "renderOverseerWatchInstructions redraws dashboard with overlay",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "renderOverseerWatchInstructions",
+      "input": { "method": "renderOverseerWatchInstructions" },
+      "output": {
+        "returnValue": null,
+        "overlayKind": null,
+        "overseerWatchInstructionsTarget": null,
+        "overseerWatchInstructionsBuffer": "draft",
+        "workOutlineOverlaySessionId": null,
+        "workOutlineOverlayOffset": 7,
+        "workOutlineOverlayEntries": [],
+        "footerFlash": null,
+        "footerFlashTicks": 0,
+        "calls": [{ "method": "redrawDashboardWithOverlay", "args": [] }]
+      },
+      "inputSha256": "bdc920e3ea0eecd27518fd72c08b16caa9e4469cf92ee08556294e6394c6ef10"
+    },
+    {
+      "id": "dashboard-interaction-helpers-005",
+      "name": "showWorkOutlineOverlay loads all entries and renders work outline",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "showWorkOutlineOverlay",
+      "input": {
+        "method": "showWorkOutlineOverlay",
+        "reloadedWorkOutlineOverlayEntries": [{ "id": "note-1" }, { "id": "note-2" }],
+        "workOutlineOverlayOffset": 4
+      },
+      "output": {
+        "returnValue": null,
+        "overlayKind": "work-outline",
+        "overseerWatchInstructionsTarget": null,
+        "overseerWatchInstructionsBuffer": "draft",
+        "workOutlineOverlaySessionId": null,
+        "workOutlineOverlayOffset": 0,
+        "workOutlineOverlayEntries": [{ "id": "note-1" }, { "id": "note-2" }],
+        "footerFlash": null,
+        "footerFlashTicks": 0,
+        "calls": [
+          { "method": "loadWorkOutlineOverlayEntries", "args": [] },
+          { "method": "openDashboardOverlay", "args": ["work-outline"] },
+          { "method": "renderWorkOutlineOverlay", "args": [] }
+        ]
+      },
+      "inputSha256": "71334579a564615abe5ea684cf98fa65fb2574f5ae21cfe05be67c25044584cf"
+    },
+    {
+      "id": "dashboard-interaction-helpers-006",
+      "name": "showWorkOutlineOverlay records session filter before loading entries",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "showWorkOutlineOverlay",
+      "input": {
+        "method": "showWorkOutlineOverlay",
+        "sessionId": "codex-1",
+        "reloadedWorkOutlineOverlayEntries": [{ "id": "note-1", "sessionId": "codex-1" }]
+      },
+      "output": {
+        "returnValue": null,
+        "overlayKind": "work-outline",
+        "overseerWatchInstructionsTarget": null,
+        "overseerWatchInstructionsBuffer": "draft",
+        "workOutlineOverlaySessionId": "codex-1",
+        "workOutlineOverlayOffset": 0,
+        "workOutlineOverlayEntries": [{ "id": "note-1", "sessionId": "codex-1" }],
+        "footerFlash": null,
+        "footerFlashTicks": 0,
+        "calls": [
+          { "method": "loadWorkOutlineOverlayEntries", "args": [] },
+          { "method": "openDashboardOverlay", "args": ["work-outline"] },
+          { "method": "renderWorkOutlineOverlay", "args": [] }
+        ]
+      },
+      "inputSha256": "89a21cdb155bc01efa031f9bbd9915b1887636445456e26815b531f77e6f4043"
+    },
+    {
+      "id": "dashboard-interaction-helpers-007",
+      "name": "showWorkOutlineOverlay stops when load fails",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "showWorkOutlineOverlay",
+      "input": { "method": "showWorkOutlineOverlay", "sessionId": "codex-1", "loadWorkOutlineResult": false },
+      "output": {
+        "returnValue": null,
+        "overlayKind": null,
+        "overseerWatchInstructionsTarget": null,
+        "overseerWatchInstructionsBuffer": "draft",
+        "workOutlineOverlaySessionId": "codex-1",
+        "workOutlineOverlayOffset": 0,
+        "workOutlineOverlayEntries": [],
+        "footerFlash": null,
+        "footerFlashTicks": 0,
+        "calls": [{ "method": "loadWorkOutlineOverlayEntries", "args": [] }]
+      },
+      "inputSha256": "4452da9483249c3cfcb803a305b531fb4e22fce311c599a16e54082c4366d7a3"
+    },
+    {
+      "id": "dashboard-interaction-helpers-008",
+      "name": "renderWorkOutlineOverlay in dashboard mode redraws dashboard overlay",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "renderWorkOutlineOverlay",
+      "input": { "method": "renderWorkOutlineOverlay", "mode": "dashboard" },
+      "output": {
+        "returnValue": null,
+        "overlayKind": null,
+        "overseerWatchInstructionsTarget": null,
+        "overseerWatchInstructionsBuffer": "draft",
+        "workOutlineOverlaySessionId": null,
+        "workOutlineOverlayOffset": 7,
+        "workOutlineOverlayEntries": [],
+        "footerFlash": null,
+        "footerFlashTicks": 0,
+        "calls": [{ "method": "redrawDashboardWithOverlay", "args": [] }]
+      },
+      "inputSha256": "89754c0e0186c4ba00bfba20e4fc4b2ac978c78faac2c65fecacabb56760fc8e"
+    },
+    {
+      "id": "dashboard-interaction-helpers-009",
+      "name": "formatRoutePreview returns empty string for no recipients",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "formatRoutePreview",
+      "input": { "method": "formatRoutePreview", "recipientIds": [] },
+      "output": {
+        "returnValue": "",
+        "overlayKind": null,
+        "overseerWatchInstructionsTarget": null,
+        "overseerWatchInstructionsBuffer": "draft",
+        "workOutlineOverlaySessionId": null,
+        "workOutlineOverlayOffset": 7,
+        "workOutlineOverlayEntries": [],
+        "footerFlash": null,
+        "footerFlashTicks": 0,
+        "calls": []
+      },
+      "inputSha256": "6a1c424a3a31d7966bf01cd6c790bb8ac0ae5d0dd08d22cd0ebf2873c2904619"
+    },
+    {
+      "id": "dashboard-interaction-helpers-010",
+      "name": "formatRoutePreview renders one recipient",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "formatRoutePreview",
+      "input": { "method": "formatRoutePreview", "recipientIds": ["codex-1"] },
+      "output": {
+        "returnValue": " [1: codex-1]",
+        "overlayKind": null,
+        "overseerWatchInstructionsTarget": null,
+        "overseerWatchInstructionsBuffer": "draft",
+        "workOutlineOverlaySessionId": null,
+        "workOutlineOverlayOffset": 7,
+        "workOutlineOverlayEntries": [],
+        "footerFlash": null,
+        "footerFlashTicks": 0,
+        "calls": []
+      },
+      "inputSha256": "d287027f59f08ab5bedd95023e06c16aec10a758ef3888b462a929b95be2fe67"
+    },
+    {
+      "id": "dashboard-interaction-helpers-011",
+      "name": "formatRoutePreview renders two recipients",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "formatRoutePreview",
+      "input": { "method": "formatRoutePreview", "recipientIds": ["codex-1", "claude-2"] },
+      "output": {
+        "returnValue": " [2: codex-1, claude-2]",
+        "overlayKind": null,
+        "overseerWatchInstructionsTarget": null,
+        "overseerWatchInstructionsBuffer": "draft",
+        "workOutlineOverlaySessionId": null,
+        "workOutlineOverlayOffset": 7,
+        "workOutlineOverlayEntries": [],
+        "footerFlash": null,
+        "footerFlashTicks": 0,
+        "calls": []
+      },
+      "inputSha256": "af9a5be9e8e984e6e4b39b51c67b2ef099bc82a219051d199fbc38d0e640b408"
+    },
+    {
+      "id": "dashboard-interaction-helpers-012",
+      "name": "formatRoutePreview truncates after two recipients with remainder count",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "formatRoutePreview",
+      "input": { "method": "formatRoutePreview", "recipientIds": ["codex-1", "claude-2", "aider-3", "shell-4"] },
+      "output": {
+        "returnValue": " [4: codex-1, claude-2, +2]",
+        "overlayKind": null,
+        "overseerWatchInstructionsTarget": null,
+        "overseerWatchInstructionsBuffer": "draft",
+        "workOutlineOverlaySessionId": null,
+        "workOutlineOverlayOffset": 7,
+        "workOutlineOverlayEntries": [],
+        "footerFlash": null,
+        "footerFlashTicks": 0,
+        "calls": []
+      },
+      "inputSha256": "5b066188f4622bfa71d34340be5af0565be35b3a64b4fe73dfa015403a95aca9"
+    }
+  ]
+}
