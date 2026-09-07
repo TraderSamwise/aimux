@@ -10,8 +10,8 @@ Statuses:
 - `ERROR`: the audit could not prove enforcement because the suite errored outside a fixture assertion.
 - `STATIC`: non-empty active suite observed without dynamic mutation.
 
-Summary: 256 suites, 303 suite/corpus bindings, 3755 cases.
-Binding statuses: PROVEN-FAILS 303, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
+Summary: 262 suites, 309 suite/corpus bindings, 3801 cases.
+Binding statuses: PROVEN-FAILS 309, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
 
 | Suite | Status | Corpus | Cases | Detail |
 | --- | --- | --- | ---: | --- |
@@ -111,6 +111,9 @@ Binding statuses: PROVEN-FAILS 303, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
 | `fixture_dashboard_model_service` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/dashboard-model-service.json` | 11 | mutated fixture output failed owning Rust suite |
 | `fixture_dashboard_model_services_lifecycle` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/dashboard-model-services-lifecycle.json` | 4 | mutated fixture output failed owning Rust suite |
 | `fixture_dashboard_navigation` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/dashboard-navigation.json` | 1 | mutated fixture output failed owning Rust suite |
+| `fixture_dashboard_ops_agent_actions` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/dashboard-ops-agent-actions.json` | 6 | mutated fixture output failed owning Rust suite |
+| `fixture_dashboard_ops_helpers` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/dashboard-ops-helpers.json` | 5 | mutated fixture output failed owning Rust suite |
+| `fixture_dashboard_ops_mutations` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/dashboard-ops-mutations.json` | 16 | mutated fixture output failed owning Rust suite |
 | `fixture_dashboard_order` | PROVEN-FAILS | `testdata/contracts/v1/dashboard/order.json` | 6 | mutated fixture output failed owning Rust suite |
 | `fixture_dashboard_orphans` | PROVEN-FAILS | `testdata/contracts/v1/dashboard/orphans.json` | 20 | mutated fixture output failed owning Rust suite |
 | `fixture_dashboard_pending_actions` | PROVEN-FAILS | `testdata/contracts/v1/dashboard/pending-actions.json` | 2 | mutated fixture output failed owning Rust suite |
@@ -118,6 +121,9 @@ Binding statuses: PROVEN-FAILS 303, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
 | `fixture_dashboard_repair_notices` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/dashboard-repair-notices.json` | 1 | mutated fixture output failed owning Rust suite |
 | `fixture_dashboard_session_actions` | PROVEN-FAILS | `testdata/contracts/v1/dashboard/session-actions.json` | 6 | mutated fixture output failed owning Rust suite |
 | `fixture_dashboard_session_registry` | PROVEN-FAILS | `testdata/contracts/v1/dashboard/session-registry.json` | 6 | mutated fixture output failed owning Rust suite |
+| `fixture_dashboard_tail_actions` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/dashboard-tail-actions.json` | 5 | mutated fixture output failed owning Rust suite |
+| `fixture_dashboard_tail_lifecycle` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/dashboard-tail-lifecycle.json` | 6 | mutated fixture output failed owning Rust suite |
+| `fixture_dashboard_tail_session_create` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/dashboard-tail-session-create.json` | 8 | mutated fixture output failed owning Rust suite |
 | `fixture_dashboard_targets` | PROVEN-FAILS | `testdata/contracts/v1/dashboard/targets.json` | 4 | mutated fixture output failed owning Rust suite |
 | `fixture_dashboard_tui_visibility` | PROVEN-FAILS | `testdata/contracts/v1/tmux/dashboard-tui-visibility.json` | 18 | mutated fixture output failed owning Rust suite |
 | `fixture_dashboard_ui_state_store` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/dashboard-ui-state-store.json` | 12 | mutated fixture output failed owning Rust suite |
