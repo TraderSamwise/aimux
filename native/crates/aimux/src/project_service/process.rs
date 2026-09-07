@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crate::backend_session_ids::reconcile_offline_backend_session_ids;
 use crate::daemon::http::PreparedDaemonResponse;
 use crate::daemon::listener::{
     DaemonListenerError, parse_daemon_http_request, prepared_response_bytes, read_http_request,
@@ -74,6 +75,8 @@ pub fn run_project_service_internal(options: ProjectServiceInternalOptions) -> R
         startup.project_root.clone(),
         startup.project_state_dir.clone(),
     );
+    let _ =
+        reconcile_offline_backend_session_ids(&startup.project_root, &startup.project_state_dir);
     let _ = ensure_default_scribe_agent(&startup_context, &mut lifecycle_runtime);
     serve_project_service_listener(listener, startup);
     Ok(())

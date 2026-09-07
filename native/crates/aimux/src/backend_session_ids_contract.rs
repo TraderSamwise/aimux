@@ -7,7 +7,7 @@ use serde_json::{Map, Value, json};
 
 use crate::backend_session_ids::{
     AgentIdentityError, BackendSessionDiscoveryOptions, ResolvedAgentIdentity,
-    record_topology_backend_session_id, resolve_agent_identity_with_options,
+    record_topology_backend_session_id_at, resolve_agent_identity_with_options,
 };
 use crate::runtime_topology::{empty_runtime_topology, list_topology_session_states};
 
@@ -57,12 +57,13 @@ fn record_contract(input: &Value, topology: &mut Value) -> Value {
         });
     }
 
-    let result = record_topology_backend_session_id(
+    let result = record_topology_backend_session_id_at(
         topology,
         input["call"]["sessionId"].as_str().unwrap_or_default(),
         input["call"]["backendSessionId"]
             .as_str()
             .unwrap_or_default(),
+        "2026-09-06T00:00:01.000Z",
     )
     .expect("record backend session id");
     json!({
@@ -72,10 +73,11 @@ fn record_contract(input: &Value, topology: &mut Value) -> Value {
 }
 
 fn capture_record_result(topology: &mut Value, call: &Value) -> Value {
-    match record_topology_backend_session_id(
+    match record_topology_backend_session_id_at(
         topology,
         call["sessionId"].as_str().unwrap_or_default(),
         call["backendSessionId"].as_str().unwrap_or_default(),
+        "2026-09-06T00:00:01.000Z",
     ) {
         Ok(value) => json!({ "ok": true, "value": value }),
         Err(error) => json!({ "ok": false, "error": error }),
@@ -125,8 +127,13 @@ fn resolve_identity(
     let mut topology = topology.clone();
     if let Some(recorded) = input["recordedBackendSessionId"].as_str() {
         let session_id = input["call"]["sessionId"].as_str().unwrap_or_default();
-        record_topology_backend_session_id(&mut topology, session_id, recorded)
-            .expect("record backend id");
+        record_topology_backend_session_id_at(
+            &mut topology,
+            session_id,
+            recorded,
+            "2026-09-06T00:00:01.000Z",
+        )
+        .expect("record backend id");
     }
     let options = BackendSessionDiscoveryOptions {
         codex_sessions_dir: Some(codex_home.join("sessions")),

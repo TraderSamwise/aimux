@@ -7,9 +7,12 @@ use serde_json::{Map, Value, json};
 
 use crate::backend_session_ids::{
     BackendSessionDiscoveryOptions, claude_transcript_path,
-    discover_backend_session_id_with_options,
+    reconcile_offline_backend_session_ids_with_options,
 };
-use crate::runtime_topology::{empty_runtime_topology, list_topology_session_states};
+use crate::runtime_topology::{
+    empty_runtime_topology, list_topology_session_states, read_runtime_topology,
+    runtime_topology_path, write_runtime_topology,
+};
 
 const UUID: &str = "0710a963-a473-430f-9f9a-e27dd4546328";
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -17,17 +20,23 @@ static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 pub fn backend_id_reconcile_contract(input: &Value) -> Value {
     with_temp_project(|repo, claude_home, codex_home, roots| {
         seed_transcripts(input, &repo, &claude_home, &codex_home);
-        let mut topology = topology_from_input(input, &repo);
+        let state_dir = repo.join("state");
+        let topology = topology_from_input(input, &repo);
+        write_runtime_topology(runtime_topology_path(&state_dir), &topology)
+            .expect("write topology fixture");
         let options = BackendSessionDiscoveryOptions {
             claude_projects_dir: Some(claude_home.join("projects")),
             codex_sessions_dir: Some(codex_home.join("sessions")),
             ..BackendSessionDiscoveryOptions::default()
         };
-        let first = reconcile(&mut topology, &repo, &options);
-        let second = input["runTwice"]
-            .as_bool()
-            .unwrap_or(false)
-            .then(|| reconcile(&mut topology, &repo, &options));
+        let first = reconcile_offline_backend_session_ids_with_options(&repo, &state_dir, &options)
+            .expect("reconcile fixture");
+        let second = input["runTwice"].as_bool().unwrap_or(false).then(|| {
+            reconcile_offline_backend_session_ids_with_options(&repo, &state_dir, &options)
+                .expect("reconcile fixture")
+        });
+        let topology = read_runtime_topology(runtime_topology_path(&state_dir))
+            .expect("read reconciled topology fixture");
         let offline = list_topology_session_states(&topology, Some(&["offline"]));
         let mut output = Map::new();
         output.insert("first".into(), first);
@@ -37,41 +46,6 @@ pub fn backend_id_reconcile_contract(input: &Value) -> Value {
         output.insert("offline".into(), Value::Array(offline));
         normalize_value(Value::Object(output), &roots)
     })
-}
-
-fn reconcile(
-    topology: &mut Value,
-    project_root: &Path,
-    options: &BackendSessionDiscoveryOptions,
-) -> Value {
-    let mut reconciled = Vec::new();
-    let sessions = list_topology_session_states(topology, Some(&["offline"]));
-    for session in sessions {
-        if session
-            .get("backendSessionId")
-            .and_then(Value::as_str)
-            .is_some_and(|id| !id.is_empty())
-        {
-            continue;
-        }
-        let Some(session_id) = session.get("id").and_then(Value::as_str) else {
-            continue;
-        };
-        let cwd = session
-            .get("worktreePath")
-            .and_then(Value::as_str)
-            .map(ToOwned::to_owned)
-            .unwrap_or_else(|| project_root.to_string_lossy().into_owned());
-        let tool_key = discovery_tool_key(&session);
-        let Some(backend_session_id) =
-            discover_backend_session_id_with_options(tool_key.as_deref(), Some(&cwd), options)
-        else {
-            continue;
-        };
-        set_backend_session_id(topology, session_id, &backend_session_id);
-        reconciled.push(json!({ "id": session_id, "backendSessionId": backend_session_id }));
-    }
-    json!({ "reconciled": reconciled })
 }
 
 fn topology_from_input(input: &Value, repo: &Path) -> Value {
@@ -84,6 +58,29 @@ fn topology_from_input(input: &Value, repo: &Path) -> Value {
         .enumerate()
         .map(|(index, session)| topology_session_from_state(index, session, repo))
         .collect::<Vec<_>>();
+    topology["rigs"] = json!([{
+        "id": "rig-1",
+        "name": "aimux",
+        "projectRoot": repo,
+        "createdAt": "2026-09-06T00:00:00.000Z",
+        "updatedAt": "2026-09-06T00:00:00.000Z",
+    }]);
+    topology["nodes"] = Value::Array(
+        sessions
+            .iter()
+            .map(|session| {
+                json!({
+                    "id": session["nodeId"],
+                    "rigId": "rig-1",
+                    "logicalId": session["id"],
+                    "runtime": session["tool"],
+                    "toolConfigKey": session["toolConfigKey"],
+                    "cwd": session["worktreePath"],
+                    "createdAt": "2026-09-06T00:00:00.000Z",
+                })
+            })
+            .collect(),
+    );
     topology["sessions"] = Value::Array(sessions);
     topology
 }
@@ -108,18 +105,6 @@ fn topology_session_from_state(index: usize, state: Value, repo: &Path) -> Value
         Value::String("2026-09-06T00:00:00.000Z".into()),
     );
     Value::Object(session)
-}
-
-fn set_backend_session_id(topology: &mut Value, session_id: &str, backend_session_id: &str) {
-    let Some(sessions) = topology.get_mut("sessions").and_then(Value::as_array_mut) else {
-        return;
-    };
-    for session in sessions {
-        if session.get("id").and_then(Value::as_str) == Some(session_id) {
-            session["backendSessionId"] = Value::String(backend_session_id.to_owned());
-            session["updatedAt"] = Value::String("2026-09-06T00:00:01.000Z".into());
-        }
-    }
 }
 
 fn discovery_tool_key(session: &Value) -> Option<String> {

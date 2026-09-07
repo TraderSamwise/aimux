@@ -1,4 +1,6 @@
-use crate::runtime_topology::list_topology_session_states;
+use crate::runtime_topology::{
+    list_topology_session_states, runtime_topology_path, update_runtime_topology,
+};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeSet;
 use std::fs::{self, File};
@@ -39,6 +41,15 @@ pub fn record_topology_backend_session_id(
     session_id: &str,
     backend_session_id: &str,
 ) -> Result<Value, String> {
+    record_topology_backend_session_id_at(topology, session_id, backend_session_id, &now_iso())
+}
+
+pub fn record_topology_backend_session_id_at(
+    topology: &mut Value,
+    session_id: &str,
+    backend_session_id: &str,
+    now: &str,
+) -> Result<Value, String> {
     let session_id = session_id.trim();
     let backend_session_id = backend_session_id.trim();
     if session_id.is_empty() {
@@ -75,9 +86,66 @@ pub fn record_topology_backend_session_id(
         .filter(|existing| !existing.is_empty())
         .unwrap_or_else(|| backend_session_id.to_owned());
     session["backendSessionId"] = Value::String(selected.clone());
-    session["updatedAt"] = Value::String("2026-09-06T00:00:01.000Z".into());
-    topology["generatedAt"] = Value::String("2026-09-06T00:00:01.000Z".into());
+    session["updatedAt"] = Value::String(now.to_owned());
+    topology["generatedAt"] = Value::String(now.to_owned());
     Ok(json!({ "sessionId": session_id, "backendSessionId": selected }))
+}
+
+pub fn reconcile_offline_backend_session_ids(
+    project_root: impl AsRef<Path>,
+    project_state_dir: impl AsRef<Path>,
+) -> Result<Value, String> {
+    reconcile_offline_backend_session_ids_with_options(
+        project_root,
+        project_state_dir,
+        &BackendSessionDiscoveryOptions::default(),
+    )
+}
+
+pub fn reconcile_offline_backend_session_ids_with_options(
+    project_root: impl AsRef<Path>,
+    project_state_dir: impl AsRef<Path>,
+    options: &BackendSessionDiscoveryOptions,
+) -> Result<Value, String> {
+    let project_root = project_root.as_ref();
+    let project_root_text = project_root.to_string_lossy().into_owned();
+    let path = runtime_topology_path(project_state_dir);
+    let now = now_iso();
+    let mut reconciled = Vec::new();
+    update_runtime_topology(path, |mut topology| {
+        let sessions = list_topology_session_states(&topology, Some(&["offline"]));
+        for session in sessions {
+            if string_field(&session, "backendSessionId").is_some_and(|id| !id.is_empty()) {
+                continue;
+            }
+            let Some(session_id) = string_field(&session, "id") else {
+                continue;
+            };
+            let cwd =
+                string_field(&session, "worktreePath").unwrap_or_else(|| project_root_text.clone());
+            let tool_key = discovery_tool_key_for_session(&session);
+            let Some(backend_session_id) =
+                discover_backend_session_id_with_options(tool_key.as_deref(), Some(&cwd), options)
+            else {
+                continue;
+            };
+            if record_topology_backend_session_id_at(
+                &mut topology,
+                &session_id,
+                &backend_session_id,
+                &now,
+            )
+            .is_ok()
+            {
+                reconciled.push(json!({
+                    "id": session_id,
+                    "backendSessionId": backend_session_id,
+                }));
+            }
+        }
+        topology
+    })?;
+    Ok(json!({ "reconciled": reconciled }))
 }
 
 pub fn resolve_agent_identity(
@@ -430,6 +498,20 @@ fn modified_ms(path: &Path) -> Option<u128> {
         .duration_since(UNIX_EPOCH)
         .ok()
         .map(|duration| duration.as_millis())
+}
+
+fn now_iso() -> String {
+    let now = time::OffsetDateTime::now_utc();
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+        now.year(),
+        u8::from(now.month()),
+        now.day(),
+        now.hour(),
+        now.minute(),
+        now.second(),
+        now.millisecond()
+    )
 }
 
 fn claude_projects_dir(override_dir: Option<&Path>) -> PathBuf {
