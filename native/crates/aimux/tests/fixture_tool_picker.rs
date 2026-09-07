@@ -24,7 +24,7 @@ struct Case {
 #[test]
 fn tool_picker_contract_matches_typescript() {
     let contract: Contract = serde_json::from_str(FIXTURE).expect("tool picker fixture parses");
-    assert_eq!(contract.cases.len(), 7);
+    assert_eq!(contract.cases.len(), 12);
 
     let mut failures = Vec::new();
     for case in contract.cases {

@@ -10,7 +10,7 @@ Statuses:
 - `ERROR`: the audit could not prove enforcement because the suite errored outside a fixture assertion.
 - `STATIC`: non-empty active suite observed without dynamic mutation.
 
-Summary: 224 suites, 270 suite/corpus bindings, 3421 cases.
+Summary: 224 suites, 270 suite/corpus bindings, 3426 cases.
 Binding statuses: PROVEN-FAILS 270, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
 
 | Suite | Status | Corpus | Cases | Detail |
@@ -262,7 +262,7 @@ Binding statuses: PROVEN-FAILS 270, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
 | `fixture_tmux_window_open` | PROVEN-FAILS | `testdata/contracts/v1/tmux/window-open.json` | 8 | mutated fixture output failed owning Rust suite |
 | `fixture_tool_hooks` | PROVEN-FAILS | `testdata/contracts/v1/hooks/tool-hooks.json` | 43 | mutated fixture output failed owning Rust suite |
 | `fixture_tool_output_watchers` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/tool-output-watchers.json` | 7 | mutated fixture output failed owning Rust suite |
-| `fixture_tool_picker` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/tool-picker.json` | 7 | mutated fixture output failed owning Rust suite |
+| `fixture_tool_picker` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/tool-picker.json` | 12 | mutated fixture output failed owning Rust suite |
 | `fixture_transcript_reconciler` | PROVEN-FAILS | `testdata/contracts/v1/agent-output/transcript-reconciler.json` | 13 | mutated fixture output failed owning Rust suite |
 | `fixture_transcript_turn_state` | PROVEN-FAILS | `testdata/contracts/v1/transcript/turn-state.json` | 27 | mutated fixture output failed owning Rust suite |
 | `fixture_transport_security` | PROVEN-FAILS | `testdata/contracts/v1/transport/security.json` | 7 | mutated fixture output failed owning Rust suite |

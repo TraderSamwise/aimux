@@ -880,8 +880,8 @@ Priority fixture groups:
   recoverable-error, and read-transport policy decisions captured by running
   TypeScript `multiplexer/tui-api-runtime` pure helpers.
 - `multiplexer/tool-picker.json`: tool picker default environment formatting
-  and configured launch override behavior captured by running TypeScript
-  `formatEnvDefaults` and `defaultsLaunchOverride`.
+  configured launch override, picker mode reset, and non-dashboard launch
+  dispatch behavior captured by running TypeScript `tool-picker` helpers.
 - `runtime-state/session-recency.json`: user-label recency anchor selection
   captured by running TypeScript `session-recency`.
 - `runtime-state/session-restorability.json`: offline-session exact backend

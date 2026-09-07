@@ -2,7 +2,7 @@
   "version": 1,
   "source": "src/multiplexer/tool-picker.test.ts",
   "generatedBy": "scripts/capture-tool-picker-contract.mjs",
-  "description": "Tool picker default environment formatting and launch override contracts captured by running TypeScript tool-picker helpers.",
+  "description": "Tool picker default environment formatting, launch override, picker mode, and non-dashboard launch dispatch contracts captured by running TypeScript tool-picker helpers.",
   "cases": [
     {
       "id": "tool-picker-001",
@@ -90,6 +90,223 @@
       },
       "output": { "command": "claude", "args": ["--base", "--model", "opus"], "env": { "FOO": "bar" } },
       "inputSha256": "d43471c0b29dd255c823f5652fc405a7a86037f28cfe7b368a4870c626e40d2a"
+    },
+    {
+      "id": "tool-picker-008",
+      "name": "switches selected tool and resets switch picker state",
+      "source": "src/multiplexer/tool-picker.test.ts",
+      "api": "runSelectedTool",
+      "input": {
+        "name": "switches selected tool and resets switch picker state",
+        "api": "runSelectedTool",
+        "host": {
+          "pickerMode": "switch-tool",
+          "switchToolSourceSessionId": "claude-1",
+          "forkSourceSessionId": "stale-fork",
+          "launchOptionsState": { "stale": true }
+        },
+        "toolKey": "codex",
+        "tool": { "command": "codex", "args": ["--base"], "enabled": true }
+      },
+      "output": {
+        "pickerMode": "create",
+        "forkSourceSessionId": null,
+        "switchToolSourceSessionId": null,
+        "toolPickerOverseer": false,
+        "toolPickerScribe": false,
+        "launchOptionsState": null,
+        "calls": {
+          "generateDashboardSessionId": [],
+          "switchAgentTool": [["claude-1", "codex", null]],
+          "forkAgent": [],
+          "createSession": [],
+          "showDashboardError": [],
+          "openDashboardOverlay": [],
+          "redrawDashboardWithOverlay": [],
+          "getViewportSize": [],
+          "clearDashboardOverlay": [],
+          "restoreDashboardAfterOverlayDismiss": []
+        }
+      },
+      "inputSha256": "bdc447740f0f0315ec737b62302e1aaff9b1a099170463894be14a7156c7114a"
+    },
+    {
+      "id": "tool-picker-009",
+      "name": "reports an error when switch source is missing",
+      "source": "src/multiplexer/tool-picker.test.ts",
+      "api": "runSelectedTool",
+      "input": {
+        "name": "reports an error when switch source is missing",
+        "api": "runSelectedTool",
+        "host": { "pickerMode": "switch-tool", "switchToolSourceSessionId": null },
+        "toolKey": "codex",
+        "tool": { "command": "codex", "args": ["--base"], "enabled": true }
+      },
+      "output": {
+        "pickerMode": "create",
+        "forkSourceSessionId": null,
+        "switchToolSourceSessionId": null,
+        "toolPickerOverseer": false,
+        "toolPickerScribe": false,
+        "launchOptionsState": null,
+        "calls": {
+          "generateDashboardSessionId": [],
+          "switchAgentTool": [],
+          "forkAgent": [],
+          "createSession": [],
+          "showDashboardError": [
+            ["Cannot switch agent tool", ["Switch source was lost before tool selection. Try again."]]
+          ],
+          "openDashboardOverlay": [],
+          "redrawDashboardWithOverlay": [],
+          "getViewportSize": [],
+          "clearDashboardOverlay": [],
+          "restoreDashboardAfterOverlayDismiss": []
+        }
+      },
+      "inputSha256": "c8c5b1c9cd0871c6d7b0b4c77a6ebe74fb6a904dedf1043248a306d1bb3628a2"
+    },
+    {
+      "id": "tool-picker-010",
+      "name": "forks from the selected source session with launch defaults",
+      "source": "src/multiplexer/tool-picker.test.ts",
+      "api": "runSelectedTool",
+      "input": {
+        "name": "forks from the selected source session with launch defaults",
+        "api": "runSelectedTool",
+        "host": { "pickerMode": "fork", "forkSourceSessionId": "claude-1", "focusedWorktreePath": "/repo/worktrees/a" },
+        "toolKey": "codex",
+        "tool": { "command": "codex", "args": ["--base"], "enabled": true, "defaultArgs": ["--model", "gpt-5"] }
+      },
+      "output": {
+        "pickerMode": "create",
+        "forkSourceSessionId": null,
+        "switchToolSourceSessionId": null,
+        "toolPickerOverseer": false,
+        "toolPickerScribe": false,
+        "launchOptionsState": null,
+        "calls": {
+          "generateDashboardSessionId": [["codex"]],
+          "switchAgentTool": [],
+          "forkAgent": [
+            [
+              {
+                "sourceSessionId": "claude-1",
+                "targetToolConfigKey": "codex",
+                "targetSessionId": "codex-generated",
+                "open": false,
+                "launchOverride": { "command": "codex", "args": ["--base", "--model", "gpt-5"] }
+              }
+            ]
+          ],
+          "createSession": [],
+          "showDashboardError": [],
+          "openDashboardOverlay": [],
+          "redrawDashboardWithOverlay": [],
+          "getViewportSize": [],
+          "clearDashboardOverlay": [],
+          "restoreDashboardAfterOverlayDismiss": []
+        }
+      },
+      "inputSha256": "a3ef1a068b5c354d7a8efa5f459ef8d28900bc285bf8805bab161d02567644e9"
+    },
+    {
+      "id": "tool-picker-011",
+      "name": "creates a plain session with explicit launch override env",
+      "source": "src/multiplexer/tool-picker.test.ts",
+      "api": "runSelectedTool",
+      "input": {
+        "name": "creates a plain session with explicit launch override env",
+        "api": "runSelectedTool",
+        "host": { "pickerMode": "create" },
+        "toolKey": "claude",
+        "tool": {
+          "command": "claude",
+          "args": ["--base"],
+          "enabled": true,
+          "preambleFlag": "--preamble",
+          "sessionIdFlag": "--session"
+        },
+        "options": { "override": { "command": "claude", "args": ["--base", "--debug"], "env": { "FOO": "bar" } } }
+      },
+      "output": {
+        "pickerMode": "create",
+        "forkSourceSessionId": null,
+        "switchToolSourceSessionId": null,
+        "toolPickerOverseer": false,
+        "toolPickerScribe": false,
+        "launchOptionsState": null,
+        "calls": {
+          "generateDashboardSessionId": [["claude"]],
+          "switchAgentTool": [],
+          "forkAgent": [],
+          "createSession": [
+            [
+              "claude",
+              ["--base", "--debug"],
+              "--preamble",
+              "claude",
+              null,
+              "--session",
+              null,
+              null,
+              "claude-generated",
+              false,
+              false,
+              null,
+              { "FOO": "bar" }
+            ]
+          ],
+          "showDashboardError": [],
+          "openDashboardOverlay": [],
+          "redrawDashboardWithOverlay": [],
+          "getViewportSize": [],
+          "clearDashboardOverlay": [],
+          "restoreDashboardAfterOverlayDismiss": []
+        }
+      },
+      "inputSha256": "fb46f8dad20ab641a9d298432688659b614674e80fa875c16efff08f7b79e3ad"
+    },
+    {
+      "id": "tool-picker-012",
+      "name": "opens switch picker mode without carrying fork state",
+      "source": "src/multiplexer/tool-picker.test.ts",
+      "api": "showToolPicker",
+      "input": {
+        "name": "opens switch picker mode without carrying fork state",
+        "api": "showToolPicker",
+        "sourceSessionId": "claude-1",
+        "options": { "mode": "switch-tool" },
+        "host": {
+          "pickerMode": "fork",
+          "forkSourceSessionId": "claude-old",
+          "switchToolSourceSessionId": null,
+          "toolPickerOverseer": true,
+          "launchOptionsState": { "stale": true }
+        }
+      },
+      "output": {
+        "pickerMode": "switch-tool",
+        "forkSourceSessionId": null,
+        "switchToolSourceSessionId": "claude-1",
+        "toolPickerOverseer": false,
+        "toolPickerScribe": false,
+        "toolPickerIndex": 0,
+        "launchOptionsState": null,
+        "calls": {
+          "generateDashboardSessionId": [],
+          "switchAgentTool": [],
+          "forkAgent": [],
+          "createSession": [],
+          "showDashboardError": [],
+          "openDashboardOverlay": [["tool-picker"]],
+          "redrawDashboardWithOverlay": [[]],
+          "getViewportSize": [],
+          "clearDashboardOverlay": [],
+          "restoreDashboardAfterOverlayDismiss": []
+        }
+      },
+      "inputSha256": "041fa2fa5ee35bc6808c3126fbce197add4290b7a8eb08d020b34006d5973aaa"
     }
   ]
 }
