@@ -10,6 +10,7 @@ pub fn run_multiplexer_persistence_worktrees_contract_case(api: &str, input: &Va
         "graveyardDesktopWorktree" => state.graveyard_desktop_worktree(),
         "resurrectGraveyardWorktree" => state.resurrect_graveyard_worktree(),
         "deleteGraveyardWorktree" => state.delete_graveyard_worktree(),
+        "resurrectGraveyardSession" => state.resurrect_graveyard_session(),
         api => panic!("unknown multiplexer persistence worktrees api: {api}"),
     }
 }
@@ -340,6 +341,28 @@ impl<'a> PersistenceWorktreeState<'a> {
         self.call("refreshLocalDashboardModel", vec![]);
         self.call("metadataServer.notifyChange", vec![]);
         self.ok(json!({ "path": path, "status": "removed" }))
+    }
+
+    fn resurrect_graveyard_session(&mut self) -> Value {
+        let session_id = string_field(self.input, "sessionId");
+        let mut sessions = array_field(&self.topology, "sessions");
+        let Some(index) = sessions.iter().position(|session| {
+            string_field(session, "id") == session_id
+                && string_field(session, "status") == "graveyard"
+        }) else {
+            return self.error(format!("Graveyard session \"{session_id}\" not found"));
+        };
+        set_string(&mut sessions[index], "status", "offline");
+        set_string(&mut sessions[index], "lifecycle", "offline");
+        self.topology["sessions"] = Value::Array(sessions);
+        self.call("loadOfflineTopologySessions", vec![]);
+        self.call("invalidateDesktopStateSnapshot", vec![]);
+        self.call("writeStatuslineFile", vec![]);
+        self.call("metadataServer.notifyChange", vec![]);
+        if string_field(self.input, "mode") == "dashboard" {
+            self.call("renderCurrentDashboardView", vec![]);
+        }
+        self.ok(json!({ "sessionId": session_id, "status": "offline" }))
     }
 
     fn stop_worktree_services_for_graveyard(&mut self, project_root: &str, path: &str) {

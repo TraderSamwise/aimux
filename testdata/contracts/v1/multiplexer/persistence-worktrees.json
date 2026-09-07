@@ -2,7 +2,7 @@
   "version": 1,
   "source": "src/multiplexer/persistence-methods.test.ts",
   "generatedBy": "scripts/capture-multiplexer-persistence-worktrees-contract.mjs",
-  "description": "Multiplexer persistence worktree graveyard, resurrection, deletion, host side effects, and topology transitions captured by running TypeScript persistenceMethods against temp git repos and topology state.",
+  "description": "Multiplexer persistence worktree create, remove, graveyard, resurrection, deletion, session resurrection, host side effects, operation failures, and topology transitions captured by running TypeScript persistenceMethods against temp git repos and topology state.",
   "cases": [
     {
       "id": "multiplexer-persistence-worktrees-001",
@@ -1043,6 +1043,246 @@
         "operationFailures": []
       },
       "inputSha256": "356280c94e68198cf559d449f9dc90be93ef306cf76cb7fde04ce0872c502933"
+    },
+    {
+      "id": "multiplexer-persistence-worktrees-011",
+      "name": "resurrects graveyard sessions into offline topology state",
+      "source": "src/multiplexer/persistence-methods.test.ts",
+      "api": "resurrectGraveyardSession",
+      "input": {
+        "projectRoot": "<repo>",
+        "sessionId": "claude-parent",
+        "offlineSessions": [],
+        "mode": "project-service",
+        "initialTopology": {
+          "worktrees": [],
+          "visibleGraveyard": [],
+          "allGraveyard": [],
+          "sessions": [
+            {
+              "id": "claude-parent",
+              "tool": "claude",
+              "toolConfigKey": "claude",
+              "command": "claude",
+              "args": [],
+              "status": "graveyard",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "worktreePath": "<repo>"
+            },
+            {
+              "id": "codex-reviewer",
+              "tool": "codex",
+              "toolConfigKey": "codex",
+              "command": "codex",
+              "args": [],
+              "status": "graveyard",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "team": { "teamId": "team-claude-parent", "parentSessionId": "claude-parent", "role": "reviewer" },
+              "worktreePath": "<repo>"
+            },
+            {
+              "id": "claude-nested",
+              "tool": "claude",
+              "toolConfigKey": "claude",
+              "command": "claude",
+              "args": [],
+              "status": "graveyard",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "team": { "teamId": "team-codex-reviewer", "parentSessionId": "codex-reviewer", "role": "reviewer" },
+              "worktreePath": "<repo>"
+            },
+            {
+              "id": "codex-independent",
+              "tool": "codex",
+              "toolConfigKey": "codex",
+              "command": "codex",
+              "args": [],
+              "status": "graveyard",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "worktreePath": "<repo>"
+            }
+          ],
+          "services": []
+        }
+      },
+      "output": {
+        "ok": true,
+        "returned": { "sessionId": "claude-parent", "status": "offline" },
+        "completion": null,
+        "host": {
+          "offlineSessions": [],
+          "offlineServices": [],
+          "footerFlash": null,
+          "footerFlashTicks": null,
+          "pendingWorktreeCreatePaths": [],
+          "pendingWorktreeRemovalPaths": [],
+          "dashboardWorktreeActions": [],
+          "calls": [
+            { "method": "loadOfflineTopologySessions", "args": [] },
+            { "method": "invalidateDesktopStateSnapshot", "args": [] },
+            { "method": "writeStatuslineFile", "args": [] },
+            { "method": "metadataServer.notifyChange", "args": [] }
+          ]
+        },
+        "topology": {
+          "worktrees": [],
+          "visibleGraveyard": [],
+          "allGraveyard": [],
+          "sessions": [
+            {
+              "id": "claude-parent",
+              "tool": "claude",
+              "toolConfigKey": "claude",
+              "command": "claude",
+              "args": [],
+              "status": "offline",
+              "lifecycle": "offline",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "worktreePath": "<repo>"
+            },
+            {
+              "id": "codex-reviewer",
+              "tool": "codex",
+              "toolConfigKey": "codex",
+              "command": "codex",
+              "args": [],
+              "status": "graveyard",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "team": { "teamId": "team-claude-parent", "parentSessionId": "claude-parent", "role": "reviewer" },
+              "worktreePath": "<repo>"
+            },
+            {
+              "id": "claude-nested",
+              "tool": "claude",
+              "toolConfigKey": "claude",
+              "command": "claude",
+              "args": [],
+              "status": "graveyard",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "team": { "teamId": "team-codex-reviewer", "parentSessionId": "codex-reviewer", "role": "reviewer" },
+              "worktreePath": "<repo>"
+            },
+            {
+              "id": "codex-independent",
+              "tool": "codex",
+              "toolConfigKey": "codex",
+              "command": "codex",
+              "args": [],
+              "status": "graveyard",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "worktreePath": "<repo>"
+            }
+          ],
+          "services": []
+        },
+        "operationFailures": []
+      },
+      "inputSha256": "c069e4b8118ca4689fc89a4e90808aa63266f44cd536b9d629f2c749982eec3f"
+    },
+    {
+      "id": "multiplexer-persistence-worktrees-012",
+      "name": "resurrects teammate graveyard sessions without resurrecting the parent",
+      "source": "src/multiplexer/persistence-methods.test.ts",
+      "api": "resurrectGraveyardSession",
+      "input": {
+        "projectRoot": "<repo>",
+        "sessionId": "codex-reviewer",
+        "offlineSessions": [],
+        "mode": "project-service",
+        "initialTopology": {
+          "worktrees": [],
+          "visibleGraveyard": [],
+          "allGraveyard": [],
+          "sessions": [
+            {
+              "id": "claude-parent",
+              "tool": "claude",
+              "toolConfigKey": "claude",
+              "command": "claude",
+              "args": [],
+              "status": "graveyard",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "worktreePath": "<repo>"
+            },
+            {
+              "id": "codex-reviewer",
+              "tool": "codex",
+              "toolConfigKey": "codex",
+              "command": "codex",
+              "args": [],
+              "status": "graveyard",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "team": { "teamId": "team-claude-parent", "parentSessionId": "claude-parent", "role": "reviewer" },
+              "worktreePath": "<repo>"
+            }
+          ],
+          "services": []
+        }
+      },
+      "output": {
+        "ok": true,
+        "returned": { "sessionId": "codex-reviewer", "status": "offline" },
+        "completion": null,
+        "host": {
+          "offlineSessions": [],
+          "offlineServices": [],
+          "footerFlash": null,
+          "footerFlashTicks": null,
+          "pendingWorktreeCreatePaths": [],
+          "pendingWorktreeRemovalPaths": [],
+          "dashboardWorktreeActions": [],
+          "calls": [
+            { "method": "loadOfflineTopologySessions", "args": [] },
+            { "method": "invalidateDesktopStateSnapshot", "args": [] },
+            { "method": "writeStatuslineFile", "args": [] },
+            { "method": "metadataServer.notifyChange", "args": [] }
+          ]
+        },
+        "topology": {
+          "worktrees": [],
+          "visibleGraveyard": [],
+          "allGraveyard": [],
+          "sessions": [
+            {
+              "id": "claude-parent",
+              "tool": "claude",
+              "toolConfigKey": "claude",
+              "command": "claude",
+              "args": [],
+              "status": "graveyard",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "worktreePath": "<repo>"
+            },
+            {
+              "id": "codex-reviewer",
+              "tool": "codex",
+              "toolConfigKey": "codex",
+              "command": "codex",
+              "args": [],
+              "status": "offline",
+              "lifecycle": "offline",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "team": { "teamId": "team-claude-parent", "parentSessionId": "claude-parent", "role": "reviewer" },
+              "worktreePath": "<repo>"
+            }
+          ],
+          "services": []
+        },
+        "operationFailures": []
+      },
+      "inputSha256": "ce887502c7d0d01e98ac2b2187e8961f8126e0941491a443fa757e3ebf3bdaf2"
     }
   ]
 }

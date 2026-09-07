@@ -163,8 +163,11 @@ function hostFor(input) {
     isSessionRuntimeLive: callRecorder(calls, "isSessionRuntimeLive", (session) => input.liveSessionIds?.includes(session.id) ?? false),
     saveState: callRecorder(calls, "saveState"),
     syncSessionsFromTopology: callRecorder(calls, "syncSessionsFromTopology"),
+    loadOfflineTopologySessions: callRecorder(calls, "loadOfflineTopologySessions"),
     invalidateDesktopStateSnapshot: callRecorder(calls, "invalidateDesktopStateSnapshot"),
     refreshLocalDashboardModel: callRecorder(calls, "refreshLocalDashboardModel"),
+    writeStatuslineFile: callRecorder(calls, "writeStatuslineFile"),
+    renderCurrentDashboardView: callRecorder(calls, "renderCurrentDashboardView"),
     renderDashboard: callRecorder(calls, "renderDashboard"),
     refreshDashboardWorktreeProjection: callRecorder(calls, "refreshDashboardWorktreeProjection"),
     noteLastUsedItem: callRecorder(calls, "noteLastUsedItem"),
@@ -229,7 +232,12 @@ async function invoke(api, ctx, input) {
   const actualInput = denormalize(input, ctx);
   const { host, calls } = hostFor(actualInput);
   try {
-    const arg = api === "createDesktopWorktree" ? actualInput.name : actualInput.path;
+    const arg =
+      api === "createDesktopWorktree"
+        ? actualInput.name
+        : api === "resurrectGraveyardSession"
+          ? actualInput.sessionId
+          : actualInput.path;
     const returned = await persistenceMethods[api].call(host, arg);
     let immediate;
     let completion = null;
@@ -275,7 +283,9 @@ async function record(cases, name, api, label, prepare) {
   await withFixture(label, async (ctx) => {
     const rawInput = await prepare(ctx);
     rawInput.initialTopology = snapshotTopology();
-    rawInput.checkoutExists = existsSync(rawInput.path);
+    if (rawInput.path !== undefined) {
+      rawInput.checkoutExists = existsSync(rawInput.path);
+    }
     const input = normalize(rawInput, ctx);
     const output = await invoke(api, ctx, input);
     cases.push({
@@ -498,12 +508,78 @@ await record(
   },
 );
 
+await record(
+  cases,
+  "resurrects graveyard sessions into offline topology state",
+  "resurrectGraveyardSession",
+  "resurrect-session-parent",
+  ({ projectRoot }) => {
+    const parent = { id: "claude-parent", command: "claude", toolConfigKey: "claude", args: [] };
+    const teammate = {
+      id: "codex-reviewer",
+      command: "codex",
+      toolConfigKey: "codex",
+      args: [],
+      team: { teamId: "team-claude-parent", parentSessionId: "claude-parent", role: "reviewer" },
+    };
+    const nested = {
+      id: "claude-nested",
+      command: "claude",
+      toolConfigKey: "claude",
+      args: [],
+      team: { teamId: "team-codex-reviewer", parentSessionId: "codex-reviewer", role: "reviewer" },
+    };
+    const independent = { id: "codex-independent", command: "codex", toolConfigKey: "codex", args: [] };
+    for (const session of [parent, teammate, nested, independent]) {
+      topologySessions.upsertTopologySession(
+        { ...session, tool: session.command, lifecycle: "offline", worktreePath: projectRoot },
+        "graveyard",
+      );
+    }
+    return {
+      projectRoot,
+      sessionId: "claude-parent",
+      offlineSessions: [],
+      mode: "project-service",
+    };
+  },
+);
+
+await record(
+  cases,
+  "resurrects teammate graveyard sessions without resurrecting the parent",
+  "resurrectGraveyardSession",
+  "resurrect-session-teammate",
+  ({ projectRoot }) => {
+    const parent = { id: "claude-parent", command: "claude", toolConfigKey: "claude", args: [] };
+    const teammate = {
+      id: "codex-reviewer",
+      command: "codex",
+      toolConfigKey: "codex",
+      args: [],
+      team: { teamId: "team-claude-parent", parentSessionId: "claude-parent", role: "reviewer" },
+    };
+    for (const session of [parent, teammate]) {
+      topologySessions.upsertTopologySession(
+        { ...session, tool: session.command, lifecycle: "offline", worktreePath: projectRoot },
+        "graveyard",
+      );
+    }
+    return {
+      projectRoot,
+      sessionId: "codex-reviewer",
+      offlineSessions: [],
+      mode: "project-service",
+    };
+  },
+);
+
 await writeContractJson(FIXTURE_PATH, {
   version: 1,
   source: "src/multiplexer/persistence-methods.test.ts",
   generatedBy: "scripts/capture-multiplexer-persistence-worktrees-contract.mjs",
   description:
-    "Multiplexer persistence worktree graveyard, resurrection, deletion, host side effects, and topology transitions captured by running TypeScript persistenceMethods against temp git repos and topology state.",
+    "Multiplexer persistence worktree create, remove, graveyard, resurrection, deletion, session resurrection, host side effects, operation failures, and topology transitions captured by running TypeScript persistenceMethods against temp git repos and topology state.",
   cases,
 });
 
