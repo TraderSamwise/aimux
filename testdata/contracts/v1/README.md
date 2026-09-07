@@ -824,9 +824,10 @@ Priority fixture groups:
   saved offline services, optimistic dashboard seeds, and topology service
   projections captured by running TypeScript `multiplexer/services` against
   deterministic fake tmux hosts and temp state files.
-- `multiplexer/worktrees.json`: dashboard worktree settle-poll backoff table
-  captured by running TypeScript `worktreeSettlePollDelay` over the tested
-  attempt ranges.
+- `multiplexer/worktrees.json`: dashboard worktree settle-poll backoff,
+  worktree create input, removal confirmation, removal completion, and list
+  dismissal contracts captured by running TypeScript `multiplexer/worktrees`
+  helpers against deterministic fake dashboard hosts.
 - `multiplexer/runtime-lifecycle-methods.json`: runtime lifecycle legacy
   instruction-file managed-block cleanup and tracking reset side effects
   captured by running TypeScript `runtimeLifecycleMethods` against temporary
