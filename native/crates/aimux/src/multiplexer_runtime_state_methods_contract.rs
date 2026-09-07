@@ -1,4 +1,4 @@
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 const NOW: &str = "2026-06-01T00:00:00.000Z";
 
@@ -161,7 +161,7 @@ fn load_offline_topology_sessions(input: &Value) -> Value {
     let topology = session_service_topology(input);
     let mut offline_sessions = array_at(input, &["host", "offlineSessions"]);
     let mut calls = Vec::new();
-    let project_root = string_field(input, "projectRoot");
+    let project_root = project_root_for(input);
     calls.push(call(
         "tmuxRuntimeManager.listProjectManagedWindows",
         vec![json!(project_root)],
@@ -195,6 +195,7 @@ fn load_offline_topology_sessions(input: &Value) -> Value {
                 vec![json!(id)],
             ));
             object_lookup_string(input, "pendingSessionActions", &id).as_deref() != Some("starting")
+                && is_available_worktree_path(&string_field(session, "worktreePath"))
         })
         .collect::<Vec<_>>();
     let previous_key = offline_sessions
@@ -379,7 +380,7 @@ fn load_offline_services(input: &Value) -> Value {
 fn reconcile_orphaned_topology_services(input: &Value) -> Value {
     let mut topology = session_service_topology(input);
     let mut calls = Vec::new();
-    let project_root = string_field(input, "projectRoot");
+    let project_root = project_root_for(input);
     calls.push(call(
         "tmuxRuntimeManager.listProjectManagedWindows",
         vec![json!(project_root)],
@@ -397,7 +398,7 @@ fn reconcile_orphaned_topology_services(input: &Value) -> Value {
 
 fn build_live_service_states(input: &Value) -> Value {
     let mut calls = Vec::new();
-    let project_root = string_field(input, "projectRoot");
+    let project_root = project_root_for(input);
     calls.push(call(
         "tmuxRuntimeManager.listProjectManagedWindows",
         vec![json!(project_root)],
@@ -485,6 +486,21 @@ fn string_at(value: &Value, path: &[&str]) -> String {
         .as_str()
         .unwrap_or_default()
         .to_owned()
+}
+
+fn project_root_for(input: &Value) -> String {
+    let project_root = string_field(input, "projectRoot");
+    if project_root.is_empty() {
+        "<repo>".to_owned()
+    } else {
+        project_root
+    }
+}
+
+fn is_available_worktree_path(worktree_path: &str) -> bool {
+    worktree_path.is_empty()
+        || worktree_path == "<repo>"
+        || worktree_path.starts_with("<repo>/.aimux/worktrees/")
 }
 
 fn number_field(value: &Value, field: &str) -> i64 {

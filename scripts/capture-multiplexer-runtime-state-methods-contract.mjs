@@ -389,6 +389,184 @@ await record(
 
 await record(
   cases,
+  "loadOfflineTopologySessions clears stale offline cache when topology has no offline sessions",
+  "loadOfflineTopologySessions",
+  "load-offline-clears-empty",
+  ({ projectRoot }) => ({
+    projectRoot,
+    host: {
+      sessions: [],
+      offlineSessions: [{ id: "codex-stale", command: "codex", toolConfigKey: "codex", worktreePath: projectRoot }],
+    },
+    initialTopology: snapshotSessionServiceTopology(),
+  }),
+  (_ctx, input) => {
+    const calls = [];
+    const host = runtimeTopologyHost(input, calls);
+    const changed = runtimeState.loadOfflineTopologySessions(host);
+    return { changed, host: { offlineSessions: host.offlineSessions }, topology: snapshotSessionServiceTopology(), calls };
+  },
+);
+
+await record(
+  cases,
+  "loadOfflineTopologySessions loads valid offline sessions without backend ids",
+  "loadOfflineTopologySessions",
+  "load-offline-without-backend",
+  ({ projectRoot }) => {
+    topologySessions.upsertTopologySession(
+      { id: "claude-recoverable", command: "claude", tool: "claude", toolConfigKey: "claude", args: [], lifecycle: "offline", worktreePath: projectRoot },
+      "offline",
+      { projectRoot },
+    );
+    return { projectRoot, host: { sessions: [], offlineSessions: [] }, initialTopology: snapshotSessionServiceTopology() };
+  },
+  (_ctx, input) => {
+    const calls = [];
+    const host = runtimeTopologyHost(input, calls);
+    const changed = runtimeState.loadOfflineTopologySessions(host);
+    return { changed, host: { offlineSessions: host.offlineSessions }, topology: snapshotSessionServiceTopology(), calls };
+  },
+);
+
+await record(
+  cases,
+  "loadOfflineTopologySessions ignores metadata-only backend id changes",
+  "loadOfflineTopologySessions",
+  "load-offline-metadata-only-backend-unchanged",
+  ({ projectRoot }) => {
+    topologySessions.upsertTopologySession(
+      { id: "claude-recoverable", command: "claude", tool: "claude", toolConfigKey: "claude", args: [], lifecycle: "offline", worktreePath: projectRoot },
+      "offline",
+      { projectRoot },
+    );
+    return {
+      projectRoot,
+      host: {
+        sessions: [],
+        offlineSessions: [
+          { id: "claude-recoverable", command: "claude", tool: "claude", toolConfigKey: "claude", args: [], lifecycle: "offline", worktreePath: projectRoot },
+        ],
+      },
+      initialTopology: snapshotSessionServiceTopology(),
+    };
+  },
+  (_ctx, input) => {
+    const calls = [];
+    const host = runtimeTopologyHost(input, calls);
+    const changed = runtimeState.loadOfflineTopologySessions(host);
+    return { changed, host: { offlineSessions: host.offlineSessions }, topology: snapshotSessionServiceTopology(), calls };
+  },
+);
+
+await record(
+  cases,
+  "loadOfflineTopologySessions reports restore blocker changes",
+  "loadOfflineTopologySessions",
+  "load-offline-restore-blocker-changed",
+  ({ projectRoot }) => {
+    topologySessions.upsertTopologySession(
+      {
+        id: "claude-recoverable",
+        command: "claude",
+        tool: "claude",
+        toolConfigKey: "claude",
+        args: [],
+        lifecycle: "offline",
+        backendSessionId: "backend-1",
+        worktreePath: projectRoot,
+        restoreBlockedReason: "agent exited during startup",
+      },
+      "offline",
+      { projectRoot },
+    );
+    return {
+      projectRoot,
+      host: {
+        sessions: [],
+        offlineSessions: [
+          {
+            id: "claude-recoverable",
+            command: "claude",
+            tool: "claude",
+            toolConfigKey: "claude",
+            args: [],
+            lifecycle: "offline",
+            backendSessionId: "backend-1",
+            worktreePath: projectRoot,
+          },
+        ],
+      },
+      initialTopology: snapshotSessionServiceTopology(),
+    };
+  },
+  (_ctx, input) => {
+    const calls = [];
+    const host = runtimeTopologyHost(input, calls);
+    const changed = runtimeState.loadOfflineTopologySessions(host);
+    return { changed, host: { offlineSessions: host.offlineSessions }, topology: snapshotSessionServiceTopology(), calls };
+  },
+);
+
+await record(
+  cases,
+  "loadOfflineTopologySessions strips stale tmux targets from explicit offline sessions",
+  "loadOfflineTopologySessions",
+  "load-offline-strips-stale-tmux-target",
+  () => {
+    topologySessions.upsertTopologySession(
+      {
+        id: "codex-offline",
+        command: "codex",
+        tool: "codex",
+        toolConfigKey: "codex",
+        args: [],
+        lifecycle: "offline",
+        tmuxTarget: { sessionName: "aimux-test", windowId: "@4", windowIndex: 4, windowName: "codex" },
+      },
+      "offline",
+    );
+    return { host: { sessions: [], offlineSessions: [] }, initialTopology: snapshotSessionServiceTopology() };
+  },
+  (_ctx, input) => {
+    const calls = [];
+    const host = runtimeTopologyHost(input, calls);
+    const changed = runtimeState.loadOfflineTopologySessions(host);
+    return { changed, host: { offlineSessions: host.offlineSessions }, topology: snapshotSessionServiceTopology(), calls };
+  },
+);
+
+await record(
+  cases,
+  "loadOfflineTopologySessions skips offline sessions whose worktree is gone",
+  "loadOfflineTopologySessions",
+  "load-offline-missing-worktree",
+  ({ projectRoot }) => {
+    topologySessions.upsertTopologySession(
+      {
+        id: "codex-missing",
+        command: "codex",
+        tool: "codex",
+        toolConfigKey: "codex",
+        args: [],
+        lifecycle: "offline",
+        worktreePath: join(projectRoot, "deleted-worktree"),
+      },
+      "offline",
+      { projectRoot },
+    );
+    return { projectRoot, host: { sessions: [], offlineSessions: [] }, initialTopology: snapshotSessionServiceTopology() };
+  },
+  (_ctx, input) => {
+    const calls = [];
+    const host = runtimeTopologyHost(input, calls);
+    const changed = runtimeState.loadOfflineTopologySessions(host);
+    return { changed, host: { offlineSessions: host.offlineSessions }, topology: snapshotSessionServiceTopology(), calls };
+  },
+);
+
+await record(
+  cases,
   "reconcileOrphanedTopologySessions demotes crash-orphaned running sessions to offline",
   "reconcileOrphanedTopologySessions",
   "reconcile-session-demote",
@@ -439,6 +617,41 @@ await record(
       { projectRoot },
     );
     return { projectRoot, host: { sessions: [], offlineSessions: [] }, initialTopology: snapshotSessionServiceTopology() };
+  },
+  (_ctx, input) => {
+    const calls = [];
+    const host = runtimeTopologyHost(input, calls);
+    const changed = runtimeState.reconcileOrphanedTopologySessions(host, []);
+    return { changed, host: { offlineSessions: host.offlineSessions }, topology: snapshotSessionServiceTopology(), calls };
+  },
+);
+
+await record(
+  cases,
+  "reconcileOrphanedTopologySessions demotes stale starting sessions and records restore blocker",
+  "reconcileOrphanedTopologySessions",
+  "reconcile-session-stale-starting",
+  ({ projectRoot }) => {
+    topologySessions.upsertTopologySession(
+      {
+        id: "claude-starting",
+        command: "claude",
+        tool: "claude",
+        toolConfigKey: "claude",
+        args: [],
+        lifecycle: "live",
+        backendSessionId: "backend-1",
+        worktreePath: projectRoot,
+      },
+      "starting",
+      { projectRoot, now: new RealDate(RealDate.parse(FIXED_NOW) - 10_000).toISOString() },
+    );
+    return {
+      projectRoot,
+      pendingSessionActions: { "claude-starting": "starting" },
+      host: { sessions: [], offlineSessions: [] },
+      initialTopology: snapshotSessionServiceTopology(),
+    };
   },
   (_ctx, input) => {
     const calls = [];
