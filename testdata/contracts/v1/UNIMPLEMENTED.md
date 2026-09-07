@@ -2,7 +2,7 @@
 
 This inventory lists real captured TypeScript contract corpora that are intentionally `#[ignore]` because the matching Rust API does not exist yet, the implementation sits behind an ownership fence, or the existing fenced Rust implementation currently differs from the captured TypeScript behavior. It deliberately does not count Vitest reporter output as coverage.
 
-Coverage definition used for this inventory: a `src` test module is covered when any `testdata/contracts/v1/**/*.json` fixture records that module in a top-level `source`, top-level `sources`, case `source`, or group/case `source` field, and the fixture contains behavior-level input/output or state data rather than test-runner metadata. Under that definition there are 245 `src` test modules, 225 covered modules, and 20 uncovered modules remaining.
+Coverage definition used for this inventory: a `src` test module is covered when any `testdata/contracts/v1/**/*.json` fixture records that module in a top-level `source`, top-level `sources`, case `source`, or group/case `source` field, and the fixture contains behavior-level input/output or state data rather than test-runner metadata. Under that definition there are 245 `src` test modules, 226 covered modules, and 19 uncovered modules remaining.
 
 There are 33 ignored corpus entries below, covering 162 captured checklist cases.
 
@@ -51,7 +51,6 @@ These `src/**/*.test.ts` modules still have no behavior-level corpus under `test
 | `src/core-cli.test.ts` | Core CLI end-to-end sidecar runner; needs per-command input/output capture from runCoreCli, not Vitest reporter metadata. | core_cli* |
 | `src/core-project-actor.test.ts` | Child-process lifecycle supervisor integration; no pure captured API selected yet. | daemon_* / project actor lifecycle |
 | `src/daemon.test.ts` | Daemon HTTP/core-command/expose/project actor integration; no pure captured API selected yet. | daemon_* |
-| `src/daemon/projects-route.test.ts` | Daemon projects route count/cache projection; should be captured as route input/output. | daemon_* |
 | `src/full/hosted-server.test.ts` | Hosted proxy server integration; needs route request/response corpus rather than test names. | daemon_* / hosted service |
 | `src/metadata-server.interaction.test.ts` | Project-service interaction HTTP API; needs request/response corpus. | project_service/routes/ |
 | `src/metadata-server.test.ts` | Project-service metadata HTTP routes; needs request/response corpus. | project_service/routes/ |

@@ -45,6 +45,11 @@ Priority fixture groups:
   values and mocked tmux side-effect call logs captured by running TypeScript
   `findLiveDashboardTarget` and `resolveDashboardTarget`.
 
+## Daemon
+
+- `daemon/projects-route-counts.json`: online desktop-agent count behavior
+  captured by running TypeScript `countOnlineDesktopAgents`.
+
 ## ANSI
 
 - `ansi/sgr-spans.json`: ANSI SGR span cases, including adversarial color,

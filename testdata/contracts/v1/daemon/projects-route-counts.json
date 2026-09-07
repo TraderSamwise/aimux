@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "generatedAt": "2026-09-07T00:00:00.000Z",
+  "generatedBy": "scripts/capture-daemon-projects-route-contract.mjs",
+  "source": "src/daemon/projects-route.test.ts",
+  "sources": ["src/daemon/projects-route.test.ts", "src/daemon/projects-route.ts"],
+  "subject": "countOnlineDesktopAgents",
+  "description": "Online desktop-agent count behavior captured by running TypeScript countOnlineDesktopAgents.",
+  "caseCount": 3,
+  "cases": [
+    {
+      "id": "daemon-projects-route-counts-001",
+      "name": "counts online sessions from worktree groups and hides overseers",
+      "source": "src/daemon/projects-route.test.ts",
+      "api": "countOnlineDesktopAgents",
+      "input": {
+        "state": {
+          "worktreeGroups": [
+            {
+              "sessions": [
+                { "status": "running" },
+                { "status": "offline" },
+                { "status": "exited" },
+                { "status": "idle", "overseer": true },
+                { "status": "idle", "team": { "role": "overseer" } },
+                { "status": "offline", "pendingAction": { "kind": "spawn" } }
+              ]
+            },
+            { "sessions": [{ "status": "waiting" }] }
+          ]
+        }
+      },
+      "output": 3,
+      "outputEncoding": "undefined-as-null",
+      "inputSha256": "4c432a8abd1f502c8d0b8425d010df371618e888aff2b92d9270ac9697fe43b1"
+    },
+    {
+      "id": "daemon-projects-route-counts-002",
+      "name": "falls back to top-level sessions and teammates",
+      "source": "src/daemon/projects-route.test.ts",
+      "api": "countOnlineDesktopAgents",
+      "input": {
+        "state": {
+          "sessions": [{ "status": "running" }, { "status": "offline" }],
+          "teammates": [{ "status": "idle" }, { "status": "exited" }]
+        }
+      },
+      "output": 2,
+      "outputEncoding": "undefined-as-null",
+      "inputSha256": "261fc91894808fa4f02305946b2af309077d02dc0cc20df9b4122a91d68bf840"
+    },
+    {
+      "id": "daemon-projects-route-counts-003",
+      "name": "returns undefined without known session collections",
+      "source": "src/daemon/projects-route.test.ts",
+      "api": "countOnlineDesktopAgents",
+      "input": { "state": {} },
+      "output": null,
+      "outputEncoding": "undefined-as-null",
+      "inputSha256": "f5ff958086348e8a6780cce4a1daf3d2a4037c95bb6e0bb5bb2eda93ccc9e5a1"
+    }
+  ]
+}
