@@ -10,7 +10,7 @@ const ROOT = new URL("../", import.meta.url);
 const FIXTURE_PATH = new URL("testdata/contracts/v1/multiplexer/services-runtime.json", ROOT);
 
 const { initPaths, getProjectStateDirFor, getStatePath } = await import(new URL("dist/paths.js", ROOT));
-const { createService, removeOfflineService, resumeOfflineService, stopService } = await import(
+const { createService, removeOfflineService, resumeOfflineService, resumeOfflineServiceById, stopService } = await import(
   new URL("dist/multiplexer/services.js", ROOT)
 );
 const { listTopologyServiceStates } = await import(new URL("dist/runtime-core/topology-services.js", ROOT));
@@ -148,6 +148,9 @@ async function runCase(input) {
           break;
         case "resumeOfflineServiceByState":
           result = resumeOfflineService(host, materialized.service);
+          break;
+        case "resumeOfflineServiceById":
+          result = resumeOfflineServiceById(host, materialized.serviceId);
           break;
         default:
           throw new Error(`unknown api ${input.api}`);
@@ -356,6 +359,52 @@ const inputs = [
     ],
     existingWindow: null,
     targets: { created: createdTarget },
+  },
+  {
+    name: "resume by id returns running for a live managed service window",
+    api: "resumeOfflineServiceById",
+    serviceId: "svc-live",
+    offlineServices: [],
+    existingWindow: {
+      target: target("@14", 14, "dev"),
+      metadata: {
+        kind: "service",
+        sessionId: "svc-live",
+        command: "zsh",
+        args: ["-lc", "yarn dev"],
+        label: "dev",
+        worktreePath: "<repo>",
+        launchCommandLine: "yarn dev",
+      },
+    },
+    isWindowAlive: true,
+  },
+  {
+    name: "resume by id throws when no offline or managed service exists",
+    api: "resumeOfflineServiceById",
+    serviceId: "svc-missing",
+    offlineServices: [],
+    existingWindow: null,
+  },
+  {
+    name: "resume by id rebuilds state from a dead managed service window",
+    api: "resumeOfflineServiceById",
+    serviceId: "svc-dead",
+    offlineServices: [],
+    existingWindow: {
+      target: target("@15", 15, "dev-old"),
+      metadata: {
+        kind: "service",
+        sessionId: "svc-dead",
+        command: "zsh",
+        args: ["-lc", "pnpm dev"],
+        label: "pnpm",
+        worktreePath: "<repo>",
+        launchCommandLine: "pnpm dev",
+      },
+    },
+    isWindowAlive: false,
+    targets: { created: target("@16", 16, "pnpm") },
   },
   {
     name: "seeds an optimistic service row during dashboard create",

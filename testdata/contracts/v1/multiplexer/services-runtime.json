@@ -1176,6 +1176,285 @@
     },
     {
       "id": "multiplexer-services-runtime-011",
+      "name": "resume by id returns running for a live managed service window",
+      "source": "src/multiplexer/services.test.ts",
+      "api": "resumeOfflineServiceById",
+      "input": {
+        "name": "resume by id returns running for a live managed service window",
+        "api": "resumeOfflineServiceById",
+        "serviceId": "svc-live",
+        "offlineServices": [],
+        "existingWindow": {
+          "target": { "sessionName": "aimux-repo", "windowId": "@14", "windowIndex": 14, "windowName": "dev" },
+          "metadata": {
+            "kind": "service",
+            "sessionId": "svc-live",
+            "command": "zsh",
+            "args": ["-lc", "yarn dev"],
+            "label": "dev",
+            "worktreePath": "<repo>",
+            "launchCommandLine": "yarn dev"
+          }
+        },
+        "isWindowAlive": true
+      },
+      "output": {
+        "result": { "serviceId": "svc-live", "status": "running" },
+        "thrown": null,
+        "host": { "offlineServices": [], "removedServiceIds": [] },
+        "calls": {
+          "tmuxRuntimeManager.getProjectSession": [["<repo>"]],
+          "tmuxRuntimeManager.ensureProjectSession": [],
+          "tmuxRuntimeManager.findManagedWindow": [["aimux-repo", { "sessionId": "svc-live" }]],
+          "tmuxRuntimeManager.createWindow": [],
+          "tmuxRuntimeManager.setWindowMetadata": [],
+          "tmuxRuntimeManager.applyManagedAgentWindowPolicy": [],
+          "tmuxRuntimeManager.killWindow": [],
+          "tmuxRuntimeManager.sendKey": [],
+          "tmuxRuntimeManager.sendText": [],
+          "tmuxRuntimeManager.sendEnter": [],
+          "tmuxRuntimeManager.hasWindow": [],
+          "tmuxRuntimeManager.isWindowAlive": [
+            [{ "sessionName": "aimux-repo", "windowId": "@14", "windowIndex": 14, "windowName": "dev" }]
+          ],
+          "tmuxRuntimeManager.displayMessage": [],
+          "saveState": [],
+          "invalidateDesktopStateSnapshot": [],
+          "refreshLocalDashboardModel": [],
+          "updateWorktreeSessions": [],
+          "adjustAfterRemove": [],
+          "noteLastUsedItem": [],
+          "preferDashboardEntrySelection": [],
+          "settleDashboardCreatePending": [],
+          "setPendingDashboardServiceAction": []
+        },
+        "savedState": null,
+        "savedServices": [],
+        "topologyServicesAll": [],
+        "topologyServicesRunning": [],
+        "topologyServicesStopped": []
+      },
+      "inputSha256": "abf4abe44e5e6960405d9196d860cf7138104ca16dbe20da256ebc41ba9bc87a"
+    },
+    {
+      "id": "multiplexer-services-runtime-012",
+      "name": "resume by id throws when no offline or managed service exists",
+      "source": "src/multiplexer/services.test.ts",
+      "api": "resumeOfflineServiceById",
+      "input": {
+        "name": "resume by id throws when no offline or managed service exists",
+        "api": "resumeOfflineServiceById",
+        "serviceId": "svc-missing",
+        "offlineServices": [],
+        "existingWindow": null
+      },
+      "output": {
+        "result": null,
+        "thrown": "Service \"svc-missing\" not found",
+        "host": { "offlineServices": [], "removedServiceIds": [] },
+        "calls": {
+          "tmuxRuntimeManager.getProjectSession": [["<repo>"]],
+          "tmuxRuntimeManager.ensureProjectSession": [],
+          "tmuxRuntimeManager.findManagedWindow": [["aimux-repo", { "sessionId": "svc-missing" }]],
+          "tmuxRuntimeManager.createWindow": [],
+          "tmuxRuntimeManager.setWindowMetadata": [],
+          "tmuxRuntimeManager.applyManagedAgentWindowPolicy": [],
+          "tmuxRuntimeManager.killWindow": [],
+          "tmuxRuntimeManager.sendKey": [],
+          "tmuxRuntimeManager.sendText": [],
+          "tmuxRuntimeManager.sendEnter": [],
+          "tmuxRuntimeManager.hasWindow": [],
+          "tmuxRuntimeManager.isWindowAlive": [],
+          "tmuxRuntimeManager.displayMessage": [],
+          "saveState": [],
+          "invalidateDesktopStateSnapshot": [],
+          "refreshLocalDashboardModel": [],
+          "updateWorktreeSessions": [],
+          "adjustAfterRemove": [],
+          "noteLastUsedItem": [],
+          "preferDashboardEntrySelection": [],
+          "settleDashboardCreatePending": [],
+          "setPendingDashboardServiceAction": []
+        },
+        "savedState": null,
+        "savedServices": [],
+        "topologyServicesAll": [],
+        "topologyServicesRunning": [],
+        "topologyServicesStopped": []
+      },
+      "inputSha256": "4a9b2e037b5fa7f3ffa3f225e72f58a5da0e2ce448bc3fcd7ff0039206370b62"
+    },
+    {
+      "id": "multiplexer-services-runtime-013",
+      "name": "resume by id rebuilds state from a dead managed service window",
+      "source": "src/multiplexer/services.test.ts",
+      "api": "resumeOfflineServiceById",
+      "input": {
+        "name": "resume by id rebuilds state from a dead managed service window",
+        "api": "resumeOfflineServiceById",
+        "serviceId": "svc-dead",
+        "offlineServices": [],
+        "existingWindow": {
+          "target": { "sessionName": "aimux-repo", "windowId": "@15", "windowIndex": 15, "windowName": "dev-old" },
+          "metadata": {
+            "kind": "service",
+            "sessionId": "svc-dead",
+            "command": "zsh",
+            "args": ["-lc", "pnpm dev"],
+            "label": "pnpm",
+            "worktreePath": "<repo>",
+            "launchCommandLine": "pnpm dev"
+          }
+        },
+        "isWindowAlive": false,
+        "targets": {
+          "created": { "sessionName": "aimux-repo", "windowId": "@16", "windowIndex": 16, "windowName": "pnpm" }
+        }
+      },
+      "output": {
+        "result": { "serviceId": "svc-dead", "status": "running" },
+        "thrown": null,
+        "host": { "offlineServices": [], "removedServiceIds": [] },
+        "calls": {
+          "tmuxRuntimeManager.getProjectSession": [["<repo>"], ["<repo>"]],
+          "tmuxRuntimeManager.ensureProjectSession": [["<repo>"]],
+          "tmuxRuntimeManager.findManagedWindow": [
+            ["aimux-repo", { "sessionId": "svc-dead" }],
+            ["aimux-repo", { "sessionId": "svc-dead" }]
+          ],
+          "tmuxRuntimeManager.createWindow": [
+            [
+              "aimux-repo",
+              "pnpm",
+              "<repo>",
+              "env",
+              [
+                "-i",
+                "AIMUX_DAEMON_PORT=43190",
+                "AIMUX_ENV=production",
+                "AIMUX_HOME=<repo>/home",
+                "CLICOLOR=1",
+                "COLORTERM=truecolor",
+                "HOME=<repo>/user-home",
+                "LANG=C.UTF-8",
+                "PATH=/usr/bin:/bin",
+                "SHELL=zsh",
+                "TERM=xterm-256color",
+                "USER=sam",
+                "env",
+                "AIMUX_SESSION_ID=svc-dead",
+                "AIMUX_TOOL=service",
+                "AIMUX_METADATA_ENDPOINT_FILE=<project-state>/metadata-api.txt",
+                "AIMUX_SHELL_INTEGRATION_SCRIPT=<project-state>/shell-integration/aimux-zsh-integration.zsh",
+                "AIMUX_SHELL_STATE_SUPPRESS_FILE=<project-state>/shell-state-suppress/svc-dead",
+                "ZDOTDIR=<project-state>/shell-integration",
+                "zsh",
+                "-ic",
+                "'zsh' '-lc' 'pnpm dev; _aimux_service_status=$?; if [ \"$_aimux_service_status\" -ne 0 ]; then;   printf \"\\n[aimux] Service command exited with status %s. Dropping into an interactive shell for debugging.\\n\" \"$_aimux_service_status\";   exec '\\''zsh'\\'' -i; fi; exit \"$_aimux_service_status\"'"
+              ],
+              { "detached": true }
+            ]
+          ],
+          "tmuxRuntimeManager.setWindowMetadata": [
+            [
+              { "sessionName": "aimux-repo", "windowId": "@16", "windowIndex": 16, "windowName": "pnpm" },
+              {
+                "kind": "service",
+                "sessionId": "svc-dead",
+                "command": "zsh",
+                "args": ["-lc", "pnpm dev"],
+                "launchCommandLine": "pnpm dev",
+                "toolConfigKey": "service",
+                "createdAt": "<ts>",
+                "worktreePath": "<repo>",
+                "label": "pnpm"
+              }
+            ]
+          ],
+          "tmuxRuntimeManager.applyManagedAgentWindowPolicy": [
+            [{ "sessionName": "aimux-repo", "windowId": "@16", "windowIndex": 16, "windowName": "pnpm" }, "service"]
+          ],
+          "tmuxRuntimeManager.killWindow": [
+            [{ "sessionName": "aimux-repo", "windowId": "@15", "windowIndex": 15, "windowName": "dev-old" }]
+          ],
+          "tmuxRuntimeManager.sendKey": [],
+          "tmuxRuntimeManager.sendText": [],
+          "tmuxRuntimeManager.sendEnter": [],
+          "tmuxRuntimeManager.hasWindow": [],
+          "tmuxRuntimeManager.isWindowAlive": [
+            [{ "sessionName": "aimux-repo", "windowId": "@15", "windowIndex": 15, "windowName": "dev-old" }]
+          ],
+          "tmuxRuntimeManager.displayMessage": [],
+          "saveState": [],
+          "invalidateDesktopStateSnapshot": [[]],
+          "refreshLocalDashboardModel": [],
+          "updateWorktreeSessions": [],
+          "adjustAfterRemove": [],
+          "noteLastUsedItem": [["svc-dead"]],
+          "preferDashboardEntrySelection": [["service", "svc-dead", "<repo>"]],
+          "settleDashboardCreatePending": [],
+          "setPendingDashboardServiceAction": []
+        },
+        "savedState": {
+          "savedAt": "<ts>",
+          "cwd": "<repo>",
+          "services": [
+            {
+              "id": "svc-dead",
+              "worktreePath": "<repo>",
+              "cwd": "<repo>",
+              "label": "pnpm",
+              "launchCommandLine": "pnpm dev",
+              "tmuxTarget": { "sessionName": "aimux-repo", "windowId": "@16", "windowIndex": 16, "windowName": "pnpm" }
+            }
+          ]
+        },
+        "savedServices": [
+          {
+            "id": "svc-dead",
+            "worktreePath": "<repo>",
+            "cwd": "<repo>",
+            "label": "pnpm",
+            "launchCommandLine": "pnpm dev",
+            "tmuxTarget": { "sessionName": "aimux-repo", "windowId": "@16", "windowIndex": 16, "windowName": "pnpm" }
+          }
+        ],
+        "topologyServicesAll": [
+          {
+            "id": "svc-dead",
+            "status": "running",
+            "command": "zsh",
+            "args": ["-lc", "pnpm dev"],
+            "launchCommandLine": "pnpm dev",
+            "worktreePath": "<repo>",
+            "cwd": "<repo>",
+            "label": "pnpm",
+            "createdAt": "<ts>",
+            "lastSeenAt": "<ts>",
+            "tmuxTarget": { "sessionName": "aimux-repo", "windowId": "@16", "windowIndex": 16, "windowName": "pnpm" }
+          }
+        ],
+        "topologyServicesRunning": [
+          {
+            "id": "svc-dead",
+            "status": "running",
+            "command": "zsh",
+            "args": ["-lc", "pnpm dev"],
+            "launchCommandLine": "pnpm dev",
+            "worktreePath": "<repo>",
+            "cwd": "<repo>",
+            "label": "pnpm",
+            "createdAt": "<ts>",
+            "lastSeenAt": "<ts>",
+            "tmuxTarget": { "sessionName": "aimux-repo", "windowId": "@16", "windowIndex": 16, "windowName": "pnpm" }
+          }
+        ],
+        "topologyServicesStopped": []
+      },
+      "inputSha256": "cc8c321c49ec2e6b8f874ce415741ab0f8ff045b920eb27a0d667d32d18ddafa"
+    },
+    {
+      "id": "multiplexer-services-runtime-014",
       "name": "seeds an optimistic service row during dashboard create",
       "source": "src/multiplexer/services.test.ts",
       "api": "createService",

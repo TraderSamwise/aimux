@@ -127,6 +127,7 @@ pub fn run_multiplexer_services_runtime_contract_case(input: &Value) -> Value {
         "removeOfflineService" => remove_offline_service(&mut host, input),
         "resumeOfflineService" => resume_offline_service(&mut host, input),
         "resumeOfflineServiceByState" => resume_offline_service_by_state(&mut host, input),
+        "resumeOfflineServiceById" => resume_offline_service_by_id(&mut host, input),
         other => Err(format!("unknown api {other}")),
     };
 
@@ -332,6 +333,38 @@ fn resume_offline_service(host: &mut HostState, input: &Value) -> Result<Value, 
 fn resume_offline_service_by_state(host: &mut HostState, input: &Value) -> Result<Value, String> {
     let service = input.get("service").cloned().unwrap_or(Value::Null);
     resume_service(host, input, &service)
+}
+
+fn resume_offline_service_by_id(host: &mut HostState, input: &Value) -> Result<Value, String> {
+    let service_id = string_field(input, "serviceId");
+    if let Some(service) = host
+        .offline_services
+        .iter()
+        .find(|entry| string_field(entry, "id") == service_id)
+        .cloned()
+    {
+        return resume_service(host, input, &service);
+    }
+
+    host.call("tmuxRuntimeManager.getProjectSession", json!([REPO]));
+    host.call(
+        "tmuxRuntimeManager.findManagedWindow",
+        json!([SESSION_NAME, { "sessionId": service_id }]),
+    );
+    let Some(existing) = input.get("existingWindow").filter(|value| !value.is_null()) else {
+        return Err(format!("Service \"{service_id}\" not found"));
+    };
+    let metadata = existing.get("metadata").unwrap_or(&Value::Null);
+    if string_field(metadata, "kind") != "service" {
+        return Err(format!("Service \"{service_id}\" not found"));
+    }
+    let target = existing.get("target").cloned().unwrap_or(Value::Null);
+    host.call("tmuxRuntimeManager.isWindowAlive", json!([target]));
+    if bool_field(input, "isWindowAlive") {
+        return Ok(json!({ "serviceId": service_id, "status": "running" }));
+    }
+    let restored = service_state_from_metadata(&service_id, metadata, "", None, None);
+    resume_service(host, input, &restored)
 }
 
 fn resume_service(host: &mut HostState, input: &Value, service: &Value) -> Result<Value, String> {
