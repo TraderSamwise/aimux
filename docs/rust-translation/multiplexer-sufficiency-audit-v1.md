@@ -192,5 +192,5 @@ Uncaptured count: 0.
 - `8868e10c` captured tmux-backed session control branches.
 - `9355fc31` captured default-scribe claim timeout.
 - `cc99cba7` wired native plugin statuses into project-service diagnostics.
-- pending commit captures the `startRuntimeGuardRepair` owned-repair branch
+- `bb389a46` captured the `startRuntimeGuardRepair` owned-repair branch
   without live fleet manipulation.
