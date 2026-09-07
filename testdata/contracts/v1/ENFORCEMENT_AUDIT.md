@@ -10,8 +10,8 @@ Statuses:
 - `ERROR`: the audit could not prove enforcement because the suite errored outside a fixture assertion.
 - `STATIC`: non-empty active suite observed without dynamic mutation.
 
-Summary: 226 suites, 272 suite/corpus bindings, 3503 cases.
-Binding statuses: PROVEN-FAILS 272, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
+Summary: 227 suites, 274 suite/corpus bindings, 3511 cases.
+Binding statuses: PROVEN-FAILS 274, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
 
 | Suite | Status | Corpus | Cases | Detail |
 | --- | --- | --- | ---: | --- |
@@ -178,6 +178,8 @@ Binding statuses: PROVEN-FAILS 272, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
 | `fixture_orchestration_actions` | PROVEN-FAILS | `testdata/contracts/v1/orchestration/actions.json` | 6 | mutated fixture output failed owning Rust suite |
 | `fixture_package_manifest` | PROVEN-FAILS | `testdata/contracts/v1/release/package-manifest.json` | 1 | mutated fixture output failed owning Rust suite |
 | `fixture_paths_behavior` | PROVEN-FAILS | `testdata/contracts/v1/paths/behavior.json` | 7 | mutated fixture output failed owning Rust suite |
+| `fixture_plugin_api` | PROVEN-FAILS | `testdata/contracts/v1/default-plugins/transcript-length.json` | 4 | mutated fixture output failed owning Rust suite |
+| `fixture_plugin_api` | PROVEN-FAILS | `testdata/contracts/v1/default-plugins/gh-pr-context.json` | 4 | mutated fixture output failed owning Rust suite |
 | `fixture_plugin_runtime` | PROVEN-FAILS | `testdata/contracts/v1/plugin/runtime.json` | 8 | mutated fixture output failed owning Rust suite |
 | `fixture_popup_expose` | PROVEN-FAILS | `testdata/contracts/v1/expose/popup-options.json` | 3 | mutated fixture output failed owning Rust suite |
 | `fixture_priority2` | PROVEN-FAILS | `testdata/contracts/v1/context/compactor.json` | 2 | mutated fixture output failed owning Rust suite |
