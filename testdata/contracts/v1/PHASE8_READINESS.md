@@ -10,6 +10,7 @@ Answer: the checklist gate is now clear for captured behavior: all 269 suite/cor
 
 - Contract inventory: 269 JSON corpora under `testdata/contracts/v1`.
 - Enforcement audit: `testdata/contracts/v1/ENFORCEMENT_AUDIT.md`.
+- Live residual suite: `scripts/phase8-live-residuals.py`, reported in `testdata/contracts/v1/PHASE8_LIVE_RESIDUALS.md`.
 - Current binding status: 269 `PROVEN-FAILS`, 0 `CHECKLIST`, 0 `VACUOUS`, 0 `ERROR`, 0 `STATIC`.
 - Current binding case count: 3,410 suite/corpus cases, all mutation-proven.
 - Current backlog: `testdata/contracts/v1/UNIMPLEMENTED.md` lists 0 ignored/checklist corpus entries.
@@ -128,13 +129,15 @@ Current state: neither option is fully implemented. The existing native code pro
 - Installed-shim plugin seeding: there is no installed CLI path to empirically invoke bundled wrapper seeding today.
 - Source-checkout developer flow: installed runtime can be Node-free, but local capture/dev/test scripts still intentionally use Node and `dist` while TypeScript exists.
 
-Smallest live suite that would cover these residuals:
+Smallest live suite covering these residuals:
 
 1. `phase8-live-tmux-smoke`: install a local release into a temp `AIMUX_INSTALL_ROOT`, use a temp tmux socket/session prefix, start one agent-like pane, send input, resize the pane, detach/reattach, render statusline, and assert topology plus captured pane output through the installed native CLI. This catches PTY buffering regressions, resize propagation errors, attach/detach state loss, statusline file races, and tmux command argument drift.
 2. `phase8-sse-stress`: start a temp project-service, attach 8-16 SSE clients, emit 100-500 ordered mutations through the HTTP API, disconnect/reconnect a subset of clients, and assert monotonic event IDs with no missing or duplicated events per client. This catches event ordering, backpressure, reconnect replay, and concurrent store-notification bugs that corpus fixtures cannot exercise.
 3. `phase8-process-race-smoke`: in a temp home, loop daemon/project-service startup on random ports while injecting stale pid files, stale manifests, occupied ports, and concurrent ensure/start requests; assert the native daemon does not adopt old Node processes, does not corrupt manifests, and recovers to healthy endpoints. This catches lock, PID reuse, port takeover, and startup/shutdown races.
 
 These should run only against temp roots and unique ports/sockets. They should not touch the user's installed Aimux, live daemon, project services, or tmux sessions.
+
+Current evidence: `scripts/phase8-live-residuals.py --prove-fails --skip-build` passed the positive tmux, SSE, and process-race checks, then proved each check fails under an intentional isolated mutation. See `PHASE8_LIVE_RESIDUALS.md`.
 
 ## Gate Decision
 
