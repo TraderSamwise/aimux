@@ -10,8 +10,8 @@ Statuses:
 - `ERROR`: the audit could not prove enforcement because the suite errored outside a fixture assertion.
 - `STATIC`: non-empty active suite observed without dynamic mutation.
 
-Summary: 268 suites, 315 suite/corpus bindings, 3849 cases.
-Binding statuses: PROVEN-FAILS 315, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
+Summary: 273 suites, 320 suite/corpus bindings, 3873 cases.
+Binding statuses: PROVEN-FAILS 320, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
 
 | Suite | Status | Corpus | Cases | Detail |
 | --- | --- | --- | ---: | --- |
@@ -269,7 +269,12 @@ Binding statuses: PROVEN-FAILS 315, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
 | `fixture_session_launch_resume` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/session-launch-resume.json` | 7 | mutated fixture output failed owning Rust suite |
 | `fixture_session_launch_startup` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/session-launch-startup.json` | 4 | mutated fixture output failed owning Rust suite |
 | `fixture_session_runtime` | PROVEN-FAILS | `testdata/contracts/v1/session/runtime.json` | 2 | mutated fixture output failed owning Rust suite |
+| `fixture_session_runtime_agent_controls` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/session-runtime-agent-controls.json` | 6 | mutated fixture output failed owning Rust suite |
 | `fixture_session_runtime_headline` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/session-runtime-headline.json` | 6 | mutated fixture output failed owning Rust suite |
+| `fixture_session_runtime_label_update` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/session-runtime-label-update.json` | 6 | mutated fixture output failed owning Rust suite |
+| `fixture_session_runtime_metadata` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/session-runtime-metadata.json` | 4 | mutated fixture output failed owning Rust suite |
+| `fixture_session_runtime_output` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/session-runtime-output.json` | 5 | mutated fixture output failed owning Rust suite |
+| `fixture_session_runtime_tmux_metadata_sync` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/session-runtime-tmux-metadata-sync.json` | 3 | mutated fixture output failed owning Rust suite |
 | `fixture_session_semantics` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/session-recency.json` | 13 | mutated fixture output failed owning Rust suite |
 | `fixture_session_semantics` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/session-restorability.json` | 5 | mutated fixture output failed owning Rust suite |
 | `fixture_session_semantics` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/session-semantics.json` | 13 | mutated fixture output failed owning Rust suite |
