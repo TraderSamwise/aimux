@@ -1,0 +1,408 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/dashboard-interaction.ts",
+  "generatedBy": "scripts/capture-dashboard-interaction-activation-contract.mjs",
+  "description": "Dashboard interaction session/service activation selection, resume, refresh, pending, and unavailable-window side effects captured by running TypeScript dashboardInteractionMethods.",
+  "cases": [
+    {
+      "id": "dashboard-interaction-activation-001",
+      "name": "running session selects row and opens live tmux window",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "activateDashboardEntry",
+      "input": {
+        "entry": { "id": "codex-1", "status": "running", "worktreePath": "/repo/.aimux/worktrees/demo" },
+        "dashboardWorktreeGroupsCache": [{ "path": "/repo/.aimux/worktrees/demo", "sessions": [], "services": [] }],
+        "entryOpenResult": "opened",
+        "api": "activateDashboardEntry"
+      },
+      "output": {
+        "result": "opened",
+        "footerFlash": "",
+        "footerFlashTicks": 0,
+        "activationToken": { "targetKind": "session", "targetId": "codex-1", "inputEpoch": 0 },
+        "activatingServiceIds": [],
+        "calls": [
+          { "method": "preferDashboardEntrySelection", "args": ["session", "codex-1", "/repo/.aimux/worktrees/demo"] },
+          { "method": "persistDashboardUiState", "args": [] },
+          {
+            "method": "waitAndOpenLiveTmuxWindowForEntry",
+            "args": [{ "id": "codex-1", "status": "running", "worktreePath": "/repo/.aimux/worktrees/demo" }]
+          }
+        ]
+      },
+      "inputSha256": "7bbf4b4bbf2230e602de501bab1461c98de06797511761e6d35348925d25ae93"
+    },
+    {
+      "id": "dashboard-interaction-activation-002",
+      "name": "preserved teammate activation skips dashboard selection persistence",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "activateDashboardEntry",
+      "input": {
+        "entry": {
+          "id": "reviewer-1",
+          "status": "running",
+          "worktreePath": "/repo/.aimux/worktrees/demo",
+          "team": { "teamId": "team-1", "parentSessionId": "parent-1", "role": "reviewer" }
+        },
+        "options": { "preserveDashboardSelection": true },
+        "dashboardWorktreeGroupsCache": [{ "path": "/repo/.aimux/worktrees/demo", "sessions": [], "services": [] }],
+        "entryOpenResult": "opened",
+        "api": "activateDashboardEntry"
+      },
+      "output": {
+        "result": "opened",
+        "footerFlash": "",
+        "footerFlashTicks": 0,
+        "activationToken": { "targetKind": "session", "targetId": "reviewer-1", "inputEpoch": 0 },
+        "activatingServiceIds": [],
+        "calls": [
+          {
+            "method": "waitAndOpenLiveTmuxWindowForEntry",
+            "args": [
+              {
+                "id": "reviewer-1",
+                "status": "running",
+                "worktreePath": "/repo/.aimux/worktrees/demo",
+                "team": { "teamId": "team-1", "parentSessionId": "parent-1", "role": "reviewer" }
+              }
+            ]
+          }
+        ]
+      },
+      "inputSha256": "c51fde145ad24a243bd7607994a44a128a8632e3f62f84ed0c6c50cfab27367f"
+    },
+    {
+      "id": "dashboard-interaction-activation-003",
+      "name": "offline dashboard agent resumes and refreshes without opening",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "activateDashboardEntry",
+      "input": {
+        "entry": {
+          "id": "codex-1",
+          "status": "offline",
+          "command": "codex",
+          "worktreePath": "/repo/.aimux/worktrees/demo"
+        },
+        "offlineSessions": [
+          { "id": "codex-1", "status": "offline", "command": "codex", "worktreePath": "/repo/.aimux/worktrees/demo" }
+        ],
+        "dashboardWorktreeGroupsCache": [{ "path": "/repo/.aimux/worktrees/demo", "sessions": [], "services": [] }],
+        "sessionResumeResult": "settled",
+        "dashboardSessions": [{ "id": "codex-1", "status": "running", "tmuxWindowId": "@agent" }],
+        "api": "activateDashboardEntry"
+      },
+      "output": {
+        "result": "opened",
+        "footerFlash": "",
+        "footerFlashTicks": 0,
+        "activationToken": { "targetKind": "session", "targetId": "codex-1", "inputEpoch": 0 },
+        "activatingServiceIds": [],
+        "calls": [
+          { "method": "preferDashboardEntrySelection", "args": ["session", "codex-1", "/repo/.aimux/worktrees/demo"] },
+          { "method": "persistDashboardUiState", "args": [] },
+          {
+            "method": "resumeOfflineSessionWithFeedback",
+            "args": [
+              {
+                "id": "codex-1",
+                "status": "offline",
+                "command": "codex",
+                "worktreePath": "/repo/.aimux/worktrees/demo"
+              }
+            ]
+          },
+          { "method": "refreshDashboardModelFromService", "args": [true, null] },
+          { "method": "renderDashboard", "args": [] }
+        ]
+      },
+      "inputSha256": "a998e3351a162e624d34a21633a9433e5d12f57c7aa2822c4921b70bacdbe30b"
+    },
+    {
+      "id": "dashboard-interaction-activation-004",
+      "name": "blocked offline dashboard agent flashes restore reason",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "activateDashboardEntry",
+      "input": {
+        "entry": {
+          "id": "codex-1",
+          "status": "offline",
+          "command": "codex",
+          "label": "Codex",
+          "restoreState": "blocked",
+          "restoreBlockedReason": "missing exact resumable backend session id",
+          "worktreePath": "/repo/.aimux/worktrees/demo"
+        },
+        "dashboardWorktreeGroupsCache": [{ "path": "/repo/.aimux/worktrees/demo", "sessions": [], "services": [] }],
+        "api": "activateDashboardEntry"
+      },
+      "output": {
+        "result": "blocked",
+        "footerFlash": "Cannot restore Codex: missing exact resumable backend session id",
+        "footerFlashTicks": 4,
+        "activationToken": { "targetKind": "session", "targetId": "codex-1", "inputEpoch": 0 },
+        "activatingServiceIds": [],
+        "calls": [
+          { "method": "preferDashboardEntrySelection", "args": ["session", "codex-1", "/repo/.aimux/worktrees/demo"] },
+          { "method": "persistDashboardUiState", "args": [] },
+          { "method": "renderDashboard", "args": [] }
+        ]
+      },
+      "inputSha256": "6ff36e2e9d32e5a73e4467377ea7da571e05b9d444d5e971991271c56e62ac5f"
+    },
+    {
+      "id": "dashboard-interaction-activation-005",
+      "name": "offline dashboard agent activation invalidated after resume returns missing",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "activateDashboardEntry",
+      "input": {
+        "entry": {
+          "id": "codex-1",
+          "status": "offline",
+          "command": "codex",
+          "worktreePath": "/repo/.aimux/worktrees/demo"
+        },
+        "offlineSessions": [
+          { "id": "codex-1", "status": "offline", "command": "codex", "worktreePath": "/repo/.aimux/worktrees/demo" }
+        ],
+        "dashboardWorktreeGroupsCache": [{ "path": "/repo/.aimux/worktrees/demo", "sessions": [], "services": [] }],
+        "sessionResumeResult": "settled",
+        "invalidateOnResume": true,
+        "api": "activateDashboardEntry"
+      },
+      "output": {
+        "result": "missing",
+        "footerFlash": "",
+        "footerFlashTicks": 0,
+        "activationToken": { "targetKind": "session", "targetId": "codex-1", "inputEpoch": 0 },
+        "activatingServiceIds": [],
+        "calls": [
+          { "method": "preferDashboardEntrySelection", "args": ["session", "codex-1", "/repo/.aimux/worktrees/demo"] },
+          { "method": "persistDashboardUiState", "args": [] },
+          {
+            "method": "resumeOfflineSessionWithFeedback",
+            "args": [
+              {
+                "id": "codex-1",
+                "status": "offline",
+                "command": "codex",
+                "worktreePath": "/repo/.aimux/worktrees/demo"
+              }
+            ]
+          }
+        ]
+      },
+      "inputSha256": "97b8e1bba50dbe6eb56e7415e5c4e15ece95be1f7d203142e1ddd2c6e0d561bb"
+    },
+    {
+      "id": "dashboard-interaction-activation-006",
+      "name": "offline dashboard agent pending resume returns pending",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "activateDashboardEntry",
+      "input": {
+        "entry": { "id": "codex-1", "status": "offline", "worktreePath": "/repo/.aimux/worktrees/demo" },
+        "offlineSessions": [{ "id": "codex-1", "status": "offline", "worktreePath": "/repo/.aimux/worktrees/demo" }],
+        "dashboardWorktreeGroupsCache": [{ "path": "/repo/.aimux/worktrees/demo", "sessions": [], "services": [] }],
+        "sessionResumeResult": "pending",
+        "api": "activateDashboardEntry"
+      },
+      "output": {
+        "result": "pending",
+        "footerFlash": "",
+        "footerFlashTicks": 0,
+        "activationToken": { "targetKind": "session", "targetId": "codex-1", "inputEpoch": 0 },
+        "activatingServiceIds": [],
+        "calls": [
+          { "method": "preferDashboardEntrySelection", "args": ["session", "codex-1", "/repo/.aimux/worktrees/demo"] },
+          { "method": "persistDashboardUiState", "args": [] },
+          {
+            "method": "resumeOfflineSessionWithFeedback",
+            "args": [{ "id": "codex-1", "status": "offline", "worktreePath": "/repo/.aimux/worktrees/demo" }]
+          }
+        ]
+      },
+      "inputSha256": "fe8127d80382d539e49efb7fc28e335e5605a3bd590f1b3dbc346919a6d9db79"
+    },
+    {
+      "id": "dashboard-interaction-activation-007",
+      "name": "running dashboard agent missing live window refreshes and flashes unavailable",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "activateDashboardEntry",
+      "input": {
+        "entry": {
+          "id": "codex-1",
+          "status": "running",
+          "command": "codex",
+          "worktreePath": "/repo/.aimux/worktrees/demo"
+        },
+        "dashboardWorktreeGroupsCache": [{ "path": "/repo/.aimux/worktrees/demo", "sessions": [], "services": [] }],
+        "entryOpenResult": "missing",
+        "api": "activateDashboardEntry"
+      },
+      "output": {
+        "result": "missing",
+        "footerFlash": "Agent codex is not available yet",
+        "footerFlashTicks": 3,
+        "activationToken": { "targetKind": "session", "targetId": "codex-1", "inputEpoch": 0 },
+        "activatingServiceIds": [],
+        "calls": [
+          { "method": "preferDashboardEntrySelection", "args": ["session", "codex-1", "/repo/.aimux/worktrees/demo"] },
+          { "method": "persistDashboardUiState", "args": [] },
+          {
+            "method": "waitAndOpenLiveTmuxWindowForEntry",
+            "args": [
+              {
+                "id": "codex-1",
+                "status": "running",
+                "command": "codex",
+                "worktreePath": "/repo/.aimux/worktrees/demo"
+              }
+            ]
+          },
+          { "method": "refreshDashboardModelFromService", "args": [true, null] },
+          { "method": "renderDashboard", "args": [] }
+        ]
+      },
+      "inputSha256": "2acfff41ec57b2110cb6c3592b6332cfb8fc94ef9444ef73b55ead78cf000b40"
+    },
+    {
+      "id": "dashboard-interaction-activation-008",
+      "name": "offline service resumes then waits for live tmux service",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "activateDashboardService",
+      "input": {
+        "service": {
+          "id": "service-1",
+          "status": "offline",
+          "label": "shell",
+          "worktreePath": "/repo/.aimux/worktrees/demo"
+        },
+        "dashboardWorktreeGroupsCache": [{ "path": "/repo/.aimux/worktrees/demo", "sessions": [], "services": [] }],
+        "serviceResumeResult": "settled",
+        "serviceOpenResult": "opened",
+        "dashboardServices": [{ "id": "service-1", "status": "running", "label": "shell", "tmuxWindowId": "@service" }],
+        "api": "activateDashboardService"
+      },
+      "output": {
+        "result": "opened",
+        "footerFlash": "",
+        "footerFlashTicks": 0,
+        "activationToken": { "targetKind": "service", "targetId": "service-1", "inputEpoch": 0 },
+        "activatingServiceIds": [],
+        "calls": [
+          {
+            "method": "preferDashboardEntrySelection",
+            "args": ["service", "service-1", "/repo/.aimux/worktrees/demo"]
+          },
+          { "method": "persistDashboardUiState", "args": [] },
+          {
+            "method": "resumeOfflineServiceWithFeedback",
+            "args": [
+              {
+                "id": "service-1",
+                "status": "offline",
+                "label": "shell",
+                "worktreePath": "/repo/.aimux/worktrees/demo"
+              }
+            ]
+          },
+          { "method": "getDashboardServices", "args": [] },
+          {
+            "method": "waitAndOpenLiveTmuxWindowForService",
+            "args": [{ "id": "service-1", "status": "running", "label": "shell", "tmuxWindowId": "@service" }, 60000]
+          },
+          { "method": "refreshDashboardModelFromService", "args": [true, null] },
+          { "method": "renderDashboard", "args": [] }
+        ]
+      },
+      "inputSha256": "1aae23407c7ed0ae0957242973e9ce5236e28cb0dc7400b1cfff56439fd37e21"
+    },
+    {
+      "id": "dashboard-interaction-activation-009",
+      "name": "offline service pending resume returns pending without refresh",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "activateDashboardService",
+      "input": {
+        "service": {
+          "id": "service-1",
+          "status": "offline",
+          "label": "shell",
+          "worktreePath": "/repo/.aimux/worktrees/demo"
+        },
+        "dashboardWorktreeGroupsCache": [{ "path": "/repo/.aimux/worktrees/demo", "sessions": [], "services": [] }],
+        "serviceResumeResult": "pending",
+        "api": "activateDashboardService"
+      },
+      "output": {
+        "result": "pending",
+        "footerFlash": "",
+        "footerFlashTicks": 0,
+        "activationToken": { "targetKind": "service", "targetId": "service-1", "inputEpoch": 0 },
+        "activatingServiceIds": [],
+        "calls": [
+          {
+            "method": "preferDashboardEntrySelection",
+            "args": ["service", "service-1", "/repo/.aimux/worktrees/demo"]
+          },
+          { "method": "persistDashboardUiState", "args": [] },
+          {
+            "method": "resumeOfflineServiceWithFeedback",
+            "args": [
+              {
+                "id": "service-1",
+                "status": "offline",
+                "label": "shell",
+                "worktreePath": "/repo/.aimux/worktrees/demo"
+              }
+            ]
+          }
+        ]
+      },
+      "inputSha256": "f7d2c2abc106d6175931e2e38f52e1b6f48029f01446049bf3c9069872739737"
+    },
+    {
+      "id": "dashboard-interaction-activation-010",
+      "name": "running service missing live window refreshes and flashes unavailable",
+      "source": "src/multiplexer/dashboard-interaction.ts",
+      "api": "activateDashboardService",
+      "input": {
+        "service": {
+          "id": "service-1",
+          "status": "running",
+          "label": "shell",
+          "worktreePath": "/repo/.aimux/worktrees/demo"
+        },
+        "dashboardWorktreeGroupsCache": [{ "path": "/repo/.aimux/worktrees/demo", "sessions": [], "services": [] }],
+        "serviceOpenResult": "missing",
+        "api": "activateDashboardService"
+      },
+      "output": {
+        "result": "missing",
+        "footerFlash": "Service shell is not available yet",
+        "footerFlashTicks": 3,
+        "activationToken": { "targetKind": "service", "targetId": "service-1", "inputEpoch": 0 },
+        "activatingServiceIds": [],
+        "calls": [
+          {
+            "method": "preferDashboardEntrySelection",
+            "args": ["service", "service-1", "/repo/.aimux/worktrees/demo"]
+          },
+          { "method": "persistDashboardUiState", "args": [] },
+          {
+            "method": "waitAndOpenLiveTmuxWindowForService",
+            "args": [
+              {
+                "id": "service-1",
+                "status": "running",
+                "label": "shell",
+                "worktreePath": "/repo/.aimux/worktrees/demo"
+              }
+            ]
+          },
+          { "method": "refreshDashboardModelFromService", "args": [true, null] },
+          { "method": "renderDashboard", "args": [] }
+        ]
+      },
+      "inputSha256": "e84cde13bb0fbba7943cc40bcda685a644124fab50f4beb504dad50d4a9b18fd"
+    }
+  ]
+}
