@@ -45,6 +45,7 @@ pub mod dashboard_actions;
 pub mod dashboard_api_client;
 pub mod dashboard_client;
 pub mod dashboard_command_spec;
+pub mod dashboard_control_activation_contract;
 pub mod dashboard_control_overlays_contract;
 pub mod dashboard_controller;
 pub mod dashboard_create;
