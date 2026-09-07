@@ -155,6 +155,7 @@ pub mod runtime_topology_worktrees_services_contract;
 pub mod session_bootstrap;
 pub mod session_launch;
 pub mod session_launch_actions_contract;
+pub mod session_launch_dashboard_contract;
 pub mod session_launch_resume_contract;
 pub mod session_launch_startup_contract;
 pub mod session_recency;

@@ -1,0 +1,731 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/session-launch.ts",
+  "generatedBy": "scripts/capture-session-launch-dashboard-contract.mjs",
+  "description": "Dashboard launch startup, input dispatch, startup repair, and tmux-ready side effects captured by running TypeScript runDashboard with deterministic fake hosts.",
+  "cases": [
+    {
+      "id": "session-launch-dashboard-001",
+      "name": "runDashboard hydrates restored subscreens and syncs footer state",
+      "source": "src/multiplexer/session-launch.ts",
+      "api": "runDashboard",
+      "input": {
+        "config": {
+          "defaultTool": "codex",
+          "tools": { "codex": { "command": "codex", "args": ["--model", "gpt-5"], "enabled": true } },
+          "scribe": { "defaultAgent": null }
+        },
+        "loadDashboardUiScreen": "graveyard",
+        "refreshResponses": [{ "result": true, "refreshedAt": 1 }]
+      },
+      "output": {
+        "result": 0,
+        "host": {
+          "mode": "dashboard",
+          "startedInDashboard": true,
+          "defaultCommand": "codex",
+          "defaultArgs": ["--model", "gpt-5"],
+          "dashboardInputEpoch": 0,
+          "dashboardRunGeneration": 1,
+          "dashboardStartupPriming": false,
+          "dashboardBusyState": null,
+          "dashboardModelServiceRefreshedAt": 1,
+          "dashboardModelServiceRefreshError": null,
+          "eventStreamStarted": false
+        },
+        "calls": [
+          { "method": "startHeartbeat", "args": [] },
+          { "method": "syncSessionsFromTopology", "args": [] },
+          { "method": "writeInstructionFiles", "args": [] },
+          { "method": "terminalHost.enterRawMode", "args": [] },
+          { "method": "getViewportKey", "args": [] },
+          { "method": "loadDashboardUiState", "args": [] },
+          { "method": "hydrateDashboardScreenState", "args": [] },
+          { "method": "writeDashboardClientStatuslineFile", "args": [] },
+          { "method": "terminalHost.enterAlternateScreen", "args": [true] },
+          { "method": "startStatusRefresh", "args": [] },
+          { "method": "renderCurrentDashboardView", "args": [] },
+          { "method": "refreshDashboardModelFromService", "args": [true, { "lifecycle": { "mode": "dashboard" } }] },
+          { "method": "renderCurrentDashboardView", "args": [] },
+          { "method": "teardown", "args": [] }
+        ],
+        "renderSnapshots": [
+          {
+            "mode": "dashboard",
+            "screen": "graveyard",
+            "inputEpoch": 0,
+            "busy": {
+              "title": "Connecting Aimux",
+              "lines": ["Loading project state from the local service."],
+              "spinnerFrame": 0
+            },
+            "startupPriming": true
+          },
+          { "mode": "dashboard", "screen": "graveyard", "inputEpoch": 0, "busy": null, "startupPriming": false }
+        ]
+      },
+      "inputSha256": "701bd62ba7feac57ba26734508fa349a5eeb090e58d3d195d90981dc3d08b293"
+    },
+    {
+      "id": "session-launch-dashboard-002",
+      "name": "runDashboard lets active overlays own keys before the runtime guard",
+      "source": "src/multiplexer/session-launch.ts",
+      "api": "runDashboard",
+      "input": {
+        "config": {
+          "defaultTool": "codex",
+          "tools": { "codex": { "command": "codex", "args": ["--model", "gpt-5"], "enabled": true } },
+          "scribe": { "defaultAgent": null }
+        },
+        "keyHandling": { "activeOverlayConsumes": true, "runtimeGuardConsumes": true },
+        "actions": [{ "stdinHex": "6e" }],
+        "refreshResponses": [{ "result": true, "refreshedAt": 1 }]
+      },
+      "output": {
+        "result": 0,
+        "host": {
+          "mode": "dashboard",
+          "startedInDashboard": true,
+          "defaultCommand": "codex",
+          "defaultArgs": ["--model", "gpt-5"],
+          "dashboardInputEpoch": 1,
+          "dashboardRunGeneration": 1,
+          "dashboardStartupPriming": false,
+          "dashboardBusyState": null,
+          "dashboardModelServiceRefreshedAt": 1,
+          "dashboardModelServiceRefreshError": null,
+          "eventStreamStarted": false
+        },
+        "calls": [
+          { "method": "startHeartbeat", "args": [] },
+          { "method": "syncSessionsFromTopology", "args": [] },
+          { "method": "writeInstructionFiles", "args": [] },
+          { "method": "terminalHost.enterRawMode", "args": [] },
+          { "method": "getViewportKey", "args": [] },
+          { "method": "loadDashboardUiState", "args": [] },
+          { "method": "hydrateDashboardScreenState", "args": [] },
+          { "method": "writeDashboardClientStatuslineFile", "args": [] },
+          { "method": "terminalHost.enterAlternateScreen", "args": [true] },
+          { "method": "startStatusRefresh", "args": [] },
+          { "method": "renderCurrentDashboardView", "args": [] },
+          { "method": "refreshDashboardModelFromService", "args": [true, { "lifecycle": { "mode": "dashboard" } }] },
+          { "method": "renderCurrentDashboardView", "args": [] },
+          { "method": "isFocusInReport", "args": [{ "type": "Buffer", "data": [110] }] },
+          { "method": "handleActiveDashboardOverlayKey", "args": [{ "type": "Buffer", "data": [110] }] },
+          { "method": "teardown", "args": [] }
+        ],
+        "renderSnapshots": [
+          {
+            "mode": "dashboard",
+            "screen": "dashboard",
+            "inputEpoch": 0,
+            "busy": {
+              "title": "Connecting Aimux",
+              "lines": ["Loading project state from the local service."],
+              "spinnerFrame": 0
+            },
+            "startupPriming": true
+          },
+          { "mode": "dashboard", "screen": "dashboard", "inputEpoch": 0, "busy": null, "startupPriming": false }
+        ]
+      },
+      "inputSha256": "4c24feedf59cefedf82a965e7f4715d2dbc4d2e66bc0fa53ffb878bb5057e5b2"
+    },
+    {
+      "id": "session-launch-dashboard-003",
+      "name": "runDashboard continues processing keys after a tmux FocusIn report",
+      "source": "src/multiplexer/session-launch.ts",
+      "api": "runDashboard",
+      "input": {
+        "config": {
+          "defaultTool": "codex",
+          "tools": { "codex": { "command": "codex", "args": ["--model", "gpt-5"], "enabled": true } },
+          "scribe": { "defaultAgent": null }
+        },
+        "actions": [{ "stdinHex": "1b5b490d" }],
+        "refreshResponses": [{ "result": true, "refreshedAt": 1 }]
+      },
+      "output": {
+        "result": 0,
+        "host": {
+          "mode": "dashboard",
+          "startedInDashboard": true,
+          "defaultCommand": "codex",
+          "defaultArgs": ["--model", "gpt-5"],
+          "dashboardInputEpoch": 1,
+          "dashboardRunGeneration": 1,
+          "dashboardStartupPriming": false,
+          "dashboardBusyState": null,
+          "dashboardModelServiceRefreshedAt": 1,
+          "dashboardModelServiceRefreshError": null,
+          "eventStreamStarted": false
+        },
+        "calls": [
+          { "method": "startHeartbeat", "args": [] },
+          { "method": "syncSessionsFromTopology", "args": [] },
+          { "method": "writeInstructionFiles", "args": [] },
+          { "method": "terminalHost.enterRawMode", "args": [] },
+          { "method": "getViewportKey", "args": [] },
+          { "method": "loadDashboardUiState", "args": [] },
+          { "method": "hydrateDashboardScreenState", "args": [] },
+          { "method": "writeDashboardClientStatuslineFile", "args": [] },
+          { "method": "terminalHost.enterAlternateScreen", "args": [true] },
+          { "method": "startStatusRefresh", "args": [] },
+          { "method": "renderCurrentDashboardView", "args": [] },
+          { "method": "refreshDashboardModelFromService", "args": [true, { "lifecycle": { "mode": "dashboard" } }] },
+          { "method": "renderCurrentDashboardView", "args": [] },
+          { "method": "isFocusInReport", "args": [{ "type": "Buffer", "data": [27, 91, 73, 13] }] },
+          { "method": "handleDashboardFocusIn", "args": [] },
+          { "method": "handleActiveDashboardOverlayKey", "args": [{ "type": "Buffer", "data": [13] }] },
+          { "method": "handleRuntimeGuardKey", "args": [{ "type": "Buffer", "data": [13] }] },
+          { "method": "isDashboardScreen", "args": ["coordination"] },
+          { "method": "isDashboardScreen", "args": ["project"] },
+          { "method": "isDashboardScreen", "args": ["library"] },
+          { "method": "isDashboardScreen", "args": ["topology"] },
+          { "method": "isDashboardScreen", "args": ["help"] },
+          { "method": "isDashboardScreen", "args": ["graveyard"] },
+          { "method": "handleDashboardKey", "args": [{ "type": "Buffer", "data": [13] }] },
+          { "method": "teardown", "args": [] }
+        ],
+        "renderSnapshots": [
+          {
+            "mode": "dashboard",
+            "screen": "dashboard",
+            "inputEpoch": 0,
+            "busy": {
+              "title": "Connecting Aimux",
+              "lines": ["Loading project state from the local service."],
+              "spinnerFrame": 0
+            },
+            "startupPriming": true
+          },
+          { "mode": "dashboard", "screen": "dashboard", "inputEpoch": 0, "busy": null, "startupPriming": false }
+        ]
+      },
+      "inputSha256": "17e8ebddf0371f4386c5a0c8e7e2fef12a68e3ad7ac58733e94b9eaa3ad440b7"
+    },
+    {
+      "id": "session-launch-dashboard-004",
+      "name": "runDashboard ignores a pure tmux FocusIn report as dashboard input",
+      "source": "src/multiplexer/session-launch.ts",
+      "api": "runDashboard",
+      "input": {
+        "config": {
+          "defaultTool": "codex",
+          "tools": { "codex": { "command": "codex", "args": ["--model", "gpt-5"], "enabled": true } },
+          "scribe": { "defaultAgent": null }
+        },
+        "actions": [{ "stdinHex": "1b5b49" }],
+        "refreshResponses": [{ "result": true, "refreshedAt": 1 }]
+      },
+      "output": {
+        "result": 0,
+        "host": {
+          "mode": "dashboard",
+          "startedInDashboard": true,
+          "defaultCommand": "codex",
+          "defaultArgs": ["--model", "gpt-5"],
+          "dashboardInputEpoch": 0,
+          "dashboardRunGeneration": 1,
+          "dashboardStartupPriming": false,
+          "dashboardBusyState": null,
+          "dashboardModelServiceRefreshedAt": 1,
+          "dashboardModelServiceRefreshError": null,
+          "eventStreamStarted": false
+        },
+        "calls": [
+          { "method": "startHeartbeat", "args": [] },
+          { "method": "syncSessionsFromTopology", "args": [] },
+          { "method": "writeInstructionFiles", "args": [] },
+          { "method": "terminalHost.enterRawMode", "args": [] },
+          { "method": "getViewportKey", "args": [] },
+          { "method": "loadDashboardUiState", "args": [] },
+          { "method": "hydrateDashboardScreenState", "args": [] },
+          { "method": "writeDashboardClientStatuslineFile", "args": [] },
+          { "method": "terminalHost.enterAlternateScreen", "args": [true] },
+          { "method": "startStatusRefresh", "args": [] },
+          { "method": "renderCurrentDashboardView", "args": [] },
+          { "method": "refreshDashboardModelFromService", "args": [true, { "lifecycle": { "mode": "dashboard" } }] },
+          { "method": "renderCurrentDashboardView", "args": [] },
+          { "method": "isFocusInReport", "args": [{ "type": "Buffer", "data": [27, 91, 73] }] },
+          { "method": "handleDashboardFocusIn", "args": [] },
+          { "method": "teardown", "args": [] }
+        ],
+        "renderSnapshots": [
+          {
+            "mode": "dashboard",
+            "screen": "dashboard",
+            "inputEpoch": 0,
+            "busy": {
+              "title": "Connecting Aimux",
+              "lines": ["Loading project state from the local service."],
+              "spinnerFrame": 0
+            },
+            "startupPriming": true
+          },
+          { "mode": "dashboard", "screen": "dashboard", "inputEpoch": 0, "busy": null, "startupPriming": false }
+        ]
+      },
+      "inputSha256": "d78e14fb2a52dab413b8e3cb20de24fc10e202811c52a9681ff680e5166ce256"
+    },
+    {
+      "id": "session-launch-dashboard-005",
+      "name": "runDashboard routes dashboard input to the active subscreen handler",
+      "source": "src/multiplexer/session-launch.ts",
+      "api": "runDashboard",
+      "input": {
+        "config": {
+          "defaultTool": "codex",
+          "tools": { "codex": { "command": "codex", "args": ["--model", "gpt-5"], "enabled": true } },
+          "scribe": { "defaultAgent": null }
+        },
+        "host": { "dashboardState": { "screen": "project" } },
+        "actions": [{ "stdinHex": "78" }],
+        "refreshResponses": [{ "result": true, "refreshedAt": 1 }]
+      },
+      "output": {
+        "result": 0,
+        "host": {
+          "mode": "dashboard",
+          "startedInDashboard": true,
+          "defaultCommand": "codex",
+          "defaultArgs": ["--model", "gpt-5"],
+          "dashboardInputEpoch": 1,
+          "dashboardRunGeneration": 1,
+          "dashboardStartupPriming": false,
+          "dashboardBusyState": null,
+          "dashboardModelServiceRefreshedAt": 1,
+          "dashboardModelServiceRefreshError": null,
+          "eventStreamStarted": false
+        },
+        "calls": [
+          { "method": "startHeartbeat", "args": [] },
+          { "method": "syncSessionsFromTopology", "args": [] },
+          { "method": "writeInstructionFiles", "args": [] },
+          { "method": "terminalHost.enterRawMode", "args": [] },
+          { "method": "getViewportKey", "args": [] },
+          { "method": "loadDashboardUiState", "args": [] },
+          { "method": "hydrateDashboardScreenState", "args": [] },
+          { "method": "writeDashboardClientStatuslineFile", "args": [] },
+          { "method": "terminalHost.enterAlternateScreen", "args": [true] },
+          { "method": "startStatusRefresh", "args": [] },
+          { "method": "renderCurrentDashboardView", "args": [] },
+          { "method": "refreshDashboardModelFromService", "args": [true, { "lifecycle": { "mode": "dashboard" } }] },
+          { "method": "renderCurrentDashboardView", "args": [] },
+          { "method": "isFocusInReport", "args": [{ "type": "Buffer", "data": [120] }] },
+          { "method": "handleActiveDashboardOverlayKey", "args": [{ "type": "Buffer", "data": [120] }] },
+          { "method": "handleRuntimeGuardKey", "args": [{ "type": "Buffer", "data": [120] }] },
+          { "method": "isDashboardScreen", "args": ["coordination"] },
+          { "method": "isDashboardScreen", "args": ["project"] },
+          { "method": "handleProjectKey", "args": [{ "type": "Buffer", "data": [120] }] },
+          { "method": "teardown", "args": [] }
+        ],
+        "renderSnapshots": [
+          {
+            "mode": "dashboard",
+            "screen": "project",
+            "inputEpoch": 0,
+            "busy": {
+              "title": "Connecting Aimux",
+              "lines": ["Loading project state from the local service."],
+              "spinnerFrame": 0
+            },
+            "startupPriming": true
+          },
+          { "mode": "dashboard", "screen": "project", "inputEpoch": 0, "busy": null, "startupPriming": false }
+        ]
+      },
+      "inputSha256": "2be64c00d699942cfcdf8e0919d3ee9885074582a0bd2d17b80c6762fe23f261"
+    },
+    {
+      "id": "session-launch-dashboard-006",
+      "name": "runDashboard clears startup busy state after successful repair without a fresh model change",
+      "source": "src/multiplexer/session-launch.ts",
+      "api": "runDashboard",
+      "input": {
+        "config": {
+          "defaultTool": "codex",
+          "tools": { "codex": { "command": "codex", "args": ["--model", "gpt-5"], "enabled": true } },
+          "scribe": { "defaultAgent": null }
+        },
+        "host": { "dashboardModelServiceRefreshedAt": 1 },
+        "refreshResponses": [{ "result": false }, { "result": false }]
+      },
+      "output": {
+        "result": 0,
+        "host": {
+          "mode": "dashboard",
+          "startedInDashboard": true,
+          "defaultCommand": "codex",
+          "defaultArgs": ["--model", "gpt-5"],
+          "dashboardInputEpoch": 0,
+          "dashboardRunGeneration": 1,
+          "dashboardStartupPriming": false,
+          "dashboardBusyState": null,
+          "dashboardModelServiceRefreshedAt": 1,
+          "dashboardModelServiceRefreshError": null,
+          "eventStreamStarted": false
+        },
+        "calls": [
+          { "method": "startHeartbeat", "args": [] },
+          { "method": "syncSessionsFromTopology", "args": [] },
+          { "method": "writeInstructionFiles", "args": [] },
+          { "method": "terminalHost.enterRawMode", "args": [] },
+          { "method": "getViewportKey", "args": [] },
+          { "method": "loadDashboardUiState", "args": [] },
+          { "method": "hydrateDashboardScreenState", "args": [] },
+          { "method": "writeDashboardClientStatuslineFile", "args": [] },
+          { "method": "terminalHost.enterAlternateScreen", "args": [true] },
+          { "method": "startStatusRefresh", "args": [] },
+          { "method": "renderCurrentDashboardView", "args": [] },
+          { "method": "refreshDashboardModelFromService", "args": [true, { "lifecycle": { "mode": "dashboard" } }] },
+          { "method": "ensureDashboardControlPlane", "args": [] },
+          { "method": "renderCurrentDashboardView", "args": [] },
+          { "method": "refreshDashboardModelFromService", "args": [true, { "lifecycle": { "mode": "dashboard" } }] },
+          { "method": "renderCurrentDashboardView", "args": [] },
+          { "method": "teardown", "args": [] }
+        ],
+        "renderSnapshots": [
+          {
+            "mode": "dashboard",
+            "screen": "dashboard",
+            "inputEpoch": 0,
+            "busy": {
+              "title": "Connecting Aimux",
+              "lines": ["Loading project state from the local service."],
+              "spinnerFrame": 0
+            },
+            "startupPriming": true
+          },
+          {
+            "mode": "dashboard",
+            "screen": "dashboard",
+            "inputEpoch": 0,
+            "busy": {
+              "title": "Connecting Aimux",
+              "lines": ["Loading project state from the local service."],
+              "spinnerFrame": 0
+            },
+            "startupPriming": true
+          },
+          { "mode": "dashboard", "screen": "dashboard", "inputEpoch": 0, "busy": null, "startupPriming": false }
+        ]
+      },
+      "inputSha256": "5c8a41a64e8b7488f04f4291c8426908b557c7e0d494098c89a2c8163b442936"
+    },
+    {
+      "id": "session-launch-dashboard-007",
+      "name": "runDashboard reports repair failure when the service remains unavailable",
+      "source": "src/multiplexer/session-launch.ts",
+      "api": "runDashboard",
+      "input": {
+        "config": {
+          "defaultTool": "codex",
+          "tools": { "codex": { "command": "codex", "args": ["--model", "gpt-5"], "enabled": true } },
+          "scribe": { "defaultAgent": null }
+        },
+        "host": { "dashboardModelServiceRefreshedAt": 1 },
+        "refreshResponses": [
+          { "result": false, "errorMessage": "service still unavailable" },
+          { "result": false, "errorMessage": "service still unavailable" }
+        ]
+      },
+      "output": {
+        "result": 0,
+        "host": {
+          "mode": "dashboard",
+          "startedInDashboard": true,
+          "defaultCommand": "codex",
+          "defaultArgs": ["--model", "gpt-5"],
+          "dashboardInputEpoch": 0,
+          "dashboardRunGeneration": 1,
+          "dashboardStartupPriming": false,
+          "dashboardBusyState": null,
+          "dashboardModelServiceRefreshedAt": 1,
+          "dashboardModelServiceRefreshError": "service still unavailable",
+          "eventStreamStarted": false
+        },
+        "calls": [
+          { "method": "startHeartbeat", "args": [] },
+          { "method": "syncSessionsFromTopology", "args": [] },
+          { "method": "writeInstructionFiles", "args": [] },
+          { "method": "terminalHost.enterRawMode", "args": [] },
+          { "method": "getViewportKey", "args": [] },
+          { "method": "loadDashboardUiState", "args": [] },
+          { "method": "hydrateDashboardScreenState", "args": [] },
+          { "method": "writeDashboardClientStatuslineFile", "args": [] },
+          { "method": "terminalHost.enterAlternateScreen", "args": [true] },
+          { "method": "startStatusRefresh", "args": [] },
+          { "method": "renderCurrentDashboardView", "args": [] },
+          { "method": "refreshDashboardModelFromService", "args": [true, { "lifecycle": { "mode": "dashboard" } }] },
+          { "method": "ensureDashboardControlPlane", "args": [] },
+          { "method": "renderCurrentDashboardView", "args": [] },
+          { "method": "refreshDashboardModelFromService", "args": [true, { "lifecycle": { "mode": "dashboard" } }] },
+          { "method": "showDashboardError", "args": ["Aimux repair failed", ["service still unavailable"]] },
+          { "method": "renderCurrentDashboardView", "args": [] },
+          { "method": "teardown", "args": [] }
+        ],
+        "renderSnapshots": [
+          {
+            "mode": "dashboard",
+            "screen": "dashboard",
+            "inputEpoch": 0,
+            "busy": {
+              "title": "Connecting Aimux",
+              "lines": ["Loading project state from the local service."],
+              "spinnerFrame": 0
+            },
+            "startupPriming": true
+          },
+          {
+            "mode": "dashboard",
+            "screen": "dashboard",
+            "inputEpoch": 0,
+            "busy": {
+              "title": "Connecting Aimux",
+              "lines": ["Loading project state from the local service."],
+              "spinnerFrame": 0
+            },
+            "startupPriming": true
+          },
+          { "mode": "dashboard", "screen": "dashboard", "inputEpoch": 0, "busy": null, "startupPriming": false }
+        ]
+      },
+      "inputSha256": "0a2e2e9ec32cde97f6e195f094c77bfd242660f78a6017a9d95ed061d827e7fa"
+    },
+    {
+      "id": "session-launch-dashboard-008",
+      "name": "runDashboard suppresses stale startup repair after later dashboard input",
+      "source": "src/multiplexer/session-launch.ts",
+      "api": "runDashboard",
+      "input": {
+        "config": {
+          "defaultTool": "codex",
+          "tools": { "codex": { "command": "codex", "args": ["--model", "gpt-5"], "enabled": true } },
+          "scribe": { "defaultAgent": null }
+        },
+        "host": { "dashboardModelServiceRefreshedAt": 1 },
+        "ensureEffect": "input",
+        "refreshResponses": [{ "result": false }, { "result": true, "refreshedAt": 2, "clearError": true }]
+      },
+      "output": {
+        "result": 0,
+        "host": {
+          "mode": "dashboard",
+          "startedInDashboard": true,
+          "defaultCommand": "codex",
+          "defaultArgs": ["--model", "gpt-5"],
+          "dashboardInputEpoch": 1,
+          "dashboardRunGeneration": 1,
+          "dashboardStartupPriming": false,
+          "dashboardBusyState": null,
+          "dashboardModelServiceRefreshedAt": 1,
+          "dashboardModelServiceRefreshError": null,
+          "eventStreamStarted": false
+        },
+        "calls": [
+          { "method": "startHeartbeat", "args": [] },
+          { "method": "syncSessionsFromTopology", "args": [] },
+          { "method": "writeInstructionFiles", "args": [] },
+          { "method": "terminalHost.enterRawMode", "args": [] },
+          { "method": "getViewportKey", "args": [] },
+          { "method": "loadDashboardUiState", "args": [] },
+          { "method": "hydrateDashboardScreenState", "args": [] },
+          { "method": "writeDashboardClientStatuslineFile", "args": [] },
+          { "method": "terminalHost.enterAlternateScreen", "args": [true] },
+          { "method": "startStatusRefresh", "args": [] },
+          { "method": "renderCurrentDashboardView", "args": [] },
+          { "method": "refreshDashboardModelFromService", "args": [true, { "lifecycle": { "mode": "dashboard" } }] },
+          { "method": "ensureDashboardControlPlane", "args": [] },
+          { "method": "renderCurrentDashboardView", "args": [] },
+          { "method": "teardown", "args": [] }
+        ],
+        "renderSnapshots": [
+          {
+            "mode": "dashboard",
+            "screen": "dashboard",
+            "inputEpoch": 0,
+            "busy": {
+              "title": "Connecting Aimux",
+              "lines": ["Loading project state from the local service."],
+              "spinnerFrame": 0
+            },
+            "startupPriming": true
+          },
+          {
+            "mode": "dashboard",
+            "screen": "dashboard",
+            "inputEpoch": 1,
+            "busy": {
+              "title": "Connecting Aimux",
+              "lines": ["Loading project state from the local service."],
+              "spinnerFrame": 0
+            },
+            "startupPriming": true
+          }
+        ]
+      },
+      "inputSha256": "517ea8d7898ced672f3fb8b27d114baea869b8e9bc94251022b6097014d1663b"
+    },
+    {
+      "id": "session-launch-dashboard-009",
+      "name": "runDashboard marks tmux dashboards ready after the first startup frame",
+      "source": "src/multiplexer/session-launch.ts",
+      "api": "runDashboard",
+      "input": {
+        "config": {
+          "defaultTool": "codex",
+          "tools": { "codex": { "command": "codex", "args": ["--model", "gpt-5"], "enabled": true } },
+          "scribe": { "defaultAgent": null }
+        },
+        "tmuxPane": "%42",
+        "refreshResponses": [{ "result": true, "refreshedAt": 1 }]
+      },
+      "output": {
+        "result": 0,
+        "host": {
+          "mode": "dashboard",
+          "startedInDashboard": true,
+          "defaultCommand": "codex",
+          "defaultArgs": ["--model", "gpt-5"],
+          "dashboardInputEpoch": 0,
+          "dashboardRunGeneration": 1,
+          "dashboardStartupPriming": false,
+          "dashboardBusyState": null,
+          "dashboardModelServiceRefreshedAt": 1,
+          "dashboardModelServiceRefreshError": null,
+          "eventStreamStarted": false
+        },
+        "calls": [
+          { "method": "startHeartbeat", "args": [] },
+          { "method": "syncSessionsFromTopology", "args": [] },
+          { "method": "writeInstructionFiles", "args": [] },
+          { "method": "terminalHost.enterRawMode", "args": [] },
+          { "method": "getViewportKey", "args": [] },
+          { "method": "loadDashboardUiState", "args": [] },
+          { "method": "hydrateDashboardScreenState", "args": [] },
+          { "method": "writeDashboardClientStatuslineFile", "args": [] },
+          { "method": "terminalHost.enterAlternateScreen", "args": [true] },
+          { "method": "startStatusRefresh", "args": [] },
+          { "method": "renderCurrentDashboardView", "args": [] },
+          {
+            "method": "tmuxRuntimeManager.setWindowOption",
+            "args": ["%42", "@aimux-dashboard-build", "<DASHBOARD_BUILD_STAMP>"]
+          },
+          {
+            "method": "tmuxRuntimeManager.setWindowOption",
+            "args": ["%42", "@aimux-dashboard-owner", "<RUNTIME_OWNER>"]
+          },
+          {
+            "method": "tmuxRuntimeManager.setWindowOption",
+            "args": ["%42", "@aimux-dashboard-ready", "<DASHBOARD_BUILD_STAMP>"]
+          },
+          { "method": "refreshDashboardModelFromService", "args": [true, { "lifecycle": { "mode": "dashboard" } }] },
+          {
+            "method": "tmuxRuntimeManager.setWindowOption",
+            "args": ["%42", "@aimux-dashboard-build", "<DASHBOARD_BUILD_STAMP>"]
+          },
+          {
+            "method": "tmuxRuntimeManager.setWindowOption",
+            "args": ["%42", "@aimux-dashboard-owner", "<RUNTIME_OWNER>"]
+          },
+          {
+            "method": "tmuxRuntimeManager.setWindowOption",
+            "args": ["%42", "@aimux-dashboard-ready", "<DASHBOARD_BUILD_STAMP>"]
+          },
+          { "method": "renderCurrentDashboardView", "args": [] },
+          { "method": "teardown", "args": [] }
+        ],
+        "renderSnapshots": [
+          {
+            "mode": "dashboard",
+            "screen": "dashboard",
+            "inputEpoch": 0,
+            "busy": {
+              "title": "Connecting Aimux",
+              "lines": ["Loading project state from the local service."],
+              "spinnerFrame": 0
+            },
+            "startupPriming": true
+          },
+          { "mode": "dashboard", "screen": "dashboard", "inputEpoch": 0, "busy": null, "startupPriming": false }
+        ]
+      },
+      "inputSha256": "cc77b148960641cffa1274dec176abb4054766143886eb34d029b5081623d321"
+    },
+    {
+      "id": "session-launch-dashboard-010",
+      "name": "runDashboard suppresses stale startup repair after a newer dashboard run starts",
+      "source": "src/multiplexer/session-launch.ts",
+      "api": "runDashboard",
+      "input": {
+        "config": {
+          "defaultTool": "codex",
+          "tools": { "codex": { "command": "codex", "args": ["--model", "gpt-5"], "enabled": true } },
+          "scribe": { "defaultAgent": null }
+        },
+        "host": { "dashboardModelServiceRefreshedAt": 1 },
+        "ensureEffect": "generation",
+        "refreshResponses": [{ "result": false }, { "result": false }]
+      },
+      "output": {
+        "result": 0,
+        "host": {
+          "mode": "dashboard",
+          "startedInDashboard": true,
+          "defaultCommand": "codex",
+          "defaultArgs": ["--model", "gpt-5"],
+          "dashboardInputEpoch": 0,
+          "dashboardRunGeneration": 2,
+          "dashboardStartupPriming": false,
+          "dashboardBusyState": null,
+          "dashboardModelServiceRefreshedAt": 1,
+          "dashboardModelServiceRefreshError": null,
+          "eventStreamStarted": false
+        },
+        "calls": [
+          { "method": "startHeartbeat", "args": [] },
+          { "method": "syncSessionsFromTopology", "args": [] },
+          { "method": "writeInstructionFiles", "args": [] },
+          { "method": "terminalHost.enterRawMode", "args": [] },
+          { "method": "getViewportKey", "args": [] },
+          { "method": "loadDashboardUiState", "args": [] },
+          { "method": "hydrateDashboardScreenState", "args": [] },
+          { "method": "writeDashboardClientStatuslineFile", "args": [] },
+          { "method": "terminalHost.enterAlternateScreen", "args": [true] },
+          { "method": "startStatusRefresh", "args": [] },
+          { "method": "renderCurrentDashboardView", "args": [] },
+          { "method": "refreshDashboardModelFromService", "args": [true, { "lifecycle": { "mode": "dashboard" } }] },
+          { "method": "ensureDashboardControlPlane", "args": [] },
+          { "method": "renderCurrentDashboardView", "args": [] },
+          { "method": "teardown", "args": [] }
+        ],
+        "renderSnapshots": [
+          {
+            "mode": "dashboard",
+            "screen": "dashboard",
+            "inputEpoch": 0,
+            "busy": {
+              "title": "Connecting Aimux",
+              "lines": ["Loading project state from the local service."],
+              "spinnerFrame": 0
+            },
+            "startupPriming": true
+          },
+          {
+            "mode": "dashboard",
+            "screen": "dashboard",
+            "inputEpoch": 0,
+            "busy": {
+              "title": "Connecting Aimux",
+              "lines": ["Loading project state from the local service."],
+              "spinnerFrame": 0
+            },
+            "startupPriming": true
+          }
+        ]
+      },
+      "inputSha256": "370757b954f7001f05acb6aaefce90846ea6fa456c8142097b907bfd9a26fff7"
+    }
+  ]
+}
