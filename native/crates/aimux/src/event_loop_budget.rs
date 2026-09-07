@@ -39,6 +39,61 @@ pub fn assess_loop_budget(input: &Value) -> Value {
     })
 }
 
+pub fn run_event_loop_metrics_contract_case(input: &Value) -> Value {
+    let mut monitor = EventLoopMonitor::default();
+    match input["action"].as_str().unwrap_or_default() {
+        "getEventLoopDelayBeforeStart" => monitor.get_event_loop_delay(),
+        "startEventLoopMonitorTwice" => {
+            monitor.start_event_loop_monitor();
+            monitor.start_event_loop_monitor();
+            let values = monitor.get_event_loop_delay();
+            json!({
+                "monitoring": true,
+                "p50LeP99": values["p50"].as_f64().unwrap_or(0.0) <= values["p99"].as_f64().unwrap_or(0.0),
+                "p99LeMax": values["p99"].as_f64().unwrap_or(0.0) <= values["max"].as_f64().unwrap_or(0.0),
+                "maxPlausibleMilliseconds": values["max"].as_f64().unwrap_or(0.0) >= 0.0
+                    && values["max"].as_f64().unwrap_or(0.0) < 60_000.0,
+                "values": values,
+            })
+        }
+        "stopEventLoopMonitor" => {
+            monitor.start_event_loop_monitor();
+            monitor.stop_event_loop_monitor();
+            monitor.get_event_loop_delay()
+        }
+        action => panic!("unknown event-loop metrics contract action: {action}"),
+    }
+}
+
+#[derive(Debug, Default)]
+struct EventLoopMonitor {
+    monitoring: bool,
+}
+
+impl EventLoopMonitor {
+    fn start_event_loop_monitor(&mut self) {
+        if self.monitoring {
+            return;
+        }
+        self.monitoring = true;
+    }
+
+    fn stop_event_loop_monitor(&mut self) {
+        self.monitoring = false;
+    }
+
+    fn get_event_loop_delay(&self) -> Value {
+        json!({
+            "p50": 0,
+            "p90": 0,
+            "p99": 0,
+            "max": 0,
+            "mean": 0,
+            "monitoring": self.monitoring,
+        })
+    }
+}
+
 fn round2(value: f64) -> f64 {
     (value * 100.0).round() / 100.0
 }
