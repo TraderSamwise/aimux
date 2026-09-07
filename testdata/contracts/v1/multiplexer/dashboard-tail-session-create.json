@@ -1,0 +1,318 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/dashboard-tail-methods.ts",
+  "generatedBy": "scripts/capture-dashboard-tail-session-create-contract.mjs",
+  "description": "Dashboard tail session creation enqueue behavior captured by running TypeScript.",
+  "cases": [
+    {
+      "id": "dashboard-tail-session-create-001",
+      "name": "spawnAgent records a starting detached agent and queued pending seed",
+      "source": "src/multiplexer/dashboard-tail-methods.ts",
+      "api": "dashboardTailMethods.sessionCreate",
+      "input": {
+        "method": "spawnAgent",
+        "config": {
+          "defaultTool": "codex",
+          "tools": {
+            "codex": {
+              "command": "codex",
+              "args": ["--model", "gpt-5"],
+              "enabled": true,
+              "preambleFlag": ["--append-system-prompt"],
+              "sessionIdFlag": ["--session-id", "{sessionId}"]
+            },
+            "claude": {
+              "command": "claude",
+              "args": ["--dangerously-skip-permissions"],
+              "enabled": true,
+              "preambleFlag": ["--append-system-prompt"]
+            }
+          }
+        },
+        "host": {},
+        "options": {
+          "toolConfigKey": "codex",
+          "targetSessionId": "codex-new",
+          "targetWorktreePath": "<REPO>/.aimux/worktrees/rust",
+          "open": false
+        }
+      },
+      "output": {
+        "result": { "sessionId": "codex-new" },
+        "error": null,
+        "calls": [
+          { "method": "invalidateDesktopStateSnapshot", "args": [] },
+          { "method": "writeStatuslineFile", "args": [] },
+          { "method": "renderCurrentDashboardView", "args": [] },
+          { "method": "updateContextWatcherSessions", "args": [] },
+          { "method": "metadataServer.notifyChange", "args": [] },
+          {
+            "method": "dashboardPendingActions.setSessionAction",
+            "args": [
+              "codex-new",
+              "starting",
+              {
+                "timeoutMs": 210000,
+                "sessionSeed": {
+                  "index": -1,
+                  "id": "codex-new",
+                  "command": "codex",
+                  "toolConfigKey": "codex",
+                  "status": "waiting",
+                  "active": false,
+                  "worktreePath": "<REPO>/.aimux/worktrees/rust",
+                  "pendingAction": "starting",
+                  "optimistic": true
+                }
+              }
+            ]
+          }
+        ],
+        "timers": [{ "ms": 50, "unref": true }],
+        "topologySessions": [
+          {
+            "id": "codex-new",
+            "tool": "codex",
+            "toolConfigKey": "codex",
+            "command": "codex",
+            "args": ["--model", "gpt-5"],
+            "status": "starting",
+            "lifecycle": "live",
+            "createdAt": "<NOW>",
+            "updatedAt": "<NOW>",
+            "worktreePath": "<REPO>/.aimux/worktrees/rust"
+          }
+        ],
+        "topologyYaml": "version: 1\ngeneratedAt: <NOW>\nrigs:\n  - id: repo-<id>\n    name: repo\n    projectRoot: <REPO>\n    createdAt: <NOW>\n    updatedAt: <NOW>\nnodes:\n  - id: agent:codex-new\n    rigId: repo-<id>\n    logicalId: codex-new\n    runtime: codex\n    toolConfigKey: codex\n    cwd: <REPO>/.aimux/worktrees/rust\n    createdAt: <NOW>\nedges: []\nbindings: []\nsessions:\n  - id: codex-new\n    nodeId: agent:codex-new\n    status: starting\n    tool: codex\n    command: codex\n    args:\n      - --model\n      - gpt-5\n    worktreePath: <REPO>/.aimux/worktrees/rust\n    createdAt: <NOW>\n    updatedAt: <NOW>\n    lastSeenAt: <NOW>\nservices: []\nworktrees: []\nworktreeGraveyard: []\nteamRoles: []\nremoteClients: []\nlifecycleOperations: []\nexchangeRefs: []\n"
+      },
+      "inputSha256": "bc05cc84721d37074e0bdd3ce1bd6d8c83a03d7199c2336a6c5f8cb7251f813b"
+    },
+    {
+      "id": "dashboard-tail-session-create-002",
+      "name": "spawnAgent generates ids and marks scribe session metadata",
+      "source": "src/multiplexer/dashboard-tail-methods.ts",
+      "api": "dashboardTailMethods.sessionCreate",
+      "input": {
+        "method": "spawnAgent",
+        "config": {
+          "defaultTool": "codex",
+          "tools": {
+            "codex": {
+              "command": "codex",
+              "args": ["--model", "gpt-5"],
+              "enabled": true,
+              "preambleFlag": ["--append-system-prompt"],
+              "sessionIdFlag": ["--session-id", "{sessionId}"]
+            },
+            "claude": {
+              "command": "claude",
+              "args": ["--dangerously-skip-permissions"],
+              "enabled": true,
+              "preambleFlag": ["--append-system-prompt"]
+            }
+          }
+        },
+        "host": {},
+        "options": { "toolConfigKey": "claude", "scribe": true, "open": true }
+      },
+      "output": {
+        "result": { "sessionId": "claude-generated" },
+        "error": null,
+        "calls": [
+          { "method": "generateDashboardSessionId", "args": ["claude"] },
+          { "method": "invalidateDesktopStateSnapshot", "args": [] },
+          { "method": "writeStatuslineFile", "args": [] },
+          { "method": "renderCurrentDashboardView", "args": [] },
+          { "method": "updateContextWatcherSessions", "args": [] },
+          { "method": "metadataServer.notifyChange", "args": [] },
+          {
+            "method": "dashboardPendingActions.setSessionAction",
+            "args": [
+              "claude-generated",
+              "starting",
+              {
+                "timeoutMs": 210000,
+                "sessionSeed": {
+                  "index": -1,
+                  "id": "claude-generated",
+                  "command": "claude",
+                  "toolConfigKey": "claude",
+                  "status": "waiting",
+                  "active": false,
+                  "team": { "teamId": "scribe", "parentSessionId": "", "role": "scribe" },
+                  "scribe": true,
+                  "pendingAction": "starting",
+                  "optimistic": true
+                }
+              }
+            ]
+          }
+        ],
+        "timers": [{ "ms": 50, "unref": true }],
+        "topologySessions": [
+          {
+            "id": "claude-generated",
+            "tool": "claude",
+            "toolConfigKey": "claude",
+            "command": "claude",
+            "args": ["--dangerously-skip-permissions"],
+            "status": "starting",
+            "lifecycle": "live",
+            "createdAt": "<NOW>",
+            "updatedAt": "<NOW>",
+            "team": { "teamId": "scribe", "parentSessionId": "", "role": "scribe" }
+          }
+        ],
+        "topologyYaml": "version: 1\ngeneratedAt: <NOW>\nrigs:\n  - id: repo-<id>\n    name: repo\n    projectRoot: <REPO>\n    createdAt: <NOW>\n    updatedAt: <NOW>\nnodes:\n  - id: agent:claude-generated\n    rigId: repo-<id>\n    logicalId: claude-generated\n    role: scribe\n    runtime: claude\n    toolConfigKey: claude\n    createdAt: <NOW>\nedges: []\nbindings: []\nsessions:\n  - id: claude-generated\n    nodeId: agent:claude-generated\n    status: starting\n    tool: claude\n    command: claude\n    args:\n      - --dangerously-skip-permissions\n    team:\n      teamId: scribe\n      parentSessionId: \"\"\n      role: scribe\n    createdAt: <NOW>\n    updatedAt: <NOW>\n    lastSeenAt: <NOW>\nservices: []\nworktrees: []\nworktreeGraveyard: []\nteamRoles: []\nremoteClients: []\nlifecycleOperations: []\nexchangeRefs: []\n"
+      },
+      "inputSha256": "954172f0c8a4548d4effad458b349db0b47da87144e743473eef2ba03eed59fb"
+    },
+    {
+      "id": "dashboard-tail-session-create-003",
+      "name": "createTeammateAgent records teammate team metadata and merged args",
+      "source": "src/multiplexer/dashboard-tail-methods.ts",
+      "api": "dashboardTailMethods.sessionCreate",
+      "input": {
+        "method": "createTeammateAgent",
+        "config": {
+          "defaultTool": "codex",
+          "tools": {
+            "codex": {
+              "command": "codex",
+              "args": ["--model", "gpt-5"],
+              "enabled": true,
+              "preambleFlag": ["--append-system-prompt"],
+              "sessionIdFlag": ["--session-id", "{sessionId}"]
+            },
+            "claude": {
+              "command": "claude",
+              "args": ["--dangerously-skip-permissions"],
+              "enabled": true,
+              "preambleFlag": ["--append-system-prompt"]
+            }
+          }
+        },
+        "host": {},
+        "options": {
+          "parentSessionId": "codex-parent",
+          "role": "reviewer",
+          "label": "Review",
+          "order": 2,
+          "extraArgs": ["--model", "sonnet"],
+          "targetSessionId": "claude-reviewer",
+          "targetWorktreePath": "<REPO>/.aimux/worktrees/review",
+          "open": true
+        }
+      },
+      "output": {
+        "result": {
+          "sessionId": "claude-reviewer",
+          "parentSessionId": "codex-parent",
+          "teamId": "team-codex-parent",
+          "role": "reviewer",
+          "label": "Review"
+        },
+        "error": null,
+        "calls": [
+          { "method": "invalidateDesktopStateSnapshot", "args": [] },
+          { "method": "writeStatuslineFile", "args": [] },
+          { "method": "renderCurrentDashboardView", "args": [] },
+          { "method": "updateContextWatcherSessions", "args": [] },
+          { "method": "metadataServer.notifyChange", "args": [] },
+          {
+            "method": "dashboardPendingActions.setSessionAction",
+            "args": [
+              "claude-reviewer",
+              "starting",
+              {
+                "timeoutMs": 210000,
+                "sessionSeed": {
+                  "index": -1,
+                  "id": "claude-reviewer",
+                  "command": "codex",
+                  "toolConfigKey": "codex",
+                  "label": "Review",
+                  "status": "waiting",
+                  "active": false,
+                  "worktreePath": "<REPO>/.aimux/worktrees/review",
+                  "team": {
+                    "teamId": "team-codex-parent",
+                    "parentSessionId": "codex-parent",
+                    "role": "reviewer",
+                    "label": "Review",
+                    "order": 2
+                  },
+                  "pendingAction": "starting",
+                  "optimistic": true
+                }
+              }
+            ]
+          }
+        ],
+        "timers": [{ "ms": 50, "unref": true }],
+        "topologySessions": [
+          {
+            "id": "claude-reviewer",
+            "tool": "codex",
+            "toolConfigKey": "codex",
+            "command": "codex",
+            "args": ["--model", "gpt-5", "--model", "sonnet"],
+            "status": "starting",
+            "lifecycle": "live",
+            "createdAt": "<NOW>",
+            "updatedAt": "<NOW>",
+            "team": {
+              "teamId": "team-codex-parent",
+              "parentSessionId": "codex-parent",
+              "role": "reviewer",
+              "label": "Review",
+              "order": 2
+            },
+            "worktreePath": "<REPO>/.aimux/worktrees/review",
+            "label": "Review"
+          }
+        ],
+        "topologyYaml": "version: 1\ngeneratedAt: <NOW>\nrigs:\n  - id: repo-<id>\n    name: repo\n    projectRoot: <REPO>\n    createdAt: <NOW>\n    updatedAt: <NOW>\nnodes:\n  - id: agent:claude-reviewer\n    rigId: repo-<id>\n    logicalId: claude-reviewer\n    role: reviewer\n    runtime: codex\n    toolConfigKey: codex\n    cwd: <REPO>/.aimux/worktrees/review\n    label: Review\n    createdAt: <NOW>\nedges: []\nbindings: []\nsessions:\n  - id: claude-reviewer\n    nodeId: agent:claude-reviewer\n    status: starting\n    tool: codex\n    command: codex\n    args:\n      - --model\n      - gpt-5\n      - --model\n      - sonnet\n    worktreePath: <REPO>/.aimux/worktrees/review\n    label: Review\n    team:\n      teamId: team-codex-parent\n      parentSessionId: codex-parent\n      role: reviewer\n      label: Review\n      order: 2\n    createdAt: <NOW>\n    updatedAt: <NOW>\n    lastSeenAt: <NOW>\nservices: []\nworktrees: []\nworktreeGraveyard: []\nteamRoles: []\nremoteClients: []\nlifecycleOperations: []\nexchangeRefs: []\n"
+      },
+      "inputSha256": "31feecfebffdae7f3a70e8b8e77312dfea9cbc588c70de382f55a7a74acda955"
+    },
+    {
+      "id": "dashboard-tail-session-create-004",
+      "name": "spawnAgent rejects an id already present in live runtimes",
+      "source": "src/multiplexer/dashboard-tail-methods.ts",
+      "api": "dashboardTailMethods.sessionCreate",
+      "input": {
+        "method": "spawnAgent",
+        "config": {
+          "defaultTool": "codex",
+          "tools": {
+            "codex": {
+              "command": "codex",
+              "args": ["--model", "gpt-5"],
+              "enabled": true,
+              "preambleFlag": ["--append-system-prompt"],
+              "sessionIdFlag": ["--session-id", "{sessionId}"]
+            },
+            "claude": {
+              "command": "claude",
+              "args": ["--dangerously-skip-permissions"],
+              "enabled": true,
+              "preambleFlag": ["--append-system-prompt"]
+            }
+          }
+        },
+        "host": { "sessions": [{ "id": "codex-new", "command": "codex" }] },
+        "options": { "toolConfigKey": "codex", "targetSessionId": "codex-new" }
+      },
+      "output": {
+        "result": null,
+        "error": "Session \"codex-new\" already exists",
+        "calls": [],
+        "timers": [],
+        "topologySessions": [],
+        "topologyYaml": ""
+      },
+      "inputSha256": "4d4954088c3477f2dba633661eee4b258e62719832c1fd5e8a76ab13b11a46a7"
+    }
+  ]
+}
