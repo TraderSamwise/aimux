@@ -819,6 +819,11 @@ Priority fixture groups:
   metadata projection, and service-label derivation captured by running
   TypeScript `multiplexer/services` helpers; tmux-backed mutation flows are
   fenced out.
+- `multiplexer/services-runtime.json`: service create/stop/remove/resume
+  side-effect behavior, including tmux call order, failure-debug shell wrapping,
+  saved offline services, optimistic dashboard seeds, and topology service
+  projections captured by running TypeScript `multiplexer/services` against
+  deterministic fake tmux hosts and temp state files.
 - `multiplexer/worktrees.json`: dashboard worktree settle-poll backoff table
   captured by running TypeScript `worktreeSettlePollDelay` over the tested
   attempt ranges.

@@ -9,7 +9,7 @@ use aimux::project_service::runtime_exchange::{
     normalize_runtime_exchange, read_runtime_exchange, update_runtime_exchange,
     write_runtime_exchange,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 const RUNTIME_EXCHANGE_STORE: &str =
     include_str!("../../../../testdata/contracts/v1/runtime-exchange/store.json");
@@ -186,8 +186,23 @@ fn runtime_exchange_store_contract(case: &Value) -> Value {
             })
         }),
         "compactSummary" => compact_summary(&compact_runtime_exchange(&case["input"]["exchange"])),
+        "compactGeneratedClosedHistorySummary" => {
+            let exchange = generated_closed_history_exchange(&case["input"]["generator"]);
+            compact_summary(&compact_runtime_exchange(&exchange))
+        }
         "compactNotificationSummary" => {
             let report = compact_runtime_exchange(&case["input"]["exchange"]);
+            json!({
+                "threadCount": report["retained"]["threads"].as_array().map(Vec::len).unwrap_or_default(),
+                "messageCount": report["retained"]["messages"].as_array().map(Vec::len).unwrap_or_default(),
+                "droppedFirstThread": !ids(&report["retained"]["threads"]).iter().any(|id| id.ends_with("-0")),
+                "keptLastThread": ids(&report["retained"]["threads"]).iter().any(|id| id.ends_with("-502")),
+                "allLatestMessages": ids(&report["retained"]["messages"]).iter().all(|id| id.ends_with("-1")),
+            })
+        }
+        "compactGeneratedNotificationSummary" => {
+            let exchange = generated_notification_exchange(&case["input"]["generator"]);
+            let report = compact_runtime_exchange(&exchange);
             json!({
                 "threadCount": report["retained"]["threads"].as_array().map(Vec::len).unwrap_or_default(),
                 "messageCount": report["retained"]["messages"].as_array().map(Vec::len).unwrap_or_default(),
@@ -277,6 +292,203 @@ fn compact_summary(report: &Value) -> Value {
         "bytes": report["bytes"],
         "retention": report["retention"],
     })
+}
+
+fn generated_closed_history_exchange(generator: &Value) -> Value {
+    let closed_thread_count = generator["closedThreadCount"].as_u64().unwrap_or_default() as usize;
+    let active_message_count =
+        generator["activeMessageCount"].as_u64().unwrap_or_default() as usize;
+    let old_closed_threads = (0..closed_thread_count)
+        .map(|index| {
+            thread(
+                &format!("thread-closed-{index}"),
+                json!({
+                    "title": format!("Closed {index}"),
+                    "status": "done",
+                    "createdAt": "2026-05-01T00:00:00.000Z",
+                    "updatedAt": format!("2026-05-01T00:{:02}:00.000Z", index),
+                    "taskId": format!("task-closed-{index}"),
+                }),
+            )
+        })
+        .collect::<Vec<_>>();
+    let mut messages = (0..active_message_count)
+        .map(|index| {
+            message(
+                &format!("active-{index}"),
+                "thread-active",
+                json!({
+                    "ts": format!("2026-05-25T00:{:02}:00.000Z", index),
+                    "from": if index % 2 == 0 { "user" } else { "codex-1" },
+                    "kind": "reply",
+                    "body": format!("active message {index}"),
+                }),
+            )
+        })
+        .collect::<Vec<_>>();
+    messages.extend(old_closed_threads.iter().enumerate().map(|(index, row)| {
+        message(
+            &format!("closed-message-{index}"),
+            row["id"].as_str().unwrap_or_default(),
+            json!({
+                "ts": row["updatedAt"],
+                "from": "codex-1",
+                "kind": "reply",
+                "body": format!("closed message {index}"),
+            }),
+        )
+    }));
+    let mut threads = vec![thread(
+        "thread-active",
+        json!({
+            "title": "Active",
+            "status": "waiting",
+            "createdAt": "2026-05-01T00:00:00.000Z",
+            "waitingOn": ["codex-1"],
+            "unreadBy": ["codex-1"],
+            "taskId": "task-active",
+            "lastMessageId": "active-old",
+        }),
+    )];
+    threads.extend(old_closed_threads.clone());
+    let mut tasks = vec![json!({
+        "id": "task-active",
+        "status": "in_progress",
+        "assignedBy": "user",
+        "assignedTo": "codex-1",
+        "threadId": "thread-active",
+        "description": "Active task",
+        "prompt": "Do active task",
+        "createdAt": "2026-05-01T00:00:00.000Z",
+        "updatedAt": "2026-05-25T00:00:00.000Z",
+    })];
+    tasks.extend(old_closed_threads.iter().enumerate().map(|(index, row)| {
+        json!({
+            "id": format!("task-closed-{index}"),
+            "status": "done",
+            "assignedBy": "user",
+            "assignedTo": "codex-1",
+            "threadId": row["id"],
+            "description": format!("Closed task {index}"),
+            "prompt": format!("Do closed task {index}"),
+            "createdAt": "2026-05-01T00:00:00.000Z",
+            "updatedAt": row["updatedAt"],
+        })
+    }));
+    base_exchange(json!({
+        "threads": threads,
+        "messages": messages,
+        "tasks": tasks,
+        "waits": [
+            { "id": "wait-active", "status": "waiting", "subjectKind": "thread", "subjectId": "thread-active", "waitingOn": ["codex-1"], "createdAt": "2026-05-01T00:00:00.000Z", "updatedAt": "2026-05-25T00:00:00.000Z" },
+            { "id": "wait-pruned", "status": "satisfied", "subjectKind": "thread", "subjectId": "thread-closed-0", "waitingOn": ["codex-1"], "createdAt": "2026-05-01T00:00:00.000Z", "updatedAt": "2026-05-01T00:00:00.000Z" },
+        ],
+        "attachmentRefs": [
+            { "id": "attachment-active", "path": "/active", "messageId": format!("active-{}", active_message_count.saturating_sub(1)), "createdAt": "2026-05-25T00:00:00.000Z", "updatedAt": "2026-05-25T00:00:00.000Z" },
+            { "id": "attachment-pruned", "path": "/pruned", "messageId": "active-0", "createdAt": "2026-05-01T00:00:00.000Z", "updatedAt": "2026-05-01T00:00:00.000Z" },
+        ],
+    }))
+}
+
+fn generated_notification_exchange(generator: &Value) -> Value {
+    let prefix = generator["prefix"].as_str().unwrap_or_default();
+    let tagged = generator["tagged"].as_bool().unwrap_or(false);
+    let thread_count = generator["threadCount"].as_u64().unwrap_or_default() as usize;
+    let threads = (0..thread_count)
+        .map(|index| {
+            let mut over = json!({
+                "title": format!("Notification {index}"),
+                "kind": "conversation",
+                "createdAt": format!("2026-05-25T00:{:02}:00.000Z", index),
+                "updatedAt": format!("2026-05-25T00:{:02}:00.000Z", index),
+                "createdBy": "aimux",
+                "participants": ["aimux", "project"],
+                "lastMessageId": format!("{prefix}-message-{index}-1"),
+            });
+            if tagged {
+                over["tags"] = json!(["notification"]);
+            }
+            thread(&format!("{prefix}-{index}"), over)
+        })
+        .collect::<Vec<_>>();
+    let messages = threads
+        .iter()
+        .enumerate()
+        .flat_map(|(index, row)| {
+            [
+                message(
+                    &format!("{prefix}-message-{index}-0"),
+                    row["id"].as_str().unwrap_or_default(),
+                    json!({ "ts": row["createdAt"], "from": "aimux", "body": "older" }),
+                ),
+                message(
+                    &format!("{prefix}-message-{index}-1"),
+                    row["id"].as_str().unwrap_or_default(),
+                    json!({ "ts": row["updatedAt"], "from": "aimux", "body": "latest" }),
+                ),
+            ]
+        })
+        .collect::<Vec<_>>();
+    base_exchange(json!({ "threads": threads, "messages": messages }))
+}
+
+fn base_exchange(over: Value) -> Value {
+    let mut exchange = json!({
+        "version": 1,
+        "generatedAt": "2026-05-25T00:00:00.000Z",
+        "threads": [],
+        "messages": [],
+        "tasks": [],
+        "handoffs": [],
+        "reviews": [],
+        "waits": [],
+        "inbox": [],
+        "planRefs": [],
+        "continuityRefs": [],
+        "attachmentRefs": [],
+    });
+    if let (Some(base), Some(over)) = (exchange.as_object_mut(), over.as_object()) {
+        for (key, value) in over {
+            base.insert(key.clone(), value.clone());
+        }
+    }
+    exchange
+}
+
+fn thread(id: &str, over: Value) -> Value {
+    let mut row = json!({
+        "id": id,
+        "title": id,
+        "kind": "task",
+        "status": "open",
+        "createdAt": "2026-05-25T00:00:00.000Z",
+        "updatedAt": "2026-05-25T00:00:00.000Z",
+        "createdBy": "user",
+        "participants": ["user", "codex-1"],
+    });
+    if let (Some(base), Some(over)) = (row.as_object_mut(), over.as_object()) {
+        for (key, value) in over {
+            base.insert(key.clone(), value.clone());
+        }
+    }
+    row
+}
+
+fn message(id: &str, thread_id: &str, over: Value) -> Value {
+    let mut row = json!({
+        "id": id,
+        "threadId": thread_id,
+        "ts": "2026-05-25T00:00:00.000Z",
+        "from": "user",
+        "kind": "note",
+        "body": id,
+    });
+    if let (Some(base), Some(over)) = (row.as_object_mut(), over.as_object()) {
+        for (key, value) in over {
+            base.insert(key.clone(), value.clone());
+        }
+    }
+    row
 }
 
 fn ids(value: &Value) -> Vec<String> {

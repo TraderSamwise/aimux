@@ -1,8 +1,8 @@
 use aimux::tmux_expose::{ExposeScopeView, ExposeSublabel};
 use aimux::tmux_expose_hot_snapshot::{
-    HotExposeScopeKey, HotExposeScopePrune, write_hot_expose_scope_view,
+    write_hot_expose_scope_view, HotExposeScopeKey, HotExposeScopePrune,
 };
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -65,6 +65,34 @@ fn run_case(case: &Value) -> Value {
                     .map(parse_prune);
                 write_hot_expose_scope_view(&state_dir, key, view, prune.as_ref());
                 results.push(json!({ "type": "write", "snapshot": snapshot(&state_dir) }));
+            }
+            "writeGeneratedBounds" => {
+                let key = parse_key(&operation["key"]);
+                let view = parse_view(&generated_bounds_view(&operation["generator"]));
+                let prune = operation
+                    .get("options")
+                    .and_then(|options| options.get("prune"))
+                    .map(parse_prune);
+                write_hot_expose_scope_view(&state_dir, key.clone(), view, prune.as_ref());
+                let value =
+                    aimux::tmux_expose_hot_snapshot::read_hot_expose_scope_view(&state_dir, &key)
+                        .map(view_to_value)
+                        .unwrap_or(Value::Null);
+                results.push(json!({
+                    "type": "writeGeneratedBounds",
+                    "bounds": bounds_summary(&value, &state_dir),
+                }));
+            }
+            "readBounds" => {
+                let key = parse_key(&operation["key"]);
+                let value =
+                    aimux::tmux_expose_hot_snapshot::read_hot_expose_scope_view(&state_dir, &key)
+                        .map(view_to_value)
+                        .unwrap_or(Value::Null);
+                results.push(json!({
+                    "type": "readBounds",
+                    "bounds": bounds_summary(&value, &state_dir),
+                }));
             }
             "read" => {
                 let key = parse_key(&operation["key"]);
@@ -172,6 +200,76 @@ fn sublabel_to_value(sublabel: ExposeSublabel) -> &'static str {
         ExposeSublabel::Worktree => "worktree",
         ExposeSublabel::ProjectWorktree => "project-worktree",
     }
+}
+
+fn generated_bounds_view(generator: &Value) -> Value {
+    let item_count = generator["itemCount"].as_u64().expect("item count") as usize;
+    let line_count = generator["lineCount"].as_u64().expect("line count") as usize;
+    let line_width = generator["lineWidth"].as_u64().expect("line width") as usize;
+    let seed = generator["seed"].as_str().expect("seed");
+    json!({
+        "scope": "project",
+        "items": (0..item_count)
+            .map(|index| {
+                let output = (0..line_count)
+                    .map(|line| format!("{seed}:{index}:{line}:{}", "x".repeat(line_width)))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                item_value(&format!("session-{index}"), &format!("@{index}"), &output)
+            })
+            .collect::<Vec<_>>(),
+        "scopeLabel": "all worktrees",
+        "sublabel": "worktree",
+    })
+}
+
+fn item_value(id: &str, window_id: &str, output: &str) -> Value {
+    json!({
+        "id": id,
+        "label": id,
+        "urgency": 0,
+        "activity": 0,
+        "recentRank": 0,
+        "previewSnapshot": {
+            "output": output,
+            "capturedAt": "2026-07-20T13:00:00.000Z",
+            "source": "capture",
+            "windowId": window_id,
+            "startLine": -40,
+            "lineCount": 40,
+        },
+        "target": {
+            "sessionName": "aimux-test",
+            "windowId": window_id,
+            "windowIndex": 1,
+            "windowName": id,
+        },
+        "metadata": {
+            "kind": "agent",
+            "sessionId": id,
+            "command": "codex",
+            "args": [],
+            "toolConfigKey": "codex",
+            "worktreePath": "/repo",
+        },
+    })
+}
+
+fn bounds_summary(value: &Value, state_dir: &Path) -> Value {
+    let path = state_dir.join("expose-hot-snapshots.json");
+    let first_output = value
+        .pointer("/items/0/previewSnapshot/output")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    json!({
+        "itemCount": value.get("items").and_then(Value::as_array).map(Vec::len).unwrap_or(0),
+        "firstPreviewLineCount": if first_output.is_empty() { 0 } else { first_output.split('\n').count() },
+        "firstPreviewBytes": first_output.len(),
+        "firstPreviewEndsWithGeneratedTail": first_output.ends_with(&"x".repeat(300)),
+        "cacheExists": path.exists(),
+        "cacheMode": mode_value(&path),
+        "cacheContainsPrunedItem": fs::read_to_string(&path).ok().is_some_and(|text| text.contains("session-100")),
+    })
 }
 
 fn snapshot(state_dir: &Path) -> Value {

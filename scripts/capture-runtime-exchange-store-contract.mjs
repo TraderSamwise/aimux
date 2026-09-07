@@ -361,25 +361,26 @@ record("prunes records that reference missing exchange subjects", "writeReadIds"
   };
 }));
 
-const oldClosedThreads = Array.from({ length: RUNTIME_EXCHANGE_RETENTION.closedWorkflowThreads + 5 }, (_, index) =>
-  thread(`thread-closed-${index}`, {
-    title: `Closed ${index}`,
-    status: "done",
-    createdAt: OLD,
-    updatedAt: `2026-05-01T00:${String(index).padStart(2, "0")}:00.000Z`,
-    taskId: `task-closed-${index}`,
-  }),
-);
-const activeMessages = Array.from({ length: RUNTIME_EXCHANGE_RETENTION.activeThreadMessages + 10 }, (_, index) =>
-  message(`active-${index}`, "thread-active", {
-    ts: `2026-05-25T00:${String(index).padStart(2, "0")}:00.000Z`,
-    from: index % 2 === 0 ? "user" : "codex-1",
-    kind: "reply",
-    body: `active message ${index}`,
-  }),
-);
-const latestActiveMessageId = `active-${RUNTIME_EXCHANGE_RETENTION.activeThreadMessages + 9}`;
-const closedHistoryExchange = baseExchange({
+function generatedClosedHistoryExchange(generator) {
+  const oldClosedThreads = Array.from({ length: generator.closedThreadCount }, (_, index) =>
+    thread(`thread-closed-${index}`, {
+      title: `Closed ${index}`,
+      status: "done",
+      createdAt: OLD,
+      updatedAt: `2026-05-01T00:${String(index).padStart(2, "0")}:00.000Z`,
+      taskId: `task-closed-${index}`,
+    }),
+  );
+  const activeMessages = Array.from({ length: generator.activeMessageCount }, (_, index) =>
+    message(`active-${index}`, "thread-active", {
+      ts: `2026-05-25T00:${String(index).padStart(2, "0")}:00.000Z`,
+      from: index % 2 === 0 ? "user" : "codex-1",
+      kind: "reply",
+      body: `active message ${index}`,
+    }),
+  );
+  const latestActiveMessageId = `active-${generator.activeMessageCount - 1}`;
+  return baseExchange({
     threads: [
       thread("thread-active", {
         title: "Active",
@@ -409,12 +410,19 @@ const closedHistoryExchange = baseExchange({
       { id: "attachment-pruned", path: "/pruned", messageId: "active-0", createdAt: OLD, updatedAt: OLD },
     ],
   });
-record("compacts closed exchange history while preserving active workflow state", "compactSummary", {
-  exchange: closedHistoryExchange,
+}
+const closedHistoryGenerator = {
+  closedThreadCount: RUNTIME_EXCHANGE_RETENTION.closedWorkflowThreads + 5,
+  activeMessageCount: RUNTIME_EXCHANGE_RETENTION.activeThreadMessages + 10,
+};
+const closedHistoryExchange = generatedClosedHistoryExchange(closedHistoryGenerator);
+record("compacts closed exchange history while preserving active workflow state", "compactGeneratedClosedHistorySummary", {
+  generator: { type: "closed-history", ...closedHistoryGenerator },
 }, compactSummary(compactRuntimeExchange(closedHistoryExchange)));
 
-function notificationExchange(prefix, tagged) {
-  const threads = Array.from({ length: RUNTIME_EXCHANGE_RETENTION.notificationThreads + 3 }, (_, index) =>
+function notificationExchange(generator) {
+  const { prefix, tagged, threadCount } = generator;
+  const threads = Array.from({ length: threadCount }, (_, index) =>
     thread(`${prefix}-${index}`, {
       title: `Notification ${index}`,
       kind: "conversation",
@@ -438,9 +446,15 @@ for (const [name, prefix, tagged] of [
   ["keeps only bounded latest notification threads and their latest messages", "notification", true],
   ["treats notification thread ids as notification threads even without tags", "notification-untagged", false],
 ]) {
-  const exchange = notificationExchange(prefix, tagged);
+  const generator = {
+    type: "notification-threads",
+    prefix,
+    tagged,
+    threadCount: RUNTIME_EXCHANGE_RETENTION.notificationThreads + 3,
+  };
+  const exchange = notificationExchange(generator);
   const report = compactRuntimeExchange(exchange);
-  record(name, "compactNotificationSummary", { exchange }, {
+  record(name, "compactGeneratedNotificationSummary", { generator }, {
     threadCount: report.retained.threads.length,
     messageCount: report.retained.messages.length,
     droppedFirstThread: !report.retained.threads.some((row) => row.id === `${prefix}-0`),

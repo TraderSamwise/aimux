@@ -49,6 +49,17 @@ const view = (scope, items = [item()]) => ({
   sublabel: scope === "global" ? "project-worktree" : scope === "worktree" ? "none" : "worktree",
 });
 
+const generatedBoundsItems = ({ itemCount, lineCount, lineWidth, seed }) =>
+  Array.from({ length: itemCount }, (_, index) =>
+    item(
+      `session-${index}`,
+      `@${index}`,
+      Array.from({ length: lineCount }, (__, line) => `${seed}:${index}:${line}:${"x".repeat(lineWidth)}`).join("\n"),
+    ),
+  );
+
+const generatedBoundsView = (params) => view("project", generatedBoundsItems(params));
+
 const normalize = (value) =>
   JSON.parse(
     JSON.stringify(value, (_key, nested) => {
@@ -100,6 +111,57 @@ const snapshot = (stateDir) => {
   };
 };
 
+const boundsSummary = (value, stateDir) => {
+  const path = join(stateDir, "expose-hot-snapshots.json");
+  const firstOutput = value?.items?.[0]?.previewSnapshot?.output ?? "";
+  return {
+    itemCount: value?.items?.length ?? 0,
+    firstPreviewLineCount: firstOutput ? firstOutput.split("\n").length : 0,
+    firstPreviewBytes: Buffer.byteLength(firstOutput, "utf8"),
+    firstPreviewEndsWithGeneratedTail: firstOutput.endsWith(`${"x".repeat(300)}`),
+    cacheExists: existsSync(path),
+    cacheMode: existsSync(path) ? (statSync(path).mode & 0o777).toString(8).padStart(3, "0") : null,
+    cacheContainsPrunedItem: existsSync(path) ? readFileSync(path, "utf8").includes("session-100") : false,
+  };
+};
+
+function generatedBoundsTrips(params) {
+  const root = mkdtempSync(join(tmpdir(), "aimux-expose-hot-snapshot-probe-"));
+  const stateDir = join(root, "state");
+  mkdirSync(stateDir);
+  hot.writeHotExposeScopeView(stateDir, { projectRoot: "/repo", scope: "project" }, generatedBoundsView(params));
+  const loaded = hot.readHotExposeScopeView(stateDir, { projectRoot: "/repo", scope: "project" });
+  const output = loaded?.items?.[0]?.previewSnapshot?.output ?? "";
+  const trips =
+    (loaded?.items?.length ?? 0) === 100 &&
+    params.itemCount > 100 &&
+    Buffer.byteLength(output, "utf8") === 16 * 1024;
+  rmSync(root, { recursive: true, force: true });
+  return trips;
+}
+
+function findSmallestBoundsGenerator() {
+  for (const itemCount of [100, 101]) {
+    for (const lineCount of [1, 2, 40, 80, 81]) {
+      let low = 1;
+      let high = 20 * 1024;
+      let best = null;
+      while (low <= high) {
+        const lineWidth = Math.floor((low + high) / 2);
+        const params = { itemCount, lineCount, lineWidth, seed: "bounds" };
+        if (generatedBoundsTrips(params)) {
+          best = lineWidth;
+          high = lineWidth - 1;
+        } else {
+          low = lineWidth + 1;
+        }
+      }
+      if (best !== null) return { itemCount, lineCount, lineWidth: best, seed: "bounds" };
+    }
+  }
+  throw new Error("could not find generated bounds input that trips item and preview limits");
+}
+
 const cases = [];
 function record(name, operations) {
   const root = mkdtempSync(join(tmpdir(), "aimux-expose-hot-snapshot-contract-"));
@@ -110,6 +172,17 @@ function record(name, operations) {
     if (op.type === "write") {
       hot.writeHotExposeScopeView(stateDir, op.key, op.view, toTsOptions(op.options));
       results.push({ type: op.type, snapshot: snapshot(stateDir) });
+    } else if (op.type === "writeGeneratedBounds") {
+      hot.writeHotExposeScopeView(stateDir, op.key, generatedBoundsView(op.generator), toTsOptions(op.options));
+      results.push({
+        type: op.type,
+        bounds: boundsSummary(hot.readHotExposeScopeView(stateDir, op.key), stateDir),
+      });
+    } else if (op.type === "readBounds") {
+      results.push({
+        type: op.type,
+        bounds: boundsSummary(hot.readHotExposeScopeView(stateDir, op.key), stateDir),
+      });
     } else if (op.type === "read") {
       results.push({
         type: op.type,
@@ -225,22 +298,14 @@ record("skips writes behind a live write lock without blocking", [
   { type: "write", key: { projectRoot: "/repo", scope: "project" }, view: view("project") },
   { type: "read", key: { projectRoot: "/repo", scope: "project" } },
 ]);
+const boundsGenerator = findSmallestBoundsGenerator();
 record("bounds cached preview output and item count", [
   {
-    type: "write",
+    type: "writeGeneratedBounds",
     key: { projectRoot: "/repo", scope: "project" },
-    view: view(
-      "project",
-      Array.from({ length: 120 }, (_, index) =>
-        item(
-          `session-${index}`,
-          `@${index}`,
-          Array.from({ length: 120 }, (__, line) => `${line}:${"x".repeat(300)}`).join("\n"),
-        ),
-      ),
-    ),
+    generator: boundsGenerator,
   },
-  { type: "read", key: { projectRoot: "/repo", scope: "project" } },
+  { type: "readBounds", key: { projectRoot: "/repo", scope: "project" } },
 ]);
 record("ignores cached items that are missing target or metadata shape", [
   {
