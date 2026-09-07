@@ -1,0 +1,270 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/dashboard-control.ts",
+  "generatedBy": "scripts/capture-dashboard-control-project-service-request-contract.mjs",
+  "description": "Dashboard-control project-service request recovery, endpoint health caching, and request shape captured by running TypeScript against isolated loopback servers.",
+  "cases": [
+    {
+      "id": "dashboard-control-project-service-request-001",
+      "name": "GET validates endpoint once and reuses health cache",
+      "source": "src/multiplexer/dashboard-control.ts",
+      "api": "getFromProjectService",
+      "input": {
+        "api": "getFromProjectService",
+        "projectName": "cache",
+        "path": "/desktop-state",
+        "repeat": 2,
+        "servers": [
+          [
+            { "status": 200, "json": "healthy" },
+            { "status": 200, "json": { "ok": true, "value": 1 } },
+            { "status": 200, "json": { "ok": true, "value": 2 } }
+          ]
+        ]
+      },
+      "output": {
+        "result": [
+          { "ok": true, "value": { "ok": true, "value": 1 } },
+          { "ok": true, "value": { "ok": true, "value": 2 } }
+        ],
+        "requests": [
+          { "method": "GET", "url": "/health", "headers": { "accept": "application/json" }, "body": null },
+          { "method": "GET", "url": "/desktop-state", "headers": { "accept": "application/json" }, "body": null },
+          { "method": "GET", "url": "/desktop-state", "headers": { "accept": "application/json" }, "body": null }
+        ],
+        "coreCalls": [],
+        "endpointHealth": { "key": "127.0.0.1:<PORT:0>:2:<PROJECT_STATE>", "checkedAt": 1700000000000 },
+        "endpointFileExists": true
+      },
+      "inputSha256": "389e223df382f92f59c6dc77341527275500b42ed8eb7b012dc53ff281b790a7"
+    },
+    {
+      "id": "dashboard-control-project-service-request-002",
+      "name": "POST sends JSON body after health verification",
+      "source": "src/multiplexer/dashboard-control.ts",
+      "api": "postToProjectService",
+      "input": {
+        "api": "postToProjectService",
+        "projectName": "post",
+        "path": "/agents/resume",
+        "body": { "sessionId": "claude-1" },
+        "servers": [
+          [
+            { "status": 200, "json": "healthy" },
+            { "status": 200, "json": { "ok": true, "resumed": true } }
+          ]
+        ]
+      },
+      "output": {
+        "result": { "ok": true, "value": { "ok": true, "resumed": true } },
+        "requests": [
+          { "method": "GET", "url": "/health", "headers": { "accept": "application/json" }, "body": null },
+          {
+            "method": "POST",
+            "url": "/agents/resume",
+            "headers": { "accept": "application/json", "content-type": "application/json" },
+            "body": { "sessionId": "claude-1" }
+          }
+        ],
+        "coreCalls": [],
+        "endpointHealth": { "key": "127.0.0.1:<PORT:0>:2:<PROJECT_STATE>", "checkedAt": 1700000000000 },
+        "endpointFileExists": true
+      },
+      "inputSha256": "07637e213f6a6f3e26af163c3592ce4850ef1875c1f3b1778b4f88e9741b0e00"
+    },
+    {
+      "id": "dashboard-control-project-service-request-003",
+      "name": "stale build endpoint is removed and recovered before mutation",
+      "source": "src/multiplexer/dashboard-control.ts",
+      "api": "postToProjectService",
+      "input": {
+        "api": "postToProjectService",
+        "projectName": "stale-build",
+        "path": "/agents/resume",
+        "body": { "sessionId": "claude-1" },
+        "servers": [
+          [{ "status": 200, "json": "stale-build" }],
+          [
+            { "status": 200, "json": "healthy" },
+            { "status": 200, "json": { "ok": true, "resumed": true } }
+          ]
+        ],
+        "recoveryEndpointIndexes": [1]
+      },
+      "output": {
+        "result": { "ok": true, "value": { "ok": true, "resumed": true } },
+        "requests": [
+          { "method": "GET", "url": "/health", "headers": { "accept": "application/json" }, "body": null },
+          { "method": "GET", "url": "/health", "headers": { "accept": "application/json" }, "body": null },
+          {
+            "method": "POST",
+            "url": "/agents/resume",
+            "headers": { "accept": "application/json", "content-type": "application/json" },
+            "body": { "sessionId": "claude-1" }
+          }
+        ],
+        "coreCalls": [
+          { "command": "core.project.stop", "payload": { "projectRoot": "<PROJECT_ROOT>" } },
+          { "command": "core.project.ensure", "payload": { "projectRoot": "<PROJECT_ROOT>" } }
+        ],
+        "endpointHealth": { "key": "127.0.0.1:<PORT:1>:2:<PROJECT_STATE>", "checkedAt": 1700000000000 },
+        "endpointFileExists": true
+      },
+      "inputSha256": "9fc760e09994f1e49b1084e26221c224f94392fced9cda155f079fa799e82b41"
+    },
+    {
+      "id": "dashboard-control-project-service-request-004",
+      "name": "retryable route status restarts project service before retry",
+      "source": "src/multiplexer/dashboard-control.ts",
+      "api": "getFromProjectService",
+      "input": {
+        "api": "getFromProjectService",
+        "projectName": "retryable-status",
+        "path": "/desktop-state",
+        "servers": [
+          [
+            { "status": 200, "json": "healthy" },
+            { "status": 503, "json": { "ok": false, "error": "starting" } }
+          ],
+          [
+            { "status": 200, "json": "healthy" },
+            { "status": 200, "json": { "ok": true, "value": 6 } }
+          ]
+        ],
+        "recoveryEndpointIndexes": [1]
+      },
+      "output": {
+        "result": { "ok": true, "value": { "ok": true, "value": 6 } },
+        "requests": [
+          { "method": "GET", "url": "/health", "headers": { "accept": "application/json" }, "body": null },
+          { "method": "GET", "url": "/desktop-state", "headers": { "accept": "application/json" }, "body": null },
+          { "method": "GET", "url": "/health", "headers": { "accept": "application/json" }, "body": null },
+          { "method": "GET", "url": "/desktop-state", "headers": { "accept": "application/json" }, "body": null }
+        ],
+        "coreCalls": [
+          { "command": "core.project.stop", "payload": { "projectRoot": "<PROJECT_ROOT>" } },
+          { "command": "core.project.ensure", "payload": { "projectRoot": "<PROJECT_ROOT>" } }
+        ],
+        "endpointHealth": { "key": "127.0.0.1:<PORT:1>:2:<PROJECT_STATE>", "checkedAt": 1700000000000 },
+        "endpointFileExists": true
+      },
+      "inputSha256": "56bcf770830a3b92136e5225192dcf49e9f003176d08c7a4295ffe8a5bee9a04"
+    },
+    {
+      "id": "dashboard-control-project-service-request-005",
+      "name": "semantic route failure is not marked recoverable",
+      "source": "src/multiplexer/dashboard-control.ts",
+      "api": "postToProjectService",
+      "input": {
+        "api": "postToProjectService",
+        "projectName": "semantic-failure",
+        "path": "/worktrees/graveyard",
+        "body": { "path": "/repo/.aimux/worktrees/demo" },
+        "servers": [
+          [
+            { "status": 200, "json": "healthy" },
+            { "status": 500, "json": { "ok": false, "error": "agent is attached" } }
+          ]
+        ]
+      },
+      "output": {
+        "result": {
+          "ok": false,
+          "error": {
+            "name": "DashboardProjectServiceHttpError",
+            "message": "agent is attached",
+            "status": 500,
+            "response": { "ok": false, "error": "agent is attached" },
+            "tuiApiRecoverable": false
+          }
+        },
+        "requests": [
+          { "method": "GET", "url": "/health", "headers": { "accept": "application/json" }, "body": null },
+          {
+            "method": "POST",
+            "url": "/worktrees/graveyard",
+            "headers": { "accept": "application/json", "content-type": "application/json" },
+            "body": { "path": "/repo/.aimux/worktrees/demo" }
+          }
+        ],
+        "coreCalls": [],
+        "endpointHealth": { "key": "127.0.0.1:<PORT:0>:2:<PROJECT_STATE>", "checkedAt": 1700000000000 },
+        "endpointFileExists": true
+      },
+      "inputSha256": "5551a08c40e39bda56bbd9056eef3e5e868c55820a31d9c350e6a615556aac9e"
+    },
+    {
+      "id": "dashboard-control-project-service-request-006",
+      "name": "cached endpoint health skips health probe",
+      "source": "src/multiplexer/dashboard-control.ts",
+      "api": "getFromProjectService",
+      "input": {
+        "api": "getFromProjectService",
+        "projectName": "cached-skip",
+        "path": "/desktop-state",
+        "cachedEndpointHealth": { "serverIndex": 0, "pid": 2 },
+        "servers": [[{ "status": 200, "json": { "ok": true, "cached": true } }]]
+      },
+      "output": {
+        "result": { "ok": true, "value": { "ok": true, "cached": true } },
+        "requests": [
+          { "method": "GET", "url": "/desktop-state", "headers": { "accept": "application/json" }, "body": null }
+        ],
+        "coreCalls": [],
+        "endpointHealth": { "key": "127.0.0.1:<PORT:0>:2:<PROJECT_STATE>", "checkedAt": 1700000000000 },
+        "endpointFileExists": true
+      },
+      "inputSha256": "2bb0a7623bdce299a1d6717a18e90446f90485b777d8d1c215cd73e6092b4874"
+    },
+    {
+      "id": "dashboard-control-project-service-request-007",
+      "name": "stream endpoint resolution repairs stale project state dir",
+      "source": "src/multiplexer/dashboard-control.ts",
+      "api": "resolveCurrentProjectServiceEndpointForDashboard",
+      "input": {
+        "api": "resolveCurrentProjectServiceEndpointForDashboard",
+        "projectName": "resolve-stale",
+        "timeoutMs": 500,
+        "servers": [[{ "status": 200, "json": "other-project" }], [{ "status": 200, "json": "healthy" }]],
+        "recoveryEndpointIndexes": [1]
+      },
+      "output": {
+        "result": {
+          "ok": true,
+          "value": { "host": "127.0.0.1", "port": "<PORT:1>", "pid": 2, "updatedAt": "2026-06-21T00:00:00.000Z" }
+        },
+        "requests": [
+          { "method": "GET", "url": "/health", "headers": { "accept": "application/json" }, "body": null },
+          { "method": "GET", "url": "/health", "headers": { "accept": "application/json" }, "body": null }
+        ],
+        "coreCalls": [
+          { "command": "core.project.stop", "payload": { "projectRoot": "<PROJECT_ROOT>" } },
+          { "command": "core.project.ensure", "payload": { "projectRoot": "<PROJECT_ROOT>" } }
+        ],
+        "endpointHealth": { "key": "127.0.0.1:<PORT:1>:2:<PROJECT_STATE>", "checkedAt": 1700000000000 },
+        "endpointFileExists": true
+      },
+      "inputSha256": "a23c8a543660f945d56ddea8d3976b30303fa4411ec35519ab998651b207703b"
+    },
+    {
+      "id": "dashboard-control-project-service-request-008",
+      "name": "explicit invalidation clears endpoint health cache",
+      "source": "src/multiplexer/dashboard-control.ts",
+      "api": "invalidateDashboardProjectServiceEndpointHealth",
+      "input": {
+        "api": "invalidateDashboardProjectServiceEndpointHealth",
+        "projectName": "invalidate",
+        "cachedEndpointHealth": { "serverIndex": 0, "pid": 2 },
+        "servers": [[]]
+      },
+      "output": {
+        "result": { "ok": true, "value": null },
+        "requests": [],
+        "coreCalls": [],
+        "endpointHealth": null,
+        "endpointFileExists": true
+      },
+      "inputSha256": "aaad18f942f88f5756ca53daa99830e7ed30e224280ce14958262a9c4ab8bb0b"
+    }
+  ]
+}

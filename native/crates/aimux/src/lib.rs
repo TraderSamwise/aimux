@@ -50,6 +50,7 @@ pub mod dashboard_control_helpers_contract;
 pub mod dashboard_control_overlay_output_contract;
 pub mod dashboard_control_orchestration_contract;
 pub mod dashboard_control_overlays_contract;
+pub mod dashboard_control_project_service_request_contract;
 pub mod dashboard_control_runtime_guard_keys_contract;
 pub mod dashboard_control_worktree_sessions_contract;
 pub mod dashboard_controller;
