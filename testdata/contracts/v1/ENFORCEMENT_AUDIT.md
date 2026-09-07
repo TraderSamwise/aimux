@@ -11,7 +11,7 @@ Statuses:
 - `STATIC`: non-empty active suite observed without dynamic mutation.
 
 Summary: 223 suites, 269 suite/corpus bindings, 3410 cases.
-Binding statuses: PROVEN-FAILS 263, VACUOUS 0, CHECKLIST 6, ERROR 0, STATIC 0.
+Binding statuses: PROVEN-FAILS 269, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
 
 | Suite | Status | Corpus | Cases | Detail |
 | --- | --- | --- | ---: | --- |
@@ -70,9 +70,9 @@ Binding statuses: PROVEN-FAILS 263, VACUOUS 0, CHECKLIST 6, ERROR 0, STATIC 0.
 | `fixture_cli_parsing` | PROVEN-FAILS | `testdata/contracts/v1/cli/parsing.json` | 14 | mutated fixture output failed owning Rust suite |
 | `fixture_cli_project_service` | PROVEN-FAILS | `testdata/contracts/v1/cli/project-service.json` | 5 | mutated fixture output failed owning Rust suite |
 | `fixture_cli_team` | PROVEN-FAILS | `testdata/contracts/v1/cli/team.json` | 3 | mutated fixture output failed owning Rust suite |
-| `fixture_cli_wrappers` | CHECKLIST | `testdata/contracts/v1/cli/metadata-command.json` | 4 | mutated fixture still passed because owning consumer is ignored or only partially active |
-| `fixture_cli_wrappers` | CHECKLIST | `testdata/contracts/v1/cli/logs-command.json` | 4 | mutated fixture still passed because owning consumer is ignored or only partially active |
-| `fixture_cli_wrappers` | CHECKLIST | `testdata/contracts/v1/cli/work-outline-command.json` | 4 | mutated fixture still passed because owning consumer is ignored or only partially active |
+| `fixture_cli_wrappers` | PROVEN-FAILS | `testdata/contracts/v1/cli/metadata-command.json` | 4 | mutated fixture output failed owning Rust suite |
+| `fixture_cli_wrappers` | PROVEN-FAILS | `testdata/contracts/v1/cli/logs-command.json` | 4 | mutated fixture output failed owning Rust suite |
+| `fixture_cli_wrappers` | PROVEN-FAILS | `testdata/contracts/v1/cli/work-outline-command.json` | 4 | mutated fixture output failed owning Rust suite |
 | `fixture_composer_protocol` | PROVEN-FAILS | `testdata/contracts/v1/composer/protocol.json` | 29 | mutated fixture output failed owning Rust suite |
 | `fixture_config_behavior` | PROVEN-FAILS | `testdata/contracts/v1/config/behavior.json` | 28 | mutated fixture output failed owning Rust suite |
 | `fixture_config_behavior` | PROVEN-FAILS | `testdata/contracts/v1/install-config/config.json` | 27 | mutated fixture output failed owning Rust suite |
@@ -80,7 +80,7 @@ Binding statuses: PROVEN-FAILS 263, VACUOUS 0, CHECKLIST 6, ERROR 0, STATIC 0.
 | `fixture_coordination_model` | PROVEN-FAILS | `testdata/contracts/v1/coordination/model.json` | 22 | mutated fixture output failed owning Rust suite |
 | `fixture_coordination_mutations` | PROVEN-FAILS | `testdata/contracts/v1/coordination/mutations.json` | 6 | mutated fixture output failed owning Rust suite |
 | `fixture_core_command_behavior` | PROVEN-FAILS | `testdata/contracts/v1/core-command/behavior.json` | 6 | mutated fixture output failed owning Rust suite |
-| `fixture_core_command_ownership` | CHECKLIST | `testdata/contracts/v1/core-command/ownership.json` | 3 | mutated fixture still passed because owning consumer is ignored or only partially active |
+| `fixture_core_command_ownership` | PROVEN-FAILS | `testdata/contracts/v1/core-command/ownership.json` | 3 | mutated fixture output failed owning Rust suite |
 | `fixture_core_command_transport` | PROVEN-FAILS | `testdata/contracts/v1/transport/core-command.json` | 3 | mutated fixture output failed owning Rust suite |
 | `fixture_daemon_projects_route` | PROVEN-FAILS | `testdata/contracts/v1/daemon/projects-route-counts.json` | 3 | mutated fixture output failed owning Rust suite |
 | `fixture_daemon_state` | PROVEN-FAILS | `testdata/contracts/v1/daemon-state/state.json` | 16 | mutated fixture output failed owning Rust suite |
@@ -200,7 +200,7 @@ Binding statuses: PROVEN-FAILS 263, VACUOUS 0, CHECKLIST 6, ERROR 0, STATIC 0.
 | `fixture_remote_access` | PROVEN-FAILS | `testdata/contracts/v1/remote-access/access.json` | 18 | mutated fixture output failed owning Rust suite |
 | `fixture_repair_events` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/repair-events.json` | 1 | mutated fixture output failed owning Rust suite |
 | `fixture_request_errors` | PROVEN-FAILS | `testdata/contracts/v1/request-errors/classification.json` | 18 | mutated fixture output failed owning Rust suite |
-| `fixture_rich_text` | CHECKLIST | `testdata/contracts/v1/terminal/rich-text.json` | 6 | mutated fixture still passed because owning consumer is ignored or only partially active |
+| `fixture_rich_text` | PROVEN-FAILS | `testdata/contracts/v1/terminal/rich-text.json` | 6 | mutated fixture output failed owning Rust suite |
 | `fixture_route_share` | PROVEN-FAILS | `testdata/contracts/v1/transport/route-share.json` | 9 | mutated fixture output failed owning Rust suite |
 | `fixture_runtime_coherence` | PROVEN-FAILS | `testdata/contracts/v1/runtime-coherence/report.json` | 15 | mutated fixture output failed owning Rust suite |
 | `fixture_runtime_exchange_import` | PROVEN-FAILS | `testdata/contracts/v1/runtime-exchange/import.json` | 3 | mutated fixture output failed owning Rust suite |
@@ -238,7 +238,7 @@ Binding statuses: PROVEN-FAILS 263, VACUOUS 0, CHECKLIST 6, ERROR 0, STATIC 0.
 | `fixture_tmux_attach_terminal_guard` | PROVEN-FAILS | `testdata/contracts/v1/tmux/attach-terminal-guard.json` | 3 | mutated fixture output failed owning Rust suite |
 | `fixture_tmux_client_dashboard_slot` | PROVEN-FAILS | `testdata/contracts/v1/tmux/client-dashboard-slot.json` | 10 | mutated fixture output failed owning Rust suite |
 | `fixture_tmux_control_script` | PROVEN-FAILS | `testdata/contracts/v1/tmux/control-script.json` | 55 | mutated fixture output failed owning Rust suite |
-| `fixture_tmux_doctor_contract` | CHECKLIST | `testdata/contracts/v1/tmux/doctor.json` | 4 | mutated fixture still passed because owning consumer is ignored or only partially active |
+| `fixture_tmux_doctor_contract` | PROVEN-FAILS | `testdata/contracts/v1/tmux/doctor.json` | 4 | mutated fixture output failed owning Rust suite |
 | `fixture_tmux_exec_metrics` | PROVEN-FAILS | `testdata/contracts/v1/tmux/exec-metrics.json` | 6 | mutated fixture output failed owning Rust suite |
 | `fixture_tmux_expose_layout` | PROVEN-FAILS | `testdata/contracts/v1/tmux/expose-layout.json` | 24 | mutated fixture output failed owning Rust suite |
 | `fixture_tmux_expose_model` | PROVEN-FAILS | `testdata/contracts/v1/tmux/expose-model.json` | 7 | mutated fixture output failed owning Rust suite |
