@@ -21,6 +21,9 @@ pub fn run_multiplexer_worktrees_settlement_contract_case(input: &Value) -> Valu
     if let Some(after) = input.get("afterInvoke") {
         host.apply_after_invoke(after);
     }
+    for action in array_field(input, "afterInvokeActions").unwrap_or_default() {
+        host.apply_after_invoke_action(&action);
+    }
     host.flush(int_field(input, "flushTurns").max(0));
     host.snapshot()
 }
@@ -298,9 +301,16 @@ impl SettlementHost {
                     self.call("renderDashboard", vec![]);
                     return;
                 }
+                if !self.has_rendered_real_worktree(&path) {
+                    if self.mode == "dashboard" && self.dashboard_input_epoch == lifecycle_epoch {
+                        self.reapply_pending();
+                        self.call("renderDashboard", vec![]);
+                    }
+                    return;
+                }
                 self.clear_worktree_action_if_token(&path, token);
                 self.refresh_dashboard_model();
-                if self.dashboard_input_epoch == lifecycle_epoch {
+                if self.mode == "dashboard" && self.dashboard_input_epoch == lifecycle_epoch {
                     set_field(
                         &mut self.dashboard_state,
                         "focusedWorktreePath",
@@ -311,7 +321,9 @@ impl SettlementHost {
                 }
             }
             AsyncStatus::PostFailed(message) => {
-                self.clear_worktree_action_if_token(&path, token);
+                if !self.clear_worktree_action_if_token(&path, token) {
+                    return;
+                }
                 self.refresh_dashboard_model();
                 if self.dashboard_input_epoch != lifecycle_epoch {
                     return;
@@ -382,6 +394,37 @@ impl SettlementHost {
         if let Some(epoch) = after.get("dashboardInputEpoch").and_then(Value::as_i64) {
             self.dashboard_input_epoch = epoch;
         }
+        if let Some(mode) = after.get("mode").and_then(Value::as_str) {
+            self.mode = mode.to_owned();
+        }
+    }
+
+    fn apply_after_invoke_action(&mut self, action: &Value) {
+        match str_field(action, "type").as_str() {
+            "setHostField" => match str_field(action, "field").as_str() {
+                "mode" => self.mode = str_field(action, "value"),
+                "dashboardInputEpoch" => {
+                    self.dashboard_input_epoch = action
+                        .get("value")
+                        .and_then(Value::as_i64)
+                        .unwrap_or_default();
+                }
+                field => panic!("unknown worktree afterInvoke host field: {field}"),
+            },
+            "setFocusedWorktreePath" => set_field(
+                &mut self.dashboard_state,
+                "focusedWorktreePath",
+                json!(str_field(action, "path")),
+            ),
+            "setPendingWorktreeAction" => {
+                self.set_worktree_action(
+                    &str_field(action, "path"),
+                    &str_field(action, "value"),
+                    json!({}),
+                );
+            }
+            kind => panic!("unknown worktree afterInvoke action: {kind}"),
+        }
     }
 
     fn refresh_dashboard_model(&mut self) {
@@ -405,9 +448,13 @@ impl SettlementHost {
             "dashboardPendingActionsSetWorktreeAction",
             vec![json!(path), json!(kind), opts.clone()],
         );
-        let seed = opts.get("worktreeSeed").cloned();
+        let key = format!("worktree:{path}");
+        let seed = opts
+            .get("worktreeSeed")
+            .cloned()
+            .or_else(|| self.pending.get(&key).and_then(|entry| entry.seed.clone()));
         self.pending.insert(
-            format!("worktree:{path}"),
+            key,
             PendingEntry {
                 value: Some(kind.to_owned()),
                 token: Some(self.next_token),
@@ -417,7 +464,7 @@ impl SettlementHost {
         self.next_token
     }
 
-    fn clear_worktree_action_if_token(&mut self, path: &str, token: i64) {
+    fn clear_worktree_action_if_token(&mut self, path: &str, token: i64) -> bool {
         self.call(
             "dashboardPendingActionsClearWorktreeActionIfToken",
             vec![json!(path), json!(token)],
@@ -428,8 +475,10 @@ impl SettlementHost {
             entry.value = None;
             entry.token = None;
             entry.seed = None;
+            self.reapply_pending();
+            return true;
         }
-        self.reapply_pending();
+        false
     }
 
     fn reapply_pending(&mut self) {
@@ -498,6 +547,18 @@ impl SettlementHost {
                 str_field(failure, "targetKind") == "worktree"
                     && str_field(failure, "operation") == "create"
                     && str_field(failure, "worktreePath") == path
+            })
+    }
+
+    fn has_rendered_real_worktree(&self, path: &str) -> bool {
+        self.dashboard_raw_worktree_groups_cache
+            .iter()
+            .any(|group| {
+                str_field(group, "path") == path
+                    && !group
+                        .get("pending")
+                        .and_then(Value::as_bool)
+                        .unwrap_or_default()
             })
     }
 

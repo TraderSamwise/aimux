@@ -271,6 +271,11 @@ async function run(input) {
       throw new Error(`unknown api ${actualInput.api}`);
   }
   if (actualInput.afterInvoke) Object.assign(host, clone(actualInput.afterInvoke));
+  for (const action of actualInput.afterInvokeActions ?? []) {
+    if (action.type === "setHostField") host[action.field] = clone(action.value);
+    if (action.type === "setFocusedWorktreePath") host.dashboardState.focusedWorktreePath = action.path;
+    if (action.type === "setPendingWorktreeAction") pending.setWorktreeAction(action.path, action.value);
+  }
   await flushAsyncWork(actualInput.flushTurns ?? 100);
   return normalizeRepo(snapshot(host, pending, calls));
 }
@@ -317,6 +322,32 @@ const casesInput = [
     },
   },
   {
+    name: "clears pending create state without stale UI after leaving the dashboard",
+    api: "handleWorktreeInputKey",
+    data: "\r",
+    afterInvokeActions: [
+      { type: "setHostField", field: "mode", value: "session" },
+      { type: "setHostField", field: "dashboardInputEpoch", value: 1 },
+    ],
+    host: {
+      worktreeInputBuffer: "demo",
+      refreshSteps: [{ result: true, worktrees: [realWorktree] }],
+    },
+  },
+  {
+    name: "continues worktree create settlement without stale UI after later dashboard input",
+    api: "handleWorktreeInputKey",
+    data: "\r",
+    afterInvokeActions: [
+      { type: "setFocusedWorktreePath", path: "/repo/.aimux/worktrees/other" },
+      { type: "setHostField", field: "dashboardInputEpoch", value: 1 },
+    ],
+    host: {
+      worktreeInputBuffer: "demo",
+      refreshSteps: [{ result: true, worktrees: [] }, { result: true, worktrees: [realWorktree] }],
+    },
+  },
+  {
     name: "keeps service-projected failed worktree creates visible",
     api: "handleWorktreeInputKey",
     data: "\r",
@@ -324,6 +355,46 @@ const casesInput = [
       worktreeInputBuffer: "demo",
       postSteps: [{ type: "reject", message: "branch already exists", props: { status: 422, tuiApiRecoverable: false } }],
       refreshSteps: [{ result: true, worktrees: [failedWorktree] }],
+    },
+  },
+  {
+    name: "does not let stale worktree create failures clear a newer same-path pending action",
+    api: "handleWorktreeInputKey",
+    data: "\r",
+    afterInvokeActions: [
+      { type: "setPendingWorktreeAction", path: "/repo/.aimux/worktrees/demo", value: "creating" },
+    ],
+    host: {
+      worktreeInputBuffer: "demo",
+      postSteps: [{ type: "reject", message: "branch already exists", props: { status: 422, tuiApiRecoverable: false } }],
+      refreshSteps: [{ result: true, worktrees: [] }],
+    },
+  },
+  {
+    name: "keeps immediate unprojected worktree create errors transient",
+    api: "handleWorktreeInputKey",
+    data: "\r",
+    host: {
+      dashboardModelServiceRefreshError: { message: "offline" },
+      worktreeInputBuffer: "demo",
+      postSteps: [{ type: "reject", message: "branch already exists", props: { status: 422, tuiApiRecoverable: false } }],
+      refreshSteps: [{ result: true, worktrees: [] }],
+    },
+  },
+  {
+    name: "surfaces unsupported worktree creates without extended reconciliation",
+    api: "handleWorktreeInputKey",
+    data: "\r",
+    host: {
+      worktreeInputBuffer: "demo",
+      postSteps: [
+        {
+          type: "reject",
+          message: "worktree create not supported by this service",
+          props: { status: 501, tuiApiRecoverable: true },
+        },
+      ],
+      refreshSteps: [{ result: true, worktrees: [] }],
     },
   },
   {
@@ -354,6 +425,36 @@ const casesInput = [
         },
       ],
       refreshSteps: [{ result: true, worktrees: [realWorktree] }],
+    },
+  },
+  {
+    name: "keeps project-service worktree creates pending until the worktree is rendered as real",
+    api: "handleWorktreeInputKey",
+    data: "\r",
+    host: {
+      worktreeInputBuffer: "demo",
+      refreshSteps: [
+        {
+          result: true,
+          worktrees: [{ ...realWorktree, branch: "(creating)", pending: true, pendingAction: "creating" }],
+        },
+        { result: true, worktrees: [realWorktree] },
+      ],
+    },
+  },
+  {
+    name: "accepts a rendered worktree create when the next forced snapshot is unavailable",
+    api: "handleWorktreeInputKey",
+    data: "\r",
+    host: {
+      worktreeInputBuffer: "demo",
+      refreshSteps: [
+        {
+          result: true,
+          worktrees: [{ ...realWorktree, branch: "(creating)", pending: true, pendingAction: "creating" }],
+        },
+        { result: false, worktrees: [realWorktree] },
+      ],
     },
   },
   {
