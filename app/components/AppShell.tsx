@@ -36,8 +36,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const insets = useSafeAreaInsets();
   const { isDesktopNative, uiScale } = useRuntimeTuning();
   const usesPersistentSidebar = Platform.OS === "web" && width >= 1024;
-  const isTablet = width >= 640 && !usesPersistentSidebar;
-  const isMobile = width < 640;
+  const usesDrawerSidebar = !usesPersistentSidebar;
 
   const [sidebarOpen, setSidebarOpen] = useAtom(sidebarOpenAtom);
   const setDesktopAppZoom = useSetAtom(desktopAppZoomAtom);
@@ -187,10 +186,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         ) : null}
         <View className="flex-1 flex-row">
           {usesPersistentSidebar ? desktopSidebarSurface : null}
-          {isTablet && sidebarOpen ? desktopSidebarSurface : null}
           <View className="flex-1">{children}</View>
 
-          {isMobile && sidebarOpen ? (
+          {usesDrawerSidebar && sidebarOpen ? (
             <Pressable
               onPress={() => setSidebarOpen(false)}
               style={[
@@ -199,7 +197,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               ]}
             />
           ) : null}
-          {isMobile ? (
+          {usesDrawerSidebar ? (
             <RNAnimated.View
               pointerEvents={sidebarOpen ? "auto" : "none"}
               style={{
