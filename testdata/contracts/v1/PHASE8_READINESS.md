@@ -1,18 +1,21 @@
 # Phase 8 Readiness
 
-Audit point: `9bd65d2429bd04d1a4856d566b9c43a0d9ce6c44`
+Audit point: post-cut `f8c0d3cd`.
 
 Question: what actually breaks if the TypeScript hot path is deleted today?
 
-Answer: the checklist gate is clear for captured behavior: all 322 suite/corpus bindings are mutation-proven `PROVEN-FAILS`, with 0 checklist, 0 vacuous, and 0 error bindings. A local-profile release asset built from clean `HEAD` at `08f2476b` also ran from an installed shim with `dist` withheld and `node` absent from `PATH` for the installed CLI, daemon, project-service, dashboard, tmux statusline/control internal paths, and hook route. Sam has now chosen the plugin strategy: suspend the public/user JS plugin API for phase 8 and port the two built-in plugins to native Rust as real internal plugins. The built-ins now pass the recorded TypeScript corpora through an internal serializable plugin API, and project-service startup/diagnostics wiring landed in `cc99cba7` so production startup reports native plugin statuses through diagnostics. Arbitrary user JS plugin execution remains intentionally unsupported, not silently replaced.
+Answer: the checklist gate is clear for behavior captured before deletion: all 325 suite/corpus bindings are mutation-proven `PROVEN-FAILS`, with 0 checklist, 0 vacuous, and 0 error bindings. A local-profile release asset built from clean `HEAD` at `08f2476b` also ran from an installed shim with `dist` withheld and `node` absent from `PATH` for the installed CLI, daemon, project-service, dashboard, tmux statusline/control internal paths, and hook route. Sam has now chosen the plugin strategy: suspend the public/user JS plugin API for phase 8 and port the two built-in plugins to native Rust as real internal plugins. The built-ins now pass the recorded TypeScript corpora through an internal serializable plugin API, and project-service startup/diagnostics wiring landed in `cc99cba7` so production startup reports native plugin statuses through diagnostics. Arbitrary user JS plugin execution remains intentionally unsupported, not silently replaced.
+
+Phase 8 deletion landed in two commits: `a9220736` deleted the retired source graph, and `f8c0d3cd` deleted the TypeScript capture harness. Together they removed 803 files and 260,512 lines from this worktree.
 
 ## Evidence Baseline
 
-- Enforcement inventory: 322 suite/corpus bindings under `testdata/contracts/v1`.
+- Enforcement inventory: 325 suite/corpus bindings under `testdata/contracts/v1`.
 - Enforcement audit: `testdata/contracts/v1/ENFORCEMENT_AUDIT.md`.
+- The enforcement audit remains runnable after TypeScript deletion: `node scripts/audit-fixture-enforcement.mjs --write-report`.
 - Live residual suite: `scripts/phase8-live-residuals.py`, reported in `testdata/contracts/v1/PHASE8_LIVE_RESIDUALS.md`.
-- Current binding status: 322 `PROVEN-FAILS`, 0 `CHECKLIST`, 0 `VACUOUS`, 0 `ERROR`, 0 `STATIC`.
-- Current binding case count: 3,928 suite/corpus cases, all mutation-proven.
+- Current binding status: 325 `PROVEN-FAILS`, 0 `CHECKLIST`, 0 `VACUOUS`, 0 `ERROR`, 0 `STATIC`.
+- Current binding case count: 4,048 suite/corpus cases, all mutation-proven.
 - Current backlog: `testdata/contracts/v1/UNIMPLEMENTED.md` lists 0 ignored/checklist corpus entries.
 - Coverage definition from `UNIMPLEMENTED.md`: 245 `src/**/*.test.ts` modules, 245 covered by behavior-level corpora, 0 uncovered. This is test-module coverage, not proof that every production TS source file is safe to delete independently.
 
@@ -73,7 +76,7 @@ Results:
 
 ## Deletion List
 
-Safe means: the behavior is captured in a real TypeScript-generated corpus and the owning Rust suite is mutation-proven `PROVEN-FAILS`. It does not mean the file can be removed before the TS build graph and imports are deleted in the same phase-8 change.
+Safe means: the behavior was captured in a real TypeScript-generated corpus before deletion, and the owning Rust suite is mutation-proven `PROVEN-FAILS`. It does not mean the file could be removed before the TS build graph and imports were deleted in the same phase-8 change.
 
 Provably safe to remove from the installed hot path now:
 
@@ -91,11 +94,11 @@ Not safe to delete as implemented behavior today:
 | --- | --- |
 | Arbitrary user JS plugin execution | Sam ruled this public API suspended for phase 8. It is safe to delete only as an intentional feature suspension; Aimux must not imply that user JS plugins still run. |
 | `app/` TypeScript | Explicitly outside phase-8 deletion scope; deleting it breaks the Expo client. |
-| Build/capture/dev TypeScript paths | Capture scripts, Vitest, `yarn build`, source-checkout dev flows, and fixture regeneration intentionally use Node while TypeScript exists. |
+| Build/capture/dev TypeScript paths | The TypeScript capture harness and Vitest regeneration path were deliberately deleted in `f8c0d3cd`. The corpora are now historical artifacts in this worktree and cannot be regenerated here without restoring the deleted TypeScript. Build-time Node may still exist for non-hot-path development and app tooling. |
 
 Conditional/development-only deletion notes:
 
-- `src/main.ts`, `src/full/main.ts`, `src/launcher-bin.ts`, and source-checkout `dist/*` entrypoints are safe to remove from the installed hot path only after all callers use `bin/aimux` or native internal entrypoints. Source-checkout tests and dev scripts still assume a TS build exists.
+- `src/main.ts`, `src/full/main.ts`, `src/launcher-bin.ts`, and source-checkout `dist/*` entrypoints were removed from the installed hot path after all production callers moved to `bin/aimux` or native internal entrypoints.
 - `src/default-plugins/*.ts` behavior is captured and Rust-enforced by native built-ins. The old `.js` wrapper payloads are deletable only with the public/user plugin API suspension and after the routed project-service wiring patch lands.
 - `app/` TypeScript is outside the phase-8 deletion scope and should not be deleted.
 
@@ -134,7 +137,7 @@ Internal native plugin API surface:
 - Platform integrations: desktop notification delivery, browser opening, `python3` use in `tmux-open-hyperlink.sh`, macOS notifier helper packaging, and Linux `xdg-open` behavior are platform-dependent.
 - User plugin execution: arbitrary user JS plugin execution is suspended for phase 8, not proven replaceable by Rust.
 - Native plugin events: subscription registration exists, but real lifecycle/activity/attention event dispatch into plugins is not yet smoke-tested under load.
-- Source-checkout developer flow: installed runtime can be Node-free, but local capture/dev/test scripts still intentionally use Node and `dist` while TypeScript exists.
+- Source-checkout developer flow: installed runtime can be Node-free, but the TypeScript capture/Vitest regeneration path is deliberately gone. The committed corpora are historical artifacts and cannot be regenerated on this branch without restoring the deleted TypeScript.
 
 Smallest live suite covering these residuals:
 
@@ -152,5 +155,5 @@ Phase 8 is ready for the normal installed CLI, daemon, project-service, tmux run
 
 Minimum remaining work:
 
-1. Keep `app/` TypeScript and build/capture scripts out of the deletion set.
+1. Keep `app/` TypeScript; capture scripts were deleted as the deliberate point of no return.
 2. Keep the live smoke/stress coverage above for PTY/SSE/process-race residuals, because corpus mutation tests cannot prove those timing properties.
