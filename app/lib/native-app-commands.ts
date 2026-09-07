@@ -20,6 +20,7 @@ interface NativeCommandPayload {
 
 interface AimuxNativeCommandsModule {
   addListener: (eventName: string) => void;
+  getHardwareKeyboardConnected?: () => Promise<unknown>;
   removeListeners: (count: number) => void;
   setChatComposerFocused?: (focused: boolean) => void;
 }
@@ -46,6 +47,17 @@ export function setNativeChatComposerFocused(focused: boolean) {
   if (Platform.OS === "web") return;
   const module = NativeModules.AimuxNativeCommands as AimuxNativeCommandsModule | undefined;
   module?.setChatComposerFocused?.(focused);
+}
+
+export async function getNativeHardwareKeyboardConnected(): Promise<boolean> {
+  if (Platform.OS === "web") return false;
+  const module = NativeModules.AimuxNativeCommands as AimuxNativeCommandsModule | undefined;
+  if (!module?.getHardwareKeyboardConnected) return false;
+  try {
+    return (await module.getHardwareKeyboardConnected()) === true;
+  } catch {
+    return false;
+  }
 }
 
 export function isNativeAppCommand(command: string): command is NativeAppCommand {

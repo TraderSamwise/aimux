@@ -152,6 +152,7 @@ import { toChatMessages } from "@/lib/transcript-view";
 import { useRouteProject } from "@/lib/use-route-project";
 import { useRouteShare } from "@/lib/use-route-share";
 import {
+  getNativeHardwareKeyboardConnected,
   setNativeChatComposerFocused,
   subscribeNativeAppCommands,
 } from "@/lib/native-app-commands";
@@ -1428,6 +1429,25 @@ export default function ChatScreen() {
       if (canUseOwnerControls) void handleInterrupt();
     };
   }, [canUseOwnerControls, handleInterrupt]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (Platform.OS === "web" || !sessionId) return undefined;
+      let active = true;
+      let task: { cancel: () => void } | null = null;
+      const focusTargetKey = chatViewportKey;
+      void getNativeHardwareKeyboardConnected().then((connected) => {
+        if (!active || !connected || !focusTargetKey) return;
+        task = InteractionManager.runAfterInteractions(() => {
+          if (active) composerInputRef.current?.focus();
+        });
+      });
+      return () => {
+        active = false;
+        task?.cancel();
+      };
+    }, [chatViewportKey, sessionId]),
+  );
 
   useFocusEffect(
     useCallback(() => {

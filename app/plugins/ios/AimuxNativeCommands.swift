@@ -1,4 +1,5 @@
 import React
+import GameController
 import UIKit
 
 @objc(AimuxNativeCommands)
@@ -42,8 +43,25 @@ class AimuxNativeCommands: RCTEventEmitter {
     chatComposerFocused
   }
 
+  static func hardwareKeyboardConnected() -> Bool {
+    if #available(iOS 14.0, *) {
+      if ProcessInfo.processInfo.isiOSAppOnMac {
+        return true
+      }
+      return GCKeyboard.coalesced != nil
+    }
+    return false
+  }
+
   @objc func setChatComposerFocused(_ focused: Bool) {
     AimuxNativeCommands.setChatComposerFocused(focused)
+  }
+
+  @objc func getHardwareKeyboardConnected(
+    _ resolve: RCTPromiseResolveBlock,
+    rejecter reject: RCTPromiseRejectBlock
+  ) {
+    resolve(AimuxNativeCommands.hardwareKeyboardConnected())
   }
 
   private func emit(_ command: String) {

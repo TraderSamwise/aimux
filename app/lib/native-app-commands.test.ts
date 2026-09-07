@@ -1,12 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 
+const nativeCommandsModule = vi.hoisted(() => ({
+  getHardwareKeyboardConnected: vi.fn(),
+}));
+
 vi.mock("react-native", () => ({
   NativeEventEmitter: class {},
-  NativeModules: {},
+  NativeModules: { AimuxNativeCommands: nativeCommandsModule },
   Platform: { OS: "ios" },
 }));
 
 import {
+  getNativeHardwareKeyboardConnected,
   isDesktopZoomCommand,
   isNativeAppCommand,
   NATIVE_APP_COMMANDS,
@@ -28,5 +33,20 @@ describe("native app commands", () => {
     expect(isDesktopZoomCommand("desktopZoomReset")).toBe(true);
     expect(isDesktopZoomCommand("chatSend")).toBe(false);
     expect(isDesktopZoomCommand("chatInterrupt")).toBe(false);
+  });
+
+  it("reads hardware keyboard presence from the native bridge", async () => {
+    nativeCommandsModule.getHardwareKeyboardConnected.mockResolvedValueOnce(true);
+    await expect(getNativeHardwareKeyboardConnected()).resolves.toBe(true);
+
+    nativeCommandsModule.getHardwareKeyboardConnected.mockResolvedValueOnce(false);
+    await expect(getNativeHardwareKeyboardConnected()).resolves.toBe(false);
+  });
+
+  it("treats native hardware keyboard bridge errors as not connected", async () => {
+    nativeCommandsModule.getHardwareKeyboardConnected.mockRejectedValueOnce(
+      new Error("native down"),
+    );
+    await expect(getNativeHardwareKeyboardConnected()).resolves.toBe(false);
   });
 });
