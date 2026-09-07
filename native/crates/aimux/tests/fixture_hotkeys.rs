@@ -1,5 +1,6 @@
+use aimux::hotkeys::run_hotkeys_contract_case;
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 const HOTKEYS: &str = include_str!("../../../../testdata/contracts/v1/terminal/hotkeys.json");
 
@@ -19,24 +20,28 @@ struct Case {
 }
 
 #[test]
-#[ignore = "checklist: global leader hotkey parity belongs to fenced dashboard/control implementation"]
-fn fixture_hotkeys_contract_is_captured() {
+fn fixture_hotkeys_contract_matches_rust() {
     let contract: Contract = serde_json::from_str(HOTKEYS).expect("hotkeys fixture parses");
     assert_eq!(contract.cases.len(), 2);
 
+    let mut failures = Vec::new();
     for case in contract.cases {
         assert!(!case.id.is_empty());
         assert_eq!(case.source, "src/hotkeys.test.ts");
-        assert!(case.input.get("chunks").and_then(Value::as_array).is_some());
-        assert!(case
-            .output
-            .get("actions")
-            .and_then(Value::as_array)
-            .is_some());
-        assert!(case
-            .output
-            .get("writes")
-            .and_then(Value::as_array)
-            .is_some());
+        let actual = run_hotkeys_contract_case(&case.input);
+        if actual != case.output {
+            failures.push(json!({
+                "id": case.id,
+                "expected": case.output,
+                "actual": actual,
+            }));
+        }
     }
+
+    assert!(
+        failures.is_empty(),
+        "{} hotkey parity failures:\n{}",
+        failures.len(),
+        serde_json::to_string_pretty(&failures).expect("serialize failures")
+    );
 }
