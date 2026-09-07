@@ -734,7 +734,7 @@ fn resume_offline_session(input: &Value) -> Value {
     let mut offline_sessions = array_at(input, &["host", "offlineSessions"]);
     let mut calls = Vec::new();
     let mut metadata = value_field(input, "initialMetadata").clone();
-    let topology_sessions = array_at(input, &["initialTopology", "sessions"]);
+    let mut topology_sessions = array_at(input, &["initialTopology", "sessions"]);
 
     let Some(topology_session) = topology_sessions
         .iter()
@@ -752,7 +752,7 @@ fn resume_offline_session(input: &Value) -> Value {
                 json!("session"),
             ],
         ));
-        return json!({
+        let mut output = json!({
             "thrown": null,
             "host": {
                 "sessions": array_at(input, &["host", "sessions"]),
@@ -764,22 +764,58 @@ fn resume_offline_session(input: &Value) -> Value {
             "metadata": metadata,
             "calls": calls,
         });
+        if let Some(other_topology) = input.get("otherTopology") {
+            set_field(&mut output, "otherTopology", other_topology.clone());
+        }
+        return output;
     };
 
-    let backend_session_id = optional_string(topology_session, "backendSessionId");
+    let topology_index = topology_sessions
+        .iter()
+        .position(|candidate| string_field(candidate, "id") == session_id)
+        .unwrap_or(0);
+    let mut topology_session = topology_session.clone();
+    let mut backend_session_id = optional_string(&topology_session, "backendSessionId");
+    let explicit_error = derived_field(&metadata, &session_id, "activity").as_deref()
+        == Some("error")
+        || derived_field(&metadata, &session_id, "attention").as_deref() == Some("error");
+    if backend_session_id.is_none()
+        && !explicit_error
+        && let Some(discovered) = optional_string(input, "discoveredBackendSessionId")
+    {
+        set_field(&mut topology_session, "backendSessionId", json!(discovered));
+        topology_sessions[topology_index] = topology_session.clone();
+        backend_session_id = Some(discovered.clone());
+        if string_field(&topology_session, "worktreePath").is_empty() {
+            calls.push(call(
+                "debug",
+                vec![
+                    json!("loaded 1 offline session(s) from runtime topology"),
+                    json!("session"),
+                ],
+            ));
+        }
+        calls.push(call(
+            "debug",
+            vec![
+                json!(format!(
+                    "reconciled backend session id for {session_id} from disk: {discovered}"
+                )),
+                json!("session"),
+            ],
+        ));
+    }
     let backend_id_json = backend_session_id
         .as_deref()
         .map(|id| json!(id))
         .unwrap_or(Value::Null);
     let derived_activity = derived_field(&metadata, &session_id, "activity");
-    let derived_attention = derived_field(&metadata, &session_id, "attention");
-    let relaunch_fresh = derived_activity.as_deref() == Some("error")
-        || derived_attention.as_deref() == Some("error")
-        || (backend_session_id.is_none() && bool_field(topology_session, "freshRelaunchAllowed"));
+    let relaunch_fresh = explicit_error
+        || (backend_session_id.is_none() && bool_field(&topology_session, "freshRelaunchAllowed"));
     let can_resume = if relaunch_fresh {
         false
     } else {
-        let tool_key = string_field(topology_session, "toolConfigKey");
+        let tool_key = string_field(&topology_session, "toolConfigKey");
         calls.push(call(
             "sessionBootstrap.canResumeWithBackendSessionId",
             vec![tool_config(input, &tool_key), backend_id_json.clone()],
@@ -794,7 +830,7 @@ fn resume_offline_session(input: &Value) -> Value {
         return json!({
             "thrown": format!(
                 "Cannot restore session \"{session_id}\" without an exact resumable backend session id for \"{}\"",
-                string_field(topology_session, "toolConfigKey")
+                string_field(&topology_session, "toolConfigKey")
             ),
             "host": {
                 "sessions": array_at(input, &["host", "sessions"]),
@@ -839,17 +875,19 @@ fn resume_offline_session(input: &Value) -> Value {
     ));
 
     let team = topology_session.get("team").cloned().unwrap_or(Value::Null);
-    let tool_key = string_field(topology_session, "toolConfigKey");
+    let tool_key = string_field(&topology_session, "toolConfigKey");
     let (launch_args, preamble_flag, persist_args) =
         compose_restore_launch(&tool_key, backend_session_id.as_deref(), use_backend_resume);
     let create_args = vec![
-        json!(string_field(topology_session, "command")),
+        json!(string_field(&topology_session, "command")),
         json!(launch_args),
         preamble_flag,
         json!(tool_key),
         Value::Null,
         Value::Null,
-        json!(project_root_for(input)),
+        optional_string(&topology_session, "worktreePath")
+            .map(|path| json!(path))
+            .unwrap_or(Value::Null),
         if use_backend_resume {
             backend_id_json
         } else {
@@ -865,7 +903,7 @@ fn resume_offline_session(input: &Value) -> Value {
     calls.push(call("createSession", create_args.clone()));
     let mut restored_session = json!({
         "id": session_id,
-        "command": string_field(topology_session, "command"),
+        "command": string_field(&topology_session, "command"),
         "restoreStartedAt": 1780272000000_i64,
     });
     if relaunch_fresh && let Some(backend_session_id) = backend_session_id.as_deref() {
@@ -903,13 +941,16 @@ fn tool_config(input: &Value, tool_key: &str) -> Value {
             "command": "claude",
             "args": ["--dangerously-skip-permissions"],
             "enabled": true,
+            "wrapperEnabled": true,
             "preambleFlag": ["--append-system-prompt"],
+            "sessionIdFlag": ["--session-id", "{sessionId}"],
             "resumeArgs": ["--resume", "{sessionId}"],
-            "forkArgs": ["--fork-session", "{sessionId}"],
+            "forkArgs": ["--resume", "{sessionId}", "--fork-session"],
             "resumeByBackendSessionId": true,
-            "developerInstructionsConfigKey": "append_system_prompt",
-            "promptPatterns": ["^> $"],
-            "turnPatterns": ["^[>❯]\\s*(.+)"],
+            "resumeFallback": ["--continue"],
+            "promptPatterns": ["^> $", "\\$ $"],
+            "turnPatterns": ["^[❯>]\\s*(.+)", "^❯\\s+(.+)", "^>\\s+(.+)"],
+            "compactCommand": "claude --print --output-format text",
         }),
         _ => {
             let mut config = json!({

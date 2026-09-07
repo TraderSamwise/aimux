@@ -2548,6 +2548,78 @@
     },
     {
       "id": "multiplexer-runtime-state-methods-043",
+      "name": "does not resume an offline cache row from another project",
+      "source": "src/multiplexer/runtime-state.test.ts",
+      "api": "resumeOfflineSession",
+      "input": {
+        "projectRoot": "<repo>",
+        "otherProjectRoot": "<tmp>/other-repo",
+        "session": {
+          "id": "codex-shared",
+          "command": "codex",
+          "toolConfigKey": "codex",
+          "args": [],
+          "worktreePath": "<repo>"
+        },
+        "host": {
+          "sessions": [],
+          "offlineSessions": [{ "id": "codex-shared", "command": "codex", "toolConfigKey": "codex" }]
+        },
+        "initialTopology": { "sessions": [], "services": [] },
+        "otherTopology": {
+          "sessions": [
+            {
+              "id": "codex-shared",
+              "tool": "codex",
+              "toolConfigKey": "codex",
+              "command": "codex",
+              "args": [],
+              "status": "offline",
+              "lifecycle": "offline",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "backendSessionId": "backend-other",
+              "worktreePath": "<tmp>/other-repo"
+            }
+          ]
+        },
+        "initialMetadata": { "version": 1, "sessions": {} }
+      },
+      "output": {
+        "thrown": null,
+        "host": { "sessions": [], "offlineSessions": [], "sessionLabels": [], "restored": [] },
+        "topology": { "sessions": [] },
+        "metadata": { "version": 1, "sessions": {} },
+        "calls": [
+          { "method": "invalidateDesktopStateSnapshot", "args": [] },
+          { "method": "writeStatuslineFile", "args": [] },
+          {
+            "method": "debug",
+            "args": ["ignored stale offline resume for codex-shared: no offline topology row", "session"]
+          }
+        ],
+        "otherTopology": {
+          "sessions": [
+            {
+              "id": "codex-shared",
+              "tool": "codex",
+              "toolConfigKey": "codex",
+              "command": "codex",
+              "args": [],
+              "status": "offline",
+              "lifecycle": "offline",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "backendSessionId": "backend-other",
+              "worktreePath": "<tmp>/other-repo"
+            }
+          ]
+        }
+      },
+      "inputSha256": "22b70ff2006e8a10bbfcdce8d75b2f7e2750294337f5722eca54d3dd578d2284"
+    },
+    {
+      "id": "multiplexer-runtime-state-methods-044",
       "name": "resumeOfflineSession settles stale running derived activity to idle",
       "source": "src/multiplexer/runtime-state.test.ts",
       "api": "resumeOfflineSession",
@@ -2698,7 +2770,143 @@
       "inputSha256": "cf5234f8f9a9d45d6608351cf41be0878658bc63fd83284a6947d8f4ea8d2051"
     },
     {
-      "id": "multiplexer-runtime-state-methods-044",
+      "id": "multiplexer-runtime-state-methods-045",
+      "name": "keeps the offline row backend id over stale metadata when resuming",
+      "source": "src/multiplexer/runtime-state.test.ts",
+      "api": "resumeOfflineSession",
+      "input": {
+        "projectRoot": "<repo>",
+        "canResumeWithBackendSessionId": true,
+        "session": {
+          "id": "codex-1",
+          "command": "codex",
+          "toolConfigKey": "codex",
+          "backendSessionId": "backend-current",
+          "args": [],
+          "worktreePath": "<repo>"
+        },
+        "host": { "sessions": [], "offlineSessions": [{ "id": "codex-1", "backendSessionId": "backend-current" }] },
+        "initialTopology": {
+          "sessions": [
+            {
+              "id": "codex-1",
+              "tool": "codex",
+              "toolConfigKey": "codex",
+              "command": "codex",
+              "args": [],
+              "status": "offline",
+              "lifecycle": "offline",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "backendSessionId": "backend-current",
+              "worktreePath": "<repo>"
+            }
+          ],
+          "services": []
+        },
+        "initialMetadata": { "version": 1, "sessions": {} }
+      },
+      "output": {
+        "thrown": null,
+        "host": {
+          "sessions": [],
+          "offlineSessions": [],
+          "sessionLabels": [],
+          "restored": [
+            {
+              "args": [
+                "codex",
+                ["--dangerously-bypass-approvals-and-sandbox", "resume", "backend-current"],
+                null,
+                "codex",
+                null,
+                null,
+                "<repo>",
+                "backend-current",
+                "codex-1",
+                true,
+                true,
+                null,
+                null,
+                ["--dangerously-bypass-approvals-and-sandbox"]
+              ],
+              "session": { "id": "codex-1", "command": "codex", "restoreStartedAt": 1780272000000 }
+            }
+          ]
+        },
+        "topology": {
+          "sessions": [
+            {
+              "id": "codex-1",
+              "tool": "codex",
+              "toolConfigKey": "codex",
+              "command": "codex",
+              "args": [],
+              "status": "offline",
+              "lifecycle": "offline",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "backendSessionId": "backend-current",
+              "worktreePath": "<repo>"
+            }
+          ]
+        },
+        "metadata": { "version": 1, "sessions": {} },
+        "calls": [
+          {
+            "method": "sessionBootstrap.canResumeWithBackendSessionId",
+            "args": [
+              {
+                "command": "codex",
+                "args": ["--dangerously-bypass-approvals-and-sandbox"],
+                "enabled": true,
+                "resumeArgs": ["resume", "{sessionId}"],
+                "forkArgs": ["fork", "{sessionId}"],
+                "resumeByBackendSessionId": true,
+                "resumeFallback": ["resume", "--last"],
+                "developerInstructionsConfigKey": "developer_instructions",
+                "promptPatterns": ["^> $"],
+                "turnPatterns": ["^[>❯]\\s*(.+)"],
+                "startupInterstitials": [
+                  {
+                    "id": "codex-update-available",
+                    "when": ["Update available!", "Press enter to continue"],
+                    "choose": "^[\\s›>❯]*(\\d+)\\.\\s+Skip\\s*$"
+                  }
+                ]
+              },
+              "backend-current"
+            ]
+          },
+          { "method": "getSessionLabel", "args": ["codex-1"] },
+          { "method": "invalidateDesktopStateSnapshot", "args": [] },
+          { "method": "writeStatuslineFile", "args": [] },
+          { "method": "debug", "args": ["resuming offline session codex-1 (backend=backend-current)", "session"] },
+          {
+            "method": "createSession",
+            "args": [
+              "codex",
+              ["--dangerously-bypass-approvals-and-sandbox", "resume", "backend-current"],
+              null,
+              "codex",
+              null,
+              null,
+              "<repo>",
+              "backend-current",
+              "codex-1",
+              true,
+              true,
+              null,
+              null,
+              ["--dangerously-bypass-approvals-and-sandbox"]
+            ]
+          }
+        ]
+      },
+      "inputSha256": "1cf434ab17837ba57319f249af2da6d8bbd77c10398fa70c33d21bc16e498644"
+    },
+    {
+      "id": "multiplexer-runtime-state-methods-046",
       "name": "resumeOfflineSession preserves waiting needs-input derived state",
       "source": "src/multiplexer/runtime-state.test.ts",
       "api": "resumeOfflineSession",
@@ -2849,7 +3057,7 @@
       "inputSha256": "f3a6484948907901796aed4b2a91289b8e84171cd2d2dceed68122cddf6fb1a5"
     },
     {
-      "id": "multiplexer-runtime-state-methods-045",
+      "id": "multiplexer-runtime-state-methods-047",
       "name": "does not use display metadata when resuming an incomplete offline row",
       "source": "src/multiplexer/runtime-state.test.ts",
       "api": "resumeOfflineSession",
@@ -2982,7 +3190,7 @@
       "inputSha256": "ff68b287bba87c895c2116e10b679acab2fb3035b0c7ab6fb770c3ead7bba535"
     },
     {
-      "id": "multiplexer-runtime-state-methods-046",
+      "id": "multiplexer-runtime-state-methods-048",
       "name": "refuses restore without a topology-owned backend id instead of repairing from session files",
       "source": "src/multiplexer/runtime-state.test.ts",
       "api": "resumeOfflineSession",
@@ -3074,7 +3282,7 @@
       "inputSha256": "f01ee308994d8c1b7dd6538ccd6d60e1626240f8491443debbc2dcc598561123"
     },
     {
-      "id": "multiplexer-runtime-state-methods-047",
+      "id": "multiplexer-runtime-state-methods-049",
       "name": "refuses targeted offline restore without exact backend resume",
       "source": "src/multiplexer/runtime-state.test.ts",
       "api": "resumeOfflineSession",
@@ -3159,7 +3367,7 @@
       "inputSha256": "34c3ec35c92fe492320db858c402b72d901227a06c68f935f6c291f2974cda22"
     },
     {
-      "id": "multiplexer-runtime-state-methods-048",
+      "id": "multiplexer-runtime-state-methods-050",
       "name": "marks fresh relaunches with the backend id they supersede",
       "source": "src/multiplexer/runtime-state.test.ts",
       "api": "resumeOfflineSession",
@@ -3283,7 +3491,7 @@
       "inputSha256": "97ee5ab4c63f14976cb95b475d59dcd50cb0ca0e1ca193c83cec336b3700ebc1"
     },
     {
-      "id": "multiplexer-runtime-state-methods-049",
+      "id": "multiplexer-runtime-state-methods-051",
       "name": "fresh relaunches backend-less sessions with no user history",
       "source": "src/multiplexer/runtime-state.test.ts",
       "api": "resumeOfflineSession",
@@ -3392,6 +3600,287 @@
         ]
       },
       "inputSha256": "289e0209d1301cda2b7e1aa4494b5302bf21ceee81ee2f897a2ba6172b7e748d"
+    },
+    {
+      "id": "multiplexer-runtime-state-methods-052",
+      "name": "reconciles a missing claude backend id from the on-disk transcript instead of refusing",
+      "source": "src/multiplexer/runtime-state.test.ts",
+      "api": "resumeOfflineSession",
+      "input": {
+        "projectRoot": "<repo>",
+        "discoveredBackendSessionId": "0710a963-a473-430f-9f9a-e27dd4546328",
+        "canResumeWithBackendSessionId": true,
+        "session": {
+          "id": "claude-1",
+          "command": "claude",
+          "toolConfigKey": "claude",
+          "args": [],
+          "worktreePath": "<repo>/wt/feature"
+        },
+        "host": { "sessions": [], "offlineSessions": [{ "id": "claude-1" }] },
+        "initialTopology": {
+          "sessions": [
+            {
+              "id": "claude-1",
+              "tool": "claude",
+              "toolConfigKey": "claude",
+              "command": "claude",
+              "args": [],
+              "status": "offline",
+              "lifecycle": "offline",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "worktreePath": "<repo>/wt/feature"
+            }
+          ],
+          "services": []
+        },
+        "initialMetadata": { "version": 1, "sessions": {} }
+      },
+      "output": {
+        "thrown": null,
+        "host": {
+          "sessions": [],
+          "offlineSessions": [],
+          "sessionLabels": [],
+          "restored": [
+            {
+              "args": [
+                "claude",
+                ["--dangerously-skip-permissions", "--resume", "0710a963-a473-430f-9f9a-e27dd4546328"],
+                ["--append-system-prompt"],
+                "claude",
+                null,
+                null,
+                "<repo>/wt/feature",
+                "0710a963-a473-430f-9f9a-e27dd4546328",
+                "claude-1",
+                true,
+                true,
+                null,
+                null,
+                ["--dangerously-skip-permissions"]
+              ],
+              "session": { "id": "claude-1", "command": "claude", "restoreStartedAt": 1780272000000 }
+            }
+          ]
+        },
+        "topology": {
+          "sessions": [
+            {
+              "id": "claude-1",
+              "tool": "claude",
+              "toolConfigKey": "claude",
+              "command": "claude",
+              "args": [],
+              "status": "offline",
+              "lifecycle": "offline",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "backendSessionId": "0710a963-a473-430f-9f9a-e27dd4546328",
+              "worktreePath": "<repo>/wt/feature"
+            }
+          ]
+        },
+        "metadata": { "version": 1, "sessions": {} },
+        "calls": [
+          {
+            "method": "debug",
+            "args": [
+              "reconciled backend session id for claude-1 from disk: 0710a963-a473-430f-9f9a-e27dd4546328",
+              "session"
+            ]
+          },
+          {
+            "method": "sessionBootstrap.canResumeWithBackendSessionId",
+            "args": [
+              {
+                "command": "claude",
+                "args": ["--dangerously-skip-permissions"],
+                "enabled": true,
+                "wrapperEnabled": true,
+                "preambleFlag": ["--append-system-prompt"],
+                "sessionIdFlag": ["--session-id", "{sessionId}"],
+                "resumeArgs": ["--resume", "{sessionId}"],
+                "forkArgs": ["--resume", "{sessionId}", "--fork-session"],
+                "resumeByBackendSessionId": true,
+                "resumeFallback": ["--continue"],
+                "promptPatterns": ["^> $", "\\$ $"],
+                "turnPatterns": ["^[❯>]\\s*(.+)", "^❯\\s+(.+)", "^>\\s+(.+)"],
+                "compactCommand": "claude --print --output-format text"
+              },
+              "0710a963-a473-430f-9f9a-e27dd4546328"
+            ]
+          },
+          { "method": "getSessionLabel", "args": ["claude-1"] },
+          { "method": "invalidateDesktopStateSnapshot", "args": [] },
+          { "method": "writeStatuslineFile", "args": [] },
+          {
+            "method": "debug",
+            "args": ["resuming offline session claude-1 (backend=0710a963-a473-430f-9f9a-e27dd4546328)", "session"]
+          },
+          {
+            "method": "createSession",
+            "args": [
+              "claude",
+              ["--dangerously-skip-permissions", "--resume", "0710a963-a473-430f-9f9a-e27dd4546328"],
+              ["--append-system-prompt"],
+              "claude",
+              null,
+              null,
+              "<repo>/wt/feature",
+              "0710a963-a473-430f-9f9a-e27dd4546328",
+              "claude-1",
+              true,
+              true,
+              null,
+              null,
+              ["--dangerously-skip-permissions"]
+            ]
+          }
+        ]
+      },
+      "inputSha256": "992d041543570fa328be953e729bf69ac5197bdc7e1be94872524141621f00ab"
+    },
+    {
+      "id": "multiplexer-runtime-state-methods-053",
+      "name": "recovers a missing backend id from the project root before restoring a main-checkout session",
+      "source": "src/multiplexer/runtime-state.test.ts",
+      "api": "resumeOfflineSession",
+      "input": {
+        "projectRoot": "<repo>",
+        "discoveredBackendSessionId": "0710a963-a473-430f-9f9a-e27dd4546328",
+        "canResumeWithBackendSessionId": true,
+        "session": {
+          "id": "claude-main",
+          "command": "claude",
+          "toolConfigKey": "claude",
+          "args": [],
+          "createdAt": "2026-06-01T00:00:00.000Z"
+        },
+        "host": { "sessions": [], "offlineSessions": [{ "id": "claude-main" }] },
+        "initialTopology": {
+          "sessions": [
+            {
+              "id": "claude-main",
+              "tool": "claude",
+              "toolConfigKey": "claude",
+              "command": "claude",
+              "args": [],
+              "status": "offline",
+              "lifecycle": "offline",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z"
+            }
+          ],
+          "services": []
+        },
+        "initialMetadata": { "version": 1, "sessions": {} }
+      },
+      "output": {
+        "thrown": null,
+        "host": {
+          "sessions": [],
+          "offlineSessions": [],
+          "sessionLabels": [],
+          "restored": [
+            {
+              "args": [
+                "claude",
+                ["--dangerously-skip-permissions", "--resume", "0710a963-a473-430f-9f9a-e27dd4546328"],
+                ["--append-system-prompt"],
+                "claude",
+                null,
+                null,
+                null,
+                "0710a963-a473-430f-9f9a-e27dd4546328",
+                "claude-main",
+                true,
+                true,
+                null,
+                null,
+                ["--dangerously-skip-permissions"]
+              ],
+              "session": { "id": "claude-main", "command": "claude", "restoreStartedAt": 1780272000000 }
+            }
+          ]
+        },
+        "topology": {
+          "sessions": [
+            {
+              "id": "claude-main",
+              "tool": "claude",
+              "toolConfigKey": "claude",
+              "command": "claude",
+              "args": [],
+              "status": "offline",
+              "lifecycle": "offline",
+              "createdAt": "2026-06-01T00:00:00.000Z",
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "backendSessionId": "0710a963-a473-430f-9f9a-e27dd4546328"
+            }
+          ]
+        },
+        "metadata": { "version": 1, "sessions": {} },
+        "calls": [
+          { "method": "debug", "args": ["loaded 1 offline session(s) from runtime topology", "session"] },
+          {
+            "method": "debug",
+            "args": [
+              "reconciled backend session id for claude-main from disk: 0710a963-a473-430f-9f9a-e27dd4546328",
+              "session"
+            ]
+          },
+          {
+            "method": "sessionBootstrap.canResumeWithBackendSessionId",
+            "args": [
+              {
+                "command": "claude",
+                "args": ["--dangerously-skip-permissions"],
+                "enabled": true,
+                "wrapperEnabled": true,
+                "preambleFlag": ["--append-system-prompt"],
+                "sessionIdFlag": ["--session-id", "{sessionId}"],
+                "resumeArgs": ["--resume", "{sessionId}"],
+                "forkArgs": ["--resume", "{sessionId}", "--fork-session"],
+                "resumeByBackendSessionId": true,
+                "resumeFallback": ["--continue"],
+                "promptPatterns": ["^> $", "\\$ $"],
+                "turnPatterns": ["^[❯>]\\s*(.+)", "^❯\\s+(.+)", "^>\\s+(.+)"],
+                "compactCommand": "claude --print --output-format text"
+              },
+              "0710a963-a473-430f-9f9a-e27dd4546328"
+            ]
+          },
+          { "method": "getSessionLabel", "args": ["claude-main"] },
+          { "method": "invalidateDesktopStateSnapshot", "args": [] },
+          { "method": "writeStatuslineFile", "args": [] },
+          {
+            "method": "debug",
+            "args": ["resuming offline session claude-main (backend=0710a963-a473-430f-9f9a-e27dd4546328)", "session"]
+          },
+          {
+            "method": "createSession",
+            "args": [
+              "claude",
+              ["--dangerously-skip-permissions", "--resume", "0710a963-a473-430f-9f9a-e27dd4546328"],
+              ["--append-system-prompt"],
+              "claude",
+              null,
+              null,
+              null,
+              "0710a963-a473-430f-9f9a-e27dd4546328",
+              "claude-main",
+              true,
+              true,
+              null,
+              null,
+              ["--dangerously-skip-permissions"]
+            ]
+          }
+        ]
+      },
+      "inputSha256": "46aaf19a0595046cc0eb711c48962c91e8089ccdcd8c8157f0114fb052d865b3"
     }
   ]
 }

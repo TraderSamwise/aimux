@@ -88,6 +88,7 @@ async function withFixture(label, fn) {
   const tmpRoot = mkdtempSync(join(tmpdir(), `aimux-runtime-state-methods-${label}-`));
   const projectRoot = join(tmpRoot, "repo");
   const previousHome = process.env.AIMUX_HOME;
+  const previousClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
   process.env.AIMUX_HOME = join(tmpRoot, "home");
   try {
     mkdirSync(projectRoot, { recursive: true });
@@ -97,6 +98,8 @@ async function withFixture(label, fn) {
   } finally {
     if (previousHome === undefined) delete process.env.AIMUX_HOME;
     else process.env.AIMUX_HOME = previousHome;
+    if (previousClaudeConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+    else process.env.CLAUDE_CONFIG_DIR = previousClaudeConfigDir;
     rmSync(tmpRoot, { recursive: true, force: true });
   }
 }
@@ -1828,6 +1831,55 @@ await record(
 
 await record(
   cases,
+  "does not resume an offline cache row from another project",
+  "resumeOfflineSession",
+  "resume-skips-other-project-topology",
+  ({ projectRoot, tmpRoot }) => {
+    const otherRepoRoot = join(tmpRoot, "other-repo");
+    mkdirSync(join(otherRepoRoot, ".git"), { recursive: true });
+    paths.withProjectPaths(otherRepoRoot, () => {
+      topologySessions.saveRuntimeTopologySessions({
+        projectRoot: otherRepoRoot,
+        sessions: [
+          {
+            id: "codex-shared",
+            command: "codex",
+            tool: "codex",
+            toolConfigKey: "codex",
+            args: [],
+            lifecycle: "offline",
+            backendSessionId: "backend-other",
+            worktreePath: otherRepoRoot,
+          },
+        ],
+      });
+    });
+    const otherTopology = paths.withProjectPaths(otherRepoRoot, () => snapshotTopology());
+    return {
+      projectRoot,
+      otherProjectRoot: otherRepoRoot,
+      session: {
+        id: "codex-shared",
+        command: "codex",
+        toolConfigKey: "codex",
+        args: [],
+        worktreePath: projectRoot,
+      },
+      host: { sessions: [], offlineSessions: [{ id: "codex-shared", command: "codex", toolConfigKey: "codex" }] },
+      initialTopology: snapshotSessionServiceTopology(),
+      otherTopology,
+      initialMetadata: metadataStore.loadMetadataState(projectRoot),
+    };
+  },
+  async (_ctx, input) => {
+    const output = runResumeOfflineSession(input);
+    output.otherTopology = paths.withProjectPaths(input.otherProjectRoot, () => snapshotTopology());
+    return output;
+  },
+);
+
+await record(
+  cases,
   "resumeOfflineSession settles stale running derived activity to idle",
   "resumeOfflineSession",
   "resume-derived-running",
@@ -1862,6 +1914,46 @@ await record(
         worktreePath: projectRoot,
       },
       host: { sessions: [], offlineSessions: [{ id: "codex-1" }] },
+      initialTopology: snapshotSessionServiceTopology(),
+      initialMetadata: metadataStore.loadMetadataState(projectRoot),
+    };
+  },
+  (_ctx, input) => runResumeOfflineSession(input),
+);
+
+await record(
+  cases,
+  "keeps the offline row backend id over stale metadata when resuming",
+  "resumeOfflineSession",
+  "resume-keeps-offline-backend-id",
+  ({ projectRoot }) => {
+    topologySessions.saveRuntimeTopologySessions({
+      projectRoot,
+      sessions: [
+        {
+          id: "codex-1",
+          command: "codex",
+          tool: "codex",
+          toolConfigKey: "codex",
+          backendSessionId: "backend-current",
+          args: [],
+          lifecycle: "offline",
+          worktreePath: projectRoot,
+        },
+      ],
+    });
+    return {
+      projectRoot,
+      canResumeWithBackendSessionId: true,
+      session: {
+        id: "codex-1",
+        command: "codex",
+        toolConfigKey: "codex",
+        backendSessionId: "backend-current",
+        args: [],
+        worktreePath: projectRoot,
+      },
+      host: { sessions: [], offlineSessions: [{ id: "codex-1", backendSessionId: "backend-current" }] },
       initialTopology: snapshotSessionServiceTopology(),
       initialMetadata: metadataStore.loadMetadataState(projectRoot),
     };
@@ -2119,6 +2211,91 @@ await record(
         worktreePath: projectRoot,
       },
       host: { sessions: [], offlineSessions: [{ id: "codex-empty" }] },
+      initialTopology: snapshotSessionServiceTopology(),
+      initialMetadata: metadataStore.loadMetadataState(projectRoot),
+    };
+  },
+  (_ctx, input) => runResumeOfflineSession(input),
+);
+
+await record(
+  cases,
+  "reconciles a missing claude backend id from the on-disk transcript instead of refusing",
+  "resumeOfflineSession",
+  "resume-recovers-claude-backend-from-worktree-transcript",
+  ({ projectRoot, tmpRoot }) => {
+    const claudeHome = join(tmpRoot, "claude-home");
+    process.env.CLAUDE_CONFIG_DIR = claudeHome;
+    const cwd = join(projectRoot, "wt", "feature");
+    const encoded = cwd.replace(/[/.]/g, "-");
+    const transcriptDir = join(claudeHome, "projects", encoded);
+    const backendSessionId = "0710a963-a473-430f-9f9a-e27dd4546328";
+    mkdirSync(transcriptDir, { recursive: true });
+    writeFileSync(join(transcriptDir, `${backendSessionId}.jsonl`), "{}\n");
+    topologySessions.saveRuntimeTopologySessions({
+      projectRoot,
+      sessions: [
+        {
+          id: "claude-1",
+          command: "claude",
+          tool: "claude",
+          toolConfigKey: "claude",
+          args: [],
+          lifecycle: "offline",
+          worktreePath: cwd,
+        },
+      ],
+    });
+    return {
+      projectRoot,
+      discoveredBackendSessionId: backendSessionId,
+      canResumeWithBackendSessionId: true,
+      session: { id: "claude-1", command: "claude", toolConfigKey: "claude", args: [], worktreePath: cwd },
+      host: { sessions: [], offlineSessions: [{ id: "claude-1" }] },
+      initialTopology: snapshotSessionServiceTopology(),
+      initialMetadata: metadataStore.loadMetadataState(projectRoot),
+    };
+  },
+  (_ctx, input) => runResumeOfflineSession(input),
+);
+
+await record(
+  cases,
+  "recovers a missing backend id from the project root before restoring a main-checkout session",
+  "resumeOfflineSession",
+  "resume-recovers-claude-backend-from-project-root",
+  ({ projectRoot, tmpRoot }) => {
+    const claudeHome = join(tmpRoot, "claude-main-home");
+    process.env.CLAUDE_CONFIG_DIR = claudeHome;
+    const backendSessionId = "0710a963-a473-430f-9f9a-e27dd4546328";
+    const transcriptDir = join(claudeHome, "projects", projectRoot.replace(/[/.]/g, "-"));
+    mkdirSync(transcriptDir, { recursive: true });
+    writeFileSync(join(transcriptDir, `${backendSessionId}.jsonl`), "{}\n");
+    topologySessions.saveRuntimeTopologySessions({
+      projectRoot,
+      sessions: [
+        {
+          id: "claude-main",
+          command: "claude",
+          tool: "claude",
+          toolConfigKey: "claude",
+          args: [],
+          lifecycle: "offline",
+        },
+      ],
+    });
+    return {
+      projectRoot,
+      discoveredBackendSessionId: backendSessionId,
+      canResumeWithBackendSessionId: true,
+      session: {
+        id: "claude-main",
+        command: "claude",
+        toolConfigKey: "claude",
+        args: [],
+        createdAt: new Date().toISOString(),
+      },
+      host: { sessions: [], offlineSessions: [{ id: "claude-main" }] },
       initialTopology: snapshotSessionServiceTopology(),
       initialMetadata: metadataStore.loadMetadataState(projectRoot),
     };
