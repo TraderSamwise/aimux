@@ -10,8 +10,8 @@ Statuses:
 - `ERROR`: the audit could not prove enforcement because the suite errored outside a fixture assertion.
 - `STATIC`: non-empty active suite observed without dynamic mutation.
 
-Summary: 247 suites, 294 suite/corpus bindings, 3668 cases.
-Binding statuses: PROVEN-FAILS 294, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
+Summary: 253 suites, 300 suite/corpus bindings, 3735 cases.
+Binding statuses: PROVEN-FAILS 300, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
 
 | Suite | Status | Corpus | Cases | Detail |
 | --- | --- | --- | ---: | --- |
@@ -98,6 +98,12 @@ Binding statuses: PROVEN-FAILS 294, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
 | `fixture_dashboard_desktop_state_counts` | PROVEN-FAILS | `testdata/contracts/v1/dashboard/desktop-state-counts.json` | 4 | mutated fixture output failed owning Rust suite |
 | `fixture_dashboard_index` | PROVEN-FAILS | `testdata/contracts/v1/dashboard/index.json` | 1 | mutated fixture output failed owning Rust suite |
 | `fixture_dashboard_interaction` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/dashboard-interaction.json` | 13 | mutated fixture output failed owning Rust suite |
+| `fixture_dashboard_interaction_activation` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/dashboard-interaction-activation.json` | 10 | mutated fixture output failed owning Rust suite |
+| `fixture_dashboard_interaction_command_keys` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/dashboard-interaction-command-keys.json` | 12 | mutated fixture output failed owning Rust suite |
+| `fixture_dashboard_interaction_navigation` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/dashboard-interaction-navigation.json` | 10 | mutated fixture output failed owning Rust suite |
+| `fixture_dashboard_interaction_orchestration_submit` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/dashboard-interaction-orchestration-submit.json` | 6 | mutated fixture output failed owning Rust suite |
+| `fixture_dashboard_interaction_overlays` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/dashboard-interaction-overlays.json` | 24 | mutated fixture output failed owning Rust suite |
+| `fixture_dashboard_interaction_review_request` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/dashboard-interaction-review-request.json` | 5 | mutated fixture output failed owning Rust suite |
 | `fixture_dashboard_lifecycle` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/dashboard-lifecycle.json` | 9 | mutated fixture output failed owning Rust suite |
 | `fixture_dashboard_model_metadata_pending` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/dashboard-model-metadata-pending.json` | 6 | mutated fixture output failed owning Rust suite |
 | `fixture_dashboard_model_service` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/dashboard-model-service.json` | 11 | mutated fixture output failed owning Rust suite |
