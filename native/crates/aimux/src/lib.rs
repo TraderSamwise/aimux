@@ -97,7 +97,6 @@ pub mod multiplexer_notifications;
 pub mod multiplexer_persistence_worktrees_contract;
 pub mod multiplexer_resource_refresh;
 pub mod multiplexer_runtime_helpers;
-pub mod multiplexer_runtime_state_methods_contract;
 pub mod notification_policy_contract;
 pub mod paths;
 pub mod plugin_runtime_contract;
