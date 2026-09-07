@@ -64,6 +64,7 @@ pub mod dashboard_renderer;
 pub mod dashboard_repair_notices;
 pub mod dashboard_service_input;
 pub mod dashboard_session_details;
+pub mod dashboard_tail_actions_contract;
 pub mod dashboard_tail_session_create_contract;
 pub mod dashboard_targets;
 pub mod dashboard_terminal;
