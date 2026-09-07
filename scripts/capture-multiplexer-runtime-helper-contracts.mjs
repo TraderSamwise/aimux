@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import prettier from "prettier";
 
 const ROOT = new URL("../", import.meta.url);
@@ -30,17 +33,27 @@ const {
   applyDashboardSessionLabel,
   applySessionLabel,
   getSessionLabel,
+  handleSessionRuntimeEvent,
   reconcileAgentActivity,
+  registerManagedSession,
+  resolveLiveSessionTmuxTarget,
   resolveRunningSession,
   stripSgr,
+  updateContextWatcherSessions,
 } = await import(new URL("dist/multiplexer/session-runtime-core.js", ROOT));
+const { initPaths } = await import(new URL("dist/paths.js", ROOT));
+const { listTopologySessionStates } = await import(new URL("dist/runtime-core/topology-sessions.js", ROOT));
 const { attentionScore, describeHandoffState, getPreferredThreadIndexForParticipant } = await import(
   new URL("dist/multiplexer/subscreens.js", ROOT)
 );
 
+const FIXED_NOW = 1_700_000_000_000;
+Date.now = () => FIXED_NOW;
+
 const hash = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const cwd = process.cwd();
+await initPaths(cwd);
 
 async function writeContractJson(url, contract) {
   await mkdir(new URL("./", url), { recursive: true });
@@ -54,6 +67,12 @@ function mapFromPairs(pairs) {
 
 function mapToObject(map) {
   return Object.fromEntries([...map.entries()].sort(([a], [b]) => String(a).localeCompare(String(b))));
+}
+
+function normalizeTargetMap(map) {
+  return Object.fromEntries(
+    [...map.entries()].sort(([a], [b]) => String(a).localeCompare(String(b))).map(([key, value]) => [key, value ?? null]),
+  );
 }
 
 function callLogHost(methods) {
@@ -81,8 +100,268 @@ function record(cases, name, source, api, input, run) {
   });
 }
 
+async function recordAsync(cases, name, source, api, input, run) {
+  const normalizedInput = normalizeValue(input);
+  const output = normalizeValue(await run(clone(input)));
+  cases.push({
+    id: `multiplexer-runtime-helpers-${String(cases.length + 1).padStart(3, "0")}`,
+    name,
+    source,
+    api,
+    input: normalizedInput,
+    output,
+    inputSha256: hash(normalizedInput),
+  });
+}
+
 function normalizeValue(value) {
   return JSON.parse(JSON.stringify(value).split(cwd).join("<REPO>"));
+}
+
+function createRuntimeCoreTargetHost(input) {
+  const calls = [];
+  const sessionTmuxTargets = mapFromPairs(input.sessionTmuxTargets);
+  const resolvedTargets = new Map((input.resolvedTargets ?? []).map(([key, value]) => [key, value]));
+  const metadataByWindow = new Map((input.metadataByWindow ?? []).map(([key, value]) => [key, value]));
+  const host = {
+    projectRoot: input.projectRoot,
+    sessions: clone(input.sessions ?? []),
+    sessionToolKeys: mapFromPairs(input.sessionToolKeys),
+    sessionTmuxTargets,
+    tmuxRuntimeManager: {
+      getTargetByWindowId(sessionName, windowId) {
+        calls.push({ method: "getTargetByWindowId", args: [sessionName, windowId] });
+        if (input.throwOnGetTarget) throw new Error("target lookup failed");
+        return resolvedTargets.has(windowId) ? clone(resolvedTargets.get(windowId)) : null;
+      },
+      getWindowMetadata(target) {
+        calls.push({ method: "getWindowMetadata", args: [clone(target)] });
+        return clone(metadataByWindow.get(target?.windowId) ?? null);
+      },
+      listProjectManagedWindows(projectRoot) {
+        calls.push({ method: "listProjectManagedWindows", args: [projectRoot] });
+        return clone(input.projectWindows ?? []);
+      },
+      isWindowAlive(target) {
+        calls.push({ method: "isWindowAlive", args: [clone(target)] });
+        return target?.alive !== false;
+      },
+    },
+  };
+  return { host, calls };
+}
+
+function resolveLiveSessionTmuxTargetFixture(input) {
+  return input.scenarios.map((scenario) => {
+    const { host, calls } = createRuntimeCoreTargetHost(scenario);
+    const result = resolveLiveSessionTmuxTarget(host, scenario.sessionId, scenario.fallback);
+    return {
+      name: scenario.name,
+      result: result ?? null,
+      sessionTmuxTargets: normalizeTargetMap(host.sessionTmuxTargets),
+      calls,
+    };
+  });
+}
+
+function updateContextWatcherFixture(input) {
+  return input.scenarios.map((scenario) => {
+    const { host, calls } = createRuntimeCoreTargetHost(scenario);
+    const updates = [];
+    host.contextWatcher = {
+      updateSessions(sessions) {
+        updates.push(
+          sessions.map((session) => ({
+            ...session,
+            turnPatterns: session.turnPatterns?.map((pattern) => pattern.toString()),
+            tmuxTarget: session.tmuxTarget ?? null,
+          })),
+        );
+      },
+      start() {
+        calls.push({ method: "contextWatcher.start", args: [] });
+      },
+    };
+    updateContextWatcherSessions(host);
+    return {
+      name: scenario.name,
+      updates,
+      sessionTmuxTargets: normalizeTargetMap(host.sessionTmuxTargets),
+      calls,
+    };
+  });
+}
+
+function registerManagedSessionFixture(input) {
+  return input.scenarios.map((scenario) => {
+    const calls = [];
+    const listeners = {};
+    const transport = {
+      id: scenario.transport.id,
+      command: scenario.transport.command,
+      backendSessionId: scenario.transport.backendSessionId,
+      exited: scenario.transport.exited ?? false,
+      exitCode: scenario.transport.exitCode,
+      status: scenario.transport.status ?? "running",
+      write() {},
+      resize() {},
+      kill() {},
+      destroy() {},
+      onData(cb) {
+        listeners.data = cb;
+      },
+      onExit(cb) {
+        listeners.exit = cb;
+      },
+    };
+    const sessions = clone(scenario.sessions ?? []);
+    if (scenario.expectExisting && sessions[0]) {
+      sessions[0].transport = transport;
+    }
+    const host = {
+      sessions,
+      offlineSessions: clone(scenario.offlineSessions ?? []),
+      sessionToolKeys: mapFromPairs(scenario.sessionToolKeys),
+      sessionOriginalArgs: mapFromPairs(scenario.sessionOriginalArgs),
+      sessionWorktreePaths: mapFromPairs(scenario.sessionWorktreePaths),
+      sessionRoles: mapFromPairs(scenario.sessionRoles),
+      sessionLabels: mapFromPairs(scenario.sessionLabels),
+      updateContextWatcherSessions() {
+        calls.push({ method: "updateContextWatcherSessions", args: [] });
+      },
+      contextWatcher: {
+        start() {
+          calls.push({ method: "contextWatcher.start", args: [] });
+        },
+      },
+      handleSessionRuntimeEvent(runtime, event) {
+        calls.push({ method: "handleSessionRuntimeEvent", args: [runtime.id, clone(event)] });
+      },
+    };
+    const beforeSessionCount = host.sessions.length;
+    const runtime = registerManagedSession(
+      host,
+      transport,
+      scenario.args ?? [],
+      scenario.toolConfigKey,
+      scenario.worktreePath,
+      scenario.role,
+      scenario.startTime,
+      scenario.team,
+    );
+    if (scenario.emitData) listeners.data?.(scenario.emitData);
+    if (Number.isInteger(scenario.emitExitCode)) listeners.exit?.(scenario.emitExitCode);
+    return {
+      name: scenario.name,
+      returnedExisting: Boolean(scenario.expectExisting && host.sessions.length === beforeSessionCount),
+      runtime: {
+        id: runtime.id,
+        command: runtime.command,
+        backendSessionId: runtime.backendSessionId ?? null,
+        status: runtime.status,
+        startTime: runtime.startTime ?? null,
+        team: runtime.team ?? null,
+      },
+      sessions: host.sessions.map((session) => session.id),
+      sessionToolKeys: mapToObject(host.sessionToolKeys),
+      sessionOriginalArgs: mapToObject(host.sessionOriginalArgs),
+      sessionWorktreePaths: mapToObject(host.sessionWorktreePaths),
+      sessionRoles: mapToObject(host.sessionRoles),
+      sessionLabels: mapToObject(host.sessionLabels),
+      calls,
+    };
+  });
+}
+
+async function handleSessionRuntimeEventFixture(input) {
+  const outputs = [];
+  for (const scenario of input.scenarios) {
+    const root = mkdtempSync(join(tmpdir(), "aimux-runtime-core-event-"));
+    const repoRoot = join(root, "repo");
+    const aimuxHome = join(root, "home");
+    mkdirSync(repoRoot, { recursive: true });
+    mkdirSync(aimuxHome, { recursive: true });
+    process.env.AIMUX_HOME = aimuxHome;
+    await initPaths(repoRoot);
+    const recording = scenario.recording;
+    if (recording) {
+      const dir = join(repoRoot, ".aimux", "recordings");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, `${scenario.runtime.id}.log`), recording);
+    }
+    const calls = [];
+    const runtime = clone(scenario.runtime);
+    const host = {
+      mode: scenario.host.mode,
+      projectRoot: repoRoot,
+      sessions: [runtime, ...clone(scenario.host.extraSessions ?? [])],
+      offlineSessions: clone(scenario.host.offlineSessions ?? []),
+      stoppingSessionIds: new Set(scenario.host.stoppingSessionIds ?? []),
+      graveyardAfterStopSessionIds: new Set(scenario.host.graveyardAfterStopSessionIds ?? []),
+      sessionOriginalArgs: mapFromPairs(scenario.host.sessionOriginalArgs),
+      sessionToolKeys: mapFromPairs(scenario.host.sessionToolKeys),
+      sessionWorktreePaths: mapFromPairs(scenario.host.sessionWorktreePaths),
+      sessionTmuxTargets: mapFromPairs(scenario.host.sessionTmuxTargets),
+      startedInDashboard: scenario.host.startedInDashboard ?? false,
+      activeIndex: scenario.host.activeIndex ?? 0,
+      unpreservedExitedSessionIds: new Set(),
+      getSessionLabel(sessionId) {
+        calls.push({ method: "getSessionLabel", args: [sessionId] });
+        return scenario.host.labels?.[sessionId];
+      },
+      deriveHeadline(sessionId) {
+        calls.push({ method: "deriveHeadline", args: [sessionId] });
+        return scenario.host.headlines?.[sessionId];
+      },
+      updateContextWatcherSessions() {
+        calls.push({ method: "updateContextWatcherSessions", args: [] });
+      },
+      loadOfflineTopologySessions() {
+        calls.push({ method: "loadOfflineTopologySessions", args: [] });
+      },
+      writeStatuslineFile() {
+        calls.push({ method: "writeStatuslineFile", args: [] });
+      },
+      saveState() {
+        calls.push({ method: "saveState", args: [] });
+      },
+      renderDashboard() {
+        calls.push({ method: "renderDashboard", args: [] });
+      },
+      resolveRun(code) {
+        calls.push({ method: "resolveRun", args: [code] });
+      },
+      publishAlert(alert) {
+        calls.push({ method: "publishAlert", args: [clone(alert)] });
+      },
+      debug(message, scope) {
+        calls.push({ method: "debug", args: [message, scope] });
+      },
+    };
+    try {
+      handleSessionRuntimeEvent(host, runtime, clone(scenario.event));
+      outputs.push({
+        name: scenario.name,
+        sessions: host.sessions.map((session) => session.id),
+        offlineSessions: host.offlineSessions,
+        stoppingSessionIds: [...host.stoppingSessionIds].sort(),
+        graveyardAfterStopSessionIds: [...host.graveyardAfterStopSessionIds].sort(),
+        sessionTmuxTargets: normalizeTargetMap(host.sessionTmuxTargets),
+        activeIndex: host.activeIndex,
+        footerFlash: host.footerFlash ?? null,
+        footerFlashTicks: host.footerFlashTicks ?? null,
+        unpreservedExitedSessionIds: [...host.unpreservedExitedSessionIds].sort(),
+        topology: listTopologySessionStates({ statuses: ["offline"] }).map((session) => ({
+          ...session,
+          updatedAt: session.updatedAt ? "<NOW>" : session.updatedAt,
+        })),
+        calls,
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+  return outputs;
 }
 
 const cases = [];
@@ -374,6 +653,236 @@ record(
       resolve: [resolve("live-1"), resolve("exited-1"), resolve("missing-1")],
     };
   },
+);
+
+record(
+  cases,
+  "resolves live tmux targets from cache, startup grace, and scanned windows",
+  "src/multiplexer/session-runtime-core.test.ts",
+  "resolveLiveSessionTmuxTarget",
+  {
+    scenarios: [
+      {
+        name: "cached metadata match retargets to resolved target",
+        sessionId: "claude-1",
+        sessions: [{ id: "claude-1", startTime: FIXED_NOW - 60_000 }],
+        sessionTmuxTargets: [["claude-1", { sessionName: "aimux-test", windowId: "@1", windowIndex: 1 }]],
+        resolvedTargets: [["@1", { sessionName: "aimux-test", windowId: "@1", windowIndex: 2 }]],
+        metadataByWindow: [["@1", { kind: "agent", sessionId: "claude-1" }]],
+      },
+      {
+        name: "metadata-less just-created target stays valid during startup grace",
+        sessionId: "claude-new",
+        sessions: [{ id: "claude-new", startTime: FIXED_NOW }],
+        sessionTmuxTargets: [["claude-new", { sessionName: "aimux-test", windowId: "@2", windowIndex: 1 }]],
+        resolvedTargets: [["@2", { sessionName: "aimux-test", windowId: "@2", windowIndex: 3 }]],
+        metadataByWindow: [["@2", null]],
+      },
+      {
+        name: "stale cached target is removed before scanned replacement is adopted",
+        sessionId: "codex-1",
+        projectRoot: "/repo/project",
+        sessions: [{ id: "codex-1", startTime: FIXED_NOW - 60_000 }],
+        sessionTmuxTargets: [["codex-1", { sessionName: "aimux-test", windowId: "@3", windowIndex: 1 }]],
+        resolvedTargets: [["@3", null]],
+        projectWindows: [
+          {
+            target: { sessionName: "aimux-test", windowId: "@4", windowIndex: 4 },
+            metadata: { kind: "agent", sessionId: "other" },
+          },
+          {
+            target: { sessionName: "aimux-test", windowId: "@5", windowIndex: 5, alive: false },
+            metadata: { kind: "agent", sessionId: "codex-1" },
+          },
+          {
+            target: { sessionName: "aimux-test", windowId: "@6", windowIndex: 6 },
+            metadata: { kind: "agent", sessionId: "codex-1" },
+          },
+        ],
+      },
+      {
+        name: "cached target with mismatched metadata is rejected",
+        sessionId: "claude-wrong",
+        sessions: [{ id: "claude-wrong", startTime: FIXED_NOW - 60_000 }],
+        sessionTmuxTargets: [["claude-wrong", { sessionName: "aimux-test", windowId: "@7", windowIndex: 7 }]],
+        resolvedTargets: [["@7", { sessionName: "aimux-test", windowId: "@7", windowIndex: 7 }]],
+        metadataByWindow: [["@7", { kind: "agent", sessionId: "other" }]],
+        projectWindows: [],
+      },
+      {
+        name: "fallback target is returned when manager cannot validate ownership",
+        sessionId: "raw-1",
+        fallback: { sessionName: "aimux-test", windowId: "@8", windowIndex: 8 },
+        sessions: [{ id: "raw-1", startTime: FIXED_NOW - 60_000 }],
+        resolvedTargets: [["@8", { sessionName: "aimux-test", windowId: "@8", windowIndex: 8 }]],
+        metadataByWindow: [["@8", { kind: "agent", sessionId: "raw-1" }]],
+      },
+    ],
+  },
+  resolveLiveSessionTmuxTargetFixture,
+);
+
+record(
+  cases,
+  "projects context watcher sessions with resolved tmux targets and turn patterns",
+  "src/multiplexer/session-runtime-core.test.ts",
+  "updateContextWatcherSessions",
+  {
+    scenarios: [
+      {
+        name: "maps configured tool patterns and live targets",
+        projectRoot: "/repo/project",
+        sessions: [
+          { id: "claude-live", command: "claude" },
+          { id: "codex-missing-target", command: "codex" },
+        ],
+        sessionToolKeys: [
+          ["claude-live", "claude"],
+          ["codex-missing-target", "codex"],
+        ],
+        sessionTmuxTargets: [["claude-live", { sessionName: "aimux-test", windowId: "@11", windowIndex: 1 }]],
+        resolvedTargets: [["@11", { sessionName: "aimux-test", windowId: "@11", windowIndex: 2 }]],
+        metadataByWindow: [["@11", { kind: "agent", sessionId: "claude-live" }]],
+        projectWindows: [],
+      },
+    ],
+  },
+  updateContextWatcherFixture,
+);
+
+record(
+  cases,
+  "registers managed sessions, restores labels, and keeps teammate roles out of role maps",
+  "src/multiplexer/session-runtime-core.test.ts",
+  "registerManagedSession",
+  {
+    scenarios: [
+      {
+        name: "new teammate session records launch maps and inherited offline label",
+        transport: { id: "codex-1", command: "codex", backendSessionId: "backend-1", status: "running" },
+        args: ["--model", "gpt-5"],
+        toolConfigKey: "codex",
+        worktreePath: "/repo/.aimux/worktrees/feature",
+        role: "coder",
+        startTime: 1234,
+        team: { teamId: "team-1", parentSessionId: "parent-1", role: "reviewer" },
+        offlineSessions: [{ id: "codex-1", label: "Reviewer" }],
+        emitData: "hello",
+        emitExitCode: 0,
+      },
+      {
+        name: "existing runtime is returned without mutating host maps",
+        expectExisting: true,
+        sessions: [{ id: "codex-existing", transportToken: "same-transport" }],
+        transport: { id: "codex-existing", command: "codex", status: "idle" },
+        sessionRoles: [["codex-existing", "existing-role"]],
+        sessionLabels: [["codex-existing", "Existing"]],
+      },
+    ],
+  },
+  (input) => {
+    input.scenarios[1].sessions[0].transport = input.scenarios[1].transport;
+    return registerManagedSessionFixture(input);
+  },
+);
+
+await recordAsync(
+  cases,
+  "handles runtime output and exit events without dropping restorable sessions",
+  "src/multiplexer/session-runtime-core.test.ts",
+  "handleSessionRuntimeEvent",
+  {
+    scenarios: [
+      {
+        name: "output event only rewrites statusline",
+        runtime: { id: "codex-output", command: "codex", startTime: FIXED_NOW - 60_000 },
+        event: { type: "output", data: "hello" },
+        host: { mode: "dashboard", startedInDashboard: true },
+      },
+      {
+        name: "last project-service session exits without resolving host run",
+        runtime: { id: "claude-last", command: "claude", startTime: FIXED_NOW - 60_000 },
+        event: { type: "exit", code: 0 },
+        host: {
+          mode: "project-service",
+          startedInDashboard: false,
+          sessionOriginalArgs: [["claude-last", []]],
+          sessionToolKeys: [["claude-last", "claude"]],
+        },
+      },
+      {
+        name: "non-service last session resolves run",
+        runtime: { id: "claude-standalone", command: "claude", startTime: FIXED_NOW - 60_000 },
+        event: { type: "exit", code: 0 },
+        host: {
+          mode: "dashboard",
+          startedInDashboard: false,
+          sessionOriginalArgs: [["claude-standalone", []]],
+          sessionToolKeys: [["claude-standalone", "claude"]],
+        },
+      },
+      {
+        name: "quick backend crash is preserved offline but restore-blocked",
+        runtime: {
+          id: "claude-current-crash",
+          command: "claude",
+          startTime: FIXED_NOW,
+          backendSessionId: "backend-current-crash",
+        },
+        event: { type: "exit", code: 1 },
+        recording: "boot\nError: model not found\n",
+        host: {
+          mode: "dashboard",
+          startedInDashboard: true,
+          sessionOriginalArgs: [["claude-current-crash", []]],
+          sessionToolKeys: [["claude-current-crash", "claude"]],
+          sessionWorktreePaths: [["claude-current-crash", "/repo/project"]],
+        },
+      },
+      {
+        name: "quick session without backend id is not preserved",
+        runtime: { id: "claude-quick", command: "claude", startTime: FIXED_NOW },
+        event: { type: "exit", code: 0 },
+        host: {
+          mode: "dashboard",
+          startedInDashboard: true,
+          sessionOriginalArgs: [["claude-quick", []]],
+          sessionToolKeys: [["claude-quick", "claude"]],
+        },
+      },
+      {
+        name: "stopped codex session without backend id keeps fresh relaunch allowed",
+        runtime: { id: "codex-stopped", command: "codex", startTime: FIXED_NOW - 20_000 },
+        event: { type: "exit", code: 0 },
+        host: {
+          mode: "dashboard",
+          startedInDashboard: true,
+          stoppingSessionIds: ["codex-stopped"],
+          sessionOriginalArgs: [["codex-stopped", ["--dangerously-bypass-approvals-and-sandbox"]]],
+          sessionToolKeys: [["codex-stopped", "codex"]],
+          sessionWorktreePaths: [["codex-stopped", "/repo/project"]],
+        },
+      },
+      {
+        name: "teammate metadata is preserved when runtime becomes offline",
+        runtime: {
+          id: "claude-team-exit",
+          command: "claude",
+          startTime: FIXED_NOW - 20_000,
+          team: { teamId: "team-1", parentSessionId: "parent-1", role: "reviewer" },
+        },
+        event: { type: "exit", code: 0 },
+        host: {
+          mode: "dashboard",
+          startedInDashboard: true,
+          sessionOriginalArgs: [["claude-team-exit", []]],
+          sessionToolKeys: [["claude-team-exit", "claude"]],
+          sessionWorktreePaths: [["claude-team-exit", "/repo/project"]],
+        },
+      },
+    ],
+  },
+  handleSessionRuntimeEventFixture,
 );
 
 record(

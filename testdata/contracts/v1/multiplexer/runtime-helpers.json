@@ -9,7 +9,7 @@
   ],
   "subject": "multiplexer dashboard/runtime helper functions",
   "generatedBy": "scripts/capture-multiplexer-runtime-helper-contracts.mjs",
-  "caseCount": 10,
+  "caseCount": 14,
   "cases": [
     {
       "id": "multiplexer-runtime-helpers-001",
@@ -359,6 +359,596 @@
     },
     {
       "id": "multiplexer-runtime-helpers-010",
+      "name": "resolves live tmux targets from cache, startup grace, and scanned windows",
+      "source": "src/multiplexer/session-runtime-core.test.ts",
+      "api": "resolveLiveSessionTmuxTarget",
+      "input": {
+        "scenarios": [
+          {
+            "name": "cached metadata match retargets to resolved target",
+            "sessionId": "claude-1",
+            "sessions": [{ "id": "claude-1", "startTime": 1699999940000 }],
+            "sessionTmuxTargets": [["claude-1", { "sessionName": "aimux-test", "windowId": "@1", "windowIndex": 1 }]],
+            "resolvedTargets": [["@1", { "sessionName": "aimux-test", "windowId": "@1", "windowIndex": 2 }]],
+            "metadataByWindow": [["@1", { "kind": "agent", "sessionId": "claude-1" }]]
+          },
+          {
+            "name": "metadata-less just-created target stays valid during startup grace",
+            "sessionId": "claude-new",
+            "sessions": [{ "id": "claude-new", "startTime": 1700000000000 }],
+            "sessionTmuxTargets": [["claude-new", { "sessionName": "aimux-test", "windowId": "@2", "windowIndex": 1 }]],
+            "resolvedTargets": [["@2", { "sessionName": "aimux-test", "windowId": "@2", "windowIndex": 3 }]],
+            "metadataByWindow": [["@2", null]]
+          },
+          {
+            "name": "stale cached target is removed before scanned replacement is adopted",
+            "sessionId": "codex-1",
+            "projectRoot": "/repo/project",
+            "sessions": [{ "id": "codex-1", "startTime": 1699999940000 }],
+            "sessionTmuxTargets": [["codex-1", { "sessionName": "aimux-test", "windowId": "@3", "windowIndex": 1 }]],
+            "resolvedTargets": [["@3", null]],
+            "projectWindows": [
+              {
+                "target": { "sessionName": "aimux-test", "windowId": "@4", "windowIndex": 4 },
+                "metadata": { "kind": "agent", "sessionId": "other" }
+              },
+              {
+                "target": { "sessionName": "aimux-test", "windowId": "@5", "windowIndex": 5, "alive": false },
+                "metadata": { "kind": "agent", "sessionId": "codex-1" }
+              },
+              {
+                "target": { "sessionName": "aimux-test", "windowId": "@6", "windowIndex": 6 },
+                "metadata": { "kind": "agent", "sessionId": "codex-1" }
+              }
+            ]
+          },
+          {
+            "name": "cached target with mismatched metadata is rejected",
+            "sessionId": "claude-wrong",
+            "sessions": [{ "id": "claude-wrong", "startTime": 1699999940000 }],
+            "sessionTmuxTargets": [
+              ["claude-wrong", { "sessionName": "aimux-test", "windowId": "@7", "windowIndex": 7 }]
+            ],
+            "resolvedTargets": [["@7", { "sessionName": "aimux-test", "windowId": "@7", "windowIndex": 7 }]],
+            "metadataByWindow": [["@7", { "kind": "agent", "sessionId": "other" }]],
+            "projectWindows": []
+          },
+          {
+            "name": "fallback target is returned when manager cannot validate ownership",
+            "sessionId": "raw-1",
+            "fallback": { "sessionName": "aimux-test", "windowId": "@8", "windowIndex": 8 },
+            "sessions": [{ "id": "raw-1", "startTime": 1699999940000 }],
+            "resolvedTargets": [["@8", { "sessionName": "aimux-test", "windowId": "@8", "windowIndex": 8 }]],
+            "metadataByWindow": [["@8", { "kind": "agent", "sessionId": "raw-1" }]]
+          }
+        ]
+      },
+      "output": [
+        {
+          "name": "cached metadata match retargets to resolved target",
+          "result": { "sessionName": "aimux-test", "windowId": "@1", "windowIndex": 2 },
+          "sessionTmuxTargets": { "claude-1": { "sessionName": "aimux-test", "windowId": "@1", "windowIndex": 2 } },
+          "calls": [
+            { "method": "getTargetByWindowId", "args": ["aimux-test", "@1"] },
+            {
+              "method": "getWindowMetadata",
+              "args": [{ "sessionName": "aimux-test", "windowId": "@1", "windowIndex": 2 }]
+            }
+          ]
+        },
+        {
+          "name": "metadata-less just-created target stays valid during startup grace",
+          "result": { "sessionName": "aimux-test", "windowId": "@2", "windowIndex": 3 },
+          "sessionTmuxTargets": { "claude-new": { "sessionName": "aimux-test", "windowId": "@2", "windowIndex": 3 } },
+          "calls": [
+            { "method": "getTargetByWindowId", "args": ["aimux-test", "@2"] },
+            {
+              "method": "getWindowMetadata",
+              "args": [{ "sessionName": "aimux-test", "windowId": "@2", "windowIndex": 3 }]
+            }
+          ]
+        },
+        {
+          "name": "stale cached target is removed before scanned replacement is adopted",
+          "result": { "sessionName": "aimux-test", "windowId": "@6", "windowIndex": 6 },
+          "sessionTmuxTargets": { "codex-1": { "sessionName": "aimux-test", "windowId": "@6", "windowIndex": 6 } },
+          "calls": [
+            { "method": "getTargetByWindowId", "args": ["aimux-test", "@3"] },
+            { "method": "listProjectManagedWindows", "args": ["/repo/project"] },
+            {
+              "method": "isWindowAlive",
+              "args": [{ "sessionName": "aimux-test", "windowId": "@5", "windowIndex": 5, "alive": false }]
+            },
+            { "method": "isWindowAlive", "args": [{ "sessionName": "aimux-test", "windowId": "@6", "windowIndex": 6 }] }
+          ]
+        },
+        {
+          "name": "cached target with mismatched metadata is rejected",
+          "result": null,
+          "sessionTmuxTargets": {},
+          "calls": [
+            { "method": "getTargetByWindowId", "args": ["aimux-test", "@7"] },
+            {
+              "method": "getWindowMetadata",
+              "args": [{ "sessionName": "aimux-test", "windowId": "@7", "windowIndex": 7 }]
+            },
+            { "method": "listProjectManagedWindows", "args": ["<REPO>"] }
+          ]
+        },
+        {
+          "name": "fallback target is returned when manager cannot validate ownership",
+          "result": { "sessionName": "aimux-test", "windowId": "@8", "windowIndex": 8 },
+          "sessionTmuxTargets": { "raw-1": { "sessionName": "aimux-test", "windowId": "@8", "windowIndex": 8 } },
+          "calls": [
+            { "method": "getTargetByWindowId", "args": ["aimux-test", "@8"] },
+            {
+              "method": "getWindowMetadata",
+              "args": [{ "sessionName": "aimux-test", "windowId": "@8", "windowIndex": 8 }]
+            }
+          ]
+        }
+      ],
+      "inputSha256": "4e719de2fd6a5e7dc409ac83583390a64a4bd1f4fd978395fab84c0f3a1b62ab"
+    },
+    {
+      "id": "multiplexer-runtime-helpers-011",
+      "name": "projects context watcher sessions with resolved tmux targets and turn patterns",
+      "source": "src/multiplexer/session-runtime-core.test.ts",
+      "api": "updateContextWatcherSessions",
+      "input": {
+        "scenarios": [
+          {
+            "name": "maps configured tool patterns and live targets",
+            "projectRoot": "/repo/project",
+            "sessions": [
+              { "id": "claude-live", "command": "claude" },
+              { "id": "codex-missing-target", "command": "codex" }
+            ],
+            "sessionToolKeys": [
+              ["claude-live", "claude"],
+              ["codex-missing-target", "codex"]
+            ],
+            "sessionTmuxTargets": [
+              ["claude-live", { "sessionName": "aimux-test", "windowId": "@11", "windowIndex": 1 }]
+            ],
+            "resolvedTargets": [["@11", { "sessionName": "aimux-test", "windowId": "@11", "windowIndex": 2 }]],
+            "metadataByWindow": [["@11", { "kind": "agent", "sessionId": "claude-live" }]],
+            "projectWindows": []
+          }
+        ]
+      },
+      "output": [
+        {
+          "name": "maps configured tool patterns and live targets",
+          "updates": [
+            [
+              {
+                "id": "claude-live",
+                "command": "claude",
+                "turnPatterns": ["/^[❯>]\\s*(.+)/", "/^❯\\s+(.+)/", "/^>\\s+(.+)/"],
+                "tmuxTarget": { "sessionName": "aimux-test", "windowId": "@11", "windowIndex": 2 }
+              },
+              {
+                "id": "codex-missing-target",
+                "command": "codex",
+                "turnPatterns": ["/^[>❯]\\s*(.+)/"],
+                "tmuxTarget": null
+              }
+            ]
+          ],
+          "sessionTmuxTargets": { "claude-live": { "sessionName": "aimux-test", "windowId": "@11", "windowIndex": 2 } },
+          "calls": [
+            { "method": "getTargetByWindowId", "args": ["aimux-test", "@11"] },
+            {
+              "method": "getWindowMetadata",
+              "args": [{ "sessionName": "aimux-test", "windowId": "@11", "windowIndex": 2 }]
+            },
+            { "method": "listProjectManagedWindows", "args": ["/repo/project"] },
+            { "method": "contextWatcher.start", "args": [] }
+          ]
+        }
+      ],
+      "inputSha256": "e0769185c1cbf4be7f1157900816603b485ee3d36549750a7082a0b05202a536"
+    },
+    {
+      "id": "multiplexer-runtime-helpers-012",
+      "name": "registers managed sessions, restores labels, and keeps teammate roles out of role maps",
+      "source": "src/multiplexer/session-runtime-core.test.ts",
+      "api": "registerManagedSession",
+      "input": {
+        "scenarios": [
+          {
+            "name": "new teammate session records launch maps and inherited offline label",
+            "transport": { "id": "codex-1", "command": "codex", "backendSessionId": "backend-1", "status": "running" },
+            "args": ["--model", "gpt-5"],
+            "toolConfigKey": "codex",
+            "worktreePath": "/repo/.aimux/worktrees/feature",
+            "role": "coder",
+            "startTime": 1234,
+            "team": { "teamId": "team-1", "parentSessionId": "parent-1", "role": "reviewer" },
+            "offlineSessions": [{ "id": "codex-1", "label": "Reviewer" }],
+            "emitData": "hello",
+            "emitExitCode": 0
+          },
+          {
+            "name": "existing runtime is returned without mutating host maps",
+            "expectExisting": true,
+            "sessions": [{ "id": "codex-existing", "transportToken": "same-transport" }],
+            "transport": { "id": "codex-existing", "command": "codex", "status": "idle" },
+            "sessionRoles": [["codex-existing", "existing-role"]],
+            "sessionLabels": [["codex-existing", "Existing"]]
+          }
+        ]
+      },
+      "output": [
+        {
+          "name": "new teammate session records launch maps and inherited offline label",
+          "returnedExisting": false,
+          "runtime": {
+            "id": "codex-1",
+            "command": "codex",
+            "backendSessionId": "backend-1",
+            "status": "running",
+            "startTime": 1234,
+            "team": { "teamId": "team-1", "parentSessionId": "parent-1", "role": "reviewer" }
+          },
+          "sessions": ["codex-1"],
+          "sessionToolKeys": { "codex-1": "codex" },
+          "sessionOriginalArgs": { "codex-1": ["--model", "gpt-5"] },
+          "sessionWorktreePaths": { "codex-1": "/repo/.aimux/worktrees/feature" },
+          "sessionRoles": {},
+          "sessionLabels": { "codex-1": "Reviewer" },
+          "calls": [
+            { "method": "updateContextWatcherSessions", "args": [] },
+            { "method": "contextWatcher.start", "args": [] },
+            { "method": "handleSessionRuntimeEvent", "args": ["codex-1", { "type": "output", "data": "hello" }] },
+            { "method": "handleSessionRuntimeEvent", "args": ["codex-1", { "type": "exit", "code": 0 }] }
+          ]
+        },
+        {
+          "name": "existing runtime is returned without mutating host maps",
+          "returnedExisting": true,
+          "runtime": { "id": "codex-existing", "backendSessionId": null, "startTime": null, "team": null },
+          "sessions": ["codex-existing"],
+          "sessionToolKeys": {},
+          "sessionOriginalArgs": {},
+          "sessionWorktreePaths": {},
+          "sessionRoles": { "codex-existing": "existing-role" },
+          "sessionLabels": { "codex-existing": "Existing" },
+          "calls": []
+        }
+      ],
+      "inputSha256": "32e7f56ae4132377a3c6c5c58bb30e27b259bdcf639ca3c8d2ff45df15626265"
+    },
+    {
+      "id": "multiplexer-runtime-helpers-013",
+      "name": "handles runtime output and exit events without dropping restorable sessions",
+      "source": "src/multiplexer/session-runtime-core.test.ts",
+      "api": "handleSessionRuntimeEvent",
+      "input": {
+        "scenarios": [
+          {
+            "name": "output event only rewrites statusline",
+            "runtime": { "id": "codex-output", "command": "codex", "startTime": 1699999940000 },
+            "event": { "type": "output", "data": "hello" },
+            "host": { "mode": "dashboard", "startedInDashboard": true }
+          },
+          {
+            "name": "last project-service session exits without resolving host run",
+            "runtime": { "id": "claude-last", "command": "claude", "startTime": 1699999940000 },
+            "event": { "type": "exit", "code": 0 },
+            "host": {
+              "mode": "project-service",
+              "startedInDashboard": false,
+              "sessionOriginalArgs": [["claude-last", []]],
+              "sessionToolKeys": [["claude-last", "claude"]]
+            }
+          },
+          {
+            "name": "non-service last session resolves run",
+            "runtime": { "id": "claude-standalone", "command": "claude", "startTime": 1699999940000 },
+            "event": { "type": "exit", "code": 0 },
+            "host": {
+              "mode": "dashboard",
+              "startedInDashboard": false,
+              "sessionOriginalArgs": [["claude-standalone", []]],
+              "sessionToolKeys": [["claude-standalone", "claude"]]
+            }
+          },
+          {
+            "name": "quick backend crash is preserved offline but restore-blocked",
+            "runtime": {
+              "id": "claude-current-crash",
+              "command": "claude",
+              "startTime": 1700000000000,
+              "backendSessionId": "backend-current-crash"
+            },
+            "event": { "type": "exit", "code": 1 },
+            "recording": "boot\nError: model not found\n",
+            "host": {
+              "mode": "dashboard",
+              "startedInDashboard": true,
+              "sessionOriginalArgs": [["claude-current-crash", []]],
+              "sessionToolKeys": [["claude-current-crash", "claude"]],
+              "sessionWorktreePaths": [["claude-current-crash", "/repo/project"]]
+            }
+          },
+          {
+            "name": "quick session without backend id is not preserved",
+            "runtime": { "id": "claude-quick", "command": "claude", "startTime": 1700000000000 },
+            "event": { "type": "exit", "code": 0 },
+            "host": {
+              "mode": "dashboard",
+              "startedInDashboard": true,
+              "sessionOriginalArgs": [["claude-quick", []]],
+              "sessionToolKeys": [["claude-quick", "claude"]]
+            }
+          },
+          {
+            "name": "stopped codex session without backend id keeps fresh relaunch allowed",
+            "runtime": { "id": "codex-stopped", "command": "codex", "startTime": 1699999980000 },
+            "event": { "type": "exit", "code": 0 },
+            "host": {
+              "mode": "dashboard",
+              "startedInDashboard": true,
+              "stoppingSessionIds": ["codex-stopped"],
+              "sessionOriginalArgs": [["codex-stopped", ["--dangerously-bypass-approvals-and-sandbox"]]],
+              "sessionToolKeys": [["codex-stopped", "codex"]],
+              "sessionWorktreePaths": [["codex-stopped", "/repo/project"]]
+            }
+          },
+          {
+            "name": "teammate metadata is preserved when runtime becomes offline",
+            "runtime": {
+              "id": "claude-team-exit",
+              "command": "claude",
+              "startTime": 1699999980000,
+              "team": { "teamId": "team-1", "parentSessionId": "parent-1", "role": "reviewer" }
+            },
+            "event": { "type": "exit", "code": 0 },
+            "host": {
+              "mode": "dashboard",
+              "startedInDashboard": true,
+              "sessionOriginalArgs": [["claude-team-exit", []]],
+              "sessionToolKeys": [["claude-team-exit", "claude"]],
+              "sessionWorktreePaths": [["claude-team-exit", "/repo/project"]]
+            }
+          }
+        ]
+      },
+      "output": [
+        {
+          "name": "output event only rewrites statusline",
+          "sessions": ["codex-output"],
+          "offlineSessions": [],
+          "stoppingSessionIds": [],
+          "graveyardAfterStopSessionIds": [],
+          "sessionTmuxTargets": {},
+          "activeIndex": 0,
+          "footerFlash": null,
+          "footerFlashTicks": null,
+          "unpreservedExitedSessionIds": [],
+          "topology": [],
+          "calls": [{ "method": "writeStatuslineFile", "args": [] }]
+        },
+        {
+          "name": "last project-service session exits without resolving host run",
+          "sessions": [],
+          "offlineSessions": [],
+          "stoppingSessionIds": [],
+          "graveyardAfterStopSessionIds": [],
+          "sessionTmuxTargets": {},
+          "activeIndex": 0,
+          "footerFlash": null,
+          "footerFlashTicks": null,
+          "unpreservedExitedSessionIds": [],
+          "topology": [
+            {
+              "id": "claude-last",
+              "tool": "claude",
+              "toolConfigKey": "claude",
+              "command": "claude",
+              "args": [],
+              "status": "offline",
+              "lifecycle": "offline",
+              "createdAt": "2023-11-14T22:12:20.000Z",
+              "updatedAt": "<NOW>",
+              "freshRelaunchAllowed": true
+            }
+          ],
+          "calls": [
+            { "method": "debug", "args": ["session exited: claude-last (code=0)", "session"] },
+            { "method": "getSessionLabel", "args": ["claude-last"] },
+            { "method": "deriveHeadline", "args": ["claude-last"] },
+            { "method": "loadOfflineTopologySessions", "args": [] },
+            { "method": "updateContextWatcherSessions", "args": [] },
+            { "method": "saveState", "args": [] }
+          ]
+        },
+        {
+          "name": "non-service last session resolves run",
+          "sessions": [],
+          "offlineSessions": [],
+          "stoppingSessionIds": [],
+          "graveyardAfterStopSessionIds": [],
+          "sessionTmuxTargets": {},
+          "activeIndex": 0,
+          "footerFlash": null,
+          "footerFlashTicks": null,
+          "unpreservedExitedSessionIds": [],
+          "topology": [
+            {
+              "id": "claude-standalone",
+              "tool": "claude",
+              "toolConfigKey": "claude",
+              "command": "claude",
+              "args": [],
+              "status": "offline",
+              "lifecycle": "offline",
+              "createdAt": "2023-11-14T22:12:20.000Z",
+              "updatedAt": "<NOW>",
+              "freshRelaunchAllowed": true
+            }
+          ],
+          "calls": [
+            { "method": "debug", "args": ["session exited: claude-standalone (code=0)", "session"] },
+            { "method": "getSessionLabel", "args": ["claude-standalone"] },
+            { "method": "deriveHeadline", "args": ["claude-standalone"] },
+            { "method": "loadOfflineTopologySessions", "args": [] },
+            { "method": "updateContextWatcherSessions", "args": [] },
+            { "method": "saveState", "args": [] },
+            { "method": "resolveRun", "args": [0] }
+          ]
+        },
+        {
+          "name": "quick backend crash is preserved offline but restore-blocked",
+          "sessions": [],
+          "offlineSessions": [],
+          "stoppingSessionIds": [],
+          "graveyardAfterStopSessionIds": [],
+          "sessionTmuxTargets": {},
+          "activeIndex": 0,
+          "footerFlash": "✗ claude-current-crash crashed (code 1)",
+          "footerFlashTicks": 8,
+          "unpreservedExitedSessionIds": [],
+          "topology": [
+            {
+              "id": "claude-current-crash",
+              "tool": "claude",
+              "toolConfigKey": "claude",
+              "command": "claude",
+              "args": [],
+              "status": "offline",
+              "lifecycle": "offline",
+              "createdAt": "2023-11-14T22:13:20.000Z",
+              "updatedAt": "<NOW>",
+              "backendSessionId": "backend-current-crash",
+              "worktreePath": "/repo/project",
+              "freshRelaunchAllowed": false,
+              "restoreBlockedReason": "agent exited during startup"
+            }
+          ],
+          "calls": [
+            { "method": "debug", "args": ["session exited: claude-current-crash (code=1)", "session"] },
+            { "method": "debug", "args": ["quick crash: claude-current-crash (code=1, uptime=0ms)", "session"] },
+            {
+              "method": "publishAlert",
+              "args": [
+                {
+                  "kind": "task_failed",
+                  "sessionId": "claude-current-crash",
+                  "title": "claude-current-crash failed",
+                  "message": "Agent exited with code 1.",
+                  "dedupeKey": "exit-failed:claude-current-crash",
+                  "cooldownMs": 15000
+                }
+              ]
+            },
+            { "method": "getSessionLabel", "args": ["claude-current-crash"] },
+            { "method": "deriveHeadline", "args": ["claude-current-crash"] },
+            { "method": "loadOfflineTopologySessions", "args": [] },
+            { "method": "updateContextWatcherSessions", "args": [] },
+            { "method": "saveState", "args": [] },
+            { "method": "renderDashboard", "args": [] }
+          ]
+        },
+        {
+          "name": "quick session without backend id is not preserved",
+          "sessions": [],
+          "offlineSessions": [],
+          "stoppingSessionIds": [],
+          "graveyardAfterStopSessionIds": [],
+          "sessionTmuxTargets": {},
+          "activeIndex": 0,
+          "footerFlash": null,
+          "footerFlashTicks": null,
+          "unpreservedExitedSessionIds": ["claude-quick"],
+          "topology": [],
+          "calls": [
+            { "method": "debug", "args": ["session exited: claude-quick (code=0)", "session"] },
+            { "method": "updateContextWatcherSessions", "args": [] },
+            { "method": "saveState", "args": [] },
+            { "method": "renderDashboard", "args": [] }
+          ]
+        },
+        {
+          "name": "stopped codex session without backend id keeps fresh relaunch allowed",
+          "sessions": [],
+          "offlineSessions": [],
+          "stoppingSessionIds": [],
+          "graveyardAfterStopSessionIds": [],
+          "sessionTmuxTargets": {},
+          "activeIndex": 0,
+          "footerFlash": null,
+          "footerFlashTicks": null,
+          "unpreservedExitedSessionIds": [],
+          "topology": [
+            {
+              "id": "codex-stopped",
+              "tool": "codex",
+              "toolConfigKey": "codex",
+              "command": "codex",
+              "args": ["--dangerously-bypass-approvals-and-sandbox"],
+              "status": "offline",
+              "lifecycle": "offline",
+              "createdAt": "2023-11-14T22:13:00.000Z",
+              "updatedAt": "<NOW>",
+              "worktreePath": "/repo/project",
+              "freshRelaunchAllowed": true
+            }
+          ],
+          "calls": [
+            { "method": "debug", "args": ["session exited: codex-stopped (code=0)", "session"] },
+            { "method": "getSessionLabel", "args": ["codex-stopped"] },
+            { "method": "deriveHeadline", "args": ["codex-stopped"] },
+            { "method": "loadOfflineTopologySessions", "args": [] },
+            { "method": "updateContextWatcherSessions", "args": [] },
+            { "method": "saveState", "args": [] },
+            { "method": "renderDashboard", "args": [] }
+          ]
+        },
+        {
+          "name": "teammate metadata is preserved when runtime becomes offline",
+          "sessions": [],
+          "offlineSessions": [],
+          "stoppingSessionIds": [],
+          "graveyardAfterStopSessionIds": [],
+          "sessionTmuxTargets": {},
+          "activeIndex": 0,
+          "footerFlash": null,
+          "footerFlashTicks": null,
+          "unpreservedExitedSessionIds": [],
+          "topology": [
+            {
+              "id": "claude-team-exit",
+              "tool": "claude",
+              "toolConfigKey": "claude",
+              "command": "claude",
+              "args": [],
+              "status": "offline",
+              "lifecycle": "offline",
+              "createdAt": "2023-11-14T22:13:00.000Z",
+              "updatedAt": "<NOW>",
+              "team": { "teamId": "team-1", "parentSessionId": "parent-1", "role": "reviewer" },
+              "worktreePath": "/repo/project",
+              "freshRelaunchAllowed": true
+            }
+          ],
+          "calls": [
+            { "method": "debug", "args": ["session exited: claude-team-exit (code=0)", "session"] },
+            { "method": "getSessionLabel", "args": ["claude-team-exit"] },
+            { "method": "deriveHeadline", "args": ["claude-team-exit"] },
+            { "method": "loadOfflineTopologySessions", "args": [] },
+            { "method": "updateContextWatcherSessions", "args": [] },
+            { "method": "saveState", "args": [] },
+            { "method": "renderDashboard", "args": [] }
+          ]
+        }
+      ],
+      "inputSha256": "58859da3a41ba6a2c4411db4e5844a187eb817495c5b76c93ffc58388fab57d4"
+    },
+    {
+      "id": "multiplexer-runtime-helpers-014",
       "name": "scores attention, chooses preferred thread, and describes handoff state",
       "source": "src/multiplexer/subscreens.test.ts",
       "api": "attentionScore+getPreferredThreadIndexForParticipant+describeHandoffState",

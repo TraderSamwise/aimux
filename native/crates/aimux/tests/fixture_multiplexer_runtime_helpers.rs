@@ -32,7 +32,7 @@ fn fixture_multiplexer_runtime_helpers_contract_matches_rust() {
         contract.subject,
         "multiplexer dashboard/runtime helper functions"
     );
-    assert_eq!(contract.case_count, 10);
+    assert_eq!(contract.case_count, 14);
     assert_eq!(contract.cases.len(), contract.case_count);
     assert!(
         contract

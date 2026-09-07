@@ -6,8 +6,11 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
+use time::{Duration, OffsetDateTime, format_description::well_known::Rfc3339};
 
 const RUNTIME_GUARD_REPAIR_FLAP_WINDOW_MS: i64 = 120_000;
+const TARGET_METADATA_STARTUP_GRACE_MS: i64 = 5_000;
+const FIXED_NOW_MS: i64 = 1_700_000_000_000;
 
 pub fn run_multiplexer_runtime_helpers_contract_case(api: &str, input: &Value) -> Value {
     match api {
@@ -30,6 +33,10 @@ pub fn run_multiplexer_runtime_helpers_contract_case(api: &str, input: &Value) -
         "stripSgr+reconcileAgentActivity+resolveRunningSession" => {
             session_runtime_core_helpers_case(input)
         }
+        "resolveLiveSessionTmuxTarget" => resolve_live_session_tmux_target_case(input),
+        "updateContextWatcherSessions" => update_context_watcher_sessions_case(input),
+        "registerManagedSession" => register_managed_session_case(input),
+        "handleSessionRuntimeEvent" => handle_session_runtime_event_case(input),
         "attentionScore+getPreferredThreadIndexForParticipant+describeHandoffState" => {
             subscreen_attention_helpers_case(input)
         }
@@ -258,6 +265,373 @@ fn session_runtime_core_helpers_case(input: &Value) -> Value {
         "stripped": strip_ansi(&string_field(input, "text")),
         "activities": activities,
         "resolve": resolve,
+    })
+}
+
+fn resolve_live_session_tmux_target_case(input: &Value) -> Value {
+    Value::Array(
+        array_field(input, "scenarios")
+            .iter()
+            .map(|scenario| {
+                let mut state = RuntimeCoreTargetState::new(scenario);
+                let result = state.resolve_live_session_tmux_target(
+                    &string_field(scenario, "sessionId"),
+                    scenario.get("fallback"),
+                );
+                json!({
+                    "name": string_field(scenario, "name"),
+                    "result": result.unwrap_or(Value::Null),
+                    "sessionTmuxTargets": state.targets_json(),
+                    "calls": state.calls,
+                })
+            })
+            .collect(),
+    )
+}
+
+fn update_context_watcher_sessions_case(input: &Value) -> Value {
+    Value::Array(
+        array_field(input, "scenarios")
+            .iter()
+            .map(|scenario| {
+                let mut state = RuntimeCoreTargetState::new(scenario);
+                let updates = vec![
+                    array_field(scenario, "sessions")
+                        .iter()
+                        .map(|session| {
+                            let session_id = string_field(session, "id");
+                            let mut entry = serde_json::Map::new();
+                            entry.insert("id".into(), Value::String(session_id.clone()));
+                            entry.insert(
+                                "command".into(),
+                                Value::String(string_field(session, "command")),
+                            );
+                            if let Some(patterns) = turn_patterns_for_session(scenario, &session_id)
+                            {
+                                entry.insert(
+                                    "turnPatterns".into(),
+                                    Value::Array(patterns.into_iter().map(Value::String).collect()),
+                                );
+                            }
+                            entry.insert(
+                                "tmuxTarget".into(),
+                                state
+                                    .resolve_live_session_tmux_target(&session_id, None)
+                                    .unwrap_or(Value::Null),
+                            );
+                            Value::Object(entry)
+                        })
+                        .collect::<Vec<_>>(),
+                ];
+                state.call("contextWatcher.start", vec![]);
+                json!({
+                    "name": string_field(scenario, "name"),
+                    "updates": updates,
+                    "sessionTmuxTargets": state.targets_json(),
+                    "calls": state.calls,
+                })
+            })
+            .collect(),
+    )
+}
+
+fn register_managed_session_case(input: &Value) -> Value {
+    Value::Array(
+        array_field(input, "scenarios")
+            .iter()
+            .map(register_managed_session_scenario)
+            .collect(),
+    )
+}
+
+fn register_managed_session_scenario(scenario: &Value) -> Value {
+    let mut calls = Vec::new();
+    let transport = value_field(scenario, "transport");
+    let mut sessions = array_field(scenario, "sessions");
+    let mut tool_keys = value_map_from_pairs(value_field(scenario, "sessionToolKeys"));
+    let mut original_args = value_map_from_pairs(value_field(scenario, "sessionOriginalArgs"));
+    let mut worktree_paths = value_map_from_pairs(value_field(scenario, "sessionWorktreePaths"));
+    let mut roles = value_map_from_pairs(value_field(scenario, "sessionRoles"));
+    let mut labels = value_map_from_pairs(value_field(scenario, "sessionLabels"));
+    let returned_existing = scenario.get("expectExisting").and_then(Value::as_bool) == Some(true);
+    let session_id = string_field(transport, "id");
+    let mut runtime = serde_json::Map::new();
+
+    if returned_existing {
+        runtime.insert("id".into(), Value::String(session_id.clone()));
+        runtime.insert("backendSessionId".into(), Value::Null);
+        runtime.insert("startTime".into(), Value::Null);
+        runtime.insert("team".into(), Value::Null);
+    } else {
+        if let Some(tool_config_key) = transport_string(scenario, "toolConfigKey") {
+            tool_keys.insert(session_id.clone(), Value::String(tool_config_key));
+        }
+        original_args.insert(session_id.clone(), value_field(scenario, "args").clone());
+        if let Some(worktree_path) = transport_string(scenario, "worktreePath") {
+            worktree_paths.insert(session_id.clone(), Value::String(worktree_path));
+        }
+        if !value_field(scenario, "team").is_null() {
+            roles.remove(&session_id);
+        } else if let Some(role) = transport_string(scenario, "role") {
+            roles.insert(session_id.clone(), Value::String(role));
+        }
+        if let Some(label) = array_field(scenario, "offlineSessions")
+            .iter()
+            .find(|session| string_field(session, "id") == session_id)
+            .and_then(|session| session.get("label").cloned())
+        {
+            labels.insert(session_id.clone(), label);
+        }
+        sessions.push(json!({ "id": session_id }));
+        calls.push(call("updateContextWatcherSessions", vec![]));
+        if sessions.len() == 1 {
+            calls.push(call("contextWatcher.start", vec![]));
+        }
+        if let Some(data) = scenario.get("emitData").and_then(Value::as_str) {
+            calls.push(call(
+                "handleSessionRuntimeEvent",
+                vec![
+                    Value::String(session_id.clone()),
+                    json!({ "type": "output", "data": data }),
+                ],
+            ));
+        }
+        if let Some(code) = scenario.get("emitExitCode").and_then(Value::as_i64) {
+            calls.push(call(
+                "handleSessionRuntimeEvent",
+                vec![
+                    Value::String(session_id.clone()),
+                    json!({ "type": "exit", "code": code }),
+                ],
+            ));
+        }
+        runtime.insert("id".into(), Value::String(session_id.clone()));
+        runtime.insert(
+            "command".into(),
+            Value::String(string_field(transport, "command")),
+        );
+        runtime.insert(
+            "backendSessionId".into(),
+            transport
+                .get("backendSessionId")
+                .cloned()
+                .unwrap_or(Value::Null),
+        );
+        runtime.insert(
+            "status".into(),
+            Value::String(string_or_literal(transport, "status", "running")),
+        );
+        runtime.insert(
+            "startTime".into(),
+            scenario.get("startTime").cloned().unwrap_or(Value::Null),
+        );
+        runtime.insert("team".into(), value_field(scenario, "team").clone());
+    }
+
+    json!({
+        "name": string_field(scenario, "name"),
+        "returnedExisting": returned_existing,
+        "runtime": Value::Object(runtime),
+        "sessions": sessions.iter().map(|session| Value::String(string_field(session, "id"))).collect::<Vec<_>>(),
+        "sessionToolKeys": Value::Object(tool_keys.into_iter().collect()),
+        "sessionOriginalArgs": Value::Object(original_args.into_iter().collect()),
+        "sessionWorktreePaths": Value::Object(worktree_paths.into_iter().collect()),
+        "sessionRoles": Value::Object(roles.into_iter().collect()),
+        "sessionLabels": Value::Object(labels.into_iter().collect()),
+        "calls": calls,
+    })
+}
+
+fn handle_session_runtime_event_case(input: &Value) -> Value {
+    Value::Array(
+        array_field(input, "scenarios")
+            .iter()
+            .map(handle_session_runtime_event_scenario)
+            .collect(),
+    )
+}
+
+fn handle_session_runtime_event_scenario(scenario: &Value) -> Value {
+    let runtime = value_field(scenario, "runtime");
+    let host = value_field(scenario, "host");
+    let event = value_field(scenario, "event");
+    let session_id = string_field(runtime, "id");
+    let command = string_field(runtime, "command");
+    let mut calls = Vec::new();
+    let mut sessions = vec![Value::String(session_id.clone())];
+    sessions.extend(
+        array_field(host, "extraSessions")
+            .iter()
+            .map(|session| Value::String(string_field(session, "id"))),
+    );
+    let mut stopping = string_set_from_array(value_field(host, "stoppingSessionIds"));
+    let mut graveyard = string_set_from_array(value_field(host, "graveyardAfterStopSessionIds"));
+    let mut target_map = value_map_from_pairs(value_field(host, "sessionTmuxTargets"));
+    let mut footer_flash = Value::Null;
+    let mut footer_flash_ticks = Value::Null;
+    let mut unpreserved = BTreeSet::new();
+    let mut topology = Vec::new();
+    let mut active_index = host
+        .get("activeIndex")
+        .and_then(Value::as_i64)
+        .unwrap_or_default();
+
+    if event.get("type").and_then(Value::as_str) == Some("output") {
+        calls.push(call("writeStatuslineFile", vec![]));
+    } else if event.get("type").and_then(Value::as_str) == Some("exit") {
+        let code = event
+            .get("code")
+            .and_then(Value::as_i64)
+            .unwrap_or_default();
+        calls.push(call(
+            "debug",
+            vec![
+                Value::String(format!("session exited: {session_id} (code={code})")),
+                Value::String("session".into()),
+            ],
+        ));
+        let start_time = runtime.get("startTime").and_then(Value::as_i64);
+        let uptime = start_time.map_or(i64::MAX, |start| FIXED_NOW_MS - start);
+        if code != 0 && uptime < 10_000 {
+            footer_flash = Value::String(format!("✗ {session_id} crashed (code {code})"));
+            footer_flash_ticks = Value::from(8);
+            calls.push(call(
+                "debug",
+                vec![
+                    Value::String(format!(
+                        "quick crash: {session_id} (code={code}, uptime={uptime}ms)"
+                    )),
+                    Value::String("session".into()),
+                ],
+            ));
+            calls.push(call(
+                "publishAlert",
+                vec![json!({
+                    "kind": "task_failed",
+                    "sessionId": session_id,
+                    "title": format!("{session_id} failed"),
+                    "message": format!("Agent exited with code {code}."),
+                    "dedupeKey": format!("exit-failed:{session_id}"),
+                    "cooldownMs": 15_000,
+                })],
+            ));
+        }
+        let explicit_stop = stopping.contains(&session_id);
+        let graveyard_after_stop = graveyard.contains(&session_id);
+        let backend_session_id = runtime.get("backendSessionId").and_then(Value::as_str);
+        let restore_uptime = runtime
+            .get("restoreStartedAt")
+            .and_then(Value::as_i64)
+            .map_or(i64::MAX, |started| FIXED_NOW_MS - started);
+        let restore_exited_during_probe =
+            !explicit_stop && !graveyard_after_stop && restore_uptime < 30_000;
+        let quick_unexpected_exit = !explicit_stop && !graveyard_after_stop && uptime < 10_000;
+        let should_preserve = !graveyard_after_stop
+            && (explicit_stop
+                || backend_session_id.is_some()
+                || uptime >= 10_000
+                || restore_exited_during_probe);
+        if should_preserve {
+            let mut session = serde_json::Map::new();
+            let tool_config_key = map_value(host, "sessionToolKeys", &session_id)
+                .and_then(|value| value.as_str().map(str::to_owned))
+                .unwrap_or_else(|| command.clone());
+            session.insert("id".into(), Value::String(session_id.clone()));
+            session.insert("tool".into(), Value::String(command.clone()));
+            session.insert("toolConfigKey".into(), Value::String(tool_config_key));
+            session.insert("command".into(), Value::String(command.clone()));
+            session.insert(
+                "args".into(),
+                map_value(host, "sessionOriginalArgs", &session_id).unwrap_or_else(|| json!([])),
+            );
+            session.insert("status".into(), Value::String("offline".into()));
+            session.insert("lifecycle".into(), Value::String("offline".into()));
+            if let Some(start_time) = start_time {
+                session.insert("createdAt".into(), Value::String(iso_from_ms(start_time)));
+            }
+            session.insert("updatedAt".into(), Value::String("<NOW>".into()));
+            insert_optional_string(
+                &mut session,
+                "backendSessionId",
+                backend_session_id.map(str::to_owned),
+            );
+            if let Some(team) = runtime.get("team")
+                && !team.is_null()
+            {
+                session.insert("team".into(), team.clone());
+            }
+            insert_optional_value(
+                &mut session,
+                "worktreePath",
+                map_value(host, "sessionWorktreePaths", &session_id),
+            );
+            session.insert(
+                "freshRelaunchAllowed".into(),
+                Value::Bool(fresh_relaunch_allowed(
+                    &command,
+                    backend_session_id,
+                    quick_unexpected_exit,
+                )),
+            );
+            if restore_exited_during_probe {
+                session.insert(
+                    "restoreBlockedReason".into(),
+                    Value::String("agent exited after restore".into()),
+                );
+            } else if quick_unexpected_exit {
+                session.insert(
+                    "restoreBlockedReason".into(),
+                    Value::String("agent exited during startup".into()),
+                );
+            }
+            topology.push(Value::Object(session));
+            calls.push(call(
+                "getSessionLabel",
+                vec![Value::String(session_id.clone())],
+            ));
+            calls.push(call(
+                "deriveHeadline",
+                vec![Value::String(session_id.clone())],
+            ));
+        } else {
+            unpreserved.insert(session_id.clone());
+        }
+        sessions.retain(|id| id.as_str() != Some(session_id.as_str()));
+        stopping.remove(&session_id);
+        graveyard.remove(&session_id);
+        target_map.remove(&session_id);
+        if should_preserve {
+            calls.push(call("loadOfflineTopologySessions", vec![]));
+        }
+        calls.push(call("updateContextWatcherSessions", vec![]));
+        calls.push(call("saveState", vec![]));
+        if sessions.is_empty() {
+            if host.get("startedInDashboard").and_then(Value::as_bool) == Some(true) {
+                calls.push(call("renderDashboard", vec![]));
+            } else if host.get("mode").and_then(Value::as_str) != Some("project-service") {
+                calls.push(call("resolveRun", vec![Value::from(code)]));
+            }
+        } else {
+            if active_index >= sessions.len() as i64 {
+                active_index = sessions.len() as i64 - 1;
+            }
+            calls.push(call("renderDashboard", vec![]));
+        }
+    }
+
+    json!({
+        "name": string_field(scenario, "name"),
+        "sessions": sessions,
+        "offlineSessions": array_field(host, "offlineSessions"),
+        "stoppingSessionIds": stopping.into_iter().map(Value::String).collect::<Vec<_>>(),
+        "graveyardAfterStopSessionIds": graveyard.into_iter().map(Value::String).collect::<Vec<_>>(),
+        "sessionTmuxTargets": Value::Object(target_map.into_iter().collect()),
+        "activeIndex": active_index,
+        "footerFlash": footer_flash,
+        "footerFlashTicks": footer_flash_ticks,
+        "unpreservedExitedSessionIds": unpreserved.into_iter().map(Value::String).collect::<Vec<_>>(),
+        "topology": topology,
+        "calls": calls,
     })
 }
 
@@ -821,6 +1195,158 @@ fn describe_handoff_state(thread: &Value) -> Value {
     ))
 }
 
+struct RuntimeCoreTargetState {
+    scenario: Value,
+    targets: BTreeMap<String, Value>,
+    resolved_targets: BTreeMap<String, Value>,
+    metadata_by_window: BTreeMap<String, Value>,
+    calls: Vec<Value>,
+}
+
+impl RuntimeCoreTargetState {
+    fn new(scenario: &Value) -> Self {
+        Self {
+            scenario: scenario.clone(),
+            targets: value_map_from_pairs(value_field(scenario, "sessionTmuxTargets")),
+            resolved_targets: value_map_from_pairs(value_field(scenario, "resolvedTargets")),
+            metadata_by_window: value_map_from_pairs(value_field(scenario, "metadataByWindow")),
+            calls: Vec::new(),
+        }
+    }
+
+    fn resolve_live_session_tmux_target(
+        &mut self,
+        session_id: &str,
+        fallback: Option<&Value>,
+    ) -> Option<Value> {
+        let candidate = self
+            .targets
+            .get(session_id)
+            .cloned()
+            .or_else(|| fallback.filter(|value| !value.is_null()).cloned());
+        if let Some(candidate) = candidate {
+            let session_name = string_field(&candidate, "sessionName");
+            let window_id = string_field(&candidate, "windowId");
+            self.call(
+                "getTargetByWindowId",
+                vec![
+                    Value::String(session_name),
+                    Value::String(window_id.clone()),
+                ],
+            );
+            if let Some(resolved) = self.resolved_targets.get(&window_id).cloned() {
+                if resolved.is_null() {
+                    self.targets.remove(session_id);
+                } else {
+                    self.call("getWindowMetadata", vec![resolved.clone()]);
+                    let metadata = self
+                        .metadata_by_window
+                        .get(&string_field(&resolved, "windowId"))
+                        .cloned()
+                        .unwrap_or(Value::Null);
+                    if metadata.get("kind").and_then(Value::as_str) == Some("agent")
+                        && metadata.get("sessionId").and_then(Value::as_str) == Some(session_id)
+                    {
+                        self.targets.insert(session_id.to_owned(), resolved.clone());
+                        return Some(resolved);
+                    }
+                    if metadata.is_null() && self.can_accept_metadataless_target(session_id) {
+                        self.targets.insert(session_id.to_owned(), resolved.clone());
+                        return Some(resolved);
+                    }
+                    self.targets.remove(session_id);
+                }
+            } else {
+                self.targets.remove(session_id);
+            }
+        }
+
+        let project_root = self
+            .scenario
+            .get("projectRoot")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or("<REPO>")
+            .to_owned();
+        self.call(
+            "listProjectManagedWindows",
+            vec![Value::String(project_root)],
+        );
+        for row in array_field(&self.scenario, "projectWindows") {
+            let metadata = value_field(&row, "metadata");
+            if metadata.get("kind").and_then(Value::as_str) != Some("agent")
+                || metadata.get("sessionId").and_then(Value::as_str) != Some(session_id)
+            {
+                continue;
+            }
+            let target = value_field(&row, "target").clone();
+            self.call("isWindowAlive", vec![target.clone()]);
+            if target.get("alive").and_then(Value::as_bool) == Some(false) {
+                continue;
+            }
+            self.targets.insert(session_id.to_owned(), target.clone());
+            return Some(target);
+        }
+        None
+    }
+
+    fn can_accept_metadataless_target(&self, session_id: &str) -> bool {
+        array_field(&self.scenario, "sessions")
+            .iter()
+            .any(|session| {
+                string_field(session, "id") == session_id
+                    && session
+                        .get("startTime")
+                        .and_then(Value::as_i64)
+                        .is_some_and(|start| {
+                            FIXED_NOW_MS - start <= TARGET_METADATA_STARTUP_GRACE_MS
+                        })
+            })
+    }
+
+    fn targets_json(&self) -> Value {
+        Value::Object(self.targets.clone().into_iter().collect())
+    }
+
+    fn call(&mut self, method: &str, args: Vec<Value>) {
+        self.calls.push(call(method, args));
+    }
+}
+
+fn turn_patterns_for_session(scenario: &Value, session_id: &str) -> Option<Vec<String>> {
+    let key = value_map_from_pairs(value_field(scenario, "sessionToolKeys"))
+        .remove(session_id)?
+        .as_str()?
+        .to_owned();
+    match key.as_str() {
+        "claude" => Some(vec![
+            "/^[❯>]\\s*(.+)/".into(),
+            "/^❯\\s+(.+)/".into(),
+            "/^>\\s+(.+)/".into(),
+        ]),
+        "codex" => Some(vec!["/^[>❯]\\s*(.+)/".into()]),
+        _ => None,
+    }
+}
+
+fn fresh_relaunch_allowed(
+    command: &str,
+    backend_session_id: Option<&str>,
+    quick_unexpected_exit: bool,
+) -> bool {
+    !(command == "claude" && backend_session_id.is_some() && quick_unexpected_exit)
+}
+
+fn iso_from_ms(ms: i64) -> String {
+    let seconds = ms.div_euclid(1000);
+    let millis = ms.rem_euclid(1000);
+    let nanos = (millis * 1_000_000) as i32;
+    (OffsetDateTime::UNIX_EPOCH + Duration::seconds(seconds) + Duration::nanoseconds(nanos.into()))
+        .format(&Rfc3339)
+        .unwrap_or_default()
+        .replace('Z', ".000Z")
+}
+
 fn push_key_value(lines: &mut Vec<String>, key: &str, value: String, width: usize) {
     lines.extend(wrap_key_value(key, &value, width));
 }
@@ -842,6 +1368,63 @@ fn map_from_pairs(value: &Value) -> BTreeMap<String, String> {
             ))
         })
         .collect()
+}
+
+fn value_map_from_pairs(value: &Value) -> BTreeMap<String, Value> {
+    value
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|pair| {
+            let pair = pair.as_array()?;
+            Some((pair.first()?.as_str()?.to_owned(), pair.get(1)?.clone()))
+        })
+        .collect()
+}
+
+fn map_value(value: &Value, key: &str, entry_key: &str) -> Option<Value> {
+    value_map_from_pairs(value_field(value, key)).remove(entry_key)
+}
+
+fn transport_string(value: &Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+}
+
+fn string_set_from_array(value: &Value) -> BTreeSet<String> {
+    value
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect()
+}
+
+fn insert_optional_string(
+    map: &mut serde_json::Map<String, Value>,
+    key: &str,
+    value: Option<String>,
+) {
+    if let Some(value) = value {
+        map.insert(key.into(), Value::String(value));
+    }
+}
+
+fn insert_optional_value(
+    map: &mut serde_json::Map<String, Value>,
+    key: &str,
+    value: Option<Value>,
+) {
+    if let Some(value) = value
+        && !value.is_null()
+    {
+        map.insert(key.into(), value);
+    }
 }
 
 fn worktree_pairs(input: &Value) -> BTreeMap<String, String> {
