@@ -26,7 +26,7 @@ fn fixture_session_runtime_agent_controls_matches_typescript() {
     let contract: Contract =
         serde_json::from_str(FIXTURE).expect("session runtime agent controls fixture parses");
     assert_eq!(contract.source, "src/multiplexer/session-runtime-core.ts");
-    assert_eq!(contract.cases.len(), 6);
+    assert_eq!(contract.cases.len(), 10);
 
     let mut failures = Vec::new();
     for case in contract.cases {
