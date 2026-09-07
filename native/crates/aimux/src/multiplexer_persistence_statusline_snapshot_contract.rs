@@ -1,4 +1,5 @@
 use serde_json::{Map, Value, json};
+use std::cmp::Reverse;
 
 const NOW: &str = "2026-06-01T00:00:00.000Z";
 
@@ -103,7 +104,7 @@ where
     groups
         .into_iter()
         .flat_map(|(_, mut entries)| {
-            entries.sort_by(|left, right| sort_key(right).cmp(&sort_key(left)));
+            entries.sort_by_key(|right| Reverse(sort_key(right)));
             entries
                 .into_iter()
                 .map(|entry| project(&entry))
