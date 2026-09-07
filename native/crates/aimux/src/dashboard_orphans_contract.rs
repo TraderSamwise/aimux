@@ -1,4 +1,4 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
 const DASHBOARD_ARGS: [&str; 2] = ["--tmux-dashboard-internal", "__dashboard-internal-native"];

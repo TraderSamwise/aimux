@@ -1,10 +1,9 @@
 use aimux::dashboard_tui_visibility::{
-    consume_dashboard_tui_visibility_wake, find_tmux_pane_for_process, mark_dashboard_tui_visible,
-    parse_process_parents, parse_tmux_pane_rows, parse_tmux_visibility,
+    DashboardTuiVisibilityState, consume_dashboard_tui_visibility_wake, find_tmux_pane_for_process,
+    mark_dashboard_tui_visible, parse_process_parents, parse_tmux_pane_rows, parse_tmux_visibility,
     read_dashboard_tui_visibility_for_state, read_tmux_tui_visibility_from_values,
-    DashboardTuiVisibilityState,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const DASHBOARD_TUI_VISIBILITY: &str =
     include_str!("../../../../testdata/contracts/v1/tmux/dashboard-tui-visibility.json");

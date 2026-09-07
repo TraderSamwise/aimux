@@ -9,7 +9,7 @@ use aimux::project_service::runtime_exchange::{
     normalize_runtime_exchange, read_runtime_exchange, update_runtime_exchange,
     write_runtime_exchange,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const RUNTIME_EXCHANGE_STORE: &str =
     include_str!("../../../../testdata/contracts/v1/runtime-exchange/store.json");

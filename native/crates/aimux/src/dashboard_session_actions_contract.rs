@@ -1,4 +1,4 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 pub fn run_dashboard_session_actions_contract_case(input: &Value) -> Value {
     let mut calls = Vec::new();

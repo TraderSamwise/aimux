@@ -1,4 +1,4 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
 pub fn run_dashboard_visibility_contract_case(input: &Value) -> Value {

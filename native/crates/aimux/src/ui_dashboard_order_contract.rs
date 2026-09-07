@@ -1,4 +1,4 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
 const MAIN_CHECKOUT_ORDER_KEY: &str = "__main__";

@@ -1,6 +1,6 @@
 use aimux::project_catalog::run_project_scanner_contract_case;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const PROJECT_CATALOG_REGISTRY: &str =
     include_str!("../../../../testdata/contracts/v1/project-catalog/registry.json");

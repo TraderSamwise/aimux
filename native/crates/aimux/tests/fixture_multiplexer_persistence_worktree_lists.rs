@@ -3,7 +3,7 @@ mod multiplexer_persistence_worktree_lists_contract;
 
 use multiplexer_persistence_worktree_lists_contract::run_multiplexer_persistence_worktree_lists_contract_case;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const FIXTURE: &str =
     include_str!("../../../../testdata/contracts/v1/multiplexer/persistence-worktree-lists.json");

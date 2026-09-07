@@ -1,9 +1,9 @@
 use aimux::dashboard_model::{
-    filter_dashboard_visible_model, DashboardService, DashboardSession, DesktopStateSnapshot,
-    DesktopWorktree, MainCheckoutInfo, WorktreeGroup,
+    DashboardService, DashboardSession, DesktopStateSnapshot, DesktopWorktree, MainCheckoutInfo,
+    WorktreeGroup, filter_dashboard_visible_model,
 };
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const DESKTOP_STATE_COUNTS: &str =
     include_str!("../../../../testdata/contracts/v1/dashboard/desktop-state-counts.json");

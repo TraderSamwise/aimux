@@ -1,6 +1,6 @@
 use aimux::transcript_reconciler_contract::run_transcript_reconciler_contract_case;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const TRANSCRIPT_RECONCILER: &str =
     include_str!("../../../../testdata/contracts/v1/agent-output/transcript-reconciler.json");

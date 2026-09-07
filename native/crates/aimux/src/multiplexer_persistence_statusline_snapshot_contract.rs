@@ -1,4 +1,4 @@
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 const NOW: &str = "2026-06-01T00:00:00.000Z";
 
@@ -159,17 +159,21 @@ fn project_agent(entry: &Value, include_control_flags: bool) -> Value {
     if include_control_flags {
         out.insert(
             "overseer".into(),
-            json!(entry
-                .get("overseer")
-                .and_then(Value::as_bool)
-                .unwrap_or(false)),
+            json!(
+                entry
+                    .get("overseer")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+            ),
         );
         out.insert(
             "scribe".into(),
-            json!(entry
-                .get("scribe")
-                .and_then(Value::as_bool)
-                .unwrap_or(false)),
+            json!(
+                entry
+                    .get("scribe")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+            ),
         );
     } else {
         insert_optional(&mut out, "team", entry);
@@ -249,10 +253,12 @@ fn insert_string_as(
 fn insert_bool(out: &mut Map<String, Value>, output_key: &str, entry: &Value, input_key: &str) {
     out.insert(
         output_key.into(),
-        json!(entry
-            .get(input_key)
-            .and_then(Value::as_bool)
-            .unwrap_or(false)),
+        json!(
+            entry
+                .get(input_key)
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        ),
     );
 }
 

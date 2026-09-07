@@ -1,4 +1,4 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const CURRENT_ENTRY_PATH: &str = "<repo>/dist/launcher-bin.js";
 const NODE: &str = "<node>";

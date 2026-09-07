@@ -1,8 +1,8 @@
 use aimux::tmux_expose::{ExposeScopeView, ExposeSublabel};
 use aimux::tmux_expose_hot_snapshot::{
-    write_hot_expose_scope_view, HotExposeScopeKey, HotExposeScopePrune,
+    HotExposeScopeKey, HotExposeScopePrune, write_hot_expose_scope_view,
 };
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};

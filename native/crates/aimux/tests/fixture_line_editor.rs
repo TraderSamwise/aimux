@@ -1,7 +1,7 @@
 use aimux::dashboard_controller::DashboardKey;
-use aimux::dashboard_launch_options::{render_line_window, LineState};
+use aimux::dashboard_launch_options::{LineState, render_line_window};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const LINE_EDITOR: &str =
     include_str!("../../../../testdata/contracts/v1/terminal/line-editor.json");

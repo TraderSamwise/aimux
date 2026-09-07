@@ -1,10 +1,10 @@
 use aimux::daemon::text::host_agent::AgentOutputSseTextHandler;
 use aimux::project_service::agent_output::{
-    agent_output_capture_window, bounded_agent_output_end_line, bounded_agent_output_start_line,
-    AgentOutputCaptureWindow,
+    AgentOutputCaptureWindow, agent_output_capture_window, bounded_agent_output_end_line,
+    bounded_agent_output_start_line,
 };
 use aimux::project_service::output_metrics::{AgentOutputReadMetricRecord, AgentOutputReadMetrics};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 const BOUNDS: &str = include_str!("../../../../testdata/contracts/v1/agent-output/bounds.json");
 const STREAM: &str = include_str!("../../../../testdata/contracts/v1/agent-output/stream.json");

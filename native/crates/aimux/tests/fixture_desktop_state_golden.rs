@@ -1,6 +1,6 @@
 use aimux::dashboard_model::DesktopStateSnapshot;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const DESKTOP_STATE_GOLDEN: &str =
     include_str!("../../../../testdata/contracts/v1/dashboard/desktop-state-golden.json");
