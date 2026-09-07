@@ -56,6 +56,7 @@ pub mod dashboard_event_stream;
 pub mod dashboard_focus;
 pub mod dashboard_interaction_activation_contract;
 pub mod dashboard_interaction_command_keys_contract;
+pub mod dashboard_interaction_orchestration_submit_contract;
 pub mod dashboard_interaction_overlays_contract;
 pub mod dashboard_internal;
 pub mod dashboard_launch_options;
