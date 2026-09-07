@@ -1,0 +1,374 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/session-runtime-core.ts",
+  "generatedBy": "scripts/capture-session-runtime-output-contract.mjs",
+  "description": "readAgentOutput target validation, capture window, and liveness parity captured by running TypeScript.",
+  "cases": [
+    {
+      "id": "session-runtime-output-001",
+      "name": "revalidates cached target and captures ansi output once",
+      "source": "src/multiplexer/session-runtime-core.ts",
+      "api": "readAgentOutput",
+      "input": {
+        "sessionId": "codex-output-1",
+        "tool": "codex",
+        "captureText": "> hello\n\nHi there",
+        "captureAnsi": "> hello\n\n\u001b[32mHi\u001b[0m there",
+        "sessionTmuxTargets": [
+          ["codex-output-1", { "sessionName": "aimux-test", "windowId": "@1", "windowIndex": 1, "windowName": "codex" }]
+        ],
+        "resolvedTargets": [
+          ["@1", { "sessionName": "aimux-test", "windowId": "@1", "windowIndex": 2, "windowName": "codex" }]
+        ],
+        "metadataByWindow": [["@1", { "kind": "agent", "sessionId": "codex-output-1" }]],
+        "derived": { "activity": "idle", "attention": "normal" }
+      },
+      "output": {
+        "result": {
+          "sessionId": "codex-output-1",
+          "output": "> hello\n\nHi there",
+          "outputAnsi": "> hello\n\n\u001b[32mHi\u001b[0m there",
+          "startLine": -120,
+          "requestedStartLine": -120,
+          "captureLineLimit": 2000,
+          "outputTailOnly": true,
+          "outputStartLineClamped": false,
+          "parsed": {
+            "blocks": [
+              { "type": "prompt", "text": "hello" },
+              { "type": "response", "text": "Hi there" }
+            ],
+            "parser": { "tool": "codex", "version": 1, "confidence": "heuristic" }
+          },
+          "messages": [
+            {
+              "id": "user:aaf4c61ddcc5",
+              "role": "user",
+              "parts": [{ "type": "text", "text": "hello", "spans": [{ "text": "hello" }] }],
+              "text": "hello"
+            },
+            {
+              "id": "assistant:9e472f09082b",
+              "role": "assistant",
+              "parts": [
+                {
+                  "type": "text",
+                  "text": "Hi there",
+                  "spans": [
+                    { "text": "Hi", "foreground": { "model": "rgb", "value": "#98c379" } },
+                    { "text": " there" }
+                  ]
+                }
+              ],
+              "text": "Hi there",
+              "latest": true
+            }
+          ],
+          "activityText": "",
+          "activity": "idle",
+          "attention": "normal"
+        },
+        "error": null,
+        "calls": [
+          { "method": "tmuxRuntimeManager.getTargetByWindowId", "args": ["aimux-test", "@1"] },
+          {
+            "method": "tmuxRuntimeManager.getWindowMetadata",
+            "args": [{ "sessionName": "aimux-test", "windowId": "@1", "windowIndex": 2, "windowName": "codex" }]
+          },
+          {
+            "method": "tmuxRuntimeManager.captureTarget",
+            "args": [
+              { "sessionName": "aimux-test", "windowId": "@1", "windowIndex": 2, "windowName": "codex" },
+              { "startLine": -120, "includeEscapes": true }
+            ]
+          }
+        ],
+        "sessionTmuxTargets": [
+          ["codex-output-1", { "sessionName": "aimux-test", "windowId": "@1", "windowIndex": 2, "windowName": "codex" }]
+        ],
+        "livePaneSnapshot": "# codex-output-1 (codex) — Live Snapshot\n\nUpdated: <ISO_DATE>\n\nRecent terminal output:\n\n> hello\nHi there\n",
+        "aimuxHome": "<AIMUX_HOME>"
+      },
+      "inputSha256": "793f562d8daf640b71401982e3de58b74f85526f77a8f9f0a35e2e223d485f73"
+    },
+    {
+      "id": "session-runtime-output-002",
+      "name": "drops a stale cached target when no live replacement exists",
+      "source": "src/multiplexer/session-runtime-core.ts",
+      "api": "readAgentOutput",
+      "input": {
+        "sessionId": "codex-output-stale",
+        "sessionTmuxTargets": [
+          [
+            "codex-output-stale",
+            { "sessionName": "aimux-test", "windowId": "@stale", "windowIndex": 1, "windowName": "codex" }
+          ]
+        ],
+        "resolvedTargets": [["@stale", null]],
+        "projectWindows": [],
+        "captureText": "should not capture"
+      },
+      "output": {
+        "result": null,
+        "error": { "name": "Error", "message": "Session \"codex-output-stale\" does not have a live tmux target" },
+        "calls": [
+          { "method": "tmuxRuntimeManager.getTargetByWindowId", "args": ["aimux-test", "@stale"] },
+          { "method": "tmuxRuntimeManager.listProjectManagedWindows", "args": ["<REPO>"] }
+        ],
+        "sessionTmuxTargets": [],
+        "livePaneSnapshot": null,
+        "aimuxHome": "<AIMUX_HOME>"
+      },
+      "inputSha256": "e5a96e3fc22d30f98cfcf78099ba9197b10e224c138dd64d04d9ed0f512c6426"
+    },
+    {
+      "id": "session-runtime-output-003",
+      "name": "adopts a scanned project window after cached metadata mismatch",
+      "source": "src/multiplexer/session-runtime-core.ts",
+      "api": "readAgentOutput",
+      "input": {
+        "sessionId": "codex-output-scan",
+        "sessionTmuxTargets": [
+          [
+            "codex-output-scan",
+            { "sessionName": "aimux-test", "windowId": "@wrong", "windowIndex": 1, "windowName": "codex" }
+          ]
+        ],
+        "resolvedTargets": [
+          ["@wrong", { "sessionName": "aimux-test", "windowId": "@wrong", "windowIndex": 1, "windowName": "codex" }]
+        ],
+        "metadataByWindow": [["@wrong", { "kind": "agent", "sessionId": "other" }]],
+        "projectWindows": [
+          {
+            "target": { "sessionName": "aimux-test", "windowId": "@other", "windowIndex": 4, "windowName": "codex" },
+            "metadata": { "kind": "agent", "sessionId": "other" }
+          },
+          {
+            "target": {
+              "sessionName": "aimux-test",
+              "windowId": "@dead",
+              "windowIndex": 5,
+              "windowName": "codex",
+              "alive": false
+            },
+            "metadata": { "kind": "agent", "sessionId": "codex-output-scan" }
+          },
+          {
+            "target": { "sessionName": "aimux-test", "windowId": "@live", "windowIndex": 6, "windowName": "codex" },
+            "metadata": { "kind": "agent", "sessionId": "codex-output-scan" }
+          }
+        ],
+        "captureText": "scan adopted output"
+      },
+      "output": {
+        "result": {
+          "sessionId": "codex-output-scan",
+          "output": "scan adopted output",
+          "outputAnsi": "scan adopted output",
+          "startLine": -120,
+          "requestedStartLine": -120,
+          "captureLineLimit": 2000,
+          "outputTailOnly": true,
+          "outputStartLineClamped": false,
+          "parsed": {
+            "blocks": [{ "type": "response", "text": "scan adopted output" }],
+            "parser": { "tool": "codex", "version": 1, "confidence": "heuristic" }
+          },
+          "messages": [
+            {
+              "id": "assistant:b38f2d6d14ea",
+              "role": "assistant",
+              "parts": [{ "type": "text", "text": "scan adopted output" }],
+              "text": "scan adopted output",
+              "latest": true
+            }
+          ],
+          "activityText": ""
+        },
+        "error": null,
+        "calls": [
+          { "method": "tmuxRuntimeManager.getTargetByWindowId", "args": ["aimux-test", "@wrong"] },
+          {
+            "method": "tmuxRuntimeManager.getWindowMetadata",
+            "args": [{ "sessionName": "aimux-test", "windowId": "@wrong", "windowIndex": 1, "windowName": "codex" }]
+          },
+          { "method": "tmuxRuntimeManager.listProjectManagedWindows", "args": ["<REPO>"] },
+          {
+            "method": "tmuxRuntimeManager.isWindowAlive",
+            "args": [
+              {
+                "sessionName": "aimux-test",
+                "windowId": "@dead",
+                "windowIndex": 5,
+                "windowName": "codex",
+                "alive": false
+              }
+            ]
+          },
+          {
+            "method": "tmuxRuntimeManager.isWindowAlive",
+            "args": [{ "sessionName": "aimux-test", "windowId": "@live", "windowIndex": 6, "windowName": "codex" }]
+          },
+          {
+            "method": "tmuxRuntimeManager.captureTarget",
+            "args": [
+              { "sessionName": "aimux-test", "windowId": "@live", "windowIndex": 6, "windowName": "codex" },
+              { "startLine": -120, "includeEscapes": true }
+            ]
+          }
+        ],
+        "sessionTmuxTargets": [
+          [
+            "codex-output-scan",
+            { "sessionName": "aimux-test", "windowId": "@live", "windowIndex": 6, "windowName": "codex" }
+          ]
+        ],
+        "livePaneSnapshot": "# codex-output-scan (codex) — Live Snapshot\n\nUpdated: <ISO_DATE>\n\nRecent terminal output:\n\nscan adopted output\n",
+        "aimuxHome": "<AIMUX_HOME>"
+      },
+      "inputSha256": "9b35043ef568916423c5d8a5169ed5f143b2f83322bf53ffed024e1b6886b63d"
+    },
+    {
+      "id": "session-runtime-output-004",
+      "name": "clamps very negative start lines to the bounded tail window",
+      "source": "src/multiplexer/session-runtime-core.ts",
+      "api": "readAgentOutput",
+      "input": {
+        "sessionId": "codex-output-bounds",
+        "startLine": -5000,
+        "captureText": "bounded output",
+        "sessionTmuxTargets": [
+          [
+            "codex-output-bounds",
+            { "sessionName": "aimux-test", "windowId": "@1", "windowIndex": 1, "windowName": "codex" }
+          ]
+        ],
+        "resolvedTargets": [
+          ["@1", { "sessionName": "aimux-test", "windowId": "@1", "windowIndex": 1, "windowName": "codex" }]
+        ],
+        "metadataByWindow": [["@1", { "kind": "agent", "sessionId": "codex-output-bounds" }]]
+      },
+      "output": {
+        "result": {
+          "sessionId": "codex-output-bounds",
+          "output": "bounded output",
+          "outputAnsi": "bounded output",
+          "startLine": -2000,
+          "requestedStartLine": -5000,
+          "captureLineLimit": 2000,
+          "outputTailOnly": true,
+          "outputStartLineClamped": true,
+          "parsed": {
+            "blocks": [{ "type": "response", "text": "bounded output" }],
+            "parser": { "tool": "codex", "version": 1, "confidence": "heuristic" }
+          },
+          "messages": [
+            {
+              "id": "assistant:9290c091cd22",
+              "role": "assistant",
+              "parts": [{ "type": "text", "text": "bounded output" }],
+              "text": "bounded output",
+              "latest": true
+            }
+          ],
+          "activityText": ""
+        },
+        "error": null,
+        "calls": [
+          { "method": "tmuxRuntimeManager.getTargetByWindowId", "args": ["aimux-test", "@1"] },
+          {
+            "method": "tmuxRuntimeManager.getWindowMetadata",
+            "args": [{ "sessionName": "aimux-test", "windowId": "@1", "windowIndex": 1, "windowName": "codex" }]
+          },
+          {
+            "method": "tmuxRuntimeManager.captureTarget",
+            "args": [
+              { "sessionName": "aimux-test", "windowId": "@1", "windowIndex": 1, "windowName": "codex" },
+              { "startLine": -2000, "includeEscapes": true }
+            ]
+          }
+        ],
+        "sessionTmuxTargets": [
+          [
+            "codex-output-bounds",
+            { "sessionName": "aimux-test", "windowId": "@1", "windowIndex": 1, "windowName": "codex" }
+          ]
+        ],
+        "livePaneSnapshot": "# codex-output-bounds (codex) — Live Snapshot\n\nUpdated: <ISO_DATE>\n\nRecent terminal output:\n\nbounded output\n",
+        "aimuxHome": "<AIMUX_HOME>"
+      },
+      "inputSha256": "a436253f5c182972a5c56944075b6bedeff382612507151b9a27c37a4969bfb8"
+    },
+    {
+      "id": "session-runtime-output-005",
+      "name": "reports interrupted and blanks progress when the pane shows an interruption prompt",
+      "source": "src/multiplexer/session-runtime-core.ts",
+      "api": "readAgentOutput",
+      "input": {
+        "sessionId": "claude-output-interrupted",
+        "tool": "claude",
+        "captureText": "• Working (4s · esc to interrupt)\n\nInterrupted · What should Claude do instead?",
+        "sessionTmuxTargets": [
+          [
+            "claude-output-interrupted",
+            { "sessionName": "aimux-test", "windowId": "@1", "windowIndex": 1, "windowName": "codex" }
+          ]
+        ],
+        "resolvedTargets": [
+          ["@1", { "sessionName": "aimux-test", "windowId": "@1", "windowIndex": 1, "windowName": "codex" }]
+        ],
+        "metadataByWindow": [["@1", { "kind": "agent", "sessionId": "claude-output-interrupted" }]],
+        "derived": { "activity": "running", "attention": "normal" }
+      },
+      "output": {
+        "result": {
+          "sessionId": "claude-output-interrupted",
+          "output": "• Working (4s · esc to interrupt)\n\nInterrupted · What should Claude do instead?",
+          "outputAnsi": "• Working (4s · esc to interrupt)\n\nInterrupted · What should Claude do instead?",
+          "startLine": -120,
+          "requestedStartLine": -120,
+          "captureLineLimit": 2000,
+          "outputTailOnly": true,
+          "outputStartLineClamped": false,
+          "parsed": {
+            "blocks": [
+              {
+                "type": "status",
+                "text": "• Working (4s · esc to interrupt)\n\nInterrupted · What should Claude do instead?"
+              }
+            ],
+            "parser": { "tool": "claude", "version": 1, "confidence": "heuristic" }
+          },
+          "messages": [],
+          "activityText": "",
+          "activity": "interrupted",
+          "attention": "normal"
+        },
+        "error": null,
+        "calls": [
+          { "method": "tmuxRuntimeManager.getTargetByWindowId", "args": ["aimux-test", "@1"] },
+          {
+            "method": "tmuxRuntimeManager.getWindowMetadata",
+            "args": [{ "sessionName": "aimux-test", "windowId": "@1", "windowIndex": 1, "windowName": "codex" }]
+          },
+          {
+            "method": "tmuxRuntimeManager.captureTarget",
+            "args": [
+              { "sessionName": "aimux-test", "windowId": "@1", "windowIndex": 1, "windowName": "codex" },
+              { "startLine": -120, "includeEscapes": true }
+            ]
+          }
+        ],
+        "sessionTmuxTargets": [
+          [
+            "claude-output-interrupted",
+            { "sessionName": "aimux-test", "windowId": "@1", "windowIndex": 1, "windowName": "codex" }
+          ]
+        ],
+        "livePaneSnapshot": "# claude-output-interrupted (claude) — Live Snapshot\n\nUpdated: <ISO_DATE>\n\nRecent terminal output:\n\n• Working (4s · esc to interrupt)\nInterrupted · What should Claude do instead?\n",
+        "aimuxHome": "<AIMUX_HOME>"
+      },
+      "inputSha256": "412ddb1b2e33545a892b89b95f91f5787b202242681b2d2f1ea412ec6c2d64c1"
+    }
+  ]
+}
