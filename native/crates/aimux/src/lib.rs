@@ -113,6 +113,7 @@ pub mod native_plugin_transcript_length;
 pub mod notification_policy_contract;
 pub mod paths;
 pub mod plugin_api;
+pub mod plugin_project_service_host;
 pub mod plugin_registry;
 pub mod plugin_runtime_contract;
 pub mod process_args;
