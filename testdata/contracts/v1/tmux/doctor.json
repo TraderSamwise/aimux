@@ -1,0 +1,463 @@
+{
+  "version": 1,
+  "generatedAt": "2026-09-07T00:00:00.000Z",
+  "generatedBy": "scripts/capture-tmux-doctor-contract.mjs",
+  "source": "src/tmux/doctor.test.ts",
+  "sources": ["src/tmux/doctor.test.ts", "src/tmux/doctor.ts"],
+  "subject": "tmux doctor report and repair",
+  "description": "tmux doctor reports, rendered text, and repair side effects captured by running TypeScript with mocked tmux.",
+  "normalizedFields": ["temp symlink roots", "repository path"],
+  "caseCount": 4,
+  "cases": [
+    {
+      "id": "tmux-doctor-001",
+      "name": "builds compatibility report for active managed session",
+      "source": "src/tmux/doctor.test.ts",
+      "api": "buildTmuxDoctorReport",
+      "input": {
+        "api": "buildTmuxDoctorReport",
+        "projectRoot": "/repo/mobile",
+        "env": { "TERM": "xterm-ghostty", "TERM_PROGRAM": "ghostty", "TMUX": "/tmp/tmux-1000/default,123,0" },
+        "sessionName": "aimux-mobile-abc"
+      },
+      "output": {
+        "report": {
+          "env": { "term": "xterm-ghostty", "termProgram": "ghostty", "insideTmux": true },
+          "tmux": {
+            "available": true,
+            "version": "tmux 3.5a",
+            "currentClientSession": "aimux-mobile-abc",
+            "currentWindowId": "@3",
+            "currentWindowName": "codex"
+          },
+          "managedSession": {
+            "sessionName": "aimux-mobile-abc",
+            "exists": true,
+            "options": {
+              "prefix": { "expected": "C-a", "observed": "C-a", "ok": true },
+              "prefix2": { "expected": "C-b", "observed": "C-b", "ok": true },
+              "mouse": { "expected": "on", "observed": "on", "ok": true },
+              "window-size": { "expected": "latest", "observed": "latest", "ok": true },
+              "history-limit": { "expected": "20000", "observed": "20000", "ok": true },
+              "extended-keys": { "expected": "always", "observed": "always", "ok": true },
+              "extended-keys-format": { "expected": "csi-u", "observed": "csi-u", "ok": true }
+            },
+            "terminalFeatures": {
+              "xterm*:ccolour": { "expected": "present", "observed": "present", "ok": true },
+              "xterm*:cstyle": { "expected": "present", "observed": "present", "ok": true },
+              "xterm*:RGB": { "expected": "present", "observed": "present", "ok": true },
+              "xterm*:extkeys": { "expected": "present", "observed": "present", "ok": true },
+              "xterm*:hyperlinks": { "expected": "present", "observed": "present", "ok": true }
+            }
+          },
+          "activeWindow": {
+            "windowId": "@3",
+            "windowName": "codex",
+            "tool": "codex",
+            "options": {
+              "allow-passthrough": { "expected": "on", "observed": "on", "ok": true },
+              "aggressive-resize": { "expected": "on", "observed": "on", "ok": true }
+            }
+          },
+          "managedWindows": [
+            {
+              "windowId": "@3",
+              "windowIndex": 3,
+              "windowName": "codex",
+              "tool": "codex",
+              "allowPassthrough": "on",
+              "aggressiveResize": "on"
+            }
+          ],
+          "statusline": {
+            "scriptPath": "<REPO>/scripts/tmux-statusline.sh",
+            "scriptExists": true,
+            "projectStateDir": "/Users/sam/.aimux/projects/mobile-078d0ecd20ec",
+            "statuslineJsonExists": false,
+            "tmuxStatuslineDirExists": false,
+            "bottomDashboardExists": false,
+            "bottomDashboardClientExists": false,
+            "sessionFormat": "#(top)",
+            "windowFormat": "#(bottom)",
+            "helperPreview": null,
+            "helperError": null
+          }
+        },
+        "calls": [
+          ["-V"],
+          ["display-message", "-p", "#{client_session}"],
+          ["display-message", "-p", "#{window_id}"],
+          ["display-message", "-p", "#{window_name}"],
+          ["has-session", "-t", "aimux-mobile-abc"],
+          ["show-options", "-v", "-t", "aimux-mobile-abc", "prefix"],
+          ["show-options", "-v", "-t", "aimux-mobile-abc", "prefix2"],
+          ["show-options", "-v", "-t", "aimux-mobile-abc", "mouse"],
+          ["show-options", "-v", "-t", "aimux-mobile-abc", "window-size"],
+          ["show-options", "-v", "-t", "aimux-mobile-abc", "history-limit"],
+          ["show-options", "-v", "-t", "aimux-mobile-abc", "extended-keys"],
+          ["show-options", "-v", "-t", "aimux-mobile-abc", "extended-keys-format"],
+          ["show-options", "-v", "-t", "aimux-mobile-abc", "terminal-features"],
+          ["show-window-options", "-v", "-t", "@3", "@aimux-tool"],
+          ["show-window-options", "-v", "-t", "@3", "allow-passthrough"],
+          ["show-window-options", "-v", "-t", "@3", "aggressive-resize"],
+          [
+            "list-windows",
+            "-t",
+            "aimux-mobile-abc",
+            "-F",
+            "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}\t#{pane_dead}\t#{@aimux-meta}"
+          ],
+          ["show-window-options", "-v", "-t", "@3", "allow-passthrough"],
+          ["show-window-options", "-v", "-t", "@3", "aggressive-resize"],
+          ["-V"],
+          ["show-options", "-v", "-t", "aimux-mobile-abc", "status-format[0]"],
+          ["show-options", "-v", "-t", "aimux-mobile-abc", "status-format[1]"]
+        ]
+      },
+      "inputSha256": "db03cdc8a8fd39fcfac3d11bf0d7b0c40b2cb10643685d64252e063c24ea03e4"
+    },
+    {
+      "id": "tmux-doctor-002",
+      "name": "renders readable report",
+      "source": "src/tmux/doctor.test.ts",
+      "api": "renderTmuxDoctorReport",
+      "input": {
+        "api": "renderTmuxDoctorReport",
+        "projectRoot": "/repo/mobile",
+        "env": { "TERM": "xterm-ghostty", "TERM_PROGRAM": "ghostty", "TMUX": "/tmp/tmux-1000/default,123,0" },
+        "sessionName": "aimux-mobile-abc"
+      },
+      "output": {
+        "text": "Tmux Doctor\n  TERM: xterm-ghostty\n  TERM_PROGRAM: ghostty\n  inside tmux: yes\n  tmux available: yes\n  tmux version: tmux 3.5a\n  current client session: aimux-mobile-abc\n  managed session: aimux-mobile-abc\n  managed session exists: yes\n  managed session options:\n    prefix: C-a (expected C-a) [ok]\n    prefix2: C-b (expected C-b) [ok]\n    mouse: on (expected on) [ok]\n    window-size: latest (expected latest) [ok]\n    history-limit: 20000 (expected 20000) [ok]\n    extended-keys: always (expected always) [ok]\n    extended-keys-format: csi-u (expected csi-u) [ok]\n  managed terminal features:\n    xterm*:ccolour: present [ok]\n    xterm*:cstyle: present [ok]\n    xterm*:RGB: present [ok]\n    xterm*:extkeys: present [ok]\n    xterm*:hyperlinks: present [ok]\n  active window: @3 (codex)\n    @aimux-tool: codex\n    allow-passthrough: on (expected on) [ok]\n    aggressive-resize: on (expected on) [ok]\n  managed windows:\n    @3 codex tool=codex allow-passthrough=on aggressive-resize=on\n  statusline:\n    script: <REPO>/scripts/tmux-statusline.sh\n    script exists: yes\n    project state dir: /Users/sam/.aimux/projects/mobile-078d0ecd20ec\n    statusline.json: no\n    tmux-statusline dir: no\n    bottom-dashboard.txt: no\n    bottom-dashboard-<client>.txt: no\n    status-format[0]: #(top)\n    status-format[1]: #(bottom)\n    helper preview: (empty)\n    helper error: (none)"
+      },
+      "inputSha256": "6f5901b5b606d6bdc445f26388b01b8b7c8dc05edd509925d5d896bbc97974ef"
+    },
+    {
+      "id": "tmux-doctor-003",
+      "name": "canonicalizes symlinked project root before managed session lookup",
+      "source": "src/tmux/doctor.test.ts",
+      "api": "buildTmuxDoctorReport",
+      "input": { "api": "buildTmuxDoctorReport", "projectRoot": "<TMP>/repo-link" },
+      "output": {
+        "aliasSession": "aimux-repo-link-05d2c861d5f0",
+        "expectedSession": "aimux-repo-1ea44548ccdb",
+        "report": {
+          "env": { "term": null, "termProgram": null, "insideTmux": false },
+          "tmux": {
+            "available": true,
+            "version": "tmux 3.5a",
+            "currentClientSession": null,
+            "currentWindowId": null,
+            "currentWindowName": null
+          },
+          "managedSession": {
+            "sessionName": "aimux-repo-1ea44548ccdb",
+            "exists": true,
+            "options": {
+              "prefix": { "expected": "C-a", "observed": "C-a", "ok": true },
+              "prefix2": { "expected": "C-b", "observed": "C-b", "ok": true },
+              "mouse": { "expected": "on", "observed": "on", "ok": true },
+              "window-size": { "expected": "latest", "observed": "latest", "ok": true },
+              "history-limit": { "expected": "20000", "observed": "20000", "ok": true },
+              "extended-keys": { "expected": "always", "observed": "always", "ok": true },
+              "extended-keys-format": { "expected": "csi-u", "observed": "csi-u", "ok": true }
+            },
+            "terminalFeatures": {
+              "xterm*:ccolour": { "expected": "present", "observed": null, "ok": false },
+              "xterm*:cstyle": { "expected": "present", "observed": null, "ok": false },
+              "xterm*:RGB": { "expected": "present", "observed": "present", "ok": true },
+              "xterm*:extkeys": { "expected": "present", "observed": "present", "ok": true },
+              "xterm*:hyperlinks": { "expected": "present", "observed": "present", "ok": true }
+            }
+          },
+          "activeWindow": null,
+          "managedWindows": [],
+          "statusline": {
+            "scriptPath": "<REPO>/scripts/tmux-statusline.sh",
+            "scriptExists": true,
+            "projectStateDir": "/Users/sam/.aimux/projects/repo-1ea44548ccdb",
+            "statuslineJsonExists": false,
+            "tmuxStatuslineDirExists": false,
+            "bottomDashboardExists": false,
+            "bottomDashboardClientExists": false,
+            "sessionFormat": "#(top)",
+            "windowFormat": "#(bottom)",
+            "helperPreview": null,
+            "helperError": null
+          }
+        },
+        "calls": [
+          ["-V"],
+          ["has-session", "-t", "aimux-repo-1ea44548ccdb"],
+          ["show-options", "-v", "-t", "aimux-repo-1ea44548ccdb", "prefix"],
+          ["show-options", "-v", "-t", "aimux-repo-1ea44548ccdb", "prefix2"],
+          ["show-options", "-v", "-t", "aimux-repo-1ea44548ccdb", "mouse"],
+          ["show-options", "-v", "-t", "aimux-repo-1ea44548ccdb", "window-size"],
+          ["show-options", "-v", "-t", "aimux-repo-1ea44548ccdb", "history-limit"],
+          ["show-options", "-v", "-t", "aimux-repo-1ea44548ccdb", "extended-keys"],
+          ["show-options", "-v", "-t", "aimux-repo-1ea44548ccdb", "extended-keys-format"],
+          ["show-options", "-v", "-t", "aimux-repo-1ea44548ccdb", "terminal-features"],
+          [
+            "list-windows",
+            "-t",
+            "aimux-repo-1ea44548ccdb",
+            "-F",
+            "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}\t#{pane_dead}\t#{@aimux-meta}"
+          ],
+          ["-V"],
+          ["show-options", "-v", "-t", "aimux-repo-1ea44548ccdb", "status-format[0]"],
+          ["show-options", "-v", "-t", "aimux-repo-1ea44548ccdb", "status-format[1]"]
+        ]
+      },
+      "inputSha256": "b4e15044065b7dc96387de4de74749be8f98dce2a6f186920b50550f17318e4e"
+    },
+    {
+      "id": "tmux-doctor-004",
+      "name": "repairs alias-derived managed sessions for canonical project",
+      "source": "src/tmux/doctor.test.ts",
+      "api": "repairTmuxRuntime",
+      "input": { "api": "repairTmuxRuntime", "projectRoot": "<TMP>/repo-link" },
+      "output": {
+        "result": {
+          "projectRoot": "/private<TMP>/repo",
+          "sessionName": "aimux-repo-1ea44548ccdb",
+          "repairedSessions": ["aimux-repo-1ea44548ccdb", "aimux-repo-link-05d2c861d5f0"],
+          "repairedWindows": [],
+          "dashboardWindowId": "@dashboard",
+          "dashboardSessionName": "aimux-repo-1ea44548ccdb"
+        },
+        "configured": [
+          ["aimux-repo-1ea44548ccdb", "/private<TMP>/repo"],
+          ["aimux-repo-link-05d2c861d5f0", "/private<TMP>/repo"],
+          ["aimux-repo-1ea44548ccdb", "/private<TMP>/repo"],
+          ["aimux-repo-link-05d2c861d5f0", "/private<TMP>/repo"]
+        ],
+        "calls": [
+          { "method": "isAvailable", "args": [] },
+          { "method": "getProjectSession", "args": ["/private<TMP>/repo"] },
+          {
+            "method": "isInsideTmux",
+            "args": [
+              {
+                "AIMUX_DAEMON_PORT": "43190",
+                "AIMUX_ENV": "production",
+                "AIMUX_HOME": "/Users/sam/.aimux",
+                "AIMUX_METADATA_ENDPOINT_FILE": "/Users/sam/.aimux/projects/aimux-4bf69b728633/metadata-api.txt",
+                "AIMUX_PROJECT_ROOT": "/Users/sam/cs/aimux",
+                "AIMUX_SESSION_ID": "codex-7w90r9",
+                "AIMUX_TOOL": "codex",
+                "BUN_INSTALL": "/Users/sam/.bun",
+                "CLICOLOR": "1",
+                "CMUX_CODEX_WRAPPER_SHIM": "/var/folders/3k/tp7t81tn3572k4dsfxd51c180000gn/T/cmux-cli-shims/D817D007-E1BB-44AD-B6F8-A673813A88F3/codex",
+                "CMUX_CODEX_WRAPPER_SHIM_ROOT": "/var/folders/3k/tp7t81tn3572k4dsfxd51c180000gn/T/cmux-cli-shims/D817D007-E1BB-44AD-B6F8-A673813A88F3",
+                "CODEX_CI": "1",
+                "CODEX_MANAGED_BY_NPM": "1",
+                "CODEX_MANAGED_PACKAGE_ROOT": "/Users/sam/.volta/tools/image/packages/@openai/codex/lib/node_modules/@openai/codex",
+                "CODEX_SESSION_ID": "01a075f2-f6ad-78e1-b625-796bb6fee013",
+                "CODEX_THREAD_ID": "01a075f2-f6ad-78e1-b625-796bb6fee013",
+                "COLORTERM": "",
+                "CONDA_DEFAULT_ENV": "py39",
+                "CONDA_EXE": "/opt/homebrew/Caskroom/miniforge/base/bin/conda",
+                "CONDA_PREFIX": "/opt/homebrew/Caskroom/miniforge/base/envs/py39",
+                "CONDA_PROMPT_MODIFIER": "(py39) ",
+                "CONDA_SHLVL": "2",
+                "GHOSTTY_RESOURCES_DIR": "/Applications/cmux.app/Contents/Resources/ghostty",
+                "GH_PAGER": "cat",
+                "GIT_PAGER": "cat",
+                "HOME": "/Users/sam",
+                "LANG": "C.UTF-8",
+                "LC_ALL": "C.UTF-8",
+                "LC_CTYPE": "C.UTF-8",
+                "LOGNAME": "sam",
+                "MANPATH": ":/usr/share/man:/usr/local/share/man:/Users/sam/.nvm/versions/node/v24.14.0/share/man:/Applications/cmux.app/Contents/Resources/man:/Applications/cmux.app/Contents/Resources/ghostty/../man:",
+                "NODE_PATH": "/Users/sam/.volta/tools/shared:",
+                "NODE_REPL_TRUSTED_BROWSER_CLIENT_SHA256S": "9230e2bd8b24b7ac7a0ba6774c64bf0d78ecdabbdd91d0ed627b02a587bae2df",
+                "NO_COLOR": "1",
+                "NVM_BIN": "/Users/sam/.nvm/versions/node/v24.14.0/bin",
+                "NVM_DIR": "/Users/sam/.nvm",
+                "NVM_INC": "/Users/sam/.nvm/versions/node/v24.14.0/include/node",
+                "PAGER": "cat",
+                "PATH": "/Users/sam/.local/volta-shims:/Users/sam/.local/bin:/Users/sam/.bun/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/pkg/env/global/bin:/Library/Apple/usr/bin:/usr/local/share/dotnet:/Users/sam/.volta/tools/image/packages/@openai/codex/lib/node_modules/@openai/codex/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/codex-path:/Users/sam/.codex/tmp/arg0/codex-arg0n8K2VI:/var/folders/3k/tp7t81tn3572k4dsfxd51c180000gn/T/cmux-cli-shims/D817D007-E1BB-44AD-B6F8-A673813A88F3:/opt/homebrew/opt/mysql-client/bin:/Users/sam/.nvm/versions/node/v24.14.0/bin:/opt/homebrew/Caskroom/miniforge/base/envs/py39/bin:/opt/homebrew/Caskroom/miniforge/base/condabin:/Users/sam/.npm-global/bin:/Users/sam/pathother:/Users/sam/apache-ant/bin:/usr/local/mysql/bin:/Users/sam/.cargo/bin:/Applications/cmux.app/Contents/Resources/bin:/Users/sam/bin",
+                "PWD": "<REPO>",
+                "SHELL": "/bin/zsh",
+                "SHLVL": "1",
+                "SSH_AUTH_SOCK": "/var/run/com.apple.launchd.IEhjFv9T78/Listeners",
+                "TERM": "dumb",
+                "TERM_PROGRAM": "ghostty",
+                "TERM_PROGRAM_VERSION": "1.3.2-HEAD-+6143bac",
+                "TMPDIR": "/var/folders/3k/tp7t81tn3572k4dsfxd51c180000gn/T/",
+                "USER": "sam",
+                "VOLTA_HOME": "/Users/sam/.volta",
+                "ZSH": "/Users/sam/.oh-my-zsh",
+                "_VOLTA_TOOL_RECURSION": "1",
+                "__CF_USER_TEXT_ENCODING": "0x1F5:0x0:0x0",
+                "OLDPWD": "<REPO>",
+                "CLOUDFLARE_API_KEY": "cfk_qg7gYb7VynezqXBtXc8ubUqPQv7csgPpkExkD7aKc496bd83",
+                "CLOUDFLARE_EMAIL": "samsteady@gmail.com",
+                "VITEST_MAX_WORKERS": "4",
+                "VITEST_MAX_FORKS": "4",
+                "VITEST_MAX_THREADS": "4",
+                "THEOS": "/Users/sam/theos",
+                "HOMEBREW_PREFIX": "/opt/homebrew",
+                "HOMEBREW_CELLAR": "/opt/homebrew/Cellar",
+                "HOMEBREW_REPOSITORY": "/opt/homebrew",
+                "FPATH": "/opt/homebrew/share/zsh/site-functions:/usr/local/share/zsh/site-functions:/usr/share/zsh/site-functions:/usr/share/zsh/5.9/functions",
+                "INFOPATH": "/opt/homebrew/share/info:",
+                "_": "/opt/homebrew/bin/node"
+              }
+            ]
+          },
+          { "method": "listSessionNames", "args": [] },
+          { "method": "isManagedSessionName", "args": ["aimux-repo-link-05d2c861d5f0"] },
+          { "method": "getSessionOption", "args": ["aimux-repo-link-05d2c861d5f0", "@aimux-project-root"] },
+          {
+            "method": "ensureProjectSession",
+            "args": [
+              "/private<TMP>/repo",
+              {
+                "cwd": "/private<TMP>/repo",
+                "command": "bash",
+                "args": [
+                  "-lc",
+                  "output_file=$(mktemp /tmp/aimux-dashboard-output.XXXXXX) ; trap 'rm -f \"$output_file\"' EXIT ; trap 'rm -f \"$output_file\"; exit 130' INT TERM HUP ; set -o pipefail ; printf '\n%s\n%s\n' 'Starting Aimux dashboard...' 'Loading local control plane.' ; env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' AIMUX_HOME='/Users/sam/.aimux' AIMUX_DAEMON_PORT='43190' AIMUX_ENV='production' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '--tmux-dashboard-internal' 2>&1 | tee \"$output_file\" ; code=$? ; if [ $code -ne 0 ] ; then printf '\\033[?1049l\\033[H\\033[2J' ; if [ -s \"$output_file\" ] ; then cat \"$output_file\" ; else printf '%s\\n' 'No dashboard stderr/stdout was captured.' ; fi ; printf '%s\\n' '' ; printf '%s\\n%s\\n%s\\n%s\\n%s\\n' 'aimux dashboard failed to start.' 'The error above was captured from the dashboard process.' 'If that output is empty, rerun aimux with --debug to record the next attempt.' 'Press q, Enter, or Ctrl+C to close this pane.' '' ; printf '%s\\n' \"exit code: $code\" ; while IFS= read -rsn1 key ; do if [ -z \"$key\" ] || [ \"$key\" = 'q' ] ; then exit 0 ; fi ; done ; fi"
+                ]
+              }
+            ]
+          },
+          { "method": "hasSession", "args": ["aimux-repo-1ea44548ccdb"] },
+          { "method": "configureManagedSession", "args": ["aimux-repo-1ea44548ccdb", "/private<TMP>/repo"] },
+          { "method": "hasSession", "args": ["aimux-repo-link-05d2c861d5f0"] },
+          { "method": "configureManagedSession", "args": ["aimux-repo-link-05d2c861d5f0", "/private<TMP>/repo"] },
+          {
+            "method": "ensureProjectSession",
+            "args": [
+              "/private<TMP>/repo",
+              {
+                "cwd": "/private<TMP>/repo",
+                "command": "bash",
+                "args": [
+                  "-lc",
+                  "output_file=$(mktemp /tmp/aimux-dashboard-output.XXXXXX) ; trap 'rm -f \"$output_file\"' EXIT ; trap 'rm -f \"$output_file\"; exit 130' INT TERM HUP ; set -o pipefail ; printf '\n%s\n%s\n' 'Starting Aimux dashboard...' 'Loading local control plane.' ; env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' AIMUX_HOME='/Users/sam/.aimux' AIMUX_DAEMON_PORT='43190' AIMUX_ENV='production' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '--tmux-dashboard-internal' 2>&1 | tee \"$output_file\" ; code=$? ; if [ $code -ne 0 ] ; then printf '\\033[?1049l\\033[H\\033[2J' ; if [ -s \"$output_file\" ] ; then cat \"$output_file\" ; else printf '%s\\n' 'No dashboard stderr/stdout was captured.' ; fi ; printf '%s\\n' '' ; printf '%s\\n%s\\n%s\\n%s\\n%s\\n' 'aimux dashboard failed to start.' 'The error above was captured from the dashboard process.' 'If that output is empty, rerun aimux with --debug to record the next attempt.' 'Press q, Enter, or Ctrl+C to close this pane.' '' ; printf '%s\\n' \"exit code: $code\" ; while IFS= read -rsn1 key ; do if [ -z \"$key\" ] || [ \"$key\" = 'q' ] ; then exit 0 ; fi ; done ; fi"
+                ]
+              }
+            ]
+          },
+          { "method": "isInsideTmux", "args": [] },
+          { "method": "getOpenSessionName", "args": ["aimux-repo-1ea44548ccdb", false] },
+          {
+            "method": "ensureDashboardWindow",
+            "args": [
+              "aimux-repo-1ea44548ccdb",
+              "/private<TMP>/repo",
+              {
+                "cwd": "/private<TMP>/repo",
+                "command": "bash",
+                "args": [
+                  "-lc",
+                  "output_file=$(mktemp /tmp/aimux-dashboard-output.XXXXXX) ; trap 'rm -f \"$output_file\"' EXIT ; trap 'rm -f \"$output_file\"; exit 130' INT TERM HUP ; set -o pipefail ; printf '\n%s\n%s\n' 'Starting Aimux dashboard...' 'Loading local control plane.' ; env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' AIMUX_HOME='/Users/sam/.aimux' AIMUX_DAEMON_PORT='43190' AIMUX_ENV='production' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '--tmux-dashboard-internal' 2>&1 | tee \"$output_file\" ; code=$? ; if [ $code -ne 0 ] ; then printf '\\033[?1049l\\033[H\\033[2J' ; if [ -s \"$output_file\" ] ; then cat \"$output_file\" ; else printf '%s\\n' 'No dashboard stderr/stdout was captured.' ; fi ; printf '%s\\n' '' ; printf '%s\\n%s\\n%s\\n%s\\n%s\\n' 'aimux dashboard failed to start.' 'The error above was captured from the dashboard process.' 'If that output is empty, rerun aimux with --debug to record the next attempt.' 'Press q, Enter, or Ctrl+C to close this pane.' '' ; printf '%s\\n' \"exit code: $code\" ; while IFS= read -rsn1 key ; do if [ -z \"$key\" ] || [ \"$key\" = 'q' ] ; then exit 0 ; fi ; done ; fi"
+                ]
+              }
+            ]
+          },
+          {
+            "method": "getWindowOption",
+            "args": [
+              {
+                "sessionName": "aimux-repo-1ea44548ccdb",
+                "windowId": "@dashboard",
+                "windowIndex": 0,
+                "windowName": "dashboard"
+              },
+              "@aimux-dashboard-build"
+            ]
+          },
+          {
+            "method": "getWindowOption",
+            "args": [
+              {
+                "sessionName": "aimux-repo-1ea44548ccdb",
+                "windowId": "@dashboard",
+                "windowIndex": 0,
+                "windowName": "dashboard"
+              },
+              "@aimux-dashboard-ready"
+            ]
+          },
+          {
+            "method": "getWindowOption",
+            "args": [
+              {
+                "sessionName": "aimux-repo-1ea44548ccdb",
+                "windowId": "@dashboard",
+                "windowIndex": 0,
+                "windowName": "dashboard"
+              },
+              "@aimux-dashboard-owner"
+            ]
+          },
+          {
+            "method": "replaceWindowWhenReady",
+            "args": [
+              {
+                "sessionName": "aimux-repo-1ea44548ccdb",
+                "windowId": "@dashboard",
+                "windowIndex": 0,
+                "windowName": "dashboard"
+              },
+              {
+                "cwd": "/private<TMP>/repo",
+                "command": "bash",
+                "args": [
+                  "-lc",
+                  "output_file=$(mktemp /tmp/aimux-dashboard-output.XXXXXX) ; trap 'rm -f \"$output_file\"' EXIT ; trap 'rm -f \"$output_file\"; exit 130' INT TERM HUP ; set -o pipefail ; printf '\n%s\n%s\n' 'Starting Aimux dashboard...' 'Loading local control plane.' ; env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' AIMUX_HOME='/Users/sam/.aimux' AIMUX_DAEMON_PORT='43190' AIMUX_ENV='production' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '--tmux-dashboard-internal' 2>&1 | tee \"$output_file\" ; code=$? ; if [ $code -ne 0 ] ; then printf '\\033[?1049l\\033[H\\033[2J' ; if [ -s \"$output_file\" ] ; then cat \"$output_file\" ; else printf '%s\\n' 'No dashboard stderr/stdout was captured.' ; fi ; printf '%s\\n' '' ; printf '%s\\n%s\\n%s\\n%s\\n%s\\n' 'aimux dashboard failed to start.' 'The error above was captured from the dashboard process.' 'If that output is empty, rerun aimux with --debug to record the next attempt.' 'Press q, Enter, or Ctrl+C to close this pane.' '' ; printf '%s\\n' \"exit code: $code\" ; while IFS= read -rsn1 key ; do if [ -z \"$key\" ] || [ \"$key\" = 'q' ] ; then exit 0 ; fi ; done ; fi"
+                ]
+              },
+              { "option": "@aimux-dashboard-ready", "value": "acacad52ee2b1a20-d620036557b5ade5", "timeoutMs": 20000 }
+            ]
+          },
+          {
+            "method": "setSessionOption",
+            "args": ["aimux-repo-1ea44548ccdb", "@aimux-dashboard-build", "acacad52ee2b1a20-d620036557b5ade5"]
+          },
+          {
+            "method": "setWindowOption",
+            "args": [
+              {
+                "sessionName": "aimux-repo-1ea44548ccdb",
+                "windowId": "@dashboard",
+                "windowIndex": 0,
+                "windowName": "dashboard"
+              },
+              "@aimux-dashboard-build",
+              "acacad52ee2b1a20-d620036557b5ade5"
+            ]
+          },
+          {
+            "method": "setWindowOption",
+            "args": [
+              {
+                "sessionName": "aimux-repo-1ea44548ccdb",
+                "windowId": "@dashboard",
+                "windowIndex": 0,
+                "windowName": "dashboard"
+              },
+              "@aimux-dashboard-owner",
+              "{\"home\":\"/Users/sam/.aimux\",\"port\":\"43190\"}"
+            ]
+          },
+          { "method": "hasSession", "args": ["aimux-repo-1ea44548ccdb"] },
+          { "method": "configureManagedSession", "args": ["aimux-repo-1ea44548ccdb", "/private<TMP>/repo"] },
+          { "method": "hasSession", "args": ["aimux-repo-link-05d2c861d5f0"] },
+          { "method": "configureManagedSession", "args": ["aimux-repo-link-05d2c861d5f0", "/private<TMP>/repo"] },
+          { "method": "hasSession", "args": ["aimux-repo-1ea44548ccdb"] },
+          { "method": "listManagedWindows", "args": ["aimux-repo-1ea44548ccdb"] },
+          { "method": "hasSession", "args": ["aimux-repo-link-05d2c861d5f0"] },
+          { "method": "listManagedWindows", "args": ["aimux-repo-link-05d2c861d5f0"] },
+          { "method": "hasSession", "args": ["aimux-repo-1ea44548ccdb"] },
+          { "method": "hasSession", "args": ["aimux-repo-link-05d2c861d5f0"] }
+        ]
+      },
+      "inputSha256": "e7f8af66fc57eb55675c8400cde7ea326841042bae80f740a3c8851ef2f34dbb"
+    }
+  ]
+}

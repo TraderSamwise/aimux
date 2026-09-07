@@ -2,9 +2,9 @@
 
 This inventory lists real captured TypeScript contract corpora that are intentionally `#[ignore]` because the matching Rust API does not exist yet, the implementation sits behind an ownership fence, or the existing fenced Rust implementation currently differs from the captured TypeScript behavior. It deliberately does not count Vitest reporter output as coverage.
 
-Coverage definition used for this inventory: a `src` test module is covered when any `testdata/contracts/v1/**/*.json` fixture records that module in a top-level `source`, top-level `sources`, case `source`, or group/case `source` field, and the fixture contains behavior-level input/output or state data rather than test-runner metadata. Under that definition there are 245 `src` test modules, 226 covered modules, and 19 uncovered modules remaining.
+Coverage definition used for this inventory: a `src` test module is covered when any `testdata/contracts/v1/**/*.json` fixture records that module in a top-level `source`, top-level `sources`, case `source`, or group/case `source` field, and the fixture contains behavior-level input/output or state data rather than test-runner metadata. Under that definition there are 245 `src` test modules, 227 covered modules, and 18 uncovered modules remaining.
 
-There are 33 ignored corpus entries below, covering 162 captured checklist cases.
+There are 34 ignored corpus entries below, covering 166 captured checklist cases.
 
 | Consumer | Corpus | Cases | Missing Rust API / parity bug | Ownership fence |
 | --- | --- | ---: | --- | --- |
@@ -37,6 +37,7 @@ There are 33 ignored corpus entries below, covering 162 captured checklist cases
 | `fixture_rich_text.rs` | `testdata/contracts/v1/terminal/rich-text.json` | 6 | parseSgrRichTextLines, richTextLineText, and richTextText helpers | Terminal/control/render; likely dashboard_* if wired through dashboard surfaces |
 | `fixture_terminal_host.rs` | `testdata/contracts/v1/terminal/host.json` | 2 | TerminalHost escape-sequence handling API | Terminal/control/render; likely tmux* / dashboard_* |
 | `fixture_transcript_reconciler.rs` | `testdata/contracts/v1/agent-output/transcript-reconciler.json` | 13 | TranscriptReconciler.scan incremental transcript reconciliation API | No explicit fence; needs multiplexer transcript reconciler API |
+| `fixture_tmux_doctor_contract.rs` | `testdata/contracts/v1/tmux/doctor.json` | 4 | tmux doctor report and repair APIs | tmux* / daemon_* |
 | `fixture_tui_runtime_mutations.rs` | `testdata/contracts/v1/runtime-state/tui-runtime-mutations.json` | 9 | TUI mutation queue helpers for notifications, session seen, and queue clearing | dashboard_* / TUI runtime |
 | `fixture_tui_screen_renderers.rs` | `testdata/contracts/v1/tui/screen-overlays.json` | 13 | TypeScript TUI overlay renderer APIs | dashboard_* / terminal/control/render |
 | `fixture_tui_screen_renderers.rs` | `testdata/contracts/v1/tui/subscreen-renderers.json` | 5 | TypeScript TUI subscreen renderer APIs | dashboard_* / terminal/control/render |
@@ -66,4 +67,3 @@ These `src/**/*.test.ts` modules still have no behavior-level corpus under `test
 | `src/multiplexer/session-launch.test.ts` | Managed tmux launch/resume/relaunch implementation; needs launch argv/metadata side-effect corpus. | tmux* / session_launch.rs |
 | `src/multiplexer/session-runtime-core.test.ts` | Managed tmux runtime core; needs mocked tmux/metadata state transition corpus. | tmux* |
 | `src/multiplexer/subscreens.test.ts` | Dashboard coordination/archive subscreen state machine; needs input/output event corpus. | dashboard_* |
-| `src/tmux/doctor.test.ts` | tmux doctor compatibility/repair report; needs mocked tmux input/output capture. | tmux* |

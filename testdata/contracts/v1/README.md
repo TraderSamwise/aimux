@@ -899,6 +899,9 @@ Priority fixture groups:
   UI-state behavior captured by running TypeScript expose helpers.
 - `tmux/expose-render.json`: expose tile header fitting and ANSI tile rendering
   captured by running TypeScript `tmux/expose` helpers.
+- `tmux/doctor.json`: tmux compatibility report, readable report rendering,
+  symlink canonicalization, and alias-session repair side effects captured by
+  running TypeScript `tmux/doctor` helpers with mocked tmux.
 - `tmux/statusline-script.json`: tmux statusline cache-file lookup and
   silent-failure behavior captured by running the shipped shell script.
 - `tmux/sync-exec-inventory.json`: synchronous tmux caller allowlist,
