@@ -1,7 +1,8 @@
+use crate::session_launch::resolve_default_scribe_launch;
 use crate::tui_render::text::{
     strip_ansi, truncate_ansi, truncate_plain, wrap_key_value, wrap_text,
 };
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -441,57 +442,6 @@ fn render_session_details(session: &Value, width: usize, height: usize) -> Vec<S
     }
     lines.truncate(height);
     lines
-}
-
-fn resolve_default_scribe_launch(config: &Value) -> Value {
-    let default_agent = value_field(value_field(config, "scribe"), "defaultAgent");
-    let (tool_key, extra_args, extra_env) = match default_agent {
-        Value::String(tool) if !tool.trim().is_empty() => {
-            (tool.trim().to_owned(), Vec::new(), Map::new())
-        }
-        Value::Object(object) => (
-            object
-                .get("tool")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned(),
-            object
-                .get("extraArgs")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default(),
-            object
-                .get("env")
-                .and_then(Value::as_object)
-                .cloned()
-                .unwrap_or_default(),
-        ),
-        _ => return json!({ "created": false, "reason": "disabled" }),
-    };
-    let tool = value_field(value_field(config, "tools"), &tool_key);
-    if tool.is_null() {
-        return json!({ "created": false, "reason": "unknown-tool" });
-    }
-    if tool.get("enabled").and_then(Value::as_bool) == Some(false) {
-        return json!({ "created": false, "reason": "disabled-tool" });
-    }
-    let mut args = array_field(tool, "args");
-    args.extend(array_field(tool, "defaultArgs"));
-    args.extend(extra_args);
-    let mut env = tool
-        .get("defaultEnv")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
-    env.extend(extra_env);
-    json!({
-        "toolConfigKey": tool_key,
-        "command": string_field(tool, "command"),
-        "args": args,
-        "sessionIdFlag": array_field(tool, "sessionIdFlag"),
-        "preambleFlag": array_field(tool, "preambleFlag"),
-        "env": env,
-    })
 }
 
 fn derive_aimux_session_id_from_backend_session_id(
