@@ -1,4 +1,4 @@
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 
 pub fn run_dashboard_ops_mutations_contract_case(api: &str, input: &Value) -> Value {
@@ -30,6 +30,230 @@ pub fn run_dashboard_ops_mutations_contract_case(api: &str, input: &Value) -> Va
         api => panic!("unknown dashboard ops mutation api: {api}"),
     };
     state.summary(result)
+}
+
+pub fn run_dashboard_ops_agent_actions_contract_case(api: &str, input: &Value) -> Value {
+    let mut state = OpsState::new(input);
+    match api {
+        "spawnDashboardAgentWithFeedback" => {
+            spawn_dashboard_agent_with_feedback(&mut state, value_field(input, "input"))
+        }
+        "forkDashboardAgentWithFeedback" => {
+            fork_dashboard_agent_with_feedback(&mut state, value_field(input, "input"))
+        }
+        "switchDashboardAgentToolWithFeedback" => {
+            switch_dashboard_agent_tool_with_feedback(&mut state, value_field(input, "input"));
+        }
+        api => panic!("unknown dashboard ops agent action api: {api}"),
+    }
+    state.agent_action_summary()
+}
+
+fn spawn_dashboard_agent_with_feedback(state: &mut OpsState, input: &Value) {
+    let session_id = string_field(input, "sessionId");
+    let tool = string_field(input, "tool");
+    let worktree_path = optional_string(input, "worktreePath");
+    let overseer = input.get("overseer").and_then(Value::as_bool) == Some(true);
+    let scribe = input.get("scribe").and_then(Value::as_bool) == Some(true);
+    if state.existing_session_action(&session_id).is_some() {
+        state.footer_flash = "creating is already settling".into();
+        state.footer_flash_ticks = 2;
+        state.render_mutation_frame();
+        return;
+    }
+    if !overseer && !scribe {
+        state.call(
+            "preferDashboardEntrySelection",
+            vec![
+                json!("session"),
+                json!(session_id.clone()),
+                worktree_path.clone().map_or(Value::Null, Value::String),
+            ],
+        );
+    }
+    let session_seed = build_pending_session_seed(input, &session_id, &tool, "creating");
+    state.set_session_action(
+        &session_id,
+        Some("creating"),
+        Some(json!({ "sessionSeed": session_seed })),
+    );
+    state.render_mutation_frame();
+    let mut body = Map::new();
+    body.insert("tool".into(), Value::String(tool));
+    body.insert("sessionId".into(), Value::String(session_id.clone()));
+    insert_optional_value(&mut body, "worktreePath", worktree_path.map(Value::String));
+    insert_optional_value(
+        &mut body,
+        "launchOverride",
+        input.get("launchOverride").cloned(),
+    );
+    if overseer {
+        body.insert("overseer".into(), Value::Bool(true));
+    }
+    if scribe {
+        body.insert("scribe".into(), Value::Bool(true));
+    }
+    body.insert("open".into(), Value::Bool(false));
+    state.call(
+        "postToProjectService",
+        vec![
+            json!("/agents/spawn"),
+            Value::Object(body),
+            json!({ "timeoutMs": 10000 }),
+        ],
+    );
+    state.refresh_model();
+    state.get_dashboard_sessions();
+    state.render_mutation_frame();
+    state.set_session_action(&session_id, None, None);
+    state.render_mutation_frame();
+}
+
+fn fork_dashboard_agent_with_feedback(state: &mut OpsState, input: &Value) {
+    let source_session_id = string_field(input, "sourceSessionId");
+    let target_session_id = string_field(input, "targetSessionId");
+    let tool = string_field(input, "tool");
+    let worktree_path = optional_string(input, "worktreePath");
+    if state.existing_session_action(&target_session_id).is_some() {
+        state.footer_flash = "forking is already settling".into();
+        state.footer_flash_ticks = 2;
+        state.render_mutation_frame();
+        return;
+    }
+    state.call(
+        "preferDashboardEntrySelection",
+        vec![
+            json!("session"),
+            json!(target_session_id.clone()),
+            worktree_path.clone().map_or(Value::Null, Value::String),
+        ],
+    );
+    let session_seed = build_pending_session_seed(input, &target_session_id, &tool, "forking");
+    state.set_session_action(
+        &target_session_id,
+        Some("forking"),
+        Some(json!({ "sessionSeed": session_seed })),
+    );
+    state.render_mutation_frame();
+    let mut body = Map::new();
+    body.insert("sourceSessionId".into(), Value::String(source_session_id));
+    body.insert(
+        "targetSessionId".into(),
+        Value::String(target_session_id.clone()),
+    );
+    body.insert("tool".into(), Value::String(tool));
+    insert_optional_value(
+        &mut body,
+        "instruction",
+        optional_string(input, "instruction").map(Value::String),
+    );
+    insert_optional_value(&mut body, "worktreePath", worktree_path.map(Value::String));
+    insert_optional_value(
+        &mut body,
+        "launchOverride",
+        input.get("launchOverride").cloned(),
+    );
+    body.insert("open".into(), Value::Bool(false));
+    state.call(
+        "postToProjectService",
+        vec![
+            json!("/agents/fork"),
+            Value::Object(body),
+            json!({ "timeoutMs": 10000 }),
+        ],
+    );
+    state.refresh_model();
+    state.get_dashboard_sessions();
+    state.render_mutation_frame();
+    state.set_session_action(&target_session_id, None, None);
+    state.render_mutation_frame();
+}
+
+fn switch_dashboard_agent_tool_with_feedback(state: &mut OpsState, input: &Value) {
+    let session_id = string_field(input, "sessionId");
+    let tool = string_field(input, "tool");
+    let current = state
+        .get_dashboard_sessions()
+        .into_iter()
+        .find(|entry| string_field(entry, "id") == session_id)
+        .or_else(|| {
+            state
+                .array("sessions")
+                .into_iter()
+                .find(|entry| string_field(entry, "id") == session_id)
+        });
+    let label = current
+        .as_ref()
+        .map(display_label)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| session_id.clone());
+    let mut session_seed = current.unwrap_or_else(|| json!({ "id": session_id }));
+    if let Some(object) = session_seed.as_object_mut() {
+        object.insert("pendingAction".into(), Value::String("switching".into()));
+    }
+
+    if state.mode != "dashboard" {
+        state.set_session_action(
+            &session_id,
+            Some("switching"),
+            Some(json!({ "sessionSeed": session_seed })),
+        );
+        state.call(
+            "switchAgentTool",
+            vec![
+                Value::String(session_id.clone()),
+                Value::String(tool.clone()),
+                input.get("launchOverride").cloned().unwrap_or(Value::Null),
+                optional_string(input, "instruction").map_or(Value::Null, Value::String),
+            ],
+        );
+        state.set_session_action(&session_id, None, None);
+        state.call("refreshLocalDashboardModel", vec![]);
+        state.footer_flash = format!("Switched {label} to {tool}");
+        state.footer_flash_ticks = 3;
+        state.call("renderDashboard", vec![]);
+        return;
+    }
+
+    if let Some(existing) = state.existing_session_action(&session_id) {
+        state.footer_flash = format!("{existing} is already settling");
+        state.footer_flash_ticks = 2;
+        state.render_mutation_frame();
+        return;
+    }
+    state.set_session_action(
+        &session_id,
+        Some("switching"),
+        Some(json!({ "sessionSeed": session_seed })),
+    );
+    state.render_mutation_frame();
+    let mut body = Map::new();
+    body.insert("sessionId".into(), Value::String(session_id.clone()));
+    body.insert("tool".into(), Value::String(tool.clone()));
+    insert_optional_value(
+        &mut body,
+        "instruction",
+        optional_string(input, "instruction").map(Value::String),
+    );
+    insert_optional_value(
+        &mut body,
+        "launchOverride",
+        input.get("launchOverride").cloned(),
+    );
+    state.call(
+        "postToProjectService",
+        vec![
+            json!("/agents/switch-tool"),
+            Value::Object(body),
+            json!({ "timeoutMs": 10000 }),
+        ],
+    );
+    state.refresh_model();
+    state.footer_flash = format!("Switched {label} to {tool}");
+    state.footer_flash_ticks = 3;
+    state.render_mutation_frame();
+    state.set_session_action(&session_id, None, None);
+    state.render_mutation_frame();
 }
 
 fn create_dashboard_service_with_feedback(state: &mut OpsState, command_line: String) {
@@ -453,6 +677,18 @@ impl<'a> OpsState<'a> {
         })
     }
 
+    fn agent_action_summary(self) -> Value {
+        json!({
+            "result": Value::Null,
+            "footerFlash": self.footer_flash,
+            "footerFlashTicks": self.footer_flash_ticks,
+            "pendingSessions": self.pending.list_sessions(),
+            "sessionSeed": self.session_seed,
+            "rawSessions": self.raw_sessions,
+            "calls": self.calls,
+        })
+    }
+
     fn array(&self, key: &str) -> Vec<Value> {
         array_field(self.input, key)
     }
@@ -667,4 +903,51 @@ fn array_field(value: &Value, key: &str) -> Vec<Value> {
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default()
+}
+
+fn build_pending_session_seed(
+    input: &Value,
+    session_id: &str,
+    tool: &str,
+    pending_action: &str,
+) -> Value {
+    let mut seed = Map::new();
+    seed.insert("index".into(), Value::from(-1));
+    seed.insert("id".into(), Value::String(session_id.to_owned()));
+    seed.insert("command".into(), Value::String(tool.to_owned()));
+    seed.insert("label".into(), Value::String(tool.to_owned()));
+    seed.insert("createdAt".into(), Value::String("<ISO_DATE>".into()));
+    seed.insert("status".into(), Value::String("waiting".into()));
+    seed.insert("active".into(), Value::Bool(false));
+    insert_optional_value(
+        &mut seed,
+        "worktreePath",
+        optional_string(input, "worktreePath").map(Value::String),
+    );
+    if input.get("overseer").and_then(Value::as_bool) == Some(true) {
+        seed.insert(
+            "team".into(),
+            json!({ "teamId": "overseer", "parentSessionId": "", "role": "overseer" }),
+        );
+        seed.insert("overseer".into(), Value::Bool(true));
+    }
+    if input.get("scribe").and_then(Value::as_bool) == Some(true) {
+        seed.insert(
+            "team".into(),
+            json!({ "teamId": "scribe", "parentSessionId": "", "role": "scribe" }),
+        );
+        seed.insert("scribe".into(), Value::Bool(true));
+    }
+    seed.insert(
+        "pendingAction".into(),
+        Value::String(pending_action.to_owned()),
+    );
+    seed.insert("optimistic".into(), Value::Bool(true));
+    Value::Object(seed)
+}
+
+fn insert_optional_value(out: &mut Map<String, Value>, key: &str, value: Option<Value>) {
+    if let Some(value) = value {
+        out.insert(key.into(), value);
+    }
 }

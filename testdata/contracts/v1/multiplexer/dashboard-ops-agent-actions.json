@@ -1,0 +1,442 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/dashboard-ops.ts",
+  "generatedBy": "scripts/capture-dashboard-ops-agent-actions-contract.mjs",
+  "description": "Dashboard operation agent spawn/fork/switch feedback captured by running TypeScript dashboard-ops exports with deterministic host adapters.",
+  "cases": [
+    {
+      "id": "dashboard-ops-agent-actions-001",
+      "name": "spawnDashboardAgentWithFeedback selects a normal target and settles when it appears",
+      "source": "src/multiplexer/dashboard-ops.ts",
+      "api": "spawnDashboardAgentWithFeedback",
+      "input": {
+        "api": "spawnDashboardAgentWithFeedback",
+        "input": { "sessionId": "codex-new", "tool": "codex", "worktreePath": "/repo/wt" },
+        "sessionSnapshots": [
+          [],
+          [{ "id": "codex-new", "command": "codex", "toolConfigKey": "codex", "status": "running" }]
+        ]
+      },
+      "output": {
+        "result": null,
+        "footerFlash": "",
+        "footerFlashTicks": 0,
+        "pendingSessions": [],
+        "sessionSeed": null,
+        "rawSessions": [{ "id": "codex-new", "command": "codex", "toolConfigKey": "codex", "status": "running" }],
+        "calls": [
+          { "method": "getDashboardSessions", "args": [] },
+          { "method": "preferDashboardEntrySelection", "args": ["session", "codex-new", "/repo/wt"] },
+          {
+            "method": "setPendingDashboardSessionAction",
+            "args": [
+              "codex-new",
+              "creating",
+              {
+                "sessionSeed": {
+                  "index": -1,
+                  "id": "codex-new",
+                  "command": "codex",
+                  "label": "codex",
+                  "createdAt": "<ISO_DATE>",
+                  "status": "waiting",
+                  "active": false,
+                  "worktreePath": "/repo/wt",
+                  "pendingAction": "creating",
+                  "optimistic": true
+                }
+              }
+            ]
+          },
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "reconcileDashboardRenderState", "args": [] },
+          { "method": "renderDashboard", "args": [] },
+          {
+            "method": "postToProjectService",
+            "args": [
+              "/agents/spawn",
+              { "tool": "codex", "sessionId": "codex-new", "worktreePath": "/repo/wt", "open": false },
+              { "timeoutMs": 10000 }
+            ]
+          },
+          { "method": "refreshDashboardModelFromService", "args": [true, { "lifecycle": { "mode": "dashboard" } }] },
+          { "method": "getDashboardSessions", "args": [] },
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "reconcileDashboardRenderState", "args": [] },
+          { "method": "renderDashboard", "args": [] },
+          { "method": "setPendingDashboardSessionAction", "args": ["codex-new", null] },
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "reconcileDashboardRenderState", "args": [] },
+          { "method": "renderDashboard", "args": [] }
+        ]
+      },
+      "inputSha256": "48e74373ea0cac1fd1a1c02419e14150e4c3db874c44a9d45475dfe49ce34674"
+    },
+    {
+      "id": "dashboard-ops-agent-actions-002",
+      "name": "spawnDashboardAgentWithFeedback does not select project-control agents",
+      "source": "src/multiplexer/dashboard-ops.ts",
+      "api": "spawnDashboardAgentWithFeedback",
+      "input": {
+        "api": "spawnDashboardAgentWithFeedback",
+        "input": { "sessionId": "scribe-new", "tool": "claude", "scribe": true },
+        "sessionSnapshots": [
+          [],
+          [{ "id": "scribe-new", "command": "claude", "toolConfigKey": "claude", "status": "running" }]
+        ]
+      },
+      "output": {
+        "result": null,
+        "footerFlash": "",
+        "footerFlashTicks": 0,
+        "pendingSessions": [],
+        "sessionSeed": null,
+        "rawSessions": [{ "id": "scribe-new", "command": "claude", "toolConfigKey": "claude", "status": "running" }],
+        "calls": [
+          { "method": "getDashboardSessions", "args": [] },
+          {
+            "method": "setPendingDashboardSessionAction",
+            "args": [
+              "scribe-new",
+              "creating",
+              {
+                "sessionSeed": {
+                  "index": -1,
+                  "id": "scribe-new",
+                  "command": "claude",
+                  "label": "claude",
+                  "createdAt": "<ISO_DATE>",
+                  "status": "waiting",
+                  "active": false,
+                  "team": { "teamId": "scribe", "parentSessionId": "", "role": "scribe" },
+                  "scribe": true,
+                  "pendingAction": "creating",
+                  "optimistic": true
+                }
+              }
+            ]
+          },
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "reconcileDashboardRenderState", "args": [] },
+          { "method": "renderDashboard", "args": [] },
+          {
+            "method": "postToProjectService",
+            "args": [
+              "/agents/spawn",
+              { "tool": "claude", "sessionId": "scribe-new", "scribe": true, "open": false },
+              { "timeoutMs": 10000 }
+            ]
+          },
+          { "method": "refreshDashboardModelFromService", "args": [true, { "lifecycle": { "mode": "dashboard" } }] },
+          { "method": "getDashboardSessions", "args": [] },
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "reconcileDashboardRenderState", "args": [] },
+          { "method": "renderDashboard", "args": [] },
+          { "method": "setPendingDashboardSessionAction", "args": ["scribe-new", null] },
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "reconcileDashboardRenderState", "args": [] },
+          { "method": "renderDashboard", "args": [] }
+        ]
+      },
+      "inputSha256": "89ede1012b15c9e5f697e037dfffec2dd85b2a3c9fc2c214115e9260d61530c4"
+    },
+    {
+      "id": "dashboard-ops-agent-actions-003",
+      "name": "forkDashboardAgentWithFeedback forwards source instruction and launch override",
+      "source": "src/multiplexer/dashboard-ops.ts",
+      "api": "forkDashboardAgentWithFeedback",
+      "input": {
+        "api": "forkDashboardAgentWithFeedback",
+        "input": {
+          "sourceSessionId": "codex-1",
+          "targetSessionId": "codex-child",
+          "tool": "codex",
+          "instruction": "continue",
+          "worktreePath": "/repo/wt-child",
+          "launchOverride": { "command": "codex", "args": ["--model", "gpt-5"], "env": { "AIMUX": "1" } }
+        },
+        "sessionSnapshots": [
+          [],
+          [{ "id": "codex-child", "command": "codex", "toolConfigKey": "codex", "status": "running" }]
+        ]
+      },
+      "output": {
+        "result": null,
+        "footerFlash": "",
+        "footerFlashTicks": 0,
+        "pendingSessions": [],
+        "sessionSeed": null,
+        "rawSessions": [{ "id": "codex-child", "command": "codex", "toolConfigKey": "codex", "status": "running" }],
+        "calls": [
+          { "method": "getDashboardSessions", "args": [] },
+          { "method": "preferDashboardEntrySelection", "args": ["session", "codex-child", "/repo/wt-child"] },
+          {
+            "method": "setPendingDashboardSessionAction",
+            "args": [
+              "codex-child",
+              "forking",
+              {
+                "sessionSeed": {
+                  "index": -1,
+                  "id": "codex-child",
+                  "command": "codex",
+                  "label": "codex",
+                  "createdAt": "<ISO_DATE>",
+                  "status": "waiting",
+                  "active": false,
+                  "worktreePath": "/repo/wt-child",
+                  "pendingAction": "forking",
+                  "optimistic": true
+                }
+              }
+            ]
+          },
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "reconcileDashboardRenderState", "args": [] },
+          { "method": "renderDashboard", "args": [] },
+          {
+            "method": "postToProjectService",
+            "args": [
+              "/agents/fork",
+              {
+                "sourceSessionId": "codex-1",
+                "targetSessionId": "codex-child",
+                "tool": "codex",
+                "instruction": "continue",
+                "worktreePath": "/repo/wt-child",
+                "launchOverride": { "command": "codex", "args": ["--model", "gpt-5"], "env": { "AIMUX": "1" } },
+                "open": false
+              },
+              { "timeoutMs": 10000 }
+            ]
+          },
+          { "method": "refreshDashboardModelFromService", "args": [true, { "lifecycle": { "mode": "dashboard" } }] },
+          { "method": "getDashboardSessions", "args": [] },
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "reconcileDashboardRenderState", "args": [] },
+          { "method": "renderDashboard", "args": [] },
+          { "method": "setPendingDashboardSessionAction", "args": ["codex-child", null] },
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "reconcileDashboardRenderState", "args": [] },
+          { "method": "renderDashboard", "args": [] }
+        ]
+      },
+      "inputSha256": "74d8b7caef9a923afa7659afdc02ae3cbc918f56235bc4a9111cf655eb20e60a"
+    },
+    {
+      "id": "dashboard-ops-agent-actions-004",
+      "name": "switchDashboardAgentToolWithFeedback settles after dashboard model shows the new tool",
+      "source": "src/multiplexer/dashboard-ops.ts",
+      "api": "switchDashboardAgentToolWithFeedback",
+      "input": {
+        "api": "switchDashboardAgentToolWithFeedback",
+        "input": { "sessionId": "codex-1", "tool": "claude", "instruction": "switch over" },
+        "sessionLabels": { "codex-1": "Coder" },
+        "sessionSnapshots": [
+          [
+            {
+              "id": "codex-1",
+              "command": "codex",
+              "toolConfigKey": "codex",
+              "label": "Coder",
+              "status": "running",
+              "active": true
+            }
+          ],
+          [
+            {
+              "id": "codex-1",
+              "command": "claude",
+              "toolConfigKey": "claude",
+              "label": "Coder",
+              "status": "running",
+              "active": true
+            }
+          ]
+        ]
+      },
+      "output": {
+        "result": null,
+        "footerFlash": "Switched Coder to claude",
+        "footerFlashTicks": 3,
+        "pendingSessions": [],
+        "sessionSeed": null,
+        "rawSessions": [
+          {
+            "id": "codex-1",
+            "command": "claude",
+            "toolConfigKey": "claude",
+            "label": "Coder",
+            "status": "running",
+            "active": true
+          }
+        ],
+        "calls": [
+          { "method": "getDashboardSessions", "args": [] },
+          { "method": "getDashboardSessions", "args": [] },
+          {
+            "method": "setPendingDashboardSessionAction",
+            "args": [
+              "codex-1",
+              "switching",
+              {
+                "sessionSeed": {
+                  "id": "codex-1",
+                  "command": "codex",
+                  "toolConfigKey": "codex",
+                  "label": "Coder",
+                  "status": "running",
+                  "active": true,
+                  "pendingAction": "switching"
+                }
+              }
+            ]
+          },
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "reconcileDashboardRenderState", "args": [] },
+          { "method": "renderDashboard", "args": [] },
+          {
+            "method": "postToProjectService",
+            "args": [
+              "/agents/switch-tool",
+              { "sessionId": "codex-1", "tool": "claude", "instruction": "switch over" },
+              { "timeoutMs": 10000 }
+            ]
+          },
+          { "method": "refreshDashboardModelFromService", "args": [true, { "lifecycle": { "mode": "dashboard" } }] },
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "reconcileDashboardRenderState", "args": [] },
+          { "method": "renderDashboard", "args": [] },
+          { "method": "setPendingDashboardSessionAction", "args": ["codex-1", null] },
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "reconcileDashboardRenderState", "args": [] },
+          { "method": "renderDashboard", "args": [] }
+        ]
+      },
+      "inputSha256": "a507209564d994b71f0a8560a71e1e92e51814dc1357f8d0609fd8c16e9ccf61"
+    },
+    {
+      "id": "dashboard-ops-agent-actions-005",
+      "name": "switchDashboardAgentToolWithFeedback coalesces an existing pending switch",
+      "source": "src/multiplexer/dashboard-ops.ts",
+      "api": "switchDashboardAgentToolWithFeedback",
+      "input": {
+        "api": "switchDashboardAgentToolWithFeedback",
+        "input": { "sessionId": "codex-1", "tool": "claude" },
+        "pendingActions": [{ "targetKind": "session", "id": "codex-1", "kind": "switching", "token": 1 }],
+        "sessionSnapshots": [
+          [
+            {
+              "id": "codex-1",
+              "command": "codex",
+              "toolConfigKey": "codex",
+              "label": "Coder",
+              "status": "running",
+              "active": true
+            }
+          ]
+        ]
+      },
+      "output": {
+        "result": null,
+        "footerFlash": "switching is already settling",
+        "footerFlashTicks": 2,
+        "pendingSessions": [{ "id": "codex-1", "kind": "switching", "token": 1 }],
+        "sessionSeed": null,
+        "rawSessions": [
+          {
+            "id": "codex-1",
+            "command": "codex",
+            "toolConfigKey": "codex",
+            "label": "Coder",
+            "status": "running",
+            "active": true
+          }
+        ],
+        "calls": [
+          { "method": "getDashboardSessions", "args": [] },
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "reconcileDashboardRenderState", "args": [] },
+          { "method": "renderDashboard", "args": [] }
+        ]
+      },
+      "inputSha256": "c0e03c82e850b22afdc5b5e66fd8b6ddfe315bc63ff164df27f9868462c1605c"
+    },
+    {
+      "id": "dashboard-ops-agent-actions-006",
+      "name": "switchDashboardAgentToolWithFeedback uses local mutation path outside dashboard mode",
+      "source": "src/multiplexer/dashboard-ops.ts",
+      "api": "switchDashboardAgentToolWithFeedback",
+      "input": {
+        "api": "switchDashboardAgentToolWithFeedback",
+        "mode": "agent",
+        "input": { "sessionId": "codex-1", "tool": "claude", "launchOverride": { "command": "claude", "args": [] } },
+        "sessions": [
+          {
+            "id": "codex-1",
+            "command": "codex",
+            "toolConfigKey": "codex",
+            "label": "Coder",
+            "status": "running",
+            "active": true
+          }
+        ],
+        "sessionSnapshots": [
+          [
+            {
+              "id": "codex-1",
+              "command": "codex",
+              "toolConfigKey": "codex",
+              "label": "Coder",
+              "status": "running",
+              "active": true
+            }
+          ]
+        ]
+      },
+      "output": {
+        "result": null,
+        "footerFlash": "Switched Coder to claude",
+        "footerFlashTicks": 3,
+        "pendingSessions": [],
+        "sessionSeed": null,
+        "rawSessions": [
+          {
+            "id": "codex-1",
+            "command": "codex",
+            "toolConfigKey": "codex",
+            "label": "Coder",
+            "status": "running",
+            "active": true
+          }
+        ],
+        "calls": [
+          { "method": "getDashboardSessions", "args": [] },
+          {
+            "method": "setPendingDashboardSessionAction",
+            "args": [
+              "codex-1",
+              "switching",
+              {
+                "sessionSeed": {
+                  "id": "codex-1",
+                  "command": "codex",
+                  "toolConfigKey": "codex",
+                  "label": "Coder",
+                  "status": "running",
+                  "active": true,
+                  "pendingAction": "switching"
+                }
+              }
+            ]
+          },
+          { "method": "switchAgentTool", "args": ["codex-1", "claude", { "command": "claude", "args": [] }, null] },
+          { "method": "setPendingDashboardSessionAction", "args": ["codex-1", null] },
+          { "method": "refreshLocalDashboardModel", "args": [] },
+          { "method": "renderDashboard", "args": [] }
+        ]
+      },
+      "inputSha256": "142df0a889534cc3e3822473296bffcd36fa0e6a3886a6b3e1e3d4d9ca135de6"
+    }
+  ]
+}
