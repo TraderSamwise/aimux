@@ -41,6 +41,9 @@ Priority fixture groups:
 - `dashboard/desktop-state-golden.json`: runtime-light/runtime-full desktop
   state snapshots and snapshot cost model captured by running TypeScript
   `buildDesktopStateSnapshot`.
+- `dashboard/targets.json`: dashboard target discovery/replacement return
+  values and mocked tmux side-effect call logs captured by running TypeScript
+  `findLiveDashboardTarget` and `resolveDashboardTarget`.
 
 ## ANSI
 

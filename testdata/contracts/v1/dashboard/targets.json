@@ -1,0 +1,579 @@
+{
+  "version": 1,
+  "generatedAt": "2026-09-07T00:00:00.000Z",
+  "generatedBy": "scripts/capture-dashboard-targets-contract.mjs",
+  "source": "src/dashboard/targets.test.ts",
+  "sources": ["src/dashboard/targets.test.ts", "src/dashboard/targets.ts"],
+  "subject": "dashboard target resolution",
+  "description": "Dashboard target discovery/replacement return values and tmux side-effect call logs captured by running TypeScript with mocked tmux.",
+  "normalizedFields": ["dashboardBuildStamp"],
+  "caseCount": 4,
+  "cases": [
+    {
+      "id": "dashboard-targets-001",
+      "name": "ignores current tmux client session from another project",
+      "source": "src/dashboard/targets.test.ts",
+      "api": "findLiveDashboardTarget",
+      "input": { "api": "findLiveDashboardTarget", "projectRoot": "/Users/sam/cs/glyde-frontend" },
+      "output": {
+        "result": {
+          "dashboardSession": {
+            "projectRoot": "/Users/sam/cs/glyde-frontend",
+            "projectId": "glyde",
+            "sessionName": "aimux-glyde-frontend-abc123"
+          },
+          "dashboardTarget": {
+            "sessionName": "aimux-glyde-frontend-abc123",
+            "windowId": "@1",
+            "windowIndex": 0,
+            "windowName": "dashboard"
+          }
+        },
+        "calls": [
+          { "method": "getProjectSession", "args": ["/Users/sam/cs/glyde-frontend"] },
+          { "method": "isInsideTmux", "args": [] },
+          { "method": "getOpenSessionName", "args": ["aimux-glyde-frontend-abc123", true] },
+          { "method": "currentClientSession", "args": [] },
+          { "method": "listSessionNames", "args": [] },
+          { "method": "hasSession", "args": ["aimux-glyde-frontend-abc123"] },
+          { "method": "listWindows", "args": ["aimux-glyde-frontend-abc123"] },
+          {
+            "method": "getWindowOption",
+            "args": [
+              {
+                "sessionName": "aimux-glyde-frontend-abc123",
+                "windowId": "@1",
+                "windowIndex": 0,
+                "windowName": "dashboard"
+              },
+              "@aimux-dashboard-build"
+            ]
+          },
+          {
+            "method": "getWindowOption",
+            "args": [
+              {
+                "sessionName": "aimux-glyde-frontend-abc123",
+                "windowId": "@1",
+                "windowIndex": 0,
+                "windowName": "dashboard"
+              },
+              "@aimux-dashboard-ready"
+            ]
+          },
+          { "method": "getSessionOption", "args": ["aimux-glyde-frontend-abc123", "@aimux-runtime-owner"] },
+          {
+            "method": "getWindowOption",
+            "args": [
+              {
+                "sessionName": "aimux-glyde-frontend-abc123",
+                "windowId": "@1",
+                "windowIndex": 0,
+                "windowName": "dashboard"
+              },
+              "@aimux-dashboard-owner"
+            ]
+          },
+          { "method": "getSessionOption", "args": ["aimux-glyde-frontend-abc123", "@aimux-project-root"] },
+          { "method": "displayMessage", "args": ["#{pane_current_command}", "@1"] },
+          {
+            "method": "captureTarget",
+            "args": [
+              {
+                "sessionName": "aimux-glyde-frontend-abc123",
+                "windowId": "@1",
+                "windowIndex": 0,
+                "windowName": "dashboard"
+              },
+              { "startLine": -40 }
+            ]
+          },
+          {
+            "method": "isWindowAlive",
+            "args": [
+              {
+                "sessionName": "aimux-glyde-frontend-abc123",
+                "windowId": "@1",
+                "windowIndex": 0,
+                "windowName": "dashboard"
+              }
+            ]
+          }
+        ]
+      },
+      "inputSha256": "2caa2160cd3bec2bfe3b304d30b4a99c7e35be6ae184a0173b48860ad6707612"
+    },
+    {
+      "id": "dashboard-targets-002",
+      "name": "replaces other-owner dashboard only after replacement is ready",
+      "source": "src/dashboard/targets.test.ts",
+      "api": "resolveDashboardTarget",
+      "input": { "api": "resolveDashboardTarget", "projectRoot": "/Users/sam/cs/glyde-frontend" },
+      "output": {
+        "findResult": null,
+        "resolveResult": {
+          "dashboardSession": {
+            "projectRoot": "/Users/sam/cs/glyde-frontend",
+            "projectId": "glyde",
+            "sessionName": "aimux-glyde-frontend-abc123"
+          },
+          "dashboardTarget": {
+            "sessionName": "aimux-glyde-frontend-abc123",
+            "windowId": "@2",
+            "windowIndex": 0,
+            "windowName": "dashboard"
+          }
+        },
+        "calls": [
+          { "method": "getProjectSession", "args": ["/Users/sam/cs/glyde-frontend"] },
+          { "method": "isInsideTmux", "args": [] },
+          { "method": "getOpenSessionName", "args": ["aimux-glyde-frontend-abc123", false] },
+          { "method": "currentClientSession", "args": [] },
+          { "method": "listSessionNames", "args": [] },
+          { "method": "hasSession", "args": ["aimux-glyde-frontend-abc123"] },
+          { "method": "listWindows", "args": ["aimux-glyde-frontend-abc123"] },
+          {
+            "method": "getWindowOption",
+            "args": [
+              {
+                "sessionName": "aimux-glyde-frontend-abc123",
+                "windowId": "@1",
+                "windowIndex": 0,
+                "windowName": "dashboard"
+              },
+              "@aimux-dashboard-build"
+            ]
+          },
+          {
+            "method": "getWindowOption",
+            "args": [
+              {
+                "sessionName": "aimux-glyde-frontend-abc123",
+                "windowId": "@1",
+                "windowIndex": 0,
+                "windowName": "dashboard"
+              },
+              "@aimux-dashboard-ready"
+            ]
+          },
+          { "method": "getSessionOption", "args": ["aimux-glyde-frontend-abc123", "@aimux-runtime-owner"] },
+          {
+            "method": "getWindowOption",
+            "args": [
+              {
+                "sessionName": "aimux-glyde-frontend-abc123",
+                "windowId": "@1",
+                "windowIndex": 0,
+                "windowName": "dashboard"
+              },
+              "@aimux-dashboard-owner"
+            ]
+          },
+          { "method": "getSessionOption", "args": ["aimux-glyde-frontend-abc123", "@aimux-project-root"] },
+          { "method": "displayMessage", "args": ["#{pane_current_command}", "@1"] },
+          {
+            "method": "captureTarget",
+            "args": [
+              {
+                "sessionName": "aimux-glyde-frontend-abc123",
+                "windowId": "@1",
+                "windowIndex": 0,
+                "windowName": "dashboard"
+              },
+              { "startLine": -40 }
+            ]
+          },
+          {
+            "method": "isWindowAlive",
+            "args": [
+              {
+                "sessionName": "aimux-glyde-frontend-abc123",
+                "windowId": "@1",
+                "windowIndex": 0,
+                "windowName": "dashboard"
+              }
+            ]
+          },
+          { "method": "getProjectSession", "args": ["/Users/sam/cs/glyde-frontend"] },
+          { "method": "isInsideTmux", "args": [] },
+          { "method": "getOpenSessionName", "args": ["aimux-glyde-frontend-abc123", false] },
+          { "method": "currentClientSession", "args": [] },
+          { "method": "listSessionNames", "args": [] },
+          { "method": "hasSession", "args": ["aimux-glyde-frontend-abc123"] },
+          { "method": "listWindows", "args": ["aimux-glyde-frontend-abc123"] },
+          {
+            "method": "getWindowOption",
+            "args": [
+              {
+                "sessionName": "aimux-glyde-frontend-abc123",
+                "windowId": "@1",
+                "windowIndex": 0,
+                "windowName": "dashboard"
+              },
+              "@aimux-dashboard-build"
+            ]
+          },
+          {
+            "method": "getWindowOption",
+            "args": [
+              {
+                "sessionName": "aimux-glyde-frontend-abc123",
+                "windowId": "@1",
+                "windowIndex": 0,
+                "windowName": "dashboard"
+              },
+              "@aimux-dashboard-ready"
+            ]
+          },
+          { "method": "getSessionOption", "args": ["aimux-glyde-frontend-abc123", "@aimux-runtime-owner"] },
+          {
+            "method": "getWindowOption",
+            "args": [
+              {
+                "sessionName": "aimux-glyde-frontend-abc123",
+                "windowId": "@1",
+                "windowIndex": 0,
+                "windowName": "dashboard"
+              },
+              "@aimux-dashboard-owner"
+            ]
+          },
+          { "method": "getSessionOption", "args": ["aimux-glyde-frontend-abc123", "@aimux-project-root"] },
+          { "method": "displayMessage", "args": ["#{pane_current_command}", "@1"] },
+          {
+            "method": "captureTarget",
+            "args": [
+              {
+                "sessionName": "aimux-glyde-frontend-abc123",
+                "windowId": "@1",
+                "windowIndex": 0,
+                "windowName": "dashboard"
+              },
+              { "startLine": -40 }
+            ]
+          },
+          {
+            "method": "isWindowAlive",
+            "args": [
+              {
+                "sessionName": "aimux-glyde-frontend-abc123",
+                "windowId": "@1",
+                "windowIndex": 0,
+                "windowName": "dashboard"
+              }
+            ]
+          },
+          {
+            "method": "ensureProjectSession",
+            "args": [
+              "/Users/sam/cs/glyde-frontend",
+              {
+                "cwd": "/Users/sam/cs/glyde-frontend",
+                "command": "bash",
+                "args": [
+                  "-lc",
+                  "output_file=$(mktemp /tmp/aimux-dashboard-output.XXXXXX) ; trap 'rm -f \"$output_file\"' EXIT ; trap 'rm -f \"$output_file\"; exit 130' INT TERM HUP ; set -o pipefail ; printf '\n%s\n%s\n' 'Starting Aimux dashboard...' 'Loading local control plane.' ; env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' AIMUX_HOME='/Users/sam/.aimux' AIMUX_DAEMON_PORT='43190' AIMUX_ENV='production' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '/Users/sam/cs/aimux/.aimux/worktrees/rust-translation-v1/dist/launcher-bin.js' '--tmux-dashboard-internal' 2>&1 | tee \"$output_file\" ; code=$? ; if [ $code -ne 0 ] ; then printf '\\033[?1049l\\033[H\\033[2J' ; if [ -s \"$output_file\" ] ; then cat \"$output_file\" ; else printf '%s\\n' 'No dashboard stderr/stdout was captured.' ; fi ; printf '%s\\n' '' ; printf '%s\\n%s\\n%s\\n%s\\n%s\\n' 'aimux dashboard failed to start.' 'The error above was captured from the dashboard process.' 'If that output is empty, rerun aimux with --debug to record the next attempt.' 'Press q, Enter, or Ctrl+C to close this pane.' '' ; printf '%s\\n' \"exit code: $code\" ; while IFS= read -rsn1 key ; do if [ -z \"$key\" ] || [ \"$key\" = 'q' ] ; then exit 0 ; fi ; done ; fi"
+                ]
+              }
+            ]
+          },
+          { "method": "isInsideTmux", "args": [] },
+          { "method": "getOpenSessionName", "args": ["aimux-glyde-frontend-abc123", false] },
+          {
+            "method": "ensureDashboardWindow",
+            "args": [
+              "aimux-glyde-frontend-abc123",
+              "/Users/sam/cs/glyde-frontend",
+              {
+                "cwd": "/Users/sam/cs/glyde-frontend",
+                "command": "bash",
+                "args": [
+                  "-lc",
+                  "output_file=$(mktemp /tmp/aimux-dashboard-output.XXXXXX) ; trap 'rm -f \"$output_file\"' EXIT ; trap 'rm -f \"$output_file\"; exit 130' INT TERM HUP ; set -o pipefail ; printf '\n%s\n%s\n' 'Starting Aimux dashboard...' 'Loading local control plane.' ; env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' AIMUX_HOME='/Users/sam/.aimux' AIMUX_DAEMON_PORT='43190' AIMUX_ENV='production' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '/Users/sam/cs/aimux/.aimux/worktrees/rust-translation-v1/dist/launcher-bin.js' '--tmux-dashboard-internal' 2>&1 | tee \"$output_file\" ; code=$? ; if [ $code -ne 0 ] ; then printf '\\033[?1049l\\033[H\\033[2J' ; if [ -s \"$output_file\" ] ; then cat \"$output_file\" ; else printf '%s\\n' 'No dashboard stderr/stdout was captured.' ; fi ; printf '%s\\n' '' ; printf '%s\\n%s\\n%s\\n%s\\n%s\\n' 'aimux dashboard failed to start.' 'The error above was captured from the dashboard process.' 'If that output is empty, rerun aimux with --debug to record the next attempt.' 'Press q, Enter, or Ctrl+C to close this pane.' '' ; printf '%s\\n' \"exit code: $code\" ; while IFS= read -rsn1 key ; do if [ -z \"$key\" ] || [ \"$key\" = 'q' ] ; then exit 0 ; fi ; done ; fi"
+                ]
+              }
+            ]
+          },
+          {
+            "method": "getWindowOption",
+            "args": [
+              {
+                "sessionName": "aimux-glyde-frontend-abc123",
+                "windowId": "@1",
+                "windowIndex": 0,
+                "windowName": "dashboard"
+              },
+              "@aimux-dashboard-build"
+            ]
+          },
+          {
+            "method": "getWindowOption",
+            "args": [
+              {
+                "sessionName": "aimux-glyde-frontend-abc123",
+                "windowId": "@1",
+                "windowIndex": 0,
+                "windowName": "dashboard"
+              },
+              "@aimux-dashboard-ready"
+            ]
+          },
+          {
+            "method": "getWindowOption",
+            "args": [
+              {
+                "sessionName": "aimux-glyde-frontend-abc123",
+                "windowId": "@1",
+                "windowIndex": 0,
+                "windowName": "dashboard"
+              },
+              "@aimux-dashboard-owner"
+            ]
+          },
+          {
+            "method": "isWindowAlive",
+            "args": [
+              {
+                "sessionName": "aimux-glyde-frontend-abc123",
+                "windowId": "@1",
+                "windowIndex": 0,
+                "windowName": "dashboard"
+              }
+            ]
+          },
+          {
+            "method": "replaceWindowWhenReady",
+            "args": [
+              {
+                "sessionName": "aimux-glyde-frontend-abc123",
+                "windowId": "@1",
+                "windowIndex": 0,
+                "windowName": "dashboard"
+              },
+              {
+                "cwd": "/Users/sam/cs/glyde-frontend",
+                "command": "bash",
+                "args": [
+                  "-lc",
+                  "output_file=$(mktemp /tmp/aimux-dashboard-output.XXXXXX) ; trap 'rm -f \"$output_file\"' EXIT ; trap 'rm -f \"$output_file\"; exit 130' INT TERM HUP ; set -o pipefail ; printf '\n%s\n%s\n' 'Starting Aimux dashboard...' 'Loading local control plane.' ; env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' AIMUX_HOME='/Users/sam/.aimux' AIMUX_DAEMON_PORT='43190' AIMUX_ENV='production' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '/Users/sam/cs/aimux/.aimux/worktrees/rust-translation-v1/dist/launcher-bin.js' '--tmux-dashboard-internal' 2>&1 | tee \"$output_file\" ; code=$? ; if [ $code -ne 0 ] ; then printf '\\033[?1049l\\033[H\\033[2J' ; if [ -s \"$output_file\" ] ; then cat \"$output_file\" ; else printf '%s\\n' 'No dashboard stderr/stdout was captured.' ; fi ; printf '%s\\n' '' ; printf '%s\\n%s\\n%s\\n%s\\n%s\\n' 'aimux dashboard failed to start.' 'The error above was captured from the dashboard process.' 'If that output is empty, rerun aimux with --debug to record the next attempt.' 'Press q, Enter, or Ctrl+C to close this pane.' '' ; printf '%s\\n' \"exit code: $code\" ; while IFS= read -rsn1 key ; do if [ -z \"$key\" ] || [ \"$key\" = 'q' ] ; then exit 0 ; fi ; done ; fi"
+                ]
+              },
+              { "option": "@aimux-dashboard-ready", "value": "acacad52ee2b1a20-d620036557b5ade5", "timeoutMs": 20000 }
+            ]
+          },
+          {
+            "method": "setSessionOption",
+            "args": ["aimux-glyde-frontend-abc123", "@aimux-dashboard-build", "acacad52ee2b1a20-d620036557b5ade5"]
+          },
+          {
+            "method": "setWindowOption",
+            "args": [
+              {
+                "sessionName": "aimux-glyde-frontend-abc123",
+                "windowId": "@2",
+                "windowIndex": 0,
+                "windowName": "dashboard"
+              },
+              "@aimux-dashboard-build",
+              "acacad52ee2b1a20-d620036557b5ade5"
+            ]
+          },
+          {
+            "method": "setWindowOption",
+            "args": [
+              {
+                "sessionName": "aimux-glyde-frontend-abc123",
+                "windowId": "@2",
+                "windowIndex": 0,
+                "windowName": "dashboard"
+              },
+              "@aimux-dashboard-owner",
+              "{\"home\":\"/Users/sam/.aimux\",\"port\":\"43190\"}"
+            ]
+          }
+        ]
+      },
+      "inputSha256": "85c673e24de5d23b069b5f086624eca8a442e71282f4acb5111b8adcb250ce34"
+    },
+    {
+      "id": "dashboard-targets-003",
+      "name": "backfills host session dashboard build stamp",
+      "source": "src/dashboard/targets.test.ts",
+      "api": "resolveDashboardTarget",
+      "input": { "api": "resolveDashboardTarget", "projectRoot": "/Users/sam/cs/glyde-frontend" },
+      "output": {
+        "result": {
+          "dashboardSession": {
+            "projectRoot": "/Users/sam/cs/glyde-frontend",
+            "projectId": "glyde",
+            "sessionName": "aimux-glyde-frontend-abc123"
+          },
+          "dashboardTarget": {
+            "sessionName": "aimux-glyde-frontend-abc123",
+            "windowId": "@1",
+            "windowIndex": 0,
+            "windowName": "dashboard"
+          }
+        },
+        "calls": [
+          { "method": "getProjectSession", "args": ["/Users/sam/cs/glyde-frontend"] },
+          { "method": "isInsideTmux", "args": [] },
+          { "method": "getOpenSessionName", "args": ["aimux-glyde-frontend-abc123", false] },
+          { "method": "currentClientSession", "args": [] },
+          { "method": "listSessionNames", "args": [] },
+          { "method": "hasSession", "args": ["aimux-glyde-frontend-abc123"] },
+          { "method": "listWindows", "args": ["aimux-glyde-frontend-abc123"] },
+          {
+            "method": "getWindowOption",
+            "args": [
+              {
+                "sessionName": "aimux-glyde-frontend-abc123",
+                "windowId": "@1",
+                "windowIndex": 0,
+                "windowName": "dashboard"
+              },
+              "@aimux-dashboard-build"
+            ]
+          },
+          {
+            "method": "getWindowOption",
+            "args": [
+              {
+                "sessionName": "aimux-glyde-frontend-abc123",
+                "windowId": "@1",
+                "windowIndex": 0,
+                "windowName": "dashboard"
+              },
+              "@aimux-dashboard-ready"
+            ]
+          },
+          { "method": "getSessionOption", "args": ["aimux-glyde-frontend-abc123", "@aimux-runtime-owner"] },
+          {
+            "method": "getWindowOption",
+            "args": [
+              {
+                "sessionName": "aimux-glyde-frontend-abc123",
+                "windowId": "@1",
+                "windowIndex": 0,
+                "windowName": "dashboard"
+              },
+              "@aimux-dashboard-owner"
+            ]
+          },
+          { "method": "getSessionOption", "args": ["aimux-glyde-frontend-abc123", "@aimux-project-root"] },
+          { "method": "displayMessage", "args": ["#{pane_current_command}", "@1"] },
+          {
+            "method": "captureTarget",
+            "args": [
+              {
+                "sessionName": "aimux-glyde-frontend-abc123",
+                "windowId": "@1",
+                "windowIndex": 0,
+                "windowName": "dashboard"
+              },
+              { "startLine": -40 }
+            ]
+          },
+          {
+            "method": "isWindowAlive",
+            "args": [
+              {
+                "sessionName": "aimux-glyde-frontend-abc123",
+                "windowId": "@1",
+                "windowIndex": 0,
+                "windowName": "dashboard"
+              }
+            ]
+          },
+          {
+            "method": "setSessionOption",
+            "args": ["aimux-glyde-frontend-abc123", "@aimux-dashboard-build", "acacad52ee2b1a20-d620036557b5ade5"]
+          }
+        ]
+      },
+      "inputSha256": "85c673e24de5d23b069b5f086624eca8a442e71282f4acb5111b8adcb250ce34"
+    },
+    {
+      "id": "dashboard-targets-004",
+      "name": "does not reuse dashboard before input readiness stamp",
+      "source": "src/dashboard/targets.test.ts",
+      "api": "findLiveDashboardTarget",
+      "input": { "api": "findLiveDashboardTarget", "projectRoot": "/Users/sam/cs/glyde-frontend" },
+      "output": {
+        "result": null,
+        "calls": [
+          { "method": "getProjectSession", "args": ["/Users/sam/cs/glyde-frontend"] },
+          { "method": "isInsideTmux", "args": [] },
+          { "method": "getOpenSessionName", "args": ["aimux-glyde-frontend-abc123", false] },
+          { "method": "currentClientSession", "args": [] },
+          { "method": "listSessionNames", "args": [] },
+          { "method": "hasSession", "args": ["aimux-glyde-frontend-abc123"] },
+          { "method": "listWindows", "args": ["aimux-glyde-frontend-abc123"] },
+          {
+            "method": "getWindowOption",
+            "args": [
+              {
+                "sessionName": "aimux-glyde-frontend-abc123",
+                "windowId": "@1",
+                "windowIndex": 0,
+                "windowName": "dashboard"
+              },
+              "@aimux-dashboard-build"
+            ]
+          },
+          {
+            "method": "getWindowOption",
+            "args": [
+              {
+                "sessionName": "aimux-glyde-frontend-abc123",
+                "windowId": "@1",
+                "windowIndex": 0,
+                "windowName": "dashboard"
+              },
+              "@aimux-dashboard-ready"
+            ]
+          },
+          { "method": "getSessionOption", "args": ["aimux-glyde-frontend-abc123", "@aimux-runtime-owner"] },
+          {
+            "method": "getWindowOption",
+            "args": [
+              {
+                "sessionName": "aimux-glyde-frontend-abc123",
+                "windowId": "@1",
+                "windowIndex": 0,
+                "windowName": "dashboard"
+              },
+              "@aimux-dashboard-owner"
+            ]
+          },
+          { "method": "getSessionOption", "args": ["aimux-glyde-frontend-abc123", "@aimux-project-root"] },
+          { "method": "displayMessage", "args": ["#{pane_current_command}", "@1"] },
+          {
+            "method": "captureTarget",
+            "args": [
+              {
+                "sessionName": "aimux-glyde-frontend-abc123",
+                "windowId": "@1",
+                "windowIndex": 0,
+                "windowName": "dashboard"
+              },
+              { "startLine": -40 }
+            ]
+          },
+          {
+            "method": "isWindowAlive",
+            "args": [
+              {
+                "sessionName": "aimux-glyde-frontend-abc123",
+                "windowId": "@1",
+                "windowIndex": 0,
+                "windowName": "dashboard"
+              }
+            ]
+          }
+        ]
+      },
+      "inputSha256": "2caa2160cd3bec2bfe3b304d30b4a99c7e35be6ae184a0173b48860ad6707612"
+    }
+  ]
+}

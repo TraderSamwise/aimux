@@ -2,9 +2,9 @@
 
 This inventory lists real captured TypeScript contract corpora that are intentionally `#[ignore]` because the matching Rust API does not exist yet, the implementation sits behind an ownership fence, or the existing fenced Rust implementation currently differs from the captured TypeScript behavior. It deliberately does not count Vitest reporter output as coverage.
 
-Coverage definition used for this inventory: a `src` test module is covered when any `testdata/contracts/v1/**/*.json` fixture records that module in a top-level `source`, top-level `sources`, case `source`, or group/case `source` field, and the fixture contains behavior-level input/output or state data rather than test-runner metadata. Under that definition there are 245 `src` test modules, 221 covered modules, and 24 uncovered modules remaining.
+Coverage definition used for this inventory: a `src` test module is covered when any `testdata/contracts/v1/**/*.json` fixture records that module in a top-level `source`, top-level `sources`, case `source`, or group/case `source` field, and the fixture contains behavior-level input/output or state data rather than test-runner metadata. Under that definition there are 245 `src` test modules, 222 covered modules, and 23 uncovered modules remaining.
 
-There are 29 ignored corpus entries below, covering 140 captured checklist cases.
+There are 30 ignored corpus entries below, covering 144 captured checklist cases.
 
 | Consumer | Corpus | Cases | Missing Rust API / parity bug | Ownership fence |
 | --- | --- | ---: | --- | --- |
@@ -18,6 +18,7 @@ There are 29 ignored corpus entries below, covering 140 captured checklist cases
 | `fixture_dashboard_navigation.rs` | `testdata/contracts/v1/runtime-state/dashboard-navigation.json` | 1 | showMigratePicker navigation decision API | dashboard_* |
 | `fixture_dashboard_command_spec.rs` | `testdata/contracts/v1/dashboard/command-spec.json` | 9 | Parity bug: TypeScript dashboard command spec launches the legacy Node dashboard while Rust launches the native dashboard | dashboard_* |
 | `fixture_dashboard_repair_notices.rs` | `testdata/contracts/v1/runtime-state/dashboard-repair-notices.json` | 1 | recordDashboardRepairNotice runtime notice-store behavior | dashboard_* |
+| `fixture_dashboard_targets.rs` | `testdata/contracts/v1/dashboard/targets.json` | 4 | dashboard target discovery/replacement APIs over mocked tmux | dashboard_* / tmux* |
 | `fixture_desktop_state_golden.rs` | `testdata/contracts/v1/dashboard/desktop-state-golden.json` | 4 | Parity bug: Rust dashboard model serialization adds default false fields and drops TS null/extra fields from captured `buildDesktopStateSnapshot` output | dashboard_* |
 | `fixture_debug_lifecycle_log.rs` | `testdata/contracts/v1/debug/lifecycle-log.json` | 3 | logLifecycleAlways logging API and event formatting | No explicit fence; needs Rust logging subsystem parity surface |
 | `fixture_event_loop.rs` | `testdata/contracts/v1/event-loop/metrics.json` | 3 | Event-loop delay histogram lifecycle APIs | daemon_* |
@@ -48,7 +49,6 @@ These `src/**/*.test.ts` modules still have no behavior-level corpus under `test
 | `src/core-project-actor.test.ts` | Child-process lifecycle supervisor integration; no pure captured API selected yet. | daemon_* / project actor lifecycle |
 | `src/daemon.test.ts` | Daemon HTTP/core-command/expose/project actor integration; no pure captured API selected yet. | daemon_* |
 | `src/daemon/projects-route.test.ts` | Daemon projects route count/cache projection; should be captured as route input/output. | daemon_* |
-| `src/dashboard/targets.test.ts` | Dashboard target resolution over mocked tmux; needs explicit mocked input/output capture. | dashboard_* / tmux* |
 | `src/full/hosted-server.test.ts` | Hosted proxy server integration; needs route request/response corpus rather than test names. | daemon_* / hosted service |
 | `src/metadata-server.interaction.test.ts` | Project-service interaction HTTP API; needs request/response corpus. | project_service/routes/ |
 | `src/metadata-server.test.ts` | Project-service metadata HTTP routes; needs request/response corpus. | project_service/routes/ |
