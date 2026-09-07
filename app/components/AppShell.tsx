@@ -35,8 +35,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const { isDesktopNative, uiScale } = useRuntimeTuning();
-  const isDesktop = width >= 1024;
-  const isTablet = width >= 640 && width < 1024;
+  const usesPersistentSidebar = Platform.OS === "web" && width >= 1024;
+  const isTablet = width >= 640 && !usesPersistentSidebar;
   const isMobile = width < 640;
 
   const [sidebarOpen, setSidebarOpen] = useAtom(sidebarOpenAtom);
@@ -61,10 +61,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     topInset: resolvedTopInset,
   });
 
-  // Mobile drawer should start closed — users don't expect it open on load.
   useEffect(() => {
-    if (isMobile) setSidebarOpen(false);
-  }, [isMobile, setSidebarOpen]);
+    if (!usesPersistentSidebar) setSidebarOpen(false);
+  }, [setSidebarOpen, usesPersistentSidebar]);
 
   useEffect(() => {
     RNAnimated.timing(translateX, {
@@ -86,7 +85,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     });
   }, [isDesktopNative, setDesktopAppZoom]);
 
-  const showHamburger = isTablet || isMobile;
+  const showHamburger = !usesPersistentSidebar;
   const shellZoomStyle = useMemo<ViewStyle>(
     () =>
       isDesktopNative && uiScale !== 1
@@ -187,7 +186,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <ChatTopEdgeFade topInset={resolvedTopInset} visible={!chatChromeVisible} />
         ) : null}
         <View className="flex-1 flex-row">
-          {isDesktop ? desktopSidebarSurface : null}
+          {usesPersistentSidebar ? desktopSidebarSurface : null}
           {isTablet && sidebarOpen ? desktopSidebarSurface : null}
           <View className="flex-1">{children}</View>
 
