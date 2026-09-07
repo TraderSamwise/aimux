@@ -1,4 +1,4 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const NOW: &str = "2026-06-01T00:00:00.000Z";
 
@@ -8,6 +8,11 @@ pub fn run_multiplexer_runtime_state_methods_contract_case(api: &str, input: &Va
         "stopSessionToOffline" => stop_session_to_offline(input),
         "graveyardSession" => graveyard_session(input),
         "isSessionRuntimeLive" => is_session_runtime_live(input),
+        "loadOfflineTopologySessions" => load_offline_topology_sessions(input),
+        "reconcileOrphanedTopologySessions" => reconcile_orphaned_topology_sessions(input),
+        "loadOfflineServices" => load_offline_services(input),
+        "reconcileOrphanedTopologyServices" => reconcile_orphaned_topology_services(input),
+        "buildLiveServiceStates" => build_live_service_states(input),
         api => panic!("unknown multiplexer runtime-state method api: {api}"),
     }
 }
@@ -152,6 +157,292 @@ fn is_session_runtime_live(input: &Value) -> Value {
     })
 }
 
+fn load_offline_topology_sessions(input: &Value) -> Value {
+    let topology = session_service_topology(input);
+    let mut offline_sessions = array_at(input, &["host", "offlineSessions"]);
+    let mut calls = Vec::new();
+    let project_root = string_field(input, "projectRoot");
+    calls.push(call(
+        "tmuxRuntimeManager.listProjectManagedWindows",
+        vec![json!(project_root)],
+    ));
+
+    let live_ids = live_ids(input, "agent");
+    let host_sessions = array_at(input, &["host", "sessions"]);
+    let owned_ids = host_sessions
+        .iter()
+        .map(|session| string_field(session, "id"))
+        .collect::<Vec<_>>();
+    let owned_backend_ids = host_sessions
+        .iter()
+        .filter_map(|session| session.get("backendSessionId").and_then(Value::as_str))
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    let next = array_field(&topology, "sessions")
+        .into_iter()
+        .filter(|session| string_field(session, "status") == "offline")
+        .filter(|session| {
+            let id = string_field(session, "id");
+            if live_ids.contains(&id) || owned_ids.contains(&id) {
+                return false;
+            }
+            let backend_id = string_field(session, "backendSessionId");
+            if !backend_id.is_empty() && owned_backend_ids.contains(&backend_id) {
+                return false;
+            }
+            calls.push(call(
+                "dashboardPendingActions.getSessionAction",
+                vec![json!(id)],
+            ));
+            object_lookup_string(input, "pendingSessionActions", &id).as_deref() != Some("starting")
+        })
+        .collect::<Vec<_>>();
+    let previous_key = offline_sessions
+        .iter()
+        .map(offline_session_change_key)
+        .collect::<Vec<_>>()
+        .join("|");
+    let next_key = next
+        .iter()
+        .map(offline_session_change_key)
+        .collect::<Vec<_>>()
+        .join("|");
+    offline_sessions = next;
+    if !offline_sessions.is_empty() {
+        calls.push(call(
+            "debug",
+            vec![
+                json!(format!(
+                    "loaded {} offline session(s) from runtime topology",
+                    offline_sessions.len()
+                )),
+                json!("session"),
+            ],
+        ));
+    }
+    json!({
+        "changed": previous_key != next_key,
+        "host": { "offlineSessions": offline_sessions },
+        "topology": topology,
+        "calls": calls,
+    })
+}
+
+fn reconcile_orphaned_topology_sessions(input: &Value) -> Value {
+    let mut topology = session_service_topology(input);
+    let mut sessions = array_field(&topology, "sessions");
+    let mut calls = Vec::new();
+    let live_ids = live_ids(input, "agent");
+    let host_sessions = array_at(input, &["host", "sessions"]);
+    let owned_ids = host_sessions
+        .iter()
+        .map(|session| string_field(session, "id"))
+        .collect::<Vec<_>>();
+    let owned_backend_ids = host_sessions
+        .iter()
+        .filter_map(|session| session.get("backendSessionId").and_then(Value::as_str))
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    let mut changed = false;
+
+    for session in &mut sessions {
+        let id = string_field(session, "id");
+        let status = string_field(session, "status");
+        if !["starting", "running", "idle", "offline"].contains(&status.as_str()) {
+            continue;
+        }
+        if live_ids.contains(&id) || owned_ids.contains(&id) {
+            continue;
+        }
+        let backend_id = string_field(session, "backendSessionId");
+        if !backend_id.is_empty() && owned_backend_ids.contains(&backend_id) {
+            continue;
+        }
+        calls.push(call(
+            "dashboardPendingActions.getSessionAction",
+            vec![json!(id)],
+        ));
+        let pending_start = object_lookup_string(input, "pendingSessionActions", &id).as_deref()
+            == Some("starting");
+        let stale_starting = status == "starting"
+            && string_field(session, "updatedAt") != NOW.replace("01T00:00:00", "01T00:00:05");
+        if pending_start && !stale_starting {
+            continue;
+        }
+
+        let worktree_path = string_field(session, "worktreePath");
+        if !worktree_path.is_empty() && worktree_path != "<repo>" {
+            let reason = format!("worktree missing after restart: {worktree_path}");
+            set_field(session, "status", json!("graveyard"));
+            remove_field(session, "lifecycle");
+            set_field(session, "updatedAt", json!(NOW));
+            set_field(session, "graveyardedAt", json!(NOW));
+            set_field(session, "graveyardReason", json!(reason));
+            calls.push(call(
+                "debug",
+                vec![
+                    json!(format!(
+                        "graveyarded unrecoverable orphaned session {id}: {reason}"
+                    )),
+                    json!("session"),
+                ],
+            ));
+            changed = true;
+            continue;
+        }
+
+        if status == "offline" {
+            continue;
+        }
+        set_field(session, "status", json!("offline"));
+        set_field(session, "lifecycle", json!("offline"));
+        set_field(session, "updatedAt", json!(NOW));
+        remove_field(session, "tmuxTarget");
+        if status == "starting" && session.get("restoreBlockedReason").is_none() {
+            set_field(
+                session,
+                "restoreBlockedReason",
+                json!("agent did not stay alive during startup"),
+            );
+        }
+        calls.push(call(
+            "debug",
+            vec![
+                json!(format!(
+                    "reconciled orphaned session {id} → offline (no live tmux window)"
+                )),
+                json!("session"),
+            ],
+        ));
+        changed = true;
+    }
+
+    topology["sessions"] = Value::Array(sessions);
+    json!({
+        "changed": changed,
+        "host": { "offlineSessions": array_at(input, &["host", "offlineSessions"]) },
+        "topology": topology,
+        "calls": calls,
+    })
+}
+
+fn load_offline_services(input: &Value) -> Value {
+    let mut topology = session_service_topology(input);
+    let mut offline_services = array_at(input, &["host", "offlineServices"]);
+    let mut calls = Vec::new();
+    let project_root = string_field(input, "projectRoot");
+    calls.push(call(
+        "tmuxRuntimeManager.listProjectManagedWindows",
+        vec![json!(project_root)],
+    ));
+    let live_service_ids = live_ids(input, "service");
+    let mut changed =
+        reconcile_services_in_topology(input, &mut topology, &live_service_ids, &mut calls);
+    let saved = array_field(&topology, "services")
+        .into_iter()
+        .filter(|service| {
+            ["stopped", "offline"].contains(&string_field(service, "status").as_str())
+        })
+        .filter(|service| {
+            let id = string_field(service, "id");
+            if live_service_ids.contains(&id) {
+                return false;
+            }
+            calls.push(call(
+                "dashboardPendingActions.getServiceAction",
+                vec![json!(id)],
+            ));
+            object_lookup_string(input, "pendingServiceActions", &id).as_deref() != Some("starting")
+        })
+        .map(offline_service_state)
+        .collect::<Vec<_>>();
+    let previous_key = offline_services
+        .iter()
+        .map(offline_service_change_key)
+        .collect::<Vec<_>>()
+        .join("|");
+    let next_key = saved
+        .iter()
+        .map(offline_service_change_key)
+        .collect::<Vec<_>>()
+        .join("|");
+    offline_services = saved;
+    changed = changed || previous_key != next_key;
+    json!({
+        "changed": changed,
+        "host": { "offlineServices": offline_services },
+        "topology": topology,
+        "calls": calls,
+    })
+}
+
+fn reconcile_orphaned_topology_services(input: &Value) -> Value {
+    let mut topology = session_service_topology(input);
+    let mut calls = Vec::new();
+    let project_root = string_field(input, "projectRoot");
+    calls.push(call(
+        "tmuxRuntimeManager.listProjectManagedWindows",
+        vec![json!(project_root)],
+    ));
+    let live_service_ids = live_ids(input, "service");
+    let changed =
+        reconcile_services_in_topology(input, &mut topology, &live_service_ids, &mut calls);
+    json!({
+        "changed": changed,
+        "host": { "offlineServices": array_at(input, &["host", "offlineServices"]) },
+        "topology": topology,
+        "calls": calls,
+    })
+}
+
+fn build_live_service_states(input: &Value) -> Value {
+    let mut calls = Vec::new();
+    let project_root = string_field(input, "projectRoot");
+    calls.push(call(
+        "tmuxRuntimeManager.listProjectManagedWindows",
+        vec![json!(project_root)],
+    ));
+    let mut seen = Vec::new();
+    let mut services = Vec::new();
+    for window in array_field(input, "liveWindows") {
+        let metadata = value_field(&window, "metadata");
+        if string_field(metadata, "kind") != "service" {
+            continue;
+        }
+        let target = value_field(&window, "target").clone();
+        calls.push(call(
+            "tmuxRuntimeManager.isWindowAlive",
+            vec![target.clone()],
+        ));
+        let service_id = string_field(metadata, "sessionId");
+        if seen.contains(&service_id) {
+            continue;
+        }
+        seen.push(service_id.clone());
+        let window_id = string_field(&target, "windowId");
+        calls.push(call(
+            "tmuxRuntimeManager.displayMessage",
+            vec![json!("#{pane_current_path}"), json!(window_id)],
+        ));
+        let cwd = object_lookup_string(input, "displayPaths", &window_id)
+            .unwrap_or_else(|| string_field(metadata, "worktreePath"));
+        let mut service = json!({
+            "id": service_id,
+            "createdAt": string_field(metadata, "createdAt"),
+            "worktreePath": string_field(metadata, "worktreePath"),
+            "label": string_field(metadata, "label"),
+            "launchCommandLine": service_launch_command_line(metadata),
+            "cwd": cwd,
+            "tmuxTarget": target,
+        });
+        remove_empty_optional(&mut service, "createdAt");
+        remove_empty_optional(&mut service, "worktreePath");
+        remove_empty_optional(&mut service, "label");
+        services.push(service);
+    }
+    json!({ "services": services, "calls": calls })
+}
+
 fn call(method: &str, args: Vec<Value>) -> Value {
     json!({ "method": method, "args": args })
 }
@@ -249,6 +540,131 @@ fn map_lookup_value(value: &Value, field: &str, key: &str) -> Option<Value> {
             .then(|| pair.get(1).cloned())
             .flatten()
     })
+}
+
+fn object_lookup_string(value: &Value, field: &str, key: &str) -> Option<String> {
+    value
+        .get(field)
+        .and_then(Value::as_object)
+        .and_then(|object| object.get(key))
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+}
+
+fn session_service_topology(input: &Value) -> Value {
+    value_field(input, "initialTopology").clone()
+}
+
+fn live_ids(input: &Value, kind: &str) -> Vec<String> {
+    array_field(input, "liveWindows")
+        .into_iter()
+        .filter_map(|window| {
+            let metadata = value_field(&window, "metadata");
+            (string_field(metadata, "kind") == kind).then(|| string_field(metadata, "sessionId"))
+        })
+        .collect()
+}
+
+fn offline_session_change_key(session: &Value) -> String {
+    format!(
+        "{}:{}:{}:{}:{}:{}",
+        string_field(session, "id"),
+        string_field(session, "label"),
+        string_field(session, "worktreePath"),
+        string_field(session, "backendSessionId"),
+        string_field(session, "restoreBlockedReason"),
+        serde_json::to_string(value_field(session, "team")).unwrap_or_else(|_| "null".to_owned())
+    )
+}
+
+fn offline_service_change_key(service: &Value) -> String {
+    format!(
+        "{}:{}:{}:{}:{}:{}:{}",
+        string_field(service, "id"),
+        string_field(service, "label"),
+        string_field(service, "worktreePath"),
+        string_field(service, "cwd"),
+        string_field(service, "launchCommandLine"),
+        string_at(service, &["tmuxTarget", "windowId"]),
+        if bool_field(service, "retained") {
+            "retained"
+        } else {
+            ""
+        }
+    )
+}
+
+fn reconcile_services_in_topology(
+    input: &Value,
+    topology: &mut Value,
+    live_service_ids: &[String],
+    calls: &mut Vec<Value>,
+) -> bool {
+    let mut services = array_field(topology, "services");
+    let mut changed = false;
+    for service in &mut services {
+        let status = string_field(service, "status");
+        if !["running", "starting"].contains(&status.as_str()) {
+            continue;
+        }
+        let id = string_field(service, "id");
+        if live_service_ids.contains(&id) {
+            continue;
+        }
+        calls.push(call(
+            "dashboardPendingActions.getServiceAction",
+            vec![json!(id)],
+        ));
+        let pending = object_lookup_string(input, "pendingServiceActions", &id);
+        if pending.as_deref() == Some("creating") || pending.as_deref() == Some("starting") {
+            continue;
+        }
+        set_field(service, "status", json!("stopped"));
+        remove_field(service, "tmuxTarget");
+        remove_field(service, "lastSeenAt");
+        calls.push(call(
+            "debug",
+            vec![
+                json!(format!(
+                    "reconciled orphaned service {id} → stopped (no live tmux window)"
+                )),
+                json!("service"),
+            ],
+        ));
+        changed = true;
+    }
+    topology["services"] = Value::Array(services);
+    changed
+}
+
+fn offline_service_state(mut service: Value) -> Value {
+    remove_field(&mut service, "tmuxTarget");
+    remove_field(&mut service, "retained");
+    service
+}
+
+fn service_launch_command_line(metadata: &Value) -> String {
+    if let Some(value) = metadata.get("launchCommandLine").and_then(Value::as_str) {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_owned();
+        }
+    }
+    let args = array_field(metadata, "args");
+    if args.first().and_then(Value::as_str) == Some("-lc") {
+        return args
+            .get(1)
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+    }
+    String::new()
+}
+
+fn remove_empty_optional(value: &mut Value, field: &str) {
+    if string_field(value, field).is_empty() {
+        remove_field(value, field);
+    }
 }
 
 fn start_time_to_iso(start_time: i64) -> &'static str {

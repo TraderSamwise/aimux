@@ -835,8 +835,10 @@ Priority fixture groups:
   repositories and isolated topology state.
 - `multiplexer/runtime-state-methods.json`: runtime-state dashboard removal
   index adjustment, stop-to-offline topology persistence, graveyard session
-  mutation, and live tmux metadata checks captured by running TypeScript
-  `multiplexer/runtime-state` helpers against isolated project state.
+  mutation, live tmux metadata checks, topology reconciliation, offline
+  session/service loading, orphaned service demotion, and live service
+  projection captured by running TypeScript `multiplexer/runtime-state`
+  helpers against isolated project state.
 - `multiplexer/runtime-lifecycle-methods.json`: runtime lifecycle legacy
   instruction-file managed-block cleanup and tracking reset side effects
   captured by running TypeScript `runtimeLifecycleMethods` against temporary

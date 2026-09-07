@@ -33,6 +33,7 @@ globalThis.Date = class FixedDate extends RealDate {
 const runtimeState = await import(new URL("dist/multiplexer/runtime-state.js", ROOT));
 const paths = await import(new URL("dist/paths.js", ROOT));
 const topologySessions = await import(new URL("dist/runtime-core/topology-sessions.js", ROOT));
+const topologyServices = await import(new URL("dist/runtime-core/topology-services.js", ROOT));
 
 const hash = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const clone = (value) => JSON.parse(JSON.stringify(value));
@@ -74,6 +75,13 @@ function snapshotTopology() {
   };
 }
 
+function snapshotSessionServiceTopology() {
+  return {
+    sessions: topologySessions.listTopologySessionStates(),
+    services: topologyServices.listTopologyServiceStates(),
+  };
+}
+
 async function withFixture(label, fn) {
   const tmpRoot = mkdtempSync(join(tmpdir(), `aimux-runtime-state-methods-${label}-`));
   const projectRoot = join(tmpRoot, "repo");
@@ -81,6 +89,7 @@ async function withFixture(label, fn) {
   process.env.AIMUX_HOME = join(tmpRoot, "home");
   try {
     mkdirSync(projectRoot, { recursive: true });
+    mkdirSync(join(projectRoot, ".git"), { recursive: true });
     await paths.initPaths(projectRoot);
     return await fn({ tmpRoot, projectRoot });
   } finally {
@@ -88,6 +97,38 @@ async function withFixture(label, fn) {
     else process.env.AIMUX_HOME = previousHome;
     rmSync(tmpRoot, { recursive: true, force: true });
   }
+}
+
+function pendingActions(input, calls) {
+  return {
+    getSessionAction: callRecorder(calls, "dashboardPendingActions.getSessionAction", (id) => input.pendingSessionActions?.[id]),
+    getServiceAction: callRecorder(calls, "dashboardPendingActions.getServiceAction", (id) => input.pendingServiceActions?.[id]),
+  };
+}
+
+function tmuxRuntimeManager(input, calls) {
+  return {
+    listProjectManagedWindows: callRecorder(calls, "tmuxRuntimeManager.listProjectManagedWindows", () =>
+      clone(input.liveWindows ?? []),
+    ),
+    isWindowAlive: callRecorder(calls, "tmuxRuntimeManager.isWindowAlive", (target) => {
+      if (!input.deadWindowIds) return true;
+      return !input.deadWindowIds.includes(target.windowId);
+    }),
+    displayMessage: callRecorder(calls, "tmuxRuntimeManager.displayMessage", (_format, windowId) => input.displayPaths?.[windowId] ?? null),
+  };
+}
+
+function runtimeTopologyHost(input, calls) {
+  return {
+    projectRoot: input.projectRoot,
+    sessions: clone(input.host?.sessions ?? []),
+    offlineSessions: clone(input.host?.offlineSessions ?? []),
+    offlineServices: clone(input.host?.offlineServices ?? []),
+    dashboardPendingActions: pendingActions(input, calls),
+    tmuxRuntimeManager: tmuxRuntimeManager(input, calls),
+    debug: callRecorder(calls, "debug"),
+  };
 }
 
 async function record(cases, name, api, label, input, run) {
@@ -276,12 +317,294 @@ await record(
   },
 );
 
+await record(
+  cases,
+  "loadOfflineTopologySessions skips a session with a pending start action",
+  "loadOfflineTopologySessions",
+  "load-offline-pending-session",
+  ({ projectRoot }) => {
+    topologySessions.upsertTopologySession(
+      {
+        id: "codex-1",
+        command: "codex",
+        tool: "codex",
+        toolConfigKey: "codex",
+        args: [],
+        lifecycle: "offline",
+        backendSessionId: "native-session",
+        worktreePath: projectRoot,
+      },
+      "offline",
+      { projectRoot },
+    );
+    return {
+      projectRoot,
+      pendingSessionActions: { "codex-1": "starting" },
+      host: { sessions: [], offlineSessions: [] },
+      initialTopology: snapshotSessionServiceTopology(),
+    };
+  },
+  (_ctx, input) => {
+    const calls = [];
+    const host = runtimeTopologyHost(input, calls);
+    const changed = runtimeState.loadOfflineTopologySessions(host);
+    return { changed, host: { offlineSessions: host.offlineSessions }, topology: snapshotSessionServiceTopology(), calls };
+  },
+);
+
+await record(
+  cases,
+  "loadOfflineTopologySessions does not confuse same-id pending service actions with sessions",
+  "loadOfflineTopologySessions",
+  "load-offline-session-service-pending",
+  ({ projectRoot }) => {
+    topologySessions.upsertTopologySession(
+      {
+        id: "codex-1",
+        command: "codex",
+        tool: "codex",
+        toolConfigKey: "codex",
+        args: [],
+        lifecycle: "offline",
+        backendSessionId: "native-session",
+        worktreePath: projectRoot,
+      },
+      "offline",
+      { projectRoot },
+    );
+    return {
+      projectRoot,
+      pendingServiceActions: { "codex-1": "starting" },
+      host: { sessions: [], offlineSessions: [] },
+      initialTopology: snapshotSessionServiceTopology(),
+    };
+  },
+  (_ctx, input) => {
+    const calls = [];
+    const host = runtimeTopologyHost(input, calls);
+    const changed = runtimeState.loadOfflineTopologySessions(host);
+    return { changed, host: { offlineSessions: host.offlineSessions }, topology: snapshotSessionServiceTopology(), calls };
+  },
+);
+
+await record(
+  cases,
+  "reconcileOrphanedTopologySessions demotes crash-orphaned running sessions to offline",
+  "reconcileOrphanedTopologySessions",
+  "reconcile-session-demote",
+  ({ projectRoot }) => {
+    topologySessions.upsertTopologySession(
+      {
+        id: "codex-1",
+        command: "codex",
+        tool: "codex",
+        toolConfigKey: "codex",
+        args: [],
+        lifecycle: "live",
+        backendSessionId: "native-1",
+        worktreePath: projectRoot,
+      },
+      "running",
+      { projectRoot },
+    );
+    return { projectRoot, host: { sessions: [], offlineSessions: [] }, initialTopology: snapshotSessionServiceTopology() };
+  },
+  (_ctx, input) => {
+    const calls = [];
+    const host = runtimeTopologyHost(input, calls);
+    const changed = runtimeState.reconcileOrphanedTopologySessions(host, []);
+    return { changed, host: { offlineSessions: host.offlineSessions }, topology: snapshotSessionServiceTopology(), calls };
+  },
+);
+
+await record(
+  cases,
+  "reconcileOrphanedTopologySessions graveyards unrecoverable missing-worktree sessions",
+  "reconcileOrphanedTopologySessions",
+  "reconcile-session-graveyard",
+  ({ projectRoot }) => {
+    const missingWorktree = join(projectRoot, "deleted-worktree");
+    topologySessions.upsertTopologySession(
+      {
+        id: "codex-gone",
+        command: "codex",
+        tool: "codex",
+        toolConfigKey: "codex",
+        args: [],
+        lifecycle: "live",
+        backendSessionId: "native-gone",
+        worktreePath: missingWorktree,
+      },
+      "running",
+      { projectRoot },
+    );
+    return { projectRoot, host: { sessions: [], offlineSessions: [] }, initialTopology: snapshotSessionServiceTopology() };
+  },
+  (_ctx, input) => {
+    const calls = [];
+    const host = runtimeTopologyHost(input, calls);
+    const changed = runtimeState.reconcileOrphanedTopologySessions(host, []);
+    return { changed, host: { offlineSessions: host.offlineSessions }, topology: snapshotSessionServiceTopology(), calls };
+  },
+);
+
+await record(
+  cases,
+  "loadOfflineServices skips a stopped service with a pending start action",
+  "loadOfflineServices",
+  "load-services-pending-service",
+  ({ projectRoot }) => {
+    topologyServices.upsertTopologyService(
+      { id: "service-1", label: "web", launchCommandLine: "yarn web", worktreePath: projectRoot },
+      "stopped",
+      { projectRoot },
+    );
+    return {
+      projectRoot,
+      pendingServiceActions: { "service-1": "starting" },
+      host: { offlineServices: [] },
+      initialTopology: snapshotSessionServiceTopology(),
+    };
+  },
+  (_ctx, input) => {
+    const calls = [];
+    const host = runtimeTopologyHost(input, calls);
+    const changed = runtimeState.loadOfflineServices(host);
+    return { changed, host: { offlineServices: host.offlineServices }, topology: snapshotSessionServiceTopology(), calls };
+  },
+);
+
+await record(
+  cases,
+  "loadOfflineServices does not confuse same-id pending session actions with services",
+  "loadOfflineServices",
+  "load-services-session-pending",
+  ({ projectRoot }) => {
+    topologyServices.upsertTopologyService(
+      { id: "service-1", label: "shell", launchCommandLine: "yarn shell", worktreePath: projectRoot },
+      "stopped",
+      { projectRoot },
+    );
+    return {
+      projectRoot,
+      pendingSessionActions: { "service-1": "starting" },
+      host: { offlineServices: [] },
+      initialTopology: snapshotSessionServiceTopology(),
+    };
+  },
+  (_ctx, input) => {
+    const calls = [];
+    const host = runtimeTopologyHost(input, calls);
+    const changed = runtimeState.loadOfflineServices(host);
+    return { changed, host: { offlineServices: host.offlineServices }, topology: snapshotSessionServiceTopology(), calls };
+  },
+);
+
+await record(
+  cases,
+  "loadOfflineServices demotes crash-orphaned running services to stopped",
+  "loadOfflineServices",
+  "load-services-demote",
+  ({ projectRoot }) => {
+    topologyServices.upsertTopologyService(
+      {
+        id: "service-orphan",
+        label: "web",
+        launchCommandLine: "yarn web",
+        worktreePath: projectRoot,
+        tmuxTarget: { sessionName: "aimux-repo", windowId: "@3", windowIndex: 3, windowName: "web" },
+      },
+      "running",
+      { projectRoot },
+    );
+    return { projectRoot, host: { offlineServices: [] }, initialTopology: snapshotSessionServiceTopology() };
+  },
+  (_ctx, input) => {
+    const calls = [];
+    const host = runtimeTopologyHost(input, calls);
+    const changed = runtimeState.loadOfflineServices(host);
+    return { changed, host: { offlineServices: host.offlineServices }, topology: snapshotSessionServiceTopology(), calls };
+  },
+);
+
+await record(
+  cases,
+  "reconcileOrphanedTopologyServices leaves a mid-launch service untouched",
+  "reconcileOrphanedTopologyServices",
+  "reconcile-services-pending",
+  ({ projectRoot }) => {
+    topologyServices.upsertTopologyService({ id: "service-starting", label: "web", worktreePath: projectRoot }, "starting", {
+      projectRoot,
+    });
+    return {
+      projectRoot,
+      pendingServiceActions: { "service-starting": "starting" },
+      host: { offlineServices: [] },
+      initialTopology: snapshotSessionServiceTopology(),
+    };
+  },
+  (_ctx, input) => {
+    const calls = [];
+    const host = runtimeTopologyHost(input, calls);
+    const changed = runtimeState.reconcileOrphanedTopologyServices(host);
+    return { changed, host: { offlineServices: host.offlineServices }, topology: snapshotSessionServiceTopology(), calls };
+  },
+);
+
+await record(
+  cases,
+  "buildLiveServiceStates projects alive service windows and dedupes by service id",
+  "buildLiveServiceStates",
+  "live-service-states",
+  ({ projectRoot }) => ({
+    projectRoot,
+    liveWindows: [
+      {
+        target: { sessionName: "aimux-repo", windowId: "@7", windowIndex: 7, windowName: "web" },
+        metadata: {
+          kind: "service",
+          sessionId: "service-live",
+          command: "yarn",
+          args: ["web"],
+          label: "web",
+          createdAt: "2026-05-01T00:00:00.000Z",
+          worktreePath: projectRoot,
+        },
+      },
+      {
+        target: { sessionName: "aimux-repo", windowId: "@8", windowIndex: 8, windowName: "web-duplicate" },
+        metadata: {
+          kind: "service",
+          sessionId: "service-live",
+          command: "yarn",
+          args: ["web"],
+          label: "web duplicate",
+          worktreePath: projectRoot,
+        },
+      },
+      {
+        target: { sessionName: "aimux-repo", windowId: "@9", windowIndex: 9, windowName: "agent" },
+        metadata: { kind: "agent", sessionId: "codex-1", command: "codex", worktreePath: projectRoot },
+      },
+    ],
+    displayPaths: { "@7": `${projectRoot}/app` },
+    host: { offlineServices: [] },
+    initialTopology: snapshotSessionServiceTopology(),
+  }),
+  (_ctx, input) => {
+    const calls = [];
+    const host = runtimeTopologyHost(input, calls);
+    const services = runtimeState.buildLiveServiceStates(host);
+    return { services, calls };
+  },
+);
+
 await writeContractJson(FIXTURE_PATH, {
   version: 1,
   source: "src/multiplexer/runtime-state.test.ts",
   generatedBy: "scripts/capture-multiplexer-runtime-state-methods-contract.mjs",
   description:
-    "Multiplexer runtime-state state transition contracts for dashboard removal adjustment, stop-to-offline topology persistence, graveyard session mutation, and live tmux metadata checks captured by running TypeScript runtime-state helpers.",
+    "Multiplexer runtime-state state transition contracts for dashboard removal adjustment, stop-to-offline topology persistence, graveyard session mutation, live tmux metadata checks, topology reconciliation, offline loads, and live service projections captured by running TypeScript runtime-state helpers.",
   cases,
 });
 
