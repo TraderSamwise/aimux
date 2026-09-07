@@ -1,4 +1,6 @@
-use aimux::tui_screen_renderers::run_tui_screen_overlay_contract_case;
+use aimux::tui_screen_renderers::{
+    run_tui_screen_overlay_contract_case, run_tui_subscreen_renderer_contract_case,
+};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -58,8 +60,7 @@ fn fixture_tui_screen_overlay_renderers_match_rust() {
 }
 
 #[test]
-#[ignore = "checklist: TypeScript TUI subscreen renderer APIs are behind the dashboard/TUI render ownership fence"]
-fn fixture_tui_subscreen_renderers_are_captured() {
+fn fixture_tui_subscreen_renderers_match_rust() {
     let contract: Contract =
         serde_json::from_str(SUBSCREEN_RENDERERS).expect("tui subscreen renderers fixture parses");
     assert_eq!(
@@ -69,22 +70,27 @@ fn fixture_tui_subscreen_renderers_are_captured() {
     assert_eq!(contract.case_count, 5);
     assert_eq!(contract.cases.len(), contract.case_count);
 
+    let mut failures = Vec::new();
     for case in contract.cases {
         assert!(!case.id.is_empty());
         assert_eq!(case.source, contract.source);
         assert!(!case.api.is_empty());
         assert!(!case.input.is_null());
-        assert!(
-            case.output
-                .get("rendered")
-                .and_then(Value::as_str)
-                .is_some()
-        );
-        assert!(
-            case.output
-                .get("visibleText")
-                .and_then(Value::as_str)
-                .is_some()
-        );
+        let actual = run_tui_subscreen_renderer_contract_case(&case.api, &case.input);
+        if actual != case.output {
+            failures.push(json!({
+                "id": case.id,
+                "api": case.api,
+                "expected": case.output,
+                "actual": actual,
+            }));
+        }
     }
+
+    assert!(
+        failures.is_empty(),
+        "{} tui subscreen renderer parity failures:\n{}",
+        failures.len(),
+        serde_json::to_string_pretty(&failures).expect("serialize failures")
+    );
 }

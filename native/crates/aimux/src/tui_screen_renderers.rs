@@ -5,8 +5,16 @@ use serde_json::{Value, json};
 use crate::team_contract::is_project_control_session;
 use crate::tui_render::{
     OverlayBoxSpec, OverlayVariant, render_overlay_box,
-    theme::{Tone, keycap_hint, pad_visible, style, visible_width},
+    screen_frame::{ScreenFrameInput, compose_screen_frame, screen_left_width},
+    text::truncate_plain,
+    theme::{
+        CardSpec, StatusKind, Tone, card, footer_hints, keycap_hint, pad_visible, status_dot,
+        style, visible_width,
+    },
 };
+
+const CONTRACT_VERSION: &str = "0.1.34";
+const CONTRACT_NOW: &str = "2026-09-07T00:00:00.000Z";
 
 pub fn run_tui_screen_overlay_contract_case(input: &Value) -> Value {
     let api = input.get("api").and_then(Value::as_str).unwrap_or_default();
@@ -32,6 +40,20 @@ pub fn run_tui_screen_overlay_contract_case(input: &Value) -> Value {
         _ => None,
     };
     overlay_output_value(api, rendered)
+}
+
+pub fn run_tui_subscreen_renderer_contract_case(api: &str, input: &Value) -> Value {
+    let rendered = match api {
+        "renderGraveyardScreen" => render_graveyard_screen_output(input),
+        "renderGraveyardDetails" => render_graveyard_details_output(input),
+        "renderProjectScreen" => render_project_screen_output(input),
+        "renderLibraryScreen" => render_library_screen_output(input),
+        _ => String::new(),
+    };
+    json!({
+        "rendered": rendered,
+        "visibleText": visible_text(&rendered),
+    })
 }
 
 fn overlay_output_value(api: &str, rendered: Option<String>) -> Value {
@@ -855,6 +877,655 @@ fn overlay_box(
     })
 }
 
+fn render_graveyard_screen_output(input: &Value) -> String {
+    let cols = 120;
+    let rows = 40;
+    let view_model = input.get("viewModel").unwrap_or(&Value::Null);
+    let graveyard_index = usize_field(input, "graveyardIndex", 0);
+    let header = screen_header("graveyard", cols);
+    let footer_lines = vec![footer_hints(
+        "[↑↓] select  [Tab] details  [d/c/p/L/t/g] screens  [1-9/Enter] resurrect  [x] delete worktree  [Esc] dashboard  [q] quit",
+    )];
+    let two_pane = true;
+    let card_width = screen_left_width(cols);
+    let (content, focus_line) = graveyard_content(view_model, graveyard_index, card_width);
+    let viewport_height = viewport_height(rows, header.len(), footer_lines.len());
+    let right_width = right_panel_width(cols);
+    let details =
+        graveyard_details_lines(view_model, graveyard_index, right_width, viewport_height);
+    compose_screen_frame(&ScreenFrameInput {
+        cols,
+        rows,
+        header: &header,
+        content: &content,
+        footer_lines: &footer_lines,
+        focus_line: focus_line as isize,
+        scroll_offset: 0,
+        two_pane,
+        right_panel: Some(&details),
+    })
+    .frame
+}
+
+fn render_graveyard_details_output(input: &Value) -> String {
+    let width = usize_field(input, "width", 60);
+    let height = usize_field(input, "height", 20);
+    let view_model = input.get("viewModel").unwrap_or(&Value::Null);
+    graveyard_details_lines(view_model, 0, width, height).join("\n")
+}
+
+fn render_project_screen_output(input: &Value) -> String {
+    let ctx = input.get("ctx").unwrap_or(&Value::Null);
+    let viewport = ctx.get("viewport").unwrap_or(&Value::Null);
+    let cols = usize_field(viewport, "cols", 120);
+    let rows = usize_field(viewport, "rows", 40);
+    let header = screen_header("project", cols);
+    let footer_lines = vec![footer_hints(
+        "[Tab] details  [r] refresh  [d/c/p/L/t/g] screens  [Esc] dashboard  [q] quit",
+    )];
+    let content = vec![format!("  {}", style("Loading project...", Tone::Muted))];
+    let details = vec![String::new(); viewport_height(rows, header.len(), footer_lines.len())];
+    compose_screen_frame(&ScreenFrameInput {
+        cols,
+        rows,
+        header: &header,
+        content: &content,
+        footer_lines: &footer_lines,
+        focus_line: 1,
+        scroll_offset: 0,
+        two_pane: cols >= 110 && bool_at(ctx, &["dashboardState", "detailsSidebarVisible"]),
+        right_panel: Some(&details),
+    })
+    .frame
+}
+
+fn render_library_screen_output(input: &Value) -> String {
+    let viewport = input.get("viewport").unwrap_or(&Value::Null);
+    let cols = usize_field(viewport, "cols", 120);
+    let rows = usize_field(viewport, "rows", 40);
+    let library_index = usize_field(input, "libraryIndex", 0);
+    let path =
+        string_field(input, "path").unwrap_or_else(|| "/repo/.aimux/plans/codex-1.md".to_owned());
+    let entry = json!({
+        "id": "plan:codex-1",
+        "kind": "plan",
+        "title": "Codex plan",
+        "path": path,
+        "updatedAt": "2026-06-20T00:00:00.000Z",
+        "sessionId": "codex-1",
+        "preview": "# Plan",
+    });
+    let entries = vec![entry];
+    let header = screen_header("library", cols);
+    let selected = entries.get(library_index).unwrap_or(&entries[0]);
+    let content = library_content(&entries, library_index);
+    let mut footer_lines = vec![footer_hints(
+        "[↑↓] select  [Tab] details  [d/c/p/L/t/g] screens  [Enter] show path  [r] refresh  [Esc] dashboard  [q] quit",
+    )];
+    if string_field(input, "libraryPathFlash").as_deref()
+        == string_field(selected, "path").as_deref()
+    {
+        footer_lines.push(style(
+            &format!(
+                "Path: {}",
+                string_field(selected, "path").unwrap_or_default()
+            ),
+            Tone::Muted,
+        ));
+    }
+    let viewport_height = viewport_height(rows, header.len(), footer_lines.len());
+    let details = library_details_lines(selected, right_panel_width(cols), viewport_height);
+    compose_screen_frame(&ScreenFrameInput {
+        cols,
+        rows,
+        header: &header,
+        content: &content,
+        footer_lines: &footer_lines,
+        focus_line: library_index as isize + 2,
+        scroll_offset: 0,
+        two_pane: true,
+        right_panel: Some(&details),
+    })
+    .frame
+}
+
+fn screen_header(title: &str, cols: usize) -> Vec<String> {
+    vec![
+        String::new(),
+        format!(
+            "{} {} — {title}  {}",
+            style("aimux", Tone::Strong),
+            style(&format!("v{CONTRACT_VERSION}"), Tone::Muted),
+            style("● tmux", Tone::Done)
+        ),
+        "─".repeat(cols),
+        String::new(),
+    ]
+}
+
+fn graveyard_content(
+    view_model: &Value,
+    graveyard_index: usize,
+    card_width: usize,
+) -> (Vec<String>, usize) {
+    let rows = array_at(view_model, &["rows"]);
+    if rows.is_empty() {
+        return (
+            vec![
+                format!("  {}", style("Worktrees", Tone::Strong)),
+                format!("    {}", style("(empty)", Tone::Muted)),
+                String::new(),
+                format!("  {}", style("Agents", Tone::Strong)),
+                format!("    {}", style("(empty)", Tone::Muted)),
+            ],
+            1,
+        );
+    }
+    let mut lines = Vec::new();
+    let mut focus_line = 1;
+    let mut first = true;
+    let mut current_card: Option<GraveyardCardBlock> = None;
+    let mut current_loose: Option<Vec<(String, Option<usize>)>> = None;
+
+    let flush_card = |lines: &mut Vec<String>,
+                      focus_line: &mut usize,
+                      card_block: &mut Option<GraveyardCardBlock>,
+                      loose: &mut Option<Vec<(String, Option<usize>)>>,
+                      first: &mut bool| {
+        if let Some(loose_rows) = loose.take() {
+            if !*first {
+                lines.push(String::new());
+            }
+            *first = false;
+            for (text, action_index) in loose_rows {
+                if action_index == Some(graveyard_index) {
+                    *focus_line = lines.len();
+                }
+                lines.push(format!("  {text}"));
+            }
+        }
+        if let Some(block) = card_block.take() {
+            if !*first {
+                lines.push(String::new());
+            }
+            *first = false;
+            if block.title_action_index == Some(graveyard_index) {
+                *focus_line = lines.len();
+            }
+            for (offset, (_, action_index)) in block.rows.iter().enumerate() {
+                if *action_index == Some(graveyard_index) {
+                    *focus_line = lines.len() + offset + 1;
+                }
+            }
+            lines.extend(card(&CardSpec {
+                tone: Tone::Muted,
+                title: &block.title,
+                summary: block.summary.as_deref(),
+                rows: &block
+                    .rows
+                    .iter()
+                    .map(|(row, _)| row.clone())
+                    .collect::<Vec<_>>(),
+                width: card_width,
+            }));
+        }
+    };
+
+    for row in rows {
+        match string_field(row, "kind").as_deref().unwrap_or_default() {
+            "section" => {
+                flush_card(
+                    &mut lines,
+                    &mut focus_line,
+                    &mut current_card,
+                    &mut current_loose,
+                    &mut first,
+                );
+                if !first {
+                    lines.push(String::new());
+                }
+                first = false;
+                lines.push(format!(
+                    "  {}",
+                    style(
+                        &string_field(row, "label").unwrap_or_default(),
+                        Tone::Strong
+                    )
+                ));
+            }
+            "worktree" => {
+                flush_card(
+                    &mut lines,
+                    &mut focus_line,
+                    &mut current_card,
+                    &mut current_loose,
+                    &mut first,
+                );
+                let selected = usize_field(row, "actionIndex", usize::MAX) == graveyard_index;
+                let entry = row.get("entry").unwrap_or(&Value::Null);
+                let branch = string_field(entry, "branch")
+                    .map(|branch| format!(" {}", style(&format!("· {branch}"), Tone::Muted)))
+                    .unwrap_or_default();
+                let title = format!(
+                    "{}{} {}{}",
+                    selected_marker(selected),
+                    keycap_hint(&action_number_label(row), "", None),
+                    style(
+                        &string_field(entry, "name").unwrap_or_default(),
+                        if selected { Tone::Accent } else { Tone::Strong }
+                    ),
+                    branch
+                );
+                let agent_count = array_at(row, &["attachedAgents"]).len();
+                let service_count = array_at(row, &["attachedServices"]).len();
+                let service_text = if service_count > 0 {
+                    format!(
+                        " · {service_count} svc{}",
+                        if service_count == 1 { "" } else { "s" }
+                    )
+                } else {
+                    String::new()
+                };
+                let count_text = style(
+                    &format!(
+                        "{agent_count} agent{}{}",
+                        if agent_count == 1 { "" } else { "s" },
+                        service_text
+                    ),
+                    Tone::Muted,
+                );
+                let summary = recency_chip(string_field(row, "lastUsedAt").as_deref())
+                    .map_or(count_text.clone(), |chip| format!("{count_text} {chip}"));
+                current_card = Some(GraveyardCardBlock {
+                    title,
+                    summary: Some(summary),
+                    title_action_index: Some(usize_field(row, "actionIndex", usize::MAX)),
+                    rows: Vec::new(),
+                });
+            }
+            "attached-agent-display" => {
+                let agent = row
+                    .get("agent")
+                    .and_then(|agent| agent.get("entry"))
+                    .unwrap_or(&Value::Null);
+                let backend = string_field(agent, "backendSessionId")
+                    .map(|backend| format!(" ({backend:.8}…)"))
+                    .unwrap_or_default();
+                let text = format!(
+                    "  {} {}",
+                    status_dot(StatusKind::Offline),
+                    style(
+                        &format!(
+                            "{}:{}{}",
+                            string_field(agent, "command").unwrap_or_default(),
+                            string_field(agent, "id").unwrap_or_default(),
+                            backend
+                        ),
+                        Tone::Muted
+                    )
+                );
+                let text = recency_chip(string_at(row, &["agent", "lastUsedAt"]))
+                    .map_or(text.clone(), |chip| format!("{text} {chip}"));
+                if let Some(block) = &mut current_card {
+                    block.rows.push((text, None));
+                }
+            }
+            "agent-worktree" => {
+                flush_card(
+                    &mut lines,
+                    &mut focus_line,
+                    &mut current_card,
+                    &mut current_loose,
+                    &mut first,
+                );
+                current_card = Some(GraveyardCardBlock {
+                    title: style(&string_field(row, "name").unwrap_or_default(), Tone::Strong),
+                    summary: None,
+                    title_action_index: None,
+                    rows: Vec::new(),
+                });
+            }
+            "orphan-agent" | "standalone-agent" => {
+                let entry = row.get("entry").unwrap_or(&Value::Null);
+                let selected = usize_field(row, "actionIndex", usize::MAX) == graveyard_index;
+                let text = format!(
+                    "{}{} {} {}",
+                    selected_marker(selected),
+                    keycap_hint(&action_number_label(row), "", None),
+                    status_dot(StatusKind::Offline),
+                    style(
+                        &format!(
+                            "{}:{}",
+                            string_field(entry, "command").unwrap_or_default(),
+                            string_field(entry, "id").unwrap_or_default()
+                        ),
+                        Tone::Muted
+                    )
+                );
+                let action = Some(usize_field(row, "actionIndex", usize::MAX));
+                if current_card.is_some() {
+                    if let Some(block) = &mut current_card {
+                        block.rows.push((text, action));
+                    }
+                } else {
+                    current_loose
+                        .get_or_insert_with(Vec::new)
+                        .push((text, action));
+                }
+            }
+            _ => {}
+        }
+    }
+    flush_card(
+        &mut lines,
+        &mut focus_line,
+        &mut current_card,
+        &mut current_loose,
+        &mut first,
+    );
+    (lines, focus_line)
+}
+
+#[derive(Debug)]
+struct GraveyardCardBlock {
+    title: String,
+    summary: Option<String>,
+    title_action_index: Option<usize>,
+    rows: Vec<(String, Option<usize>)>,
+}
+
+fn graveyard_details_lines(
+    view_model: &Value,
+    graveyard_index: usize,
+    width: usize,
+    height: usize,
+) -> Vec<String> {
+    let selected = array_at(view_model, &["selectableRows"]).get(graveyard_index);
+    let Some(selected) = selected else {
+        return vec![String::new(); height];
+    };
+    let mut lines = Vec::new();
+    if string_field(selected, "kind").as_deref() == Some("worktree") {
+        let entry = selected.get("entry").unwrap_or(&Value::Null);
+        lines.push(style("Details", Tone::Strong));
+        push_kv(
+            &mut lines,
+            "Worktree",
+            &string_field(entry, "name").unwrap_or_default(),
+        );
+        push_kv(
+            &mut lines,
+            "Branch",
+            &string_field(entry, "branch").unwrap_or_default(),
+        );
+        push_kv(
+            &mut lines,
+            "Path",
+            &string_field(entry, "path").unwrap_or_default(),
+        );
+        push_kv(&mut lines, "Status", "graveyard");
+        if let Some(graveyarded_at) = string_field(entry, "graveyardedAt")
+            && let Some(recency) = format_relative_recency(&graveyarded_at)
+        {
+            push_kv(&mut lines, "Graveyarded", &recency);
+        }
+        push_kv(
+            &mut lines,
+            "Agents",
+            &array_at(selected, &["attachedAgents"]).len().to_string(),
+        );
+        push_kv(
+            &mut lines,
+            "Services",
+            &array_at(selected, &["attachedServices"]).len().to_string(),
+        );
+        if let Some(last_used_at) = string_field(selected, "lastUsedAt")
+            && let Some(recency) = format_relative_recency(&last_used_at)
+        {
+            push_kv(&mut lines, "Last Used", &recency);
+        }
+        lines.push(String::new());
+        lines.push(style("Attached Agents", Tone::Strong));
+        let attached = array_at(selected, &["visibleAttachedAgents"]);
+        if attached.is_empty() {
+            lines.push(style("(none)", Tone::Muted));
+        } else {
+            for agent in attached
+                .iter()
+                .take(height.saturating_sub(lines.len()).max(1))
+            {
+                let entry = agent.get("entry").unwrap_or(&Value::Null);
+                let recency = string_field(agent, "lastUsedAt")
+                    .and_then(|value| format_relative_recency(&value))
+                    .map(|value| format!(" · {value}"))
+                    .unwrap_or_default();
+                lines.push(format!(
+                    "- {}{recency}",
+                    string_field(entry, "label")
+                        .or_else(|| string_field(entry, "id"))
+                        .unwrap_or_default()
+                ));
+            }
+        }
+    } else {
+        let entry = selected.get("entry").unwrap_or(&Value::Null);
+        lines.push(style("Details", Tone::Strong));
+        push_kv(
+            &mut lines,
+            "Agent",
+            &string_field(entry, "label")
+                .or_else(|| string_field(entry, "id"))
+                .unwrap_or_default(),
+        );
+        push_kv(
+            &mut lines,
+            "Session",
+            &string_field(entry, "id").unwrap_or_default(),
+        );
+        push_kv(
+            &mut lines,
+            "Tool",
+            &string_field(entry, "tool").unwrap_or_default(),
+        );
+        push_kv(
+            &mut lines,
+            "Config",
+            &string_field(entry, "toolConfigKey").unwrap_or_default(),
+        );
+        push_kv(&mut lines, "Status", "offline");
+        if let Some(command) = string_field(entry, "command") {
+            push_kv(&mut lines, "Command", &command);
+        }
+    }
+    while lines.len() < height {
+        lines.push(String::new());
+    }
+    lines.truncate(height);
+    lines
+        .into_iter()
+        .map(|line| truncate_plain(&line, width))
+        .collect()
+}
+
+fn library_content(entries: &[Value], selected_index: usize) -> Vec<String> {
+    let mut lines = vec![format!("  {}", style("Library", Tone::Strong))];
+    for (index, entry) in entries.iter().enumerate() {
+        let selected = index == selected_index;
+        let kind = string_field(entry, "kind").unwrap_or_default();
+        let tone = if kind == "plan" {
+            Tone::Work
+        } else {
+            Tone::Info
+        };
+        let session = if kind == "plan" {
+            string_field(entry, "sessionId")
+                .map(|session| format!(" {}", style(&format!("({session})"), Tone::Muted)))
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+        let when = string_field(entry, "updatedAt")
+            .and_then(|updated| format_relative_recency(&updated))
+            .map(|recency| format!(" {}", style(&format!("· {recency}"), Tone::Muted)))
+            .unwrap_or_default();
+        lines.push(format!(
+            "{}{} {} {}{}{}{}",
+            selected_marker(selected),
+            style(&format!("[{}]", index + 1), Tone::Muted),
+            style(&format!("[{kind}]"), tone),
+            style(
+                &truncate_plain(&string_field(entry, "title").unwrap_or_default(), 38),
+                Tone::Strong
+            ),
+            session,
+            when,
+            trailing_mark(selected)
+        ));
+    }
+    lines
+}
+
+fn library_details_lines(entry: &Value, width: usize, height: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    lines.push(style("Details", Tone::Strong));
+    push_kv(
+        &mut lines,
+        "Title",
+        &string_field(entry, "title").unwrap_or_default(),
+    );
+    push_kv(
+        &mut lines,
+        "Kind",
+        &string_field(entry, "kind").unwrap_or_default(),
+    );
+    if let Some(session_id) = string_field(entry, "sessionId") {
+        push_kv(&mut lines, "Session", &session_id);
+    }
+    push_kv(
+        &mut lines,
+        "Updated",
+        &string_field(entry, "updatedAt").unwrap_or_default(),
+    );
+    push_kv(
+        &mut lines,
+        "Path",
+        &string_field(entry, "path").unwrap_or_default(),
+    );
+    lines.push(String::new());
+    lines.push(style("Preview", Tone::Strong));
+    let preview = string_field(entry, "preview").unwrap_or_else(|| "(empty)".to_owned());
+    for line in preview.lines() {
+        lines.push(if line.chars().count() > width {
+            format!(
+                "{}…",
+                line.chars()
+                    .take(width.saturating_sub(1))
+                    .collect::<String>()
+            )
+        } else {
+            line.to_owned()
+        });
+    }
+    while lines.len() < height {
+        lines.push(String::new());
+    }
+    lines.truncate(height);
+    lines
+}
+
+fn push_kv(lines: &mut Vec<String>, key: &str, value: &str) {
+    lines.push(format!("{key}: {value}"));
+}
+
+fn action_number_label(row: &Value) -> String {
+    row.get("actionNumber")
+        .and_then(Value::as_u64)
+        .map(|number| number.to_string())
+        .or_else(|| string_field(row, "actionNumber"))
+        .unwrap_or_else(|| "1".to_owned())
+}
+
+fn selected_marker(selected: bool) -> String {
+    if selected {
+        format!("{} ", style("▸", Tone::Accent))
+    } else {
+        "  ".to_owned()
+    }
+}
+
+fn trailing_mark(selected: bool) -> String {
+    if selected {
+        format!(" {}", style("◀", Tone::Accent))
+    } else {
+        String::new()
+    }
+}
+
+fn recency_chip(value: Option<&str>) -> Option<String> {
+    format_relative_recency(value?).map(|recency| {
+        crate::tui_render::theme::chip(&recency, crate::tui_render::theme::ChipTone::Muted)
+    })
+}
+
+fn format_relative_recency(value: &str) -> Option<String> {
+    let then = days_from_civil_string(value)?;
+    let now = days_from_civil_string(CONTRACT_NOW)?;
+    let delta_seconds = ((now - then).max(0)) * 24 * 60 * 60;
+    if delta_seconds < 15 {
+        return Some("just now".to_owned());
+    }
+    if delta_seconds < 60 {
+        return Some(format!("{delta_seconds}s ago"));
+    }
+    let minutes = delta_seconds / 60;
+    if minutes < 60 {
+        return Some(format!("{minutes}m ago"));
+    }
+    let hours = minutes / 60;
+    if hours < 24 {
+        return Some(format!("{hours}h ago"));
+    }
+    let days = hours / 24;
+    if days < 7 {
+        return Some(format!("{days}d ago"));
+    }
+    let weeks = days / 7;
+    if weeks < 5 {
+        return Some(format!("{weeks}w ago"));
+    }
+    let months = days / 30;
+    if months < 12 {
+        return Some(format!("{months}mo ago"));
+    }
+    Some(format!("{}y ago", days / 365))
+}
+
+fn days_from_civil_string(value: &str) -> Option<i64> {
+    let year = value.get(0..4)?.parse::<i32>().ok()?;
+    let month = value.get(5..7)?.parse::<u32>().ok()?;
+    let day = value.get(8..10)?.parse::<u32>().ok()?;
+    let year = year - i32::from(month <= 2);
+    let era = if year >= 0 { year } else { year - 399 } / 400;
+    let yoe = year - era * 400;
+    let month = month as i32;
+    let doy = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + day as i32 - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    Some((era * 146_097 + doe - 719_468) as i64)
+}
+
+fn viewport_height(rows: usize, header_len: usize, footer_line_len: usize) -> usize {
+    rows.saturating_sub(header_len + 1 + footer_line_len).max(1)
+}
+
+fn right_panel_width(cols: usize) -> usize {
+    let content_width = 72.max(cols);
+    let left_width = screen_left_width(cols);
+    content_width
+        .saturating_sub(left_width)
+        .saturating_sub(4)
+        .max(20)
+}
+
 fn dashboard_overseer_sessions(ctx: &Value) -> Vec<&Value> {
     ctx.get("dashboardOverseerSessionsCache")
         .and_then(Value::as_array)
@@ -1039,6 +1710,14 @@ fn string_field(value: &Value, key: &str) -> Option<String> {
 
 fn bool_field(value: &Value, key: &str) -> bool {
     value.get(key).and_then(Value::as_bool).unwrap_or(false)
+}
+
+fn bool_at(value: &Value, path: &[&str]) -> bool {
+    let mut current = value;
+    for key in path {
+        current = current.get(*key).unwrap_or(&Value::Null);
+    }
+    current.as_bool().unwrap_or(false)
 }
 
 fn bool_field_is(value: &Value, key: &str, expected: bool) -> bool {
