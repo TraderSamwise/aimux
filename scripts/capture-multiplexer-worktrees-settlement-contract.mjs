@@ -262,7 +262,7 @@ async function run(input) {
       handleWorktreeInputKey(host, Buffer.from(actualInput.data));
       break;
     case "beginWorktreeRemoval":
-      beginWorktreeRemoval(host, actualInput.path, actualInput.name, actualInput.oldIdx);
+      beginWorktreeRemoval(host, actualInput.path, actualInput.worktreeName ?? actualInput.name, actualInput.oldIdx);
       break;
     case "handleWorktreeRemoveConfirmKey":
       handleWorktreeRemoveConfirmKey(host, Buffer.from(actualInput.data));
@@ -276,6 +276,7 @@ async function run(input) {
     if (action.type === "setFocusedWorktreePath") host.dashboardState.focusedWorktreePath = action.path;
     if (action.type === "setPendingWorktreeAction") pending.setWorktreeAction(action.path, action.value);
   }
+  if (actualInput.waitMs) await new Promise((resolve) => setTimeout(resolve, actualInput.waitMs));
   await flushAsyncWork(actualInput.flushTurns ?? 100);
   return normalizeRepo(snapshot(host, pending, calls));
 }
@@ -428,6 +429,17 @@ const casesInput = [
     },
   },
   {
+    name: "surfaces async project-service worktree create failures instead of dropping the pending row",
+    api: "handleWorktreeInputKey",
+    data: "\r",
+    waitMs: 700,
+    host: {
+      worktreeInputBuffer: "demo",
+      dashboardOperationFailuresCache: [],
+      refreshSteps: [{ result: true, worktrees: [failedWorktree] }],
+    },
+  },
+  {
     name: "keeps project-service worktree creates pending until the worktree is rendered as real",
     api: "handleWorktreeInputKey",
     data: "\r",
@@ -492,7 +504,7 @@ const casesInput = [
     name: "clears worktree graveyard pending state when the project service rejects the request",
     api: "beginWorktreeRemoval",
     path: "/repo/.aimux/worktrees/demo",
-    name: "demo",
+    worktreeName: "demo",
     oldIdx: 0,
     host: {
       dashboardRawWorktreeGroupsCache: [realWorktree],
@@ -517,6 +529,20 @@ const casesInput = [
       dashboardRawWorktreeGroupsCache: [realWorktree],
       dashboardWorktreeGroupsCache: [realWorktree],
       dashboardState: { worktreeNavOrder: ["/repo/.aimux/worktrees/demo"], focusedWorktreePath: "/repo/.aimux/worktrees/demo" },
+    },
+  },
+  {
+    name: "removes a worktree through the project service after the raw group disappears",
+    api: "beginWorktreeRemoval",
+    path: "/repo/.aimux/worktrees/demo",
+    worktreeName: "demo",
+    oldIdx: 0,
+    host: {
+      dashboardWorktreeStableSettleMs: 0,
+      dashboardRawWorktreeGroupsCache: [realWorktree],
+      dashboardWorktreeGroupsCache: [realWorktree],
+      dashboardState: { worktreeNavOrder: ["/repo/.aimux/worktrees/demo"], focusedWorktreePath: "/repo/.aimux/worktrees/demo" },
+      refreshSteps: [{ result: true, worktrees: [] }],
     },
   },
 ];

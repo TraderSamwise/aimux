@@ -8,11 +8,18 @@ pub fn run_multiplexer_worktrees_settlement_contract_case(input: &Value) -> Valu
     let mut host = SettlementHost::new(input);
     match str_field(input, "api").as_str() {
         "handleWorktreeInputKey" => host.handle_worktree_input_key(&str_field(input, "data")),
-        "beginWorktreeRemoval" => host.begin_worktree_removal(
-            &str_field(input, "path"),
-            &str_field(input, "name"),
-            int_field(input, "oldIdx"),
-        ),
+        "beginWorktreeRemoval" => {
+            let name = if input.get("worktreeName").is_some() {
+                str_field(input, "worktreeName")
+            } else {
+                str_field(input, "name")
+            };
+            host.begin_worktree_removal(
+                &str_field(input, "path"),
+                &name,
+                int_field(input, "oldIdx"),
+            );
+        }
         "handleWorktreeRemoveConfirmKey" => {
             host.handle_worktree_remove_confirm_key(&str_field(input, "data"))
         }
@@ -301,6 +308,27 @@ impl SettlementHost {
                     self.call("renderDashboard", vec![]);
                     return;
                 }
+                if self.has_create_failure(&path) {
+                    self.footer_flash = json!("worktree creating is still settling");
+                    self.footer_flash_ticks = json!(4);
+                    self.call("renderDashboard", vec![]);
+                    self.call(
+                        "dashboardPendingActionsGetWorktreeAction",
+                        vec![json!(path)],
+                    );
+                    if !self.clear_worktree_action_if_token(&path, token) {
+                        return;
+                    }
+                    self.call("dashboardUiStateStoreMarkSelectionDirty", vec![]);
+                    self.call(
+                        "showDashboardError",
+                        vec![
+                            json!(format!("Failed to create \"{name}\"")),
+                            json!([format!("Path: {path}"), "Error: branch already exists"]),
+                        ],
+                    );
+                    return;
+                }
                 if !self.has_rendered_real_worktree(&path) {
                     if self.mode == "dashboard" && self.dashboard_input_epoch == lifecycle_epoch {
                         self.reapply_pending();
@@ -358,6 +386,10 @@ impl SettlementHost {
         match status {
             AsyncStatus::Posted => {
                 self.refresh_dashboard_model();
+                if !self.raw_has_worktree(&path) {
+                    self.clear_worktree_action_if_token(&path, token);
+                    self.finish_worktree_removal_success(&path, &name);
+                }
             }
             AsyncStatus::PostFailed(message) => {
                 self.clear_worktree_action_if_token(&path, token);
@@ -369,6 +401,24 @@ impl SettlementHost {
                 self.finish_worktree_removal(&path, &name, &message);
             }
         }
+    }
+
+    fn finish_worktree_removal_success(&mut self, path: &str, name: &str) {
+        self.worktree_removal_jobs.remove(path);
+        self.set_current_worktree_removal_job();
+        self.footer_flash = json!(format!("Graveyarded: {name}"));
+        self.footer_flash_ticks = json!(3);
+        self.set_nav_order_from_groups();
+        if let Some(object) = self.dashboard_state.as_object_mut()
+            && object
+                .get("focusedWorktreePath")
+                .and_then(Value::as_str)
+                .is_none_or(|focused| focused == path)
+            && self.dashboard_worktree_groups_cache.is_empty()
+        {
+            object.remove("focusedWorktreePath");
+        }
+        self.call("renderDashboard", vec![]);
     }
 
     fn finish_worktree_removal(&mut self, path: &str, name: &str, message: &str) {
@@ -560,6 +610,12 @@ impl SettlementHost {
                         .and_then(Value::as_bool)
                         .unwrap_or_default()
             })
+    }
+
+    fn raw_has_worktree(&self, path: &str) -> bool {
+        self.dashboard_raw_worktree_groups_cache
+            .iter()
+            .any(|group| str_field(group, "path") == path)
     }
 
     fn next_post_step(&mut self) -> Option<String> {
