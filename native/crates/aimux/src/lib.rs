@@ -88,6 +88,7 @@ pub mod managed_launch_env;
 pub mod monitor_capture_contract;
 pub mod monitor_targets_contract;
 pub mod multiplexer_dashboard_state_helpers;
+pub mod multiplexer_notifications;
 pub mod multiplexer_resource_refresh;
 pub mod multiplexer_runtime_helpers;
 pub mod notification_policy_contract;

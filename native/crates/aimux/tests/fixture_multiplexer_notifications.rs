@@ -1,3 +1,4 @@
+use aimux::multiplexer_notifications::run_multiplexer_notifications_contract_case;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -24,7 +25,6 @@ struct Case {
 }
 
 #[test]
-#[ignore = "checklist: TypeScript dashboard notification host helpers are behind the dashboard_* ownership fence"]
 fn fixture_multiplexer_notifications_contract_is_captured() {
     let contract: Contract = serde_json::from_str(MULTIPLEXER_NOTIFICATIONS)
         .expect("multiplexer notifications fixture parses");
@@ -43,7 +43,11 @@ fn fixture_multiplexer_notifications_contract_is_captured() {
                 | "notificationTargetLabel+notificationTargetState"
                 | "notificationMutationInputForItem"
         ));
-        assert!(!case.input.is_null());
-        assert!(!case.output.is_null());
+        let actual = run_multiplexer_notifications_contract_case(&case.api, &case.input);
+        assert_eq!(
+            actual, case.output,
+            "multiplexer notifications parity failure for {}",
+            case.id
+        );
     }
 }
