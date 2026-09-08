@@ -317,6 +317,7 @@ impl DashboardController {
             DashboardKey::Printable('o') => {
                 self.open_relevant_thread_for_selected_session(snapshot)
             }
+            DashboardKey::Printable('R') => self.reply_to_selected_waiting_thread(snapshot),
             DashboardKey::Printable('e') => self.open_teammate_picker(snapshot),
             DashboardKey::NextAttention => self.activate_next_attention_entry(snapshot),
             DashboardKey::Printable('s') => {
@@ -1623,6 +1624,25 @@ impl DashboardController {
         DashboardControllerEffect::OpenRelevantThread {
             session_id: session.id.clone(),
         }
+    }
+
+    fn reply_to_selected_waiting_thread(
+        &mut self,
+        snapshot: &DesktopStateSnapshot,
+    ) -> DashboardControllerEffect {
+        let Some(session) = self.selected_session_for_tool_action(snapshot) else {
+            return DashboardControllerEffect::Ignored;
+        };
+        if session.thread_waiting_on_me_count > 0 {
+            return DashboardControllerEffect::OpenRelevantThread {
+                session_id: session.id.clone(),
+            };
+        }
+        self.footer_message = Some(format!(
+            "Nothing waiting on you for {}",
+            session_label(session)
+        ));
+        DashboardControllerEffect::Render
     }
 
     fn selected_session_for_tool_action<'a>(

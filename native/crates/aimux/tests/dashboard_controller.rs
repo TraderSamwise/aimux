@@ -276,6 +276,33 @@ fn plain_o_requests_relevant_thread_for_selected_session() {
 }
 
 #[test]
+fn shifted_r_replies_only_when_selected_session_has_waiting_thread() {
+    let mut snapshot = snapshot();
+    snapshot.worktree_groups[0].sessions[1].thread_waiting_on_me_count = 1;
+    let mut controller = DashboardController::new(&snapshot);
+    controller.navigation.level = DashboardNavLevel::Sessions;
+    controller.navigation.worktree_index = 0;
+    controller.navigation.item_index = 1;
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('R')),
+        DashboardControllerEffect::OpenRelevantThread {
+            session_id: "claude-0".into()
+        }
+    );
+
+    snapshot.worktree_groups[0].sessions[1].thread_waiting_on_me_count = 0;
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('R')),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(
+        controller.footer_message.as_deref(),
+        Some("Nothing waiting on you for label-claude-0")
+    );
+}
+
+#[test]
 fn thread_reply_collects_text_and_dispatches_reply_request() {
     let snapshot = snapshot();
     let mut controller = DashboardController::new(&snapshot);
