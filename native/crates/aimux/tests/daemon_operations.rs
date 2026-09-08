@@ -7,6 +7,7 @@ use aimux::daemon::text::operations::{
 };
 use aimux::daemon::text::params::ProjectServiceJsonResult;
 use aimux::project_api_contract::routes as project_routes;
+use aimux::runtime_coherence::render_runtime_coherence_report;
 use serde_json::{Value, json};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -73,10 +74,9 @@ impl DaemonOperationsTextRuntime for FakeOperationsRuntime {
         if self.fail == Some("versions") {
             return Err("versions failed".into());
         }
-        Ok((
-            json!({ "generatedAt": "now", "projects": [] }),
-            "Runtime Coherence\n  ok".into(),
-        ))
+        let report = fake_runtime_coherence_report();
+        let text = render_runtime_coherence_report(&report);
+        Ok((report, text))
     }
 
     fn doctor_disk_report(
@@ -400,6 +400,51 @@ fn json_text(response: DaemonRouteResponse) -> Value {
     serde_json::from_str(&text_body(response)).expect("json text")
 }
 
+fn fake_runtime_coherence_report() -> Value {
+    json!({
+        "generatedAt": "now",
+        "cliVersion": "test-cli",
+        "buildProfile": "test",
+        "cliLaunch": {
+            "command": "/tmp/aimux",
+            "args": [],
+            "source": "native-binary",
+            "currentEntryPath": "/tmp/aimux",
+            "stableShimPath": "/tmp/stable/aimux"
+        },
+        "expected": {
+            "projectService": {
+                "apiVersion": 5,
+                "buildStamp": "test-build",
+                "capabilities": {
+                    "agentActivityState": true,
+                    "agentTranscriptMessages": true,
+                    "attachmentRead": true,
+                    "chatEventStream": true,
+                    "parsedAgentOutput": true
+                }
+            },
+            "runtimeOwner": "test-owner",
+            "runtimeContract": "2"
+        },
+        "daemon": {
+            "running": true,
+            "info": { "pid": 123, "port": 46290, "startedAt": "then", "updatedAt": "now" },
+            "process": null,
+            "projectCount": 0
+        },
+        "tmux": { "available": false, "version": null, "sessionCount": 0 },
+        "projects": [],
+        "staleHookProcesses": [],
+        "summary": {
+            "projects": 0,
+            "ok": 0,
+            "needsRestart": 0,
+            "runtimeRebuildRequired": 0
+        }
+    })
+}
+
 #[test]
 fn doctor_exchange_route_reads_project_diagnostics_and_renders_exchange() {
     let mut runtime = FakeOperationsRuntime::default();
@@ -507,7 +552,13 @@ fn doctor_versions_text_and_json_routes_render_runtime_report() {
     )
     .expect("versions route");
     assert_eq!(text.status, 200);
-    assert_eq!(text_body(text), "Runtime Coherence\n  ok\n");
+    let body = text_body(text);
+    assert!(body.starts_with("Aimux Versions\n"));
+    assert!(body.contains("  cli version: test-cli\n"));
+    assert!(body.contains("  daemon projects: 0\n"));
+    assert!(body.contains("  tmux: unavailable\n"));
+    assert!(body.contains("  projects: 0 (0 ok, 0 need restart, 0 need runtime rebuild)\n"));
+    assert!(!body.contains("Runtime Coherence"));
 
     let json = route_operations_text_request(
         &mut runtime,
@@ -516,10 +567,10 @@ fn doctor_versions_text_and_json_routes_render_runtime_report() {
         None,
     )
     .expect("versions route");
-    assert_eq!(
-        json_text(json),
-        json!({ "generatedAt": "now", "projects": [] })
-    );
+    let report = json_text(json);
+    assert_eq!(report["cliVersion"], json!("test-cli"));
+    assert_eq!(report["summary"]["projects"], json!(0));
+    assert_eq!(report["expected"]["runtimeContract"], json!("2"));
 }
 
 #[test]

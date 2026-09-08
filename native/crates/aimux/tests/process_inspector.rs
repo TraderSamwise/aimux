@@ -1,8 +1,9 @@
 use aimux::process_inspector::{
     ProjectServiceProcessIdentity, command_arg_value_matches, is_aimux_daemon_process_args,
-    is_aimux_project_service_process_args, is_exited_process_state,
-    is_native_aimux_daemon_process_args, is_native_aimux_project_service_process_args,
-    is_pid_alive, list_process_args, list_process_parents, read_process_args,
+    is_aimux_project_service_process_args, is_current_native_aimux_project_service_process_args,
+    is_exited_process_state, is_native_aimux_daemon_process_args,
+    is_native_aimux_project_service_process_args, is_pid_alive, list_process_args,
+    list_process_parents, read_process_args,
 };
 
 #[test]
@@ -108,6 +109,26 @@ fn native_process_identity_rejects_node_launcher_control_plane() {
     ));
     assert!(!is_native_aimux_daemon_process_args(
         "/opt/homebrew/bin/node /Users/sam/.aimux/native/current/dist/launcher-bin.js daemon run"
+    ));
+}
+
+#[test]
+fn current_native_project_service_identity_requires_expected_binary_path() {
+    let expected = ProjectServiceProcessIdentity {
+        project_id: Some("project-1".into()),
+        project_root: Some("/repo".into()),
+    };
+    assert!(is_current_native_aimux_project_service_process_args(
+        "/Users/sam/.aimux/native/local-new/native/darwin-arm64/aimux __project-service-internal --project-id project-1 --project-root /repo",
+        None,
+        &expected,
+        std::path::Path::new("/Users/sam/.aimux/native/local-new/native/darwin-arm64/aimux")
+    ));
+    assert!(!is_current_native_aimux_project_service_process_args(
+        "/Users/sam/.aimux/native/local-old/native/darwin-arm64/aimux __project-service-internal --project-id project-1 --project-root /repo",
+        None,
+        &expected,
+        std::path::Path::new("/Users/sam/.aimux/native/local-new/native/darwin-arm64/aimux")
     ));
 }
 

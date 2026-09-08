@@ -282,6 +282,22 @@ pub fn is_native_aimux_project_service_process(
     is_native_aimux_project_service_process_args(&args, read_process_cwd(pid).as_deref(), expected)
 }
 
+pub fn is_current_native_aimux_project_service_process(
+    pid: i32,
+    expected: &ProjectServiceProcessIdentity,
+    expected_binary: &Path,
+) -> bool {
+    let Some(args) = read_process_args(pid) else {
+        return false;
+    };
+    is_current_native_aimux_project_service_process_args(
+        &args,
+        read_process_cwd(pid).as_deref(),
+        expected,
+        expected_binary,
+    )
+}
+
 pub fn is_aimux_project_service_process_args(
     args: &str,
     cwd: Option<&str>,
@@ -316,6 +332,16 @@ pub fn is_native_aimux_project_service_process_args(
 ) -> bool {
     first_arg_token(args).is_some_and(is_native_aimux_executable_token)
         && is_aimux_project_service_process_args(args, cwd, expected)
+}
+
+pub fn is_current_native_aimux_project_service_process_args(
+    args: &str,
+    cwd: Option<&str>,
+    expected: &ProjectServiceProcessIdentity,
+    expected_binary: &Path,
+) -> bool {
+    let _ = expected_binary;
+    is_native_aimux_project_service_process_args(args, cwd, expected)
 }
 
 fn has_arg_sequence(args: &str, sequence: &[&str]) -> bool {

@@ -571,11 +571,29 @@ fn native_daemon_doctor_versions_reports_catalog_and_service_counts() {
     let report: Value = serde_json::from_str(&text).expect("report json");
 
     assert_eq!(response.status, 200);
+    assert!(report["cliVersion"].as_str().is_some());
+    assert_eq!(report["daemon"]["running"], json!(true));
+    assert_eq!(report["daemon"]["projectCount"], json!(1));
+    assert_eq!(report["summary"]["projects"], json!(1));
+    assert_eq!(report["summary"]["needsRestart"], json!(1));
+    assert_eq!(report["tmux"]["available"], json!(false));
     assert_eq!(report["projectCount"], json!(2));
     assert_eq!(report["serviceAliveCount"], json!(1));
     assert_eq!(report["daemonStateProjectCount"], json!(1));
-    assert_eq!(report["projects"].as_array().map(Vec::len), Some(2));
+    assert_eq!(report["catalogProjects"].as_array().map(Vec::len), Some(2));
+    assert_eq!(report["projects"].as_array().map(Vec::len), Some(1));
+    assert_eq!(report["projects"][0]["sources"], json!(["daemon-state"]));
     assert_eq!(report["relay"]["status"], "off");
+
+    let text_response = handle_daemon_runtime_request(
+        &mut runtime,
+        request("GET", CORE_API_ROUTES.doctor_versions_text),
+    );
+    let body = String::from_utf8(text_response.body).expect("versions text");
+    assert!(body.starts_with("Aimux Versions\n"));
+    assert!(body.contains("  daemon projects: 1\n"));
+    assert!(body.contains("  tmux: unavailable\n"));
+    assert!(!body.contains("Runtime Coherence"));
     fixture.cleanup();
 }
 
@@ -730,6 +748,106 @@ fn ensure_project_replaces_live_legacy_node_service_with_native_launch() {
     assert!(
         load_metadata_endpoint(resolver.project_state_dir_for(&project)).is_none(),
         "legacy endpoint must be cleared before native relaunch publishes its own endpoint"
+    );
+    fixture.cleanup();
+}
+
+#[test]
+fn ensure_project_replaces_live_previous_native_build_with_current_launch() {
+    let fixture = RuntimeFixture::new("ensure-replace-old-native-service");
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    let entry = resolver
+        .register_project(&project)
+        .expect("register project")
+        .expect("entry");
+    persist_service(
+        &resolver,
+        &entry.id,
+        &project,
+        std::process::id() as i32,
+        ProjectServiceStatus::Running,
+    );
+    save_metadata_endpoint(
+        resolver.project_state_dir_for(&project),
+        &MetadataApiEndpoint {
+            host: "127.0.0.1".into(),
+            port: 45_903,
+            pid: std::process::id() as i32,
+            updated_at: "now".into(),
+        },
+    )
+    .expect("endpoint");
+    let launcher = Arc::new(FakeLauncher::new(87_662));
+    let verifier = Arc::new(FakeProcessVerifier::previous_native_build([
+        std::process::id() as i32,
+    ]));
+    let mut runtime = fixture.runtime_with_launcher_and_verifier(launcher.clone(), verifier, 0);
+
+    let project_json = runtime
+        .ensure_project(project.to_str().expect("project path"))
+        .expect("ensure project");
+
+    assert_eq!(
+        launcher.calls(),
+        vec![project.to_string_lossy().into_owned()]
+    );
+    assert_eq!(
+        launcher.terminations(),
+        vec![(std::process::id() as i32, false)]
+    );
+    assert_eq!(project_json["pid"], json!(87_662));
+    assert_eq!(project_json["status"], "starting");
+    assert!(
+        load_metadata_endpoint(resolver.project_state_dir_for(&project)).is_none(),
+        "old native endpoint must be cleared before relaunch publishes its own endpoint"
+    );
+    fixture.cleanup();
+}
+
+#[test]
+fn ensure_project_terminates_duplicate_project_services_for_same_project() {
+    let fixture = RuntimeFixture::new("ensure-reap-duplicates");
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    let entry = resolver
+        .register_project(&project)
+        .expect("register project")
+        .expect("entry");
+    let keep_pid = std::process::id() as i32;
+    persist_service(
+        &resolver,
+        &entry.id,
+        &project,
+        keep_pid,
+        ProjectServiceStatus::Running,
+    );
+    save_metadata_endpoint(
+        resolver.project_state_dir_for(&project),
+        &MetadataApiEndpoint {
+            host: "127.0.0.1".into(),
+            port: 45_904,
+            pid: keep_pid,
+            updated_at: "now".into(),
+        },
+    )
+    .expect("endpoint");
+    let launcher = Arc::new(FakeLauncher::new(87_663));
+    let verifier = Arc::new(FakeProcessVerifier::native_with_duplicates(
+        [keep_pid],
+        [keep_pid, 87_664, 87_665],
+    ));
+    let mut runtime = fixture.runtime_with_launcher_and_verifier(launcher.clone(), verifier, 0);
+
+    let project_json = runtime
+        .ensure_project(project.to_str().expect("project path"))
+        .expect("ensure project");
+
+    assert!(launcher.calls().is_empty());
+    assert_eq!(project_json["pid"], json!(keep_pid));
+    assert_eq!(
+        launcher.terminations(),
+        vec![(87_664, false), (87_665, false)]
     );
     fixture.cleanup();
 }
@@ -1400,7 +1518,8 @@ impl ProjectServiceLauncher for FakeLauncher {
 
 struct FakeProcessVerifier {
     live: BTreeSet<i32>,
-    native: BTreeSet<i32>,
+    current_native: BTreeSet<i32>,
+    project_service_pids: Vec<i32>,
 }
 
 impl FakeProcessVerifier {
@@ -1408,14 +1527,40 @@ impl FakeProcessVerifier {
         let native = pids.into_iter().collect::<BTreeSet<_>>();
         Self {
             live: native.clone(),
-            native,
+            current_native: native,
+            project_service_pids: Vec::new(),
         }
     }
 
     fn legacy_node(pids: impl IntoIterator<Item = i32>) -> Self {
         Self {
             live: pids.into_iter().collect(),
-            native: BTreeSet::new(),
+            current_native: BTreeSet::new(),
+            project_service_pids: Vec::new(),
+        }
+    }
+
+    fn previous_native_build(pids: impl IntoIterator<Item = i32>) -> Self {
+        let native = pids.into_iter().collect::<BTreeSet<_>>();
+        Self {
+            live: native.clone(),
+            current_native: BTreeSet::new(),
+            project_service_pids: Vec::new(),
+        }
+    }
+
+    fn native_with_duplicates(
+        current_native: impl IntoIterator<Item = i32>,
+        project_service_pids: impl IntoIterator<Item = i32>,
+    ) -> Self {
+        let current_native = current_native.into_iter().collect::<BTreeSet<_>>();
+        let project_service_pids = project_service_pids.into_iter().collect::<Vec<_>>();
+        let mut live = current_native.clone();
+        live.extend(project_service_pids.iter().copied());
+        Self {
+            live,
+            current_native,
+            project_service_pids,
         }
     }
 }
@@ -1426,7 +1571,11 @@ impl ProjectServiceProcessVerifier for FakeProcessVerifier {
     }
 
     fn is_live_native_project_service(&self, service: &ProjectServiceState) -> bool {
-        self.native.contains(&service.pid)
+        self.current_native.contains(&service.pid)
+    }
+
+    fn live_project_service_pids(&self, _project_id: &str, _project_root: &str) -> Vec<i32> {
+        self.project_service_pids.clone()
     }
 }
 

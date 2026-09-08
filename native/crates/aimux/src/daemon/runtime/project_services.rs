@@ -27,20 +27,28 @@ impl ProjectServiceLauncher for SystemProjectServiceLauncher {
         _project_state_dir: &Path,
     ) -> Result<i32, String> {
         let project_root_text = project_root.to_string_lossy().into_owned();
+        let current_exe = std::env::current_exe()
+            .map(|path| path.to_string_lossy().into_owned())
+            .ok();
+        let mut env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+        if let Some(current_exe) = current_exe.as_deref() {
+            env.insert("AIMUX_NATIVE_BIN".into(), current_exe.to_owned());
+        }
         let launch = get_aimux_project_service_launch_command(
             project_id,
             &project_root_text,
             AimuxCliLaunchOptions {
-                env: std::env::vars().collect(),
-                current_argv_entry: std::env::args().next(),
-                current_entry_path: None,
-                process_exec_path: None,
+                env,
+                current_argv_entry: current_exe.clone().or_else(|| std::env::args().next()),
+                current_entry_path: current_exe.clone(),
+                process_exec_path: current_exe,
                 home_dir: None,
             },
         );
         let mut command = Command::new(&launch.command);
         command
             .args(&launch.args)
+            .env("AIMUX_NATIVE_BIN", &launch.command)
             .current_dir(project_root)
             .stdin(Stdio::null())
             .stdout(Stdio::null())

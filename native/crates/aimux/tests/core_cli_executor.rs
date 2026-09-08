@@ -210,6 +210,26 @@ impl CoreCliRuntime for FakeRuntime {
             || path.starts_with("/core/repair-exchange-text")
         {
             "repair ok\n".into()
+        } else if path.starts_with("/core/doctor/versions-text?json=1") {
+            "{\n  \"cliVersion\": \"test-cli\",\n  \"summary\": { \"projects\": 0 },\n  \"expected\": { \"runtimeContract\": \"2\" }\n}\n".into()
+        } else if path.starts_with("/core/doctor/versions-text") {
+            concat!(
+                "Aimux Versions\n",
+                "  cli version: test-cli\n",
+                "  build profile: test\n",
+                "  cli launcher: /tmp/aimux\n",
+                "  cli current entry: /tmp/aimux\n",
+                "  cli stable shim: /tmp/stable/aimux\n",
+                "  expected project service: api=5 build=test-build capabilities=parsedAgentOutput, attachmentRead, chatEventStream, agentTranscriptMessages, agentActivityState\n",
+                "  expected runtime owner: test-owner\n",
+                "  expected tmux runtime contract: 2\n",
+                "  daemon: running pid=123 endpoint=http://127.0.0.1:46290\n",
+                "  daemon projects: 0\n",
+                "  tmux: unavailable\n",
+                "  tmux sessions: 0\n",
+                "  projects: 0 (0 ok, 0 need restart, 0 need runtime rebuild)\n"
+            )
+            .into()
         } else if path.ends_with("?json=1") {
             "{\n  \"generatedAt\": \"now\",\n  \"projects\": []\n}\n".into()
         } else {
@@ -476,7 +496,11 @@ fn project_commands_refuse_non_git_directory_with_actionable_message() {
     for command in [["init"].as_slice(), ["ps"].as_slice(), ["serve"].as_slice()] {
         let execution = run_core_cli_with(&args(command), &mut runtime);
         assert_eq!(execution.code, 1, "{command:?}");
-        assert_eq!(execution.stderr, [expected.clone()], "{command:?}");
+        assert_eq!(
+            execution.stderr,
+            std::slice::from_ref(&expected),
+            "{command:?}"
+        );
     }
 
     let projects = run_core_cli_with(&args(&["projects"]), &mut runtime);
@@ -662,14 +686,18 @@ fn doctor_versions_executes_daemon_text_route() {
 
     let text = run_core_cli_with(&args(&["doctor", "versions"]), &mut runtime);
     assert_eq!(text.code, 0);
-    assert_eq!(text.stdout, ["Runtime Coherence\n  ok"]);
+    assert_eq!(text.stdout.len(), 1);
+    assert!(text.stdout[0].starts_with("Aimux Versions\n"));
+    assert!(text.stdout[0].contains("  cli version: test-cli\n"));
+    assert!(text.stdout[0].contains("  daemon projects: 0\n"));
+    assert!(!text.stdout[0].contains("Runtime Coherence"));
 
     let json = run_core_cli_with(&args(&["doctor", "versions", "--json"]), &mut runtime);
     assert_eq!(json.code, 0);
-    assert_eq!(
-        serde_json::from_str::<Value>(&json.stdout[0]).expect("doctor json"),
-        json!({ "generatedAt": "now", "projects": [] })
-    );
+    let report = serde_json::from_str::<Value>(&json.stdout[0]).expect("doctor json");
+    assert_eq!(report["cliVersion"], json!("test-cli"));
+    assert_eq!(report["summary"]["projects"], json!(0));
+    assert_eq!(report["expected"]["runtimeContract"], json!("2"));
     let disk = run_core_cli_with(
         &args(&["doctor", "disk", "--project=/repo", "--include-active"]),
         &mut runtime,

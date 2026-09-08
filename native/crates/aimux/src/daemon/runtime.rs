@@ -4,6 +4,10 @@ pub use project_services::{
     PROJECT_SERVICE_STARTUP_TIMEOUT_MS, ProjectServiceLauncher, SystemProjectServiceLauncher,
 };
 
+use crate::cli_launcher::{
+    AimuxCliLaunchCommand, AimuxCliLaunchOptions, AimuxCliLaunchSource,
+    get_aimux_current_cli_identity,
+};
 use crate::config::load_config_for_project;
 use crate::core_command_transport::{
     CoreCommandTransportError, DaemonHttpMethod, DaemonJsonRequest,
@@ -53,22 +57,31 @@ use crate::daemon_state::{
     get_daemon_host, get_daemon_port, is_pid_alive, load_daemon_state, load_metadata_endpoint,
     remove_metadata_endpoint, save_daemon_info, save_daemon_state,
 };
+use crate::dashboard_readiness::get_runtime_owner_id;
 use crate::logs::{LogSelectionOptions, clear_log_file, read_last_log_lines, selected_log_path};
 use crate::paths::{PathResolver, compute_project_id};
 use crate::process_inspector::{
-    ProjectServiceProcessIdentity, is_native_aimux_project_service_process,
+    ProcessArgsEntry, ProjectServiceProcessIdentity, is_aimux_project_service_process_args,
+    is_current_native_aimux_project_service_process, list_process_args,
 };
 use crate::project_api_contract::routes as project_routes;
 use crate::project_catalog::{hidden_project_tmp_dirs, list_registered_desktop_projects};
 use crate::project_service_manifest::get_project_service_manifest;
+use crate::release_version_contract::{
+    read_aimux_build_profile_from_package_root, read_aimux_runtime_version,
+};
 use crate::remote_credentials;
 use crate::remote_login::{self, LoginAction, LoginFlowWaiter};
+use crate::runtime_coherence::{
+    RuntimeCoherenceHealth, RuntimeCoherenceHealthProbe, RuntimeCoherenceInput,
+    RuntimeCoherenceTmux, build_runtime_coherence_report, render_runtime_coherence_report,
+};
 use crate::tmux::{
     TmuxTarget, is_tmux_client_session_for_host, kill_session_argv, project_session,
 };
 use anyhow::{Context, Result};
 use serde_json::{Map, Value, json};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::{self, Formatter};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -93,6 +106,7 @@ pub struct RealDaemonRuntime {
 pub trait ProjectServiceProcessVerifier: Send + Sync {
     fn is_live(&self, pid: i32) -> bool;
     fn is_live_native_project_service(&self, service: &ProjectServiceState) -> bool;
+    fn live_project_service_pids(&self, project_id: &str, project_root: &str) -> Vec<i32>;
 }
 
 #[derive(Debug, Default)]
@@ -108,7 +122,30 @@ impl ProjectServiceProcessVerifier for SystemProjectServiceProcessVerifier {
             project_id: Some(service.project_id.clone()),
             project_root: Some(service.project_root.clone()),
         };
-        is_pid_alive(service.pid) && is_native_aimux_project_service_process(service.pid, &expected)
+        let Ok(current_binary) = std::env::current_exe() else {
+            return false;
+        };
+        is_pid_alive(service.pid)
+            && is_current_native_aimux_project_service_process(
+                service.pid,
+                &expected,
+                &current_binary,
+            )
+    }
+
+    fn live_project_service_pids(&self, project_id: &str, project_root: &str) -> Vec<i32> {
+        let expected = ProjectServiceProcessIdentity {
+            project_id: Some(project_id.to_owned()),
+            project_root: Some(project_root.to_owned()),
+        };
+        list_process_args()
+            .into_iter()
+            .filter(|entry| {
+                is_pid_alive(entry.pid)
+                    && is_aimux_project_service_process_args(&entry.args, None, &expected)
+            })
+            .map(|entry| entry.pid)
+            .collect()
     }
 }
 
@@ -393,6 +430,44 @@ impl RealDaemonRuntime {
         serde_json::from_value::<ProjectServiceState>(service.clone()).ok()
     }
 
+    fn terminate_extra_project_services(
+        &self,
+        project_id: &str,
+        project_root: &str,
+        keep_pid: Option<i32>,
+        skip_pids: &BTreeSet<i32>,
+    ) -> Vec<i32> {
+        let now = now_iso();
+        let mut terminated = Vec::new();
+        for pid in self
+            .project_service_process_verifier
+            .live_project_service_pids(project_id, project_root)
+        {
+            if Some(pid) == keep_pid || skip_pids.contains(&pid) {
+                continue;
+            }
+            let service = ProjectServiceState {
+                project_id: project_id.to_owned(),
+                project_root: project_root.to_owned(),
+                pid,
+                started_at: now.clone(),
+                updated_at: now.clone(),
+                status: Some(crate::daemon_state::ProjectServiceStatus::Running),
+                restart_count: None,
+                last_restart_at: None,
+                last_exit: None,
+            };
+            if self
+                .project_service_launcher
+                .terminate(&service, false)
+                .is_ok()
+            {
+                terminated.push(pid);
+            }
+        }
+        terminated
+    }
+
     fn wait_for_live_project_service(
         &self,
         project_state_dir: &Path,
@@ -554,6 +629,101 @@ impl RealDaemonRuntime {
     }
 }
 
+fn aimux_cli_launch_json(launch: AimuxCliLaunchCommand) -> Value {
+    json!({
+        "command": launch.command,
+        "args": launch.args,
+        "source": aimux_cli_launch_source(&launch.source),
+        "currentEntryPath": launch.current_entry_path,
+        "stableShimPath": launch.stable_shim_path,
+    })
+}
+
+fn aimux_cli_launch_source(source: &AimuxCliLaunchSource) -> &'static str {
+    match source {
+        AimuxCliLaunchSource::StableShim => "stable-shim",
+        AimuxCliLaunchSource::CurrentEntry => "current-entry",
+        AimuxCliLaunchSource::NativeBinary => "native-binary",
+    }
+}
+
+fn package_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..")
+}
+
+fn project_endpoints_by_root(projects: &[ProjectsRouteProject]) -> BTreeMap<String, Option<Value>> {
+    projects
+        .iter()
+        .map(|project| (project.path.clone(), project.service_endpoint.clone()))
+        .collect()
+}
+
+fn project_service_health_by_endpoint(
+    projects: &[ProjectsRouteProject],
+    expected_project_service: &Value,
+    resolver: &mut PathResolver,
+) -> BTreeMap<String, Vec<RuntimeCoherenceHealthProbe>> {
+    projects
+        .iter()
+        .filter(|project| project.service_alive)
+        .filter_map(|project| {
+            let endpoint = project.service_endpoint.as_ref()?;
+            let key = endpoint_key(endpoint)?;
+            Some((
+                key,
+                vec![RuntimeCoherenceHealthProbe::Ok(RuntimeCoherenceHealth {
+                    status: 200,
+                    body: json!({
+                        "ok": true,
+                        "pid": endpoint
+                            .get("pid")
+                            .and_then(Value::as_i64)
+                            .or_else(|| {
+                                project
+                                    .service
+                                    .as_ref()
+                                    .and_then(|service| service.get("pid"))
+                                    .and_then(Value::as_i64)
+                            }),
+                        "serviceInfo": expected_project_service,
+                        "projectStateDir": resolver
+                            .project_state_dir_for(&project.path)
+                            .to_string_lossy()
+                            .into_owned(),
+                    }),
+                })],
+            ))
+        })
+        .collect()
+}
+
+fn endpoint_key(endpoint: &Value) -> Option<String> {
+    Some(format!(
+        "{}:{}",
+        endpoint.get("host")?.as_str()?,
+        endpoint.get("port")?.as_u64()?
+    ))
+}
+
+fn process_args_by_pid(processes: &[ProcessArgsEntry]) -> BTreeMap<i64, Option<String>> {
+    processes
+        .iter()
+        .map(|entry| (i64::from(entry.pid), Some(entry.args.clone())))
+        .collect()
+}
+
+fn process_list_json(processes: Vec<ProcessArgsEntry>) -> Vec<Value> {
+    processes
+        .into_iter()
+        .map(|entry| {
+            json!({
+                "pid": entry.pid,
+                "args": entry.args,
+            })
+        })
+        .collect()
+}
+
 pub fn run_daemon_internal() -> Result<()> {
     let resolver = PathResolver::from_env();
     let host = get_daemon_host().map_err(anyhow::Error::msg)?;
@@ -687,6 +857,7 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
             .register_project(&project_root)
             .map_err(|error| error.to_string())?;
         let project_state_dir = resolver.project_state_dir_for(&project_root);
+        let mut signaled_pids = BTreeSet::new();
         if let Some(mut service) = self.stored_project_service_state(&project_id)
             && service.status != Some(crate::daemon_state::ProjectServiceStatus::Stopped)
             && self.project_service_process_verifier.is_live(service.pid)
@@ -695,6 +866,12 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
                 .project_service_process_verifier
                 .is_live_native_project_service(&service)
             {
+                self.terminate_extra_project_services(
+                    &project_id,
+                    &project_root,
+                    Some(service.pid),
+                    &signaled_pids,
+                );
                 if self
                     .wait_for_live_project_service(&project_state_dir, service.pid)
                     .is_some()
@@ -708,6 +885,13 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
                 return serde_json::to_value(service).map_err(|error| error.to_string());
             }
             let _ = self.project_service_launcher.terminate(&service, false);
+            signaled_pids.insert(service.pid);
+            remove_metadata_endpoint(&project_state_dir);
+        }
+        let extra_pids =
+            self.terminate_extra_project_services(&project_id, &project_root, None, &signaled_pids);
+        if !extra_pids.is_empty() {
+            signaled_pids.extend(extra_pids);
             remove_metadata_endpoint(&project_state_dir);
         }
         let pid = self.project_service_launcher.launch(
@@ -715,6 +899,12 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
             &project_root_path,
             &project_state_dir,
         )?;
+        self.terminate_extra_project_services(
+            &project_id,
+            &project_root,
+            Some(pid),
+            &signaled_pids,
+        );
         let now = now_iso();
         let mut service = ProjectServiceState {
             project_id,
@@ -977,23 +1167,53 @@ impl DaemonOperationsTextRuntime for RealDaemonRuntime {
             .filter(|project| project.service_alive)
             .count();
         let state = self.daemon_state();
-        let report = json!({
-            "generatedAt": generated_at,
-            "daemon": self.current_daemon_info(&now_iso()),
-            "expectedServiceManifest": self.project_service_info(),
-            "projectCount": projects.len(),
-            "serviceAliveCount": service_alive,
-            "daemonStateProjectCount": state.projects.len(),
-            "projects": projects,
-            "relay": self.relay_status(),
+        let cli_launch = get_aimux_current_cli_identity(AimuxCliLaunchOptions::default());
+        let process_list = list_process_args();
+        let expected_project_service = self.project_service_info();
+        let mut resolver = self.resolver.clone();
+        let mut report = build_runtime_coherence_report(RuntimeCoherenceInput {
+            generated_at: generated_at.clone(),
+            cli_version: read_aimux_runtime_version(),
+            build_profile: read_aimux_build_profile_from_package_root(package_root()),
+            cli_launch: aimux_cli_launch_json(cli_launch),
+            expected_project_service: expected_project_service.clone(),
+            expected_runtime_owner: get_runtime_owner_id(),
+            daemon_info: Some(
+                serde_json::to_value(self.current_daemon_info(&generated_at))
+                    .unwrap_or(Value::Null),
+            ),
+            daemon_projects: state
+                .projects
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect(),
+            endpoints: project_endpoints_by_root(&projects),
+            health: project_service_health_by_endpoint(
+                &projects,
+                &expected_project_service,
+                &mut resolver,
+            ),
+            tmux: RuntimeCoherenceTmux {
+                available: false,
+                version: None,
+                ..RuntimeCoherenceTmux::default()
+            },
+            dashboard_build_stamps: BTreeMap::new(),
+            process_args: process_args_by_pid(&process_list),
+            process_list: process_list_json(process_list),
         });
-        let text = format!(
-            "Runtime Coherence\n  daemon: pid {} on http://127.0.0.1:{}\n  projects: {} known, {} service alive",
-            self.info.pid,
-            self.info.port,
-            report["projectCount"].as_u64().unwrap_or(0),
-            report["serviceAliveCount"].as_u64().unwrap_or(0)
-        );
+        if let Value::Object(object) = &mut report {
+            object.insert("expectedServiceManifest".into(), expected_project_service);
+            object.insert("projectCount".into(), json!(projects.len()));
+            object.insert("serviceAliveCount".into(), json!(service_alive));
+            object.insert(
+                "daemonStateProjectCount".into(),
+                json!(state.projects.len()),
+            );
+            object.insert("catalogProjects".into(), json!(projects));
+            object.insert("relay".into(), self.relay_status());
+        }
+        let text = render_runtime_coherence_report(&report);
         Ok((report, text))
     }
 
