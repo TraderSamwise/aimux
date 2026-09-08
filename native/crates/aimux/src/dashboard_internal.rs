@@ -175,6 +175,51 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                         }
                         render_now = true;
                     }
+                    DashboardControllerEffect::MoveSelectedEntry {
+                        kind,
+                        worktree_path,
+                        selected_id,
+                        direction,
+                        sessions,
+                        services,
+                        next_item_index,
+                    } => {
+                        if let Some(ui_state) = ui_state.as_ref() {
+                            match ui_state.move_entry_within_worktree(
+                                kind.as_str(),
+                                worktree_path.as_deref(),
+                                &selected_id,
+                                direction.as_str(),
+                                &sessions,
+                                &services,
+                            ) {
+                                Ok(true) => {
+                                    controller.navigation.item_index = next_item_index;
+                                    controller.footer_message = Some(format!(
+                                        "Moved {} {}",
+                                        kind.display_label(),
+                                        direction.as_str()
+                                    ));
+                                    if let Some(endpoint) = latest_endpoint.as_ref() {
+                                        let _ = refresh_dashboard_statusline(
+                                            endpoint,
+                                            ui_state.client_session(),
+                                        );
+                                    }
+                                }
+                                Ok(false) => {
+                                    controller.footer_message = Some("Already at edge".into());
+                                }
+                                Err(error) => {
+                                    controller.footer_message = Some(error.to_string());
+                                }
+                            }
+                        } else {
+                            controller.footer_message =
+                                Some("Dashboard ordering unavailable".into());
+                        }
+                        render_now = true;
+                    }
                     DashboardControllerEffect::WorktreeCacheCleanupPreview(request) => {
                         if let Some(endpoint) = latest_endpoint.as_ref() {
                             match execute_dashboard_action(endpoint, &request)
@@ -310,7 +355,10 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                     return Ok(());
                 }
             } else {
-                let loaded = load_dashboard_snapshot(&options)?;
+                let mut loaded = load_dashboard_snapshot(&options)?;
+                if let Some(ui_state) = ui_state.as_ref() {
+                    ui_state.apply_order_to_snapshot(&mut loaded.snapshot);
+                }
                 let hide_offline_agents = controller
                     .as_ref()
                     .map(|controller| controller.hide_offline_agents)

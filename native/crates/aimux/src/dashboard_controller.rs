@@ -53,6 +53,15 @@ pub struct DashboardController {
 pub enum DashboardControllerEffect {
     Render,
     Request(DashboardActionRequest),
+    MoveSelectedEntry {
+        kind: DashboardMovedEntryKind,
+        worktree_path: Option<String>,
+        selected_id: String,
+        direction: DashboardMoveDirection,
+        sessions: Vec<String>,
+        services: Vec<String>,
+        next_item_index: usize,
+    },
     WorktreeCacheCleanupPreview(DashboardActionRequest),
     WorktreeCacheCleanupApply(DashboardActionRequest),
     LoadOrchestrationRoutes {
@@ -68,6 +77,64 @@ pub enum DashboardControllerEffect {
     OpenAgentToolPicker(DashboardToolPickerMode),
     Quit,
     Ignored,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DashboardMovedEntryKind {
+    Session,
+    Service,
+}
+
+impl DashboardMovedEntryKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Session => "session",
+            Self::Service => "service",
+        }
+    }
+
+    pub fn display_label(self) -> &'static str {
+        match self {
+            Self::Session => "agent",
+            Self::Service => "service",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DashboardMoveDirection {
+    Up,
+    Down,
+}
+
+impl DashboardMoveDirection {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Up => "up",
+            Self::Down => "down",
+        }
+    }
+
+    fn adjacent_index(self, index: usize, len: usize) -> Option<usize> {
+        match self {
+            Self::Up => index.checked_sub(1),
+            Self::Down => {
+                let next = index + 1;
+                (next < len).then_some(next)
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct DashboardMoveCandidate {
+    kind: DashboardMovedEntryKind,
+    worktree_path: Option<String>,
+    selected_id: String,
+    direction: DashboardMoveDirection,
+    sessions: Vec<String>,
+    services: Vec<String>,
+    row_offset: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -282,6 +349,10 @@ impl DashboardController {
             }
             DashboardKey::ForkAgent => self.open_fork_tool_picker(snapshot),
             DashboardKey::SwitchTool => self.open_switch_tool_picker(snapshot),
+            DashboardKey::ShiftUp => self.move_selected_entry(snapshot, DashboardMoveDirection::Up),
+            DashboardKey::ShiftDown => {
+                self.move_selected_entry(snapshot, DashboardMoveDirection::Down)
+            }
             DashboardKey::Down => {
                 self.navigation.move_next(snapshot);
                 DashboardControllerEffect::Render
@@ -381,11 +452,98 @@ impl DashboardController {
             DashboardKey::LaunchOptions
             | DashboardKey::Left
             | DashboardKey::Right
+            | DashboardKey::ShiftLeft
+            | DashboardKey::ShiftRight
             | DashboardKey::Home
             | DashboardKey::End
             | DashboardKey::Delete
             | DashboardKey::FocusIn
             | DashboardKey::Ctrl(_) => DashboardControllerEffect::Ignored,
+        }
+    }
+
+    fn move_selected_entry(
+        &mut self,
+        snapshot: &DesktopStateSnapshot,
+        direction: DashboardMoveDirection,
+    ) -> DashboardControllerEffect {
+        if self.navigation.level != DashboardNavLevel::Sessions
+            || snapshot.worktree_groups.is_empty()
+        {
+            return DashboardControllerEffect::Ignored;
+        }
+        let Some(group) = snapshot.worktree_groups.get(self.navigation.worktree_index) else {
+            return DashboardControllerEffect::Ignored;
+        };
+        let Some(selected) = self.navigation.selected_entry(snapshot) else {
+            return DashboardControllerEffect::Ignored;
+        };
+        let worktree_path = group.path.clone();
+        match selected {
+            DashboardEntryRef::Session(session) => {
+                let sessions = group
+                    .sessions
+                    .iter()
+                    .filter(|session| !is_project_control_session(session))
+                    .map(|session| session.id.clone())
+                    .collect::<Vec<_>>();
+                self.move_selected_peer(DashboardMoveCandidate {
+                    kind: DashboardMovedEntryKind::Session,
+                    worktree_path,
+                    selected_id: session.id.clone(),
+                    direction,
+                    sessions,
+                    services: Vec::new(),
+                    row_offset: 0,
+                })
+            }
+            DashboardEntryRef::Service(service) => {
+                let sessions_len = group
+                    .sessions
+                    .iter()
+                    .filter(|session| !is_project_control_session(session))
+                    .count();
+                let services = group
+                    .services
+                    .iter()
+                    .map(|service| service.id.clone())
+                    .collect::<Vec<_>>();
+                self.move_selected_peer(DashboardMoveCandidate {
+                    kind: DashboardMovedEntryKind::Service,
+                    worktree_path,
+                    selected_id: service.id.clone(),
+                    direction,
+                    sessions: Vec::new(),
+                    services,
+                    row_offset: sessions_len,
+                })
+            }
+        }
+    }
+
+    fn move_selected_peer(
+        &mut self,
+        candidate: DashboardMoveCandidate,
+    ) -> DashboardControllerEffect {
+        let peers = match candidate.kind {
+            DashboardMovedEntryKind::Session => &candidate.sessions,
+            DashboardMovedEntryKind::Service => &candidate.services,
+        };
+        let Some(index) = peers.iter().position(|id| id == &candidate.selected_id) else {
+            return DashboardControllerEffect::Ignored;
+        };
+        let Some(next_index) = candidate.direction.adjacent_index(index, peers.len()) else {
+            self.footer_message = Some("Already at edge".into());
+            return DashboardControllerEffect::Render;
+        };
+        DashboardControllerEffect::MoveSelectedEntry {
+            kind: candidate.kind,
+            worktree_path: candidate.worktree_path,
+            selected_id: candidate.selected_id,
+            direction: candidate.direction,
+            sessions: candidate.sessions,
+            services: candidate.services,
+            next_item_index: candidate.row_offset + next_index,
         }
     }
 
@@ -986,6 +1144,10 @@ impl DashboardController {
             | DashboardKey::Tab
             | DashboardKey::Left
             | DashboardKey::Right
+            | DashboardKey::ShiftUp
+            | DashboardKey::ShiftDown
+            | DashboardKey::ShiftLeft
+            | DashboardKey::ShiftRight
             | DashboardKey::Home
             | DashboardKey::End
             | DashboardKey::Delete
@@ -1745,6 +1907,10 @@ impl DashboardController {
             | DashboardKey::Tab
             | DashboardKey::Left
             | DashboardKey::Right
+            | DashboardKey::ShiftUp
+            | DashboardKey::ShiftDown
+            | DashboardKey::ShiftLeft
+            | DashboardKey::ShiftRight
             | DashboardKey::Home
             | DashboardKey::End
             | DashboardKey::Delete
@@ -2110,6 +2276,8 @@ impl DashboardScreen {
 pub enum DashboardKey {
     Up,
     Down,
+    ShiftUp,
+    ShiftDown,
     Enter,
     Back,
     Stop,
@@ -2127,6 +2295,8 @@ pub enum DashboardKey {
     Tab,
     Left,
     Right,
+    ShiftLeft,
+    ShiftRight,
     Home,
     End,
     Delete,
@@ -2171,9 +2341,13 @@ fn dashboard_keys_from_event(event: KeyEvent) -> Vec<DashboardKey> {
                 .map(DashboardKey::Printable)
                 .collect();
         }
+        "up" if event.shift => DashboardKey::ShiftUp,
         "up" => DashboardKey::Up,
+        "down" if event.shift => DashboardKey::ShiftDown,
         "down" => DashboardKey::Down,
+        "right" if event.shift => DashboardKey::ShiftRight,
         "right" => DashboardKey::Right,
+        "left" if event.shift => DashboardKey::ShiftLeft,
         "left" => DashboardKey::Left,
         "home" => DashboardKey::Home,
         "end" => DashboardKey::End,

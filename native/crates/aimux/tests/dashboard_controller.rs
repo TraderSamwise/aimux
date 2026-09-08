@@ -1,7 +1,8 @@
 use aimux::dashboard_controller::{
-    DashboardController, DashboardControllerEffect, DashboardKey, DashboardOrchestrationMode,
-    DashboardOrchestrationTarget, DashboardSubscreenAction, orchestration_targets_from_resource,
-    parse_dashboard_key, parse_dashboard_keys,
+    DashboardController, DashboardControllerEffect, DashboardKey, DashboardMoveDirection,
+    DashboardMovedEntryKind, DashboardOrchestrationMode, DashboardOrchestrationTarget,
+    DashboardSubscreenAction, orchestration_targets_from_resource, parse_dashboard_key,
+    parse_dashboard_keys,
 };
 use aimux::dashboard_model::{
     DashboardOperationFailure, DesktopStateGoldenFixture, DesktopStateSnapshot,
@@ -46,6 +47,12 @@ fn hjkl_navigation_steps_into_and_back_out_of_worktrees() {
 }
 
 #[test]
+fn shifted_arrows_parse_as_reorder_keys() {
+    assert_eq!(parse_dashboard_key(b"\x1b[1;2A"), DashboardKey::ShiftUp);
+    assert_eq!(parse_dashboard_key(b"\x1b[1;2B"), DashboardKey::ShiftDown);
+}
+
+#[test]
 fn quick_jump_second_digit_requests_selected_entry_activation() {
     let snapshot = snapshot();
     let mut controller = DashboardController::new(&snapshot);
@@ -64,6 +71,46 @@ fn quick_jump_second_digit_requests_selected_entry_activation() {
     assert_eq!(request.body, json!({ "sessionId": "codex-offline" }));
     assert_eq!(controller.navigation.level, DashboardNavLevel::Sessions);
     assert_eq!(controller.navigation.item_index, 1);
+}
+
+#[test]
+fn shifted_down_requests_selected_entry_reorder() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.navigation.level = DashboardNavLevel::Sessions;
+    controller.navigation.worktree_index = 0;
+    controller.navigation.item_index = 0;
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::ShiftDown),
+        DashboardControllerEffect::MoveSelectedEntry {
+            kind: DashboardMovedEntryKind::Session,
+            worktree_path: None,
+            selected_id: "codex-offline-main".into(),
+            direction: DashboardMoveDirection::Down,
+            sessions: vec!["codex-offline-main".into(), "claude-0".into()],
+            services: Vec::new(),
+            next_item_index: 1,
+        }
+    );
+}
+
+#[test]
+fn shifted_up_at_edge_flashes_edge_message() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.navigation.level = DashboardNavLevel::Sessions;
+    controller.navigation.worktree_index = 0;
+    controller.navigation.item_index = 0;
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::ShiftUp),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(
+        controller.footer_message.as_deref(),
+        Some("Already at edge")
+    );
 }
 
 #[test]

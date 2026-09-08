@@ -1,5 +1,6 @@
 use crate::atomic_write::write_json_atomic;
 use crate::dashboard_controller::DashboardScreen;
+use crate::dashboard_model::DesktopStateSnapshot;
 use crate::paths::PathResolver;
 use anyhow::{Context, Result, anyhow};
 use serde_json::{Map, Value, json};
@@ -10,6 +11,7 @@ use std::process::Command;
 
 #[derive(Debug, Clone)]
 pub struct DashboardUiStatePersistence {
+    project_state_dir: PathBuf,
     path: PathBuf,
     client_session: String,
     last_screen: Option<DashboardScreen>,
@@ -41,6 +43,7 @@ impl DashboardUiStatePersistence {
             .and_then(|snapshot| snapshot.get("previewSource"))
             .map(|value| normalize_preview_source(Some(value)));
         Ok(Self {
+            project_state_dir: project_state_dir.as_ref().to_path_buf(),
             path,
             client_session: client_session.to_owned(),
             last_screen,
@@ -98,6 +101,142 @@ impl DashboardUiStatePersistence {
 
     pub fn client_session(&self) -> &str {
         &self.client_session
+    }
+
+    pub fn apply_order_to_snapshot(&self, snapshot: &mut DesktopStateSnapshot) {
+        let order_state = self.read_shared_order_state();
+        if snapshot.worktree_groups.is_empty() {
+            apply_typed_dashboard_order(
+                &mut snapshot.sessions,
+                order_state
+                    .agent_order_by_worktree_key
+                    .get("__main__")
+                    .map(Vec::as_slice),
+                |session| &session.id,
+            );
+            apply_typed_dashboard_order(
+                &mut snapshot.services,
+                order_state
+                    .service_order_by_worktree_key
+                    .get("__main__")
+                    .map(Vec::as_slice),
+                |service| &service.id,
+            );
+            return;
+        }
+        for group in &mut snapshot.worktree_groups {
+            let key = dashboard_order_key(group.path.as_deref());
+            apply_typed_dashboard_order(
+                &mut group.sessions,
+                order_state
+                    .agent_order_by_worktree_key
+                    .get(&key)
+                    .map(Vec::as_slice),
+                |session| &session.id,
+            );
+            apply_typed_dashboard_order(
+                &mut group.services,
+                order_state
+                    .service_order_by_worktree_key
+                    .get(&key)
+                    .map(Vec::as_slice),
+                |service| &service.id,
+            );
+        }
+    }
+
+    pub fn move_entry_within_worktree(
+        &self,
+        kind: &str,
+        worktree_path: Option<&str>,
+        selected_id: &str,
+        direction: &str,
+        sessions: &[String],
+        services: &[String],
+    ) -> Result<bool> {
+        let key = dashboard_order_key(worktree_path);
+        let mut order_state = self.read_shared_order_state();
+        let session_values = ids_as_json_values(sessions);
+        let service_values = ids_as_json_values(services);
+        let moved = if kind == "session" {
+            let result = move_dashboard_order(
+                &session_values,
+                order_state
+                    .agent_order_by_worktree_key
+                    .get(&key)
+                    .map(Vec::as_slice),
+                selected_id,
+                direction,
+            );
+            if result.moved {
+                order_state
+                    .agent_order_by_worktree_key
+                    .insert(key, result.order);
+            }
+            result.moved
+        } else {
+            let result = move_dashboard_order(
+                &service_values,
+                order_state
+                    .service_order_by_worktree_key
+                    .get(&key)
+                    .map(Vec::as_slice),
+                selected_id,
+                direction,
+            );
+            if result.moved {
+                order_state
+                    .service_order_by_worktree_key
+                    .insert(key, result.order);
+            }
+            result.moved
+        };
+        if moved {
+            self.write_shared_order_state(&order_state)?;
+        }
+        Ok(moved)
+    }
+
+    fn shared_path(&self) -> PathBuf {
+        self.project_state_dir.join("dashboard-ui.json")
+    }
+
+    fn read_shared_order_state(&self) -> DashboardOrderState {
+        let Some(snapshot) = read_dashboard_state_snapshot(&self.shared_path()) else {
+            return DashboardOrderState::default();
+        };
+        DashboardOrderState {
+            agent_order_by_worktree_key: sanitize_order_map(
+                snapshot.get("agentOrderByWorktreeKey"),
+            ),
+            service_order_by_worktree_key: sanitize_order_map(
+                snapshot.get("serviceOrderByWorktreeKey"),
+            ),
+        }
+    }
+
+    fn write_shared_order_state(&self, order_state: &DashboardOrderState) -> Result<()> {
+        let mut shared = read_dashboard_state_snapshot(&self.shared_path())
+            .and_then(|value| value.as_object().cloned())
+            .unwrap_or_default();
+        if has_order_entries(&order_state.agent_order_by_worktree_key) {
+            shared.insert(
+                "agentOrderByWorktreeKey".to_owned(),
+                order_map_value(&order_state.agent_order_by_worktree_key),
+            );
+        } else {
+            shared.remove("agentOrderByWorktreeKey");
+        }
+        if has_order_entries(&order_state.service_order_by_worktree_key) {
+            shared.insert(
+                "serviceOrderByWorktreeKey".to_owned(),
+                order_map_value(&order_state.service_order_by_worktree_key),
+            );
+        } else {
+            shared.remove("serviceOrderByWorktreeKey");
+        }
+        write_json_atomic(self.shared_path(), &Value::Object(shared))
+            .with_context(|| format!("write dashboard ui state {}", self.shared_path().display()))
     }
 }
 
@@ -969,6 +1108,32 @@ fn apply_dashboard_order(items: &[Value], saved_order: Option<&[String]>) -> Vec
         .into_iter()
         .filter_map(|id| by_id.get(id.as_str()).cloned())
         .collect()
+}
+
+fn apply_typed_dashboard_order<T, F>(items: &mut Vec<T>, saved_order: Option<&[String]>, id: F)
+where
+    F: Fn(&T) -> &str,
+{
+    let Some(saved_order) = saved_order else {
+        return;
+    };
+    let current_values = items
+        .iter()
+        .map(|item| json!({ "id": id(item) }))
+        .collect::<Vec<_>>();
+    let order = normalize_dashboard_order(&current_values, Some(saved_order));
+    let mut by_id = items
+        .drain(..)
+        .map(|item| (id(&item).to_owned(), item))
+        .collect::<BTreeMap<_, _>>();
+    *items = order
+        .into_iter()
+        .filter_map(|entry_id| by_id.remove(&entry_id))
+        .collect();
+}
+
+fn ids_as_json_values(ids: &[String]) -> Vec<Value> {
+    ids.iter().map(|id| json!({ "id": id })).collect()
 }
 
 fn move_dashboard_order(

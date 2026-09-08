@@ -1,4 +1,7 @@
 use aimux::dashboard_controller::DashboardScreen;
+use aimux::dashboard_model::{
+    DesktopStateSnapshot, MainCheckoutInfo, WorktreeGroup, WorktreeStatus,
+};
 use aimux::dashboard_ui_state::{DashboardUiStatePersistence, dashboard_client_key};
 use std::fs;
 use std::path::PathBuf;
@@ -70,6 +73,52 @@ fn persists_preview_source_with_render_state() {
 }
 
 #[test]
+fn moves_and_applies_shared_worktree_session_order() {
+    let root = temp_dir("dashboard-ui-state-order");
+    fs::create_dir_all(&root).expect("create temp dir");
+    fs::write(
+        root.join("dashboard-ui.json"),
+        r#"{"detailsSidebarVisible":false,"previewSource":"scribe"}"#,
+    )
+    .expect("seed shared state");
+    let state = DashboardUiStatePersistence::new(&root, "client").expect("create ui state");
+
+    let moved = state
+        .move_entry_within_worktree(
+            "session",
+            Some("/repo/wt"),
+            "agent-a",
+            "down",
+            &["agent-a".into(), "agent-b".into()],
+            &[],
+        )
+        .expect("move entry");
+    assert!(moved);
+
+    let mut snapshot = order_snapshot();
+    state.apply_order_to_snapshot(&mut snapshot);
+    assert_eq!(
+        snapshot.worktree_groups[0]
+            .sessions
+            .iter()
+            .map(|session| session.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["agent-b", "agent-a"]
+    );
+    let saved: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(root.join("dashboard-ui.json")).expect("read shared state"),
+    )
+    .expect("json");
+    assert_eq!(
+        saved["agentOrderByWorktreeKey"]["/repo/wt"],
+        serde_json::json!(["agent-b", "agent-a"])
+    );
+    assert_eq!(saved["detailsSidebarVisible"], false);
+    assert_eq!(saved["previewSource"], "scribe");
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
 fn skips_write_when_screen_is_unchanged() {
     let root = temp_dir("dashboard-ui-state-unchanged");
     fs::create_dir_all(&root).expect("create temp dir");
@@ -103,6 +152,48 @@ fn ignores_invalid_persisted_screen() {
     let state = DashboardUiStatePersistence::new(&root, "client").expect("create ui state");
     assert_eq!(state.load_screen(), None);
     fs::remove_dir_all(root).ok();
+}
+
+fn order_snapshot() -> DesktopStateSnapshot {
+    let mut fixture: aimux::dashboard_model::DesktopStateGoldenFixture = serde_json::from_str(
+        include_str!("../../../../src/multiplexer/desktop-state-golden.fixture.json"),
+    )
+    .expect("fixture");
+    let mut group = fixture.runtime_full.worktree_groups.remove(0);
+    group.path = Some("/repo/wt".into());
+    group.sessions.truncate(2);
+    group.sessions[0].id = "agent-a".into();
+    group.sessions[1].id = "agent-b".into();
+    DesktopStateSnapshot {
+        sessions: Vec::new(),
+        teammates: Vec::new(),
+        services: Vec::new(),
+        worktrees: Vec::new(),
+        worktree_groups: vec![WorktreeGroup {
+            name: "feature".into(),
+            branch: "feature".into(),
+            path: Some("/repo/wt".into()),
+            status: WorktreeStatus::Active,
+            pending: false,
+            removing: false,
+            pending_action: None,
+            operation_failure: None,
+            sessions: group.sessions,
+            services: Vec::new(),
+            extra: Default::default(),
+        }],
+        main_checkout_info: MainCheckoutInfo {
+            name: "Main Checkout".into(),
+            branch: "master".into(),
+            extra: Default::default(),
+        },
+        main_checkout_path: Some("/repo".into()),
+        worktree_removal: None,
+        worktree_removals: Vec::new(),
+        agent_restore_offer: None,
+        operation_failures: Vec::new(),
+        extra: Default::default(),
+    }
 }
 
 fn temp_dir(prefix: &str) -> PathBuf {
