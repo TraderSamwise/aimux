@@ -157,9 +157,18 @@ impl DashboardNavigationState {
         snapshot: &'a DesktopStateSnapshot,
         digit: char,
     ) -> DashboardNavigationOutcome<'a> {
-        if !digit.is_ascii_digit() || digit == '0' {
+        if !digit.is_ascii_digit() {
             self.clear_quick_jump();
             return DashboardNavigationOutcome::Ignored;
+        }
+        let had_pending_worktree_digit = !self.quick_jump_digits.is_empty();
+        if digit == '0' {
+            self.clear_quick_jump();
+            return if had_pending_worktree_digit && !snapshot.worktree_groups.is_empty() {
+                DashboardNavigationOutcome::Changed
+            } else {
+                DashboardNavigationOutcome::Ignored
+            };
         }
         let Some(value) = digit.to_digit(10).map(|value| value as usize) else {
             return DashboardNavigationOutcome::Ignored;
@@ -171,7 +180,10 @@ impl DashboardNavigationState {
             return self.focus_worktree_digit(snapshot, value);
         }
         self.quick_jump_digits.clear();
-        self.select_entry_digit(snapshot, value)
+        match self.select_entry_digit(snapshot, value) {
+            DashboardNavigationOutcome::Ignored => DashboardNavigationOutcome::Changed,
+            outcome => outcome,
+        }
     }
 
     pub fn clear_quick_jump(&mut self) {

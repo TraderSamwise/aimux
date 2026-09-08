@@ -6,7 +6,7 @@ use aimux::dashboard_controller::{
 };
 use aimux::dashboard_model::{
     DashboardOperationFailure, DesktopStateGoldenFixture, DesktopStateSnapshot,
-    SessionSemanticState, SessionTeamMetadata,
+    SessionSemanticState, SessionStatus, SessionTeamMetadata, filter_dashboard_visible_model,
 };
 use aimux::dashboard_navigation::DashboardEntryRef;
 use aimux::dashboard_renderer::{DashboardNavLevel, DashboardRenderInput, render_dashboard_frame};
@@ -245,6 +245,46 @@ fn quick_jump_first_digit_targets_worktrees_even_from_session_level() {
     assert_eq!(controller.navigation.level, DashboardNavLevel::Sessions);
     assert_eq!(controller.navigation.worktree_index, 1);
     assert_eq!(controller.navigation.item_index, 0);
+}
+
+#[test]
+fn quick_jump_invalid_second_digit_stays_on_worktree_and_redraws() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Digit('2')),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Digit('9')),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(controller.navigation.level, DashboardNavLevel::Worktrees);
+    assert_eq!(controller.navigation.worktree_index, 1);
+    assert_eq!(controller.navigation.quick_jump_digits, "");
+}
+
+#[test]
+fn quick_jump_uses_filtered_worktrees_when_offline_agents_are_hidden() {
+    let mut snapshot = snapshot();
+    snapshot.worktree_groups[0].sessions[1].status = SessionStatus::Offline;
+    snapshot.worktree_groups[0].sessions[1].semantic = Some(semantic("offline", "offline", 0, 0));
+    snapshot.worktree_groups[0].services.clear();
+    snapshot.services.clear();
+
+    let visible = filter_dashboard_visible_model(&snapshot, true).snapshot;
+    let mut controller = DashboardController::new(&visible);
+    controller.hide_offline_agents = true;
+
+    assert_eq!(
+        controller.handle_key(&visible, DashboardKey::Digit('1')),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(
+        controller.navigation.focused_worktree_path(&visible),
+        Some("<WORKTREE>")
+    );
 }
 
 #[test]
