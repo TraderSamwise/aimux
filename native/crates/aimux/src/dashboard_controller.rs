@@ -37,6 +37,7 @@ pub struct DashboardController {
     pub worktree_remove_confirm: Option<DashboardWorktreeRemoveConfirm>,
     pub worktree_list_open: bool,
     pub worktree_cache_cleanup_confirm: Option<Value>,
+    pub preview_source: String,
     pub teammate_picker: Option<DashboardTeammatePickerState>,
     pub orchestration_route_picker: Option<DashboardOrchestrationRoutePickerState>,
     pub orchestration_input: Option<DashboardOrchestrationInputState>,
@@ -190,6 +191,7 @@ impl DashboardController {
             worktree_remove_confirm: None,
             worktree_list_open: false,
             worktree_cache_cleanup_confirm: None,
+            preview_source: "output".into(),
             teammate_picker: None,
             orchestration_route_picker: None,
             orchestration_input: None,
@@ -301,6 +303,7 @@ impl DashboardController {
                     body: json!({ "dryRun": true, "includeActive": false }),
                 })
             }
+            DashboardKey::Printable('V') => self.toggle_scribe_preview(snapshot),
             DashboardKey::Printable('o') => {
                 self.open_relevant_thread_for_selected_session(snapshot)
             }
@@ -876,6 +879,30 @@ impl DashboardController {
             path: routes::threads::STATUS,
             body: json!({ "threadId": thread_id, "status": status }),
         })
+    }
+
+    pub fn set_preview_source(&mut self, preview_source: impl Into<String>) {
+        self.preview_source = match preview_source.into().as_str() {
+            "scribe" => "scribe".into(),
+            _ => "output".into(),
+        };
+    }
+
+    fn toggle_scribe_preview(
+        &mut self,
+        snapshot: &DesktopStateSnapshot,
+    ) -> DashboardControllerEffect {
+        if !has_live_scribe(snapshot) {
+            return DashboardControllerEffect::Ignored;
+        }
+        self.preview_source = if self.preview_source == "scribe" {
+            self.footer_message = Some("Previewing output".into());
+            "output".into()
+        } else {
+            self.footer_message = Some("Previewing scribe summaries".into());
+            "scribe".into()
+        };
+        DashboardControllerEffect::Render
     }
 
     fn handle_tool_picker_key(
@@ -1812,6 +1839,13 @@ fn is_live_session(session: &DashboardSession) -> bool {
         session.status,
         SessionStatus::Offline | SessionStatus::Exited
     )
+}
+
+fn has_live_scribe(snapshot: &DesktopStateSnapshot) -> bool {
+    snapshot.sessions.iter().any(|session| {
+        is_live_session(session)
+            && session.team.as_ref().and_then(|team| team.role.as_deref()) == Some("scribe")
+    })
 }
 
 fn visual_dashboard_session_order(snapshot: &DesktopStateSnapshot) -> Vec<&DashboardSession> {

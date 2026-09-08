@@ -13,6 +13,7 @@ pub struct DashboardUiStatePersistence {
     path: PathBuf,
     client_session: String,
     last_screen: Option<DashboardScreen>,
+    last_preview_source: Option<String>,
 }
 
 impl DashboardUiStatePersistence {
@@ -31,11 +32,19 @@ impl DashboardUiStatePersistence {
         let path = project_state_dir
             .as_ref()
             .join(format!("dashboard-ui-client-{client_key}.json"));
-        let last_screen = read_dashboard_screen(&path);
+        let snapshot = read_dashboard_state_snapshot(&path);
+        let last_screen = snapshot
+            .as_ref()
+            .and_then(read_dashboard_screen_from_snapshot);
+        let last_preview_source = snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.get("previewSource"))
+            .map(|value| normalize_preview_source(Some(value)));
         Ok(Self {
             path,
             client_session: client_session.to_owned(),
             last_screen,
+            last_preview_source,
         })
     }
 
@@ -43,19 +52,43 @@ impl DashboardUiStatePersistence {
         self.last_screen
     }
 
+    pub fn load_preview_source(&self) -> Option<&str> {
+        self.last_preview_source.as_deref()
+    }
+
     pub fn persist_screen(&mut self, screen: DashboardScreen) -> Result<bool> {
         if self.last_screen == Some(screen) {
             return Ok(false);
         }
-        let mut snapshot = fs::read_to_string(&self.path)
-            .ok()
-            .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
-            .filter(Value::is_object)
+        let mut snapshot = read_dashboard_state_snapshot(&self.path)
             .unwrap_or_else(|| Value::Object(Default::default()));
         snapshot["screen"] = Value::String(screen.as_str().to_owned());
         write_json_atomic(&self.path, &snapshot)
             .with_context(|| format!("write dashboard ui state {}", self.path.display()))?;
         self.last_screen = Some(screen);
+        Ok(true)
+    }
+
+    pub fn persist_render_state(
+        &mut self,
+        screen: DashboardScreen,
+        preview_source: &str,
+    ) -> Result<bool> {
+        let preview_source =
+            normalize_preview_source(Some(&Value::String(preview_source.to_owned())));
+        if self.last_screen == Some(screen)
+            && self.last_preview_source.as_deref() == Some(preview_source.as_str())
+        {
+            return Ok(false);
+        }
+        let mut snapshot = read_dashboard_state_snapshot(&self.path)
+            .unwrap_or_else(|| Value::Object(Default::default()));
+        snapshot["screen"] = Value::String(screen.as_str().to_owned());
+        snapshot["previewSource"] = Value::String(preview_source.clone());
+        write_json_atomic(&self.path, &snapshot)
+            .with_context(|| format!("write dashboard ui state {}", self.path.display()))?;
+        self.last_screen = Some(screen);
+        self.last_preview_source = Some(preview_source);
         Ok(true)
     }
 
@@ -81,9 +114,14 @@ pub fn dashboard_client_key(session: &str) -> String {
         .collect()
 }
 
-fn read_dashboard_screen(path: &Path) -> Option<DashboardScreen> {
-    let raw = fs::read_to_string(path).ok()?;
-    let value = serde_json::from_str::<Value>(&raw).ok()?;
+fn read_dashboard_state_snapshot(path: &Path) -> Option<Value> {
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+        .filter(Value::is_object)
+}
+
+fn read_dashboard_screen_from_snapshot(value: &Value) -> Option<DashboardScreen> {
     let screen = value.get("screen").and_then(Value::as_str)?;
     DashboardScreen::parse(screen)
 }

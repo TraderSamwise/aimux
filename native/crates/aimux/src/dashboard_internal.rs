@@ -13,7 +13,7 @@ use crate::dashboard_event_stream::{
 use crate::dashboard_focus::DashboardFocusState;
 use crate::dashboard_launch_options::render_launch_options_overlay;
 use crate::dashboard_model::{
-    DesktopStateGoldenFixture, DesktopStateSnapshot, filter_dashboard_visible_model,
+    DesktopStateGoldenFixture, DesktopStateSnapshot, SessionStatus, filter_dashboard_visible_model,
 };
 use crate::dashboard_navigation::DashboardEntryRef;
 use crate::dashboard_project_events::{
@@ -38,6 +38,10 @@ use crate::dashboard_tui_visibility::{
     read_dashboard_tui_visibility_for_loop, read_tmux_tui_visibility,
 };
 use crate::dashboard_ui_state::DashboardUiStatePersistence;
+use crate::paths::PathResolver;
+use crate::project_service::work_outline::{
+    WorkOutlineEntry, WorkOutlineQuery, list_work_outline_entries,
+};
 use crate::release_version_contract::read_aimux_runtime_version;
 use anyhow::{Context, Result};
 use std::fs;
@@ -311,6 +315,12 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                     {
                         controller.screen = screen;
                     }
+                    if let Some(preview_source) = ui_state
+                        .as_ref()
+                        .and_then(DashboardUiStatePersistence::load_preview_source)
+                    {
+                        controller.set_preview_source(preview_source);
+                    }
                     controller
                 });
                 let frame = render_dashboard_snapshot(
@@ -325,7 +335,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                 rendered_once = true;
                 let statusline_client_session = ui_state.as_mut().and_then(|ui_state| {
                     ui_state
-                        .persist_screen(controller.screen)
+                        .persist_render_state(controller.screen, &controller.preview_source)
                         .unwrap_or(false)
                         .then(|| ui_state.client_session().to_owned())
                 });
@@ -554,6 +564,8 @@ fn render_dashboard_snapshot(
         };
     let focused_worktree_path = controller.navigation.focused_worktree_path(snapshot);
     let runtime_version = dashboard_runtime_version();
+    let scribe_preview_entries =
+        scribe_preview_entries_for_render(options, snapshot, selected_session_id, controller);
     let frame = render_dashboard_frame(&DashboardRenderInput {
         snapshot,
         cols: options.cols,
@@ -562,7 +574,7 @@ fn render_dashboard_snapshot(
         selected_session_id,
         selected_service_id,
         focused_worktree_path,
-        runtime_label: Some("native"),
+        runtime_label: Some("tmux"),
         version: Some(&runtime_version),
         is_dev_runtime: cfg!(debug_assertions),
         hide_offline_agents: controller.hide_offline_agents,
@@ -570,8 +582,8 @@ fn render_dashboard_snapshot(
         scroll_offset,
         footer_message: controller.footer_message.as_deref(),
         details_sidebar_visible: controller.details_sidebar_visible,
-        preview_source: "output",
-        scribe_preview_entries: &[],
+        preview_source: &controller.preview_source,
+        scribe_preview_entries: &scribe_preview_entries,
     });
     if let Some(launch_options) = controller.launch_options.as_ref() {
         let mut output = frame.frame;
@@ -1010,6 +1022,55 @@ fn load_dashboard_snapshot(options: &NativeDashboardOptions) -> Result<Dashboard
     Ok(DashboardSnapshotLoad {
         snapshot,
         endpoint: Some(endpoint),
+    })
+}
+
+fn scribe_preview_entries_for_render(
+    options: &NativeDashboardOptions,
+    snapshot: &DesktopStateSnapshot,
+    selected_session_id: Option<&str>,
+    controller: &DashboardController,
+) -> Vec<WorkOutlineEntry> {
+    if controller.preview_source != "scribe" || !dashboard_has_live_scribe(snapshot) {
+        return Vec::new();
+    }
+    let Some(selected) = selected_session_id.and_then(|session_id| {
+        snapshot
+            .sessions
+            .iter()
+            .find(|session| session.id == session_id)
+    }) else {
+        return Vec::new();
+    };
+    let mut resolver = PathResolver::from_env();
+    let project_state_dir = resolver.project_state_dir_for(&options.project_root);
+    let direct = list_work_outline_entries(
+        &project_state_dir,
+        WorkOutlineQuery {
+            session_id: Some(selected.id.clone()),
+            limit: Some(6),
+            ..WorkOutlineQuery::default()
+        },
+    );
+    if !direct.is_empty() || selected.worktree_path.is_none() {
+        return direct;
+    }
+    list_work_outline_entries(
+        project_state_dir,
+        WorkOutlineQuery {
+            worktree_path: selected.worktree_path.clone(),
+            limit: Some(6),
+            ..WorkOutlineQuery::default()
+        },
+    )
+}
+
+fn dashboard_has_live_scribe(snapshot: &DesktopStateSnapshot) -> bool {
+    snapshot.sessions.iter().any(|session| {
+        !matches!(
+            session.status,
+            SessionStatus::Offline | SessionStatus::Exited
+        ) && session.team.as_ref().and_then(|team| team.role.as_deref()) == Some("scribe")
     })
 }
 

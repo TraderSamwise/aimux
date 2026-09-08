@@ -521,6 +521,50 @@ fn tab_toggles_session_details_sidebar() {
 }
 
 #[test]
+fn shifted_v_toggles_scribe_preview_only_when_live_scribe_exists() {
+    let mut snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+
+    assert_eq!(controller.preview_source, "output");
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('V')),
+        DashboardControllerEffect::Ignored
+    );
+    assert_eq!(controller.preview_source, "output");
+
+    let mut scribe = snapshot.sessions[0].clone();
+    scribe.id = "claude-scribe".into();
+    scribe.team = Some(SessionTeamMetadata {
+        team_id: "scribe".into(),
+        parent_session_id: String::new(),
+        role: Some("scribe".into()),
+        label: None,
+        order: None,
+        extra: Default::default(),
+    });
+    snapshot.sessions.push(scribe);
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('V')),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(controller.preview_source, "scribe");
+    assert_eq!(
+        controller.footer_message.as_deref(),
+        Some("Previewing scribe summaries")
+    );
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('V')),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(controller.preview_source, "output");
+    assert_eq!(
+        controller.footer_message.as_deref(),
+        Some("Previewing output")
+    );
+}
+
+#[test]
 fn a_toggles_offline_agent_visibility() {
     let snapshot = snapshot();
     let mut controller = DashboardController::new(&snapshot);

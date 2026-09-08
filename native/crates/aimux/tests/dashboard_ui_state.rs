@@ -44,6 +44,32 @@ fn reads_existing_screen_and_preserves_other_client_fields() {
 }
 
 #[test]
+fn persists_preview_source_with_render_state() {
+    let root = temp_dir("dashboard-ui-state-preview-source");
+    fs::create_dir_all(&root).expect("create temp dir");
+    let path = root.join("dashboard-ui-client-client.json");
+    fs::write(
+        &path,
+        r#"{"screen":"dashboard","previewSource":"scribe","selectedEntryId":"codex-1"}"#,
+    )
+    .expect("seed state");
+
+    let mut state = DashboardUiStatePersistence::new(&root, "client").expect("create ui state");
+    assert_eq!(state.load_preview_source(), Some("scribe"));
+    let changed = state
+        .persist_render_state(DashboardScreen::Dashboard, "output")
+        .expect("persist render state");
+    assert!(changed);
+
+    let saved: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).expect("read state")).expect("json");
+    assert_eq!(saved["screen"], "dashboard");
+    assert_eq!(saved["previewSource"], "output");
+    assert_eq!(saved["selectedEntryId"], "codex-1");
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
 fn skips_write_when_screen_is_unchanged() {
     let root = temp_dir("dashboard-ui-state-unchanged");
     fs::create_dir_all(&root).expect("create temp dir");
