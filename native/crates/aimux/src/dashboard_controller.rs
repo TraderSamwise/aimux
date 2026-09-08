@@ -1920,7 +1920,7 @@ impl DashboardController {
         let effect = match key {
             DashboardKey::Back => DashboardServiceInputEffect::Close,
             DashboardKey::Enter => service_input.create(worktree_path),
-            DashboardKey::Backspace => service_input.handle_backspace(),
+            DashboardKey::Backspace | DashboardKey::Delete => service_input.handle_backspace(),
             DashboardKey::Printable(character) => service_input.handle_printable(character),
             DashboardKey::Up
             | DashboardKey::Down
@@ -1944,7 +1944,6 @@ impl DashboardController {
             | DashboardKey::ShiftRight
             | DashboardKey::Home
             | DashboardKey::End
-            | DashboardKey::Delete
             | DashboardKey::Ctrl(_)
             | DashboardKey::FocusIn
             | DashboardKey::Other => DashboardServiceInputEffect::Render,

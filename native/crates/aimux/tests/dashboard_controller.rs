@@ -1443,6 +1443,27 @@ fn service_input_handles_pasted_command_sequence() {
 }
 
 #[test]
+fn service_input_delete_matches_backspace() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.handle_key(&snapshot, DashboardKey::Printable('v'));
+
+    for key in parse_dashboard_keys(b"abc") {
+        controller.handle_key(&snapshot, key);
+    }
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Delete),
+        DashboardControllerEffect::Render
+    );
+
+    let buffer = controller
+        .service_input
+        .as_ref()
+        .map(|state| state.buffer.as_str());
+    assert_eq!(buffer, Some("ab"));
+}
+
+#[test]
 fn worktree_input_collects_name_and_dispatches_create() {
     let snapshot = snapshot();
     let mut controller = DashboardController::new(&snapshot);
