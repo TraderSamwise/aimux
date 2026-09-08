@@ -341,6 +341,70 @@ fn renders_selected_session_details_sidebar_when_visible() {
 }
 
 #[test]
+fn renders_selected_teammates_in_node_order() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let mut snapshot = fixture.runtime_light.clone();
+    let parent_id = snapshot.sessions[0].id.clone();
+
+    let mut second = snapshot.sessions[0].clone();
+    second.id = "claude-second".into();
+    second.label = Some("Second".into());
+    second.created_at = Some("2026-01-01T00:00:01.000Z".into());
+    second.team = Some(
+        serde_json::from_value(json!({
+            "teamId": "team-1",
+            "parentSessionId": parent_id,
+            "role": "reviewer",
+            "label": "Second",
+            "order": 2
+        }))
+        .expect("team metadata parses"),
+    );
+
+    let mut first = snapshot.sessions[0].clone();
+    first.id = "claude-first".into();
+    first.label = Some("First".into());
+    first.created_at = Some("2026-01-01T00:00:02.000Z".into());
+    first.team = Some(
+        serde_json::from_value(json!({
+            "teamId": "team-1",
+            "parentSessionId": parent_id,
+            "role": "coder",
+            "label": "First",
+            "order": 1
+        }))
+        .expect("team metadata parses"),
+    );
+    snapshot.teammates = vec![second, first];
+
+    let result = render_dashboard_frame(&DashboardRenderInput {
+        snapshot: &snapshot,
+        cols: 160,
+        rows: 32,
+        nav_level: DashboardNavLevel::Sessions,
+        selected_session_id: Some(&parent_id),
+        selected_service_id: None,
+        focused_worktree_path: None,
+        runtime_label: None,
+        version: None,
+        is_dev_runtime: false,
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_message: None,
+        details_sidebar_visible: true,
+        preview_source: "output",
+        scribe_preview_entries: &[],
+    });
+    let plain = strip_ansi(&result.frame);
+    let first_index = plain.find("First(coder)").expect("first teammate row");
+    let second_index = plain.find("Second(reviewer)").expect("second teammate row");
+
+    assert!(first_index < second_index);
+}
+
+#[test]
 fn renders_typed_scribe_preview_rows_for_selected_session() {
     let fixture: DesktopStateGoldenFixture =
         serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");

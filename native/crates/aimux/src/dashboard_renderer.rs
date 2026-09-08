@@ -2352,7 +2352,7 @@ fn selected_teammates<'a>(input: &'a DashboardRenderInput<'_>) -> Vec<&'a Dashbo
     let Some(parent) = selected_session(input) else {
         return Vec::new();
     };
-    input
+    let mut teammates = input
         .snapshot
         .teammates
         .iter()
@@ -2362,7 +2362,28 @@ fn selected_teammates<'a>(input: &'a DashboardRenderInput<'_>) -> Vec<&'a Dashbo
                 .as_ref()
                 .is_some_and(|team| team.parent_session_id == parent.id)
         })
-        .collect()
+        .collect::<Vec<_>>();
+    teammates.sort_by(|left, right| {
+        let left_order = left.team.as_ref().and_then(|team| team.order);
+        let right_order = right.team.as_ref().and_then(|team| team.order);
+        left_order
+            .unwrap_or(usize::MAX)
+            .cmp(&right_order.unwrap_or(usize::MAX))
+            .then_with(|| {
+                compare_optional_created_at(left.created_at.as_deref(), right.created_at.as_deref())
+            })
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    teammates
+}
+
+fn compare_optional_created_at(left: Option<&str>, right: Option<&str>) -> std::cmp::Ordering {
+    match (left, right) {
+        (Some(left), Some(right)) => left.cmp(right),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    }
 }
 
 fn summarize_teammate(session: &DashboardSession) -> String {
