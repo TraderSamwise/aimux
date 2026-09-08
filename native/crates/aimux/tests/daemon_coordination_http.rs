@@ -647,6 +647,130 @@ fn review_routes_round_trip_through_daemon_http_to_project_service() {
     fixture.cleanup();
 }
 
+#[test]
+fn notification_routes_round_trip_through_daemon_http_to_project_service() {
+    let fixture = CoordinationHttpFixture::new("notification-routes");
+    let project = fixture.project("repo");
+    let project_text = project.to_string_lossy().into_owned();
+    let project_query = percent_encode_query_value(&project_text);
+    let server = ScriptedHttpServer::spawn(vec![
+        json!({
+            "ok": true,
+            "entry": { "id": "notification-1", "kind": "needs_input" }
+        }),
+        json!({
+            "notifications": [
+                {
+                    "id": "notification-1",
+                    "unread": true,
+                    "sessionId": "claude-1",
+                    "title": "claude-1 needs input",
+                    "body": "Agent is waiting for input."
+                }
+            ],
+            "unreadCount": 1
+        }),
+        json!({ "ok": true, "updated": 1 }),
+        json!({ "ok": true, "cleared": 2 }),
+    ]);
+    let mut runtime = fixture.runtime_for_project(&project, server.port);
+
+    let sent = handle_daemon_runtime_request(
+        &mut runtime,
+        request(
+            "POST",
+            CORE_API_ROUTES.notification_send_text,
+            Some(json!({
+                "project": project_text,
+                "title": " claude-1 needs input ",
+                "body": " Agent is waiting for input. ",
+                "sessionId": " claude-1 ",
+                "kind": " needs_input "
+            })),
+        ),
+    );
+    assert_eq!(sent.status, 200);
+    assert_eq!(
+        text_body(&sent),
+        "Queued notification \"claude-1 needs input\".\n"
+    );
+
+    let listed = handle_daemon_runtime_request(
+        &mut runtime,
+        request(
+            "GET",
+            &format!(
+                "{}?project={}&unread=1&sessionId=%20claude-1%20",
+                CORE_API_ROUTES.notification_list_text, project_query
+            ),
+            None,
+        ),
+    );
+    assert_eq!(listed.status, 200);
+    assert_eq!(
+        text_body(&listed),
+        "notification-1 unread [claude-1] claude-1 needs input: Agent is waiting for input.\n"
+    );
+
+    let read = handle_daemon_runtime_request(
+        &mut runtime,
+        request(
+            "POST",
+            CORE_API_ROUTES.notification_read_text,
+            Some(json!({
+                "project": project_text,
+                "ids": " notification-1, notification-2 ",
+                "sessionId": " claude-1 "
+            })),
+        ),
+    );
+    assert_eq!(read.status, 200);
+    assert_eq!(text_body(&read), "Marked 1 notification as read.\n");
+
+    let cleared = handle_daemon_runtime_request(
+        &mut runtime,
+        request(
+            "POST",
+            CORE_API_ROUTES.notification_clear_text,
+            Some(json!({
+                "project": project_text,
+                "id": "notification-1"
+            })),
+        ),
+    );
+    assert_eq!(cleared.status, 200);
+    assert_eq!(text_body(&cleared), "Cleared 2 notifications.\n");
+
+    let requests = server.join();
+    assert_request_path(&requests[0], "POST", project_routes::runtime::NOTIFY);
+    assert_eq!(
+        request_json_body(&requests[0]),
+        json!({
+            "title": "claude-1 needs input",
+            "message": "Agent is waiting for input.",
+            "sessionId": "claude-1",
+            "kind": "needs_input",
+            "force": true
+        })
+    );
+    assert_request_path(
+        &requests[1],
+        "GET",
+        "/notifications?unread=1&sessionId=claude-1",
+    );
+    assert_request_path(&requests[2], "POST", project_routes::notifications::READ);
+    assert_eq!(
+        request_json_body(&requests[2]),
+        json!({ "ids": ["notification-1", "notification-2"], "sessionId": "claude-1" })
+    );
+    assert_request_path(&requests[3], "POST", project_routes::notifications::CLEAR);
+    assert_eq!(
+        request_json_body(&requests[3]),
+        json!({ "id": "notification-1" })
+    );
+    fixture.cleanup();
+}
+
 #[derive(Debug)]
 struct CoordinationHttpFixture {
     root: PathBuf,
