@@ -36,11 +36,13 @@ impl DashboardUiStatePersistence {
         let path = project_state_dir
             .as_ref()
             .join(format!("dashboard-ui-client-{client_key}.json"));
-        let snapshot = read_dashboard_state_snapshot(&path);
-        let last_screen = snapshot
+        let client_snapshot = read_dashboard_state_snapshot(&path);
+        let shared_snapshot =
+            read_dashboard_state_snapshot(&shared_dashboard_state_path(project_state_dir.as_ref()));
+        let last_screen = client_snapshot
             .as_ref()
             .and_then(read_dashboard_screen_from_snapshot);
-        let last_preview_source = snapshot
+        let last_preview_source = shared_snapshot
             .as_ref()
             .and_then(|snapshot| snapshot.get("previewSource"))
             .map(|value| normalize_preview_source(Some(value)));
@@ -62,7 +64,7 @@ impl DashboardUiStatePersistence {
     }
 
     pub fn load_details_sidebar_visible(&self) -> Option<bool> {
-        read_dashboard_state_snapshot(&self.path).and_then(|snapshot| {
+        read_dashboard_state_snapshot(&self.shared_path()).and_then(|snapshot| {
             snapshot
                 .get("detailsSidebarVisible")
                 .and_then(Value::as_bool)
@@ -94,15 +96,24 @@ impl DashboardUiStatePersistence {
         {
             return Ok(false);
         }
-        let mut snapshot = read_dashboard_state_snapshot(&self.path)
+        let mut client = read_dashboard_state_snapshot(&self.path)
             .unwrap_or_else(|| Value::Object(Default::default()));
-        snapshot["screen"] = Value::String(screen.as_str().to_owned());
-        snapshot["previewSource"] = Value::String(preview_source.clone());
-        write_json_atomic(&self.path, &snapshot)
-            .with_context(|| format!("write dashboard ui state {}", self.path.display()))?;
+        let mut shared = read_dashboard_state_snapshot(&self.shared_path())
+            .unwrap_or_else(|| Value::Object(Default::default()));
+        client["screen"] = Value::String(screen.as_str().to_owned());
+        shared["previewSource"] = Value::String(preview_source.clone());
+        let changed = read_dashboard_state_snapshot(&self.path).as_ref() != Some(&client)
+            || read_dashboard_state_snapshot(&self.shared_path()).as_ref() != Some(&shared);
+        if changed {
+            write_json_atomic(&self.path, &client)
+                .with_context(|| format!("write dashboard ui state {}", self.path.display()))?;
+            write_json_atomic(self.shared_path(), &shared).with_context(|| {
+                format!("write dashboard ui state {}", self.shared_path().display())
+            })?;
+        }
         self.last_screen = Some(screen);
         self.last_preview_source = Some(preview_source);
-        Ok(true)
+        Ok(changed)
     }
 
     pub fn restore_navigation(
@@ -129,22 +140,28 @@ impl DashboardUiStatePersistence {
     ) -> Result<bool> {
         let preview_source =
             normalize_preview_source(Some(&Value::String(preview_source.to_owned())));
-        let mut state = read_dashboard_state_snapshot(&self.path)
+        let mut client = read_dashboard_state_snapshot(&self.path)
             .unwrap_or_else(|| Value::Object(Default::default()));
-        state["screen"] = Value::String(screen.as_str().to_owned());
-        state["previewSource"] = Value::String(preview_source.clone());
-        state["detailsSidebarVisible"] = Value::Bool(details_sidebar_visible);
-        persist_navigation_state(&mut state, snapshot, navigation);
-        if read_dashboard_state_snapshot(&self.path).as_ref() == Some(&state) {
-            self.last_screen = Some(screen);
-            self.last_preview_source = Some(preview_source);
-            return Ok(false);
+        client["screen"] = Value::String(screen.as_str().to_owned());
+        persist_navigation_state(&mut client, snapshot, navigation);
+
+        let mut shared = read_dashboard_state_snapshot(&self.shared_path())
+            .unwrap_or_else(|| Value::Object(Default::default()));
+        shared["previewSource"] = Value::String(preview_source.clone());
+        shared["detailsSidebarVisible"] = Value::Bool(details_sidebar_visible);
+
+        let changed = read_dashboard_state_snapshot(&self.path).as_ref() != Some(&client)
+            || read_dashboard_state_snapshot(&self.shared_path()).as_ref() != Some(&shared);
+        if changed {
+            write_json_atomic(&self.path, &client)
+                .with_context(|| format!("write dashboard ui state {}", self.path.display()))?;
+            write_json_atomic(self.shared_path(), &shared).with_context(|| {
+                format!("write dashboard ui state {}", self.shared_path().display())
+            })?;
         }
-        write_json_atomic(&self.path, &state)
-            .with_context(|| format!("write dashboard ui state {}", self.path.display()))?;
         self.last_screen = Some(screen);
         self.last_preview_source = Some(preview_source);
-        Ok(true)
+        Ok(changed)
     }
 
     pub fn path(&self) -> &Path {
@@ -250,7 +267,7 @@ impl DashboardUiStatePersistence {
     }
 
     fn shared_path(&self) -> PathBuf {
-        self.project_state_dir.join("dashboard-ui.json")
+        shared_dashboard_state_path(&self.project_state_dir)
     }
 
     fn read_shared_order_state(&self) -> DashboardOrderState {
@@ -310,6 +327,10 @@ fn read_dashboard_state_snapshot(path: &Path) -> Option<Value> {
         .ok()
         .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
         .filter(Value::is_object)
+}
+
+fn shared_dashboard_state_path(project_state_dir: &Path) -> PathBuf {
+    project_state_dir.join("dashboard-ui.json")
 }
 
 fn read_dashboard_screen_from_snapshot(value: &Value) -> Option<DashboardScreen> {

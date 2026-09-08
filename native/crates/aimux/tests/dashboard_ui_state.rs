@@ -52,12 +52,14 @@ fn reads_existing_screen_and_preserves_other_client_fields() {
 fn persists_preview_source_with_render_state() {
     let root = temp_dir("dashboard-ui-state-preview-source");
     fs::create_dir_all(&root).expect("create temp dir");
-    let path = root.join("dashboard-ui-client-client.json");
+    let client_path = root.join("dashboard-ui-client-client.json");
+    let shared_path = root.join("dashboard-ui.json");
+    fs::write(&shared_path, r#"{"previewSource":"scribe"}"#).expect("seed shared state");
     fs::write(
-        &path,
-        r#"{"screen":"dashboard","previewSource":"scribe","selectedEntryId":"codex-1"}"#,
+        &client_path,
+        r#"{"screen":"dashboard","selectedEntryId":"codex-1"}"#,
     )
-    .expect("seed state");
+    .expect("seed client state");
 
     let mut state = DashboardUiStatePersistence::new(&root, "client").expect("create ui state");
     assert_eq!(state.load_preview_source(), Some("scribe"));
@@ -66,11 +68,16 @@ fn persists_preview_source_with_render_state() {
         .expect("persist render state");
     assert!(changed);
 
-    let saved: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&path).expect("read state")).expect("json");
-    assert_eq!(saved["screen"], "dashboard");
-    assert_eq!(saved["previewSource"], "output");
-    assert_eq!(saved["selectedEntryId"], "codex-1");
+    let client: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&client_path).expect("read client state"))
+            .expect("json");
+    let shared: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&shared_path).expect("read shared state"))
+            .expect("json");
+    assert_eq!(client["screen"], "dashboard");
+    assert!(client.get("previewSource").is_none());
+    assert_eq!(client["selectedEntryId"], "codex-1");
+    assert_eq!(shared["previewSource"], "output");
     fs::remove_dir_all(root).ok();
 }
 
@@ -84,6 +91,8 @@ fn moves_and_applies_shared_worktree_session_order() {
     )
     .expect("seed shared state");
     let state = DashboardUiStatePersistence::new(&root, "client").expect("create ui state");
+    assert_eq!(state.load_details_sidebar_visible(), Some(false));
+    assert_eq!(state.load_preview_source(), Some("scribe"));
 
     let moved = state
         .move_entry_within_worktree(
@@ -152,6 +161,24 @@ fn persists_and_restores_selected_worktree_entry_state() {
     assert_eq!(restored.level, DashboardNavLevel::Sessions);
     assert_eq!(restored.worktree_index, 0);
     assert_eq!(restored.item_index, 2);
+
+    let client: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(root.join("dashboard-ui-client-client.json"))
+            .expect("read client state"),
+    )
+    .expect("json");
+    let shared: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(root.join("dashboard-ui.json")).expect("read shared state"),
+    )
+    .expect("json");
+    assert_eq!(client["screen"], "dashboard");
+    assert_eq!(client["level"], "sessions");
+    assert_eq!(client["selectedEntryKind"], "service");
+    assert_eq!(client["selectedEntryId"], "svc-a");
+    assert!(client.get("previewSource").is_none());
+    assert!(client.get("detailsSidebarVisible").is_none());
+    assert_eq!(shared["previewSource"], "scribe");
+    assert_eq!(shared["detailsSidebarVisible"], false);
     fs::remove_dir_all(root).ok();
 }
 
