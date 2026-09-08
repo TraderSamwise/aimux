@@ -957,6 +957,217 @@ fn loop_routes_round_trip_through_daemon_http_to_project_service() {
     fixture.cleanup();
 }
 
+#[test]
+fn worktree_and_graveyard_routes_round_trip_through_daemon_http_to_project_service() {
+    let fixture = CoordinationHttpFixture::new("worktree-routes");
+    let project = fixture.project("repo");
+    let project_text = project.to_string_lossy().into_owned();
+    let project_query = percent_encode_query_value(&project_text);
+    let worktree_path = format!("{project_text}/.aimux/worktrees/feature");
+    let old_worktree_path = format!("{project_text}/.aimux/worktrees/old");
+    let server = ScriptedHttpServer::spawn(vec![
+        json!({
+            "worktrees": [
+                { "name": "main", "branch": "master", "path": project_text },
+                { "name": "feature", "branch": "feature", "path": worktree_path }
+            ]
+        }),
+        json!({ "ok": true, "path": worktree_path, "status": "created" }),
+        json!({ "ok": true, "path": worktree_path, "status": "removed" }),
+        json!({ "ok": true, "sessionId": "claude-1", "worktreePath": worktree_path }),
+        json!({
+            "entries": [
+                {
+                    "id": "claude-old",
+                    "tool": "claude",
+                    "backendSessionId": "backend-old"
+                }
+            ],
+            "worktrees": [
+                { "name": "old", "branch": "old", "path": old_worktree_path }
+            ]
+        }),
+        json!({
+            "ok": true,
+            "sessionId": "claude-old",
+            "status": "graveyard",
+            "previousStatus": "offline"
+        }),
+        json!({
+            "ok": true,
+            "sessionId": "claude-old",
+            "status": "offline"
+        }),
+        json!({
+            "ok": true,
+            "path": old_worktree_path,
+            "status": "resurrected"
+        }),
+    ]);
+    let mut runtime = fixture.runtime_for_project(&project, server.port);
+
+    let listed = handle_daemon_runtime_request(
+        &mut runtime,
+        request(
+            "GET",
+            &format!(
+                "{}?project={project_query}",
+                CORE_API_ROUTES.worktree_list_text
+            ),
+            None,
+        ),
+    );
+    assert_eq!(listed.status, 200);
+    assert!(text_body(&listed).contains("feature"));
+
+    let created = handle_daemon_runtime_request(
+        &mut runtime,
+        request(
+            "POST",
+            CORE_API_ROUTES.worktree_create_text,
+            Some(json!({ "project": project_text, "name": "feature" })),
+        ),
+    );
+    assert_eq!(created.status, 200);
+    assert_eq!(
+        text_body(&created),
+        format!("Created worktree \"feature\" at {worktree_path}\n")
+    );
+
+    let removed = handle_daemon_runtime_request(
+        &mut runtime,
+        request(
+            "POST",
+            CORE_API_ROUTES.worktree_remove_text,
+            Some(json!({ "project": project_text, "path": worktree_path })),
+        ),
+    );
+    assert_eq!(removed.status, 200);
+    assert_eq!(text_body(&removed), format!("removed {worktree_path}\n"));
+
+    let migrated = handle_daemon_runtime_request(
+        &mut runtime,
+        request(
+            "POST",
+            CORE_API_ROUTES.agent_migrate_text,
+            Some(json!({
+                "project": project_text,
+                "sessionId": "claude-1",
+                "worktreePath": ".aimux/worktrees/feature"
+            })),
+        ),
+    );
+    assert_eq!(migrated.status, 200);
+    assert_eq!(
+        text_body(&migrated),
+        format!("migrated claude-1 -> {worktree_path}\n")
+    );
+
+    let graveyard = handle_daemon_runtime_request(
+        &mut runtime,
+        request(
+            "GET",
+            &format!(
+                "{}?project={project_query}",
+                CORE_API_ROUTES.graveyard_list_text
+            ),
+            None,
+        ),
+    );
+    assert_eq!(graveyard.status, 200);
+    let graveyard_text = text_body(&graveyard);
+    assert!(graveyard_text.contains("Worktrees\n"));
+    assert!(graveyard_text.contains("Agents\n"));
+    assert!(graveyard_text.contains("claude-old"));
+
+    let graveyarded = handle_daemon_runtime_request(
+        &mut runtime,
+        request(
+            "POST",
+            CORE_API_ROUTES.graveyard_send_text,
+            Some(json!({ "project": project_text, "sessionId": "claude-old" })),
+        ),
+    );
+    assert_eq!(graveyarded.status, 200);
+    assert_eq!(text_body(&graveyarded), "graveyarded claude-old\n");
+
+    let resurrected_agent = handle_daemon_runtime_request(
+        &mut runtime,
+        request(
+            "POST",
+            CORE_API_ROUTES.graveyard_resurrect_text,
+            Some(json!({ "project": project_text, "sessionId": "claude-old" })),
+        ),
+    );
+    assert_eq!(resurrected_agent.status, 200);
+    assert_eq!(text_body(&resurrected_agent), "resurrected claude-old\n");
+
+    let resurrected_worktree = handle_daemon_runtime_request(
+        &mut runtime,
+        request(
+            "POST",
+            CORE_API_ROUTES.worktree_resurrect_text,
+            Some(json!({ "project": project_text, "path": old_worktree_path })),
+        ),
+    );
+    assert_eq!(resurrected_worktree.status, 200);
+    assert_eq!(
+        text_body(&resurrected_worktree),
+        format!("resurrected {old_worktree_path}\n")
+    );
+
+    let requests = server.join();
+    assert_request_path(&requests[0], "GET", project_routes::WORKTREES);
+    assert_request_path(
+        &requests[1],
+        "POST",
+        project_routes::worktree_actions::CREATE,
+    );
+    assert_eq!(
+        request_json_body(&requests[1]),
+        json!({ "name": "feature" })
+    );
+    assert_request_path(
+        &requests[2],
+        "POST",
+        project_routes::worktree_actions::REMOVE,
+    );
+    assert_eq!(
+        request_json_body(&requests[2]),
+        json!({ "path": worktree_path })
+    );
+    assert_request_path(&requests[3], "POST", project_routes::agents::MIGRATE);
+    assert_eq!(
+        request_json_body(&requests[3]),
+        json!({ "sessionId": "claude-1", "worktreePath": worktree_path })
+    );
+    assert_request_path(&requests[4], "GET", project_routes::GRAVEYARD);
+    assert_request_path(&requests[5], "POST", project_routes::agents::KILL);
+    assert_eq!(
+        request_json_body(&requests[5]),
+        json!({ "sessionId": "claude-old" })
+    );
+    assert_request_path(
+        &requests[6],
+        "POST",
+        project_routes::graveyard_actions::RESURRECT_AGENT,
+    );
+    assert_eq!(
+        request_json_body(&requests[6]),
+        json!({ "sessionId": "claude-old" })
+    );
+    assert_request_path(
+        &requests[7],
+        "POST",
+        project_routes::graveyard_actions::RESURRECT_WORKTREE,
+    );
+    assert_eq!(
+        request_json_body(&requests[7]),
+        json!({ "path": old_worktree_path })
+    );
+    fixture.cleanup();
+}
+
 #[derive(Debug)]
 struct CoordinationHttpFixture {
     root: PathBuf,
