@@ -1438,8 +1438,7 @@ fn session_status_dot(session: &DashboardSession) -> String {
     let attention = session
         .semantic
         .as_ref()
-        .map(|semantic| semantic.user.attention.as_str())
-        .or(session.attention.as_deref());
+        .map(|semantic| semantic.user.attention.as_str());
     if attention == Some("error") || label == Some("error") {
         return status_dot(StatusKind::Error);
     }

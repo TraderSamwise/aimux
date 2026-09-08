@@ -191,6 +191,44 @@ fn renders_live_agent_rows_without_jamming_identity_status_or_activity() {
 }
 
 #[test]
+fn row_dot_ignores_legacy_direct_attention_without_semantic_state() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let mut snapshot = fixture.runtime_light.clone();
+    snapshot.worktrees.clear();
+    snapshot.worktree_groups.clear();
+    snapshot.services.clear();
+
+    let session = &mut snapshot.sessions[0];
+    session.status = SessionStatus::Running;
+    session.semantic = None;
+    session.attention = Some("error".into());
+
+    let result = render_dashboard_frame(&DashboardRenderInput {
+        snapshot: &snapshot,
+        cols: 140,
+        rows: 24,
+        nav_level: DashboardNavLevel::Sessions,
+        selected_session_id: Some("claude-0"),
+        selected_service_id: None,
+        focused_worktree_path: None,
+        runtime_label: None,
+        version: None,
+        is_dev_runtime: false,
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_message: None,
+        details_sidebar_visible: false,
+        preview_source: "output",
+        scribe_preview_entries: &[],
+    });
+
+    assert!(result.frame.contains("\x1b[1;33m●\x1b[0m"));
+    assert!(!result.frame.contains("\x1b[31m●\x1b[0m"));
+}
+
+#[test]
 fn renders_state_aware_footer_hints_for_session_actions() {
     let fixture: DesktopStateGoldenFixture =
         serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
