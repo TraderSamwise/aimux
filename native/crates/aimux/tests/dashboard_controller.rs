@@ -116,8 +116,8 @@ fn flat_single_session_navigation_does_not_redraw_when_selection_cannot_move() {
 #[test]
 fn worktree_root_escape_focuses_active_visible_session() {
     let mut snapshot = snapshot();
-    snapshot.sessions[0].tmux_window_id = Some("@active".into());
     snapshot.worktree_groups[0].sessions[1].tmux_window_id = Some("@active".into());
+    snapshot.sessions.clear();
     let mut controller = DashboardController::new(&snapshot);
     controller.navigation.level = DashboardNavLevel::Worktrees;
 

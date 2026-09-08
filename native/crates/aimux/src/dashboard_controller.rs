@@ -2312,18 +2312,7 @@ impl DashboardController {
         if self.navigation.level != DashboardNavLevel::Worktrees {
             return DashboardControllerEffect::Ignored;
         }
-        let target = snapshot
-            .sessions
-            .iter()
-            .filter(|session| !is_project_control_session(session))
-            .find(|session| session.active)
-            .or_else(|| {
-                snapshot
-                    .sessions
-                    .iter()
-                    .find(|session| !is_project_control_session(session))
-            })
-            .map(|session| session.id.clone());
+        let target = active_or_first_visible_session(snapshot).map(|session| session.id.clone());
         let Some(target) = target else {
             return DashboardControllerEffect::Ignored;
         };
@@ -2805,12 +2794,12 @@ fn visual_dashboard_session_order(snapshot: &DesktopStateSnapshot) -> Vec<&Dashb
 }
 
 fn active_or_first_visible_session(snapshot: &DesktopStateSnapshot) -> Option<&DashboardSession> {
-    snapshot
-        .sessions
+    let ordered = visual_dashboard_session_order(snapshot);
+    ordered
         .iter()
-        .filter(|session| !is_project_control_session(session))
+        .copied()
         .find(|session| session.active)
-        .or_else(|| visual_dashboard_session_order(snapshot).into_iter().next())
+        .or_else(|| ordered.into_iter().next())
 }
 
 fn migrate_picker_targets(snapshot: &DesktopStateSnapshot) -> Vec<DashboardMigrateTarget> {
