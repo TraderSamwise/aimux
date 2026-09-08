@@ -11,6 +11,7 @@ CODEX.md
 src-tauri/target/
 native/target/
 native/darwin/aimux-notifier.app/
+scripts/__pycache__/
 
 # Secrets and local env
 .env
