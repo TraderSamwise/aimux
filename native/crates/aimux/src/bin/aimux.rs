@@ -142,6 +142,10 @@ fn main() -> Result<ExitCode> {
         print_root_help();
         return Ok(ExitCode::SUCCESS);
     }
+    if let Some(help) = core_command_help(&stripped_args) {
+        println!("{help}");
+        return Ok(ExitCode::SUCCESS);
+    }
     let process_argv = std::iter::once("node".to_owned())
         .chain(std::iter::once("aimux".to_owned()))
         .chain(raw_args.clone())
@@ -303,6 +307,93 @@ fn print_root_help() {
         "Usage: aimux [options] [command] [tool] [args...]\n\nNative CLI agent multiplexer\n\nArguments:\n  tool                         Tool to run (e.g. claude, codex, aider)\n  args                         Arguments to pass to the tool\n\nOptions:\n  --resume                     Resume previous sessions using native tool resume\n  --restore                    Start fresh sessions with injected history context\n  --debug                      Enable debug logging for this process\n  -V, --version                output the version number\n  -h, --help                   display help for command\n\nCommands:\n  init                         Initialize .aimux directory\n  restart                      Restart the Aimux control plane\n  dashboard-reload             Reload or open the dashboard\n  stop [sessionId]             Stop an agent or the current project service\n  restart-runtime              Restart the tmux runtime service\n  host                         Advanced project-service inspection commands\n  daemon                       Advanced: manage the global aimux control-plane daemon\n  projects                     Inspect known aimux projects\n  compact                      Compact session history using LLM summarization\n  worktree                     Manage git worktrees\n  thread                       Inspect and manage orchestration threads\n  threads                      List orchestration threads\n  input                        Send input to a running agent\n  ps                           List running agent sessions\n  list                         List agents grouped by worktree\n  id <sessionId>               Resolve an Aimux agent id to its canonical tool and native backend id\n  loop                         Manage agents in an overseer-managed loop\n  message                      Send directed orchestration messages\n  handoff                      Send an explicit orchestration handoff\n  task                         Create and manage orchestrated tasks\n  review                       Manage review workflow tasks\n  overseer                     Manage the project overseer\n  scribe                       Manage the project scribe\n  fork                         Fork an agent session\n  graveyard                    Manage killed agents\n  rename <sessionId>           Rename an agent session\n  kill <sessionId>             Kill an agent session\n  migrate <sessionId>          Move an agent to another worktree\n  doctor                       Inspect aimux runtime state\n  notifications                Manage desktop notification delivery\n  repair                       Repair the current project runtime in place\n  migration                    Audit and migrate runtime state\n  notify                       Send a notification\n  list-notifications           List notifications\n  clear-notifications          Clear notifications\n  read-notifications           Mark notifications read\n"
     );
 }
+
+fn core_command_help(args: &[String]) -> Option<&'static str> {
+    let help_requested = args
+        .iter()
+        .any(|arg| matches!(arg.as_str(), "--help" | "-h"));
+    let command = args.first().map(String::as_str)?;
+    let subcommand = args
+        .iter()
+        .skip(1)
+        .find(|arg| !arg.starts_with('-'))
+        .map(String::as_str);
+    match (command, subcommand, help_requested) {
+        ("host", None, _) => Some(HOST_HELP),
+        ("host", Some("status"), true) => Some(HOST_STATUS_HELP),
+        ("host", Some("agent-read"), true) => Some(HOST_AGENT_READ_HELP),
+        ("host", Some("agent-stream"), true) => Some(HOST_AGENT_STREAM_HELP),
+        ("host", Some("restart"), true) => Some(HOST_RESTART_HELP),
+        ("host", Some("topology"), true) => Some(HOST_TOPOLOGY_HELP),
+        ("host", Some("stop" | "kill"), true) => Some(HOST_STOP_HELP),
+        ("overseer", None, _) => Some(OVERSEER_HELP),
+        ("overseer", Some("start"), true) => Some(OVERSEER_START_HELP),
+        ("overseer", Some("clear"), true) => Some(OVERSEER_CLEAR_HELP),
+        ("overseer", Some("status"), true) => Some(OVERSEER_STATUS_HELP),
+        ("scribe", None, _) => Some(SCRIBE_HELP),
+        ("scribe", Some("start"), true) => Some(SCRIBE_START_HELP),
+        ("scribe", Some("clear"), true) => Some(SCRIBE_CLEAR_HELP),
+        ("scribe", Some("status"), true) => Some(SCRIBE_STATUS_HELP),
+        ("loop", None, _) => Some(LOOP_HELP),
+        ("loop", Some("add"), true) => Some(LOOP_ADD_HELP),
+        ("loop", Some("remove"), true) => Some(LOOP_REMOVE_HELP),
+        ("loop", Some("list"), true) => Some(LOOP_LIST_HELP),
+        ("loop", Some("done"), true) => Some(LOOP_DONE_HELP),
+        ("loop", Some("block"), true) => Some(LOOP_BLOCK_HELP),
+        ("doctor", None, _) => Some(DOCTOR_HELP),
+        ("doctor", Some("versions"), true) => Some(DOCTOR_VERSIONS_HELP),
+        ("worktree", Some("create" | "add"), true) => Some(WORKTREE_CREATE_HELP),
+        ("worktree", Some("remove"), true) => Some(WORKTREE_REMOVE_HELP),
+        ("worktree", Some("graveyard"), true) => Some(WORKTREE_GRAVEYARD_HELP),
+        ("worktree", Some("resurrect"), true) => Some(WORKTREE_RESURRECT_HELP),
+        ("worktree", Some("cleanup-caches"), true) => Some(WORKTREE_CLEANUP_HELP),
+        ("graveyard", Some("send"), true) => Some(GRAVEYARD_SEND_HELP),
+        ("graveyard", Some("resurrect"), true) => Some(GRAVEYARD_RESURRECT_HELP),
+        ("graveyard", Some("cleanup"), true) => Some(GRAVEYARD_CLEANUP_HELP),
+        ("fork", _, true) => Some(FORK_HELP),
+        ("spawn", _, true) => Some(SPAWN_HELP),
+        ("kill", _, true) => Some(KILL_HELP),
+        ("migrate", _, true) => Some(MIGRATE_HELP),
+        _ => None,
+    }
+}
+
+const HOST_HELP: &str = "Usage: aimux host [options] [command]\n\nAdvanced project-service inspection commands\n\nCommands:\n  status                      Print project-service status\n  agent-read <sessionId>      Read an agent pane snapshot\n  agent-stream <sessionId>    Stream an agent pane snapshot\n  restart                     Restart the current project service\n  topology                    Print topology debug information\n  stop                        Stop the current project service\n  kill                        Kill the current project service";
+const HOST_STATUS_HELP: &str = "Usage: aimux host status [options]\n\nPrint project-service status\n\nOptions:\n  --json                      Emit JSON";
+const HOST_AGENT_READ_HELP: &str = "Usage: aimux host agent-read <sessionId> [options]\n\nRead an agent pane snapshot\n\nOptions:\n  --project <path>            Project path\n  --lines <count>             Number of trailing lines\n  --start-line <line>         Starting line\n  --json                      Emit JSON";
+const HOST_AGENT_STREAM_HELP: &str = "Usage: aimux host agent-stream <sessionId> [options]\n\nStream an agent pane snapshot\n\nOptions:\n  --project <path>            Project path\n  --lines <count>             Number of trailing lines\n  --start-line <line>         Starting line\n  --interval-ms <ms>          Poll interval";
+const HOST_RESTART_HELP: &str = "Usage: aimux host restart [options]\n\nRestart the current project service\n\nOptions:\n  --serve                     Ensure the service is running after restart\n  --open                      Open the dashboard after restart\n  --json                      Emit JSON";
+const HOST_TOPOLOGY_HELP: &str = "Usage: aimux host topology [options]\n\nPrint topology debug information\n\nOptions:\n  --project <path>            Project path\n  --raw                       Print raw topology\n  --json                      Emit JSON";
+const HOST_STOP_HELP: &str = "Usage: aimux host <stop|kill>\n\nStop the current project service";
+const OVERSEER_HELP: &str = "Usage: aimux overseer [options] [command]\n\nManage the project overseer (top-down orchestrator)\n\nCommands:\n  start                       Spawn an overseer agent\n  clear <sessionId>           Demote a session from overseer\n  status                      Print overseer status";
+const OVERSEER_START_HELP: &str = "Usage: aimux overseer start [options]\n\nSpawn an overseer agent that monitors and directs the project's agents\n\nOptions:\n  --tool <toolKey>            Configured tool key\n  --project <path>            Project path\n  --worktree <path>           Target worktree path\n  --no-open                   Do not switch into the overseer window\n  --json                      Emit JSON";
+const OVERSEER_CLEAR_HELP: &str = "Usage: aimux overseer clear <sessionId> [options]\n\nDemote a session from overseer\n\nOptions:\n  --project <path>            Project path";
+const OVERSEER_STATUS_HELP: &str = "Usage: aimux overseer status [options]\n\nPrint overseer status\n\nOptions:\n  --project <path>            Project path\n  --json                      Emit JSON";
+const SCRIBE_HELP: &str = "Usage: aimux scribe [options] [command]\n\nManage the project scribe\n\nCommands:\n  start                       Spawn a scribe agent\n  clear <sessionId>           Demote a session from scribe\n  status                      Print scribe status";
+const SCRIBE_START_HELP: &str = "Usage: aimux scribe start [options]\n\nSpawn a scribe agent that maintains project scribe notes\n\nOptions:\n  --tool <toolKey>            Configured tool key\n  --project <path>            Project path\n  --worktree <path>           Target worktree path\n  --no-open                   Do not switch into the scribe window\n  --json                      Emit JSON";
+const SCRIBE_CLEAR_HELP: &str = "Usage: aimux scribe clear <sessionId> [options]\n\nDemote a session from scribe\n\nOptions:\n  --project <path>            Project path";
+const SCRIBE_STATUS_HELP: &str = "Usage: aimux scribe status [options]\n\nPrint scribe status\n\nOptions:\n  --project <path>            Project path\n  --json                      Emit JSON";
+const LOOP_HELP: &str = "Usage: aimux loop [options] [command]\n\nManage agents in an overseer-managed loop\n\nCommands:\n  add <sessionId>             Mark an agent as in a managed loop\n  remove <sessionId>          Remove an agent from the managed loop\n  list                        List agents in the managed loop\n  done                        Report the loop goal complete\n  block                       Report the loop blocked";
+const LOOP_ADD_HELP: &str = "Usage: aimux loop add <sessionId> [options]\n\nMark an agent as in a managed loop\n\nOptions:\n  --goal <goal>               What the agent should keep working toward";
+const LOOP_REMOVE_HELP: &str =
+    "Usage: aimux loop remove <sessionId>\n\nRemove an agent from the managed loop";
+const LOOP_LIST_HELP: &str = "Usage: aimux loop list [options]\n\nList agents in the managed loop\n\nOptions:\n  --project <path>            Project path\n  --json                      Emit JSON";
+const LOOP_DONE_HELP: &str = "Usage: aimux loop done [options]\n\nReport the loop goal complete\n\nOptions:\n  --session <id>              Session id\n  --reason <text>             What was completed";
+const LOOP_BLOCK_HELP: &str = "Usage: aimux loop block [options]\n\nReport the loop blocked\n\nOptions:\n  --session <id>              Session id\n  --reason <text>             Why you are blocked";
+const DOCTOR_HELP: &str = "Usage: aimux doctor [options] [command]\n\nInspect aimux runtime state\n\nCommands:\n  versions                    Inspect version coherence\n  lifecycle                   Inspect lifecycle queue diagnostics\n  exchange                    Inspect runtime exchange\n  disk                        Inspect worktree cache disk usage\n  installs                    Report superseded installs\n  notifications               Inspect desktop notification delivery\n  tmux                        Inspect managed tmux runtime state";
+const DOCTOR_VERSIONS_HELP: &str = "Usage: aimux doctor versions [options]\n\nInspect local daemon, project service, and dashboard version coherence\n\nOptions:\n  --json                      Emit JSON";
+const WORKTREE_CREATE_HELP: &str = "Usage: aimux worktree create <name> [options]\n\nCreate a git worktree\n\nOptions:\n  --project <path>            Project path\n  --json                      Emit JSON";
+const WORKTREE_REMOVE_HELP: &str = "Usage: aimux worktree remove <path> [options]\n\nRemove a git worktree\n\nOptions:\n  --project <path>            Project path\n  --json                      Emit JSON";
+const WORKTREE_GRAVEYARD_HELP: &str = "Usage: aimux worktree graveyard <path> [options]\n\nMove a worktree to the graveyard without deleting the checkout\n\nOptions:\n  --project <path>            Project path\n  --json                      Emit JSON";
+const WORKTREE_RESURRECT_HELP: &str = "Usage: aimux worktree resurrect <path> [options]\n\nRestore a graveyarded worktree to the active worktree list\n\nOptions:\n  --project <path>            Project path\n  --json                      Emit JSON";
+const WORKTREE_CLEANUP_HELP: &str = "Usage: aimux worktree cleanup-caches [options]\n\nRemove generated cache directories from Aimux-managed worktrees\n\nOptions:\n  --project <path>            Project path\n  --yes                       Delete instead of dry run\n  --include-active            Include active worktrees\n  --json                      Emit JSON";
+const GRAVEYARD_SEND_HELP: &str = "Usage: aimux graveyard send <id> [options]\n\nSend an agent to the graveyard\n\nOptions:\n  --project <path>            Project path\n  --json                      Emit JSON";
+const GRAVEYARD_RESURRECT_HELP: &str = "Usage: aimux graveyard resurrect <id> [options]\n\nResurrect an agent from the graveyard\n\nOptions:\n  --project <path>            Project path\n  --json                      Emit JSON";
+const GRAVEYARD_CLEANUP_HELP: &str = "Usage: aimux graveyard cleanup [options]\n\nRemove expired graveyard agents and worktrees\n\nOptions:\n  --project <path>            Project path\n  --dry-run                   Show what would be removed\n  --json                      Emit JSON";
+const FORK_HELP: &str = "Usage: aimux fork <sourceSessionId> --tool <toolKey> [options]\n\nFork an existing agent into a new agent with handed-off context\n\nOptions:\n  --tool <toolKey>            Configured target tool key\n  --project <path>            Project path\n  --instruction <text>        Extra instruction\n  --worktree <path>           Target worktree path\n  --no-open                   Do not switch into the forked agent window\n  --json                      Emit JSON";
+const SPAWN_HELP: &str = "Usage: aimux spawn --tool <toolKey> [options]\n\nSpawn a new agent\n\nOptions:\n  --tool <toolKey>            Configured tool key\n  --project <path>            Project path\n  --worktree <path>           Target worktree path\n  --no-open                   Do not switch into the agent window\n  --json                      Emit JSON";
+const KILL_HELP: &str = "Usage: aimux kill <sessionId> [options]\n\nSend an agent to the graveyard\n\nOptions:\n  --project <path>            Project path\n  --json                      Emit JSON";
+const MIGRATE_HELP: &str = "Usage: aimux migrate <sessionId> --worktree <path> [options]\n\nMigrate a running agent into another worktree\n\nOptions:\n  --worktree <path>           Target worktree path\n  --project <path>            Project path\n  --json                      Emit JSON";
 
 fn run_root_dashboard_command() -> Result<ExitCode> {
     let serve_args = vec!["serve".to_owned()];

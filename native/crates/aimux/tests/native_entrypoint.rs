@@ -71,6 +71,63 @@ fn root_version_and_help_stay_native_even_when_node_fallback_is_configured() {
 }
 
 #[test]
+fn core_subcommand_help_and_bare_parent_usage_stay_command_scoped() {
+    let root = temp_root("native-core-scoped-help");
+    let log = root.join("node.log");
+    let node = fake_node(&root, &log, 9);
+    fs::create_dir_all(root.join("home")).expect("create home");
+    fs::create_dir_all(root.join("aimux-home")).expect("create aimux home");
+
+    for (index, (args, expected, forbidden)) in [
+        (
+            vec!["overseer", "--help"],
+            "Usage: aimux overseer [options] [command]",
+            "Usage: aimux [options] [command] [tool]",
+        ),
+        (
+            vec!["scribe", "--help"],
+            "Usage: aimux scribe [options] [command]",
+            "Usage: aimux [options] [command] [tool]",
+        ),
+        (
+            vec!["host"],
+            "Usage: aimux host [options] [command]",
+            "unsupported or invalid aimux command",
+        ),
+        (
+            vec!["loop", "list", "--help"],
+            "Usage: aimux loop list [options]",
+            "Usage: aimux [options] [command] [tool]",
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let output = Command::new(env!("CARGO_BIN_EXE_aimux"))
+            .env("AIMUX_ROOT", &root)
+            .env("AIMUX_NODE_BIN", &node)
+            .env("HOME", root.join("home"))
+            .env("AIMUX_HOME", root.join("aimux-home"))
+            .env("AIMUX_DAEMON_PORT", format!("{}", 46270 + index))
+            .args(args)
+            .output()
+            .expect("run native aimux help");
+        assert!(output.status.success());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stdout.contains(expected), "{stdout}");
+        assert!(!stdout.contains(forbidden), "{stdout}");
+        assert!(stderr.is_empty(), "{stderr}");
+    }
+
+    assert!(
+        !log.exists(),
+        "core help should not invoke node fallback or daemon I/O"
+    );
+    cleanup(root);
+}
+
+#[test]
 fn ui_command_stays_native_even_when_node_fallback_is_configured() {
     let root = temp_root("native-ui");
     let log = root.join("node.log");
