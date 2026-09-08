@@ -8,6 +8,7 @@ use aimux::daemon_state::{
     save_daemon_state, save_metadata_endpoint, AimuxDaemonInfo, DaemonState, MetadataApiEndpoint,
     ProjectServiceState, ProjectServiceStatus,
 };
+use aimux::native_cli_dispatch::CORE_REVIEW_LIST_TEXT_ROUTE;
 use aimux::paths::PathResolver;
 use aimux::project_api_contract::routes as project_routes;
 use serde_json::{json, Map, Value};
@@ -533,6 +534,115 @@ fn message_and_handoff_routes_preserve_delivery_and_attribution_over_daemon_http
     assert_eq!(
         request_json_body(&requests[3]),
         json!({ "threadId": "thread-2", "from": "user", "body": "complete" })
+    );
+    fixture.cleanup();
+}
+
+#[test]
+fn review_routes_round_trip_through_daemon_http_to_project_service() {
+    let fixture = CoordinationHttpFixture::new("review-routes");
+    let project = fixture.project("repo");
+    let project_text = project.to_string_lossy().into_owned();
+    let project_query = percent_encode_query_value(&project_text);
+    let server = ScriptedHttpServer::spawn(vec![
+        json!({
+            "tasks": [
+                {
+                    "id": "task-1",
+                    "type": "task",
+                    "status": "todo",
+                    "assignedTo": "claude-1",
+                    "description": "ordinary task"
+                },
+                {
+                    "id": "review-1",
+                    "type": "review",
+                    "status": "todo",
+                    "assignedTo": "codex-1",
+                    "threadId": "thread-1",
+                    "description": "Review diff"
+                },
+                {
+                    "id": "task-2",
+                    "status": "todo",
+                    "reviewStatus": "changes_requested",
+                    "description": "Review-shaped task"
+                }
+            ]
+        }),
+        json!({ "task": { "id": "review-1" }, "thread": { "id": "thread-1" } }),
+        json!({
+            "task": { "id": "review-1" },
+            "followUpTask": { "id": "task-follow-up" },
+            "thread": { "id": "thread-1" }
+        }),
+    ]);
+    let mut runtime = fixture.runtime_for_project(&project, server.port);
+
+    let listed = handle_daemon_runtime_request(
+        &mut runtime,
+        request(
+            "GET",
+            &format!("{CORE_REVIEW_LIST_TEXT_ROUTE}?project={project_query}"),
+            None,
+        ),
+    );
+    assert_eq!(listed.status, 200);
+    let listed_text = text_body(&listed);
+    assert!(listed_text.contains("Review tasks:\n"));
+    assert!(listed_text.contains("review-1  review  todo  target=codex-1 thread=thread-1"));
+    assert!(listed_text.contains("task-2  task  todo  target=unassigned"));
+    assert!(!listed_text.contains("ordinary task"));
+
+    let approved = handle_daemon_runtime_request(
+        &mut runtime,
+        request(
+            "POST",
+            CORE_API_ROUTES.review_approve_text,
+            Some(json!({
+                "project": project_text,
+                "taskId": "review-1",
+                "from": "codex-1",
+                "body": "ship it"
+            })),
+        ),
+    );
+    assert_eq!(approved.status, 200);
+    assert_eq!(text_body(&approved), "task review-1\nthread thread-1\n");
+
+    let changes = handle_daemon_runtime_request(
+        &mut runtime,
+        request(
+            "POST",
+            CORE_API_ROUTES.review_request_changes_text,
+            Some(json!({
+                "project": project_text,
+                "taskId": "review-1",
+                "body": "fix edge case"
+            })),
+        ),
+    );
+    assert_eq!(changes.status, 200);
+    assert_eq!(
+        text_body(&changes),
+        "task review-1\nfollow-up task-follow-up\nthread thread-1\n"
+    );
+
+    let requests = server.join();
+    assert_request_path(&requests[0], "GET", project_routes::tasks::LIST);
+    assert_request_path(&requests[1], "POST", project_routes::reviews::APPROVE);
+    assert_eq!(
+        request_json_body(&requests[1]),
+        json!({ "taskId": "review-1", "from": "codex-1", "body": "ship it" })
+    );
+    assert_request_path(
+        &requests[2],
+        "POST",
+        project_routes::reviews::REQUEST_CHANGES,
+    );
+    assert_eq!(
+        request_json_body(&requests[2]),
+        json!({ "taskId": "review-1", "from": "user", "body": "fix edge case" })
     );
     fixture.cleanup();
 }
