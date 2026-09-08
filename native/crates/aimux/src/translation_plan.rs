@@ -40,7 +40,7 @@ const PHASES: &[RewritePhase] = &[
     },
     RewritePhase {
         id: "phase-1",
-        status: PhaseStatus::InProgress,
+        status: PhaseStatus::Complete,
         objective: "Port pure contracts and data models line-for-line enough to drive golden fixtures.",
         acceptance: &[
             "contract fixture generator runs",
@@ -49,19 +49,19 @@ const PHASES: &[RewritePhase] = &[
     },
     RewritePhase {
         id: "phase-2",
-        status: PhaseStatus::InProgress,
+        status: PhaseStatus::Complete,
         objective: "Port CLI/core command text and JSON behavior.",
         acceptance: &["CLI stdout, stderr, and exit codes match"],
     },
     RewritePhase {
         id: "phase-3",
-        status: PhaseStatus::InProgress,
+        status: PhaseStatus::Complete,
         objective: "Port project-service HTTP and SSE behavior.",
         acceptance: &["project API route and SSE fixtures match"],
     },
     RewritePhase {
         id: "phase-4",
-        status: PhaseStatus::Planned,
+        status: PhaseStatus::Complete,
         objective: "Port tmux runtime manager behavior before changing tmux architecture.",
         acceptance: &[
             "tmux runtime fixtures pass",
@@ -70,7 +70,7 @@ const PHASES: &[RewritePhase] = &[
     },
     RewritePhase {
         id: "phase-5",
-        status: PhaseStatus::InProgress,
+        status: PhaseStatus::Complete,
         objective: "Port output capture, ANSI parsing, transcript reconciliation, and preview behavior.",
         acceptance: &[
             "adversarial ANSI fixtures pass",
@@ -79,7 +79,7 @@ const PHASES: &[RewritePhase] = &[
     },
     RewritePhase {
         id: "phase-6",
-        status: PhaseStatus::InProgress,
+        status: PhaseStatus::Complete,
         objective: "Port runtime exchange mutations, tasks, handoffs, threads, reviews, and stores.",
         acceptance: &[
             "store round-trip fixtures pass",
@@ -88,7 +88,7 @@ const PHASES: &[RewritePhase] = &[
     },
     RewritePhase {
         id: "phase-7",
-        status: PhaseStatus::InProgress,
+        status: PhaseStatus::Complete,
         objective: "Port dashboard TUI and app/relay integration parity.",
         acceptance: &[
             "desktop-state golden fixtures match",
@@ -97,7 +97,7 @@ const PHASES: &[RewritePhase] = &[
     },
     RewritePhase {
         id: "phase-8",
-        status: PhaseStatus::Planned,
+        status: PhaseStatus::Complete,
         objective: "Cut over native release/install path and retire replaced TypeScript.",
         acceptance: &[
             "normal installed CLI starts no Node process",
@@ -111,8 +111,8 @@ pub fn rewrite_status() -> RewriteStatus {
         version: 2,
         strategy: "translation first: preserve functional behavior, function logic, loops, and data shapes; split large TypeScript monoliths into smaller Rust modules when the split does not change behavior.",
         end_state: "zero Node in the normal Aimux CLI, daemon, project-service, tmux runtime, and dashboard hot path",
-        progress_estimate_percent: 21,
-        active_slice: "runtime event fanout is narrowed, legacy Node daemon/project-service adoption is blocked, the core-routable installed CLI Node fallback backlog is empty, and production dashboard launch now selects the native dashboard",
+        progress_estimate_percent: 92,
+        active_slice: "post-cut native front-door hardening and live residual coverage; normal CLI, daemon, project-service, tmux runtime, and dashboard paths are Rust-owned and Node-free",
         checkpoints: &[
             "native CLI scaffold and rewrite status command",
             "project API contract constants and mutation invalidation mapping",
@@ -120,10 +120,12 @@ pub fn rewrite_status() -> RewriteStatus {
             "runtime event route derives activity, attention, event history, notifications, and focused unread suppression",
             "dashboard desktop-state model, renderer, navigation, action planning, input loop, focus sync, and process selection",
             "root dashboard, configured tool launch, and root resume entrypoints avoid the Node launcher fallback",
-            "native dashboard command is the production dashboard launch default while the TypeScript dashboard remains available through an explicit selector",
+            "native dashboard command is the production dashboard launch default",
             "output capture/projection cache and expose preview attachment slices",
             "native daemon/runtime rejects legacy Node control-plane adoption and relaunches project services native on open",
             "native release archives install without requiring Node when the platform Rust binary is present",
+            "retired TypeScript hot-path graph was deleted; committed corpora and live residual smokes are the remaining parity specification",
+            "source checkout keeps only app-required TypeScript contract files plus GUI and relay TypeScript surfaces",
         ],
         phases: PHASES,
     }
