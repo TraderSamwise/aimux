@@ -577,11 +577,14 @@ impl RealDaemonRuntime {
     fn restart_project_roots(&self, project_root: Option<&str>) -> Vec<String> {
         match project_root {
             Some(project_root) => vec![self.resolve_project_root_value(project_root)],
-            None => self
-                .list_projects_for_route()
-                .into_iter()
-                .map(|project| project.path)
-                .collect(),
+            None => restart_all_project_roots(
+                &self.daemon_state(),
+                self.resolver
+                    .list_projects()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|project| project.repo_root),
+            ),
         }
     }
 
@@ -2106,6 +2109,28 @@ fn restart_summary(projects: &[Value]) -> Value {
     })
 }
 
+fn restart_all_project_roots(
+    state: &DaemonState,
+    registry_project_roots: impl IntoIterator<Item = String>,
+) -> Vec<String> {
+    state
+        .projects
+        .values()
+        .filter_map(|project| project.get("projectRoot").and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|project_root| !project_root.is_empty())
+        .map(str::to_owned)
+        .chain(
+            registry_project_roots
+                .into_iter()
+                .map(|project_root| project_root.trim().to_owned())
+                .filter(|project_root| !project_root.is_empty()),
+        )
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
 fn restart_step_status<'a>(project: &'a Value, field: &str) -> Option<&'a str> {
     project
         .get(field)
@@ -2132,4 +2157,40 @@ fn current_unix_millis() -> u128 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn restart_all_project_roots_follow_daemon_state_and_registry() {
+        let state = DaemonState {
+            version: 1,
+            updated_at: Some(json!("now")),
+            projects: Map::from_iter([
+                ("beta".into(), json!({ "projectRoot": "/repo/beta" })),
+                ("empty".into(), json!({ "projectRoot": " " })),
+                ("missing".into(), json!({ "pid": 42 })),
+                ("alpha".into(), json!({ "projectRoot": "/repo/alpha" })),
+                ("dup".into(), json!({ "projectRoot": "/repo/beta" })),
+            ]),
+        };
+
+        assert_eq!(
+            restart_all_project_roots(
+                &state,
+                [
+                    "/repo/beta".to_owned(),
+                    "/repo/gamma".to_owned(),
+                    " ".to_owned(),
+                ],
+            ),
+            vec![
+                "/repo/alpha".to_owned(),
+                "/repo/beta".to_owned(),
+                "/repo/gamma".to_owned()
+            ]
+        );
+    }
 }

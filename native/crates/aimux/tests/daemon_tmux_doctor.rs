@@ -2,18 +2,21 @@ use aimux::daemon::tmux_doctor::{
     TmuxDoctorCommandRunner, TmuxDoctorInput, TmuxRepairInput, build_tmux_doctor_report,
     render_tmux_doctor_report, render_tmux_repair_result, repair_tmux_runtime,
 };
-use aimux::tmux::{TmuxCommandSpec, project_session};
+use aimux::tmux::{AIMUX_TMUX_RUNTIME_CONTRACT_VERSION, TmuxCommandSpec, project_session};
 use serde_json::{Value, json};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
+type FakeCommandKey = (String, Vec<String>);
+type FakeCommandResponses = VecDeque<Result<String, String>>;
+
 #[derive(Debug, Default)]
 struct FakeRunner {
-    responses: HashMap<(String, Vec<String>), Result<String, String>>,
+    responses: HashMap<FakeCommandKey, FakeCommandResponses>,
     calls: Vec<(String, Vec<String>)>,
     sourced_files: Vec<String>,
     pass_mutations: bool,
@@ -26,7 +29,20 @@ impl FakeRunner {
                 program.to_owned(),
                 args.iter().map(|arg| (*arg).to_owned()).collect(),
             ),
-            Ok(output.to_owned()),
+            VecDeque::from([Ok(output.to_owned())]),
+        );
+    }
+
+    fn respond_sequence(&mut self, program: &str, args: &[&str], outputs: &[&str]) {
+        self.responses.insert(
+            (
+                program.to_owned(),
+                args.iter().map(|arg| (*arg).to_owned()).collect(),
+            ),
+            outputs
+                .iter()
+                .map(|output| Ok((*output).to_owned()))
+                .collect(),
         );
     }
 
@@ -36,7 +52,7 @@ impl FakeRunner {
                 program.to_owned(),
                 args.iter().map(|arg| (*arg).to_owned()).collect(),
             ),
-            Err(error.to_owned()),
+            VecDeque::from([Err(error.to_owned())]),
         );
     }
 }
@@ -56,8 +72,14 @@ impl TmuxDoctorCommandRunner for FakeRunner {
             return Ok(String::new());
         }
         self.responses
-            .get(&key)
-            .cloned()
+            .get_mut(&key)
+            .and_then(|responses| {
+                if responses.len() > 1 {
+                    responses.pop_front()
+                } else {
+                    responses.front().cloned()
+                }
+            })
             .unwrap_or_else(|| Err(format!("unhandled command: {program} {}", args.join(" "))))
     }
 }
@@ -298,6 +320,116 @@ fn canonicalizes_default_session_and_reports_unavailable_tmux_without_fallback()
     let text = render_tmux_doctor_report(&report);
     assert!(text.contains("tmux available: no"));
     assert!(text.contains("active window: (none)"));
+    fixture.cleanup();
+}
+
+#[test]
+fn repair_creates_dashboard_window_when_host_session_exists_without_dashboard() {
+    let fixture = Fixture::new("missing-dashboard-window");
+    let project_root = fixture.root.join("repo");
+    fs::create_dir_all(&project_root).expect("project root");
+    fs::create_dir_all(fixture.script.parent().expect("script parent")).expect("script dir");
+    fs::write(&fixture.script, "#!/bin/sh\n").expect("statusline script");
+    let control_script = fixture.root.join("scripts/tmux-control.sh");
+    fs::write(&control_script, "#!/bin/sh\n").expect("control script");
+    let canonical_project_root = fs::canonicalize(&project_root).expect("canonical project root");
+    let host_session = project_session(&canonical_project_root, "aimux").session_name;
+
+    let mut runner = FakeRunner {
+        pass_mutations: true,
+        ..FakeRunner::default()
+    };
+    runner.respond("tmux", &["-V"], "tmux 3.5a\n");
+    runner.respond(
+        "tmux",
+        &["list-sessions", "-F", "#{session_name}"],
+        &format!("{host_session}\n"),
+    );
+    runner.respond("tmux", &["has-session", "-t", &host_session], "");
+    runner.respond(
+        "tmux",
+        &[
+            "show-options",
+            "-v",
+            "-t",
+            &host_session,
+            "@aimux-runtime-contract",
+        ],
+        AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
+    );
+    runner.respond(
+        "tmux",
+        &[
+            "show-options",
+            "-v",
+            "-t",
+            &host_session,
+            "terminal-features",
+        ],
+        "",
+    );
+    runner.respond_sequence(
+        "tmux",
+        &[
+            "list-windows",
+            "-t",
+            &host_session,
+            "-F",
+            "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}\t#{pane_dead}",
+        ],
+        &[
+            "@3\t3\tclaude\t1\t0\t0\n",
+            "@0\t0\tdashboard\t1\t0\t0\n@3\t3\tclaude\t0\t0\t0\n",
+        ],
+    );
+    runner.respond(
+        "tmux",
+        &[
+            "list-windows",
+            "-t",
+            &host_session,
+            "-F",
+            "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}\t#{pane_dead}\t#{@aimux-meta}",
+        ],
+        "",
+    );
+
+    let result = repair_tmux_runtime(
+        &mut runner,
+        &TmuxRepairInput {
+            project_root,
+            aimux_home: fixture.aimux_home.clone(),
+            session_prefix: "aimux".into(),
+            dashboard_command: Some(TmuxCommandSpec {
+                cwd: canonical_project_root.to_string_lossy().into_owned(),
+                command: "aimux".into(),
+                args: vec!["__dashboard-internal-native".into()],
+            }),
+            statusline_script_path: fixture.script.clone(),
+            tmux_control_script_path: control_script,
+            tmux_env: None,
+            open: false,
+        },
+    )
+    .expect("repair result");
+
+    assert_eq!(result.session_name, host_session);
+    assert_eq!(result.dashboard_session_name, result.session_name);
+    assert_eq!(result.dashboard_window_id, "@0");
+    assert!(runner.calls.iter().any(|(_, args)| args
+        == &[
+            "new-window".to_owned(),
+            "-d".to_owned(),
+            "-t".to_owned(),
+            result.session_name.clone(),
+            "-c".to_owned(),
+            canonical_project_root.to_string_lossy().into_owned(),
+            "-n".to_owned(),
+            "dashboard".to_owned(),
+            "aimux".to_owned(),
+            "__dashboard-internal-native".to_owned(),
+        ]));
+    assert!(render_tmux_repair_result(&result).contains("dashboard target:"));
     fixture.cleanup();
 }
 
