@@ -30,6 +30,40 @@ pub fn native_tool_launch_args_for_config(args: &[String], config: &Value) -> Op
     Some(spawn_args)
 }
 
+pub fn native_root_tool_launch_args_for_config(
+    args: &[String],
+    config: &Value,
+) -> Option<Vec<String>> {
+    let launch_args = native_tool_launch_args_for_config(args, config)?;
+    if launch_args.first().map(String::as_str) == Some("spawn") {
+        Some(force_spawn_no_open_json(&launch_args))
+    } else {
+        Some(launch_args)
+    }
+}
+
+pub fn force_spawn_no_open_json(args: &[String]) -> Vec<String> {
+    let delimiter_index = args.iter().position(|arg| arg == "--");
+    let head_end = delimiter_index.unwrap_or(args.len());
+    let mut result = Vec::with_capacity(args.len() + 2);
+    result.extend(
+        args[..head_end]
+            .iter()
+            .filter(|arg| arg.as_str() != "--no-open")
+            .cloned(),
+    );
+    if !result.iter().any(|arg| arg == "--no-open") {
+        result.push("--no-open".into());
+    }
+    if !result.iter().any(|arg| arg == "--json") {
+        result.push("--json".into());
+    }
+    if let Some(index) = delimiter_index {
+        result.extend(args[index..].iter().cloned());
+    }
+    result
+}
+
 fn strip_leading_delimiter(args: &[String]) -> &[String] {
     match args {
         [delimiter, rest @ ..] if delimiter == "--" => rest,

@@ -42,7 +42,7 @@ pub fn cli_entry_for<S: AsRef<str>>(argv: &[S]) -> CliEntry {
 fn is_full_cli_only_command(args: &[String]) -> bool {
     matches!(
         args.first().map(String::as_str),
-        Some("spawn" | "dashboard-reload" | "restart-runtime")
+        Some("dashboard-reload" | "restart-runtime")
     ) || matches!(
         args.get(0..2),
         Some([host, agent_stream]) if host == "host" && agent_stream == "agent-stream"

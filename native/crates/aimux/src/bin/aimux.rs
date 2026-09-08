@@ -13,20 +13,24 @@ use aimux::local_ui_server::{
     open_url_in_browser, resolve_default_local_ui_root, start_local_ui_server,
 };
 use aimux::native_cli_dispatch::{
-    native_tool_launch_args_for_config, normalize_root_dispatch_args,
+    native_root_tool_launch_args_for_config, normalize_root_dispatch_args,
 };
 use aimux::paths::PathResolver;
 use aimux::project_service::process::{
     ProjectServiceInternalOptions, run_project_service_internal,
 };
 use aimux::root_session_launch::{parse_root_resume_args, resume_saved_sessions};
+use aimux::tmux::{OpenTargetOptions, TmuxRuntimeManager, TmuxTarget};
 use aimux::tmux_control::{parse_tmux_control_args, run_tmux_control};
 use aimux::tmux_expose::{parse_expose_args, run_tmux_expose};
 use aimux::tmux_open_hyperlink::run_tmux_open_hyperlink_from_env;
 use aimux::tmux_statusline_script::{parse_tmux_statusline_args, run_tmux_statusline};
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use serde_json::Value;
 use std::fs;
+use std::io::IsTerminal;
+use std::os::fd::AsRawFd;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -81,10 +85,10 @@ enum Command {
         project_root: Option<PathBuf>,
         #[arg(long = "desktop-state-file")]
         desktop_state_file: Option<PathBuf>,
-        #[arg(long, default_value_t = 120)]
-        cols: usize,
-        #[arg(long, default_value_t = 40)]
-        rows: usize,
+        #[arg(long)]
+        cols: Option<usize>,
+        #[arg(long)]
+        rows: Option<usize>,
         #[arg(long)]
         once: bool,
     },
@@ -168,7 +172,7 @@ fn main() -> Result<ExitCode> {
                 return run_root_resume_command(request.tool_filter.as_deref());
             }
             if let Some(args) = native_tool_launch_args(&stripped_args) {
-                return run_core_command_and_print(&args);
+                return run_root_tool_launch_command(&args);
             }
             if let Some(code) = handle_known_native_command_fallback(&stripped_args) {
                 return Ok(code);
@@ -233,11 +237,12 @@ fn main() -> Result<ExitCode> {
             rows,
             once,
         } => {
+            let (resolved_cols, resolved_rows) = resolve_dashboard_dimensions(cols, rows);
             run_native_dashboard_internal(NativeDashboardOptions {
                 project_root: project_root.unwrap_or(std::env::current_dir()?),
                 desktop_state_file,
-                cols,
-                rows,
+                cols: resolved_cols,
+                rows: resolved_rows,
                 once,
             })?;
             Ok(())
@@ -323,19 +328,37 @@ fn run_root_dashboard_command() -> Result<ExitCode> {
         return Ok(ExitCode::from(serve.code as u8));
     }
 
-    let dashboard_args = vec!["dashboard-reload".to_owned(), "--open".to_owned()];
-    run_core_command_and_print(&dashboard_args)
+    if std::env::var_os("TMUX").is_some() {
+        let mut dashboard_args = vec!["dashboard-reload".to_owned(), "--open".to_owned()];
+        append_foreground_tmux_client_args(&mut dashboard_args);
+        return run_core_command_and_print(&dashboard_args);
+    }
+
+    let dashboard_args = vec!["dashboard-reload".to_owned(), "--json".to_owned()];
+    let execution = run_core_cli(&dashboard_args);
+    if execution.code != 0 {
+        print_execution(execution);
+        return Ok(ExitCode::from(1));
+    }
+    let payload = parse_single_json_stdout(&execution.stdout)?;
+    open_payload_target_from_foreground(&payload)?;
+    Ok(ExitCode::SUCCESS)
 }
 
 fn run_core_command_and_print(args: &[String]) -> Result<ExitCode> {
     let execution = run_core_cli(args);
+    let code = execution.code;
+    print_execution(execution);
+    Ok(ExitCode::from(code as u8))
+}
+
+fn print_execution(execution: aimux::core_cli_executor::CoreCliExecution) {
     for line in execution.stdout {
         println!("{line}");
     }
     for line in execution.stderr {
         eprintln!("{line}");
     }
-    Ok(ExitCode::from(execution.code as u8))
 }
 
 fn run_root_resume_command(tool_filter: Option<&str>) -> Result<ExitCode> {
@@ -358,7 +381,124 @@ fn run_root_resume_command(tool_filter: Option<&str>) -> Result<ExitCode> {
     for (session_id, error) in result.failed {
         eprintln!("Skipping saved session \"{session_id}\": {error}");
     }
-    run_core_command_and_print(&["dashboard-reload".to_owned(), "--open".to_owned()])
+    let mut dashboard_args = vec!["dashboard-reload".to_owned(), "--open".to_owned()];
+    append_foreground_tmux_client_args(&mut dashboard_args);
+    run_core_command_and_print(&dashboard_args)
+}
+
+fn run_root_tool_launch_command(args: &[String]) -> Result<ExitCode> {
+    if args.first().map(String::as_str) != Some("spawn") {
+        return run_core_command_and_print(args);
+    }
+    let execution = run_core_cli(args);
+    if execution.code != 0 {
+        print_execution(execution);
+        return Ok(ExitCode::from(1));
+    }
+    let payload = parse_single_json_stdout(&execution.stdout)?;
+    open_payload_target_from_foreground(&payload)?;
+    Ok(ExitCode::SUCCESS)
+}
+
+fn parse_single_json_stdout(stdout: &[String]) -> Result<Value> {
+    let text = stdout.join("\n");
+    serde_json::from_str(&text).map_err(anyhow::Error::from)
+}
+
+fn open_payload_target_from_foreground(payload: &Value) -> Result<()> {
+    let target = tmux_target_from_value(&payload["dashboardTarget"])
+        .or_else(|| tmux_target_from_value(&payload["tmuxTarget"]))
+        .ok_or_else(|| anyhow::anyhow!("tmux target missing from native launch response"))?;
+    let mut tmux = TmuxRuntimeManager::new();
+    tmux.open_target(
+        &target,
+        OpenTargetOptions {
+            inside_tmux: std::env::var_os("TMUX").is_some(),
+            client_tty: foreground_tty(),
+            ..OpenTargetOptions::default()
+        },
+    )
+    .map_err(anyhow::Error::msg)?;
+    Ok(())
+}
+
+fn tmux_target_from_value(value: &Value) -> Option<TmuxTarget> {
+    Some(TmuxTarget {
+        session_name: value.get("sessionName")?.as_str()?.to_owned(),
+        window_id: value.get("windowId")?.as_str()?.to_owned(),
+        window_index: value.get("windowIndex")?.as_i64()?,
+        window_name: value.get("windowName")?.as_str()?.to_owned(),
+        pane_dead: value.get("paneDead").and_then(Value::as_bool),
+    })
+}
+
+fn append_foreground_tmux_client_args(args: &mut Vec<String>) {
+    if let Some(tty) = foreground_tty() {
+        args.push("--client-tty".into());
+        args.push(tty);
+    }
+    if let Some(session) = current_tmux_client_session() {
+        args.push("--current-client-session".into());
+        args.push(session);
+    }
+}
+
+fn foreground_tty() -> Option<String> {
+    if std::env::var_os("TMUX").is_some()
+        && let Some(client_tty) = tmux_display_message("#{client_tty}")
+    {
+        return Some(client_tty);
+    }
+    if !std::io::stdin().is_terminal() {
+        return None;
+    }
+    std::process::Command::new("tty")
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        .filter(|tty| !tty.is_empty() && tty != "not a tty")
+}
+
+fn current_tmux_client_session() -> Option<String> {
+    std::env::var_os("TMUX")?;
+    tmux_display_message("#{client_session}")
+}
+
+fn tmux_display_message(format: &str) -> Option<String> {
+    std::process::Command::new("tmux")
+        .args(["display-message", "-p", format])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        .filter(|value| !value.is_empty())
+}
+
+fn resolve_dashboard_dimensions(cols: Option<usize>, rows: Option<usize>) -> (usize, usize) {
+    let detected = terminal_dimensions();
+    (
+        cols.or_else(|| detected.map(|(cols, _)| cols))
+            .unwrap_or(120),
+        rows.or_else(|| detected.map(|(_, rows)| rows))
+            .unwrap_or(40),
+    )
+}
+
+fn terminal_dimensions() -> Option<(usize, usize)> {
+    terminal_dimensions_for_fd(std::io::stdout().as_raw_fd())
+        .or_else(|| terminal_dimensions_for_fd(std::io::stdin().as_raw_fd()))
+}
+
+fn terminal_dimensions_for_fd(fd: i32) -> Option<(usize, usize)> {
+    let mut size = std::mem::MaybeUninit::<libc::winsize>::zeroed();
+    if unsafe { libc::ioctl(fd, libc::TIOCGWINSZ, size.as_mut_ptr()) } != 0 {
+        return None;
+    }
+    let size = unsafe { size.assume_init() };
+    let cols = usize::from(size.ws_col);
+    let rows = usize::from(size.ws_row);
+    (cols > 0 && rows > 0).then_some((cols, rows))
 }
 
 fn native_tool_launch_args(args: &[String]) -> Option<Vec<String>> {
@@ -371,7 +511,7 @@ fn native_tool_launch_args(args: &[String]) -> Option<Vec<String>> {
     let normalized = std::iter::once(tool.clone())
         .chain(extra_args.iter().cloned())
         .collect::<Vec<_>>();
-    native_tool_launch_args_for_config(&normalized, &config)
+    native_root_tool_launch_args_for_config(&normalized, &config)
 }
 
 fn current_project_root() -> Result<PathBuf> {

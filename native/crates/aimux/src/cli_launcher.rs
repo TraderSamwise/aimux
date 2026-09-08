@@ -141,11 +141,22 @@ fn resolve_aimux_cli_launch_command_with_native_preference(
             stable_shim_path,
         };
     }
+    let current_entry_is_process = canonical_path(&process_exec_path)
+        == canonical_path(&current_entry_path)
+        && Path::new(&process_exec_path)
+            .file_name()
+            .and_then(|value| value.to_str())
+            == Some("aimux");
+    let current_entry_args = if current_entry_is_process {
+        args
+    } else {
+        std::iter::once(current_entry_path.clone())
+            .chain(args)
+            .collect()
+    };
     AimuxCliLaunchCommand {
         command: process_exec_path,
-        args: std::iter::once(current_entry_path.clone())
-            .chain(args)
-            .collect(),
+        args: current_entry_args,
         source: AimuxCliLaunchSource::CurrentEntry,
         current_entry_path,
         stable_shim_path,

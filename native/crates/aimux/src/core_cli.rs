@@ -538,7 +538,7 @@ where
             (
                 CoreCliOperation::LifecycleSpawn,
                 CoreCliAction::TextRoute {
-                    path: text_route_path(CORE_API_ROUTES.lifecycle_spawn_text, parsed.json),
+                    path: lifecycle_spawn_text_path(&parsed, &project_root),
                     body: Some(Value::Object(body)),
                 },
                 CoreCliFallback::None,
@@ -1471,17 +1471,18 @@ where
                 CoreCliFallback::None,
             )
         }
-        ("dashboard-reload", _) => (
-            CoreCliOperation::DashboardReload,
-            CoreCliAction::TextRoute {
-                path: CORE_API_ROUTES.dashboard_reload_text.to_owned(),
-                body: Some(dashboard_reload_payload(
-                    context.current_project_root.clone(),
-                    &args,
-                )?),
-            },
-            CoreCliFallback::None,
-        ),
+        ("dashboard-reload", _) => {
+            let (payload, json) =
+                dashboard_reload_payload(context.current_project_root.clone(), &args)?;
+            (
+                CoreCliOperation::DashboardReload,
+                CoreCliAction::TextRoute {
+                    path: text_route_path(CORE_API_ROUTES.dashboard_reload_text, json),
+                    body: Some(payload),
+                },
+                CoreCliFallback::None,
+            )
+        }
         ("restart-runtime", _) => {
             let (payload, json) = runtime_restart_payload(
                 context.current_project_root.clone(),

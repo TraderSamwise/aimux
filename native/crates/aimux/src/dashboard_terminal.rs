@@ -97,8 +97,34 @@ pub fn read_dashboard_keys(input: &mut impl Read) -> io::Result<Vec<DashboardKey
     match input.read(&mut buffer) {
         Ok(0) => Ok(Vec::new()),
         Ok(count) => Ok(parse_dashboard_keys(&buffer[..count])),
-        Err(error) if error.kind() == io::ErrorKind::WouldBlock => Ok(Vec::new()),
+        Err(error) if is_nonblocking_empty_read(&error) => Ok(Vec::new()),
         Err(error) if error.kind() == io::ErrorKind::Interrupted => Ok(Vec::new()),
         Err(error) => Err(error),
+    }
+}
+
+fn is_nonblocking_empty_read(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::WouldBlock
+        || error.raw_os_error() == Some(libc::EAGAIN)
+        || error.raw_os_error() == Some(libc::EWOULDBLOCK)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct NonblockingEmptyRead;
+
+    impl Read for NonblockingEmptyRead {
+        fn read(&mut self, _buffer: &mut [u8]) -> io::Result<usize> {
+            Err(io::Error::from_raw_os_error(libc::EAGAIN))
+        }
+    }
+
+    #[test]
+    fn raw_eagain_from_nonblocking_stdin_is_empty_input() {
+        let mut input = NonblockingEmptyRead;
+
+        assert_eq!(read_dashboard_keys(&mut input).unwrap(), Vec::new());
     }
 }

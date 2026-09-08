@@ -69,6 +69,7 @@ pub fn has_core_global_logging_args<S: AsRef<str>>(argv_or_raw_args: &[S]) -> bo
 
 pub(super) fn has_help<S: AsRef<str>>(args: &[S]) -> bool {
     args.iter()
+        .take_while(|arg| arg.as_ref() != "--")
         .any(|arg| matches!(arg.as_ref(), "--help" | "-h"))
 }
 

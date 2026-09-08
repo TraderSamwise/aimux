@@ -527,6 +527,7 @@ pub enum CoreHostAgentStreamArgsError {
 #[serde(rename_all = "camelCase")]
 pub struct CoreDashboardReloadArgs {
     pub open: bool,
+    pub json: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub client_tty: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

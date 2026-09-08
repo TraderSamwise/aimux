@@ -1,5 +1,6 @@
 use crate::core_cli_routing::{
-    CoreHostRestartArgs, parse_core_dashboard_reload_args, parse_core_runtime_restart_args,
+    CoreHostRestartArgs, CoreLifecycleSpawnArgs, parse_core_dashboard_reload_args,
+    parse_core_runtime_restart_args,
 };
 use crate::core_command_contract::CORE_API_ROUTES;
 use serde_json::{Value, json};
@@ -18,18 +19,21 @@ pub(super) fn project_restart_payload(project_root: String, options: CoreHostRes
 pub(super) fn dashboard_reload_payload(
     project_root: String,
     args: &[String],
-) -> Result<Value, CoreCliPlanError> {
+) -> Result<(Value, bool), CoreCliPlanError> {
     let parsed = parse_core_dashboard_reload_args(args).ok_or_else(|| {
         CoreCliPlanError::InvalidArguments {
             args: args.to_vec(),
             message: "error: invalid dashboard-reload arguments",
         }
     })?;
-    Ok(dashboard_text_payload(
-        project_root,
-        parsed.open,
-        parsed.client_tty,
-        parsed.current_client_session,
+    Ok((
+        dashboard_text_payload(
+            project_root,
+            parsed.open,
+            parsed.client_tty,
+            parsed.current_client_session,
+        ),
+        parsed.json,
     ))
 }
 
@@ -288,6 +292,27 @@ pub(super) fn text_route_path(path: &str, json: bool) -> String {
     } else {
         path.to_owned()
     }
+}
+
+pub(super) fn lifecycle_spawn_text_path(
+    parsed: &CoreLifecycleSpawnArgs,
+    project_root: &str,
+) -> String {
+    let mut path = format!(
+        "{}?project={}&tool={}&open={}",
+        CORE_API_ROUTES.lifecycle_spawn_text,
+        encode_query_component(project_root),
+        encode_query_component(&parsed.tool),
+        if parsed.open { "1" } else { "0" }
+    );
+    if let Some(worktree) = parsed.worktree.as_deref() {
+        path.push_str("&worktreePath=");
+        path.push_str(&encode_query_component(worktree));
+    }
+    if parsed.json {
+        path.push_str("&json=1");
+    }
+    path
 }
 
 pub(super) fn metadata_text_path(project: &str, args: &[String]) -> String {

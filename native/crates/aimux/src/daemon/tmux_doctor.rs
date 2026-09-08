@@ -304,11 +304,7 @@ pub fn repair_tmux_runtime(
         })
         .flatten();
     if !existed {
-        let argv = new_session_argv(
-            &host_session.session_name,
-            &project_root_text,
-            dashboard_command.as_ref(),
-        );
+        let argv = new_session_argv(&host_session.session_name, &project_root_text, None);
         run_tmux_owned(runner, &argv)?;
     }
     configure_managed_session(

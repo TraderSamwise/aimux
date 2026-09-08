@@ -12,8 +12,16 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RootSessionLaunchMode {
+    Resume,
+    Restore,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RootResumeRequest {
+    pub mode: RootSessionLaunchMode,
     pub tool_filter: Option<String>,
+    pub ignored_args: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,13 +31,41 @@ pub struct RootResumeResult {
 }
 
 pub fn parse_root_resume_args(args: &[String]) -> Option<RootResumeRequest> {
-    match args {
-        [flag] if flag == "--resume" => Some(RootResumeRequest { tool_filter: None }),
-        [flag, tool] if flag == "--resume" && !tool.starts_with('-') => Some(RootResumeRequest {
-            tool_filter: Some(tool.clone()),
-        }),
-        _ => None,
+    let mut mode = None;
+    let mut tool_filter = None;
+    let mut ignored_args = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--resume" => {
+                if mode.is_none() {
+                    mode = Some(RootSessionLaunchMode::Resume);
+                }
+                index += 1;
+            }
+            "--restore" => {
+                if mode.is_none() {
+                    mode = Some(RootSessionLaunchMode::Restore);
+                }
+                index += 1;
+            }
+            "--" => {
+                ignored_args.extend(args[index + 1..].iter().cloned());
+                break;
+            }
+            value if !value.starts_with('-') && tool_filter.is_none() => {
+                tool_filter = Some(value.to_owned());
+                ignored_args.extend(args[index + 1..].iter().cloned());
+                break;
+            }
+            _ => return None,
+        }
     }
+    Some(RootResumeRequest {
+        mode: mode?,
+        tool_filter,
+        ignored_args,
+    })
 }
 
 pub fn launchable_offline_session_ids(topology: &Value, tool_filter: Option<&str>) -> Vec<String> {

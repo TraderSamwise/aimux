@@ -84,6 +84,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
         ..DashboardTuiVisibilityState::default()
     };
     let mut render_now = true;
+    let mut rendered_once = false;
     let mut last_render = Instant::now();
     let clock_start = Instant::now();
     let mut stdout = io::stdout();
@@ -96,7 +97,10 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
 
     loop {
         let now = elapsed_millis(clock_start);
-        let mut dashboard_visible = if visibility_state.started_in_dashboard {
+        let first_paint_pending = render_now && !rendered_once;
+        let mut dashboard_visible = if first_paint_pending {
+            true
+        } else if visibility_state.started_in_dashboard {
             read_dashboard_tui_visibility_for_loop(
                 &mut visibility_state,
                 now,
@@ -168,8 +172,8 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                 visible_model.hidden_offline_agent_count,
                 scroll_offset,
             );
-            stdout.write_all(frame.frame.as_bytes())?;
-            stdout.flush()?;
+            write_dashboard_frame(&mut stdout, frame.frame.as_bytes())?;
+            rendered_once = true;
             let statusline_client_session = ui_state.as_mut().and_then(|ui_state| {
                 ui_state
                     .persist_screen(controller.screen)
@@ -317,6 +321,40 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
         }
         thread::sleep(DASHBOARD_KEY_POLL_INTERVAL);
     }
+}
+
+fn write_dashboard_frame(output: &mut impl Write, bytes: &[u8]) -> io::Result<()> {
+    let mut remaining = bytes;
+    while !remaining.is_empty() {
+        match output.write(remaining) {
+            Ok(0) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::WriteZero,
+                    "failed to write dashboard frame",
+                ));
+            }
+            Ok(count) => remaining = &remaining[count..],
+            Err(error) if is_nonblocking_terminal_write(&error) => {
+                thread::sleep(Duration::from_millis(5));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    loop {
+        match output.flush() {
+            Ok(()) => return Ok(()),
+            Err(error) if is_nonblocking_terminal_write(&error) => {
+                thread::sleep(Duration::from_millis(5));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+fn is_nonblocking_terminal_write(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::WouldBlock
+        || error.raw_os_error() == Some(libc::EAGAIN)
+        || error.raw_os_error() == Some(libc::EWOULDBLOCK)
 }
 
 fn suspend_dashboard_event_stream(

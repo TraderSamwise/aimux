@@ -11,7 +11,8 @@ use std::fs;
 use std::io::IsTerminal;
 use std::path::Path;
 use std::process::Command;
-use std::time::Instant;
+use std::thread;
+use std::time::{Duration, Instant};
 
 pub const TMUX_SEND_TEXT_CHUNK_BYTES: usize = 4_000;
 pub const WINDOW_TARGET_FORMAT: &str = "#{window_id}\t#{window_index}\t#{window_name}";
@@ -297,7 +298,7 @@ impl TmuxRuntimeManager {
     pub fn ensure_project_session(
         &mut self,
         project_root: impl AsRef<Path>,
-        dashboard_command: Option<&TmuxCommandSpec>,
+        _dashboard_command: Option<&TmuxCommandSpec>,
         config: Option<TmuxRuntimeConfig>,
     ) -> Result<TmuxSessionRef, String> {
         let project_root = project_root.as_ref();
@@ -317,11 +318,17 @@ impl TmuxRuntimeManager {
             };
             if !exists {
                 self.exec_owned(
-                    new_session_argv(&session.session_name, &project_root_text, dashboard_command),
+                    new_session_argv(&session.session_name, &project_root_text, None),
                     Some(TmuxExecOptions {
                         cwd: Some(project_root_text.clone()),
                     }),
                 )?;
+                if !self.wait_for_session(&session.session_name, Duration::from_millis(500)) {
+                    return Err(format!(
+                        "tmux session {} was not visible after creation",
+                        session.session_name
+                    ));
+                }
             }
             let configure_result = (|| {
                 if !exists {
@@ -346,6 +353,17 @@ impl TmuxRuntimeManager {
             return Ok(session);
         }
         Ok(session)
+    }
+
+    fn wait_for_session(&mut self, session_name: &str, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if self.has_session(session_name) {
+                return true;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        self.has_session(session_name)
     }
 
     pub async fn ensure_project_session_async(

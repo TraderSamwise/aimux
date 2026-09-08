@@ -124,7 +124,15 @@ pub fn get_dashboard_command_spec_with_options(
         build_dashboard_env_command_prefix(&options.env, true, unset_keys, &options.home_dir),
         aimux_command
     );
-    let wrapped_dashboard_command = build_wrapped_dashboard_command(&dashboard_entrypoint);
+    let native_dashboard = launch
+        .args
+        .iter()
+        .any(|arg| arg == "__dashboard-internal-native");
+    let wrapped_dashboard_command = if native_dashboard {
+        dashboard_entrypoint.clone()
+    } else {
+        build_wrapped_dashboard_command(&dashboard_entrypoint)
+    };
     let stamp_command =
         wrapped_dashboard_command.replacen(&dashboard_entrypoint, &dashboard_stamp_entrypoint, 1);
 

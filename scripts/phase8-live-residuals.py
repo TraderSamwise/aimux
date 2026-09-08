@@ -13,6 +13,7 @@ import glob
 import http.client
 import json
 import os
+import shlex
 import shutil
 import signal
 import socket
@@ -46,6 +47,7 @@ class Scope:
         self.aimux_bin = aimux_bin
         self.procs: list[subprocess.Popen[Any]] = []
         self.tmux_socket_name: str | None = None
+        self.real_tmux: str | None = None
         self.env = isolated_env(self.root, self.home, self.aimux_home, aimux_bin)
         self.home.mkdir(parents=True, exist_ok=True)
         self.aimux_home.mkdir(parents=True, exist_ok=True)
@@ -118,6 +120,7 @@ def isolated_env(root: Path, home: Path, aimux_home: Path, aimux_bin: Path) -> d
     env["AIMUX_DAEMON_HOST"] = "127.0.0.1"
     env["AIMUX_DAEMON_PORT"] = str(free_loopback_port())
     env["AIMUX_DASHBOARD_IMPLEMENTATION"] = "native"
+    env["TERM"] = "xterm-256color"
     env["TMPDIR"] = str(root / "tmp")
     Path(env["TMPDIR"]).mkdir(parents=True, exist_ok=True)
     return without_tmux(env)
@@ -267,14 +270,195 @@ def run_tmux_live_smoke(aimux_bin: Path, mutation: str | None) -> dict[str, Any]
         }
 
 
-def tmux_cmd(scope: Scope, args: list[str]) -> subprocess.CompletedProcess[str]:
+def run_dashboard_render_smoke(aimux_bin: Path, mutation: str | None) -> dict[str, Any]:
     tmux = find_tmux()
+    with Scope("dashboard", aimux_bin) as scope:
+        scope.init_git_project()
+        project_root = scope.project.resolve()
+        run([str(aimux_bin), "init"], cwd=scope.project, env=scope.env, timeout=30)
+        run([str(aimux_bin), "serve"], cwd=scope.project, env=scope.env, timeout=30)
+        endpoint = wait_for_project_service_endpoint(scope)
+        health = http_json(endpoint, "GET", "/health")
+        if health.get("ok") is not True:
+            raise LiveResidualFailure(f"project-service health failed: {health}")
+
+        socket_name = f"aimux-dashboard-{os.getpid()}-{time.time_ns()}"
+        scope.tmux_socket_name = socket_name
+        session = "phase8-dashboard"
+        dashboard_command = (
+            f"cd {shlex.quote(str(project_root))} && "
+            f"{shlex.quote(str(aimux_bin))} __dashboard-internal-native "
+            f"--project-root {shlex.quote(str(project_root))}"
+        )
+        command = f"{dashboard_command}; code=$?; printf '\\n__AIMUX_DASHBOARD_EXIT:%s\\n' \"$code\"; sleep 30"
+        tmux_cmd(scope, [
+            "-f",
+            "/dev/null",
+            "new-session",
+            "-d",
+            "-s",
+            session,
+            "-x",
+            "100",
+            "-y",
+            "30",
+            "sh",
+            "-lc",
+            command,
+        ])
+        required = "agent multiplexer"
+        if mutation == "dashboard-empty-frame":
+            required = "phase8-dashboard-mutation-never-present"
+        output = ""
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            output = capture_tmux(scope, session)
+            if required in output:
+                break
+            if "__AIMUX_DASHBOARD_EXIT:" in output:
+                break
+            time.sleep(0.05)
+        else:
+            raise LiveResidualFailure(f"timed out waiting for native dashboard first frame:\n{output}")
+        if required not in output:
+            raise LiveResidualFailure(f"dashboard did not render required content:\n{output}")
+        if "Main Checkout" not in output or "worktrees" not in output:
+            raise LiveResidualFailure(f"dashboard frame missing project row or navigation hints:\n{output}")
+        return {
+            "name": "phase8-live-dashboard-render-smoke",
+            "privateSocket": socket_name,
+            "caught": [
+                "native dashboard first paint reaching a real tmux pane",
+                "blank alternate-screen dashboard startup",
+                "daemon/project-service backed dashboard snapshot rendering",
+            ],
+            "notCaught": [
+                "user terminal attach handoff outside the private socket",
+                "long-running visibility transitions after first paint",
+            ],
+        }
+
+
+def run_dashboard_attach_smoke(aimux_bin: Path, mutation: str | None) -> dict[str, Any]:
+    tmux = find_tmux()
+    with Scope("dashboard-attach", aimux_bin) as scope:
+        scope.init_git_project()
+        run([str(aimux_bin), "init"], cwd=scope.project, env=scope.env, timeout=30)
+        socket_name = f"aimux-attach-{os.getpid()}-{time.time_ns()}"
+        scope.tmux_socket_name = socket_name
+        install_tmux_socket_wrapper(scope, tmux, socket_name)
+        session = "phase8-attach"
+        project_root = scope.project.resolve()
+        command = (
+            f"cd {shlex.quote(str(project_root))} && "
+            f"{shlex.quote(str(aimux_bin))}; "
+            "code=$?; printf '\\n__AIMUX_ATTACH_EXIT:%s\\n' \"$code\"; sleep 30"
+        )
+        proc = subprocess.Popen(
+            [
+                "script",
+                "-q",
+                "/dev/null",
+                tmux,
+                "-L",
+                socket_name,
+                "-f",
+                "/dev/null",
+                "new-session",
+                "-s",
+                session,
+                "-x",
+                "100",
+                "-y",
+                "30",
+                "sh",
+                "-lc",
+                command,
+            ],
+            cwd=str(project_root),
+            env=scope.env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        scope.procs.append(proc)
+        output = ""
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            try:
+                output = capture_all_tmux(scope)
+            except LiveResidualFailure:
+                output = ""
+            if mutation == "dashboard-attach-terminal-error":
+                output += "\ncannot attach to tmux session phase8-mutation without a terminal"
+            if "cannot attach to tmux session" in output:
+                raise LiveResidualFailure(f"bare aimux refused terminal attach:\n{output}")
+            if "agent multiplexer" in output or "Main Checkout" in output:
+                break
+            time.sleep(0.05)
+        else:
+            terminate_process(proc)
+            raise LiveResidualFailure(
+                "timed out waiting for bare aimux dashboard attach:\n"
+                f"{output}\nstdout:\n{read_pipe(proc.stdout)}\nstderr:\n{read_pipe(proc.stderr)}"
+            )
+        windows = tmux_cmd(
+            scope,
+            ["list-windows", "-a", "-F", "#{session_name}\t#{window_name}"],
+        ).stdout
+        if "dashboard" not in windows:
+            raise LiveResidualFailure(f"bare aimux did not create a dashboard window:\n{windows}")
+        return {
+            "name": "phase8-live-dashboard-attach-smoke",
+            "privateSocket": socket_name,
+            "caught": [
+                "bare aimux terminal attach refusal",
+                "foreground dashboard open path inside a real tmux client",
+                "dashboard window creation from the root CLI entry point",
+            ],
+            "notCaught": [
+                "host-specific terminal emulator behavior outside tmux",
+                "manual detach/reattach navigation after startup",
+            ],
+        }
+
+
+def tmux_cmd(scope: Scope, args: list[str]) -> subprocess.CompletedProcess[str]:
+    tmux = scope.real_tmux or find_tmux()
     return run([tmux, "-L", scope.tmux_socket_name or "aimux-phase8", *args], env=scope.env, timeout=10)
 
 
 def capture_tmux(scope: Scope, session: str) -> str:
     result = tmux_cmd(scope, ["capture-pane", "-p", "-J", "-t", f"{session}:0"])
     return result.stdout
+
+
+def capture_all_tmux(scope: Scope) -> str:
+    sessions = tmux_cmd(scope, ["list-sessions", "-F", "#{session_name}"]).stdout.splitlines()
+    captures: list[str] = []
+    for session in sessions:
+        session = session.strip()
+        if not session:
+            continue
+        try:
+            captures.append(capture_tmux(scope, session))
+        except LiveResidualFailure:
+            pass
+    return "\n".join(captures)
+
+
+def install_tmux_socket_wrapper(scope: Scope, real_tmux: str, socket_name: str) -> None:
+    bin_dir = scope.root / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    wrapper = bin_dir / "tmux"
+    wrapper.write_text(
+        "#!/bin/sh\n"
+        f"exec {shlex.quote(real_tmux)} -L {shlex.quote(socket_name)} \"$@\"\n"
+    )
+    wrapper.chmod(0o755)
+    scope.real_tmux = real_tmux
+    scope.env["PATH"] = f"{bin_dir}{os.pathsep}{scope.env.get('PATH', '')}"
 
 
 def run_sse_stress(aimux_bin: Path, mutation: str | None) -> dict[str, Any]:
@@ -605,6 +789,10 @@ def recorded_temp_pids(scope: Scope) -> list[int]:
 def run_one(name: str, aimux_bin: Path, mutation: str | None) -> dict[str, Any]:
     if name == "tmux":
         return run_tmux_live_smoke(aimux_bin, mutation)
+    if name == "dashboard":
+        return run_dashboard_render_smoke(aimux_bin, mutation)
+    if name == "dashboard-attach":
+        return run_dashboard_attach_smoke(aimux_bin, mutation)
     if name == "sse":
         return run_sse_stress(aimux_bin, mutation)
     if name == "process":
@@ -615,6 +803,8 @@ def run_one(name: str, aimux_bin: Path, mutation: str | None) -> dict[str, Any]:
 def prove_failures(args: argparse.Namespace, aimux_bin: Path) -> list[dict[str, Any]]:
     mutations = {
         "tmux": "tmux-drop-output",
+        "dashboard": "dashboard-empty-frame",
+        "dashboard-attach": "dashboard-attach-terminal-error",
         "sse": "sse-reorder",
         "process": "process-delete-endpoint",
     }
@@ -655,11 +845,17 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--aimux-bin", help="native aimux binary to test")
     parser.add_argument("--skip-build", action="store_true", help="reuse the existing target binary")
-    parser.add_argument("--only", choices=["all", "tmux", "sse", "process"], default="all")
+    parser.add_argument(
+        "--only",
+        choices=["all", "tmux", "dashboard", "dashboard-attach", "sse", "process"],
+        default="all",
+    )
     parser.add_argument("--prove-fails", action="store_true", help="run intentional-fault checks and require failure")
     parser.add_argument("--mutation", choices=[
         "tmux-drop-output",
         "tmux-wrong-resize",
+        "dashboard-empty-frame",
+        "dashboard-attach-terminal-error",
         "sse-reorder",
         "process-delete-endpoint",
     ])
@@ -670,7 +866,7 @@ def main(argv: list[str]) -> int:
     args = parse_args(argv)
     try:
         aimux_bin = build_aimux(args)
-        suites = ["tmux", "sse", "process"] if args.only == "all" else [args.only]
+        suites = ["tmux", "dashboard", "dashboard-attach", "sse", "process"] if args.only == "all" else [args.only]
         results = []
         for suite in suites:
             results.append(run_one(suite, aimux_bin, args.mutation))

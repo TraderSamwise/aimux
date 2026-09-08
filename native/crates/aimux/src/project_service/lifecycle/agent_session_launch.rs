@@ -51,6 +51,7 @@ pub(super) struct AgentSessionLaunchInput {
 
 pub(super) struct AgentSessionLaunchResult {
     pub(super) session_id: String,
+    pub(super) target: crate::tmux::TmuxTarget,
 }
 
 pub(super) fn launch_agent_session(
@@ -237,6 +238,7 @@ pub(super) fn launch_agent_session(
     );
     Ok(AgentSessionLaunchResult {
         session_id: input.session_id,
+        target,
     })
 }
 

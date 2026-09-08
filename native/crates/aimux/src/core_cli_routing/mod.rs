@@ -467,6 +467,7 @@ pub fn parse_core_dashboard_reload_args<S: AsRef<str>>(
     }
     let mut parsed = CoreDashboardReloadArgs {
         open: false,
+        json: false,
         client_tty: None,
         current_client_session: None,
     };
@@ -475,6 +476,11 @@ pub fn parse_core_dashboard_reload_args<S: AsRef<str>>(
         let arg = args[index].as_ref();
         if arg == "--open" {
             parsed.open = true;
+            index += 1;
+            continue;
+        }
+        if arg == "--json" {
+            parsed.json = true;
             index += 1;
             continue;
         }

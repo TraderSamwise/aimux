@@ -229,7 +229,15 @@ pub(super) fn route_agent_spawn(
     );
     match result {
         Ok(result) => lifecycle_response(
-            json!({ "sessionId": result.session_id }),
+            json!({
+                "sessionId": result.session_id,
+                "tmuxTarget": {
+                    "sessionName": result.target.session_name,
+                    "windowId": result.target.window_id,
+                    "windowIndex": result.target.window_index,
+                    "windowName": result.target.window_name,
+                }
+            }),
             "agent.spawn",
             "agent",
             Some(&result.session_id),

@@ -1359,7 +1359,7 @@ fn dashboard_and_runtime_restart_parsers_match_shell_shim_forms() {
     assert!(restart.json);
     assert_eq!(restart.client_tty.as_deref(), Some("/dev/ttys001"));
 
-    assert!(parse_core_dashboard_reload_args(&["dashboard-reload", "--json"]).is_none());
+    assert!(parse_core_dashboard_reload_args(&["dashboard-reload", "--json"]).is_some());
     assert!(parse_core_dashboard_reload_args(&["dashboard-reload", "--client-tty=-x"]).is_none());
     assert!(parse_core_runtime_restart_args(&["restart-runtime", "--project-root=-x"]).is_none());
 }
