@@ -24,7 +24,7 @@ const DASHBOARD_ENV_KEYS: &[&str] = &[
     "AIMUX_CLI_BIN",
     "AIMUX_INSTALL_ROOT",
 ];
-const DASHBOARD_INHERITED_ENV_UNSET_KEYS: &[&str] = &["AIMUX_ROOT"];
+const DASHBOARD_INHERITED_ENV_UNSET_KEYS: &[&str] = &["AIMUX_ROOT", "AIMUX_NATIVE_BIN"];
 const STABLE_SHIM_ENV_KEYS: &[&str] = &["AIMUX_CLI_BIN", "AIMUX_INSTALL_ROOT"];
 const CONTRACT_NODE_EXEC_PATH: &str = "/opt/homebrew/Cellar/node/25.8.1_1/bin/node";
 const CONTRACT_HOME_DIR: &str = "/Users/sam";

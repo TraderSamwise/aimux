@@ -136,6 +136,10 @@ fn launch_environment_is_allowlisted_quoted_and_unsets_stable_paths_for_source()
         &test_dir,
         BTreeMap::from([
             ("AIMUX_ROOT".into(), "/old/aimux/install".into()),
+            (
+                "AIMUX_NATIVE_BIN".into(),
+                "/old/aimux/install/native/darwin-arm64/aimux".into(),
+            ),
             ("AIMUX_HOME".into(), "/tmp/custom'home; echo unsafe".into()),
             ("AIMUX_DAEMON_PORT".into(), "43219".into()),
             ("AIMUX_CLI_BIN".into(), "/not/the/current/shim".into()),
@@ -152,9 +156,11 @@ fn launch_environment_is_allowlisted_quoted_and_unsets_stable_paths_for_source()
     assert!(command.contains("AIMUX_HOME='/tmp/custom'\"'\"'home; echo unsafe'"));
     assert!(command.contains("AIMUX_DAEMON_PORT='43219'"));
     assert!(command.contains("-u 'AIMUX_ROOT'"));
+    assert!(command.contains("-u 'AIMUX_NATIVE_BIN'"));
     assert!(command.contains("-u 'AIMUX_CLI_BIN'"));
     assert!(command.contains("-u 'AIMUX_INSTALL_ROOT'"));
     assert!(!command.contains("/old/aimux/install"));
+    assert!(!command.contains("/old/aimux/install/native/darwin-arm64/aimux"));
     assert!(!command.contains("/not/the/current/shim"));
     assert!(!command.contains("/not/the/current/install"));
     assert!(!command.contains("SECRET_TOKEN"));
@@ -187,6 +193,15 @@ fn native_dashboard_command_unsets_stale_aimux_root_from_tmux_environment() {
                 "AIMUX_ROOT".into(),
                 stale_root.to_string_lossy().into_owned(),
             ),
+            (
+                "AIMUX_NATIVE_BIN".into(),
+                stale_root
+                    .join("native")
+                    .join(host_native_dirname())
+                    .join("aimux")
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
         ]),
         script_path: native_binary.clone(),
         implementation_path: native_binary.clone(),
@@ -201,6 +216,7 @@ fn native_dashboard_command_unsets_stale_aimux_root_from_tmux_environment() {
 
     assert!(command.contains("__dashboard-internal-native"));
     assert!(command.contains("-u 'AIMUX_ROOT'"));
+    assert!(command.contains("-u 'AIMUX_NATIVE_BIN'"));
     assert!(!command.contains(&stale_root.to_string_lossy().into_owned()));
     assert!(command.contains(&native_binary.to_string_lossy().into_owned()));
 }

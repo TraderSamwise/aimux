@@ -1,3 +1,4 @@
+use aimux::release_version_contract::read_aimux_version_from_package_root;
 use aimux::tui_render::text::strip_ansi;
 use serde_json::Value;
 use std::fs;
@@ -48,7 +49,10 @@ fn root_version_and_help_stay_native_even_when_node_fallback_is_configured() {
         .output()
         .expect("run native aimux version");
     assert!(version.status.success());
-    assert_eq!(String::from_utf8_lossy(&version.stdout), "9.8.7-test\n");
+    assert_eq!(
+        String::from_utf8_lossy(&version.stdout),
+        format!("{}\n", expected_source_checkout_runtime_version())
+    );
     assert!(
         !log.exists(),
         "root --version should not invoke node fallback"
@@ -212,11 +216,85 @@ fn native_dashboard_internal_once_renders_snapshot_without_node_fallback() {
         "native dashboard should not invoke node fallback"
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(strip_ansi(&stdout).contains("aimux vlocal-dashboard-test"));
+    assert!(
+        strip_ansi(&stdout).contains(&format!(
+            "aimux v{}",
+            expected_source_checkout_runtime_version()
+        )),
+        "{stdout}"
+    );
     assert!(stdout.contains("agent multiplexer"));
     assert!(stdout.contains("Main Checkout"));
     assert!(stdout.contains("feature-a"));
-    assert!(stdout.contains("native"));
+    assert!(stdout.contains("tmux"));
+    cleanup(root);
+}
+
+#[test]
+fn native_dashboard_internal_version_prefers_running_binary_over_stale_aimux_env() {
+    let root = temp_root("native-dashboard-current-exe-version");
+    let current_root = root.join("install-current");
+    let stale_root = root.join("install-stale");
+    let current_binary = current_root
+        .join("native")
+        .join(host_native_dirname())
+        .join("aimux");
+    let stale_binary = stale_root
+        .join("native")
+        .join(host_native_dirname())
+        .join("aimux");
+    fs::create_dir_all(current_binary.parent().expect("current binary parent"))
+        .expect("create current native dir");
+    fs::create_dir_all(stale_binary.parent().expect("stale binary parent"))
+        .expect("create stale native dir");
+    fs::copy(env!("CARGO_BIN_EXE_aimux"), &current_binary).expect("copy native binary");
+    #[cfg(unix)]
+    {
+        let mut permissions = fs::metadata(&current_binary)
+            .expect("current native metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&current_binary, permissions).expect("chmod current native binary");
+    }
+    fs::write(current_root.join("VERSION"), "local-current-exe\n").expect("write current version");
+    fs::write(stale_root.join("VERSION"), "local-stale-env\n").expect("write stale version");
+    fs::write(&stale_binary, "").expect("write stale native binary");
+    let log = root.join("node.log");
+    let node = fake_node(&root, &log, 9);
+    let desktop_state_file = root.join("desktop-state.json");
+    fs::write(
+        &desktop_state_file,
+        include_str!("../../../../src/multiplexer/desktop-state-golden.fixture.json"),
+    )
+    .expect("write desktop-state fixture");
+
+    let output = Command::new(&current_binary)
+        .env("AIMUX_ROOT", &stale_root)
+        .env("AIMUX_NATIVE_BIN", &stale_binary)
+        .env("AIMUX_NODE_BIN", node)
+        .args([
+            "__dashboard-internal-native",
+            "--project-root",
+            root.to_str().unwrap(),
+            "--desktop-state-file",
+            desktop_state_file.to_str().unwrap(),
+            "--cols",
+            "120",
+            "--rows",
+            "32",
+            "--once",
+        ])
+        .output()
+        .expect("run installed native dashboard");
+
+    assert!(output.status.success());
+    assert!(
+        !log.exists(),
+        "native dashboard should not invoke node fallback"
+    );
+    let stdout = strip_ansi(&String::from_utf8_lossy(&output.stdout));
+    assert!(stdout.contains("aimux vlocal-current-exe"), "{stdout}");
+    assert!(!stdout.contains("local-stale-env"), "{stdout}");
     cleanup(root);
 }
 
@@ -536,6 +614,25 @@ fn unknown_main_commands_fail_native_without_node_fallback() {
     cleanup(root);
 }
 
+fn host_native_dirname() -> String {
+    format!("{}-{}", host_native_platform(), host_native_arch())
+}
+
+fn host_native_platform() -> &'static str {
+    match std::env::consts::OS {
+        "macos" => "darwin",
+        value => value,
+    }
+}
+
+fn host_native_arch() -> &'static str {
+    match std::env::consts::ARCH {
+        "aarch64" => "arm64",
+        "x86_64" => "x64",
+        value => value,
+    }
+}
+
 fn fake_node(root: &std::path::Path, log: &std::path::Path, code: i32) -> PathBuf {
     let path = root.join("fake-node");
     fs::write(
@@ -575,6 +672,10 @@ fn temp_root(label: &str) -> PathBuf {
 
 fn cleanup(path: PathBuf) {
     let _ = fs::remove_dir_all(path);
+}
+
+fn expected_source_checkout_runtime_version() -> String {
+    read_aimux_version_from_package_root(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.."))
 }
 
 struct NativeEntrypointFixture {

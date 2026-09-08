@@ -38,11 +38,6 @@ pub fn read_aimux_runtime_version_from(
     aimux_root: Option<PathBuf>,
     executable_path: Option<PathBuf>,
 ) -> String {
-    if let Some(root) = aimux_root
-        && let Some(version) = read_non_default_version(root)
-    {
-        return version;
-    }
     if let Some(executable_path) = executable_path
         && let Some(parent) = executable_path.parent()
     {
@@ -51,6 +46,11 @@ pub fn read_aimux_runtime_version_from(
                 return version;
             }
         }
+    }
+    if let Some(root) = aimux_root
+        && let Some(version) = read_non_default_version(root)
+    {
+        return version;
     }
     read_aimux_version_from_package_root(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.."))
 }
@@ -167,7 +167,7 @@ mod tests {
     }
 
     #[test]
-    fn runtime_version_prefers_explicit_aimux_root() {
+    fn runtime_version_prefers_running_executable_over_explicit_aimux_root() {
         let env_root = ContractTempDir::new();
         let exe_root = ContractTempDir::new();
         fs::write(env_root.path().join("VERSION"), "local-env\n").expect("write env version");
@@ -176,7 +176,7 @@ mod tests {
 
         assert_eq!(
             read_aimux_runtime_version_from(Some(env_root.path().to_path_buf()), Some(exe)),
-            "local-env"
+            "local-exe"
         );
     }
 }
