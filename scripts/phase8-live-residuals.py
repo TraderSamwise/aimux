@@ -801,7 +801,7 @@ def run_agent_shell_spawn_smoke(aimux_bin: Path, mutation: str | None) -> dict[s
         socket_name = f"aimux-phase8-agent-{os.getpid()}-{int(time.time() * 1000)}"
         scope.tmux_socket_name = socket_name
         install_tmux_socket_wrapper(scope, tmux, socket_name)
-        run([tmux, "-L", socket_name, "start-server"], env=without_tmux(os.environ.copy()), timeout=10)
+        run([tmux, "-L", socket_name, "kill-server"], env=without_tmux(os.environ.copy()), timeout=10, check=False)
         scope.init_git_project()
         run([str(aimux_bin), "init"], cwd=scope.project, env=scope.env, timeout=30)
         install_shell_tool_config(scope)
@@ -850,6 +850,7 @@ def run_agent_shell_spawn_smoke(aimux_bin: Path, mutation: str | None) -> dict[s
             "psAfterSpawn": ps_payload,
             "caught": [
                 "native spawn executor reaches project-service",
+                "agent spawn bootstraps an empty tmux server",
                 "spawned shell session appears in aimux ps",
                 "spawned shell tmux window exists",
                 "agent stop removes the spawned session",
@@ -858,6 +859,56 @@ def run_agent_shell_spawn_smoke(aimux_bin: Path, mutation: str | None) -> dict[s
                 "external agent CLI availability",
                 "LLM API credentials",
                 "long-running interactive shell usage",
+            ],
+        }
+
+
+def run_shell_service_smoke(aimux_bin: Path, mutation: str | None) -> dict[str, Any]:
+    tmux = find_tmux()
+    with Scope("shell-service", aimux_bin) as scope:
+        socket_name = f"aimux-phase8-shell-service-{os.getpid()}-{int(time.time() * 1000)}"
+        scope.tmux_socket_name = socket_name
+        install_tmux_socket_wrapper(scope, tmux, socket_name)
+        run([tmux, "-L", socket_name, "kill-server"], env=without_tmux(os.environ.copy()), timeout=10, check=False)
+        scope.init_git_project()
+        run([str(aimux_bin), "init"], cwd=scope.project, env=scope.env, timeout=30)
+        result = run(
+            [str(aimux_bin), "shell"],
+            cwd=scope.project,
+            env=scope.env,
+            timeout=30,
+        )
+        prefix = "service "
+        suffix = " running"
+        line = result.stdout.strip()
+        if not (line.startswith(prefix) and line.endswith(suffix)):
+            raise LiveResidualFailure(f"aimux shell returned unexpected output:\n{result.stdout}\n{result.stderr}")
+        service_id = line[len(prefix):-len(suffix)]
+        expected_window = "shell"
+        if mutation == "shell-service-missing-window":
+            expected_window = "phase8-shell-service-mutation-missing"
+        windows = wait_until(
+            lambda: tmux_cmd_for_socket(
+                tmux,
+                socket_name,
+                ["list-windows", "-a", "-F", "#{session_name}\t#{window_name}"],
+            ).stdout,
+            timeout=10,
+            label="shell service tmux window inventory",
+        )
+        if f"\t{expected_window}" not in windows:
+            raise LiveResidualFailure(f"shell service tmux window missing for {service_id}:\n{windows}")
+        return {
+            "name": "phase8-shell-service-smoke",
+            "serviceId": service_id,
+            "caught": [
+                "top-level aimux shell reaches service create",
+                "service create bootstraps an empty tmux server",
+                "shell service creates a tmux window",
+            ],
+            "notCaught": [
+                "long-running interactive shell usage",
+                "manual attach focus behavior after service creation",
             ],
         }
 
@@ -1791,6 +1842,8 @@ def run_one(name: str, aimux_bin: Path, mutation: str | None) -> dict[str, Any]:
         return run_command_resolution_smoke(aimux_bin, mutation)
     if name == "agent-shell":
         return run_agent_shell_spawn_smoke(aimux_bin, mutation)
+    if name == "shell-service":
+        return run_shell_service_smoke(aimux_bin, mutation)
     if name == "graveyard":
         return run_graveyard_lifecycle_smoke(aimux_bin, mutation)
     if name == "top-level-agent":
@@ -1816,6 +1869,7 @@ def prove_failures(args: argparse.Namespace, aimux_bin: Path) -> list[dict[str, 
         ("command-resolution", "command-unsupported"),
         ("command-resolution", "command-silent-alias"),
         ("agent-shell", "agent-shell-missing-window"),
+        ("shell-service", "shell-service-missing-window"),
         ("graveyard", "graveyard-stop-adds-entry"),
         ("top-level-agent", "top-level-agent-missing-session"),
         ("lazy-read", "lazy-read-service-unavailable"),
@@ -1871,6 +1925,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             "dashboard-spawn",
             "command-resolution",
             "agent-shell",
+            "shell-service",
             "graveyard",
             "top-level-agent",
             "lazy-read",
@@ -1891,6 +1946,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "command-unsupported",
         "command-silent-alias",
         "agent-shell-missing-window",
+        "shell-service-missing-window",
         "graveyard-stop-adds-entry",
         "top-level-agent-missing-session",
         "lazy-read-service-unavailable",
@@ -1912,6 +1968,7 @@ def main(argv: list[str]) -> int:
             "dashboard-spawn",
             "command-resolution",
             "agent-shell",
+            "shell-service",
             "graveyard",
             "top-level-agent",
             "lazy-read",

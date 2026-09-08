@@ -1399,6 +1399,7 @@ fn service_create_launches_detached_window_with_metadata_policy_and_topology() {
     assert_eq!(response.body["serviceId"], "svc-dev");
     assert_eq!(response.body["status"], "running");
     assert_eq!(response.body["transition"]["operation"], "service.create");
+    assert_eq!(runtime.ensured_sessions, vec![project.clone()]);
     assert_eq!(runtime.created.len(), 1);
     let created = &runtime.created[0];
     assert_eq!(created.name, "yarn");
@@ -1490,6 +1491,7 @@ fn service_resume_recreates_stopped_service_from_persisted_launch_state() {
     assert_eq!(resumed.body["serviceId"], "svc-web");
     assert_eq!(resumed.body["status"], "running");
     assert_eq!(resumed.body["transition"]["operation"], "service.resume");
+    assert_eq!(runtime.ensured_sessions, vec![project.clone()]);
     assert_eq!(runtime.created.len(), 1);
     let created = &runtime.created[0];
     assert_eq!(created.name, "web");

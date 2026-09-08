@@ -164,6 +164,9 @@ fn launch_service(
         vec!["-lc".to_owned(), input.launch_command_line.clone()]
     };
     let session_name = project_session(&project_root, "aimux").session_name;
+    if let Err(error) = runtime.ensure_project_session(context.project_root()) {
+        return json_error(500, error);
+    }
     let target =
         match runtime.create_window(&session_name, &label, &cwd, &launch_command, &args, true) {
             Ok(target) => target,
