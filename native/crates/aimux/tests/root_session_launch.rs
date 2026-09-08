@@ -1,9 +1,9 @@
 use aimux::root_session_launch::{
-    launchable_offline_session_ids, parse_root_resume_args, resume_saved_sessions_from_state_dir,
-    RootSessionLaunchMode,
+    RootSessionLaunchMode, launchable_offline_session_ids, parse_root_resume_args,
+    resume_saved_sessions_from_state_dir,
 };
 use aimux::{
-    daemon_state::{save_metadata_endpoint, MetadataApiEndpoint},
+    daemon_state::{MetadataApiEndpoint, save_metadata_endpoint},
     runtime_topology::{coerce_runtime_topology, runtime_topology_path, write_runtime_topology},
 };
 use serde_json::json;
@@ -13,8 +13,8 @@ use std::{
     net::TcpListener,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicU16, Ordering},
         Arc, Mutex,
+        atomic::{AtomicU16, Ordering},
     },
     thread::{self, JoinHandle},
     time::{SystemTime, UNIX_EPOCH},

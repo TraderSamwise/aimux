@@ -1,5 +1,5 @@
 use crate::core_command_transport::{
-    execute_loopback_json_request, CoreCommandTransportError, DaemonHttpMethod, DaemonJsonRequest,
+    CoreCommandTransportError, DaemonHttpMethod, DaemonJsonRequest, execute_loopback_json_request,
 };
 use crate::daemon_state::{load_metadata_endpoint, resolve_project_service_endpoint};
 use crate::paths::PathResolver;
@@ -7,7 +7,7 @@ use crate::project_api_contract::routes;
 use crate::runtime_topology::{
     list_topology_session_states, read_runtime_topology, runtime_topology_path,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::path::Path;
 

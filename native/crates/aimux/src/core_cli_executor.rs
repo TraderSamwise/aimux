@@ -422,52 +422,6 @@ fn restart_bootstrap_project_roots(
         .collect()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::Map;
-
-    #[test]
-    fn restart_bootstrap_project_roots_follow_saved_daemon_state() {
-        let state = DaemonState {
-            version: 1,
-            updated_at: Some(json!("now")),
-            projects: Map::from_iter([
-                ("beta".into(), json!({ "projectRoot": "/repo/beta" })),
-                ("empty".into(), json!({ "projectRoot": " " })),
-                ("missing".into(), json!({ "pid": 42 })),
-                ("alpha".into(), json!({ "projectRoot": "/repo/alpha" })),
-                ("dup".into(), json!({ "projectRoot": "/repo/beta" })),
-            ]),
-        };
-
-        assert_eq!(
-            restart_bootstrap_project_roots(
-                None,
-                &state,
-                [
-                    "/repo/beta".to_owned(),
-                    "/repo/gamma".to_owned(),
-                    " ".to_owned(),
-                ],
-            ),
-            vec![
-                "/repo/alpha".to_owned(),
-                "/repo/beta".to_owned(),
-                "/repo/gamma".to_owned()
-            ]
-        );
-        assert_eq!(
-            restart_bootstrap_project_roots(
-                Some("/repo/only"),
-                &state,
-                ["/repo/ignored".to_owned()],
-            ),
-            vec!["/repo/only".to_owned()]
-        );
-    }
-}
-
 pub fn run_core_cli(raw_args: &[String]) -> CoreCliExecution {
     let mut runtime = RealCoreCliRuntime;
     run_core_cli_with(raw_args, &mut runtime)
@@ -1228,5 +1182,51 @@ fn js_string(value: &Value) -> String {
         Value::String(value) => value.clone(),
         Value::Array(values) => values.iter().map(js_string).collect::<Vec<_>>().join(","),
         Value::Object(_) => "[object Object]".into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::Map;
+
+    #[test]
+    fn restart_bootstrap_project_roots_follow_saved_daemon_state() {
+        let state = DaemonState {
+            version: 1,
+            updated_at: Some(json!("now")),
+            projects: Map::from_iter([
+                ("beta".into(), json!({ "projectRoot": "/repo/beta" })),
+                ("empty".into(), json!({ "projectRoot": " " })),
+                ("missing".into(), json!({ "pid": 42 })),
+                ("alpha".into(), json!({ "projectRoot": "/repo/alpha" })),
+                ("dup".into(), json!({ "projectRoot": "/repo/beta" })),
+            ]),
+        };
+
+        assert_eq!(
+            restart_bootstrap_project_roots(
+                None,
+                &state,
+                [
+                    "/repo/beta".to_owned(),
+                    "/repo/gamma".to_owned(),
+                    " ".to_owned(),
+                ],
+            ),
+            vec![
+                "/repo/alpha".to_owned(),
+                "/repo/beta".to_owned(),
+                "/repo/gamma".to_owned()
+            ]
+        );
+        assert_eq!(
+            restart_bootstrap_project_roots(
+                Some("/repo/only"),
+                &state,
+                ["/repo/ignored".to_owned()],
+            ),
+            vec!["/repo/only".to_owned()]
+        );
     }
 }

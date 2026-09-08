@@ -5,20 +5,20 @@ use aimux::daemon::runtime::{
 };
 use aimux::daemon::server::DaemonHttpRequest;
 use aimux::daemon_state::{
-    save_daemon_state, save_metadata_endpoint, AimuxDaemonInfo, DaemonState, MetadataApiEndpoint,
-    ProjectServiceState, ProjectServiceStatus,
+    AimuxDaemonInfo, DaemonState, MetadataApiEndpoint, ProjectServiceState, ProjectServiceStatus,
+    save_daemon_state, save_metadata_endpoint,
 };
 use aimux::native_cli_dispatch::{CORE_LOOP_LIST_TEXT_ROUTE, CORE_REVIEW_LIST_TEXT_ROUTE};
 use aimux::paths::PathResolver;
 use aimux::project_api_contract::routes as project_routes;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use std::collections::BTreeSet;
 use std::fs::{self, remove_dir_all};
 use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
