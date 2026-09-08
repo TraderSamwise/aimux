@@ -6,8 +6,9 @@ use crate::dashboard_create::{
     DashboardCreateIntent, DashboardCreatePlan, DashboardServiceCreateIntent, plan_dashboard_create,
 };
 use crate::dashboard_model::{DashboardSession, WorktreeGroup};
-use crate::tui_render::theme::{Tone, footer_hints, keycap, keycap_hints, style};
+use crate::tui_render::theme::{Tone, keycap, keycap_hints, style};
 use crate::tui_render::{OverlayBoxSpec, OverlayVariant, render_overlay_box};
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DashboardServiceInputState {
@@ -64,7 +65,7 @@ pub fn render_service_input_overlay(
             style("Empty command opens an interactive shell", Tone::Muted)
         ),
         String::new(),
-        footer_hints("[Enter] create  [Esc] cancel"),
+        modal_hints("[Enter] create  [Esc] cancel"),
     ];
     render_overlay_box(&OverlayBoxSpec {
         title: "Create service",
@@ -80,7 +81,7 @@ pub fn render_worktree_input_overlay(buffer: &str, cols: usize, rows: usize) -> 
     let body = vec![
         format!("  {} {}_", style("Name:", Tone::Muted), buffer),
         String::new(),
-        footer_hints("[Enter] create  [Esc] cancel"),
+        modal_hints("[Enter] create  [Esc] cancel"),
     ];
     render_overlay_box(&OverlayBoxSpec {
         title: "Create worktree",
@@ -109,7 +110,7 @@ pub fn render_worktree_remove_confirm_overlay(
             )
         ),
         String::new(),
-        footer_hints("[Enter/y] yes  [n/Esc] cancel"),
+        modal_hints("[Enter/y] yes  [n/Esc] cancel"),
     ];
     render_overlay_box(&OverlayBoxSpec {
         title: "Graveyard worktree",
@@ -145,7 +146,7 @@ pub fn render_worktree_list_overlay(
         }
     }
     body.push(String::new());
-    body.push(footer_hints("[Esc] back"));
+    body.push(modal_hints("[Esc] back"));
     render_overlay_box(&OverlayBoxSpec {
         title: "Worktree Management",
         body: &body,
@@ -174,7 +175,7 @@ pub fn render_worktree_cache_cleanup_confirm_overlay(
                 style("No inactive generated worktree caches found.", Tone::Muted)
             ),
             String::new(),
-            footer_hints("[Enter] dismiss  [Esc] back"),
+            modal_hints("[Enter] dismiss  [Esc] back"),
         ]
     } else {
         let mut body = worktree_cache_cleanup_lines(result)
@@ -198,7 +199,7 @@ pub fn render_worktree_cache_cleanup_confirm_overlay(
             )
         ));
         body.push(String::new());
-        body.push(footer_hints("[Enter/y] remove  [n/Esc] cancel"));
+        body.push(modal_hints("[Enter/y] remove  [n/Esc] cancel"));
         body
     };
     render_overlay_box(&OverlayBoxSpec {
@@ -344,7 +345,7 @@ pub fn render_thread_reply_overlay(
         String::new(),
         format!("  {} {}_", style("Message:", Tone::Muted), state.buffer),
         String::new(),
-        footer_hints("[Enter] send  [Esc] cancel"),
+        modal_hints("[Enter] send  [Esc] cancel"),
     ];
     render_overlay_box(&OverlayBoxSpec {
         title: "Reply in thread",
@@ -381,11 +382,16 @@ fn worktree_cache_cleanup_lines(result: &serde_json::Value) -> Vec<String> {
         .and_then(serde_json::Value::as_array)
         .cloned()
         .unwrap_or_default();
-    let reclaimable = result
-        .get("plan")
-        .and_then(|plan| plan.get("reclaimableBytes"))
-        .and_then(serde_json::Value::as_f64)
-        .unwrap_or(0.0);
+    let dry_run = result
+        .get("dryRun")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let bytes = if dry_run {
+        number_at(result, &["plan", "reclaimableBytes"])
+    } else {
+        number_at(result, &["reclaimedBytes"])
+    };
+    let action = if dry_run { "would remove" } else { "removed" };
     let failed = result
         .get("results")
         .and_then(serde_json::Value::as_array)
@@ -394,28 +400,117 @@ fn worktree_cache_cleanup_lines(result: &serde_json::Value) -> Vec<String> {
         .filter(|entry| entry.get("status").and_then(serde_json::Value::as_str) == Some("failed"))
         .count();
     let mut lines = vec![format!(
-        "Worktree cache cleanup would remove {} item(s), {}; {failed} failed.",
+        "Worktree cache cleanup {action} {} item(s), {}; {failed} failed.",
         targets.len(),
-        format_worktree_cache_bytes(reclaimable)
+        format_worktree_cache_bytes(bytes)
     )];
-    if !targets.is_empty() {
-        lines.push("Targets:".into());
-        for target in targets.iter().take(8) {
-            let size = target
-                .get("sizeBytes")
-                .and_then(serde_json::Value::as_f64)
-                .unwrap_or(0.0);
-            let path = target
-                .get("path")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("");
-            lines.push(format!("{:>7}  {path}", format_worktree_cache_bytes(size)));
+    let by_worktree = summarize_worktree_cache_targets(&targets);
+    if !by_worktree.is_empty() {
+        lines.push("By worktree:".into());
+        for summary in by_worktree.iter().take(6) {
+            let size = format_worktree_cache_bytes(summary.size_bytes);
+            lines.push(format!(
+                "{size:>7}  {:>4} item(s)  {}",
+                summary.target_count, summary.worktree_path
+            ));
         }
-        if targets.len() > 8 {
-            lines.push(format!("... {} more target(s) hidden.", targets.len() - 8));
+        if by_worktree.len() > 6 {
+            lines.push(format!(
+                "... {} more worktree(s) hidden; use --json for full detail.",
+                by_worktree.len() - 6
+            ));
         }
     }
+    if !targets.is_empty() {
+        if targets.len() <= 8 {
+            lines.push("Targets:".into());
+            for target in &targets {
+                let size = number_field(target, "sizeBytes");
+                let path = string_field(target, "path").unwrap_or_default();
+                lines.push(format!("{:>7}  {path}", format_worktree_cache_bytes(size)));
+            }
+        } else {
+            lines.push(format!(
+                "Targets hidden ({}); use --json for full detail.",
+                targets.len()
+            ));
+        }
+    }
+    let skipped = array_at(result, &["plan", "skipped"]);
+    if !skipped.is_empty() {
+        let active = skipped
+            .iter()
+            .filter(|entry| string_field(entry, "reason").as_deref() == Some("active-runtime"))
+            .count();
+        let suffix = if active > 0 {
+            format!(" ({active} active-runtime)")
+        } else {
+            String::new()
+        };
+        lines.push(format!("Skipped {} worktree(s){suffix}.", skipped.len()));
+    }
     lines
+}
+
+#[derive(Debug)]
+struct WorktreeCacheSummary {
+    worktree_path: String,
+    size_bytes: f64,
+    target_count: usize,
+}
+
+fn summarize_worktree_cache_targets(targets: &[serde_json::Value]) -> Vec<WorktreeCacheSummary> {
+    let mut by_worktree = BTreeMap::<String, WorktreeCacheSummary>::new();
+    for target in targets {
+        let worktree_path = string_field(target, "worktreePath").unwrap_or_default();
+        let entry =
+            by_worktree
+                .entry(worktree_path.clone())
+                .or_insert_with(|| WorktreeCacheSummary {
+                    worktree_path,
+                    size_bytes: 0.0,
+                    target_count: 0,
+                });
+        entry.size_bytes += number_field(target, "sizeBytes");
+        entry.target_count += 1;
+    }
+    let mut summaries = by_worktree.into_values().collect::<Vec<_>>();
+    summaries.sort_by(|left, right| {
+        right
+            .size_bytes
+            .partial_cmp(&left.size_bytes)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    summaries
+}
+
+fn array_at<'a>(value: &'a serde_json::Value, path: &[&str]) -> Vec<&'a serde_json::Value> {
+    path.iter()
+        .try_fold(value, |current, key| current.get(*key))
+        .and_then(serde_json::Value::as_array)
+        .map(|items| items.iter().collect())
+        .unwrap_or_default()
+}
+
+fn number_at(value: &serde_json::Value, path: &[&str]) -> f64 {
+    path.iter()
+        .try_fold(value, |current, key| current.get(*key))
+        .and_then(serde_json::Value::as_f64)
+        .unwrap_or(0.0)
+}
+
+fn number_field(value: &serde_json::Value, field: &str) -> f64 {
+    value
+        .get(field)
+        .and_then(serde_json::Value::as_f64)
+        .unwrap_or(0.0)
+}
+
+fn string_field(value: &serde_json::Value, field: &str) -> Option<String> {
+    value
+        .get(field)
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned)
 }
 
 pub fn render_teammate_picker_overlay(
@@ -435,29 +530,33 @@ pub fn render_teammate_picker_overlay(
         .enumerate()
         .map(|(index, teammate)| {
             let marker = if index == selected_index {
-                style(">", Tone::Accent)
+                style("▸", Tone::Accent)
             } else {
                 " ".into()
             };
             let number = if index < 9 {
-                format!("[{}]", index + 1)
+                keycap(&(index + 1).to_string(), None)
             } else {
                 "   ".into()
             };
-            let status = format!("{:?}", teammate.status).to_lowercase();
+            let status = teammate_status_label(teammate);
             let label = teammate_label(teammate);
-            let summary = teammate.headline.as_deref().or_else(|| {
-                teammate
-                    .extra
-                    .get("previewLine")
-                    .and_then(serde_json::Value::as_str)
-            });
+            let summary = teammate
+                .headline
+                .as_deref()
+                .or(teammate.preview_line.as_deref())
+                .or_else(|| {
+                    teammate
+                        .last_event
+                        .as_ref()
+                        .and_then(|event| event.message.as_deref())
+                });
             let suffix = summary
-                .map(|summary| format!(" - {}", style(summary, Tone::Muted)))
+                .map(|summary| style(&format!(" - {summary}"), Tone::Muted))
                 .unwrap_or_default();
             format!(
                 "  {marker} {} {} {}{suffix}",
-                style(&number, Tone::Muted),
+                number,
                 style(&label, Tone::Strong),
                 style(&format!("- {status}"), Tone::Muted),
             )
@@ -473,9 +572,7 @@ pub fn render_teammate_picker_overlay(
         ));
     }
     body.push(String::new());
-    body.push(footer_hints(
-        "[up/down] select  [1-9/Enter] open  [Esc] back",
-    ));
+    body.push(modal_hints("[↑↓] select  [1-9/Enter] open  [Esc] back"));
     Some(render_overlay_box(&OverlayBoxSpec {
         title: "Team",
         body: &body,
@@ -486,6 +583,18 @@ pub fn render_teammate_picker_overlay(
     }))
 }
 
+fn modal_hints(line: &str) -> String {
+    format!("  {}", keycap_hints(line))
+}
+
+fn teammate_status_label(teammate: &DashboardSession) -> String {
+    teammate
+        .semantic
+        .as_ref()
+        .map(|semantic| semantic.presentation.status_label.clone())
+        .unwrap_or_else(|| format!("{:?}", teammate.status).to_lowercase())
+}
+
 fn teammate_label(teammate: &DashboardSession) -> String {
     let label = teammate
         .team
@@ -493,7 +602,12 @@ fn teammate_label(teammate: &DashboardSession) -> String {
         .and_then(|team| team.label.as_deref())
         .or(teammate.label.as_deref())
         .unwrap_or(teammate.command.as_str());
-    if let Some(role) = teammate.team.as_ref().and_then(|team| team.role.as_deref()) {
+    if let Some(role) = teammate
+        .team
+        .as_ref()
+        .and_then(|team| team.role.as_deref())
+        .or(teammate.role.as_deref())
+    {
         format!("{label} ({role})")
     } else {
         label.to_owned()

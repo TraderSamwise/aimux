@@ -3,15 +3,29 @@ use aimux::dashboard_controller::{
     DashboardOrchestrationRoutePickerState, DashboardOrchestrationTarget,
 };
 use aimux::dashboard_create::DashboardCreatePlan;
-use aimux::dashboard_model::WorktreeGroup;
+use aimux::dashboard_model::{DashboardSession, WorktreeGroup};
 use aimux::dashboard_service_input::{
     DashboardServiceInputEffect, DashboardServiceInputState, render_orchestration_input_overlay,
     render_orchestration_route_picker_overlay, render_service_input_overlay,
-    render_worktree_cache_cleanup_confirm_overlay, render_worktree_list_overlay,
+    render_teammate_picker_overlay, render_worktree_cache_cleanup_confirm_overlay,
+    render_worktree_list_overlay, render_worktree_remove_confirm_overlay,
 };
 use aimux::project_api_contract::routes;
 use aimux::tui_render::text::strip_ansi;
 use serde_json::json;
+
+const NODE_SERVICE_INPUT_OVERLAY: &str =
+    include_str!("../../../../testdata/contracts/v1/tui/overlay-node-service-input-frame-v1.txt");
+const NODE_WORKTREE_REMOVE_OVERLAY: &str =
+    include_str!("../../../../testdata/contracts/v1/tui/overlay-node-worktree-remove-frame-v1.txt");
+const NODE_TEAMMATE_PICKER_OVERLAY: &str =
+    include_str!("../../../../testdata/contracts/v1/tui/overlay-node-teammate-picker-frame-v1.txt");
+const NODE_WORKTREE_LIST_OVERLAY: &str =
+    include_str!("../../../../testdata/contracts/v1/tui/overlay-node-worktree-list-frame-v1.txt");
+const NODE_CACHE_EMPTY_OVERLAY: &str =
+    include_str!("../../../../testdata/contracts/v1/tui/overlay-node-cache-empty-frame-v1.txt");
+const NODE_CACHE_REMOVAL_OVERLAY: &str =
+    include_str!("../../../../testdata/contracts/v1/tui/overlay-node-cache-removal-frame-v1.txt");
 
 #[test]
 fn printable_input_and_backspace_update_buffer() {
@@ -78,6 +92,83 @@ fn render_service_input_overlay_includes_buffer() {
 }
 
 #[test]
+fn service_input_overlay_matches_node_frame() {
+    let state = DashboardServiceInputState {
+        buffer: "python -m http.server".into(),
+    };
+
+    assert_eq!(
+        render_service_input_overlay(&state, 100, 30),
+        NODE_SERVICE_INPUT_OVERLAY
+    );
+}
+
+#[test]
+fn worktree_remove_overlay_matches_node_frame() {
+    assert_eq!(
+        render_worktree_remove_confirm_overlay(
+            "feat/cleanup",
+            "/repo/.aimux/worktrees/feat/cleanup",
+            100,
+            30,
+        ),
+        NODE_WORKTREE_REMOVE_OVERLAY
+    );
+}
+
+#[test]
+fn teammate_picker_overlay_matches_node_frame() {
+    let sessions = [
+        dashboard_session(json!({
+            "index": 1,
+            "id": "claude-a",
+            "command": "claude",
+            "status": "idle",
+            "active": true,
+            "headline": "mapping remaining gaps",
+            "team": {
+                "teamId": "team-a",
+                "parentSessionId": "parent",
+                "label": "Planner",
+                "role": "architect"
+            },
+            "semantic": {
+                "user": { "label": "Ready" },
+                "presentation": { "statusLabel": "ready", "compactHint": null }
+            }
+        })),
+        dashboard_session(json!({
+            "index": 2,
+            "id": "codex-b",
+            "command": "codex",
+            "status": "running",
+            "active": true,
+            "label": "Porter",
+            "previewLine": "transliterating overlays",
+            "semantic": {
+                "user": { "label": "Working" },
+                "presentation": { "statusLabel": "working", "compactHint": null }
+            }
+        })),
+        dashboard_session(json!({
+            "index": 3,
+            "id": "aider-c",
+            "command": "aider",
+            "status": "offline",
+            "active": false,
+            "role": "reviewer",
+            "lastEvent": { "message": "left notes" }
+        })),
+    ];
+    let refs = sessions.iter().collect::<Vec<_>>();
+
+    assert_eq!(
+        render_teammate_picker_overlay(&refs, 1, 100, 30).expect("teammate overlay renders"),
+        NODE_TEAMMATE_PICKER_OVERLAY
+    );
+}
+
+#[test]
 fn render_worktree_list_overlay_includes_main_and_worktree_rows() {
     let worktrees = vec![
         worktree_group(json!({
@@ -108,6 +199,32 @@ fn render_worktree_list_overlay_includes_main_and_worktree_rows() {
 }
 
 #[test]
+fn worktree_list_overlay_matches_node_frame() {
+    let worktrees = vec![
+        worktree_group(json!({
+            "name": "Main Checkout",
+            "branch": "master",
+            "status": "active",
+            "sessions": [],
+            "services": []
+        })),
+        worktree_group(json!({
+            "name": "feature-a",
+            "branch": "feature-a",
+            "path": "/repo/.aimux/worktrees/feature-a",
+            "status": "active",
+            "sessions": [],
+            "services": []
+        })),
+    ];
+
+    assert_eq!(
+        render_worktree_list_overlay(&worktrees, 100, 30),
+        NODE_WORKTREE_LIST_OVERLAY
+    );
+}
+
+#[test]
 fn render_worktree_cache_cleanup_overlay_shows_preview_and_confirmation() {
     let result = json!({
         "dryRun": true,
@@ -130,6 +247,30 @@ fn render_worktree_cache_cleanup_overlay_shows_preview_and_confirmation() {
 }
 
 #[test]
+fn cache_cleanup_removal_overlay_matches_node_frame() {
+    let result = json!({
+        "dryRun": true,
+        "plan": {
+            "targets": [{
+                "worktreePath": "/repo/.aimux/worktrees/old",
+                "relativePath": "node_modules",
+                "path": "/repo/.aimux/worktrees/old/node_modules",
+                "sizeBytes": 2048
+            }],
+            "reclaimableBytes": 2048,
+            "skipped": [{ "worktreePath": "/repo/.aimux/worktrees/live", "reason": "active-runtime" }]
+        },
+        "results": [{ "path": "/repo/.aimux/worktrees/old/node_modules", "status": "dry-run", "sizeBytes": 2048 }],
+        "reclaimedBytes": 0
+    });
+
+    assert_eq!(
+        render_worktree_cache_cleanup_confirm_overlay(&result, 120, 40),
+        NODE_CACHE_REMOVAL_OVERLAY
+    );
+}
+
+#[test]
 fn render_empty_worktree_cache_cleanup_overlay_is_dismiss_only() {
     let result = json!({
         "dryRun": true,
@@ -148,6 +289,25 @@ fn render_empty_worktree_cache_cleanup_overlay_is_dismiss_only() {
     assert!(plain.contains("No inactive generated worktree caches found."));
     assert!(plain.contains("Enter"));
     assert!(!plain.contains("remove  [n"));
+}
+
+#[test]
+fn cache_cleanup_empty_overlay_matches_node_frame() {
+    let result = json!({
+        "dryRun": true,
+        "plan": {
+            "targets": [],
+            "reclaimableBytes": 0,
+            "skipped": []
+        },
+        "results": [],
+        "reclaimedBytes": 0
+    });
+
+    assert_eq!(
+        render_worktree_cache_cleanup_confirm_overlay(&result, 100, 24),
+        NODE_CACHE_EMPTY_OVERLAY
+    );
 }
 
 #[test]
@@ -200,6 +360,10 @@ fn render_orchestration_input_overlay_includes_target_route_and_buffer() {
 
 fn worktree_group(value: serde_json::Value) -> WorktreeGroup {
     serde_json::from_value(value).expect("valid worktree group")
+}
+
+fn dashboard_session(value: serde_json::Value) -> DashboardSession {
+    serde_json::from_value(value).expect("valid dashboard session")
 }
 
 fn orchestration_target(label: &str) -> DashboardOrchestrationTarget {
