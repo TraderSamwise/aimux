@@ -234,6 +234,15 @@ def terminate_pid(pid: int) -> None:
         os.kill(pid, signal.SIGTERM)
     except OSError:
         return
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        if not pid_is_alive(pid):
+            return
+        time.sleep(0.05)
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except OSError:
+        pass
 
 
 def pid_is_alive(pid: int) -> bool:
