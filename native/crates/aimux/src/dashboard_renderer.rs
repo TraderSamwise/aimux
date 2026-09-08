@@ -514,6 +514,13 @@ fn build_dashboard_footer_hints(input: &DashboardRenderInput<'_>) -> Vec<FooterH
             label: "reply",
             tone: None,
         });
+        if selected_session.is_some() && !selected_teammates(input).is_empty() {
+            hints.push(FooterHint {
+                key: "e",
+                label: "team",
+                tone: None,
+            });
+        }
         if let Some(label) = kill_verb {
             hints.push(FooterHint {
                 key: "x",

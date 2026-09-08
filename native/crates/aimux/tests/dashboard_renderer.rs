@@ -223,6 +223,53 @@ fn renders_state_aware_footer_hints_for_session_actions() {
 }
 
 #[test]
+fn flat_session_footer_keeps_team_hint_for_selected_parent() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let mut snapshot = fixture.runtime_light.clone();
+    snapshot.worktrees.clear();
+    snapshot.worktree_groups.clear();
+    let parent_id = snapshot.sessions[0].id.clone();
+    let mut teammate = snapshot.sessions[0].clone();
+    teammate.id = "claude-teammate".into();
+    teammate.team = Some(
+        serde_json::from_value(json!({
+            "teamId": "team-1",
+            "parentSessionId": parent_id,
+            "role": "reviewer",
+            "label": "Reviewer"
+        }))
+        .expect("team metadata parses"),
+    );
+    snapshot.teammates = vec![teammate];
+
+    let result = render_dashboard_frame(&DashboardRenderInput {
+        snapshot: &snapshot,
+        cols: 140,
+        rows: 24,
+        nav_level: DashboardNavLevel::Sessions,
+        selected_session_id: Some(&parent_id),
+        selected_service_id: None,
+        focused_worktree_path: None,
+        runtime_label: None,
+        version: None,
+        is_dev_runtime: false,
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_message: None,
+        details_sidebar_visible: false,
+        preview_source: "output",
+        scribe_preview_entries: &[],
+    });
+    let plain = strip_ansi(&result.frame);
+
+    assert!(plain.contains("R reply"));
+    assert!(plain.contains("e team"));
+    assert!(plain.contains("x stop"));
+}
+
+#[test]
 fn renders_selected_session_details_sidebar_when_visible() {
     let fixture: DesktopStateGoldenFixture =
         serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
