@@ -70,6 +70,29 @@ fn create_selected_maps_default_launch_override() {
 }
 
 #[test]
+fn create_scribe_mode_marks_spawn_request_as_scribe() {
+    let tools = enabled_dashboard_tools(&merge_config_layers(None, None));
+    let picker = DashboardToolPickerState::with_mode(tools, DashboardToolPickerMode::CreateScribe);
+
+    let DashboardToolPickerEffect::Create(DashboardCreatePlan::Request(request)) =
+        picker.create_selected(Some("/repo"))
+    else {
+        panic!("expected scribe request");
+    };
+
+    assert_eq!(request.path, routes::agents::SPAWN);
+    assert_eq!(
+        request.body,
+        json!({
+            "tool": "claude",
+            "worktreePath": "/repo",
+            "open": false,
+            "scribe": true
+        })
+    );
+}
+
+#[test]
 fn digit_selects_and_creates_tool() {
     let config = merge_config_layers(None, None);
     let tools = enabled_dashboard_tools(&config);

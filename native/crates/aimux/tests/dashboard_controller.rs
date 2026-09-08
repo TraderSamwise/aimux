@@ -12,6 +12,9 @@ use aimux::dashboard_renderer::{DashboardNavLevel, DashboardRenderInput, render_
 use aimux::dashboard_service_input::DashboardThreadReplyState;
 use aimux::dashboard_tool_picker::{DashboardToolEntry, DashboardToolPickerMode};
 use aimux::project_api_contract::routes;
+use aimux::project_service::work_outline::{
+    WorkOutlineEntry, WorkOutlineSource, WorkOutlineStatus,
+};
 use aimux::tui_render::text::strip_ansi;
 use serde_json::json;
 
@@ -630,6 +633,118 @@ fn shifted_v_toggles_scribe_preview_only_when_live_scribe_exists() {
         controller.footer_message.as_deref(),
         Some("Previewing output")
     );
+}
+
+#[test]
+fn shifted_p_opens_work_outline_overlay_for_selected_session() {
+    let mut snapshot = snapshot();
+    snapshot
+        .sessions
+        .push(scribe_session(&snapshot.sessions[0]));
+    let mut controller = DashboardController::new(&snapshot);
+    controller.navigation.level = DashboardNavLevel::Sessions;
+    controller.navigation.worktree_index = 0;
+    controller.navigation.item_index = 1;
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('P')),
+        DashboardControllerEffect::LoadWorkOutlineOverlay {
+            session_id: Some("claude-0".into())
+        }
+    );
+}
+
+#[test]
+fn work_outline_overlay_keys_scroll_reload_focus_stop_unset_and_close() {
+    let mut snapshot = snapshot();
+    snapshot
+        .sessions
+        .push(scribe_session(&snapshot.sessions[0]));
+    let mut controller = DashboardController::new(&snapshot);
+    controller.set_work_outline_overlay(
+        Some("claude-0".into()),
+        vec![work_outline_entry("one"), work_outline_entry("two")],
+    );
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('j')),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(
+        controller
+            .work_outline_overlay
+            .as_ref()
+            .map(|state| state.offset),
+        Some(1)
+    );
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('k')),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(
+        controller
+            .work_outline_overlay
+            .as_ref()
+            .map(|state| state.offset),
+        Some(0)
+    );
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('r')),
+        DashboardControllerEffect::LoadWorkOutlineOverlay {
+            session_id: Some("claude-0".into())
+        }
+    );
+
+    let DashboardControllerEffect::Request(focus_request) =
+        controller.handle_key(&snapshot, DashboardKey::Enter)
+    else {
+        panic!("expected scribe focus request");
+    };
+    assert_eq!(focus_request.path, routes::controls::FOCUS_WINDOW);
+    assert_eq!(
+        focus_request.body,
+        json!({ "windowId": "@scribe", "focus": true })
+    );
+    assert!(controller.work_outline_overlay.is_none());
+
+    controller.set_work_outline_overlay(None, vec![work_outline_entry("one")]);
+    let DashboardControllerEffect::Request(stop_request) =
+        controller.handle_key(&snapshot, DashboardKey::Printable('x'))
+    else {
+        panic!("expected scribe stop request");
+    };
+    assert_eq!(stop_request.path, routes::agents::STOP);
+    assert_eq!(stop_request.body, json!({ "sessionId": "claude-scribe" }));
+
+    let DashboardControllerEffect::Request(unset_request) =
+        controller.handle_key(&snapshot, DashboardKey::Printable('d'))
+    else {
+        panic!("expected scribe unset request");
+    };
+    assert_eq!(unset_request.path, routes::agents::SCRIBE);
+    assert_eq!(
+        unset_request.body,
+        json!({ "sessionId": "claude-scribe", "active": false })
+    );
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('q')),
+        DashboardControllerEffect::Render
+    );
+    assert!(controller.work_outline_overlay.is_none());
+}
+
+#[test]
+fn work_outline_enter_opens_scribe_picker_when_no_live_scribe_exists() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.set_work_outline_overlay(None, Vec::new());
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Enter),
+        DashboardControllerEffect::OpenAgentToolPicker(DashboardToolPickerMode::CreateScribe)
+    );
+    assert!(controller.work_outline_overlay.is_none());
 }
 
 #[test]
@@ -1495,6 +1610,43 @@ fn semantic(
         "activityNewCount": activity_new_count
     }))
     .unwrap()
+}
+
+fn scribe_session(
+    base: &aimux::dashboard_model::DashboardSession,
+) -> aimux::dashboard_model::DashboardSession {
+    let mut scribe = base.clone();
+    scribe.id = "claude-scribe".into();
+    scribe.status = aimux::dashboard_model::SessionStatus::Running;
+    scribe.tmux_window_id = Some("@scribe".into());
+    scribe.scribe = Some(true);
+    scribe.project_control = Some(true);
+    scribe.team = Some(SessionTeamMetadata {
+        team_id: "scribe".into(),
+        parent_session_id: String::new(),
+        role: Some("scribe".into()),
+        label: None,
+        order: None,
+        extra: Default::default(),
+    });
+    scribe
+}
+
+fn work_outline_entry(id: &str) -> WorkOutlineEntry {
+    WorkOutlineEntry {
+        entry_id: id.into(),
+        topic_key: id.into(),
+        title: format!("Topic {id}"),
+        summary: format!("Summary {id}"),
+        status: WorkOutlineStatus::Active,
+        source: WorkOutlineSource::Scribe,
+        session_ids: vec!["claude-0".into()],
+        worktree_path: Some("<ROOT>".into()),
+        evidence: None,
+        created_at: "2026-09-08T00:00:00.000Z".into(),
+        updated_at: "2026-09-08T00:00:00.000Z".into(),
+        last_seen_at: "2026-09-08T00:00:00.000Z".into(),
+    }
 }
 
 fn orchestration_target(label: &str) -> DashboardOrchestrationTarget {

@@ -43,6 +43,7 @@ use crate::project_service::work_outline::{
     WorkOutlineEntry, WorkOutlineQuery, list_work_outline_entries,
 };
 use crate::release_version_contract::read_aimux_runtime_version;
+use crate::tui_screen_renderers::render_work_outline_overlay_output;
 use anyhow::{Context, Result};
 use std::fs;
 use std::io::{self, Write};
@@ -240,6 +241,12 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                             controller.footer_message =
                                 Some("Dashboard action requires a project-service endpoint".into());
                         }
+                        render_now = true;
+                    }
+                    DashboardControllerEffect::LoadWorkOutlineOverlay { session_id } => {
+                        let entries =
+                            load_work_outline_overlay_entries(&options, session_id.as_deref());
+                        controller.set_work_outline_overlay(session_id, entries);
                         render_now = true;
                     }
                     DashboardControllerEffect::OpenAgentToolPicker(mode) => {
@@ -608,6 +615,31 @@ fn render_dashboard_snapshot(
         preview_source: &controller.preview_source,
         scribe_preview_entries: &scribe_preview_entries,
     });
+    if let Some(work_outline_overlay) = controller.work_outline_overlay.as_ref() {
+        let mut output = frame.frame;
+        let mut ctx = serde_json::json!({
+            "workOutlineOverlayEntries": &work_outline_overlay.entries,
+            "workOutlineOverlayOffset": work_outline_overlay.offset,
+            "dashboardScribeSessionsCache": &scribe_sessions,
+        });
+        if let Some(session_id) = work_outline_overlay.session_id.as_ref()
+            && let Some(object) = ctx.as_object_mut()
+        {
+            object.insert(
+                "workOutlineOverlaySessionId".into(),
+                serde_json::Value::String(session_id.clone()),
+            );
+        }
+        output.push_str(&render_work_outline_overlay_output(
+            &ctx,
+            options.cols,
+            options.rows,
+        ));
+        return crate::tui_render::screen_frame::ScreenFrameResult {
+            frame: output,
+            scroll_offset: frame.scroll_offset,
+        };
+    }
     if let Some(launch_options) = controller.launch_options.as_ref() {
         let mut output = frame.frame;
         let selected_tool = controller
@@ -1086,6 +1118,21 @@ fn scribe_preview_entries_for_render(
         WorkOutlineQuery {
             worktree_path: selected.worktree_path.clone(),
             limit: Some(6),
+            ..WorkOutlineQuery::default()
+        },
+    )
+}
+
+fn load_work_outline_overlay_entries(
+    options: &NativeDashboardOptions,
+    session_id: Option<&str>,
+) -> Vec<WorkOutlineEntry> {
+    let mut resolver = PathResolver::from_env();
+    let project_state_dir = resolver.project_state_dir_for(&options.project_root);
+    list_work_outline_entries(
+        project_state_dir,
+        WorkOutlineQuery {
+            session_id: session_id.map(str::to_owned),
             ..WorkOutlineQuery::default()
         },
     )

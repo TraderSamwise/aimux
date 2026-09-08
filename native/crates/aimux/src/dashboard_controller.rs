@@ -16,6 +16,7 @@ use crate::dashboard_tool_picker::{
     DashboardToolPickerState,
 };
 use crate::project_api_contract::routes;
+use crate::project_service::work_outline::WorkOutlineEntry;
 use crate::terminal_key_parser::{KeyEvent, parse_keys};
 use serde_json::{Map, Value, json};
 
@@ -37,6 +38,7 @@ pub struct DashboardController {
     pub worktree_remove_confirm: Option<DashboardWorktreeRemoveConfirm>,
     pub worktree_list_open: bool,
     pub worktree_cache_cleanup_confirm: Option<Value>,
+    pub work_outline_overlay: Option<DashboardWorkOutlineOverlayState>,
     pub preview_source: String,
     pub teammate_picker: Option<DashboardTeammatePickerState>,
     pub orchestration_route_picker: Option<DashboardOrchestrationRoutePickerState>,
@@ -56,6 +58,9 @@ pub enum DashboardControllerEffect {
     },
     OpenRelevantThread {
         session_id: String,
+    },
+    LoadWorkOutlineOverlay {
+        session_id: Option<String>,
     },
     OpenAgentToolPicker(DashboardToolPickerMode),
     Quit,
@@ -191,6 +196,7 @@ impl DashboardController {
             worktree_remove_confirm: None,
             worktree_list_open: false,
             worktree_cache_cleanup_confirm: None,
+            work_outline_overlay: None,
             preview_source: "output".into(),
             teammate_picker: None,
             orchestration_route_picker: None,
@@ -228,6 +234,9 @@ impl DashboardController {
         }
         if self.worktree_cache_cleanup_confirm.is_some() {
             return self.handle_worktree_cache_cleanup_confirm_key(key);
+        }
+        if self.work_outline_overlay.is_some() {
+            return self.handle_work_outline_overlay_key(snapshot, key);
         }
         if self.teammate_picker.is_some() {
             return self.handle_teammate_picker_key(snapshot, key);
@@ -303,6 +312,7 @@ impl DashboardController {
                     body: json!({ "dryRun": true, "includeActive": false }),
                 })
             }
+            DashboardKey::Printable('P') => self.open_work_outline_overlay(snapshot),
             DashboardKey::Printable('V') => self.toggle_scribe_preview(snapshot),
             DashboardKey::Printable('o') => {
                 self.open_relevant_thread_for_selected_session(snapshot)
@@ -484,6 +494,7 @@ impl DashboardController {
         self.worktree_remove_confirm = None;
         self.worktree_list_open = false;
         self.worktree_cache_cleanup_confirm = None;
+        self.work_outline_overlay = None;
         self.teammate_picker = None;
         self.orchestration_route_picker = None;
         self.orchestration_input = None;
@@ -1078,6 +1089,124 @@ impl DashboardController {
         DashboardControllerEffect::Ignored
     }
 
+    fn open_work_outline_overlay(
+        &self,
+        snapshot: &DesktopStateSnapshot,
+    ) -> DashboardControllerEffect {
+        DashboardControllerEffect::LoadWorkOutlineOverlay {
+            session_id: self
+                .selected_session_for_tool_action(snapshot)
+                .map(|session| session.id.clone()),
+        }
+    }
+
+    pub fn set_work_outline_overlay(
+        &mut self,
+        session_id: Option<String>,
+        entries: Vec<WorkOutlineEntry>,
+    ) {
+        self.work_outline_overlay = Some(DashboardWorkOutlineOverlayState {
+            session_id,
+            entries,
+            offset: 0,
+        });
+    }
+
+    fn handle_work_outline_overlay_key(
+        &mut self,
+        snapshot: &DesktopStateSnapshot,
+        key: DashboardKey,
+    ) -> DashboardControllerEffect {
+        match key {
+            DashboardKey::Back | DashboardKey::Printable('q') => {
+                self.work_outline_overlay = None;
+                DashboardControllerEffect::Render
+            }
+            DashboardKey::Enter => self.activate_or_create_scribe_from_work_outline(snapshot),
+            DashboardKey::Printable('r') => DashboardControllerEffect::LoadWorkOutlineOverlay {
+                session_id: self
+                    .work_outline_overlay
+                    .as_ref()
+                    .and_then(|state| state.session_id.clone()),
+            },
+            DashboardKey::Down | DashboardKey::Printable('j') => {
+                if let Some(state) = self.work_outline_overlay.as_mut() {
+                    state.offset = (state.offset + 1).min(state.entries.len().saturating_sub(1));
+                }
+                DashboardControllerEffect::Render
+            }
+            DashboardKey::Up | DashboardKey::Printable('k') => {
+                if let Some(state) = self.work_outline_overlay.as_mut() {
+                    state.offset = state.offset.saturating_sub(1);
+                }
+                DashboardControllerEffect::Render
+            }
+            DashboardKey::Printable('x') => self.stop_live_scribe_from_work_outline(snapshot),
+            DashboardKey::Printable('d') => self.unset_scribe_from_work_outline(snapshot),
+            _ => DashboardControllerEffect::Ignored,
+        }
+    }
+
+    fn activate_or_create_scribe_from_work_outline(
+        &mut self,
+        snapshot: &DesktopStateSnapshot,
+    ) -> DashboardControllerEffect {
+        if let Some(scribe) = live_scribe_session(snapshot) {
+            self.work_outline_overlay = None;
+            return match plan_dashboard_action(
+                Some(DashboardEntryRef::Session(scribe)),
+                DashboardActionKind::Enter,
+            ) {
+                DashboardActionPlan::Request(request) => {
+                    DashboardControllerEffect::Request(request)
+                }
+                DashboardActionPlan::Blocked(message) => {
+                    self.footer_message = Some(message);
+                    DashboardControllerEffect::Render
+                }
+                DashboardActionPlan::Ignored => DashboardControllerEffect::Render,
+            };
+        }
+        self.work_outline_overlay = None;
+        DashboardControllerEffect::OpenAgentToolPicker(DashboardToolPickerMode::CreateScribe)
+    }
+
+    fn stop_live_scribe_from_work_outline(
+        &mut self,
+        snapshot: &DesktopStateSnapshot,
+    ) -> DashboardControllerEffect {
+        let Some(scribe) = live_scribe_session(snapshot) else {
+            self.footer_message = Some("No running scribe".into());
+            return DashboardControllerEffect::Render;
+        };
+        match plan_dashboard_action(
+            Some(DashboardEntryRef::Session(scribe)),
+            DashboardActionKind::Stop,
+        ) {
+            DashboardActionPlan::Request(request) => DashboardControllerEffect::Request(request),
+            DashboardActionPlan::Blocked(message) => {
+                self.footer_message = Some(message);
+                DashboardControllerEffect::Render
+            }
+            DashboardActionPlan::Ignored => DashboardControllerEffect::Ignored,
+        }
+    }
+
+    fn unset_scribe_from_work_outline(
+        &mut self,
+        snapshot: &DesktopStateSnapshot,
+    ) -> DashboardControllerEffect {
+        let Some(scribe) = first_scribe_session(snapshot) else {
+            self.footer_message = Some("No scribe configured".into());
+            return DashboardControllerEffect::Render;
+        };
+        DashboardControllerEffect::Request(DashboardActionRequest {
+            method: "POST",
+            path: routes::agents::SCRIBE,
+            body: json!({ "sessionId": scribe.id, "active": false }),
+        })
+    }
+
     fn open_teammate_picker(
         &mut self,
         snapshot: &DesktopStateSnapshot,
@@ -1667,6 +1796,13 @@ pub struct DashboardWorktreeRemoveConfirm {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DashboardWorkOutlineOverlayState {
+    pub session_id: Option<String>,
+    pub entries: Vec<WorkOutlineEntry>,
+    pub offset: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DashboardTeammatePickerState {
     pub parent_session_id: String,
     pub index: usize,
@@ -1844,10 +1980,21 @@ fn is_live_session(session: &DashboardSession) -> bool {
 }
 
 fn has_live_scribe(snapshot: &DesktopStateSnapshot) -> bool {
+    live_scribe_session(snapshot).is_some()
+}
+
+fn live_scribe_session(snapshot: &DesktopStateSnapshot) -> Option<&DashboardSession> {
     snapshot
         .sessions
         .iter()
-        .any(|session| is_live_session(session) && is_scribe_session(session))
+        .find(|session| is_live_session(session) && is_scribe_session(session))
+}
+
+fn first_scribe_session(snapshot: &DesktopStateSnapshot) -> Option<&DashboardSession> {
+    snapshot
+        .sessions
+        .iter()
+        .find(|session| is_scribe_session(session))
 }
 
 fn is_scribe_session(session: &DashboardSession) -> bool {

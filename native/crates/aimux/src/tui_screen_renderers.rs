@@ -42,6 +42,10 @@ pub fn run_tui_screen_overlay_contract_case(input: &Value) -> Value {
     overlay_output_value(api, rendered)
 }
 
+pub fn render_work_outline_overlay_output(ctx: &Value, cols: usize, rows: usize) -> String {
+    build_work_outline_overlay_output(ctx, cols, rows)
+}
+
 pub fn run_tui_subscreen_renderer_contract_case(api: &str, input: &Value) -> Value {
     let rendered = match api {
         "renderGraveyardScreen" => render_graveyard_screen_output(input),
