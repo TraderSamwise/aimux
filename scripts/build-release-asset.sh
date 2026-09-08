@@ -11,6 +11,7 @@ case "$BUILD_PROFILE" in
   full | local) ;;
   *) printf 'Unsupported AIMUX_BUILD_PROFILE: %s\n' "$BUILD_PROFILE" >&2; exit 1 ;;
 esac
+export AIMUX_BUILD_PROFILE="$BUILD_PROFILE"
 
 detect_platform() {
   case "$(uname -s)" in

@@ -116,6 +116,28 @@ fn homebrew_formula_does_not_require_node_runtime() {
     );
 }
 
+#[test]
+fn release_asset_compiles_native_binary_with_selected_build_profile() {
+    let repo = repo_root();
+    let script =
+        fs::read_to_string(repo.join("scripts/build-release-asset.sh")).expect("read script");
+    let build_script =
+        fs::read_to_string(repo.join("native/crates/aimux/build.rs")).expect("read build script");
+
+    assert!(
+        script.contains("export AIMUX_BUILD_PROFILE=\"$BUILD_PROFILE\""),
+        "release build must pass the selected BUILD_PROFILE into the native binary compile"
+    );
+    assert!(
+        script.contains("cargo build --manifest-path native/Cargo.toml -p aimux --release"),
+        "release asset must compile the native binary after exporting the build profile"
+    );
+    assert!(
+        build_script.contains("cargo:rerun-if-env-changed=AIMUX_BUILD_PROFILE"),
+        "Cargo must rebuild aimux when AIMUX_BUILD_PROFILE changes"
+    );
+}
+
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../..")
