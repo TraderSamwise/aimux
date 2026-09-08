@@ -224,6 +224,62 @@ fn desktop_state_route_matches_app_contract_shape() {
     cleanup(project);
 }
 
+#[test]
+fn attachment_publish_route_matches_app_contract_shape() {
+    let project = temp_project("attachment-publish");
+    let state_dir = project.join("state");
+    seed_gui_project(&project, &state_dir);
+    let source = project.join("notes.md");
+    write(&source, b"published gui notes").expect("source file");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let published = route_project_service_request(
+        &context,
+        "POST",
+        routes::ATTACHMENTS_PUBLISH,
+        Some(&json!({ "path": source, "sessionId": "codex-1" })),
+    );
+
+    assert_eq!(published.status, 200);
+    assert_eq!(published.body["ok"], true);
+    assert_eq!(published.body["attachment"]["kind"], "text");
+    assert_eq!(published.body["attachment"]["filename"], "notes.md");
+    assert_eq!(published.body["attachment"]["mimeType"], "text/markdown");
+    assert_eq!(published.body["attachment"]["sizeBytes"], 19);
+    assert_eq!(published.body["attachment"]["source"], "path");
+    assert_eq!(published.body["attachment"]["sessionId"], "codex-1");
+    assert!(published.body["attachment"]["sha256"].as_str().is_some());
+    assert!(published.body["attachment"]["createdAt"].as_str().is_some());
+    assert!(
+        published.body["referenceText"]
+            .as_str()
+            .expect("reference text")
+            .contains("notes.md (text/markdown, 19 bytes):")
+    );
+
+    let attachment_id = published.body["attachment"]["id"]
+        .as_str()
+        .expect("attachment id");
+    let metadata = route_project_service_request(
+        &context,
+        "GET",
+        &format!("/attachments/{attachment_id}?sessionId=codex-1"),
+        None,
+    );
+    assert_eq!(metadata.status, 200);
+    assert_eq!(metadata.body["attachment"], published.body["attachment"]);
+
+    let content_url = published.body["attachment"]["contentUrl"]
+        .as_str()
+        .expect("content URL");
+    let content = route_project_service_request(&context, "GET", content_url, None);
+    assert_eq!(content.status, 200);
+    assert_eq!(content.content_type.as_deref(), Some("text/markdown"));
+    assert_eq!(content.bytes, Some(b"published gui notes".to_vec()));
+
+    cleanup(project);
+}
+
 fn seed_gui_project(project: &Path, state_dir: &Path) {
     create_dir_all(state_dir).unwrap();
     let project_root = project.to_string_lossy();
