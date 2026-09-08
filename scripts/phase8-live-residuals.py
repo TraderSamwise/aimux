@@ -15,10 +15,12 @@ import http.client
 import json
 import os
 import pty
+import re
 import shlex
 import shutil
 import signal
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
@@ -37,6 +39,7 @@ SSE_CLIENT_COUNT = 8
 DEFAULT_DAEMON_PORT = 43190
 RESIDUAL_DAEMON_PORT_MIN = 45000
 RESIDUAL_DAEMON_PORT_MAX = 45999
+ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
 class LiveResidualFailure(Exception):
@@ -440,6 +443,7 @@ def run_dashboard_render_smoke(aimux_bin: Path, mutation: str | None) -> dict[st
             raise LiveResidualFailure(f"dashboard did not render required content:\n{output}")
         if "Main Checkout" not in output or "worktrees" not in output:
             raise LiveResidualFailure(f"dashboard frame missing project row or navigation hints:\n{output}")
+
         def exercise_key(
             key_session: str,
             key: str,
@@ -582,28 +586,21 @@ def run_dashboard_attach_smoke(aimux_bin: Path, mutation: str | None) -> dict[st
         run([str(aimux_bin), "dashboard-reload"], cwd=scope.project, env=scope.env, timeout=30)
         session = "phase8-attach"
         project_root = scope.project.resolve()
-        proc = subprocess.Popen(
+        proc, client_fd = start_tmux_capture_client(
+            scope,
+            tmux,
+            socket_name,
             [
-                "script",
-                "-q",
-                "/dev/null",
-                tmux,
-                "-L",
-                socket_name,
                 "-f",
                 "/dev/null",
                 "attach-session",
                 "-t",
                 f"{host_session_name}:0",
             ],
-            cwd=str(project_root),
-            env=scope.env,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
+            cwd=project_root,
+            cols=120,
+            rows=30,
         )
-        scope.procs.append(proc)
         output = ""
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
@@ -622,7 +619,7 @@ def run_dashboard_attach_smoke(aimux_bin: Path, mutation: str | None) -> dict[st
             terminate_process(proc)
             raise LiveResidualFailure(
                 "timed out waiting for managed dashboard attach:\n"
-                f"{output}\nstdout:\n{read_pipe(proc.stdout)}\nstderr:\n{read_pipe(proc.stderr)}"
+                f"{output}\nclient:\n{drain_fd_now(client_fd)}"
             )
 
         def attached_client_rows() -> list[dict[str, str]]:
@@ -819,6 +816,73 @@ def run_dashboard_attach_smoke(aimux_bin: Path, mutation: str | None) -> dict[st
                     "capture": capture_all_tmux(scope)[-2000:],
                 }, indent=2)
             )
+        resize_cases = [(80, 24), (100, 15), (200, 50)]
+        for cols, rows in resize_cases:
+            target_window = dashboard_client["windowId"]
+            drain_fd_now(client_fd)
+            set_pty_size(client_fd, cols, rows)
+            os.kill(proc.pid, signal.SIGWINCH)
+            tmux_cmd_for_socket(
+                tmux,
+                socket_name,
+                ["resize-window", "-t", target_window, "-x", str(cols), "-y", str(rows)],
+            )
+            wait_until(
+                lambda: (
+                    size
+                    if (size := tmux_cmd_for_socket(tmux, socket_name, [
+                        "display-message",
+                        "-p",
+                        "-t",
+                        target_window,
+                        "#{window_width}x#{window_height}",
+                    ]).stdout.strip()) == f"{cols}x{rows}"
+                    else None
+                ),
+                timeout=5,
+                label=f"dashboard attach resize settles to {cols}x{rows}",
+            )
+            tmux_cmd_for_socket(tmux, socket_name, ["send-keys", "-t", target_window, "Tab"])
+            output = ""
+            frame = ""
+            frame_deadline = time.monotonic() + 5
+            while time.monotonic() < frame_deadline:
+                output += drain_fd_now(client_fd)
+                frame = terminal_screen_from_output(
+                    output,
+                    cols,
+                    rows,
+                    f"dashboard attach {cols}x{rows}",
+                )
+                footer_anchor = "q quit" if rows >= 20 else "Dashboard"
+                if "agent multiplexer" in frame and footer_anchor in frame:
+                    break
+                time.sleep(0.05)
+            else:
+                pane_state = tmux_cmd_for_socket(
+                    tmux,
+                    socket_name,
+                    [
+                        "display-message",
+                        "-p",
+                        "-t",
+                        target_window,
+                        "#{pane_current_command}\t#{pane_dead}\t#{pane_width}x#{pane_height}\t#{window_width}x#{window_height}",
+                    ],
+                    check=False,
+                )
+                raise LiveResidualFailure(
+                    "dashboard attach frame incomplete after resize "
+                    f"to {cols}x{rows}:\n"
+                    + json.dumps({
+                        "paneState": pane_state.stdout.strip(),
+                        "clients": attached_client_rows(),
+                        "outputTail": output[-2000:],
+                        "frame": frame,
+                    }, indent=2)
+                )
+            allowed_width = cols - 1 if mutation == "dashboard-resize-width-overflow" else cols
+            assert_frame_width(frame, allowed_width, f"dashboard attach {cols}x{rows}")
         return {
             "name": "phase8-live-dashboard-attach-smoke",
             "privateSocket": socket_name,
@@ -826,6 +890,7 @@ def run_dashboard_attach_smoke(aimux_bin: Path, mutation: str | None) -> dict[st
                 "managed native TUI renders inside a real tmux client",
                 "dashboard Enter focuses the selected managed session from an attached tmux client",
                 "managed prefix+d returns the attached client to the dashboard",
+                "managed native TUI frame stays complete and bounded across live tmux resizes",
             ],
             "notCaught": [
                 "host-specific terminal emulator behavior outside tmux",
@@ -2056,6 +2121,44 @@ def start_tmux_pty_client(
     threading.Thread(target=drain_fd, args=(master_fd,), daemon=True).start()
 
 
+def start_tmux_capture_client(
+    scope: Scope,
+    tmux: str,
+    socket_name: str,
+    args: list[str],
+    *,
+    cwd: Path,
+    cols: int,
+    rows: int,
+) -> tuple[subprocess.Popen[Any], int]:
+    master_fd, slave_fd = pty.openpty()
+    set_pty_size(slave_fd, cols, rows)
+    scope.fds.append(master_fd)
+
+    def make_controlling_tty() -> None:
+        os.setsid()
+        fcntl.ioctl(slave_fd, termios.TIOCSCTTY, 0)
+
+    proc = subprocess.Popen(
+        [tmux, "-L", socket_name, *args],
+        cwd=str(cwd),
+        env=scope.env,
+        stdin=slave_fd,
+        stdout=slave_fd,
+        stderr=slave_fd,
+        close_fds=True,
+        preexec_fn=make_controlling_tty,
+    )
+    os.close(slave_fd)
+    scope.procs.append(proc)
+    return proc, master_fd
+
+
+def set_pty_size(fd: int, cols: int, rows: int) -> None:
+    winsize = struct.pack("HHHH", rows, cols, 0, 0)
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, winsize)
+
+
 def drain_fd(fd: int) -> None:
     while True:
         try:
@@ -2063,6 +2166,24 @@ def drain_fd(fd: int) -> None:
                 return
         except OSError:
             return
+
+
+def drain_fd_now(fd: int) -> str:
+    try:
+        flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+        fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+        chunks: list[bytes] = []
+        while True:
+            try:
+                chunk = os.read(fd, 4096)
+            except BlockingIOError:
+                break
+            if not chunk:
+                break
+            chunks.append(chunk)
+        return b"".join(chunks).decode(errors="replace")
+    except Exception:
+        return ""
 
 
 def capture_tmux(scope: Scope, session: str) -> str:
@@ -2082,6 +2203,20 @@ def capture_all_tmux(scope: Scope) -> str:
         except LiveResidualFailure:
             pass
     return "\n".join(captures)
+
+
+def strip_ansi(text: str) -> str:
+    return ANSI_ESCAPE_RE.sub("", text)
+
+
+def assert_frame_width(frame: str, width: int, label: str) -> None:
+    for line_no, line in enumerate(frame.splitlines(), start=1):
+        visible = strip_ansi(line)
+        if len(visible) > width:
+            raise LiveResidualFailure(
+                f"{label} line {line_no} exceeds width {width}: "
+                f"visible={len(visible)} line={visible!r}"
+            )
 
 
 def install_tmux_socket_wrapper(scope: Scope, real_tmux: str, socket_name: str) -> None:
@@ -2187,6 +2322,54 @@ def read_pipe(pipe: Any) -> str:
         return pipe.read() or ""
     except Exception:
         return ""
+
+
+def terminal_screen_from_output(output: str, cols: int, rows: int, label: str) -> str:
+    screen = [[" " for _ in range(cols)] for _ in range(rows)]
+    row = 0
+    col = 0
+    index = 0
+    while index < len(output):
+        char = output[index]
+        if char == "\x1b":
+            if index + 2 < len(output) and output[index + 1] in "()":
+                index += 3
+                continue
+            match = ANSI_ESCAPE_RE.match(output, index)
+            if match:
+                params = match.group(0)[2:-1]
+                command = match.group(0)[-1]
+                if command in ("H", "f"):
+                    parts = [part for part in params.split(";") if part and not part.startswith("?")]
+                    next_row = int(parts[0]) if len(parts) >= 1 and parts[0].isdigit() else 1
+                    next_col = int(parts[1]) if len(parts) >= 2 and parts[1].isdigit() else 1
+                    row = min(rows - 1, max(0, next_row - 1))
+                    col = min(cols - 1, max(0, next_col - 1))
+                elif command == "J" and params in ("2", "3"):
+                    screen = [[" " for _ in range(cols)] for _ in range(rows)]
+                    row = 0
+                    col = 0
+                elif command == "K":
+                    if 0 <= row < rows:
+                        for clear_col in range(col, cols):
+                            screen[row][clear_col] = " "
+                index = match.end()
+                continue
+            index += 1
+            continue
+        if char == "\r":
+            col = 0
+        elif char == "\n":
+            row = min(row + 1, rows - 1)
+        elif ord(char) >= 32:
+            if 0 <= row < rows and 0 <= col < cols:
+                screen[row][col] = char
+            col += 1
+            if col >= cols:
+                col = 0
+                row = min(row + 1, rows - 1)
+        index += 1
+    return "\n".join("".join(line) for line in screen)
 
 
 def wait_for_project_service_endpoint(scope: Scope) -> str:
@@ -2464,6 +2647,7 @@ def prove_failures(args: argparse.Namespace, aimux_bin: Path) -> list[dict[str, 
         ("dashboard-attach", "dashboard-attach-terminal-error"),
         ("dashboard-attach", "dashboard-attach-focus-target-missing"),
         ("dashboard-attach", "dashboard-attach-return-missing"),
+        ("dashboard-attach", "dashboard-resize-width-overflow"),
         ("dashboard-spawn", "dashboard-spawn-missing-session"),
         ("command-resolution", "command-unsupported"),
         ("command-resolution", "command-silent-alias"),
@@ -2546,6 +2730,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "tmux-drop-output",
         "tmux-wrong-resize",
         "dashboard-empty-frame",
+        "dashboard-resize-width-overflow",
         "dashboard-input-dead",
         "dashboard-attach-terminal-error",
         "dashboard-attach-focus-target-missing",

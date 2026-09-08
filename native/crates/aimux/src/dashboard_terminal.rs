@@ -1,8 +1,12 @@
 use crate::dashboard_controller::{DashboardKey, parse_dashboard_keys};
 use serde_json::{Value, json};
+use std::fs;
 use std::io::{self, IsTerminal, Read, Write};
+use std::os::fd::AsRawFd;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub const TERMINAL_RESTORE_SEQUENCE: &str = "\x1b[0m\x1b[?25h\x1b[?1l\x1b>\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1004l\x1b[?1005l\x1b[?1006l\x1b[?1015l\x1b[?2004l\x1b[?1049l";
+static TERMINAL_RESIZED: AtomicBool = AtomicBool::new(false);
 
 pub struct DashboardTerminalGuard {
     stdin_fd: i32,
@@ -19,6 +23,7 @@ impl DashboardTerminalGuard {
         };
         guard.enable_raw_mode()?;
         guard.enable_nonblocking_stdin()?;
+        install_resize_signal_handler();
         write!(output, "\x1b[?1049h\x1b[?25l")?;
         output.flush()?;
         Ok(guard)
@@ -101,6 +106,43 @@ pub fn read_dashboard_keys(input: &mut impl Read) -> io::Result<Vec<DashboardKey
         Err(error) if error.kind() == io::ErrorKind::Interrupted => Ok(Vec::new()),
         Err(error) => Err(error),
     }
+}
+
+pub fn terminal_size() -> Option<(usize, usize)> {
+    terminal_size_for_fd(libc::STDOUT_FILENO)
+        .or_else(|| terminal_size_for_fd(libc::STDIN_FILENO))
+        .or_else(|| terminal_size_for_fd(libc::STDERR_FILENO))
+        .or_else(terminal_size_from_tty)
+}
+
+pub fn consume_terminal_resize() -> bool {
+    TERMINAL_RESIZED.swap(false, Ordering::SeqCst)
+}
+
+extern "C" fn handle_resize_signal(_signal: i32) {
+    TERMINAL_RESIZED.store(true, Ordering::SeqCst);
+}
+
+fn install_resize_signal_handler() {
+    unsafe {
+        libc::signal(libc::SIGWINCH, handle_resize_signal as usize);
+    }
+}
+
+fn terminal_size_for_fd(fd: i32) -> Option<(usize, usize)> {
+    let mut size = std::mem::MaybeUninit::<libc::winsize>::uninit();
+    if unsafe { libc::ioctl(fd, libc::TIOCGWINSZ, size.as_mut_ptr()) } == -1 {
+        return None;
+    }
+    let size = unsafe { size.assume_init() };
+    let cols = usize::from(size.ws_col);
+    let rows = usize::from(size.ws_row);
+    (cols > 0 && rows > 0).then_some((cols, rows))
+}
+
+fn terminal_size_from_tty() -> Option<(usize, usize)> {
+    let tty = fs::OpenOptions::new().read(true).open("/dev/tty").ok()?;
+    terminal_size_for_fd(tty.as_raw_fd())
 }
 
 fn is_nonblocking_empty_read(error: &io::Error) -> bool {

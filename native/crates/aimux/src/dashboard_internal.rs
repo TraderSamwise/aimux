@@ -37,7 +37,9 @@ use crate::dashboard_service_input::{
     render_worktree_cache_cleanup_confirm_overlay, render_worktree_input_overlay,
     render_worktree_list_overlay, render_worktree_remove_confirm_overlay,
 };
-use crate::dashboard_terminal::{DashboardTerminalGuard, read_dashboard_keys};
+use crate::dashboard_terminal::{
+    DashboardTerminalGuard, consume_terminal_resize, read_dashboard_keys, terminal_size,
+};
 use crate::dashboard_tool_picker::{enabled_dashboard_tools, render_tool_picker_overlay};
 use crate::dashboard_tui_visibility::{
     DashboardTuiVisibilityState, consume_dashboard_tui_visibility_wake, mark_dashboard_tui_visible,
@@ -60,6 +62,7 @@ use std::env;
 use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
+use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -67,6 +70,7 @@ const DASHBOARD_KEY_POLL_INTERVAL: Duration = Duration::from_millis(50);
 const DASHBOARD_HIDDEN_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const DASHBOARD_STREAM_RETRY_INTERVAL: Duration = Duration::from_secs(2);
 const DASHBOARD_FALLBACK_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
+const DASHBOARD_TERMINAL_SIZE_RECHECK_INTERVAL: Duration = Duration::from_millis(250);
 
 #[derive(Debug, Clone)]
 pub struct NativeDashboardOptions {
@@ -80,6 +84,12 @@ pub struct NativeDashboardOptions {
 struct DashboardSnapshotLoad {
     snapshot: DesktopStateSnapshot,
     endpoint: Option<ProjectServiceEndpoint>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DashboardViewport {
+    cols: usize,
+    rows: usize,
 }
 
 pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<()> {
@@ -103,6 +113,11 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
     };
     let mut render_now = true;
     let mut rendered_once = false;
+    let mut viewport = DashboardViewport {
+        cols: options.cols,
+        rows: options.rows,
+    };
+    let mut last_tmux_viewport_check = Instant::now() - DASHBOARD_TERMINAL_SIZE_RECHECK_INTERVAL;
     let mut last_render = Instant::now();
     let clock_start = Instant::now();
     let mut output = dashboard_output(options.once);
@@ -134,6 +149,30 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
             mark_dashboard_tui_visible(&mut visibility_state, now, None);
             dashboard_visible = true;
         }
+        let terminal_resized =
+            !options.once && options.desktop_state_file.is_none() && consume_terminal_resize();
+        if terminal_resized {
+            render_now = true;
+            dashboard_visible = true;
+        }
+        if !options.once && options.desktop_state_file.is_none() {
+            let tmux_viewport =
+                if last_tmux_viewport_check.elapsed() >= DASHBOARD_TERMINAL_SIZE_RECHECK_INTERVAL {
+                    last_tmux_viewport_check = Instant::now();
+                    read_tmux_terminal_size()
+                } else {
+                    None
+                };
+            let measured_viewport = tmux_viewport
+                .or_else(|| terminal_size().map(|(cols, rows)| DashboardViewport { cols, rows }));
+            if let Some(next_viewport) = measured_viewport
+                && next_viewport != viewport
+            {
+                viewport = next_viewport;
+                render_now = true;
+                dashboard_visible = true;
+            }
+        }
         if !dashboard_visible {
             suspend_dashboard_event_stream(&mut event_stream, &mut event_stream_retry_at);
             thread::sleep(DASHBOARD_HIDDEN_POLL_INTERVAL);
@@ -162,7 +201,6 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
             latest_endpoint.as_ref(),
             options.once || options.desktop_state_file.is_some(),
         );
-
         if rendered_once && !keys.is_empty() {
             mark_dashboard_tui_visible(&mut visibility_state, elapsed_millis(clock_start), None);
             let Some(snapshot) = latest_snapshot.as_ref() else {
@@ -371,6 +409,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
             {
                 let frame = render_dashboard_snapshot(
                     &options,
+                    viewport,
                     controller,
                     snapshot,
                     latest_endpoint.as_ref(),
@@ -449,6 +488,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                 );
                 let frame = render_dashboard_snapshot(
                     &options,
+                    viewport,
                     controller,
                     &visible_model.snapshot,
                     loaded.endpoint.as_ref(),
@@ -652,6 +692,27 @@ fn elapsed_millis(start: Instant) -> i64 {
     start.elapsed().as_millis().min(i64::MAX as u128) as i64
 }
 
+fn read_tmux_terminal_size() -> Option<DashboardViewport> {
+    let tmux_pane = env::var("TMUX_PANE")
+        .ok()
+        .filter(|value| !value.trim().is_empty());
+    let mut command = Command::new("tmux");
+    command.args(["display-message", "-p"]);
+    if let Some(tmux_pane) = tmux_pane.as_deref() {
+        command.args(["-t", tmux_pane]);
+    }
+    command.arg("#{window_width}x#{window_height}");
+    let output = command.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let raw = String::from_utf8_lossy(&output.stdout);
+    let (cols, rows) = raw.split_once('x')?;
+    let cols = cols.trim().parse::<usize>().ok()?;
+    let rows = rows.trim().parse::<usize>().ok()?;
+    (cols > 0 && rows > 0).then_some(DashboardViewport { cols, rows })
+}
+
 fn execute_dashboard_controller_action(
     endpoint: &ProjectServiceEndpoint,
     request: &DashboardActionRequest,
@@ -839,6 +900,7 @@ fn find_dashboard_session<'a>(
 
 fn render_dashboard_snapshot(
     options: &NativeDashboardOptions,
+    viewport: DashboardViewport,
     controller: &mut DashboardController,
     snapshot: &DesktopStateSnapshot,
     endpoint: Option<&ProjectServiceEndpoint>,
@@ -846,7 +908,7 @@ fn render_dashboard_snapshot(
     scroll_offset: usize,
 ) -> crate::tui_render::screen_frame::ScreenFrameResult {
     if controller.screen != DashboardScreen::Dashboard {
-        return render_dashboard_subscreen_snapshot(options, controller, endpoint, scroll_offset);
+        return render_dashboard_subscreen_snapshot(viewport, controller, endpoint, scroll_offset);
     }
     controller.navigation.clamp(snapshot);
     let (selected_session_id, selected_service_id) =
@@ -884,8 +946,8 @@ fn render_dashboard_snapshot(
         snapshot,
         overseer_sessions: &overseer_sessions,
         scribe_sessions: &scribe_sessions,
-        cols: options.cols,
-        rows: options.rows,
+        cols: viewport.cols,
+        rows: viewport.rows,
         nav_level: controller.navigation.level,
         selected_session_id,
         selected_service_id,
@@ -910,8 +972,8 @@ fn render_dashboard_snapshot(
         });
         output.push_str(&render_overseer_overlay_output(
             &ctx,
-            options.cols,
-            options.rows,
+            viewport.cols,
+            viewport.rows,
         ));
         return crate::tui_render::screen_frame::ScreenFrameResult {
             frame: output,
@@ -925,7 +987,7 @@ fn render_dashboard_snapshot(
             "overseerWatchInstructionsBuffer": &watch.buffer,
         });
         if let Some(overlay) =
-            render_overseer_watch_instructions_overlay_output(&ctx, options.cols, options.rows)
+            render_overseer_watch_instructions_overlay_output(&ctx, viewport.cols, viewport.rows)
         {
             output.push_str(&overlay);
         }
@@ -951,8 +1013,8 @@ fn render_dashboard_snapshot(
         }
         output.push_str(&render_work_outline_overlay_output(
             &ctx,
-            options.cols,
-            options.rows,
+            viewport.cols,
+            viewport.rows,
         ));
         return crate::tui_render::screen_frame::ScreenFrameResult {
             frame: output,
@@ -968,8 +1030,8 @@ fn render_dashboard_snapshot(
         output.push_str(&render_launch_options_overlay(
             launch_options,
             selected_tool,
-            options.cols,
-            options.rows,
+            viewport.cols,
+            viewport.rows,
         ));
         return crate::tui_render::screen_frame::ScreenFrameResult {
             frame: output,
@@ -980,8 +1042,8 @@ fn render_dashboard_snapshot(
         let mut output = frame.frame;
         output.push_str(&render_tool_picker_overlay(
             tool_picker,
-            options.cols,
-            options.rows,
+            viewport.cols,
+            viewport.rows,
         ));
         return crate::tui_render::screen_frame::ScreenFrameResult {
             frame: output,
@@ -992,8 +1054,8 @@ fn render_dashboard_snapshot(
         let mut output = frame.frame;
         output.push_str(&render_service_input_overlay(
             service_input,
-            options.cols,
-            options.rows,
+            viewport.cols,
+            viewport.rows,
         ));
         return crate::tui_render::screen_frame::ScreenFrameResult {
             frame: output,
@@ -1004,8 +1066,8 @@ fn render_dashboard_snapshot(
         let mut output = frame.frame;
         output.push_str(&render_worktree_input_overlay(
             worktree_input,
-            options.cols,
-            options.rows,
+            viewport.cols,
+            viewport.rows,
         ));
         return crate::tui_render::screen_frame::ScreenFrameResult {
             frame: output,
@@ -1016,8 +1078,8 @@ fn render_dashboard_snapshot(
         let mut output = frame.frame;
         output.push_str(&render_migrate_picker_overlay(
             migrate_picker,
-            options.cols,
-            options.rows,
+            viewport.cols,
+            viewport.rows,
         ));
         return crate::tui_render::screen_frame::ScreenFrameResult {
             frame: output,
@@ -1028,8 +1090,8 @@ fn render_dashboard_snapshot(
         let mut output = frame.frame;
         output.push_str(&render_label_input_overlay(
             label_input,
-            options.cols,
-            options.rows,
+            viewport.cols,
+            viewport.rows,
         ));
         return crate::tui_render::screen_frame::ScreenFrameResult {
             frame: output,
@@ -1041,8 +1103,8 @@ fn render_dashboard_snapshot(
         output.push_str(&render_worktree_remove_confirm_overlay(
             &confirm.name,
             &confirm.path,
-            options.cols,
-            options.rows,
+            viewport.cols,
+            viewport.rows,
         ));
         return crate::tui_render::screen_frame::ScreenFrameResult {
             frame: output,
@@ -1053,8 +1115,8 @@ fn render_dashboard_snapshot(
         let mut output = frame.frame;
         output.push_str(&render_worktree_list_overlay(
             &snapshot.worktree_groups,
-            options.cols,
-            options.rows,
+            viewport.cols,
+            viewport.rows,
         ));
         return crate::tui_render::screen_frame::ScreenFrameResult {
             frame: output,
@@ -1065,8 +1127,8 @@ fn render_dashboard_snapshot(
         let mut output = frame.frame;
         output.push_str(&render_worktree_cache_cleanup_confirm_overlay(
             preview,
-            options.cols,
-            options.rows,
+            viewport.cols,
+            viewport.rows,
         ));
         return crate::tui_render::screen_frame::ScreenFrameResult {
             frame: output,
@@ -1081,8 +1143,8 @@ fn render_dashboard_snapshot(
         if let Some(overlay) = render_teammate_picker_overlay(
             &teammates,
             teammate_picker.index,
-            options.cols,
-            options.rows,
+            viewport.cols,
+            viewport.rows,
         ) {
             let mut output = frame.frame;
             output.push_str(&overlay);
@@ -1096,8 +1158,8 @@ fn render_dashboard_snapshot(
         let mut output = frame.frame;
         output.push_str(&render_orchestration_route_picker_overlay(
             route_picker,
-            options.cols,
-            options.rows,
+            viewport.cols,
+            viewport.rows,
         ));
         return crate::tui_render::screen_frame::ScreenFrameResult {
             frame: output,
@@ -1108,8 +1170,8 @@ fn render_dashboard_snapshot(
         let mut output = frame.frame;
         output.push_str(&render_orchestration_input_overlay(
             input,
-            options.cols,
-            options.rows,
+            viewport.cols,
+            viewport.rows,
         ));
         return crate::tui_render::screen_frame::ScreenFrameResult {
             frame: output,
@@ -1120,8 +1182,8 @@ fn render_dashboard_snapshot(
         let mut output = frame.frame;
         output.push_str(&render_thread_reply_overlay(
             reply,
-            options.cols,
-            options.rows,
+            viewport.cols,
+            viewport.rows,
         ));
         return crate::tui_render::screen_frame::ScreenFrameResult {
             frame: output,
@@ -1136,7 +1198,7 @@ fn dashboard_runtime_version() -> String {
 }
 
 fn render_dashboard_subscreen_snapshot(
-    options: &NativeDashboardOptions,
+    viewport: DashboardViewport,
     controller: &mut DashboardController,
     endpoint: Option<&ProjectServiceEndpoint>,
     scroll_offset: usize,
@@ -1160,8 +1222,8 @@ fn render_dashboard_subscreen_snapshot(
         resource: resource.as_ref(),
         error: error.as_deref(),
         selected_index: controller.subscreen_index,
-        cols: options.cols,
-        rows: options.rows,
+        cols: viewport.cols,
+        rows: viewport.rows,
         scroll_offset,
         footer_message: controller.footer_message.as_deref(),
         details_sidebar_visible: controller.details_sidebar_visible,
@@ -1173,8 +1235,8 @@ fn render_dashboard_subscreen_snapshot(
         let mut output = frame.frame;
         output.push_str(&render_thread_reply_overlay(
             reply,
-            options.cols,
-            options.rows,
+            viewport.cols,
+            viewport.rows,
         ));
         return crate::tui_render::screen_frame::ScreenFrameResult {
             frame: output,
