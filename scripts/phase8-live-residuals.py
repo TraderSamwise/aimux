@@ -548,7 +548,7 @@ def run_dashboard_spawn_smoke(aimux_bin: Path, mutation: str | None) -> dict[str
         socket_name = f"aimux-phase8-dashboard-spawn-{os.getpid()}-{int(time.time() * 1000)}"
         scope.tmux_socket_name = socket_name
         install_tmux_socket_wrapper(scope, tmux, socket_name)
-        run([tmux, "-L", socket_name, "start-server"], env=without_tmux(os.environ.copy()), timeout=10)
+        run([tmux, "-L", socket_name, "kill-server"], env=without_tmux(os.environ.copy()), timeout=10, check=False)
         scope.init_git_project()
         run([str(aimux_bin), "init"], cwd=scope.project, env=scope.env, timeout=30)
         install_agent_tool_config(scope, "claude")
@@ -680,7 +680,7 @@ def run_command_resolution_smoke(aimux_bin: Path, mutation: str | None) -> dict[
         socket_name = f"aimux-phase8-command-{os.getpid()}-{int(time.time() * 1000)}"
         scope.tmux_socket_name = socket_name
         install_tmux_socket_wrapper(scope, tmux, socket_name)
-        run([tmux, "-L", socket_name, "start-server"], env=without_tmux(os.environ.copy()), timeout=10)
+        run([tmux, "-L", socket_name, "kill-server"], env=without_tmux(os.environ.copy()), timeout=10, check=False)
         scope.init_git_project()
         seed_initial_commit(scope)
         run([str(aimux_bin), "init"], cwd=scope.project, env=scope.env, timeout=30)
@@ -919,7 +919,7 @@ def run_graveyard_lifecycle_smoke(aimux_bin: Path, mutation: str | None) -> dict
         socket_name = f"aimux-phase8-graveyard-{os.getpid()}-{int(time.time() * 1000)}"
         scope.tmux_socket_name = socket_name
         install_tmux_socket_wrapper(scope, tmux, socket_name)
-        run([tmux, "-L", socket_name, "start-server"], env=without_tmux(os.environ.copy()), timeout=10)
+        run([tmux, "-L", socket_name, "kill-server"], env=without_tmux(os.environ.copy()), timeout=10, check=False)
         scope.init_git_project()
         run([str(aimux_bin), "init"], cwd=scope.project, env=scope.env, timeout=30)
         install_shell_tool_config(scope)
@@ -999,7 +999,7 @@ def run_top_level_agent_tool_smoke(aimux_bin: Path, mutation: str | None) -> dic
         socket_name = f"aimux-phase8-top-level-agent-{os.getpid()}-{int(time.time() * 1000)}"
         scope.tmux_socket_name = socket_name
         install_tmux_socket_wrapper(scope, tmux, socket_name)
-        run([tmux, "-L", socket_name, "start-server"], env=without_tmux(os.environ.copy()), timeout=10)
+        run([tmux, "-L", socket_name, "kill-server"], env=without_tmux(os.environ.copy()), timeout=10, check=False)
         scope.init_git_project()
         run([str(aimux_bin), "init"], cwd=scope.project, env=scope.env, timeout=30)
         install_agent_tool_config(scope, "codex")
@@ -1206,7 +1206,7 @@ def run_lazy_read_start_smoke(aimux_bin: Path, mutation: str | None) -> dict[str
         socket_name = f"aimux-phase8-read-{os.getpid()}-{int(time.time() * 1000)}"
         scope.tmux_socket_name = socket_name
         install_tmux_socket_wrapper(scope, tmux, socket_name)
-        run([tmux, "-L", socket_name, "start-server"], env=without_tmux(os.environ.copy()), timeout=10)
+        run([tmux, "-L", socket_name, "kill-server"], env=without_tmux(os.environ.copy()), timeout=10, check=False)
         scope.init_git_project()
         seed_initial_commit(scope)
         run([str(aimux_bin), "init"], cwd=scope.project, env=scope.env, timeout=30)
@@ -1256,7 +1256,7 @@ def run_restart_current_project_smoke(aimux_bin: Path, mutation: str | None) -> 
         socket_name = f"aimux-phase8-restart-{os.getpid()}-{int(time.time() * 1000)}"
         scope.tmux_socket_name = socket_name
         install_tmux_socket_wrapper(scope, tmux, socket_name)
-        run([tmux, "-L", socket_name, "start-server"], env=without_tmux(os.environ.copy()), timeout=10)
+        run([tmux, "-L", socket_name, "kill-server"], env=without_tmux(os.environ.copy()), timeout=10, check=False)
         scope.init_git_project()
         seed_initial_commit(scope)
         run([str(aimux_bin), "init"], cwd=scope.project, env=scope.env, timeout=30)

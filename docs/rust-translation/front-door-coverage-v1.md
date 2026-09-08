@@ -21,6 +21,8 @@ Every executable entry point needs at least one contract at its own boundary, ev
 `scripts/phase8-live-residuals.py` now covers the front-door seams that caught the failures:
 
 - command resolution from `aimux --help` through real binary execution;
+- first-run command seams from empty private tmux sockets, so a warm tmux
+  server cannot hide bootstrap regressions;
 - command-group output alias detection for `overseer status`, `scribe status`,
   `loop list`, and `review list`;
 - bare `graveyard` routing plus stop-vs-kill graveyard lifecycle semantics;
