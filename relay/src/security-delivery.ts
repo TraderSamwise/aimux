@@ -71,14 +71,12 @@ async function sendExpoPush(messages: unknown[]): Promise<{ sent: number }> {
     const detail = await response.text().catch(() => "");
     throw new Error(`Expo push failed (${response.status}): ${detail.slice(0, 300)}`);
   }
-  const body = (await response.json().catch(() => null)) as
-    | { data?: Array<{ status?: string; message?: string; details?: unknown }> }
-    | null;
+  const body = (await response.json().catch(() => null)) as {
+    data?: Array<{ status?: string; message?: string; details?: unknown }>;
+  } | null;
   const failedTicket = body?.data?.find((ticket) => ticket.status === "error");
   if (failedTicket) {
-    const detail =
-      failedTicket.message ||
-      (failedTicket.details ? JSON.stringify(failedTicket.details) : "");
+    const detail = failedTicket.message || (failedTicket.details ? JSON.stringify(failedTicket.details) : "");
     throw new Error(`Expo push rejected a token${detail ? `: ${detail}` : ""}`);
   }
   return { sent: messages.length };

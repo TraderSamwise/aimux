@@ -71,7 +71,9 @@ describe("hosted relay attachments", () => {
     );
 
     expect(hosted).toMatchObject({
-      contentUrl: expect.stringMatching(/^https:\/\/relay\.aimux\.app\/attachments\/hosted\/ha_[A-Za-z0-9_-]{43}\/content$/),
+      contentUrl: expect.stringMatching(
+        /^https:\/\/relay\.aimux\.app\/attachments\/hosted\/ha_[A-Za-z0-9_-]{43}\/content$/,
+      ),
       expiresAt: new Date(now.getTime() + HOSTED_ATTACHMENT_TTL_MS).toISOString(),
       sha256: "ea80334363eed145dfeee51ebae7dc3f1cd7d0c7879f8bfd2070c061d3c33f56",
       sizeBytes: 9,

@@ -114,7 +114,9 @@ export async function serveHostedAttachment(env: Env, id: string): Promise<Respo
     return json({ ok: false, error: "attachment expired" }, 410);
   }
 
-  const mimeType = normalizeMimeType(metadata?.mimeType ?? object.httpMetadata?.contentType ?? "application/octet-stream");
+  const mimeType = normalizeMimeType(
+    metadata?.mimeType ?? object.httpMetadata?.contentType ?? "application/octet-stream",
+  );
   const filename = sanitizeFilename(metadata?.filename ?? "attachment");
   return new Response(object.body, {
     status: 200,
@@ -150,7 +152,11 @@ function normalizeMimeType(mimeType: string): string {
 }
 
 function sanitizeFilename(filename: string): string {
-  const safe = filename.trim().replaceAll(/[\\/]/g, "").replaceAll(/[\r\n]/g, " ").trim();
+  const safe = filename
+    .trim()
+    .replaceAll(/[\\/]/g, "")
+    .replaceAll(/[\r\n]/g, " ")
+    .trim();
   return safe || "attachment";
 }
 
