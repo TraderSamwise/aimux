@@ -67,6 +67,36 @@ fn flat_session_clamp_uses_visible_non_control_entries() {
 }
 
 #[test]
+fn flat_session_escape_focuses_selected_visible_session() {
+    let mut snapshot = snapshot();
+    snapshot.worktree_groups.clear();
+    let mut visible = snapshot.sessions[0].clone();
+    visible.tmux_window_id = Some("@visible".into());
+    snapshot.sessions = vec![overseer_session(&visible), visible];
+    let mut controller = DashboardController::new(&snapshot);
+
+    let DashboardControllerEffect::Request(request) =
+        controller.handle_key(&snapshot, DashboardKey::Back)
+    else {
+        panic!("expected focus request");
+    };
+    assert_eq!(request.path, routes::controls::FOCUS_WINDOW);
+    assert_eq!(
+        request.body,
+        json!({ "windowId": "@visible", "focus": true })
+    );
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('h')),
+        DashboardControllerEffect::Ignored
+    );
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Left),
+        DashboardControllerEffect::Ignored
+    );
+}
+
+#[test]
 fn shifted_arrows_parse_as_reorder_keys() {
     assert_eq!(parse_dashboard_key(b"\x1b[1;2A"), DashboardKey::ShiftUp);
     assert_eq!(parse_dashboard_key(b"\x1b[1;2B"), DashboardKey::ShiftDown);

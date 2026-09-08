@@ -338,6 +338,12 @@ impl DashboardController {
         if self.tool_picker.is_some() {
             return self.handle_tool_picker_key(snapshot, key);
         }
+        if key == DashboardKey::Back
+            && self.screen == DashboardScreen::Dashboard
+            && snapshot.worktree_groups.is_empty()
+        {
+            return self.handle_action(snapshot, DashboardActionKind::Enter);
+        }
         if let Some(effect) = self.handle_screen_command_key(snapshot, key) {
             return effect;
         }
