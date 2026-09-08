@@ -10,6 +10,8 @@ Real install testing also caught later front-door regressions after those first 
 
 Another real-machine first-run bug appeared when no tmux server existed: top-level `aimux shell` routed into service creation and tried `new-window` before ensuring the managed project session. Agent spawn already bootstrapped tmux; service spawn now follows the same invariant.
 
+Real install testing then exposed two lifecycle gaps: `stop` left agents offline in `ps` but absent from `graveyard`, making documented recovery unreachable, and `fork <sessionId>` rejected the advertised same-tool fork form unless `--tool` was supplied. `stop` now moves the session into recoverable graveyard; `graveyard resurrect` clears it back to offline; root `--restore <tool>` relaunches it. Same-tool `fork <sessionId>` now infers the source session's tool from topology.
+
 Those failures were not contradictions in the corpora. They were outside the corpora boundary. The corpora proved function input/output contracts; they did not prove the assembled binary, daemon loopback transport, tmux terminal, or installed command dispatch.
 
 ## Rule
@@ -25,7 +27,7 @@ Every executable entry point needs at least one contract at its own boundary, ev
   server cannot hide bootstrap regressions;
 - command-group output alias detection for `overseer status`, `scribe status`,
   `loop list`, and `review list`;
-- bare `graveyard` routing plus stop-vs-kill graveyard lifecycle semantics;
+- bare `graveyard` routing plus stop, resurrect, restore, kill, and fork graveyard lifecycle semantics;
 - top-level `aimux shell` service creation from an empty private tmux socket;
 - shell agent spawn end to end without external agent CLIs or credentials;
 - top-level generic tool dispatch through the real binary with `codex`,
@@ -38,6 +40,6 @@ Every executable entry point needs at least one contract at its own boundary, ev
 - cold project-service reads through `ps`, `list`, `worktree list`, `threads`, and `task list`;
 - bare `aimux restart --json` including the current checkout before it has been registered by another command.
 
-Current proof head: `aa8a0125`. `scripts/phase8-live-residuals.py --prove-fails --aimux-bin native/target/debug/aimux --skip-build` passes with 15 residual mutations reported as `PROVEN-FAILS`, including command unsupported, command silent alias, dashboard input dead, dashboard spawn missing session, shell-service missing window, top-level agent missing session, lazy read unavailable, restart-current zero projects, SSE reorder, process missing endpoint, and graveyard stop-adds-entry. The front-door, dashboard-spawn, top-level agent, lazy-read, restart-current, shell-service, and graveyard residuals now start from empty private tmux sockets instead of warmed servers. The process residual also covers concurrent `serve` startup over stale daemon info and malformed daemon-start locks. Agent resume/restore shares the same tmux session bootstrap invariant.
+Current proof head: `7f264dc0`. `scripts/phase8-live-residuals.py --only graveyard --prove-fails --aimux-bin native/target/debug/aimux --skip-build` passes the scoped graveyard lifecycle and reports 16 residual mutations as `PROVEN-FAILS`, including command unsupported, command silent alias, dashboard input dead, dashboard spawn missing session, shell-service missing window, top-level agent missing session, lazy read unavailable, restart-current zero projects, SSE reorder, process missing endpoint, graveyard stop missing entry, and graveyard fork missing session. The front-door, dashboard-spawn, top-level agent, lazy-read, restart-current, shell-service, and graveyard residuals now start from empty private tmux sockets instead of warmed servers. The process residual also covers concurrent `serve` startup over stale daemon info and malformed daemon-start locks. Agent resume/restore shares the same tmux session bootstrap invariant.
 
 These tests intentionally avoid exact TUI layout, screenshots, real Claude/Codex invocations, network access, or timing-sensitive multi-agent orchestration.
