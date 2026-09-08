@@ -1,6 +1,8 @@
 use crate::atomic_write::write_json_atomic;
 use crate::dashboard_controller::DashboardScreen;
-use crate::dashboard_model::DesktopStateSnapshot;
+use crate::dashboard_model::{DashboardSession, DesktopStateSnapshot};
+use crate::dashboard_navigation::{DashboardEntryRef, DashboardNavigationState};
+use crate::dashboard_renderer::DashboardNavLevel;
 use crate::paths::PathResolver;
 use anyhow::{Context, Result, anyhow};
 use serde_json::{Map, Value, json};
@@ -59,6 +61,14 @@ impl DashboardUiStatePersistence {
         self.last_preview_source.as_deref()
     }
 
+    pub fn load_details_sidebar_visible(&self) -> Option<bool> {
+        read_dashboard_state_snapshot(&self.path).and_then(|snapshot| {
+            snapshot
+                .get("detailsSidebarVisible")
+                .and_then(Value::as_bool)
+        })
+    }
+
     pub fn persist_screen(&mut self, screen: DashboardScreen) -> Result<bool> {
         if self.last_screen == Some(screen) {
             return Ok(false);
@@ -89,6 +99,48 @@ impl DashboardUiStatePersistence {
         snapshot["screen"] = Value::String(screen.as_str().to_owned());
         snapshot["previewSource"] = Value::String(preview_source.clone());
         write_json_atomic(&self.path, &snapshot)
+            .with_context(|| format!("write dashboard ui state {}", self.path.display()))?;
+        self.last_screen = Some(screen);
+        self.last_preview_source = Some(preview_source);
+        Ok(true)
+    }
+
+    pub fn restore_navigation(
+        &self,
+        navigation: &mut DashboardNavigationState,
+        snapshot: &DesktopStateSnapshot,
+    ) {
+        let Some(state) = read_dashboard_state_snapshot(&self.path) else {
+            return;
+        };
+        restore_worktree_focus(navigation, snapshot, &state);
+        restore_navigation_level(navigation, snapshot, &state);
+        restore_selected_entry(navigation, snapshot, &state);
+        navigation.clamp(snapshot);
+    }
+
+    pub fn persist_controller_state(
+        &mut self,
+        screen: DashboardScreen,
+        preview_source: &str,
+        details_sidebar_visible: bool,
+        snapshot: &DesktopStateSnapshot,
+        navigation: &DashboardNavigationState,
+    ) -> Result<bool> {
+        let preview_source =
+            normalize_preview_source(Some(&Value::String(preview_source.to_owned())));
+        let mut state = read_dashboard_state_snapshot(&self.path)
+            .unwrap_or_else(|| Value::Object(Default::default()));
+        state["screen"] = Value::String(screen.as_str().to_owned());
+        state["previewSource"] = Value::String(preview_source.clone());
+        state["detailsSidebarVisible"] = Value::Bool(details_sidebar_visible);
+        persist_navigation_state(&mut state, snapshot, navigation);
+        if read_dashboard_state_snapshot(&self.path).as_ref() == Some(&state) {
+            self.last_screen = Some(screen);
+            self.last_preview_source = Some(preview_source);
+            return Ok(false);
+        }
+        write_json_atomic(&self.path, &state)
             .with_context(|| format!("write dashboard ui state {}", self.path.display()))?;
         self.last_screen = Some(screen);
         self.last_preview_source = Some(preview_source);
@@ -263,6 +315,169 @@ fn read_dashboard_state_snapshot(path: &Path) -> Option<Value> {
 fn read_dashboard_screen_from_snapshot(value: &Value) -> Option<DashboardScreen> {
     let screen = value.get("screen").and_then(Value::as_str)?;
     DashboardScreen::parse(screen)
+}
+
+fn restore_worktree_focus(
+    navigation: &mut DashboardNavigationState,
+    snapshot: &DesktopStateSnapshot,
+    state: &Value,
+) {
+    if snapshot.worktree_groups.is_empty() {
+        navigation.worktree_index = 0;
+        return;
+    }
+    let focused_path = state.get("focusedWorktreePath").and_then(Value::as_str);
+    navigation.worktree_index = focused_path
+        .and_then(|path| {
+            snapshot
+                .worktree_groups
+                .iter()
+                .position(|group| group.path.as_deref() == Some(path))
+        })
+        .unwrap_or(0);
+}
+
+fn restore_navigation_level(
+    navigation: &mut DashboardNavigationState,
+    snapshot: &DesktopStateSnapshot,
+    state: &Value,
+) {
+    navigation.level = if snapshot.worktree_groups.is_empty()
+        || state.get("level").and_then(Value::as_str) == Some("sessions")
+    {
+        DashboardNavLevel::Sessions
+    } else {
+        DashboardNavLevel::Worktrees
+    };
+}
+
+fn restore_selected_entry(
+    navigation: &mut DashboardNavigationState,
+    snapshot: &DesktopStateSnapshot,
+    state: &Value,
+) {
+    if snapshot.worktree_groups.is_empty() {
+        if let Some(flat_session_id) = state.get("flatSessionId").and_then(Value::as_str) {
+            navigation.item_index = snapshot
+                .sessions
+                .iter()
+                .filter(|session| !is_project_control_session(session))
+                .position(|session| session.id == flat_session_id)
+                .unwrap_or(navigation.item_index);
+        }
+        return;
+    }
+    if navigation.level != DashboardNavLevel::Sessions {
+        return;
+    }
+    let Some(kind) = state.get("selectedEntryKind").and_then(Value::as_str) else {
+        return;
+    };
+    let Some(id) = state.get("selectedEntryId").and_then(Value::as_str) else {
+        return;
+    };
+    let Some(group) = snapshot.worktree_groups.get(navigation.worktree_index) else {
+        return;
+    };
+    let session_index = group
+        .sessions
+        .iter()
+        .filter(|session| !is_project_control_session(session))
+        .position(|session| kind == "session" && session.id == id);
+    if let Some(index) = session_index {
+        navigation.item_index = index;
+        return;
+    }
+    let session_count = group
+        .sessions
+        .iter()
+        .filter(|session| !is_project_control_session(session))
+        .count();
+    if let Some(index) = group
+        .services
+        .iter()
+        .position(|service| kind == "service" && service.id == id)
+    {
+        navigation.item_index = session_count + index;
+    }
+}
+
+fn persist_navigation_state(
+    state: &mut Value,
+    snapshot: &DesktopStateSnapshot,
+    navigation: &DashboardNavigationState,
+) {
+    state["level"] = Value::String(
+        match navigation.level {
+            DashboardNavLevel::Sessions => "sessions",
+            DashboardNavLevel::Worktrees => "worktrees",
+        }
+        .to_owned(),
+    );
+    persist_worktree_focus(state, snapshot, navigation);
+    persist_selected_entry(state, snapshot, navigation);
+}
+
+fn persist_worktree_focus(
+    state: &mut Value,
+    snapshot: &DesktopStateSnapshot,
+    navigation: &DashboardNavigationState,
+) {
+    if snapshot.worktree_groups.is_empty() {
+        remove_object_key(state, "focusedWorktreePath");
+        return;
+    }
+    if let Some(path) = snapshot
+        .worktree_groups
+        .get(navigation.worktree_index)
+        .and_then(|group| group.path.as_deref())
+    {
+        state["focusedWorktreePath"] = Value::String(path.to_owned());
+    } else {
+        remove_object_key(state, "focusedWorktreePath");
+    }
+}
+
+fn persist_selected_entry(
+    state: &mut Value,
+    snapshot: &DesktopStateSnapshot,
+    navigation: &DashboardNavigationState,
+) {
+    let Some(entry) = navigation.selected_entry(snapshot) else {
+        remove_object_key(state, "selectedEntryKind");
+        remove_object_key(state, "selectedEntryId");
+        return;
+    };
+    match entry {
+        DashboardEntryRef::Session(session) => {
+            state["selectedEntryKind"] = Value::String("session".into());
+            state["selectedEntryId"] = Value::String(session.id.clone());
+            if snapshot.worktree_groups.is_empty() {
+                state["flatSessionId"] = Value::String(session.id.clone());
+            }
+        }
+        DashboardEntryRef::Service(service) => {
+            state["selectedEntryKind"] = Value::String("service".into());
+            state["selectedEntryId"] = Value::String(service.id.clone());
+        }
+    }
+}
+
+fn remove_object_key(value: &mut Value, key: &str) {
+    if let Some(object) = value.as_object_mut() {
+        object.remove(key);
+    }
+}
+
+fn is_project_control_session(session: &DashboardSession) -> bool {
+    session.project_control == Some(true)
+        || session.overseer == Some(true)
+        || session
+            .team
+            .as_ref()
+            .and_then(|team| team.role.as_deref())
+            .is_some_and(|role| role == "overseer" || role == "scribe")
+        || session.scribe == Some(true)
 }
 
 fn current_tmux_session() -> Option<String> {

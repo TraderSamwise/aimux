@@ -379,6 +379,18 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                     {
                         controller.set_preview_source(preview_source);
                     }
+                    if let Some(details_visible) = ui_state
+                        .as_ref()
+                        .and_then(DashboardUiStatePersistence::load_details_sidebar_visible)
+                    {
+                        controller.details_sidebar_visible = details_visible;
+                    }
+                    if let Some(ui_state) = ui_state.as_ref() {
+                        ui_state.restore_navigation(
+                            &mut controller.navigation,
+                            &visible_model.snapshot,
+                        );
+                    }
                     controller
                 });
                 let frame = render_dashboard_snapshot(
@@ -393,7 +405,13 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                 rendered_once = true;
                 let statusline_client_session = ui_state.as_mut().and_then(|ui_state| {
                     ui_state
-                        .persist_render_state(controller.screen, &controller.preview_source)
+                        .persist_controller_state(
+                            controller.screen,
+                            &controller.preview_source,
+                            controller.details_sidebar_visible,
+                            &visible_model.snapshot,
+                            &controller.navigation,
+                        )
                         .unwrap_or(false)
                         .then(|| ui_state.client_session().to_owned())
                 });

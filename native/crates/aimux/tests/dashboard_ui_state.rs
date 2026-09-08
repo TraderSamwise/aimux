@@ -2,6 +2,8 @@ use aimux::dashboard_controller::DashboardScreen;
 use aimux::dashboard_model::{
     DesktopStateSnapshot, MainCheckoutInfo, WorktreeGroup, WorktreeStatus,
 };
+use aimux::dashboard_navigation::DashboardNavigationState;
+use aimux::dashboard_renderer::DashboardNavLevel;
 use aimux::dashboard_ui_state::{DashboardUiStatePersistence, dashboard_client_key};
 use std::fs;
 use std::path::PathBuf;
@@ -119,6 +121,41 @@ fn moves_and_applies_shared_worktree_session_order() {
 }
 
 #[test]
+fn persists_and_restores_selected_worktree_entry_state() {
+    let root = temp_dir("dashboard-ui-state-navigation");
+    fs::create_dir_all(&root).expect("create temp dir");
+    let mut snapshot = order_snapshot();
+    snapshot.worktree_groups[0].services.push(service("svc-a"));
+    let mut navigation = DashboardNavigationState::new(&snapshot);
+    navigation.level = DashboardNavLevel::Sessions;
+    navigation.worktree_index = 0;
+    navigation.item_index = 2;
+
+    let mut state = DashboardUiStatePersistence::new(&root, "client").expect("create ui state");
+    assert!(
+        state
+            .persist_controller_state(
+                DashboardScreen::Dashboard,
+                "scribe",
+                false,
+                &snapshot,
+                &navigation,
+            )
+            .expect("persist navigation")
+    );
+
+    let mut restored = DashboardNavigationState::new(&snapshot);
+    let reloaded = DashboardUiStatePersistence::new(&root, "client").expect("reload ui state");
+    reloaded.restore_navigation(&mut restored, &snapshot);
+    assert_eq!(reloaded.load_details_sidebar_visible(), Some(false));
+    assert_eq!(reloaded.load_preview_source(), Some("scribe"));
+    assert_eq!(restored.level, DashboardNavLevel::Sessions);
+    assert_eq!(restored.worktree_index, 0);
+    assert_eq!(restored.item_index, 2);
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
 fn skips_write_when_screen_is_unchanged() {
     let root = temp_dir("dashboard-ui-state-unchanged");
     fs::create_dir_all(&root).expect("create temp dir");
@@ -192,6 +229,35 @@ fn order_snapshot() -> DesktopStateSnapshot {
         worktree_removals: Vec::new(),
         agent_restore_offer: None,
         operation_failures: Vec::new(),
+        extra: Default::default(),
+    }
+}
+
+fn service(id: &str) -> aimux::dashboard_model::DashboardService {
+    aimux::dashboard_model::DashboardService {
+        id: id.into(),
+        command: Some("yarn dev".into()),
+        label: None,
+        args: Vec::new(),
+        status: aimux::dashboard_model::ServiceStatus::Running,
+        active: true,
+        tmux_window_id: Some("@3".into()),
+        tmux_window_index: Some(3),
+        worktree_path: Some("/repo/wt".into()),
+        worktree_name: Some("feature".into()),
+        worktree_branch: Some("feature".into()),
+        created_at: None,
+        last_used_at: None,
+        foreground_command: None,
+        shell_command: None,
+        shell_command_state: None,
+        pid: None,
+        preview_line: None,
+        cwd: None,
+        pending_action: None,
+        pending_started_at: None,
+        pending: false,
+        optimistic: false,
         extra: Default::default(),
     }
 }
