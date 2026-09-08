@@ -87,12 +87,12 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
     let mut rendered_once = false;
     let mut last_render = Instant::now();
     let clock_start = Instant::now();
-    let mut stdout = io::stdout();
+    let mut output = dashboard_output(options.once);
     let mut stdin = io::stdin();
     let _terminal = if options.once {
         None
     } else {
-        Some(DashboardTerminalGuard::enter(&mut stdout).context("enter dashboard terminal")?)
+        Some(DashboardTerminalGuard::enter(&mut *output).context("enter dashboard terminal")?)
     };
 
     loop {
@@ -110,12 +110,10 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
         } else {
             true
         };
-        if !dashboard_visible {
-            let keys = read_dashboard_keys(&mut stdin).context("read dashboard key")?;
-            if keys.iter().any(|key| key.is_focus_in()) {
-                mark_dashboard_tui_visible(&mut visibility_state, now, None);
-                dashboard_visible = true;
-            }
+        let keys = read_dashboard_keys(&mut stdin).context("read dashboard key")?;
+        if !keys.is_empty() {
+            mark_dashboard_tui_visible(&mut visibility_state, now, None);
+            dashboard_visible = true;
         }
         if !dashboard_visible {
             suspend_dashboard_event_stream(&mut event_stream, &mut event_stream_retry_at);
@@ -146,76 +144,122 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
             options.once || options.desktop_state_file.is_some(),
         );
 
-        if render_now || last_render.elapsed() >= DASHBOARD_FALLBACK_REFRESH_INTERVAL {
-            let loaded = load_dashboard_snapshot(&options)?;
-            let hide_offline_agents = controller
-                .as_ref()
-                .map(|controller| controller.hide_offline_agents)
-                .unwrap_or(false);
-            let visible_model =
-                filter_dashboard_visible_model(&loaded.snapshot, hide_offline_agents);
-            let controller = controller.get_or_insert_with(|| {
-                let mut controller = DashboardController::new(&visible_model.snapshot);
-                if let Some(screen) = ui_state
-                    .as_ref()
-                    .and_then(DashboardUiStatePersistence::load_screen)
-                {
-                    controller.screen = screen;
-                }
-                controller
+        let key_processing_pending = rendered_once && !keys.is_empty();
+        let render_due = render_now || last_render.elapsed() >= DASHBOARD_FALLBACK_REFRESH_INTERVAL;
+        if render_due && !key_processing_pending {
+            let cached_subscreen_snapshot = latest_snapshot.as_ref().filter(|_| {
+                render_now
+                    && controller
+                        .as_ref()
+                        .is_some_and(|controller| controller.screen != DashboardScreen::Dashboard)
             });
-            let frame = render_dashboard_snapshot(
-                &options,
-                controller,
-                &visible_model.snapshot,
-                loaded.endpoint.as_ref(),
-                visible_model.hidden_offline_agent_count,
-                scroll_offset,
-            );
-            write_dashboard_frame(&mut stdout, frame.frame.as_bytes())?;
-            rendered_once = true;
-            let statusline_client_session = ui_state.as_mut().and_then(|ui_state| {
-                ui_state
-                    .persist_screen(controller.screen)
-                    .unwrap_or(false)
-                    .then(|| ui_state.client_session().to_owned())
-            });
-            if let (Some(endpoint), Some(client_session)) = (
-                loaded.endpoint.as_ref(),
-                statusline_client_session.as_deref(),
-            ) {
-                let _ = refresh_dashboard_statusline(endpoint, client_session);
-            }
-            scroll_offset = frame.scroll_offset;
-            if !ready_marked {
-                let _ = mark_native_dashboard_ready(&options.project_root);
-                ready_marked = true;
-            }
-            latest_snapshot = Some(visible_model.snapshot);
-            latest_endpoint = loaded.endpoint;
-            refresh_state.complete_refresh();
-            reconcile_dashboard_event_stream(
-                &mut event_stream,
-                &mut event_stream_retry_at,
-                latest_endpoint.as_ref(),
-                options.once || options.desktop_state_file.is_some(),
-            );
-            let focus_render = if let (Some(snapshot), Some(endpoint)) =
-                (latest_snapshot.as_ref(), latest_endpoint.as_ref())
+            let rendered_from_cached_snapshot = if let (Some(snapshot), Some(controller)) =
+                (cached_subscreen_snapshot, controller.as_mut())
             {
-                sync_dashboard_focus(&mut focus_state, controller, snapshot, endpoint)
+                let frame = render_dashboard_snapshot(
+                    &options,
+                    controller,
+                    snapshot,
+                    latest_endpoint.as_ref(),
+                    0,
+                    scroll_offset,
+                );
+                write_dashboard_frame(&mut *output, frame.frame.as_bytes())?;
+                rendered_once = true;
+                let statusline_client_session = ui_state.as_mut().and_then(|ui_state| {
+                    ui_state
+                        .persist_screen(controller.screen)
+                        .unwrap_or(false)
+                        .then(|| ui_state.client_session().to_owned())
+                });
+                if let (Some(endpoint), Some(client_session)) = (
+                    latest_endpoint.as_ref(),
+                    statusline_client_session.as_deref(),
+                ) {
+                    let _ = refresh_dashboard_statusline(endpoint, client_session);
+                }
+                scroll_offset = frame.scroll_offset;
+                render_now = false;
+                last_render = Instant::now();
+                true
             } else {
                 false
             };
-            render_now = focus_render;
-            last_render = Instant::now();
-            if options.once {
-                return Ok(());
+            if rendered_from_cached_snapshot {
+                if options.once {
+                    return Ok(());
+                }
+            } else {
+                let loaded = load_dashboard_snapshot(&options)?;
+                let hide_offline_agents = controller
+                    .as_ref()
+                    .map(|controller| controller.hide_offline_agents)
+                    .unwrap_or(false);
+                let visible_model =
+                    filter_dashboard_visible_model(&loaded.snapshot, hide_offline_agents);
+                let controller = controller.get_or_insert_with(|| {
+                    let mut controller = DashboardController::new(&visible_model.snapshot);
+                    if let Some(screen) = ui_state
+                        .as_ref()
+                        .and_then(DashboardUiStatePersistence::load_screen)
+                    {
+                        controller.screen = screen;
+                    }
+                    controller
+                });
+                let frame = render_dashboard_snapshot(
+                    &options,
+                    controller,
+                    &visible_model.snapshot,
+                    loaded.endpoint.as_ref(),
+                    visible_model.hidden_offline_agent_count,
+                    scroll_offset,
+                );
+                write_dashboard_frame(&mut *output, frame.frame.as_bytes())?;
+                rendered_once = true;
+                let statusline_client_session = ui_state.as_mut().and_then(|ui_state| {
+                    ui_state
+                        .persist_screen(controller.screen)
+                        .unwrap_or(false)
+                        .then(|| ui_state.client_session().to_owned())
+                });
+                if let (Some(endpoint), Some(client_session)) = (
+                    loaded.endpoint.as_ref(),
+                    statusline_client_session.as_deref(),
+                ) {
+                    let _ = refresh_dashboard_statusline(endpoint, client_session);
+                }
+                scroll_offset = frame.scroll_offset;
+                if !ready_marked {
+                    let _ = mark_native_dashboard_ready(&options.project_root);
+                    ready_marked = true;
+                }
+                latest_snapshot = Some(visible_model.snapshot);
+                latest_endpoint = loaded.endpoint;
+                refresh_state.complete_refresh();
+                reconcile_dashboard_event_stream(
+                    &mut event_stream,
+                    &mut event_stream_retry_at,
+                    latest_endpoint.as_ref(),
+                    options.once || options.desktop_state_file.is_some(),
+                );
+                let focus_render = if let (Some(snapshot), Some(endpoint)) =
+                    (latest_snapshot.as_ref(), latest_endpoint.as_ref())
+                {
+                    sync_dashboard_focus(&mut focus_state, controller, snapshot, endpoint)
+                } else {
+                    false
+                };
+                render_now = focus_render;
+                last_render = Instant::now();
+                if options.once {
+                    return Ok(());
+                }
             }
         }
 
-        let keys = read_dashboard_keys(&mut stdin).context("read dashboard key")?;
         if !keys.is_empty() {
+            mark_dashboard_tui_visible(&mut visibility_state, elapsed_millis(clock_start), None);
             let Some(snapshot) = latest_snapshot.as_ref() else {
                 render_now = true;
                 thread::sleep(DASHBOARD_KEY_POLL_INTERVAL);
@@ -323,7 +367,18 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
     }
 }
 
-fn write_dashboard_frame(output: &mut impl Write, bytes: &[u8]) -> io::Result<()> {
+fn dashboard_output(once: bool) -> Box<dyn Write> {
+    if once {
+        return Box::new(io::stdout());
+    }
+    fs::OpenOptions::new()
+        .write(true)
+        .open("/dev/tty")
+        .map(|file| Box::new(file) as Box<dyn Write>)
+        .unwrap_or_else(|_| Box::new(io::stdout()))
+}
+
+fn write_dashboard_frame(output: &mut dyn Write, bytes: &[u8]) -> io::Result<()> {
     let mut remaining = bytes;
     while !remaining.is_empty() {
         match output.write(remaining) {
@@ -333,7 +388,10 @@ fn write_dashboard_frame(output: &mut impl Write, bytes: &[u8]) -> io::Result<()
                     "failed to write dashboard frame",
                 ));
             }
-            Ok(count) => remaining = &remaining[count..],
+            Ok(count) => {
+                remaining = &remaining[count..];
+            }
+            Err(error) if is_terminal_output_hangup(&error) => return Ok(()),
             Err(error) if is_nonblocking_terminal_write(&error) => {
                 thread::sleep(Duration::from_millis(5));
             }
@@ -343,6 +401,7 @@ fn write_dashboard_frame(output: &mut impl Write, bytes: &[u8]) -> io::Result<()
     loop {
         match output.flush() {
             Ok(()) => return Ok(()),
+            Err(error) if is_terminal_output_hangup(&error) => return Ok(()),
             Err(error) if is_nonblocking_terminal_write(&error) => {
                 thread::sleep(Duration::from_millis(5));
             }
@@ -355,6 +414,10 @@ fn is_nonblocking_terminal_write(error: &io::Error) -> bool {
     error.kind() == io::ErrorKind::WouldBlock
         || error.raw_os_error() == Some(libc::EAGAIN)
         || error.raw_os_error() == Some(libc::EWOULDBLOCK)
+}
+
+fn is_terminal_output_hangup(error: &io::Error) -> bool {
+    error.raw_os_error() == Some(libc::EIO)
 }
 
 fn suspend_dashboard_event_stream(

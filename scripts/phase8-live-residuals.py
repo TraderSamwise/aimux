@@ -9,10 +9,12 @@ HOME/AIMUX_HOME roots, random loopback ports, and a unique tmux -L socket.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import glob
 import http.client
 import json
 import os
+import pty
 import shlex
 import shutil
 import signal
@@ -20,6 +22,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import termios
 import threading
 import time
 from pathlib import Path
@@ -46,6 +49,7 @@ class Scope:
         self.project = self.root / "project"
         self.aimux_bin = aimux_bin
         self.procs: list[subprocess.Popen[Any]] = []
+        self.fds: list[int] = []
         self.tmux_socket_name: str | None = None
         self.real_tmux: str | None = None
         self.env = isolated_env(self.root, self.home, self.aimux_home, aimux_bin)
@@ -102,6 +106,11 @@ class Scope:
                 )
         for proc in reversed(self.procs):
             terminate_process(proc)
+        for fd in self.fds:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
         self.temp.cleanup()
 
     def __enter__(self) -> "Scope":
@@ -284,6 +293,7 @@ def run_dashboard_render_smoke(aimux_bin: Path, mutation: str | None) -> dict[st
 
         socket_name = f"aimux-dashboard-{os.getpid()}-{time.time_ns()}"
         scope.tmux_socket_name = socket_name
+        install_tmux_socket_wrapper(scope, tmux, socket_name)
         session = "phase8-dashboard"
         dashboard_command = (
             f"cd {shlex.quote(str(project_root))} && "
@@ -299,9 +309,9 @@ def run_dashboard_render_smoke(aimux_bin: Path, mutation: str | None) -> dict[st
             "-s",
             session,
             "-x",
-            "100",
+            "80",
             "-y",
-            "30",
+            "24",
             "sh",
             "-lc",
             command,
@@ -312,7 +322,10 @@ def run_dashboard_render_smoke(aimux_bin: Path, mutation: str | None) -> dict[st
         output = ""
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
-            output = capture_tmux(scope, session)
+            try:
+                output = capture_tmux(scope, session)
+            except LiveResidualFailure:
+                output = ""
             if required in output:
                 break
             if "__AIMUX_DASHBOARD_EXIT:" in output:
@@ -324,11 +337,46 @@ def run_dashboard_render_smoke(aimux_bin: Path, mutation: str | None) -> dict[st
             raise LiveResidualFailure(f"dashboard did not render required content:\n{output}")
         if "Main Checkout" not in output or "worktrees" not in output:
             raise LiveResidualFailure(f"dashboard frame missing project row or navigation hints:\n{output}")
+        start_tmux_pty_client(
+            scope,
+            tmux,
+            socket_name,
+            ["attach-session", "-t", session],
+            cwd=project_root,
+        )
+        clients = wait_until(
+            lambda: tmux_cmd(scope, ["list-clients", "-F", "#{client_tty}"]).stdout.strip(),
+            timeout=5,
+            label="attached dashboard tmux client",
+        )
+        if not clients:
+            raise LiveResidualFailure("dashboard input smoke has no attached tmux client")
+        first_frame = wait_until(
+            lambda: capture_tmux(scope, session)
+            if required in capture_tmux(scope, session)
+            else None,
+            timeout=5,
+            label="attached dashboard frame",
+        )
+        if mutation != "dashboard-input-dead":
+            tmux_cmd(scope, ["send-keys", "-t", f"{session}:0", "?"])
+            time.sleep(0.2)
+            tmux_cmd(scope, ["send-keys", "-t", f"{session}:0", "q"])
+        final_output = ""
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            final_output = capture_tmux(scope, session)
+            if "__AIMUX_DASHBOARD_EXIT:0" in final_output:
+                break
+            time.sleep(0.05)
+        else:
+            raise LiveResidualFailure(f"dashboard did not stay responsive to keyboard input:\n{final_output}")
         return {
             "name": "phase8-live-dashboard-render-smoke",
             "privateSocket": socket_name,
             "caught": [
                 "native dashboard first paint reaching a real tmux pane",
+                "native dashboard keyboard input reaching the event loop",
                 "blank alternate-screen dashboard startup",
                 "daemon/project-service backed dashboard snapshot rendering",
             ],
@@ -741,6 +789,44 @@ def tmux_cmd(scope: Scope, args: list[str]) -> subprocess.CompletedProcess[str]:
     return run([tmux, "-L", scope.tmux_socket_name or "aimux-phase8", *args], env=scope.env, timeout=10)
 
 
+def start_tmux_pty_client(
+    scope: Scope,
+    tmux: str,
+    socket_name: str,
+    args: list[str],
+    *,
+    cwd: Path,
+) -> None:
+    master_fd, slave_fd = pty.openpty()
+    scope.fds.append(master_fd)
+    def make_controlling_tty() -> None:
+        os.setsid()
+        fcntl.ioctl(slave_fd, termios.TIOCSCTTY, 0)
+
+    proc = subprocess.Popen(
+        [tmux, "-L", socket_name, *args],
+        cwd=str(cwd),
+        env=scope.env,
+        stdin=slave_fd,
+        stdout=slave_fd,
+        stderr=slave_fd,
+        close_fds=True,
+        preexec_fn=make_controlling_tty,
+    )
+    os.close(slave_fd)
+    scope.procs.append(proc)
+    threading.Thread(target=drain_fd, args=(master_fd,), daemon=True).start()
+
+
+def drain_fd(fd: int) -> None:
+    while True:
+        try:
+            if not os.read(fd, 4096):
+                return
+        except OSError:
+            return
+
+
 def capture_tmux(scope: Scope, session: str) -> str:
     result = tmux_cmd(scope, ["capture-pane", "-p", "-J", "-t", f"{session}:0"])
     return result.stdout
@@ -1101,7 +1187,7 @@ def recorded_temp_pids(scope: Scope) -> list[int]:
 def run_one(name: str, aimux_bin: Path, mutation: str | None) -> dict[str, Any]:
     if name == "tmux":
         return run_tmux_live_smoke(aimux_bin, mutation)
-    if name == "dashboard":
+    if name == "dashboard" or name == "dashboard-input":
         return run_dashboard_render_smoke(aimux_bin, mutation)
     if name == "dashboard-attach":
         return run_dashboard_attach_smoke(aimux_bin, mutation)
@@ -1124,6 +1210,7 @@ def prove_failures(args: argparse.Namespace, aimux_bin: Path) -> list[dict[str, 
     mutations = {
         "tmux": "tmux-drop-output",
         "dashboard": "dashboard-empty-frame",
+        "dashboard-input": "dashboard-input-dead",
         "dashboard-attach": "dashboard-attach-terminal-error",
         "command-resolution": "command-unsupported",
         "agent-shell": "agent-shell-missing-window",
@@ -1175,6 +1262,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             "all",
             "tmux",
             "dashboard",
+            "dashboard-input",
             "dashboard-attach",
             "command-resolution",
             "agent-shell",
@@ -1190,6 +1278,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "tmux-drop-output",
         "tmux-wrong-resize",
         "dashboard-empty-frame",
+        "dashboard-input-dead",
         "dashboard-attach-terminal-error",
         "command-unsupported",
         "agent-shell-missing-window",

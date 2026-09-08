@@ -11,7 +11,7 @@ pub struct DashboardTerminalGuard {
 }
 
 impl DashboardTerminalGuard {
-    pub fn enter(output: &mut impl Write) -> io::Result<Self> {
+    pub fn enter(output: &mut dyn Write) -> io::Result<Self> {
         let mut guard = Self {
             stdin_fd: libc::STDIN_FILENO,
             original_termios: None,
