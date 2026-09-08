@@ -453,8 +453,8 @@ fn hook_session_id(headers: &BTreeMap<String, String>, path: &str) -> String {
 
 fn header_value(headers: &BTreeMap<String, String>, name: &str) -> Option<String> {
     headers
-        .get(name)
-        .or_else(|| headers.get(&name.to_ascii_lowercase()))
+        .iter()
+        .find_map(|(key, value)| key.eq_ignore_ascii_case(name).then_some(value))
         .map(|value| value.trim())
         .filter(|value| !value.is_empty())
         .map(str::to_owned)

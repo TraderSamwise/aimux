@@ -128,7 +128,7 @@ impl ProjectServiceRequestContext {
     ) -> Self {
         self.request_headers = headers
             .into_iter()
-            .map(|(key, value)| (key.into(), value.into()))
+            .map(|(key, value)| (key.into().to_ascii_lowercase(), value.into()))
             .collect();
         self
     }

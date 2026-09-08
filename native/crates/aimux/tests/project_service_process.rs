@@ -12,9 +12,11 @@ use aimux::project_service::process::{
     write_project_service_response_with_runtime,
 };
 use aimux::project_service::router::ProjectServiceRequestContext;
-use aimux::runtime_topology::{coerce_runtime_topology, runtime_topology_path};
+use aimux::runtime_topology::{
+    coerce_runtime_topology, runtime_topology_path, write_runtime_topology,
+};
 use aimux::tmux::CapturePaneOptions;
-use serde_json::json;
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::fs::{create_dir_all, read_to_string, remove_dir_all, write};
 use std::io::{self, Read, Write};
@@ -94,6 +96,42 @@ fn project_service_connection_routes_http_to_rust_project_router() {
     assert!(health_response.contains("\"ok\":true"));
     assert!(health_response.contains("\"projectStateDir\""));
     assert!(health_response.contains("\"serviceInfo\""));
+    cleanup(project);
+}
+
+#[test]
+fn project_service_connection_passes_hook_headers_to_desktop_state() {
+    let project = temp_project("hook-headers");
+    let state_dir = project.join("state");
+    write_hook_header_state(&project, &state_dir, "claude-http-1", Some("9a518b4c"));
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let body = r#"{"session_id":"9a518b4c","hook_event_name":"Stop"}"#;
+    let request = format!(
+        "POST /hooks/claude?action=stop HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nX-Aimux-Session-Id: claude-http-1\r\nContent-Length: {}\r\n\r\n{}",
+        body.len(),
+        body
+    );
+    let mut hook = MemoryStream::new(request.as_bytes());
+
+    handle_project_service_connection(&mut hook, &context).expect("claude hook connection");
+
+    let response = String::from_utf8(hook.output).expect("hook response");
+    assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
+    assert!(response.ends_with("{}"));
+
+    let mut desktop = MemoryStream::new(b"GET /desktop-state HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+    handle_project_service_connection(&mut desktop, &context).expect("desktop-state connection");
+
+    let state = response_json(&desktop.output);
+    let row = state["sessions"]
+        .as_array()
+        .unwrap_or_else(|| panic!("desktop sessions in {state}"))
+        .iter()
+        .find(|row| row["id"] == "claude-http-1")
+        .expect("desktop row");
+    assert!(row["lastOutputAt"].as_str().is_some());
+    assert_eq!(row["semantic"]["presentation"]["statusLabel"], "done");
+    assert_eq!(row["unseenCount"], 1);
     cleanup(project);
 }
 
@@ -371,6 +409,71 @@ fn temp_project(label: &str) -> PathBuf {
 
 fn cleanup(path: PathBuf) {
     let _ = remove_dir_all(path);
+}
+
+fn response_json(output: &[u8]) -> Value {
+    let response = std::str::from_utf8(output).expect("utf8 http response");
+    let body = response.split("\r\n\r\n").nth(1).expect("response body");
+    serde_json::from_str(body).expect("json response body")
+}
+
+fn write_hook_header_state(
+    project: &std::path::Path,
+    state_dir: &PathBuf,
+    session_id: &str,
+    backend_session_id: Option<&str>,
+) {
+    create_dir_all(state_dir).unwrap();
+    let project_root = project.to_string_lossy().into_owned();
+    let mut session = json!({
+        "id": session_id,
+        "nodeId": "node-hook",
+        "status": "running",
+        "tool": "claude",
+        "toolConfigKey": "claude",
+        "command": "claude",
+        "args": [],
+        "worktreePath": project_root.clone(),
+        "createdAt": "2026-09-08T00:00:00.000Z",
+        "updatedAt": "2026-09-08T00:00:00.000Z"
+    });
+    if let Some(backend_session_id) = backend_session_id {
+        session["backendSessionId"] = json!(backend_session_id);
+    }
+    let topology = coerce_runtime_topology(&json!({
+            "version": 1,
+            "generatedAt": "2026-09-08T00:00:00.000Z",
+            "rigs": [
+                { "id": "rig-1", "name": "aimux", "projectRoot": project_root.clone(), "createdAt": "2026-09-08T00:00:00.000Z", "updatedAt": "2026-09-08T00:00:00.000Z" }
+            ],
+            "nodes": [
+                { "id": "node-hook", "rigId": "rig-1", "logicalId": session_id, "toolConfigKey": "claude", "cwd": project_root.clone(), "createdAt": "2026-09-08T00:00:00.000Z" }
+            ],
+            "edges": [],
+            "bindings": [
+                { "id": "binding-hook", "nodeId": "node-hook", "tmuxSession": "aimux-test", "tmuxWindowId": "@1", "tmuxWindowIndex": 1, "tmuxWindowName": "claude", "updatedAt": "2026-09-08T00:00:00.000Z" }
+            ],
+            "sessions": [session],
+            "services": [],
+            "worktrees": [
+                { "id": "main", "rigId": "rig-1", "path": project_root, "name": "Main Checkout", "status": "active", "branch": "master", "createdAt": "2026-09-08T00:00:00.000Z", "updatedAt": "2026-09-08T00:00:00.000Z" }
+            ],
+            "worktreeGraveyard": [],
+            "teamRoles": [],
+            "remoteClients": [],
+            "lifecycleOperations": [],
+            "exchangeRefs": []
+        }))
+        .unwrap();
+    write_runtime_topology(runtime_topology_path(state_dir), &topology).unwrap();
+    save_metadata_state(
+        state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::new(),
+        },
+    )
+    .unwrap();
 }
 
 fn write_output_stream_state(state_dir: &PathBuf) {

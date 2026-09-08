@@ -153,12 +153,20 @@ where
 {
     let bytes = read_http_request(stream)?;
     let request = parse_daemon_http_request(&bytes)?;
-    let response = handle_project_service_http_request(
-        project_request_from_daemon(request),
-        |method, path, body| route_project_service_request(context, method, path, body),
-    );
+    let request = project_request_from_daemon(request);
+    let request_context = context
+        .clone()
+        .with_request_headers(request.headers.clone());
+    let response = handle_project_service_http_request(request, |method, path, body| {
+        route_project_service_request(&request_context, method, path, body)
+    });
     let mut runtime = SystemAgentOutputCaptureRuntime;
-    write_project_service_response_with_runtime(stream, &response, Some(context), &mut runtime)
+    write_project_service_response_with_runtime(
+        stream,
+        &response,
+        Some(&request_context),
+        &mut runtime,
+    )
 }
 
 pub fn write_project_service_response(
