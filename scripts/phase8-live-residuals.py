@@ -802,11 +802,11 @@ def run_top_level_agent_tool_smoke(aimux_bin: Path, mutation: str | None) -> dic
             launched.append(f"{label}:{session_id}")
             return session_id, ps_payload
 
-        def restore_and_stop(label: str, tool: str, session_id: str) -> None:
+        def resume_or_restore_and_stop(label: str, mode: str, tool: str, session_id: str) -> None:
             launcher_session = f"phase8-top-level-agent-{label}"
             command = (
                 f"cd {shlex.quote(str(project_root))} && "
-                f"{shlex.quote(str(aimux_bin))} --restore {shlex.quote(tool)}; "
+                f"{shlex.quote(str(aimux_bin))} --{mode} {shlex.quote(tool)}; "
                 f"code=$?; printf '\\n__AIMUX_TOP_LEVEL_AGENT_{label}_EXIT:%s\\n' \"$code\"; sleep 30"
             )
             proc = subprocess.Popen(
@@ -852,7 +852,7 @@ def run_top_level_agent_tool_smoke(aimux_bin: Path, mutation: str | None) -> dic
                 time.sleep(0.05)
             else:
                 raise LiveResidualFailure(
-                    f"timed out waiting for {label} restored session {session_id}:\n"
+                    f"timed out waiting for {label} {mode} session {session_id}:\n"
                     f"{output}\nstdout:\n{read_pipe(proc.stdout)}\nstderr:\n{read_pipe(proc.stderr)}"
                 )
             tmux_cmd(scope, ["send-keys", "-t", f"{launcher_session}:0", "q"])
@@ -863,23 +863,25 @@ def run_top_level_agent_tool_smoke(aimux_bin: Path, mutation: str | None) -> dic
                     break
                 time.sleep(0.05)
             else:
-                raise LiveResidualFailure(f"{label} restored dashboard did not quit:\n{output}")
+                raise LiveResidualFailure(f"{label} {mode} dashboard did not quit:\n{output}")
             stop = run(
                 [str(aimux_bin), "stop", session_id, "--json"],
                 cwd=scope.project,
                 env=scope.env,
                 timeout=30,
             )
-            parse_json_stdout(stop.stdout, f"{label} restored agent stop")
+            parse_json_stdout(stop.stdout, f"{label} {mode} agent stop")
             wait_until(
                 lambda: not ps_contains_session(scope, aimux_bin, session_id),
                 timeout=10,
-                label=f"{label} restored session removed from aimux ps",
+                label=f"{label} {mode} session removed from aimux ps",
             )
             launched.append(f"{label}:{session_id}")
 
         session_id, ps_payload = launch_and_stop("codex-bare", ["codex"], "codex")
-        restore_and_stop("codex-restore", "codex", session_id)
+        stamp_backend_session(scope, session_id, "backend-phase8-codex")
+        resume_or_restore_and_stop("codex-resume", "resume", "codex", session_id)
+        resume_or_restore_and_stop("codex-restore", "restore", "codex", session_id)
         launch_and_stop("codex-args", ["codex", "hello"], "codex")
         launch_and_stop("claude-bare", ["claude"], "claude")
         launch_and_stop("aider-args", ["aider", "--help"], "aider")
@@ -892,6 +894,7 @@ def run_top_level_agent_tool_smoke(aimux_bin: Path, mutation: str | None) -> dic
                 "bare top-level agent tool dispatch through the real binary",
                 "built-in codex and claude tool names through the real binary",
                 "tool argument pass-through before Clap fallback",
+                "root --resume tool filter exact-resuming a saved backend session",
                 "root --restore tool filter relaunching a saved session",
                 "spawn executor implementation behind resolved dispatch",
                 "foreground target opening from an attached tmux client",
@@ -899,7 +902,6 @@ def run_top_level_agent_tool_smoke(aimux_bin: Path, mutation: str | None) -> dic
             "notCaught": [
                 "real aider CLI availability",
                 "Claude/Codex credentials or network access",
-                "exact saved-session --resume backend id semantics",
             ],
         }
 
@@ -1024,10 +1026,25 @@ def install_agent_tool_config(scope: Scope, tool: str) -> None:
         "args": ["-lc", "printf 'phase8-agent-tool-ready\\n'; sleep 30"],
         "enabled": True,
         "wrapperEnabled": False,
+        "resumeArgs": ["--resume", "{sessionId}"],
+        "resumeByBackendSessionId": True,
         "promptPatterns": ["^[$#] "],
         "turnPatterns": [],
     }
     config_path.write_text(json.dumps(config, indent=2) + "\n")
+
+
+def stamp_backend_session(scope: Scope, session_id: str, backend_session_id: str) -> None:
+    endpoint = wait_for_project_service_endpoint(scope)
+    http_json(
+        endpoint,
+        "POST",
+        "/agents/record-backend-session",
+        {
+            "sessionId": session_id,
+            "backendSessionId": backend_session_id,
+        },
+    )
 
 
 def parse_json_stdout(stdout: str, label: str) -> dict[str, Any]:
