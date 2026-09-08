@@ -70,6 +70,7 @@ fn run_case(case: &Value) -> Value {
                     requests.push(summarize_request(&snapshot, &request));
                 }
                 DashboardControllerEffect::Quit
+                | DashboardControllerEffect::MoveSelectedEntry { .. }
                 | DashboardControllerEffect::OpenAgentToolPicker(_)
                 | DashboardControllerEffect::WorktreeCacheCleanupPreview(_)
                 | DashboardControllerEffect::WorktreeCacheCleanupApply(_)

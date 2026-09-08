@@ -45,8 +45,9 @@ fn dashboard_interaction_matches_typescript_contract() {
 }
 
 fn run_case(case: &Value) -> Value {
+    let snapshot_input = normalize_legacy_snapshot(case["input"]["snapshot"].clone());
     let snapshot: DesktopStateSnapshot =
-        serde_json::from_value(case["input"]["snapshot"].clone()).expect("snapshot parses");
+        serde_json::from_value(snapshot_input).expect("snapshot parses");
     let mut controller = DashboardController::new(&snapshot);
     apply_initial_state(&mut controller, &snapshot, &case["input"]["initialState"]);
     let mut renders = 0;
@@ -61,10 +62,12 @@ fn run_case(case: &Value) -> Value {
                     requests.push(summarize_request(&snapshot, &request));
                 }
                 DashboardControllerEffect::Quit
+                | DashboardControllerEffect::MoveSelectedEntry { .. }
                 | DashboardControllerEffect::OpenAgentToolPicker(_)
                 | DashboardControllerEffect::OpenRelevantThread { .. }
                 | DashboardControllerEffect::WorktreeCacheCleanupPreview(_)
                 | DashboardControllerEffect::WorktreeCacheCleanupApply(_)
+                | DashboardControllerEffect::LoadWorkOutlineOverlay { .. }
                 | DashboardControllerEffect::LoadOrchestrationRoutes { .. }
                 | DashboardControllerEffect::Ignored => {}
             }
@@ -84,6 +87,26 @@ fn run_case(case: &Value) -> Value {
         "renders": renders,
         "requests": requests,
     })
+}
+
+fn normalize_legacy_snapshot(mut snapshot: Value) -> Value {
+    if let Some(groups) = snapshot
+        .get_mut("worktreeGroups")
+        .and_then(Value::as_array_mut)
+    {
+        for (index, group) in groups.iter_mut().enumerate() {
+            let Some(failure) = group
+                .get_mut("operationFailure")
+                .and_then(Value::as_object_mut)
+            else {
+                continue;
+            };
+            failure
+                .entry("id")
+                .or_insert_with(|| json!(format!("legacy-worktree-operation-failure-{index}")));
+        }
+    }
+    snapshot
 }
 
 fn apply_initial_state(
