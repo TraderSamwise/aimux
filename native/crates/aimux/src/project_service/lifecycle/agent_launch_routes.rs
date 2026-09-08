@@ -616,6 +616,9 @@ pub(super) fn resume_agent_session(
         Err(error) => return json_error(500, error),
     };
     let session_name = project_session(&project_root, "aimux").session_name;
+    if let Err(error) = runtime.ensure_project_session(context.project_root()) {
+        return json_error(500, error);
+    }
     let target = match runtime.create_window(
         &session_name,
         &label,

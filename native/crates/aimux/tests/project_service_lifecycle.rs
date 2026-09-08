@@ -1160,6 +1160,7 @@ fn agent_resume_launches_exact_backend_resume_and_updates_topology_metadata() {
     assert_eq!(response.body["sessionId"], "mock-offline");
     assert_eq!(response.body["status"], "running");
     assert_eq!(response.body["transition"]["operation"], "agent.resume");
+    assert_eq!(runtime.ensured_sessions, vec![project.clone()]);
     assert_eq!(runtime.created.len(), 1);
     let created = &runtime.created[0];
     assert_eq!(created.name, "mock lane");
@@ -1294,6 +1295,7 @@ fn agent_restore_force_fresh_relaunches_without_backend_id() {
     assert_eq!(response.body["sessionId"], "mock-offline");
     assert_eq!(response.body["status"], "running");
     assert_eq!(response.body["transition"]["operation"], "agent.restore");
+    assert_eq!(runtime.ensured_sessions, vec![project.clone()]);
     assert_eq!(runtime.created.len(), 1);
     let created = &runtime.created[0];
     assert_eq!(created.cwd, "/repo/worktree");
