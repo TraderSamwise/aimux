@@ -22,6 +22,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
+const EXPOSE_NODE_FRAME: &str =
+    include_str!("../../../../testdata/contracts/v1/tmux/expose-node-frame.json");
+
 #[derive(Debug, Default)]
 struct FakeHttp {
     responses: VecDeque<Value>,
@@ -646,6 +649,109 @@ fn runner_renders_hot_snapshot_without_blocking_on_item_discovery() {
 }
 
 #[test]
+fn runner_matches_node_generated_whole_expose_frame() {
+    let contract: Value = serde_json::from_str(EXPOSE_NODE_FRAME).expect("node frame fixture");
+    let case = &contract["cases"][0];
+    let state_dir = temp_dir("runner-node-frame");
+    let snapshot = &case["input"]["hotSnapshot"];
+    write_hot_expose_scope_view(
+        &state_dir,
+        HotExposeScopeKey {
+            project_root: snapshot["key"]["projectRoot"]
+                .as_str()
+                .expect("project root")
+                .into(),
+            scope: expose_scope_value(&snapshot["key"]["scope"]),
+            worktree_key: snapshot["key"]
+                .get("worktreeKey")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            launch_window_id: snapshot["key"]
+                .get("launchWindowId")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+        },
+        ExposeScopeView {
+            scope: expose_scope_value(&snapshot["view"]["scope"]),
+            scope_label: snapshot["view"]["scopeLabel"]
+                .as_str()
+                .expect("scope label")
+                .into(),
+            sublabel: expose_sublabel_value(&snapshot["view"]["sublabel"]),
+            items: snapshot["view"]["items"]
+                .as_array()
+                .expect("items")
+                .to_vec(),
+        },
+        None,
+    );
+    let input_options = &case["input"]["options"];
+    let mut options = parsed_options(&state_dir);
+    options.project_root =
+        PathBuf::from(input_options["projectRoot"].as_str().expect("project root"));
+    options.current_window = input_options
+        .get("currentWindow")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    options.current_window_id = input_options
+        .get("currentWindowId")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    options.current_path = input_options
+        .get("currentPath")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    options.current_client_session = input_options
+        .get("currentClientSession")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    options.daemon_endpoint = input_options
+        .get("daemonEndpoint")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    options.columns = input_options
+        .get("columns")
+        .and_then(Value::as_u64)
+        .map(|value| value as usize);
+    options.rows = input_options
+        .get("rows")
+        .and_then(Value::as_u64)
+        .map(|value| value as usize);
+    options.expose_config.initial_scope = input_options
+        .get("exposeConfig")
+        .and_then(|config| config.get("initialScope"))
+        .map(expose_scope_value);
+    let mut client = FakeHttp::with_responses([json!({ "ok": true, "items": [] })]);
+    let mut capture = FakeCapture::with_responses([Err("tmux unavailable".into())]);
+    let mut input = ScriptedInput::new([ScriptedInputEvent::Bytes(
+        case["input"]["inputBytes"]
+            .as_str()
+            .expect("input bytes")
+            .as_bytes()
+            .to_vec(),
+    )]);
+    let mut output = Vec::new();
+
+    let exit_code = run_tmux_expose_with_input_source(
+        options,
+        &mut input,
+        &mut output,
+        &mut client,
+        &mut capture,
+    );
+
+    assert_eq!(
+        exit_code,
+        case["output"]["exitCode"].as_i64().unwrap() as i32
+    );
+    assert_eq!(
+        first_synchronized_frame(&String::from_utf8(output).expect("utf8 output")),
+        case["output"]["frame"].as_str().expect("expected output")
+    );
+    cleanup(state_dir);
+}
+
+#[test]
 fn runner_validates_stale_hot_selection_before_writing_selection_file() {
     let state_dir = temp_dir("runner-hot-selection");
     let selection_file = state_dir.join("selected-window.txt");
@@ -1007,6 +1113,35 @@ fn hot_item(window_id: &str, output: &str) -> Value {
             "worktreePath": "/repo"
         }
     })
+}
+
+fn expose_scope_value(value: &Value) -> ExposeScope {
+    match value.as_str().expect("expose scope") {
+        "worktree" => ExposeScope::Worktree,
+        "project" => ExposeScope::Project,
+        "global" => ExposeScope::Global,
+        unexpected => panic!("unexpected expose scope {unexpected}"),
+    }
+}
+
+fn expose_sublabel_value(value: &Value) -> ExposeSublabel {
+    match value.as_str().expect("expose sublabel") {
+        "none" => ExposeSublabel::None,
+        "worktree" => ExposeSublabel::Worktree,
+        "project-worktree" => ExposeSublabel::ProjectWorktree,
+        unexpected => panic!("unexpected expose sublabel {unexpected}"),
+    }
+}
+
+fn first_synchronized_frame(output: &str) -> &str {
+    let start = output
+        .find("\x1b[?2026h")
+        .expect("synchronized frame start");
+    let end = output[start..]
+        .find("\x1b[?2026l")
+        .map(|offset| start + offset + "\x1b[?2026l".len())
+        .expect("synchronized frame end");
+    &output[start..end]
 }
 
 fn temp_dir(label: &str) -> PathBuf {
