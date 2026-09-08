@@ -13,7 +13,8 @@ use aimux::local_ui_server::{
     open_url_in_browser, resolve_default_local_ui_root, start_local_ui_server,
 };
 use aimux::native_cli_dispatch::{
-    native_root_tool_launch_args_for_config, normalize_root_dispatch_args,
+    is_known_aimux_command_word, native_root_tool_launch_args_for_config,
+    normalize_root_dispatch_args,
 };
 use aimux::paths::PathResolver;
 use aimux::project_service::process::{
@@ -530,73 +531,6 @@ fn handle_known_native_command_fallback(args: &[String]) -> Option<ExitCode> {
         args.join(" ")
     );
     Some(ExitCode::from(2))
-}
-
-fn is_known_aimux_command_word(word: &str) -> bool {
-    matches!(
-        word,
-        "attachment"
-            | "build-info"
-            | "clear-notifications"
-            | "compact"
-            | "contracts"
-            | "daemon"
-            | "dashboard-reload"
-            | "debug-state"
-            | "doctor"
-            | "expose"
-            | "fork"
-            | "graveyard"
-            | "handoff"
-            | "host"
-            | "hosted"
-            | "id"
-            | "init"
-            | "input"
-            | "kill"
-            | "list"
-            | "list-notifications"
-            | "login"
-            | "logout"
-            | "logs"
-            | "loop"
-            | "message"
-            | "metadata"
-            | "migrate"
-            | "migration"
-            | "notifications"
-            | "notify"
-            | "outline"
-            | "overseer"
-            | "projects"
-            | "ps"
-            | "read-notifications"
-            | "remote"
-            | "rename"
-            | "repair"
-            | "restart"
-            | "restart-runtime"
-            | "review"
-            | "rewrite"
-            | "scribe"
-            | "security"
-            | "serve"
-            | "service"
-            | "spawn"
-            | "stop"
-            | "task"
-            | "team"
-            | "thread"
-            | "threads"
-            | "ui"
-            | "whoami"
-            | "worktree"
-            | "__dashboard-internal-native"
-            | "__tmux-control-internal"
-            | "__tmux-statusline-internal"
-            | "__tmux-open-hyperlink-internal"
-            | "__project-service-internal"
-    )
 }
 
 fn run_local_ui_command(

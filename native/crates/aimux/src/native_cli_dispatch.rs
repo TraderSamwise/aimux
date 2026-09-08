@@ -84,11 +84,13 @@ fn shell_service_create_args(extra_args: &[String]) -> Vec<String> {
     service_args
 }
 
-fn is_known_aimux_command_word(word: &str) -> bool {
+pub fn is_known_aimux_command_word(word: &str) -> bool {
     matches!(
         word,
         "attachment"
             | "build-info"
+            | "clear-notifications"
+            | "compact"
             | "contracts"
             | "daemon"
             | "dashboard-reload"
@@ -100,9 +102,11 @@ fn is_known_aimux_command_word(word: &str) -> bool {
             | "handoff"
             | "host"
             | "hosted"
+            | "id"
             | "init"
             | "input"
             | "kill"
+            | "list"
             | "list-notifications"
             | "login"
             | "logout"

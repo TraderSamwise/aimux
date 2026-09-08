@@ -542,7 +542,8 @@ fn service_create_parser_matches_top_level_shell_dispatch_forms() {
 fn root_dispatch_delimiter_and_tool_forms_match_native_contract() {
     use aimux::config::default_config;
     use aimux::native_cli_dispatch::{
-        native_tool_launch_args_for_config, normalize_root_dispatch_args,
+        is_known_aimux_command_word, native_tool_launch_args_for_config,
+        normalize_root_dispatch_args,
     };
 
     let config = default_config();
@@ -578,6 +579,14 @@ fn root_dispatch_delimiter_and_tool_forms_match_native_contract() {
         native_tool_launch_args_for_config(&["projects".to_owned()], &config),
         None
     );
+    for command in ["list", "id", "compact", "clear-notifications"] {
+        assert!(is_known_aimux_command_word(command), "{command}");
+        assert_eq!(
+            native_tool_launch_args_for_config(&[command.to_owned()], &config),
+            None,
+            "{command} must remain a command word, not a guessed tool"
+        );
+    }
 }
 
 #[test]
