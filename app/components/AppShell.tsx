@@ -11,6 +11,12 @@ import { usePathname } from "expo-router";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { KeyRound, Menu } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import Reanimated, {
+  ReduceMotion,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from "react-native-reanimated";
 import { MonitorSidebar } from "@/components/MonitorSidebar";
 import { PairDeviceDialog, APPROVE_COMMAND } from "@/components/PairDeviceDialog";
 import { ProjectSidebar } from "@/components/ProjectSidebar";
@@ -20,7 +26,7 @@ import { ChatTopEdgeFade } from "@/components/ChatTopEdgeFade";
 import { TopBar } from "@/components/TopBar";
 import { Button } from "@/components/ui/button";
 import { Text } from "@/components/ui/text";
-import { canUsePersistentSidebar } from "@/lib/app-shell-layout";
+import { getSidebarPresentation } from "@/lib/app-shell-layout";
 import { chatTopBarReserveHeight } from "@/lib/chat-chrome-layout";
 import { isDesktopZoomCommand, subscribeNativeAppCommands } from "@/lib/native-app-commands";
 import { resolveChromeTopInset } from "@/lib/native-safe-area";
@@ -31,12 +37,14 @@ import { desktopAppZoomAtom, stepDesktopAppZoom } from "@/stores/settings";
 import { chatChromeVisibleAtom, sidebarOpenAtom } from "@/stores/ui";
 
 const DRAWER_WIDTH = 320;
+const SIDEBAR_SLIDE_MS = 180;
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const { isDesktopNative, uiScale } = useRuntimeTuning();
-  const usesPersistentSidebar = canUsePersistentSidebar(width);
+  const sidebarPresentation = getSidebarPresentation(width);
+  const usesPersistentSidebar = sidebarPresentation === "persistent";
   const usesDrawerSidebar = !usesPersistentSidebar;
 
   const [sidebarOpen, setSidebarOpen] = useAtom(sidebarOpenAtom);
@@ -52,6 +60,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pendingApproval = useAtomValue(relayPendingApprovalAtom);
   const [pairingDialogOpen, setPairingDialogOpen] = useState(false);
   const [translateX] = useState(() => new RNAnimated.Value(-DRAWER_WIDTH));
+  const persistentSidebarWidth = useSharedValue(
+    usesPersistentSidebar && sidebarOpen ? DRAWER_WIDTH : 0,
+  );
   const Sidebar = isMonitorRoute ? MonitorSidebar : isSharedShell ? SharedSidebar : ProjectSidebar;
   const showPairingBanner = relayConfigured && relayStatus === "device_pending" && !isSharedShell;
   const overlayTopChrome = isChatRoute(pathname);
@@ -75,6 +86,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, [sidebarOpen, translateX, usesDrawerSidebar]);
 
   useEffect(() => {
+    persistentSidebarWidth.value = withTiming(
+      usesPersistentSidebar && sidebarOpen ? DRAWER_WIDTH : 0,
+      { duration: SIDEBAR_SLIDE_MS, reduceMotion: ReduceMotion.System },
+    );
+  }, [persistentSidebarWidth, sidebarOpen, usesPersistentSidebar]);
+
+  useEffect(() => {
     if (!isDesktopNative) return undefined;
     return subscribeNativeAppCommands((command) => {
       if (!isDesktopZoomCommand(command)) return;
@@ -86,7 +104,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     });
   }, [isDesktopNative, setDesktopAppZoom]);
 
-  const showHamburger = !usesPersistentSidebar;
+  const persistentSidebarSlotStyle = useAnimatedStyle(() => ({
+    width: persistentSidebarWidth.value,
+  }));
+  const persistentSidebarInnerStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: persistentSidebarWidth.value - DRAWER_WIDTH }],
+  }));
   const shellZoomStyle = useMemo<ViewStyle>(
     () =>
       isDesktopNative && uiScale !== 1
@@ -99,7 +122,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         : { flex: 1 },
     [height, isDesktopNative, uiScale, width],
   );
-  const hamburger = showHamburger ? (
+  const hamburger = (
     <Button
       variant="ghost"
       size="icon"
@@ -108,7 +131,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     >
       <Menu size={20} color="#a1a1aa" />
     </Button>
-  ) : undefined;
+  );
   const desktopSidebarSurface = overlayTopChrome ? (
     <View className="flex-1 bg-[#161719]">
       <View
@@ -187,7 +210,26 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <ChatTopEdgeFade topInset={resolvedTopInset} visible={!chatChromeVisible} />
         ) : null}
         <View className="flex-1 flex-row">
-          {usesPersistentSidebar ? desktopSidebarSurface : null}
+          {usesPersistentSidebar ? (
+            <Reanimated.View
+              pointerEvents={sidebarOpen ? "auto" : "none"}
+              style={[
+                {
+                  backgroundColor: "#161719",
+                  flexShrink: 0,
+                  height: "100%",
+                  overflow: "hidden",
+                },
+                persistentSidebarSlotStyle,
+              ]}
+            >
+              <Reanimated.View
+                style={[{ height: "100%", width: DRAWER_WIDTH }, persistentSidebarInnerStyle]}
+              >
+                {desktopSidebarSurface}
+              </Reanimated.View>
+            </Reanimated.View>
+          ) : null}
           <View className="flex-1">{children}</View>
 
           {usesDrawerSidebar && sidebarOpen ? (

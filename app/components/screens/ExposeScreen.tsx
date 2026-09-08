@@ -12,6 +12,7 @@ import { SegmentedControl, type SegmentOption } from "@/components/ui/segmented-
 import { StatusDotMini } from "@/components/status-dot";
 import { Text } from "@/components/ui/text";
 import { listGlobalExposeItems, listSwitchableAgents, type DaemonProject } from "@/lib/api";
+import { shouldDismissSidebarOnNavigate } from "@/lib/app-shell-layout";
 import { useAuth } from "@/lib/auth";
 import { blurWebActiveElement } from "@/lib/blur-web-active-element";
 import {
@@ -745,7 +746,7 @@ export default function ExposeScreen() {
 
   function openTile(tile: ExposeTile) {
     blurWebActiveElement();
-    setSidebarOpen(false);
+    if (shouldDismissSidebarOnNavigate(width)) setSidebarOpen(false);
     if (tile.kind === "agent") {
       setSelectedSession(tile.sessionId);
       router.push(detailHrefForPath(pathname, "agent", tile.sessionId, tile.projectRoot));

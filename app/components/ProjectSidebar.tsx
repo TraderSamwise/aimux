@@ -7,6 +7,7 @@ import {
   ScrollView,
   View,
   type GestureResponderEvent,
+  useWindowDimensions,
 } from "react-native";
 import { useGlobalSearchParams, usePathname, useRouter, type Href } from "expo-router";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
@@ -27,6 +28,7 @@ import { blurWebActiveElement } from "@/lib/blur-web-active-element";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopState } from "@/lib/desktop-state";
 import { buildMainTabHref, MAIN_TAB_ROUTES, mainTabForPath, type MainTabId } from "@/lib/main-tabs";
+import { shouldDismissSidebarOnNavigate } from "@/lib/app-shell-layout";
 import { filterProjectPickerProjects } from "@/lib/project-picker";
 import {
   buildViewHref,
@@ -446,6 +448,7 @@ function SidebarPrimaryNav({
 // ─── Top-level component ──────────────────────────────────────────────────
 
 export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boolean }) {
+  const { width } = useWindowDimensions();
   const projects = useAtomValue(projectsAtom);
   const selectedProject = useAtomValue(selectedProjectAtom);
   const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
@@ -471,6 +474,7 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
   const endpoint = effectiveProject
     ? getProjectServiceEndpoint(effectiveProject)
     : selectedProjectEndpoint;
+  const dismissSidebarOnNavigate = shouldDismissSidebarOnNavigate(width);
 
   // Fetch auth token once (auth context is stable in LOCAL_MODE; refetch is cheap).
   const { getToken } = useAuth();
@@ -565,13 +569,13 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
   function handlePickSession(sessionId: string, sessionProjectPath = routeProjectPath) {
     blurWebActiveElement();
     setSelectedSession(sessionId);
-    setSidebarOpen(false);
+    if (dismissSidebarOnNavigate) setSidebarOpen(false);
     router.push(detailHrefForPath(pathname, "agent", sessionId, sessionProjectPath));
   }
 
   function handlePickService(serviceId: string) {
     blurWebActiveElement();
-    setSidebarOpen(false);
+    if (dismissSidebarOnNavigate) setSidebarOpen(false);
     router.push(detailHrefForPath(pathname, "service", serviceId, routeProjectPath));
   }
 
@@ -695,7 +699,9 @@ export function ProjectSidebar({ showPrimaryNav = true }: { showPrimaryNav?: boo
                     {sidebarMode === "views" ? (
                       <SidebarPrimaryNav
                         projectPath={routeProjectPath}
-                        onNavigate={() => setSidebarOpen(false)}
+                        onNavigate={() => {
+                          if (dismissSidebarOnNavigate) setSidebarOpen(false);
+                        }}
                       />
                     ) : (
                       <WorktreeTree
