@@ -387,7 +387,7 @@ impl DashboardController {
                 DashboardControllerEffect::Render
             }
             DashboardKey::Enter => self.handle_enter(snapshot),
-            DashboardKey::Stop => self.handle_action(snapshot, DashboardActionKind::Stop),
+            DashboardKey::Stop => self.handle_stop_key(snapshot),
             DashboardKey::ClearFailures => self.handle_clear_failures(snapshot),
             DashboardKey::Printable('w') => {
                 self.worktree_input = Some(String::new());
@@ -2176,6 +2176,27 @@ impl DashboardController {
             }
             DashboardActionPlan::Ignored => DashboardControllerEffect::Ignored,
         }
+    }
+
+    fn handle_stop_key(&mut self, snapshot: &DesktopStateSnapshot) -> DashboardControllerEffect {
+        if self.navigation.level == DashboardNavLevel::Worktrees
+            && let Some(effect) = self.handle_worktree_stop(snapshot)
+        {
+            return effect;
+        }
+        if let Some(DashboardEntryRef::Session(session)) = self.navigation.selected_entry(snapshot)
+            && matches!(
+                session.status,
+                SessionStatus::Offline | SessionStatus::Exited
+            )
+        {
+            return DashboardControllerEffect::Request(DashboardActionRequest {
+                method: "POST",
+                path: routes::agents::KILL,
+                body: json!({ "sessionId": session.id }),
+            });
+        }
+        self.handle_action(snapshot, DashboardActionKind::Stop)
     }
 
     fn handle_worktree_stop(

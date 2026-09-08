@@ -245,6 +245,23 @@ fn stop_key_dispatches_selected_session_stop() {
 }
 
 #[test]
+fn stop_key_graveyards_selected_offline_session() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.navigation.level = DashboardNavLevel::Sessions;
+    controller.navigation.worktree_index = 1;
+    controller.navigation.item_index = 1;
+
+    let DashboardControllerEffect::Request(request) =
+        controller.handle_key(&snapshot, DashboardKey::Stop)
+    else {
+        panic!("expected graveyard request");
+    };
+    assert_eq!(request.path, routes::agents::KILL);
+    assert_eq!(request.body, json!({ "sessionId": "codex-offline" }));
+}
+
+#[test]
 fn clear_failures_key_dispatches_only_when_failures_exist() {
     let mut snapshot = snapshot();
     let mut controller = DashboardController::new(&snapshot);
