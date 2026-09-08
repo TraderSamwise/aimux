@@ -1,6 +1,6 @@
 # Phase 8 Complete
 
-Audit point: final Phase 8 cut tree after `d1812def` and subsequent native cleanup commits. The definitive post-cut enforcement audit is in progress and will replace the parity status below when it finishes.
+Audit point: final Phase 8 cut tree after `d1812def` and subsequent native cleanup commits. The definitive post-cut enforcement audit completed on this tree and rewrote `testdata/contracts/v1/ENFORCEMENT_AUDIT.md` at Sep 8 08:47:19 2026, after `594165ad`.
 
 ## Cut Commits
 
@@ -13,9 +13,9 @@ Audit point: final Phase 8 cut tree after `d1812def` and subsequent native clean
 
 The two deletion commits removed 803 files and 260,512 lines from this worktree.
 
-## Parity Numbers Pending Final Audit
+## Final Parity Numbers
 
-These are the expected target numbers from the last recorded audit. The definitive post-cut audit must rewrite `testdata/contracts/v1/ENFORCEMENT_AUDIT.md` after `594165ad` before these can be treated as final for this tree.
+These are the measured results from the definitive post-cut audit on this tree.
 
 | Metric | Value |
 | --- | ---: |
@@ -28,13 +28,13 @@ These are the expected target numbers from the last recorded audit. The definiti
 | `ERROR` bindings | 0 |
 | `STATIC` bindings | 0 |
 
-The definitive post-cut audit command is currently running:
+The definitive post-cut audit command was:
 
 ```bash
 node scripts/audit-fixture-enforcement.mjs --write-report
 ```
 
-That script uses only Node built-ins and the committed Rust fixture suites plus JSON corpora. It does not require the deleted TypeScript source or Vitest harness. The report timestamp must be newer than `594165ad` before the result is accepted.
+That script uses only Node built-ins and the committed Rust fixture suites plus JSON corpora. It does not require the deleted TypeScript source or Vitest harness.
 
 ## What Survives
 
