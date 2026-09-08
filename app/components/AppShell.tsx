@@ -37,7 +37,7 @@ import { desktopAppZoomAtom, stepDesktopAppZoom } from "@/stores/settings";
 import { chatChromeVisibleAtom, sidebarOpenAtom } from "@/stores/ui";
 
 const DRAWER_WIDTH = 320;
-const SIDEBAR_SLIDE_MS = 180;
+const SIDEBAR_SURFACE_MOTION_MS = 110;
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { width, height } = useWindowDimensions();
@@ -60,9 +60,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pendingApproval = useAtomValue(relayPendingApprovalAtom);
   const [pairingDialogOpen, setPairingDialogOpen] = useState(false);
   const [translateX] = useState(() => new RNAnimated.Value(-DRAWER_WIDTH));
-  const persistentSidebarWidth = useSharedValue(
-    usesPersistentSidebar && sidebarOpen ? DRAWER_WIDTH : 0,
-  );
+  const persistentSidebarProgress = useSharedValue(usesPersistentSidebar && sidebarOpen ? 1 : 0);
   const Sidebar = isMonitorRoute ? MonitorSidebar : isSharedShell ? SharedSidebar : ProjectSidebar;
   const showPairingBanner = relayConfigured && relayStatus === "device_pending" && !isSharedShell;
   const overlayTopChrome = isChatRoute(pathname);
@@ -86,11 +84,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, [sidebarOpen, translateX, usesDrawerSidebar]);
 
   useEffect(() => {
-    persistentSidebarWidth.value = withTiming(
-      usesPersistentSidebar && sidebarOpen ? DRAWER_WIDTH : 0,
-      { duration: SIDEBAR_SLIDE_MS, reduceMotion: ReduceMotion.System },
-    );
-  }, [persistentSidebarWidth, sidebarOpen, usesPersistentSidebar]);
+    persistentSidebarProgress.value = withTiming(usesPersistentSidebar && sidebarOpen ? 1 : 0, {
+      duration: SIDEBAR_SURFACE_MOTION_MS,
+      reduceMotion: ReduceMotion.System,
+    });
+  }, [persistentSidebarProgress, sidebarOpen, usesPersistentSidebar]);
 
   useEffect(() => {
     if (!isDesktopNative) return undefined;
@@ -104,11 +102,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     });
   }, [isDesktopNative, setDesktopAppZoom]);
 
-  const persistentSidebarSlotStyle = useAnimatedStyle(() => ({
-    width: persistentSidebarWidth.value,
-  }));
   const persistentSidebarInnerStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: persistentSidebarWidth.value - DRAWER_WIDTH }],
+    opacity: persistentSidebarProgress.value,
+    transform: [{ translateX: -10 * (1 - persistentSidebarProgress.value) }],
   }));
   const shellZoomStyle = useMemo<ViewStyle>(
     () =>
@@ -219,8 +215,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   flexShrink: 0,
                   height: "100%",
                   overflow: "hidden",
+                  width: sidebarOpen ? DRAWER_WIDTH : 0,
                 },
-                persistentSidebarSlotStyle,
               ]}
             >
               <Reanimated.View
