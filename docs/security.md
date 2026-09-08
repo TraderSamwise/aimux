@@ -13,15 +13,12 @@ Aimux has two native build profiles:
   mobile push forwarding, and remote security-device commands.
 - `local` is the TUI/runtime profile for machines where remote access should be
   visibly absent. It starts the same daemon, project service, tmux runtime, and
-  dashboard, but uses no-op remote adapters and does not package `dist/full`,
-  `dist-ui`, or docs.
+  dashboard, but uses no-op remote adapters and does not package `dist-ui` or
+  docs.
 
-Security-sensitive implementation lives under `src/full/`: credentials,
-login, relay client, hosted listener/auth/principals/audit, security-device
-client, relay attachment hosting, and mobile push forwarding. Root-level shared
-modules may define inert contracts or parsers used by both profiles, such as
-remote actor header parsing or relay payload types, but they must not perform
-remote network IO or credential storage.
+Security-sensitive local implementation lives in the native daemon and
+project-service. Root-level `src/` keeps only app-required contracts and
+parsers; it must not perform remote network IO or credential storage.
 
 Build the local package with:
 
@@ -30,8 +27,8 @@ AIMUX_BUILD_PROFILE=local yarn release:asset
 ```
 
 The local release path runs `scripts/check-local-build-boundary.mjs`, which
-fails if compiled local output contains `dist/full` or a static import into the
-full tree.
+fails if the retired Node runtime payload returns to the package or if the
+post-cut `src/` survivor set grows beyond the app contract boundary.
 
 ## Remote Access
 
