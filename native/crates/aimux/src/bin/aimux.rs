@@ -338,20 +338,18 @@ fn run_root_dashboard_command() -> Result<ExitCode> {
         return Ok(ExitCode::from(serve.code as u8));
     }
 
-    if std::env::var_os("TMUX").is_some() {
-        let mut dashboard_args = vec!["dashboard-reload".to_owned(), "--open".to_owned()];
-        append_foreground_tmux_client_args(&mut dashboard_args);
-        return run_core_command_and_print(&dashboard_args);
-    }
+    run_root_native_dashboard()
+}
 
-    let dashboard_args = vec!["dashboard-reload".to_owned(), "--json".to_owned()];
-    let execution = run_core_cli(&dashboard_args);
-    if execution.code != 0 {
-        print_execution(execution);
-        return Ok(ExitCode::from(1));
-    }
-    let payload = parse_single_json_stdout(&execution.stdout)?;
-    open_payload_target_from_foreground(&payload)?;
+fn run_root_native_dashboard() -> Result<ExitCode> {
+    let (cols, rows) = resolve_dashboard_dimensions(None, None);
+    run_native_dashboard_internal(NativeDashboardOptions {
+        project_root: current_project_root()?,
+        desktop_state_file: None,
+        cols,
+        rows,
+        once: false,
+    })?;
     Ok(ExitCode::SUCCESS)
 }
 
@@ -391,9 +389,7 @@ fn run_root_resume_command(tool_filter: Option<&str>) -> Result<ExitCode> {
     for (session_id, error) in result.failed {
         eprintln!("Skipping saved session \"{session_id}\": {error}");
     }
-    let mut dashboard_args = vec!["dashboard-reload".to_owned(), "--open".to_owned()];
-    append_foreground_tmux_client_args(&mut dashboard_args);
-    run_core_command_and_print(&dashboard_args)
+    run_root_native_dashboard()
 }
 
 fn run_root_tool_launch_command(args: &[String]) -> Result<ExitCode> {
@@ -442,17 +438,6 @@ fn tmux_target_from_value(value: &Value) -> Option<TmuxTarget> {
     })
 }
 
-fn append_foreground_tmux_client_args(args: &mut Vec<String>) {
-    if let Some(tty) = foreground_tty() {
-        args.push("--client-tty".into());
-        args.push(tty);
-    }
-    if let Some(session) = current_tmux_client_session() {
-        args.push("--current-client-session".into());
-        args.push(session);
-    }
-}
-
 fn foreground_tty() -> Option<String> {
     if std::env::var_os("TMUX").is_some()
         && let Some(client_tty) = tmux_display_message("#{client_tty}")
@@ -468,11 +453,6 @@ fn foreground_tty() -> Option<String> {
         .filter(|output| output.status.success())
         .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
         .filter(|tty| !tty.is_empty() && tty != "not a tty")
-}
-
-fn current_tmux_client_session() -> Option<String> {
-    std::env::var_os("TMUX")?;
-    tmux_display_message("#{client_session}")
 }
 
 fn tmux_display_message(format: &str) -> Option<String> {

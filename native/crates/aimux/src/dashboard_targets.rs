@@ -159,12 +159,8 @@ impl DashboardTargetTmux for TmuxRuntimeManager {
         project_root: &str,
         dashboard_command: &TmuxCommandSpec,
     ) -> Result<TmuxSessionRef, String> {
-        TmuxRuntimeManager::ensure_project_session(
-            self,
-            project_root,
-            Some(dashboard_command),
-            None,
-        )
+        let _ = dashboard_command;
+        TmuxRuntimeManager::ensure_project_session(self, project_root, None, None)
     }
 
     fn ensure_dashboard_window(

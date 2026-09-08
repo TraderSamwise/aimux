@@ -18,6 +18,9 @@ Every executable entry point needs at least one contract at its own boundary, ev
 
 - command resolution from `aimux --help` through real binary execution;
 - shell agent spawn end to end without external agent CLIs or credentials;
+- top-level generic tool dispatch through the real binary with `aider` backed
+  by `/bin/sh`, covering the bare tool path, tool-argument pass-through, spawn
+  execution, and foreground target opening;
 - native dashboard first paint into a real tmux pane;
 - bare `aimux` attach in a real TTY through a private tmux socket;
 - cold project-service reads through `ps`, `list`, `worktree list`, `threads`, and `task list`;

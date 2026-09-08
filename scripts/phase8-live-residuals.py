@@ -451,19 +451,25 @@ def run_dashboard_attach_smoke(aimux_bin: Path, mutation: str | None) -> dict[st
                 "timed out waiting for bare aimux dashboard attach:\n"
                 f"{output}\nstdout:\n{read_pipe(proc.stdout)}\nstderr:\n{read_pipe(proc.stderr)}"
             )
-        windows = tmux_cmd(
-            scope,
-            ["list-windows", "-a", "-F", "#{session_name}\t#{window_name}"],
-        ).stdout
-        if "dashboard" not in windows:
-            raise LiveResidualFailure(f"bare aimux did not create a dashboard window:\n{windows}")
+        tmux_cmd(scope, ["send-keys", "-t", f"{session}:0", "q"])
+        final_output = ""
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            final_output = capture_all_tmux(scope)
+            if "__AIMUX_ATTACH_EXIT:0" in final_output:
+                break
+            if "__AIMUX_ATTACH_EXIT:" in final_output:
+                raise LiveResidualFailure(f"bare aimux exited nonzero:\n{final_output}")
+            time.sleep(0.05)
+        else:
+            raise LiveResidualFailure(f"bare aimux did not accept q in a real TTY:\n{final_output}")
         return {
             "name": "phase8-live-dashboard-attach-smoke",
             "privateSocket": socket_name,
             "caught": [
                 "bare aimux terminal attach refusal",
-                "foreground dashboard open path inside a real tmux client",
-                "dashboard window creation from the root CLI entry point",
+                "bare aimux direct native TUI render inside a real tmux client",
+                "bare aimux direct native TUI input inside a real tmux client",
             ],
             "notCaught": [
                 "host-specific terminal emulator behavior outside tmux",
@@ -629,6 +635,119 @@ def run_agent_shell_spawn_smoke(aimux_bin: Path, mutation: str | None) -> dict[s
         }
 
 
+def run_top_level_agent_tool_smoke(aimux_bin: Path, mutation: str | None) -> dict[str, Any]:
+    tmux = find_tmux()
+    with Scope("top-level-agent", aimux_bin) as scope:
+        socket_name = f"aimux-phase8-top-level-agent-{os.getpid()}-{int(time.time() * 1000)}"
+        scope.tmux_socket_name = socket_name
+        install_tmux_socket_wrapper(scope, tmux, socket_name)
+        run([tmux, "-L", socket_name, "start-server"], env=without_tmux(os.environ.copy()), timeout=10)
+        scope.init_git_project()
+        run([str(aimux_bin), "init"], cwd=scope.project, env=scope.env, timeout=30)
+        install_agent_tool_config(scope, "aider")
+        project_root = scope.project.resolve()
+        launcher_session = "phase8-top-level-agent-launcher"
+        command = (
+            f"cd {shlex.quote(str(project_root))} && "
+            f"{shlex.quote(str(aimux_bin))} aider --help; "
+            "code=$?; printf '\\n__AIMUX_TOP_LEVEL_AGENT_EXIT:%s\\n' \"$code\"; sleep 30"
+        )
+        proc = subprocess.Popen(
+            [
+                "script",
+                "-q",
+                "/dev/null",
+                tmux,
+                "-L",
+                socket_name,
+                "-f",
+                "/dev/null",
+                "new-session",
+                "-s",
+                launcher_session,
+                "-x",
+                "100",
+                "-y",
+                "30",
+                "sh",
+                "-lc",
+                command,
+            ],
+            cwd=str(project_root),
+            env=scope.env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        scope.procs.append(proc)
+        output = ""
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            try:
+                output = capture_all_tmux(scope)
+            except LiveResidualFailure:
+                output = ""
+            if has_unsupported_command_error(output) or "tool is required" in output:
+                raise LiveResidualFailure(f"top-level agent tool dispatch failed:\n{output}")
+            if "__AIMUX_TOP_LEVEL_AGENT_EXIT:0" in output:
+                break
+            time.sleep(0.05)
+        else:
+            raise LiveResidualFailure(
+                "timed out waiting for top-level agent tool dispatch:\n"
+                f"{output}\nstdout:\n{read_pipe(proc.stdout)}\nstderr:\n{read_pipe(proc.stderr)}"
+            )
+
+        expected_tool = "aider"
+        if mutation == "top-level-agent-missing-session":
+            expected_tool = "phase8-agent-tool-mutation-missing"
+        ps_payload, session = wait_until(
+            lambda: ps_session_for_tool(scope, aimux_bin, expected_tool),
+            timeout=10,
+            label=f"{expected_tool} session in aimux ps",
+        )
+        session_id = str(session.get("id") or "")
+        if not session_id:
+            raise LiveResidualFailure(f"top-level agent session has no id: {session}")
+        windows = tmux_cmd_for_socket(
+            tmux,
+            socket_name,
+            ["list-windows", "-a", "-F", "#{session_name}\t#{window_name}"],
+        ).stdout
+        if "\t/bin/sh" not in windows and "\taider" not in windows:
+            raise LiveResidualFailure(f"top-level agent tmux window missing for {session_id}:\n{windows}")
+
+        stop = run(
+            [str(aimux_bin), "stop", session_id, "--json"],
+            cwd=scope.project,
+            env=scope.env,
+            timeout=30,
+        )
+        parse_json_stdout(stop.stdout, "top-level agent stop")
+        wait_until(
+            lambda: not ps_contains_session(scope, aimux_bin, session_id),
+            timeout=10,
+            label="top-level agent session removed from aimux ps",
+        )
+        return {
+            "name": "phase8-top-level-agent-tool-smoke",
+            "sessionId": session_id,
+            "psAfterSpawn": ps_payload,
+            "caught": [
+                "bare top-level agent tool dispatch through the real binary",
+                "tool argument pass-through before Clap fallback",
+                "spawn executor implementation behind resolved dispatch",
+                "foreground target opening from an attached tmux client",
+            ],
+            "notCaught": [
+                "real aider CLI availability",
+                "Claude/Codex credentials or network access",
+                "saved-session resume or restore semantics",
+            ],
+        }
+
+
 def run_lazy_read_start_smoke(aimux_bin: Path, mutation: str | None) -> dict[str, Any]:
     tmux = find_tmux()
     with Scope("lazy-read", aimux_bin) as scope:
@@ -737,12 +856,16 @@ def seed_initial_commit(scope: Scope) -> None:
 
 
 def install_shell_tool_config(scope: Scope) -> None:
+    install_agent_tool_config(scope, "shell")
+
+
+def install_agent_tool_config(scope: Scope, tool: str) -> None:
     config_path = scope.project / ".aimux" / "config.json"
     config = json.loads(config_path.read_text())
     tools = config.setdefault("tools", {})
-    tools["shell"] = {
+    tools[tool] = {
         "command": "/bin/sh",
-        "args": [],
+        "args": ["-lc", "printf 'phase8-agent-tool-ready\\n'; sleep 30"],
         "enabled": True,
         "wrapperEnabled": False,
         "promptPatterns": ["^[$#] "],
@@ -777,6 +900,27 @@ def ps_contains_session(scope: Scope, aimux_bin: Path, session_id: str) -> dict[
             if session.get("status") not in ("starting", "running", "idle"):
                 return None
             return payload if isinstance(payload, dict) else {"sessions": payload}
+    return None
+
+
+def ps_session_for_tool(scope: Scope, aimux_bin: Path, tool: str) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    result = run([str(aimux_bin), "ps", "--json"], cwd=scope.project, env=scope.env, timeout=15, check=False)
+    if result.returncode != 0:
+        return None
+    try:
+        payload: Any = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
+    sessions = payload.get("sessions") if isinstance(payload, dict) else payload
+    if not isinstance(sessions, list):
+        return None
+    for session in sessions:
+        if not isinstance(session, dict):
+            continue
+        if session.get("tool") != tool and session.get("toolConfigKey") != tool:
+            continue
+        if session.get("status") in ("starting", "running", "idle"):
+            return payload if isinstance(payload, dict) else {"sessions": payload}, session
     return None
 
 
@@ -1195,6 +1339,8 @@ def run_one(name: str, aimux_bin: Path, mutation: str | None) -> dict[str, Any]:
         return run_command_resolution_smoke(aimux_bin, mutation)
     if name == "agent-shell":
         return run_agent_shell_spawn_smoke(aimux_bin, mutation)
+    if name == "top-level-agent":
+        return run_top_level_agent_tool_smoke(aimux_bin, mutation)
     if name == "lazy-read":
         return run_lazy_read_start_smoke(aimux_bin, mutation)
     if name == "restart-current":
@@ -1214,6 +1360,7 @@ def prove_failures(args: argparse.Namespace, aimux_bin: Path) -> list[dict[str, 
         "dashboard-attach": "dashboard-attach-terminal-error",
         "command-resolution": "command-unsupported",
         "agent-shell": "agent-shell-missing-window",
+        "top-level-agent": "top-level-agent-missing-session",
         "lazy-read": "lazy-read-service-unavailable",
         "restart-current": "restart-current-zero-projects",
         "sse": "sse-reorder",
@@ -1266,6 +1413,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             "dashboard-attach",
             "command-resolution",
             "agent-shell",
+            "top-level-agent",
             "lazy-read",
             "restart-current",
             "sse",
@@ -1282,6 +1430,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "dashboard-attach-terminal-error",
         "command-unsupported",
         "agent-shell-missing-window",
+        "top-level-agent-missing-session",
         "lazy-read-service-unavailable",
         "restart-current-zero-projects",
         "sse-reorder",
@@ -1300,6 +1449,7 @@ def main(argv: list[str]) -> int:
             "dashboard-attach",
             "command-resolution",
             "agent-shell",
+            "top-level-agent",
             "lazy-read",
             "restart-current",
             "sse",
