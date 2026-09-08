@@ -128,9 +128,15 @@ fn release_asset_compiles_native_binary_with_selected_build_profile() {
         script.contains("export AIMUX_BUILD_PROFILE=\"$BUILD_PROFILE\""),
         "release build must pass the selected BUILD_PROFILE into the native binary compile"
     );
+    let export_profile = script
+        .find("export AIMUX_BUILD_PROFILE=\"$BUILD_PROFILE\"")
+        .expect("profile export");
+    let cargo_build = script
+        .find("cargo build --manifest-path native/Cargo.toml -p aimux --release")
+        .expect("cargo build");
     assert!(
-        script.contains("cargo build --manifest-path native/Cargo.toml -p aimux --release"),
-        "release asset must compile the native binary after exporting the build profile"
+        export_profile < cargo_build,
+        "release asset must export the build profile before compiling the native binary"
     );
     assert!(
         build_script.contains("cargo:rerun-if-env-changed=AIMUX_BUILD_PROFILE"),
