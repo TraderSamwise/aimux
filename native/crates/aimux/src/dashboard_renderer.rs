@@ -888,9 +888,16 @@ fn entries_for_group_sessions<'a>(
     fallback_entries: &[&'a DashboardSession],
 ) -> Vec<&'a DashboardSession> {
     if ordered_group_entries.is_empty() {
-        fallback_entries.to_vec()
+        fallback_entries
+            .iter()
+            .copied()
+            .filter(|session| !is_project_control_session(session))
+            .collect()
     } else {
-        ordered_group_entries.iter().collect()
+        ordered_group_entries
+            .iter()
+            .filter(|session| !is_project_control_session(session))
+            .collect()
     }
 }
 
@@ -2007,7 +2014,14 @@ fn render_worktree_details_panel(
         .find(|worktree| worktree.path == focused_path);
     let focused_sessions = focused_quick_jump_worktree
         .as_ref()
-        .map(|worktree| worktree.sessions.clone())
+        .map(|worktree| {
+            worktree
+                .sessions
+                .iter()
+                .copied()
+                .filter(|session| !is_project_control_session(session))
+                .collect::<Vec<_>>()
+        })
         .unwrap_or_else(|| {
             input
                 .snapshot

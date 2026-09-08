@@ -98,6 +98,49 @@ fn second_quick_jump_digit_selects_session_or_service_inside_worktree() {
 }
 
 #[test]
+fn navigation_skips_project_control_sessions_inside_worktree_groups() {
+    let mut snapshot = snapshot();
+    snapshot.worktree_groups[0].services.clear();
+    snapshot.services.clear();
+
+    let mut plain = snapshot.worktree_groups[0].sessions[0].clone();
+    plain.id = "claude-plain".into();
+    plain.label = Some("Plain Agent".into());
+    plain.overseer = None;
+    plain.scribe = None;
+    plain.project_control = None;
+    plain.team = None;
+
+    let mut overseer = plain.clone();
+    overseer.id = "claude-overseer".into();
+    overseer.label = Some("Project Overseer".into());
+    overseer.overseer = Some(true);
+    overseer.project_control = Some(true);
+
+    let mut scribe = plain.clone();
+    scribe.id = "claude-scribe".into();
+    scribe.label = Some("Project Scribe".into());
+    scribe.scribe = Some(true);
+    scribe.project_control = Some(true);
+
+    snapshot.sessions = vec![overseer.clone(), plain.clone(), scribe.clone()];
+    snapshot.worktree_groups[0].sessions = vec![overseer, plain.clone(), scribe];
+
+    let mut state = DashboardNavigationState::new(&snapshot);
+    assert_eq!(state.step_in(&snapshot), DashboardNavigationOutcome::StepIn);
+    assert_eq!(
+        state.selected_entry(&snapshot),
+        Some(DashboardEntryRef::Session(&plain))
+    );
+
+    state.move_next(&snapshot);
+    assert_eq!(
+        state.selected_entry(&snapshot),
+        Some(DashboardEntryRef::Session(&plain))
+    );
+}
+
+#[test]
 fn stale_quick_jump_can_be_cleared_without_changing_focused_worktree() {
     let snapshot = snapshot();
     let mut state = DashboardNavigationState::new(&snapshot);

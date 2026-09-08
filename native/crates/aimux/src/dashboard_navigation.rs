@@ -235,12 +235,23 @@ impl DashboardNavigationState {
 
 fn entry_count(snapshot: &DesktopStateSnapshot, worktree_index: usize) -> usize {
     if snapshot.worktree_groups.is_empty() {
-        return snapshot.sessions.len();
+        return snapshot
+            .sessions
+            .iter()
+            .filter(|session| !is_project_control_session(session))
+            .count();
     }
     snapshot
         .worktree_groups
         .get(worktree_index)
-        .map(|group| group.sessions.len() + group.services.len())
+        .map(|group| {
+            group
+                .sessions
+                .iter()
+                .filter(|session| !is_project_control_session(session))
+                .count()
+                + group.services.len()
+        })
         .unwrap_or_default()
 }
 
@@ -252,20 +263,48 @@ fn entry_at(
     if snapshot.worktree_groups.is_empty() {
         return snapshot
             .sessions
-            .get(item_index)
+            .iter()
+            .filter(|session| !is_project_control_session(session))
+            .nth(item_index)
             .map(DashboardEntryRef::Session);
     }
     let group = snapshot.worktree_groups.get(worktree_index)?;
-    if item_index < group.sessions.len() {
+    let sessions = group
+        .sessions
+        .iter()
+        .filter(|session| !is_project_control_session(session))
+        .collect::<Vec<_>>();
+    if item_index < sessions.len() {
         return group
             .sessions
-            .get(item_index)
+            .iter()
+            .filter(|session| !is_project_control_session(session))
+            .nth(item_index)
             .map(DashboardEntryRef::Session);
     }
     group
         .services
-        .get(item_index - group.sessions.len())
+        .get(item_index - sessions.len())
         .map(DashboardEntryRef::Service)
+}
+
+fn is_project_control_session(session: &DashboardSession) -> bool {
+    session.project_control == Some(true)
+        || session.overseer == Some(true)
+        || is_overseer_session(session)
+        || is_scribe_session(session)
+}
+
+fn is_overseer_session(session: &DashboardSession) -> bool {
+    session.team.as_ref().and_then(|team| team.role.as_deref()) == Some("overseer")
+}
+
+fn is_scribe_session(session: &DashboardSession) -> bool {
+    if session.scribe == Some(false) {
+        return false;
+    }
+    session.scribe == Some(true)
+        || session.team.as_ref().and_then(|team| team.role.as_deref()) == Some("scribe")
 }
 
 pub fn run_show_migrate_picker_contract_case(input: &Value) -> Value {

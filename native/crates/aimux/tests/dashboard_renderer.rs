@@ -545,7 +545,7 @@ fn worktree_details_count_the_same_project_sessions_as_rendered_rows() {
     scribe.project_control = Some(true);
 
     snapshot.sessions = vec![plain_agent.clone(), overseer, scribe];
-    snapshot.worktree_groups[0].sessions = vec![plain_agent];
+    snapshot.worktree_groups[0].sessions = snapshot.sessions.clone();
 
     let result = render_dashboard_frame(&DashboardRenderInput {
         snapshot: &snapshot,
