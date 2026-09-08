@@ -48,7 +48,7 @@ fn desktop_state_golden_preserves_dashboard_renderer_contract() {
 }
 
 #[test]
-fn desktop_state_model_preserves_unmodeled_contract_fields() {
+fn desktop_state_model_preserves_dashboard_renderer_carrier_fields() {
     let fixture: DesktopStateGoldenFixture =
         serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
     let snapshot = fixture.runtime_full;
@@ -58,34 +58,25 @@ fn desktop_state_model_preserves_unmodeled_contract_fields() {
         .iter()
         .find(|session| session.id == "claude-0")
         .unwrap();
-    assert_eq!(active.extra.get("pid"), Some(&json!(4242)));
-    assert_eq!(active.extra.get("foregroundCommand"), Some(&json!("node")));
+    assert_eq!(active.pid, Some(4242));
+    assert_eq!(active.foreground_command.as_deref(), Some("node"));
+    assert_eq!(active.preview_line.as_deref(), Some("last line for @1"));
+    assert_eq!(active.thread_name.as_deref(), Some("Thread 14"));
     assert_eq!(
-        active.extra.get("previewLine"),
-        Some(&json!("last line for @1"))
+        active.workflow_top_label.as_deref(),
+        Some("Thread 12 (on me)")
     );
-    assert_eq!(active.extra.get("threadName"), Some(&json!("Thread 14")));
-    assert_eq!(
-        active.extra.get("workflowTopLabel"),
-        Some(&json!("Thread 12 (on me)"))
-    );
-    assert_eq!(
-        active.extra.get("workflowNextAction"),
-        Some(&json!("open thread"))
-    );
+    assert_eq!(active.workflow_next_action.as_deref(), Some("open thread"));
     assert_eq!(active.extra.get("threadWaitingCount"), Some(&json!(5)));
 
     let service = snapshot.services.first().unwrap();
-    assert_eq!(service.extra.get("pid"), Some(&json!(4243)));
-    assert_eq!(service.extra.get("cwd"), Some(&json!("node\t4243")));
-    assert_eq!(service.extra.get("foregroundCommand"), Some(&json!("node")));
+    assert_eq!(service.pid, Some(4243));
+    assert_eq!(service.cwd.as_deref(), Some("node\t4243"));
+    assert_eq!(service.foreground_command.as_deref(), Some("node"));
+    assert_eq!(service.preview_line.as_deref(), Some("last line for @3"));
     assert_eq!(
-        service.extra.get("previewLine"),
-        Some(&json!("last line for @3"))
-    );
-    assert_eq!(
-        service.extra.get("createdAt"),
-        Some(&json!("2026-01-01T00:02:00.000Z"))
+        service.created_at.as_deref(),
+        Some("2026-01-01T00:02:00.000Z")
     );
 
     let group = snapshot.worktree_groups.first().unwrap();
@@ -171,4 +162,33 @@ fn dashboard_visible_model_hides_offline_agents_and_keeps_related_services() {
             .any(|service| service.id == "service-web"),
         "services in a visible worktree remain available"
     );
+}
+
+#[test]
+fn dashboard_visible_model_does_not_count_hidden_project_control_sessions() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let mut snapshot = fixture.runtime_light;
+
+    let mut ordinary_offline = snapshot.sessions[0].clone();
+    ordinary_offline.id = "claude-offline".into();
+    ordinary_offline.status = SessionStatus::Offline;
+    ordinary_offline.semantic = None;
+    ordinary_offline.overseer = None;
+    ordinary_offline.scribe = None;
+    ordinary_offline.project_control = None;
+    ordinary_offline.team = None;
+
+    let mut control_offline = ordinary_offline.clone();
+    control_offline.id = "claude-scribe-offline".into();
+    control_offline.scribe = Some(true);
+    control_offline.project_control = Some(true);
+
+    snapshot.sessions = vec![ordinary_offline, control_offline];
+    snapshot.worktree_groups.clear();
+    snapshot.services.clear();
+
+    let visible = filter_dashboard_visible_model(&snapshot, true);
+
+    assert_eq!(visible.hidden_offline_agent_count, 1);
 }

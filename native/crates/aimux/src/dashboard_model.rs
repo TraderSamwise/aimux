@@ -548,6 +548,7 @@ pub fn filter_dashboard_visible_model(
     let hidden_offline_agent_count = snapshot
         .sessions
         .iter()
+        .filter(|session| !is_project_control_session(session))
         .filter(|session| is_dashboard_session_offline(session))
         .count();
     let sessions = snapshot
@@ -607,6 +608,21 @@ pub fn filter_dashboard_visible_model(
         },
         hidden_offline_agent_count,
     }
+}
+
+fn is_project_control_session(session: &DashboardSession) -> bool {
+    session.project_control == Some(true)
+        || session.overseer == Some(true)
+        || session.team.as_ref().and_then(|team| team.role.as_deref()) == Some("overseer")
+        || is_scribe_session(session)
+}
+
+fn is_scribe_session(session: &DashboardSession) -> bool {
+    if session.scribe == Some(false) {
+        return false;
+    }
+    session.scribe == Some(true)
+        || session.team.as_ref().and_then(|team| team.role.as_deref()) == Some("scribe")
 }
 
 pub fn run_dashboard_worktree_groups_contract_case(api: &str, input: &Value) -> Value {
