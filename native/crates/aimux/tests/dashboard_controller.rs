@@ -375,6 +375,72 @@ fn next_attention_key_opens_highest_priority_attention_session() {
 }
 
 #[test]
+fn next_attention_key_ignores_project_control_sessions() {
+    let mut snapshot = snapshot();
+    snapshot.sessions[0].tmux_window_id = Some("@blocked".into());
+    snapshot.sessions[0].semantic = Some(semantic("blocked", "blocked", 0, 0));
+    snapshot.worktree_groups[1].sessions[0].tmux_window_id = Some("@input".into());
+    snapshot.worktree_groups[1].sessions[0].semantic =
+        Some(semantic("needs_input", "needs_input", 0, 0));
+
+    let mut overseer = snapshot.worktree_groups[1].sessions[0].clone();
+    overseer.id = "claude-overseer".into();
+    overseer.label = Some("Project Overseer".into());
+    overseer.tmux_window_id = Some("@overseer".into());
+    overseer.overseer = Some(true);
+    overseer.project_control = Some(true);
+    overseer.semantic = Some(semantic("error", "error", 0, 0));
+    snapshot.worktree_groups[1].sessions.insert(0, overseer);
+
+    let mut controller = DashboardController::new(&snapshot);
+    let DashboardControllerEffect::Request(request) =
+        controller.handle_key(&snapshot, DashboardKey::Printable('u'))
+    else {
+        panic!("expected attention request");
+    };
+
+    assert_eq!(request.path, routes::controls::FOCUS_WINDOW);
+    assert_eq!(request.body, json!({ "windowId": "@input", "focus": true }));
+    assert_eq!(controller.navigation.level, DashboardNavLevel::Sessions);
+    assert_eq!(controller.navigation.worktree_index, 1);
+    assert_eq!(controller.navigation.item_index, 0);
+}
+
+#[test]
+fn next_attention_key_ignores_project_control_when_no_visible_agent_needs_attention() {
+    let mut snapshot = snapshot();
+    let mut plain = snapshot.worktree_groups[0].sessions[0].clone();
+    plain.id = "claude-plain".into();
+    plain.tmux_window_id = Some("@plain".into());
+    plain.semantic = None;
+    plain.overseer = None;
+    plain.scribe = None;
+    plain.project_control = None;
+    plain.team = None;
+
+    let mut overseer = plain.clone();
+    overseer.id = "claude-overseer".into();
+    overseer.label = Some("Project Overseer".into());
+    overseer.tmux_window_id = Some("@overseer".into());
+    overseer.overseer = Some(true);
+    overseer.project_control = Some(true);
+    overseer.semantic = Some(semantic("error", "error", 0, 0));
+
+    snapshot.sessions = vec![plain.clone(), overseer.clone()];
+    snapshot.worktree_groups = vec![snapshot.worktree_groups[0].clone()];
+    snapshot.worktree_groups[0].sessions = vec![overseer, plain];
+    snapshot.worktree_groups[0].services.clear();
+    snapshot.services.clear();
+
+    let mut controller = DashboardController::new(&snapshot);
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('u')),
+        DashboardControllerEffect::Ignored
+    );
+}
+
+#[test]
 fn next_attention_key_cycles_from_current_attention_session() {
     let mut snapshot = snapshot();
     snapshot.sessions[0].tmux_window_id = Some("@blocked".into());

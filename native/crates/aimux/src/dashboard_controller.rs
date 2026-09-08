@@ -1560,6 +1560,7 @@ impl DashboardController {
             if let Some(index) = snapshot
                 .sessions
                 .iter()
+                .filter(|session| !is_project_control_session(session))
                 .position(|session| session.id == session_id)
             {
                 self.navigation.level = DashboardNavLevel::Sessions;
@@ -1574,6 +1575,7 @@ impl DashboardController {
             if let Some(item_index) = group
                 .sessions
                 .iter()
+                .filter(|session| !is_project_control_session(session))
                 .position(|session| session.id == session_id)
             {
                 self.navigation.level = DashboardNavLevel::Sessions;
@@ -1860,21 +1862,33 @@ fn visual_dashboard_session_order(snapshot: &DesktopStateSnapshot) -> Vec<&Dashb
     let mut ordered = snapshot
         .sessions
         .iter()
+        .filter(|session| !is_project_control_session(session))
         .filter(|session| session.worktree_path.is_none())
         .collect::<Vec<_>>();
     for group in &snapshot.worktree_groups {
         for session in &group.sessions {
-            if !ordered.iter().any(|entry| entry.id == session.id) {
+            if !is_project_control_session(session)
+                && !ordered.iter().any(|entry| entry.id == session.id)
+            {
                 ordered.push(session);
             }
         }
     }
     for session in &snapshot.sessions {
-        if !ordered.iter().any(|entry| entry.id == session.id) {
+        if !is_project_control_session(session)
+            && !ordered.iter().any(|entry| entry.id == session.id)
+        {
             ordered.push(session);
         }
     }
     ordered
+}
+
+fn is_project_control_session(session: &DashboardSession) -> bool {
+    session.project_control == Some(true)
+        || session.overseer == Some(true)
+        || session.team.as_ref().and_then(|team| team.role.as_deref()) == Some("overseer")
+        || is_scribe_session(session)
 }
 
 fn attention_score(session: &DashboardSession) -> usize {
