@@ -353,7 +353,13 @@ fn restart_control_plane_from_cli(
     let resolver = PathResolver::from_env();
     let daemon_info = load_daemon_info(resolver.daemon_info_path());
     let daemon_state = load_daemon_state(resolver.daemon_state_path());
-    let project_roots = restart_bootstrap_project_roots(project_root, &daemon_state);
+    let registry_project_roots = resolver
+        .list_projects()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|entry| entry.repo_root);
+    let project_roots =
+        restart_bootstrap_project_roots(project_root, &daemon_state, registry_project_roots);
 
     if let Some(info) = daemon_info.as_ref() {
         assert_not_stopping_newer_daemon().map_err(|error| error.to_string())?;
@@ -390,7 +396,11 @@ fn restart_control_plane_from_cli(
     Ok(RestartControlPlaneTextResult { restart, text })
 }
 
-fn restart_bootstrap_project_roots(project_root: Option<&str>, state: &DaemonState) -> Vec<String> {
+fn restart_bootstrap_project_roots(
+    project_root: Option<&str>,
+    state: &DaemonState,
+    registry_project_roots: impl IntoIterator<Item = String>,
+) -> Vec<String> {
     if let Some(project_root) = project_root {
         return vec![project_root.to_owned()];
     }
@@ -401,6 +411,12 @@ fn restart_bootstrap_project_roots(project_root: Option<&str>, state: &DaemonSta
         .map(str::trim)
         .filter(|project_root| !project_root.is_empty())
         .map(str::to_owned)
+        .chain(
+            registry_project_roots
+                .into_iter()
+                .map(|project_root| project_root.trim().to_owned())
+                .filter(|project_root| !project_root.is_empty()),
+        )
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect()
@@ -426,11 +442,27 @@ mod tests {
         };
 
         assert_eq!(
-            restart_bootstrap_project_roots(None, &state),
-            vec!["/repo/alpha".to_owned(), "/repo/beta".to_owned()]
+            restart_bootstrap_project_roots(
+                None,
+                &state,
+                [
+                    "/repo/beta".to_owned(),
+                    "/repo/gamma".to_owned(),
+                    " ".to_owned(),
+                ],
+            ),
+            vec![
+                "/repo/alpha".to_owned(),
+                "/repo/beta".to_owned(),
+                "/repo/gamma".to_owned()
+            ]
         );
         assert_eq!(
-            restart_bootstrap_project_roots(Some("/repo/only"), &state),
+            restart_bootstrap_project_roots(
+                Some("/repo/only"),
+                &state,
+                ["/repo/ignored".to_owned()],
+            ),
             vec!["/repo/only".to_owned()]
         );
     }
