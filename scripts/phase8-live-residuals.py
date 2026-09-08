@@ -802,7 +802,84 @@ def run_top_level_agent_tool_smoke(aimux_bin: Path, mutation: str | None) -> dic
             launched.append(f"{label}:{session_id}")
             return session_id, ps_payload
 
+        def restore_and_stop(label: str, tool: str, session_id: str) -> None:
+            launcher_session = f"phase8-top-level-agent-{label}"
+            command = (
+                f"cd {shlex.quote(str(project_root))} && "
+                f"{shlex.quote(str(aimux_bin))} --restore {shlex.quote(tool)}; "
+                f"code=$?; printf '\\n__AIMUX_TOP_LEVEL_AGENT_{label}_EXIT:%s\\n' \"$code\"; sleep 30"
+            )
+            proc = subprocess.Popen(
+                [
+                    "script",
+                    "-q",
+                    "/dev/null",
+                    tmux,
+                    "-L",
+                    socket_name,
+                    "-f",
+                    "/dev/null",
+                    "new-session",
+                    "-s",
+                    launcher_session,
+                    "-x",
+                    "100",
+                    "-y",
+                    "30",
+                    "sh",
+                    "-lc",
+                    command,
+                ],
+                cwd=str(project_root),
+                env=scope.env,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            scope.procs.append(proc)
+            deadline = time.monotonic() + 20
+            output = ""
+            while time.monotonic() < deadline:
+                try:
+                    output = capture_all_tmux(scope)
+                except LiveResidualFailure:
+                    output = ""
+                if has_unsupported_command_error(output) or "tool is required" in output:
+                    raise LiveResidualFailure(f"{label} root restore dispatch failed:\n{output}")
+                if ps_contains_session(scope, aimux_bin, session_id):
+                    break
+                time.sleep(0.05)
+            else:
+                raise LiveResidualFailure(
+                    f"timed out waiting for {label} restored session {session_id}:\n"
+                    f"{output}\nstdout:\n{read_pipe(proc.stdout)}\nstderr:\n{read_pipe(proc.stderr)}"
+                )
+            tmux_cmd(scope, ["send-keys", "-t", f"{launcher_session}:0", "q"])
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                output = capture_all_tmux(scope)
+                if f"__AIMUX_TOP_LEVEL_AGENT_{label}_EXIT:0" in output:
+                    break
+                time.sleep(0.05)
+            else:
+                raise LiveResidualFailure(f"{label} restored dashboard did not quit:\n{output}")
+            stop = run(
+                [str(aimux_bin), "stop", session_id, "--json"],
+                cwd=scope.project,
+                env=scope.env,
+                timeout=30,
+            )
+            parse_json_stdout(stop.stdout, f"{label} restored agent stop")
+            wait_until(
+                lambda: not ps_contains_session(scope, aimux_bin, session_id),
+                timeout=10,
+                label=f"{label} restored session removed from aimux ps",
+            )
+            launched.append(f"{label}:{session_id}")
+
         session_id, ps_payload = launch_and_stop("codex-bare", ["codex"], "codex")
+        restore_and_stop("codex-restore", "codex", session_id)
         launch_and_stop("codex-args", ["codex", "hello"], "codex")
         launch_and_stop("claude-bare", ["claude"], "claude")
         launch_and_stop("aider-args", ["aider", "--help"], "aider")
@@ -815,13 +892,14 @@ def run_top_level_agent_tool_smoke(aimux_bin: Path, mutation: str | None) -> dic
                 "bare top-level agent tool dispatch through the real binary",
                 "built-in codex and claude tool names through the real binary",
                 "tool argument pass-through before Clap fallback",
+                "root --restore tool filter relaunching a saved session",
                 "spawn executor implementation behind resolved dispatch",
                 "foreground target opening from an attached tmux client",
             ],
             "notCaught": [
                 "real aider CLI availability",
                 "Claude/Codex credentials or network access",
-                "saved-session resume or restore semantics",
+                "exact saved-session --resume backend id semantics",
             ],
         }
 
