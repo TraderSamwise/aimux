@@ -58,6 +58,7 @@ use crate::daemon_state::{
     remove_metadata_endpoint, save_daemon_info, save_daemon_state,
 };
 use crate::dashboard_readiness::get_runtime_owner_id;
+use crate::dashboard_targets::{DashboardResolveOptions, resolve_dashboard_target};
 use crate::logs::{LogSelectionOptions, clear_log_file, read_last_log_lines, selected_log_path};
 use crate::paths::{PathResolver, compute_project_id};
 use crate::process_inspector::{
@@ -77,7 +78,8 @@ use crate::runtime_coherence::{
     RuntimeCoherenceTmux, build_runtime_coherence_report, render_runtime_coherence_report,
 };
 use crate::tmux::{
-    TmuxTarget, is_tmux_client_session_for_host, kill_session_argv, project_session,
+    TmuxRuntimeManager, TmuxTarget, is_tmux_client_session_for_host, kill_session_argv,
+    project_session,
 };
 use anyhow::{Context, Result};
 use serde_json::{Map, Value, json};
@@ -505,9 +507,17 @@ impl RealDaemonRuntime {
         open: Option<DashboardOpenRequest>,
     ) -> Result<Value, String> {
         <Self as DaemonCoreCommandRuntime>::ensure_project(self, project_root)?;
-        let (repair, _) = system_tmux_repair_result(&mut self.resolver, project_root, false)?;
+        let mut tmux = TmuxRuntimeManager::new();
+        let target = resolve_dashboard_target(
+            project_root,
+            &mut tmux,
+            DashboardResolveOptions {
+                force_reload: true,
+                open_in_host_session: false,
+            },
+        )?;
         self.refresh_project_statusline(project_root);
-        dashboard_payload_from_repair(project_root, &repair, open)
+        dashboard_payload_from_target(project_root, &target.dashboard_target, open)
     }
 
     fn restart_project_runtime(
@@ -518,9 +528,18 @@ impl RealDaemonRuntime {
         let _ = <Self as DaemonCoreCommandRuntime>::stop_project(self, project_root, false);
         let tmux_sessions_killed = stop_project_tmux_runtime(project_root);
         let project = <Self as DaemonCoreCommandRuntime>::ensure_project(self, project_root)?;
-        let (repair, _) = system_tmux_repair_result(&mut self.resolver, project_root, false)?;
+        let mut tmux = TmuxRuntimeManager::new();
+        let target = resolve_dashboard_target(
+            project_root,
+            &mut tmux,
+            DashboardResolveOptions {
+                force_reload: true,
+                open_in_host_session: false,
+            },
+        )?;
         self.refresh_project_statusline(project_root);
-        let mut payload = dashboard_payload_from_repair(project_root, &repair, open)?;
+        let mut payload =
+            dashboard_payload_from_target(project_root, &target.dashboard_target, open)?;
         if let Value::Object(object) = &mut payload {
             object.insert("project".into(), project);
             object.insert("tmuxSessionsKilled".into(), json!(tmux_sessions_killed));
@@ -1977,24 +1996,14 @@ fn session_prefix_for_project(project_root: &str) -> String {
         .to_owned()
 }
 
-fn dashboard_payload_from_repair(
+fn dashboard_payload_from_target(
     project_root: &str,
-    repair: &Value,
+    target: &TmuxTarget,
     open: Option<DashboardOpenRequest>,
 ) -> Result<Value, String> {
-    let session_name = repair
-        .get("dashboardSessionName")
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| "dashboard session missing after repair".to_owned())?;
-    let window_id = repair
-        .get("dashboardWindowId")
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| "dashboard window missing after repair".to_owned())?;
     let mut runtime = SystemDaemonExposeFocusRuntime;
     let target = runtime
-        .target_by_window_id(session_name, window_id)?
+        .target_by_window_id(&target.session_name, &target.window_id)?
         .ok_or_else(|| "dashboard window not found after repair".to_owned())?;
     if let Some(open) = open {
         open_target_for_client(
@@ -2007,7 +2016,7 @@ fn dashboard_payload_from_repair(
     Ok(json!({
         "ok": true,
         "projectRoot": project_root,
-        "dashboardSessionName": session_name,
+        "dashboardSessionName": target.session_name,
         "dashboardTarget": tmux_target_json(&target),
     }))
 }

@@ -2,8 +2,10 @@ use crate::core_command_transport::{
     CoreCommandTransportError, DaemonHttpMethod, DaemonJsonRequest, DaemonRequestInit,
     execute_loopback_json_request, request_daemon_json,
 };
+use crate::daemon_state::load_metadata_endpoint;
 use crate::dashboard_actions::DashboardActionRequest;
 use crate::dashboard_model::DesktopStateSnapshot;
+use crate::paths::PathResolver;
 use crate::paths::{is_git_project_root, project_checkout_required_message};
 use crate::project_api_contract::routes;
 use anyhow::{Context, Result, anyhow};
@@ -18,6 +20,12 @@ pub struct ProjectServiceEndpoint {
 }
 
 pub fn resolve_project_service_endpoint(project_root: &Path) -> Result<ProjectServiceEndpoint> {
+    if !is_git_project_root(project_root) {
+        return Err(anyhow!(project_checkout_required_message(project_root)));
+    }
+    if let Some(endpoint) = resolve_project_service_endpoint_from_disk(project_root) {
+        return Ok(endpoint);
+    }
     let projects = request_daemon_json(
         "/projects",
         DaemonRequestInit {
@@ -35,9 +43,6 @@ pub fn find_project_service_endpoint(
     project_root: &Path,
 ) -> Result<ProjectServiceEndpoint> {
     let root_text = project_root.to_string_lossy();
-    if !is_git_project_root(project_root) {
-        return Err(anyhow!(project_checkout_required_message(project_root)));
-    }
     let project = projects
         .get("projects")
         .and_then(Value::as_array)
@@ -62,6 +67,31 @@ pub fn find_project_service_endpoint(
         .and_then(|port| u16::try_from(port).ok())
         .ok_or_else(|| anyhow!("project service endpoint port is invalid"))?;
     Ok(ProjectServiceEndpoint { host, port })
+}
+
+fn resolve_project_service_endpoint_from_disk(
+    project_root: &Path,
+) -> Option<ProjectServiceEndpoint> {
+    let mut resolver = PathResolver::from_env();
+    let endpoint = load_metadata_endpoint(resolver.project_state_dir_for(project_root))?;
+    let candidate = ProjectServiceEndpoint {
+        host: endpoint.host,
+        port: endpoint.port,
+    };
+    project_service_health_ok(&candidate).then_some(candidate)
+}
+
+fn project_service_health_ok(endpoint: &ProjectServiceEndpoint) -> bool {
+    let Ok(request) =
+        build_project_service_json_request(endpoint, DaemonHttpMethod::Get, "/health", None)
+    else {
+        return false;
+    };
+    let Ok(response) = execute_loopback_json_request(&request).map_err(map_transport_error) else {
+        return false;
+    };
+    (200..300).contains(&response.status)
+        && response.json.get("ok").and_then(Value::as_bool) != Some(false)
 }
 
 pub fn fetch_desktop_state(endpoint: &ProjectServiceEndpoint) -> Result<DesktopStateSnapshot> {

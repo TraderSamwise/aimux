@@ -1528,6 +1528,123 @@ def run_restart_current_project_smoke(aimux_bin: Path, mutation: str | None) -> 
         }
 
 
+def run_restart_missing_dashboard_smoke(aimux_bin: Path, mutation: str | None) -> dict[str, Any]:
+    tmux = find_tmux()
+    with Scope("restart-missing-dashboard", aimux_bin) as scope:
+        socket_name = f"aimux-phase8-restart-missing-dashboard-{os.getpid()}-{int(time.time() * 1000)}"
+        scope.tmux_socket_name = socket_name
+        install_tmux_socket_wrapper(scope, tmux, socket_name)
+        run([tmux, "-L", socket_name, "kill-server"], env=without_tmux(os.environ.copy()), timeout=10, check=False)
+        scope.init_git_project()
+        seed_initial_commit(scope)
+        run([str(aimux_bin), "init"], cwd=scope.project, env=scope.env, timeout=30)
+        run([str(aimux_bin), "shell"], cwd=scope.project, env=scope.env, timeout=30)
+
+        inventory = wait_until(
+            lambda: tmux_cmd_for_socket(
+                tmux,
+                socket_name,
+                ["list-windows", "-a", "-F", "#{session_name}\t#{window_id}\t#{window_index}\t#{window_name}"],
+            ).stdout,
+            timeout=10,
+            label="managed tmux window inventory before dashboard removal",
+        )
+        dashboard_rows = [
+            row.split("\t")
+            for row in inventory.splitlines()
+            if row.endswith("\tdashboard")
+        ]
+        if not dashboard_rows:
+            raise LiveResidualFailure(f"expected an initial dashboard window before removal:\n{inventory}")
+        dashboard_session, dashboard_window_id = dashboard_rows[0][0], dashboard_rows[0][1]
+        tmux_cmd_for_socket(tmux, socket_name, ["kill-window", "-t", dashboard_window_id])
+        without_dashboard = tmux_cmd_for_socket(
+            tmux,
+            socket_name,
+            ["list-windows", "-a", "-F", "#{session_name}\t#{window_id}\t#{window_index}\t#{window_name}"],
+        ).stdout
+        if "\tdashboard" in without_dashboard:
+            raise LiveResidualFailure(f"failed to create missing-dashboard precondition:\n{without_dashboard}")
+
+        result = run(
+            [str(aimux_bin), "restart", "--json"],
+            cwd=scope.home,
+            env=scope.env,
+            timeout=75,
+        )
+        payload = parse_json_stdout(result.stdout, "global restart missing-dashboard repair")
+        projects = payload.get("projects")
+        project = next(
+            (
+                item
+                for item in projects
+                if isinstance(item, dict) and item.get("projectRoot") == str(scope.project.resolve())
+            ),
+            None,
+        ) if isinstance(projects, list) else None
+        if not isinstance(project, dict):
+            raise LiveResidualFailure(
+                "global restart did not include registered project:\n"
+                + json.dumps({"projectRoot": str(scope.project.resolve()), "payload": payload}, indent=2)
+            )
+        dashboard = project.get("dashboard")
+        target = dashboard.get("target") if isinstance(dashboard, dict) else None
+        if not isinstance(target, dict) or dashboard.get("status") != "reloaded":
+            raise LiveResidualFailure(
+                "global restart did not report a reloaded dashboard target:\n"
+                + json.dumps({"dashboard": dashboard, "payload": payload}, indent=2)
+            )
+        reported_session = str(target.get("sessionName") or "")
+        reported_window_id = str(target.get("windowId") or "")
+        if mutation == "restart-missing-dashboard-target-mismatch":
+            reported_window_id = "@phase8-missing-dashboard-mutated"
+
+        repaired_inventory = wait_until(
+            lambda: tmux_cmd_for_socket(
+                tmux,
+                socket_name,
+                ["list-windows", "-a", "-F", "#{session_name}\t#{window_id}\t#{window_index}\t#{window_name}"],
+            ).stdout,
+            timeout=10,
+            label="managed tmux window inventory after global restart",
+        )
+        matching_reported_target = False
+        matching_dashboard_window = False
+        expected_window_name = "dashboard"
+        if mutation == "restart-missing-dashboard-window-missing":
+            expected_window_name = "phase8-dashboard-mutation-missing"
+        for row in repaired_inventory.splitlines():
+            session_name, window_id, _window_index, window_name = (row.split("\t") + ["", "", "", ""])[:4]
+            if session_name == reported_session and window_id == reported_window_id:
+                matching_reported_target = True
+            if session_name == dashboard_session and window_name == expected_window_name:
+                matching_dashboard_window = True
+        if not matching_reported_target:
+            raise LiveResidualFailure(
+                "global restart reported a dashboard target that does not exist in tmux:\n"
+                + json.dumps({"reported": target, "windows": repaired_inventory}, indent=2)
+            )
+        if not matching_dashboard_window:
+            raise LiveResidualFailure(
+                "global restart did not recreate the missing dashboard window:\n"
+                + json.dumps({"session": dashboard_session, "windows": repaired_inventory}, indent=2)
+            )
+        return {
+            "name": "phase8-restart-missing-dashboard-smoke",
+            "privateSocket": socket_name,
+            "reportedTarget": target,
+            "caught": [
+                "global aimux restart from a non-project cwd skipping registered projects with missing dashboard windows",
+                "restart reporting a dashboard window id that does not exist in tmux",
+                "install-time repair claiming dashboard reload success for a transient dead window",
+            ],
+            "notCaught": [
+                "scripts/install.sh output formatting",
+                "remote-machine install permissions outside the temp root",
+            ],
+        }
+
+
 def run_non_git_project_smoke(aimux_bin: Path, mutation: str | None) -> dict[str, Any]:
     with Scope("non-git", aimux_bin) as scope:
         expected = (
@@ -2133,6 +2250,8 @@ def run_one(name: str, aimux_bin: Path, mutation: str | None) -> dict[str, Any]:
         return run_lazy_read_start_smoke(aimux_bin, mutation)
     if name == "restart-current":
         return run_restart_current_project_smoke(aimux_bin, mutation)
+    if name == "restart-missing-dashboard":
+        return run_restart_missing_dashboard_smoke(aimux_bin, mutation)
     if name == "non-git":
         return run_non_git_project_smoke(aimux_bin, mutation)
     if name == "sse":
@@ -2158,6 +2277,8 @@ def prove_failures(args: argparse.Namespace, aimux_bin: Path) -> list[dict[str, 
         ("top-level-agent", "top-level-agent-missing-session"),
         ("lazy-read", "lazy-read-service-unavailable"),
         ("restart-current", "restart-current-zero-projects"),
+        ("restart-missing-dashboard", "restart-missing-dashboard-target-mismatch"),
+        ("restart-missing-dashboard", "restart-missing-dashboard-window-missing"),
         ("non-git", "non-git-message-mismatch"),
         ("non-git", "non-git-init-created-aimux"),
         ("sse", "sse-reorder"),
@@ -2216,6 +2337,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             "top-level-agent",
             "lazy-read",
             "restart-current",
+            "restart-missing-dashboard",
             "non-git",
             "sse",
             "process",
@@ -2239,6 +2361,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "top-level-agent-missing-session",
         "lazy-read-service-unavailable",
         "restart-current-zero-projects",
+        "restart-missing-dashboard-target-mismatch",
+        "restart-missing-dashboard-window-missing",
         "non-git-message-mismatch",
         "non-git-init-created-aimux",
         "sse-reorder",
@@ -2265,6 +2389,7 @@ def main(argv: list[str]) -> int:
             "top-level-agent",
             "lazy-read",
             "restart-current",
+            "restart-missing-dashboard",
             "non-git",
             "sse",
             "process",

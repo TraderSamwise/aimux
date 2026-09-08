@@ -13,6 +13,7 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 const DASHBOARD_REPLACEMENT_READY_TIMEOUT_MS: u64 = 20_000;
 const CONTRACT_NODE_EXEC_PATH: &str = "/opt/homebrew/Cellar/node/25.8.1_1/bin/node";
@@ -63,7 +64,7 @@ pub trait DashboardTargetTmux {
         session_name: &str,
         project_root: &str,
         dashboard_command: &TmuxCommandSpec,
-    ) -> Result<TmuxTarget, String>;
+    ) -> Result<(TmuxTarget, bool), String>;
     fn replace_window_when_ready(
         &mut self,
         target: &TmuxTarget,
@@ -168,13 +169,17 @@ impl DashboardTargetTmux for TmuxRuntimeManager {
         session_name: &str,
         project_root: &str,
         dashboard_command: &TmuxCommandSpec,
-    ) -> Result<TmuxTarget, String> {
-        TmuxRuntimeManager::ensure_dashboard_window(
+    ) -> Result<(TmuxTarget, bool), String> {
+        let dashboard_existed = TmuxRuntimeManager::list_windows(self, session_name)
+            .into_iter()
+            .any(|window| is_dashboard_window_name(&window.name));
+        let target = TmuxRuntimeManager::ensure_dashboard_window(
             self,
             session_name,
             project_root,
             Some(dashboard_command),
-        )
+        )?;
+        Ok((target, !dashboard_existed))
     }
 
     fn replace_window_when_ready(
@@ -320,7 +325,7 @@ pub fn resolve_dashboard_target_with_context(
         let inside_tmux = tmux.is_inside_tmux();
         tmux.get_open_session_name(&dashboard_session.session_name, inside_tmux)
     };
-    let mut dashboard_target =
+    let (mut dashboard_target, dashboard_created) =
         tmux.ensure_dashboard_window(&open_session_name, project_root, &context.dashboard_command)?;
     let current_build_stamp =
         tmux.get_window_option(&dashboard_target, TMUX_DASHBOARD_BUILD_OPTION);
@@ -333,7 +338,14 @@ pub fn resolve_dashboard_target_with_context(
         || current_build_stamp.as_deref() != Some(context.dashboard_build_stamp.as_str())
         || current_ready_stamp.as_deref() != Some(context.dashboard_build_stamp.as_str())
         || current_dashboard_owner.as_deref() != Some(context.runtime_owner_id.as_str());
-    if should_respawn {
+    if dashboard_created {
+        wait_for_dashboard_target_ready(
+            tmux,
+            &dashboard_target,
+            &context.dashboard_build_stamp,
+            DASHBOARD_REPLACEMENT_READY_TIMEOUT_MS,
+        )?;
+    } else if should_respawn {
         dashboard_target = tmux.replace_window_when_ready(
             &dashboard_target,
             &context.dashboard_command,
@@ -361,6 +373,35 @@ pub fn resolve_dashboard_target_with_context(
         dashboard_session,
         dashboard_target,
     })
+}
+
+fn wait_for_dashboard_target_ready(
+    tmux: &mut impl DashboardTargetTmux,
+    target: &TmuxTarget,
+    _readiness_value: &str,
+    timeout_ms: u64,
+) -> Result<(), String> {
+    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+    while Instant::now() < deadline {
+        if tmux
+            .get_window_option(target, TMUX_DASHBOARD_READY_OPTION)
+            .as_deref()
+            .is_some_and(|value| !value.is_empty())
+        {
+            return Ok(());
+        }
+        if !tmux.is_window_alive(target) {
+            return Err(format!(
+                "Dashboard window {} exited before becoming ready",
+                target.window_id
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    Err(format!(
+        "Timed out waiting for tmux window {} to become ready",
+        target.window_id
+    ))
 }
 
 pub fn is_usable_dashboard_target(
@@ -694,7 +735,7 @@ impl DashboardTargetTmux for DashboardTargetsContractTmux {
         session_name: &str,
         project_root: &str,
         dashboard_command: &TmuxCommandSpec,
-    ) -> Result<TmuxTarget, String> {
+    ) -> Result<(TmuxTarget, bool), String> {
         self.record(
             "ensureDashboardWindow",
             json!([
@@ -703,7 +744,7 @@ impl DashboardTargetTmux for DashboardTargetsContractTmux {
                 command_spec_to_value(dashboard_command)
             ]),
         );
-        Ok(self.dashboard_target("@1"))
+        Ok((self.dashboard_target("@1"), false))
     }
 
     fn replace_window_when_ready(
