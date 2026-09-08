@@ -93,6 +93,7 @@ class Scope:
         return proc
 
     def cleanup(self) -> None:
+        self.stop_control_plane()
         if self.tmux_socket_name:
             tmux = find_tmux(required=False)
             if tmux:
@@ -112,6 +113,38 @@ class Scope:
             except OSError:
                 pass
         self.temp.cleanup()
+
+    def stop_control_plane(self) -> None:
+        project_service_pids = self.project_service_pids()
+        try:
+            subprocess.run(
+                [str(self.aimux_bin), "daemon", "stop", "--json"],
+                cwd=str(self.project),
+                env=self.env,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+                check=False,
+            )
+        except Exception:
+            pass
+        for pid in project_service_pids:
+            terminate_pid(pid)
+
+    def project_service_pids(self) -> list[int]:
+        state_path = self.aimux_home / "daemon" / "state.json"
+        try:
+            state = json.loads(state_path.read_text())
+        except Exception:
+            return []
+        projects = state.get("projects")
+        if not isinstance(projects, dict):
+            return []
+        pids = []
+        for project in projects.values():
+            if isinstance(project, dict) and isinstance(project.get("pid"), int):
+                pids.append(project["pid"])
+        return pids
 
     def __enter__(self) -> "Scope":
         return self
@@ -187,6 +220,28 @@ def terminate_process(proc: subprocess.Popen[Any]) -> None:
         proc.wait(timeout=3)
     except Exception:
         pass
+
+
+def terminate_pid(pid: int) -> None:
+    if pid <= 0:
+        return
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline:
+        if not pid_is_alive(pid):
+            return
+        time.sleep(0.05)
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError:
+        return
+
+
+def pid_is_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
 
 
 def build_aimux(args: argparse.Namespace) -> Path:
