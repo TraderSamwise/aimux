@@ -568,6 +568,7 @@ fn renders_typed_scribe_preview_rows_for_selected_session() {
 
     let mut scribe = snapshot.sessions[0].clone();
     scribe.id = "claude-scribe".into();
+    scribe.label = Some("Project Scribe".into());
     scribe.scribe = Some(true);
     scribe.project_control = Some(true);
     snapshot.sessions.push(scribe);
