@@ -1,9 +1,9 @@
 use aimux::core_cli::{CoreCommandOk, CoreCommandRequestOptions};
 use aimux::core_command_contract::{CORE_API_ROUTES, CORE_COMMAND_NAMES};
 use aimux::core_command_transport::{
-    CoreCommandTransportError, DaemonHttpMethod, DaemonJsonResponse, DaemonRequestInit,
-    build_daemon_json_request, execute_loopback_json_request, request_core_command_with,
-    request_daemon_json_with, send_core_command_with,
+    CoreCommandTransportError, DaemonHttpMethod, DaemonJsonRequest, DaemonJsonResponse,
+    DaemonRequestInit, build_daemon_json_request, execute_loopback_json_request,
+    request_core_command_with, request_daemon_json_with, send_core_command_with,
 };
 use aimux::daemon_state::AimuxDaemonInfo;
 use serde_json::{Value, json};
@@ -240,6 +240,31 @@ fn loopback_transport_posts_json_with_content_type_and_timeout() {
     assert!(wire.contains("content-type: application/json\r\n"));
     assert!(wire.contains("content-length: 23\r\n"));
     assert!(wire.ends_with("\r\n\r\n{\"command\":\"core.ping\"}"));
+    handle.join().expect("server thread");
+}
+
+#[test]
+fn loopback_transport_adds_content_length_for_direct_body_requests() {
+    let response =
+        b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\n\r\n{\"ok\":true}"
+            .to_vec();
+    let (port, captured, handle) = spawn_http_server(response);
+    let request = DaemonJsonRequest {
+        url: format!("http://127.0.0.1:{port}/agents/spawn"),
+        method: DaemonHttpMethod::Post,
+        headers: BTreeMap::from([("content-type".to_owned(), "application/json".to_owned())]),
+        body: Some(r#"{"tool":"shell"}"#.to_owned()),
+        timeout_ms: Some(1_000),
+    };
+
+    let result = execute_loopback_json_request(&request).expect("POST JSON");
+    assert_eq!(result.status, 200);
+    assert_eq!(result.json, json!({ "ok": true }));
+
+    let wire =
+        String::from_utf8(captured.recv().expect("captured request")).expect("UTF-8 request");
+    assert!(wire.contains("content-length: 16\r\n"));
+    assert!(wire.ends_with("\r\n\r\n{\"tool\":\"shell\"}"));
     handle.join().expect("server thread");
 }
 

@@ -21,6 +21,7 @@ static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 #[derive(Default)]
 struct FakeLifecycleRuntime {
     legacy_repairs: Vec<PathBuf>,
+    ensured_sessions: Vec<PathBuf>,
     created: Vec<FakeCreateWindow>,
     cleared: Vec<String>,
     metadata: Vec<(String, Value)>,
@@ -52,6 +53,11 @@ struct FakeCreateWorktree {
 impl ProjectLifecycleRuntime for FakeLifecycleRuntime {
     fn repair_legacy_project_session_names(&mut self, project_root: &Path) -> Result<(), String> {
         self.legacy_repairs.push(project_root.to_owned());
+        Ok(())
+    }
+
+    fn ensure_project_session(&mut self, project_root: &Path) -> Result<(), String> {
+        self.ensured_sessions.push(project_root.to_owned());
         Ok(())
     }
 

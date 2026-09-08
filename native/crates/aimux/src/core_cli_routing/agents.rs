@@ -22,6 +22,13 @@ pub fn parse_core_agent_list_args<S: AsRef<str>>(args: &[S]) -> Option<CoreAgent
     })
 }
 
+pub fn parse_core_project_stop_args<S: AsRef<str>>(args: &[S]) -> Option<CoreAgentPsArgs> {
+    if args.first().map(AsRef::as_ref) != Some("stop") {
+        return None;
+    }
+    parse_project_json_flags(&args[1..])
+}
+
 pub fn parse_core_agent_identity_args<S: AsRef<str>>(args: &[S]) -> Option<CoreAgentIdentityArgs> {
     if args.first().map(AsRef::as_ref) != Some("id") {
         return None;

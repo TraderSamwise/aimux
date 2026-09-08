@@ -174,6 +174,7 @@ pub(super) fn launch_agent_session(
         .unwrap_or_else(|| project_root.clone());
     let label = input.label.clone().unwrap_or_else(|| input.command.clone());
     let session_name = project_session(&project_root, "aimux").session_name;
+    runtime.ensure_project_session(context.project_root())?;
     let target = runtime.create_window(
         &session_name,
         &label,

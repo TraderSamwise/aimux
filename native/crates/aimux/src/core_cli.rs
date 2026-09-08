@@ -11,9 +11,9 @@ use crate::core_cli_routing::{
     parse_core_loop_mutation_args, parse_core_metadata_args, parse_core_migration_args,
     parse_core_notification_args, parse_core_notification_test_args, parse_core_outline_args,
     parse_core_overseer_clear_args, parse_core_overseer_start_args, parse_core_project_ensure_args,
-    parse_core_repair_args, parse_core_restart_args, parse_core_scribe_clear_args,
-    parse_core_scribe_start_args, parse_core_service_create_args, parse_core_task_args,
-    parse_core_team_args, parse_core_thread_args, parse_core_worktree_args,
+    parse_core_project_stop_args, parse_core_repair_args, parse_core_restart_args,
+    parse_core_scribe_clear_args, parse_core_scribe_start_args, parse_core_service_create_args,
+    parse_core_task_args, parse_core_team_args, parse_core_thread_args, parse_core_worktree_args,
 };
 use crate::core_command_contract::{CORE_API_ROUTES, CORE_COMMAND_NAMES};
 use crate::native_cli_dispatch::CORE_SERVICE_CREATE_TEXT_ROUTE;
@@ -570,28 +570,48 @@ where
             )
         }
         ("stop", _) => {
-            let parsed = parse_core_lifecycle_status_args(&args, "stop").ok_or_else(|| {
-                CoreCliPlanError::InvalidArguments {
-                    args: args.clone(),
-                    message: "error: invalid stop arguments",
-                }
-            })?;
-            let project_root = parsed
-                .project
-                .as_deref()
-                .map(&resolve_project_root)
-                .unwrap_or_else(|| context.current_project_root.clone());
-            (
-                CoreCliOperation::LifecycleStop,
-                CoreCliAction::TextRoute {
-                    path: text_route_path(CORE_API_ROUTES.lifecycle_stop_text, parsed.json),
-                    body: Some(json!({
-                        "project": project_root,
-                        "sessionId": parsed.session_id,
-                    })),
-                },
-                CoreCliFallback::None,
-            )
+            if let Some(parsed) = parse_core_project_stop_args(&args) {
+                let project_root = parsed
+                    .project
+                    .as_deref()
+                    .map(&resolve_project_root)
+                    .unwrap_or_else(|| context.current_project_root.clone());
+                (
+                    CoreCliOperation::HostStop,
+                    CoreCliAction::TextRoute {
+                        path: project_text_path(
+                            CORE_API_ROUTES.project_stop_text,
+                            &project_root,
+                            parsed.json,
+                        ),
+                        body: None,
+                    },
+                    CoreCliFallback::None,
+                )
+            } else {
+                let parsed = parse_core_lifecycle_status_args(&args, "stop").ok_or_else(|| {
+                    CoreCliPlanError::InvalidArguments {
+                        args: args.clone(),
+                        message: "error: invalid stop arguments",
+                    }
+                })?;
+                let project_root = parsed
+                    .project
+                    .as_deref()
+                    .map(&resolve_project_root)
+                    .unwrap_or_else(|| context.current_project_root.clone());
+                (
+                    CoreCliOperation::LifecycleStop,
+                    CoreCliAction::TextRoute {
+                        path: text_route_path(CORE_API_ROUTES.lifecycle_stop_text, parsed.json),
+                        body: Some(json!({
+                            "project": project_root,
+                            "sessionId": parsed.session_id,
+                        })),
+                    },
+                    CoreCliFallback::None,
+                )
+            }
         }
         ("kill", _) => {
             let parsed = parse_core_lifecycle_status_args(&args, "kill").ok_or_else(|| {
@@ -719,6 +739,28 @@ where
                 CoreCliAction::TextRoute {
                     path: text_route_path(route, parsed.json),
                     body: Some(Value::Object(body)),
+                },
+                CoreCliFallback::None,
+            )
+        }
+        ("loop", "list") | ("overseer", "status") | ("scribe", "status") => {
+            let project_root = context.current_project_root.clone();
+            (
+                CoreCliOperation::AgentPs,
+                CoreCliAction::TextRoute {
+                    path: agent_ps_text_path(&project_root, false),
+                    body: None,
+                },
+                CoreCliFallback::None,
+            )
+        }
+        ("review", "list") => {
+            let project_root = context.current_project_root.clone();
+            (
+                CoreCliOperation::TaskList,
+                CoreCliAction::TextRoute {
+                    path: task_list_text_path(&project_root, None, None, false),
+                    body: None,
                 },
                 CoreCliFallback::None,
             )
@@ -1339,8 +1381,8 @@ where
         }
         (
             "worktree",
-            "" | "list" | "create" | "cleanup-caches" | "remove" | "graveyard" | "resurrect"
-            | "delete-graveyard",
+            "" | "list" | "add" | "create" | "cleanup-caches" | "remove" | "graveyard"
+            | "resurrect" | "delete-graveyard",
         ) => {
             let parsed = parse_core_worktree_args(&args).ok_or_else(|| {
                 CoreCliPlanError::InvalidArguments {

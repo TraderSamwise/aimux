@@ -13,6 +13,7 @@ mod worktrees;
 pub use agents::{
     parse_core_agent_identity_args, parse_core_agent_input_args, parse_core_agent_list_args,
     parse_core_agent_migrate_args, parse_core_agent_ps_args, parse_core_agent_rename_args,
+    parse_core_project_stop_args,
 };
 pub use args::*;
 pub use collaboration::parse_core_collaboration_args;
@@ -690,10 +691,13 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
         (Some("service"), Some("create")) => parse_core_service_create_args(args).is_some(),
         (Some("fork"), _) => true,
         (Some("kill"), _) => true,
-        (Some("stop"), _) => stop_has_session_or_invalid_agent_shape(args),
-        (Some("loop"), Some("add" | "remove" | "done" | "block")) => true,
-        (Some("overseer"), Some("start" | "clear")) => true,
-        (Some("scribe"), Some("start" | "clear")) => true,
+        (Some("stop"), _) => {
+            parse_core_project_stop_args(args).is_some()
+                || stop_has_session_or_invalid_agent_shape(args)
+        }
+        (Some("loop"), Some("add" | "remove" | "done" | "block" | "list")) => true,
+        (Some("overseer"), Some("start" | "clear" | "status")) => true,
+        (Some("scribe"), Some("start" | "clear" | "status")) => true,
         (Some("team"), Some("show" | "init" | "add" | "default" | "remove")) => true,
         (Some("message"), Some("send")) => has_workflow_required_positional(args),
         (Some("handoff"), Some("send" | "accept" | "complete")) => {
@@ -703,6 +707,7 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
         (Some("task"), Some("show" | "assign" | "accept" | "block" | "complete" | "reopen")) => {
             has_workflow_required_positional(args)
         }
+        (Some("review"), Some("list")) => true,
         (Some("review"), Some("approve" | "request-changes")) => {
             has_workflow_required_positional(args)
         }
@@ -716,7 +721,7 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
         (Some("worktree"), None) | (Some("worktree"), Some("list" | "cleanup-caches")) => true,
         (
             Some("worktree"),
-            Some("create" | "remove" | "graveyard" | "resurrect" | "delete-graveyard"),
+            Some("add" | "create" | "remove" | "graveyard" | "resurrect" | "delete-graveyard"),
         ) => args.len() > 2 && !has_help(args),
         (Some("graveyard"), Some("list" | "cleanup")) => true,
         (Some("graveyard"), Some("send" | "resurrect")) => args.len() > 2 && !has_help(args),

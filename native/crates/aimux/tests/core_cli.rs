@@ -1514,7 +1514,7 @@ fn lifecycle_commands_plan_native_text_routes() {
     assert_eq!(
         spawn.action,
         CoreCliAction::TextRoute {
-            path: "/core/lifecycle/spawn-text?json=1".into(),
+            path: "/core/lifecycle/spawn-text?project=%2Fresolved%2F.%2Fchild&tool=claude&open=0&worktreePath=feature&json=1".into(),
             body: Some(json!({
                 "project": "/resolved/./child",
                 "tool": "claude",
@@ -1564,6 +1564,16 @@ fn lifecycle_commands_plan_native_text_routes() {
             body: Some(json!({ "project": "/repo", "sessionId": "claude-1" })),
         }
     );
+    let project_stop =
+        classify_core_cli(&["stop", "--json"], &context(true, true)).expect("project stop plan");
+    assert_eq!(project_stop.operation, CoreCliOperation::HostStop);
+    assert_eq!(
+        project_stop.action,
+        CoreCliAction::TextRoute {
+            path: "/core/project-stop-text?project=%2Frepo&json=1".into(),
+            body: None,
+        }
+    );
 
     let kill = classify_core_cli(&["kill", "claude-1", "--json"], &context(true, true))
         .expect("kill plan");
@@ -1606,7 +1616,7 @@ fn lifecycle_commands_plan_native_text_routes() {
         }
     );
 
-    assert!(classify_core_cli(&["stop"], &context(true, true)).is_err());
+    assert!(classify_core_cli(&["stop"], &context(true, true)).is_ok());
 }
 
 #[test]

@@ -333,7 +333,13 @@ fn execute_loopback_http_request(
         endpoint.host,
         endpoint.port
     );
-    for (name, value) in &request.headers {
+    let mut headers = request.headers.clone();
+    if let Some(body) = request.body.as_ref() {
+        headers
+            .entry("content-length".to_owned())
+            .or_insert_with(|| body.len().to_string());
+    }
+    for (name, value) in &headers {
         wire.push_str(name);
         wire.push_str(": ");
         wire.push_str(value);

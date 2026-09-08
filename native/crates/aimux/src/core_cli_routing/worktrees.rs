@@ -20,6 +20,7 @@ pub fn parse_core_worktree_args<S: AsRef<str>>(args: &[S]) -> Option<CoreWorktre
     if !matches!(
         subcommand,
         "list"
+            | "add"
             | "create"
             | "cleanup-caches"
             | "remove"
@@ -30,7 +31,12 @@ pub fn parse_core_worktree_args<S: AsRef<str>>(args: &[S]) -> Option<CoreWorktre
         return None;
     }
     let mut parsed = CoreWorktreeArgs {
-        subcommand: subcommand.to_owned(),
+        subcommand: if subcommand == "add" {
+            "create"
+        } else {
+            subcommand
+        }
+        .to_owned(),
         project: None,
         name: None,
         path: None,
@@ -70,7 +76,7 @@ pub fn parse_core_worktree_args<S: AsRef<str>>(args: &[S]) -> Option<CoreWorktre
             return None;
         }
         match subcommand {
-            "create" => {
+            "add" | "create" => {
                 if parsed.name.is_some() {
                     return None;
                 }
@@ -89,7 +95,7 @@ pub fn parse_core_worktree_args<S: AsRef<str>>(args: &[S]) -> Option<CoreWorktre
     }
     match subcommand {
         "list" | "cleanup-caches" => {}
-        "create" => {
+        "add" | "create" => {
             parsed.name.as_ref()?;
         }
         "remove" | "graveyard" | "resurrect" | "delete-graveyard" => {

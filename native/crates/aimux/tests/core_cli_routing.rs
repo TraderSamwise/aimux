@@ -15,10 +15,10 @@ use aimux::core_cli_routing::{
     parse_core_lifecycle_spawn_args, parse_core_lifecycle_status_args, parse_core_logs_args,
     parse_core_loop_exit_args, parse_core_loop_mutation_args, parse_core_metadata_args,
     parse_core_notification_args, parse_core_outline_args, parse_core_overseer_clear_args,
-    parse_core_overseer_start_args, parse_core_project_ensure_args, parse_core_repair_args,
-    parse_core_restart_args, parse_core_runtime_restart_args, parse_core_scribe_clear_args,
-    parse_core_scribe_start_args, parse_core_service_create_args, parse_core_task_args,
-    parse_core_team_args, parse_core_thread_args, parse_core_worktree_args,
+    parse_core_overseer_start_args, parse_core_project_ensure_args, parse_core_project_stop_args,
+    parse_core_repair_args, parse_core_restart_args, parse_core_runtime_restart_args,
+    parse_core_scribe_clear_args, parse_core_scribe_start_args, parse_core_service_create_args,
+    parse_core_task_args, parse_core_team_args, parse_core_thread_args, parse_core_worktree_args,
 };
 
 #[test]
@@ -500,7 +500,9 @@ fn lifecycle_parsers_match_spawn_stop_kill_and_fork_forms() {
     assert!(parse_core_lifecycle_spawn_args(&["spawn", "--tool"]).is_none());
     assert!(parse_core_lifecycle_fork_args(&["fork", "claude-1"]).is_none());
     assert!(parse_core_lifecycle_status_args(&["stop"], "stop").is_none());
-    assert!(!is_core_cli_command(&["stop"]));
+    let project_stop = parse_core_project_stop_args(&["stop", "--json"]).expect("project stop");
+    assert!(project_stop.json);
+    assert!(is_core_cli_command(&["stop"]));
     assert!(is_core_cli_command(&["stop", "claude-1"]));
     assert!(is_core_cli_command(&["stop", "--bad"]));
 }

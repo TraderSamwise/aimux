@@ -174,6 +174,9 @@ fn main() -> Result<ExitCode> {
             if let Some(args) = native_tool_launch_args(&stripped_args) {
                 return run_root_tool_launch_command(&args);
             }
+            if is_native_foreground_core_command(&stripped_args) {
+                return run_core_command_and_print(&stripped_args);
+            }
             if let Some(code) = handle_known_native_command_fallback(&stripped_args) {
                 return Ok(code);
             }
@@ -271,6 +274,13 @@ fn is_native_main_command(args: &[String]) -> bool {
         [command, ..] if command == "__tmux-open-hyperlink-internal" => true,
         _ => false,
     }
+}
+
+fn is_native_foreground_core_command(args: &[String]) -> bool {
+    matches!(
+        args.first().map(String::as_str),
+        Some("dashboard-reload" | "restart-runtime")
+    )
 }
 
 fn is_root_version_request(args: &[String]) -> bool {
@@ -544,6 +554,8 @@ fn is_known_aimux_command_word(word: &str) -> bool {
         word,
         "attachment"
             | "build-info"
+            | "clear-notifications"
+            | "compact"
             | "contracts"
             | "daemon"
             | "dashboard-reload"
@@ -555,9 +567,11 @@ fn is_known_aimux_command_word(word: &str) -> bool {
             | "handoff"
             | "host"
             | "hosted"
+            | "id"
             | "init"
             | "input"
             | "kill"
+            | "list"
             | "list-notifications"
             | "login"
             | "logout"

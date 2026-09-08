@@ -10,6 +10,7 @@ use crate::tmux::{
 
 pub trait ProjectLifecycleRuntime {
     fn repair_legacy_project_session_names(&mut self, project_root: &Path) -> Result<(), String>;
+    fn ensure_project_session(&mut self, project_root: &Path) -> Result<(), String>;
     fn find_main_repo(&mut self, cwd: &str) -> Result<String, String>;
     fn create_worktree(
         &mut self,
@@ -39,6 +40,12 @@ impl ProjectLifecycleRuntime for SystemProjectLifecycleRuntime {
     fn repair_legacy_project_session_names(&mut self, project_root: &Path) -> Result<(), String> {
         TmuxRuntimeManager::new().repair_legacy_project_session_names(project_root, None);
         Ok(())
+    }
+
+    fn ensure_project_session(&mut self, project_root: &Path) -> Result<(), String> {
+        TmuxRuntimeManager::new()
+            .ensure_project_session(project_root, None, None)
+            .map(|_| ())
     }
 
     fn find_main_repo(&mut self, cwd: &str) -> Result<String, String> {

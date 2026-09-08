@@ -424,6 +424,218 @@ def run_dashboard_attach_smoke(aimux_bin: Path, mutation: str | None) -> dict[st
         }
 
 
+def run_command_resolution_smoke(aimux_bin: Path, mutation: str | None) -> dict[str, Any]:
+    tmux = find_tmux()
+    with Scope("command-resolution", aimux_bin) as scope:
+        socket_name = f"aimux-phase8-command-{os.getpid()}-{int(time.time() * 1000)}"
+        scope.tmux_socket_name = socket_name
+        install_tmux_socket_wrapper(scope, tmux, socket_name)
+        run([tmux, "-L", socket_name, "start-server"], env=without_tmux(os.environ.copy()), timeout=10)
+        scope.init_git_project()
+        seed_initial_commit(scope)
+        run([str(aimux_bin), "init"], cwd=scope.project, env=scope.env, timeout=30)
+        run([str(aimux_bin), "serve"], cwd=scope.project, env=scope.env, timeout=30)
+
+        help_output = run([str(aimux_bin), "--help"], cwd=scope.project, env=scope.env, timeout=10).stdout
+        commands = parse_help_commands(help_output)
+        if not commands:
+            raise LiveResidualFailure(f"could not parse aimux --help commands:\n{help_output}")
+
+        probes: list[tuple[str, list[str]]] = [(command, [command, "--help"]) for command in commands]
+        probes.extend(command_resolution_regression_probes())
+        failures = []
+        for index, (name, args) in enumerate(probes):
+            result = run([str(aimux_bin), *args], cwd=scope.project, env=scope.env, timeout=30, check=False)
+            combined = result.stdout + "\n" + result.stderr
+            if mutation == "command-unsupported" and index == 0:
+                combined += "\nunsupported or invalid aimux command: phase8 mutation"
+            if has_unsupported_command_error(combined):
+                failures.append({
+                    "name": name,
+                    "args": args,
+                    "code": result.returncode,
+                    "stdout": result.stdout[-600:],
+                    "stderr": result.stderr[-600:],
+                })
+        if failures:
+            raise LiveResidualFailure("command resolution regressions:\n" + json.dumps(failures, indent=2))
+        return {
+            "name": "phase8-command-resolution-smoke",
+            "helpCommands": commands,
+            "probes": len(probes),
+            "caught": [
+                "advertised command missing from native root dispatch",
+                "valid subcommand rejected as unsupported",
+                "Clap fallback unrecognized-subcommand regressions",
+            ],
+            "notCaught": [
+                "exact command output formatting",
+                "remote relay behavior",
+                "commands that intentionally fail for domain reasons after routing",
+            ],
+        }
+
+
+def parse_help_commands(help_output: str) -> list[str]:
+    commands: list[str] = []
+    in_commands = False
+    for line in help_output.splitlines():
+        if line.strip() == "Commands:":
+            in_commands = True
+            continue
+        if not in_commands:
+            continue
+        if not line.startswith("  "):
+            continue
+        command = line.strip().split()[0]
+        if command:
+            commands.append(command)
+    return commands
+
+
+def command_resolution_regression_probes() -> list[tuple[str, list[str]]]:
+    return [
+        ("dashboard-reload-json", ["dashboard-reload", "--json"]),
+        ("restart-runtime-json", ["restart-runtime", "--json"]),
+        ("stop-project-json", ["stop", "--json"]),
+        ("overseer-status", ["overseer", "status"]),
+        ("scribe-status", ["scribe", "status"]),
+        ("loop-list", ["loop", "list"]),
+        ("review-list", ["review", "list"]),
+        ("worktree-add", ["worktree", "add", "phase8-command-smoke", "--json"]),
+    ]
+
+
+def has_unsupported_command_error(output: str) -> bool:
+    return (
+        "unsupported or invalid aimux command" in output
+        or "unrecognized subcommand" in output
+        or "unsupported core command" in output
+    )
+
+
+def run_agent_shell_spawn_smoke(aimux_bin: Path, mutation: str | None) -> dict[str, Any]:
+    tmux = find_tmux()
+    with Scope("agent-shell", aimux_bin) as scope:
+        socket_name = f"aimux-phase8-agent-{os.getpid()}-{int(time.time() * 1000)}"
+        scope.tmux_socket_name = socket_name
+        install_tmux_socket_wrapper(scope, tmux, socket_name)
+        run([tmux, "-L", socket_name, "start-server"], env=without_tmux(os.environ.copy()), timeout=10)
+        scope.init_git_project()
+        run([str(aimux_bin), "init"], cwd=scope.project, env=scope.env, timeout=30)
+        install_shell_tool_config(scope)
+        result = run(
+            [str(aimux_bin), "spawn", "--tool", "shell", "--no-open", "--json"],
+            cwd=scope.project,
+            env=scope.env,
+            timeout=30,
+        )
+        payload = parse_json_stdout(result.stdout, "shell spawn")
+        session_id = str(payload.get("sessionId") or "")
+        if not session_id:
+            raise LiveResidualFailure(f"shell spawn did not return a sessionId: {payload}")
+        target = payload.get("tmuxTarget")
+        if not isinstance(target, dict):
+            raise LiveResidualFailure(f"shell spawn did not return a tmuxTarget: {payload}")
+        session_name = str(target.get("sessionName") or "")
+        window_name = str(target.get("windowName") or "")
+        if mutation == "agent-shell-missing-window":
+            window_name = "phase8-agent-shell-mutation-missing"
+
+        ps_payload = wait_until(
+            lambda: ps_contains_session(scope, aimux_bin, session_id),
+            timeout=10,
+            label="shell session in aimux ps",
+        )
+        windows = tmux_cmd_for_socket(tmux, socket_name, ["list-windows", "-a", "-F", "#{session_name}\t#{window_name}"]).stdout
+        if session_name not in windows or window_name not in windows:
+            raise LiveResidualFailure(f"shell tmux window missing for {session_id}:\n{windows}")
+
+        stop = run(
+            [str(aimux_bin), "stop", session_id, "--json"],
+            cwd=scope.project,
+            env=scope.env,
+            timeout=30,
+        )
+        parse_json_stdout(stop.stdout, "shell stop")
+        wait_until(
+            lambda: not ps_contains_session(scope, aimux_bin, session_id),
+            timeout=10,
+            label="shell session removed from aimux ps",
+        )
+        return {
+            "name": "phase8-agent-shell-spawn-smoke",
+            "sessionId": session_id,
+            "psAfterSpawn": ps_payload,
+            "caught": [
+                "native spawn executor reaches project-service",
+                "spawned shell session appears in aimux ps",
+                "spawned shell tmux window exists",
+                "agent stop removes the spawned session",
+            ],
+            "notCaught": [
+                "external agent CLI availability",
+                "LLM API credentials",
+                "long-running interactive shell usage",
+            ],
+        }
+
+
+def seed_initial_commit(scope: Scope) -> None:
+    readme = scope.project / "README.md"
+    readme.write_text("phase8 command resolution smoke\n")
+    run(["git", "add", "README.md"], cwd=scope.project, env=scope.env, timeout=10)
+    run(["git", "commit", "-q", "-m", "initial"], cwd=scope.project, env=scope.env, timeout=10)
+
+
+def install_shell_tool_config(scope: Scope) -> None:
+    config_path = scope.project / ".aimux" / "config.json"
+    config = json.loads(config_path.read_text())
+    tools = config.setdefault("tools", {})
+    tools["shell"] = {
+        "command": "/bin/sh",
+        "args": [],
+        "enabled": True,
+        "wrapperEnabled": False,
+        "promptPatterns": ["^[$#] "],
+        "turnPatterns": [],
+    }
+    config_path.write_text(json.dumps(config, indent=2) + "\n")
+
+
+def parse_json_stdout(stdout: str, label: str) -> dict[str, Any]:
+    try:
+        value = json.loads(stdout)
+    except json.JSONDecodeError as error:
+        raise LiveResidualFailure(f"{label} returned non-JSON stdout:\n{stdout}") from error
+    if not isinstance(value, dict):
+        raise LiveResidualFailure(f"{label} returned non-object JSON: {value!r}")
+    return value
+
+
+def ps_contains_session(scope: Scope, aimux_bin: Path, session_id: str) -> dict[str, Any] | None:
+    result = run([str(aimux_bin), "ps", "--json"], cwd=scope.project, env=scope.env, timeout=15, check=False)
+    if result.returncode != 0:
+        return None
+    try:
+        payload: Any = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
+    sessions = payload.get("sessions") if isinstance(payload, dict) else payload
+    if not isinstance(sessions, list):
+        return None
+    for session in sessions:
+        if isinstance(session, dict) and session.get("id") == session_id:
+            if session.get("status") not in ("starting", "running", "idle"):
+                return None
+            return payload if isinstance(payload, dict) else {"sessions": payload}
+    return None
+
+
+def tmux_cmd_for_socket(tmux: str, socket_name: str, args: list[str]) -> subprocess.CompletedProcess[str]:
+    return run([tmux, "-L", socket_name, *args], env=without_tmux(os.environ.copy()), timeout=10)
+
+
 def tmux_cmd(scope: Scope, args: list[str]) -> subprocess.CompletedProcess[str]:
     tmux = scope.real_tmux or find_tmux()
     return run([tmux, "-L", scope.tmux_socket_name or "aimux-phase8", *args], env=scope.env, timeout=10)
@@ -793,6 +1005,10 @@ def run_one(name: str, aimux_bin: Path, mutation: str | None) -> dict[str, Any]:
         return run_dashboard_render_smoke(aimux_bin, mutation)
     if name == "dashboard-attach":
         return run_dashboard_attach_smoke(aimux_bin, mutation)
+    if name == "command-resolution":
+        return run_command_resolution_smoke(aimux_bin, mutation)
+    if name == "agent-shell":
+        return run_agent_shell_spawn_smoke(aimux_bin, mutation)
     if name == "sse":
         return run_sse_stress(aimux_bin, mutation)
     if name == "process":
@@ -805,6 +1021,8 @@ def prove_failures(args: argparse.Namespace, aimux_bin: Path) -> list[dict[str, 
         "tmux": "tmux-drop-output",
         "dashboard": "dashboard-empty-frame",
         "dashboard-attach": "dashboard-attach-terminal-error",
+        "command-resolution": "command-unsupported",
+        "agent-shell": "agent-shell-missing-window",
         "sse": "sse-reorder",
         "process": "process-delete-endpoint",
     }
@@ -847,7 +1065,16 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--skip-build", action="store_true", help="reuse the existing target binary")
     parser.add_argument(
         "--only",
-        choices=["all", "tmux", "dashboard", "dashboard-attach", "sse", "process"],
+        choices=[
+            "all",
+            "tmux",
+            "dashboard",
+            "dashboard-attach",
+            "command-resolution",
+            "agent-shell",
+            "sse",
+            "process",
+        ],
         default="all",
     )
     parser.add_argument("--prove-fails", action="store_true", help="run intentional-fault checks and require failure")
@@ -856,6 +1083,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "tmux-wrong-resize",
         "dashboard-empty-frame",
         "dashboard-attach-terminal-error",
+        "command-unsupported",
+        "agent-shell-missing-window",
         "sse-reorder",
         "process-delete-endpoint",
     ])
@@ -866,7 +1095,15 @@ def main(argv: list[str]) -> int:
     args = parse_args(argv)
     try:
         aimux_bin = build_aimux(args)
-        suites = ["tmux", "dashboard", "dashboard-attach", "sse", "process"] if args.only == "all" else [args.only]
+        suites = [
+            "tmux",
+            "dashboard",
+            "dashboard-attach",
+            "command-resolution",
+            "agent-shell",
+            "sse",
+            "process",
+        ] if args.only == "all" else [args.only]
         results = []
         for suite in suites:
             results.append(run_one(suite, aimux_bin, args.mutation))
