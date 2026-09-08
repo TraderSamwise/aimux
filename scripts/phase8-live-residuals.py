@@ -337,7 +337,13 @@ def run_dashboard_render_smoke(aimux_bin: Path, mutation: str | None) -> dict[st
             raise LiveResidualFailure(f"dashboard did not render required content:\n{output}")
         if "Main Checkout" not in output or "worktrees" not in output:
             raise LiveResidualFailure(f"dashboard frame missing project row or navigation hints:\n{output}")
-        def exercise_key(key_session: str, key: str, label: str, anchor: str | None) -> None:
+        def exercise_key(
+            key_session: str,
+            key: str,
+            label: str,
+            anchor: str | None,
+            reset_key: str = "Escape",
+        ) -> None:
             key_command = (
                 f"cd {shlex.quote(str(project_root))} && {shlex.quote(str(aimux_bin))}; code=$?; "
                 f"printf '\\n__AIMUX_DASHBOARD_{key_session}_EXIT:%s\\n' \"$code\"; sleep 30"
@@ -396,7 +402,7 @@ def run_dashboard_render_smoke(aimux_bin: Path, mutation: str | None) -> dict[st
                 raise LiveResidualFailure(
                     f"{label} key changed frame without expected anchor {anchor!r}:\n{after}"
                 )
-            tmux_cmd(scope, ["send-keys", "-t", f"{key_session}:0", "Escape"])
+            tmux_cmd(scope, ["send-keys", "-t", f"{key_session}:0", reset_key])
             wait_until(
                 lambda: (
                     current
@@ -418,15 +424,16 @@ def run_dashboard_render_smoke(aimux_bin: Path, mutation: str | None) -> dict[st
             raise LiveResidualFailure(f"{label} dashboard did not accept q after input:\n{final_output}")
 
         key_specs = [
-            ("?", "help", "aimux — help"),
-            ("n", "new-agent", "SELECT TOOL"),
-            ("w", "worktree-create", "CREATE WORKTREE"),
-            ("v", "service-create", "CREATE SERVICE"),
+            ("?", "help", "aimux — help", "Escape"),
+            ("n", "new-agent", "SELECT TOOL", "Escape"),
+            ("w", "worktree-create", "CREATE WORKTREE", "Escape"),
+            ("v", "service-create", "CREATE SERVICE", "Escape"),
+            ("Tab", "details-toggle", None, "Tab"),
         ]
         if mutation == "dashboard-input-dead":
             key_specs = key_specs[:1]
-        for index, (key, label, anchor) in enumerate(key_specs, start=1):
-            exercise_key(f"phase8-dashboard-key-{index}", key, label, anchor)
+        for index, (key, label, anchor, reset_key) in enumerate(key_specs, start=1):
+            exercise_key(f"phase8-dashboard-key-{index}", key, label, anchor, reset_key)
         return {
             "name": "phase8-live-dashboard-render-smoke",
             "privateSocket": socket_name,

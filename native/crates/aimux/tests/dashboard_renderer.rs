@@ -146,6 +146,60 @@ fn renders_selected_session_details_sidebar_when_visible() {
 }
 
 #[test]
+fn renders_worktree_details_sidebar_when_no_session_selected() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let snapshot = &fixture.runtime_light;
+
+    let visible = render_dashboard_frame(&DashboardRenderInput {
+        snapshot,
+        cols: 140,
+        rows: 24,
+        nav_level: DashboardNavLevel::Worktrees,
+        selected_session_id: None,
+        selected_service_id: None,
+        focused_worktree_path: None,
+        runtime_label: None,
+        version: None,
+        is_dev_runtime: false,
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_message: None,
+        details_sidebar_visible: true,
+    });
+    let hidden = render_dashboard_frame(&DashboardRenderInput {
+        snapshot,
+        cols: 140,
+        rows: 24,
+        nav_level: DashboardNavLevel::Worktrees,
+        selected_session_id: None,
+        selected_service_id: None,
+        focused_worktree_path: None,
+        runtime_label: None,
+        version: None,
+        is_dev_runtime: false,
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_message: None,
+        details_sidebar_visible: false,
+    });
+    let visible_plain = strip_ansi(&visible.frame);
+    let hidden_plain = strip_ansi(&hidden.frame);
+
+    assert!(visible_plain.contains("Details"));
+    assert!(visible_plain.contains("Worktree"));
+    assert!(visible_plain.contains("Main Checkout"));
+    assert!(visible_plain.contains("Agents"));
+    assert!(!hidden_plain.contains("Details"));
+    assert_ne!(visible.frame, hidden.frame);
+    for line in visible.frame.split("\r\n") {
+        assert!(visible_width(line) <= 140 || line.starts_with("\x1b[2J\x1b[H"));
+    }
+}
+
+#[test]
 fn renders_unavailable_footer_hint_for_blocked_offline_session() {
     let fixture: DesktopStateGoldenFixture =
         serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");

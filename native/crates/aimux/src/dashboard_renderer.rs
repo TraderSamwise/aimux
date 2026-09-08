@@ -2,7 +2,7 @@ mod footer;
 mod rows;
 
 use crate::dashboard_controller::DashboardScreen;
-use crate::dashboard_model::DesktopStateSnapshot;
+use crate::dashboard_model::{DesktopStateSnapshot, WorktreeGroup, WorktreeStatus};
 use crate::dashboard_renderer::footer::render_dashboard_footer;
 use crate::dashboard_renderer::rows::{render_service_row, render_session_row, worktree_summary};
 use crate::dashboard_session_details::render_session_details;
@@ -487,7 +487,6 @@ fn render_dashboard_right_panel(
     if !input.details_sidebar_visible {
         return None;
     }
-    let session = selected_session(input)?;
     let content_width = screen_content_width(input.cols);
     let separator_width = 3;
     let right_width = 20.max(
@@ -497,12 +496,78 @@ fn render_dashboard_right_panel(
             .saturating_sub(1),
     );
     let panel_height = 1.max(input.rows.saturating_sub(header_len + footer_len));
-    let session_value = serde_json::to_value(session).ok()?;
-    Some(render_session_details(
-        Some(&session_value),
-        right_width,
-        panel_height,
-    ))
+    if let Some(session) = selected_session(input) {
+        let session_value = serde_json::to_value(session).ok()?;
+        return Some(render_session_details(
+            Some(&session_value),
+            right_width,
+            panel_height,
+        ));
+    }
+    selected_worktree(input)
+        .map(|worktree| render_worktree_details(worktree, right_width, panel_height))
+}
+
+fn selected_worktree<'a>(input: &DashboardRenderInput<'a>) -> Option<&'a WorktreeGroup> {
+    input
+        .snapshot
+        .focused_worktree(input.focused_worktree_path)
+        .or_else(|| input.snapshot.worktree_groups.first())
+}
+
+fn render_worktree_details(worktree: &WorktreeGroup, width: usize, height: usize) -> Vec<String> {
+    let mut lines = vec![style("Details", Tone::Strong), String::new()];
+    push_detail_line(&mut lines, "Worktree", &worktree.name, width);
+    if !worktree.branch.is_empty() {
+        push_detail_line(&mut lines, "Branch", &worktree.branch, width);
+    }
+    if let Some(path) = worktree.path.as_deref() {
+        push_detail_line(&mut lines, "Path", path, width);
+    }
+    push_detail_line(
+        &mut lines,
+        "Status",
+        worktree_status_label(&worktree.status),
+        width,
+    );
+    push_detail_line(
+        &mut lines,
+        "Agents",
+        &worktree.sessions.len().to_string(),
+        width,
+    );
+    push_detail_line(
+        &mut lines,
+        "Services",
+        &worktree.services.len().to_string(),
+        width,
+    );
+    if let Some(action) = worktree.pending_action.as_deref() {
+        push_detail_line(&mut lines, "Pending", action, width);
+    } else if worktree.pending {
+        push_detail_line(&mut lines, "Pending", "yes", width);
+    }
+    lines
+        .into_iter()
+        .take(height)
+        .map(|line| truncate_ansi(&line, width))
+        .collect()
+}
+
+fn push_detail_line(lines: &mut Vec<String>, label: &str, value: &str, width: usize) {
+    let text = format!("{}: {}", style(label, Tone::Muted), value);
+    lines.extend(
+        wrap_text(&text, width)
+            .into_iter()
+            .map(|line| format!("  {line}")),
+    );
+}
+
+fn worktree_status_label(status: &WorktreeStatus) -> &'static str {
+    match status {
+        WorktreeStatus::Active => "active",
+        WorktreeStatus::Offline => "offline",
+    }
 }
 
 fn selected_session<'a>(
