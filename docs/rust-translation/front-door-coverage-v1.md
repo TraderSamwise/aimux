@@ -36,6 +36,6 @@ Every executable entry point needs at least one contract at its own boundary, ev
 - cold project-service reads through `ps`, `list`, `worktree list`, `threads`, and `task list`;
 - bare `aimux restart --json` including the current checkout before it has been registered by another command.
 
-Current proof head: `09eb330a`. `scripts/phase8-live-residuals.py --prove-fails --aimux-bin native/target/debug/aimux --skip-build` passed at `949551a7` with the front-door, dashboard, tmux, lazy-read, SSE, process-race, and graveyard mutations all reported as `PROVEN-FAILS`. The follow-up `shell-service` residual also passes and prove-fails on a missing-window mutation.
+Current proof head: `4b182d57`. `scripts/phase8-live-residuals.py --prove-fails --aimux-bin native/target/debug/aimux --skip-build` passes with 15 residual mutations reported as `PROVEN-FAILS`, including command unsupported, command silent alias, dashboard input dead, dashboard spawn missing session, shell-service missing window, top-level agent missing session, lazy read unavailable, restart-current zero projects, SSE reorder, process missing endpoint, and graveyard stop-adds-entry. Agent resume/restore now shares the same tmux session bootstrap invariant.
 
 These tests intentionally avoid exact TUI layout, screenshots, real Claude/Codex invocations, network access, or timing-sensitive multi-agent orchestration.

@@ -163,6 +163,8 @@ Parity evidence:
   detection, bare `graveyard`, and stop-vs-kill graveyard lifecycle semantics.
 - Commit `09eb330a` covers top-level `aimux shell` from an
   empty private tmux socket, matching the first-run no-server install bug.
+- Commit `4b182d57` applies the same tmux bootstrap invariant to agent
+  resume/restore before relaunching an offline session window.
 
 Open gaps:
 - Live residuals still do not invoke real Claude/Codex/Aider binaries or
@@ -189,14 +191,17 @@ Parity evidence:
   lifecycle coverage.
 - `09eb330a` makes service launch call the same tmux
   session bootstrap used by agent launch.
-- The live residual proof sweep reports all 14 intentional mutations as
+- `4b182d57` makes offline agent resume/restore call the same tmux session
+  bootstrap before creating the replacement window.
+- The live residual proof sweep reports 15 intentional mutations as
   `PROVEN-FAILS`, including command unsupported, command silent alias,
-  dashboard input dead, dashboard spawn missing session, top-level agent missing
-  session, lazy read unavailable, restart-current zero projects, SSE reorder,
-  process missing endpoint, and graveyard stop-adds-entry.
-- `scripts/phase8-live-residuals.py --only shell-service --aimux-bin native/target/debug/aimux --skip-build`
-  passes, and the old service-bootstrap bug prove-fails when the ensure call is
-  temporarily removed.
+  dashboard input dead, dashboard spawn missing session, shell-service missing
+  window, top-level agent missing session, lazy read unavailable,
+  restart-current zero projects, SSE reorder, process missing endpoint, and
+  graveyard stop-adds-entry.
+- The old service-bootstrap bug prove-fails when the service ensure call is
+  temporarily removed: `aimux shell` fails against an empty private tmux socket
+  before any service window is created.
 
 Open gaps:
 - Same as above: real Claude/Codex/Aider credentials and host-specific terminal
