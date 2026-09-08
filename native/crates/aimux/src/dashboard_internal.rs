@@ -1,7 +1,9 @@
 use crate::config::load_config_for_project;
 use crate::core_command_contract::CORE_COMMAND_NAMES;
 use crate::core_command_transport::send_core_command;
-use crate::dashboard_actions::{DashboardActionKind, DashboardActionPlan, plan_dashboard_action};
+use crate::dashboard_actions::{
+    DashboardActionKind, DashboardActionPlan, DashboardActionRequest, plan_dashboard_action,
+};
 use crate::dashboard_client::{
     ProjectServiceEndpoint, execute_dashboard_action, fetch_dashboard_resource,
     fetch_desktop_state, refresh_dashboard_statusline, resolve_project_service_endpoint,
@@ -47,11 +49,14 @@ use crate::project_service::work_outline::{
     WorkOutlineEntry, WorkOutlineQuery, list_work_outline_entries,
 };
 use crate::release_version_contract::read_aimux_runtime_version;
+use crate::tmux::TmuxRuntimeManager;
 use crate::tui_screen_renderers::{
     render_overseer_overlay_output, render_overseer_watch_instructions_overlay_output,
     render_work_outline_overlay_output,
 };
 use anyhow::{Context, Result};
+use serde_json::{Map, Value};
+use std::env;
 use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -180,7 +185,9 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                     DashboardControllerEffect::Quit => return Ok(()),
                     DashboardControllerEffect::Request(request) => {
                         if let Some(endpoint) = latest_endpoint.as_ref() {
-                            if let Err(error) = execute_dashboard_action(endpoint, &request) {
+                            if let Err(error) =
+                                execute_dashboard_controller_action(endpoint, &request)
+                            {
                                 controller.footer_message = Some(error.to_string());
                             }
                         } else {
@@ -238,7 +245,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                     }
                     DashboardControllerEffect::WorktreeCacheCleanupPreview(request) => {
                         if let Some(endpoint) = latest_endpoint.as_ref() {
-                            match execute_dashboard_action(endpoint, &request)
+                            match execute_dashboard_controller_action(endpoint, &request)
                                 .and_then(cache_cleanup_result_from_response)
                             {
                                 Ok(result) => {
@@ -257,7 +264,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                     }
                     DashboardControllerEffect::WorktreeCacheCleanupApply(request) => {
                         if let Some(endpoint) = latest_endpoint.as_ref() {
-                            match execute_dashboard_action(endpoint, &request)
+                            match execute_dashboard_controller_action(endpoint, &request)
                                 .and_then(cache_cleanup_result_from_response)
                             {
                                 Ok(result) => {
@@ -645,6 +652,104 @@ fn elapsed_millis(start: Instant) -> i64 {
     start.elapsed().as_millis().min(i64::MAX as u128) as i64
 }
 
+fn execute_dashboard_controller_action(
+    endpoint: &ProjectServiceEndpoint,
+    request: &DashboardActionRequest,
+) -> Result<Value> {
+    let request = attach_dashboard_client_context(request);
+    execute_dashboard_action(endpoint, &request)
+}
+
+fn attach_dashboard_client_context(request: &DashboardActionRequest) -> DashboardActionRequest {
+    if request.path != crate::project_api_contract::routes::controls::FOCUS_WINDOW
+        && request.path != crate::project_api_contract::routes::controls::OPEN_NOTIFICATION_TARGET
+    {
+        return request.clone();
+    }
+    let Some(context) = dashboard_control_client_context() else {
+        return request.clone();
+    };
+    let Value::Object(mut body) = request.body.clone() else {
+        return request.clone();
+    };
+    insert_context_value(
+        &mut body,
+        "currentClientSession",
+        context.current_client_session,
+    );
+    insert_context_value(&mut body, "clientTty", context.client_tty);
+    insert_context_value(&mut body, "currentWindowId", context.current_window_id);
+    DashboardActionRequest {
+        method: request.method,
+        path: request.path,
+        body: Value::Object(body),
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct DashboardClientContext {
+    current_client_session: Option<String>,
+    client_tty: Option<String>,
+    current_window_id: Option<String>,
+}
+
+fn dashboard_control_client_context() -> Option<DashboardClientContext> {
+    let mut tmux = TmuxRuntimeManager::new();
+    let dashboard_pane_target = env::var("TMUX_PANE")
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
+    let dashboard_window_id = dashboard_pane_target
+        .as_deref()
+        .and_then(|target| tmux.display_message("#{window_id}", Some(target)))
+        .or_else(|| tmux.display_message("#{window_id}", None));
+    let ambient_client_tty = tmux.display_message("#{client_tty}", None);
+    let ambient_client_session = tmux.current_client_session();
+    let clients = tmux.list_clients();
+    let dashboard_client = dashboard_window_id.as_deref().and_then(|window_id| {
+        clients
+            .iter()
+            .filter(|client| client.window_id == window_id)
+            .find(|client| {
+                ambient_client_tty
+                    .as_deref()
+                    .is_some_and(|tty| client.tty == tty)
+            })
+            .or_else(|| clients.iter().find(|client| client.window_id == window_id))
+            .cloned()
+    });
+    let ambient_client = ambient_client_tty
+        .as_deref()
+        .and_then(|tty| clients.iter().find(|client| client.tty == tty))
+        .cloned();
+    let visible_client = dashboard_client.or(ambient_client);
+    let context = DashboardClientContext {
+        current_client_session: visible_client
+            .as_ref()
+            .map(|client| client.session_name.clone())
+            .or(ambient_client_session),
+        client_tty: visible_client
+            .as_ref()
+            .map(|client| client.tty.clone())
+            .or(ambient_client_tty),
+        current_window_id: dashboard_window_id
+            .or_else(|| visible_client.map(|client| client.window_id)),
+    };
+    (context.current_client_session.is_some()
+        || context.client_tty.is_some()
+        || context.current_window_id.is_some())
+    .then_some(context)
+}
+
+fn insert_context_value(body: &mut Map<String, Value>, key: &str, value: Option<String>) {
+    if body.contains_key(key) {
+        return;
+    }
+    if let Some(value) = value.filter(|value| !value.trim().is_empty()) {
+        body.insert(key.to_owned(), Value::String(value));
+    }
+}
+
 fn sync_dashboard_focus(
     focus_state: &mut DashboardFocusState,
     controller: &DashboardController,
@@ -654,7 +759,7 @@ fn sync_dashboard_focus(
     let plan = focus_state.plan_sync(controller.screen, snapshot, &controller.navigation);
     let mut synced_seen = false;
     for request in plan.requests {
-        if execute_dashboard_action(endpoint, &request).is_ok()
+        if execute_dashboard_controller_action(endpoint, &request).is_ok()
             && request.path == crate::project_api_contract::routes::runtime::MARK_SEEN
         {
             synced_seen = true;
@@ -704,7 +809,7 @@ fn execute_overseer_watch_command(
             if let DashboardActionPlan::Request(focus_request) = plan_dashboard_action(
                 Some(DashboardEntryRef::Session(session)),
                 DashboardActionKind::Enter,
-            ) && execute_dashboard_action(endpoint, &focus_request).is_ok()
+            ) && execute_dashboard_controller_action(endpoint, &focus_request).is_ok()
             {
                 return Ok(());
             }
