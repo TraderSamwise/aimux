@@ -423,11 +423,6 @@ fn build_dashboard_footer_hints(input: &DashboardRenderInput<'_>) -> Vec<FooterH
             },
         ];
         hints.extend(scribe_controls);
-        hints.push(FooterHint {
-            key: "R",
-            label: "reply",
-            tone: None,
-        });
         hints.extend([
             FooterHint {
                 key: "u",

@@ -261,38 +261,6 @@ fn renders_state_aware_footer_hints_for_session_actions() {
 }
 
 #[test]
-fn worktree_level_footer_keeps_reply_after_scribe_controls_like_node() {
-    let fixture: DesktopStateGoldenFixture =
-        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
-    let snapshot = &fixture.runtime_full;
-
-    let result = render_dashboard_frame(&DashboardRenderInput {
-        snapshot,
-        cols: 160,
-        rows: 24,
-        nav_level: DashboardNavLevel::Worktrees,
-        selected_session_id: None,
-        selected_service_id: None,
-        focused_worktree_path: None,
-        runtime_label: None,
-        version: None,
-        is_dev_runtime: false,
-        hide_offline_agents: false,
-        hidden_offline_agent_count: 0,
-        scroll_offset: 0,
-        footer_message: None,
-        details_sidebar_visible: false,
-        preview_source: "output",
-        scribe_preview_entries: &[],
-    });
-    let plain = strip_ansi(&result.frame);
-    let scribe = plain.find("P scribe").expect("footer has scribe action");
-    let reply = plain.find("R reply").expect("footer has reply action");
-
-    assert!(reply > scribe);
-}
-
-#[test]
 fn flat_session_footer_keeps_team_hint_for_selected_parent() {
     let fixture: DesktopStateGoldenFixture =
         serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
