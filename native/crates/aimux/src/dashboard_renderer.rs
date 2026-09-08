@@ -692,11 +692,16 @@ fn build_dashboard_quick_jump_worktrees<'a>(
     let mut main_services = Vec::new();
     let mut sessions_by_path: BTreeMap<&str, Vec<&'a DashboardSession>> = BTreeMap::new();
     let mut services_by_path: BTreeMap<&str, Vec<&'a DashboardService>> = BTreeMap::new();
+    let mut session_path_order = Vec::new();
+    let mut service_path_order = Vec::new();
     for session in &input.snapshot.sessions {
         if is_project_control_session(session) {
             continue;
         }
         if let Some(path) = session.worktree_path.as_deref() {
+            if !sessions_by_path.contains_key(path) {
+                session_path_order.push(path);
+            }
             sessions_by_path.entry(path).or_default().push(session);
         } else {
             main_sessions.push(session);
@@ -704,6 +709,9 @@ fn build_dashboard_quick_jump_worktrees<'a>(
     }
     for service in &input.snapshot.services {
         if let Some(path) = service.worktree_path.as_deref() {
+            if !services_by_path.contains_key(path) {
+                service_path_order.push(path);
+            }
             services_by_path.entry(path).or_default().push(service);
         } else {
             main_services.push(service);
@@ -801,7 +809,11 @@ fn build_dashboard_quick_jump_worktrees<'a>(
         );
     }
 
-    for path in sessions_by_path.keys().chain(services_by_path.keys()) {
+    let orphan_paths = session_path_order
+        .into_iter()
+        .chain(service_path_order)
+        .collect::<Vec<_>>();
+    for path in orphan_paths {
         if path.is_empty() || rendered_paths.contains_key(path) {
             continue;
         }

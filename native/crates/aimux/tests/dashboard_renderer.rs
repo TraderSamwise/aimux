@@ -1,6 +1,7 @@
 use aimux::dashboard_model::{
     DashboardOperationFailure, DashboardSessionEvent, DashboardSessionLoopLastAction,
-    DashboardWorktreeRemovalInfo, DesktopStateGoldenFixture, SessionStatus,
+    DashboardWorktreeRemovalInfo, DesktopStateGoldenFixture, SessionStatus, WorktreeGroup,
+    WorktreeStatus,
 };
 use aimux::dashboard_renderer::{DashboardNavLevel, DashboardRenderInput, render_dashboard_frame};
 use aimux::project_service::work_outline::{
@@ -146,6 +147,66 @@ fn renders_golden_worktrees_sessions_services_and_unread_chips() {
     for line in result.frame.split("\r\n") {
         assert!(visible_width(line) <= 140 || line.starts_with("\x1b[2J\x1b[H"));
     }
+}
+
+#[test]
+fn orphan_worktrees_keep_node_first_seen_order() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let mut snapshot = fixture.runtime_light.clone();
+    snapshot.services.clear();
+    snapshot.worktree_groups = vec![WorktreeGroup {
+        name: "Main Checkout".into(),
+        branch: "master".into(),
+        path: None,
+        status: WorktreeStatus::Active,
+        pending: false,
+        removing: false,
+        pending_action: None,
+        operation_failure: None,
+        sessions: Vec::new(),
+        services: Vec::new(),
+        extra: Default::default(),
+    }];
+
+    let mut zeta = snapshot.sessions[0].clone();
+    zeta.id = "claude-zeta".into();
+    zeta.worktree_path = Some("/repo/zeta".into());
+    zeta.worktree_name = Some("Zeta".into());
+    zeta.worktree_branch = Some("zeta".into());
+    let mut alpha = snapshot.sessions[0].clone();
+    alpha.id = "claude-alpha".into();
+    alpha.worktree_path = Some("/repo/alpha".into());
+    alpha.worktree_name = Some("Alpha".into());
+    alpha.worktree_branch = Some("alpha".into());
+    snapshot.sessions = vec![zeta, alpha];
+
+    let result = render_dashboard_frame(&DashboardRenderInput {
+        snapshot: &snapshot,
+        cols: 140,
+        rows: 32,
+        nav_level: DashboardNavLevel::Worktrees,
+        selected_session_id: None,
+        selected_service_id: None,
+        focused_worktree_path: None,
+        runtime_label: None,
+        version: None,
+        is_dev_runtime: false,
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_message: None,
+        details_sidebar_visible: false,
+        preview_source: "output",
+        scribe_preview_entries: &[],
+    });
+    let plain = strip_ansi(&result.frame);
+    let zeta_index = plain
+        .find("Zeta")
+        .expect("renders first-seen zeta worktree");
+    let alpha_index = plain.find("Alpha").expect("renders later alpha worktree");
+
+    assert!(zeta_index < alpha_index);
 }
 
 #[test]
