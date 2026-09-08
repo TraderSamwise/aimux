@@ -340,8 +340,10 @@ pub fn is_current_native_aimux_project_service_process_args(
     expected: &ProjectServiceProcessIdentity,
     expected_binary: &Path,
 ) -> bool {
-    let _ = expected_binary;
-    is_native_aimux_project_service_process_args(args, cwd, expected)
+    first_arg_token(args).is_some_and(|token| {
+        is_native_aimux_executable_token(token)
+            && normalize_path(token) == normalize_path(&expected_binary.to_string_lossy())
+    }) && is_aimux_project_service_process_args(args, cwd, expected)
 }
 
 fn has_arg_sequence(args: &str, sequence: &[&str]) -> bool {
