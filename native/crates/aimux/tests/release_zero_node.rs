@@ -105,6 +105,17 @@ fn install_script_rejects_archives_without_native_cli() {
     );
 }
 
+#[test]
+fn homebrew_formula_does_not_require_node_runtime() {
+    let workflow = fs::read_to_string(repo_root().join(".github/workflows/release.yml"))
+        .expect("read release workflow");
+
+    assert!(
+        !workflow.contains("depends_on \"node\""),
+        "Homebrew formula must not install Node for the native Aimux runtime"
+    );
+}
+
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../..")

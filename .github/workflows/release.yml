@@ -276,7 +276,6 @@ jobs:
               end
             end
 
-            depends_on "node"
             depends_on "tmux"
 
             def install
