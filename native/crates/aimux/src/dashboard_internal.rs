@@ -144,9 +144,114 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
             options.once || options.desktop_state_file.is_some(),
         );
 
-        let key_processing_pending = rendered_once && !keys.is_empty();
+        if rendered_once && !keys.is_empty() {
+            mark_dashboard_tui_visible(&mut visibility_state, elapsed_millis(clock_start), None);
+            let Some(snapshot) = latest_snapshot.as_ref() else {
+                render_now = true;
+                thread::sleep(DASHBOARD_KEY_POLL_INTERVAL);
+                continue;
+            };
+            let controller = controller.get_or_insert_with(|| DashboardController::new(snapshot));
+            for key in keys.into_iter().filter(|key| !key.is_focus_in()) {
+                match controller.handle_key(snapshot, key) {
+                    DashboardControllerEffect::Quit => return Ok(()),
+                    DashboardControllerEffect::Request(request) => {
+                        if let Some(endpoint) = latest_endpoint.as_ref() {
+                            if let Err(error) = execute_dashboard_action(endpoint, &request) {
+                                controller.footer_message = Some(error.to_string());
+                            }
+                        } else {
+                            controller.footer_message =
+                                Some("Dashboard action requires a project-service endpoint".into());
+                        }
+                        render_now = true;
+                    }
+                    DashboardControllerEffect::WorktreeCacheCleanupPreview(request) => {
+                        if let Some(endpoint) = latest_endpoint.as_ref() {
+                            match execute_dashboard_action(endpoint, &request)
+                                .and_then(cache_cleanup_result_from_response)
+                            {
+                                Ok(result) => {
+                                    controller.worktree_cache_cleanup_confirm = Some(result);
+                                }
+                                Err(error) => {
+                                    controller.footer_message = Some(error.to_string());
+                                }
+                            }
+                        } else {
+                            controller.footer_message =
+                                Some("Dashboard action requires a project-service endpoint".into());
+                        }
+                        render_now = true;
+                    }
+                    DashboardControllerEffect::WorktreeCacheCleanupApply(request) => {
+                        if let Some(endpoint) = latest_endpoint.as_ref() {
+                            match execute_dashboard_action(endpoint, &request)
+                                .and_then(cache_cleanup_result_from_response)
+                            {
+                                Ok(result) => {
+                                    controller.footer_message =
+                                        Some(worktree_cache_cleanup_summary(&result));
+                                }
+                                Err(error) => {
+                                    controller.footer_message = Some(error.to_string());
+                                }
+                            }
+                        } else {
+                            controller.footer_message =
+                                Some("Dashboard action requires a project-service endpoint".into());
+                        }
+                        render_now = true;
+                    }
+                    DashboardControllerEffect::LoadOrchestrationRoutes { mode, path } => {
+                        if let Some(endpoint) = latest_endpoint.as_ref() {
+                            match fetch_dashboard_resource(endpoint, &path).and_then(|resource| {
+                                orchestration_targets_from_resource(&resource)
+                                    .map_err(anyhow::Error::msg)
+                            }) {
+                                Ok(options) => {
+                                    controller.set_orchestration_route_options(mode, options);
+                                }
+                                Err(error) => {
+                                    controller.footer_message = Some(format!(
+                                        "Failed to load orchestration targets: {error}"
+                                    ));
+                                }
+                            }
+                        } else {
+                            controller.footer_message =
+                                Some("Dashboard action requires a project-service endpoint".into());
+                        }
+                        render_now = true;
+                    }
+                    DashboardControllerEffect::OpenRelevantThread { session_id } => {
+                        if let Some(endpoint) = latest_endpoint.as_ref() {
+                            if let Err(error) =
+                                open_relevant_thread_for_session(endpoint, controller, &session_id)
+                            {
+                                controller.footer_message = Some(error.to_string());
+                            }
+                        } else {
+                            controller.footer_message =
+                                Some("Dashboard action requires a project-service endpoint".into());
+                        }
+                        render_now = true;
+                    }
+                    DashboardControllerEffect::OpenAgentToolPicker(mode) => {
+                        let config = load_config_for_project(&options.project_root);
+                        controller.open_tool_picker(enabled_dashboard_tools(&config), mode);
+                        render_now = true;
+                    }
+                    DashboardControllerEffect::Render => {
+                        render_now = true;
+                    }
+                    DashboardControllerEffect::Ignored => {}
+                }
+            }
+        }
+
         let render_due = render_now || last_render.elapsed() >= DASHBOARD_FALLBACK_REFRESH_INTERVAL;
-        if render_due && !key_processing_pending {
+        if render_due {
             let cached_subscreen_snapshot = latest_snapshot.as_ref().filter(|_| {
                 render_now
                     && controller
@@ -254,112 +359,6 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                 last_render = Instant::now();
                 if options.once {
                     return Ok(());
-                }
-            }
-        }
-
-        if !keys.is_empty() {
-            mark_dashboard_tui_visible(&mut visibility_state, elapsed_millis(clock_start), None);
-            let Some(snapshot) = latest_snapshot.as_ref() else {
-                render_now = true;
-                thread::sleep(DASHBOARD_KEY_POLL_INTERVAL);
-                continue;
-            };
-            let controller = controller.get_or_insert_with(|| DashboardController::new(snapshot));
-            for key in keys.into_iter().filter(|key| !key.is_focus_in()) {
-                match controller.handle_key(snapshot, key) {
-                    DashboardControllerEffect::Quit => return Ok(()),
-                    DashboardControllerEffect::Request(request) => {
-                        if let Some(endpoint) = latest_endpoint.as_ref() {
-                            if let Err(error) = execute_dashboard_action(endpoint, &request) {
-                                controller.footer_message = Some(error.to_string());
-                            }
-                        } else {
-                            controller.footer_message =
-                                Some("Dashboard action requires a project-service endpoint".into());
-                        }
-                        render_now = true;
-                    }
-                    DashboardControllerEffect::WorktreeCacheCleanupPreview(request) => {
-                        if let Some(endpoint) = latest_endpoint.as_ref() {
-                            match execute_dashboard_action(endpoint, &request)
-                                .and_then(cache_cleanup_result_from_response)
-                            {
-                                Ok(result) => {
-                                    controller.worktree_cache_cleanup_confirm = Some(result);
-                                }
-                                Err(error) => {
-                                    controller.footer_message = Some(error.to_string());
-                                }
-                            }
-                        } else {
-                            controller.footer_message =
-                                Some("Dashboard action requires a project-service endpoint".into());
-                        }
-                        render_now = true;
-                    }
-                    DashboardControllerEffect::WorktreeCacheCleanupApply(request) => {
-                        if let Some(endpoint) = latest_endpoint.as_ref() {
-                            match execute_dashboard_action(endpoint, &request)
-                                .and_then(cache_cleanup_result_from_response)
-                            {
-                                Ok(result) => {
-                                    controller.footer_message =
-                                        Some(worktree_cache_cleanup_summary(&result));
-                                }
-                                Err(error) => {
-                                    controller.footer_message = Some(error.to_string());
-                                }
-                            }
-                        } else {
-                            controller.footer_message =
-                                Some("Dashboard action requires a project-service endpoint".into());
-                        }
-                        render_now = true;
-                    }
-                    DashboardControllerEffect::LoadOrchestrationRoutes { mode, path } => {
-                        if let Some(endpoint) = latest_endpoint.as_ref() {
-                            match fetch_dashboard_resource(endpoint, &path).and_then(|resource| {
-                                orchestration_targets_from_resource(&resource)
-                                    .map_err(anyhow::Error::msg)
-                            }) {
-                                Ok(options) => {
-                                    controller.set_orchestration_route_options(mode, options);
-                                }
-                                Err(error) => {
-                                    controller.footer_message = Some(format!(
-                                        "Failed to load orchestration targets: {error}"
-                                    ));
-                                }
-                            }
-                        } else {
-                            controller.footer_message =
-                                Some("Dashboard action requires a project-service endpoint".into());
-                        }
-                        render_now = true;
-                    }
-                    DashboardControllerEffect::OpenRelevantThread { session_id } => {
-                        if let Some(endpoint) = latest_endpoint.as_ref() {
-                            if let Err(error) =
-                                open_relevant_thread_for_session(endpoint, controller, &session_id)
-                            {
-                                controller.footer_message = Some(error.to_string());
-                            }
-                        } else {
-                            controller.footer_message =
-                                Some("Dashboard action requires a project-service endpoint".into());
-                        }
-                        render_now = true;
-                    }
-                    DashboardControllerEffect::OpenAgentToolPicker(mode) => {
-                        let config = load_config_for_project(&options.project_root);
-                        controller.open_tool_picker(enabled_dashboard_tools(&config), mode);
-                        render_now = true;
-                    }
-                    DashboardControllerEffect::Render => {
-                        render_now = true;
-                    }
-                    DashboardControllerEffect::Ignored => {}
                 }
             }
         }

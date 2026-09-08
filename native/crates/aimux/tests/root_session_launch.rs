@@ -19,9 +19,16 @@ fn root_resume_parser_accepts_optional_tool_filter_only() {
             .tool_filter,
         Some("codex".into())
     );
+    assert_eq!(
+        parse_root_resume_args(&args(&["--restore"]))
+            .unwrap()
+            .tool_filter,
+        None
+    );
     assert!(parse_root_resume_args(&args(&["--resume", "--json"])).is_none());
-    assert!(parse_root_resume_args(&args(&["--restore"])).is_none());
-    assert!(parse_root_resume_args(&args(&["--resume", "codex", "extra"])).is_none());
+    let request = parse_root_resume_args(&args(&["--resume", "codex", "extra"])).unwrap();
+    assert_eq!(request.tool_filter, Some("codex".into()));
+    assert_eq!(request.ignored_args, ["extra"]);
 }
 
 #[test]

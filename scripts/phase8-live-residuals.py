@@ -337,46 +337,103 @@ def run_dashboard_render_smoke(aimux_bin: Path, mutation: str | None) -> dict[st
             raise LiveResidualFailure(f"dashboard did not render required content:\n{output}")
         if "Main Checkout" not in output or "worktrees" not in output:
             raise LiveResidualFailure(f"dashboard frame missing project row or navigation hints:\n{output}")
-        start_tmux_pty_client(
-            scope,
-            tmux,
-            socket_name,
-            ["attach-session", "-t", session],
-            cwd=project_root,
-        )
-        clients = wait_until(
-            lambda: tmux_cmd(scope, ["list-clients", "-F", "#{client_tty}"]).stdout.strip(),
-            timeout=5,
-            label="attached dashboard tmux client",
-        )
-        if not clients:
-            raise LiveResidualFailure("dashboard input smoke has no attached tmux client")
-        first_frame = wait_until(
-            lambda: capture_tmux(scope, session)
-            if required in capture_tmux(scope, session)
-            else None,
-            timeout=5,
-            label="attached dashboard frame",
-        )
-        if mutation != "dashboard-input-dead":
-            tmux_cmd(scope, ["send-keys", "-t", f"{session}:0", "?"])
-            time.sleep(0.2)
-            tmux_cmd(scope, ["send-keys", "-t", f"{session}:0", "q"])
-        final_output = ""
-        deadline = time.monotonic() + 5
-        while time.monotonic() < deadline:
-            final_output = capture_tmux(scope, session)
-            if "__AIMUX_DASHBOARD_EXIT:0" in final_output:
-                break
-            time.sleep(0.05)
-        else:
-            raise LiveResidualFailure(f"dashboard did not stay responsive to keyboard input:\n{final_output}")
+        def exercise_key(key_session: str, key: str, label: str, anchor: str | None) -> None:
+            key_command = (
+                f"cd {shlex.quote(str(project_root))} && {shlex.quote(str(aimux_bin))}; code=$?; "
+                f"printf '\\n__AIMUX_DASHBOARD_{key_session}_EXIT:%s\\n' \"$code\"; sleep 30"
+            )
+            proc = subprocess.Popen(
+                [
+                    "script",
+                    "-q",
+                    "/dev/null",
+                    tmux,
+                    "-L",
+                    socket_name,
+                    "-f",
+                    "/dev/null",
+                    "new-session",
+                    "-s",
+                    key_session,
+                    "-x",
+                    "100",
+                    "-y",
+                    "30",
+                    "sh",
+                    "-lc",
+                    key_command,
+                ],
+                cwd=str(project_root),
+                env=scope.env,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            scope.procs.append(proc)
+            before = wait_until(
+                lambda: capture_tmux(scope, key_session)
+                if required in capture_tmux(scope, key_session)
+                else None,
+                timeout=10,
+                label=f"{label} dashboard frame",
+            )
+            time.sleep(1.0)
+            if mutation != "dashboard-input-dead":
+                tmux_cmd(scope, ["send-keys", "-t", f"{key_session}:0", key])
+            after = wait_until(
+                lambda: (
+                    current
+                    if (current := capture_tmux(scope, key_session)) != before
+                    and (anchor is None or anchor in current)
+                    and current.strip()
+                    else None
+                ),
+                timeout=5,
+                label=f"{label} key changed dashboard frame",
+            )
+            if anchor is not None and anchor not in after:
+                raise LiveResidualFailure(
+                    f"{label} key changed frame without expected anchor {anchor!r}:\n{after}"
+                )
+            tmux_cmd(scope, ["send-keys", "-t", f"{key_session}:0", "Escape"])
+            wait_until(
+                lambda: (
+                    current
+                    if required in (current := capture_tmux(scope, key_session))
+                    and current != after
+                    else None
+                ),
+                timeout=5,
+                label=f"{label} key returned to dashboard before quit",
+            )
+            tmux_cmd(scope, ["send-keys", "-t", f"{key_session}:0", "q"])
+            final_output = ""
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                final_output = capture_tmux(scope, key_session)
+                if f"__AIMUX_DASHBOARD_{key_session}_EXIT:0" in final_output:
+                    return
+                time.sleep(0.05)
+            raise LiveResidualFailure(f"{label} dashboard did not accept q after input:\n{final_output}")
+
+        key_specs = [
+            ("?", "help", "aimux — help"),
+            ("n", "new-agent", "SELECT TOOL"),
+            ("w", "worktree-create", "CREATE WORKTREE"),
+            ("v", "service-create", "CREATE SERVICE"),
+        ]
+        if mutation == "dashboard-input-dead":
+            key_specs = key_specs[:1]
+        for index, (key, label, anchor) in enumerate(key_specs, start=1):
+            exercise_key(f"phase8-dashboard-key-{index}", key, label, anchor)
         return {
             "name": "phase8-live-dashboard-render-smoke",
             "privateSocket": socket_name,
             "caught": [
                 "native dashboard first paint reaching a real tmux pane",
-                "native dashboard keyboard input reaching the event loop",
+                "advertised native dashboard keys visibly repaint the TUI",
+                "native dashboard quit works after non-quit input",
                 "blank alternate-screen dashboard startup",
                 "daemon/project-service backed dashboard snapshot rendering",
             ],
