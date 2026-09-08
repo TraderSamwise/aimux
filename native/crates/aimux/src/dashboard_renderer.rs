@@ -2449,9 +2449,8 @@ fn summarize_teammate(session: &DashboardSession) -> String {
 fn has_live_scribe(input: &DashboardRenderInput<'_>) -> bool {
     input
         .snapshot
-        .teammates
+        .sessions
         .iter()
-        .chain(input.snapshot.sessions.iter())
         .any(|session| is_scribe_session(session) && !is_session_offline(session))
 }
 

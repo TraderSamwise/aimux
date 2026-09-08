@@ -499,6 +499,53 @@ fn renders_typed_scribe_preview_rows_for_selected_session() {
 }
 
 #[test]
+fn teammate_scribe_does_not_enable_project_scribe_preview() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let mut snapshot = fixture.runtime_light.clone();
+    let parent_id = snapshot.sessions[0].id.clone();
+    let mut teammate = snapshot.sessions[0].clone();
+    teammate.id = "claude-teammate-scribe".into();
+    teammate.scribe = Some(true);
+    teammate.team = Some(
+        serde_json::from_value(json!({
+            "teamId": "team-1",
+            "parentSessionId": parent_id,
+            "role": "scribe",
+            "label": "Scribe Teammate"
+        }))
+        .expect("team metadata parses"),
+    );
+    snapshot.teammates = vec![teammate];
+
+    let result = render_dashboard_frame(&DashboardRenderInput {
+        snapshot: &snapshot,
+        cols: 140,
+        rows: 24,
+        nav_level: DashboardNavLevel::Sessions,
+        selected_session_id: Some(&parent_id),
+        selected_service_id: None,
+        focused_worktree_path: None,
+        runtime_label: None,
+        version: None,
+        is_dev_runtime: false,
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_message: None,
+        details_sidebar_visible: true,
+        preview_source: "scribe",
+        scribe_preview_entries: &[],
+    });
+    let plain = strip_ansi(&result.frame);
+
+    assert!(!plain.contains("V preview"));
+    assert!(!plain.contains("SCRIBE"));
+    assert!(plain.contains("Team"));
+    assert!(plain.contains("Scribe Teammate(scribe)"));
+}
+
+#[test]
 fn renders_worktree_details_sidebar_when_no_session_selected() {
     let fixture: DesktopStateGoldenFixture =
         serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
