@@ -182,7 +182,7 @@ impl DashboardNavigationState {
             self.worktree_index = 0;
             self.item_index = self
                 .item_index
-                .min(snapshot.sessions.len().saturating_sub(1));
+                .min(entry_count(snapshot, 0).saturating_sub(1));
             return;
         }
         self.worktree_index = self

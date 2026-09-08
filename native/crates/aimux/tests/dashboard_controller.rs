@@ -47,6 +47,26 @@ fn hjkl_navigation_steps_into_and_back_out_of_worktrees() {
 }
 
 #[test]
+fn flat_session_clamp_uses_visible_non_control_entries() {
+    let mut snapshot = snapshot();
+    snapshot.worktree_groups.clear();
+    let visible = snapshot.sessions[0].clone();
+    snapshot.sessions = vec![overseer_session(&visible), visible.clone()];
+    let mut controller = DashboardController::new(&snapshot);
+    controller.navigation.item_index = 9;
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Other),
+        DashboardControllerEffect::Ignored
+    );
+    assert_eq!(controller.navigation.item_index, 0);
+    assert_eq!(
+        controller.navigation.selected_entry(&snapshot),
+        Some(DashboardEntryRef::Session(&visible))
+    );
+}
+
+#[test]
 fn shifted_arrows_parse_as_reorder_keys() {
     assert_eq!(parse_dashboard_key(b"\x1b[1;2A"), DashboardKey::ShiftUp);
     assert_eq!(parse_dashboard_key(b"\x1b[1;2B"), DashboardKey::ShiftDown);
