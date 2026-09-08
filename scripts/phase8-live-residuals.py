@@ -34,6 +34,9 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_TARGET_DIR = Path("/tmp/aimux-phase8-live-target")
 SSE_EVENT_COUNT = 96
 SSE_CLIENT_COUNT = 8
+DEFAULT_DAEMON_PORT = 43190
+RESIDUAL_DAEMON_PORT_MIN = 45000
+RESIDUAL_DAEMON_PORT_MAX = 45999
 
 
 class LiveResidualFailure(Exception):
@@ -160,7 +163,7 @@ def isolated_env(root: Path, home: Path, aimux_home: Path, aimux_bin: Path) -> d
     env["AIMUX_NATIVE_BIN"] = str(aimux_bin)
     env["AIMUX_CLI_BIN"] = str(aimux_bin)
     env["AIMUX_DAEMON_HOST"] = "127.0.0.1"
-    env["AIMUX_DAEMON_PORT"] = str(free_loopback_port())
+    env["AIMUX_DAEMON_PORT"] = str(free_residual_daemon_port())
     env["AIMUX_DASHBOARD_IMPLEMENTATION"] = "native"
     env["TERM"] = "xterm-256color"
     env["TMPDIR"] = str(root / "tmp")
@@ -174,10 +177,46 @@ def without_tmux(env: dict[str, str]) -> dict[str, str]:
     return env
 
 
-def free_loopback_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
+def free_residual_daemon_port() -> int:
+    span = RESIDUAL_DAEMON_PORT_MAX - RESIDUAL_DAEMON_PORT_MIN + 1
+    start = RESIDUAL_DAEMON_PORT_MIN + ((os.getpid() + time.monotonic_ns()) % span)
+    for offset in range(span):
+        port = RESIDUAL_DAEMON_PORT_MIN + ((start - RESIDUAL_DAEMON_PORT_MIN + offset) % span)
+        if port == DEFAULT_DAEMON_PORT:
+            continue
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            try:
+                sock.bind(("127.0.0.1", port))
+            except OSError:
+                continue
+            return port
+    raise LiveResidualFailure(
+        f"no free isolated daemon port in {RESIDUAL_DAEMON_PORT_MIN}-{RESIDUAL_DAEMON_PORT_MAX}"
+    )
+
+
+def default_daemon_listener_snapshot() -> str:
+    result = subprocess.run(
+        ["lsof", "-nP", f"-iTCP:{DEFAULT_DAEMON_PORT}", "-sTCP:LISTEN"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        raise LiveResidualFailure(
+            f"expected an existing non-harness listener on {DEFAULT_DAEMON_PORT}; lsof returned {result.returncode}"
+        )
+    return result.stdout.strip()
+
+
+def assert_default_daemon_listener_unchanged(before: str) -> None:
+    after = default_daemon_listener_snapshot()
+    if after != before:
+        raise LiveResidualFailure(
+            f"default daemon port {DEFAULT_DAEMON_PORT} listener changed during residual run\n"
+            f"before:\n{before}\n\nafter:\n{after}"
+        )
 
 
 def run(
@@ -2210,7 +2249,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
+    default_listener = None
     try:
+        default_listener = default_daemon_listener_snapshot()
         aimux_bin = build_aimux(args)
         suites = [
             "tmux",
@@ -2242,6 +2283,9 @@ def main(argv: list[str]) -> int:
     except Exception as error:
         print(f"FAILED: {error}", file=sys.stderr)
         return 1
+    finally:
+        if default_listener is not None:
+            assert_default_daemon_listener_unchanged(default_listener)
 
 
 if __name__ == "__main__":
