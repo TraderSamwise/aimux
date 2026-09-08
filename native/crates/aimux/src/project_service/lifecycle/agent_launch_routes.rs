@@ -254,9 +254,6 @@ pub(super) fn route_agent_fork(
     let Some(source_session_id) = trimmed_string(body.get("sourceSessionId")) else {
         return json_error(400, "sourceSessionId is required");
     };
-    let Some(tool_key) = trimmed_string(body.get("tool")) else {
-        return json_error(400, "tool is required");
-    };
     let project_root = context.project_root().to_string_lossy().into_owned();
     let topology = match read_runtime_topology(runtime_topology_path(context.project_state_dir())) {
         Ok(topology) => topology,
@@ -273,6 +270,9 @@ pub(super) fn route_agent_fork(
         return json_error(400, format!("Session \"{source_session_id}\" is not live"));
     }
     let source_session = topology_session_to_session_state(&source_topology_session, &topology);
+    let tool_key = trimmed_string(body.get("tool"))
+        .or_else(|| tool_config_key_for_session(&source_session))
+        .unwrap_or_else(|| string_field(&source_session, "command"));
     let config = load_config_for_project(context.project_root());
     let Some(tool_config) = config
         .get("tools")
@@ -390,7 +390,7 @@ pub(super) fn route_agent_fork(
     );
     match result {
         Ok(result) => lifecycle_response(
-            json!({ "sessionId": result.session_id, "threadId": thread_id }),
+            json!({ "sessionId": result.session_id, "threadId": thread_id, "tool": tool_key }),
             "agent.fork",
             "agent",
             Some(&result.session_id),

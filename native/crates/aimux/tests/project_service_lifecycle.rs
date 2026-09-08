@@ -136,7 +136,7 @@ impl ProjectLifecycleRuntime for FakeLifecycleRuntime {
 }
 
 #[test]
-fn agent_stop_marks_topology_offline_removes_binding_and_kills_window() {
+fn agent_stop_moves_session_to_recoverable_graveyard_and_kills_window() {
     let project = temp_project("agent-stop");
     let state_dir = project.join("state");
     write_lifecycle_topology(&state_dir);
@@ -156,13 +156,15 @@ fn agent_stop_marks_topology_offline_removes_binding_and_kills_window() {
     assert_eq!(response.status, 200);
     assert_eq!(response.body["ok"], true);
     assert_eq!(response.body["sessionId"], "codex-live");
-    assert_eq!(response.body["status"], "offline");
+    assert_eq!(response.body["status"], "graveyard");
     assert_eq!(response.body["transition"]["operation"], "agent.stop");
     assert_eq!(response.body["transition"]["phase"], "succeeded");
     assert_eq!(runtime.killed, vec!["@agent"]);
     let topology = read_topology(&state_dir);
     let session = session(&topology, "codex-live");
-    assert_eq!(session["status"], "offline");
+    assert_eq!(session["status"], "graveyard");
+    assert!(session["graveyardedAt"].as_str().is_some());
+    assert_eq!(session["graveyardReason"], "stopped");
     assert!(
         topology["bindings"]
             .as_array()
@@ -643,12 +645,12 @@ fn teammate_stop_routes_through_agent_stop_with_parent_metadata() {
     assert_eq!(response.body["parentSessionId"], "codex-parent");
     assert_eq!(response.body["teammateSessionId"], "codex-child");
     assert_eq!(response.body["sessionId"], "codex-child");
-    assert_eq!(response.body["status"], "offline");
+    assert_eq!(response.body["status"], "graveyard");
     assert_eq!(response.body["transition"]["operation"], "agent.stop");
     assert_eq!(runtime.killed, vec!["@child"]);
     assert_eq!(
         session(&read_topology(&state_dir), "codex-child")["status"],
-        "offline"
+        "graveyard"
     );
     cleanup(project);
 }
@@ -825,6 +827,61 @@ fn agent_fork_creates_handoff_thread_and_native_fork_launch() {
                     && message["body"] == "carry this forward"
             })
     );
+    cleanup(project);
+}
+
+#[test]
+fn agent_fork_without_tool_uses_source_session_tool() {
+    let project = temp_project("agent-fork-source-tool");
+    write_project_tool_config(&project);
+    let state_dir = project.join("state");
+    write_agent_resume_topology(
+        &state_dir,
+        json!({
+            "id": "mock-source",
+            "nodeId": "agent:mock-source",
+            "status": "running",
+            "tool": "mock",
+            "toolConfigKey": "mock",
+            "command": "/bin/mock",
+            "args": ["--base"],
+            "backendSessionId": "backend-123",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+        }),
+    );
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::FORK,
+        Some(&json!({
+            "sourceSessionId": "mock-source",
+            "targetSessionId": "mock-fork",
+            "open": false
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["sessionId"], "mock-fork");
+    assert_eq!(response.body["tool"], "mock");
+    assert!(
+        runtime.created[0]
+            .args
+            .iter()
+            .any(|arg| arg.contains("/bin/mock"))
+    );
+    assert!(
+        runtime.created[0]
+            .args
+            .last()
+            .is_some_and(|arg| arg.contains("'--fork' 'backend-123'"))
+    );
+    assert_eq!(runtime.metadata[0].1["toolConfigKey"], "mock");
     cleanup(project);
 }
 

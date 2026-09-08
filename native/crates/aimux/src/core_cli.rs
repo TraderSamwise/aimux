@@ -21,7 +21,7 @@ use crate::native_cli_dispatch::{
     CORE_SCRIBE_STATUS_TEXT_ROUTE, CORE_SERVICE_CREATE_TEXT_ROUTE,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 
@@ -717,14 +717,14 @@ where
                 CoreCliOperation::LifecycleFork,
                 CoreCliAction::TextRoute {
                     path: text_route_path(CORE_API_ROUTES.lifecycle_fork_text, parsed.json),
-                    body: Some(json!({
+                    body: Some(json_without_null_fields(json!({
                         "project": project_root,
                         "sourceSessionId": parsed.source_session_id,
                         "tool": parsed.tool,
                         "instruction": parsed.instruction,
                         "worktreePath": parsed.worktree,
                         "open": parsed.open,
-                    })),
+                    }))),
                 },
                 CoreCliFallback::None,
             )
@@ -2136,4 +2136,16 @@ where
         action,
         fallback,
     })
+}
+
+fn json_without_null_fields(value: Value) -> Value {
+    let Value::Object(fields) = value else {
+        return value;
+    };
+    Value::Object(
+        fields
+            .into_iter()
+            .filter(|(_, value)| !value.is_null())
+            .collect::<Map<_, _>>(),
+    )
 }

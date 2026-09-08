@@ -1019,7 +1019,6 @@ fn lifecycle_commands_execute_native_text_routes_without_core_command_fallback()
                     "sourceSessionId": "claude-1",
                     "tool": "codex",
                     "instruction": "continue",
-                    "worktreePath": null,
                     "open": true,
                 })),
             ),

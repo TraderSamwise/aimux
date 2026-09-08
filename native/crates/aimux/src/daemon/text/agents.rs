@@ -382,10 +382,7 @@ pub fn lifecycle_fork_text_route(
         Ok(source_session_id) => source_session_id,
         Err(response) => return response,
     };
-    let tool = match required_param(route_url, body, "tool") {
-        Ok(tool) => tool,
-        Err(response) => return response,
-    };
+    let tool = optional_string(route_url, body, "tool");
     let instruction = optional_string(route_url, body, "instruction");
     let project_root = runtime.resolve_project_root(&project);
     let worktree_path = resolve_lifecycle_worktree(
@@ -398,7 +395,7 @@ pub fn lifecycle_fork_text_route(
         "sourceSessionId".into(),
         Value::String(source_session_id.clone()),
     );
-    request.insert("tool".into(), Value::String(tool.clone()));
+    insert_string_if_some(&mut request, "tool", tool.clone());
     insert_string_if_some(&mut request, "instruction", instruction);
     if let Some(worktree_path) = worktree_path.as_ref() {
         request.insert("worktreePath".into(), Value::String(worktree_path.clone()));
@@ -427,7 +424,7 @@ pub fn lifecycle_fork_text_route(
         "sourceSessionId": source_session_id,
         "sessionId": session_id,
         "threadId": thread_id,
-        "tool": tool,
+        "tool": tool.or_else(|| json.get("tool").and_then(Value::as_str).map(str::to_owned)),
         "worktreePath": worktree_path.unwrap_or_else(|| project_root.clone()),
         "opened": open,
     });

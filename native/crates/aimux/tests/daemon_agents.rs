@@ -91,7 +91,7 @@ impl DaemonAgentTextRuntime for FakeAgentRuntime {
             ),
             project_routes::agents::STOP => ProjectServiceJsonResult::ok(
                 "/repo",
-                json!({ "sessionId": body["sessionId"].clone(), "status": "offline" }),
+                json!({ "sessionId": body["sessionId"].clone(), "status": "graveyard" }),
             ),
             project_routes::agents::KILL => ProjectServiceJsonResult::ok(
                 "/repo",
@@ -99,7 +99,7 @@ impl DaemonAgentTextRuntime for FakeAgentRuntime {
             ),
             project_routes::agents::FORK => ProjectServiceJsonResult::ok(
                 "/repo",
-                json!({ "sessionId": "codex-2", "threadId": "thread-1" }),
+                json!({ "sessionId": "codex-2", "threadId": "thread-1", "tool": body.get("tool").cloned().unwrap_or_else(|| json!("claude")) }),
             ),
             project_routes::agents::INPUT => {
                 ProjectServiceJsonResult::ok("/repo", json!({ "ok": true }))

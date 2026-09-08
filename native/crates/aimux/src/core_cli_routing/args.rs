@@ -109,7 +109,8 @@ pub struct CoreServiceCreateArgs {
 #[serde(rename_all = "camelCase")]
 pub struct CoreLifecycleForkArgs {
     pub source_session_id: String,
-    pub tool: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

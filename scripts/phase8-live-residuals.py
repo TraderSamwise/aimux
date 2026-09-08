@@ -977,6 +977,79 @@ def run_shell_service_smoke(aimux_bin: Path, mutation: str | None) -> dict[str, 
         }
 
 
+def run_top_level_tool_restore(
+    scope: Scope,
+    aimux_bin: Path,
+    tmux: str,
+    socket_name: str,
+    project_root: Path,
+    session_id: str,
+    tool: str,
+) -> str:
+    launcher_session = f"phase8-restore-{tool}-{int(time.time() * 1000)}"
+    command = (
+        f"cd {shlex.quote(str(project_root))} && "
+        f"{shlex.quote(str(aimux_bin))} --restore {shlex.quote(tool)}; "
+        f"code=$?; printf '\\n__AIMUX_RESTORE_{tool}_EXIT:%s\\n' \"$code\"; sleep 30"
+    )
+    proc = subprocess.Popen(
+        [
+            "script",
+            "-q",
+            "/dev/null",
+            tmux,
+            "-L",
+            socket_name,
+            "-f",
+            "/dev/null",
+            "new-session",
+            "-s",
+            launcher_session,
+            "-x",
+            "100",
+            "-y",
+            "30",
+            "sh",
+            "-lc",
+            command,
+        ],
+        cwd=str(project_root),
+        env=scope.env,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    scope.procs.append(proc)
+    deadline = time.monotonic() + 20
+    output = ""
+    while time.monotonic() < deadline:
+        try:
+            output = capture_all_tmux(scope)
+        except LiveResidualFailure:
+            output = ""
+        if has_unsupported_command_error(output) or "tool is required" in output:
+            raise LiveResidualFailure(f"{tool} restore dispatch failed:\n{output}")
+        if ps_contains_session(scope, aimux_bin, session_id):
+            break
+        time.sleep(0.05)
+    else:
+        raise LiveResidualFailure(
+            f"timed out waiting for restored {tool} session {session_id}:\n"
+            f"{output}\nstdout:\n{read_pipe(proc.stdout)}\nstderr:\n{read_pipe(proc.stderr)}"
+        )
+    tmux_cmd(scope, ["send-keys", "-t", f"{launcher_session}:0", "q"])
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        output = capture_all_tmux(scope)
+        if f"__AIMUX_RESTORE_{tool}_EXIT:0" in output:
+            break
+        time.sleep(0.05)
+    else:
+        raise LiveResidualFailure(f"{tool} restore dashboard did not quit:\n{output}")
+    return session_id
+
+
 def run_graveyard_lifecycle_smoke(aimux_bin: Path, mutation: str | None) -> dict[str, Any]:
     tmux = find_tmux()
     with Scope("graveyard", aimux_bin) as scope:
@@ -987,6 +1060,7 @@ def run_graveyard_lifecycle_smoke(aimux_bin: Path, mutation: str | None) -> dict
         scope.init_git_project()
         run([str(aimux_bin), "init"], cwd=scope.project, env=scope.env, timeout=30)
         install_shell_tool_config(scope)
+        project_root = scope.project.resolve()
         spawn = run(
             [str(aimux_bin), "spawn", "--tool", "shell", "--no-open", "--json"],
             cwd=scope.project,
@@ -1001,58 +1075,109 @@ def run_graveyard_lifecycle_smoke(aimux_bin: Path, mutation: str | None) -> dict
             timeout=10,
             label="graveyard spawned shell in aimux ps",
         )
+        fork = run(
+            [str(aimux_bin), "fork", session_id, "--json"],
+            cwd=scope.project,
+            env=scope.env,
+            timeout=30,
+        )
+        fork_payload = parse_json_stdout(fork.stdout, "graveyard shell fork")
+        fork_session_id = str(fork_payload.get("sessionId") or "")
+        if not fork_session_id:
+            raise LiveResidualFailure(f"graveyard shell fork did not return a session id: {fork.stdout}")
+        if mutation == "graveyard-fork-missing-session":
+            fork_session_id = "phase8-missing-fork-session"
+        wait_until(
+            lambda: ps_contains_session(scope, aimux_bin, fork_session_id),
+            timeout=10,
+            label="forked shell in aimux ps",
+        )
+        stop_fork = run(
+            [str(aimux_bin), "stop", fork_session_id, "--json"],
+            cwd=scope.project,
+            env=scope.env,
+            timeout=30,
+        )
+        parse_json_stdout(stop_fork.stdout, "graveyard forked shell stop")
         stop = run(
             [str(aimux_bin), "stop", session_id, "--json"],
             cwd=scope.project,
             env=scope.env,
             timeout=30,
         )
-        parse_json_stdout(stop.stdout, "graveyard shell stop")
-        stopped_session = wait_until(
-            lambda: ps_session_by_id(scope, aimux_bin, session_id),
-            timeout=10,
-            label="graveyard stopped shell remains in aimux ps",
-        )
-        if stopped_session.get("status") != "offline":
-            raise LiveResidualFailure(f"stopped shell should be offline, got: {stopped_session}")
-
-        graveyard_after_stop = graveyard_payload(scope, aimux_bin)
-        if mutation == "graveyard-stop-adds-entry":
-            graveyard_after_stop.setdefault("entries", []).append({"id": session_id})
-        if graveyard_contains_session(graveyard_after_stop, session_id):
-            raise LiveResidualFailure(
-                f"stop moved {session_id} into graveyard; stop should leave it offline:\n"
-                + json.dumps(graveyard_after_stop, indent=2)
-            )
-
-        kill = run(
-            [str(aimux_bin), "kill", session_id, "--json"],
-            cwd=scope.project,
-            env=scope.env,
-            timeout=30,
-        )
-        parse_json_stdout(kill.stdout, "graveyard shell kill")
-        graveyard_after_kill = wait_until(
+        stop_payload = parse_json_stdout(stop.stdout, "graveyard shell stop")
+        if stop_payload.get("status") != "graveyard":
+            raise LiveResidualFailure(f"graveyard shell stop should return graveyard status: {stop_payload}")
+        graveyard_after_stop = wait_until(
             lambda: (
                 payload
                 if graveyard_contains_session((payload := graveyard_payload(scope, aimux_bin)), session_id)
                 else None
             ),
             timeout=10,
-            label="killed shell in graveyard list",
+            label="stopped shell in graveyard list",
+        )
+        if mutation == "graveyard-stop-missing-entry":
+            graveyard_after_stop["entries"] = [
+                entry
+                for entry in graveyard_after_stop.get("entries", [])
+                if isinstance(entry, dict) and entry.get("id") != session_id
+            ]
+        if not graveyard_contains_session(graveyard_after_stop, session_id):
+            raise LiveResidualFailure(
+                f"stop did not move {session_id} into graveyard:\n"
+                + json.dumps(graveyard_after_stop, indent=2)
+            )
+
+        resurrect = run(
+            [str(aimux_bin), "graveyard", "resurrect", session_id, "--json"],
+            cwd=scope.project,
+            env=scope.env,
+            timeout=30,
+        )
+        resurrect_payload = parse_json_stdout(resurrect.stdout, "graveyard shell resurrect")
+        if resurrect_payload.get("status") != "offline":
+            raise LiveResidualFailure(f"graveyard resurrect should return offline status: {resurrect_payload}")
+        resurrected_session = wait_until(
+            lambda: ps_session_by_id(scope, aimux_bin, session_id),
+            timeout=10,
+            label="resurrected shell in aimux ps",
+        )
+        if resurrected_session.get("status") != "offline":
+            raise LiveResidualFailure(f"resurrected shell should be offline, got: {resurrected_session}")
+        stamp_backend_session(scope, session_id, "backend-phase8-shell")
+        restored = run_top_level_tool_restore(scope, aimux_bin, tmux, socket_name, project_root, session_id, "shell")
+        kill = run(
+            [str(aimux_bin), "kill", restored, "--json"],
+            cwd=scope.project,
+            env=scope.env,
+            timeout=30,
+        )
+        parse_json_stdout(kill.stdout, "graveyard restored shell kill")
+        graveyard_after_kill = wait_until(
+            lambda: (
+                payload
+                if graveyard_contains_session((payload := graveyard_payload(scope, aimux_bin)), restored)
+                else None
+            ),
+            timeout=10,
+            label="killed restored shell in graveyard list",
         )
         return {
             "name": "phase8-graveyard-lifecycle-smoke",
             "sessionId": session_id,
+            "forkSessionId": fork_session_id,
             "graveyardAfterKill": graveyard_after_kill,
             "caught": [
                 "bare aimux graveyard routes to graveyard list",
-                "stop leaves a session offline and out of graveyard",
-                "kill moves an offline session into graveyard",
+                "fork on a running agent succeeds without an explicit tool flag",
+                "stop moves a session into recoverable graveyard",
+                "graveyard resurrect returns the session to offline ps",
+                "root --restore relaunches the resurrected session",
+                "kill keeps a restored session in graveyard",
             ],
             "notCaught": [
                 "graveyard cleanup retention timing",
-                "manual resurrection workflow after listing",
             ],
         }
 
@@ -1934,7 +2059,8 @@ def prove_failures(args: argparse.Namespace, aimux_bin: Path) -> list[dict[str, 
         ("command-resolution", "command-silent-alias"),
         ("agent-shell", "agent-shell-missing-window"),
         ("shell-service", "shell-service-missing-window"),
-        ("graveyard", "graveyard-stop-adds-entry"),
+        ("graveyard", "graveyard-stop-missing-entry"),
+        ("graveyard", "graveyard-fork-missing-session"),
         ("top-level-agent", "top-level-agent-missing-session"),
         ("lazy-read", "lazy-read-service-unavailable"),
         ("restart-current", "restart-current-zero-projects"),
@@ -2011,7 +2137,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "command-silent-alias",
         "agent-shell-missing-window",
         "shell-service-missing-window",
-        "graveyard-stop-adds-entry",
+        "graveyard-stop-missing-entry",
+        "graveyard-fork-missing-session",
         "top-level-agent-missing-session",
         "lazy-read-service-unavailable",
         "restart-current-zero-projects",

@@ -371,7 +371,7 @@ pub fn parse_core_lifecycle_fork_args<S: AsRef<str>>(args: &[S]) -> Option<CoreL
     }
     Some(CoreLifecycleForkArgs {
         source_session_id: source_session_id?,
-        tool: tool?,
+        tool,
         project,
         instruction,
         worktree,

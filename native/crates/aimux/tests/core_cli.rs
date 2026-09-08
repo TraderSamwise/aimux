@@ -1661,6 +1661,21 @@ fn lifecycle_commands_plan_native_text_routes() {
         }
     );
 
+    let same_tool_fork =
+        classify_core_cli(&["fork", "claude-1"], &context(true, true)).expect("same tool fork");
+    assert_eq!(same_tool_fork.operation, CoreCliOperation::LifecycleFork);
+    assert_eq!(
+        same_tool_fork.action,
+        CoreCliAction::TextRoute {
+            path: "/core/lifecycle/fork-text".into(),
+            body: Some(json!({
+                "project": "/repo",
+                "sourceSessionId": "claude-1",
+                "open": true,
+            })),
+        }
+    );
+
     assert!(classify_core_cli(&["stop"], &context(true, true)).is_ok());
 }
 
