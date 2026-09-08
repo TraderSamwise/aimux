@@ -93,6 +93,30 @@ fn create_scribe_mode_marks_spawn_request_as_scribe() {
 }
 
 #[test]
+fn create_overseer_mode_marks_spawn_request_as_overseer() {
+    let tools = enabled_dashboard_tools(&merge_config_layers(None, None));
+    let picker =
+        DashboardToolPickerState::with_mode(tools, DashboardToolPickerMode::CreateOverseer);
+
+    let DashboardToolPickerEffect::Create(DashboardCreatePlan::Request(request)) =
+        picker.create_selected(Some("/repo"))
+    else {
+        panic!("expected overseer request");
+    };
+
+    assert_eq!(request.path, routes::agents::SPAWN);
+    assert_eq!(
+        request.body,
+        json!({
+            "tool": "claude",
+            "worktreePath": "/repo",
+            "open": false,
+            "overseer": true
+        })
+    );
+}
+
+#[test]
 fn digit_selects_and_creates_tool() {
     let config = merge_config_layers(None, None);
     let tools = enabled_dashboard_tools(&config);

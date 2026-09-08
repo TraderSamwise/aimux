@@ -43,7 +43,9 @@ use crate::project_service::work_outline::{
     WorkOutlineEntry, WorkOutlineQuery, list_work_outline_entries,
 };
 use crate::release_version_contract::read_aimux_runtime_version;
-use crate::tui_screen_renderers::render_work_outline_overlay_output;
+use crate::tui_screen_renderers::{
+    render_overseer_overlay_output, render_work_outline_overlay_output,
+};
 use anyhow::{Context, Result};
 use std::fs;
 use std::io::{self, Write};
@@ -615,6 +617,23 @@ fn render_dashboard_snapshot(
         preview_source: &controller.preview_source,
         scribe_preview_entries: &scribe_preview_entries,
     });
+    if controller.overseer_overlay_open {
+        let mut output = frame.frame;
+        let ctx = serde_json::json!({
+            "dashboardOverseerSessionsCache": &overseer_sessions,
+            "dashboardSessionsCache": &snapshot.sessions,
+            "dashboardTeammatesCache": &snapshot.teammates,
+        });
+        output.push_str(&render_overseer_overlay_output(
+            &ctx,
+            options.cols,
+            options.rows,
+        ));
+        return crate::tui_render::screen_frame::ScreenFrameResult {
+            frame: output,
+            scroll_offset: frame.scroll_offset,
+        };
+    }
     if let Some(work_outline_overlay) = controller.work_outline_overlay.as_ref() {
         let mut output = frame.frame;
         let mut ctx = serde_json::json!({

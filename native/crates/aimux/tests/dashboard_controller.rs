@@ -682,6 +682,81 @@ fn shifted_p_opens_work_outline_overlay_for_selected_session() {
 }
 
 #[test]
+fn shifted_o_opens_overseer_overlay_and_overlay_keys_follow_node_actions() {
+    let mut snapshot = snapshot();
+    snapshot
+        .sessions
+        .push(overseer_session(&snapshot.sessions[0]));
+    let mut controller = DashboardController::new(&snapshot);
+    controller.navigation.level = DashboardNavLevel::Sessions;
+    controller.navigation.worktree_index = 0;
+    controller.navigation.item_index = 1;
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('O')),
+        DashboardControllerEffect::Render
+    );
+    assert!(controller.overseer_overlay_open);
+
+    let DashboardControllerEffect::Request(focus_request) =
+        controller.handle_key(&snapshot, DashboardKey::Enter)
+    else {
+        panic!("expected overseer focus request");
+    };
+    assert_eq!(focus_request.path, routes::controls::FOCUS_WINDOW);
+    assert_eq!(
+        focus_request.body,
+        json!({ "windowId": "@overseer", "focus": true })
+    );
+    assert!(!controller.overseer_overlay_open);
+
+    controller.overseer_overlay_open = true;
+    let DashboardControllerEffect::Request(stop_request) =
+        controller.handle_key(&snapshot, DashboardKey::Printable('x'))
+    else {
+        panic!("expected overseer stop request");
+    };
+    assert_eq!(stop_request.path, routes::agents::STOP);
+    assert_eq!(stop_request.body, json!({ "sessionId": "claude-overseer" }));
+
+    let DashboardControllerEffect::Request(unwatch_request) =
+        controller.handle_key(&snapshot, DashboardKey::Printable('u'))
+    else {
+        panic!("expected overseer unwatch request");
+    };
+    assert_eq!(unwatch_request.path, routes::agents::LOOP);
+    assert_eq!(
+        unwatch_request.body,
+        json!({
+            "sessionId": "claude-0",
+            "active": false,
+            "action": "remove",
+            "source": "dashboard",
+            "updatedBy": "dashboard",
+        })
+    );
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('q')),
+        DashboardControllerEffect::Render
+    );
+    assert!(!controller.overseer_overlay_open);
+}
+
+#[test]
+fn overseer_overlay_enter_opens_overseer_picker_when_no_live_overseer_exists() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.overseer_overlay_open = true;
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Enter),
+        DashboardControllerEffect::OpenAgentToolPicker(DashboardToolPickerMode::CreateOverseer)
+    );
+    assert!(!controller.overseer_overlay_open);
+}
+
+#[test]
 fn work_outline_overlay_keys_scroll_reload_focus_stop_unset_and_close() {
     let mut snapshot = snapshot();
     snapshot
@@ -1657,6 +1732,26 @@ fn scribe_session(
         extra: Default::default(),
     });
     scribe
+}
+
+fn overseer_session(
+    base: &aimux::dashboard_model::DashboardSession,
+) -> aimux::dashboard_model::DashboardSession {
+    let mut overseer = base.clone();
+    overseer.id = "claude-overseer".into();
+    overseer.status = aimux::dashboard_model::SessionStatus::Running;
+    overseer.tmux_window_id = Some("@overseer".into());
+    overseer.overseer = Some(true);
+    overseer.project_control = Some(true);
+    overseer.team = Some(SessionTeamMetadata {
+        team_id: "overseer".into(),
+        parent_session_id: String::new(),
+        role: Some("overseer".into()),
+        label: None,
+        order: None,
+        extra: Default::default(),
+    });
+    overseer
 }
 
 fn work_outline_entry(id: &str) -> WorkOutlineEntry {

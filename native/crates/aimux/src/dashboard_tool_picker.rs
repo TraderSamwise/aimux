@@ -27,6 +27,7 @@ pub struct DashboardToolPickerState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DashboardToolPickerMode {
     Create,
+    CreateOverseer,
     CreateScribe,
     Fork { source_session_id: String },
     SwitchTool { session_id: String },
@@ -115,19 +116,20 @@ impl DashboardToolPickerState {
         launch_override: Option<Value>,
     ) -> DashboardToolPickerEffect {
         match &self.mode {
-            DashboardToolPickerMode::Create | DashboardToolPickerMode::CreateScribe => {
-                DashboardToolPickerEffect::Create(plan_dashboard_create(
-                    &DashboardCreateIntent::Agent(DashboardAgentCreateIntent {
-                        tool: Some(tool.key.clone()),
-                        session_id: None,
-                        worktree_path: worktree_path.map(str::to_owned),
-                        launch_override,
-                        overseer: None,
-                        scribe: matches!(self.mode, DashboardToolPickerMode::CreateScribe)
-                            .then_some(true),
-                    }),
-                ))
-            }
+            DashboardToolPickerMode::Create
+            | DashboardToolPickerMode::CreateOverseer
+            | DashboardToolPickerMode::CreateScribe => DashboardToolPickerEffect::Create(
+                plan_dashboard_create(&DashboardCreateIntent::Agent(DashboardAgentCreateIntent {
+                    tool: Some(tool.key.clone()),
+                    session_id: None,
+                    worktree_path: worktree_path.map(str::to_owned),
+                    launch_override,
+                    overseer: matches!(self.mode, DashboardToolPickerMode::CreateOverseer)
+                        .then_some(true),
+                    scribe: matches!(self.mode, DashboardToolPickerMode::CreateScribe)
+                        .then_some(true),
+                })),
+            ),
             DashboardToolPickerMode::Fork { source_session_id } => {
                 DashboardToolPickerEffect::Create(DashboardCreatePlan::Request(
                     dashboard_agent_tool_request(
@@ -180,6 +182,7 @@ pub fn render_tool_picker_overlay(
 ) -> String {
     let title = match &state.mode {
         DashboardToolPickerMode::Create => "Select tool".to_owned(),
+        DashboardToolPickerMode::CreateOverseer => "Select overseer".to_owned(),
         DashboardToolPickerMode::CreateScribe => "Select scribe".to_owned(),
         DashboardToolPickerMode::Fork { source_session_id } => {
             format!("Fork from {source_session_id}")

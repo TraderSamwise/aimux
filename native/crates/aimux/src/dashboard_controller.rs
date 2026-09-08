@@ -38,6 +38,7 @@ pub struct DashboardController {
     pub worktree_remove_confirm: Option<DashboardWorktreeRemoveConfirm>,
     pub worktree_list_open: bool,
     pub worktree_cache_cleanup_confirm: Option<Value>,
+    pub overseer_overlay_open: bool,
     pub work_outline_overlay: Option<DashboardWorkOutlineOverlayState>,
     pub preview_source: String,
     pub teammate_picker: Option<DashboardTeammatePickerState>,
@@ -196,6 +197,7 @@ impl DashboardController {
             worktree_remove_confirm: None,
             worktree_list_open: false,
             worktree_cache_cleanup_confirm: None,
+            overseer_overlay_open: false,
             work_outline_overlay: None,
             preview_source: "output".into(),
             teammate_picker: None,
@@ -234,6 +236,9 @@ impl DashboardController {
         }
         if self.worktree_cache_cleanup_confirm.is_some() {
             return self.handle_worktree_cache_cleanup_confirm_key(key);
+        }
+        if self.overseer_overlay_open {
+            return self.handle_overseer_overlay_key(snapshot, key);
         }
         if self.work_outline_overlay.is_some() {
             return self.handle_work_outline_overlay_key(snapshot, key);
@@ -316,6 +321,10 @@ impl DashboardController {
             DashboardKey::Printable('V') => self.toggle_scribe_preview(snapshot),
             DashboardKey::Printable('o') => {
                 self.open_relevant_thread_for_selected_session(snapshot)
+            }
+            DashboardKey::Printable('O') => {
+                self.overseer_overlay_open = true;
+                DashboardControllerEffect::Render
             }
             DashboardKey::Printable('R') => self.reply_to_selected_waiting_thread(snapshot),
             DashboardKey::Printable('e') => self.open_teammate_picker(snapshot),
@@ -495,6 +504,7 @@ impl DashboardController {
         self.worktree_remove_confirm = None;
         self.worktree_list_open = false;
         self.worktree_cache_cleanup_confirm = None;
+        self.overseer_overlay_open = false;
         self.work_outline_overlay = None;
         self.teammate_picker = None;
         self.orchestration_route_picker = None;
@@ -1099,6 +1109,88 @@ impl DashboardController {
                 .selected_session_for_tool_action(snapshot)
                 .map(|session| session.id.clone()),
         }
+    }
+
+    fn handle_overseer_overlay_key(
+        &mut self,
+        snapshot: &DesktopStateSnapshot,
+        key: DashboardKey,
+    ) -> DashboardControllerEffect {
+        match key {
+            DashboardKey::Back | DashboardKey::Printable('q') => {
+                self.overseer_overlay_open = false;
+                DashboardControllerEffect::Render
+            }
+            DashboardKey::Enter => self.activate_or_create_overseer_from_overlay(snapshot),
+            DashboardKey::Printable('x') => self.stop_live_overseer_from_overlay(snapshot),
+            DashboardKey::Printable('u') => self.unwatch_selected_from_overseer_overlay(snapshot),
+            _ => DashboardControllerEffect::Ignored,
+        }
+    }
+
+    fn activate_or_create_overseer_from_overlay(
+        &mut self,
+        snapshot: &DesktopStateSnapshot,
+    ) -> DashboardControllerEffect {
+        self.overseer_overlay_open = false;
+        if let Some(overseer) = live_overseer_session(snapshot) {
+            return match plan_dashboard_action(
+                Some(DashboardEntryRef::Session(overseer)),
+                DashboardActionKind::Enter,
+            ) {
+                DashboardActionPlan::Request(request) => {
+                    DashboardControllerEffect::Request(request)
+                }
+                DashboardActionPlan::Blocked(message) => {
+                    self.footer_message = Some(message);
+                    DashboardControllerEffect::Render
+                }
+                DashboardActionPlan::Ignored => DashboardControllerEffect::Render,
+            };
+        }
+        DashboardControllerEffect::OpenAgentToolPicker(DashboardToolPickerMode::CreateOverseer)
+    }
+
+    fn stop_live_overseer_from_overlay(
+        &mut self,
+        snapshot: &DesktopStateSnapshot,
+    ) -> DashboardControllerEffect {
+        let Some(overseer) = live_overseer_session(snapshot) else {
+            self.footer_message = Some("No running overseer".into());
+            return DashboardControllerEffect::Render;
+        };
+        match plan_dashboard_action(
+            Some(DashboardEntryRef::Session(overseer)),
+            DashboardActionKind::Stop,
+        ) {
+            DashboardActionPlan::Request(request) => DashboardControllerEffect::Request(request),
+            DashboardActionPlan::Blocked(message) => {
+                self.footer_message = Some(message);
+                DashboardControllerEffect::Render
+            }
+            DashboardActionPlan::Ignored => DashboardControllerEffect::Ignored,
+        }
+    }
+
+    fn unwatch_selected_from_overseer_overlay(
+        &mut self,
+        snapshot: &DesktopStateSnapshot,
+    ) -> DashboardControllerEffect {
+        let Some(selected) = self.selected_session_for_tool_action(snapshot) else {
+            self.footer_message = Some("Select an agent first".into());
+            return DashboardControllerEffect::Render;
+        };
+        DashboardControllerEffect::Request(DashboardActionRequest {
+            method: "POST",
+            path: routes::agents::LOOP,
+            body: json!({
+                "sessionId": selected.id,
+                "active": false,
+                "action": "remove",
+                "source": "dashboard",
+                "updatedBy": "dashboard",
+            }),
+        })
     }
 
     pub fn set_work_outline_overlay(
@@ -2056,6 +2148,18 @@ fn is_project_control_session(session: &DashboardSession) -> bool {
         || session.overseer == Some(true)
         || session.team.as_ref().and_then(|team| team.role.as_deref()) == Some("overseer")
         || is_scribe_session(session)
+}
+
+fn live_overseer_session(snapshot: &DesktopStateSnapshot) -> Option<&DashboardSession> {
+    snapshot
+        .sessions
+        .iter()
+        .find(|session| is_live_session(session) && is_overseer_session(session))
+}
+
+fn is_overseer_session(session: &DashboardSession) -> bool {
+    session.overseer == Some(true)
+        || session.team.as_ref().and_then(|team| team.role.as_deref()) == Some("overseer")
 }
 
 fn attention_score(session: &DashboardSession) -> usize {
