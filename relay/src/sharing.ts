@@ -143,7 +143,7 @@ export function summarizeShare(share: SharedSessionRecord): SharedSessionSummary
     version: share.version,
     mode: getShareChatMode(share),
     participants: Object.values(share.participants),
-    invites: Object.values(share.invites).map(({ tokenHash, ...invite }) => invite),
+    invites: Object.values(share.invites).map(({ tokenHash: _tokenHash, ...invite }) => invite),
   };
 }
 
