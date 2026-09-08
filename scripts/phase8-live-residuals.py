@@ -631,6 +631,56 @@ def run_lazy_read_start_smoke(aimux_bin: Path, mutation: str | None) -> dict[str
         }
 
 
+def run_restart_current_project_smoke(aimux_bin: Path, mutation: str | None) -> dict[str, Any]:
+    tmux = find_tmux()
+    with Scope("restart-current", aimux_bin) as scope:
+        socket_name = f"aimux-phase8-restart-{os.getpid()}-{int(time.time() * 1000)}"
+        scope.tmux_socket_name = socket_name
+        install_tmux_socket_wrapper(scope, tmux, socket_name)
+        run([tmux, "-L", socket_name, "start-server"], env=without_tmux(os.environ.copy()), timeout=10)
+        scope.init_git_project()
+        seed_initial_commit(scope)
+        run([str(aimux_bin), "init"], cwd=scope.project, env=scope.env, timeout=30)
+        run([str(aimux_bin), "daemon", "status", "--json"], cwd=scope.project, env=scope.env, timeout=30)
+
+        result = run(
+            [str(aimux_bin), "restart", "--json"],
+            cwd=scope.project,
+            env=scope.env,
+            timeout=45,
+        )
+        payload = parse_json_stdout(result.stdout, "restart current project")
+        summary_projects = payload.get("summary", {}).get("projects")
+        if mutation == "restart-current-zero-projects":
+            summary_projects = 0
+        projects = payload.get("projects")
+        project_roots = [
+            item.get("projectRoot")
+            for item in projects
+            if isinstance(item, dict)
+        ] if isinstance(projects, list) else []
+        if summary_projects != 1 or str(scope.project.resolve()) not in project_roots:
+            raise LiveResidualFailure(
+                "restart did not include current project:\n"
+                + json.dumps({
+                    "summaryProjects": summary_projects,
+                    "projectRoots": project_roots,
+                    "payload": payload,
+                }, indent=2)
+            )
+        return {
+            "name": "phase8-restart-current-project-smoke",
+            "caught": [
+                "bare aimux restart ignoring an unregistered current checkout",
+                "restart summary reporting zero projects while current project exists",
+            ],
+            "notCaught": [
+                "fleet-wide daemon restart across many catalog projects",
+                "manual install restart behavior outside the temp root",
+            ],
+        }
+
+
 def seed_initial_commit(scope: Scope) -> None:
     readme = scope.project / "README.md"
     readme.write_text("phase8 command resolution smoke\n")
@@ -1061,6 +1111,8 @@ def run_one(name: str, aimux_bin: Path, mutation: str | None) -> dict[str, Any]:
         return run_agent_shell_spawn_smoke(aimux_bin, mutation)
     if name == "lazy-read":
         return run_lazy_read_start_smoke(aimux_bin, mutation)
+    if name == "restart-current":
+        return run_restart_current_project_smoke(aimux_bin, mutation)
     if name == "sse":
         return run_sse_stress(aimux_bin, mutation)
     if name == "process":
@@ -1076,6 +1128,7 @@ def prove_failures(args: argparse.Namespace, aimux_bin: Path) -> list[dict[str, 
         "command-resolution": "command-unsupported",
         "agent-shell": "agent-shell-missing-window",
         "lazy-read": "lazy-read-service-unavailable",
+        "restart-current": "restart-current-zero-projects",
         "sse": "sse-reorder",
         "process": "process-delete-endpoint",
     }
@@ -1126,6 +1179,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             "command-resolution",
             "agent-shell",
             "lazy-read",
+            "restart-current",
             "sse",
             "process",
         ],
@@ -1140,6 +1194,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "command-unsupported",
         "agent-shell-missing-window",
         "lazy-read-service-unavailable",
+        "restart-current-zero-projects",
         "sse-reorder",
         "process-delete-endpoint",
     ])
@@ -1157,6 +1212,7 @@ def main(argv: list[str]) -> int:
             "command-resolution",
             "agent-shell",
             "lazy-read",
+            "restart-current",
             "sse",
             "process",
         ] if args.only == "all" else [args.only]

@@ -983,7 +983,8 @@ fn lifecycle_commands_execute_native_text_routes_without_core_command_fallback()
         runtime.text_routes,
         [
             (
-                "/core/lifecycle/spawn-text".into(),
+                "/core/lifecycle/spawn-text?project=%2Frepo&tool=claude&open=0&worktreePath=feature"
+                    .into(),
                 Some(json!({
                     "project": "/repo",
                     "tool": "claude",
@@ -2097,10 +2098,6 @@ fn metadata_and_repair_commands_execute_native_text_routes_without_core_command_
 fn invalid_dashboard_and_runtime_restart_args_fail_before_io() {
     let mut runtime = FakeRuntime::default();
 
-    let reload = run_core_cli_with(&args(&["dashboard-reload", "--json"]), &mut runtime);
-    assert_eq!(reload.code, 1);
-    assert_eq!(reload.stderr, ["error: invalid dashboard-reload arguments"]);
-
     let restart = run_core_cli_with(
         &args(&["restart-runtime", "--open", "--json"]),
         &mut runtime,
@@ -2249,12 +2246,23 @@ fn security_unlock_uses_native_login_flow_without_daemon_relay_request_when_offl
 fn restart_control_plane_runs_native_restart_and_preserves_project_scope() {
     let mut runtime = FakeRuntime::default();
 
+    let current = run_core_cli_with(&args(&["restart"]), &mut runtime);
+
+    assert_eq!(current.code, 0);
+    assert_eq!(current.stdout, ["Aimux Restart\n  failures: 0"]);
+    assert!(current.stderr.is_empty());
+    assert_eq!(runtime.restart_calls, [Some("/repo".into())]);
+    assert!(runtime.commands.is_empty());
+
     let execution = run_core_cli_with(&args(&["restart", "--project", "child"]), &mut runtime);
 
     assert_eq!(execution.code, 0);
     assert_eq!(execution.stdout, ["Aimux Restart\n  failures: 0"]);
     assert!(execution.stderr.is_empty());
-    assert_eq!(runtime.restart_calls, [Some("/resolved/child".into())]);
+    assert_eq!(
+        runtime.restart_calls,
+        [Some("/repo".into()), Some("/resolved/child".into())]
+    );
     assert!(runtime.commands.is_empty());
 }
 

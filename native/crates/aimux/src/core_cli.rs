@@ -383,7 +383,13 @@ where
         ),
         ("restart", _) => {
             let parsed = parse_core_restart_args(&args).expect("eligible restart must parse");
-            let project_root = parsed.project.as_deref().map(&resolve_project_root);
+            let project_root = Some(
+                parsed
+                    .project
+                    .as_deref()
+                    .map(&resolve_project_root)
+                    .unwrap_or_else(|| context.current_project_root.clone()),
+            );
             (
                 CoreCliOperation::Restart,
                 CoreCliAction::RestartControlPlane { project_root },
