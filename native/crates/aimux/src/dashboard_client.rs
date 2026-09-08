@@ -42,6 +42,9 @@ pub fn find_project_service_endpoint(
     projects: &Value,
     project_root: &Path,
 ) -> Result<ProjectServiceEndpoint> {
+    if !is_git_project_root(project_root) {
+        return Err(anyhow!(project_checkout_required_message(project_root)));
+    }
     let root_text = project_root.to_string_lossy();
     let project = projects
         .get("projects")
