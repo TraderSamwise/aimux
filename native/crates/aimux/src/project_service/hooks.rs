@@ -1,7 +1,12 @@
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 
+use crate::backend_session_ids::record_topology_backend_session_id;
 use crate::project_api_contract::routes;
+use crate::runtime_topology::{
+    list_topology_session_states, read_runtime_topology, runtime_topology_path,
+    update_runtime_topology,
+};
 
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::metadata::{route_runtime_metadata_request, update_session_metadata};
@@ -46,7 +51,10 @@ fn route_claude_hook(
     explicit_session_id: &str,
     payload: &Value,
 ) -> ProjectServiceDispatchResponse {
-    let session_id = explicit_session_id.to_owned();
+    let backend_session_id = trimmed_payload_string(payload, "session_id");
+    let session_id =
+        resolve_hook_session_id(context, explicit_session_id, backend_session_id.as_deref());
+    record_hook_backend_session_id(context, &session_id, backend_session_id.as_deref());
     if let Err(error) = record_hook_metadata(context, &session_id, payload, true) {
         return json_response(500, json!({ "ok": false, "error": error }));
     }
@@ -92,6 +100,8 @@ fn route_codex_hook(
     session_id: &str,
     payload: &Value,
 ) -> ProjectServiceDispatchResponse {
+    let backend_session_id = trimmed_payload_string(payload, "session_id");
+    record_hook_backend_session_id(context, session_id, backend_session_id.as_deref());
     if let Err(error) = record_hook_metadata(context, session_id, payload, false) {
         return json_response(500, json!({ "ok": false, "error": error }));
     }
@@ -125,6 +135,51 @@ fn route_codex_hook(
         }
     }
     json_response(200, json!({}))
+}
+
+fn resolve_hook_session_id(
+    context: &ProjectServiceRequestContext,
+    explicit_session_id: &str,
+    backend_session_id: Option<&str>,
+) -> String {
+    let Some(backend_session_id) = backend_session_id
+        .map(str::trim)
+        .filter(|backend_session_id| !backend_session_id.is_empty())
+    else {
+        return explicit_session_id.to_owned();
+    };
+    let topology = match read_runtime_topology(runtime_topology_path(context.project_state_dir())) {
+        Ok(topology) => topology,
+        Err(_) => return explicit_session_id.to_owned(),
+    };
+    list_topology_session_states(&topology, None)
+        .into_iter()
+        .find(|session| {
+            session.get("backendSessionId").and_then(Value::as_str) == Some(backend_session_id)
+        })
+        .and_then(|session| session.get("id").and_then(Value::as_str).map(str::to_owned))
+        .unwrap_or_else(|| explicit_session_id.to_owned())
+}
+
+fn record_hook_backend_session_id(
+    context: &ProjectServiceRequestContext,
+    session_id: &str,
+    backend_session_id: Option<&str>,
+) {
+    let Some(backend_session_id) = backend_session_id
+        .map(str::trim)
+        .filter(|backend_session_id| !backend_session_id.is_empty())
+    else {
+        return;
+    };
+    let _ = update_runtime_topology(
+        runtime_topology_path(context.project_state_dir()),
+        |mut topology| {
+            let _ =
+                record_topology_backend_session_id(&mut topology, session_id, backend_session_id);
+            topology
+        },
+    );
 }
 
 fn mark_hook_session_running(

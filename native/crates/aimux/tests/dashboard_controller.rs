@@ -6,10 +6,12 @@ use aimux::dashboard_controller::{
 use aimux::dashboard_model::{
     DesktopStateGoldenFixture, DesktopStateSnapshot, SessionSemanticState, SessionTeamMetadata,
 };
-use aimux::dashboard_renderer::DashboardNavLevel;
+use aimux::dashboard_navigation::DashboardEntryRef;
+use aimux::dashboard_renderer::{DashboardNavLevel, DashboardRenderInput, render_dashboard_frame};
 use aimux::dashboard_service_input::DashboardThreadReplyState;
 use aimux::dashboard_tool_picker::{DashboardToolEntry, DashboardToolPickerMode};
 use aimux::project_api_contract::routes;
+use aimux::tui_render::text::strip_ansi;
 use serde_json::json;
 
 const GOLDEN: &str = include_str!("../../../../src/multiplexer/desktop-state-golden.fixture.json");
@@ -456,6 +458,48 @@ fn printable_navigation_keys_still_drive_dashboard_commands() {
         DashboardControllerEffect::Render
     );
     assert_eq!(controller.navigation.level, DashboardNavLevel::Sessions);
+}
+
+#[test]
+fn enter_from_worktree_level_renders_agent_details_rail() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Enter),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(controller.navigation.level, DashboardNavLevel::Sessions);
+
+    let selected_session_id = match controller.navigation.selected_entry(&snapshot) {
+        Some(DashboardEntryRef::Session(session)) => session.id.as_str(),
+        _ => panic!("expected selected session"),
+    };
+    let result = render_dashboard_frame(&DashboardRenderInput {
+        snapshot: &snapshot,
+        cols: 140,
+        rows: 24,
+        nav_level: controller.navigation.level,
+        selected_session_id: Some(selected_session_id),
+        selected_service_id: None,
+        focused_worktree_path: controller.navigation.focused_worktree_path(&snapshot),
+        runtime_label: Some("native"),
+        version: Some("local"),
+        is_dev_runtime: false,
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_message: None,
+        details_sidebar_visible: controller.details_sidebar_visible,
+        preview_source: "output",
+        scribe_preview_entries: &[],
+    });
+    let plain = strip_ansi(&result.frame);
+
+    assert!(plain.contains("DETAILS"));
+    assert!(plain.contains("Aimux ID"));
+    assert!(plain.contains(selected_session_id));
+    assert!(!plain.contains("WORKTREE"));
 }
 
 #[test]
