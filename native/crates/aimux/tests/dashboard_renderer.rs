@@ -578,6 +578,19 @@ fn assert_same_frame(expected: &str, actual: &str) {
     panic!("dashboard frame differs");
 }
 
+fn assert_frame_fits_viewport(frame: &str, width: usize) {
+    for (index, line) in frame.split("\r\n").enumerate() {
+        assert!(
+            visible_width(line) <= width || line.starts_with("\x1b[2J\x1b[H"),
+            "line {} exceeds viewport width {}: width={} line={:?}",
+            index + 1,
+            width,
+            visible_width(line),
+            strip_ansi(line)
+        );
+    }
+}
+
 #[test]
 fn renders_golden_worktrees_sessions_services_and_unread_chips() {
     let fixture: DesktopStateGoldenFixture =
@@ -620,6 +633,40 @@ fn renders_golden_worktrees_sessions_services_and_unread_chips() {
     assert!(plain.contains("step in"));
     for line in result.frame.split("\r\n") {
         assert!(visible_width(line) <= 140 || line.starts_with("\x1b[2J\x1b[H"));
+    }
+}
+
+#[test]
+fn populated_dashboard_frame_fits_common_viewports() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let snapshot = &fixture.runtime_full;
+
+    for (cols, rows) in [(80, 24), (120, 40), (200, 50)] {
+        let result = render_dashboard_frame(&DashboardRenderInput {
+            snapshot,
+            overseer_sessions: &[],
+            scribe_sessions: &[],
+            cols,
+            rows,
+            nav_level: DashboardNavLevel::Sessions,
+            selected_session_id: Some("claude-0"),
+            selected_service_id: None,
+            focused_worktree_path: Some("<WORKTREE>"),
+            runtime_label: Some("tmux"),
+            version: Some("local"),
+            is_dev_runtime: false,
+            hide_offline_agents: true,
+            hidden_offline_agent_count: 7,
+            scroll_offset: 0,
+            footer_message: None,
+            details_sidebar_visible: true,
+            preview_source: "output",
+            scribe_preview_entries: &[],
+        });
+
+        assert!(!strip_ansi(&result.frame).trim().is_empty());
+        assert_frame_fits_viewport(&result.frame, cols);
     }
 }
 
