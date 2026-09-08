@@ -806,7 +806,8 @@ fn shifted_p_opens_work_outline_overlay_for_selected_session() {
     assert_eq!(
         controller.handle_key(&snapshot, DashboardKey::Printable('P')),
         DashboardControllerEffect::LoadWorkOutlineOverlay {
-            session_id: Some("claude-0".into())
+            session_id: Some("claude-0".into()),
+            offset: None
         }
     );
 }
@@ -923,8 +924,33 @@ fn work_outline_overlay_keys_scroll_reload_focus_stop_unset_and_close() {
     assert_eq!(
         controller.handle_key(&snapshot, DashboardKey::Printable('r')),
         DashboardControllerEffect::LoadWorkOutlineOverlay {
-            session_id: Some("claude-0".into())
+            session_id: Some("claude-0".into()),
+            offset: Some(0)
         }
+    );
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('j')),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('r')),
+        DashboardControllerEffect::LoadWorkOutlineOverlay {
+            session_id: Some("claude-0".into()),
+            offset: Some(1)
+        }
+    );
+    controller.set_work_outline_overlay_with_offset(
+        Some("claude-0".into()),
+        vec![work_outline_entry("only")],
+        1,
+    );
+    assert_eq!(
+        controller
+            .work_outline_overlay
+            .as_ref()
+            .map(|state| state.offset),
+        Some(0)
     );
 
     let DashboardControllerEffect::Request(focus_request) =

@@ -73,6 +73,7 @@ pub enum DashboardControllerEffect {
     },
     LoadWorkOutlineOverlay {
         session_id: Option<String>,
+        offset: Option<usize>,
     },
     OpenAgentToolPicker(DashboardToolPickerMode),
     Quit,
@@ -1290,6 +1291,7 @@ impl DashboardController {
             session_id: self
                 .selected_session_for_tool_action(snapshot)
                 .map(|session| session.id.clone()),
+            offset: None,
         }
     }
 
@@ -1380,10 +1382,20 @@ impl DashboardController {
         session_id: Option<String>,
         entries: Vec<WorkOutlineEntry>,
     ) {
+        self.set_work_outline_overlay_with_offset(session_id, entries, 0);
+    }
+
+    pub fn set_work_outline_overlay_with_offset(
+        &mut self,
+        session_id: Option<String>,
+        entries: Vec<WorkOutlineEntry>,
+        offset: usize,
+    ) {
+        let offset = offset.min(entries.len().saturating_sub(1));
         self.work_outline_overlay = Some(DashboardWorkOutlineOverlayState {
             session_id,
             entries,
-            offset: 0,
+            offset,
         });
     }
 
@@ -1498,6 +1510,7 @@ impl DashboardController {
                     .work_outline_overlay
                     .as_ref()
                     .and_then(|state| state.session_id.clone()),
+                offset: self.work_outline_overlay.as_ref().map(|state| state.offset),
             },
             DashboardKey::Down | DashboardKey::Printable('j') => {
                 if let Some(state) = self.work_outline_overlay.as_mut() {

@@ -291,10 +291,14 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                         }
                         render_now = true;
                     }
-                    DashboardControllerEffect::LoadWorkOutlineOverlay { session_id } => {
+                    DashboardControllerEffect::LoadWorkOutlineOverlay { session_id, offset } => {
                         let entries =
                             load_work_outline_overlay_entries(&options, session_id.as_deref());
-                        controller.set_work_outline_overlay(session_id, entries);
+                        controller.set_work_outline_overlay_with_offset(
+                            session_id,
+                            entries,
+                            offset.unwrap_or(0),
+                        );
                         render_now = true;
                     }
                     DashboardControllerEffect::OpenAgentToolPicker(mode) => {
