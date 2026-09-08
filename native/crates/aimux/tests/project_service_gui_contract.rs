@@ -9,7 +9,7 @@ use aimux::tmux::CapturePaneOptions;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::fs::{create_dir_all, remove_dir_all, write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -35,7 +35,7 @@ impl AgentOutputCaptureRuntime for FakeCaptureRuntime {
 fn advertised_gui_capabilities_have_backing_http_contracts() {
     let project = temp_project("capabilities");
     let state_dir = project.join("state");
-    seed_running_agent(&state_dir);
+    seed_gui_project(&project, &state_dir);
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
 
     let health = route_project_service_request(&context, "GET", routes::HEALTH, None);
@@ -143,26 +143,114 @@ fn advertised_gui_capabilities_have_backing_http_contracts() {
     cleanup(project);
 }
 
-fn seed_running_agent(state_dir: &PathBuf) {
+#[test]
+fn desktop_state_route_matches_app_contract_shape() {
+    let project = temp_project("desktop-state");
+    let state_dir = project.join("state");
+    seed_gui_project(&project, &state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let response = route_project_service_request(&context, "GET", routes::DESKTOP_STATE, None);
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["ok"], true);
+    assert_eq!(response.body["serviceInfo"]["apiVersion"], 5);
+    assert_eq!(response.body["pendingInteractions"], json!([]));
+    assert_eq!(
+        response.body["mainCheckoutPath"],
+        project.to_string_lossy().as_ref()
+    );
+    assert_eq!(response.body["mainCheckoutInfo"]["name"], "Main Checkout");
+    assert!(response.body["mainCheckoutInfo"]["branch"].as_str().is_some());
+
+    let sessions = response.body["sessions"].as_array().expect("sessions");
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0]["id"], "codex-1");
+    assert_eq!(sessions[0]["command"], "codex");
+    assert_eq!(sessions[0]["status"], "running");
+    assert_eq!(sessions[0]["active"], true);
+    assert_eq!(sessions[0]["worktreePath"], "/repo/feature");
+    assert_eq!(sessions[0]["worktreeName"], "feature");
+    assert_eq!(sessions[0]["worktreeBranch"], "feature/gui");
+    assert_eq!(sessions[0]["tmuxWindowId"], "@1");
+    assert_eq!(sessions[0]["tmuxWindowIndex"], 1);
+    assert_eq!(sessions[0]["activity"], "running");
+    assert_eq!(sessions[0]["attention"], "needs_input");
+    assert_eq!(sessions[0]["loop"]["active"], true);
+    assert_eq!(sessions[0]["overseer"], false);
+    assert_eq!(sessions[0]["scribe"], false);
+    assert_eq!(sessions[0]["semantic"]["runtime"]["lifecycle"], "running");
+    assert_eq!(sessions[0]["semantic"]["user"]["attention"], "needs_input");
+
+    let services = response.body["services"].as_array().expect("services");
+    assert_eq!(services.len(), 1);
+    assert_eq!(services[0]["id"], "svc-web");
+    assert_eq!(services[0]["command"], "shell");
+    assert_eq!(services[0]["args"], json!(["yarn", "dev"]));
+    assert_eq!(services[0]["status"], "running");
+    assert_eq!(services[0]["active"], true);
+    assert_eq!(services[0]["worktreeName"], "feature");
+    assert_eq!(services[0]["shellCommand"], "yarn dev");
+    assert_eq!(services[0]["shellCommandState"], "running");
+
+    let worktrees = response.body["worktrees"].as_array().expect("worktrees");
+    assert!(
+        worktrees
+            .iter()
+            .any(|worktree| worktree["path"] == project.to_string_lossy().as_ref())
+    );
+    assert!(
+        worktrees
+            .iter()
+            .any(|worktree| worktree["path"] == "/repo/feature"
+                && worktree["name"] == "feature"
+                && worktree["branch"] == "feature/gui"
+                && worktree["isBare"] == false)
+    );
+
+    let groups = response.body["worktreeGroups"]
+        .as_array()
+        .expect("worktreeGroups");
+    let feature_group = groups
+        .iter()
+        .find(|group| group["path"] == "/repo/feature")
+        .expect("feature group");
+    assert_eq!(feature_group["name"], "feature");
+    assert_eq!(feature_group["branch"], "feature/gui");
+    assert_eq!(feature_group["status"], "active");
+    assert_eq!(feature_group["sessions"][0]["id"], "codex-1");
+    assert_eq!(feature_group["services"][0]["id"], "svc-web");
+
+    cleanup(project);
+}
+
+fn seed_gui_project(project: &Path, state_dir: &Path) {
     create_dir_all(state_dir).unwrap();
+    let project_root = project.to_string_lossy();
     let topology = coerce_runtime_topology(&json!({
         "version": 1,
         "generatedAt": "2026-09-05T00:00:00.000Z",
         "rigs": [
-            { "id": "rig-1", "name": "aimux", "projectRoot": "/repo", "createdAt": "2026-09-05T00:00:00.000Z", "updatedAt": "2026-09-05T00:00:00.000Z" }
+            { "id": "rig-1", "name": "aimux", "projectRoot": project_root.as_ref(), "createdAt": "2026-09-05T00:00:00.000Z", "updatedAt": "2026-09-05T00:00:00.000Z" }
         ],
         "nodes": [
-            { "id": "node-live", "rigId": "rig-1", "logicalId": "codex-1", "toolConfigKey": "codex", "createdAt": "2026-09-05T00:00:00.000Z" }
+            { "id": "node-live", "rigId": "rig-1", "logicalId": "codex-1", "toolConfigKey": "codex", "cwd": "/repo/feature", "createdAt": "2026-09-05T00:00:00.000Z" },
+            { "id": "node-service", "rigId": "rig-1", "logicalId": "svc-web", "toolConfigKey": "shell", "cwd": "/repo/feature", "createdAt": "2026-09-05T00:00:01.000Z" }
         ],
         "edges": [],
         "bindings": [
-            { "id": "binding-live", "nodeId": "node-live", "tmuxSession": "aimux-repo", "tmuxWindowId": "@1", "tmuxWindowIndex": 1, "tmuxWindowName": "codex", "updatedAt": "2026-09-05T00:00:00.000Z" }
+            { "id": "binding-live", "nodeId": "node-live", "tmuxSession": "aimux-repo", "tmuxWindowId": "@1", "tmuxWindowIndex": 1, "tmuxWindowName": "codex", "updatedAt": "2026-09-05T00:00:00.000Z" },
+            { "id": "binding-service", "nodeId": "node-service", "tmuxSession": "aimux-repo", "tmuxWindowId": "@2", "tmuxWindowIndex": 2, "tmuxWindowName": "web", "updatedAt": "2026-09-05T00:00:01.000Z" }
         ],
         "sessions": [
-            { "id": "codex-1", "nodeId": "node-live", "status": "running", "command": "codex", "createdAt": "2026-09-05T00:00:00.000Z", "updatedAt": "2026-09-05T00:00:00.000Z" }
+            { "id": "codex-1", "nodeId": "node-live", "status": "running", "command": "codex", "worktreePath": "/repo/feature", "createdAt": "2026-09-05T00:00:00.000Z", "updatedAt": "2026-09-05T00:00:00.000Z" }
         ],
-        "services": [],
-        "worktrees": [],
+        "services": [
+            { "id": "svc-web", "rigId": "rig-1", "nodeId": "node-service", "status": "running", "command": "shell", "args": ["yarn", "dev"], "launchCommandLine": "yarn dev", "worktreePath": "/repo/feature", "label": "web", "createdAt": "2026-09-05T00:00:01.000Z", "updatedAt": "2026-09-05T00:00:01.000Z" }
+        ],
+        "worktrees": [
+            { "id": "wt-feature", "rigId": "rig-1", "path": "/repo/feature", "name": "feature", "status": "active", "branch": "feature/gui", "createdAt": "2026-09-05T00:00:00.000Z", "updatedAt": "2026-09-05T00:00:00.000Z" }
+        ],
         "worktreeGraveyard": [],
         "teamRoles": [],
         "remoteClients": [],
@@ -175,16 +263,29 @@ fn seed_running_agent(state_dir: &PathBuf) {
         state_dir,
         &MetadataState {
             version: 1,
-            sessions: BTreeMap::from([(
-                "codex-1".into(),
-                json!({
-                    "derived": {
-                        "activity": "running",
-                        "attention": "needs_input"
-                    },
-                    "updatedAt": "2026-09-05T00:00:00.000Z"
-                }),
-            )]),
+            sessions: BTreeMap::from([
+                (
+                    "codex-1".into(),
+                    json!({
+                        "derived": {
+                            "activity": "running",
+                            "attention": "needs_input"
+                        },
+                        "loop": { "active": true, "goal": "keep app green" },
+                        "updatedAt": "2026-09-05T00:00:00.000Z"
+                    }),
+                ),
+                (
+                    "svc-web".into(),
+                    json!({
+                        "derived": {
+                            "shellCommand": "yarn dev",
+                            "shellCommandState": "running"
+                        },
+                        "updatedAt": "2026-09-05T00:00:01.000Z"
+                    }),
+                ),
+            ]),
         },
     )
     .unwrap();
