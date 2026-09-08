@@ -160,9 +160,7 @@ impl DashboardNavigationState {
         let Some(value) = digit.to_digit(10).map(|value| value as usize) else {
             return DashboardNavigationOutcome::Ignored;
         };
-        if snapshot.worktree_groups.is_empty()
-            || self.level == DashboardNavLevel::Sessions && self.quick_jump_digits.is_empty()
-        {
+        if snapshot.worktree_groups.is_empty() {
             return self.select_entry_digit(snapshot, value);
         }
         if self.quick_jump_digits.is_empty() {

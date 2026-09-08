@@ -157,6 +157,36 @@ fn quick_jump_second_digit_requests_selected_entry_activation() {
 }
 
 #[test]
+fn quick_jump_first_digit_targets_worktrees_even_from_session_level() {
+    let mut snapshot = snapshot();
+    snapshot.worktree_groups[1].sessions[0].tmux_window_id = Some("@wt".into());
+    let mut controller = DashboardController::new(&snapshot);
+    controller.navigation.level = DashboardNavLevel::Sessions;
+    controller.navigation.worktree_index = 0;
+    controller.navigation.item_index = 0;
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Digit('2')),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(controller.navigation.level, DashboardNavLevel::Worktrees);
+    assert_eq!(controller.navigation.worktree_index, 1);
+    assert_eq!(controller.navigation.quick_jump_digits, "2");
+
+    let DashboardControllerEffect::Request(request) =
+        controller.handle_key(&snapshot, DashboardKey::Digit('1'))
+    else {
+        panic!("expected selected worktree entry activation");
+    };
+    assert_eq!(request.method, "POST");
+    assert_eq!(request.path, routes::controls::FOCUS_WINDOW);
+    assert_eq!(request.body, json!({ "windowId": "@wt", "focus": true }));
+    assert_eq!(controller.navigation.level, DashboardNavLevel::Sessions);
+    assert_eq!(controller.navigation.worktree_index, 1);
+    assert_eq!(controller.navigation.item_index, 0);
+}
+
+#[test]
 fn shifted_down_requests_selected_entry_reorder() {
     let snapshot = snapshot();
     let mut controller = DashboardController::new(&snapshot);
