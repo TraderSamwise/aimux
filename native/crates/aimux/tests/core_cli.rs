@@ -1659,18 +1659,13 @@ fn lifecycle_commands_plan_native_text_routes() {
         }
     );
 
-    let same_tool_fork =
-        classify_core_cli(&["fork", "claude-1"], &context(true, true)).expect("same tool fork");
-    assert_eq!(same_tool_fork.operation, CoreCliOperation::LifecycleFork);
+    let same_tool_fork = classify_core_cli(&["fork", "claude-1"], &context(true, true))
+        .expect_err("CLI fork requires --tool like the Node command");
     assert_eq!(
-        same_tool_fork.action,
-        CoreCliAction::TextRoute {
-            path: "/core/lifecycle/fork-text".into(),
-            body: Some(json!({
-                "project": "/repo",
-                "sourceSessionId": "claude-1",
-                "open": true,
-            })),
+        same_tool_fork,
+        CoreCliPlanError::InvalidArguments {
+            args: vec!["fork".into(), "claude-1".into()],
+            message: "error: invalid fork arguments",
         }
     );
 
