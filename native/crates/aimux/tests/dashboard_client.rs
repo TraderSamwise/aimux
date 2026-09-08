@@ -5,15 +5,19 @@ use aimux::dashboard_client::{
 };
 use aimux::project_api_contract::routes;
 use serde_json::json;
-use std::path::Path;
+use std::fs;
+use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
 fn finds_loopback_project_service_endpoint_for_registered_project() {
+    let repo = temp_git_root("dashboard-client-registered");
+    let repo_text = repo.to_string_lossy().into_owned();
     let endpoint = find_project_service_endpoint(
         &json!({
             "projects": [
                 {
-                    "projectRoot": "/repo",
+                    "projectRoot": repo_text,
                     "serviceEndpoint": {
                         "host": "127.0.0.1",
                         "port": 44191
@@ -21,7 +25,7 @@ fn finds_loopback_project_service_endpoint_for_registered_project() {
                 }
             ]
         }),
-        Path::new("/repo"),
+        &repo,
     )
     .expect("endpoint");
 
@@ -32,22 +36,25 @@ fn finds_loopback_project_service_endpoint_for_registered_project() {
             port: 44191,
         }
     );
+    fs::remove_dir_all(repo).expect("cleanup");
 }
 
 #[test]
 fn rejects_missing_or_non_loopback_project_service_endpoint() {
-    let missing = find_project_service_endpoint(&json!({ "projects": [] }), Path::new("/repo"))
+    let repo = temp_git_root("dashboard-client-missing");
+    let repo_text = repo.to_string_lossy().into_owned();
+    let missing = find_project_service_endpoint(&json!({ "projects": [] }), &repo)
         .expect_err("missing project");
     assert_eq!(
         missing.to_string(),
-        "project is not registered with the daemon: /repo"
+        format!("project service is unavailable for {repo_text}")
     );
 
     let remote = find_project_service_endpoint(
         &json!({
             "projects": [
                 {
-                    "path": "/repo",
+                    "path": repo_text,
                     "serviceEndpoint": {
                         "host": "10.0.0.2",
                         "port": 44191
@@ -55,13 +62,30 @@ fn rejects_missing_or_non_loopback_project_service_endpoint() {
                 }
             ]
         }),
-        Path::new("/repo"),
+        &repo,
     )
     .expect_err("remote endpoint");
     assert_eq!(
         remote.to_string(),
         "project service endpoint must be loopback"
     );
+    fs::remove_dir_all(repo).expect("cleanup");
+}
+
+#[test]
+fn dashboard_endpoint_rejects_non_git_directory_with_actionable_message() {
+    let repo = temp_plain_dir("dashboard-client-non-git");
+    let error =
+        find_project_service_endpoint(&json!({ "projects": [] }), &repo).expect_err("non-git");
+
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "{} is not a git repository. Run `git init` first, or cd into a repo.",
+            repo.display()
+        )
+    );
+    fs::remove_dir_all(repo).expect("cleanup");
 }
 
 #[test]
@@ -135,4 +159,20 @@ fn endpoint() -> ProjectServiceEndpoint {
         host: "127.0.0.1".into(),
         port: 44191,
     }
+}
+
+fn temp_plain_dir(label: &str) -> PathBuf {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time")
+        .as_millis();
+    let path = std::env::temp_dir().join(format!("aimux-{label}-{millis}-{}", std::process::id()));
+    fs::create_dir_all(&path).expect("temp dir");
+    path
+}
+
+fn temp_git_root(label: &str) -> PathBuf {
+    let path = temp_plain_dir(label);
+    fs::create_dir_all(path.join(".git")).expect("git dir");
+    path
 }

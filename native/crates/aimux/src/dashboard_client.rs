@@ -4,6 +4,7 @@ use crate::core_command_transport::{
 };
 use crate::dashboard_actions::DashboardActionRequest;
 use crate::dashboard_model::DesktopStateSnapshot;
+use crate::paths::{is_git_project_root, project_checkout_required_message};
 use crate::project_api_contract::routes;
 use anyhow::{Context, Result, anyhow};
 use serde_json::{Value, json};
@@ -34,6 +35,9 @@ pub fn find_project_service_endpoint(
     project_root: &Path,
 ) -> Result<ProjectServiceEndpoint> {
     let root_text = project_root.to_string_lossy();
+    if !is_git_project_root(project_root) {
+        return Err(anyhow!(project_checkout_required_message(project_root)));
+    }
     let project = projects
         .get("projects")
         .and_then(Value::as_array)
@@ -45,7 +49,7 @@ pub fn find_project_service_endpoint(
                     == Some(root_text.as_ref())
             })
         })
-        .ok_or_else(|| anyhow!("project is not registered with the daemon: {}", root_text))?;
+        .ok_or_else(|| anyhow!("project service is unavailable for {}", root_text))?;
     let endpoint = project
         .get("serviceEndpoint")
         .ok_or_else(|| anyhow!("project service endpoint is unavailable for {}", root_text))?;

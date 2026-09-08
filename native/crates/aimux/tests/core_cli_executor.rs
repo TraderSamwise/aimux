@@ -30,6 +30,7 @@ struct FakeRuntime {
     cleared_credentials: Cell<usize>,
     remote_enabled: Cell<Option<bool>>,
     fail_commands: bool,
+    git_project_root: bool,
     restart_failures: i64,
     log_path: PathBuf,
     log_output: String,
@@ -60,6 +61,7 @@ impl Default for FakeRuntime {
             cleared_credentials: Cell::new(0),
             remote_enabled: Cell::new(None),
             fail_commands: false,
+            git_project_root: true,
             restart_failures: 0,
             log_path: PathBuf::from("/tmp/aimux.log"),
             log_output: String::new(),
@@ -230,6 +232,10 @@ impl CoreCliRuntime for FakeRuntime {
 
     fn init_project(&self, _project_root: &str) -> Result<(), String> {
         Ok(())
+    }
+
+    fn is_git_project_root(&self, _project_root: &str) -> bool {
+        self.git_project_root
     }
 
     fn runtime_topology_path(&self, _project_root: &str) -> PathBuf {
@@ -455,6 +461,26 @@ fn init_executes_locally_without_daemon_fallback() {
         ["Initialized .aimux/ with config.json and .gitignore"]
     );
     assert!(runtime.commands.is_empty());
+    assert!(runtime.text_routes.is_empty());
+}
+
+#[test]
+fn project_commands_refuse_non_git_directory_with_actionable_message() {
+    let mut runtime = FakeRuntime {
+        git_project_root: false,
+        ..FakeRuntime::default()
+    };
+    let expected =
+        "/repo is not a git repository. Run `git init` first, or cd into a repo.".to_owned();
+
+    for command in [["init"].as_slice(), ["ps"].as_slice(), ["serve"].as_slice()] {
+        let execution = run_core_cli_with(&args(command), &mut runtime);
+        assert_eq!(execution.code, 1, "{command:?}");
+        assert_eq!(execution.stderr, [expected.clone()], "{command:?}");
+    }
+
+    let projects = run_core_cli_with(&args(&["projects"]), &mut runtime);
+    assert_eq!(projects.code, 0);
     assert!(runtime.text_routes.is_empty());
 }
 

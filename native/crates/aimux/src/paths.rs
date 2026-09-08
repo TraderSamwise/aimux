@@ -319,6 +319,21 @@ pub fn is_git_project_root(repo_root: impl AsRef<Path>) -> bool {
     is_git_project_root_from(repo_root.as_ref(), &cwd)
 }
 
+pub fn require_git_project_root(repo_root: impl AsRef<Path>) -> Result<()> {
+    let repo_root = repo_root.as_ref();
+    if is_git_project_root(repo_root) {
+        return Ok(());
+    }
+    bail!("{}", project_checkout_required_message(repo_root));
+}
+
+pub fn project_checkout_required_message(path: impl AsRef<Path>) -> String {
+    format!(
+        "{} is not a git repository. Run `git init` first, or cd into a repo.",
+        path.as_ref().display()
+    )
+}
+
 pub fn is_ephemeral_temp_project_root(repo_root: impl AsRef<Path>) -> bool {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     is_ephemeral_temp_project_root_from(repo_root.as_ref(), &cwd)

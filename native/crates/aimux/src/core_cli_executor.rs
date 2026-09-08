@@ -41,7 +41,7 @@ use crate::install_cleanup::{
 use crate::logs::{
     LogSelectionOptions, clear_log_file, parse_line_count, read_last_log_lines, selected_log_path,
 };
-use crate::paths::PathResolver;
+use crate::paths::{PathResolver, is_git_project_root, project_checkout_required_message};
 use crate::remote_credentials::{clear_credentials, load_credentials, set_remote_enabled};
 use crate::remote_login::{LoginAction, run_login_flow};
 use crate::runtime_migration::{
@@ -100,6 +100,7 @@ pub trait CoreCliRuntime {
     fn read_log_lines(&self, path: &Path, lines: usize) -> String;
     fn clear_log(&self, path: &Path) -> Result<(), String>;
     fn init_project(&self, project_root: &str) -> Result<(), String>;
+    fn is_git_project_root(&self, project_root: &str) -> bool;
     fn runtime_topology_path(&self, project_root: &str) -> PathBuf;
     fn read_text_file(&self, path: &Path) -> Result<String, String>;
     fn read_runtime_topology(&self, path: &Path) -> Result<Value, String>;
@@ -248,6 +249,10 @@ impl CoreCliRuntime for RealCoreCliRuntime {
         init_project(project_root)
     }
 
+    fn is_git_project_root(&self, project_root: &str) -> bool {
+        is_git_project_root(project_root)
+    }
+
     fn runtime_topology_path(&self, project_root: &str) -> PathBuf {
         let mut resolver = PathResolver::from_env();
         runtime_topology_path(resolver.project_state_dir_for(project_root))
@@ -378,10 +383,42 @@ pub fn run_core_cli_with(
         Ok(plan) => plan,
         Err(error) => return CoreCliExecution::error(error.to_string(), error.exit_code()),
     };
+    if operation_requires_git_project(plan.operation)
+        && !runtime.is_git_project_root(&context.current_project_root)
+    {
+        return CoreCliExecution::error(
+            project_checkout_required_message(&context.current_project_root),
+            1,
+        );
+    }
     match run_plan(plan.operation, plan.output_mode, plan.action, runtime) {
         Ok(execution) => execution,
         Err(message) => CoreCliExecution::error(format!("Error: {message}"), 1),
     }
+}
+
+fn operation_requires_git_project(operation: CoreCliOperation) -> bool {
+    !matches!(
+        operation,
+        CoreCliOperation::DaemonEnsure
+            | CoreCliOperation::DaemonStop
+            | CoreCliOperation::DaemonKill
+            | CoreCliOperation::DaemonRestart
+            | CoreCliOperation::DaemonStatus
+            | CoreCliOperation::DaemonProjects
+            | CoreCliOperation::DoctorVersions
+            | CoreCliOperation::DoctorInstalls
+            | CoreCliOperation::DoctorNotifications
+            | CoreCliOperation::ProjectsList
+            | CoreCliOperation::RemoteStatus
+            | CoreCliOperation::RemoteEnable
+            | CoreCliOperation::RemoteDisable
+            | CoreCliOperation::Whoami
+            | CoreCliOperation::Logout
+            | CoreCliOperation::Login
+            | CoreCliOperation::SecurityUnlock
+            | CoreCliOperation::DebugState
+    )
 }
 
 fn run_plan(

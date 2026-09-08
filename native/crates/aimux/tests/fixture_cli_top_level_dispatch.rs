@@ -219,6 +219,10 @@ impl CoreCliRuntime for FakeRuntime {
         Ok(())
     }
 
+    fn is_git_project_root(&self, _project_root: &str) -> bool {
+        true
+    }
+
     fn runtime_topology_path(&self, _project_root: &str) -> PathBuf {
         PathBuf::from("/repo/.aimux/runtime-topology.yaml")
     }

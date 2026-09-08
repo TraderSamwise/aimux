@@ -34,7 +34,7 @@ fn init_project_creates_local_and_global_state_without_overwriting_config() {
     let temp = temp_path("init");
     let repo = temp.join("repo");
     let home = temp.join("home");
-    fs::create_dir_all(&repo).expect("repo");
+    fs::create_dir_all(repo.join(".git")).expect("repo git");
     fs::create_dir_all(&home).expect("home");
     let mut resolver = PathResolver::new(&repo, &home, None);
     init_project_with_resolver(&mut resolver, &repo).expect("init project");
@@ -65,6 +65,28 @@ fn init_project_creates_local_and_global_state_without_overwriting_config() {
         "{\"defaultTool\":\"codex\"}\n"
     );
 
+    fs::remove_dir_all(temp).expect("cleanup");
+}
+
+#[test]
+fn init_project_refuses_non_git_directories_without_creating_aimux_dir() {
+    let temp = temp_path("non-git-init");
+    let repo = temp.join("repo");
+    let home = temp.join("home");
+    fs::create_dir_all(&repo).expect("repo");
+    fs::create_dir_all(&home).expect("home");
+    let mut resolver = PathResolver::new(&repo, &home, None);
+
+    let error = init_project_with_resolver(&mut resolver, &repo).expect_err("non-git init");
+
+    assert_eq!(
+        error,
+        format!(
+            "{} is not a git repository. Run `git init` first, or cd into a repo.",
+            repo.display()
+        )
+    );
+    assert!(!repo.join(".aimux").exists());
     fs::remove_dir_all(temp).expect("cleanup");
 }
 

@@ -2,7 +2,7 @@ use serde_json::{Map, Number, Value, json};
 use std::path::Path;
 
 use crate::atomic_write::{write_json_atomic, write_text_atomic};
-use crate::paths::PathResolver;
+use crate::paths::{PathResolver, require_git_project_root};
 
 const GITIGNORE_CONTENTS: &str =
     "# Runtime-private service/project state (lives in ~/.aimux/projects/)
@@ -206,6 +206,8 @@ pub fn init_project_with_resolver(
     project_root: impl AsRef<Path>,
 ) -> Result<(), String> {
     let project_root = project_root.as_ref();
+    let resolved_root = resolver.resolve_repo_root(project_root);
+    require_git_project_root(&resolved_root).map_err(|error| error.to_string())?;
     let local_dir = resolver.aimux_dir_for(project_root);
     std::fs::create_dir_all(&local_dir).map_err(|error| error.to_string())?;
     for subdir in ["plans", "context", "history", "status"] {
