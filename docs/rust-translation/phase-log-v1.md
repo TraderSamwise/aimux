@@ -136,3 +136,30 @@ Parity evidence:
 
 Open gaps:
 - None for this lane.
+
+## 2026-09-08 Phase 8 Front Door Stabilization
+
+Status: complete for current native head
+Scope: installed-binary seams that corpora cannot cover directly: root
+dashboard input, root tool dispatch, command-group dispatch, lazy project reads,
+restart-current reporting, and saved-session resume/restore entry points.
+
+Verification:
+- `cargo test --manifest-path native/Cargo.toml -p aimux --test dashboard_renderer --test dashboard_controller --test root_session_launch --test fixture_cli_top_level_dispatch`
+- `cargo test --manifest-path native/Cargo.toml -p aimux --test project_service_lifecycle --test root_session_launch --test fixture_cli_top_level_dispatch`
+- `cargo test --manifest-path native/Cargo.toml -p aimux --lib`
+- `cargo clippy --manifest-path native/Cargo.toml -p aimux --lib --bin aimux -- -D warnings`
+- `scripts/phase8-live-residuals.py --aimux-bin native/target/debug/aimux --skip-build`
+- `scripts/phase8-live-residuals.py --prove-fails --aimux-bin native/target/debug/aimux --skip-build`
+
+Parity evidence:
+- `docs/rust-translation/front-door-coverage-v1.md`
+- `scripts/phase8-live-residuals.py`
+- Commits `2f869c2f`, `bdafc972`, `793c0ba6`, `7c5bdb0e`, and `7cc6c7d4`
+  cover worktree details, built-in top-level tools, restore mode preservation,
+  root restore, and root resume.
+
+Open gaps:
+- Live residuals still do not invoke real Claude/Codex/Aider binaries or
+  credentials; they intentionally substitute `/bin/sh` for deterministic CI-safe
+  process-boundary coverage.
