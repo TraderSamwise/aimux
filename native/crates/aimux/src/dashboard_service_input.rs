@@ -1,6 +1,6 @@
 use crate::dashboard_controller::{
-    DashboardOrchestrationInputState, DashboardOrchestrationMode,
-    DashboardOrchestrationRoutePickerState,
+    DashboardLabelInputState, DashboardMigratePickerState, DashboardOrchestrationInputState,
+    DashboardOrchestrationMode, DashboardOrchestrationRoutePickerState,
 };
 use crate::dashboard_create::{
     DashboardCreateIntent, DashboardCreatePlan, DashboardServiceCreateIntent, plan_dashboard_create,
@@ -149,6 +149,66 @@ pub fn render_worktree_list_overlay(
     body.push(modal_hints("[Esc] back"));
     render_overlay_box(&OverlayBoxSpec {
         title: "Worktree Management",
+        body: &body,
+        cols,
+        rows,
+        variant: OverlayVariant::Blue,
+        icon: None,
+    })
+}
+
+pub fn render_migrate_picker_overlay(
+    state: &DashboardMigratePickerState,
+    cols: usize,
+    rows: usize,
+) -> String {
+    let mut body = state
+        .targets
+        .iter()
+        .enumerate()
+        .map(|(index, target)| {
+            let marker = if state
+                .session_worktree_path
+                .as_ref()
+                .is_some_and(|path| path == &target.path)
+                || (state.session_worktree_path.is_none() && target.name == "(main)")
+            {
+                format!(" {}", style("(current)", Tone::Muted))
+            } else {
+                String::new()
+            };
+            format!(
+                "  {} {}{}",
+                keycap(&(index + 1).to_string(), None),
+                style(&target.name, Tone::Strong),
+                marker
+            )
+        })
+        .collect::<Vec<_>>();
+    body.push(String::new());
+    body.push(modal_hints("[Esc] cancel"));
+    render_overlay_box(&OverlayBoxSpec {
+        title: &format!("Migrate \"{}\" to", state.session_id),
+        body: &body,
+        cols,
+        rows,
+        variant: OverlayVariant::Blue,
+        icon: None,
+    })
+}
+
+pub fn render_label_input_overlay(
+    state: &DashboardLabelInputState,
+    cols: usize,
+    rows: usize,
+) -> String {
+    let body = vec![
+        format!("  {} {}_", style("Name:", Tone::Muted), state.buffer),
+        String::new(),
+        modal_hints("[Enter] save  [Esc] cancel"),
+    ];
+    render_overlay_box(&OverlayBoxSpec {
+        title: "Name agent",
         body: &body,
         cols,
         rows,

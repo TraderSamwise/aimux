@@ -1255,6 +1255,84 @@ fn shifted_w_opens_worktree_list_until_escape() {
 }
 
 #[test]
+fn migrate_key_opens_picker_and_digit_dispatches_selected_session_migrate() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.navigation.level = DashboardNavLevel::Sessions;
+    controller.navigation.worktree_index = 0;
+    controller.navigation.item_index = 1;
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('m')),
+        DashboardControllerEffect::Render
+    );
+    let picker = controller
+        .migrate_picker
+        .as_ref()
+        .expect("migrate picker open");
+    assert_eq!(picker.session_id, "claude-0");
+    assert_eq!(
+        picker
+            .targets
+            .iter()
+            .map(|target| (target.name.as_str(), target.path.as_str()))
+            .collect::<Vec<_>>(),
+        vec![("(main)", "<REPO>"), ("feature-a", "<WORKTREE>")]
+    );
+
+    let DashboardControllerEffect::Request(request) =
+        controller.handle_key(&snapshot, DashboardKey::Printable('2'))
+    else {
+        panic!("expected migrate request");
+    };
+    assert_eq!(request.method, "POST");
+    assert_eq!(request.path, routes::agents::MIGRATE);
+    assert_eq!(
+        request.body,
+        json!({ "sessionId": "claude-0", "worktreePath": "<WORKTREE>" })
+    );
+    assert!(controller.migrate_picker.is_none());
+}
+
+#[test]
+fn name_key_opens_label_input_and_submit_dispatches_rename() {
+    let mut snapshot = snapshot();
+    snapshot.worktree_groups[0].sessions[1].label = Some("Old label".into());
+    let mut controller = DashboardController::new(&snapshot);
+    controller.navigation.level = DashboardNavLevel::Sessions;
+    controller.navigation.worktree_index = 0;
+    controller.navigation.item_index = 1;
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('r')),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(
+        controller
+            .label_input
+            .as_ref()
+            .map(|input| (input.session_id.as_str(), input.buffer.as_str())),
+        Some(("claude-0", "Old label"))
+    );
+    for key in parse_dashboard_keys(b"\x7fNew name ") {
+        controller.handle_key(&snapshot, key);
+    }
+
+    let DashboardControllerEffect::Request(request) =
+        controller.handle_key(&snapshot, DashboardKey::Enter)
+    else {
+        panic!("expected rename request");
+    };
+    assert_eq!(request.method, "POST");
+    assert_eq!(request.path, routes::agents::RENAME);
+    assert_eq!(
+        request.body,
+        json!({ "sessionId": "claude-0", "label": "Old labeNew name" })
+    );
+    assert!(controller.label_input.is_none());
+}
+
+#[test]
 fn shifted_d_requests_worktree_cache_cleanup_preview_and_confirm_apply() {
     let snapshot = snapshot();
     let mut controller = DashboardController::new(&snapshot);

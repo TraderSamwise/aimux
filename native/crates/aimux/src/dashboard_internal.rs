@@ -26,8 +26,9 @@ use crate::dashboard_renderer::{
 };
 use crate::dashboard_service_input::DashboardThreadReplyState;
 use crate::dashboard_service_input::{
-    render_orchestration_input_overlay, render_orchestration_route_picker_overlay,
-    render_service_input_overlay, render_teammate_picker_overlay, render_thread_reply_overlay,
+    render_label_input_overlay, render_migrate_picker_overlay, render_orchestration_input_overlay,
+    render_orchestration_route_picker_overlay, render_service_input_overlay,
+    render_teammate_picker_overlay, render_thread_reply_overlay,
     render_worktree_cache_cleanup_confirm_overlay, render_worktree_input_overlay,
     render_worktree_list_overlay, render_worktree_remove_confirm_overlay,
 };
@@ -704,6 +705,30 @@ fn render_dashboard_snapshot(
         let mut output = frame.frame;
         output.push_str(&render_worktree_input_overlay(
             worktree_input,
+            options.cols,
+            options.rows,
+        ));
+        return crate::tui_render::screen_frame::ScreenFrameResult {
+            frame: output,
+            scroll_offset: frame.scroll_offset,
+        };
+    }
+    if let Some(migrate_picker) = controller.migrate_picker.as_ref() {
+        let mut output = frame.frame;
+        output.push_str(&render_migrate_picker_overlay(
+            migrate_picker,
+            options.cols,
+            options.rows,
+        ));
+        return crate::tui_render::screen_frame::ScreenFrameResult {
+            frame: output,
+            scroll_offset: frame.scroll_offset,
+        };
+    }
+    if let Some(label_input) = controller.label_input.as_ref() {
+        let mut output = frame.frame;
+        output.push_str(&render_label_input_overlay(
+            label_input,
             options.cols,
             options.rows,
         ));

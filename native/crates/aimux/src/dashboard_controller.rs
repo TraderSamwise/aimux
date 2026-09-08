@@ -40,6 +40,8 @@ pub struct DashboardController {
     pub worktree_cache_cleanup_confirm: Option<Value>,
     pub overseer_overlay_open: bool,
     pub work_outline_overlay: Option<DashboardWorkOutlineOverlayState>,
+    pub migrate_picker: Option<DashboardMigratePickerState>,
+    pub label_input: Option<DashboardLabelInputState>,
     pub preview_source: String,
     pub teammate_picker: Option<DashboardTeammatePickerState>,
     pub orchestration_route_picker: Option<DashboardOrchestrationRoutePickerState>,
@@ -199,6 +201,8 @@ impl DashboardController {
             worktree_cache_cleanup_confirm: None,
             overseer_overlay_open: false,
             work_outline_overlay: None,
+            migrate_picker: None,
+            label_input: None,
             preview_source: "output".into(),
             teammate_picker: None,
             orchestration_route_picker: None,
@@ -242,6 +246,12 @@ impl DashboardController {
         }
         if self.work_outline_overlay.is_some() {
             return self.handle_work_outline_overlay_key(snapshot, key);
+        }
+        if self.migrate_picker.is_some() {
+            return self.handle_migrate_picker_key(key);
+        }
+        if self.label_input.is_some() {
+            return self.handle_label_input_key(key);
         }
         if self.teammate_picker.is_some() {
             return self.handle_teammate_picker_key(snapshot, key);
@@ -327,6 +337,8 @@ impl DashboardController {
                 DashboardControllerEffect::Render
             }
             DashboardKey::Printable('R') => self.reply_to_selected_waiting_thread(snapshot),
+            DashboardKey::Printable('m') => self.open_migrate_picker(snapshot),
+            DashboardKey::Printable('r') => self.open_label_input(snapshot),
             DashboardKey::Printable('e') => self.open_teammate_picker(snapshot),
             DashboardKey::NextAttention => self.activate_next_attention_entry(snapshot),
             DashboardKey::Printable('s') => {
@@ -506,6 +518,8 @@ impl DashboardController {
         self.worktree_cache_cleanup_confirm = None;
         self.overseer_overlay_open = false;
         self.work_outline_overlay = None;
+        self.migrate_picker = None;
+        self.label_input = None;
         self.teammate_picker = None;
         self.orchestration_route_picker = None;
         self.orchestration_input = None;
@@ -1203,6 +1217,101 @@ impl DashboardController {
             entries,
             offset: 0,
         });
+    }
+
+    fn open_migrate_picker(
+        &mut self,
+        snapshot: &DesktopStateSnapshot,
+    ) -> DashboardControllerEffect {
+        let Some(session) = self.selected_session_for_tool_action(snapshot) else {
+            self.footer_message = Some("Select an agent to migrate".into());
+            return DashboardControllerEffect::Render;
+        };
+        let targets = migrate_picker_targets(snapshot);
+        if targets.len() <= 1 {
+            return DashboardControllerEffect::Ignored;
+        }
+        self.migrate_picker = Some(DashboardMigratePickerState {
+            session_id: session.id.clone(),
+            session_worktree_path: session.worktree_path.clone(),
+            targets,
+        });
+        DashboardControllerEffect::Render
+    }
+
+    fn handle_migrate_picker_key(&mut self, key: DashboardKey) -> DashboardControllerEffect {
+        let Some(state) = self.migrate_picker.take() else {
+            return DashboardControllerEffect::Ignored;
+        };
+        if matches!(key, DashboardKey::Back) {
+            return DashboardControllerEffect::Render;
+        }
+        let (DashboardKey::Digit(digit) | DashboardKey::Printable(digit)) = key else {
+            return DashboardControllerEffect::Render;
+        };
+        if !digit.is_ascii_digit() || digit == '0' {
+            return DashboardControllerEffect::Render;
+        }
+        let Some(index) = digit.to_digit(10).map(|digit| digit as usize - 1) else {
+            return DashboardControllerEffect::Render;
+        };
+        let Some(target) = state.targets.get(index) else {
+            return DashboardControllerEffect::Render;
+        };
+        DashboardControllerEffect::Request(DashboardActionRequest {
+            method: "POST",
+            path: routes::agents::MIGRATE,
+            body: json!({
+                "sessionId": state.session_id,
+                "worktreePath": target.path,
+            }),
+        })
+    }
+
+    fn open_label_input(&mut self, snapshot: &DesktopStateSnapshot) -> DashboardControllerEffect {
+        let Some(session) = self.selected_session_for_tool_action(snapshot) else {
+            return DashboardControllerEffect::Ignored;
+        };
+        self.label_input = Some(DashboardLabelInputState {
+            session_id: session.id.clone(),
+            buffer: session.label.clone().unwrap_or_default(),
+        });
+        DashboardControllerEffect::Render
+    }
+
+    fn handle_label_input_key(&mut self, key: DashboardKey) -> DashboardControllerEffect {
+        match key {
+            DashboardKey::Back => {
+                self.label_input = None;
+                DashboardControllerEffect::Render
+            }
+            DashboardKey::Enter => {
+                let Some(input) = self.label_input.take() else {
+                    return DashboardControllerEffect::Ignored;
+                };
+                DashboardControllerEffect::Request(DashboardActionRequest {
+                    method: "POST",
+                    path: routes::agents::RENAME,
+                    body: json!({
+                        "sessionId": input.session_id,
+                        "label": input.buffer.trim(),
+                    }),
+                })
+            }
+            DashboardKey::Backspace | DashboardKey::Delete => {
+                if let Some(input) = self.label_input.as_mut() {
+                    input.buffer.pop();
+                }
+                DashboardControllerEffect::Render
+            }
+            DashboardKey::Printable(character) => {
+                if let Some(input) = self.label_input.as_mut() {
+                    input.buffer.push(character);
+                }
+                DashboardControllerEffect::Render
+            }
+            _ => DashboardControllerEffect::Ignored,
+        }
     }
 
     fn handle_work_outline_overlay_key(
@@ -1915,6 +2024,25 @@ pub struct DashboardWorkOutlineOverlayState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DashboardMigratePickerState {
+    pub session_id: String,
+    pub session_worktree_path: Option<String>,
+    pub targets: Vec<DashboardMigrateTarget>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DashboardMigrateTarget {
+    pub name: String,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DashboardLabelInputState {
+    pub session_id: String,
+    pub buffer: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DashboardTeammatePickerState {
     pub parent_session_id: String,
     pub index: usize,
@@ -2141,6 +2269,26 @@ fn visual_dashboard_session_order(snapshot: &DesktopStateSnapshot) -> Vec<&Dashb
         }
     }
     ordered
+}
+
+fn migrate_picker_targets(snapshot: &DesktopStateSnapshot) -> Vec<DashboardMigrateTarget> {
+    let main_path = snapshot.main_checkout_path.as_deref().unwrap_or_default();
+    let mut targets = Vec::<DashboardMigrateTarget>::new();
+    for group in &snapshot.worktree_groups {
+        let path = group.path.as_deref().unwrap_or(main_path).to_owned();
+        if targets.iter().any(|target| target.path == path) {
+            continue;
+        }
+        targets.push(DashboardMigrateTarget {
+            name: if group.path.is_none() {
+                "(main)".into()
+            } else {
+                group.name.clone()
+            },
+            path,
+        });
+    }
+    targets
 }
 
 fn is_project_control_session(session: &DashboardSession) -> bool {
