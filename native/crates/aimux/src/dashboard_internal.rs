@@ -109,6 +109,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
     };
 
     loop {
+        let mut render_requested_by_input = false;
         let now = elapsed_millis(clock_start);
         let first_paint_pending = render_now && !rendered_once;
         let mut dashboard_visible = if first_paint_pending {
@@ -187,6 +188,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                                 Some("Dashboard action requires a project-service endpoint".into());
                         }
                         render_now = true;
+                        render_requested_by_input = true;
                     }
                     DashboardControllerEffect::MoveSelectedEntry {
                         kind,
@@ -232,6 +234,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                                 Some("Dashboard ordering unavailable".into());
                         }
                         render_now = true;
+                        render_requested_by_input = true;
                     }
                     DashboardControllerEffect::WorktreeCacheCleanupPreview(request) => {
                         if let Some(endpoint) = latest_endpoint.as_ref() {
@@ -250,6 +253,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                                 Some("Dashboard action requires a project-service endpoint".into());
                         }
                         render_now = true;
+                        render_requested_by_input = true;
                     }
                     DashboardControllerEffect::WorktreeCacheCleanupApply(request) => {
                         if let Some(endpoint) = latest_endpoint.as_ref() {
@@ -269,6 +273,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                                 Some("Dashboard action requires a project-service endpoint".into());
                         }
                         render_now = true;
+                        render_requested_by_input = true;
                     }
                     DashboardControllerEffect::LoadOrchestrationRoutes { mode, path } => {
                         if let Some(endpoint) = latest_endpoint.as_ref() {
@@ -290,6 +295,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                                 Some("Dashboard action requires a project-service endpoint".into());
                         }
                         render_now = true;
+                        render_requested_by_input = true;
                     }
                     DashboardControllerEffect::OpenRelevantThread { session_id } => {
                         if let Some(endpoint) = latest_endpoint.as_ref() {
@@ -303,6 +309,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                                 Some("Dashboard action requires a project-service endpoint".into());
                         }
                         render_now = true;
+                        render_requested_by_input = true;
                     }
                     DashboardControllerEffect::LoadWorkOutlineOverlay { session_id, offset } => {
                         let entries =
@@ -313,6 +320,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                             offset.unwrap_or(0),
                         );
                         render_now = true;
+                        render_requested_by_input = true;
                     }
                     DashboardControllerEffect::WatchWithOverseer(request) => {
                         match execute_overseer_watch_command(&options, controller, &request) {
@@ -323,14 +331,17 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                             }
                         }
                         render_now = true;
+                        render_requested_by_input = true;
                     }
                     DashboardControllerEffect::OpenAgentToolPicker(mode) => {
                         let config = load_config_for_project(&options.project_root);
                         controller.open_tool_picker(enabled_dashboard_tools(&config), mode);
                         render_now = true;
+                        render_requested_by_input = true;
                     }
                     DashboardControllerEffect::Render => {
                         render_now = true;
+                        render_requested_by_input = true;
                     }
                     DashboardControllerEffect::Ignored => {}
                 }
@@ -423,6 +434,12 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                     }
                     controller
                 });
+                restore_dashboard_navigation_for_render(
+                    ui_state.as_ref(),
+                    controller,
+                    &visible_model.snapshot,
+                    render_requested_by_input,
+                );
                 let frame = render_dashboard_snapshot(
                     &options,
                     controller,
@@ -1420,10 +1437,44 @@ fn parse_desktop_state_snapshot(contents: &str) -> Result<DesktopStateSnapshot> 
     })
 }
 
+fn restore_dashboard_navigation_for_render(
+    ui_state: Option<&DashboardUiStatePersistence>,
+    controller: &mut DashboardController,
+    snapshot: &DesktopStateSnapshot,
+    render_requested_by_input: bool,
+) {
+    if render_requested_by_input {
+        return;
+    }
+    let Some(ui_state) = ui_state else {
+        return;
+    };
+    ui_state.restore_navigation(&mut controller.navigation, snapshot);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dashboard_renderer::DashboardNavLevel;
     use serde_json::json;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn fixture_snapshot() -> DesktopStateSnapshot {
+        serde_json::from_str::<DesktopStateGoldenFixture>(include_str!(
+            "../../../../src/multiplexer/desktop-state-golden.fixture.json"
+        ))
+        .expect("valid desktop-state fixture")
+        .runtime_full
+    }
+
+    fn temp_dir(prefix: &str) -> std::path::PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        std::env::temp_dir().join(format!("{prefix}-{}-{nanos}", std::process::id()))
+    }
 
     #[test]
     fn preferred_thread_worklist_index_uses_typescript_scoring() {
@@ -1476,5 +1527,83 @@ mod tests {
             })
         );
         assert_eq!(preferred_thread_selection(&resource, "missing"), None);
+    }
+
+    #[test]
+    fn background_refresh_restores_dashboard_selection_by_id() {
+        let root = temp_dir("dashboard-internal-selection-refresh");
+        fs::create_dir_all(&root).expect("create temp dir");
+        let snapshot = fixture_snapshot();
+        let selected_id = snapshot.worktree_groups[0].sessions[1].id.clone();
+        let mut controller = DashboardController::new(&snapshot);
+        controller.navigation.level = DashboardNavLevel::Sessions;
+        controller.navigation.worktree_index = 0;
+        controller.navigation.item_index = 1;
+        let mut ui_state =
+            DashboardUiStatePersistence::new(&root, "client").expect("create ui state");
+        ui_state
+            .persist_controller_state(
+                DashboardScreen::Dashboard,
+                "output",
+                true,
+                &snapshot,
+                &controller.navigation,
+            )
+            .expect("persist navigation");
+
+        let mut reordered = snapshot.clone();
+        reordered.worktree_groups[0].sessions.swap(0, 1);
+        restore_dashboard_navigation_for_render(
+            Some(&ui_state),
+            &mut controller,
+            &reordered,
+            false,
+        );
+
+        assert_eq!(controller.navigation.item_index, 0);
+        let Some(DashboardEntryRef::Session(selected)) =
+            controller.navigation.selected_entry(&reordered)
+        else {
+            panic!("expected selected session");
+        };
+        assert_eq!(selected.id, selected_id);
+        fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn input_render_does_not_restore_stale_dashboard_selection() {
+        let root = temp_dir("dashboard-internal-input-render-selection");
+        fs::create_dir_all(&root).expect("create temp dir");
+        let snapshot = fixture_snapshot();
+        let mut controller = DashboardController::new(&snapshot);
+        controller.navigation.level = DashboardNavLevel::Sessions;
+        controller.navigation.worktree_index = 0;
+        controller.navigation.item_index = 1;
+        let mut ui_state =
+            DashboardUiStatePersistence::new(&root, "client").expect("create ui state");
+        ui_state
+            .persist_controller_state(
+                DashboardScreen::Dashboard,
+                "output",
+                true,
+                &snapshot,
+                &controller.navigation,
+            )
+            .expect("persist navigation");
+
+        let mut reordered = snapshot.clone();
+        reordered.worktree_groups[0].sessions.swap(0, 1);
+        controller.navigation.item_index = 1;
+        let expected_id = reordered.worktree_groups[0].sessions[1].id.clone();
+        restore_dashboard_navigation_for_render(Some(&ui_state), &mut controller, &reordered, true);
+
+        assert_eq!(controller.navigation.item_index, 1);
+        let Some(DashboardEntryRef::Session(selected)) =
+            controller.navigation.selected_entry(&reordered)
+        else {
+            panic!("expected selected session");
+        };
+        assert_eq!(selected.id, expected_id);
+        fs::remove_dir_all(root).ok();
     }
 }
