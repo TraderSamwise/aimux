@@ -2196,6 +2196,20 @@ impl DashboardController {
                 body: json!({ "sessionId": session.id }),
             });
         }
+        if let Some(DashboardEntryRef::Service(service)) = self.navigation.selected_entry(snapshot)
+            && matches!(
+                service.status,
+                crate::dashboard_model::ServiceStatus::Offline
+                    | crate::dashboard_model::ServiceStatus::Stopped
+                    | crate::dashboard_model::ServiceStatus::Exited
+            )
+        {
+            return DashboardControllerEffect::Request(DashboardActionRequest {
+                method: "POST",
+                path: routes::services::REMOVE,
+                body: json!({ "serviceId": service.id }),
+            });
+        }
         self.handle_action(snapshot, DashboardActionKind::Stop)
     }
 

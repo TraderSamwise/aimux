@@ -262,6 +262,23 @@ fn stop_key_graveyards_selected_offline_session() {
 }
 
 #[test]
+fn stop_key_removes_selected_offline_service() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.navigation.level = DashboardNavLevel::Sessions;
+    controller.navigation.worktree_index = 1;
+    controller.navigation.item_index = 2;
+
+    let DashboardControllerEffect::Request(request) =
+        controller.handle_key(&snapshot, DashboardKey::Stop)
+    else {
+        panic!("expected remove service request");
+    };
+    assert_eq!(request.path, routes::services::REMOVE);
+    assert_eq!(request.body, json!({ "serviceId": "service-web" }));
+}
+
+#[test]
 fn clear_failures_key_dispatches_only_when_failures_exist() {
     let mut snapshot = snapshot();
     let mut controller = DashboardController::new(&snapshot);
