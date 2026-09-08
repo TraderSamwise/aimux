@@ -106,6 +106,12 @@ pub fn render_dashboard_frame(input: &DashboardRenderInput<'_>) -> ScreenFrameRe
         divider,
         String::new(),
     ];
+    let dashboard_sessions = input
+        .snapshot
+        .sessions
+        .iter()
+        .filter(|session| !is_project_control_session(session))
+        .collect::<Vec<_>>();
     let mut content = Vec::new();
     if !input.snapshot.operation_failures.is_empty() {
         let mut failure_rows = input
@@ -154,12 +160,12 @@ pub fn render_dashboard_frame(input: &DashboardRenderInput<'_>) -> ScreenFrameRe
         }));
         content.push(String::new());
     }
-    if input.snapshot.sessions.is_empty() && input.snapshot.worktree_groups.is_empty() {
+    if dashboard_sessions.is_empty() && input.snapshot.worktree_groups.is_empty() {
         content.push(center_in_block("No sessions. Press [n] to create one."));
     } else if has_worktrees(input) {
         render_worktree_grouped(input, &mut content, card_width);
     } else {
-        for (index, session) in input.snapshot.sessions.iter().enumerate() {
+        for (index, session) in dashboard_sessions.iter().enumerate() {
             let selected = input.nav_level == DashboardNavLevel::Sessions
                 && input.selected_session_id == Some(session.id.as_str());
             let digit = (index < DASHBOARD_QUICK_JUMP_LIMIT).then_some(index + 1);
@@ -682,6 +688,9 @@ fn build_dashboard_quick_jump_worktrees<'a>(
     let mut sessions_by_path: BTreeMap<&str, Vec<&'a DashboardSession>> = BTreeMap::new();
     let mut services_by_path: BTreeMap<&str, Vec<&'a DashboardService>> = BTreeMap::new();
     for session in &input.snapshot.sessions {
+        if is_project_control_session(session) {
+            continue;
+        }
         if let Some(path) = session.worktree_path.as_deref() {
             sessions_by_path.entry(path).or_default().push(session);
         } else {

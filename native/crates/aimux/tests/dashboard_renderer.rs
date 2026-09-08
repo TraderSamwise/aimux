@@ -576,6 +576,60 @@ fn worktree_details_count_the_same_project_sessions_as_rendered_rows() {
 }
 
 #[test]
+fn flat_session_rows_exclude_project_control_sessions_like_node() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let mut snapshot = fixture.runtime_light.clone();
+    snapshot.worktrees.clear();
+    snapshot.worktree_groups.clear();
+    snapshot.services.clear();
+
+    let mut plain_agent = snapshot.sessions[0].clone();
+    plain_agent.id = "claude-plain".into();
+    plain_agent.label = Some("Plain Agent".into());
+
+    let mut overseer = plain_agent.clone();
+    overseer.id = "claude-overseer".into();
+    overseer.label = Some("Project Overseer".into());
+    overseer.overseer = Some(true);
+    overseer.project_control = Some(true);
+
+    let mut scribe = plain_agent.clone();
+    scribe.id = "claude-scribe".into();
+    scribe.label = Some("Project Scribe".into());
+    scribe.scribe = Some(true);
+    scribe.project_control = Some(true);
+
+    snapshot.sessions = vec![overseer, plain_agent, scribe];
+
+    let result = render_dashboard_frame(&DashboardRenderInput {
+        snapshot: &snapshot,
+        cols: 140,
+        rows: 24,
+        nav_level: DashboardNavLevel::Sessions,
+        selected_session_id: Some("claude-plain"),
+        selected_service_id: None,
+        focused_worktree_path: None,
+        runtime_label: None,
+        version: None,
+        is_dev_runtime: false,
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_message: None,
+        details_sidebar_visible: false,
+        preview_source: "output",
+        scribe_preview_entries: &[],
+    });
+    let plain = strip_ansi(&result.frame);
+
+    assert!(plain.contains("Plain Agent"));
+    assert!(plain.contains("[1]"));
+    assert!(!plain.contains("Project Overseer"));
+    assert!(!plain.contains("Project Scribe"));
+}
+
+#[test]
 fn worktree_details_show_active_removal_status_and_progress() {
     let fixture: DesktopStateGoldenFixture =
         serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
