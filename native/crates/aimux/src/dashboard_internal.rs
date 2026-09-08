@@ -38,6 +38,7 @@ use crate::dashboard_tui_visibility::{
     read_dashboard_tui_visibility_for_loop, read_tmux_tui_visibility,
 };
 use crate::dashboard_ui_state::DashboardUiStatePersistence;
+use crate::release_version_contract::read_aimux_version_from_package_root;
 use anyhow::{Context, Result};
 use std::fs;
 use std::io::{self, Write};
@@ -552,6 +553,7 @@ fn render_dashboard_snapshot(
             None => (None, None),
         };
     let focused_worktree_path = controller.navigation.focused_worktree_path(snapshot);
+    let runtime_version = dashboard_runtime_version();
     let frame = render_dashboard_frame(&DashboardRenderInput {
         snapshot,
         cols: options.cols,
@@ -561,7 +563,7 @@ fn render_dashboard_snapshot(
         selected_service_id,
         focused_worktree_path,
         runtime_label: Some("native"),
-        version: Some(crate::build_info::build_info().version),
+        version: Some(&runtime_version),
         is_dev_runtime: cfg!(debug_assertions),
         hide_offline_agents: controller.hide_offline_agents,
         hidden_offline_agent_count,
@@ -717,6 +719,13 @@ fn render_dashboard_snapshot(
         };
     }
     frame
+}
+
+fn dashboard_runtime_version() -> String {
+    let package_root = std::env::var_os("AIMUX_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.."));
+    read_aimux_version_from_package_root(package_root)
 }
 
 fn render_dashboard_subscreen_snapshot(

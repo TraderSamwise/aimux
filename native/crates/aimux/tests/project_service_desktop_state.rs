@@ -69,18 +69,28 @@ fn builds_desktop_state_from_topology_metadata_and_exchange_without_live_runtime
     assert_eq!(live["active"], true);
     assert_eq!(live["worktreeName"], "feature-a");
     assert_eq!(live["worktreeBranch"], "feature/a");
+    assert_eq!(live["backendSessionId"], "backend-live");
+    assert_eq!(live["cwd"], "/repo/.aimux/worktrees/feature-a");
+    assert_eq!(live["repoOwner"], "sam");
+    assert_eq!(live["repoName"], "aimux");
+    assert_eq!(live["repoRemote"], "git@example.com:sam/aimux.git");
+    assert_eq!(live["prNumber"], 17);
+    assert_eq!(live["prTitle"], "Port dashboard");
+    assert_eq!(live["prUrl"], "https://example.com/pr/17");
     assert_eq!(live["tmuxWindowId"], "@1");
     assert_eq!(live["tmuxWindowIndex"].as_f64(), Some(1.0));
     assert_eq!(live["activity"], "running");
     assert_eq!(live["attention"], "needs_input");
     assert_eq!(live["unseenCount"], 2);
+    assert_eq!(live["lastOutputAt"], "2026-09-05T00:09:00.000Z");
+    assert_eq!(live["lastEvent"]["kind"], "response");
     assert_eq!(live["threadUnreadCount"], 1);
     assert_eq!(live["threadWaitingCount"], 1);
     assert_eq!(live["threadWaitingOnMeCount"], 0);
     assert_eq!(live["threadWaitingOnThemCount"], 1);
     assert_eq!(live["threadPendingCount"], 1);
-    assert_eq!(live["threadId"], "thread-build");
-    assert_eq!(live["threadName"], "Build");
+    assert_eq!(live["threadId"], "thread-derived");
+    assert_eq!(live["threadName"], "Derived Thread");
     assert_eq!(live["workflowOnMeCount"], 0);
     assert_eq!(live["workflowBlockedCount"], 0);
     assert_eq!(live["workflowFamilyCount"], 0);
@@ -433,7 +443,7 @@ fn topology_fixture() -> Value {
         ],
         "sessions": [
             { "id": "boss", "nodeId": "node-main", "status": "running", "command": "claude", "team": { "role": "overseer" }, "createdAt": "2026-09-05T00:00:03.000Z", "updatedAt": "2026-09-05T00:00:03.000Z" },
-            { "id": "codex-live", "nodeId": "node-live", "status": "running", "command": "codex", "worktreePath": "/repo/.aimux/worktrees/feature-a", "headline": "Working", "backendSessionId": "backend-live", "createdAt": "2026-09-05T00:00:01.000Z", "updatedAt": "2026-09-05T00:00:01.000Z" },
+            { "id": "codex-live", "nodeId": "node-live", "status": "running", "command": "codex", "worktreePath": "/repo/.aimux/worktrees/feature-a", "headline": "Working", "createdAt": "2026-09-05T00:00:01.000Z", "updatedAt": "2026-09-05T00:00:01.000Z" },
             { "id": "reviewer", "nodeId": "node-review", "status": "idle", "command": "codex", "worktreePath": "/repo/.aimux/worktrees/feature-a", "team": { "parentSessionId": "codex-live", "role": "reviewer", "label": "Review", "order": 1 }, "createdAt": "2026-09-05T00:00:02.000Z", "updatedAt": "2026-09-05T00:00:02.000Z" },
             { "id": "codex-cold", "nodeId": "node-cold", "status": "offline", "command": "codex", "worktreePath": "/repo/unknown", "backendSessionId": "backend-cold", "createdAt": "2026-09-05T00:00:05.000Z", "updatedAt": "2026-09-05T00:00:05.000Z" },
             { "id": "graveyarded", "nodeId": "node-live", "status": "graveyard", "command": "codex", "createdAt": "2026-09-05T00:00:06.000Z", "updatedAt": "2026-09-05T00:00:06.000Z" }
@@ -461,10 +471,32 @@ fn metadata_fixture() -> BTreeMap<String, Value> {
         (
             "codex-live".into(),
             json!({
+                "backendSessionId": "backend-live",
+                "context": {
+                    "cwd": "/repo/.aimux/worktrees/feature-a",
+                    "repo": {
+                        "owner": "sam",
+                        "name": "aimux",
+                        "remote": "git@example.com:sam/aimux.git"
+                    },
+                    "pr": {
+                        "number": 17,
+                        "title": "Port dashboard",
+                        "url": "https://example.com/pr/17"
+                    }
+                },
                 "derived": {
                     "activity": "running",
                     "attention": "needs_input",
-                    "unseenCount": 2
+                    "unseenCount": 2,
+                    "lastOutputAt": "2026-09-05T00:09:00.000Z",
+                    "lastEvent": {
+                        "kind": "response",
+                        "ts": "2026-09-05T00:09:00.000Z",
+                        "message": "Ready"
+                    },
+                    "threadId": "thread-derived",
+                    "threadName": "Derived Thread"
                 },
                 "loop": { "active": true },
                 "loopLastAction": { "action": "continue" },

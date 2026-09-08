@@ -1125,8 +1125,9 @@ fn agent_identity(session: &DashboardSession) -> String {
     let label = session.label.as_deref().unwrap_or(&session.command);
     let prefix = format!("{}-", session.command);
     let short_id = session.id.strip_prefix(&prefix).unwrap_or(&session.id);
-    let suffix = if !short_id.is_empty() && short_id != label {
-        format!(" {}", style(&format!("({short_id})"), Tone::Muted))
+    let display_id = short_id.chars().take(6).collect::<String>();
+    let suffix = if !display_id.is_empty() && display_id != label {
+        format!(" {}", style(&format!("({display_id})"), Tone::Muted))
     } else {
         String::new()
     };

@@ -1,6 +1,7 @@
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
+use std::process::Command;
 
 use crate::config::default_config;
 use crate::daemon_state::{load_daemon_info, load_metadata_state};
@@ -291,7 +292,7 @@ fn desktop_worktrees(project_root: &str, topology: &Value) -> Vec<Value> {
             insert_string(
                 &mut item,
                 "branch",
-                string_field(&worktree, "branch").unwrap_or(""),
+                &worktree_branch_or_current(project_root, path, string_field(&worktree, "branch")),
             );
             item.insert("isBare".into(), Value::Bool(false));
             for key in [
@@ -315,7 +316,7 @@ fn desktop_worktrees(project_root: &str, topology: &Value) -> Vec<Value> {
             json!({
                 "name": "Main Checkout",
                 "path": project_root,
-                "branch": "",
+                "branch": current_git_branch(project_root).unwrap_or_default(),
                 "isBare": false,
             }),
         );
@@ -405,6 +406,28 @@ fn dashboard_session(
     let mut attention = None;
     let mut unseen_count = 0;
     if let Some(metadata) = metadata {
+        if !item.contains_key("backendSessionId") {
+            insert_value(
+                &mut item,
+                "backendSessionId",
+                metadata.get("backendSessionId").cloned(),
+            );
+        }
+        if let Some(context) = metadata.get("context") {
+            for key in ["cwd", "branch"] {
+                insert_value(&mut item, key, context.get(key).cloned());
+            }
+            if let Some(repo) = context.get("repo") {
+                insert_value(&mut item, "repoOwner", repo.get("owner").cloned());
+                insert_value(&mut item, "repoName", repo.get("name").cloned());
+                insert_value(&mut item, "repoRemote", repo.get("remote").cloned());
+            }
+            if let Some(pr) = context.get("pr") {
+                insert_value(&mut item, "prNumber", pr.get("number").cloned());
+                insert_value(&mut item, "prTitle", pr.get("title").cloned());
+                insert_value(&mut item, "prUrl", pr.get("url").cloned());
+            }
+        }
         for key in [
             "loop",
             "loopLastAction",
@@ -428,6 +451,8 @@ fn dashboard_session(
                 "foregroundCommand",
                 "pid",
                 "previewLine",
+                "threadId",
+                "threadName",
             ] {
                 insert_value(&mut item, key, derived.get(key).cloned());
             }
@@ -450,8 +475,12 @@ fn dashboard_session(
         Value::from(thread.waiting_on_them),
     );
     item.insert("threadPendingCount".into(), Value::from(thread.pending));
-    insert_optional_owned(&mut item, "threadId", thread.latest_id.clone());
-    insert_optional_owned(&mut item, "threadName", thread.latest_title.clone());
+    if !item.contains_key("threadId") {
+        insert_optional_owned(&mut item, "threadId", thread.latest_id.clone());
+    }
+    if !item.contains_key("threadName") {
+        insert_optional_owned(&mut item, "threadName", thread.latest_title.clone());
+    }
     item.insert("workflowOnMeCount".into(), Value::from(workflow.on_me));
     item.insert("workflowBlockedCount".into(), Value::from(workflow.blocked));
     item.insert(
@@ -604,6 +633,7 @@ fn build_worktree_groups(
     }
     let mut groups = Vec::new();
     groups.push(worktree_group(
+        project_root,
         worktrees
             .iter()
             .find(|worktree| string_field(worktree, "path") == Some(main_path)),
@@ -617,6 +647,7 @@ fn build_worktree_groups(
         .filter(|path| path != main_path)
         .map(|path| {
             worktree_group(
+                project_root,
                 worktrees
                     .iter()
                     .find(|worktree| string_field(worktree, "path") == Some(path.as_str())),
@@ -635,6 +666,7 @@ fn build_worktree_groups(
 }
 
 fn worktree_group(
+    project_root: &str,
     worktree: Option<&Value>,
     path: &str,
     main: bool,
@@ -656,9 +688,11 @@ fn worktree_group(
     insert_string(
         &mut group,
         "branch",
-        worktree
-            .and_then(|worktree| string_field(worktree, "branch"))
-            .unwrap_or(""),
+        &worktree_branch_or_current(
+            project_root,
+            path,
+            worktree.and_then(|worktree| string_field(worktree, "branch")),
+        ),
     );
     if !main {
         insert_string(&mut group, "path", path);
@@ -1047,8 +1081,41 @@ fn main_checkout_branch(project_root: &str, worktrees: Option<&Value>) -> String
                 .find(|worktree| string_field(worktree, "path") == Some(project_root))
         })
         .and_then(|worktree| string_field(worktree, "branch"))
-        .unwrap_or("")
-        .to_owned()
+        .filter(|branch| !branch.trim().is_empty())
+        .map(str::to_owned)
+        .or_else(|| current_git_branch(project_root))
+        .unwrap_or_default()
+}
+
+fn worktree_branch_or_current(project_root: &str, path: &str, branch: Option<&str>) -> String {
+    branch
+        .filter(|branch| !branch.trim().is_empty())
+        .map(str::to_owned)
+        .or_else(|| {
+            if path == project_root {
+                current_git_branch(project_root)
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default()
+}
+
+fn current_git_branch(project_root: &str) -> Option<String> {
+    let output = Command::new("git")
+        .args(["-C", project_root, "branch", "--show-current"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let branch = String::from_utf8(output.stdout).ok()?;
+    let branch = branch.trim();
+    if branch.is_empty() {
+        None
+    } else {
+        Some(branch.to_owned())
+    }
 }
 
 fn task_counts(exchange: &Value) -> Value {

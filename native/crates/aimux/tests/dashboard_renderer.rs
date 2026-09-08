@@ -1,7 +1,10 @@
-use aimux::dashboard_model::{DesktopStateGoldenFixture, SessionStatus};
+use aimux::dashboard_model::{
+    DashboardSessionEvent, DashboardSessionLoopLastAction, DesktopStateGoldenFixture, SessionStatus,
+};
 use aimux::dashboard_renderer::{DashboardNavLevel, DashboardRenderInput, render_dashboard_frame};
 use aimux::tui_render::text::strip_ansi;
 use aimux::tui_render::theme::visible_width;
+use serde_json::json;
 
 const GOLDEN: &str = include_str!("../../../../src/multiplexer/desktop-state-golden.fixture.json");
 
@@ -87,6 +90,48 @@ fn renders_golden_worktrees_sessions_services_and_unread_chips() {
 }
 
 #[test]
+fn renders_live_agent_rows_without_jamming_identity_status_or_activity() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let mut snapshot = fixture.runtime_light.clone();
+    let session = &mut snapshot.sessions[0];
+    session.id = "claude-3c4dmezz".into();
+    session.command = "claude".into();
+    session.label = None;
+    session.last_output_at = Some("2026-01-01T00:00:00.000Z".into());
+    session.unseen_count = 1;
+    session.semantic = None;
+    snapshot.worktree_groups[0].sessions[0] = session.clone();
+
+    let result = render_dashboard_frame(&DashboardRenderInput {
+        snapshot: &snapshot,
+        cols: 140,
+        rows: 24,
+        nav_level: DashboardNavLevel::Sessions,
+        selected_session_id: Some("claude-3c4dmezz"),
+        selected_service_id: None,
+        focused_worktree_path: None,
+        runtime_label: None,
+        version: None,
+        is_dev_runtime: false,
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_message: None,
+        details_sidebar_visible: false,
+        preview_source: "output",
+        scribe_preview_entries: &[],
+    });
+    let plain = strip_ansi(&result.frame);
+
+    assert!(plain.contains("claude (3c4dme)"));
+    assert!(plain.contains("Ready"));
+    assert!(plain.contains("output "));
+    assert!(plain.contains("1 unseen"));
+    assert!(!plain.contains("(3c4dmeReady"));
+}
+
+#[test]
 fn renders_state_aware_footer_hints_for_session_actions() {
     let fixture: DesktopStateGoldenFixture =
         serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
@@ -122,10 +167,38 @@ fn renders_state_aware_footer_hints_for_session_actions() {
 fn renders_selected_session_details_sidebar_when_visible() {
     let fixture: DesktopStateGoldenFixture =
         serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
-    let snapshot = &fixture.runtime_light;
+    let mut snapshot = fixture.runtime_light.clone();
+    let session = &mut snapshot.sessions[0];
+    session.backend_session_id = Some("backend-live".into());
+    session.worktree_name = Some("Main Checkout".into());
+    session.worktree_branch = Some("master".into());
+    session.cwd = Some("/repo".into());
+    session.foreground_command = Some("codex exec".into());
+    session.pid = Some(12345);
+    session.loop_last_action = Some(DashboardSessionLoopLastAction {
+        action: "continue".into(),
+        at: "2026-01-01T00:00:00.000Z".into(),
+        source: Some("overseer".into()),
+        extra: Default::default(),
+    });
+    session.last_event = Some(DashboardSessionEvent {
+        kind: Some("response".into()),
+        ts: Some("2026-01-01T00:00:00.000Z".into()),
+        message: Some("Ready for input".into()),
+        extra: Default::default(),
+    });
+    session.semantic = Some(
+        serde_json::from_value(json!({
+            "user": { "label": "ready", "attention": "normal" },
+            "notifications": { "unreadCount": 0 },
+            "presentation": { "statusLabel": "Ready", "compactHint": null, "attentionScore": 1 },
+            "activityNewCount": 2
+        }))
+        .expect("semantic parses"),
+    );
 
     let result = render_dashboard_frame(&DashboardRenderInput {
-        snapshot,
+        snapshot: &snapshot,
         cols: 140,
         rows: 24,
         nav_level: DashboardNavLevel::Sessions,
@@ -146,8 +219,16 @@ fn renders_selected_session_details_sidebar_when_visible() {
     let plain = strip_ansi(&result.frame);
 
     assert!(plain.contains("DETAILS"));
+    assert!(plain.contains("Agent"));
+    assert!(plain.contains("Canonical"));
     assert!(plain.contains("Aimux ID"));
+    assert!(plain.contains("Backend ID"));
     assert!(plain.contains("claude-0"));
+    assert!(plain.contains("Loop last"));
+    assert!(plain.contains("Loop source"));
+    assert!(plain.contains("State"));
+    assert!(plain.contains("New activity"));
+    assert!(plain.contains("Last"));
     for line in result.frame.split("\r\n") {
         assert!(visible_width(line) <= 140 || line.starts_with("\x1b[2J\x1b[H"));
     }

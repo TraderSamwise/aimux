@@ -258,7 +258,10 @@ pub(super) fn generated_session_id_for_launch(
 ) -> String {
     let executable = command_executable(command);
     let Some(backend_session_id) = backend_session_id else {
-        return format!("{executable}-{}", short_id());
+        return format!(
+            "{executable}-{}",
+            short_id().chars().take(6).collect::<String>()
+        );
     };
     for session in array_field(topology, "sessions") {
         if string_field(&session, "backendSessionId") == backend_session_id

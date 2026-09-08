@@ -1,3 +1,4 @@
+use aimux::tui_render::text::strip_ansi;
 use serde_json::Value;
 use std::fs;
 use std::path::PathBuf;
@@ -94,6 +95,7 @@ fn ui_command_stays_native_even_when_node_fallback_is_configured() {
 #[test]
 fn native_dashboard_internal_once_renders_snapshot_without_node_fallback() {
     let root = temp_root("native-dashboard-internal");
+    fs::write(root.join("VERSION"), "local-dashboard-test\n").expect("write version");
     let log = root.join("node.log");
     let node = fake_node(&root, &log, 9);
     let desktop_state_file = root.join("desktop-state.json");
@@ -127,7 +129,7 @@ fn native_dashboard_internal_once_renders_snapshot_without_node_fallback() {
         "native dashboard should not invoke node fallback"
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("aimux"));
+    assert!(strip_ansi(&stdout).contains("aimux vlocal-dashboard-test"));
     assert!(stdout.contains("agent multiplexer"));
     assert!(stdout.contains("Main Checkout"));
     assert!(stdout.contains("feature-a"));
@@ -195,6 +197,7 @@ fn daemon_restart_stays_native_even_when_node_fallback_is_configured() {
 #[test]
 fn configured_tool_launch_stays_native_with_original_tool_args() {
     let root = temp_root("native-tool-launch");
+    fs::create_dir_all(root.join(".git")).expect("create repo marker");
     fs::create_dir_all(root.join("dist")).expect("create dist");
     fs::write(root.join("dist/launcher-bin.js"), "").expect("write launcher");
     let log = root.join("node.log");
@@ -225,6 +228,7 @@ fn configured_tool_launch_stays_native_with_original_tool_args() {
 #[test]
 fn root_resume_entry_stays_native_even_when_node_fallback_is_configured() {
     let root = temp_root("native-root-resume");
+    fs::create_dir_all(root.join(".git")).expect("create repo marker");
     fs::create_dir_all(root.join("dist")).expect("create dist");
     fs::write(root.join("dist/launcher-bin.js"), "").expect("write launcher");
     let log = root.join("node.log");
