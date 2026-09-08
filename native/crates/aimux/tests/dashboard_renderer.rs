@@ -1,5 +1,6 @@
 use aimux::dashboard_model::{
-    DashboardSessionEvent, DashboardSessionLoopLastAction, DesktopStateGoldenFixture, SessionStatus,
+    DashboardSessionEvent, DashboardSessionLoopLastAction, DashboardWorktreeRemovalInfo,
+    DesktopStateGoldenFixture, SessionStatus,
 };
 use aimux::dashboard_renderer::{DashboardNavLevel, DashboardRenderInput, render_dashboard_frame};
 use aimux::tui_render::text::strip_ansi;
@@ -402,6 +403,50 @@ fn worktree_details_count_the_same_project_sessions_as_rendered_rows() {
     assert!(!plain.contains("Agents: 3"));
     assert!(!plain.contains("Project Overseer"));
     assert!(!plain.contains("Project Scribe"));
+}
+
+#[test]
+fn worktree_details_show_active_removal_status_and_progress() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let mut snapshot = fixture.runtime_full.clone();
+    let worktree_path = snapshot.worktree_groups[1]
+        .path
+        .clone()
+        .expect("secondary worktree path");
+    snapshot.worktree_removals = vec![DashboardWorktreeRemovalInfo {
+        path: worktree_path.clone(),
+        name: "feature-a".into(),
+        started_at: 1,
+        stderr: Some("old\nremoving files\npruning refs\ncleaned".into()),
+        extra: Default::default(),
+    }];
+
+    let result = render_dashboard_frame(&DashboardRenderInput {
+        snapshot: &snapshot,
+        cols: 140,
+        rows: 24,
+        nav_level: DashboardNavLevel::Worktrees,
+        selected_session_id: None,
+        selected_service_id: None,
+        focused_worktree_path: Some(&worktree_path),
+        runtime_label: None,
+        version: None,
+        is_dev_runtime: false,
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_message: None,
+        details_sidebar_visible: true,
+        preview_source: "output",
+        scribe_preview_entries: &[],
+    });
+    let plain = strip_ansi(&result.frame);
+
+    assert!(plain.contains("Status: removing"));
+    assert!(plain.contains("Elapsed: "));
+    assert!(plain.contains("Progress: removing files | pruning refs | cleaned"));
+    assert!(!plain.contains("Progress: old | removing files | pruning refs"));
 }
 
 #[test]

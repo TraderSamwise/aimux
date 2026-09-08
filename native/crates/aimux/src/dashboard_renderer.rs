@@ -2094,6 +2094,42 @@ fn render_worktree_details_panel(
         .iter()
         .filter(|service| service.status == ServiceStatus::Running)
         .collect::<Vec<_>>();
+    let active_worktree_removal = focused_path.and_then(|path| {
+        input
+            .snapshot
+            .worktree_removals
+            .iter()
+            .find(|job| job.path == path)
+            .or_else(|| {
+                input
+                    .snapshot
+                    .worktree_removal
+                    .as_ref()
+                    .filter(|job| job.path == path)
+            })
+    });
+    if let Some(removal) = active_worktree_removal {
+        let elapsed_seconds = now_ms().saturating_sub(removal.started_at as u128) / 1000;
+        push_kv(&mut lines, "Status", "removing", width);
+        push_kv(&mut lines, "Elapsed", &format!("{elapsed_seconds}s"), width);
+        let detail_lines = removal
+            .stderr
+            .as_deref()
+            .unwrap_or("")
+            .split('\n')
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>();
+        if !detail_lines.is_empty() {
+            let start = detail_lines.len().saturating_sub(3);
+            push_kv(
+                &mut lines,
+                "Progress",
+                &detail_lines[start..].join(" | "),
+                width,
+            );
+        }
+    }
     if !active_sessions.is_empty() {
         push_kv(
             &mut lines,

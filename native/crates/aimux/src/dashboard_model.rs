@@ -20,6 +20,10 @@ pub struct DesktopStateSnapshot {
     pub main_checkout_info: MainCheckoutInfo,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub main_checkout_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worktree_removal: Option<DashboardWorktreeRemovalInfo>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub worktree_removals: Vec<DashboardWorktreeRemovalInfo>,
     pub agent_restore_offer: Option<AgentRestoreOffer>,
     #[serde(default)]
     pub operation_failures: Vec<Value>,
@@ -442,6 +446,18 @@ pub struct AgentRestoreOffer {
     pub updated_at: String,
     pub session_ids: Vec<String>,
     pub sessions: Vec<AgentRestoreSession>,
+    #[serde(default, flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardWorktreeRemovalInfo {
+    pub path: String,
+    pub name: String,
+    pub started_at: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stderr: Option<String>,
     #[serde(default, flatten)]
     pub extra: BTreeMap<String, Value>,
 }

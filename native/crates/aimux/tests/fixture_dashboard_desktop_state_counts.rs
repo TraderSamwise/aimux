@@ -82,6 +82,8 @@ fn run_case(input: CaseInput) -> Value {
             extra: Default::default(),
         },
         main_checkout_path: None,
+        worktree_removal: None,
+        worktree_removals: Vec::new(),
         agent_restore_offer: None,
         operation_failures: Vec::new(),
         extra: Default::default(),
