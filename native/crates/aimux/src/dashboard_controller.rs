@@ -426,14 +426,14 @@ impl DashboardController {
             DashboardKey::ShiftDown => {
                 self.move_selected_entry(snapshot, DashboardMoveDirection::Down)
             }
-            DashboardKey::Down => {
-                self.navigation.move_next(snapshot);
-                DashboardControllerEffect::Render
-            }
-            DashboardKey::Up => {
-                self.navigation.move_prev(snapshot);
-                DashboardControllerEffect::Render
-            }
+            DashboardKey::Down => match self.navigation.move_next(snapshot) {
+                DashboardNavigationOutcome::Changed => DashboardControllerEffect::Render,
+                _ => DashboardControllerEffect::Ignored,
+            },
+            DashboardKey::Up => match self.navigation.move_prev(snapshot) {
+                DashboardNavigationOutcome::Changed => DashboardControllerEffect::Render,
+                _ => DashboardControllerEffect::Ignored,
+            },
             DashboardKey::Back => match self.navigation.back(snapshot) {
                 DashboardNavigationOutcome::Back => DashboardControllerEffect::Render,
                 _ => DashboardControllerEffect::Ignored,

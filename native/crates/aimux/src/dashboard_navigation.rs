@@ -72,7 +72,9 @@ impl DashboardNavigationState {
                 let count = entry_count(snapshot, self.worktree_index);
                 if count > 1 {
                     self.item_index = (self.item_index + 1) % count;
+                    return DashboardNavigationOutcome::Changed;
                 }
+                return DashboardNavigationOutcome::Ignored;
             }
         }
         DashboardNavigationOutcome::Changed
@@ -91,7 +93,9 @@ impl DashboardNavigationState {
                 let count = entry_count(snapshot, self.worktree_index);
                 if count > 1 {
                     self.item_index = (self.item_index + count - 1) % count;
+                    return DashboardNavigationOutcome::Changed;
                 }
+                return DashboardNavigationOutcome::Ignored;
             }
         }
         DashboardNavigationOutcome::Changed

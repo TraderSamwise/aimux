@@ -97,6 +97,23 @@ fn flat_session_escape_focuses_selected_visible_session() {
 }
 
 #[test]
+fn flat_single_session_navigation_does_not_redraw_when_selection_cannot_move() {
+    let mut snapshot = snapshot();
+    snapshot.worktree_groups.clear();
+    snapshot.sessions = vec![snapshot.sessions[0].clone()];
+    let mut controller = DashboardController::new(&snapshot);
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('j')),
+        DashboardControllerEffect::Ignored
+    );
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('k')),
+        DashboardControllerEffect::Ignored
+    );
+}
+
+#[test]
 fn worktree_root_escape_focuses_active_visible_session() {
     let mut snapshot = snapshot();
     snapshot.sessions[0].tmux_window_id = Some("@active".into());
