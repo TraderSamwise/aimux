@@ -497,9 +497,14 @@ fn lifecycle_parsers_match_spawn_stop_kill_and_fork_forms() {
     assert_eq!(fork.worktree.as_deref(), Some("../other"));
     assert!(fork.open);
 
+    let default_tool_fork =
+        parse_core_lifecycle_fork_args(&["fork", "claude-1"]).expect("default tool fork args");
+    assert_eq!(default_tool_fork.source_session_id, "claude-1");
+    assert!(default_tool_fork.tool.is_none());
+
     assert!(parse_core_lifecycle_spawn_args(&["spawn", "--tool"]).is_none());
     assert!(parse_core_lifecycle_spawn_args(&["spawn", "claude"]).is_none());
-    assert!(parse_core_lifecycle_fork_args(&["fork", "claude-1"]).is_none());
+    assert!(parse_core_lifecycle_fork_args(&["fork"]).is_none());
     assert!(parse_core_lifecycle_status_args(&["stop"], "stop").is_none());
     let project_stop = parse_core_project_stop_args(&["stop", "--json"]).expect("project stop");
     assert!(project_stop.json);

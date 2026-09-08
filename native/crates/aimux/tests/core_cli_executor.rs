@@ -1031,12 +1031,17 @@ fn lifecycle_commands_execute_native_text_routes_without_core_command_fallback()
         ]),
         &mut runtime,
     );
+    let default_tool_fork = run_core_cli_with(&args(&["fork", "claude-1"]), &mut runtime);
 
     assert_eq!(spawn.stdout, ["spawned claude-1"]);
     assert_eq!(stop.stdout, ["stopped claude-1"]);
     assert_eq!(service.stdout, ["service service-1 running"]);
     assert_eq!(kill.stdout, ["graveyarded claude-1"]);
     assert_eq!(fork.stdout, ["forked codex-2\nthread thread-1"]);
+    assert_eq!(
+        default_tool_fork.stdout,
+        ["forked codex-2\nthread thread-1"]
+    );
     assert_eq!(
         runtime.text_routes,
         [
@@ -1073,6 +1078,14 @@ fn lifecycle_commands_execute_native_text_routes_without_core_command_fallback()
                     "sourceSessionId": "claude-1",
                     "tool": "codex",
                     "instruction": "continue",
+                    "open": true,
+                })),
+            ),
+            (
+                "/core/lifecycle/fork-text".into(),
+                Some(json!({
+                    "project": "/repo",
+                    "sourceSessionId": "claude-1",
                     "open": true,
                 })),
             ),
