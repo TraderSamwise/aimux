@@ -5,6 +5,10 @@ use aimux::core_cli::{
     classify_core_cli_with_project_resolver, validate_core_command_response,
 };
 use aimux::core_command_contract::{CORE_API_ROUTES, CORE_COMMAND_NAMES};
+use aimux::native_cli_dispatch::{
+    CORE_LOOP_LIST_TEXT_ROUTE, CORE_OVERSEER_STATUS_TEXT_ROUTE, CORE_REVIEW_LIST_TEXT_ROUTE,
+    CORE_SCRIBE_STATUS_TEXT_ROUTE,
+};
 use serde_json::{Value, json};
 
 fn context(daemon_running: bool, has_credentials: bool) -> CoreCliContext {
@@ -780,6 +784,17 @@ fn task_and_review_commands_plan_native_text_routes() {
             })),
         }
     );
+
+    let review_list =
+        classify_core_cli(&["review", "list"], &context(true, true)).expect("review list plan");
+    assert_eq!(review_list.operation, CoreCliOperation::ReviewList);
+    assert_eq!(
+        review_list.action,
+        CoreCliAction::TextRoute {
+            path: format!("{CORE_REVIEW_LIST_TEXT_ROUTE}?project=%2Frepo"),
+            body: None,
+        }
+    );
 }
 
 #[test]
@@ -1004,6 +1019,17 @@ fn worktree_and_graveyard_commands_plan_native_text_routes() {
         graveyard_list.action,
         CoreCliAction::TextRoute {
             path: "/core/graveyard/list-text?project=%2Frepo&json=1".into(),
+            body: None,
+        }
+    );
+
+    let bare_graveyard =
+        classify_core_cli(&["graveyard"], &context(true, true)).expect("bare graveyard plan");
+    assert_eq!(bare_graveyard.operation, CoreCliOperation::GraveyardList);
+    assert_eq!(
+        bare_graveyard.action,
+        CoreCliAction::TextRoute {
+            path: "/core/graveyard/list-text?project=%2Frepo".into(),
             body: None,
         }
     );
@@ -1719,6 +1745,17 @@ fn loop_commands_plan_native_text_routes_with_actor_defaults() {
         missing_session.to_string(),
         "aimux: pass --session or run inside an aimux agent (AIMUX_SESSION_ID is unset)"
     );
+
+    let list = classify_core_cli(&["loop", "list", "--json"], &context(true, true))
+        .expect("loop list plan");
+    assert_eq!(list.operation, CoreCliOperation::LoopList);
+    assert_eq!(
+        list.action,
+        CoreCliAction::TextRoute {
+            path: format!("{CORE_LOOP_LIST_TEXT_ROUTE}?project=%2Frepo&json=1"),
+            body: None,
+        }
+    );
 }
 
 #[test]
@@ -1771,6 +1808,17 @@ fn overseer_commands_plan_native_text_routes() {
             .exit_code(),
         1
     );
+
+    let status = classify_core_cli(&["overseer", "status"], &context(true, true))
+        .expect("overseer status plan");
+    assert_eq!(status.operation, CoreCliOperation::OverseerStatus);
+    assert_eq!(
+        status.action,
+        CoreCliAction::TextRoute {
+            path: format!("{CORE_OVERSEER_STATUS_TEXT_ROUTE}?project=%2Frepo"),
+            body: None,
+        }
+    );
 }
 
 #[test]
@@ -1822,6 +1870,17 @@ fn scribe_commands_plan_native_text_routes() {
             .expect_err("missing scribe session")
             .exit_code(),
         1
+    );
+
+    let status =
+        classify_core_cli(&["scribe", "status"], &context(true, true)).expect("scribe status plan");
+    assert_eq!(status.operation, CoreCliOperation::ScribeStatus);
+    assert_eq!(
+        status.action,
+        CoreCliAction::TextRoute {
+            path: format!("{CORE_SCRIBE_STATUS_TEXT_ROUTE}?project=%2Frepo"),
+            body: None,
+        }
     );
 }
 

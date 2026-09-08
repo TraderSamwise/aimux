@@ -110,6 +110,15 @@ pub fn parse_core_graveyard_args<S: AsRef<str>>(args: &[S]) -> Option<CoreGravey
     if args.first().map(AsRef::as_ref) != Some("graveyard") {
         return None;
     }
+    if args.len() == 1 {
+        return Some(CoreGraveyardArgs {
+            subcommand: "list".to_owned(),
+            project: None,
+            session_id: None,
+            dry_run: false,
+            json: false,
+        });
+    }
     let subcommand = args.get(1).map(AsRef::as_ref)?;
     if !matches!(subcommand, "list" | "send" | "resurrect" | "cleanup") {
         return None;

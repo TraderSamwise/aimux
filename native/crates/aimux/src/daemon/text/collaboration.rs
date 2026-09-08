@@ -1,11 +1,11 @@
 use crate::core_command_contract::CORE_API_ROUTES;
 use crate::core_text::{
     render_core_handoff_mutation_lines, render_core_handoff_send_lines,
-    render_core_message_send_lines, render_core_review_request_changes_lines,
-    render_core_task_list_lines, render_core_task_mutation_lines, render_core_task_show_lines,
-    render_core_thread_list_lines, render_core_thread_mark_seen_lines,
-    render_core_thread_open_lines, render_core_thread_send_lines, render_core_thread_show_lines,
-    render_core_thread_status_lines,
+    render_core_message_send_lines, render_core_review_list_lines,
+    render_core_review_request_changes_lines, render_core_task_list_lines,
+    render_core_task_mutation_lines, render_core_task_show_lines, render_core_thread_list_lines,
+    render_core_thread_mark_seen_lines, render_core_thread_open_lines,
+    render_core_thread_send_lines, render_core_thread_show_lines, render_core_thread_status_lines,
 };
 use crate::daemon::routing::{
     DaemonRouteResponse, DaemonRouteUrl, csv_param, required_param, string_param, text_error,
@@ -15,6 +15,7 @@ use crate::daemon::text::params::{
     ProjectServiceJsonResult, required_project_service_array, required_project_service_object,
 };
 use crate::daemon::text::worktrees::CLI_PROJECT_MUTATION_TIMEOUT_MS;
+use crate::native_cli_dispatch::CORE_REVIEW_LIST_TEXT_ROUTE;
 use crate::project_api_contract::routes as project_routes;
 use serde_json::{Map, Value, json};
 
@@ -87,6 +88,9 @@ pub fn route_collaboration_text_request(
     }
     if method == "GET" && pathname == CORE_API_ROUTES.task_list_text {
         return Some(task_list_text_route(runtime, &route_url, body));
+    }
+    if method == "GET" && pathname == CORE_REVIEW_LIST_TEXT_ROUTE {
+        return Some(review_list_text_route(runtime, &route_url, body));
     }
     if method == "GET" && pathname == CORE_API_ROUTES.task_show_text {
         return Some(task_show_text_route(runtime, &route_url, body));
@@ -622,6 +626,41 @@ pub fn task_list_text_route(
         route_url,
         payload.clone(),
         &render_core_task_list_lines(&payload),
+    )
+}
+
+pub fn review_list_text_route(
+    runtime: &mut impl DaemonCollaborationTextRuntime,
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+) -> DaemonRouteResponse {
+    let project = match required_param(route_url, body, "project") {
+        Ok(project) => project,
+        Err(response) => return response,
+    };
+    let (json, _) = match unwrap_project_result(
+        runtime.get_project_service_json(&project, project_routes::tasks::LIST),
+    ) {
+        Ok(result) => result,
+        Err(response) => return response,
+    };
+    let tasks = match required_project_service_array(&json, "review list", "tasks") {
+        Ok(tasks) => tasks,
+        Err(response) => return response,
+    };
+    let reviews = tasks
+        .into_iter()
+        .filter(|task| {
+            task.get("type").and_then(Value::as_str) == Some("review")
+                || task.get("reviewStatus").is_some()
+                || task.get("reviewFeedback").is_some()
+        })
+        .collect::<Vec<_>>();
+    let payload = json!({ "tasks": reviews });
+    text_or_json_lines(
+        route_url,
+        payload.clone(),
+        &render_core_review_list_lines(&payload),
     )
 }
 

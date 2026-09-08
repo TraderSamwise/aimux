@@ -16,7 +16,10 @@ use crate::core_cli_routing::{
     parse_core_task_args, parse_core_team_args, parse_core_thread_args, parse_core_worktree_args,
 };
 use crate::core_command_contract::{CORE_API_ROUTES, CORE_COMMAND_NAMES};
-use crate::native_cli_dispatch::CORE_SERVICE_CREATE_TEXT_ROUTE;
+use crate::native_cli_dispatch::{
+    CORE_LOOP_LIST_TEXT_ROUTE, CORE_OVERSEER_STATUS_TEXT_ROUTE, CORE_REVIEW_LIST_TEXT_ROUTE,
+    CORE_SCRIBE_STATUS_TEXT_ROUTE, CORE_SERVICE_CREATE_TEXT_ROUTE,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::error::Error;
@@ -63,12 +66,15 @@ pub enum CoreCliOperation {
     LifecycleFork,
     LoopAdd,
     LoopRemove,
+    LoopList,
     LoopDone,
     LoopBlock,
     OverseerStart,
     OverseerClear,
+    OverseerStatus,
     ScribeStart,
     ScribeClear,
+    ScribeStatus,
     TeamShow,
     TeamInit,
     TeamAdd,
@@ -95,6 +101,7 @@ pub enum CoreCliOperation {
     TaskReopen,
     ReviewApprove,
     ReviewRequestChanges,
+    ReviewList,
     ThreadList,
     ThreadShow,
     ThreadOpen,
@@ -340,6 +347,57 @@ fn command_action(request: CoreCommandCall) -> CoreCliAction {
         request,
         open_dashboard_after: false,
     }
+}
+
+fn parse_project_read_options(
+    args: &[String],
+    label: &'static str,
+) -> Result<(Option<String>, bool), CoreCliPlanError> {
+    let mut project = None;
+    let mut json = false;
+    let mut index = 2;
+    while index < args.len() {
+        let arg = args[index].as_str();
+        if arg == "--json" {
+            json = true;
+            index += 1;
+            continue;
+        }
+        if arg == "--project" {
+            let value = args.get(index + 1).map(String::as_str).unwrap_or("");
+            if value.is_empty() || value.starts_with('-') {
+                return Err(CoreCliPlanError::InvalidArguments {
+                    args: args.to_vec(),
+                    message: "error: invalid project argument",
+                });
+            }
+            project = Some(value.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--project=") {
+            if value.is_empty() || value.starts_with('-') {
+                return Err(CoreCliPlanError::InvalidArguments {
+                    args: args.to_vec(),
+                    message: "error: invalid project argument",
+                });
+            }
+            project = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        return Err(CoreCliPlanError::InvalidArguments {
+            args: args.to_vec(),
+            message: match label {
+                "loop list" => "error: invalid loop list arguments",
+                "overseer status" => "error: invalid overseer status arguments",
+                "scribe status" => "error: invalid scribe status arguments",
+                "review list" => "error: invalid review list arguments",
+                _ => "error: invalid arguments",
+            },
+        });
+    }
+    Ok((project, json))
 }
 
 /// Produces the high-level execution decision made by `runCoreCli` while
@@ -749,23 +807,61 @@ where
                 CoreCliFallback::None,
             )
         }
-        ("loop", "list") | ("overseer", "status") | ("scribe", "status") => {
-            let project_root = context.current_project_root.clone();
+        ("loop", "list") => {
+            let (project, json) = parse_project_read_options(&args, "loop list")?;
+            let project_root = project
+                .as_deref()
+                .map(&resolve_project_root)
+                .unwrap_or_else(|| context.current_project_root.clone());
             (
-                CoreCliOperation::AgentPs,
+                CoreCliOperation::LoopList,
                 CoreCliAction::TextRoute {
-                    path: agent_ps_text_path(&project_root, false),
+                    path: project_text_path(CORE_LOOP_LIST_TEXT_ROUTE, &project_root, json),
+                    body: None,
+                },
+                CoreCliFallback::None,
+            )
+        }
+        ("overseer", "status") => {
+            let (project, json) = parse_project_read_options(&args, "overseer status")?;
+            let project_root = project
+                .as_deref()
+                .map(&resolve_project_root)
+                .unwrap_or_else(|| context.current_project_root.clone());
+            (
+                CoreCliOperation::OverseerStatus,
+                CoreCliAction::TextRoute {
+                    path: project_text_path(CORE_OVERSEER_STATUS_TEXT_ROUTE, &project_root, json),
+                    body: None,
+                },
+                CoreCliFallback::None,
+            )
+        }
+        ("scribe", "status") => {
+            let (project, json) = parse_project_read_options(&args, "scribe status")?;
+            let project_root = project
+                .as_deref()
+                .map(&resolve_project_root)
+                .unwrap_or_else(|| context.current_project_root.clone());
+            (
+                CoreCliOperation::ScribeStatus,
+                CoreCliAction::TextRoute {
+                    path: project_text_path(CORE_SCRIBE_STATUS_TEXT_ROUTE, &project_root, json),
                     body: None,
                 },
                 CoreCliFallback::None,
             )
         }
         ("review", "list") => {
-            let project_root = context.current_project_root.clone();
+            let (project, json) = parse_project_read_options(&args, "review list")?;
+            let project_root = project
+                .as_deref()
+                .map(&resolve_project_root)
+                .unwrap_or_else(|| context.current_project_root.clone());
             (
-                CoreCliOperation::TaskList,
+                CoreCliOperation::ReviewList,
                 CoreCliAction::TextRoute {
-                    path: task_list_text_path(&project_root, None, None, false),
+                    path: project_text_path(CORE_REVIEW_LIST_TEXT_ROUTE, &project_root, json),
                     body: None,
                 },
                 CoreCliFallback::None,
@@ -1453,7 +1549,7 @@ where
                 CoreCliFallback::None,
             )
         }
-        ("graveyard", "list" | "send" | "resurrect" | "cleanup") => {
+        ("graveyard", "" | "list" | "send" | "resurrect" | "cleanup") => {
             let parsed = parse_core_graveyard_args(&args).ok_or_else(|| {
                 CoreCliPlanError::InvalidArguments {
                     args: args.clone(),

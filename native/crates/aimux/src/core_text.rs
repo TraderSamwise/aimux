@@ -12,11 +12,11 @@ mod collaboration;
 mod worktrees;
 pub use collaboration::{
     render_core_handoff_mutation_lines, render_core_handoff_send_lines,
-    render_core_message_send_lines, render_core_review_request_changes_lines,
-    render_core_task_list_lines, render_core_task_mutation_lines, render_core_task_show_lines,
-    render_core_thread_list_lines, render_core_thread_mark_seen_lines,
-    render_core_thread_open_lines, render_core_thread_send_lines, render_core_thread_show_lines,
-    render_core_thread_status_lines,
+    render_core_message_send_lines, render_core_review_list_lines,
+    render_core_review_request_changes_lines, render_core_task_list_lines,
+    render_core_task_mutation_lines, render_core_task_show_lines, render_core_thread_list_lines,
+    render_core_thread_mark_seen_lines, render_core_thread_open_lines,
+    render_core_thread_send_lines, render_core_thread_show_lines, render_core_thread_status_lines,
 };
 pub use worktrees::{
     render_core_graveyard_agent_lines, render_core_graveyard_cleanup_lines,
@@ -689,6 +689,15 @@ pub fn render_core_loop_remove_lines(payload: &Value) -> Vec<String> {
         js_string(field(payload, "sessionId"))
     )]
 }
+pub fn render_core_loop_list_lines(payload: &Value) -> Vec<String> {
+    let agents = array(payload, "agents");
+    if agents.is_empty() {
+        return vec!["No loop agents.".into()];
+    }
+    let mut lines = vec!["Loop agents:".into()];
+    lines.extend(render_core_agent_ps_lines(payload));
+    lines
+}
 fn render_loop_completion(payload: &Value, status: &str) -> Vec<String> {
     let mut lines = Vec::new();
     if let Some(warning) = field(payload, "eventWarning")
@@ -721,6 +730,15 @@ pub fn render_core_overseer_clear_lines(payload: &Value) -> Vec<String> {
         js_string(field(payload, "sessionId"))
     )]
 }
+pub fn render_core_overseer_status_lines(payload: &Value) -> Vec<String> {
+    let agents = array(payload, "agents");
+    if agents.is_empty() {
+        return vec!["No overseer running.".into()];
+    }
+    let mut lines = vec!["Overseer:".into()];
+    lines.extend(render_core_agent_ps_lines(payload));
+    lines
+}
 pub fn render_core_scribe_start_lines(payload: &Value) -> Vec<String> {
     vec![format!("scribe {}", js_string(field(payload, "sessionId")))]
 }
@@ -729,6 +747,15 @@ pub fn render_core_scribe_clear_lines(payload: &Value) -> Vec<String> {
         "scribe cleared {}",
         js_string(field(payload, "sessionId"))
     )]
+}
+pub fn render_core_scribe_status_lines(payload: &Value) -> Vec<String> {
+    let agents = array(payload, "agents");
+    if agents.is_empty() {
+        return vec!["No scribe running.".into()];
+    }
+    let mut lines = vec!["Scribe:".into()];
+    lines.extend(render_core_agent_ps_lines(payload));
+    lines
 }
 
 fn required_team_role(payload: &Value) -> Option<&str> {

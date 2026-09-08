@@ -230,6 +230,16 @@ pub fn render_core_task_list_lines(payload: &Value) -> Vec<String> {
     lines
 }
 
+pub fn render_core_review_list_lines(payload: &Value) -> Vec<String> {
+    let tasks = filtered_objects(array(payload, "tasks"));
+    if tasks.is_empty() {
+        return vec!["No review tasks found.".into()];
+    }
+    let mut lines = vec!["Review tasks:".into()];
+    lines.extend(render_core_task_list_lines(payload));
+    lines
+}
+
 pub fn render_core_task_show_lines(payload: &Value) -> Vec<String> {
     let task = object(payload, "task");
     let mut lines = vec![

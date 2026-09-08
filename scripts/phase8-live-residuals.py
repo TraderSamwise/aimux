@@ -542,6 +542,138 @@ def run_dashboard_attach_smoke(aimux_bin: Path, mutation: str | None) -> dict[st
         }
 
 
+def run_dashboard_spawn_smoke(aimux_bin: Path, mutation: str | None) -> dict[str, Any]:
+    tmux = find_tmux()
+    with Scope("dashboard-spawn", aimux_bin) as scope:
+        socket_name = f"aimux-phase8-dashboard-spawn-{os.getpid()}-{int(time.time() * 1000)}"
+        scope.tmux_socket_name = socket_name
+        install_tmux_socket_wrapper(scope, tmux, socket_name)
+        run([tmux, "-L", socket_name, "start-server"], env=without_tmux(os.environ.copy()), timeout=10)
+        scope.init_git_project()
+        run([str(aimux_bin), "init"], cwd=scope.project, env=scope.env, timeout=30)
+        install_agent_tool_config(scope, "claude")
+        install_agent_tool_config(scope, "codex")
+        install_agent_tool_config(scope, "aider")
+
+        dashboard_session = "phase8-dashboard-spawn"
+        project_root = scope.project.resolve()
+        command = (
+            f"cd {shlex.quote(str(project_root))} && "
+            f"{shlex.quote(str(aimux_bin))}; "
+            "code=$?; printf '\\n__AIMUX_DASHBOARD_SPAWN_EXIT:%s\\n' \"$code\"; sleep 30"
+        )
+        proc = subprocess.Popen(
+            [
+                "script",
+                "-q",
+                "/dev/null",
+                tmux,
+                "-L",
+                socket_name,
+                "-f",
+                "/dev/null",
+                "new-session",
+                "-s",
+                dashboard_session,
+                "-x",
+                "100",
+                "-y",
+                "30",
+                "sh",
+                "-lc",
+                command,
+            ],
+            cwd=str(project_root),
+            env=scope.env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        scope.procs.append(proc)
+        required = "agent multiplexer"
+        wait_until(
+            lambda: (
+                current
+                if required in (current := capture_tmux(scope, dashboard_session))
+                else None
+            ),
+            timeout=10,
+            label="dashboard spawn first frame",
+        )
+        tmux_cmd(scope, ["send-keys", "-t", f"{dashboard_session}:0", "n"])
+        picker_output = wait_until(
+            lambda: (
+                current
+                if "SELECT TOOL" in (current := capture_tmux(scope, dashboard_session))
+                else None
+            ),
+            timeout=5,
+            label="dashboard spawn tool picker",
+        )
+        if "claude" not in picker_output:
+            raise LiveResidualFailure(f"dashboard spawn picker did not include claude:\n{picker_output}")
+        tmux_cmd(scope, ["send-keys", "-t", f"{dashboard_session}:0", "Enter"])
+
+        lookup_tool = "claude"
+        if mutation == "dashboard-spawn-missing-session":
+            lookup_tool = "phase8-dashboard-spawn-mutation-missing"
+        ps_payload, session = wait_until(
+            lambda: ps_session_for_tool(scope, aimux_bin, lookup_tool),
+            timeout=12,
+            label=f"{lookup_tool} dashboard-spawn session in aimux ps",
+        )
+        session_id = str(session.get("id") or "")
+        if not session_id:
+            raise LiveResidualFailure(f"dashboard-spawn session has no id: {session}")
+        windows = tmux_cmd_for_socket(
+            tmux,
+            socket_name,
+            ["list-windows", "-a", "-F", "#{session_name}\t#{window_name}"],
+        ).stdout
+        if "\tclaude" not in windows and "\t/bin/sh" not in windows:
+            raise LiveResidualFailure(f"dashboard-spawn tmux window missing for {session_id}:\n{windows}")
+
+        stop = run(
+            [str(aimux_bin), "stop", session_id, "--json"],
+            cwd=scope.project,
+            env=scope.env,
+            timeout=30,
+        )
+        parse_json_stdout(stop.stdout, "dashboard-spawn agent stop")
+        wait_until(
+            lambda: not ps_contains_session(scope, aimux_bin, session_id),
+            timeout=10,
+            label="dashboard-spawn session removed from aimux ps",
+        )
+        tmux_cmd(scope, ["send-keys", "-t", f"{dashboard_session}:0", "q"])
+        final_output = ""
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            final_output = capture_all_tmux(scope)
+            if "__AIMUX_DASHBOARD_SPAWN_EXIT:0" in final_output:
+                break
+            time.sleep(0.05)
+        else:
+            raise LiveResidualFailure(f"dashboard-spawn dashboard did not quit:\n{final_output}")
+        return {
+            "name": "phase8-dashboard-spawn-smoke",
+            "sessionId": session_id,
+            "psAfterSpawn": ps_payload,
+            "caught": [
+                "native dashboard tool picker creating an agent through the real binary",
+                "dashboard action execution reaching POST /agents/spawn",
+                "spawned dashboard agent appears in aimux ps",
+                "spawned dashboard agent tmux window exists",
+                "dashboard remains responsive after spawning an agent",
+            ],
+            "notCaught": [
+                "real Claude CLI availability",
+                "tool picker launch option editing before spawn",
+            ],
+        }
+
+
 def run_command_resolution_smoke(aimux_bin: Path, mutation: str | None) -> dict[str, Any]:
     tmux = find_tmux()
     with Scope("command-resolution", aimux_bin) as scope:
@@ -561,6 +693,15 @@ def run_command_resolution_smoke(aimux_bin: Path, mutation: str | None) -> dict[
 
         probes: list[tuple[str, list[str]]] = [(command, [command, "--help"]) for command in commands]
         probes.extend(command_resolution_regression_probes())
+        alias_baselines = {
+            "loop-list": ("aimux ps", run([str(aimux_bin), "ps"], cwd=scope.project, env=scope.env, timeout=30).stdout),
+            "overseer-status": ("aimux ps", run([str(aimux_bin), "ps"], cwd=scope.project, env=scope.env, timeout=30).stdout),
+            "scribe-status": ("aimux ps", run([str(aimux_bin), "ps"], cwd=scope.project, env=scope.env, timeout=30).stdout),
+            "review-list": (
+                "aimux task list",
+                run([str(aimux_bin), "task", "list"], cwd=scope.project, env=scope.env, timeout=30).stdout,
+            ),
+        }
         failures = []
         for index, (name, args) in enumerate(probes):
             result = run([str(aimux_bin), *args], cwd=scope.project, env=scope.env, timeout=30, check=False)
@@ -575,6 +716,25 @@ def run_command_resolution_smoke(aimux_bin: Path, mutation: str | None) -> dict[
                     "stdout": result.stdout[-600:],
                     "stderr": result.stderr[-600:],
                 })
+                continue
+            if mutation == "command-silent-alias" and name in alias_baselines:
+                result = subprocess.CompletedProcess(
+                    result.args,
+                    result.returncode,
+                    stdout=alias_baselines[name][1],
+                    stderr=result.stderr,
+                )
+            if name in alias_baselines and result.returncode == 0:
+                baseline_label, baseline_stdout = alias_baselines[name]
+                if result.stdout == baseline_stdout:
+                    failures.append({
+                        "name": name,
+                        "args": args,
+                        "code": result.returncode,
+                        "stdout": result.stdout[-600:],
+                        "stderr": result.stderr[-600:],
+                        "aliasBaseline": baseline_label,
+                    })
         if failures:
             raise LiveResidualFailure("command resolution regressions:\n" + json.dumps(failures, indent=2))
         return {
@@ -585,6 +745,7 @@ def run_command_resolution_smoke(aimux_bin: Path, mutation: str | None) -> dict[
                 "advertised command missing from native root dispatch",
                 "valid subcommand rejected as unsupported",
                 "Clap fallback unrecognized-subcommand regressions",
+                "command groups silently aliasing ps or task-list output",
             ],
             "notCaught": [
                 "exact command output formatting",
@@ -1508,6 +1669,8 @@ def run_one(name: str, aimux_bin: Path, mutation: str | None) -> dict[str, Any]:
         return run_dashboard_render_smoke(aimux_bin, mutation)
     if name == "dashboard-attach":
         return run_dashboard_attach_smoke(aimux_bin, mutation)
+    if name == "dashboard-spawn":
+        return run_dashboard_spawn_smoke(aimux_bin, mutation)
     if name == "command-resolution":
         return run_command_resolution_smoke(aimux_bin, mutation)
     if name == "agent-shell":
@@ -1526,21 +1689,23 @@ def run_one(name: str, aimux_bin: Path, mutation: str | None) -> dict[str, Any]:
 
 
 def prove_failures(args: argparse.Namespace, aimux_bin: Path) -> list[dict[str, Any]]:
-    mutations = {
-        "tmux": "tmux-drop-output",
-        "dashboard": "dashboard-empty-frame",
-        "dashboard-input": "dashboard-input-dead",
-        "dashboard-attach": "dashboard-attach-terminal-error",
-        "command-resolution": "command-unsupported",
-        "agent-shell": "agent-shell-missing-window",
-        "top-level-agent": "top-level-agent-missing-session",
-        "lazy-read": "lazy-read-service-unavailable",
-        "restart-current": "restart-current-zero-projects",
-        "sse": "sse-reorder",
-        "process": "process-delete-endpoint",
-    }
+    mutations = [
+        ("tmux", "tmux-drop-output"),
+        ("dashboard", "dashboard-empty-frame"),
+        ("dashboard-input", "dashboard-input-dead"),
+        ("dashboard-attach", "dashboard-attach-terminal-error"),
+        ("dashboard-spawn", "dashboard-spawn-missing-session"),
+        ("command-resolution", "command-unsupported"),
+        ("command-resolution", "command-silent-alias"),
+        ("agent-shell", "agent-shell-missing-window"),
+        ("top-level-agent", "top-level-agent-missing-session"),
+        ("lazy-read", "lazy-read-service-unavailable"),
+        ("restart-current", "restart-current-zero-projects"),
+        ("sse", "sse-reorder"),
+        ("process", "process-delete-endpoint"),
+    ]
     proof = []
-    for suite, mutation in mutations.items():
+    for suite, mutation in mutations:
         command = [
             sys.executable,
             str(Path(__file__).resolve()),
@@ -1584,6 +1749,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             "dashboard",
             "dashboard-input",
             "dashboard-attach",
+            "dashboard-spawn",
             "command-resolution",
             "agent-shell",
             "top-level-agent",
@@ -1601,7 +1767,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "dashboard-empty-frame",
         "dashboard-input-dead",
         "dashboard-attach-terminal-error",
+        "dashboard-spawn-missing-session",
         "command-unsupported",
+        "command-silent-alias",
         "agent-shell-missing-window",
         "top-level-agent-missing-session",
         "lazy-read-service-unavailable",
@@ -1620,6 +1788,7 @@ def main(argv: list[str]) -> int:
             "tmux",
             "dashboard",
             "dashboard-attach",
+            "dashboard-spawn",
             "command-resolution",
             "agent-shell",
             "top-level-agent",

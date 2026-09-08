@@ -723,7 +723,7 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
             Some("worktree"),
             Some("add" | "create" | "remove" | "graveyard" | "resurrect" | "delete-graveyard"),
         ) => args.len() > 2 && !has_help(args),
-        (Some("graveyard"), Some("list" | "cleanup")) => true,
+        (Some("graveyard"), None) | (Some("graveyard"), Some("list" | "cleanup")) => true,
         (Some("graveyard"), Some("send" | "resurrect")) => args.len() > 2 && !has_help(args),
         (
             Some("notify" | "list-notifications" | "read-notifications" | "clear-notifications"),

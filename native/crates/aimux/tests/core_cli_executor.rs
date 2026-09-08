@@ -5,6 +5,10 @@ use aimux::daemon::text::auth::AuthFlowResult;
 use aimux::daemon::text::operations::RestartControlPlaneTextResult;
 use aimux::daemon_state::{AimuxDaemonInfo, DaemonState, StoppedDaemonInfo};
 use aimux::native_cli_dispatch::CORE_SERVICE_CREATE_TEXT_ROUTE;
+use aimux::native_cli_dispatch::{
+    CORE_LOOP_LIST_TEXT_ROUTE, CORE_OVERSEER_STATUS_TEXT_ROUTE, CORE_REVIEW_LIST_TEXT_ROUTE,
+    CORE_SCRIBE_STATUS_TEXT_ROUTE,
+};
 use serde_json::{Value, json};
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
@@ -1041,11 +1045,13 @@ fn loop_commands_execute_native_text_routes_without_core_command_fallback() {
         &args(&["loop", "block", "--session=claude-1", "--reason=blocked"]),
         &mut runtime,
     );
+    let list = run_core_cli_with(&args(&["loop", "list"]), &mut runtime);
 
     assert_eq!(add.stdout, ["loop ok"]);
     assert_eq!(remove.stdout, ["loop ok"]);
     assert_eq!(done.stdout, ["loop ok"]);
     assert_eq!(block.stdout, ["loop ok"]);
+    assert_eq!(list.stdout, ["loop ok"]);
     assert_eq!(
         runtime.text_routes,
         [
@@ -1084,6 +1090,7 @@ fn loop_commands_execute_native_text_routes_without_core_command_fallback() {
                     "reason": "blocked",
                 })),
             ),
+            (format!("{CORE_LOOP_LIST_TEXT_ROUTE}?project=%2Frepo"), None,),
         ]
     );
     assert!(runtime.commands.is_empty());
@@ -1110,9 +1117,11 @@ fn overseer_commands_execute_native_text_routes_without_core_command_fallback() 
         &args(&["overseer", "clear", "boss", "--project=/repo"]),
         &mut runtime,
     );
+    let status = run_core_cli_with(&args(&["overseer", "status"]), &mut runtime);
 
     assert_eq!(start.stdout, ["overseer ok"]);
     assert_eq!(clear.stdout, ["overseer ok"]);
+    assert_eq!(status.stdout, ["overseer ok"]);
     assert_eq!(
         runtime.text_routes,
         [
@@ -1128,6 +1137,10 @@ fn overseer_commands_execute_native_text_routes_without_core_command_fallback() 
             (
                 "/core/overseer/clear-text".into(),
                 Some(json!({ "project": "/repo", "sessionId": "boss" })),
+            ),
+            (
+                format!("{CORE_OVERSEER_STATUS_TEXT_ROUTE}?project=%2Frepo"),
+                None,
             ),
         ]
     );
@@ -1155,9 +1168,11 @@ fn scribe_commands_execute_native_text_routes_without_core_command_fallback() {
         &args(&["scribe", "clear", "scribe-1", "--project=/repo"]),
         &mut runtime,
     );
+    let status = run_core_cli_with(&args(&["scribe", "status"]), &mut runtime);
 
     assert_eq!(start.stdout, ["scribe ok"]);
     assert_eq!(clear.stdout, ["scribe ok"]);
+    assert_eq!(status.stdout, ["scribe ok"]);
     assert_eq!(
         runtime.text_routes,
         [
@@ -1173,6 +1188,10 @@ fn scribe_commands_execute_native_text_routes_without_core_command_fallback() {
             (
                 "/core/scribe/clear-text".into(),
                 Some(json!({ "project": "/repo", "sessionId": "scribe-1" })),
+            ),
+            (
+                format!("{CORE_SCRIBE_STATUS_TEXT_ROUTE}?project=%2Frepo"),
+                None,
             ),
         ]
     );
@@ -1695,6 +1714,7 @@ fn task_and_review_commands_execute_native_text_routes_without_core_command_fall
         ]),
         &mut runtime,
     );
+    let review_list = run_core_cli_with(&args(&["review", "list"]), &mut runtime);
 
     for execution in [
         list,
@@ -1706,6 +1726,7 @@ fn task_and_review_commands_execute_native_text_routes_without_core_command_fall
         reopen,
         approve,
         request_changes,
+        review_list,
     ] {
         assert_eq!(execution.stdout, ["task task-1\nthread thread-1"]);
     }
@@ -1789,6 +1810,10 @@ fn task_and_review_commands_execute_native_text_routes_without_core_command_fall
                     "from": "reviewer",
                     "body": "fix",
                 })),
+            ),
+            (
+                format!("{CORE_REVIEW_LIST_TEXT_ROUTE}?project=%2Frepo"),
+                None,
             ),
         ]
     );

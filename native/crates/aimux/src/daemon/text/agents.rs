@@ -4,7 +4,8 @@ use crate::core_text::{
     render_core_agent_ps_lines, render_core_agent_rename_lines, render_core_lifecycle_fork_lines,
     render_core_lifecycle_kill_lines, render_core_lifecycle_spawn_lines,
     render_core_lifecycle_stop_lines, render_core_loop_add_lines, render_core_loop_block_lines,
-    render_core_loop_done_lines, render_core_loop_remove_lines,
+    render_core_loop_done_lines, render_core_loop_list_lines, render_core_loop_remove_lines,
+    render_core_overseer_status_lines, render_core_scribe_status_lines,
 };
 use crate::daemon::routing::{
     DaemonRouteResponse, DaemonRouteUrl, boolean_param, required_param, string_param, text_error,
@@ -14,7 +15,10 @@ use crate::daemon::text::params::{
     ProjectServiceJsonResult, required_project_service_array, required_project_service_string,
     resolve_lifecycle_worktree, resolve_project_relative_path,
 };
-use crate::native_cli_dispatch::CORE_SERVICE_CREATE_TEXT_ROUTE;
+use crate::native_cli_dispatch::{
+    CORE_LOOP_LIST_TEXT_ROUTE, CORE_OVERSEER_STATUS_TEXT_ROUTE, CORE_SCRIBE_STATUS_TEXT_ROUTE,
+    CORE_SERVICE_CREATE_TEXT_ROUTE,
+};
 use crate::project_api_contract::routes as project_routes;
 use serde_json::{Map, Value, json};
 
@@ -164,6 +168,30 @@ pub fn route_agent_text_request(
                 tone: None,
                 render: render_core_loop_block_lines,
             },
+        ));
+    }
+    if method == "GET" && pathname == CORE_LOOP_LIST_TEXT_ROUTE {
+        return Some(agent_filtered_text_route(
+            runtime,
+            &route_url,
+            body,
+            AgentFilterKind::Loop,
+        ));
+    }
+    if method == "GET" && pathname == CORE_OVERSEER_STATUS_TEXT_ROUTE {
+        return Some(agent_filtered_text_route(
+            runtime,
+            &route_url,
+            body,
+            AgentFilterKind::Overseer,
+        ));
+    }
+    if method == "GET" && pathname == CORE_SCRIBE_STATUS_TEXT_ROUTE {
+        return Some(agent_filtered_text_route(
+            runtime,
+            &route_url,
+            body,
+            AgentFilterKind::Scribe,
         ));
     }
 
@@ -475,6 +503,78 @@ pub fn agent_ps_text_route(
         json!(agents),
         &render_core_agent_ps_lines(&payload),
     )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AgentFilterKind {
+    Loop,
+    Overseer,
+    Scribe,
+}
+
+fn agent_filtered_text_route(
+    runtime: &mut impl DaemonAgentTextRuntime,
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+    kind: AgentFilterKind,
+) -> DaemonRouteResponse {
+    let project = match required_param(route_url, body, "project") {
+        Ok(project) => project,
+        Err(response) => return response,
+    };
+    let (json, _) = match unwrap_project_result(
+        runtime.get_project_service_json(&project, project_routes::agents::LIST),
+    ) {
+        Ok(result) => result,
+        Err(response) => return response,
+    };
+    let agents = match required_project_service_array(&json, "agent filtered list", "agents") {
+        Ok(agents) => agents,
+        Err(response) => return response,
+    };
+    if agents.iter().any(|agent| !agent.is_object()) {
+        return text_error(
+            502,
+            "Error: project service returned invalid agent filtered list response: agents entries are invalid",
+        );
+    }
+    let filtered = agents
+        .into_iter()
+        .filter(|agent| match kind {
+            AgentFilterKind::Loop => {
+                agent
+                    .get("loop")
+                    .and_then(Value::as_object)
+                    .and_then(|loop_state| loop_state.get("active"))
+                    .and_then(Value::as_bool)
+                    == Some(true)
+            }
+            AgentFilterKind::Overseer => is_project_control_agent(agent, "overseer"),
+            AgentFilterKind::Scribe => is_project_control_agent(agent, "scribe"),
+        })
+        .collect::<Vec<_>>();
+    let payload = json!({ "agents": filtered });
+    let lines = match kind {
+        AgentFilterKind::Loop => render_core_loop_list_lines(&payload),
+        AgentFilterKind::Overseer => render_core_overseer_status_lines(&payload),
+        AgentFilterKind::Scribe => render_core_scribe_status_lines(&payload),
+    };
+    text_or_json_lines(route_url, payload.clone(), &lines)
+}
+
+fn is_project_control_agent(agent: &Value, role: &str) -> bool {
+    if agent.get(role).and_then(Value::as_bool) == Some(true) {
+        return true;
+    }
+    if agent.get("role").and_then(Value::as_str) == Some(role) {
+        return true;
+    }
+    agent
+        .get("team")
+        .and_then(Value::as_object)
+        .and_then(|team| team.get("role"))
+        .and_then(Value::as_str)
+        == Some(role)
 }
 
 pub fn agent_list_text_route(
