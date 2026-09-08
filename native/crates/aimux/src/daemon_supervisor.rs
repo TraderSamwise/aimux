@@ -197,8 +197,17 @@ pub fn try_acquire_daemon_start_lock_with(
     if pid.is_some_and(is_alive) && !is_lock_stale(lock_path, DAEMON_START_LOCK_STALE_MS, now_ms) {
         return Ok(None);
     }
-    fs::remove_dir_all(lock_path)?;
+    if let Err(error) = fs::remove_dir_all(lock_path) {
+        if is_daemon_start_lock_reclaim_race(&error) {
+            return Ok(None);
+        }
+        return Err(error.into());
+    }
     Ok(acquire()?)
+}
+
+fn is_daemon_start_lock_reclaim_race(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::NotFound || error.raw_os_error() == Some(66)
 }
 
 pub fn release_daemon_start_lock(
