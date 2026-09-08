@@ -475,7 +475,35 @@ fn renders_selected_teammates_in_node_order() {
         }))
         .expect("team metadata parses"),
     );
-    snapshot.teammates = vec![second, first];
+    let mut invalid_created = snapshot.sessions[0].clone();
+    invalid_created.id = "claude-invalid-created".into();
+    invalid_created.label = Some("Invalid Created".into());
+    invalid_created.created_at = Some("0000".into());
+    invalid_created.team = Some(
+        serde_json::from_value(json!({
+            "teamId": "team-1",
+            "parentSessionId": parent_id,
+            "role": "reviewer",
+            "label": "Invalid Created"
+        }))
+        .expect("team metadata parses"),
+    );
+
+    let mut valid_created = snapshot.sessions[0].clone();
+    valid_created.id = "claude-valid-created".into();
+    valid_created.label = Some("Valid Created".into());
+    valid_created.created_at = Some("2026-01-01T00:00:03.000Z".into());
+    valid_created.team = Some(
+        serde_json::from_value(json!({
+            "teamId": "team-1",
+            "parentSessionId": parent_id,
+            "role": "reviewer",
+            "label": "Valid Created"
+        }))
+        .expect("team metadata parses"),
+    );
+
+    snapshot.teammates = vec![invalid_created, second, valid_created, first];
 
     let result = render_dashboard_frame(&DashboardRenderInput {
         snapshot: &snapshot,
@@ -499,8 +527,16 @@ fn renders_selected_teammates_in_node_order() {
     let plain = strip_ansi(&result.frame);
     let first_index = plain.find("First(coder)").expect("first teammate row");
     let second_index = plain.find("Second(reviewer)").expect("second teammate row");
+    let valid_index = plain
+        .find("Valid Created(reviewer)")
+        .expect("valid-created teammate row");
+    let invalid_index = plain
+        .find("Invalid Created(reviewer)")
+        .expect("invalid-created teammate row");
 
     assert!(first_index < second_index);
+    assert!(second_index < valid_index);
+    assert!(valid_index < invalid_index);
 }
 
 #[test]

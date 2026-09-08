@@ -2410,16 +2410,19 @@ fn selected_teammates<'a>(input: &'a DashboardRenderInput<'_>) -> Vec<&'a Dashbo
             .unwrap_or(usize::MAX)
             .cmp(&right_order.unwrap_or(usize::MAX))
             .then_with(|| {
-                compare_optional_created_at(left.created_at.as_deref(), right.created_at.as_deref())
+                compare_teammate_created_at(left.created_at.as_deref(), right.created_at.as_deref())
             })
             .then_with(|| left.id.cmp(&right.id))
     });
     teammates
 }
 
-fn compare_optional_created_at(left: Option<&str>, right: Option<&str>) -> std::cmp::Ordering {
-    match (left, right) {
-        (Some(left), Some(right)) => left.cmp(right),
+fn compare_teammate_created_at(left: Option<&str>, right: Option<&str>) -> std::cmp::Ordering {
+    match (
+        left.and_then(parse_timestamp_ms),
+        right.and_then(parse_timestamp_ms),
+    ) {
+        (Some(left), Some(right)) => left.cmp(&right),
         (Some(_), None) => std::cmp::Ordering::Less,
         (None, Some(_)) => std::cmp::Ordering::Greater,
         (None, None) => std::cmp::Ordering::Equal,
