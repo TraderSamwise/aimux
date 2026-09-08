@@ -2359,6 +2359,7 @@ fn selected_session<'a>(input: &'a DashboardRenderInput<'_>) -> Option<&'a Dashb
         .snapshot
         .sessions
         .iter()
+        .filter(|session| !is_project_control_session(session))
         .find(|session| session.id == session_id)
 }
 

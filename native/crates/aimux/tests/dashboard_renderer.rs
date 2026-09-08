@@ -576,6 +576,58 @@ fn worktree_details_count_the_same_project_sessions_as_rendered_rows() {
 }
 
 #[test]
+fn selected_project_control_session_keeps_worktree_details_like_node() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let mut snapshot = fixture.runtime_light.clone();
+    snapshot.services.clear();
+    snapshot.worktree_groups[0].services.clear();
+
+    let mut plain_agent = snapshot.worktree_groups[0].sessions[0].clone();
+    plain_agent.id = "claude-plain".into();
+    plain_agent.label = Some("Plain Agent".into());
+    plain_agent.overseer = None;
+    plain_agent.scribe = None;
+    plain_agent.project_control = None;
+    plain_agent.team = None;
+
+    let mut scribe = plain_agent.clone();
+    scribe.id = "claude-scribe".into();
+    scribe.label = Some("Project Scribe".into());
+    scribe.scribe = Some(true);
+    scribe.project_control = Some(true);
+
+    snapshot.sessions = vec![plain_agent.clone(), scribe.clone()];
+    snapshot.worktree_groups[0].sessions = vec![plain_agent, scribe];
+
+    let result = render_dashboard_frame(&DashboardRenderInput {
+        snapshot: &snapshot,
+        cols: 140,
+        rows: 24,
+        nav_level: DashboardNavLevel::Sessions,
+        selected_session_id: Some("claude-scribe"),
+        selected_service_id: None,
+        focused_worktree_path: None,
+        runtime_label: None,
+        version: None,
+        is_dev_runtime: false,
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_message: None,
+        details_sidebar_visible: true,
+        preview_source: "output",
+        scribe_preview_entries: &[],
+    });
+    let plain = strip_ansi(&result.frame);
+
+    assert!(plain.contains("WORKTREE"));
+    assert!(plain.contains("Agents: 1"));
+    assert!(!plain.contains("DETAILS"));
+    assert!(!plain.contains("Agent: Project Scribe"));
+}
+
+#[test]
 fn flat_session_rows_exclude_project_control_sessions_like_node() {
     let fixture: DesktopStateGoldenFixture =
         serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
