@@ -27,6 +27,39 @@ pub fn read_aimux_version_from_package_root(package_root: impl AsRef<Path>) -> S
         .unwrap_or_else(|| DEFAULT_VERSION.to_owned())
 }
 
+pub fn read_aimux_runtime_version() -> String {
+    read_aimux_runtime_version_from(
+        std::env::var_os("AIMUX_ROOT").map(PathBuf::from),
+        std::env::current_exe().ok(),
+    )
+}
+
+pub fn read_aimux_runtime_version_from(
+    aimux_root: Option<PathBuf>,
+    executable_path: Option<PathBuf>,
+) -> String {
+    if let Some(root) = aimux_root
+        && let Some(version) = read_non_default_version(root)
+    {
+        return version;
+    }
+    if let Some(executable_path) = executable_path
+        && let Some(parent) = executable_path.parent()
+    {
+        for candidate in parent.ancestors() {
+            if let Some(version) = read_non_default_version(candidate) {
+                return version;
+            }
+        }
+    }
+    read_aimux_version_from_package_root(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.."))
+}
+
+fn read_non_default_version(root: impl AsRef<Path>) -> Option<String> {
+    let version = read_aimux_version_from_package_root(root);
+    (version != DEFAULT_VERSION).then_some(version)
+}
+
 pub fn read_aimux_build_profile_from_package_root(package_root: impl AsRef<Path>) -> String {
     read_aimux_build_profile_from_package_root_with_env(
         package_root,
@@ -112,5 +145,38 @@ impl ContractTempDir {
 impl Drop for ContractTempDir {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.path);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn runtime_version_finds_install_root_above_direct_native_binary() {
+        let temp = ContractTempDir::new();
+        fs::write(temp.path().join("VERSION"), "local-direct\n").expect("write version");
+        let exe = temp.path().join("native/darwin-arm64/aimux");
+        fs::create_dir_all(exe.parent().expect("exe parent")).expect("create native dir");
+        fs::write(&exe, "").expect("write fake exe");
+
+        assert_eq!(
+            read_aimux_runtime_version_from(None, Some(exe)),
+            "local-direct"
+        );
+    }
+
+    #[test]
+    fn runtime_version_prefers_explicit_aimux_root() {
+        let env_root = ContractTempDir::new();
+        let exe_root = ContractTempDir::new();
+        fs::write(env_root.path().join("VERSION"), "local-env\n").expect("write env version");
+        fs::write(exe_root.path().join("VERSION"), "local-exe\n").expect("write exe version");
+        let exe = exe_root.path().join("native/darwin-arm64/aimux");
+
+        assert_eq!(
+            read_aimux_runtime_version_from(Some(env_root.path().to_path_buf()), Some(exe)),
+            "local-env"
+        );
     }
 }

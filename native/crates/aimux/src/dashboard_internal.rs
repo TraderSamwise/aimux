@@ -38,7 +38,7 @@ use crate::dashboard_tui_visibility::{
     read_dashboard_tui_visibility_for_loop, read_tmux_tui_visibility,
 };
 use crate::dashboard_ui_state::DashboardUiStatePersistence;
-use crate::release_version_contract::read_aimux_version_from_package_root;
+use crate::release_version_contract::read_aimux_runtime_version;
 use anyhow::{Context, Result};
 use std::fs;
 use std::io::{self, Write};
@@ -722,10 +722,7 @@ fn render_dashboard_snapshot(
 }
 
 fn dashboard_runtime_version() -> String {
-    let package_root = std::env::var_os("AIMUX_ROOT")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.."));
-    read_aimux_version_from_package_root(package_root)
+    read_aimux_runtime_version()
 }
 
 fn render_dashboard_subscreen_snapshot(

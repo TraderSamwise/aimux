@@ -20,6 +20,7 @@ use aimux::paths::{PathResolver, project_checkout_required_message};
 use aimux::project_service::process::{
     ProjectServiceInternalOptions, run_project_service_internal,
 };
+use aimux::release_version_contract::read_aimux_runtime_version;
 use aimux::root_session_launch::{
     RootResumeRequest, parse_root_resume_args, resume_saved_sessions,
 };
@@ -31,7 +32,6 @@ use aimux::tmux_statusline_script::{parse_tmux_statusline_args, run_tmux_statusl
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use serde_json::Value;
-use std::fs;
 use std::io::IsTerminal;
 use std::os::fd::AsRawFd;
 use std::path::PathBuf;
@@ -295,31 +295,7 @@ fn is_root_help_request(args: &[String]) -> bool {
 }
 
 fn aimux_package_version() -> String {
-    let root = std::env::var_os("AIMUX_ROOT")
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::current_exe()
-                .ok()
-                .and_then(|path| path.parent().map(PathBuf::from))
-        })
-        .unwrap_or_else(|| PathBuf::from("."));
-    let version_path = root.join("VERSION");
-    if let Ok(version) = fs::read_to_string(&version_path) {
-        let version = version.trim();
-        if !version.is_empty() {
-            return version.to_owned();
-        }
-    }
-    let package_path = root.join("package.json");
-    fs::read_to_string(package_path)
-        .ok()
-        .and_then(|body| serde_json::from_str::<serde_json::Value>(&body).ok())
-        .and_then(|pkg| {
-            pkg.get("version")
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_owned)
-        })
-        .unwrap_or_else(|| "0.0.0".into())
+    read_aimux_runtime_version()
 }
 
 fn print_root_help() {
