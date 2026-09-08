@@ -12,13 +12,16 @@ use aimux::daemon::runtime::{
     RealDaemonRuntime, SystemProjectServiceLauncher,
 };
 use aimux::daemon::status::DaemonStatusRuntime;
+use aimux::daemon::text::agents::DaemonAgentTextRuntime;
 use aimux::daemon::text::auth::DaemonAuthTextRuntime;
+use aimux::daemon::text::params::ProjectServiceJsonResult;
 use aimux::daemon_state::{
     AimuxDaemonInfo, DaemonState, MetadataApiEndpoint, MetadataState, ProjectServiceState,
     ProjectServiceStatus, load_metadata_endpoint, save_daemon_state, save_metadata_endpoint,
     save_metadata_state,
 };
 use aimux::paths::PathResolver;
+use aimux::project_api_contract::routes as project_routes;
 use aimux::remote_credentials::{AimuxCredentials, load_credentials, save_credentials_at};
 use aimux::runtime_topology::{runtime_topology_path, write_runtime_topology};
 use aimux::tmux::TmuxTarget;
@@ -407,6 +410,37 @@ fn native_daemon_json_proxy_forwards_loopback_project_service_response() {
     assert_eq!(response.status, 200);
     assert_eq!(response_json, json!({ "ok": true, "value": 42 }));
     assert!(server.join().contains("GET /health?check=1 HTTP/1.1"));
+    fixture.cleanup();
+}
+
+#[test]
+fn native_text_reads_lazy_start_cold_project_service_before_proxying_get() {
+    let fixture = RuntimeFixture::new("lazy-read");
+    let project = fixture.project("lazy");
+    let server = OneShotHttpServer::spawn(
+        b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 13\r\n\r\n{\"agents\":[]}"
+            .to_vec(),
+    );
+    let launcher = Arc::new(FakeLauncher::new(91_901).with_endpoint(server.port));
+    let mut runtime = fixture.runtime_with_launcher_and_verifier(
+        launcher.clone(),
+        Arc::new(FakeProcessVerifier::native([91_901])),
+        PROJECT_SERVICE_STARTUP_TIMEOUT_MS,
+    );
+
+    let result = <RealDaemonRuntime as DaemonAgentTextRuntime>::get_project_service_json(
+        &mut runtime,
+        &project.to_string_lossy(),
+        project_routes::agents::LIST,
+    );
+    let ProjectServiceJsonResult::Ok { project_root, json } = result else {
+        panic!("expected lazy-started project-service read, got {result:?}");
+    };
+
+    assert_eq!(project_root, project.to_string_lossy());
+    assert_eq!(json, json!({ "agents": [] }));
+    assert_eq!(launcher.calls(), vec![project.to_string_lossy()]);
+    assert!(server.join().contains("GET /agents HTTP/1.1"));
     fixture.cleanup();
 }
 
@@ -1300,6 +1334,7 @@ fn tmux_target(
 #[derive(Debug)]
 struct FakeLauncher {
     pid: i32,
+    endpoint_port: Option<u16>,
     calls: Mutex<Vec<String>>,
     terminations: Mutex<Vec<(i32, bool)>>,
 }
@@ -1308,9 +1343,15 @@ impl FakeLauncher {
     fn new(pid: i32) -> Self {
         Self {
             pid,
+            endpoint_port: None,
             calls: Mutex::new(Vec::new()),
             terminations: Mutex::new(Vec::new()),
         }
+    }
+
+    fn with_endpoint(mut self, port: u16) -> Self {
+        self.endpoint_port = Some(port);
+        self
     }
 
     fn calls(&self) -> Vec<String> {
@@ -1327,12 +1368,24 @@ impl ProjectServiceLauncher for FakeLauncher {
         &self,
         _project_id: &str,
         project_root: &Path,
-        _project_state_dir: &Path,
+        project_state_dir: &Path,
     ) -> Result<i32, String> {
         self.calls
             .lock()
             .expect("calls")
             .push(project_root.to_string_lossy().into_owned());
+        if let Some(port) = self.endpoint_port {
+            save_metadata_endpoint(
+                project_state_dir,
+                &MetadataApiEndpoint {
+                    host: "127.0.0.1".into(),
+                    port,
+                    pid: self.pid,
+                    updated_at: "now".into(),
+                },
+            )
+            .map_err(|error| error.to_string())?;
+        }
         Ok(self.pid)
     }
 

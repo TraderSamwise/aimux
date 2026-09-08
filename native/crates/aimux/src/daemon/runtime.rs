@@ -268,6 +268,48 @@ impl RealDaemonRuntime {
         }
     }
 
+    fn ensure_project_service_for_text_request(&mut self, project: &str) -> Result<String, String> {
+        let project_root = self.resolve_project_root_value(project);
+        <Self as DaemonCoreCommandRuntime>::ensure_project(self, &project_root)
+            .map(|_| project_root)
+    }
+
+    fn get_ensured_project_service_json(
+        &mut self,
+        project: &str,
+        route_path: &str,
+    ) -> ProjectServiceJsonResult {
+        let project_root = match self.ensure_project_service_for_text_request(project) {
+            Ok(project_root) => project_root,
+            Err(error) => {
+                return ProjectServiceJsonResult::error(crate::daemon::routing::text_error(
+                    502,
+                    format!("Error: {error}"),
+                ));
+            }
+        };
+        self.request_project_service_json(&project_root, route_path, None, None)
+    }
+
+    fn post_ensured_project_service_json(
+        &mut self,
+        project: &str,
+        route_path: &str,
+        body: Value,
+        timeout_ms: Option<u64>,
+    ) -> ProjectServiceJsonResult {
+        let project_root = match self.ensure_project_service_for_text_request(project) {
+            Ok(project_root) => project_root,
+            Err(error) => {
+                return ProjectServiceJsonResult::error(crate::daemon::routing::text_error(
+                    502,
+                    format!("Error: {error}"),
+                ));
+            }
+        };
+        self.request_project_service_json(&project_root, route_path, Some(body), timeout_ms)
+    }
+
     fn project_service_json(
         &mut self,
         project: &str,
@@ -1101,7 +1143,7 @@ impl DaemonHostAgentTextRuntime for RealDaemonRuntime {
         project: &str,
         route_path: &str,
     ) -> ProjectServiceJsonResult {
-        self.request_project_service_json(project, route_path, None, None)
+        self.get_ensured_project_service_json(project, route_path)
     }
 }
 
@@ -1138,7 +1180,7 @@ impl DaemonAgentTextRuntime for RealDaemonRuntime {
         project: &str,
         route_path: &str,
     ) -> ProjectServiceJsonResult {
-        self.request_project_service_json(project, route_path, None, None)
+        self.get_ensured_project_service_json(project, route_path)
     }
 
     fn post_project_service_json(
@@ -1149,17 +1191,10 @@ impl DaemonAgentTextRuntime for RealDaemonRuntime {
         options: ProjectServicePostOptions,
     ) -> ProjectServiceJsonResult {
         if options.ensure_project {
-            let project_root = self.resolve_project_root_value(project);
-            if let Err(error) =
-                <Self as DaemonCoreCommandRuntime>::ensure_project(self, &project_root)
-            {
-                return ProjectServiceJsonResult::error(crate::daemon::routing::text_error(
-                    502,
-                    format!("Error: {error}"),
-                ));
-            }
+            self.post_ensured_project_service_json(project, route_path, body, None)
+        } else {
+            self.request_project_service_json(project, route_path, Some(body), None)
         }
-        self.request_project_service_json(project, route_path, Some(body), None)
     }
 }
 
@@ -1182,7 +1217,7 @@ impl DaemonOverseerTextRuntime for RealDaemonRuntime {
         route_path: &str,
         body: Value,
     ) -> ProjectServiceJsonResult {
-        self.request_project_service_json(project, route_path, Some(body), None)
+        self.post_ensured_project_service_json(project, route_path, body, None)
     }
 }
 
@@ -1205,7 +1240,7 @@ impl DaemonScribeTextRuntime for RealDaemonRuntime {
         route_path: &str,
         body: Value,
     ) -> ProjectServiceJsonResult {
-        self.request_project_service_json(project, route_path, Some(body), None)
+        self.post_ensured_project_service_json(project, route_path, body, None)
     }
 }
 
@@ -1215,7 +1250,7 @@ impl DaemonNotificationTextRuntime for RealDaemonRuntime {
         project: &str,
         route_path: &str,
     ) -> ProjectServiceJsonResult {
-        self.request_project_service_json(project, route_path, None, None)
+        self.get_ensured_project_service_json(project, route_path)
     }
 
     fn post_project_service_json(
@@ -1225,7 +1260,7 @@ impl DaemonNotificationTextRuntime for RealDaemonRuntime {
         body: Value,
         timeout_ms: Option<u64>,
     ) -> ProjectServiceJsonResult {
-        self.request_project_service_json(project, route_path, Some(body), timeout_ms)
+        self.post_ensured_project_service_json(project, route_path, body, timeout_ms)
     }
 }
 
@@ -1235,7 +1270,7 @@ impl DaemonTeamTextRuntime for RealDaemonRuntime {
         project: &str,
         route_path: &str,
     ) -> ProjectServiceJsonResult {
-        self.request_project_service_json(project, route_path, None, None)
+        self.get_ensured_project_service_json(project, route_path)
     }
 
     fn post_project_service_json(
@@ -1245,7 +1280,7 @@ impl DaemonTeamTextRuntime for RealDaemonRuntime {
         body: Value,
         timeout_ms: Option<u64>,
     ) -> ProjectServiceJsonResult {
-        self.request_project_service_json(project, route_path, Some(body), timeout_ms)
+        self.post_ensured_project_service_json(project, route_path, body, timeout_ms)
     }
 }
 
@@ -1259,7 +1294,7 @@ impl DaemonWorktreeTextRuntime for RealDaemonRuntime {
         project: &str,
         route_path: &str,
     ) -> ProjectServiceJsonResult {
-        self.request_project_service_json(project, route_path, None, None)
+        self.get_ensured_project_service_json(project, route_path)
     }
 
     fn post_project_service_json(
@@ -1269,7 +1304,7 @@ impl DaemonWorktreeTextRuntime for RealDaemonRuntime {
         body: Value,
         timeout_ms: Option<u64>,
     ) -> ProjectServiceJsonResult {
-        self.request_project_service_json(project, route_path, Some(body), timeout_ms)
+        self.post_ensured_project_service_json(project, route_path, body, timeout_ms)
     }
 }
 
@@ -1279,7 +1314,7 @@ impl DaemonCollaborationTextRuntime for RealDaemonRuntime {
         project: &str,
         route_path: &str,
     ) -> ProjectServiceJsonResult {
-        self.request_project_service_json(project, route_path, None, None)
+        self.get_ensured_project_service_json(project, route_path)
     }
 
     fn post_project_service_json(
@@ -1289,7 +1324,7 @@ impl DaemonCollaborationTextRuntime for RealDaemonRuntime {
         body: Value,
         timeout_ms: Option<u64>,
     ) -> ProjectServiceJsonResult {
-        self.request_project_service_json(project, route_path, Some(body), timeout_ms)
+        self.post_ensured_project_service_json(project, route_path, body, timeout_ms)
     }
 }
 
@@ -1299,7 +1334,7 @@ impl DaemonProjectContentTextRuntime for RealDaemonRuntime {
         project: &str,
         route_path: &str,
     ) -> ProjectServiceJsonResult {
-        self.request_project_service_json(project, route_path, None, None)
+        self.get_ensured_project_service_json(project, route_path)
     }
 
     fn post_project_service_json(
@@ -1309,7 +1344,7 @@ impl DaemonProjectContentTextRuntime for RealDaemonRuntime {
         body: Value,
         timeout_ms: Option<u64>,
     ) -> ProjectServiceJsonResult {
-        self.request_project_service_json(project, route_path, Some(body), timeout_ms)
+        self.post_ensured_project_service_json(project, route_path, body, timeout_ms)
     }
 }
 

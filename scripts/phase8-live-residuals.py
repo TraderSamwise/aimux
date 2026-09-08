@@ -581,6 +581,56 @@ def run_agent_shell_spawn_smoke(aimux_bin: Path, mutation: str | None) -> dict[s
         }
 
 
+def run_lazy_read_start_smoke(aimux_bin: Path, mutation: str | None) -> dict[str, Any]:
+    tmux = find_tmux()
+    with Scope("lazy-read", aimux_bin) as scope:
+        socket_name = f"aimux-phase8-read-{os.getpid()}-{int(time.time() * 1000)}"
+        scope.tmux_socket_name = socket_name
+        install_tmux_socket_wrapper(scope, tmux, socket_name)
+        run([tmux, "-L", socket_name, "start-server"], env=without_tmux(os.environ.copy()), timeout=10)
+        scope.init_git_project()
+        seed_initial_commit(scope)
+        run([str(aimux_bin), "init"], cwd=scope.project, env=scope.env, timeout=30)
+        run([str(aimux_bin), "daemon", "status", "--json"], cwd=scope.project, env=scope.env, timeout=30)
+
+        probes = [
+            ("ps-json", ["ps", "--json"]),
+            ("list-json", ["list", "--json"]),
+            ("worktree-list-json", ["worktree", "list", "--json"]),
+            ("threads-json", ["threads", "--json"]),
+            ("task-list-json", ["task", "list", "--json"]),
+        ]
+        failures = []
+        for name, args in probes:
+            run([str(aimux_bin), "host", "stop", "--json"], cwd=scope.project, env=scope.env, timeout=15, check=False)
+            result = run([str(aimux_bin), *args], cwd=scope.project, env=scope.env, timeout=30, check=False)
+            combined = result.stdout + "\n" + result.stderr
+            if mutation == "lazy-read-service-unavailable" and name == "ps-json":
+                combined += "\nError: project service unavailable for phase8 mutation"
+            if result.returncode != 0 or "project service unavailable" in combined:
+                failures.append({
+                    "name": name,
+                    "args": args,
+                    "code": result.returncode,
+                    "stdout": result.stdout[-600:],
+                    "stderr": result.stderr[-600:],
+                })
+        if failures:
+            raise LiveResidualFailure("lazy read start regressions:\n" + json.dumps(failures, indent=2))
+        return {
+            "name": "phase8-lazy-read-start-smoke",
+            "probes": len(probes),
+            "caught": [
+                "fresh-project read commands waking a cold project service",
+                "project service unavailable regressions on ps/list/thread/task/worktree reads",
+            ],
+            "notCaught": [
+                "all-project catalog reads that intentionally stay daemon-only",
+                "long-running idle service shutdown policy",
+            ],
+        }
+
+
 def seed_initial_commit(scope: Scope) -> None:
     readme = scope.project / "README.md"
     readme.write_text("phase8 command resolution smoke\n")
@@ -1009,6 +1059,8 @@ def run_one(name: str, aimux_bin: Path, mutation: str | None) -> dict[str, Any]:
         return run_command_resolution_smoke(aimux_bin, mutation)
     if name == "agent-shell":
         return run_agent_shell_spawn_smoke(aimux_bin, mutation)
+    if name == "lazy-read":
+        return run_lazy_read_start_smoke(aimux_bin, mutation)
     if name == "sse":
         return run_sse_stress(aimux_bin, mutation)
     if name == "process":
@@ -1023,6 +1075,7 @@ def prove_failures(args: argparse.Namespace, aimux_bin: Path) -> list[dict[str, 
         "dashboard-attach": "dashboard-attach-terminal-error",
         "command-resolution": "command-unsupported",
         "agent-shell": "agent-shell-missing-window",
+        "lazy-read": "lazy-read-service-unavailable",
         "sse": "sse-reorder",
         "process": "process-delete-endpoint",
     }
@@ -1072,6 +1125,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             "dashboard-attach",
             "command-resolution",
             "agent-shell",
+            "lazy-read",
             "sse",
             "process",
         ],
@@ -1085,6 +1139,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "dashboard-attach-terminal-error",
         "command-unsupported",
         "agent-shell-missing-window",
+        "lazy-read-service-unavailable",
         "sse-reorder",
         "process-delete-endpoint",
     ])
@@ -1101,6 +1156,7 @@ def main(argv: list[str]) -> int:
             "dashboard-attach",
             "command-resolution",
             "agent-shell",
+            "lazy-read",
             "sse",
             "process",
         ] if args.only == "all" else [args.only]
