@@ -459,7 +459,12 @@ fn build_dashboard_footer_hints(input: &DashboardRenderInput<'_>) -> Vec<FooterH
         hints.extend(system);
         return hints;
     }
-    if !input.snapshot.sessions.is_empty() {
+    let has_dashboard_sessions = input
+        .snapshot
+        .sessions
+        .iter()
+        .any(|session| !is_project_control_session(session));
+    if has_dashboard_sessions {
         let mut hints = vec![
             FooterHint {
                 key: "↑↓/jk",

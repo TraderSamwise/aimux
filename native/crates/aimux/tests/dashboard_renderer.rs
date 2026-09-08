@@ -682,6 +682,50 @@ fn flat_session_rows_exclude_project_control_sessions_like_node() {
 }
 
 #[test]
+fn flat_footer_uses_no_session_hints_when_only_project_control_sessions_exist() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let mut snapshot = fixture.runtime_light.clone();
+    snapshot.worktrees.clear();
+    snapshot.worktree_groups.clear();
+    snapshot.services.clear();
+
+    let mut scribe = snapshot.sessions[0].clone();
+    scribe.id = "claude-scribe".into();
+    scribe.label = Some("Project Scribe".into());
+    scribe.scribe = Some(true);
+    scribe.project_control = Some(true);
+    snapshot.sessions = vec![scribe];
+
+    let result = render_dashboard_frame(&DashboardRenderInput {
+        snapshot: &snapshot,
+        cols: 140,
+        rows: 24,
+        nav_level: DashboardNavLevel::Sessions,
+        selected_session_id: None,
+        selected_service_id: None,
+        focused_worktree_path: None,
+        runtime_label: None,
+        version: None,
+        is_dev_runtime: false,
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_message: None,
+        details_sidebar_visible: false,
+        preview_source: "output",
+        scribe_preview_entries: &[],
+    });
+    let plain = strip_ansi(&result.frame);
+
+    assert!(plain.contains("No sessions. Press [n] to create one."));
+    assert!(plain.contains("n agent"));
+    assert!(plain.contains("q quit"));
+    assert!(!plain.contains("↑↓/jk select"));
+    assert!(!plain.contains("Enter/→/l focus"));
+}
+
+#[test]
 fn worktree_details_show_active_removal_status_and_progress() {
     let fixture: DesktopStateGoldenFixture =
         serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
