@@ -584,7 +584,10 @@ fn render_active_context(
         return None;
     }
     let session_id = resolve_exact_current_session_id(snapshot, project_root, options)?;
-    let metadata = snapshot.get("metadata")?.get(session_id)?;
+    let metadata = snapshot
+        .get("metadata")
+        .and_then(|metadata| metadata.get(session_id))
+        .unwrap_or(&Value::Null);
     let context = metadata.get("context").and_then(Value::as_object);
     let worktree = options
         .current_path

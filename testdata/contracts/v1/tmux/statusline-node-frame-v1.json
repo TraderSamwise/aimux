@@ -1,0 +1,3250 @@
+{
+  "version": 1,
+  "generatedAt": "2026-09-09T00:00:00.000Z",
+  "generatedBy": "scratch direct TypeScript renderer from a9220736^",
+  "source": "src/tmux/statusline.ts",
+  "sources": [
+    "src/statusline-model.ts",
+    "src/tmux/statusline.ts",
+    "src/tui/render/theme.ts"
+  ],
+  "subject": "tmux statusline whole chrome",
+  "description": "Node-generated top+bottom tmux statusline frames from renderTmuxStatuslineFromData.",
+  "caseCount": 7,
+  "cases": [
+    {
+      "id": "dashboard-chrome",
+      "source": "src/tmux/statusline.ts",
+      "api": "renderTmuxStatuslineFromData:top+bottom",
+      "input": {
+        "data": {
+          "updatedAt": "2099-01-01T00:00:00.000Z",
+          "dashboardScreen": "topology",
+          "sessions": [
+            {
+              "id": "coder",
+              "kind": "agent",
+              "tool": "codex",
+              "label": "coder",
+              "windowName": "codex",
+              "tmuxWindowId": "@1",
+              "tmuxWindowIndex": 1,
+              "role": "coder",
+              "status": "running",
+              "active": true,
+              "headline": "Fix statusline parity across the visible tmux chrome",
+              "worktreePath": "/repo/aimux",
+              "semantic": {
+                "runtime": {
+                  "lifecycle": "running",
+                  "isAlive": true,
+                  "canEnter": true,
+                  "canReceiveInput": true,
+                  "canInterrupt": true
+                },
+                "user": {
+                  "label": "needs_input",
+                  "attention": "needs_input",
+                  "source": "tool"
+                },
+                "notifications": {
+                  "unreadCount": 0
+                },
+                "orchestration": {
+                  "pressure": "none",
+                  "assignedTask": false,
+                  "canBeAssignedWork": true
+                },
+                "presentation": {
+                  "statusLabel": "needs input",
+                  "compactHint": "on you",
+                  "attentionScore": 4
+                },
+                "attention": "needs_input",
+                "activityNewCount": 0,
+                "threadUnreadCount": 0,
+                "pendingDeliveryCount": 0,
+                "waitingOnMeCount": 0,
+                "waitingOnThemCount": 0,
+                "blockedCount": 0,
+                "familyCount": 0
+              }
+            },
+            {
+              "id": "worker",
+              "kind": "agent",
+              "tool": "claude",
+              "label": "claude-v90abcd",
+              "windowName": "claude",
+              "tmuxWindowId": "@2",
+              "tmuxWindowIndex": 2,
+              "status": "idle",
+              "worktreePath": "/repo/aimux",
+              "semantic": {
+                "runtime": {
+                  "lifecycle": "idle",
+                  "isAlive": true,
+                  "canEnter": true,
+                  "canReceiveInput": true,
+                  "canInterrupt": true
+                },
+                "user": {
+                  "label": "done",
+                  "attention": "none",
+                  "source": "runtime"
+                },
+                "notifications": {
+                  "unreadCount": 0
+                },
+                "orchestration": {
+                  "pressure": "none",
+                  "assignedTask": false,
+                  "canBeAssignedWork": true
+                },
+                "presentation": {
+                  "statusLabel": "done",
+                  "compactHint": "7 new",
+                  "attentionScore": 1
+                },
+                "attention": "normal",
+                "activityNewCount": 7,
+                "threadUnreadCount": 0,
+                "pendingDeliveryCount": 0,
+                "waitingOnMeCount": 0,
+                "waitingOnThemCount": 0,
+                "blockedCount": 0,
+                "familyCount": 0
+              }
+            },
+            {
+              "id": "svc",
+              "kind": "service",
+              "tool": "shell",
+              "label": "web",
+              "launchCommandLine": "yarn dev:web:local --host 127.0.0.1",
+              "windowName": "web",
+              "tmuxWindowId": "@3",
+              "tmuxWindowIndex": 3,
+              "status": "running",
+              "worktreePath": "/repo/aimux"
+            },
+            {
+              "id": "boss",
+              "kind": "agent",
+              "tool": "claude",
+              "label": "claude-overseer",
+              "windowName": "overseer",
+              "tmuxWindowId": "@4",
+              "tmuxWindowIndex": 4,
+              "status": "running",
+              "worktreePath": "/repo/aimux",
+              "overseer": true,
+              "team": {
+                "teamId": "overseer",
+                "parentSessionId": "",
+                "role": "overseer"
+              },
+              "semantic": {
+                "runtime": {
+                  "lifecycle": "running",
+                  "isAlive": true,
+                  "canEnter": true,
+                  "canReceiveInput": true,
+                  "canInterrupt": true
+                },
+                "user": {
+                  "label": "working",
+                  "attention": "none",
+                  "source": "runtime"
+                },
+                "notifications": {
+                  "unreadCount": 0
+                },
+                "orchestration": {
+                  "pressure": "none",
+                  "assignedTask": false,
+                  "canBeAssignedWork": true
+                },
+                "presentation": {
+                  "statusLabel": "working",
+                  "compactHint": null,
+                  "attentionScore": 0
+                },
+                "attention": "normal",
+                "activityNewCount": 0,
+                "threadUnreadCount": 0,
+                "pendingDeliveryCount": 0,
+                "waitingOnMeCount": 0,
+                "waitingOnThemCount": 0,
+                "blockedCount": 0,
+                "familyCount": 0
+              }
+            },
+            {
+              "id": "scribe",
+              "kind": "agent",
+              "tool": "claude",
+              "label": "claude-scribe",
+              "windowName": "scribe",
+              "tmuxWindowId": "@5",
+              "tmuxWindowIndex": 5,
+              "status": "running",
+              "worktreePath": "/repo/aimux",
+              "scribe": true,
+              "team": {
+                "teamId": "scribe",
+                "parentSessionId": "",
+                "role": "scribe"
+              },
+              "semantic": {
+                "runtime": {
+                  "lifecycle": "running",
+                  "isAlive": true,
+                  "canEnter": true,
+                  "canReceiveInput": true,
+                  "canInterrupt": true
+                },
+                "user": {
+                  "label": "ready",
+                  "attention": "none",
+                  "source": "runtime"
+                },
+                "notifications": {
+                  "unreadCount": 0
+                },
+                "orchestration": {
+                  "pressure": "none",
+                  "assignedTask": false,
+                  "canBeAssignedWork": true
+                },
+                "presentation": {
+                  "statusLabel": "ready",
+                  "compactHint": null,
+                  "attentionScore": 0
+                },
+                "attention": "normal",
+                "activityNewCount": 0,
+                "threadUnreadCount": 0,
+                "pendingDeliveryCount": 0,
+                "waitingOnMeCount": 0,
+                "waitingOnThemCount": 0,
+                "blockedCount": 0,
+                "familyCount": 0
+              }
+            },
+            {
+              "id": "offline",
+              "kind": "agent",
+              "tool": "aider",
+              "label": "old-aider",
+              "windowName": "aider",
+              "tmuxWindowId": "@6",
+              "tmuxWindowIndex": 6,
+              "status": "offline",
+              "worktreePath": "/repo/aimux"
+            }
+          ],
+          "teammates": [
+            {
+              "id": "reviewer",
+              "kind": "agent",
+              "tool": "codex",
+              "label": "reviewer",
+              "windowName": "codex-review",
+              "tmuxWindowId": "@7",
+              "tmuxWindowIndex": 7,
+              "status": "running",
+              "createdAt": "2026-01-01T00:00:00.000Z",
+              "worktreePath": "/repo/aimux",
+              "team": {
+                "teamId": "team-1",
+                "parentSessionId": "coder",
+                "role": "reviewer",
+                "label": "review",
+                "order": 1
+              },
+              "semantic": {
+                "runtime": {
+                  "lifecycle": "running",
+                  "isAlive": true,
+                  "canEnter": true,
+                  "canReceiveInput": true,
+                  "canInterrupt": true
+                },
+                "user": {
+                  "label": "working",
+                  "attention": "none",
+                  "source": "runtime"
+                },
+                "notifications": {
+                  "unreadCount": 0
+                },
+                "orchestration": {
+                  "pressure": "none",
+                  "assignedTask": false,
+                  "canBeAssignedWork": true
+                },
+                "presentation": {
+                  "statusLabel": "working",
+                  "compactHint": "2 new",
+                  "attentionScore": 1
+                },
+                "attention": "normal",
+                "activityNewCount": 2,
+                "threadUnreadCount": 0,
+                "pendingDeliveryCount": 0,
+                "waitingOnMeCount": 0,
+                "waitingOnThemCount": 0,
+                "blockedCount": 0,
+                "familyCount": 0
+              }
+            },
+            {
+              "id": "implementer",
+              "kind": "agent",
+              "tool": "claude",
+              "label": "implementer",
+              "windowName": "claude-impl",
+              "tmuxWindowId": "@8",
+              "tmuxWindowIndex": 8,
+              "status": "running",
+              "createdAt": "2026-01-01T00:01:00.000Z",
+              "worktreePath": "/repo/aimux",
+              "team": {
+                "teamId": "team-1",
+                "parentSessionId": "coder",
+                "role": "implementer",
+                "label": "impl",
+                "order": 2
+              },
+              "semantic": {
+                "runtime": {
+                  "lifecycle": "running",
+                  "isAlive": true,
+                  "canEnter": true,
+                  "canReceiveInput": true,
+                  "canInterrupt": true
+                },
+                "user": {
+                  "label": "needs_response",
+                  "attention": "needs_response",
+                  "source": "tool"
+                },
+                "notifications": {
+                  "unreadCount": 0
+                },
+                "orchestration": {
+                  "pressure": "none",
+                  "assignedTask": false,
+                  "canBeAssignedWork": true
+                },
+                "presentation": {
+                  "statusLabel": "needs answer",
+                  "compactHint": "answer",
+                  "attentionScore": 4
+                },
+                "attention": "needs_response",
+                "activityNewCount": 0,
+                "threadUnreadCount": 0,
+                "pendingDeliveryCount": 0,
+                "waitingOnMeCount": 0,
+                "waitingOnThemCount": 0,
+                "blockedCount": 0,
+                "familyCount": 0
+              }
+            }
+          ],
+          "metadata": {
+            "coder": {
+              "context": {
+                "worktreeName": "aimux",
+                "branch": "rust-translation-v1",
+                "pr": {
+                  "number": 456,
+                  "url": "https://github.com/example/aimux/pull/456"
+                }
+              },
+              "derived": {
+                "services": [
+                  {
+                    "port": 4173,
+                    "url": "http://localhost:4173"
+                  }
+                ]
+              },
+              "statusline": {
+                "top": [
+                  {
+                    "id": "token",
+                    "text": "tokens 42k",
+                    "tone": "info"
+                  }
+                ],
+                "bottom": [
+                  {
+                    "id": "sync",
+                    "text": "synced",
+                    "tone": "success"
+                  }
+                ]
+              },
+              "status": {
+                "text": "user approval needed",
+                "tone": "warn"
+              },
+              "progress": {
+                "current": 3,
+                "total": 5,
+                "label": "audit"
+              },
+              "logs": [
+                {
+                  "message": "last log from coder",
+                  "source": "hook",
+                  "tone": "info",
+                  "ts": "2026-01-01T00:00:00.000Z"
+                }
+              ]
+            },
+            "boss": {
+              "statusline": {
+                "bottom": [
+                  {
+                    "id": "loop",
+                    "text": "loop ok",
+                    "tone": "success"
+                  }
+                ]
+              },
+              "status": {
+                "text": "driving agents"
+              }
+            },
+            "scribe": {
+              "statusline": {
+                "bottom": [
+                  {
+                    "id": "notes",
+                    "text": "notes fresh",
+                    "tone": "info"
+                  }
+                ]
+              },
+              "status": {
+                "text": "notes fresh"
+              }
+            },
+            "reviewer": {
+              "statusline": {
+                "bottom": [
+                  {
+                    "id": "review",
+                    "text": "review queued",
+                    "tone": "warn"
+                  }
+                ]
+              },
+              "status": {
+                "text": "review running"
+              }
+            }
+          },
+          "tasks": {
+            "pending": 2,
+            "assigned": 1
+          },
+          "controlPlane": {
+            "daemonAlive": true,
+            "projectServiceAlive": true
+          }
+        },
+        "projectRoot": "/repo/aimux",
+        "options": {
+          "currentWindow": "dashboard",
+          "currentWindowId": "@0",
+          "currentPath": "/repo/aimux",
+          "currentSession": "aimux-client",
+          "width": 120
+        }
+      },
+      "output": {
+        "top": "aimux aimux  ·  ctl ok  ·  tasks 2/1",
+        "bottom": "#[fg=yellow,bold]D#[default]ashboard  ·  #[fg=yellow,bold]C#[default]oordination  ·  #[fg=yellow,bold]P#[default]roject  ·  #[fg=yellow,bold]L#[default]ibrary  ·  #[fg=black,bg=yellow] Topology #[default]  ·  #[fg=yellow,bold]G#[default]raveyard",
+        "frame": "aimux aimux  ·  ctl ok  ·  tasks 2/1\n#[fg=yellow,bold]D#[default]ashboard  ·  #[fg=yellow,bold]C#[default]oordination  ·  #[fg=yellow,bold]P#[default]roject  ·  #[fg=yellow,bold]L#[default]ibrary  ·  #[fg=black,bg=yellow] Topology #[default]  ·  #[fg=yellow,bold]G#[default]raveyard"
+      },
+      "inputSha256": "7d82c70167ef7d0509a39913edd199a929065ad36bde319f6636bcf4fabe0bde"
+    },
+    {
+      "id": "active-agent-chrome",
+      "source": "src/tmux/statusline.ts",
+      "api": "renderTmuxStatuslineFromData:top+bottom",
+      "input": {
+        "data": {
+          "updatedAt": "2099-01-01T00:00:00.000Z",
+          "dashboardScreen": "topology",
+          "sessions": [
+            {
+              "id": "coder",
+              "kind": "agent",
+              "tool": "codex",
+              "label": "coder",
+              "windowName": "codex",
+              "tmuxWindowId": "@1",
+              "tmuxWindowIndex": 1,
+              "role": "coder",
+              "status": "running",
+              "active": true,
+              "headline": "Fix statusline parity across the visible tmux chrome",
+              "worktreePath": "/repo/aimux",
+              "semantic": {
+                "runtime": {
+                  "lifecycle": "running",
+                  "isAlive": true,
+                  "canEnter": true,
+                  "canReceiveInput": true,
+                  "canInterrupt": true
+                },
+                "user": {
+                  "label": "needs_input",
+                  "attention": "needs_input",
+                  "source": "tool"
+                },
+                "notifications": {
+                  "unreadCount": 0
+                },
+                "orchestration": {
+                  "pressure": "none",
+                  "assignedTask": false,
+                  "canBeAssignedWork": true
+                },
+                "presentation": {
+                  "statusLabel": "needs input",
+                  "compactHint": "on you",
+                  "attentionScore": 4
+                },
+                "attention": "needs_input",
+                "activityNewCount": 0,
+                "threadUnreadCount": 0,
+                "pendingDeliveryCount": 0,
+                "waitingOnMeCount": 0,
+                "waitingOnThemCount": 0,
+                "blockedCount": 0,
+                "familyCount": 0
+              }
+            },
+            {
+              "id": "worker",
+              "kind": "agent",
+              "tool": "claude",
+              "label": "claude-v90abcd",
+              "windowName": "claude",
+              "tmuxWindowId": "@2",
+              "tmuxWindowIndex": 2,
+              "status": "idle",
+              "worktreePath": "/repo/aimux",
+              "semantic": {
+                "runtime": {
+                  "lifecycle": "idle",
+                  "isAlive": true,
+                  "canEnter": true,
+                  "canReceiveInput": true,
+                  "canInterrupt": true
+                },
+                "user": {
+                  "label": "done",
+                  "attention": "none",
+                  "source": "runtime"
+                },
+                "notifications": {
+                  "unreadCount": 0
+                },
+                "orchestration": {
+                  "pressure": "none",
+                  "assignedTask": false,
+                  "canBeAssignedWork": true
+                },
+                "presentation": {
+                  "statusLabel": "done",
+                  "compactHint": "7 new",
+                  "attentionScore": 1
+                },
+                "attention": "normal",
+                "activityNewCount": 7,
+                "threadUnreadCount": 0,
+                "pendingDeliveryCount": 0,
+                "waitingOnMeCount": 0,
+                "waitingOnThemCount": 0,
+                "blockedCount": 0,
+                "familyCount": 0
+              }
+            },
+            {
+              "id": "svc",
+              "kind": "service",
+              "tool": "shell",
+              "label": "web",
+              "launchCommandLine": "yarn dev:web:local --host 127.0.0.1",
+              "windowName": "web",
+              "tmuxWindowId": "@3",
+              "tmuxWindowIndex": 3,
+              "status": "running",
+              "worktreePath": "/repo/aimux"
+            },
+            {
+              "id": "boss",
+              "kind": "agent",
+              "tool": "claude",
+              "label": "claude-overseer",
+              "windowName": "overseer",
+              "tmuxWindowId": "@4",
+              "tmuxWindowIndex": 4,
+              "status": "running",
+              "worktreePath": "/repo/aimux",
+              "overseer": true,
+              "team": {
+                "teamId": "overseer",
+                "parentSessionId": "",
+                "role": "overseer"
+              },
+              "semantic": {
+                "runtime": {
+                  "lifecycle": "running",
+                  "isAlive": true,
+                  "canEnter": true,
+                  "canReceiveInput": true,
+                  "canInterrupt": true
+                },
+                "user": {
+                  "label": "working",
+                  "attention": "none",
+                  "source": "runtime"
+                },
+                "notifications": {
+                  "unreadCount": 0
+                },
+                "orchestration": {
+                  "pressure": "none",
+                  "assignedTask": false,
+                  "canBeAssignedWork": true
+                },
+                "presentation": {
+                  "statusLabel": "working",
+                  "compactHint": null,
+                  "attentionScore": 0
+                },
+                "attention": "normal",
+                "activityNewCount": 0,
+                "threadUnreadCount": 0,
+                "pendingDeliveryCount": 0,
+                "waitingOnMeCount": 0,
+                "waitingOnThemCount": 0,
+                "blockedCount": 0,
+                "familyCount": 0
+              }
+            },
+            {
+              "id": "scribe",
+              "kind": "agent",
+              "tool": "claude",
+              "label": "claude-scribe",
+              "windowName": "scribe",
+              "tmuxWindowId": "@5",
+              "tmuxWindowIndex": 5,
+              "status": "running",
+              "worktreePath": "/repo/aimux",
+              "scribe": true,
+              "team": {
+                "teamId": "scribe",
+                "parentSessionId": "",
+                "role": "scribe"
+              },
+              "semantic": {
+                "runtime": {
+                  "lifecycle": "running",
+                  "isAlive": true,
+                  "canEnter": true,
+                  "canReceiveInput": true,
+                  "canInterrupt": true
+                },
+                "user": {
+                  "label": "ready",
+                  "attention": "none",
+                  "source": "runtime"
+                },
+                "notifications": {
+                  "unreadCount": 0
+                },
+                "orchestration": {
+                  "pressure": "none",
+                  "assignedTask": false,
+                  "canBeAssignedWork": true
+                },
+                "presentation": {
+                  "statusLabel": "ready",
+                  "compactHint": null,
+                  "attentionScore": 0
+                },
+                "attention": "normal",
+                "activityNewCount": 0,
+                "threadUnreadCount": 0,
+                "pendingDeliveryCount": 0,
+                "waitingOnMeCount": 0,
+                "waitingOnThemCount": 0,
+                "blockedCount": 0,
+                "familyCount": 0
+              }
+            },
+            {
+              "id": "offline",
+              "kind": "agent",
+              "tool": "aider",
+              "label": "old-aider",
+              "windowName": "aider",
+              "tmuxWindowId": "@6",
+              "tmuxWindowIndex": 6,
+              "status": "offline",
+              "worktreePath": "/repo/aimux"
+            }
+          ],
+          "teammates": [
+            {
+              "id": "reviewer",
+              "kind": "agent",
+              "tool": "codex",
+              "label": "reviewer",
+              "windowName": "codex-review",
+              "tmuxWindowId": "@7",
+              "tmuxWindowIndex": 7,
+              "status": "running",
+              "createdAt": "2026-01-01T00:00:00.000Z",
+              "worktreePath": "/repo/aimux",
+              "team": {
+                "teamId": "team-1",
+                "parentSessionId": "coder",
+                "role": "reviewer",
+                "label": "review",
+                "order": 1
+              },
+              "semantic": {
+                "runtime": {
+                  "lifecycle": "running",
+                  "isAlive": true,
+                  "canEnter": true,
+                  "canReceiveInput": true,
+                  "canInterrupt": true
+                },
+                "user": {
+                  "label": "working",
+                  "attention": "none",
+                  "source": "runtime"
+                },
+                "notifications": {
+                  "unreadCount": 0
+                },
+                "orchestration": {
+                  "pressure": "none",
+                  "assignedTask": false,
+                  "canBeAssignedWork": true
+                },
+                "presentation": {
+                  "statusLabel": "working",
+                  "compactHint": "2 new",
+                  "attentionScore": 1
+                },
+                "attention": "normal",
+                "activityNewCount": 2,
+                "threadUnreadCount": 0,
+                "pendingDeliveryCount": 0,
+                "waitingOnMeCount": 0,
+                "waitingOnThemCount": 0,
+                "blockedCount": 0,
+                "familyCount": 0
+              }
+            },
+            {
+              "id": "implementer",
+              "kind": "agent",
+              "tool": "claude",
+              "label": "implementer",
+              "windowName": "claude-impl",
+              "tmuxWindowId": "@8",
+              "tmuxWindowIndex": 8,
+              "status": "running",
+              "createdAt": "2026-01-01T00:01:00.000Z",
+              "worktreePath": "/repo/aimux",
+              "team": {
+                "teamId": "team-1",
+                "parentSessionId": "coder",
+                "role": "implementer",
+                "label": "impl",
+                "order": 2
+              },
+              "semantic": {
+                "runtime": {
+                  "lifecycle": "running",
+                  "isAlive": true,
+                  "canEnter": true,
+                  "canReceiveInput": true,
+                  "canInterrupt": true
+                },
+                "user": {
+                  "label": "needs_response",
+                  "attention": "needs_response",
+                  "source": "tool"
+                },
+                "notifications": {
+                  "unreadCount": 0
+                },
+                "orchestration": {
+                  "pressure": "none",
+                  "assignedTask": false,
+                  "canBeAssignedWork": true
+                },
+                "presentation": {
+                  "statusLabel": "needs answer",
+                  "compactHint": "answer",
+                  "attentionScore": 4
+                },
+                "attention": "needs_response",
+                "activityNewCount": 0,
+                "threadUnreadCount": 0,
+                "pendingDeliveryCount": 0,
+                "waitingOnMeCount": 0,
+                "waitingOnThemCount": 0,
+                "blockedCount": 0,
+                "familyCount": 0
+              }
+            }
+          ],
+          "metadata": {
+            "coder": {
+              "context": {
+                "worktreeName": "aimux",
+                "branch": "rust-translation-v1",
+                "pr": {
+                  "number": 456,
+                  "url": "https://github.com/example/aimux/pull/456"
+                }
+              },
+              "derived": {
+                "services": [
+                  {
+                    "port": 4173,
+                    "url": "http://localhost:4173"
+                  }
+                ]
+              },
+              "statusline": {
+                "top": [
+                  {
+                    "id": "token",
+                    "text": "tokens 42k",
+                    "tone": "info"
+                  }
+                ],
+                "bottom": [
+                  {
+                    "id": "sync",
+                    "text": "synced",
+                    "tone": "success"
+                  }
+                ]
+              },
+              "status": {
+                "text": "user approval needed",
+                "tone": "warn"
+              },
+              "progress": {
+                "current": 3,
+                "total": 5,
+                "label": "audit"
+              },
+              "logs": [
+                {
+                  "message": "last log from coder",
+                  "source": "hook",
+                  "tone": "info",
+                  "ts": "2026-01-01T00:00:00.000Z"
+                }
+              ]
+            },
+            "boss": {
+              "statusline": {
+                "bottom": [
+                  {
+                    "id": "loop",
+                    "text": "loop ok",
+                    "tone": "success"
+                  }
+                ]
+              },
+              "status": {
+                "text": "driving agents"
+              }
+            },
+            "scribe": {
+              "statusline": {
+                "bottom": [
+                  {
+                    "id": "notes",
+                    "text": "notes fresh",
+                    "tone": "info"
+                  }
+                ]
+              },
+              "status": {
+                "text": "notes fresh"
+              }
+            },
+            "reviewer": {
+              "statusline": {
+                "bottom": [
+                  {
+                    "id": "review",
+                    "text": "review queued",
+                    "tone": "warn"
+                  }
+                ]
+              },
+              "status": {
+                "text": "review running"
+              }
+            }
+          },
+          "tasks": {
+            "pending": 2,
+            "assigned": 1
+          },
+          "controlPlane": {
+            "daemonAlive": true,
+            "projectServiceAlive": true
+          }
+        },
+        "projectRoot": "/repo/aimux",
+        "options": {
+          "currentWindow": "codex",
+          "currentWindowId": "@1",
+          "currentPath": "/repo/aimux",
+          "currentSession": "aimux-client",
+          "width": 160
+        }
+      },
+      "output": {
+        "top": "aimux aimux  ·  ctl ok  ·  aimux@rust-translation-…  ·  #[range=user|pr]PR #456#[norange]  ·  :4173  ·  tasks 2/1  ·  needs input  ·  #[fg=cyan]tokens 42k#[d…",
+        "bottom": "#[fg=black,bg=yellow] coder(coder) on you ? #[default]  ·  claude 7 new  ·  yarn dev:web:loca…  |  Fix statusline parity across the visible …  ·  team: review 2 new, impl answer  ·  #[fg=green]synced#[default]",
+        "frame": "aimux aimux  ·  ctl ok  ·  aimux@rust-translation-…  ·  #[range=user|pr]PR #456#[norange]  ·  :4173  ·  tasks 2/1  ·  needs input  ·  #[fg=cyan]tokens 42k#[d…\n#[fg=black,bg=yellow] coder(coder) on you ? #[default]  ·  claude 7 new  ·  yarn dev:web:loca…  |  Fix statusline parity across the visible …  ·  team: review 2 new, impl answer  ·  #[fg=green]synced#[default]"
+      },
+      "inputSha256": "294d7328949ed43bc56dd9da501de74e2a6f2a90cbd500f1dd7d7de6211ab759"
+    },
+    {
+      "id": "narrow-agent-chrome",
+      "source": "src/tmux/statusline.ts",
+      "api": "renderTmuxStatuslineFromData:top+bottom",
+      "input": {
+        "data": {
+          "updatedAt": "2099-01-01T00:00:00.000Z",
+          "dashboardScreen": "topology",
+          "sessions": [
+            {
+              "id": "coder",
+              "kind": "agent",
+              "tool": "codex",
+              "label": "coder",
+              "windowName": "codex",
+              "tmuxWindowId": "@1",
+              "tmuxWindowIndex": 1,
+              "role": "coder",
+              "status": "running",
+              "active": true,
+              "headline": "Fix statusline parity across the visible tmux chrome",
+              "worktreePath": "/repo/aimux",
+              "semantic": {
+                "runtime": {
+                  "lifecycle": "running",
+                  "isAlive": true,
+                  "canEnter": true,
+                  "canReceiveInput": true,
+                  "canInterrupt": true
+                },
+                "user": {
+                  "label": "needs_input",
+                  "attention": "needs_input",
+                  "source": "tool"
+                },
+                "notifications": {
+                  "unreadCount": 0
+                },
+                "orchestration": {
+                  "pressure": "none",
+                  "assignedTask": false,
+                  "canBeAssignedWork": true
+                },
+                "presentation": {
+                  "statusLabel": "needs input",
+                  "compactHint": "on you",
+                  "attentionScore": 4
+                },
+                "attention": "needs_input",
+                "activityNewCount": 0,
+                "threadUnreadCount": 0,
+                "pendingDeliveryCount": 0,
+                "waitingOnMeCount": 0,
+                "waitingOnThemCount": 0,
+                "blockedCount": 0,
+                "familyCount": 0
+              }
+            },
+            {
+              "id": "worker",
+              "kind": "agent",
+              "tool": "claude",
+              "label": "claude-v90abcd",
+              "windowName": "claude",
+              "tmuxWindowId": "@2",
+              "tmuxWindowIndex": 2,
+              "status": "idle",
+              "worktreePath": "/repo/aimux",
+              "semantic": {
+                "runtime": {
+                  "lifecycle": "idle",
+                  "isAlive": true,
+                  "canEnter": true,
+                  "canReceiveInput": true,
+                  "canInterrupt": true
+                },
+                "user": {
+                  "label": "done",
+                  "attention": "none",
+                  "source": "runtime"
+                },
+                "notifications": {
+                  "unreadCount": 0
+                },
+                "orchestration": {
+                  "pressure": "none",
+                  "assignedTask": false,
+                  "canBeAssignedWork": true
+                },
+                "presentation": {
+                  "statusLabel": "done",
+                  "compactHint": "7 new",
+                  "attentionScore": 1
+                },
+                "attention": "normal",
+                "activityNewCount": 7,
+                "threadUnreadCount": 0,
+                "pendingDeliveryCount": 0,
+                "waitingOnMeCount": 0,
+                "waitingOnThemCount": 0,
+                "blockedCount": 0,
+                "familyCount": 0
+              }
+            },
+            {
+              "id": "svc",
+              "kind": "service",
+              "tool": "shell",
+              "label": "web",
+              "launchCommandLine": "yarn dev:web:local --host 127.0.0.1",
+              "windowName": "web",
+              "tmuxWindowId": "@3",
+              "tmuxWindowIndex": 3,
+              "status": "running",
+              "worktreePath": "/repo/aimux"
+            },
+            {
+              "id": "boss",
+              "kind": "agent",
+              "tool": "claude",
+              "label": "claude-overseer",
+              "windowName": "overseer",
+              "tmuxWindowId": "@4",
+              "tmuxWindowIndex": 4,
+              "status": "running",
+              "worktreePath": "/repo/aimux",
+              "overseer": true,
+              "team": {
+                "teamId": "overseer",
+                "parentSessionId": "",
+                "role": "overseer"
+              },
+              "semantic": {
+                "runtime": {
+                  "lifecycle": "running",
+                  "isAlive": true,
+                  "canEnter": true,
+                  "canReceiveInput": true,
+                  "canInterrupt": true
+                },
+                "user": {
+                  "label": "working",
+                  "attention": "none",
+                  "source": "runtime"
+                },
+                "notifications": {
+                  "unreadCount": 0
+                },
+                "orchestration": {
+                  "pressure": "none",
+                  "assignedTask": false,
+                  "canBeAssignedWork": true
+                },
+                "presentation": {
+                  "statusLabel": "working",
+                  "compactHint": null,
+                  "attentionScore": 0
+                },
+                "attention": "normal",
+                "activityNewCount": 0,
+                "threadUnreadCount": 0,
+                "pendingDeliveryCount": 0,
+                "waitingOnMeCount": 0,
+                "waitingOnThemCount": 0,
+                "blockedCount": 0,
+                "familyCount": 0
+              }
+            },
+            {
+              "id": "scribe",
+              "kind": "agent",
+              "tool": "claude",
+              "label": "claude-scribe",
+              "windowName": "scribe",
+              "tmuxWindowId": "@5",
+              "tmuxWindowIndex": 5,
+              "status": "running",
+              "worktreePath": "/repo/aimux",
+              "scribe": true,
+              "team": {
+                "teamId": "scribe",
+                "parentSessionId": "",
+                "role": "scribe"
+              },
+              "semantic": {
+                "runtime": {
+                  "lifecycle": "running",
+                  "isAlive": true,
+                  "canEnter": true,
+                  "canReceiveInput": true,
+                  "canInterrupt": true
+                },
+                "user": {
+                  "label": "ready",
+                  "attention": "none",
+                  "source": "runtime"
+                },
+                "notifications": {
+                  "unreadCount": 0
+                },
+                "orchestration": {
+                  "pressure": "none",
+                  "assignedTask": false,
+                  "canBeAssignedWork": true
+                },
+                "presentation": {
+                  "statusLabel": "ready",
+                  "compactHint": null,
+                  "attentionScore": 0
+                },
+                "attention": "normal",
+                "activityNewCount": 0,
+                "threadUnreadCount": 0,
+                "pendingDeliveryCount": 0,
+                "waitingOnMeCount": 0,
+                "waitingOnThemCount": 0,
+                "blockedCount": 0,
+                "familyCount": 0
+              }
+            },
+            {
+              "id": "offline",
+              "kind": "agent",
+              "tool": "aider",
+              "label": "old-aider",
+              "windowName": "aider",
+              "tmuxWindowId": "@6",
+              "tmuxWindowIndex": 6,
+              "status": "offline",
+              "worktreePath": "/repo/aimux"
+            }
+          ],
+          "teammates": [
+            {
+              "id": "reviewer",
+              "kind": "agent",
+              "tool": "codex",
+              "label": "reviewer",
+              "windowName": "codex-review",
+              "tmuxWindowId": "@7",
+              "tmuxWindowIndex": 7,
+              "status": "running",
+              "createdAt": "2026-01-01T00:00:00.000Z",
+              "worktreePath": "/repo/aimux",
+              "team": {
+                "teamId": "team-1",
+                "parentSessionId": "coder",
+                "role": "reviewer",
+                "label": "review",
+                "order": 1
+              },
+              "semantic": {
+                "runtime": {
+                  "lifecycle": "running",
+                  "isAlive": true,
+                  "canEnter": true,
+                  "canReceiveInput": true,
+                  "canInterrupt": true
+                },
+                "user": {
+                  "label": "working",
+                  "attention": "none",
+                  "source": "runtime"
+                },
+                "notifications": {
+                  "unreadCount": 0
+                },
+                "orchestration": {
+                  "pressure": "none",
+                  "assignedTask": false,
+                  "canBeAssignedWork": true
+                },
+                "presentation": {
+                  "statusLabel": "working",
+                  "compactHint": "2 new",
+                  "attentionScore": 1
+                },
+                "attention": "normal",
+                "activityNewCount": 2,
+                "threadUnreadCount": 0,
+                "pendingDeliveryCount": 0,
+                "waitingOnMeCount": 0,
+                "waitingOnThemCount": 0,
+                "blockedCount": 0,
+                "familyCount": 0
+              }
+            },
+            {
+              "id": "implementer",
+              "kind": "agent",
+              "tool": "claude",
+              "label": "implementer",
+              "windowName": "claude-impl",
+              "tmuxWindowId": "@8",
+              "tmuxWindowIndex": 8,
+              "status": "running",
+              "createdAt": "2026-01-01T00:01:00.000Z",
+              "worktreePath": "/repo/aimux",
+              "team": {
+                "teamId": "team-1",
+                "parentSessionId": "coder",
+                "role": "implementer",
+                "label": "impl",
+                "order": 2
+              },
+              "semantic": {
+                "runtime": {
+                  "lifecycle": "running",
+                  "isAlive": true,
+                  "canEnter": true,
+                  "canReceiveInput": true,
+                  "canInterrupt": true
+                },
+                "user": {
+                  "label": "needs_response",
+                  "attention": "needs_response",
+                  "source": "tool"
+                },
+                "notifications": {
+                  "unreadCount": 0
+                },
+                "orchestration": {
+                  "pressure": "none",
+                  "assignedTask": false,
+                  "canBeAssignedWork": true
+                },
+                "presentation": {
+                  "statusLabel": "needs answer",
+                  "compactHint": "answer",
+                  "attentionScore": 4
+                },
+                "attention": "needs_response",
+                "activityNewCount": 0,
+                "threadUnreadCount": 0,
+                "pendingDeliveryCount": 0,
+                "waitingOnMeCount": 0,
+                "waitingOnThemCount": 0,
+                "blockedCount": 0,
+                "familyCount": 0
+              }
+            }
+          ],
+          "metadata": {
+            "coder": {
+              "context": {
+                "worktreeName": "aimux",
+                "branch": "rust-translation-v1",
+                "pr": {
+                  "number": 456,
+                  "url": "https://github.com/example/aimux/pull/456"
+                }
+              },
+              "derived": {
+                "services": [
+                  {
+                    "port": 4173,
+                    "url": "http://localhost:4173"
+                  }
+                ]
+              },
+              "statusline": {
+                "top": [
+                  {
+                    "id": "token",
+                    "text": "tokens 42k",
+                    "tone": "info"
+                  }
+                ],
+                "bottom": [
+                  {
+                    "id": "sync",
+                    "text": "synced",
+                    "tone": "success"
+                  }
+                ]
+              },
+              "status": {
+                "text": "user approval needed",
+                "tone": "warn"
+              },
+              "progress": {
+                "current": 3,
+                "total": 5,
+                "label": "audit"
+              },
+              "logs": [
+                {
+                  "message": "last log from coder",
+                  "source": "hook",
+                  "tone": "info",
+                  "ts": "2026-01-01T00:00:00.000Z"
+                }
+              ]
+            },
+            "boss": {
+              "statusline": {
+                "bottom": [
+                  {
+                    "id": "loop",
+                    "text": "loop ok",
+                    "tone": "success"
+                  }
+                ]
+              },
+              "status": {
+                "text": "driving agents"
+              }
+            },
+            "scribe": {
+              "statusline": {
+                "bottom": [
+                  {
+                    "id": "notes",
+                    "text": "notes fresh",
+                    "tone": "info"
+                  }
+                ]
+              },
+              "status": {
+                "text": "notes fresh"
+              }
+            },
+            "reviewer": {
+              "statusline": {
+                "bottom": [
+                  {
+                    "id": "review",
+                    "text": "review queued",
+                    "tone": "warn"
+                  }
+                ]
+              },
+              "status": {
+                "text": "review running"
+              }
+            }
+          },
+          "tasks": {
+            "pending": 2,
+            "assigned": 1
+          },
+          "controlPlane": {
+            "daemonAlive": true,
+            "projectServiceAlive": true
+          }
+        },
+        "projectRoot": "/repo/aimux",
+        "options": {
+          "currentWindow": "codex",
+          "currentWindowId": "@1",
+          "currentPath": "/repo/aimux",
+          "currentSession": "aimux-client",
+          "width": 64
+        }
+      },
+      "output": {
+        "top": "aimux aimux  ·  ctl ok  ·  aimux@rust-translation-…  ·  #[ran…",
+        "bottom": "#[fg=black,bg=yellow] coder(coder) on you ? #[default]  ·  claude 7 new",
+        "frame": "aimux aimux  ·  ctl ok  ·  aimux@rust-translation-…  ·  #[ran…\n#[fg=black,bg=yellow] coder(coder) on you ? #[default]  ·  claude 7 new"
+      },
+      "inputSha256": "f2d8b0c5c1541490f09881a30e97d2b8534bf27d181a2dd915dbaf676c126a76"
+    },
+    {
+      "id": "focused-teammate-chrome",
+      "source": "src/tmux/statusline.ts",
+      "api": "renderTmuxStatuslineFromData:top+bottom",
+      "input": {
+        "data": {
+          "updatedAt": "2099-01-01T00:00:00.000Z",
+          "dashboardScreen": "topology",
+          "sessions": [
+            {
+              "id": "coder",
+              "kind": "agent",
+              "tool": "codex",
+              "label": "coder",
+              "windowName": "codex",
+              "tmuxWindowId": "@1",
+              "tmuxWindowIndex": 1,
+              "role": "coder",
+              "status": "running",
+              "active": true,
+              "headline": "Fix statusline parity across the visible tmux chrome",
+              "worktreePath": "/repo/aimux",
+              "semantic": {
+                "runtime": {
+                  "lifecycle": "running",
+                  "isAlive": true,
+                  "canEnter": true,
+                  "canReceiveInput": true,
+                  "canInterrupt": true
+                },
+                "user": {
+                  "label": "needs_input",
+                  "attention": "needs_input",
+                  "source": "tool"
+                },
+                "notifications": {
+                  "unreadCount": 0
+                },
+                "orchestration": {
+                  "pressure": "none",
+                  "assignedTask": false,
+                  "canBeAssignedWork": true
+                },
+                "presentation": {
+                  "statusLabel": "needs input",
+                  "compactHint": "on you",
+                  "attentionScore": 4
+                },
+                "attention": "needs_input",
+                "activityNewCount": 0,
+                "threadUnreadCount": 0,
+                "pendingDeliveryCount": 0,
+                "waitingOnMeCount": 0,
+                "waitingOnThemCount": 0,
+                "blockedCount": 0,
+                "familyCount": 0
+              }
+            },
+            {
+              "id": "worker",
+              "kind": "agent",
+              "tool": "claude",
+              "label": "claude-v90abcd",
+              "windowName": "claude",
+              "tmuxWindowId": "@2",
+              "tmuxWindowIndex": 2,
+              "status": "idle",
+              "worktreePath": "/repo/aimux",
+              "semantic": {
+                "runtime": {
+                  "lifecycle": "idle",
+                  "isAlive": true,
+                  "canEnter": true,
+                  "canReceiveInput": true,
+                  "canInterrupt": true
+                },
+                "user": {
+                  "label": "done",
+                  "attention": "none",
+                  "source": "runtime"
+                },
+                "notifications": {
+                  "unreadCount": 0
+                },
+                "orchestration": {
+                  "pressure": "none",
+                  "assignedTask": false,
+                  "canBeAssignedWork": true
+                },
+                "presentation": {
+                  "statusLabel": "done",
+                  "compactHint": "7 new",
+                  "attentionScore": 1
+                },
+                "attention": "normal",
+                "activityNewCount": 7,
+                "threadUnreadCount": 0,
+                "pendingDeliveryCount": 0,
+                "waitingOnMeCount": 0,
+                "waitingOnThemCount": 0,
+                "blockedCount": 0,
+                "familyCount": 0
+              }
+            },
+            {
+              "id": "svc",
+              "kind": "service",
+              "tool": "shell",
+              "label": "web",
+              "launchCommandLine": "yarn dev:web:local --host 127.0.0.1",
+              "windowName": "web",
+              "tmuxWindowId": "@3",
+              "tmuxWindowIndex": 3,
+              "status": "running",
+              "worktreePath": "/repo/aimux"
+            },
+            {
+              "id": "boss",
+              "kind": "agent",
+              "tool": "claude",
+              "label": "claude-overseer",
+              "windowName": "overseer",
+              "tmuxWindowId": "@4",
+              "tmuxWindowIndex": 4,
+              "status": "running",
+              "worktreePath": "/repo/aimux",
+              "overseer": true,
+              "team": {
+                "teamId": "overseer",
+                "parentSessionId": "",
+                "role": "overseer"
+              },
+              "semantic": {
+                "runtime": {
+                  "lifecycle": "running",
+                  "isAlive": true,
+                  "canEnter": true,
+                  "canReceiveInput": true,
+                  "canInterrupt": true
+                },
+                "user": {
+                  "label": "working",
+                  "attention": "none",
+                  "source": "runtime"
+                },
+                "notifications": {
+                  "unreadCount": 0
+                },
+                "orchestration": {
+                  "pressure": "none",
+                  "assignedTask": false,
+                  "canBeAssignedWork": true
+                },
+                "presentation": {
+                  "statusLabel": "working",
+                  "compactHint": null,
+                  "attentionScore": 0
+                },
+                "attention": "normal",
+                "activityNewCount": 0,
+                "threadUnreadCount": 0,
+                "pendingDeliveryCount": 0,
+                "waitingOnMeCount": 0,
+                "waitingOnThemCount": 0,
+                "blockedCount": 0,
+                "familyCount": 0
+              }
+            },
+            {
+              "id": "scribe",
+              "kind": "agent",
+              "tool": "claude",
+              "label": "claude-scribe",
+              "windowName": "scribe",
+              "tmuxWindowId": "@5",
+              "tmuxWindowIndex": 5,
+              "status": "running",
+              "worktreePath": "/repo/aimux",
+              "scribe": true,
+              "team": {
+                "teamId": "scribe",
+                "parentSessionId": "",
+                "role": "scribe"
+              },
+              "semantic": {
+                "runtime": {
+                  "lifecycle": "running",
+                  "isAlive": true,
+                  "canEnter": true,
+                  "canReceiveInput": true,
+                  "canInterrupt": true
+                },
+                "user": {
+                  "label": "ready",
+                  "attention": "none",
+                  "source": "runtime"
+                },
+                "notifications": {
+                  "unreadCount": 0
+                },
+                "orchestration": {
+                  "pressure": "none",
+                  "assignedTask": false,
+                  "canBeAssignedWork": true
+                },
+                "presentation": {
+                  "statusLabel": "ready",
+                  "compactHint": null,
+                  "attentionScore": 0
+                },
+                "attention": "normal",
+                "activityNewCount": 0,
+                "threadUnreadCount": 0,
+                "pendingDeliveryCount": 0,
+                "waitingOnMeCount": 0,
+                "waitingOnThemCount": 0,
+                "blockedCount": 0,
+                "familyCount": 0
+              }
+            },
+            {
+              "id": "offline",
+              "kind": "agent",
+              "tool": "aider",
+              "label": "old-aider",
+              "windowName": "aider",
+              "tmuxWindowId": "@6",
+              "tmuxWindowIndex": 6,
+              "status": "offline",
+              "worktreePath": "/repo/aimux"
+            }
+          ],
+          "teammates": [
+            {
+              "id": "reviewer",
+              "kind": "agent",
+              "tool": "codex",
+              "label": "reviewer",
+              "windowName": "codex-review",
+              "tmuxWindowId": "@7",
+              "tmuxWindowIndex": 7,
+              "status": "running",
+              "createdAt": "2026-01-01T00:00:00.000Z",
+              "worktreePath": "/repo/aimux",
+              "team": {
+                "teamId": "team-1",
+                "parentSessionId": "coder",
+                "role": "reviewer",
+                "label": "review",
+                "order": 1
+              },
+              "semantic": {
+                "runtime": {
+                  "lifecycle": "running",
+                  "isAlive": true,
+                  "canEnter": true,
+                  "canReceiveInput": true,
+                  "canInterrupt": true
+                },
+                "user": {
+                  "label": "working",
+                  "attention": "none",
+                  "source": "runtime"
+                },
+                "notifications": {
+                  "unreadCount": 0
+                },
+                "orchestration": {
+                  "pressure": "none",
+                  "assignedTask": false,
+                  "canBeAssignedWork": true
+                },
+                "presentation": {
+                  "statusLabel": "working",
+                  "compactHint": "2 new",
+                  "attentionScore": 1
+                },
+                "attention": "normal",
+                "activityNewCount": 2,
+                "threadUnreadCount": 0,
+                "pendingDeliveryCount": 0,
+                "waitingOnMeCount": 0,
+                "waitingOnThemCount": 0,
+                "blockedCount": 0,
+                "familyCount": 0
+              }
+            },
+            {
+              "id": "implementer",
+              "kind": "agent",
+              "tool": "claude",
+              "label": "implementer",
+              "windowName": "claude-impl",
+              "tmuxWindowId": "@8",
+              "tmuxWindowIndex": 8,
+              "status": "running",
+              "createdAt": "2026-01-01T00:01:00.000Z",
+              "worktreePath": "/repo/aimux",
+              "team": {
+                "teamId": "team-1",
+                "parentSessionId": "coder",
+                "role": "implementer",
+                "label": "impl",
+                "order": 2
+              },
+              "semantic": {
+                "runtime": {
+                  "lifecycle": "running",
+                  "isAlive": true,
+                  "canEnter": true,
+                  "canReceiveInput": true,
+                  "canInterrupt": true
+                },
+                "user": {
+                  "label": "needs_response",
+                  "attention": "needs_response",
+                  "source": "tool"
+                },
+                "notifications": {
+                  "unreadCount": 0
+                },
+                "orchestration": {
+                  "pressure": "none",
+                  "assignedTask": false,
+                  "canBeAssignedWork": true
+                },
+                "presentation": {
+                  "statusLabel": "needs answer",
+                  "compactHint": "answer",
+                  "attentionScore": 4
+                },
+                "attention": "needs_response",
+                "activityNewCount": 0,
+                "threadUnreadCount": 0,
+                "pendingDeliveryCount": 0,
+                "waitingOnMeCount": 0,
+                "waitingOnThemCount": 0,
+                "blockedCount": 0,
+                "familyCount": 0
+              }
+            }
+          ],
+          "metadata": {
+            "coder": {
+              "context": {
+                "worktreeName": "aimux",
+                "branch": "rust-translation-v1",
+                "pr": {
+                  "number": 456,
+                  "url": "https://github.com/example/aimux/pull/456"
+                }
+              },
+              "derived": {
+                "services": [
+                  {
+                    "port": 4173,
+                    "url": "http://localhost:4173"
+                  }
+                ]
+              },
+              "statusline": {
+                "top": [
+                  {
+                    "id": "token",
+                    "text": "tokens 42k",
+                    "tone": "info"
+                  }
+                ],
+                "bottom": [
+                  {
+                    "id": "sync",
+                    "text": "synced",
+                    "tone": "success"
+                  }
+                ]
+              },
+              "status": {
+                "text": "user approval needed",
+                "tone": "warn"
+              },
+              "progress": {
+                "current": 3,
+                "total": 5,
+                "label": "audit"
+              },
+              "logs": [
+                {
+                  "message": "last log from coder",
+                  "source": "hook",
+                  "tone": "info",
+                  "ts": "2026-01-01T00:00:00.000Z"
+                }
+              ]
+            },
+            "boss": {
+              "statusline": {
+                "bottom": [
+                  {
+                    "id": "loop",
+                    "text": "loop ok",
+                    "tone": "success"
+                  }
+                ]
+              },
+              "status": {
+                "text": "driving agents"
+              }
+            },
+            "scribe": {
+              "statusline": {
+                "bottom": [
+                  {
+                    "id": "notes",
+                    "text": "notes fresh",
+                    "tone": "info"
+                  }
+                ]
+              },
+              "status": {
+                "text": "notes fresh"
+              }
+            },
+            "reviewer": {
+              "statusline": {
+                "bottom": [
+                  {
+                    "id": "review",
+                    "text": "review queued",
+                    "tone": "warn"
+                  }
+                ]
+              },
+              "status": {
+                "text": "review running"
+              }
+            }
+          },
+          "tasks": {
+            "pending": 2,
+            "assigned": 1
+          },
+          "controlPlane": {
+            "daemonAlive": true,
+            "projectServiceAlive": true
+          }
+        },
+        "projectRoot": "/repo/aimux",
+        "options": {
+          "currentWindow": "codex-review",
+          "currentWindowId": "@7",
+          "currentPath": "/repo/aimux",
+          "currentSession": "aimux-client",
+          "width": 160
+        }
+      },
+      "output": {
+        "top": "aimux aimux  ·  ctl ok  ·  aimux  ·  tasks 2/1  ·  working",
+        "bottom": "#[fg=black,bg=cyan] review 2 new #[default]  ·  #[fg=cyan]impl answer ?#[default]  |  #[fg=cyan]team plane#[default]  ·  #[fg=yellow]review queued#[default]",
+        "frame": "aimux aimux  ·  ctl ok  ·  aimux  ·  tasks 2/1  ·  working\n#[fg=black,bg=cyan] review 2 new #[default]  ·  #[fg=cyan]impl answer ?#[default]  |  #[fg=cyan]team plane#[default]  ·  #[fg=yellow]review queued#[default]"
+      },
+      "inputSha256": "edf42d7b30eb95cd76bf4efcc849666c9e2da8d370602fc02f9b69dd0fa4731b"
+    },
+    {
+      "id": "focused-overseer-chrome",
+      "source": "src/tmux/statusline.ts",
+      "api": "renderTmuxStatuslineFromData:top+bottom",
+      "input": {
+        "data": {
+          "updatedAt": "2099-01-01T00:00:00.000Z",
+          "dashboardScreen": "topology",
+          "sessions": [
+            {
+              "id": "coder",
+              "kind": "agent",
+              "tool": "codex",
+              "label": "coder",
+              "windowName": "codex",
+              "tmuxWindowId": "@1",
+              "tmuxWindowIndex": 1,
+              "role": "coder",
+              "status": "running",
+              "active": true,
+              "headline": "Fix statusline parity across the visible tmux chrome",
+              "worktreePath": "/repo/aimux",
+              "semantic": {
+                "runtime": {
+                  "lifecycle": "running",
+                  "isAlive": true,
+                  "canEnter": true,
+                  "canReceiveInput": true,
+                  "canInterrupt": true
+                },
+                "user": {
+                  "label": "needs_input",
+                  "attention": "needs_input",
+                  "source": "tool"
+                },
+                "notifications": {
+                  "unreadCount": 0
+                },
+                "orchestration": {
+                  "pressure": "none",
+                  "assignedTask": false,
+                  "canBeAssignedWork": true
+                },
+                "presentation": {
+                  "statusLabel": "needs input",
+                  "compactHint": "on you",
+                  "attentionScore": 4
+                },
+                "attention": "needs_input",
+                "activityNewCount": 0,
+                "threadUnreadCount": 0,
+                "pendingDeliveryCount": 0,
+                "waitingOnMeCount": 0,
+                "waitingOnThemCount": 0,
+                "blockedCount": 0,
+                "familyCount": 0
+              }
+            },
+            {
+              "id": "worker",
+              "kind": "agent",
+              "tool": "claude",
+              "label": "claude-v90abcd",
+              "windowName": "claude",
+              "tmuxWindowId": "@2",
+              "tmuxWindowIndex": 2,
+              "status": "idle",
+              "worktreePath": "/repo/aimux",
+              "semantic": {
+                "runtime": {
+                  "lifecycle": "idle",
+                  "isAlive": true,
+                  "canEnter": true,
+                  "canReceiveInput": true,
+                  "canInterrupt": true
+                },
+                "user": {
+                  "label": "done",
+                  "attention": "none",
+                  "source": "runtime"
+                },
+                "notifications": {
+                  "unreadCount": 0
+                },
+                "orchestration": {
+                  "pressure": "none",
+                  "assignedTask": false,
+                  "canBeAssignedWork": true
+                },
+                "presentation": {
+                  "statusLabel": "done",
+                  "compactHint": "7 new",
+                  "attentionScore": 1
+                },
+                "attention": "normal",
+                "activityNewCount": 7,
+                "threadUnreadCount": 0,
+                "pendingDeliveryCount": 0,
+                "waitingOnMeCount": 0,
+                "waitingOnThemCount": 0,
+                "blockedCount": 0,
+                "familyCount": 0
+              }
+            },
+            {
+              "id": "svc",
+              "kind": "service",
+              "tool": "shell",
+              "label": "web",
+              "launchCommandLine": "yarn dev:web:local --host 127.0.0.1",
+              "windowName": "web",
+              "tmuxWindowId": "@3",
+              "tmuxWindowIndex": 3,
+              "status": "running",
+              "worktreePath": "/repo/aimux"
+            },
+            {
+              "id": "boss",
+              "kind": "agent",
+              "tool": "claude",
+              "label": "claude-overseer",
+              "windowName": "overseer",
+              "tmuxWindowId": "@4",
+              "tmuxWindowIndex": 4,
+              "status": "running",
+              "worktreePath": "/repo/aimux",
+              "overseer": true,
+              "team": {
+                "teamId": "overseer",
+                "parentSessionId": "",
+                "role": "overseer"
+              },
+              "semantic": {
+                "runtime": {
+                  "lifecycle": "running",
+                  "isAlive": true,
+                  "canEnter": true,
+                  "canReceiveInput": true,
+                  "canInterrupt": true
+                },
+                "user": {
+                  "label": "working",
+                  "attention": "none",
+                  "source": "runtime"
+                },
+                "notifications": {
+                  "unreadCount": 0
+                },
+                "orchestration": {
+                  "pressure": "none",
+                  "assignedTask": false,
+                  "canBeAssignedWork": true
+                },
+                "presentation": {
+                  "statusLabel": "working",
+                  "compactHint": null,
+                  "attentionScore": 0
+                },
+                "attention": "normal",
+                "activityNewCount": 0,
+                "threadUnreadCount": 0,
+                "pendingDeliveryCount": 0,
+                "waitingOnMeCount": 0,
+                "waitingOnThemCount": 0,
+                "blockedCount": 0,
+                "familyCount": 0
+              }
+            },
+            {
+              "id": "scribe",
+              "kind": "agent",
+              "tool": "claude",
+              "label": "claude-scribe",
+              "windowName": "scribe",
+              "tmuxWindowId": "@5",
+              "tmuxWindowIndex": 5,
+              "status": "running",
+              "worktreePath": "/repo/aimux",
+              "scribe": true,
+              "team": {
+                "teamId": "scribe",
+                "parentSessionId": "",
+                "role": "scribe"
+              },
+              "semantic": {
+                "runtime": {
+                  "lifecycle": "running",
+                  "isAlive": true,
+                  "canEnter": true,
+                  "canReceiveInput": true,
+                  "canInterrupt": true
+                },
+                "user": {
+                  "label": "ready",
+                  "attention": "none",
+                  "source": "runtime"
+                },
+                "notifications": {
+                  "unreadCount": 0
+                },
+                "orchestration": {
+                  "pressure": "none",
+                  "assignedTask": false,
+                  "canBeAssignedWork": true
+                },
+                "presentation": {
+                  "statusLabel": "ready",
+                  "compactHint": null,
+                  "attentionScore": 0
+                },
+                "attention": "normal",
+                "activityNewCount": 0,
+                "threadUnreadCount": 0,
+                "pendingDeliveryCount": 0,
+                "waitingOnMeCount": 0,
+                "waitingOnThemCount": 0,
+                "blockedCount": 0,
+                "familyCount": 0
+              }
+            },
+            {
+              "id": "offline",
+              "kind": "agent",
+              "tool": "aider",
+              "label": "old-aider",
+              "windowName": "aider",
+              "tmuxWindowId": "@6",
+              "tmuxWindowIndex": 6,
+              "status": "offline",
+              "worktreePath": "/repo/aimux"
+            }
+          ],
+          "teammates": [
+            {
+              "id": "reviewer",
+              "kind": "agent",
+              "tool": "codex",
+              "label": "reviewer",
+              "windowName": "codex-review",
+              "tmuxWindowId": "@7",
+              "tmuxWindowIndex": 7,
+              "status": "running",
+              "createdAt": "2026-01-01T00:00:00.000Z",
+              "worktreePath": "/repo/aimux",
+              "team": {
+                "teamId": "team-1",
+                "parentSessionId": "coder",
+                "role": "reviewer",
+                "label": "review",
+                "order": 1
+              },
+              "semantic": {
+                "runtime": {
+                  "lifecycle": "running",
+                  "isAlive": true,
+                  "canEnter": true,
+                  "canReceiveInput": true,
+                  "canInterrupt": true
+                },
+                "user": {
+                  "label": "working",
+                  "attention": "none",
+                  "source": "runtime"
+                },
+                "notifications": {
+                  "unreadCount": 0
+                },
+                "orchestration": {
+                  "pressure": "none",
+                  "assignedTask": false,
+                  "canBeAssignedWork": true
+                },
+                "presentation": {
+                  "statusLabel": "working",
+                  "compactHint": "2 new",
+                  "attentionScore": 1
+                },
+                "attention": "normal",
+                "activityNewCount": 2,
+                "threadUnreadCount": 0,
+                "pendingDeliveryCount": 0,
+                "waitingOnMeCount": 0,
+                "waitingOnThemCount": 0,
+                "blockedCount": 0,
+                "familyCount": 0
+              }
+            },
+            {
+              "id": "implementer",
+              "kind": "agent",
+              "tool": "claude",
+              "label": "implementer",
+              "windowName": "claude-impl",
+              "tmuxWindowId": "@8",
+              "tmuxWindowIndex": 8,
+              "status": "running",
+              "createdAt": "2026-01-01T00:01:00.000Z",
+              "worktreePath": "/repo/aimux",
+              "team": {
+                "teamId": "team-1",
+                "parentSessionId": "coder",
+                "role": "implementer",
+                "label": "impl",
+                "order": 2
+              },
+              "semantic": {
+                "runtime": {
+                  "lifecycle": "running",
+                  "isAlive": true,
+                  "canEnter": true,
+                  "canReceiveInput": true,
+                  "canInterrupt": true
+                },
+                "user": {
+                  "label": "needs_response",
+                  "attention": "needs_response",
+                  "source": "tool"
+                },
+                "notifications": {
+                  "unreadCount": 0
+                },
+                "orchestration": {
+                  "pressure": "none",
+                  "assignedTask": false,
+                  "canBeAssignedWork": true
+                },
+                "presentation": {
+                  "statusLabel": "needs answer",
+                  "compactHint": "answer",
+                  "attentionScore": 4
+                },
+                "attention": "needs_response",
+                "activityNewCount": 0,
+                "threadUnreadCount": 0,
+                "pendingDeliveryCount": 0,
+                "waitingOnMeCount": 0,
+                "waitingOnThemCount": 0,
+                "blockedCount": 0,
+                "familyCount": 0
+              }
+            }
+          ],
+          "metadata": {
+            "coder": {
+              "context": {
+                "worktreeName": "aimux",
+                "branch": "rust-translation-v1",
+                "pr": {
+                  "number": 456,
+                  "url": "https://github.com/example/aimux/pull/456"
+                }
+              },
+              "derived": {
+                "services": [
+                  {
+                    "port": 4173,
+                    "url": "http://localhost:4173"
+                  }
+                ]
+              },
+              "statusline": {
+                "top": [
+                  {
+                    "id": "token",
+                    "text": "tokens 42k",
+                    "tone": "info"
+                  }
+                ],
+                "bottom": [
+                  {
+                    "id": "sync",
+                    "text": "synced",
+                    "tone": "success"
+                  }
+                ]
+              },
+              "status": {
+                "text": "user approval needed",
+                "tone": "warn"
+              },
+              "progress": {
+                "current": 3,
+                "total": 5,
+                "label": "audit"
+              },
+              "logs": [
+                {
+                  "message": "last log from coder",
+                  "source": "hook",
+                  "tone": "info",
+                  "ts": "2026-01-01T00:00:00.000Z"
+                }
+              ]
+            },
+            "boss": {
+              "statusline": {
+                "bottom": [
+                  {
+                    "id": "loop",
+                    "text": "loop ok",
+                    "tone": "success"
+                  }
+                ]
+              },
+              "status": {
+                "text": "driving agents"
+              }
+            },
+            "scribe": {
+              "statusline": {
+                "bottom": [
+                  {
+                    "id": "notes",
+                    "text": "notes fresh",
+                    "tone": "info"
+                  }
+                ]
+              },
+              "status": {
+                "text": "notes fresh"
+              }
+            },
+            "reviewer": {
+              "statusline": {
+                "bottom": [
+                  {
+                    "id": "review",
+                    "text": "review queued",
+                    "tone": "warn"
+                  }
+                ]
+              },
+              "status": {
+                "text": "review running"
+              }
+            }
+          },
+          "tasks": {
+            "pending": 2,
+            "assigned": 1
+          },
+          "controlPlane": {
+            "daemonAlive": true,
+            "projectServiceAlive": true
+          }
+        },
+        "projectRoot": "/repo/aimux",
+        "options": {
+          "currentWindow": "overseer",
+          "currentWindowId": "@4",
+          "currentPath": "/repo/aimux",
+          "currentSession": "aimux-client",
+          "width": 160
+        }
+      },
+      "output": {
+        "top": "aimux aimux  ·  ctl ok  ·  aimux  ·  tasks 2/1  ·  working",
+        "bottom": "#[fg=cyan]overseer#[default]  claude working  |  #[fg=green]loop ok#[default]",
+        "frame": "aimux aimux  ·  ctl ok  ·  aimux  ·  tasks 2/1  ·  working\n#[fg=cyan]overseer#[default]  claude working  |  #[fg=green]loop ok#[default]"
+      },
+      "inputSha256": "2be6f5fc1114dfec12390001f5c93ebf80631499ec1d6a426bf593ff89adba86"
+    },
+    {
+      "id": "focused-scribe-chrome",
+      "source": "src/tmux/statusline.ts",
+      "api": "renderTmuxStatuslineFromData:top+bottom",
+      "input": {
+        "data": {
+          "updatedAt": "2099-01-01T00:00:00.000Z",
+          "dashboardScreen": "topology",
+          "sessions": [
+            {
+              "id": "coder",
+              "kind": "agent",
+              "tool": "codex",
+              "label": "coder",
+              "windowName": "codex",
+              "tmuxWindowId": "@1",
+              "tmuxWindowIndex": 1,
+              "role": "coder",
+              "status": "running",
+              "active": true,
+              "headline": "Fix statusline parity across the visible tmux chrome",
+              "worktreePath": "/repo/aimux",
+              "semantic": {
+                "runtime": {
+                  "lifecycle": "running",
+                  "isAlive": true,
+                  "canEnter": true,
+                  "canReceiveInput": true,
+                  "canInterrupt": true
+                },
+                "user": {
+                  "label": "needs_input",
+                  "attention": "needs_input",
+                  "source": "tool"
+                },
+                "notifications": {
+                  "unreadCount": 0
+                },
+                "orchestration": {
+                  "pressure": "none",
+                  "assignedTask": false,
+                  "canBeAssignedWork": true
+                },
+                "presentation": {
+                  "statusLabel": "needs input",
+                  "compactHint": "on you",
+                  "attentionScore": 4
+                },
+                "attention": "needs_input",
+                "activityNewCount": 0,
+                "threadUnreadCount": 0,
+                "pendingDeliveryCount": 0,
+                "waitingOnMeCount": 0,
+                "waitingOnThemCount": 0,
+                "blockedCount": 0,
+                "familyCount": 0
+              }
+            },
+            {
+              "id": "worker",
+              "kind": "agent",
+              "tool": "claude",
+              "label": "claude-v90abcd",
+              "windowName": "claude",
+              "tmuxWindowId": "@2",
+              "tmuxWindowIndex": 2,
+              "status": "idle",
+              "worktreePath": "/repo/aimux",
+              "semantic": {
+                "runtime": {
+                  "lifecycle": "idle",
+                  "isAlive": true,
+                  "canEnter": true,
+                  "canReceiveInput": true,
+                  "canInterrupt": true
+                },
+                "user": {
+                  "label": "done",
+                  "attention": "none",
+                  "source": "runtime"
+                },
+                "notifications": {
+                  "unreadCount": 0
+                },
+                "orchestration": {
+                  "pressure": "none",
+                  "assignedTask": false,
+                  "canBeAssignedWork": true
+                },
+                "presentation": {
+                  "statusLabel": "done",
+                  "compactHint": "7 new",
+                  "attentionScore": 1
+                },
+                "attention": "normal",
+                "activityNewCount": 7,
+                "threadUnreadCount": 0,
+                "pendingDeliveryCount": 0,
+                "waitingOnMeCount": 0,
+                "waitingOnThemCount": 0,
+                "blockedCount": 0,
+                "familyCount": 0
+              }
+            },
+            {
+              "id": "svc",
+              "kind": "service",
+              "tool": "shell",
+              "label": "web",
+              "launchCommandLine": "yarn dev:web:local --host 127.0.0.1",
+              "windowName": "web",
+              "tmuxWindowId": "@3",
+              "tmuxWindowIndex": 3,
+              "status": "running",
+              "worktreePath": "/repo/aimux"
+            },
+            {
+              "id": "boss",
+              "kind": "agent",
+              "tool": "claude",
+              "label": "claude-overseer",
+              "windowName": "overseer",
+              "tmuxWindowId": "@4",
+              "tmuxWindowIndex": 4,
+              "status": "running",
+              "worktreePath": "/repo/aimux",
+              "overseer": true,
+              "team": {
+                "teamId": "overseer",
+                "parentSessionId": "",
+                "role": "overseer"
+              },
+              "semantic": {
+                "runtime": {
+                  "lifecycle": "running",
+                  "isAlive": true,
+                  "canEnter": true,
+                  "canReceiveInput": true,
+                  "canInterrupt": true
+                },
+                "user": {
+                  "label": "working",
+                  "attention": "none",
+                  "source": "runtime"
+                },
+                "notifications": {
+                  "unreadCount": 0
+                },
+                "orchestration": {
+                  "pressure": "none",
+                  "assignedTask": false,
+                  "canBeAssignedWork": true
+                },
+                "presentation": {
+                  "statusLabel": "working",
+                  "compactHint": null,
+                  "attentionScore": 0
+                },
+                "attention": "normal",
+                "activityNewCount": 0,
+                "threadUnreadCount": 0,
+                "pendingDeliveryCount": 0,
+                "waitingOnMeCount": 0,
+                "waitingOnThemCount": 0,
+                "blockedCount": 0,
+                "familyCount": 0
+              }
+            },
+            {
+              "id": "scribe",
+              "kind": "agent",
+              "tool": "claude",
+              "label": "claude-scribe",
+              "windowName": "scribe",
+              "tmuxWindowId": "@5",
+              "tmuxWindowIndex": 5,
+              "status": "running",
+              "worktreePath": "/repo/aimux",
+              "scribe": true,
+              "team": {
+                "teamId": "scribe",
+                "parentSessionId": "",
+                "role": "scribe"
+              },
+              "semantic": {
+                "runtime": {
+                  "lifecycle": "running",
+                  "isAlive": true,
+                  "canEnter": true,
+                  "canReceiveInput": true,
+                  "canInterrupt": true
+                },
+                "user": {
+                  "label": "ready",
+                  "attention": "none",
+                  "source": "runtime"
+                },
+                "notifications": {
+                  "unreadCount": 0
+                },
+                "orchestration": {
+                  "pressure": "none",
+                  "assignedTask": false,
+                  "canBeAssignedWork": true
+                },
+                "presentation": {
+                  "statusLabel": "ready",
+                  "compactHint": null,
+                  "attentionScore": 0
+                },
+                "attention": "normal",
+                "activityNewCount": 0,
+                "threadUnreadCount": 0,
+                "pendingDeliveryCount": 0,
+                "waitingOnMeCount": 0,
+                "waitingOnThemCount": 0,
+                "blockedCount": 0,
+                "familyCount": 0
+              }
+            },
+            {
+              "id": "offline",
+              "kind": "agent",
+              "tool": "aider",
+              "label": "old-aider",
+              "windowName": "aider",
+              "tmuxWindowId": "@6",
+              "tmuxWindowIndex": 6,
+              "status": "offline",
+              "worktreePath": "/repo/aimux"
+            }
+          ],
+          "teammates": [
+            {
+              "id": "reviewer",
+              "kind": "agent",
+              "tool": "codex",
+              "label": "reviewer",
+              "windowName": "codex-review",
+              "tmuxWindowId": "@7",
+              "tmuxWindowIndex": 7,
+              "status": "running",
+              "createdAt": "2026-01-01T00:00:00.000Z",
+              "worktreePath": "/repo/aimux",
+              "team": {
+                "teamId": "team-1",
+                "parentSessionId": "coder",
+                "role": "reviewer",
+                "label": "review",
+                "order": 1
+              },
+              "semantic": {
+                "runtime": {
+                  "lifecycle": "running",
+                  "isAlive": true,
+                  "canEnter": true,
+                  "canReceiveInput": true,
+                  "canInterrupt": true
+                },
+                "user": {
+                  "label": "working",
+                  "attention": "none",
+                  "source": "runtime"
+                },
+                "notifications": {
+                  "unreadCount": 0
+                },
+                "orchestration": {
+                  "pressure": "none",
+                  "assignedTask": false,
+                  "canBeAssignedWork": true
+                },
+                "presentation": {
+                  "statusLabel": "working",
+                  "compactHint": "2 new",
+                  "attentionScore": 1
+                },
+                "attention": "normal",
+                "activityNewCount": 2,
+                "threadUnreadCount": 0,
+                "pendingDeliveryCount": 0,
+                "waitingOnMeCount": 0,
+                "waitingOnThemCount": 0,
+                "blockedCount": 0,
+                "familyCount": 0
+              }
+            },
+            {
+              "id": "implementer",
+              "kind": "agent",
+              "tool": "claude",
+              "label": "implementer",
+              "windowName": "claude-impl",
+              "tmuxWindowId": "@8",
+              "tmuxWindowIndex": 8,
+              "status": "running",
+              "createdAt": "2026-01-01T00:01:00.000Z",
+              "worktreePath": "/repo/aimux",
+              "team": {
+                "teamId": "team-1",
+                "parentSessionId": "coder",
+                "role": "implementer",
+                "label": "impl",
+                "order": 2
+              },
+              "semantic": {
+                "runtime": {
+                  "lifecycle": "running",
+                  "isAlive": true,
+                  "canEnter": true,
+                  "canReceiveInput": true,
+                  "canInterrupt": true
+                },
+                "user": {
+                  "label": "needs_response",
+                  "attention": "needs_response",
+                  "source": "tool"
+                },
+                "notifications": {
+                  "unreadCount": 0
+                },
+                "orchestration": {
+                  "pressure": "none",
+                  "assignedTask": false,
+                  "canBeAssignedWork": true
+                },
+                "presentation": {
+                  "statusLabel": "needs answer",
+                  "compactHint": "answer",
+                  "attentionScore": 4
+                },
+                "attention": "needs_response",
+                "activityNewCount": 0,
+                "threadUnreadCount": 0,
+                "pendingDeliveryCount": 0,
+                "waitingOnMeCount": 0,
+                "waitingOnThemCount": 0,
+                "blockedCount": 0,
+                "familyCount": 0
+              }
+            }
+          ],
+          "metadata": {
+            "coder": {
+              "context": {
+                "worktreeName": "aimux",
+                "branch": "rust-translation-v1",
+                "pr": {
+                  "number": 456,
+                  "url": "https://github.com/example/aimux/pull/456"
+                }
+              },
+              "derived": {
+                "services": [
+                  {
+                    "port": 4173,
+                    "url": "http://localhost:4173"
+                  }
+                ]
+              },
+              "statusline": {
+                "top": [
+                  {
+                    "id": "token",
+                    "text": "tokens 42k",
+                    "tone": "info"
+                  }
+                ],
+                "bottom": [
+                  {
+                    "id": "sync",
+                    "text": "synced",
+                    "tone": "success"
+                  }
+                ]
+              },
+              "status": {
+                "text": "user approval needed",
+                "tone": "warn"
+              },
+              "progress": {
+                "current": 3,
+                "total": 5,
+                "label": "audit"
+              },
+              "logs": [
+                {
+                  "message": "last log from coder",
+                  "source": "hook",
+                  "tone": "info",
+                  "ts": "2026-01-01T00:00:00.000Z"
+                }
+              ]
+            },
+            "boss": {
+              "statusline": {
+                "bottom": [
+                  {
+                    "id": "loop",
+                    "text": "loop ok",
+                    "tone": "success"
+                  }
+                ]
+              },
+              "status": {
+                "text": "driving agents"
+              }
+            },
+            "scribe": {
+              "statusline": {
+                "bottom": [
+                  {
+                    "id": "notes",
+                    "text": "notes fresh",
+                    "tone": "info"
+                  }
+                ]
+              },
+              "status": {
+                "text": "notes fresh"
+              }
+            },
+            "reviewer": {
+              "statusline": {
+                "bottom": [
+                  {
+                    "id": "review",
+                    "text": "review queued",
+                    "tone": "warn"
+                  }
+                ]
+              },
+              "status": {
+                "text": "review running"
+              }
+            }
+          },
+          "tasks": {
+            "pending": 2,
+            "assigned": 1
+          },
+          "controlPlane": {
+            "daemonAlive": true,
+            "projectServiceAlive": true
+          }
+        },
+        "projectRoot": "/repo/aimux",
+        "options": {
+          "currentWindow": "scribe",
+          "currentWindowId": "@5",
+          "currentPath": "/repo/aimux",
+          "currentSession": "aimux-client",
+          "width": 160
+        }
+      },
+      "output": {
+        "top": "aimux aimux  ·  ctl ok  ·  aimux  ·  tasks 2/1  ·  ready",
+        "bottom": "#[fg=cyan]scribe#[default]  claude ready  |  #[fg=cyan]notes fresh#[default]",
+        "frame": "aimux aimux  ·  ctl ok  ·  aimux  ·  tasks 2/1  ·  ready\n#[fg=cyan]scribe#[default]  claude ready  |  #[fg=cyan]notes fresh#[default]"
+      },
+      "inputSha256": "5fa2bc2229b139290b6c4845b53fa90612fa42a2e8dfd518185295a8ced9f172"
+    },
+    {
+      "id": "scoped-worktree-chrome",
+      "source": "src/tmux/statusline.ts",
+      "api": "renderTmuxStatuslineFromData:top+bottom",
+      "input": {
+        "data": {
+          "updatedAt": "2099-01-01T00:00:00.000Z",
+          "dashboardScreen": "topology",
+          "sessions": [
+            {
+              "id": "coder",
+              "kind": "agent",
+              "tool": "codex",
+              "label": "coder",
+              "windowName": "codex",
+              "tmuxWindowId": "@1",
+              "tmuxWindowIndex": 1,
+              "role": "coder",
+              "status": "running",
+              "active": true,
+              "headline": "Fix statusline parity across the visible tmux chrome",
+              "worktreePath": "/repo/aimux",
+              "semantic": {
+                "runtime": {
+                  "lifecycle": "running",
+                  "isAlive": true,
+                  "canEnter": true,
+                  "canReceiveInput": true,
+                  "canInterrupt": true
+                },
+                "user": {
+                  "label": "needs_input",
+                  "attention": "needs_input",
+                  "source": "tool"
+                },
+                "notifications": {
+                  "unreadCount": 0
+                },
+                "orchestration": {
+                  "pressure": "none",
+                  "assignedTask": false,
+                  "canBeAssignedWork": true
+                },
+                "presentation": {
+                  "statusLabel": "needs input",
+                  "compactHint": "on you",
+                  "attentionScore": 4
+                },
+                "attention": "needs_input",
+                "activityNewCount": 0,
+                "threadUnreadCount": 0,
+                "pendingDeliveryCount": 0,
+                "waitingOnMeCount": 0,
+                "waitingOnThemCount": 0,
+                "blockedCount": 0,
+                "familyCount": 0
+              }
+            },
+            {
+              "id": "worker",
+              "kind": "agent",
+              "tool": "claude",
+              "label": "claude-v90abcd",
+              "windowName": "claude",
+              "tmuxWindowId": "@2",
+              "tmuxWindowIndex": 2,
+              "status": "idle",
+              "worktreePath": "/repo/aimux",
+              "semantic": {
+                "runtime": {
+                  "lifecycle": "idle",
+                  "isAlive": true,
+                  "canEnter": true,
+                  "canReceiveInput": true,
+                  "canInterrupt": true
+                },
+                "user": {
+                  "label": "done",
+                  "attention": "none",
+                  "source": "runtime"
+                },
+                "notifications": {
+                  "unreadCount": 0
+                },
+                "orchestration": {
+                  "pressure": "none",
+                  "assignedTask": false,
+                  "canBeAssignedWork": true
+                },
+                "presentation": {
+                  "statusLabel": "done",
+                  "compactHint": "7 new",
+                  "attentionScore": 1
+                },
+                "attention": "normal",
+                "activityNewCount": 7,
+                "threadUnreadCount": 0,
+                "pendingDeliveryCount": 0,
+                "waitingOnMeCount": 0,
+                "waitingOnThemCount": 0,
+                "blockedCount": 0,
+                "familyCount": 0
+              }
+            },
+            {
+              "id": "svc",
+              "kind": "service",
+              "tool": "shell",
+              "label": "web",
+              "launchCommandLine": "yarn dev:web:local --host 127.0.0.1",
+              "windowName": "web",
+              "tmuxWindowId": "@3",
+              "tmuxWindowIndex": 3,
+              "status": "running",
+              "worktreePath": "/repo/aimux"
+            },
+            {
+              "id": "boss",
+              "kind": "agent",
+              "tool": "claude",
+              "label": "claude-overseer",
+              "windowName": "overseer",
+              "tmuxWindowId": "@4",
+              "tmuxWindowIndex": 4,
+              "status": "running",
+              "worktreePath": "/repo/aimux",
+              "overseer": true,
+              "team": {
+                "teamId": "overseer",
+                "parentSessionId": "",
+                "role": "overseer"
+              },
+              "semantic": {
+                "runtime": {
+                  "lifecycle": "running",
+                  "isAlive": true,
+                  "canEnter": true,
+                  "canReceiveInput": true,
+                  "canInterrupt": true
+                },
+                "user": {
+                  "label": "working",
+                  "attention": "none",
+                  "source": "runtime"
+                },
+                "notifications": {
+                  "unreadCount": 0
+                },
+                "orchestration": {
+                  "pressure": "none",
+                  "assignedTask": false,
+                  "canBeAssignedWork": true
+                },
+                "presentation": {
+                  "statusLabel": "working",
+                  "compactHint": null,
+                  "attentionScore": 0
+                },
+                "attention": "normal",
+                "activityNewCount": 0,
+                "threadUnreadCount": 0,
+                "pendingDeliveryCount": 0,
+                "waitingOnMeCount": 0,
+                "waitingOnThemCount": 0,
+                "blockedCount": 0,
+                "familyCount": 0
+              }
+            },
+            {
+              "id": "scribe",
+              "kind": "agent",
+              "tool": "claude",
+              "label": "claude-scribe",
+              "windowName": "scribe",
+              "tmuxWindowId": "@5",
+              "tmuxWindowIndex": 5,
+              "status": "running",
+              "worktreePath": "/repo/aimux",
+              "scribe": true,
+              "team": {
+                "teamId": "scribe",
+                "parentSessionId": "",
+                "role": "scribe"
+              },
+              "semantic": {
+                "runtime": {
+                  "lifecycle": "running",
+                  "isAlive": true,
+                  "canEnter": true,
+                  "canReceiveInput": true,
+                  "canInterrupt": true
+                },
+                "user": {
+                  "label": "ready",
+                  "attention": "none",
+                  "source": "runtime"
+                },
+                "notifications": {
+                  "unreadCount": 0
+                },
+                "orchestration": {
+                  "pressure": "none",
+                  "assignedTask": false,
+                  "canBeAssignedWork": true
+                },
+                "presentation": {
+                  "statusLabel": "ready",
+                  "compactHint": null,
+                  "attentionScore": 0
+                },
+                "attention": "normal",
+                "activityNewCount": 0,
+                "threadUnreadCount": 0,
+                "pendingDeliveryCount": 0,
+                "waitingOnMeCount": 0,
+                "waitingOnThemCount": 0,
+                "blockedCount": 0,
+                "familyCount": 0
+              }
+            },
+            {
+              "id": "offline",
+              "kind": "agent",
+              "tool": "aider",
+              "label": "old-aider",
+              "windowName": "aider",
+              "tmuxWindowId": "@6",
+              "tmuxWindowIndex": 6,
+              "status": "offline",
+              "worktreePath": "/repo/aimux"
+            }
+          ],
+          "teammates": [
+            {
+              "id": "reviewer",
+              "kind": "agent",
+              "tool": "codex",
+              "label": "reviewer",
+              "windowName": "codex-review",
+              "tmuxWindowId": "@7",
+              "tmuxWindowIndex": 7,
+              "status": "running",
+              "createdAt": "2026-01-01T00:00:00.000Z",
+              "worktreePath": "/repo/aimux",
+              "team": {
+                "teamId": "team-1",
+                "parentSessionId": "coder",
+                "role": "reviewer",
+                "label": "review",
+                "order": 1
+              },
+              "semantic": {
+                "runtime": {
+                  "lifecycle": "running",
+                  "isAlive": true,
+                  "canEnter": true,
+                  "canReceiveInput": true,
+                  "canInterrupt": true
+                },
+                "user": {
+                  "label": "working",
+                  "attention": "none",
+                  "source": "runtime"
+                },
+                "notifications": {
+                  "unreadCount": 0
+                },
+                "orchestration": {
+                  "pressure": "none",
+                  "assignedTask": false,
+                  "canBeAssignedWork": true
+                },
+                "presentation": {
+                  "statusLabel": "working",
+                  "compactHint": "2 new",
+                  "attentionScore": 1
+                },
+                "attention": "normal",
+                "activityNewCount": 2,
+                "threadUnreadCount": 0,
+                "pendingDeliveryCount": 0,
+                "waitingOnMeCount": 0,
+                "waitingOnThemCount": 0,
+                "blockedCount": 0,
+                "familyCount": 0
+              }
+            },
+            {
+              "id": "implementer",
+              "kind": "agent",
+              "tool": "claude",
+              "label": "implementer",
+              "windowName": "claude-impl",
+              "tmuxWindowId": "@8",
+              "tmuxWindowIndex": 8,
+              "status": "running",
+              "createdAt": "2026-01-01T00:01:00.000Z",
+              "worktreePath": "/repo/aimux",
+              "team": {
+                "teamId": "team-1",
+                "parentSessionId": "coder",
+                "role": "implementer",
+                "label": "impl",
+                "order": 2
+              },
+              "semantic": {
+                "runtime": {
+                  "lifecycle": "running",
+                  "isAlive": true,
+                  "canEnter": true,
+                  "canReceiveInput": true,
+                  "canInterrupt": true
+                },
+                "user": {
+                  "label": "needs_response",
+                  "attention": "needs_response",
+                  "source": "tool"
+                },
+                "notifications": {
+                  "unreadCount": 0
+                },
+                "orchestration": {
+                  "pressure": "none",
+                  "assignedTask": false,
+                  "canBeAssignedWork": true
+                },
+                "presentation": {
+                  "statusLabel": "needs answer",
+                  "compactHint": "answer",
+                  "attentionScore": 4
+                },
+                "attention": "needs_response",
+                "activityNewCount": 0,
+                "threadUnreadCount": 0,
+                "pendingDeliveryCount": 0,
+                "waitingOnMeCount": 0,
+                "waitingOnThemCount": 0,
+                "blockedCount": 0,
+                "familyCount": 0
+              }
+            }
+          ],
+          "metadata": {
+            "coder": {
+              "context": {
+                "worktreeName": "aimux",
+                "branch": "rust-translation-v1",
+                "pr": {
+                  "number": 456,
+                  "url": "https://github.com/example/aimux/pull/456"
+                }
+              },
+              "derived": {
+                "services": [
+                  {
+                    "port": 4173,
+                    "url": "http://localhost:4173"
+                  }
+                ]
+              },
+              "statusline": {
+                "top": [
+                  {
+                    "id": "token",
+                    "text": "tokens 42k",
+                    "tone": "info"
+                  }
+                ],
+                "bottom": [
+                  {
+                    "id": "sync",
+                    "text": "synced",
+                    "tone": "success"
+                  }
+                ]
+              },
+              "status": {
+                "text": "user approval needed",
+                "tone": "warn"
+              },
+              "progress": {
+                "current": 3,
+                "total": 5,
+                "label": "audit"
+              },
+              "logs": [
+                {
+                  "message": "last log from coder",
+                  "source": "hook",
+                  "tone": "info",
+                  "ts": "2026-01-01T00:00:00.000Z"
+                }
+              ]
+            },
+            "boss": {
+              "statusline": {
+                "bottom": [
+                  {
+                    "id": "loop",
+                    "text": "loop ok",
+                    "tone": "success"
+                  }
+                ]
+              },
+              "status": {
+                "text": "driving agents"
+              }
+            },
+            "scribe": {
+              "statusline": {
+                "bottom": [
+                  {
+                    "id": "notes",
+                    "text": "notes fresh",
+                    "tone": "info"
+                  }
+                ]
+              },
+              "status": {
+                "text": "notes fresh"
+              }
+            },
+            "reviewer": {
+              "statusline": {
+                "bottom": [
+                  {
+                    "id": "review",
+                    "text": "review queued",
+                    "tone": "warn"
+                  }
+                ]
+              },
+              "status": {
+                "text": "review running"
+              }
+            }
+          },
+          "tasks": {
+            "pending": 2,
+            "assigned": 1
+          },
+          "controlPlane": {
+            "daemonAlive": true,
+            "projectServiceAlive": true
+          }
+        },
+        "projectRoot": "/repo/aimux",
+        "options": {
+          "currentWindow": "claude",
+          "currentWindowId": "@2",
+          "currentPath": "/repo/aimux/packages/app",
+          "currentSession": "aimux-client",
+          "width": 120
+        }
+      },
+      "output": {
+        "top": "aimux aimux  ·  ctl ok  ·  app  ·  tasks 2/1",
+        "bottom": "coder(coder) on you ?  ·  #[fg=black,bg=yellow] claude 7 new #[default]  ·  yarn dev:web:loca…",
+        "frame": "aimux aimux  ·  ctl ok  ·  app  ·  tasks 2/1\ncoder(coder) on you ?  ·  #[fg=black,bg=yellow] claude 7 new #[default]  ·  yarn dev:web:loca…"
+      },
+      "inputSha256": "1c5c276d6f2c38496a0e146bb124cbb2e86181c1e4084d7c60114a7283c0dd1b"
+    }
+  ]
+}
