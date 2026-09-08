@@ -4,7 +4,8 @@ use aimux::dashboard_controller::{
     parse_dashboard_key, parse_dashboard_keys,
 };
 use aimux::dashboard_model::{
-    DesktopStateGoldenFixture, DesktopStateSnapshot, SessionSemanticState, SessionTeamMetadata,
+    DashboardOperationFailure, DesktopStateGoldenFixture, DesktopStateSnapshot,
+    SessionSemanticState, SessionTeamMetadata,
 };
 use aimux::dashboard_navigation::DashboardEntryRef;
 use aimux::dashboard_renderer::{DashboardNavLevel, DashboardRenderInput, render_dashboard_frame};
@@ -90,10 +91,9 @@ fn clear_failures_key_dispatches_only_when_failures_exist() {
         DashboardControllerEffect::Ignored
     );
 
-    snapshot.operation_failures.push(json!({
-        "id": "failure-1",
-        "operation": "stop",
-    }));
+    snapshot
+        .operation_failures
+        .push(operation_failure("failure-1", Some("stop"), None));
     let DashboardControllerEffect::Request(request) =
         controller.handle_key(&snapshot, DashboardKey::Printable('X'))
     else {
@@ -1281,10 +1281,11 @@ fn worktree_stop_key_blocks_pending_and_dismisses_failures() {
 
     snapshot.worktree_groups[1].pending = false;
     snapshot.worktree_groups[1].pending_action = None;
-    snapshot.worktree_groups[1].operation_failure = Some(json!({
-        "operation": "create",
-        "message": "branch already exists",
-    }));
+    snapshot.worktree_groups[1].operation_failure = Some(operation_failure(
+        "failure-1",
+        Some("create"),
+        Some("branch already exists"),
+    ));
     let worktree_path = snapshot.worktree_groups[1].path.as_ref().unwrap().clone();
     let DashboardControllerEffect::Request(request) =
         controller.handle_key(&snapshot, DashboardKey::Printable('x'))
@@ -1347,6 +1348,26 @@ fn snapshot() -> DesktopStateSnapshot {
     serde_json::from_str::<DesktopStateGoldenFixture>(GOLDEN)
         .expect("valid fixture")
         .runtime_full
+}
+
+fn operation_failure(
+    id: &str,
+    operation: Option<&str>,
+    message: Option<&str>,
+) -> DashboardOperationFailure {
+    DashboardOperationFailure {
+        id: id.into(),
+        target_kind: None,
+        operation: operation.map(str::to_owned),
+        title: None,
+        message: message.map(str::to_owned),
+        created_at: None,
+        target_id: None,
+        worktree_path: None,
+        worktree_name: None,
+        cleared: false,
+        extra: Default::default(),
+    }
 }
 
 fn semantic(

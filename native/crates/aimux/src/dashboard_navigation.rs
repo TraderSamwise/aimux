@@ -123,10 +123,7 @@ impl DashboardNavigationState {
             ));
         }
         if let Some(failure) = group.operation_failure.as_ref() {
-            let message = failure
-                .get("message")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("operation failed");
+            let message = failure.message.as_deref().unwrap_or("operation failed");
             return DashboardNavigationOutcome::Blocked(format!(
                 "Worktree {} failed: {message}",
                 group.name

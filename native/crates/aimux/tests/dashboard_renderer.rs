@@ -1,6 +1,6 @@
 use aimux::dashboard_model::{
-    DashboardSessionEvent, DashboardSessionLoopLastAction, DashboardWorktreeRemovalInfo,
-    DesktopStateGoldenFixture, SessionStatus,
+    DashboardOperationFailure, DashboardSessionEvent, DashboardSessionLoopLastAction,
+    DashboardWorktreeRemovalInfo, DesktopStateGoldenFixture, SessionStatus,
 };
 use aimux::dashboard_renderer::{DashboardNavLevel, DashboardRenderInput, render_dashboard_frame};
 use aimux::tui_render::text::strip_ansi;
@@ -490,10 +490,19 @@ fn renders_service_and_failure_footer_hints() {
     let fixture: DesktopStateGoldenFixture =
         serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
     let mut snapshot = fixture.runtime_full.clone();
-    snapshot.operation_failures.push(serde_json::json!({
-        "id": "failure-1",
-        "message": "could not stop service"
-    }));
+    snapshot.operation_failures.push(DashboardOperationFailure {
+        id: "failure-1".into(),
+        target_kind: None,
+        operation: None,
+        title: None,
+        message: Some("could not stop service".into()),
+        created_at: None,
+        target_id: None,
+        worktree_path: None,
+        worktree_name: None,
+        cleared: false,
+        extra: Default::default(),
+    });
     let service_id = snapshot.services[0].id.clone();
 
     let result = render_dashboard_frame(&DashboardRenderInput {
@@ -521,4 +530,58 @@ fn renders_service_and_failure_footer_hints() {
     assert!(plain.contains("Enter/→/l open"));
     assert!(plain.contains("X clear failures"));
     assert!(plain.contains("x stop"));
+}
+
+#[test]
+fn renders_typed_operation_failures_in_banner_and_worktree_details() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let mut snapshot = fixture.runtime_full.clone();
+    let worktree_path = snapshot.worktree_groups[1]
+        .path
+        .clone()
+        .expect("secondary worktree path");
+    snapshot.operation_failures = vec![DashboardOperationFailure {
+        id: "failure-1".into(),
+        target_kind: Some("worktree".into()),
+        operation: Some("remove".into()),
+        title: Some("Failed to remove worktree".into()),
+        message: Some("branch is busy".into()),
+        created_at: Some("2999-01-01T00:00:00.000Z".into()),
+        target_id: None,
+        worktree_path: Some(worktree_path.clone()),
+        worktree_name: Some("feature-a".into()),
+        cleared: false,
+        extra: Default::default(),
+    }];
+    snapshot.worktree_groups[1].operation_failure = snapshot.operation_failures.first().cloned();
+
+    let result = render_dashboard_frame(&DashboardRenderInput {
+        snapshot: &snapshot,
+        cols: 140,
+        rows: 24,
+        nav_level: DashboardNavLevel::Worktrees,
+        selected_session_id: None,
+        selected_service_id: None,
+        focused_worktree_path: Some(&worktree_path),
+        runtime_label: None,
+        version: None,
+        is_dev_runtime: false,
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_message: None,
+        details_sidebar_visible: true,
+        preview_source: "output",
+        scribe_preview_entries: &[],
+    });
+    let plain = strip_ansi(&result.frame);
+
+    assert!(plain.contains("FAILED OPERATIONS"));
+    assert!(plain.contains("Failed to remove worktree"));
+    assert!(plain.contains("feature-a"));
+    assert!(plain.contains("Status: failed"));
+    assert!(plain.contains("Operation: remove"));
+    assert!(plain.contains("Error: branch is busy"));
+    assert!(plain.contains("Failed: just now"));
 }

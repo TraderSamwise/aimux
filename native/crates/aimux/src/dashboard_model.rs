@@ -26,7 +26,7 @@ pub struct DesktopStateSnapshot {
     pub worktree_removals: Vec<DashboardWorktreeRemovalInfo>,
     pub agent_restore_offer: Option<AgentRestoreOffer>,
     #[serde(default)]
-    pub operation_failures: Vec<Value>,
+    pub operation_failures: Vec<DashboardOperationFailure>,
     #[serde(default, flatten)]
     pub extra: BTreeMap<String, Value>,
 }
@@ -324,7 +324,7 @@ pub struct WorktreeGroup {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pending_action: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub operation_failure: Option<Value>,
+    pub operation_failure: Option<DashboardOperationFailure>,
     pub sessions: Vec<DashboardSession>,
     pub services: Vec<DashboardService>,
     #[serde(default, flatten)]
@@ -353,6 +353,32 @@ pub struct DesktopWorktree {
 pub struct MainCheckoutInfo {
     pub name: String,
     pub branch: String,
+    #[serde(default, flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardOperationFailure {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worktree_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worktree_name: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub cleared: bool,
     #[serde(default, flatten)]
     pub extra: BTreeMap<String, Value>,
 }

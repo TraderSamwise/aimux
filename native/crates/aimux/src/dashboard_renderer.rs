@@ -2,7 +2,8 @@ mod footer;
 
 use crate::dashboard_controller::DashboardScreen;
 use crate::dashboard_model::{
-    DashboardService, DashboardSession, DesktopStateSnapshot, ServiceStatus, SessionStatus,
+    DashboardOperationFailure, DashboardService, DashboardSession, DesktopStateSnapshot,
+    ServiceStatus, SessionStatus,
 };
 use crate::project_service::worktree_colors_contract::worktree_color_ansi;
 use crate::tmux_expose_preview_sanitize::sanitize_expose_preview_output;
@@ -112,19 +113,23 @@ pub fn render_dashboard_frame(input: &DashboardRenderInput<'_>) -> ScreenFrameRe
             .iter()
             .take(3)
             .map(|failure| {
-                let recency = string_at(failure, &["createdAt"])
+                let recency = failure
+                    .created_at
+                    .as_deref()
                     .and_then(format_relative_recency)
-                    .or_else(|| string_at(failure, &["createdAt"]).map(str::to_owned))
+                    .or_else(|| failure.created_at.clone())
                     .unwrap_or_default();
-                let target = string_at(failure, &["worktreeName"])
-                    .or_else(|| string_at(failure, &["targetId"]))
-                    .or_else(|| string_at(failure, &["worktreePath"]));
+                let target = failure
+                    .worktree_name
+                    .as_deref()
+                    .or(failure.target_id.as_deref())
+                    .or(failure.worktree_path.as_deref());
                 let target_hint = target
                     .map(|target| style(&format!(" · {}", truncate(target, 24)), Tone::Muted))
                     .unwrap_or_default();
                 format!(
                     "{}{}{}",
-                    truncate(string_at(failure, &["title"]).unwrap_or(""), 48),
+                    truncate(failure.title.as_deref().unwrap_or(""), 48),
                     target_hint,
                     style(&format!(" · {recency}"), Tone::Muted)
                 )
@@ -655,7 +660,7 @@ struct QuickJumpWorktree<'a> {
     pending: bool,
     removing: bool,
     pending_action: Option<&'a str>,
-    operation_failure: Option<&'a Value>,
+    operation_failure: Option<&'a DashboardOperationFailure>,
     sessions: Vec<&'a DashboardSession>,
     services: Vec<&'a DashboardService>,
     entries: Vec<QuickJumpEntry<'a>>,
@@ -824,7 +829,7 @@ struct QuickJumpWorktreeInput<'a> {
     pending: bool,
     removing: bool,
     pending_action: Option<&'a str>,
-    operation_failure: Option<&'a Value>,
+    operation_failure: Option<&'a DashboardOperationFailure>,
     sessions: Vec<&'a DashboardSession>,
     services: Vec<&'a DashboardService>,
 }
@@ -2056,13 +2061,13 @@ fn render_worktree_details_panel(
     push_kv(&mut lines, "Path", path, width);
     if let Some(failure) = focused_group.and_then(|group| group.operation_failure.as_ref()) {
         push_kv(&mut lines, "Status", "failed", width);
-        if let Some(operation) = string_at(failure, &["operation"]) {
+        if let Some(operation) = failure.operation.as_deref() {
             push_kv(&mut lines, "Operation", operation, width);
         }
-        if let Some(message) = string_at(failure, &["message"]) {
+        if let Some(message) = failure.message.as_deref() {
             push_kv(&mut lines, "Error", message, width);
         }
-        if let Some(created_at) = string_at(failure, &["createdAt"]) {
+        if let Some(created_at) = failure.created_at.as_deref() {
             push_kv(
                 &mut lines,
                 "Failed",

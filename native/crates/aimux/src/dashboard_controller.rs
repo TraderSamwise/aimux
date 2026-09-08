@@ -1594,10 +1594,7 @@ impl DashboardController {
             return Some(DashboardControllerEffect::Render);
         }
         if let Some(failure) = group.operation_failure.as_ref() {
-            let operation = failure
-                .get("operation")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("worktree");
+            let operation = failure.operation.as_deref().unwrap_or("worktree");
             return Some(DashboardControllerEffect::Request(DashboardActionRequest {
                 method: "POST",
                 path: routes::OPERATION_FAILURES_CLEAR,
