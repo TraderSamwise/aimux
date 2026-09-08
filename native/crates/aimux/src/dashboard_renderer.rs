@@ -40,6 +40,8 @@ pub enum DashboardNavLevel {
 #[derive(Debug, Clone)]
 pub struct DashboardRenderInput<'a> {
     pub snapshot: &'a DesktopStateSnapshot,
+    pub overseer_sessions: &'a [DashboardSession],
+    pub scribe_sessions: &'a [DashboardSession],
     pub cols: usize,
     pub rows: usize,
     pub nav_level: DashboardNavLevel,
@@ -2462,9 +2464,12 @@ fn summarize_teammate(session: &DashboardSession) -> String {
 }
 
 fn has_live_scribe(input: &DashboardRenderInput<'_>) -> bool {
-    input
-        .snapshot
-        .sessions
+    let sessions = if input.scribe_sessions.is_empty() {
+        input.snapshot.sessions.as_slice()
+    } else {
+        input.scribe_sessions
+    };
+    sessions
         .iter()
         .any(|session| is_scribe_session(session) && !is_session_offline(session))
 }

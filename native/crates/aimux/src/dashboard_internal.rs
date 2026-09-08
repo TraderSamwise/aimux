@@ -566,8 +566,31 @@ fn render_dashboard_snapshot(
     let runtime_version = dashboard_runtime_version();
     let scribe_preview_entries =
         scribe_preview_entries_for_render(options, snapshot, selected_session_id, controller);
+    let overseer_sessions = snapshot
+        .sessions
+        .iter()
+        .filter(|session| {
+            session.overseer == Some(true)
+                || session.team.as_ref().and_then(|team| team.role.as_deref()) == Some("overseer")
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let scribe_sessions = snapshot
+        .sessions
+        .iter()
+        .filter(|session| {
+            if session.scribe == Some(false) {
+                return false;
+            }
+            session.scribe == Some(true)
+                || session.team.as_ref().and_then(|team| team.role.as_deref()) == Some("scribe")
+        })
+        .cloned()
+        .collect::<Vec<_>>();
     let frame = render_dashboard_frame(&DashboardRenderInput {
         snapshot,
+        overseer_sessions: &overseer_sessions,
+        scribe_sessions: &scribe_sessions,
         cols: options.cols,
         rows: options.rows,
         nav_level: controller.navigation.level,

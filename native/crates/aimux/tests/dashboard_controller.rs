@@ -543,6 +543,8 @@ fn enter_from_worktree_level_renders_agent_details_rail() {
     };
     let result = render_dashboard_frame(&DashboardRenderInput {
         snapshot: &snapshot,
+        overseer_sessions: &[],
+        scribe_sessions: &[],
         cols: 140,
         rows: 24,
         nav_level: controller.navigation.level,

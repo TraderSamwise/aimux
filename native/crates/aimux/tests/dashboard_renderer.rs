@@ -28,6 +28,8 @@ fn renders_empty_dashboard_with_create_hint() {
 
     let result = render_dashboard_frame(&DashboardRenderInput {
         snapshot: &snapshot,
+        overseer_sessions: &[],
+        scribe_sessions: &[],
         cols: 100,
         rows: 24,
         nav_level: DashboardNavLevel::Sessions,
@@ -61,6 +63,8 @@ fn matches_node_dashboard_full_frame_for_populated_agent_selection() {
 
     let result = render_dashboard_frame(&DashboardRenderInput {
         snapshot,
+        overseer_sessions: &[],
+        scribe_sessions: &[],
         cols: 200,
         rows: 50,
         nav_level: DashboardNavLevel::Sessions,
@@ -114,6 +118,8 @@ fn renders_golden_worktrees_sessions_services_and_unread_chips() {
 
     let result = render_dashboard_frame(&DashboardRenderInput {
         snapshot,
+        overseer_sessions: &[],
+        scribe_sessions: &[],
         cols: 140,
         rows: 40,
         nav_level: DashboardNavLevel::Worktrees,
@@ -183,6 +189,8 @@ fn orphan_worktrees_keep_node_first_seen_order() {
 
     let result = render_dashboard_frame(&DashboardRenderInput {
         snapshot: &snapshot,
+        overseer_sessions: &[],
+        scribe_sessions: &[],
         cols: 140,
         rows: 32,
         nav_level: DashboardNavLevel::Worktrees,
@@ -225,6 +233,8 @@ fn renders_live_agent_rows_without_jamming_identity_status_or_activity() {
 
     let result = render_dashboard_frame(&DashboardRenderInput {
         snapshot: &snapshot,
+        overseer_sessions: &[],
+        scribe_sessions: &[],
         cols: 140,
         rows: 24,
         nav_level: DashboardNavLevel::Sessions,
@@ -267,6 +277,8 @@ fn row_dot_ignores_legacy_direct_attention_without_semantic_state() {
 
     let result = render_dashboard_frame(&DashboardRenderInput {
         snapshot: &snapshot,
+        overseer_sessions: &[],
+        scribe_sessions: &[],
         cols: 140,
         rows: 24,
         nav_level: DashboardNavLevel::Sessions,
@@ -297,6 +309,8 @@ fn renders_state_aware_footer_hints_for_session_actions() {
 
     let result = render_dashboard_frame(&DashboardRenderInput {
         snapshot,
+        overseer_sessions: &[],
+        scribe_sessions: &[],
         cols: 140,
         rows: 24,
         nav_level: DashboardNavLevel::Sessions,
@@ -344,6 +358,8 @@ fn flat_session_footer_keeps_team_hint_for_selected_parent() {
 
     let result = render_dashboard_frame(&DashboardRenderInput {
         snapshot: &snapshot,
+        overseer_sessions: &[],
+        scribe_sessions: &[],
         cols: 140,
         rows: 24,
         nav_level: DashboardNavLevel::Sessions,
@@ -404,6 +420,8 @@ fn renders_selected_session_details_sidebar_when_visible() {
 
     let result = render_dashboard_frame(&DashboardRenderInput {
         snapshot: &snapshot,
+        overseer_sessions: &[],
+        scribe_sessions: &[],
         cols: 140,
         rows: 24,
         nav_level: DashboardNavLevel::Sessions,
@@ -507,6 +525,8 @@ fn renders_selected_teammates_in_node_order() {
 
     let result = render_dashboard_frame(&DashboardRenderInput {
         snapshot: &snapshot,
+        overseer_sessions: &[],
+        scribe_sessions: &[],
         cols: 160,
         rows: 32,
         nav_level: DashboardNavLevel::Sessions,
@@ -570,6 +590,8 @@ fn renders_typed_scribe_preview_rows_for_selected_session() {
 
     let result = render_dashboard_frame(&DashboardRenderInput {
         snapshot: &snapshot,
+        overseer_sessions: &[],
+        scribe_sessions: &[],
         cols: 140,
         rows: 24,
         nav_level: DashboardNavLevel::Sessions,
@@ -596,6 +618,63 @@ fn renders_typed_scribe_preview_rows_for_selected_session() {
 }
 
 #[test]
+fn explicit_scribe_sessions_drive_scribe_preview_like_node_view_model() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let mut snapshot = fixture.runtime_light.clone();
+    snapshot.sessions[0].id = "claude-parent".into();
+    snapshot.worktree_groups[0].sessions = vec![snapshot.sessions[0].clone()];
+
+    let mut scribe = snapshot.sessions[0].clone();
+    scribe.id = "claude-scribe".into();
+    scribe.scribe = Some(true);
+    scribe.project_control = Some(true);
+
+    let entries = vec![WorkOutlineEntry {
+        entry_id: "outline-1".into(),
+        topic_key: "dashboard".into(),
+        title: "Dashboard parity work".into(),
+        summary: "Scribe summary is carried outside the visible session rows.".into(),
+        status: WorkOutlineStatus::Done,
+        source: WorkOutlineSource::Scribe,
+        session_ids: vec!["claude-parent".into()],
+        worktree_path: None,
+        evidence: None,
+        created_at: "2999-01-01T00:00:00.000Z".into(),
+        updated_at: "2999-01-01T00:00:00.000Z".into(),
+        last_seen_at: "2999-01-01T00:00:00.000Z".into(),
+    }];
+
+    let result = render_dashboard_frame(&DashboardRenderInput {
+        snapshot: &snapshot,
+        overseer_sessions: &[],
+        scribe_sessions: &[scribe],
+        cols: 140,
+        rows: 24,
+        nav_level: DashboardNavLevel::Sessions,
+        selected_session_id: Some("claude-parent"),
+        selected_service_id: None,
+        focused_worktree_path: None,
+        runtime_label: None,
+        version: None,
+        is_dev_runtime: false,
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_message: None,
+        details_sidebar_visible: true,
+        preview_source: "scribe",
+        scribe_preview_entries: &entries,
+    });
+    let plain = strip_ansi(&result.frame);
+
+    assert!(plain.contains("V preview"));
+    assert!(plain.contains("SCRIBE"));
+    assert!(plain.contains("Dashboard parity work"));
+    assert!(!plain.contains("Project Scribe"));
+}
+
+#[test]
 fn teammate_scribe_does_not_enable_project_scribe_preview() {
     let fixture: DesktopStateGoldenFixture =
         serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
@@ -617,6 +696,8 @@ fn teammate_scribe_does_not_enable_project_scribe_preview() {
 
     let result = render_dashboard_frame(&DashboardRenderInput {
         snapshot: &snapshot,
+        overseer_sessions: &[],
+        scribe_sessions: &[],
         cols: 140,
         rows: 24,
         nav_level: DashboardNavLevel::Sessions,
@@ -650,6 +731,8 @@ fn renders_worktree_details_sidebar_when_no_session_selected() {
 
     let visible = render_dashboard_frame(&DashboardRenderInput {
         snapshot,
+        overseer_sessions: &[],
+        scribe_sessions: &[],
         cols: 140,
         rows: 24,
         nav_level: DashboardNavLevel::Worktrees,
@@ -669,6 +752,8 @@ fn renders_worktree_details_sidebar_when_no_session_selected() {
     });
     let hidden = render_dashboard_frame(&DashboardRenderInput {
         snapshot,
+        overseer_sessions: &[],
+        scribe_sessions: &[],
         cols: 140,
         rows: 24,
         nav_level: DashboardNavLevel::Worktrees,
@@ -731,6 +816,8 @@ fn worktree_details_count_the_same_project_sessions_as_rendered_rows() {
 
     let result = render_dashboard_frame(&DashboardRenderInput {
         snapshot: &snapshot,
+        overseer_sessions: &[],
+        scribe_sessions: &[],
         cols: 140,
         rows: 24,
         nav_level: DashboardNavLevel::Worktrees,
@@ -784,6 +871,8 @@ fn selected_project_control_session_keeps_worktree_details_like_node() {
 
     let result = render_dashboard_frame(&DashboardRenderInput {
         snapshot: &snapshot,
+        overseer_sessions: &[],
+        scribe_sessions: &[],
         cols: 140,
         rows: 24,
         nav_level: DashboardNavLevel::Sessions,
@@ -838,6 +927,8 @@ fn flat_session_rows_exclude_project_control_sessions_like_node() {
 
     let result = render_dashboard_frame(&DashboardRenderInput {
         snapshot: &snapshot,
+        overseer_sessions: &[],
+        scribe_sessions: &[],
         cols: 140,
         rows: 24,
         nav_level: DashboardNavLevel::Sessions,
@@ -881,6 +972,8 @@ fn flat_footer_uses_no_session_hints_when_only_project_control_sessions_exist() 
 
     let result = render_dashboard_frame(&DashboardRenderInput {
         snapshot: &snapshot,
+        overseer_sessions: &[],
+        scribe_sessions: &[],
         cols: 140,
         rows: 24,
         nav_level: DashboardNavLevel::Sessions,
@@ -927,6 +1020,8 @@ fn worktree_details_show_active_removal_status_and_progress() {
 
     let result = render_dashboard_frame(&DashboardRenderInput {
         snapshot: &snapshot,
+        overseer_sessions: &[],
+        scribe_sessions: &[],
         cols: 140,
         rows: 24,
         nav_level: DashboardNavLevel::Worktrees,
@@ -965,6 +1060,8 @@ fn renders_unavailable_footer_hint_for_blocked_offline_session() {
 
     let result = render_dashboard_frame(&DashboardRenderInput {
         snapshot: &snapshot,
+        overseer_sessions: &[],
+        scribe_sessions: &[],
         cols: 140,
         rows: 24,
         nav_level: DashboardNavLevel::Sessions,
@@ -1010,6 +1107,8 @@ fn renders_service_and_failure_footer_hints() {
 
     let result = render_dashboard_frame(&DashboardRenderInput {
         snapshot: &snapshot,
+        overseer_sessions: &[],
+        scribe_sessions: &[],
         cols: 140,
         rows: 24,
         nav_level: DashboardNavLevel::Sessions,
@@ -1061,6 +1160,8 @@ fn renders_typed_operation_failures_in_banner_and_worktree_details() {
 
     let result = render_dashboard_frame(&DashboardRenderInput {
         snapshot: &snapshot,
+        overseer_sessions: &[],
+        scribe_sessions: &[],
         cols: 140,
         rows: 24,
         nav_level: DashboardNavLevel::Worktrees,

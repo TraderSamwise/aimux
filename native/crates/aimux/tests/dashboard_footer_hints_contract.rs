@@ -48,6 +48,8 @@ fn run_case(case: &Value) -> Value {
     render_dashboard_footer_hints_contract(
         &DashboardRenderInput {
             snapshot: &snapshot,
+            overseer_sessions: &[],
+            scribe_sessions: &[],
             cols: 140,
             rows: 40,
             nav_level: match state.get("navLevel").and_then(Value::as_str) {

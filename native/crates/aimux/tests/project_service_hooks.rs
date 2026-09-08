@@ -220,6 +220,8 @@ fn claude_hook_backend_id_updates_the_topology_session_row() {
         serde_json::from_value(desktop.body).expect("desktop state snapshot");
     let result = render_dashboard_frame(&DashboardRenderInput {
         snapshot: &snapshot,
+        overseer_sessions: &[],
+        scribe_sessions: &[],
         cols: 140,
         rows: 24,
         nav_level: DashboardNavLevel::Sessions,
