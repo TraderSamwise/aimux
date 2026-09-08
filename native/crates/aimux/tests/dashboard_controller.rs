@@ -97,6 +97,39 @@ fn flat_session_escape_focuses_selected_visible_session() {
 }
 
 #[test]
+fn worktree_root_escape_focuses_active_visible_session() {
+    let mut snapshot = snapshot();
+    snapshot.sessions[0].tmux_window_id = Some("@active".into());
+    snapshot.worktree_groups[0].sessions[1].tmux_window_id = Some("@active".into());
+    let mut controller = DashboardController::new(&snapshot);
+    controller.navigation.level = DashboardNavLevel::Worktrees;
+
+    let DashboardControllerEffect::Request(request) =
+        controller.handle_key(&snapshot, DashboardKey::Back)
+    else {
+        panic!("expected focus request");
+    };
+    assert_eq!(request.path, routes::controls::FOCUS_WINDOW);
+    assert_eq!(
+        request.body,
+        json!({ "windowId": "@active", "focus": true })
+    );
+
+    let mut h_controller = DashboardController::new(&snapshot);
+    h_controller.navigation.level = DashboardNavLevel::Worktrees;
+    assert_eq!(
+        h_controller.handle_key(&snapshot, DashboardKey::Printable('h')),
+        DashboardControllerEffect::Ignored
+    );
+    let mut left_controller = DashboardController::new(&snapshot);
+    left_controller.navigation.level = DashboardNavLevel::Worktrees;
+    assert_eq!(
+        left_controller.handle_key(&snapshot, DashboardKey::Left),
+        DashboardControllerEffect::Ignored
+    );
+}
+
+#[test]
 fn shifted_arrows_parse_as_reorder_keys() {
     assert_eq!(parse_dashboard_key(b"\x1b[1;2A"), DashboardKey::ShiftUp);
     assert_eq!(parse_dashboard_key(b"\x1b[1;2B"), DashboardKey::ShiftDown);

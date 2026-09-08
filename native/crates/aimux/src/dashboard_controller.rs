@@ -338,11 +338,11 @@ impl DashboardController {
         if self.tool_picker.is_some() {
             return self.handle_tool_picker_key(snapshot, key);
         }
-        if key == DashboardKey::Back
-            && self.screen == DashboardScreen::Dashboard
-            && snapshot.worktree_groups.is_empty()
-        {
-            return self.handle_action(snapshot, DashboardActionKind::Enter);
+        if key == DashboardKey::Back && self.screen == DashboardScreen::Dashboard {
+            let effect = self.handle_dashboard_escape(snapshot);
+            if effect != DashboardControllerEffect::Ignored {
+                return effect;
+            }
         }
         if let Some(effect) = self.handle_screen_command_key(snapshot, key) {
             return effect;
@@ -2038,6 +2038,37 @@ impl DashboardController {
                 }
                 _ => DashboardControllerEffect::Ignored,
             };
+        }
+        self.handle_action(snapshot, DashboardActionKind::Enter)
+    }
+
+    fn handle_dashboard_escape(
+        &mut self,
+        snapshot: &DesktopStateSnapshot,
+    ) -> DashboardControllerEffect {
+        if snapshot.worktree_groups.is_empty() {
+            return self.handle_action(snapshot, DashboardActionKind::Enter);
+        }
+        if self.navigation.level != DashboardNavLevel::Worktrees {
+            return DashboardControllerEffect::Ignored;
+        }
+        let target = snapshot
+            .sessions
+            .iter()
+            .filter(|session| !is_project_control_session(session))
+            .find(|session| session.active)
+            .or_else(|| {
+                snapshot
+                    .sessions
+                    .iter()
+                    .find(|session| !is_project_control_session(session))
+            })
+            .map(|session| session.id.clone());
+        let Some(target) = target else {
+            return DashboardControllerEffect::Ignored;
+        };
+        if !self.focus_session_by_id(snapshot, &target) {
+            return DashboardControllerEffect::Ignored;
         }
         self.handle_action(snapshot, DashboardActionKind::Enter)
     }
