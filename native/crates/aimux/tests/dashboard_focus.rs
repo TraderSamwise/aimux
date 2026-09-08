@@ -1,3 +1,4 @@
+use aimux::dashboard_controller::DashboardScreen;
 use aimux::dashboard_focus::DashboardFocusState;
 use aimux::dashboard_model::{DesktopStateGoldenFixture, DesktopStateSnapshot};
 use aimux::dashboard_navigation::DashboardNavigationState;
@@ -16,7 +17,7 @@ fn focused_session_plans_context_and_mark_seen_requests() {
     navigation.item_index = 1;
     let mut focus = DashboardFocusState::default();
 
-    let plan = focus.plan_sync(&snapshot, &navigation);
+    let plan = focus.plan_sync(DashboardScreen::Dashboard, &snapshot, &navigation);
 
     assert_eq!(plan.requests.len(), 2);
     assert_eq!(plan.requests[0].path, routes::runtime::NOTIFICATION_CONTEXT);
@@ -44,9 +45,9 @@ fn repeated_focused_session_sync_is_deduped_after_seen_success() {
     navigation.item_index = 1;
     let mut focus = DashboardFocusState::default();
 
-    let plan = focus.plan_sync(&snapshot, &navigation);
+    let plan = focus.plan_sync(DashboardScreen::Dashboard, &snapshot, &navigation);
     focus.mark_seen_synced(plan.seen_session_id.expect("seen session"));
-    let repeated = focus.plan_sync(&snapshot, &navigation);
+    let repeated = focus.plan_sync(DashboardScreen::Dashboard, &snapshot, &navigation);
 
     assert!(repeated.requests.is_empty());
     assert!(repeated.seen_session_id.is_none());
@@ -61,7 +62,7 @@ fn selected_service_clears_session_focus_without_marking_seen() {
     navigation.item_index = 2;
     let mut focus = DashboardFocusState::default();
 
-    let plan = focus.plan_sync(&snapshot, &navigation);
+    let plan = focus.plan_sync(DashboardScreen::Dashboard, &snapshot, &navigation);
 
     assert_eq!(plan.requests.len(), 1);
     assert_eq!(plan.requests[0].path, routes::runtime::NOTIFICATION_CONTEXT);
@@ -75,6 +76,22 @@ fn selected_service_clears_session_focus_without_marking_seen() {
         })
     );
     assert!(plan.seen_session_id.is_none());
+}
+
+#[test]
+fn subscreen_focus_context_reports_the_current_screen() {
+    let snapshot = snapshot();
+    let mut navigation = DashboardNavigationState::new(&snapshot);
+    navigation.level = DashboardNavLevel::Sessions;
+    navigation.worktree_index = 0;
+    navigation.item_index = 1;
+    let mut focus = DashboardFocusState::default();
+
+    let plan = focus.plan_sync(DashboardScreen::Coordination, &snapshot, &navigation);
+
+    assert_eq!(plan.requests[0].path, routes::runtime::NOTIFICATION_CONTEXT);
+    assert_eq!(plan.requests[0].body["screen"], "coordination");
+    assert_eq!(plan.requests[0].body["sessionId"], "claude-0");
 }
 
 fn snapshot() -> DesktopStateSnapshot {

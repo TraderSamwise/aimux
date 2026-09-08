@@ -651,7 +651,7 @@ fn sync_dashboard_focus(
     snapshot: &DesktopStateSnapshot,
     endpoint: &ProjectServiceEndpoint,
 ) -> bool {
-    let plan = focus_state.plan_sync(snapshot, &controller.navigation);
+    let plan = focus_state.plan_sync(controller.screen, snapshot, &controller.navigation);
     let mut synced_seen = false;
     for request in plan.requests {
         if execute_dashboard_action(endpoint, &request).is_ok()

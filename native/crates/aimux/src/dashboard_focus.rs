@@ -1,4 +1,5 @@
 use crate::dashboard_actions::DashboardActionRequest;
+use crate::dashboard_controller::DashboardScreen;
 use crate::dashboard_model::DesktopStateSnapshot;
 use crate::dashboard_navigation::{DashboardEntryRef, DashboardNavigationState};
 use crate::project_api_contract::routes;
@@ -27,12 +28,13 @@ struct DashboardFocusContext {
 impl DashboardFocusState {
     pub fn plan_sync(
         &mut self,
+        screen: DashboardScreen,
         snapshot: &DesktopStateSnapshot,
         navigation: &DashboardNavigationState,
     ) -> DashboardFocusPlan {
         let session_id = selected_session_id(snapshot, navigation).map(str::to_owned);
         let context = DashboardFocusContext {
-            screen: "dashboard",
+            screen: screen.as_str(),
             session_id: session_id.clone(),
             panel_open: false,
         };
