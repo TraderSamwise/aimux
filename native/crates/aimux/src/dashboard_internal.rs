@@ -1070,8 +1070,16 @@ fn dashboard_has_live_scribe(snapshot: &DesktopStateSnapshot) -> bool {
         !matches!(
             session.status,
             SessionStatus::Offline | SessionStatus::Exited
-        ) && session.team.as_ref().and_then(|team| team.role.as_deref()) == Some("scribe")
+        ) && dashboard_is_scribe_session(session)
     })
+}
+
+fn dashboard_is_scribe_session(session: &crate::dashboard_model::DashboardSession) -> bool {
+    if session.scribe == Some(false) {
+        return false;
+    }
+    session.scribe == Some(true)
+        || session.team.as_ref().and_then(|team| team.role.as_deref()) == Some("scribe")
 }
 
 fn cache_cleanup_result_from_response(response: serde_json::Value) -> Result<serde_json::Value> {

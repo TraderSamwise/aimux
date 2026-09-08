@@ -1842,10 +1842,18 @@ fn is_live_session(session: &DashboardSession) -> bool {
 }
 
 fn has_live_scribe(snapshot: &DesktopStateSnapshot) -> bool {
-    snapshot.sessions.iter().any(|session| {
-        is_live_session(session)
-            && session.team.as_ref().and_then(|team| team.role.as_deref()) == Some("scribe")
-    })
+    snapshot
+        .sessions
+        .iter()
+        .any(|session| is_live_session(session) && is_scribe_session(session))
+}
+
+fn is_scribe_session(session: &DashboardSession) -> bool {
+    if session.scribe == Some(false) {
+        return false;
+    }
+    session.scribe == Some(true)
+        || session.team.as_ref().and_then(|team| team.role.as_deref()) == Some("scribe")
 }
 
 fn visual_dashboard_session_order(snapshot: &DesktopStateSnapshot) -> Vec<&DashboardSession> {

@@ -2424,7 +2424,7 @@ fn has_live_scribe(input: &DashboardRenderInput<'_>) -> bool {
         .teammates
         .iter()
         .chain(input.snapshot.sessions.iter())
-        .any(|session| session.scribe == Some(true) && !is_session_offline(session))
+        .any(|session| is_scribe_session(session) && !is_session_offline(session))
 }
 
 fn is_project_control_session(session: &DashboardSession) -> bool {
@@ -2434,6 +2434,13 @@ fn is_project_control_session(session: &DashboardSession) -> bool {
     if session.team.as_ref().and_then(|team| team.role.as_deref()) == Some("overseer") {
         return true;
     }
+    if session.scribe == Some(false) {
+        return false;
+    }
+    is_scribe_session(session)
+}
+
+fn is_scribe_session(session: &DashboardSession) -> bool {
     if session.scribe == Some(false) {
         return false;
     }
