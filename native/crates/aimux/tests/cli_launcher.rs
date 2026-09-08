@@ -294,6 +294,44 @@ fn project_service_launch_uses_installed_native_binary_from_current_entry_root()
 }
 
 #[test]
+fn native_launch_prefers_current_entry_root_over_stale_native_bin_env() {
+    let test_dir = TestDir::new();
+    let current_root = test_dir.0.join("native/current-build");
+    let stale_root = test_dir.0.join("native/stale-build");
+    let current_binary = platform_native_binary_path(&current_root);
+    let stale_binary = platform_native_binary_path(&stale_root);
+    fs::create_dir_all(current_binary.parent().expect("current parent"))
+        .expect("create current native parent");
+    fs::create_dir_all(stale_binary.parent().expect("stale parent"))
+        .expect("create stale native parent");
+    fs::write(&current_binary, "#!/bin/sh\n").expect("write current native binary");
+    fs::write(&stale_binary, "#!/bin/sh\n").expect("write stale native binary");
+
+    let command = get_aimux_dashboard_launch_command(options(
+        &test_dir,
+        BTreeMap::from([
+            ("AIMUX_DASHBOARD_IMPLEMENTATION".into(), "native".into()),
+            (
+                "AIMUX_NATIVE_BIN".into(),
+                stale_binary.to_string_lossy().into_owned(),
+            ),
+        ]),
+        Some(current_binary.to_string_lossy().into_owned()),
+    ));
+
+    assert_eq!(command.source, AimuxCliLaunchSource::NativeBinary);
+    assert_eq!(
+        command.command,
+        current_binary.canonicalize().unwrap().to_string_lossy()
+    );
+    assert_ne!(
+        command.command,
+        stale_binary.canonicalize().unwrap().to_string_lossy()
+    );
+    assert_eq!(command.args, vec!["__dashboard-internal-native"]);
+}
+
+#[test]
 fn daemon_and_identity_launch_use_native_binary_from_stable_shim_symlink() {
     let test_dir = TestDir::new();
     let install_root = test_dir.0.join("native/old-build");

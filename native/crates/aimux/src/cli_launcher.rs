@@ -190,13 +190,14 @@ struct ResolveInstalledNativeInput<'a> {
 }
 
 fn resolve_installed_native_binary(input: &ResolveInstalledNativeInput<'_>) -> Option<String> {
-    if let Some(explicit) = input
-        .env
-        .get("AIMUX_NATIVE_BIN")
-        .map(|value| value.trim())
-        .filter(|value| !value.is_empty() && file_exists(value))
-    {
-        return Some(canonical_path(explicit));
+    for entry in [input.current_argv_entry, Some(input.current_entry_path)] {
+        let Some(root) = native_install_root_from_entry(entry) else {
+            continue;
+        };
+        let native_binary = platform_native_binary_path(&root);
+        if file_exists(&native_binary) {
+            return Some(canonical_path(native_binary));
+        }
     }
     if let Some(stable_native) = native_binary_for_stable_shim(input.stable_shim_path)
         && should_use_stable_shim(&ShouldUseStableShimInput {
@@ -208,14 +209,13 @@ fn resolve_installed_native_binary(input: &ResolveInstalledNativeInput<'_>) -> O
     {
         return Some(stable_native);
     }
-    for entry in [input.current_argv_entry, Some(input.current_entry_path)] {
-        let Some(root) = native_install_root_from_entry(entry) else {
-            continue;
-        };
-        let native_binary = platform_native_binary_path(&root);
-        if file_exists(&native_binary) {
-            return Some(canonical_path(native_binary));
-        }
+    if let Some(explicit) = input
+        .env
+        .get("AIMUX_NATIVE_BIN")
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty() && file_exists(value))
+    {
+        return Some(canonical_path(explicit));
     }
     None
 }

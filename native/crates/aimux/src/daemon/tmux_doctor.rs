@@ -1,6 +1,6 @@
-use crate::cli_launcher::{AimuxCliLaunchOptions, get_aimux_dashboard_launch_command};
 use crate::config::load_config_for_project;
 use crate::daemon_state::DEFAULT_DAEMON_PORT;
+use crate::dashboard_command_spec::get_dashboard_command_spec;
 use crate::paths::PathResolver;
 use crate::shell_hooks::shell_quote;
 use crate::tmux::{
@@ -244,20 +244,13 @@ pub fn system_tmux_repair_result(
         .filter(|prefix| !prefix.trim().is_empty())
         .unwrap_or("aimux")
         .to_owned();
-    let mut launch_options = AimuxCliLaunchOptions::default();
-    launch_options
-        .env
-        .insert("AIMUX_DASHBOARD_IMPLEMENTATION".into(), "native".into());
-    let dashboard_launch = get_aimux_dashboard_launch_command(launch_options);
+    let dashboard_spec =
+        get_dashboard_command_spec(project_root).map_err(|error| error.to_string())?;
     let input = TmuxRepairInput {
         project_root: PathBuf::from(project_root),
         aimux_home: resolver.global_aimux_dir(),
         session_prefix,
-        dashboard_command: Some(TmuxCommandSpec {
-            cwd: project_root.to_owned(),
-            command: dashboard_launch.command,
-            args: dashboard_launch.args,
-        }),
+        dashboard_command: Some(dashboard_spec.dashboard_command),
         statusline_script_path: resolve_statusline_script_path(),
         tmux_control_script_path: resolve_tmux_control_script_path(),
         tmux_env: nonempty_env("TMUX"),
