@@ -206,3 +206,37 @@ Parity evidence:
 Open gaps:
 - Same as above: real Claude/Codex/Aider credentials and host-specific terminal
   emulator behavior remain outside deterministic temp-root residuals.
+
+## 2026-09-09 TUI Behavior Residuals
+
+Status: complete for current native head
+Scope: tmux-attached dashboard behavior after renderer parity: entering a
+managed session from the dashboard, returning the attached client to the
+dashboard, and repainting cleanly across live terminal resizes.
+
+Verification:
+- `python3 -m py_compile scripts/phase8-live-residuals.py`
+- `CARGO_TARGET_DIR=/tmp/aimux-cargo-target-dashboard-focus cargo build --manifest-path native/Cargo.toml -p aimux --bin aimux`
+- `CARGO_TARGET_DIR=/tmp/aimux-cargo-target-dashboard-focus python3 scripts/phase8-live-residuals.py --only dashboard-attach --skip-build --aimux-bin /tmp/aimux-cargo-target-dashboard-focus/debug/aimux`
+- `CARGO_TARGET_DIR=/tmp/aimux-cargo-target-dashboard-focus python3 scripts/phase8-live-residuals.py --only dashboard-attach --mutation dashboard-resize-width-overflow --skip-build --aimux-bin /tmp/aimux-cargo-target-dashboard-focus/debug/aimux`
+- `CARGO_TARGET_DIR=/tmp/aimux-cargo-target-dashboard-focus python3 scripts/phase8-live-residuals.py --only dashboard-attach --mutation dashboard-attach-focus-target-missing --skip-build --aimux-bin /tmp/aimux-cargo-target-dashboard-focus/debug/aimux`
+- `CARGO_TARGET_DIR=/tmp/aimux-cargo-target-dashboard-focus python3 scripts/phase8-live-residuals.py --only dashboard-attach --mutation dashboard-attach-return-missing --skip-build --aimux-bin /tmp/aimux-cargo-target-dashboard-focus/debug/aimux`
+- `cargo test --manifest-path native/Cargo.toml -p aimux --lib`
+- `cargo clippy --manifest-path native/Cargo.toml -p aimux --lib -- -D warnings`
+- `cargo fmt --manifest-path native/Cargo.toml -p aimux --check`
+- `git diff --check`
+
+Parity evidence:
+- Commit `c32bb0e5` routes dashboard focus/open actions through the controller
+  context wrapper so attached tmux clients focus managed session windows and can
+  return to the dashboard.
+- Commit `cabd9683` makes the live dashboard refresh viewport dimensions from
+  terminal/tmux state, bypasses cached tmux size reads, bounds two-pane frames to
+  the viewport, and extends the residual suite with a controlled PTY client that
+  proves live 80x24, 100x15, and 200x50 resize repaint behavior.
+- Mutation checks prove missing focus handoff, missing dashboard return, and
+  width overflow are caught by the residual.
+
+Open gaps:
+- Host terminal emulator behavior outside tmux remains outside deterministic
+  temp-root residuals.
