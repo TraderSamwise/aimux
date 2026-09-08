@@ -561,13 +561,15 @@ fn render_dashboard_snapshot(
         selected_service_id,
         focused_worktree_path,
         runtime_label: Some("native"),
-        version: None,
+        version: Some(crate::build_info::build_info().version),
         is_dev_runtime: cfg!(debug_assertions),
         hide_offline_agents: controller.hide_offline_agents,
         hidden_offline_agent_count,
         scroll_offset,
         footer_message: controller.footer_message.as_deref(),
         details_sidebar_visible: controller.details_sidebar_visible,
+        preview_source: "output",
+        scribe_preview_entries: &[],
     });
     if let Some(launch_options) = controller.launch_options.as_ref() {
         let mut output = frame.frame;

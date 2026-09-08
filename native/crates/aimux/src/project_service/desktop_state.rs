@@ -368,8 +368,17 @@ fn dashboard_session(
         "team",
         "label",
         "worktreePath",
+        "lastUsedAt",
+        "pendingAction",
+        "pendingStartedAt",
+        "foregroundCommand",
+        "pid",
+        "previewLine",
     ] {
         insert_value(&mut item, key, session.get(key).cloned());
+    }
+    if let Some(cwd) = string_field(session, "worktreePath") {
+        insert_string(&mut item, "cwd", cwd);
     }
     if let Some(target) = session.get("tmuxTarget") {
         insert_value(&mut item, "tmuxWindowId", target.get("windowId").cloned());
@@ -410,8 +419,15 @@ fn dashboard_session(
                 "activity",
                 "attention",
                 "unseenCount",
+                "lastOutputAt",
+                "becameIdleAt",
+                "lastEvent",
+                "services",
                 "shellCommand",
                 "shellCommandState",
+                "foregroundCommand",
+                "pid",
+                "previewLine",
             ] {
                 insert_value(&mut item, key, derived.get(key).cloned());
             }
@@ -527,6 +543,11 @@ fn dashboard_service(
         "worktreePath",
         "label",
         "launchCommandLine",
+        "foregroundCommand",
+        "pid",
+        "previewLine",
+        "pendingAction",
+        "pendingStartedAt",
     ] {
         insert_value(&mut item, key, service.get(key).cloned());
     }
@@ -552,7 +573,13 @@ fn dashboard_service(
         .get(id)
         .and_then(|metadata| metadata.get("derived"))
     {
-        for key in ["shellCommand", "shellCommandState"] {
+        for key in [
+            "shellCommand",
+            "shellCommandState",
+            "foregroundCommand",
+            "pid",
+            "previewLine",
+        ] {
             insert_value(&mut item, key, derived.get(key).cloned());
         }
     }

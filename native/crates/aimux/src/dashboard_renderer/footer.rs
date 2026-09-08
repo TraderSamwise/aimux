@@ -1,6 +1,5 @@
 use crate::dashboard_model::{DashboardService, DashboardSession};
 use crate::dashboard_renderer::{DashboardNavLevel, DashboardRenderInput};
-use crate::tui_render::theme::{KeyTone, Tone, footer_key, style, visible_width};
 use serde_json::{Value, json};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -8,13 +7,6 @@ struct FooterHint<'a> {
     key: &'a str,
     label: &'a str,
     danger: bool,
-}
-
-pub(super) fn render_dashboard_footer(input: &DashboardRenderInput<'_>) -> Vec<String> {
-    render_footer_hints(
-        &build_dashboard_footer_hints(input, "output"),
-        input.cols.saturating_sub(2),
-    )
 }
 
 pub(super) fn dashboard_footer_hint_values_for_contract(
@@ -354,33 +346,6 @@ fn build_dashboard_footer_hints<'a>(
     hints
 }
 
-fn render_footer_hints(hints: &[FooterHint<'_>], width: usize) -> Vec<String> {
-    let mut lines = Vec::new();
-    let mut line = String::new();
-    for hint in hints {
-        let token = format!(
-            "{} {}",
-            footer_key(hint.key, hint.danger.then_some(KeyTone::Danger)),
-            style(hint.label, Tone::Muted)
-        );
-        let candidate = if line.is_empty() {
-            token.clone()
-        } else {
-            format!("{line}  {token}")
-        };
-        if line.is_empty() || visible_width(&candidate) <= width {
-            line = candidate;
-        } else {
-            lines.push(line);
-            line = token;
-        }
-    }
-    if !line.is_empty() {
-        lines.push(line);
-    }
-    lines
-}
-
 fn append_operation_failure_hint<'a>(
     input: &'a DashboardRenderInput<'_>,
     hints: &mut Vec<FooterHint<'a>>,
@@ -422,11 +387,12 @@ fn dashboard_enter_verb(
     match session.status {
         crate::dashboard_model::SessionStatus::Offline
         | crate::dashboard_model::SessionStatus::Exited => {
-            if session
-                .extra
-                .get("restoreState")
-                .and_then(serde_json::Value::as_str)
-                == Some("blocked")
+            if session.restore_state.as_deref().or_else(|| {
+                session
+                    .extra
+                    .get("restoreState")
+                    .and_then(serde_json::Value::as_str)
+            }) == Some("blocked")
             {
                 "unavailable"
             } else {

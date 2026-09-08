@@ -32,6 +32,8 @@ fn renders_empty_dashboard_with_create_hint() {
         scroll_offset: 0,
         footer_message: None,
         details_sidebar_visible: false,
+        preview_source: "output",
+        scribe_preview_entries: &[],
     });
     let plain = strip_ansi(&result.frame);
 
@@ -63,6 +65,8 @@ fn renders_golden_worktrees_sessions_services_and_unread_chips() {
         scroll_offset: 0,
         footer_message: None,
         details_sidebar_visible: false,
+        preview_source: "output",
+        scribe_preview_entries: &[],
     });
     let plain = strip_ansi(&result.frame);
 
@@ -74,7 +78,7 @@ fn renders_golden_worktrees_sessions_services_and_unread_chips() {
     assert!(plain.contains("codex"));
     assert!(plain.contains("yarn dev"));
     assert!(plain.contains("[svc] offline"));
-    assert!(plain.contains("READY"));
+    assert!(plain.contains("Ready"));
     assert!(plain.contains("thread 8/0/5"));
     assert!(plain.contains("step in"));
     for line in result.frame.split("\r\n") {
@@ -104,6 +108,8 @@ fn renders_state_aware_footer_hints_for_session_actions() {
         scroll_offset: 0,
         footer_message: None,
         details_sidebar_visible: false,
+        preview_source: "output",
+        scribe_preview_entries: &[],
     });
     let plain = strip_ansi(&result.frame);
 
@@ -134,10 +140,12 @@ fn renders_selected_session_details_sidebar_when_visible() {
         scroll_offset: 0,
         footer_message: None,
         details_sidebar_visible: true,
+        preview_source: "output",
+        scribe_preview_entries: &[],
     });
     let plain = strip_ansi(&result.frame);
 
-    assert!(plain.contains("Details"));
+    assert!(plain.contains("DETAILS"));
     assert!(plain.contains("Aimux ID"));
     assert!(plain.contains("claude-0"));
     for line in result.frame.split("\r\n") {
@@ -167,6 +175,8 @@ fn renders_worktree_details_sidebar_when_no_session_selected() {
         scroll_offset: 0,
         footer_message: None,
         details_sidebar_visible: true,
+        preview_source: "output",
+        scribe_preview_entries: &[],
     });
     let hidden = render_dashboard_frame(&DashboardRenderInput {
         snapshot,
@@ -184,15 +194,17 @@ fn renders_worktree_details_sidebar_when_no_session_selected() {
         scroll_offset: 0,
         footer_message: None,
         details_sidebar_visible: false,
+        preview_source: "output",
+        scribe_preview_entries: &[],
     });
     let visible_plain = strip_ansi(&visible.frame);
     let hidden_plain = strip_ansi(&hidden.frame);
 
-    assert!(visible_plain.contains("Details"));
-    assert!(visible_plain.contains("Worktree"));
+    assert!(visible_plain.contains("WORKTREE"));
+    assert!(visible_plain.contains("Name"));
     assert!(visible_plain.contains("Main Checkout"));
     assert!(visible_plain.contains("Agents"));
-    assert!(!hidden_plain.contains("Details"));
+    assert!(!hidden_plain.contains("WORKTREE"));
     assert_ne!(visible.frame, hidden.frame);
     for line in visible.frame.split("\r\n") {
         assert!(visible_width(line) <= 140 || line.starts_with("\x1b[2J\x1b[H"));
@@ -226,6 +238,8 @@ fn renders_unavailable_footer_hint_for_blocked_offline_session() {
         scroll_offset: 0,
         footer_message: None,
         details_sidebar_visible: false,
+        preview_source: "output",
+        scribe_preview_entries: &[],
     });
     let plain = strip_ansi(&result.frame);
 
@@ -260,6 +274,8 @@ fn renders_service_and_failure_footer_hints() {
         scroll_offset: 0,
         footer_message: None,
         details_sidebar_visible: false,
+        preview_source: "output",
+        scribe_preview_entries: &[],
     });
     let plain = strip_ansi(&result.frame);
 

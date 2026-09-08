@@ -40,6 +40,12 @@ pub struct DashboardSession {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub headline: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub backend_session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub restore_state: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub restore_blocked_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_config_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tmux_window_id: Option<String>,
@@ -55,6 +61,48 @@ pub struct DashboardSession {
     pub worktree_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub worktree_branch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repo_owner: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repo_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repo_remote: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pr_number: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pr_title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pr_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub activity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attention: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_output_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub became_idle_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_event: Option<DashboardSessionEvent>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub services: Option<Vec<DashboardSessionService>>,
+    #[serde(rename = "loop", skip_serializing_if = "Option::is_none")]
+    pub loop_state: Option<DashboardSessionLoop>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub loop_last_action: Option<DashboardSessionLoopLastAction>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub foreground_command: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preview_line: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preview_snapshot: Option<DashboardPreviewSnapshot>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub team: Option<SessionTeamMetadata>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -79,16 +127,26 @@ pub struct DashboardSession {
     pub thread_waiting_on_them_count: usize,
     #[serde(default)]
     pub thread_pending_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thread_name: Option<String>,
     #[serde(default)]
     pub workflow_on_me_count: usize,
     #[serde(default)]
     pub workflow_blocked_count: usize,
     #[serde(default)]
     pub workflow_family_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow_top_label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workflow_next_action: Option<String>,
     #[serde(default)]
     pub notification_unread_count: usize,
     #[serde(default)]
     pub notification_needs_input_unread_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_notification_text: Option<String>,
     #[serde(default)]
     pub notification_stale: bool,
     #[serde(default, skip_serializing_if = "is_false")]
@@ -150,6 +208,17 @@ pub struct SessionNotificationState {
     pub unread_count: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub latest_text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_unread: Option<SessionLatestUnread>,
+    #[serde(default, flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionLatestUnread {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
     #[serde(default, flatten)]
     pub extra: BTreeMap<String, Value>,
 }
@@ -183,6 +252,8 @@ pub struct DashboardService {
     pub id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
     pub args: Vec<String>,
     pub status: ServiceStatus,
     pub active: bool,
@@ -196,6 +267,26 @@ pub struct DashboardService {
     pub worktree_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub worktree_branch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_used_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub foreground_command: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shell_command: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shell_command_state: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preview_line: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pending_action: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pending_started_at: Option<String>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub pending: bool,
     #[serde(default, skip_serializing_if = "is_false")]
@@ -273,6 +364,73 @@ pub struct SessionTeamMetadata {
     pub label: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub order: Option<usize>,
+    #[serde(default, flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardSessionEvent {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ts: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(default, flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardSessionService {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
+    #[serde(default, flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardSessionLoop {
+    #[serde(default)]
+    pub active: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub goal: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub since: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_by: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_by_session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_by_role: Option<String>,
+    #[serde(default, flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardSessionLoopLastAction {
+    pub action: String,
+    pub at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(default, flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardPreviewSnapshot {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output: Option<String>,
     #[serde(default, flatten)]
     pub extra: BTreeMap<String, Value>,
 }

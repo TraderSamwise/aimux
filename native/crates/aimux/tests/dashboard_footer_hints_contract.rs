@@ -68,6 +68,8 @@ fn run_case(case: &Value) -> Value {
             scroll_offset: 0,
             footer_message: None,
             details_sidebar_visible: false,
+            preview_source: "output",
+            scribe_preview_entries: &[],
         },
         preview_source,
     )
