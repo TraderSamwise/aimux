@@ -1,12 +1,12 @@
-use aimux::daemon_state::{MetadataState, save_metadata_state};
+use aimux::daemon_state::{save_metadata_state, MetadataState};
 use aimux::project_api_contract::routes;
 use aimux::project_service::agent_output::{
-    AgentOutputCaptureRuntime, route_agent_output_request_with_runtime,
+    route_agent_output_request_with_runtime, AgentOutputCaptureRuntime,
 };
-use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
+use aimux::project_service::router::{route_project_service_request, ProjectServiceRequestContext};
 use aimux::runtime_topology::{coerce_runtime_topology, runtime_topology_path};
 use aimux::tmux::CapturePaneOptions;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::fs::{create_dir_all, remove_dir_all, write};
 use std::path::{Path, PathBuf};
@@ -161,7 +161,9 @@ fn desktop_state_route_matches_app_contract_shape() {
         project.to_string_lossy().as_ref()
     );
     assert_eq!(response.body["mainCheckoutInfo"]["name"], "Main Checkout");
-    assert!(response.body["mainCheckoutInfo"]["branch"].as_str().is_some());
+    assert!(response.body["mainCheckoutInfo"]["branch"]
+        .as_str()
+        .is_some());
 
     let sessions = response.body["sessions"].as_array().expect("sessions");
     assert_eq!(sessions.len(), 1);
@@ -194,19 +196,15 @@ fn desktop_state_route_matches_app_contract_shape() {
     assert_eq!(services[0]["shellCommandState"], "running");
 
     let worktrees = response.body["worktrees"].as_array().expect("worktrees");
-    assert!(
-        worktrees
-            .iter()
-            .any(|worktree| worktree["path"] == project.to_string_lossy().as_ref())
-    );
-    assert!(
-        worktrees
-            .iter()
-            .any(|worktree| worktree["path"] == "/repo/feature"
-                && worktree["name"] == "feature"
-                && worktree["branch"] == "feature/gui"
-                && worktree["isBare"] == false)
-    );
+    assert!(worktrees
+        .iter()
+        .any(|worktree| worktree["path"] == project.to_string_lossy().as_ref()));
+    assert!(worktrees
+        .iter()
+        .any(|worktree| worktree["path"] == "/repo/feature"
+            && worktree["name"] == "feature"
+            && worktree["branch"] == "feature/gui"
+            && worktree["isBare"] == false));
 
     let groups = response.body["worktreeGroups"]
         .as_array()
@@ -250,12 +248,10 @@ fn attachment_publish_route_matches_app_contract_shape() {
     assert_eq!(published.body["attachment"]["sessionId"], "codex-1");
     assert!(published.body["attachment"]["sha256"].as_str().is_some());
     assert!(published.body["attachment"]["createdAt"].as_str().is_some());
-    assert!(
-        published.body["referenceText"]
-            .as_str()
-            .expect("reference text")
-            .contains("notes.md (text/markdown, 19 bytes):")
-    );
+    assert!(published.body["referenceText"]
+        .as_str()
+        .expect("reference text")
+        .contains("notes.md (text/markdown, 19 bytes):"));
 
     let attachment_id = published.body["attachment"]["id"]
         .as_str()
@@ -314,7 +310,11 @@ fn seed_gui_project(project: &Path, state_dir: &Path) {
         "exchangeRefs": []
     }))
     .unwrap();
-    write(runtime_topology_path(state_dir), serde_yaml::to_string(&topology).unwrap()).unwrap();
+    write(
+        runtime_topology_path(state_dir),
+        serde_yaml::to_string(&topology).unwrap(),
+    )
+    .unwrap();
     save_metadata_state(
         state_dir,
         &MetadataState {
