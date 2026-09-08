@@ -114,6 +114,50 @@ fn flat_single_session_navigation_does_not_redraw_when_selection_cannot_move() {
 }
 
 #[test]
+fn grouped_session_selection_clamps_when_selected_entry_disappears() {
+    let mut snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.navigation.level = DashboardNavLevel::Sessions;
+    controller.navigation.worktree_index = 0;
+    controller.navigation.item_index = 99;
+
+    snapshot.worktree_groups[0].sessions.truncate(1);
+    snapshot.worktree_groups[0].services.clear();
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Other),
+        DashboardControllerEffect::Ignored
+    );
+    assert_eq!(controller.navigation.item_index, 0);
+    assert_eq!(
+        controller.navigation.selected_entry(&snapshot),
+        Some(DashboardEntryRef::Session(
+            &snapshot.worktree_groups[0].sessions[0]
+        ))
+    );
+}
+
+#[test]
+fn empty_focused_worktree_keeps_session_level_but_has_no_activation_target() {
+    let mut snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.navigation.level = DashboardNavLevel::Sessions;
+    controller.navigation.worktree_index = 1;
+    controller.navigation.item_index = 4;
+
+    snapshot.worktree_groups[1].sessions.clear();
+    snapshot.worktree_groups[1].services.clear();
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Enter),
+        DashboardControllerEffect::Ignored
+    );
+    assert_eq!(controller.navigation.level, DashboardNavLevel::Sessions);
+    assert_eq!(controller.navigation.item_index, 0);
+    assert_eq!(controller.navigation.selected_entry(&snapshot), None);
+}
+
+#[test]
 fn worktree_root_escape_focuses_active_visible_session() {
     let mut snapshot = snapshot();
     snapshot.worktree_groups[0].sessions[1].tmux_window_id = Some("@active".into());
