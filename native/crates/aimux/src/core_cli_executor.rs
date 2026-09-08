@@ -6,7 +6,8 @@ use crate::config::init_project;
 use crate::context_compactor::{context_dir, list_history_session_ids, llm_compact};
 use crate::core_cli::{
     CoreCliAction, CoreCliContext, CoreCliOperation, CoreCliOutputMode, CoreCommandCall,
-    CoreCommandOk, CoreLoopActorContext, classify_core_cli_with_project_resolver,
+    CoreCommandOk, CoreCommandRequestOptions, CoreLoopActorContext,
+    classify_core_cli_with_project_resolver,
 };
 use crate::core_command_client::request_core_command;
 use crate::core_command_contract::CORE_COMMAND_NAMES;
@@ -26,7 +27,10 @@ use crate::daemon_state::EnsureDaemonRunningOptions;
 use crate::daemon_state::{
     AimuxDaemonInfo, DaemonState, StoppedDaemonInfo, load_daemon_info, load_daemon_state,
 };
-use crate::daemon_supervisor::{ensure_daemon_running, stop_daemon};
+use crate::daemon_supervisor::{
+    assert_not_stopping_newer_daemon, ensure_daemon_running, ensure_project_service, stop_daemon,
+    stop_daemon_info,
+};
 use crate::debug_state::{build_debug_state_report, render_debug_state_report};
 use crate::desktop_notifier::{
     DesktopNotificationPayload, build_desktop_notifier_doctor_report, notification_test_json,
@@ -292,23 +296,7 @@ impl CoreCliRuntime for RealCoreCliRuntime {
         &mut self,
         project_root: Option<&str>,
     ) -> Result<RestartControlPlaneTextResult, String> {
-        let response = self.request_core_command(&CoreCommandCall {
-            command: CORE_COMMAND_NAMES.restart,
-            payload: project_root.map(|project_root| json!({ "projectRoot": project_root })),
-            options: Default::default(),
-        })?;
-        let restart = response
-            .result
-            .get("restart")
-            .cloned()
-            .unwrap_or(Value::Null);
-        let text = response
-            .result
-            .get("text")
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-            .unwrap_or_else(|| "Aimux Restart\n  failures: 0".into());
-        Ok(RestartControlPlaneTextResult { restart, text })
+        restart_control_plane_from_cli(project_root)
     }
 
     fn stop_daemon(&mut self, signal: &str) -> Result<Option<StoppedDaemonInfo>, String> {
@@ -356,6 +344,95 @@ impl CoreCliRuntime for RealCoreCliRuntime {
             sound: true,
         });
         Ok(notification_test_json(&attempt))
+    }
+}
+
+fn restart_control_plane_from_cli(
+    project_root: Option<&str>,
+) -> Result<RestartControlPlaneTextResult, String> {
+    let resolver = PathResolver::from_env();
+    let daemon_info = load_daemon_info(resolver.daemon_info_path());
+    let daemon_state = load_daemon_state(resolver.daemon_state_path());
+    let project_roots = restart_bootstrap_project_roots(project_root, &daemon_state);
+
+    if let Some(info) = daemon_info.as_ref() {
+        assert_not_stopping_newer_daemon().map_err(|error| error.to_string())?;
+        stop_daemon_info(&resolver, info, daemon_state.clone(), "SIGTERM")
+            .map_err(|error| error.to_string())?;
+    }
+    ensure_daemon_running(EnsureDaemonRunningOptions {
+        adopt_existing: Some(false),
+    })
+    .map_err(|error| error.to_string())?;
+    for project_root in project_roots {
+        ensure_project_service(&project_root).map_err(|error| error.to_string())?;
+    }
+    let response = request_core_command(
+        CORE_COMMAND_NAMES.restart,
+        project_root.map(|project_root| json!({ "projectRoot": project_root })),
+        CoreCommandRequestOptions {
+            ensure_daemon: false,
+            timeout_ms: None,
+        },
+    )
+    .map_err(|error| error.to_string())?;
+    let restart = response
+        .result
+        .get("restart")
+        .cloned()
+        .unwrap_or(Value::Null);
+    let text = response
+        .result
+        .get("text")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .unwrap_or_else(|| "Aimux Restart\n  failures: 0".into());
+    Ok(RestartControlPlaneTextResult { restart, text })
+}
+
+fn restart_bootstrap_project_roots(project_root: Option<&str>, state: &DaemonState) -> Vec<String> {
+    if let Some(project_root) = project_root {
+        return vec![project_root.to_owned()];
+    }
+    state
+        .projects
+        .values()
+        .filter_map(|project| project.get("projectRoot").and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|project_root| !project_root.is_empty())
+        .map(str::to_owned)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::Map;
+
+    #[test]
+    fn restart_bootstrap_project_roots_follow_saved_daemon_state() {
+        let state = DaemonState {
+            version: 1,
+            updated_at: Some(json!("now")),
+            projects: Map::from_iter([
+                ("beta".into(), json!({ "projectRoot": "/repo/beta" })),
+                ("empty".into(), json!({ "projectRoot": " " })),
+                ("missing".into(), json!({ "pid": 42 })),
+                ("alpha".into(), json!({ "projectRoot": "/repo/alpha" })),
+                ("dup".into(), json!({ "projectRoot": "/repo/beta" })),
+            ]),
+        };
+
+        assert_eq!(
+            restart_bootstrap_project_roots(None, &state),
+            vec!["/repo/alpha".to_owned(), "/repo/beta".to_owned()]
+        );
+        assert_eq!(
+            restart_bootstrap_project_roots(Some("/repo/only"), &state),
+            vec!["/repo/only".to_owned()]
+        );
     }
 }
 
