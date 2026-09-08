@@ -643,6 +643,15 @@ impl DashboardController {
             DashboardKey::Printable('E') if self.screen == DashboardScreen::Coordination => {
                 self.selected_coordination_task_request(routes::tasks::REOPEN)
             }
+            DashboardKey::Printable('s') => {
+                self.load_orchestration_routes(snapshot, DashboardOrchestrationMode::Message)
+            }
+            DashboardKey::Printable('H') => {
+                self.load_orchestration_routes(snapshot, DashboardOrchestrationMode::Handoff)
+            }
+            DashboardKey::Printable('T') => {
+                self.load_orchestration_routes(snapshot, DashboardOrchestrationMode::Task)
+            }
             DashboardKey::Printable('r') => DashboardControllerEffect::Render,
             DashboardKey::Enter => self.handle_subscreen_enter(snapshot),
             DashboardKey::Printable('?') => {

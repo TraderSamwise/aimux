@@ -1341,6 +1341,14 @@ fn coordination_thread_keys_dispatch_workflow_requests() {
         done_request.body,
         json!({ "threadId": "thread-1", "status": "done" })
     );
+
+    let DashboardControllerEffect::LoadOrchestrationRoutes { mode, path } =
+        controller.handle_key(&snapshot, DashboardKey::Printable('s'))
+    else {
+        panic!("expected message route picker load");
+    };
+    assert_eq!(mode, DashboardOrchestrationMode::Message);
+    assert_eq!(path, "/orchestration/routes?mode=message");
 }
 
 #[test]
