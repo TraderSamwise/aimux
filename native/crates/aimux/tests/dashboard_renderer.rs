@@ -7,6 +7,8 @@ use aimux::tui_render::theme::visible_width;
 use serde_json::json;
 
 const GOLDEN: &str = include_str!("../../../../src/multiplexer/desktop-state-golden.fixture.json");
+const NODE_FULL_FRAME: &str =
+    include_str!("../../../../testdata/contracts/v1/tui/dashboard-node-full-frame-v1.txt");
 
 #[test]
 fn renders_empty_dashboard_with_create_hint() {
@@ -44,6 +46,59 @@ fn renders_empty_dashboard_with_create_hint() {
     assert!(plain.contains("No sessions. Press [n] to create one."));
     assert!(plain.contains("n agent"));
     assert!(plain.contains("q quit"));
+}
+
+#[test]
+fn matches_node_dashboard_full_frame_for_populated_agent_selection() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let snapshot = &fixture.runtime_full;
+
+    let result = render_dashboard_frame(&DashboardRenderInput {
+        snapshot,
+        cols: 200,
+        rows: 50,
+        nav_level: DashboardNavLevel::Sessions,
+        selected_session_id: Some("claude-0"),
+        selected_service_id: None,
+        focused_worktree_path: Some("<WORKTREE>"),
+        runtime_label: Some("tmux"),
+        version: Some("local-node"),
+        is_dev_runtime: false,
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_message: None,
+        details_sidebar_visible: true,
+        preview_source: "output",
+        scribe_preview_entries: &[],
+    });
+
+    assert_same_frame(NODE_FULL_FRAME, &result.frame);
+}
+
+fn assert_same_frame(expected: &str, actual: &str) {
+    if expected == actual {
+        return;
+    }
+
+    let expected_lines = expected.split("\r\n").collect::<Vec<_>>();
+    let actual_lines = actual.split("\r\n").collect::<Vec<_>>();
+    let max = expected_lines.len().max(actual_lines.len());
+    for index in 0..max {
+        let expected_line = expected_lines.get(index).copied().unwrap_or("<missing>");
+        let actual_line = actual_lines.get(index).copied().unwrap_or("<missing>");
+        if expected_line != actual_line {
+            panic!(
+                "dashboard frame differs at line {}\nexpected: {:?}\nactual:   {:?}",
+                index + 1,
+                expected_line,
+                actual_line
+            );
+        }
+    }
+
+    panic!("dashboard frame differs");
 }
 
 #[test]
@@ -124,7 +179,7 @@ fn renders_live_agent_rows_without_jamming_identity_status_or_activity() {
     });
     let plain = strip_ansi(&result.frame);
 
-    assert!(plain.contains("claude (3c4dme)"));
+    assert!(plain.contains("claude (3c4d"));
     assert!(plain.contains("Ready"));
     assert!(plain.contains("output "));
     assert!(plain.contains("1 unseen"));

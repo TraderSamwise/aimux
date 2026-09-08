@@ -1044,7 +1044,7 @@ fn service_row(service: &DashboardService, selected: bool, digit: Option<usize>)
         .label
         .as_deref()
         .or(service.command.as_deref())
-        .unwrap_or("service");
+        .unwrap_or("undefined");
     let status_label = service
         .pending_action
         .as_deref()
@@ -1125,9 +1125,8 @@ fn agent_identity(session: &DashboardSession) -> String {
     let label = session.label.as_deref().unwrap_or(&session.command);
     let prefix = format!("{}-", session.command);
     let short_id = session.id.strip_prefix(&prefix).unwrap_or(&session.id);
-    let display_id = short_id.chars().take(6).collect::<String>();
-    let suffix = if !display_id.is_empty() && display_id != label {
-        format!(" {}", style(&format!("({display_id})"), Tone::Muted))
+    let suffix = if !short_id.is_empty() && short_id != label {
+        format!(" {}", style(&format!("({short_id})"), Tone::Muted))
     } else {
         String::new()
     };
@@ -1593,9 +1592,11 @@ fn session_state_rank(state: Option<&str>) -> (usize, Tone) {
         Some("error") => (6, Tone::Danger),
         Some("needs_input" | "needs_response") => (5, Tone::Attention),
         Some("blocked") => (4, Tone::Blocked),
-        Some("working" | "next_step") => (3, Tone::Work),
+        Some("working") => (3, Tone::Work),
+        Some("next_step") => (3, Tone::Attention),
         Some("done") => (2, Tone::Done),
-        Some("ready" | "idle") => (1, Tone::Ready),
+        Some("ready") => (1, Tone::Ready),
+        Some("idle") => (1, Tone::Idle),
         Some("offline") | None => (0, Tone::Muted),
         _ => (3, Tone::Attention),
     }
@@ -1628,7 +1629,7 @@ fn render_selected_details_panel(
                     .label
                     .as_deref()
                     .or(service.command.as_deref())
-                    .unwrap_or("service"),
+                    .unwrap_or("undefined"),
                 service.id
             ),
             width,
@@ -2103,7 +2104,7 @@ fn render_worktree_details_panel(
                         .label
                         .as_deref()
                         .or(service.command.as_deref())
-                        .unwrap_or("service")
+                        .unwrap_or("undefined")
                 })
                 .take(3)
                 .collect::<Vec<_>>()
@@ -2267,13 +2268,6 @@ fn selected_session<'a>(input: &'a DashboardRenderInput<'_>) -> Option<&'a Dashb
         .snapshot
         .sessions
         .iter()
-        .chain(
-            input
-                .snapshot
-                .worktree_groups
-                .iter()
-                .flat_map(|group| group.sessions.iter()),
-        )
         .find(|session| session.id == session_id)
 }
 
@@ -2283,13 +2277,6 @@ fn selected_service<'a>(input: &'a DashboardRenderInput<'_>) -> Option<&'a Dashb
         .snapshot
         .services
         .iter()
-        .chain(
-            input
-                .snapshot
-                .worktree_groups
-                .iter()
-                .flat_map(|group| group.services.iter()),
-        )
         .find(|service| service.id == service_id)
 }
 
