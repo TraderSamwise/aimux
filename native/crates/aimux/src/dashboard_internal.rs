@@ -1,11 +1,14 @@
 use crate::config::load_config_for_project;
+use crate::core_command_contract::CORE_COMMAND_NAMES;
+use crate::core_command_transport::send_core_command;
+use crate::dashboard_actions::{DashboardActionKind, DashboardActionPlan, plan_dashboard_action};
 use crate::dashboard_client::{
     ProjectServiceEndpoint, execute_dashboard_action, fetch_dashboard_resource,
     fetch_desktop_state, refresh_dashboard_statusline, resolve_project_service_endpoint,
 };
 use crate::dashboard_controller::{
-    DashboardController, DashboardControllerEffect, DashboardScreen, DashboardSubscreenAction,
-    orchestration_targets_from_resource,
+    DashboardController, DashboardControllerEffect, DashboardOverseerWatchRequest, DashboardScreen,
+    DashboardSubscreenAction, orchestration_targets_from_resource,
 };
 use crate::dashboard_event_stream::{
     DashboardEventStreamHandle, DashboardEventStreamMessage, spawn_dashboard_project_event_stream,
@@ -45,7 +48,8 @@ use crate::project_service::work_outline::{
 };
 use crate::release_version_contract::read_aimux_runtime_version;
 use crate::tui_screen_renderers::{
-    render_overseer_overlay_output, render_work_outline_overlay_output,
+    render_overseer_overlay_output, render_overseer_watch_instructions_overlay_output,
+    render_work_outline_overlay_output,
 };
 use anyhow::{Context, Result};
 use std::fs;
@@ -299,6 +303,16 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                             entries,
                             offset.unwrap_or(0),
                         );
+                        render_now = true;
+                    }
+                    DashboardControllerEffect::WatchWithOverseer(request) => {
+                        match execute_overseer_watch_command(&options, controller, &request) {
+                            Ok(()) => {}
+                            Err(error) => {
+                                controller.footer_message =
+                                    Some(format!("Overseer update failed: {error}"));
+                            }
+                        }
                         render_now = true;
                     }
                     DashboardControllerEffect::OpenAgentToolPicker(mode) => {
@@ -624,6 +638,71 @@ fn sync_dashboard_focus(
     false
 }
 
+fn execute_overseer_watch_command(
+    options: &NativeDashboardOptions,
+    controller: &mut DashboardController,
+    request: &DashboardOverseerWatchRequest,
+) -> Result<()> {
+    let mut payload = serde_json::json!({
+        "projectRoot": options.project_root.to_string_lossy(),
+        "sessionId": request.session_id,
+        "instructions": request.instructions,
+    });
+    if let Some(goal) = request.goal.as_ref()
+        && let Some(object) = payload.as_object_mut()
+    {
+        object.insert("goal".into(), serde_json::Value::String(goal.clone()));
+    }
+    let response = send_core_command(
+        CORE_COMMAND_NAMES.overseer_watch,
+        Some(payload),
+        Some(20_000),
+    )?;
+    let loaded = load_dashboard_snapshot(options)?;
+    let visible_model =
+        filter_dashboard_visible_model(&loaded.snapshot, controller.hide_offline_agents);
+    if let Some(overseer_session_id) = response
+        .result
+        .get("overseerSessionId")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+    {
+        if let (Some(endpoint), Some(session)) = (
+            loaded.endpoint.as_ref(),
+            find_dashboard_session(&visible_model.snapshot, overseer_session_id),
+        ) {
+            controller.focus_session_by_id(&visible_model.snapshot, overseer_session_id);
+            if let DashboardActionPlan::Request(focus_request) = plan_dashboard_action(
+                Some(DashboardEntryRef::Session(session)),
+                DashboardActionKind::Enter,
+            ) && execute_dashboard_action(endpoint, &focus_request).is_ok()
+            {
+                return Ok(());
+            }
+        }
+        controller.footer_message = Some("Overseer updated, but could not open overseer".into());
+        return Ok(());
+    }
+    controller.footer_message = Some(format!("{} added to overseer loop", request.target_label));
+    Ok(())
+}
+
+fn find_dashboard_session<'a>(
+    snapshot: &'a DesktopStateSnapshot,
+    session_id: &str,
+) -> Option<&'a crate::dashboard_model::DashboardSession> {
+    snapshot
+        .sessions
+        .iter()
+        .chain(
+            snapshot
+                .worktree_groups
+                .iter()
+                .flat_map(|group| group.sessions.iter()),
+        )
+        .find(|session| session.id == session_id)
+}
+
 fn render_dashboard_snapshot(
     options: &NativeDashboardOptions,
     controller: &mut DashboardController,
@@ -700,6 +779,22 @@ fn render_dashboard_snapshot(
             options.cols,
             options.rows,
         ));
+        return crate::tui_render::screen_frame::ScreenFrameResult {
+            frame: output,
+            scroll_offset: frame.scroll_offset,
+        };
+    }
+    if let Some(watch) = controller.overseer_watch_instructions.as_ref() {
+        let mut output = frame.frame;
+        let ctx = serde_json::json!({
+            "overseerWatchInstructionsTarget": &watch.target,
+            "overseerWatchInstructionsBuffer": &watch.buffer,
+        });
+        if let Some(overlay) =
+            render_overseer_watch_instructions_overlay_output(&ctx, options.cols, options.rows)
+        {
+            output.push_str(&overlay);
+        }
         return crate::tui_render::screen_frame::ScreenFrameResult {
             frame: output,
             scroll_offset: frame.scroll_offset,

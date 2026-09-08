@@ -952,6 +952,87 @@ fn overseer_overlay_enter_opens_overseer_picker_when_no_live_overseer_exists() {
 }
 
 #[test]
+fn overseer_overlay_watch_instructions_follow_node_actions() {
+    let mut snapshot = snapshot();
+    snapshot.sessions[1].task_description = Some("keep parity honest".into());
+    snapshot.worktree_groups[0].sessions[1].task_description = Some("keep parity honest".into());
+    let mut controller = DashboardController::new(&snapshot);
+    controller.navigation.level = DashboardNavLevel::Sessions;
+    controller.navigation.worktree_index = 0;
+    controller.navigation.item_index = 1;
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('O')),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('w')),
+        DashboardControllerEffect::Render
+    );
+    assert!(!controller.overseer_overlay_open);
+    assert_eq!(
+        controller
+            .overseer_watch_instructions
+            .as_ref()
+            .map(|state| state.target.id.as_str()),
+        Some("claude-0")
+    );
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('f')),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('i')),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Delete),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(
+        controller
+            .overseer_watch_instructions
+            .as_ref()
+            .map(|state| state.buffer.as_str()),
+        Some("f")
+    );
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('x')),
+        DashboardControllerEffect::Render
+    );
+
+    let DashboardControllerEffect::WatchWithOverseer(request) =
+        controller.handle_key(&snapshot, DashboardKey::Enter)
+    else {
+        panic!("expected overseer watch request");
+    };
+    assert_eq!(request.session_id, "claude-0");
+    assert_eq!(request.goal.as_deref(), Some("keep parity honest"));
+    assert_eq!(request.instructions, "fx");
+    assert!(controller.overseer_watch_instructions.is_none());
+}
+
+#[test]
+fn overseer_overlay_watch_requires_selected_agent() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.overseer_overlay_open = true;
+    controller.navigation.level = DashboardNavLevel::Worktrees;
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('w')),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(
+        controller.footer_message.as_deref(),
+        Some("Select an agent first")
+    );
+    assert!(controller.overseer_overlay_open);
+    assert!(controller.overseer_watch_instructions.is_none());
+}
+
+#[test]
 fn work_outline_overlay_keys_scroll_reload_focus_stop_unset_and_close() {
     let mut snapshot = snapshot();
     snapshot

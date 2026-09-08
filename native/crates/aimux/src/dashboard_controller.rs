@@ -39,6 +39,7 @@ pub struct DashboardController {
     pub worktree_list_open: bool,
     pub worktree_cache_cleanup_confirm: Option<Value>,
     pub overseer_overlay_open: bool,
+    pub overseer_watch_instructions: Option<DashboardOverseerWatchInstructionsState>,
     pub work_outline_overlay: Option<DashboardWorkOutlineOverlayState>,
     pub migrate_picker: Option<DashboardMigratePickerState>,
     pub label_input: Option<DashboardLabelInputState>,
@@ -75,6 +76,7 @@ pub enum DashboardControllerEffect {
         session_id: Option<String>,
         offset: Option<usize>,
     },
+    WatchWithOverseer(DashboardOverseerWatchRequest),
     OpenAgentToolPicker(DashboardToolPickerMode),
     Quit,
     Ignored,
@@ -202,6 +204,20 @@ pub struct DashboardOrchestrationInputState {
     pub buffer: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DashboardOverseerWatchInstructionsState {
+    pub target: DashboardSession,
+    pub buffer: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DashboardOverseerWatchRequest {
+    pub session_id: String,
+    pub target_label: String,
+    pub goal: Option<String>,
+    pub instructions: String,
+}
+
 impl DashboardOrchestrationInputState {
     pub fn submit_request(&self, body_text: String) -> DashboardActionRequest {
         let mut body = Map::new();
@@ -268,6 +284,7 @@ impl DashboardController {
             worktree_list_open: false,
             worktree_cache_cleanup_confirm: None,
             overseer_overlay_open: false,
+            overseer_watch_instructions: None,
             work_outline_overlay: None,
             migrate_picker: None,
             label_input: None,
@@ -311,6 +328,9 @@ impl DashboardController {
         }
         if self.overseer_overlay_open {
             return self.handle_overseer_overlay_key(snapshot, key);
+        }
+        if self.overseer_watch_instructions.is_some() {
+            return self.handle_overseer_watch_instructions_key(key);
         }
         if self.work_outline_overlay.is_some() {
             return self.handle_work_outline_overlay_key(snapshot, key);
@@ -691,6 +711,7 @@ impl DashboardController {
         self.worktree_list_open = false;
         self.worktree_cache_cleanup_confirm = None;
         self.overseer_overlay_open = false;
+        self.overseer_watch_instructions = None;
         self.work_outline_overlay = None;
         self.migrate_picker = None;
         self.label_input = None;
@@ -1315,6 +1336,7 @@ impl DashboardController {
                 DashboardControllerEffect::Render
             }
             DashboardKey::Enter => self.activate_or_create_overseer_from_overlay(snapshot),
+            DashboardKey::Printable('w') => self.open_overseer_watch_instructions(snapshot),
             DashboardKey::Printable('x') => self.stop_live_overseer_from_overlay(snapshot),
             DashboardKey::Printable('u') => self.unwatch_selected_from_overseer_overlay(snapshot),
             _ => DashboardControllerEffect::Ignored,
@@ -1384,6 +1406,87 @@ impl DashboardController {
                 "updatedBy": "dashboard",
             }),
         })
+    }
+
+    fn open_overseer_watch_instructions(
+        &mut self,
+        snapshot: &DesktopStateSnapshot,
+    ) -> DashboardControllerEffect {
+        let Some(selected) = self.selected_session_for_tool_action(snapshot) else {
+            self.footer_message = Some("Select an agent first".into());
+            return DashboardControllerEffect::Render;
+        };
+        self.overseer_overlay_open = false;
+        self.overseer_watch_instructions = Some(DashboardOverseerWatchInstructionsState {
+            target: selected.clone(),
+            buffer: String::new(),
+        });
+        DashboardControllerEffect::Render
+    }
+
+    fn handle_overseer_watch_instructions_key(
+        &mut self,
+        key: DashboardKey,
+    ) -> DashboardControllerEffect {
+        match key {
+            DashboardKey::Back => {
+                self.overseer_watch_instructions = None;
+                DashboardControllerEffect::Render
+            }
+            DashboardKey::Enter => {
+                let Some(state) = self.overseer_watch_instructions.take() else {
+                    return DashboardControllerEffect::Ignored;
+                };
+                DashboardControllerEffect::WatchWithOverseer(DashboardOverseerWatchRequest {
+                    session_id: state.target.id.clone(),
+                    target_label: session_label(&state.target).to_owned(),
+                    goal: state
+                        .target
+                        .task_description
+                        .clone()
+                        .or_else(|| state.target.headline.clone())
+                        .filter(|value| !value.is_empty()),
+                    instructions: state.buffer.trim().to_owned(),
+                })
+            }
+            DashboardKey::Backspace | DashboardKey::Delete => {
+                if let Some(state) = self.overseer_watch_instructions.as_mut() {
+                    state.buffer.pop();
+                }
+                DashboardControllerEffect::Render
+            }
+            DashboardKey::Printable(character) => {
+                if let Some(state) = self.overseer_watch_instructions.as_mut() {
+                    state.buffer.push(character);
+                }
+                DashboardControllerEffect::Render
+            }
+            DashboardKey::Up
+            | DashboardKey::Down
+            | DashboardKey::Stop
+            | DashboardKey::NewAgent
+            | DashboardKey::NewService
+            | DashboardKey::ForkAgent
+            | DashboardKey::SwitchTool
+            | DashboardKey::ClearFailures
+            | DashboardKey::ToggleOfflineAgents
+            | DashboardKey::LaunchOptions
+            | DashboardKey::Quit
+            | DashboardKey::NextAttention
+            | DashboardKey::Digit(_)
+            | DashboardKey::Tab
+            | DashboardKey::Left
+            | DashboardKey::Right
+            | DashboardKey::ShiftUp
+            | DashboardKey::ShiftDown
+            | DashboardKey::ShiftLeft
+            | DashboardKey::ShiftRight
+            | DashboardKey::Home
+            | DashboardKey::End
+            | DashboardKey::Ctrl(_)
+            | DashboardKey::FocusIn
+            | DashboardKey::Other => DashboardControllerEffect::Ignored,
+        }
     }
 
     pub fn set_work_outline_overlay(
@@ -2132,7 +2235,11 @@ impl DashboardController {
         self.handle_action(snapshot, DashboardActionKind::Enter)
     }
 
-    fn focus_session_by_id(&mut self, snapshot: &DesktopStateSnapshot, session_id: &str) -> bool {
+    pub(crate) fn focus_session_by_id(
+        &mut self,
+        snapshot: &DesktopStateSnapshot,
+        session_id: &str,
+    ) -> bool {
         if snapshot.worktree_groups.is_empty() {
             if let Some(index) = snapshot
                 .sessions
