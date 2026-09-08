@@ -2301,7 +2301,7 @@ fn restart_control_plane_runs_native_restart_and_preserves_project_scope() {
     assert_eq!(current.code, 0);
     assert_eq!(current.stdout, ["Aimux Restart\n  failures: 0"]);
     assert!(current.stderr.is_empty());
-    assert_eq!(runtime.restart_calls, [Some("/repo".into())]);
+    assert_eq!(runtime.restart_calls, [None]);
     assert!(runtime.commands.is_empty());
 
     let execution = run_core_cli_with(&args(&["restart", "--project", "child"]), &mut runtime);
@@ -2311,8 +2311,25 @@ fn restart_control_plane_runs_native_restart_and_preserves_project_scope() {
     assert!(execution.stderr.is_empty());
     assert_eq!(
         runtime.restart_calls,
-        [Some("/repo".into()), Some("/resolved/child".into())]
+        [None, Some("/resolved/child".into())]
     );
+    assert!(runtime.commands.is_empty());
+}
+
+#[test]
+fn restart_control_plane_does_not_require_git_cwd_without_project_scope() {
+    let mut runtime = FakeRuntime {
+        cwd: "/Users/sam".into(),
+        git_project_root: false,
+        ..FakeRuntime::default()
+    };
+
+    let execution = run_core_cli_with(&args(&["restart"]), &mut runtime);
+
+    assert_eq!(execution.code, 0);
+    assert_eq!(execution.stdout, ["Aimux Restart\n  failures: 0"]);
+    assert!(execution.stderr.is_empty());
+    assert_eq!(runtime.restart_calls, [None]);
     assert!(runtime.commands.is_empty());
 }
 

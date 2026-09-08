@@ -173,14 +173,12 @@ fn project_ensure_and_restart_use_the_supplied_project_resolver() {
         }
     );
 
-    let restart_current = classify_core_cli(&["restart"], &context(true, true))
-        .expect("restart current project plan");
-    assert_eq!(restart_current.operation, CoreCliOperation::Restart);
+    let global_restart =
+        classify_core_cli(&["restart"], &context(true, true)).expect("global restart plan");
+    assert_eq!(global_restart.operation, CoreCliOperation::Restart);
     assert_eq!(
-        restart_current.action,
-        CoreCliAction::RestartControlPlane {
-            project_root: Some("/repo".into()),
-        }
+        global_restart.action,
+        CoreCliAction::RestartControlPlane { project_root: None }
     );
 }
 

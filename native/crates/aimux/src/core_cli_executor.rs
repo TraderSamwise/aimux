@@ -410,6 +410,7 @@ fn operation_requires_git_project(operation: CoreCliOperation) -> bool {
             | CoreCliOperation::DoctorInstalls
             | CoreCliOperation::DoctorNotifications
             | CoreCliOperation::ProjectsList
+            | CoreCliOperation::Restart
             | CoreCliOperation::RemoteStatus
             | CoreCliOperation::RemoteEnable
             | CoreCliOperation::RemoteDisable
