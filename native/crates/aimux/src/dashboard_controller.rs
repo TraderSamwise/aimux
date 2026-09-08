@@ -1403,7 +1403,10 @@ impl DashboardController {
         &mut self,
         snapshot: &DesktopStateSnapshot,
     ) -> DashboardControllerEffect {
-        let Some(session) = self.selected_session_for_tool_action(snapshot) else {
+        let Some(session) = self
+            .selected_session_for_tool_action(snapshot)
+            .or_else(|| active_or_first_visible_session(snapshot))
+        else {
             self.footer_message = Some("Select an agent to migrate".into());
             return DashboardControllerEffect::Render;
         };
@@ -2507,6 +2510,15 @@ fn visual_dashboard_session_order(snapshot: &DesktopStateSnapshot) -> Vec<&Dashb
         }
     }
     ordered
+}
+
+fn active_or_first_visible_session(snapshot: &DesktopStateSnapshot) -> Option<&DashboardSession> {
+    snapshot
+        .sessions
+        .iter()
+        .filter(|session| !is_project_control_session(session))
+        .find(|session| session.active)
+        .or_else(|| visual_dashboard_session_order(snapshot).into_iter().next())
 }
 
 fn migrate_picker_targets(snapshot: &DesktopStateSnapshot) -> Vec<DashboardMigrateTarget> {

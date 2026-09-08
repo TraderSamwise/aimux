@@ -1481,6 +1481,25 @@ fn migrate_key_opens_picker_and_digit_dispatches_selected_session_migrate() {
 }
 
 #[test]
+fn migrate_key_from_worktree_root_falls_back_to_active_session() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.navigation.level = DashboardNavLevel::Worktrees;
+    controller.navigation.worktree_index = 1;
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('m')),
+        DashboardControllerEffect::Render
+    );
+    let picker = controller
+        .migrate_picker
+        .as_ref()
+        .expect("migrate picker open");
+    assert_eq!(picker.session_id, "claude-0");
+    assert_eq!(picker.session_worktree_path, None);
+}
+
+#[test]
 fn name_key_opens_label_input_and_submit_dispatches_rename() {
     let mut snapshot = snapshot();
     snapshot.worktree_groups[0].sessions[1].label = Some("Old label".into());
