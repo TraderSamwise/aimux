@@ -708,98 +708,112 @@ def run_top_level_agent_tool_smoke(aimux_bin: Path, mutation: str | None) -> dic
         run([tmux, "-L", socket_name, "start-server"], env=without_tmux(os.environ.copy()), timeout=10)
         scope.init_git_project()
         run([str(aimux_bin), "init"], cwd=scope.project, env=scope.env, timeout=30)
+        install_agent_tool_config(scope, "codex")
+        install_agent_tool_config(scope, "claude")
         install_agent_tool_config(scope, "aider")
         project_root = scope.project.resolve()
-        launcher_session = "phase8-top-level-agent-launcher"
-        command = (
-            f"cd {shlex.quote(str(project_root))} && "
-            f"{shlex.quote(str(aimux_bin))} aider --help; "
-            "code=$?; printf '\\n__AIMUX_TOP_LEVEL_AGENT_EXIT:%s\\n' \"$code\"; sleep 30"
-        )
-        proc = subprocess.Popen(
-            [
-                "script",
-                "-q",
-                "/dev/null",
-                tmux,
-                "-L",
-                socket_name,
-                "-f",
-                "/dev/null",
-                "new-session",
-                "-s",
-                launcher_session,
-                "-x",
-                "100",
-                "-y",
-                "30",
-                "sh",
-                "-lc",
-                command,
-            ],
-            cwd=str(project_root),
-            env=scope.env,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        scope.procs.append(proc)
-        output = ""
-        deadline = time.monotonic() + 20
-        while time.monotonic() < deadline:
-            try:
-                output = capture_all_tmux(scope)
-            except LiveResidualFailure:
-                output = ""
-            if has_unsupported_command_error(output) or "tool is required" in output:
-                raise LiveResidualFailure(f"top-level agent tool dispatch failed:\n{output}")
-            if "__AIMUX_TOP_LEVEL_AGENT_EXIT:0" in output:
-                break
-            time.sleep(0.05)
-        else:
-            raise LiveResidualFailure(
-                "timed out waiting for top-level agent tool dispatch:\n"
-                f"{output}\nstdout:\n{read_pipe(proc.stdout)}\nstderr:\n{read_pipe(proc.stderr)}"
+        launched: list[str] = []
+
+        def launch_and_stop(label: str, args: list[str], expected_tool: str) -> tuple[str, dict[str, Any]]:
+            launcher_session = f"phase8-top-level-agent-{label}"
+            command = (
+                f"cd {shlex.quote(str(project_root))} && "
+                f"{' '.join([shlex.quote(str(aimux_bin)), *map(shlex.quote, args)])}; "
+                f"code=$?; printf '\\n__AIMUX_TOP_LEVEL_AGENT_{label}_EXIT:%s\\n' \"$code\"; sleep 30"
             )
+            proc = subprocess.Popen(
+                [
+                    "script",
+                    "-q",
+                    "/dev/null",
+                    tmux,
+                    "-L",
+                    socket_name,
+                    "-f",
+                    "/dev/null",
+                    "new-session",
+                    "-s",
+                    launcher_session,
+                    "-x",
+                    "100",
+                    "-y",
+                    "30",
+                    "sh",
+                    "-lc",
+                    command,
+                ],
+                cwd=str(project_root),
+                env=scope.env,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            scope.procs.append(proc)
+            output = ""
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline:
+                try:
+                    output = capture_all_tmux(scope)
+                except LiveResidualFailure:
+                    output = ""
+                if has_unsupported_command_error(output) or "tool is required" in output:
+                    raise LiveResidualFailure(f"{label} top-level agent tool dispatch failed:\n{output}")
+                if f"__AIMUX_TOP_LEVEL_AGENT_{label}_EXIT:0" in output:
+                    break
+                time.sleep(0.05)
+            else:
+                raise LiveResidualFailure(
+                    f"timed out waiting for {label} top-level agent tool dispatch:\n"
+                    f"{output}\nstdout:\n{read_pipe(proc.stdout)}\nstderr:\n{read_pipe(proc.stderr)}"
+                )
 
-        expected_tool = "aider"
-        if mutation == "top-level-agent-missing-session":
-            expected_tool = "phase8-agent-tool-mutation-missing"
-        ps_payload, session = wait_until(
-            lambda: ps_session_for_tool(scope, aimux_bin, expected_tool),
-            timeout=10,
-            label=f"{expected_tool} session in aimux ps",
-        )
-        session_id = str(session.get("id") or "")
-        if not session_id:
-            raise LiveResidualFailure(f"top-level agent session has no id: {session}")
-        windows = tmux_cmd_for_socket(
-            tmux,
-            socket_name,
-            ["list-windows", "-a", "-F", "#{session_name}\t#{window_name}"],
-        ).stdout
-        if "\t/bin/sh" not in windows and "\taider" not in windows:
-            raise LiveResidualFailure(f"top-level agent tmux window missing for {session_id}:\n{windows}")
+            lookup_tool = expected_tool
+            if mutation == "top-level-agent-missing-session" and not launched:
+                lookup_tool = "phase8-agent-tool-mutation-missing"
+            ps_payload, session = wait_until(
+                lambda: ps_session_for_tool(scope, aimux_bin, lookup_tool),
+                timeout=10,
+                label=f"{lookup_tool} session in aimux ps",
+            )
+            session_id = str(session.get("id") or "")
+            if not session_id:
+                raise LiveResidualFailure(f"{label} top-level agent session has no id: {session}")
+            windows = tmux_cmd_for_socket(
+                tmux,
+                socket_name,
+                ["list-windows", "-a", "-F", "#{session_name}\t#{window_name}"],
+            ).stdout
+            if f"\t{expected_tool}" not in windows and "\t/bin/sh" not in windows:
+                raise LiveResidualFailure(f"{label} top-level agent tmux window missing for {session_id}:\n{windows}")
 
-        stop = run(
-            [str(aimux_bin), "stop", session_id, "--json"],
-            cwd=scope.project,
-            env=scope.env,
-            timeout=30,
-        )
-        parse_json_stdout(stop.stdout, "top-level agent stop")
-        wait_until(
-            lambda: not ps_contains_session(scope, aimux_bin, session_id),
-            timeout=10,
-            label="top-level agent session removed from aimux ps",
-        )
+            stop = run(
+                [str(aimux_bin), "stop", session_id, "--json"],
+                cwd=scope.project,
+                env=scope.env,
+                timeout=30,
+            )
+            parse_json_stdout(stop.stdout, f"{label} top-level agent stop")
+            wait_until(
+                lambda: not ps_contains_session(scope, aimux_bin, session_id),
+                timeout=10,
+                label=f"{label} top-level agent session removed from aimux ps",
+            )
+            launched.append(f"{label}:{session_id}")
+            return session_id, ps_payload
+
+        session_id, ps_payload = launch_and_stop("codex-bare", ["codex"], "codex")
+        launch_and_stop("codex-args", ["codex", "hello"], "codex")
+        launch_and_stop("claude-bare", ["claude"], "claude")
+        launch_and_stop("aider-args", ["aider", "--help"], "aider")
         return {
             "name": "phase8-top-level-agent-tool-smoke",
             "sessionId": session_id,
+            "launched": launched,
             "psAfterSpawn": ps_payload,
             "caught": [
                 "bare top-level agent tool dispatch through the real binary",
+                "built-in codex and claude tool names through the real binary",
                 "tool argument pass-through before Clap fallback",
                 "spawn executor implementation behind resolved dispatch",
                 "foreground target opening from an attached tmux client",
