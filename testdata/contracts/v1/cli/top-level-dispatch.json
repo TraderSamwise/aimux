@@ -1,0 +1,93 @@
+{
+  "id": "cli.top-level-dispatch",
+  "source": "post-phase8/native-cli-top-level-dispatch",
+  "generatedBy": "manual-regression-from-sam-mbp2-install",
+  "description": "Native root CLI positional tool dispatch and command alias contract after the TypeScript entrypoints were retired.",
+  "cases": [
+    {
+      "id": "codex_tool",
+      "name": "aimux codex dispatches to lifecycle spawn",
+      "input": {
+        "args": ["codex"]
+      },
+      "output": {
+        "normalizedArgs": ["codex"],
+        "launchArgs": ["spawn", "--tool", "codex"],
+        "isCoreCommand": true
+      }
+    },
+    {
+      "id": "claude_tool_with_args",
+      "name": "aimux claude preserves extra tool arguments after spawn delimiter",
+      "input": {
+        "args": ["claude", "--model", "opus"]
+      },
+      "output": {
+        "normalizedArgs": ["claude", "--model", "opus"],
+        "launchArgs": ["spawn", "--tool", "claude", "--", "--model", "opus"],
+        "isCoreCommand": true
+      }
+    },
+    {
+      "id": "root_delimiter_tool",
+      "name": "aimux -- codex strips the root delimiter before tool dispatch",
+      "input": {
+        "args": ["--", "codex"]
+      },
+      "output": {
+        "normalizedArgs": ["codex"],
+        "launchArgs": ["spawn", "--tool", "codex"],
+        "isCoreCommand": true
+      }
+    },
+    {
+      "id": "tool_delimiter_args",
+      "name": "aimux codex -- --search preserves only one tool argument delimiter",
+      "input": {
+        "args": ["codex", "--", "--search"]
+      },
+      "output": {
+        "normalizedArgs": ["codex", "--", "--search"],
+        "launchArgs": ["spawn", "--tool", "codex", "--", "--search"],
+        "isCoreCommand": true
+      }
+    },
+    {
+      "id": "shell_alias",
+      "name": "aimux shell dispatches to interactive service create",
+      "input": {
+        "args": ["shell"]
+      },
+      "output": {
+        "normalizedArgs": ["shell"],
+        "launchArgs": ["service", "create"],
+        "isCoreCommand": true
+      }
+    },
+    {
+      "id": "projects_alias",
+      "name": "aimux projects is the projects list alias advertised by help",
+      "input": {
+        "args": ["projects"]
+      },
+      "output": {
+        "normalizedArgs": ["projects"],
+        "launchArgs": null,
+        "isCoreCommand": true
+      }
+    },
+    {
+      "id": "disabled_tool",
+      "name": "configured disabled tools do not dispatch as lifecycle spawn",
+      "input": {
+        "args": ["codex"],
+        "disabledTool": "codex"
+      },
+      "output": {
+        "normalizedArgs": ["codex"],
+        "launchArgs": null,
+        "isCoreCommand": false
+      }
+    }
+  ]
+}

@@ -17,8 +17,8 @@ use aimux::core_cli_routing::{
     parse_core_notification_args, parse_core_outline_args, parse_core_overseer_clear_args,
     parse_core_overseer_start_args, parse_core_project_ensure_args, parse_core_repair_args,
     parse_core_restart_args, parse_core_runtime_restart_args, parse_core_scribe_clear_args,
-    parse_core_scribe_start_args, parse_core_task_args, parse_core_team_args,
-    parse_core_thread_args, parse_core_worktree_args,
+    parse_core_scribe_start_args, parse_core_service_create_args, parse_core_task_args,
+    parse_core_team_args, parse_core_thread_args, parse_core_worktree_args,
 };
 
 #[test]
@@ -503,6 +503,79 @@ fn lifecycle_parsers_match_spawn_stop_kill_and_fork_forms() {
     assert!(!is_core_cli_command(&["stop"]));
     assert!(is_core_cli_command(&["stop", "claude-1"]));
     assert!(is_core_cli_command(&["stop", "--bad"]));
+}
+
+#[test]
+fn service_create_parser_matches_top_level_shell_dispatch_forms() {
+    let interactive =
+        parse_core_service_create_args(&["service", "create"]).expect("interactive service create");
+    assert_eq!(interactive.command, "");
+    assert_eq!(interactive.project, None);
+    assert_eq!(interactive.worktree, None);
+    assert!(!interactive.json);
+
+    let command = parse_core_service_create_args(&[
+        "service",
+        "create",
+        "--project",
+        "/repo",
+        "--worktree=feature",
+        "--json",
+        "--",
+        "yarn",
+        "dev",
+    ])
+    .expect("service create command");
+    assert_eq!(command.command, "yarn dev");
+    assert_eq!(command.project.as_deref(), Some("/repo"));
+    assert_eq!(command.worktree.as_deref(), Some("feature"));
+    assert!(command.json);
+
+    assert!(parse_core_service_create_args(&["service"]).is_none());
+    assert!(parse_core_service_create_args(&["service", "create", "--worktree"]).is_none());
+    assert!(parse_core_service_create_args(&["service", "create", "--bad"]).is_none());
+}
+
+#[test]
+fn root_dispatch_delimiter_and_tool_forms_match_native_contract() {
+    use aimux::config::default_config;
+    use aimux::native_cli_dispatch::{
+        native_tool_launch_args_for_config, normalize_root_dispatch_args,
+    };
+
+    let config = default_config();
+    let root_delimited = normalize_root_dispatch_args(&["--".to_owned(), "codex".to_owned()]);
+    assert_eq!(root_delimited, ["codex"]);
+    assert_eq!(
+        native_tool_launch_args_for_config(&root_delimited, &config),
+        Some(vec![
+            "spawn".to_owned(),
+            "--tool".to_owned(),
+            "codex".to_owned()
+        ])
+    );
+    assert_eq!(
+        native_tool_launch_args_for_config(
+            &["claude".to_owned(), "--model".to_owned(), "opus".to_owned()],
+            &config
+        ),
+        Some(vec![
+            "spawn".to_owned(),
+            "--tool".to_owned(),
+            "claude".to_owned(),
+            "--".to_owned(),
+            "--model".to_owned(),
+            "opus".to_owned()
+        ])
+    );
+    assert_eq!(
+        native_tool_launch_args_for_config(&["shell".to_owned()], &config),
+        Some(vec!["service".to_owned(), "create".to_owned()])
+    );
+    assert_eq!(
+        native_tool_launch_args_for_config(&["projects".to_owned()], &config),
+        None
+    );
 }
 
 #[test]
@@ -1305,6 +1378,8 @@ fn core_cli_eligibility_matches_the_typescript_dispatch_boundary() {
         vec!["daemon", "status"],
         vec!["daemon", "projects"],
         vec!["daemon", "restart", "--json"],
+        vec!["service", "create"],
+        vec!["service", "create", "--", "yarn", "dev"],
         vec!["debug-state", "codex-a1"],
         vec!["doctor", "versions"],
         vec!["doctor", "versions", "--json"],
@@ -1344,6 +1419,7 @@ fn core_cli_eligibility_matches_the_typescript_dispatch_boundary() {
         vec!["graveyard", "list"],
         vec!["graveyard", "send", "claude-1"],
         vec!["graveyard", "cleanup", "--dry-run"],
+        vec!["projects"],
         vec!["projects", "list", "--json"],
         vec!["remote", "status", "--json"],
         vec!["remote", "enable"],
@@ -1376,6 +1452,8 @@ fn core_cli_eligibility_matches_the_typescript_dispatch_boundary() {
         vec!["dashboard-reload", "--client-tty=-x"],
         vec!["restart-runtime", "--project-root=-x"],
         vec!["host", "stop", "--open"],
+        vec!["service"],
+        vec!["service", "create", "--worktree"],
         vec!["daemon", "restart", "--project", "/repo"],
         vec!["daemon", "status", "extra"],
         vec!["debug-state"],

@@ -5,6 +5,7 @@ use aimux::daemon::text::agents::{
     DaemonAgentTextRuntime, ProjectServicePostOptions, route_agent_text_request,
 };
 use aimux::daemon::text::params::ProjectServiceJsonResult;
+use aimux::native_cli_dispatch::CORE_SERVICE_CREATE_TEXT_ROUTE;
 use aimux::project_api_contract::routes as project_routes;
 use serde_json::{Value, json};
 
@@ -84,6 +85,10 @@ impl DaemonAgentTextRuntime for FakeAgentRuntime {
             project_routes::agents::SPAWN => {
                 ProjectServiceJsonResult::ok("/repo", json!({ "sessionId": "claude-1" }))
             }
+            project_routes::services::CREATE => ProjectServiceJsonResult::ok(
+                "/repo",
+                json!({ "serviceId": "service-1", "status": "running" }),
+            ),
             project_routes::agents::STOP => ProjectServiceJsonResult::ok(
                 "/repo",
                 json!({ "sessionId": body["sessionId"].clone(), "status": "offline" }),
@@ -160,6 +165,23 @@ fn lifecycle_routes_match_agent_project_service_contracts() {
             "extraArgs": ["--model", "gpt-5"],
             "open": false
         })
+    );
+
+    let service = route_agent_text_request(
+        &mut runtime,
+        "POST",
+        CORE_SERVICE_CREATE_TEXT_ROUTE,
+        Some(&json!({ "project": ".", "command": "yarn dev", "worktreePath": "wt" })),
+    )
+    .expect("service create route");
+    assert_eq!(text_body(service), "service service-1 running\n");
+    let service_call = runtime.calls.last().unwrap();
+    assert_eq!(service_call.project, ".");
+    assert_eq!(service_call.route_path, project_routes::services::CREATE);
+    assert_eq!(service_call.ensure_project, Some(true));
+    assert_eq!(
+        service_call.body.as_ref().unwrap(),
+        &json!({ "command": "yarn dev", "worktreePath": "/repo/wt" })
     );
 
     let stopped = route_agent_text_request(

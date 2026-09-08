@@ -12,6 +12,9 @@ use aimux::local_ui_server::{
     DEFAULT_LOCAL_UI_HOST, DEFAULT_LOCAL_UI_PORT, LocalUiConfig, LocalUiServerOptions,
     open_url_in_browser, resolve_default_local_ui_root, start_local_ui_server,
 };
+use aimux::native_cli_dispatch::{
+    native_tool_launch_args_for_config, normalize_root_dispatch_args,
+};
 use aimux::paths::PathResolver;
 use aimux::project_service::process::{
     ProjectServiceInternalOptions, run_project_service_internal,
@@ -123,7 +126,7 @@ enum RewriteCommand {
 fn main() -> Result<ExitCode> {
     prepare_stable_process_env();
     let raw_args = std::env::args().skip(1).collect::<Vec<_>>();
-    let stripped_args = core_command_args(&raw_args);
+    let stripped_args = normalize_root_dispatch_args(&core_command_args(&raw_args));
     if is_root_version_request(&stripped_args) {
         println!("{}", aimux_package_version());
         return Ok(ExitCode::SUCCESS);
@@ -365,20 +368,10 @@ fn native_tool_launch_args(args: &[String]) -> Option<Vec<String>> {
     }
     let project_root = current_project_root().ok()?;
     let config = load_config_for_project(project_root);
-    let tool_config = config.get("tools")?.as_object()?.get(tool)?;
-    if tool_config
-        .get("enabled")
-        .and_then(serde_json::Value::as_bool)
-        == Some(false)
-    {
-        return None;
-    }
-    let mut spawn_args = vec!["spawn".to_owned(), "--tool".to_owned(), tool.clone()];
-    if !extra_args.is_empty() {
-        spawn_args.push("--".to_owned());
-        spawn_args.extend(extra_args.iter().cloned());
-    }
-    Some(spawn_args)
+    let normalized = std::iter::once(tool.clone())
+        .chain(extra_args.iter().cloned())
+        .collect::<Vec<_>>();
+    native_tool_launch_args_for_config(&normalized, &config)
 }
 
 fn current_project_root() -> Result<PathBuf> {
@@ -451,6 +444,7 @@ fn is_known_aimux_command_word(word: &str) -> bool {
             | "scribe"
             | "security"
             | "serve"
+            | "service"
             | "spawn"
             | "stop"
             | "task"

@@ -14,6 +14,7 @@ use crate::daemon::text::params::{
     ProjectServiceJsonResult, required_project_service_array, required_project_service_string,
     resolve_lifecycle_worktree, resolve_project_relative_path,
 };
+use crate::native_cli_dispatch::CORE_SERVICE_CREATE_TEXT_ROUTE;
 use crate::project_api_contract::routes as project_routes;
 use serde_json::{Map, Value, json};
 
@@ -63,6 +64,9 @@ pub fn route_agent_text_request(
 
     if method == "POST" && pathname == CORE_API_ROUTES.lifecycle_spawn_text {
         return Some(lifecycle_spawn_text_route(runtime, &route_url, body));
+    }
+    if method == "POST" && pathname == CORE_SERVICE_CREATE_TEXT_ROUTE {
+        return Some(service_create_text_route(runtime, &route_url, body));
     }
     if method == "POST" && pathname == CORE_API_ROUTES.lifecycle_stop_text {
         return Some(lifecycle_status_text_route(
@@ -164,6 +168,53 @@ pub fn route_agent_text_request(
     }
 
     None
+}
+
+pub fn service_create_text_route(
+    runtime: &mut impl DaemonAgentTextRuntime,
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+) -> DaemonRouteResponse {
+    let project = match required_param(route_url, body, "project") {
+        Ok(project) => project,
+        Err(response) => return response,
+    };
+    let project_root = runtime.resolve_project_root(&project);
+    let worktree_path = resolve_lifecycle_worktree(
+        &project_root,
+        string_param(route_url, body, "worktreePath").as_deref(),
+    );
+    let command = string_param(route_url, body, "command").unwrap_or_default();
+    let mut request = Map::new();
+    request.insert("command".into(), Value::String(command.clone()));
+    if let Some(worktree_path) = worktree_path.as_ref() {
+        request.insert("worktreePath".into(), Value::String(worktree_path.clone()));
+    }
+    let (json, project_root) = match unwrap_project_result(runtime.post_project_service_json(
+        &project,
+        project_routes::services::CREATE,
+        Value::Object(request),
+        ProjectServicePostOptions::ensure(),
+    )) {
+        Ok(result) => result,
+        Err(response) => return response,
+    };
+    let service_id = match required_project_service_string(&json, "service create", "serviceId") {
+        Ok(service_id) => service_id,
+        Err(response) => return response,
+    };
+    let payload = json!({
+        "ok": true,
+        "projectRoot": project_root.clone(),
+        "serviceId": service_id,
+        "command": command,
+        "worktreePath": worktree_path.unwrap_or_else(|| project_root.clone()),
+    });
+    text_or_json_lines(
+        route_url,
+        payload,
+        &[format!("service {service_id} running")],
+    )
 }
 
 pub fn lifecycle_spawn_text_route(

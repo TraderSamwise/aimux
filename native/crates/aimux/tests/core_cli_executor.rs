@@ -4,6 +4,7 @@ use aimux::core_command_contract::CORE_COMMAND_NAMES;
 use aimux::daemon::text::auth::AuthFlowResult;
 use aimux::daemon::text::operations::RestartControlPlaneTextResult;
 use aimux::daemon_state::{AimuxDaemonInfo, DaemonState, StoppedDaemonInfo};
+use aimux::native_cli_dispatch::CORE_SERVICE_CREATE_TEXT_ROUTE;
 use serde_json::{Value, json};
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
@@ -166,6 +167,8 @@ impl CoreCliRuntime for FakeRuntime {
             "migrated claude-1 -> feature\n".into()
         } else if path.starts_with("/core/lifecycle/spawn-text") {
             "spawned claude-1\n".into()
+        } else if path.starts_with(CORE_SERVICE_CREATE_TEXT_ROUTE) {
+            "service service-1 running\n".into()
         } else if path.starts_with("/core/lifecycle/stop-text") {
             "stopped claude-1\n".into()
         } else if path.starts_with("/core/lifecycle/kill-text") {
@@ -467,6 +470,10 @@ fn host_status_and_projects_render_text_and_json_like_core_cli() {
             "Tmux session: aimux-repo"
         ]
     );
+
+    let bare_projects = run_core_cli_with(&args(&["projects"]), &mut runtime);
+    assert_eq!(bare_projects.code, 0);
+    assert_eq!(bare_projects.stdout, ["repo  live  /repo"]);
 
     let projects = run_core_cli_with(&args(&["projects", "list", "--json"]), &mut runtime);
     assert_eq!(projects.code, 0);
@@ -950,6 +957,10 @@ fn lifecycle_commands_execute_native_text_routes_without_core_command_fallback()
         &mut runtime,
     );
     let stop = run_core_cli_with(&args(&["stop", "claude-1"]), &mut runtime);
+    let service = run_core_cli_with(
+        &args(&["service", "create", "--", "yarn", "dev"]),
+        &mut runtime,
+    );
     let kill = run_core_cli_with(&args(&["kill", "claude-1"]), &mut runtime);
     let fork = run_core_cli_with(
         &args(&[
@@ -965,6 +976,7 @@ fn lifecycle_commands_execute_native_text_routes_without_core_command_fallback()
 
     assert_eq!(spawn.stdout, ["spawned claude-1"]);
     assert_eq!(stop.stdout, ["stopped claude-1"]);
+    assert_eq!(service.stdout, ["service service-1 running"]);
     assert_eq!(kill.stdout, ["graveyarded claude-1"]);
     assert_eq!(fork.stdout, ["forked codex-2\nthread thread-1"]);
     assert_eq!(
@@ -982,6 +994,14 @@ fn lifecycle_commands_execute_native_text_routes_without_core_command_fallback()
             (
                 "/core/lifecycle/stop-text".into(),
                 Some(json!({ "project": "/repo", "sessionId": "claude-1" })),
+            ),
+            (
+                CORE_SERVICE_CREATE_TEXT_ROUTE.into(),
+                Some(json!({
+                    "project": "/repo",
+                    "command": "yarn dev",
+                    "worktreePath": null,
+                })),
             ),
             (
                 "/core/lifecycle/kill-text".into(),

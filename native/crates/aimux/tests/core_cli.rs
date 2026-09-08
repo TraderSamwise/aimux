@@ -62,6 +62,12 @@ fn sidecar_owned_commands_map_to_authoritative_names_and_payloads() {
             None,
         ),
         (
+            vec!["projects"],
+            CoreCliOperation::ProjectsList,
+            CORE_COMMAND_NAMES.projects_list,
+            None,
+        ),
+        (
             vec!["serve"],
             CoreCliOperation::ProjectServe,
             CORE_COMMAND_NAMES.project_ensure,
@@ -1515,6 +1521,36 @@ fn lifecycle_commands_plan_native_text_routes() {
                 "worktreePath": "feature",
                 "extraArgs": ["--model", "gpt-5"],
                 "open": false,
+            })),
+        }
+    );
+
+    let service = classify_core_cli_with_project_resolver(
+        &[
+            "service",
+            "create",
+            "--project",
+            "./child",
+            "--worktree",
+            "feature",
+            "--json",
+            "--",
+            "yarn",
+            "dev",
+        ],
+        &context(true, true),
+        |project| format!("/resolved/{project}"),
+    )
+    .expect("service create plan");
+    assert_eq!(service.operation, CoreCliOperation::ServiceCreate);
+    assert_eq!(
+        service.action,
+        CoreCliAction::TextRoute {
+            path: "/core/services/create-text?json=1".into(),
+            body: Some(json!({
+                "project": "/resolved/./child",
+                "command": "yarn dev",
+                "worktreePath": "feature",
             })),
         }
     );

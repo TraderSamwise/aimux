@@ -19,7 +19,7 @@ pub use collaboration::parse_core_collaboration_args;
 pub use common::{core_command_args, has_core_global_logging_args};
 pub use lifecycle::{
     parse_core_lifecycle_fork_args, parse_core_lifecycle_spawn_args,
-    parse_core_lifecycle_status_args, parse_core_migration_args,
+    parse_core_lifecycle_status_args, parse_core_migration_args, parse_core_service_create_args,
 };
 pub use local::{parse_core_logs_args, parse_core_metadata_args, parse_core_repair_args};
 pub use notifications::{
@@ -681,6 +681,7 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
             parse_core_migration_args(args).is_some()
         }
         (Some("spawn"), _) => true,
+        (Some("service"), Some("create")) => parse_core_service_create_args(args).is_some(),
         (Some("fork"), _) => true,
         (Some("kill"), _) => true,
         (Some("stop"), _) => stop_has_session_or_invalid_agent_shape(args),
@@ -744,6 +745,7 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
         (Some("metadata"), _) => parse_core_metadata_args(args).is_some(),
         (Some("repair"), _) => parse_core_repair_args(args).is_some(),
         (Some("logs"), _) => parse_core_logs_args(args).is_some(),
+        (Some("projects"), None) => true,
         (Some("projects"), Some("list")) => has_only_allowed_flags(&args[2..], &["--json"]),
         (Some("remote"), Some("status")) => has_only_allowed_flags(&args[2..], &["--json"]),
         (Some("remote"), Some("enable" | "disable")) => args.len() == 2,

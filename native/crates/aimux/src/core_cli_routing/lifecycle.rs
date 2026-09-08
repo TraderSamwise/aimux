@@ -1,5 +1,6 @@
 use super::args::{
     CoreLifecycleForkArgs, CoreLifecycleSpawnArgs, CoreLifecycleStatusArgs, CoreMigrationArgs,
+    CoreServiceCreateArgs,
 };
 use super::common::required_value;
 
@@ -193,6 +194,86 @@ pub fn parse_core_lifecycle_spawn_args<S: AsRef<str>>(
         worktree,
         extra_args,
         open,
+        json,
+    })
+}
+
+pub fn parse_core_service_create_args<S: AsRef<str>>(args: &[S]) -> Option<CoreServiceCreateArgs> {
+    if args.first().map(AsRef::as_ref) != Some("service")
+        || args.get(1).map(AsRef::as_ref) != Some("create")
+    {
+        return None;
+    }
+    let mut command = String::new();
+    let mut project = None;
+    let mut worktree = None;
+    let mut json = false;
+    let mut index = 2;
+    while index < args.len() {
+        let arg = args[index].as_ref();
+        if arg == "--" {
+            command = args[index + 1..]
+                .iter()
+                .map(AsRef::as_ref)
+                .collect::<Vec<_>>()
+                .join(" ");
+            break;
+        }
+        if arg == "--json" {
+            json = true;
+            index += 1;
+            continue;
+        }
+        if arg == "--command" {
+            command = args.get(index + 1)?.as_ref().to_owned();
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--command=") {
+            command = value.to_owned();
+            index += 1;
+            continue;
+        }
+        if arg == "--project" {
+            let value = required_value(args, index)?;
+            if value.starts_with('-') {
+                return None;
+            }
+            project = Some(value.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--project=") {
+            if value.is_empty() || value.starts_with('-') {
+                return None;
+            }
+            project = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        if arg == "--worktree" {
+            let value = required_value(args, index)?;
+            if value.starts_with('-') {
+                return None;
+            }
+            worktree = Some(value.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--worktree=") {
+            if value.is_empty() || value.starts_with('-') {
+                return None;
+            }
+            worktree = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
+        return None;
+    }
+    Some(CoreServiceCreateArgs {
+        command,
+        project,
+        worktree,
         json,
     })
 }

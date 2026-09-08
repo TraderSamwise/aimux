@@ -12,10 +12,11 @@ use crate::core_cli_routing::{
     parse_core_notification_args, parse_core_notification_test_args, parse_core_outline_args,
     parse_core_overseer_clear_args, parse_core_overseer_start_args, parse_core_project_ensure_args,
     parse_core_repair_args, parse_core_restart_args, parse_core_scribe_clear_args,
-    parse_core_scribe_start_args, parse_core_task_args, parse_core_team_args,
-    parse_core_thread_args, parse_core_worktree_args,
+    parse_core_scribe_start_args, parse_core_service_create_args, parse_core_task_args,
+    parse_core_team_args, parse_core_thread_args, parse_core_worktree_args,
 };
 use crate::core_command_contract::{CORE_API_ROUTES, CORE_COMMAND_NAMES};
+use crate::native_cli_dispatch::CORE_SERVICE_CREATE_TEXT_ROUTE;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::error::Error;
@@ -56,6 +57,7 @@ pub enum CoreCliOperation {
     AgentMigrate,
     AgentPs,
     LifecycleSpawn,
+    ServiceCreate,
     LifecycleStop,
     LifecycleKill,
     LifecycleFork,
@@ -538,6 +540,31 @@ where
                 CoreCliAction::TextRoute {
                     path: text_route_path(CORE_API_ROUTES.lifecycle_spawn_text, parsed.json),
                     body: Some(Value::Object(body)),
+                },
+                CoreCliFallback::None,
+            )
+        }
+        ("service", "create") => {
+            let parsed = parse_core_service_create_args(&args).ok_or_else(|| {
+                CoreCliPlanError::InvalidArguments {
+                    args: args.clone(),
+                    message: "error: invalid service create arguments",
+                }
+            })?;
+            let project_root = parsed
+                .project
+                .as_deref()
+                .map(&resolve_project_root)
+                .unwrap_or_else(|| context.current_project_root.clone());
+            (
+                CoreCliOperation::ServiceCreate,
+                CoreCliAction::TextRoute {
+                    path: text_route_path(CORE_SERVICE_CREATE_TEXT_ROUTE, parsed.json),
+                    body: Some(json!({
+                        "project": project_root,
+                        "command": parsed.command,
+                        "worktreePath": parsed.worktree,
+                    })),
                 },
                 CoreCliFallback::None,
             )
@@ -1872,7 +1899,7 @@ where
                 fallback,
             )
         }
-        ("projects", "list") => (
+        ("projects", "") | ("projects", "list") => (
             CoreCliOperation::ProjectsList,
             command_action(default_call(CORE_COMMAND_NAMES.projects_list, None)),
             CoreCliFallback::None,
