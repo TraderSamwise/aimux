@@ -1,4 +1,6 @@
-use aimux::root_session_launch::{launchable_offline_session_ids, parse_root_resume_args};
+use aimux::root_session_launch::{
+    RootSessionLaunchMode, launchable_offline_session_ids, parse_root_resume_args,
+};
 use serde_json::json;
 
 fn args(values: &[&str]) -> Vec<String> {
@@ -19,12 +21,9 @@ fn root_resume_parser_accepts_optional_tool_filter_only() {
             .tool_filter,
         Some("codex".into())
     );
-    assert_eq!(
-        parse_root_resume_args(&args(&["--restore"]))
-            .unwrap()
-            .tool_filter,
-        None
-    );
+    let restore = parse_root_resume_args(&args(&["--restore", "claude"])).unwrap();
+    assert_eq!(restore.mode, RootSessionLaunchMode::Restore);
+    assert_eq!(restore.tool_filter, Some("claude".into()));
     assert!(parse_root_resume_args(&args(&["--resume", "--json"])).is_none());
     let request = parse_root_resume_args(&args(&["--resume", "codex", "extra"])).unwrap();
     assert_eq!(request.tool_filter, Some("codex".into()));

@@ -72,7 +72,7 @@ pub(super) fn route_agent_restore_previous(
     let mut restored = Vec::new();
     let mut failed = Vec::new();
     for session_id in &session_ids {
-        let response = resume_agent_session(context, session_id, runtime, "agent.restore");
+        let response = resume_agent_session(context, session_id, runtime, false, "agent.restore");
         if response.status == 200 {
             restored.push(json!({
                 "sessionId": session_id,

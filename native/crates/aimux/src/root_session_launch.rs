@@ -93,6 +93,7 @@ pub fn launchable_offline_session_ids(topology: &Value, tool_filter: Option<&str
 
 pub fn resume_saved_sessions(
     project_root: &Path,
+    mode: RootSessionLaunchMode,
     tool_filter: Option<&str>,
 ) -> Result<RootResumeResult, CoreCommandTransportError> {
     let mut resolver = PathResolver::from_env();
@@ -111,8 +112,9 @@ pub fn resume_saved_sessions(
         resumed: Vec::new(),
         failed: Vec::new(),
     };
+    let force_fresh = mode == RootSessionLaunchMode::Restore;
     for session_id in session_ids {
-        match post_project_service_resume(&endpoint.host, endpoint.port, &session_id) {
+        match post_project_service_resume(&endpoint.host, endpoint.port, &session_id, force_fresh) {
             Ok(()) => result.resumed.push(session_id),
             Err(error) => result.failed.push((session_id, error.to_string())),
         }
@@ -124,8 +126,9 @@ fn post_project_service_resume(
     host: &str,
     port: u16,
     session_id: &str,
+    force_fresh: bool,
 ) -> Result<(), CoreCommandTransportError> {
-    let body = serde_json::to_string(&json!({ "sessionId": session_id }))?;
+    let body = serde_json::to_string(&json!({ "sessionId": session_id, "fresh": force_fresh }))?;
     let response = execute_loopback_json_request(&DaemonJsonRequest {
         url: format!("http://{host}:{port}{}", routes::agents::RESUME),
         method: DaemonHttpMethod::Post,

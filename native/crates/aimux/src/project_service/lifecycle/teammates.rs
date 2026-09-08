@@ -192,6 +192,7 @@ pub(super) fn route_agent_resume_teammate(
         context,
         &resolved.teammate_session_id,
         runtime,
+        false,
         "agent.resume",
     );
     attach_teammate_response_ids(

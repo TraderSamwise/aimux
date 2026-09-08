@@ -1260,6 +1260,61 @@ fn agent_resume_refuses_missing_exact_backend_resume() {
 }
 
 #[test]
+fn agent_restore_force_fresh_relaunches_without_backend_id() {
+    let project = temp_project("agent-restore-fresh");
+    write_project_tool_config(&project);
+    let state_dir = project.join("state");
+    write_agent_resume_topology(
+        &state_dir,
+        json!({
+            "id": "mock-offline",
+            "nodeId": "agent:mock-offline",
+            "status": "offline",
+            "tool": "mock",
+            "command": "/bin/mock",
+            "args": ["--base", "--resume", "stale-backend"],
+            "worktreePath": "/repo/worktree",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+        }),
+    );
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::RESUME,
+        Some(&json!({ "sessionId": "mock-offline", "fresh": true })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["sessionId"], "mock-offline");
+    assert_eq!(response.body["status"], "running");
+    assert_eq!(response.body["transition"]["operation"], "agent.restore");
+    assert_eq!(runtime.created.len(), 1);
+    let created = &runtime.created[0];
+    assert_eq!(created.cwd, "/repo/worktree");
+    assert_eq!(created.command, "env");
+    assert!(
+        created
+            .args
+            .last()
+            .is_some_and(|arg| !arg.contains("--resume") && !arg.contains("stale-backend"))
+    );
+    assert_eq!(runtime.metadata[0].1["backendSessionId"], Value::Null);
+    assert_eq!(runtime.metadata[0].1["args"], json!(["--base"]));
+    let topology = read_topology(&state_dir);
+    let session = session(&topology, "mock-offline");
+    assert_eq!(session["status"], "running");
+    assert_eq!(session["backendSessionId"], Value::Null);
+    assert_eq!(session["args"], json!(["--base"]));
+    cleanup(project);
+}
+
+#[test]
 fn agent_resume_fresh_relaunch_clears_error_metadata_without_backend_id() {
     let project = temp_project("agent-resume-fresh");
     write_project_tool_config(&project);

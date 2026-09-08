@@ -19,7 +19,9 @@ use aimux::paths::PathResolver;
 use aimux::project_service::process::{
     ProjectServiceInternalOptions, run_project_service_internal,
 };
-use aimux::root_session_launch::{parse_root_resume_args, resume_saved_sessions};
+use aimux::root_session_launch::{
+    RootResumeRequest, parse_root_resume_args, resume_saved_sessions,
+};
 use aimux::tmux::{OpenTargetOptions, TmuxRuntimeManager, TmuxTarget};
 use aimux::tmux_control::{parse_tmux_control_args, run_tmux_control};
 use aimux::tmux_expose::{parse_expose_args, run_tmux_expose};
@@ -169,7 +171,7 @@ fn main() -> Result<ExitCode> {
                 return run_root_dashboard_command();
             }
             if let Some(request) = parse_root_resume_args(&stripped_args) {
-                return run_root_resume_command(request.tool_filter.as_deref());
+                return run_root_resume_command(request);
             }
             if let Some(args) = native_tool_launch_args(&stripped_args) {
                 return run_root_tool_launch_command(&args);
@@ -369,7 +371,7 @@ fn print_execution(execution: aimux::core_cli_executor::CoreCliExecution) {
     }
 }
 
-fn run_root_resume_command(tool_filter: Option<&str>) -> Result<ExitCode> {
+fn run_root_resume_command(request: RootResumeRequest) -> Result<ExitCode> {
     let serve_args = vec!["serve".to_owned()];
     let serve = run_core_cli(&serve_args);
     if serve.code != 0 {
@@ -382,7 +384,8 @@ fn run_root_resume_command(tool_filter: Option<&str>) -> Result<ExitCode> {
         return Ok(ExitCode::from(serve.code as u8));
     }
     let project_root = current_project_root()?;
-    let result = resume_saved_sessions(&project_root, tool_filter)?;
+    let result =
+        resume_saved_sessions(&project_root, request.mode, request.tool_filter.as_deref())?;
     if result.resumed.is_empty() {
         eprintln!("No saved session state found (or state is stale). Starting fresh.");
     }

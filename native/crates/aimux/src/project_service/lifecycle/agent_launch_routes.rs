@@ -514,13 +514,20 @@ pub(super) fn route_agent_resume(
     let Some(session_id) = trimmed_string(body.get("sessionId")) else {
         return json_error(400, "sessionId is required");
     };
-    resume_agent_session(context, &session_id, runtime, "agent.resume")
+    let force_fresh = body.get("fresh").and_then(Value::as_bool) == Some(true);
+    let operation = if force_fresh {
+        "agent.restore"
+    } else {
+        "agent.resume"
+    };
+    resume_agent_session(context, &session_id, runtime, force_fresh, operation)
 }
 
 pub(super) fn resume_agent_session(
     context: &ProjectServiceRequestContext,
     session_id: &str,
     runtime: &mut impl ProjectLifecycleRuntime,
+    force_fresh: bool,
     operation: &str,
 ) -> ProjectServiceDispatchResponse {
     let session_id = session_id.to_owned();
@@ -564,7 +571,7 @@ pub(super) fn resume_agent_session(
         .sessions
         .get(&session_id)
         .and_then(|session| session.get("derived"));
-    let relaunch_fresh = should_relaunch_agent_fresh(&session, derived);
+    let relaunch_fresh = force_fresh || should_relaunch_agent_fresh(&session, derived);
     let use_backend_resume = !relaunch_fresh
         && can_resume_with_backend_session_id(tool_config, backend_session_id.as_deref());
     let action_args = if use_backend_resume {
