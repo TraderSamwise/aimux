@@ -1804,6 +1804,18 @@ fn worktree_stop_key_blocks_pending_and_dismisses_failures() {
     let mut controller = DashboardController::new(&snapshot);
     controller.navigation.level = DashboardNavLevel::Worktrees;
     controller.navigation.worktree_index = 1;
+    snapshot.worktree_groups[1].removing = true;
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Printable('x')),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(
+        controller.footer_message.as_deref(),
+        Some("Worktree feature-a is removing")
+    );
+
+    snapshot.worktree_groups[1].removing = false;
     snapshot.worktree_groups[1].pending = true;
     snapshot.worktree_groups[1].pending_action = Some("creating".into());
 
@@ -1829,6 +1841,10 @@ fn worktree_stop_key_blocks_pending_and_dismisses_failures() {
     else {
         panic!("expected failure dismissal request");
     };
+    assert_eq!(
+        controller.footer_message.as_deref(),
+        Some("Dismissed failure for feature-a")
+    );
     assert_eq!(request.path, routes::OPERATION_FAILURES_CLEAR);
     assert_eq!(
         request.body,

@@ -2170,21 +2170,35 @@ impl DashboardController {
             .worktree_groups
             .get(self.navigation.worktree_index)?;
         let path = group.path.as_ref()?;
-        if group.pending || group.removing {
+        if group.removing
+            || group.pending_action.as_deref() == Some("removing")
+            || group.pending_action.as_deref() == Some("graveyarding")
+        {
+            let action = if group.pending_action.as_deref() == Some("graveyarding") {
+                "graveyarding"
+            } else {
+                "removing"
+            };
+            self.footer_message = Some(format!("Worktree {} is {action}", group.name));
+            return Some(DashboardControllerEffect::Render);
+        }
+        if group.pending {
             let action = group.pending_action.as_deref().unwrap_or("pending");
             self.footer_message = Some(format!("Worktree {} is {action}", group.name));
             return Some(DashboardControllerEffect::Render);
         }
         if let Some(failure) = group.operation_failure.as_ref() {
-            let operation = failure.operation.as_deref().unwrap_or("worktree");
+            self.footer_message = Some(format!("Dismissed failure for {}", group.name));
+            let mut body = Map::new();
+            body.insert("targetKind".into(), Value::String("worktree".into()));
+            if let Some(operation) = failure.operation.as_ref() {
+                body.insert("operation".into(), Value::String(operation.clone()));
+            }
+            body.insert("worktreePath".into(), Value::String(path.clone()));
             return Some(DashboardControllerEffect::Request(DashboardActionRequest {
                 method: "POST",
                 path: routes::OPERATION_FAILURES_CLEAR,
-                body: json!({
-                    "targetKind": "worktree",
-                    "operation": operation,
-                    "worktreePath": path,
-                }),
+                body: Value::Object(body),
             }));
         }
         self.worktree_remove_confirm = Some(DashboardWorktreeRemoveConfirm {
