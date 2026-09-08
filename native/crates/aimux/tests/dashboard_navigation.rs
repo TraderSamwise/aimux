@@ -141,6 +141,37 @@ fn navigation_skips_project_control_sessions_inside_worktree_groups() {
 }
 
 #[test]
+fn step_in_ignores_worktree_with_only_project_control_sessions() {
+    let mut snapshot = snapshot();
+    snapshot.worktree_groups[0].services.clear();
+    snapshot.services.clear();
+
+    let mut overseer = snapshot.worktree_groups[0].sessions[0].clone();
+    overseer.id = "claude-overseer".into();
+    overseer.label = Some("Project Overseer".into());
+    overseer.overseer = Some(true);
+    overseer.project_control = Some(true);
+
+    let mut scribe = overseer.clone();
+    scribe.id = "claude-scribe".into();
+    scribe.label = Some("Project Scribe".into());
+    scribe.overseer = None;
+    scribe.scribe = Some(true);
+
+    snapshot.sessions = vec![overseer.clone(), scribe.clone()];
+    snapshot.worktree_groups[0].sessions = vec![overseer, scribe];
+
+    let mut state = DashboardNavigationState::new(&snapshot);
+
+    assert_eq!(
+        state.step_in(&snapshot),
+        DashboardNavigationOutcome::Ignored
+    );
+    assert_eq!(state.level, DashboardNavLevel::Worktrees);
+    assert_eq!(state.item_index, 0);
+}
+
+#[test]
 fn stale_quick_jump_can_be_cleared_without_changing_focused_worktree() {
     let snapshot = snapshot();
     let mut state = DashboardNavigationState::new(&snapshot);

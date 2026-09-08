@@ -129,6 +129,9 @@ impl DashboardNavigationState {
                 group.name
             ));
         }
+        if entry_count(snapshot, self.worktree_index) == 0 {
+            return DashboardNavigationOutcome::Ignored;
+        }
         self.level = DashboardNavLevel::Sessions;
         self.item_index = 0;
         self.clamp(snapshot);
