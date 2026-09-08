@@ -36,6 +36,11 @@ impl DashboardServiceInputState {
         DashboardServiceInputEffect::Render
     }
 
+    pub fn handle_text(&mut self, text: &str) -> DashboardServiceInputEffect {
+        self.buffer.push_str(text);
+        DashboardServiceInputEffect::Render
+    }
+
     pub fn handle_backspace(&mut self) -> DashboardServiceInputEffect {
         self.buffer.pop();
         DashboardServiceInputEffect::Render

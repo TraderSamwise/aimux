@@ -241,6 +241,36 @@ fn coalesced_input_keeps_filling_existing_text_surface() {
 }
 
 #[test]
+fn bracketed_paste_is_text_not_dashboard_command() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+
+    assert_eq!(
+        parse_dashboard_key(b"\x1b[200~n\x1b[201~"),
+        DashboardKey::Paste("n".into())
+    );
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Paste("n".into())),
+        DashboardControllerEffect::Ignored
+    );
+    assert!(controller.tool_picker.is_none());
+}
+
+#[test]
+fn bracketed_paste_appends_whole_text_inside_text_surfaces() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.worktree_input = Some(String::from("feat/"));
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Paste("new-ui".into())),
+        DashboardControllerEffect::Render
+    );
+
+    assert_eq!(controller.worktree_input.as_deref(), Some("feat/new-ui"));
+}
+
+#[test]
 fn shifted_down_requests_selected_entry_reorder() {
     let snapshot = snapshot();
     let mut controller = DashboardController::new(&snapshot);

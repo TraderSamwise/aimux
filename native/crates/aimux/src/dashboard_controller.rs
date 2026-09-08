@@ -411,7 +411,7 @@ impl DashboardController {
                 return effect;
             }
         }
-        if let Some(effect) = self.handle_screen_command_key(snapshot, key) {
+        if let Some(effect) = self.handle_screen_command_key(snapshot, key.clone()) {
             return effect;
         }
         let key = normalize_dashboard_command_key(key);
@@ -518,7 +518,7 @@ impl DashboardController {
                 self.navigation.clear_quick_jump();
                 DashboardControllerEffect::Ignored
             }
-            DashboardKey::Backspace | DashboardKey::Printable(_) => {
+            DashboardKey::Backspace | DashboardKey::Printable(_) | DashboardKey::Paste(_) => {
                 self.navigation.clear_quick_jump();
                 DashboardControllerEffect::Ignored
             }
@@ -1290,6 +1290,7 @@ impl DashboardController {
             | DashboardKey::End
             | DashboardKey::Delete
             | DashboardKey::Ctrl(_)
+            | DashboardKey::Paste(_)
             | DashboardKey::Printable(_)
             | DashboardKey::FocusIn
             | DashboardKey::Other => DashboardToolPickerEffect::Render,
@@ -1343,6 +1344,12 @@ impl DashboardController {
             DashboardKey::Printable(character) => {
                 if let Some(buffer) = self.worktree_input.as_mut() {
                     buffer.push(character);
+                }
+                DashboardControllerEffect::Render
+            }
+            DashboardKey::Paste(text) => {
+                if let Some(buffer) = self.worktree_input.as_mut() {
+                    buffer.push_str(&text);
                 }
                 DashboardControllerEffect::Render
             }
@@ -1562,6 +1569,12 @@ impl DashboardController {
                 }
                 DashboardControllerEffect::Render
             }
+            DashboardKey::Paste(text) => {
+                if let Some(state) = self.overseer_watch_instructions.as_mut() {
+                    state.buffer.push_str(&text);
+                }
+                DashboardControllerEffect::Render
+            }
             DashboardKey::Up
             | DashboardKey::Down
             | DashboardKey::Stop
@@ -1703,6 +1716,12 @@ impl DashboardController {
             DashboardKey::Printable(character) => {
                 if let Some(input) = self.label_input.as_mut() {
                     input.buffer.push(character);
+                }
+                DashboardControllerEffect::Render
+            }
+            DashboardKey::Paste(text) => {
+                if let Some(input) = self.label_input.as_mut() {
+                    input.buffer.push_str(&text);
                 }
                 DashboardControllerEffect::Render
             }
@@ -2007,6 +2026,12 @@ impl DashboardController {
                 }
                 DashboardControllerEffect::Render
             }
+            DashboardKey::Paste(text) => {
+                if let Some(input) = self.orchestration_input.as_mut() {
+                    input.buffer.push_str(&text);
+                }
+                DashboardControllerEffect::Render
+            }
             _ => DashboardControllerEffect::Ignored,
         }
     }
@@ -2045,6 +2070,12 @@ impl DashboardController {
             DashboardKey::Printable(character) => {
                 if let Some(reply) = self.thread_reply.as_mut() {
                     reply.buffer.push(character);
+                }
+                DashboardControllerEffect::Render
+            }
+            DashboardKey::Paste(text) => {
+                if let Some(reply) = self.thread_reply.as_mut() {
+                    reply.buffer.push_str(&text);
                 }
                 DashboardControllerEffect::Render
             }
@@ -2126,6 +2157,7 @@ impl DashboardController {
             DashboardKey::Enter => service_input.create(worktree_path),
             DashboardKey::Backspace | DashboardKey::Delete => service_input.handle_backspace(),
             DashboardKey::Printable(character) => service_input.handle_printable(character),
+            DashboardKey::Paste(text) => service_input.handle_text(&text),
             DashboardKey::Up
             | DashboardKey::Down
             | DashboardKey::Stop
@@ -2590,7 +2622,7 @@ impl DashboardScreen {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DashboardKey {
     Up,
     Down,
@@ -2619,6 +2651,7 @@ pub enum DashboardKey {
     End,
     Delete,
     Ctrl(char),
+    Paste(String),
     Printable(char),
     FocusIn,
     Other,
@@ -2650,8 +2683,15 @@ fn dashboard_keys_from_event(event: KeyEvent) -> Vec<DashboardKey> {
             event.name.chars().next().unwrap_or_default(),
         )];
     }
+    if event.name == "paste" {
+        return if event.char.is_empty() {
+            Vec::new()
+        } else {
+            vec![DashboardKey::Paste(event.char)]
+        };
+    }
     let key = match event.name.as_str() {
-        "" | "paste" => {
+        "" => {
             return event
                 .char
                 .chars()
@@ -2700,6 +2740,7 @@ fn normalize_dashboard_command_key(key: DashboardKey) -> DashboardKey {
         DashboardKey::Printable('j') => DashboardKey::Down,
         DashboardKey::Printable('k') => DashboardKey::Up,
         DashboardKey::Printable(digit) if digit.is_ascii_digit() => DashboardKey::Digit(digit),
+        DashboardKey::Paste(_) => DashboardKey::Other,
         other => other,
     }
 }
