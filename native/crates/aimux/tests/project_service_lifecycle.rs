@@ -1731,6 +1731,45 @@ fn graveyard_agent_resurrect_restores_offline_and_clears_graveyard_state() {
 }
 
 #[test]
+fn graveyard_agent_resurrect_routes_through_project_service_router() {
+    let project = temp_project("graveyard-agent-router-resurrect");
+    let state_dir = project.join("state");
+    let worktree = project.join("wt");
+    std::fs::create_dir_all(&worktree).unwrap();
+    write_graveyard_agent_topology(&state_dir, &worktree, false);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let response = route_project_service_request(
+        &context,
+        "POST",
+        routes::graveyard_actions::RESURRECT_AGENT,
+        Some(&json!({ "id": "codex-old" })),
+    );
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["sessionId"], "codex-old");
+    assert_eq!(response.body["status"], "offline");
+    assert_eq!(
+        response.body["transition"]["operation"],
+        "graveyard.agent.resurrect"
+    );
+    let topology = read_topology(&state_dir);
+    let session = session(&topology, "codex-old");
+    assert_eq!(session["status"], "offline");
+    assert!(session.get("graveyardedAt").is_none());
+    assert!(session.get("graveyardReason").is_none());
+    assert!(session.get("restoreBlockedReason").is_none());
+    assert!(
+        topology["bindings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|binding| binding["nodeId"] != "node-old")
+    );
+    cleanup(project);
+}
+
+#[test]
 fn graveyard_agent_resurrect_rejects_missing_active_worktree() {
     let project = temp_project("graveyard-agent-missing-worktree");
     let state_dir = project.join("state");
