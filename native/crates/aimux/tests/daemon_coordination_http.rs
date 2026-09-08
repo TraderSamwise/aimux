@@ -8,7 +8,7 @@ use aimux::daemon_state::{
     save_daemon_state, save_metadata_endpoint, AimuxDaemonInfo, DaemonState, MetadataApiEndpoint,
     ProjectServiceState, ProjectServiceStatus,
 };
-use aimux::native_cli_dispatch::CORE_REVIEW_LIST_TEXT_ROUTE;
+use aimux::native_cli_dispatch::{CORE_LOOP_LIST_TEXT_ROUTE, CORE_REVIEW_LIST_TEXT_ROUTE};
 use aimux::paths::PathResolver;
 use aimux::project_api_contract::routes as project_routes;
 use serde_json::{json, Map, Value};
@@ -767,6 +767,192 @@ fn notification_routes_round_trip_through_daemon_http_to_project_service() {
     assert_eq!(
         request_json_body(&requests[3]),
         json!({ "id": "notification-1" })
+    );
+    fixture.cleanup();
+}
+
+#[test]
+fn loop_routes_round_trip_through_daemon_http_to_project_service() {
+    let fixture = CoordinationHttpFixture::new("loop-routes");
+    let project = fixture.project("repo");
+    let project_text = project.to_string_lossy().into_owned();
+    let project_query = percent_encode_query_value(&project_text);
+    let server = ScriptedHttpServer::spawn(vec![
+        json!({
+            "agents": [
+                {
+                    "id": "claude-1",
+                    "tool": "claude",
+                    "status": "running",
+                    "loop": { "active": true, "goal": "ship the slice" }
+                },
+                {
+                    "id": "codex-1",
+                    "tool": "codex",
+                    "status": "running",
+                    "loop": { "active": false }
+                }
+            ]
+        }),
+        json!({
+            "sessionId": "claude-1",
+            "loop": { "active": true, "goal": "canonical goal" }
+        }),
+        json!({ "sessionId": "claude-1", "loop": { "active": false } }),
+        json!({ "sessionId": "claude-1", "loop": { "active": false } }),
+        json!({ "ok": true }),
+        json!({ "sessionId": "claude-1", "loop": { "active": false } }),
+        json!({ "ok": true }),
+    ]);
+    let mut runtime = fixture.runtime_for_project(&project, server.port);
+
+    let listed = handle_daemon_runtime_request(
+        &mut runtime,
+        request(
+            "GET",
+            &format!("{CORE_LOOP_LIST_TEXT_ROUTE}?project={project_query}"),
+            None,
+        ),
+    );
+    assert_eq!(listed.status, 200);
+    let listed_text = text_body(&listed);
+    assert!(listed_text.contains("Loop agents:\n"));
+    assert!(listed_text.contains("claude-1  [claude]  running  {loop:ship the slice}"));
+    assert!(!listed_text.contains("codex-1"));
+
+    let added = handle_daemon_runtime_request(
+        &mut runtime,
+        request(
+            "POST",
+            CORE_API_ROUTES.loop_add_text,
+            Some(json!({
+                "project": project_text,
+                "sessionId": "claude-1",
+                "goal": "ship",
+                "updatedBy": "sam",
+                "updatedBySessionId": "overseer-1",
+                "updatedByRole": "overseer"
+            })),
+        ),
+    );
+    assert_eq!(added.status, 200);
+    assert_eq!(text_body(&added), "loop on claude-1 — canonical goal\n");
+
+    let removed = handle_daemon_runtime_request(
+        &mut runtime,
+        request(
+            "POST",
+            CORE_API_ROUTES.loop_remove_text,
+            Some(json!({
+                "project": project_text,
+                "sessionId": "claude-1",
+                "source": "overseer"
+            })),
+        ),
+    );
+    assert_eq!(removed.status, 200);
+    assert_eq!(text_body(&removed), "loop off claude-1\n");
+
+    let done = handle_daemon_runtime_request(
+        &mut runtime,
+        request(
+            "POST",
+            CORE_API_ROUTES.loop_done_text,
+            Some(json!({
+                "project": project_text,
+                "sessionId": "claude-1",
+                "reason": "finished"
+            })),
+        ),
+    );
+    assert_eq!(done.status, 200);
+    assert_eq!(text_body(&done), "loop done claude-1\n");
+
+    let blocked = handle_daemon_runtime_request(
+        &mut runtime,
+        request(
+            "POST",
+            CORE_API_ROUTES.loop_block_text,
+            Some(json!({
+                "project": project_text,
+                "sessionId": "claude-1"
+            })),
+        ),
+    );
+    assert_eq!(blocked.status, 200);
+    assert_eq!(text_body(&blocked), "loop blocked claude-1\n");
+
+    let requests = server.join();
+    assert_request_path(&requests[0], "GET", project_routes::agents::LIST);
+    assert_request_path(&requests[1], "POST", project_routes::agents::LOOP);
+    assert_eq!(
+        request_json_body(&requests[1]),
+        json!({
+            "sessionId": "claude-1",
+            "source": "human",
+            "updatedBy": "sam",
+            "updatedBySessionId": "overseer-1",
+            "updatedByRole": "overseer",
+            "active": true,
+            "action": "add",
+            "goal": "ship"
+        })
+    );
+    assert_request_path(&requests[2], "POST", project_routes::agents::LOOP);
+    assert_eq!(
+        request_json_body(&requests[2]),
+        json!({
+            "sessionId": "claude-1",
+            "source": "overseer",
+            "active": false,
+            "action": "remove"
+        })
+    );
+    assert_request_path(&requests[3], "POST", project_routes::agents::LOOP);
+    assert_eq!(
+        request_json_body(&requests[3]),
+        json!({
+            "sessionId": "claude-1",
+            "source": "agent",
+            "active": false,
+            "action": "done",
+            "reason": "finished"
+        })
+    );
+    assert_request_path(&requests[4], "POST", project_routes::runtime::EVENT);
+    assert_eq!(
+        request_json_body(&requests[4]),
+        json!({
+            "session": "claude-1",
+            "event": {
+                "kind": "task_done",
+                "message": "finished",
+                "tone": "success",
+                "source": "loop"
+            }
+        })
+    );
+    assert_request_path(&requests[5], "POST", project_routes::agents::LOOP);
+    assert_eq!(
+        request_json_body(&requests[5]),
+        json!({
+            "sessionId": "claude-1",
+            "source": "agent",
+            "active": false,
+            "action": "block"
+        })
+    );
+    assert_request_path(&requests[6], "POST", project_routes::runtime::EVENT);
+    assert_eq!(
+        request_json_body(&requests[6]),
+        json!({
+            "session": "claude-1",
+            "event": {
+                "kind": "blocked",
+                "message": "Blocked beyond repair.",
+                "source": "loop"
+            }
+        })
     );
     fixture.cleanup();
 }
