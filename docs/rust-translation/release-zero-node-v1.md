@@ -5,6 +5,8 @@ Aimux runtime starts no Node process outside the GUI app toolchain.
 
 Allowed JavaScript:
 - Expo/mobile/web GUI source and build tooling.
+- Hosted relay source and build tooling that does not ship in the installed
+  local runtime.
 - One-off development scripts that do not ship in the installed runtime.
 
 Disallowed in installed runtime:
@@ -26,6 +28,7 @@ Retired TypeScript gates:
 Acceptance commands:
 - `yarn native:fmt:check`
 - `yarn native:test`
+- `yarn check:local-build-boundary`
 - `cargo clippy --manifest-path native/Cargo.toml --all-targets -- -D warnings`
 - native release asset inspection: no runtime `node`, `AIMUX_NODE_BIN`,
   `dist/launcher-bin.js`, or runtime `node_modules` dependency.
