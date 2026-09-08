@@ -1980,18 +1980,32 @@ fn render_worktree_details_panel(
     width: usize,
 ) -> Vec<String> {
     let focused_path = input.focused_worktree_path;
-    let focused_sessions = input
-        .snapshot
-        .sessions
-        .iter()
-        .filter(|session| session.worktree_path.as_deref() == focused_path)
-        .collect::<Vec<_>>();
-    let focused_services = input
-        .snapshot
-        .services
-        .iter()
-        .filter(|service| service.worktree_path.as_deref() == focused_path)
-        .collect::<Vec<_>>();
+    let focused_quick_jump_worktree = build_dashboard_quick_jump_worktrees(input)
+        .into_iter()
+        .find(|worktree| worktree.path == focused_path);
+    let focused_sessions = focused_quick_jump_worktree
+        .as_ref()
+        .map(|worktree| worktree.sessions.clone())
+        .unwrap_or_else(|| {
+            input
+                .snapshot
+                .sessions
+                .iter()
+                .filter(|session| session.worktree_path.as_deref() == focused_path)
+                .filter(|session| !is_project_control_session(session))
+                .collect::<Vec<_>>()
+        });
+    let focused_services = focused_quick_jump_worktree
+        .as_ref()
+        .map(|worktree| worktree.services.clone())
+        .unwrap_or_else(|| {
+            input
+                .snapshot
+                .services
+                .iter()
+                .filter(|service| service.worktree_path.as_deref() == focused_path)
+                .collect::<Vec<_>>()
+        });
     let focused_group = focused_path.and_then(|path| {
         input
             .snapshot
@@ -2336,6 +2350,20 @@ fn has_live_scribe(input: &DashboardRenderInput<'_>) -> bool {
         .iter()
         .chain(input.snapshot.sessions.iter())
         .any(|session| session.scribe == Some(true) && !is_session_offline(session))
+}
+
+fn is_project_control_session(session: &DashboardSession) -> bool {
+    if session.project_control == Some(true) || session.overseer == Some(true) {
+        return true;
+    }
+    if session.team.as_ref().and_then(|team| team.role.as_deref()) == Some("overseer") {
+        return true;
+    }
+    if session.scribe == Some(false) {
+        return false;
+    }
+    session.scribe == Some(true)
+        || session.team.as_ref().and_then(|team| team.role.as_deref()) == Some("scribe")
 }
 
 fn dashboard_enter_verb(

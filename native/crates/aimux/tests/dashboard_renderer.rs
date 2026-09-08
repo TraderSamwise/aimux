@@ -348,6 +348,63 @@ fn renders_worktree_details_sidebar_when_no_session_selected() {
 }
 
 #[test]
+fn worktree_details_count_the_same_project_sessions_as_rendered_rows() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let mut snapshot = fixture.runtime_light.clone();
+    snapshot.services.clear();
+    snapshot.worktree_groups[0].services.clear();
+
+    let mut plain_agent = snapshot.worktree_groups[0].sessions[0].clone();
+    plain_agent.id = "claude-plain".into();
+    plain_agent.label = Some("Plain Agent".into());
+    plain_agent.status = SessionStatus::Running;
+    plain_agent.semantic = None;
+
+    let mut overseer = plain_agent.clone();
+    overseer.id = "claude-overseer".into();
+    overseer.label = Some("Project Overseer".into());
+    overseer.overseer = Some(true);
+    overseer.project_control = Some(true);
+
+    let mut scribe = plain_agent.clone();
+    scribe.id = "claude-scribe".into();
+    scribe.label = Some("Project Scribe".into());
+    scribe.scribe = Some(true);
+    scribe.project_control = Some(true);
+
+    snapshot.sessions = vec![plain_agent.clone(), overseer, scribe];
+    snapshot.worktree_groups[0].sessions = vec![plain_agent];
+
+    let result = render_dashboard_frame(&DashboardRenderInput {
+        snapshot: &snapshot,
+        cols: 140,
+        rows: 24,
+        nav_level: DashboardNavLevel::Worktrees,
+        selected_session_id: None,
+        selected_service_id: None,
+        focused_worktree_path: None,
+        runtime_label: None,
+        version: None,
+        is_dev_runtime: false,
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_message: None,
+        details_sidebar_visible: true,
+        preview_source: "output",
+        scribe_preview_entries: &[],
+    });
+    let plain = strip_ansi(&result.frame);
+
+    assert!(plain.contains("Agents: 1"));
+    assert!(plain.contains("Active: Plain Agent"));
+    assert!(!plain.contains("Agents: 3"));
+    assert!(!plain.contains("Project Overseer"));
+    assert!(!plain.contains("Project Scribe"));
+}
+
+#[test]
 fn renders_unavailable_footer_hint_for_blocked_offline_session() {
     let fixture: DesktopStateGoldenFixture =
         serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
