@@ -210,6 +210,194 @@ fn thread_routes_round_trip_through_daemon_http_to_project_service() {
     fixture.cleanup();
 }
 
+#[test]
+fn task_routes_round_trip_through_daemon_http_to_project_service() {
+    let fixture = CoordinationHttpFixture::new("task-routes");
+    let project = fixture.project("repo");
+    let project_text = project.to_string_lossy().into_owned();
+    let project_query = percent_encode_query_value(&project_text);
+    let server = ScriptedHttpServer::spawn(vec![
+        json!({
+            "tasks": [
+                {
+                    "id": "task-1",
+                    "type": "task",
+                    "status": "todo",
+                    "assignedTo": "claude-1",
+                    "threadId": "thread-1",
+                    "description": "Ship it"
+                }
+            ]
+        }),
+        json!({
+            "task": {
+                "id": "task-1",
+                "type": "task",
+                "status": "todo",
+                "assignedBy": "sam",
+                "assignedTo": "claude-1",
+                "threadId": "thread-1",
+                "description": "Ship it",
+                "prompt": "Use the real route"
+            },
+            "thread": { "id": "thread-1", "title": "Task" },
+            "messages": [
+                { "id": "msg-1", "from": "sam", "kind": "request", "body": "Ship it" }
+            ]
+        }),
+        json!({ "task": { "id": "task-2" }, "thread": { "id": "thread-2" } }),
+        json!({ "task": { "id": "task-1" }, "thread": { "id": "thread-1" } }),
+        json!({ "task": { "id": "task-1" }, "thread": { "id": "thread-1" } }),
+        json!({ "task": { "id": "task-1" }, "thread": { "id": "thread-1" } }),
+        json!({ "task": { "id": "task-1" }, "thread": { "id": "thread-1" } }),
+    ]);
+    let mut runtime = fixture.runtime_for_project(&project, server.port);
+
+    let listed = handle_daemon_runtime_request(
+        &mut runtime,
+        request(
+            "GET",
+            &format!(
+                "{}?project={}&session=%20claude-1%20&status=todo",
+                CORE_API_ROUTES.task_list_text, project_query
+            ),
+            None,
+        ),
+    );
+    assert_eq!(listed.status, 200);
+    assert!(text_body(&listed).contains("task-1  task  todo  target=claude-1 thread=thread-1"));
+
+    let shown = handle_daemon_runtime_request(
+        &mut runtime,
+        request(
+            "GET",
+            &format!(
+                "{}?project={}&taskId=task-1",
+                CORE_API_ROUTES.task_show_text, project_query
+            ),
+            None,
+        ),
+    );
+    assert_eq!(shown.status, 200);
+    assert!(text_body(&shown).contains("Ship it (task)"));
+    assert!(text_body(&shown).contains("Use the real route"));
+
+    let assigned = handle_daemon_runtime_request(
+        &mut runtime,
+        request(
+            "POST",
+            CORE_API_ROUTES.task_assign_text,
+            Some(json!({
+                "project": project_text,
+                "to": "claude-1",
+                "description": "Do it",
+                "prompt": "details",
+                "worktree": "/repo/wt"
+            })),
+        ),
+    );
+    assert_eq!(assigned.status, 200);
+    assert_eq!(text_body(&assigned), "task task-2\nthread thread-2\n");
+
+    let accepted = handle_daemon_runtime_request(
+        &mut runtime,
+        request(
+            "POST",
+            CORE_API_ROUTES.task_accept_text,
+            Some(json!({
+                "project": project_text,
+                "taskId": "task-1",
+                "from": "claude-1",
+                "body": "taking it"
+            })),
+        ),
+    );
+    assert_eq!(accepted.status, 200);
+    assert_eq!(text_body(&accepted), "task task-1\nthread thread-1\n");
+
+    let blocked = handle_daemon_runtime_request(
+        &mut runtime,
+        request(
+            "POST",
+            CORE_API_ROUTES.task_block_text,
+            Some(json!({
+                "project": project_text,
+                "taskId": "task-1",
+                "body": "missing input"
+            })),
+        ),
+    );
+    assert_eq!(blocked.status, 200);
+    assert_eq!(text_body(&blocked), "task task-1\nthread thread-1\n");
+
+    let completed = handle_daemon_runtime_request(
+        &mut runtime,
+        request(
+            "POST",
+            CORE_API_ROUTES.task_complete_text,
+            Some(json!({
+                "project": project_text,
+                "taskId": "task-1",
+                "result": "done"
+            })),
+        ),
+    );
+    assert_eq!(completed.status, 200);
+    assert_eq!(text_body(&completed), "task task-1\nthread thread-1\n");
+
+    let reopened = handle_daemon_runtime_request(
+        &mut runtime,
+        request(
+            "POST",
+            CORE_API_ROUTES.task_reopen_text,
+            Some(json!({
+                "project": project_text,
+                "taskId": "task-1",
+                "body": "follow-up"
+            })),
+        ),
+    );
+    assert_eq!(reopened.status, 200);
+    assert_eq!(text_body(&reopened), "task task-1\nthread thread-1\n");
+
+    let requests = server.join();
+    assert_request_path(&requests[0], "GET", "/tasks?session=claude-1&status=todo");
+    assert_request_path(&requests[1], "GET", "/tasks/task-1");
+    assert_request_path(&requests[2], "POST", project_routes::tasks::ASSIGN);
+    assert_eq!(
+        request_json_body(&requests[2]),
+        json!({
+            "from": "user",
+            "to": "claude-1",
+            "description": "Do it",
+            "prompt": "details",
+            "type": "task",
+            "worktreePath": "/repo/wt"
+        })
+    );
+    assert_request_path(&requests[3], "POST", project_routes::tasks::ACCEPT);
+    assert_eq!(
+        request_json_body(&requests[3]),
+        json!({ "taskId": "task-1", "from": "claude-1", "body": "taking it" })
+    );
+    assert_request_path(&requests[4], "POST", project_routes::tasks::BLOCK);
+    assert_eq!(
+        request_json_body(&requests[4]),
+        json!({ "taskId": "task-1", "from": "user", "body": "missing input" })
+    );
+    assert_request_path(&requests[5], "POST", project_routes::tasks::COMPLETE);
+    assert_eq!(
+        request_json_body(&requests[5]),
+        json!({ "taskId": "task-1", "from": "user", "body": "done" })
+    );
+    assert_request_path(&requests[6], "POST", project_routes::tasks::REOPEN);
+    assert_eq!(
+        request_json_body(&requests[6]),
+        json!({ "taskId": "task-1", "from": "user", "body": "follow-up" })
+    );
+    fixture.cleanup();
+}
+
 #[derive(Debug)]
 struct CoordinationHttpFixture {
     root: PathBuf,
