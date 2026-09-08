@@ -724,6 +724,12 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
             Some("add" | "create" | "remove" | "graveyard" | "resurrect" | "delete-graveyard"),
         ) => args.len() > 2 && !has_help(args),
         (Some("graveyard"), None) | (Some("graveyard"), Some("list" | "cleanup")) => true,
+        (Some("graveyard"), Some("--json" | "--project")) => {
+            parse_core_graveyard_args(args).is_some()
+        }
+        (Some("graveyard"), Some(arg)) if arg.starts_with("--project=") => {
+            parse_core_graveyard_args(args).is_some()
+        }
         (Some("graveyard"), Some("send" | "resurrect")) => args.len() > 2 && !has_help(args),
         (
             Some("notify" | "list-notifications" | "read-notifications" | "clear-notifications"),

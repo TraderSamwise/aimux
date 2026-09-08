@@ -1549,7 +1549,7 @@ where
                 CoreCliFallback::None,
             )
         }
-        ("graveyard", "" | "list" | "send" | "resurrect" | "cleanup") => {
+        ("graveyard", _) => {
             let parsed = parse_core_graveyard_args(&args).ok_or_else(|| {
                 CoreCliPlanError::InvalidArguments {
                     args: args.clone(),

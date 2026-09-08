@@ -1033,6 +1033,15 @@ fn worktree_and_graveyard_commands_plan_native_text_routes() {
             body: None,
         }
     );
+    let bare_graveyard_json = classify_core_cli(&["graveyard", "--json"], &context(true, true))
+        .expect("bare graveyard json plan");
+    assert_eq!(
+        bare_graveyard_json.action,
+        CoreCliAction::TextRoute {
+            path: "/core/graveyard/list-text?project=%2Frepo&json=1".into(),
+            body: None,
+        }
+    );
 
     let send = classify_core_cli(
         &["graveyard", "send", "claude-1", "--project=/repo"],

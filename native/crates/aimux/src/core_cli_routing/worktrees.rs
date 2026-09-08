@@ -110,16 +110,14 @@ pub fn parse_core_graveyard_args<S: AsRef<str>>(args: &[S]) -> Option<CoreGravey
     if args.first().map(AsRef::as_ref) != Some("graveyard") {
         return None;
     }
-    if args.len() == 1 {
-        return Some(CoreGraveyardArgs {
-            subcommand: "list".to_owned(),
-            project: None,
-            session_id: None,
-            dry_run: false,
-            json: false,
-        });
-    }
-    let subcommand = args.get(1).map(AsRef::as_ref)?;
+    let (subcommand, mut index) = match args.get(1).map(AsRef::as_ref) {
+        None => ("list", 1),
+        Some("list" | "send" | "resurrect" | "cleanup") => (args[1].as_ref(), 2),
+        Some(arg) if arg == "--json" || arg == "--project" || arg.starts_with("--project=") => {
+            ("list", 1)
+        }
+        _ => return None,
+    };
     if !matches!(subcommand, "list" | "send" | "resurrect" | "cleanup") {
         return None;
     }
@@ -130,7 +128,6 @@ pub fn parse_core_graveyard_args<S: AsRef<str>>(args: &[S]) -> Option<CoreGravey
         dry_run: false,
         json: false,
     };
-    let mut index = 2;
     while index < args.len() {
         let arg = args[index].as_ref();
         if arg == "--json" {
