@@ -5,6 +5,7 @@ use crate::dashboard_model::{
     DashboardOperationFailure, DashboardService, DashboardSession, DesktopStateSnapshot,
     ServiceStatus, SessionStatus,
 };
+use crate::project_service::work_outline::{WorkOutlineEntry, WorkOutlineStatus};
 use crate::project_service::worktree_colors_contract::worktree_color_ansi;
 use crate::tmux_expose_preview_sanitize::sanitize_expose_preview_output;
 use crate::tui_render::screen_frame::{
@@ -54,7 +55,7 @@ pub struct DashboardRenderInput<'a> {
     pub footer_message: Option<&'a str>,
     pub details_sidebar_visible: bool,
     pub preview_source: &'a str,
-    pub scribe_preview_entries: &'a [Value],
+    pub scribe_preview_entries: &'a [WorkOutlineEntry],
 }
 
 pub fn render_dashboard_frame(input: &DashboardRenderInput<'_>) -> ScreenFrameResult {
@@ -2258,7 +2259,7 @@ fn preview_snapshot_rows(session: &DashboardSession, width: usize, max_rows: usi
         .collect()
 }
 
-fn scribe_preview_rows(entries: &[Value], width: usize, max_rows: usize) -> Vec<String> {
+fn scribe_preview_rows(entries: &[WorkOutlineEntry], width: usize, max_rows: usize) -> Vec<String> {
     if max_rows == 0 {
         return Vec::new();
     }
@@ -2267,7 +2268,7 @@ fn scribe_preview_rows(entries: &[Value], width: usize, max_rows: usize) -> Vec<
     }
     let mut rows = Vec::new();
     for entry in entries {
-        let status_text = string_at(entry, &["status"]).unwrap_or("");
+        let status_text = work_outline_status_text(entry.status);
         let status_tone = if status_text == "done" {
             Tone::Done
         } else if status_text == "stale" {
@@ -2275,14 +2276,11 @@ fn scribe_preview_rows(entries: &[Value], width: usize, max_rows: usize) -> Vec<
         } else {
             Tone::Accent
         };
-        let age = string_at(entry, &["updatedAt"]).and_then(format_relative_recency);
+        let age = format_relative_recency(&entry.updated_at);
         let title_width = width.saturating_sub(18).max(8);
         let mut title = format!(
             "{} {}",
-            style(
-                &truncate(string_at(entry, &["title"]).unwrap_or(""), title_width),
-                Tone::Strong
-            ),
+            style(&truncate(&entry.title, title_width), Tone::Strong),
             style(status_text, status_tone)
         );
         if let Some(age) = age {
@@ -2292,8 +2290,7 @@ fn scribe_preview_rows(entries: &[Value], width: usize, max_rows: usize) -> Vec<
         if rows.len() >= max_rows {
             break;
         }
-        let summary = string_at(entry, &["summary"]).unwrap_or("");
-        for line in wrap_text(summary, width)
+        for line in wrap_text(&entry.summary, width)
             .into_iter()
             .take(max_rows.saturating_sub(rows.len()).max(1))
         {
@@ -2315,6 +2312,15 @@ fn scribe_preview_rows(entries: &[Value], width: usize, max_rows: usize) -> Vec<
     }
     rows.truncate(max_rows);
     rows
+}
+
+fn work_outline_status_text(status: WorkOutlineStatus) -> &'static str {
+    match status {
+        WorkOutlineStatus::Active => "active",
+        WorkOutlineStatus::Done => "done",
+        WorkOutlineStatus::Superseded => "superseded",
+        WorkOutlineStatus::Stale => "stale",
+    }
 }
 
 fn selected_session<'a>(input: &'a DashboardRenderInput<'_>) -> Option<&'a DashboardSession> {

@@ -3,6 +3,9 @@ use aimux::dashboard_model::{
     DashboardWorktreeRemovalInfo, DesktopStateGoldenFixture, SessionStatus,
 };
 use aimux::dashboard_renderer::{DashboardNavLevel, DashboardRenderInput, render_dashboard_frame};
+use aimux::project_service::work_outline::{
+    WorkOutlineEntry, WorkOutlineSource, WorkOutlineStatus,
+};
 use aimux::tui_render::text::strip_ansi;
 use aimux::tui_render::theme::visible_width;
 use serde_json::json;
@@ -288,6 +291,62 @@ fn renders_selected_session_details_sidebar_when_visible() {
     for line in result.frame.split("\r\n") {
         assert!(visible_width(line) <= 140 || line.starts_with("\x1b[2J\x1b[H"));
     }
+}
+
+#[test]
+fn renders_typed_scribe_preview_rows_for_selected_session() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let mut snapshot = fixture.runtime_light.clone();
+    snapshot.sessions[0].id = "claude-parent".into();
+
+    let mut scribe = snapshot.sessions[0].clone();
+    scribe.id = "claude-scribe".into();
+    scribe.scribe = Some(true);
+    scribe.project_control = Some(true);
+    snapshot.sessions.push(scribe);
+
+    let entries = vec![WorkOutlineEntry {
+        entry_id: "outline-1".into(),
+        topic_key: "dashboard".into(),
+        title: "Dashboard parity work".into(),
+        summary: "Copy the Node dashboard renderer exactly and keep the preview panel typed."
+            .into(),
+        status: WorkOutlineStatus::Done,
+        source: WorkOutlineSource::Scribe,
+        session_ids: vec!["claude-parent".into()],
+        worktree_path: None,
+        evidence: None,
+        created_at: "2999-01-01T00:00:00.000Z".into(),
+        updated_at: "2999-01-01T00:00:00.000Z".into(),
+        last_seen_at: "2999-01-01T00:00:00.000Z".into(),
+    }];
+
+    let result = render_dashboard_frame(&DashboardRenderInput {
+        snapshot: &snapshot,
+        cols: 140,
+        rows: 24,
+        nav_level: DashboardNavLevel::Sessions,
+        selected_session_id: Some("claude-parent"),
+        selected_service_id: None,
+        focused_worktree_path: None,
+        runtime_label: None,
+        version: None,
+        is_dev_runtime: false,
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_message: None,
+        details_sidebar_visible: true,
+        preview_source: "scribe",
+        scribe_preview_entries: &entries,
+    });
+    let plain = strip_ansi(&result.frame);
+
+    assert!(plain.contains("SCRIBE"));
+    assert!(plain.contains("Dashboard parity work"));
+    assert!(plain.contains("done · just now"));
+    assert!(plain.contains("Copy the Node dashboard renderer exactly"));
 }
 
 #[test]
