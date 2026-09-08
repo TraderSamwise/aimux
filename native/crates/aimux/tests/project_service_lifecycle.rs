@@ -298,8 +298,15 @@ fn agent_spawn_launches_tool_and_records_topology_metadata() {
 
     assert_eq!(response.status, 200);
     assert_eq!(response.body["sessionId"], "mock-new");
-    assert_eq!(response.body["transition"]["operation"], "agent.spawn");
     assert_eq!(runtime.created.len(), 1);
+    assert_eq!(
+        response.body["tmuxTarget"]["sessionName"],
+        runtime.created[0].session_name
+    );
+    assert_eq!(response.body["tmuxTarget"]["windowId"], "@11");
+    assert_eq!(response.body["tmuxTarget"]["windowIndex"], 11);
+    assert_eq!(response.body["tmuxTarget"]["windowName"], "/bin/mock");
+    assert_eq!(response.body["transition"]["operation"], "agent.spawn");
     assert_eq!(runtime.created[0].name, "/bin/mock");
     assert_eq!(runtime.created[0].cwd, worktree.to_string_lossy());
     assert_eq!(runtime.created[0].command, "env");
