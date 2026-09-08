@@ -128,6 +128,32 @@ fn core_subcommand_help_and_bare_parent_usage_stay_command_scoped() {
 }
 
 #[test]
+fn loop_list_entrypoint_reaches_core_cli_instead_of_known_command_fallback() {
+    let fixture = NativeEntrypointFixture::new("native-loop-list", 46320);
+    let repo = fixture.root.join("repo");
+    fs::create_dir_all(repo.join(".git")).expect("create repo");
+
+    let output = fixture
+        .command()
+        .current_dir(&repo)
+        .args(["loop", "list", "--json"])
+        .output()
+        .expect("run native loop list");
+
+    assert!(output.status.success());
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).expect("loop list json"),
+        serde_json::json!({ "agents": [] })
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.contains("unsupported or invalid aimux command"));
+    assert!(
+        !fixture.log.exists(),
+        "loop list should not invoke node fallback"
+    );
+}
+
+#[test]
 fn ui_command_stays_native_even_when_node_fallback_is_configured() {
     let root = temp_root("native-ui");
     let log = root.join("node.log");
@@ -549,4 +575,53 @@ fn temp_root(label: &str) -> PathBuf {
 
 fn cleanup(path: PathBuf) {
     let _ = fs::remove_dir_all(path);
+}
+
+struct NativeEntrypointFixture {
+    root: PathBuf,
+    home: PathBuf,
+    aimux_home: PathBuf,
+    log: PathBuf,
+    node: PathBuf,
+    port: u16,
+}
+
+impl NativeEntrypointFixture {
+    fn new(label: &str, base_port: u16) -> Self {
+        let root = temp_root(label);
+        let home = root.join("home");
+        let aimux_home = root.join("aimux-home");
+        fs::create_dir_all(&home).expect("create home");
+        fs::create_dir_all(&aimux_home).expect("create aimux home");
+        let log = root.join("node.log");
+        let node = fake_node(&root, &log, 9);
+        let offset = u16::try_from(TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed) % 600)
+            .expect("port offset");
+        Self {
+            root,
+            home,
+            aimux_home,
+            log,
+            node,
+            port: base_port + offset,
+        }
+    }
+
+    fn command(&self) -> Command {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_aimux"));
+        command
+            .env("AIMUX_ROOT", &self.root)
+            .env("AIMUX_NODE_BIN", &self.node)
+            .env("HOME", &self.home)
+            .env("AIMUX_HOME", &self.aimux_home)
+            .env("AIMUX_DAEMON_PORT", self.port.to_string());
+        command
+    }
+}
+
+impl Drop for NativeEntrypointFixture {
+    fn drop(&mut self) {
+        let _ = self.command().args(["daemon", "stop"]).output();
+        cleanup(self.root.clone());
+    }
 }
