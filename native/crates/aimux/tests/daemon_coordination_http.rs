@@ -398,6 +398,145 @@ fn task_routes_round_trip_through_daemon_http_to_project_service() {
     fixture.cleanup();
 }
 
+#[test]
+fn message_and_handoff_routes_preserve_delivery_and_attribution_over_daemon_http() {
+    let fixture = CoordinationHttpFixture::new("message-handoff-routes");
+    let project = fixture.project("repo");
+    let project_text = project.to_string_lossy().into_owned();
+    let server = ScriptedHttpServer::spawn(vec![
+        json!({
+            "thread": { "id": "thread-1", "kind": "conversation" },
+            "message": { "id": "msg-1" },
+            "deliveredTo": ["claude-1"]
+        }),
+        json!({
+            "thread": { "id": "thread-2", "kind": "handoff" },
+            "message": { "id": "msg-2" },
+            "deliveredTo": ["codex-1", "claude-1"]
+        }),
+        json!({
+            "thread": { "id": "thread-2" },
+            "message": { "id": "msg-3" },
+            "deliveredTo": ["sam"]
+        }),
+        json!({
+            "thread": { "id": "thread-2" },
+            "message": { "id": "msg-4" }
+        }),
+    ]);
+    let mut runtime = fixture.runtime_for_project(&project, server.port);
+
+    let message = handle_daemon_runtime_request(
+        &mut runtime,
+        request(
+            "POST",
+            CORE_API_ROUTES.message_send_text,
+            Some(json!({
+                "project": project_text,
+                "thread": "thread-1",
+                "to": "claude-1",
+                "body": "please",
+                "title": "Ask",
+                "worktree": "/repo/wt"
+            })),
+        ),
+    );
+    assert_eq!(message.status, 200);
+    assert_eq!(
+        text_body(&message),
+        "thread thread-1\nmessage msg-1\ndelivered claude-1\n"
+    );
+
+    let handoff = handle_daemon_runtime_request(
+        &mut runtime,
+        request(
+            "POST",
+            CORE_API_ROUTES.handoff_send_text,
+            Some(json!({
+                "project": project_text,
+                "from": "sam",
+                "to": "codex-1,claude-1",
+                "body": "take over",
+                "title": "Handoff",
+                "worktree": "/repo/wt"
+            })),
+        ),
+    );
+    assert_eq!(handoff.status, 200);
+    assert_eq!(
+        text_body(&handoff),
+        "thread thread-2\nmessage msg-2\ndelivered codex-1,claude-1\n"
+    );
+
+    let accepted = handle_daemon_runtime_request(
+        &mut runtime,
+        request(
+            "POST",
+            CORE_API_ROUTES.handoff_accept_text,
+            Some(json!({
+                "project": project_text,
+                "threadId": "thread-2",
+                "from": "codex-1",
+                "body": "accepted"
+            })),
+        ),
+    );
+    assert_eq!(accepted.status, 200);
+    assert_eq!(text_body(&accepted), "thread thread-2\nmessage msg-3\n");
+
+    let completed = handle_daemon_runtime_request(
+        &mut runtime,
+        request(
+            "POST",
+            CORE_API_ROUTES.handoff_complete_text,
+            Some(json!({
+                "project": project_text,
+                "threadId": "thread-2",
+                "body": "complete"
+            })),
+        ),
+    );
+    assert_eq!(completed.status, 200);
+    assert_eq!(text_body(&completed), "thread thread-2\nmessage msg-4\n");
+
+    let requests = server.join();
+    assert_request_path(&requests[0], "POST", project_routes::threads::SEND);
+    assert_eq!(
+        request_json_body(&requests[0]),
+        json!({
+            "threadId": "thread-1",
+            "from": "user",
+            "to": ["claude-1"],
+            "worktreePath": "/repo/wt",
+            "kind": "request",
+            "body": "please",
+            "title": "Ask"
+        })
+    );
+    assert_request_path(&requests[1], "POST", project_routes::handoff::SEND);
+    assert_eq!(
+        request_json_body(&requests[1]),
+        json!({
+            "from": "sam",
+            "to": ["codex-1", "claude-1"],
+            "body": "take over",
+            "title": "Handoff",
+            "worktreePath": "/repo/wt"
+        })
+    );
+    assert_request_path(&requests[2], "POST", project_routes::handoff::ACCEPT);
+    assert_eq!(
+        request_json_body(&requests[2]),
+        json!({ "threadId": "thread-2", "from": "codex-1", "body": "accepted" })
+    );
+    assert_request_path(&requests[3], "POST", project_routes::handoff::COMPLETE);
+    assert_eq!(
+        request_json_body(&requests[3]),
+        json!({ "threadId": "thread-2", "from": "user", "body": "complete" })
+    );
+    fixture.cleanup();
+}
+
 #[derive(Debug)]
 struct CoordinationHttpFixture {
     root: PathBuf,
