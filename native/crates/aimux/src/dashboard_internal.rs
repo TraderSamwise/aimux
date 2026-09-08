@@ -790,6 +790,9 @@ fn render_dashboard_subscreen_snapshot(
         scroll_offset,
         footer_message: controller.footer_message.as_deref(),
         details_sidebar_visible: controller.details_sidebar_visible,
+        runtime_label: Some("tmux"),
+        version: Some(&dashboard_runtime_version()),
+        is_dev_runtime: cfg!(debug_assertions),
     });
     if let Some(reply) = controller.thread_reply.as_ref() {
         let mut output = frame.frame;

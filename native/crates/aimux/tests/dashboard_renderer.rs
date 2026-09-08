@@ -1,9 +1,13 @@
+use aimux::dashboard_controller::DashboardScreen;
 use aimux::dashboard_model::{
     DashboardOperationFailure, DashboardSessionEvent, DashboardSessionLoopLastAction,
     DashboardWorktreeRemovalInfo, DesktopStateGoldenFixture, SessionStatus, SessionTeamMetadata,
     WorktreeGroup, WorktreeStatus,
 };
-use aimux::dashboard_renderer::{DashboardNavLevel, DashboardRenderInput, render_dashboard_frame};
+use aimux::dashboard_renderer::{
+    DashboardNavLevel, DashboardRenderInput, DashboardSubscreenRenderInput, render_dashboard_frame,
+    render_dashboard_subscreen_frame,
+};
 use aimux::project_service::work_outline::{
     WorkOutlineEntry, WorkOutlineSource, WorkOutlineStatus,
 };
@@ -17,6 +21,16 @@ const NODE_FULL_FRAME: &str =
 const NODE_CONTROL_SCRIBE_FRAME: &str = include_str!(
     "../../../../testdata/contracts/v1/tui/dashboard-node-control-scribe-frame-v1.txt"
 );
+const NODE_SUBSCREEN_COORDINATION_FRAME: &str =
+    include_str!("../../../../testdata/contracts/v1/tui/subscreen-node-coordination-frame-v1.txt");
+const NODE_SUBSCREEN_TOPOLOGY_FRAME: &str =
+    include_str!("../../../../testdata/contracts/v1/tui/subscreen-node-topology-frame-v1.txt");
+const NODE_SUBSCREEN_GRAVEYARD_FRAME: &str =
+    include_str!("../../../../testdata/contracts/v1/tui/subscreen-node-graveyard-frame-v1.txt");
+const NODE_SUBSCREEN_PROJECT_FRAME: &str =
+    include_str!("../../../../testdata/contracts/v1/tui/subscreen-node-project-frame-v1.txt");
+const NODE_SUBSCREEN_LIBRARY_FRAME: &str =
+    include_str!("../../../../testdata/contracts/v1/tui/subscreen-node-library-frame-v1.txt");
 
 #[test]
 fn renders_empty_dashboard_with_create_hint() {
@@ -166,6 +180,378 @@ fn matches_node_dashboard_full_frame_with_project_controls_and_scribe_preview() 
     });
 
     assert_same_frame(NODE_CONTROL_SCRIBE_FRAME, &result.frame);
+}
+
+#[test]
+fn matches_node_coordination_subscreen_full_frame() {
+    let resource = json!({
+        "worklist": [
+            {
+                "kind": "notification",
+                "type": "msg",
+                "bucket": "awake",
+                "actionable": true,
+                "title": "Sam needs a reply on the migration thread",
+                "when": "2999-01-01T00:00:00.000Z",
+                "reachability": "live",
+                "stale": false,
+                "notification": {
+                    "title": "Sam needs a reply on the migration thread",
+                    "unreadCount": 1,
+                    "reachability": "live",
+                    "sessionId": "claude-1",
+                    "latestUnread": {
+                        "kind": "message",
+                        "createdAt": "2999-01-01T00:00:00.000Z",
+                        "body": "Can you confirm the renderer parity?"
+                    },
+                    "notifications": []
+                }
+            },
+            {
+                "kind": "thread",
+                "type": "task",
+                "bucket": "handled",
+                "actionable": false,
+                "title": "Closed review thread",
+                "when": "2999-01-01T00:00:00.000Z",
+                "thread": {
+                    "displayTitle": "Closed review thread",
+                    "stateLabel": "done",
+                    "pendingDeliveries": 0,
+                    "latestPendingRecipients": [],
+                    "familyTaskIds": ["task-1"],
+                    "messages": [{ "from": "sam", "to": ["codex"], "kind": "msg", "body": "done" }],
+                    "thread": {
+                        "kind": "task",
+                        "status": "done",
+                        "participants": ["sam", "codex"],
+                        "waitingOn": [],
+                        "owner": "sam"
+                    },
+                    "task": { "status": "done", "type": "task", "prompt": "Review it" }
+                }
+            }
+        ]
+    });
+
+    let result = render_dashboard_subscreen_frame(&DashboardSubscreenRenderInput {
+        screen: DashboardScreen::Coordination,
+        resource: Some(&resource),
+        error: None,
+        selected_index: 0,
+        cols: 140,
+        rows: 36,
+        scroll_offset: 0,
+        footer_message: None,
+        details_sidebar_visible: true,
+        runtime_label: Some("tmux"),
+        version: Some("0.1.34"),
+        is_dev_runtime: false,
+    });
+
+    assert_same_frame(NODE_SUBSCREEN_COORDINATION_FRAME, &result.frame);
+}
+
+#[test]
+fn matches_node_topology_subscreen_full_frame() {
+    let resource = json!({
+        "topology": {
+            "projectName": "aimux",
+            "health": "active",
+            "counts": { "worktrees": 2, "agents": 3, "services": 1 },
+            "rows": [
+                {
+                    "kind": "worktree",
+                    "label": "Main Checkout",
+                    "health": "active",
+                    "detail": "master",
+                    "status": "2 agents",
+                    "depth": 0,
+                    "worktreePath": "/repo"
+                },
+                {
+                    "kind": "agent",
+                    "label": "claude-1",
+                    "health": "attention",
+                    "detail": "needs reply",
+                    "status": "done",
+                    "depth": 1,
+                    "sessionId": "claude-1",
+                    "worktreePath": "/repo"
+                },
+                {
+                    "kind": "service",
+                    "label": "shell",
+                    "health": "idle",
+                    "detail": ":3000",
+                    "status": "running",
+                    "depth": 1,
+                    "serviceId": "service-1",
+                    "worktreePath": "/repo"
+                }
+            ]
+        }
+    });
+
+    let result = render_dashboard_subscreen_frame(&DashboardSubscreenRenderInput {
+        screen: DashboardScreen::Topology,
+        resource: Some(&resource),
+        error: None,
+        selected_index: 1,
+        cols: 140,
+        rows: 36,
+        scroll_offset: 0,
+        footer_message: None,
+        details_sidebar_visible: true,
+        runtime_label: Some("tmux"),
+        version: Some("0.1.34"),
+        is_dev_runtime: false,
+    });
+
+    assert_same_frame(NODE_SUBSCREEN_TOPOLOGY_FRAME, &result.frame);
+}
+
+#[test]
+fn matches_node_graveyard_subscreen_full_frame() {
+    let resource = json!({
+        "viewModel": {
+            "rows": [
+                { "kind": "section", "label": "Worktrees" },
+                {
+                    "kind": "worktree",
+                    "actionIndex": 0,
+                    "actionNumber": 1,
+                    "entry": {
+                        "path": "/repo/feature-a",
+                        "name": "feature-a",
+                        "branch": "feature/a",
+                        "graveyardedAt": "2999-01-01T00:00:00.000Z"
+                    },
+                    "attachedAgents": [
+                        {
+                            "entry": {
+                                "id": "claude-old",
+                                "command": "claude",
+                                "tool": "claude",
+                                "backendSessionId": "backend-session-123456789"
+                            },
+                            "lastUsedAt": "2999-01-01T00:00:00.000Z"
+                        }
+                    ],
+                    "visibleAttachedAgents": [
+                        {
+                            "entry": {
+                                "id": "claude-old",
+                                "command": "claude",
+                                "tool": "claude",
+                                "backendSessionId": "backend-session-123456789"
+                            },
+                            "lastUsedAt": "2999-01-01T00:00:00.000Z"
+                        }
+                    ],
+                    "hiddenAttachedAgentCount": 0,
+                    "attachedServices": [],
+                    "lastUsedAt": "2999-01-01T00:00:00.000Z"
+                },
+                {
+                    "kind": "attached-agent-display",
+                    "agent": {
+                        "entry": {
+                            "id": "claude-old",
+                            "command": "claude",
+                            "tool": "claude",
+                            "backendSessionId": "backend-session-123456789"
+                        },
+                        "lastUsedAt": "2999-01-01T00:00:00.000Z"
+                    }
+                },
+                { "kind": "section", "label": "Orphaned Agents" },
+                {
+                    "kind": "orphan-agent",
+                    "actionIndex": 1,
+                    "actionNumber": 2,
+                    "entry": {
+                        "id": "codex-orphan",
+                        "command": "codex",
+                        "tool": "codex",
+                        "worktreePath": "/repo/old",
+                        "headline": "stale output"
+                    },
+                    "lastUsedAt": "2999-01-01T00:00:00.000Z"
+                }
+            ],
+            "selectableRows": [
+                {
+                    "kind": "worktree",
+                    "entry": {
+                        "path": "/repo/feature-a",
+                        "name": "feature-a",
+                        "branch": "feature/a",
+                        "graveyardedAt": "2999-01-01T00:00:00.000Z"
+                    },
+                    "attachedAgents": [
+                        {
+                            "entry": {
+                                "id": "claude-old",
+                                "label": "Claude Old",
+                                "command": "claude",
+                                "tool": "claude"
+                            },
+                            "lastUsedAt": "2999-01-01T00:00:00.000Z"
+                        }
+                    ],
+                    "visibleAttachedAgents": [
+                        {
+                            "entry": {
+                                "id": "claude-old",
+                                "label": "Claude Old",
+                                "command": "claude",
+                                "tool": "claude"
+                            },
+                            "lastUsedAt": "2999-01-01T00:00:00.000Z"
+                        }
+                    ],
+                    "hiddenAttachedAgentCount": 0,
+                    "attachedServices": [],
+                    "lastUsedAt": "2999-01-01T00:00:00.000Z"
+                },
+                {
+                    "kind": "orphan-agent",
+                    "entry": {
+                        "id": "codex-orphan",
+                        "command": "codex",
+                        "tool": "codex",
+                        "toolConfigKey": "codex",
+                        "worktreePath": "/repo/old",
+                        "backendSessionId": "backend-orphan-1",
+                        "headline": "stale output"
+                    },
+                    "lastUsedAt": "2999-01-01T00:00:00.000Z"
+                }
+            ]
+        }
+    });
+
+    let result = render_dashboard_subscreen_frame(&DashboardSubscreenRenderInput {
+        screen: DashboardScreen::Graveyard,
+        resource: Some(&resource),
+        error: None,
+        selected_index: 0,
+        cols: 140,
+        rows: 36,
+        scroll_offset: 0,
+        footer_message: None,
+        details_sidebar_visible: true,
+        runtime_label: Some("tmux"),
+        version: Some("0.1.34"),
+        is_dev_runtime: false,
+    });
+
+    assert_same_frame(NODE_SUBSCREEN_GRAVEYARD_FRAME, &result.frame);
+}
+
+#[test]
+fn matches_node_project_subscreen_full_frame() {
+    let resource = json!({
+        "project": {
+            "summary": {
+                "agentsRunning": 1,
+                "agentsWaiting": 2,
+                "agentsOffline": 1,
+                "services": 2,
+                "worktrees": 2,
+                "openTasks": 3,
+                "doneTasks": 4,
+                "unreadNotifications": 5
+            },
+            "progress": {
+                "total": 9,
+                "pending": 1,
+                "assigned": 2,
+                "in_progress": 3,
+                "blocked": 1,
+                "done": 2,
+                "failed": 0
+            },
+            "story": [
+                {
+                    "kind": "task",
+                    "status": "unread",
+                    "title": "Finish dashboard parity",
+                    "meta": "claude-1",
+                    "createdAt": "2999-01-01T00:00:00.000Z",
+                    "body": "Copy the renderer."
+                },
+                {
+                    "kind": "notification",
+                    "status": "read",
+                    "title": "Older message",
+                    "meta": "codex-1",
+                    "createdAt": "2999-01-01T00:00:00.000Z"
+                }
+            ]
+        }
+    });
+
+    let result = render_dashboard_subscreen_frame(&DashboardSubscreenRenderInput {
+        screen: DashboardScreen::Project,
+        resource: Some(&resource),
+        error: None,
+        selected_index: 0,
+        cols: 140,
+        rows: 36,
+        scroll_offset: 0,
+        footer_message: None,
+        details_sidebar_visible: true,
+        runtime_label: Some("tmux"),
+        version: Some("0.1.34"),
+        is_dev_runtime: false,
+    });
+
+    assert_same_frame(NODE_SUBSCREEN_PROJECT_FRAME, &result.frame);
+}
+
+#[test]
+fn matches_node_library_subscreen_full_frame() {
+    let resource = json!({
+        "entries": [
+            {
+                "id": "plan:codex-1",
+                "kind": "plan",
+                "title": "Codex plan",
+                "path": "/repo/.aimux/plans/codex-1.md",
+                "updatedAt": "2999-01-01T00:00:00.000Z",
+                "sessionId": "codex-1",
+                "preview": "# Plan\nDo the work."
+            },
+            {
+                "id": "doc:readme",
+                "kind": "doc",
+                "title": "Project README",
+                "path": "/repo/README.md",
+                "updatedAt": "2999-01-01T00:00:00.000Z",
+                "preview": "Read me."
+            }
+        ]
+    });
+
+    let result = render_dashboard_subscreen_frame(&DashboardSubscreenRenderInput {
+        screen: DashboardScreen::Library,
+        resource: Some(&resource),
+        error: None,
+        selected_index: 0,
+        cols: 140,
+        rows: 36,
+        scroll_offset: 0,
+        footer_message: Some("Path: /repo/.aimux/plans/codex-1.md"),
+        details_sidebar_visible: true,
+        runtime_label: Some("tmux"),
+        version: Some("0.1.34"),
+        is_dev_runtime: false,
+    });
+
+    assert_same_frame(NODE_SUBSCREEN_LIBRARY_FRAME, &result.frame);
 }
 
 fn assert_same_frame(expected: &str, actual: &str) {
