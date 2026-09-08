@@ -183,6 +183,46 @@ fn persists_and_restores_selected_worktree_entry_state() {
 }
 
 #[test]
+fn restores_selected_worktree_entry_by_id_after_refresh_reorders_rows() {
+    let root = temp_dir("dashboard-ui-state-navigation-reorder");
+    fs::create_dir_all(&root).expect("create temp dir");
+    let snapshot = order_snapshot();
+    let mut navigation = DashboardNavigationState::new(&snapshot);
+    navigation.level = DashboardNavLevel::Sessions;
+    navigation.worktree_index = 0;
+    navigation.item_index = 1;
+
+    let mut state = DashboardUiStatePersistence::new(&root, "client").expect("create ui state");
+    state
+        .persist_controller_state(
+            DashboardScreen::Dashboard,
+            "output",
+            true,
+            &snapshot,
+            &navigation,
+        )
+        .expect("persist navigation");
+
+    let mut reordered = order_snapshot();
+    reordered.worktree_groups[0].sessions.swap(0, 1);
+    let mut restored = DashboardNavigationState::new(&reordered);
+    DashboardUiStatePersistence::new(&root, "client")
+        .expect("reload ui state")
+        .restore_navigation(&mut restored, &reordered);
+
+    assert_eq!(restored.level, DashboardNavLevel::Sessions);
+    assert_eq!(restored.item_index, 0);
+    assert_eq!(
+        restored.selected_entry(&reordered),
+        Some(aimux::dashboard_navigation::DashboardEntryRef::Session(
+            &reordered.worktree_groups[0].sessions[0]
+        ))
+    );
+    assert_eq!(reordered.worktree_groups[0].sessions[0].id, "agent-b");
+    fs::remove_dir_all(root).ok();
+}
+
+#[test]
 fn skips_write_when_screen_is_unchanged() {
     let root = temp_dir("dashboard-ui-state-unchanged");
     fs::create_dir_all(&root).expect("create temp dir");
