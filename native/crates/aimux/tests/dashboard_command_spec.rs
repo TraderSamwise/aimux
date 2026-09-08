@@ -135,6 +135,7 @@ fn launch_environment_is_allowlisted_quoted_and_unsets_stable_paths_for_source()
     let options = source_options(
         &test_dir,
         BTreeMap::from([
+            ("AIMUX_ROOT".into(), "/old/aimux/install".into()),
             ("AIMUX_HOME".into(), "/tmp/custom'home; echo unsafe".into()),
             ("AIMUX_DAEMON_PORT".into(), "43219".into()),
             ("AIMUX_CLI_BIN".into(), "/not/the/current/shim".into()),
@@ -150,12 +151,77 @@ fn launch_environment_is_allowlisted_quoted_and_unsets_stable_paths_for_source()
 
     assert!(command.contains("AIMUX_HOME='/tmp/custom'\"'\"'home; echo unsafe'"));
     assert!(command.contains("AIMUX_DAEMON_PORT='43219'"));
+    assert!(command.contains("-u 'AIMUX_ROOT'"));
     assert!(command.contains("-u 'AIMUX_CLI_BIN'"));
     assert!(command.contains("-u 'AIMUX_INSTALL_ROOT'"));
+    assert!(!command.contains("/old/aimux/install"));
     assert!(!command.contains("/not/the/current/shim"));
     assert!(!command.contains("/not/the/current/install"));
     assert!(!command.contains("SECRET_TOKEN"));
     assert!(!command.contains("not-for-tmux"));
+}
+
+#[test]
+fn native_dashboard_command_unsets_stale_aimux_root_from_tmux_environment() {
+    let test_dir = TestDir::new();
+    let native_root = test_dir.0.join("install-current");
+    let stale_root = test_dir.0.join("install-stale");
+    let native_binary = native_root
+        .join("native")
+        .join(host_native_dirname())
+        .join("aimux");
+    fs::create_dir_all(native_binary.parent().expect("native parent")).expect("create native");
+    fs::write(&native_binary, "native-current").expect("write native binary");
+    fs::write(native_root.join("VERSION"), "local-current\n").expect("write current version");
+    fs::create_dir_all(&stale_root).expect("create stale root");
+    fs::write(stale_root.join("VERSION"), "local-stale\n").expect("write stale version");
+
+    let options = DashboardCommandSpecOptions {
+        env: BTreeMap::from([
+            ("AIMUX_DASHBOARD_IMPLEMENTATION".into(), "native".into()),
+            (
+                "AIMUX_INSTALL_ROOT".into(),
+                native_root.to_string_lossy().into_owned(),
+            ),
+            (
+                "AIMUX_ROOT".into(),
+                stale_root.to_string_lossy().into_owned(),
+            ),
+        ]),
+        script_path: native_binary.clone(),
+        implementation_path: native_binary.clone(),
+        process_exec_path: native_binary.to_string_lossy().into_owned(),
+        home_dir: test_dir.0.join("home"),
+        platform: host_native_platform().into(),
+        arch: host_native_arch().into(),
+    };
+
+    let spec = get_dashboard_command_spec_with_options("/tmp/repo", options).expect("build spec");
+    let command = command_text(&spec);
+
+    assert!(command.contains("__dashboard-internal-native"));
+    assert!(command.contains("-u 'AIMUX_ROOT'"));
+    assert!(!command.contains(&stale_root.to_string_lossy().into_owned()));
+    assert!(command.contains(&native_binary.to_string_lossy().into_owned()));
+}
+
+fn host_native_dirname() -> String {
+    format!("{}-{}", host_native_platform(), host_native_arch())
+}
+
+fn host_native_platform() -> &'static str {
+    match std::env::consts::OS {
+        "macos" => "darwin",
+        value => value,
+    }
+}
+
+fn host_native_arch() -> &'static str {
+    match std::env::consts::ARCH {
+        "aarch64" => "arm64",
+        "x86_64" => "x64",
+        value => value,
+    }
 }
 
 #[test]

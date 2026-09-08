@@ -24,6 +24,7 @@ const DASHBOARD_ENV_KEYS: &[&str] = &[
     "AIMUX_CLI_BIN",
     "AIMUX_INSTALL_ROOT",
 ];
+const DASHBOARD_INHERITED_ENV_UNSET_KEYS: &[&str] = &["AIMUX_ROOT"];
 const STABLE_SHIM_ENV_KEYS: &[&str] = &["AIMUX_CLI_BIN", "AIMUX_INSTALL_ROOT"];
 const CONTRACT_NODE_EXEC_PATH: &str = "/opt/homebrew/Cellar/node/25.8.1_1/bin/node";
 const CONTRACT_HOME_DIR: &str = "/Users/sam";
@@ -109,19 +110,15 @@ pub fn get_dashboard_command_spec_with_options(
         .map(shell_quote)
         .collect::<Vec<_>>()
         .join(" ");
-    let unset_keys = if launch.source == AimuxCliLaunchSource::CurrentEntry {
-        STABLE_SHIM_ENV_KEYS
-    } else {
-        &[]
-    };
+    let unset_keys = dashboard_unset_env_keys(launch.source == AimuxCliLaunchSource::CurrentEntry);
     let dashboard_entrypoint = format!(
         "{}{}",
-        build_dashboard_env_command_prefix(&options.env, false, unset_keys, &options.home_dir),
+        build_dashboard_env_command_prefix(&options.env, false, &unset_keys, &options.home_dir),
         aimux_command
     );
     let dashboard_stamp_entrypoint = format!(
         "{}{}",
-        build_dashboard_env_command_prefix(&options.env, true, unset_keys, &options.home_dir),
+        build_dashboard_env_command_prefix(&options.env, true, &unset_keys, &options.home_dir),
         aimux_command
     );
     let native_dashboard = launch
@@ -396,6 +393,14 @@ fn build_dashboard_env_command_prefix(
     } else {
         format!("env {} ", args.join(" "))
     }
+}
+
+fn dashboard_unset_env_keys(source_checkout: bool) -> Vec<&'static str> {
+    let mut keys = DASHBOARD_INHERITED_ENV_UNSET_KEYS.to_vec();
+    if source_checkout {
+        keys.extend(STABLE_SHIM_ENV_KEYS);
+    }
+    keys
 }
 
 fn is_dashboard_env_stamp_default(key: &str, value: &str, home_dir: &Path) -> bool {
