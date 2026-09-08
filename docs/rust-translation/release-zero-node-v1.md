@@ -15,13 +15,13 @@ Disallowed in installed runtime:
   process commands using Node.
 - Release archive contents requiring `node_modules` for runtime execution.
 
-Known TypeScript gates to flip:
-- `src/one-shot-node-inventory.test.ts`
-- `src/installed-shim.test.ts`
-- `src/cli-launcher.test.ts`
-- `src/dashboard/command-spec.test.ts`
-- `src/runtime-coherence.test.ts`
-- `src/runtime-restart.test.ts`
+Retired TypeScript gates:
+- The old runtime TypeScript tests and capture harness were removed in Phase 8.
+- Their surviving evidence is the committed corpora under `testdata/contracts/v1`
+  plus Rust fixture consumers and live residual seams.
+- Native release/install behavior is now covered by Rust tests such as
+  `native/crates/aimux/tests/release_zero_node.rs`, fixture-backed release
+  contracts, and the post-cut no-Node smoke evidence.
 
 Acceptance commands:
 - `yarn native:fmt:check`

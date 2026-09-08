@@ -6,6 +6,10 @@ Status: adopted.
 
 Phase 8 had 325 mutation-proven fixture bindings behind the native runtime, but the installed binary front door still shipped broken in multiple ways: bare tool dispatch dropped the positional tool, resolved spawn mapped to an unimplemented executor path, bare dashboard attach misdetected the terminal, and the dashboard could enter alternate screen without painting content.
 
+Real install testing also caught later front-door regressions after those first fixes: `overseer status`, `scribe status`, and `loop list` returned `aimux ps` output verbatim; `review list` returned `task list` output verbatim; bare `graveyard` was rejected even though `graveyard list` worked. Those were successful wrong answers, so the residual suite now treats silent aliasing as a failure class, not only unsupported-command errors.
+
+Another real-machine first-run bug appeared when no tmux server existed: top-level `aimux shell` routed into service creation and tried `new-window` before ensuring the managed project session. Agent spawn already bootstrapped tmux; service spawn now follows the same invariant.
+
 Those failures were not contradictions in the corpora. They were outside the corpora boundary. The corpora proved function input/output contracts; they did not prove the assembled binary, daemon loopback transport, tmux terminal, or installed command dispatch.
 
 ## Rule
@@ -17,6 +21,10 @@ Every executable entry point needs at least one contract at its own boundary, ev
 `scripts/phase8-live-residuals.py` now covers the front-door seams that caught the failures:
 
 - command resolution from `aimux --help` through real binary execution;
+- command-group output alias detection for `overseer status`, `scribe status`,
+  `loop list`, and `review list`;
+- bare `graveyard` routing plus stop-vs-kill graveyard lifecycle semantics;
+- top-level `aimux shell` service creation from an empty private tmux socket;
 - shell agent spawn end to end without external agent CLIs or credentials;
 - top-level generic tool dispatch through the real binary with `codex`,
   `claude`, and `aider` backed by `/bin/sh`, covering bare tool paths,
@@ -27,5 +35,7 @@ Every executable entry point needs at least one contract at its own boundary, ev
 - bare `aimux` attach in a real TTY through a private tmux socket;
 - cold project-service reads through `ps`, `list`, `worktree list`, `threads`, and `task list`;
 - bare `aimux restart --json` including the current checkout before it has been registered by another command.
+
+Current proof head: `09eb330a`. `scripts/phase8-live-residuals.py --prove-fails --aimux-bin native/target/debug/aimux --skip-build` passed at `949551a7` with the front-door, dashboard, tmux, lazy-read, SSE, process-race, and graveyard mutations all reported as `PROVEN-FAILS`. The follow-up `shell-service` residual also passes and prove-fails on a missing-window mutation.
 
 These tests intentionally avoid exact TUI layout, screenshots, real Claude/Codex invocations, network access, or timing-sensitive multi-agent orchestration.

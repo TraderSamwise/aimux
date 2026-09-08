@@ -158,8 +158,46 @@ Parity evidence:
 - Commits `2f869c2f`, `bdafc972`, `793c0ba6`, `7c5bdb0e`, and `7cc6c7d4`
   cover worktree details, built-in top-level tools, restore mode preservation,
   root restore, and root resume.
+- Commits `6377fe3a` and `949551a7` cover dedicated `overseer status`,
+  `scribe status`, `loop list`, and `review list` routes, silent-alias
+  detection, bare `graveyard`, and stop-vs-kill graveyard lifecycle semantics.
+- Commit `09eb330a` covers top-level `aimux shell` from an
+  empty private tmux socket, matching the first-run no-server install bug.
 
 Open gaps:
 - Live residuals still do not invoke real Claude/Codex/Aider binaries or
   credentials; they intentionally substitute `/bin/sh` for deterministic CI-safe
   process-boundary coverage.
+
+## 2026-09-08 Phase 8 Residual Sweep
+
+Status: complete for current native head
+Scope: full live residual proof sweep after real-machine command aliasing and
+graveyard defects were fixed.
+
+Verification:
+- `cargo test --manifest-path native/Cargo.toml -p aimux --test core_cli --test core_cli_executor --test core_text`
+- `cargo test --manifest-path native/Cargo.toml -p aimux --test core_cli --test core_cli_executor --lib`
+- `cargo fmt --manifest-path native/Cargo.toml -p aimux --check`
+- `cargo build --manifest-path native/Cargo.toml -p aimux --bin aimux`
+- `cargo clippy --manifest-path native/Cargo.toml -p aimux --lib --bin aimux -- -D warnings`
+- `scripts/phase8-live-residuals.py --prove-fails --aimux-bin native/target/debug/aimux --skip-build`
+
+Parity evidence:
+- `6377fe3a` replaces status/list aliases with dedicated native text routes.
+- `949551a7` adds bare `graveyard` routing and live stop-vs-kill graveyard
+  lifecycle coverage.
+- `09eb330a` makes service launch call the same tmux
+  session bootstrap used by agent launch.
+- The live residual proof sweep reports all 14 intentional mutations as
+  `PROVEN-FAILS`, including command unsupported, command silent alias,
+  dashboard input dead, dashboard spawn missing session, top-level agent missing
+  session, lazy read unavailable, restart-current zero projects, SSE reorder,
+  process missing endpoint, and graveyard stop-adds-entry.
+- `scripts/phase8-live-residuals.py --only shell-service --aimux-bin native/target/debug/aimux --skip-build`
+  passes, and the old service-bootstrap bug prove-fails when the ensure call is
+  temporarily removed.
+
+Open gaps:
+- Same as above: real Claude/Codex/Aider credentials and host-specific terminal
+  emulator behavior remain outside deterministic temp-root residuals.
