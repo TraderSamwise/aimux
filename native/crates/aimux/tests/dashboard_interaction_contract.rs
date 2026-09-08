@@ -55,8 +55,14 @@ fn run_case(case: &Value) -> Value {
 
     for key in case["input"]["keys"].as_array().expect("keys") {
         let key = key.as_str().expect("key string");
-        for parsed in parse_dashboard_keys(key.as_bytes()) {
-            match controller.handle_key(&snapshot, parsed) {
+        let parsed_keys = parse_dashboard_keys(key.as_bytes());
+        let is_coalesced_input = parsed_keys.len() > 1;
+        for parsed in parsed_keys {
+            let before_surface = controller.input_surface();
+            let effect = controller.handle_key(&snapshot, parsed);
+            let stop_after_key = is_coalesced_input
+                && controller.should_stop_coalesced_input(before_surface, &effect);
+            match effect {
                 DashboardControllerEffect::Render => renders += 1,
                 DashboardControllerEffect::Request(request) => {
                     requests.push(summarize_request(&snapshot, &request));
@@ -69,7 +75,11 @@ fn run_case(case: &Value) -> Value {
                 | DashboardControllerEffect::WorktreeCacheCleanupApply(_)
                 | DashboardControllerEffect::LoadWorkOutlineOverlay { .. }
                 | DashboardControllerEffect::LoadOrchestrationRoutes { .. }
+                | DashboardControllerEffect::WatchWithOverseer(_)
                 | DashboardControllerEffect::Ignored => {}
+            }
+            if stop_after_key {
+                break;
             }
         }
     }

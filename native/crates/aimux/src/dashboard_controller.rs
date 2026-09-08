@@ -83,6 +83,52 @@ pub enum DashboardControllerEffect {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DashboardInputSurface {
+    screen: DashboardScreen,
+    overlay: DashboardInputOverlay,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DashboardInputOverlay {
+    None,
+    ToolPicker,
+    ServiceInput,
+    LaunchOptions,
+    WorktreeInput,
+    WorktreeRemoveConfirm,
+    WorktreeList,
+    WorktreeCacheCleanupConfirm,
+    Overseer,
+    OverseerWatchInstructions,
+    WorkOutline,
+    MigratePicker,
+    LabelInput,
+    TeammatePicker,
+    OrchestrationRoutePicker,
+    OrchestrationInput,
+    ThreadReply,
+    GraveyardWorktreeDeleteConfirm,
+}
+
+impl DashboardControllerEffect {
+    pub fn stops_coalesced_dashboard_input(&self) -> bool {
+        matches!(
+            self,
+            Self::Quit
+                | Self::Request(_)
+                | Self::MoveSelectedEntry { .. }
+                | Self::WorktreeCacheCleanupPreview(_)
+                | Self::WorktreeCacheCleanupApply(_)
+                | Self::LoadOrchestrationRoutes { .. }
+                | Self::OpenRelevantThread { .. }
+                | Self::LoadWorkOutlineOverlay { .. }
+                | Self::WatchWithOverseer(_)
+                | Self::OpenAgentToolPicker(_)
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DashboardMovedEntryKind {
     Session,
     Service,
@@ -728,6 +774,61 @@ impl DashboardController {
         self.subscreen_actions = actions;
         if self.subscreen_index >= self.subscreen_item_count {
             self.subscreen_index = self.subscreen_item_count.saturating_sub(1);
+        }
+    }
+
+    pub fn input_surface(&self) -> DashboardInputSurface {
+        DashboardInputSurface {
+            screen: self.screen,
+            overlay: self.input_overlay(),
+        }
+    }
+
+    pub fn should_stop_coalesced_input(
+        &self,
+        before: DashboardInputSurface,
+        effect: &DashboardControllerEffect,
+    ) -> bool {
+        effect.stops_coalesced_dashboard_input() || before != self.input_surface()
+    }
+
+    fn input_overlay(&self) -> DashboardInputOverlay {
+        if self.tool_picker.is_some() {
+            DashboardInputOverlay::ToolPicker
+        } else if self.service_input.is_some() {
+            DashboardInputOverlay::ServiceInput
+        } else if self.launch_options.is_some() {
+            DashboardInputOverlay::LaunchOptions
+        } else if self.worktree_input.is_some() {
+            DashboardInputOverlay::WorktreeInput
+        } else if self.worktree_remove_confirm.is_some() {
+            DashboardInputOverlay::WorktreeRemoveConfirm
+        } else if self.worktree_list_open {
+            DashboardInputOverlay::WorktreeList
+        } else if self.worktree_cache_cleanup_confirm.is_some() {
+            DashboardInputOverlay::WorktreeCacheCleanupConfirm
+        } else if self.overseer_overlay_open {
+            DashboardInputOverlay::Overseer
+        } else if self.overseer_watch_instructions.is_some() {
+            DashboardInputOverlay::OverseerWatchInstructions
+        } else if self.work_outline_overlay.is_some() {
+            DashboardInputOverlay::WorkOutline
+        } else if self.migrate_picker.is_some() {
+            DashboardInputOverlay::MigratePicker
+        } else if self.label_input.is_some() {
+            DashboardInputOverlay::LabelInput
+        } else if self.teammate_picker.is_some() {
+            DashboardInputOverlay::TeammatePicker
+        } else if self.orchestration_route_picker.is_some() {
+            DashboardInputOverlay::OrchestrationRoutePicker
+        } else if self.orchestration_input.is_some() {
+            DashboardInputOverlay::OrchestrationInput
+        } else if self.thread_reply.is_some() {
+            DashboardInputOverlay::ThreadReply
+        } else if self.graveyard_worktree_delete_confirm.is_some() {
+            DashboardInputOverlay::GraveyardWorktreeDeleteConfirm
+        } else {
+            DashboardInputOverlay::None
         }
     }
 

@@ -187,6 +187,60 @@ fn quick_jump_first_digit_targets_worktrees_even_from_session_level() {
 }
 
 #[test]
+fn coalesced_input_continues_until_quick_jump_pair_commits() {
+    let mut snapshot = snapshot();
+    snapshot.worktree_groups[1].sessions[0].tmux_window_id = Some("@wt".into());
+    let mut controller = DashboardController::new(&snapshot);
+
+    let before_first = controller.input_surface();
+    let first = controller.handle_key(&snapshot, DashboardKey::Digit('2'));
+    assert_eq!(first, DashboardControllerEffect::Render);
+    assert!(!controller.should_stop_coalesced_input(before_first, &first));
+
+    let before_second = controller.input_surface();
+    let second = controller.handle_key(&snapshot, DashboardKey::Digit('1'));
+    let DashboardControllerEffect::Request(request) = &second else {
+        panic!("expected second quick-jump digit to activate selected entry");
+    };
+    assert_eq!(request.path, routes::controls::FOCUS_WINDOW);
+    assert_eq!(request.body, json!({ "windowId": "@wt", "focus": true }));
+    assert!(controller.should_stop_coalesced_input(before_second, &second));
+}
+
+#[test]
+fn coalesced_input_stops_after_opening_command_surfaces() {
+    let snapshot = snapshot();
+    let mut help_controller = DashboardController::new(&snapshot);
+    let before_help = help_controller.input_surface();
+    let help = help_controller.handle_key(&snapshot, DashboardKey::Printable('?'));
+    assert_eq!(help, DashboardControllerEffect::Render);
+    assert!(help_controller.should_stop_coalesced_input(before_help, &help));
+
+    let mut picker_controller = DashboardController::new(&snapshot);
+    let before_picker = picker_controller.input_surface();
+    let picker = picker_controller.handle_key(&snapshot, DashboardKey::Printable('n'));
+    assert_eq!(
+        picker,
+        DashboardControllerEffect::OpenAgentToolPicker(DashboardToolPickerMode::Create)
+    );
+    assert!(picker_controller.should_stop_coalesced_input(before_picker, &picker));
+}
+
+#[test]
+fn coalesced_input_keeps_filling_existing_text_surface() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.worktree_input = Some(String::new());
+
+    let before = controller.input_surface();
+    let effect = controller.handle_key(&snapshot, DashboardKey::Printable('f'));
+
+    assert_eq!(effect, DashboardControllerEffect::Render);
+    assert!(!controller.should_stop_coalesced_input(before, &effect));
+    assert_eq!(controller.worktree_input.as_deref(), Some("f"));
+}
+
+#[test]
 fn shifted_down_requests_selected_entry_reorder() {
     let snapshot = snapshot();
     let mut controller = DashboardController::new(&snapshot);

@@ -165,8 +165,17 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                 continue;
             };
             let controller = controller.get_or_insert_with(|| DashboardController::new(snapshot));
-            for key in keys.into_iter().filter(|key| !key.is_focus_in()) {
-                match controller.handle_key(snapshot, key) {
+            let keys = keys
+                .into_iter()
+                .filter(|key| !key.is_focus_in())
+                .collect::<Vec<_>>();
+            let is_coalesced_input = keys.len() > 1;
+            for key in keys {
+                let before_surface = controller.input_surface();
+                let effect = controller.handle_key(snapshot, key);
+                let stop_after_key = is_coalesced_input
+                    && controller.should_stop_coalesced_input(before_surface, &effect);
+                match effect {
                     DashboardControllerEffect::Quit => return Ok(()),
                     DashboardControllerEffect::Request(request) => {
                         if let Some(endpoint) = latest_endpoint.as_ref() {
@@ -324,6 +333,9 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                         render_now = true;
                     }
                     DashboardControllerEffect::Ignored => {}
+                }
+                if stop_after_key {
+                    break;
                 }
             }
         }
