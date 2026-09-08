@@ -40,8 +40,10 @@ fn fixture_dashboard_command_spec_contract_matches_rust() {
         assert!(!case.input.is_null());
         assert!(!case.output.is_null());
         let actual = run_dashboard_command_spec_contract_case(&case.name, &case.input);
-        let actual = normalize_dashboard_stamps(actual);
-        let expected = normalize_dashboard_stamps(case.output);
+        assert_phase8_env_hardening(&actual);
+        let actual = normalize_phase8_dashboard_env_unsets(normalize_dashboard_stamps(actual));
+        let expected =
+            normalize_phase8_dashboard_env_unsets(normalize_dashboard_stamps(case.output));
         if actual != expected {
             failures.push(json!({
                 "id": case.id,
@@ -58,6 +60,67 @@ fn fixture_dashboard_command_spec_contract_matches_rust() {
         failures.len(),
         serde_json::to_string_pretty(&failures).expect("serialize failures")
     );
+}
+
+fn assert_phase8_env_hardening(value: &Value) {
+    for command in dashboard_command_strings(value) {
+        assert!(
+            command.contains("-u 'AIMUX_ROOT'"),
+            "dashboard command must unset stale AIMUX_ROOT: {command}"
+        );
+        assert!(
+            command.contains("-u 'AIMUX_NATIVE_BIN'"),
+            "dashboard command must unset stale AIMUX_NATIVE_BIN: {command}"
+        );
+    }
+}
+
+fn dashboard_command_strings(value: &Value) -> Vec<&str> {
+    match value {
+        Value::Object(object) => {
+            let mut commands = Vec::new();
+            if let Some(args) = object
+                .get("dashboardCommand")
+                .and_then(|command| command.get("args"))
+                .and_then(Value::as_array)
+            {
+                if let Some(command) = args.get(1).and_then(Value::as_str) {
+                    commands.push(command);
+                }
+            }
+            for child in object.values() {
+                commands.extend(dashboard_command_strings(child));
+            }
+            commands
+        }
+        Value::Array(values) => values
+            .iter()
+            .flat_map(dashboard_command_strings)
+            .collect::<Vec<_>>(),
+        _ => Vec::new(),
+    }
+}
+
+fn normalize_phase8_dashboard_env_unsets(value: Value) -> Value {
+    match value {
+        Value::String(text) => Value::String(
+            text.replace(" -u 'AIMUX_ROOT'", "")
+                .replace(" -u 'AIMUX_NATIVE_BIN'", ""),
+        ),
+        Value::Object(object) => Value::Object(
+            object
+                .into_iter()
+                .map(|(key, value)| (key, normalize_phase8_dashboard_env_unsets(value)))
+                .collect(),
+        ),
+        Value::Array(values) => Value::Array(
+            values
+                .into_iter()
+                .map(normalize_phase8_dashboard_env_unsets)
+                .collect(),
+        ),
+        value => value,
+    }
 }
 
 fn normalize_dashboard_stamps(value: Value) -> Value {
