@@ -1,4 +1,4 @@
-use super::text::{sgr_end, strip_ansi, truncate_ansi};
+use super::text::{js_len, sgr_end, strip_ansi, truncate_ansi};
 
 const RESET: &str = "\x1b[0m";
 
@@ -95,7 +95,7 @@ pub fn recede(text: &str) -> String {
 }
 
 pub fn visible_width(text: &str) -> usize {
-    strip_ansi(text).chars().count()
+    js_len(&strip_ansi(text))
 }
 
 pub fn pad_visible(text: &str, width: usize) -> String {

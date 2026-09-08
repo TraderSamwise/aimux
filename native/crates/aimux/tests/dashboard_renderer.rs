@@ -1,7 +1,7 @@
 use aimux::dashboard_model::{
     DashboardOperationFailure, DashboardSessionEvent, DashboardSessionLoopLastAction,
-    DashboardWorktreeRemovalInfo, DesktopStateGoldenFixture, SessionStatus, WorktreeGroup,
-    WorktreeStatus,
+    DashboardWorktreeRemovalInfo, DesktopStateGoldenFixture, SessionStatus, SessionTeamMetadata,
+    WorktreeGroup, WorktreeStatus,
 };
 use aimux::dashboard_renderer::{DashboardNavLevel, DashboardRenderInput, render_dashboard_frame};
 use aimux::project_service::work_outline::{
@@ -14,6 +14,9 @@ use serde_json::json;
 const GOLDEN: &str = include_str!("../../../../src/multiplexer/desktop-state-golden.fixture.json");
 const NODE_FULL_FRAME: &str =
     include_str!("../../../../testdata/contracts/v1/tui/dashboard-node-full-frame-v1.txt");
+const NODE_CONTROL_SCRIBE_FRAME: &str = include_str!(
+    "../../../../testdata/contracts/v1/tui/dashboard-node-control-scribe-frame-v1.txt"
+);
 
 #[test]
 fn renders_empty_dashboard_with_create_hint() {
@@ -84,6 +87,85 @@ fn matches_node_dashboard_full_frame_for_populated_agent_selection() {
     });
 
     assert_same_frame(NODE_FULL_FRAME, &result.frame);
+}
+
+#[test]
+fn matches_node_dashboard_full_frame_with_project_controls_and_scribe_preview() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let mut snapshot = fixture.runtime_full.clone();
+    let base = snapshot.sessions[0].clone();
+    let mut overseer = base.clone();
+    overseer.id = "claude-overseer".into();
+    overseer.label = Some("Project Overseer".into());
+    overseer.overseer = Some(true);
+    overseer.scribe = Some(false);
+    overseer.project_control = Some(true);
+    overseer.team = Some(SessionTeamMetadata {
+        team_id: "project-control".into(),
+        parent_session_id: String::new(),
+        role: Some("overseer".into()),
+        label: Some("Project Overseer".into()),
+        order: Some(0),
+        extra: Default::default(),
+    });
+
+    let mut scribe = base;
+    scribe.id = "claude-scribe".into();
+    scribe.label = Some("Project Scribe".into());
+    scribe.overseer = Some(false);
+    scribe.scribe = Some(true);
+    scribe.project_control = Some(true);
+    scribe.team = Some(SessionTeamMetadata {
+        team_id: "project-control".into(),
+        parent_session_id: String::new(),
+        role: Some("scribe".into()),
+        label: Some("Project Scribe".into()),
+        order: Some(1),
+        extra: Default::default(),
+    });
+
+    let overseer_sessions = vec![overseer.clone()];
+    let scribe_sessions = vec![scribe.clone()];
+    snapshot.sessions.splice(0..0, [overseer, scribe]);
+    let preview_entries = vec![WorkOutlineEntry {
+        entry_id: "outline-1".into(),
+        topic_key: "topic-1".into(),
+        title: "Project handoff summary".into(),
+        summary: "Scribe has summarized the selected agent output for review.".into(),
+        status: WorkOutlineStatus::Active,
+        source: WorkOutlineSource::Scribe,
+        session_ids: vec!["claude-0".into()],
+        worktree_path: None,
+        evidence: None,
+        created_at: "2999-01-01T00:00:00.000Z".into(),
+        updated_at: "2999-01-01T00:00:00.000Z".into(),
+        last_seen_at: "2999-01-01T00:00:00.000Z".into(),
+    }];
+
+    let result = render_dashboard_frame(&DashboardRenderInput {
+        snapshot: &snapshot,
+        overseer_sessions: &overseer_sessions,
+        scribe_sessions: &scribe_sessions,
+        cols: 200,
+        rows: 50,
+        nav_level: DashboardNavLevel::Sessions,
+        selected_session_id: Some("claude-0"),
+        selected_service_id: None,
+        focused_worktree_path: None,
+        runtime_label: Some("tmux"),
+        version: Some("local-node"),
+        is_dev_runtime: false,
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_message: None,
+        details_sidebar_visible: true,
+        preview_source: "scribe",
+        scribe_preview_entries: &preview_entries,
+    });
+
+    assert_same_frame(NODE_CONTROL_SCRIBE_FRAME, &result.frame);
 }
 
 fn assert_same_frame(expected: &str, actual: &str) {

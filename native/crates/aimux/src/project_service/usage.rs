@@ -407,27 +407,57 @@ fn parse_iso_millis(value: &str) -> Option<u128> {
     if date_parts.next().is_some() || !(1..=12).contains(&month) || !(1..=31).contains(&day) {
         return None;
     }
-    let time = time.strip_suffix('Z')?;
+    let (time, offset_minutes) = split_iso_time_offset(time)?;
     let (hms, millis) = time.split_once('.').unwrap_or((time, "0"));
     let mut time_parts = hms.split(':');
     let hour = time_parts.next()?.parse::<i64>().ok()?;
     let minute = time_parts.next()?.parse::<i64>().ok()?;
     let second = time_parts.next()?.parse::<i64>().ok()?;
-    if time_parts.next().is_some() || hour > 23 || minute > 59 || second > 59 || millis.len() > 3 {
+    if time_parts.next().is_some() || hour > 23 || minute > 59 || second > 59 {
         return None;
     }
-    let mut millis = millis.parse::<u128>().ok()?;
-    for _ in 0..(3 - value
-        .split_once('.')
-        .map_or(0, |(_, rest)| rest.trim_end_matches('Z').len()))
-    {
+    if !millis.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let millis_len = millis.len().min(3);
+    let mut millis = millis
+        .chars()
+        .take(3)
+        .collect::<String>()
+        .parse::<i128>()
+        .unwrap_or(0);
+    for _ in millis_len..3 {
         millis *= 10;
     }
     let days = days_from_civil(year, month, day)?;
-    Some(
-        (((days as u128 * 24 + hour as u128) * 60 + minute as u128) * 60 + second as u128) * 1000
-            + millis,
-    )
+    let local_millis =
+        ((((days as i128 * 24 + hour as i128) * 60 + minute as i128) * 60 + second as i128) * 1000)
+            + millis;
+    let utc_millis = local_millis - i128::from(offset_minutes) * 60 * 1000;
+    (utc_millis >= 0).then_some(utc_millis as u128)
+}
+
+fn split_iso_time_offset(time: &str) -> Option<(&str, i32)> {
+    if let Some(time) = time.strip_suffix('Z') {
+        return Some((time, 0));
+    }
+    let offset_start = time.rfind('+').or_else(|| {
+        time.char_indices()
+            .skip(1)
+            .filter(|(_, ch)| *ch == '-')
+            .map(|(index, _)| index)
+            .last()
+    })?;
+    let (time, offset) = time.split_at(offset_start);
+    let sign = if offset.starts_with('+') { 1 } else { -1 };
+    let offset = &offset[1..];
+    let (hours, minutes) = offset.split_once(':')?;
+    let hours = hours.parse::<i32>().ok()?;
+    let minutes = minutes.parse::<i32>().ok()?;
+    if !(0..=23).contains(&hours) || !(0..=59).contains(&minutes) {
+        return None;
+    }
+    Some((time, sign * (hours * 60 + minutes)))
 }
 
 fn days_from_civil(year: i64, month: i64, day: i64) -> Option<i64> {

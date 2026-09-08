@@ -3,7 +3,8 @@ use aimux::tui_render::screen_frame::{
     ScreenFrameInput, compose_screen_frame, screen_content_width, screen_left_width,
 };
 use aimux::tui_render::text::{
-    compose_two_pane, strip_ansi, truncate_ansi, truncate_plain, wrap_key_value, wrap_text,
+    compose_two_pane, strip_ansi, truncate, truncate_ansi, truncate_plain, wrap_key_value,
+    wrap_text,
 };
 use aimux::tui_render::theme::{
     ChipTone, Column, StatusKind, Tone, chip, cols, keycap, pad_visible, pill, status_dot, style,
@@ -22,6 +23,9 @@ fn visible_width_ignores_ansi_sgr_sequences() {
 fn truncates_pads_and_wraps_like_the_typescript_helpers() {
     assert_eq!(truncate_plain("abcdef", 4), "abc…");
     assert_eq!(truncate_plain("abcdef", 1), "a");
+    assert_eq!(visible_width("a😀b"), 4);
+    assert_eq!(truncate_plain("😀x", 2), "\u{fffd}…");
+    assert_eq!(truncate("😀x", 2), "😀…");
 
     let truncated = truncate_ansi(&style("abcdef", Tone::Work), 4);
     assert_eq!(strip_ansi(&truncated), "abc…");

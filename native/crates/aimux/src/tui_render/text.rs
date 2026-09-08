@@ -1,4 +1,5 @@
 const ESC: u8 = 0x1b;
+const REPLACEMENT: char = '\u{fffd}';
 
 pub(crate) fn sgr_end(bytes: &[u8], start: usize) -> Option<usize> {
     if bytes.get(start) != Some(&ESC) || bytes.get(start + 1) != Some(&b'[') {
@@ -33,26 +34,36 @@ pub fn strip_ansi(text: &str) -> String {
     output
 }
 
+pub fn js_len(text: &str) -> usize {
+    text.encode_utf16().count()
+}
+
+fn take_js_units(text: &str, max: usize) -> String {
+    char::decode_utf16(text.encode_utf16().take(max))
+        .map(|unit| unit.unwrap_or(REPLACEMENT))
+        .collect()
+}
+
 pub fn center(text: &str, width: usize) -> String {
-    let padding = width.saturating_sub(strip_ansi(text).chars().count()) / 2;
+    let padding = width.saturating_sub(js_len(&strip_ansi(text))) / 2;
     format!("{}{text}", " ".repeat(padding))
 }
 
 pub fn truncate(text: &str, max: usize) -> String {
-    if text.chars().count() <= max {
+    if js_len(text) <= max {
         return text.to_owned();
     }
-    format!("{}…", text.chars().take(max).collect::<String>())
+    format!("{}…", take_js_units(text, max))
 }
 
 pub fn truncate_plain(text: &str, max: usize) -> String {
-    if text.chars().count() <= max {
+    if js_len(text) <= max {
         return text.to_owned();
     }
     if max <= 1 {
-        return text.chars().take(max).collect();
+        return take_js_units(text, max);
     }
-    format!("{}…", text.chars().take(max - 1).collect::<String>())
+    format!("{}…", take_js_units(text, max - 1))
 }
 
 pub fn truncate_ansi(text: &str, max: usize) -> String {
@@ -60,7 +71,7 @@ pub fn truncate_ansi(text: &str, max: usize) -> String {
         return String::new();
     }
 
-    let plain_length = strip_ansi(text).chars().count();
+    let plain_length = js_len(&strip_ansi(text));
     let needs_ellipsis = plain_length > max;
     let limit = if needs_ellipsis && max > 1 {
         max - 1
@@ -85,9 +96,14 @@ pub fn truncate_ansi(text: &str, max: usize) -> String {
             .chars()
             .next()
             .expect("index must be at a UTF-8 character boundary");
+        let units = character.len_utf16();
+        if visible + units > limit {
+            output.push(REPLACEMENT);
+            break;
+        }
         output.push(character);
         index += character.len_utf8();
-        visible += 1;
+        visible += units;
     }
 
     if needs_ellipsis {
@@ -116,14 +132,14 @@ pub fn wrap_text(text: &str, width: usize) -> Vec<String> {
         } else {
             format!("{current} {word}")
         };
-        if next.chars().count() <= width {
+        if js_len(&next) <= width {
             current = next;
             continue;
         }
         if !current.is_empty() {
             lines.push(current);
         }
-        current = if word.chars().count() > width {
+        current = if js_len(word) > width {
             truncate_plain(word, width)
         } else {
             word.to_owned()
@@ -137,7 +153,7 @@ pub fn wrap_text(text: &str, width: usize) -> Vec<String> {
 
 pub fn wrap_key_value(key: &str, value: &str, width: usize) -> Vec<String> {
     let prefix = format!("{key}: ");
-    let wrapped = wrap_text(value, 8.max(width.saturating_sub(prefix.chars().count())));
+    let wrapped = wrap_text(value, 8.max(width.saturating_sub(js_len(&prefix))));
     wrapped
         .into_iter()
         .enumerate()
@@ -145,7 +161,7 @@ pub fn wrap_key_value(key: &str, value: &str, width: usize) -> Vec<String> {
             if index == 0 {
                 format!("{prefix}{line}")
             } else {
-                format!("{}{line}", " ".repeat(prefix.chars().count()))
+                format!("{}{line}", " ".repeat(js_len(&prefix)))
             }
         })
         .collect()
@@ -163,7 +179,7 @@ pub fn compose_two_pane(
 ) -> Vec<String> {
     let separator = separator.unwrap_or(" │ ");
     let left_width = two_pane_left_width(cols);
-    let separator_width = strip_ansi(separator).chars().count();
+    let separator_width = js_len(&strip_ansi(separator));
     let right_width = 20.max(
         cols.saturating_sub(left_width)
             .saturating_sub(separator_width)
@@ -183,8 +199,8 @@ pub fn compose_two_pane(
                 right.get(index).map(String::as_str).unwrap_or(""),
                 right_width,
             );
-            let left_padding = left_width.saturating_sub(strip_ansi(&left_line).chars().count());
-            let right_padding = right_width.saturating_sub(strip_ansi(&right_line).chars().count());
+            let left_padding = left_width.saturating_sub(js_len(&strip_ansi(&left_line)));
+            let right_padding = right_width.saturating_sub(js_len(&strip_ansi(&right_line)));
             format!(
                 "{}{}{}{separator}{}{}",
                 " ".repeat(outer_padding),

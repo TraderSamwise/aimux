@@ -61,6 +61,25 @@ fn older_mark_does_not_overwrite_newer_item_timestamp() {
 }
 
 #[test]
+fn offset_timestamps_sort_like_javascript_date_parse() {
+    let project = temp_project("offset");
+    let state_dir = project.join("state");
+    mark_last_used(
+        &state_dir,
+        mark("agent-a", None, "2026-06-28T12:00:00.000+08:00"),
+    );
+    mark_last_used(
+        &state_dir,
+        mark("agent-b", None, "2026-06-28T04:00:01.000Z"),
+    );
+
+    let state = load_last_used_state(&state_dir);
+    assert_eq!(state["projectRecentIds"], json!(["agent-b", "agent-a"]));
+    assert_eq!(state["updatedAt"], "2026-06-28T04:00:01.000Z");
+    cleanup(project);
+}
+
+#[test]
 fn keeps_each_clients_recency_independent() {
     let project = temp_project("clients");
     let state_dir = project.join("state");
