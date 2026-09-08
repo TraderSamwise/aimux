@@ -1,12 +1,18 @@
 # PTY Recording Dead Writer v1
 
-Status: analysis only. No behavior change.
+Status: RETIRED. Session recording writer stays removed; legacy recording cleanup stays.
 
 ## Finding
 
 The session recording writer is dead code. `src/recorder.ts` still defines a `Recorder` that appends raw PTY output to `<session-id>.log` and stripped plaintext output to `<session-id>.txt`, but no current TypeScript or Rust runtime path constructs it or writes those files.
 
-This is pre-existing, not caused by the Rust rewrite. The native tree currently ports cleanup and migration handling for recording files, not recording creation.
+This is pre-existing, not caused by the Rust rewrite. The native tree ports cleanup and migration handling for recording files, not recording creation. New project init no longer creates a recordings directory that nothing writes to.
+
+## Decision
+
+Do not restore PTY session recording. The writer has been dead since `0098853a` on 2026-03-30 and nobody noticed for five months. Aimux already has agent output capture, transcripts, scrollback, and Expose pane taps through the native tmux runtime; restoring recording would add a second contended pane-output consumer with no demonstrated demand.
+
+Keep `recording_cleanup.rs`, graveyard cleanup integration, runtime migration handling, and the `recordings/` `.gitignore` entry. They service real legacy `.log` and `.txt` files that may still exist on disk and should remain ignored and cleanable.
 
 ## What The Feature Was
 
@@ -60,9 +66,9 @@ Those commits sweep or remove existing `.log` and `.txt` files, including old fi
 
 The Rust port mirrors this cleanup behavior in `native/crates/aimux/src/recording_cleanup.rs` and graveyard cleanup code. It does not contain the missing creation path.
 
-## Restoring It
+## Retired Restore Path
 
-Restoration should be a native tmux-output recording feature, not a revival of the old Node `Recorder`.
+If this feature is ever brought back, restoration should be a native tmux-output recording feature, not a revival of the old Node `Recorder`.
 
 A minimal faithful restore would need:
 

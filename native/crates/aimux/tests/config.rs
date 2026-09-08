@@ -48,10 +48,10 @@ fn init_project_creates_local_and_global_state_without_overwriting_config() {
         "# Runtime-private service/project state (lives in ~/.aimux/projects/)\nstate.json\n\n# Agent-facing shared artifacts\ncontext/\nhistory/\ntasks/\nstatus/\nthreads/\n\n# Terminal recordings (large, machine-specific)\nrecordings/\n\n# Agent plan files\nplans/\n\n# Managed git worktrees\nworktrees/\n\n"
     );
     assert!(
-        resolver
+        !resolver
             .project_state_dir_for(&repo)
             .join("recordings")
-            .is_dir()
+            .exists()
     );
 
     fs::write(

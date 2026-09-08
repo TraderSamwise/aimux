@@ -222,8 +222,6 @@ pub fn init_project_with_resolver(
         write_text_atomic(gitignore_path, GITIGNORE_CONTENTS).map_err(|error| error.to_string())?;
     }
 
-    let state_dir = resolver.project_state_dir_for(project_root);
-    std::fs::create_dir_all(state_dir.join("recordings")).map_err(|error| error.to_string())?;
     Ok(())
 }
 
