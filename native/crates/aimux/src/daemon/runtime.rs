@@ -972,6 +972,19 @@ impl RealDaemonRuntime {
         project_root: &str,
         reload_dashboard: impl FnOnce(&str) -> Result<RestartDashboardTarget, String>,
     ) -> Value {
+        self.restart_control_plane_project_with_statusline(
+            project_root,
+            reload_dashboard,
+            |runtime, project_root| runtime.refresh_project_statusline(project_root),
+        )
+    }
+
+    fn restart_control_plane_project_with_statusline(
+        &mut self,
+        project_root: &str,
+        reload_dashboard: impl FnOnce(&str) -> Result<RestartDashboardTarget, String>,
+        refresh_statusline: impl FnOnce(&mut Self, &str),
+    ) -> Value {
         record_repair_event_for_project(
             &self.resolver,
             project_root,
@@ -996,9 +1009,7 @@ impl RealDaemonRuntime {
         };
         let dashboard = match reload_dashboard(project_root) {
             Ok(restart_dashboard) => {
-                if !restart_dashboard.retained {
-                    self.refresh_project_statusline(project_root);
-                }
+                refresh_statusline(self, project_root);
                 let status = restart_dashboard.status();
                 let target = restart_dashboard.target;
                 json!({
@@ -2872,7 +2883,38 @@ fn reload_dashboard_for_restart(project_root: &str) -> Result<RestartDashboardTa
         None,
     );
     let mut tmux = TmuxRuntimeManager::new();
-    if let Some(target) = retained_dashboard_for_restart(project_root, &mut tmux)? {
+    reload_dashboard_for_restart_with_tmux(project_root, &mut tmux)
+}
+
+fn reload_dashboard_for_restart_with_tmux(
+    project_root: &str,
+    tmux: &mut TmuxRuntimeManager,
+) -> Result<RestartDashboardTarget, String> {
+    let active_windows = capture_active_non_dashboard_windows(project_root, tmux);
+    if let Some(target) = retained_dashboard_for_restart(project_root, tmux)? {
+        let target_ref = &target.target;
+        let mut errors = cleanup_host_dashboard_session(
+            tmux,
+            &target_ref.dashboard_session.session_name,
+            &target_ref.dashboard_target,
+        );
+        errors.extend(relink_dashboard_to_client_sessions(
+            project_root,
+            tmux,
+            &target_ref.dashboard_target,
+        ));
+        restore_active_windows(tmux, &active_windows);
+        if !errors.is_empty() {
+            let error = format!("dashboard relink failed for {}", errors.join("; "));
+            record_repair_event_from_env(
+                project_root,
+                ACTION_DASHBOARD_RELOAD,
+                "control-plane-restart",
+                STATUS_FAILED,
+                Some(json!({ "error": error.clone(), "status": "retained" })),
+            );
+            return Err(error);
+        }
         record_repair_event_from_env(
             project_root,
             ACTION_DASHBOARD_RELOAD,
@@ -2887,19 +2929,17 @@ fn reload_dashboard_for_restart(project_root: &str) -> Result<RestartDashboardTa
         return Ok(target);
     }
     let context = DashboardTargetContext::for_project(project_root)?;
-    let active_windows = capture_active_non_dashboard_windows(project_root, &mut tmux);
-    let resolved =
-        resolve_dashboard_target_for_restart_with_context(project_root, &mut tmux, &context);
+    let resolved = resolve_dashboard_target_for_restart_with_context(project_root, tmux, &context);
     let result = match resolved {
         Ok(target) => {
             let mut errors = cleanup_host_dashboard_session(
-                &mut tmux,
+                tmux,
                 &target.dashboard_session.session_name,
                 &target.dashboard_target,
             );
             errors.extend(relink_dashboard_to_client_sessions(
                 project_root,
-                &mut tmux,
+                tmux,
                 &target.dashboard_target,
             ));
             if errors.is_empty() {
@@ -2938,7 +2978,7 @@ fn reload_dashboard_for_restart(project_root: &str) -> Result<RestartDashboardTa
             Err(error)
         }
     };
-    restore_active_windows(&mut tmux, &active_windows);
+    restore_active_windows(tmux, &active_windows);
     result
 }
 
@@ -3410,6 +3450,98 @@ mod tests {
     }
 
     #[test]
+    fn restart_retained_dashboard_relinks_clients_and_cleans_stale_dashboards() {
+        let project_root = "/repo";
+        let context = DashboardTargetContext::for_project(project_root).expect("context");
+        let host = project_session(project_root, "aimux").session_name;
+        let client = format!("{host}-client-deadbeef");
+        let state = Rc::new(RefCell::new(
+            FakeTmuxState::new(
+                vec![host.clone(), client.clone()],
+                [
+                    (host.clone(), vec![fake_window("@1", 0, "dashboard", true)]),
+                    (
+                        client.clone(),
+                        vec![fake_window("@old", 0, "dashboard", true)],
+                    ),
+                ],
+            )
+            .with_session_option(&host, "@aimux-project-root", project_root)
+            .with_session_option(&host, TMUX_RUNTIME_OWNER_OPTION, &context.runtime_owner_id)
+            .with_window_option(
+                "@1",
+                TMUX_DASHBOARD_BUILD_OPTION,
+                &context.dashboard_build_stamp,
+            )
+            .with_window_option(
+                "@1",
+                TMUX_DASHBOARD_READY_OPTION,
+                &context.dashboard_build_stamp,
+            )
+            .with_window_option(
+                "@1",
+                TMUX_DASHBOARD_OWNER_OPTION,
+                &context.runtime_owner_id,
+            ),
+        ));
+        let mut tmux = fake_tmux_manager(Rc::clone(&state));
+
+        let result =
+            reload_dashboard_for_restart_with_tmux(project_root, &mut tmux).expect("reload result");
+
+        assert!(result.retained);
+        assert_eq!(result.target.dashboard_target.window_id, "@1");
+        let calls = state.borrow().calls.clone();
+        assert!(
+            calls
+                .iter()
+                .any(|call| call == &format!("link-window -d -s @1 -t {client}")),
+            "{calls:?}"
+        );
+        assert!(
+            calls
+                .iter()
+                .any(|call| call == &format!("swap-window -s {client}:@1 -t {client}:0")),
+            "{calls:?}"
+        );
+        assert!(
+            calls
+                .iter()
+                .any(|call| call == &format!("unlink-window -t {client}:@old")),
+            "{calls:?}"
+        );
+        assert!(
+            !calls.iter().any(|call| call.contains("new-window"))
+                && !calls.iter().any(|call| call.contains("respawn-pane")),
+            "{calls:?}"
+        );
+    }
+
+    #[test]
+    fn control_plane_restart_refreshes_statusline_for_retained_dashboard() {
+        let fixture = restart_service_fixture("restart-retained-statusline");
+        let project = fixture.project_root.clone();
+        let project_id = fixture.register_project();
+        fixture.persist_service(&project_id, 91_006, ProjectServiceStatus::Running);
+        fixture.persist_endpoint(91_006);
+        let launcher = Arc::new(RestartTestLauncher::new(91_106));
+        let verifier = Arc::new(RestartTestProcessVerifier::current_native([91_006]));
+        let mut runtime = fixture.runtime(launcher.clone(), verifier);
+        let refreshed = RefCell::new(Vec::<String>::new());
+
+        let result = runtime.restart_control_plane_project_with_statusline(
+            &project,
+            restart_test_retained_dashboard,
+            |_runtime, project_root| refreshed.borrow_mut().push(project_root.to_owned()),
+        );
+
+        assert_eq!(result["dashboard"]["status"], "retained");
+        assert_eq!(refreshed.into_inner(), vec![project]);
+        assert!(launcher.calls().is_empty());
+        fixture.cleanup();
+    }
+
+    #[test]
     fn control_plane_restart_batches_extra_service_pid_discovery() {
         let fixture = restart_service_fixture("restart-batched-pids-one");
         let other_project_path = fixture.root.join("other-repo");
@@ -3714,6 +3846,8 @@ mod tests {
     struct FakeTmuxState {
         sessions: Vec<String>,
         windows: HashMap<String, Vec<FakeWindow>>,
+        session_options: HashMap<(String, String), String>,
+        window_options: HashMap<(String, String), String>,
         calls: Vec<String>,
     }
 
@@ -3725,8 +3859,22 @@ mod tests {
             Self {
                 sessions,
                 windows: windows.into_iter().collect(),
+                session_options: HashMap::new(),
+                window_options: HashMap::new(),
                 calls: Vec::new(),
             }
+        }
+
+        fn with_session_option(mut self, session_name: &str, key: &str, value: &str) -> Self {
+            self.session_options
+                .insert((session_name.to_owned(), key.to_owned()), value.to_owned());
+            self
+        }
+
+        fn with_window_option(mut self, window_id: &str, key: &str, value: &str) -> Self {
+            self.window_options
+                .insert((window_id.to_owned(), key.to_owned()), value.to_owned());
+            self
         }
 
         fn run(&mut self, args: &[String]) -> Result<String, String> {
@@ -3735,6 +3883,14 @@ mod tests {
             match args.first().map(String::as_str) {
                 Some("-V") => Ok("tmux 3.4".to_owned()),
                 Some("list-sessions") => Ok(self.sessions.join("\n")),
+                Some("has-session") => {
+                    let session = arg_after(args, "-t").unwrap_or_default();
+                    if self.sessions.iter().any(|candidate| candidate == session) {
+                        Ok(String::new())
+                    } else {
+                        Err(format!("missing session {session}"))
+                    }
+                }
                 Some("list-windows") => {
                     let session = arg_after(args, "-t").unwrap_or_default();
                     Ok(self
@@ -3753,6 +3909,15 @@ mod tests {
                         })
                         .collect::<Vec<_>>()
                         .join("\n"))
+                }
+                Some("show-window-options") => {
+                    let window_id = arg_after(args, "-t").unwrap_or_default();
+                    let key = args.last().map(String::as_str).unwrap_or_default();
+                    Ok(self
+                        .window_options
+                        .get(&(window_id.to_owned(), key.to_owned()))
+                        .cloned()
+                        .unwrap_or_default())
                 }
                 Some("link-window") => {
                     let source = arg_after(args, "-s").unwrap_or_default();
@@ -3782,8 +3947,25 @@ mod tests {
                     }
                     Ok(String::new())
                 }
-                Some("show-options") => Ok("on".to_owned()),
-                Some("set-option") => Ok(String::new()),
+                Some("show-options") => {
+                    let session_name = arg_after(args, "-t").unwrap_or_default();
+                    let key = args.last().map(String::as_str).unwrap_or_default();
+                    Ok(self
+                        .session_options
+                        .get(&(session_name.to_owned(), key.to_owned()))
+                        .cloned()
+                        .unwrap_or_default())
+                }
+                Some("set-option") => {
+                    let session_name = arg_after(args, "-t").unwrap_or_default();
+                    if args.len() >= 2 {
+                        let key = args[args.len() - 2].clone();
+                        let value = args[args.len() - 1].clone();
+                        self.session_options
+                            .insert((session_name.to_owned(), key), value);
+                    }
+                    Ok(String::new())
+                }
                 Some("swap-window") => {
                     let source = arg_after(args, "-s").unwrap_or_default();
                     let target = arg_after(args, "-t").unwrap_or_default();
@@ -3807,6 +3989,15 @@ mod tests {
                         }
                     }
                     Ok(String::new())
+                }
+                Some("display-message") => {
+                    let format = args.last().map(String::as_str).unwrap_or_default();
+                    match format {
+                        "#{pane_dead}" => Ok("0".to_owned()),
+                        "#{pane_current_command}" => Ok("aimux".to_owned()),
+                        "#{client_session}" => Ok(String::new()),
+                        _ => Ok(String::new()),
+                    }
                 }
                 Some("unlink-window") => {
                     let target = arg_after(args, "-t").unwrap_or_default();
