@@ -1,4 +1,4 @@
-#[path = "../src/hosted_principals_contract.rs"]
+#[path = "fixture_hosted_principals_contract.rs"]
 mod hosted_principals_contract;
 
 use hosted_principals_contract::run_hosted_principals_contract_case;
