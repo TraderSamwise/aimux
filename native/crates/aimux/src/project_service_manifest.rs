@@ -195,9 +195,9 @@ pub fn project_service_build_stamp() -> io::Result<String> {
 pub fn has_project_service_build_drift() -> bool {
     match (
         project_service_build_stamp(),
-        compute_project_service_build_stamp(source_project_service_module_dir()),
+        compute_current_project_service_manifest(),
     ) {
-        (Ok(initial), Ok(current)) => current != initial,
+        (Ok(initial), Ok(current)) => current.build_stamp != initial,
         _ => false,
     }
 }
