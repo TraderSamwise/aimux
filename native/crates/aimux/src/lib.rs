@@ -78,6 +78,7 @@ pub mod hosted_auth;
 pub mod hosted_audit;
 pub mod hosted_cli;
 pub mod hosted_config;
+pub mod hosted_events;
 pub mod hosted_lock;
 pub mod hosted_lockdown;
 pub mod hosted_outbox;

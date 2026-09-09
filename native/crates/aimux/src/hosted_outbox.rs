@@ -1,8 +1,9 @@
 use crate::hosted_audit::{HostedAuditRecord, HostedAuditStore};
+pub use crate::hosted_events::HostedEvent;
 use crate::hosted_lock::{HostedLockOptions, with_hosted_lock};
 use crate::paths::PathResolver;
 use anyhow::{Result, anyhow};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -10,21 +11,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const MAX_SPOOLED: usize = 500;
 const MAX_SPOOL_BYTES: u64 = 1024 * 1024;
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct HostedEvent {
-    pub id: String,
-    pub kind: String,
-    pub ts: String,
-    pub principal_id: Option<String>,
-    pub label: String,
-    pub fingerprint: Option<String>,
-    pub address_known: bool,
-    pub user_agent: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub detail: Option<String>,
-}
 
 #[derive(Debug, Clone)]
 pub struct HostedOutboxStore {
@@ -82,7 +68,8 @@ impl HostedOutboxStore {
             kind: kind.to_owned(),
             ts,
             principal_id: principal_id.map(str::to_owned),
-            label: "cli".to_owned(),
+            label: Some("cli".to_owned()),
+            session_id: None,
             fingerprint: None,
             address_known: false,
             user_agent: None,
