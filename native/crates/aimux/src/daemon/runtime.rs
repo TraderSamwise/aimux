@@ -29,7 +29,8 @@ use crate::daemon::listener::{
 use crate::daemon::process::handle_daemon_runtime_request;
 use crate::daemon::status::DaemonStatusRuntime;
 use crate::daemon::stream::{
-    maybe_handle_host_agent_stream_request, maybe_handle_project_event_stream_request,
+    maybe_handle_host_agent_stream_request_with_runtime_mutex,
+    maybe_handle_project_event_stream_request,
 };
 use crate::daemon::text::agents::{DaemonAgentTextRuntime, ProjectServicePostOptions};
 use crate::daemon::text::auth::{
@@ -793,16 +794,16 @@ pub fn run_daemon_internal() -> Result<()> {
             })? {
                 return Ok(true);
             }
-            let mut runtime = stream_runtime
-                .lock()
-                .expect("daemon runtime mutex poisoned");
-            maybe_handle_host_agent_stream_request(&mut *runtime, request, writer).map_err(
-                |error| {
-                    crate::daemon::listener::DaemonListenerError::Io(std::io::Error::other(
-                        error.to_string(),
-                    ))
-                },
+            maybe_handle_host_agent_stream_request_with_runtime_mutex(
+                &stream_runtime,
+                request,
+                writer,
             )
+            .map_err(|error| {
+                crate::daemon::listener::DaemonListenerError::Io(std::io::Error::other(
+                    error.to_string(),
+                ))
+            })
         },
     )
     .map_err(anyhow::Error::new)

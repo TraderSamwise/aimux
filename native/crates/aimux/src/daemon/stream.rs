@@ -16,6 +16,7 @@ use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 use std::io::{self, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -226,12 +227,40 @@ pub fn maybe_handle_host_agent_stream_request(
     request: &DaemonHttpRequest,
     writer: &mut impl Write,
 ) -> Result<bool, HostAgentStreamError> {
+    let Some(resolution) = resolve_host_agent_stream_request(runtime, request)? else {
+        return Ok(false);
+    };
+    write_host_agent_stream_resolution(resolution, writer)
+}
+
+pub fn maybe_handle_host_agent_stream_request_with_runtime_mutex<Runtime>(
+    runtime: &Arc<Mutex<Runtime>>,
+    request: &DaemonHttpRequest,
+    writer: &mut impl Write,
+) -> Result<bool, HostAgentStreamError>
+where
+    Runtime: DaemonHostAgentTextRuntime,
+{
+    let resolution = {
+        let mut runtime = runtime.lock().expect("daemon runtime mutex poisoned");
+        resolve_host_agent_stream_request(&mut *runtime, request)
+    }?;
+    let Some(resolution) = resolution else {
+        return Ok(false);
+    };
+    write_host_agent_stream_resolution(resolution, writer)
+}
+
+pub fn resolve_host_agent_stream_request(
+    runtime: &mut impl DaemonHostAgentTextRuntime,
+    request: &DaemonHttpRequest,
+) -> Result<Option<HostAgentStreamResolution>, HostAgentStreamError> {
     let route_url = DaemonRouteUrl::parse(&request.path);
     if request.method != "GET"
         || route_url.pathname()
             != crate::core_command_contract::CORE_API_ROUTES.host_agent_stream_text
     {
-        return Ok(false);
+        return Ok(None);
     }
 
     let actor = parse_remote_actor(&request.headers);
@@ -246,17 +275,15 @@ pub fn maybe_handle_host_agent_stream_request(
         },
     );
     if !access_decision.ok {
-        write_prepared(
-            writer,
-            &DaemonRouteResponse::json(
+        return Ok(Some(HostAgentStreamResolution::Err {
+            response: DaemonRouteResponse::json(
                 access_decision.status.unwrap_or(403),
                 serde_json::json!({
                     "ok": false,
                     "error": access_decision.error.as_deref().unwrap_or("remote access denied")
                 }),
             ),
-        )?;
-        return Ok(true);
+        }));
     }
 
     let headers = request
@@ -264,12 +291,19 @@ pub fn maybe_handle_host_agent_stream_request(
         .iter()
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect::<Vec<_>>();
-    match resolve_host_agent_stream_text_route(
+    Ok(Some(resolve_host_agent_stream_text_route(
         runtime,
         &request.path,
         Some(&headers),
         actor.is_some(),
-    ) {
+    )))
+}
+
+pub fn write_host_agent_stream_resolution(
+    resolution: HostAgentStreamResolution,
+    writer: &mut impl Write,
+) -> Result<bool, HostAgentStreamError> {
+    match resolution {
         HostAgentStreamResolution::Err { response } => {
             write_prepared(writer, &response)?;
             Ok(true)

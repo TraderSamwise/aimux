@@ -1,10 +1,15 @@
+use aimux::daemon::http::{DaemonResponseBody, prepare_daemon_response};
 use aimux::daemon::json::ProjectEventStreamTarget;
+use aimux::daemon::listener::{
+    DaemonRequestMetadata, handle_daemon_stream_with_metadata_and_interceptor,
+};
 use aimux::daemon::stream::{
     HostAgentStreamError, HostAgentStreamFailure, HostAgentStreamRequestOptions,
     host_agent_stream_failure_bytes, host_agent_stream_failure_response,
-    maybe_handle_host_agent_stream_request, maybe_handle_project_event_stream_request,
-    pipe_host_agent_stream_from_url, pipe_project_event_stream_from_url,
-    write_host_agent_stream_text,
+    maybe_handle_host_agent_stream_request,
+    maybe_handle_host_agent_stream_request_with_runtime_mutex,
+    maybe_handle_project_event_stream_request, pipe_host_agent_stream_from_url,
+    pipe_project_event_stream_from_url, write_host_agent_stream_text,
 };
 use aimux::daemon::text::host_agent::DaemonHostAgentTextRuntime;
 use aimux::daemon::text::params::ProjectServiceJsonResult;
@@ -12,7 +17,10 @@ use aimux::daemon_state::MetadataApiEndpoint;
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 
 #[test]
 fn upstream_failure_maps_to_plain_text_response_before_stream_headers() {
@@ -374,6 +382,103 @@ fn host_agent_stream_interceptor_resolves_and_pipes_upstream() {
     assert!(response.ends_with("hello\n"));
 }
 
+#[test]
+fn host_agent_stream_does_not_block_concurrent_daemon_requests() {
+    let (upstream_url, release_upstream, upstream_join) = serve_blocking_stream();
+    let runtime = Arc::new(Mutex::new(FakeHostAgentRuntime {
+        ensured: false,
+        endpoint: endpoint_from_url(&upstream_url),
+    }));
+    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("listener");
+    let address = listener.local_addr().expect("daemon address");
+    let (ready_tx, ready_rx) = mpsc::channel();
+    let server_runtime = Arc::clone(&runtime);
+    let server_join = thread::spawn(move || {
+        ready_tx.send(()).expect("ready");
+        let mut joins = Vec::new();
+        for _ in 0..7 {
+            let (mut stream, _) = listener.accept().expect("accept daemon request");
+            let request_runtime = Arc::clone(&server_runtime);
+            joins.push(thread::spawn(move || {
+                handle_daemon_stream_with_metadata_and_interceptor(
+                    &mut stream,
+                    DaemonRequestMetadata {
+                        issued_at: "now".into(),
+                        stopping: false,
+                    },
+                    &mut |request, writer| {
+                        maybe_handle_host_agent_stream_request_with_runtime_mutex(
+                            &request_runtime,
+                            request,
+                            writer,
+                        )
+                        .map_err(|error| {
+                            aimux::daemon::listener::DaemonListenerError::Io(std::io::Error::other(
+                                error.to_string(),
+                            ))
+                        })
+                    },
+                    &mut |_request| {
+                        let _guard = request_runtime.lock().expect("runtime mutex poisoned");
+                        prepare_daemon_response(
+                            200,
+                            DaemonResponseBody::Json(serde_json::json!({ "ok": true })),
+                            None,
+                        )
+                    },
+                )
+                .expect("handle daemon request");
+            }));
+        }
+        for join in joins {
+            join.join().expect("request thread");
+        }
+    });
+    ready_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("ready");
+
+    let stream_address = address;
+    let stream_join = thread::spawn(move || {
+        let mut stream = TcpStream::connect(stream_address).expect("connect stream");
+        stream
+            .write_all(
+                b"GET /core/host-agent-stream-text?project=.&sessionId=claude-1 HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n",
+            )
+            .expect("write stream request");
+        read_response_text(&mut stream)
+    });
+    wait_for_upstream_request();
+
+    let (done_tx, done_rx) = mpsc::channel();
+    for _ in 0..6 {
+        let done_tx = done_tx.clone();
+        thread::spawn(move || {
+            let mut stream = TcpStream::connect(address).expect("connect health");
+            stream
+                .write_all(b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+                .expect("write health");
+            let response = read_response_text(&mut stream);
+            done_tx.send(response).expect("send response");
+        });
+    }
+    drop(done_tx);
+
+    for _ in 0..6 {
+        let response = done_rx
+            .recv_timeout(Duration::from_millis(750))
+            .expect("health request completed while stream stayed open");
+        assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
+        assert!(response.ends_with(r#"{"ok":true}"#));
+    }
+
+    release_upstream.send(()).expect("release upstream");
+    let stream_response = stream_join.join().expect("stream thread");
+    assert!(stream_response.ends_with("hello\n"));
+    upstream_join.join().expect("upstream");
+    server_join.join().expect("server");
+}
+
 #[derive(Debug, Default)]
 struct FakeHostAgentRuntime {
     ensured: bool,
@@ -455,4 +560,61 @@ fn read_request_text(stream: &mut TcpStream) -> String {
         }
     }
     String::from_utf8(bytes).expect("request utf8")
+}
+
+fn read_response_text(stream: &mut TcpStream) -> String {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .expect("timeout");
+    let mut bytes = Vec::new();
+    stream.read_to_end(&mut bytes).expect("read response");
+    String::from_utf8(bytes).expect("response utf8")
+}
+
+fn serve_blocking_stream() -> (String, mpsc::Sender<()>, thread::JoinHandle<()>) {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("upstream listener");
+    let address = listener.local_addr().expect("upstream address");
+    let (release_tx, release_rx) = mpsc::channel();
+    let join = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept upstream");
+        let _request = read_request_text(&mut stream);
+        stream
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\nevent: output\ndata: {\"output\":\"hello\\n\"}\n\n",
+            )
+            .expect("write upstream stream");
+        stream.flush().expect("flush upstream");
+        notify_upstream_request();
+        release_rx.recv().expect("release upstream");
+    });
+    (
+        format!("http://127.0.0.1:{}", address.port()),
+        release_tx,
+        join,
+    )
+}
+
+fn notify_upstream_request() {
+    upstream_request_signal()
+        .0
+        .send(())
+        .expect("notify upstream request");
+}
+
+fn wait_for_upstream_request() {
+    upstream_request_signal()
+        .1
+        .lock()
+        .expect("upstream request receiver")
+        .recv_timeout(Duration::from_secs(1))
+        .expect("upstream request observed");
+}
+
+fn upstream_request_signal() -> &'static (mpsc::Sender<()>, Mutex<mpsc::Receiver<()>>) {
+    static SIGNAL: std::sync::OnceLock<(mpsc::Sender<()>, Mutex<mpsc::Receiver<()>>)> =
+        std::sync::OnceLock::new();
+    SIGNAL.get_or_init(|| {
+        let (tx, rx) = mpsc::channel();
+        (tx, Mutex::new(rx))
+    })
 }
