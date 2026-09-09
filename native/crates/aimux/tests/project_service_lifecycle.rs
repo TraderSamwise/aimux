@@ -33,6 +33,7 @@ struct FakeLifecycleRuntime {
     main_repo: Option<String>,
     worktrees_created: Vec<FakeCreateWorktree>,
     create_worktree_error: Option<String>,
+    create_window_error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,6 +102,9 @@ impl ProjectLifecycleRuntime for FakeLifecycleRuntime {
             args: args.to_owned(),
             detached,
         });
+        if let Some(error) = &self.create_window_error {
+            return Err(error.clone());
+        }
         Ok(TmuxTarget {
             session_name: session_name.to_owned(),
             window_id: format!("@{}", self.created.len() + 10),
@@ -334,6 +338,45 @@ fn agent_spawn_launches_tool_and_records_topology_metadata() {
     assert_eq!(session["status"], "running");
     assert_eq!(session["toolConfigKey"], "mock");
     assert_eq!(session["worktreePath"], worktree.to_string_lossy().as_ref());
+    cleanup(project);
+}
+
+#[test]
+fn agent_spawn_failure_records_dashboard_operation_failure() {
+    let project = temp_project("agent-spawn-failure");
+    write_project_tool_config(&project);
+    let state_dir = project.join("state");
+    let worktree = project.join("wt");
+    let worktree_path = worktree.to_string_lossy().into_owned();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime {
+        create_window_error: Some("tmux failed to create window".into()),
+        ..Default::default()
+    };
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::SPAWN,
+        Some(&json!({
+            "tool": "mock",
+            "sessionId": "mock-failed",
+            "worktreePath": worktree_path.clone(),
+            "open": false
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 500);
+    assert_eq!(response.body["error"], "tmux failed to create window");
+    let failures = list_dashboard_operation_failures(&state_dir);
+    assert_eq!(failures.len(), 1);
+    assert_eq!(failures[0]["targetKind"], "agent");
+    assert_eq!(failures[0]["operation"], "create");
+    assert_eq!(failures[0]["targetId"], "mock-failed");
+    assert_eq!(failures[0]["message"], "tmux failed to create window");
+    assert_eq!(failures[0]["worktreePath"], worktree_path);
     cleanup(project);
 }
 

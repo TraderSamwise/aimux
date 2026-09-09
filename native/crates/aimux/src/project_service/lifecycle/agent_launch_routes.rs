@@ -4,6 +4,10 @@ use crate::config::load_config_for_project;
 use crate::daemon_state::load_metadata_state;
 use crate::project_service::coordination_mutations::derive_runtime_exchange_indexes;
 use crate::project_service::dispatcher::ProjectServiceDispatchResponse;
+use crate::project_service::operation_failures::{
+    OperationFailureInput, OperationFailureMatch, WorktreePathMatch,
+    add_dashboard_operation_failure, clear_dashboard_operation_failures,
+};
 use crate::project_service::router::ProjectServiceRequestContext;
 use crate::project_service::runtime_exchange::{runtime_exchange_path, update_runtime_exchange};
 use crate::runtime_topology::{
@@ -205,6 +209,7 @@ pub(super) fn route_agent_spawn(
         return json_error(500, format!("Session \"{session_id}\" already exists"));
     }
     let worktree_path = trimmed_string(body.get("worktreePath"));
+    clear_agent_create_operation_failure(context.project_state_dir(), worktree_path.as_deref());
     let result = launch_agent_session(
         context,
         runtime,
@@ -213,7 +218,7 @@ pub(super) fn route_agent_spawn(
             tool_key: tool_key.clone(),
             command,
             args,
-            worktree_path,
+            worktree_path: worktree_path.clone(),
             label: None,
             team,
             extra_preamble: None,
@@ -229,21 +234,75 @@ pub(super) fn route_agent_spawn(
     );
     match result {
         Ok(result) => lifecycle_response(
-            json!({
-                "sessionId": result.session_id,
-                "tmuxTarget": {
-                    "sessionName": result.target.session_name,
-                    "windowId": result.target.window_id,
-                    "windowIndex": result.target.window_index,
-                    "windowName": result.target.window_name,
-                }
-            }),
+            {
+                clear_agent_create_operation_failure(
+                    context.project_state_dir(),
+                    worktree_path.as_deref(),
+                );
+                json!({
+                    "sessionId": result.session_id,
+                    "tmuxTarget": {
+                        "sessionName": result.target.session_name,
+                        "windowId": result.target.window_id,
+                        "windowIndex": result.target.window_index,
+                        "windowName": result.target.window_name,
+                    }
+                })
+            },
             "agent.spawn",
             "agent",
             Some(&result.session_id),
         ),
-        Err(error) => json_error(500, error),
+        Err(error) => {
+            record_agent_create_operation_failure(
+                context.project_state_dir(),
+                &tool_key,
+                &session_id,
+                worktree_path.as_deref(),
+                &error,
+            );
+            json_error(500, error)
+        }
     }
+}
+
+fn record_agent_create_operation_failure(
+    project_state_dir: impl AsRef<std::path::Path>,
+    tool_key: &str,
+    session_id: &str,
+    worktree_path: Option<&str>,
+    message: &str,
+) {
+    let _ = add_dashboard_operation_failure(
+        project_state_dir,
+        OperationFailureInput {
+            target_kind: "agent".into(),
+            operation: "create".into(),
+            title: format!("Failed to create {tool_key} agent"),
+            message: message.to_owned(),
+            target_id: Some(session_id.to_owned()),
+            worktree_path: worktree_path.map(str::to_owned),
+            worktree_name: None,
+            created_at: None,
+        },
+    );
+}
+
+fn clear_agent_create_operation_failure(
+    project_state_dir: impl AsRef<std::path::Path>,
+    worktree_path: Option<&str>,
+) {
+    let _ = clear_dashboard_operation_failures(
+        project_state_dir,
+        OperationFailureMatch {
+            target_kind: Some("agent".into()),
+            operation: Some("create".into()),
+            target_id: None,
+            worktree_path: worktree_path
+                .map(|path| WorktreePathMatch::Exact(path.to_owned()))
+                .unwrap_or(WorktreePathMatch::OnlyMissing),
+        },
+    );
 }
 
 pub(super) fn route_agent_fork(
