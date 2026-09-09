@@ -225,10 +225,9 @@ pub fn is_aimux_project_service_process(
     pid: i32,
     expected: &ProjectServiceProcessIdentity,
 ) -> bool {
-    let Some(args) = read_process_args(pid) else {
-        return false;
-    };
-    is_aimux_project_service_process_args(&args, read_process_cwd(pid).as_deref(), expected)
+    process_args_match_with_optional_cwd(pid, read_process_args, read_process_cwd, |args, cwd| {
+        is_aimux_project_service_process_args(args, cwd, expected)
+    })
 }
 
 pub fn is_aimux_daemon_process(pid: i32) -> bool {
@@ -276,10 +275,9 @@ pub fn is_native_aimux_project_service_process(
     pid: i32,
     expected: &ProjectServiceProcessIdentity,
 ) -> bool {
-    let Some(args) = read_process_args(pid) else {
-        return false;
-    };
-    is_native_aimux_project_service_process_args(&args, read_process_cwd(pid).as_deref(), expected)
+    process_args_match_with_optional_cwd(pid, read_process_args, read_process_cwd, |args, cwd| {
+        is_native_aimux_project_service_process_args(args, cwd, expected)
+    })
 }
 
 pub fn is_current_native_aimux_project_service_process(
@@ -287,15 +285,24 @@ pub fn is_current_native_aimux_project_service_process(
     expected: &ProjectServiceProcessIdentity,
     expected_binary: &Path,
 ) -> bool {
-    let Some(args) = read_process_args(pid) else {
+    process_args_match_with_optional_cwd(pid, read_process_args, read_process_cwd, |args, cwd| {
+        is_current_native_aimux_project_service_process_args(args, cwd, expected, expected_binary)
+    })
+}
+
+fn process_args_match_with_optional_cwd(
+    pid: i32,
+    read_args: impl FnOnce(i32) -> Option<String>,
+    read_cwd: impl FnOnce(i32) -> Option<String>,
+    matches: impl Fn(&str, Option<&str>) -> bool,
+) -> bool {
+    let Some(args) = read_args(pid) else {
         return false;
     };
-    is_current_native_aimux_project_service_process_args(
-        &args,
-        read_process_cwd(pid).as_deref(),
-        expected,
-        expected_binary,
-    )
+    if matches(&args, None) {
+        return true;
+    }
+    matches(&args, read_cwd(pid).as_deref())
 }
 
 pub fn is_aimux_project_service_process_args(
@@ -370,4 +377,65 @@ fn normalize_path(path: &str) -> String {
         })
         .to_string_lossy()
         .into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::Cell;
+    use std::path::Path;
+
+    #[test]
+    fn project_service_process_match_skips_cwd_when_args_identify_project() {
+        let cwd_calls = Cell::new(0);
+        let expected = ProjectServiceProcessIdentity {
+            project_id: Some("project-1".to_owned()),
+            project_root: Some("/repo".to_owned()),
+        };
+        let args =
+            "/bin/aimux __project-service-internal --project-id project-1 --project-root /repo";
+
+        let matched = process_args_match_with_optional_cwd(
+            42,
+            |_| Some(args.to_owned()),
+            |_| {
+                cwd_calls.set(cwd_calls.get() + 1);
+                Some("/wrong".to_owned())
+            },
+            |args, cwd| {
+                is_current_native_aimux_project_service_process_args(
+                    args,
+                    cwd,
+                    &expected,
+                    Path::new("/bin/aimux"),
+                )
+            },
+        );
+
+        assert!(matched);
+        assert_eq!(cwd_calls.get(), 0);
+    }
+
+    #[test]
+    fn project_service_process_match_uses_cwd_fallback_for_old_args() {
+        let cwd_calls = Cell::new(0);
+        let expected = ProjectServiceProcessIdentity {
+            project_id: None,
+            project_root: Some("/repo".to_owned()),
+        };
+        let args = "/bin/aimux __project-service-internal";
+
+        let matched = process_args_match_with_optional_cwd(
+            42,
+            |_| Some(args.to_owned()),
+            |_| {
+                cwd_calls.set(cwd_calls.get() + 1);
+                Some("/repo".to_owned())
+            },
+            |args, cwd| is_native_aimux_project_service_process_args(args, cwd, &expected),
+        );
+
+        assert!(matched);
+        assert_eq!(cwd_calls.get(), 1);
+    }
 }
