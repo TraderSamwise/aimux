@@ -47,12 +47,30 @@ fn overlay_clears_once_the_model_reports_the_new_state() {
     pending.set_session_action("claude-a1", "stopping", None, 0);
     let mut settled = snapshot_with("offline");
 
-    pending.reconcile(&settled, 10);
+    pending.reconcile(&settled, 500);
     pending.apply(&mut settled);
 
     assert!(pending.is_empty());
     assert!(!settled.sessions[0].pending);
     assert!(settled.sessions[0].pending_action.is_none());
+}
+
+#[test]
+fn an_overlay_survives_a_refresh_that_already_reports_the_new_state() {
+    // The mutation is a blocking round trip, so the first refresh after it
+    // usually already agrees. Without a floor the overlay never reaches a frame.
+    let mut pending = DashboardPendingActions::new();
+    pending.set_session_action("claude-a1", "stopping", None, 0);
+    let mut settled = snapshot_with("offline");
+
+    pending.reconcile(&settled, 10);
+    pending.apply(&mut settled);
+
+    assert!(!pending.is_empty());
+    assert_eq!(
+        settled.sessions[0].pending_action.as_deref(),
+        Some("stopping")
+    );
 }
 
 #[test]

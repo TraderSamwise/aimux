@@ -211,10 +211,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
     let mut latest_snapshot = None;
     let mut latest_endpoint = None;
     let mut pending_actions = DashboardPendingActions::new();
-    let mut deferred_requests: Vec<(
-        DashboardActionRequest,
-        Option<(PendingTarget, String, u64)>,
-    )> = Vec::new();
+    let mut deferred_requests: Vec<DeferredDashboardRequest> = Vec::new();
     let mut ui_state = if options.once || options.desktop_state_file.is_some() {
         None
     } else {
@@ -604,6 +601,13 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                 false
             };
             if rendered_from_cached_snapshot {
+                flush_deferred_dashboard_requests(
+                    &mut deferred_requests,
+                    latest_endpoint.as_ref(),
+                    &mut pending_actions,
+                    controller.as_mut(),
+                    &mut render_now,
+                );
                 if options.once {
                     return Ok(());
                 }
@@ -669,6 +673,14 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                 );
                 write_dashboard_frame(&mut *output, frame.frame.as_bytes())?;
                 rendered_once = true;
+                let mut flush_render = false;
+                flush_deferred_dashboard_requests(
+                    &mut deferred_requests,
+                    loaded.endpoint.as_ref(),
+                    &mut pending_actions,
+                    Some(controller),
+                    &mut flush_render,
+                );
                 let statusline_client_session = ui_state.as_mut().and_then(|ui_state| {
                     ui_state
                         .persist_controller_state(
@@ -708,7 +720,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                 } else {
                     false
                 };
-                render_now = focus_render;
+                render_now = focus_render || flush_render;
                 last_render = Instant::now();
                 if options.once {
                     return Ok(());
@@ -1822,6 +1834,41 @@ fn pending_action_now_ms() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|elapsed| elapsed.as_millis() as i64)
         .unwrap_or_default()
+}
+
+/// A mutation held back until its optimistic frame has been written, paired with
+/// the overlay to drop if the request never leaves.
+type DeferredDashboardRequest = (DashboardActionRequest, Option<(PendingTarget, String, u64)>);
+
+/// Send the mutations queued during key handling, now that the optimistic frame
+/// has been written. Clears the overlay for any request that never left.
+fn flush_deferred_dashboard_requests(
+    deferred: &mut Vec<DeferredDashboardRequest>,
+    endpoint: Option<&ProjectServiceEndpoint>,
+    pending_actions: &mut DashboardPendingActions,
+    mut controller: Option<&mut DashboardController>,
+    render_now: &mut bool,
+) {
+    if deferred.is_empty() {
+        return;
+    }
+    for (request, pending) in deferred.drain(..) {
+        let failure = match endpoint {
+            Some(endpoint) => execute_dashboard_controller_action(endpoint, &request)
+                .err()
+                .map(|error| error.to_string()),
+            None => Some("Dashboard action requires a project-service endpoint".to_owned()),
+        };
+        if let Some(message) = failure {
+            if let Some(controller) = controller.as_deref_mut() {
+                controller.footer_message = Some(message);
+            }
+            if let Some((target, id, token)) = pending.as_ref() {
+                pending_actions.clear_if_token(*target, id, *token);
+            }
+        }
+    }
+    *render_now = true;
 }
 
 #[cfg(test)]
