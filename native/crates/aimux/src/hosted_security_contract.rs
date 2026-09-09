@@ -1,9 +1,18 @@
-use serde_json::{Map, Value, json};
+use aimux::hosted_auth::{
+    HostedAuthentication, authenticate_hosted_value,
+    bearer_token_value as hosted_bearer_token_value, strip_trusted_headers_value,
+};
+use aimux::hosted_principals::{HostedPrincipalsStore, clear_hosted_principals_cache};
+use aimux::paths::PathResolver;
+use serde_json::{Value, json};
+use std::fs;
+use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub fn run_hosted_security_contract_case(input: &Value) -> Value {
     match str_field(input, "api") {
         "stripTrustedHeaders" => {
-            strip_trusted_headers(input.get("headers").unwrap_or(&Value::Null))
+            strip_trusted_headers_value(input.get("headers").unwrap_or(&Value::Null))
         }
         "bearerToken" => json!(
             array_field(input, "values")
@@ -13,7 +22,7 @@ pub fn run_hosted_security_contract_case(input: &Value) -> Value {
         ),
         "authenticateHosted" => authenticate_hosted_case(str_field(input, "scenario")),
         "authenticateHosted/stripTrustedHeaders" => {
-            let clean = strip_trusted_headers(input.get("headers").unwrap_or(&Value::Null));
+            let clean = strip_trusted_headers_value(input.get("headers").unwrap_or(&Value::Null));
             authenticate_hosted_headers(&clean)
         }
         "hostedLockdownState/setHostedLockdown" => lockdown_case(str_field(input, "scenario")),
@@ -27,89 +36,112 @@ pub fn run_hosted_security_contract_case(input: &Value) -> Value {
     }
 }
 
-fn strip_trusted_headers(headers: &Value) -> Value {
-    let mut clean = Map::new();
-    if let Some(headers) = headers.as_object() {
-        for (key, value) in headers {
-            let normalized_key = key.to_lowercase();
-            if normalized_key.starts_with("x-aimux-") || value.is_null() {
-                continue;
-            }
-            if let Some(text) = value.as_str() {
-                clean.insert(normalized_key, Value::String(text.to_owned()));
-            } else if let Some(values) = value.as_array() {
-                clean.insert(
-                    normalized_key,
-                    Value::String(
-                        values
-                            .iter()
-                            .filter_map(Value::as_str)
-                            .collect::<Vec<_>>()
-                            .join(", "),
-                    ),
-                );
-            }
-        }
-    }
-    Value::Object(clean)
-}
-
 fn bearer_token_value(headers: &Value) -> Value {
-    bearer_token(headers)
+    hosted_bearer_token_value(headers)
         .map(Value::String)
         .unwrap_or(Value::Null)
 }
 
-fn bearer_token(headers: &Value) -> Option<String> {
-    let raw = headers
-        .get("authorization")
-        .or_else(|| headers.get("Authorization"))?;
-    let header = raw
-        .as_array()
-        .and_then(|values| values.first())
-        .and_then(Value::as_str)
-        .or_else(|| raw.as_str())?;
-    let mut parts = header.trim_start().splitn(2, char::is_whitespace);
-    let scheme = parts.next()?;
-    if !scheme.eq_ignore_ascii_case("bearer") {
-        return None;
-    }
-    let token = parts.next()?.trim();
-    (!token.is_empty()).then(|| token.to_owned())
-}
-
 fn authenticate_hosted_case(scenario: &str) -> Value {
+    let fixture = AuthFixture::new();
     match scenario {
-        "live-token" => json!({
-            "ok": true,
-            "actor": {
-                "role": "operator",
-                "principalId": "<principal:1>",
-                "principalMatches": true,
-            },
-            "principal": {
-                "id": "<principal:1>",
-                "label": "grand",
-                "role": "operator",
-                "grants": [],
-                "revoked": false,
-            },
-        }),
-        "missing-unknown-revoked" => json!({
-            "missing": { "ok": false, "reason": "missing_token" },
-            "unknown": { "ok": false, "reason": "unknown_token" },
-            "revoked": { "ok": false, "reason": "unknown_token" },
-        }),
+        "live-token" => {
+            let (_principal, token) = fixture.store.create_principal("grand").expect("create");
+            auth_result(
+                authenticate_hosted_value(
+                    &json!({ "authorization": format!("Bearer {token}") }),
+                    &fixture.store,
+                )
+                .expect("authenticate live"),
+            )
+        }
+        "missing-unknown-revoked" => {
+            let (principal, token) = fixture.store.create_principal("grand").expect("create");
+            let missing =
+                authenticate_hosted_value(&json!({}), &fixture.store).expect("missing auth");
+            let unknown = authenticate_hosted_value(
+                &json!({ "authorization": "Bearer amx_unknown" }),
+                &fixture.store,
+            )
+            .expect("unknown auth");
+            fixture
+                .store
+                .revoke_principal(&principal.id)
+                .expect("revoke principal");
+            let revoked = authenticate_hosted_value(
+                &json!({ "authorization": format!("Bearer {token}") }),
+                &fixture.store,
+            )
+            .expect("revoked auth");
+            json!({
+                "missing": auth_result(missing),
+                "unknown": auth_result(unknown),
+                "revoked": auth_result(revoked),
+            })
+        }
         scenario => panic!("unknown hosted auth scenario: {scenario}"),
     }
 }
 
 fn authenticate_hosted_headers(headers: &Value) -> Value {
-    if bearer_token(headers).is_some() {
-        json!({ "ok": false, "reason": "unknown_token" })
-    } else {
-        json!({ "ok": false, "reason": "missing_token" })
+    let fixture = AuthFixture::new();
+    auth_result(authenticate_hosted_value(headers, &fixture.store).expect("authenticate headers"))
+}
+
+struct AuthFixture {
+    root: PathBuf,
+    store: HostedPrincipalsStore,
+}
+
+impl AuthFixture {
+    fn new() -> Self {
+        let root = std::env::temp_dir().join(format!(
+            "aimux-hosted-auth-contract-{}-{}",
+            std::process::id(),
+            unix_millis(SystemTime::now())
+        ));
+        fs::create_dir_all(&root).expect("fixture root");
+        let resolver = PathResolver::new(
+            "/",
+            &root,
+            Some(root.join(".aimux").to_string_lossy().into_owned()),
+        );
+        Self {
+            root,
+            store: HostedPrincipalsStore::with_resolver(resolver),
+        }
     }
+}
+
+impl Drop for AuthFixture {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.root);
+        clear_hosted_principals_cache();
+    }
+}
+
+fn auth_result(result: HostedAuthentication) -> Value {
+    if !result.ok {
+        return json!({ "ok": false, "reason": result.reason.unwrap_or_default() });
+    }
+    let principal = result.principal.expect("principal");
+    let actor = result.actor.expect("actor");
+    let actor_principal = actor.principal.expect("actor principal");
+    json!({
+        "ok": true,
+        "actor": {
+            "role": "operator",
+            "principalId": "<principal:1>",
+            "principalMatches": actor_principal.id == principal.id,
+        },
+        "principal": {
+            "id": "<principal:1>",
+            "label": principal.label,
+            "role": principal.role,
+            "grants": principal.grants,
+            "revoked": principal.revoked_at.is_some(),
+        },
+    })
 }
 
 fn lockdown_case(scenario: &str) -> Value {
@@ -160,4 +192,10 @@ fn array_field<'a>(value: &'a Value, field: &str) -> &'a [Value] {
 
 fn str_field<'a>(value: &'a Value, field: &str) -> &'a str {
     value.get(field).and_then(Value::as_str).unwrap_or_default()
+}
+
+fn unix_millis(time: SystemTime) -> u128 {
+    time.duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
 }

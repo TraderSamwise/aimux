@@ -2,44 +2,17 @@ use crate::atomic_write::atomic_write_with_mode;
 use crate::hosted_config::{
     HostedConfig, load_hosted_config_with_resolver, validate_hosted_startup,
 };
+use crate::hosted_principals::{
+    HostedGrant, HostedPrincipal, HostedPrincipalsState, HostedPrincipalsStore,
+};
 use crate::paths::PathResolver;
 use anyhow::{Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
-
-const TOKEN_PREFIX: &str = "amx_";
-const HASH_PREFIX: &str = "sha256:";
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct HostedGrant {
-    pub project_root: String,
-    pub session_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct HostedPrincipal {
-    pub id: String,
-    pub label: String,
-    pub token_hash: String,
-    pub role: String,
-    pub grants: Vec<HostedGrant>,
-    pub created_at: String,
-    pub revoked_at: Option<String>,
-    pub last_seen_at: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct HostedPrincipalsState {
-    pub version: u8,
-    pub principals: Vec<HostedPrincipal>,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -422,10 +395,6 @@ impl HostedStore {
         })
     }
 
-    fn principals_path(&self) -> PathBuf {
-        self.resolver.hosted_principals_path()
-    }
-
     fn hosted_dir(&self) -> PathBuf {
         self.resolver.hosted_dir()
     }
@@ -453,109 +422,28 @@ impl HostedStore {
         load_hosted_config_with_resolver(&self.resolver)
     }
 
-    fn load_principals(&self) -> Result<HostedPrincipalsState> {
-        let path = self.principals_path();
-        let Ok(raw) = fs::read_to_string(path) else {
-            return Ok(empty_state());
-        };
-        let value: Value = serde_json::from_str(&raw).unwrap_or(Value::Null);
-        let principals = value
-            .get("principals")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(normalize_principal)
-            .collect::<Vec<_>>();
-        Ok(HostedPrincipalsState {
-            version: 1,
-            principals,
-        })
+    fn principal_store(&self) -> HostedPrincipalsStore {
+        HostedPrincipalsStore::with_resolver(self.resolver.clone())
     }
 
-    fn save_principals(&self, state: &HostedPrincipalsState) -> Result<()> {
-        fs::create_dir_all(self.hosted_dir())?;
-        let data = serde_json::to_string_pretty(state)? + "\n";
-        atomic_write_with_mode(self.principals_path(), data, Some(0o600))?;
-        Ok(())
+    fn load_principals(&self) -> Result<HostedPrincipalsState> {
+        self.principal_store().load()
     }
 
     fn create_principal(&self, label: &str) -> Result<(HostedPrincipal, String)> {
-        let token = format!("{TOKEN_PREFIX}{}", random_base64url(32)?);
-        let principal = HostedPrincipal {
-            id: format!("prn_{}", random_hex(6)?),
-            label: {
-                let trimmed = label.trim();
-                if trimmed.is_empty() {
-                    "unlabelled".to_owned()
-                } else {
-                    trimmed.to_owned()
-                }
-            },
-            token_hash: hash_hosted_token(&token),
-            role: "operator".to_owned(),
-            grants: Vec::new(),
-            created_at: now_iso(),
-            revoked_at: None,
-            last_seen_at: None,
-        };
-        let mut state = self.load_principals()?;
-        state.principals.push(principal.clone());
-        self.save_principals(&state)?;
-        Ok((principal, token))
+        self.principal_store().create_principal(label)
     }
 
     fn revoke_principal(&self, principal_id: &str) -> Result<bool> {
-        let mut state = self.load_principals()?;
-        let Some(principal) = state
-            .principals
-            .iter_mut()
-            .find(|entry| entry.id == principal_id)
-        else {
-            return Ok(false);
-        };
-        if principal.revoked_at.is_some() {
-            return Ok(false);
-        }
-        principal.revoked_at = Some(now_iso());
-        self.save_principals(&state)?;
-        Ok(true)
+        self.principal_store().revoke_principal(principal_id)
     }
 
     fn grant_session(&self, principal_id: &str, grant: HostedGrant) -> Result<bool> {
-        let Some(normalized) = normalize_grant_value(&json!(grant)) else {
-            return Ok(false);
-        };
-        let mut state = self.load_principals()?;
-        let Some(principal) = state
-            .principals
-            .iter_mut()
-            .find(|entry| entry.id == principal_id && entry.revoked_at.is_none())
-        else {
-            return Ok(false);
-        };
-        if !principal.grants.iter().any(|entry| entry == &normalized) {
-            principal.grants.push(normalized);
-        }
-        self.save_principals(&state)?;
-        Ok(true)
+        self.principal_store().grant_session(principal_id, grant)
     }
 
     fn ungrant_session(&self, principal_id: &str, grant: &HostedGrant) -> Result<bool> {
-        let mut state = self.load_principals()?;
-        let Some(principal) = state
-            .principals
-            .iter_mut()
-            .find(|entry| entry.id == principal_id)
-        else {
-            return Ok(false);
-        };
-        let before = principal.grants.len();
-        principal.grants.retain(|entry| entry != grant);
-        if principal.grants.len() == before {
-            return Ok(false);
-        }
-        self.save_principals(&state)?;
-        Ok(true)
+        self.principal_store().ungrant_session(principal_id, grant)
     }
 
     fn set_lockdown(&self, active: bool) -> Result<HostedLockdownState> {
@@ -643,63 +531,6 @@ impl HostedStore {
     }
 }
 
-fn empty_state() -> HostedPrincipalsState {
-    HostedPrincipalsState {
-        version: 1,
-        principals: Vec::new(),
-    }
-}
-
-fn normalize_principal(value: &Value) -> Option<HostedPrincipal> {
-    let id = value.get("id")?.as_str()?.trim();
-    let token_hash = value.get("tokenHash")?.as_str()?.trim();
-    if id.is_empty() || !token_hash.starts_with(HASH_PREFIX) {
-        return None;
-    }
-    Some(HostedPrincipal {
-        id: id.to_owned(),
-        label: value
-            .get("label")
-            .and_then(Value::as_str)
-            .unwrap_or(id)
-            .to_owned(),
-        token_hash: token_hash.to_owned(),
-        role: "operator".to_owned(),
-        grants: value
-            .get("grants")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(normalize_grant_value)
-            .collect(),
-        created_at: value
-            .get("createdAt")
-            .and_then(Value::as_str)
-            .unwrap_or("1970-01-01T00:00:00.000Z")
-            .to_owned(),
-        revoked_at: value
-            .get("revokedAt")
-            .and_then(Value::as_str)
-            .map(str::to_owned),
-        last_seen_at: value
-            .get("lastSeenAt")
-            .and_then(Value::as_str)
-            .map(str::to_owned),
-    })
-}
-
-fn normalize_grant_value(value: &Value) -> Option<HostedGrant> {
-    let project_root = value.get("projectRoot")?.as_str()?.trim();
-    let session_id = value.get("sessionId")?.as_str()?.trim();
-    if project_root.is_empty() || session_id.is_empty() || !Path::new(project_root).is_absolute() {
-        return None;
-    }
-    Some(HostedGrant {
-        project_root: Path::new(project_root).to_string_lossy().into_owned(),
-        session_id: session_id.to_owned(),
-    })
-}
-
 fn option_value<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
     for index in 0..args.len() {
         let arg = args[index].as_str();
@@ -715,10 +546,6 @@ fn option_value<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
 
 fn has_flag(args: &[String], name: &str) -> bool {
     args.iter().any(|arg| arg == name)
-}
-
-fn hash_hosted_token(token: &str) -> String {
-    format!("{}{}", HASH_PREFIX, hex(&Sha256::digest(token.as_bytes())))
 }
 
 fn append_jsonl(path: PathBuf, value: &impl Serialize) -> Result<()> {
@@ -757,10 +584,6 @@ fn pending_path_for(path: &Path) -> PathBuf {
     PathBuf::from(format!("{}.pending", path.to_string_lossy()))
 }
 
-fn random_hex(bytes: usize) -> Result<String> {
-    Ok(hex(&random_bytes(bytes)?))
-}
-
 fn random_uuid_like() -> Result<String> {
     let bytes = random_bytes(16)?;
     Ok(format!(
@@ -773,34 +596,10 @@ fn random_uuid_like() -> Result<String> {
     ))
 }
 
-fn random_base64url(bytes: usize) -> Result<String> {
-    Ok(base64_url_no_pad(&random_bytes(bytes)?))
-}
-
 fn random_bytes(bytes: usize) -> Result<Vec<u8>> {
     let mut output = vec![0_u8; bytes];
     std::fs::File::open("/dev/urandom")?.read_exact(&mut output)?;
     Ok(output)
-}
-
-fn base64_url_no_pad(bytes: &[u8]) -> String {
-    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-    let mut output = String::new();
-    for chunk in bytes.chunks(3) {
-        let b0 = chunk[0];
-        let b1 = *chunk.get(1).unwrap_or(&0);
-        let b2 = *chunk.get(2).unwrap_or(&0);
-        let n = ((b0 as u32) << 16) | ((b1 as u32) << 8) | b2 as u32;
-        output.push(TABLE[((n >> 18) & 63) as usize] as char);
-        output.push(TABLE[((n >> 12) & 63) as usize] as char);
-        if chunk.len() > 1 {
-            output.push(TABLE[((n >> 6) & 63) as usize] as char);
-        }
-        if chunk.len() > 2 {
-            output.push(TABLE[(n & 63) as usize] as char);
-        }
-    }
-    output
 }
 
 fn hex(bytes: &[u8]) -> String {
