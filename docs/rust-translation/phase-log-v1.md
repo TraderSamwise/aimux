@@ -222,7 +222,7 @@ Verification:
 - `CARGO_TARGET_DIR=/tmp/aimux-cargo-target-dashboard-focus python3 scripts/phase8-live-residuals.py --only dashboard-attach --skip-build --aimux-bin /tmp/aimux-cargo-target-dashboard-focus/debug/aimux`
 - `python3 scripts/phase8-live-residuals.py --only dashboard --aimux-bin /tmp/aimux-cargo-target-resize-fix/debug/aimux --skip-build`
 - `python3 scripts/phase8-live-residuals.py --only dashboard-input --mutation dashboard-input-dead --aimux-bin /tmp/aimux-cargo-target-resize-fix/debug/aimux --skip-build` (prove-failed)
-- `CARGO_TARGET_DIR=/tmp/aimux-cargo-target-dashboard-focus python3 scripts/phase8-live-residuals.py --only dashboard-attach --mutation dashboard-resize-width-overflow --skip-build --aimux-bin /tmp/aimux-cargo-target-dashboard-focus/debug/aimux`
+- `python3 scripts/phase8-live-residuals.py --only dashboard --mutation dashboard-resize-width-overflow --aimux-bin /tmp/aimux-cargo-target-resize-fix/debug/aimux --skip-build` (prove-failed)
 - `CARGO_TARGET_DIR=/tmp/aimux-cargo-target-dashboard-focus python3 scripts/phase8-live-residuals.py --only dashboard-attach --mutation dashboard-attach-focus-target-missing --skip-build --aimux-bin /tmp/aimux-cargo-target-dashboard-focus/debug/aimux`
 - `CARGO_TARGET_DIR=/tmp/aimux-cargo-target-dashboard-focus python3 scripts/phase8-live-residuals.py --only dashboard-attach --mutation dashboard-attach-return-missing --skip-build --aimux-bin /tmp/aimux-cargo-target-dashboard-focus/debug/aimux`
 - `cargo test --manifest-path native/Cargo.toml -p aimux --lib`
@@ -234,10 +234,10 @@ Parity evidence:
 - Commit `c32bb0e5` routes dashboard focus/open actions through the controller
   context wrapper so attached tmux clients focus managed session windows and can
   return to the dashboard.
-- Commit `cabd9683` makes the live dashboard refresh viewport dimensions from
-  terminal/tmux state, bypasses cached tmux size reads, bounds two-pane frames to
-  the viewport, and extends the residual suite with a controlled PTY client that
-  proves live 80x24, 100x15, and 200x50 resize repaint behavior.
+- Commit `375c41de` makes the live dashboard refresh viewport dimensions from
+  tmux pane state during idle polling, keeps dashboard stdin non-blocking, and
+  extends the residual suite with a controlled PTY client that proves no-input
+  repaint at 80x24, 120x30, and 200x50.
 - Mutation checks prove missing focus handoff, missing dashboard return, and
   width overflow are caught by the residual.
 
