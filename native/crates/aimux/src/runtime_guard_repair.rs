@@ -2,6 +2,9 @@ use crate::core_command_contract::CORE_API_ROUTES;
 use crate::core_command_transport::{DaemonHttpMethod, DaemonRequestInit, request_daemon_json};
 use crate::daemon_state::is_pid_alive;
 use crate::debug_logging::log_lifecycle_always;
+use crate::repair_events::{
+    ACTION_CONTROL_PLANE_RESTART, STATUS_FAILED, STATUS_STARTED, record_repair_event_from_env,
+};
 use crate::runtime_guard::{RuntimeGuardStaleReason, RuntimeGuardState};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -167,6 +170,13 @@ pub fn current_time_ms() -> i64 {
 }
 
 pub fn start_runtime_guard_repair_daemon_request(project_root: &str) -> Result<Value, String> {
+    record_repair_event_from_env(
+        project_root,
+        ACTION_CONTROL_PLANE_RESTART,
+        "dashboard-runtime-guard-repair",
+        STATUS_STARTED,
+        None,
+    );
     log_lifecycle_always(
         "runtime guard repair requested",
         "tmux",
@@ -186,6 +196,13 @@ pub fn start_runtime_guard_repair_daemon_request(project_root: &str) -> Result<V
     )
     .map_err(|error| error.to_string());
     if let Err(error) = &result {
+        record_repair_event_from_env(
+            project_root,
+            ACTION_CONTROL_PLANE_RESTART,
+            "dashboard-runtime-guard-repair",
+            STATUS_FAILED,
+            Some(json!({ "error": error })),
+        );
         log_lifecycle_always(
             "runtime guard repair request failed",
             "tmux",

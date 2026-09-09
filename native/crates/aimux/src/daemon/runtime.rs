@@ -99,6 +99,11 @@ use crate::release_version_contract::{
 };
 use crate::remote_credentials;
 use crate::remote_login::{self, LoginAction, LoginFlowWaiter};
+use crate::repair_events::{
+    ACTION_CONTROL_PLANE_RESTART, ACTION_DASHBOARD_RELOAD, ACTION_PROJECT_SERVICE_ENSURE,
+    STATUS_FAILED, STATUS_REPAIRED, STATUS_SKIPPED, STATUS_STARTED,
+    record_repair_event_for_project, record_repair_event_from_env,
+};
 use crate::runtime_coherence::{
     RuntimeCoherenceHealth, RuntimeCoherenceHealthProbe, RuntimeCoherenceInput,
     RuntimeCoherenceTmux, build_runtime_coherence_report, render_runtime_coherence_report,
@@ -811,6 +816,14 @@ impl RealDaemonRuntime {
         project_root: &str,
         reload_dashboard: impl FnOnce(&str) -> Result<RestartDashboardTarget, String>,
     ) -> Value {
+        record_repair_event_for_project(
+            &self.resolver,
+            project_root,
+            ACTION_CONTROL_PLANE_RESTART,
+            "control-plane-restart",
+            STATUS_STARTED,
+            None,
+        );
         let mut result = empty_restart_project_result(project_root);
         let runtime_rebuild_required = read_runtime_rebuild_required(project_root);
         let runtime = if runtime_rebuild_required {
@@ -849,6 +862,26 @@ impl RealDaemonRuntime {
             object.insert("service".into(), service);
             object.insert("dashboard".into(), dashboard);
         }
+        let failed = ["runtime", "service", "dashboard"]
+            .into_iter()
+            .any(|field| restart_step_status(&result, field) == Some(STATUS_FAILED));
+        record_repair_event_for_project(
+            &self.resolver,
+            project_root,
+            ACTION_CONTROL_PLANE_RESTART,
+            "control-plane-restart",
+            if failed {
+                STATUS_FAILED
+            } else {
+                STATUS_REPAIRED
+            },
+            Some(json!({
+                "runtimeRebuildRequired": runtime_rebuild_required,
+                "runtime": result.get("runtime").cloned().unwrap_or(Value::Null),
+                "service": result.get("service").cloned().unwrap_or(Value::Null),
+                "dashboard": result.get("dashboard").cloned().unwrap_or(Value::Null),
+            })),
+        );
         result
     }
 }
@@ -1366,6 +1399,14 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
         let project_root_path = resolver.resolve_repo_root(project_root);
         let project_root = project_root_path.to_string_lossy().into_owned();
         let project_id = compute_project_id(&project_root_path);
+        record_repair_event_for_project(
+            &self.resolver,
+            &project_root,
+            ACTION_PROJECT_SERVICE_ENSURE,
+            "project-service-ensure",
+            STATUS_STARTED,
+            Some(json!({ "projectId": project_id.clone() })),
+        );
         log_at(
             LogLevel::Debug,
             "project service ensure started",
@@ -1415,6 +1456,18 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
                             "pid": service.pid,
                         })),
                     );
+                    record_repair_event_for_project(
+                        &self.resolver,
+                        &project_root,
+                        ACTION_PROJECT_SERVICE_ENSURE,
+                        "project-service-ensure",
+                        STATUS_SKIPPED,
+                        Some(json!({
+                            "projectId": project_id.clone(),
+                            "pid": service.pid,
+                            "status": "running",
+                        })),
+                    );
                 } else {
                     service.status = Some(crate::daemon_state::ProjectServiceStatus::Starting);
                     log_lifecycle_always(
@@ -1424,6 +1477,19 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
                             "projectId": project_id.clone(),
                             "projectRoot": project_root.clone(),
                             "pid": service.pid,
+                        })),
+                    );
+                    record_repair_event_for_project(
+                        &self.resolver,
+                        &project_root,
+                        ACTION_PROJECT_SERVICE_ENSURE,
+                        "project-service-ensure",
+                        STATUS_SKIPPED,
+                        Some(json!({
+                            "projectId": project_id.clone(),
+                            "pid": service.pid,
+                            "status": "starting",
+                            "reason": "live-process-without-endpoint",
                         })),
                     );
                 }
@@ -1457,11 +1523,27 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
             );
             remove_metadata_endpoint(&project_state_dir);
         }
-        let pid = self.project_service_launcher.launch(
+        let pid = match self.project_service_launcher.launch(
             &project_id,
             &project_root_path,
             &project_state_dir,
-        )?;
+        ) {
+            Ok(pid) => pid,
+            Err(error) => {
+                record_repair_event_for_project(
+                    &self.resolver,
+                    &project_root,
+                    ACTION_PROJECT_SERVICE_ENSURE,
+                    "project-service-ensure",
+                    STATUS_FAILED,
+                    Some(json!({
+                        "projectId": project_id.clone(),
+                        "error": error.clone(),
+                    })),
+                );
+                return Err(error);
+            }
+        };
         log_lifecycle_always(
             "project service ensure launched service",
             "project-service",
@@ -1517,6 +1599,24 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
                 })),
             );
         }
+        record_repair_event_for_project(
+            &self.resolver,
+            &project_root,
+            ACTION_PROJECT_SERVICE_ENSURE,
+            "project-service-ensure",
+            STATUS_REPAIRED,
+            Some(json!({
+                "projectId": project_id,
+                "pid": pid,
+                "status": service.status.as_ref().map(|status| match status {
+                    crate::daemon_state::ProjectServiceStatus::Running => "running",
+                    crate::daemon_state::ProjectServiceStatus::Starting => "starting",
+                    crate::daemon_state::ProjectServiceStatus::Restarting => "restarting",
+                    crate::daemon_state::ProjectServiceStatus::Stopped => "stopped",
+                }),
+                "signaledPids": signaled_pids,
+            })),
+        );
         serde_json::to_value(service).map_err(|error| error.to_string())
     }
 
@@ -2601,8 +2701,26 @@ fn session_prefix_for_project(project_root: &str) -> String {
 }
 
 fn reload_dashboard_for_restart(project_root: &str) -> Result<RestartDashboardTarget, String> {
+    record_repair_event_from_env(
+        project_root,
+        ACTION_DASHBOARD_RELOAD,
+        "control-plane-restart",
+        STATUS_STARTED,
+        None,
+    );
     let mut tmux = TmuxRuntimeManager::new();
     if let Some(target) = retained_dashboard_for_restart(project_root, &mut tmux)? {
+        record_repair_event_from_env(
+            project_root,
+            ACTION_DASHBOARD_RELOAD,
+            "control-plane-restart",
+            STATUS_SKIPPED,
+            Some(json!({
+                "status": "retained",
+                "sessionName": target.target.dashboard_session.session_name.clone(),
+                "target": tmux_target_json(&target.target.dashboard_target),
+            })),
+        );
         return Ok(target);
     }
     let context = DashboardTargetContext::for_project(project_root)?;
@@ -2622,12 +2740,40 @@ fn reload_dashboard_for_restart(project_root: &str) -> Result<RestartDashboardTa
                 &target.dashboard_target,
             ));
             if errors.is_empty() {
+                record_repair_event_from_env(
+                    project_root,
+                    ACTION_DASHBOARD_RELOAD,
+                    "control-plane-restart",
+                    STATUS_REPAIRED,
+                    Some(json!({
+                        "status": "reloaded",
+                        "sessionName": target.dashboard_session.session_name.clone(),
+                        "target": tmux_target_json(&target.dashboard_target),
+                    })),
+                );
                 Ok(RestartDashboardTarget::reloaded(target))
             } else {
-                Err(format!("dashboard relink failed for {}", errors.join("; ")))
+                let error = format!("dashboard relink failed for {}", errors.join("; "));
+                record_repair_event_from_env(
+                    project_root,
+                    ACTION_DASHBOARD_RELOAD,
+                    "control-plane-restart",
+                    STATUS_FAILED,
+                    Some(json!({ "error": error.clone() })),
+                );
+                Err(error)
             }
         }
-        Err(error) => Err(error),
+        Err(error) => {
+            record_repair_event_from_env(
+                project_root,
+                ACTION_DASHBOARD_RELOAD,
+                "control-plane-restart",
+                STATUS_FAILED,
+                Some(json!({ "error": error.clone() })),
+            );
+            Err(error)
+        }
     };
     restore_active_windows(&mut tmux, &active_windows);
     result
@@ -3023,6 +3169,15 @@ mod tests {
         assert_eq!(result["service"]["state"]["updatedAt"], json!("now"));
         assert!(launcher.calls().is_empty());
         assert!(launcher.terminations().is_empty());
+        let repair_events = fixture.repair_events();
+        assert_eq!(repair_events[0]["action"], ACTION_CONTROL_PLANE_RESTART);
+        assert_eq!(repair_events[0]["status"], STATUS_STARTED);
+        assert_eq!(repair_events[1]["action"], ACTION_PROJECT_SERVICE_ENSURE);
+        assert_eq!(repair_events[1]["status"], STATUS_STARTED);
+        assert_eq!(repair_events[2]["action"], ACTION_PROJECT_SERVICE_ENSURE);
+        assert_eq!(repair_events[2]["status"], STATUS_SKIPPED);
+        assert_eq!(repair_events[3]["action"], ACTION_CONTROL_PLANE_RESTART);
+        assert_eq!(repair_events[3]["status"], STATUS_REPAIRED);
         fixture.cleanup();
     }
 
@@ -3503,6 +3658,16 @@ mod tests {
                 verifier,
                 0,
             )
+        }
+
+        fn repair_events(&self) -> Vec<Value> {
+            let mut resolver = self.resolver.clone();
+            let path = resolver.project_repair_log_path_for(&self.project_root);
+            fs::read_to_string(path)
+                .expect("repair log")
+                .lines()
+                .map(|line| serde_json::from_str(line).expect("repair event json"))
+                .collect()
         }
 
         fn cleanup(self) {

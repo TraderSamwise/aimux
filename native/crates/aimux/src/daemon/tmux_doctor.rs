@@ -3,6 +3,10 @@ use crate::daemon_state::DEFAULT_DAEMON_PORT;
 use crate::dashboard_command_spec::get_dashboard_command_spec;
 use crate::debug_logging::log_lifecycle_always;
 use crate::paths::PathResolver;
+use crate::repair_events::{
+    ACTION_TMUX_RUNTIME_REPAIR, STATUS_FAILED, STATUS_REPAIRED, STATUS_STARTED,
+    record_repair_event_for_project,
+};
 use crate::shell_hooks::shell_quote;
 use crate::tmux::{
     AIMUX_TMUX_RUNTIME_CONTRACT_VERSION, MANAGED_TMUX_AGENT_WINDOW_OPTIONS,
@@ -240,6 +244,14 @@ pub fn system_tmux_repair_result(
     project_root: &str,
     open: bool,
 ) -> Result<(Value, String), String> {
+    record_repair_event_for_project(
+        resolver,
+        project_root,
+        ACTION_TMUX_RUNTIME_REPAIR,
+        "runtime-contract-drift",
+        STATUS_STARTED,
+        Some(json!({ "open": open })),
+    );
     log_lifecycle_always(
         "tmux repair started",
         "tmux",
@@ -278,6 +290,14 @@ pub fn system_tmux_repair_result(
                     "error": error,
                 })),
             );
+            record_repair_event_for_project(
+                resolver,
+                project_root,
+                ACTION_TMUX_RUNTIME_REPAIR,
+                "runtime-contract-drift",
+                STATUS_FAILED,
+                Some(json!({ "error": error })),
+            );
             return Err(error);
         }
     };
@@ -287,6 +307,19 @@ pub fn system_tmux_repair_result(
         "tmux",
         Some(json!({
             "projectRoot": project_root,
+            "repairedSessions": result.repaired_sessions.len(),
+            "repairedWindows": result.repaired_windows.len(),
+            "dashboardSessionName": result.dashboard_session_name.clone(),
+            "dashboardWindowId": result.dashboard_window_id.clone(),
+        })),
+    );
+    record_repair_event_for_project(
+        resolver,
+        project_root,
+        ACTION_TMUX_RUNTIME_REPAIR,
+        "runtime-contract-drift",
+        STATUS_REPAIRED,
+        Some(json!({
             "repairedSessions": result.repaired_sessions.len(),
             "repairedWindows": result.repaired_windows.len(),
             "dashboardSessionName": result.dashboard_session_name.clone(),
