@@ -5,11 +5,13 @@ use aimux::transcript_reconciler::{
     SessionView, TranscriptProbe, TranscriptReconciler, TranscriptReconcilerDeps,
 };
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 
 #[derive(Default)]
 struct TestDeps {
     pending_interaction: bool,
     probe_result: Option<TranscriptProbe>,
+    probe_results: BTreeMap<String, Option<TranscriptProbe>>,
     codex_path: Option<String>,
     settled: Vec<String>,
     cleared: Vec<String>,
@@ -30,7 +32,10 @@ impl TranscriptReconcilerDeps for TestDeps {
     fn probe(&mut self, tool_config_key: &str, path: &str) -> Option<TranscriptProbe> {
         self.probed
             .push((tool_config_key.to_owned(), path.to_owned()));
-        self.probe_result.clone()
+        self.probe_results
+            .get(path)
+            .cloned()
+            .unwrap_or_else(|| self.probe_result.clone())
     }
     fn find_codex_path(&mut self, backend_session_id: &str) -> Option<String> {
         self.codex_calls.push(backend_session_id.to_owned());
@@ -70,11 +75,41 @@ fn stored_transcript_path_wins_over_derivation() {
         probe_result: complete(),
         ..Default::default()
     };
-    let metadata = metadata(running(), json!({ "transcriptPath": "/stored/a.jsonl" }));
+    let metadata = metadata(running(), json!({ "transcriptPath": "/stored/be-a.jsonl" }));
     reconciler.scan(&[session("claude")], &metadata, &mut deps);
     assert_eq!(
         deps.probed,
-        vec![("claude".to_owned(), "/stored/a.jsonl".to_owned())]
+        vec![("claude".to_owned(), "/stored/be-a.jsonl".to_owned())]
+    );
+}
+
+#[test]
+fn stale_stored_transcript_path_for_previous_backend_does_not_settle() {
+    let mut reconciler = TranscriptReconciler::new();
+    let mut deps = TestDeps {
+        probe_results: BTreeMap::from([("/stored/be-old.jsonl".to_owned(), complete())]),
+        ..Default::default()
+    };
+    let metadata = metadata(
+        running(),
+        json!({ "transcriptPath": "/stored/be-old.jsonl" }),
+    );
+
+    reconciler.scan(&[session("claude")], &metadata, &mut deps);
+    reconciler.scan(&[session("claude")], &metadata, &mut deps);
+
+    assert_eq!(deps.probed.len(), 2);
+    for (_, path) in &deps.probed {
+        assert_ne!(path, "/stored/be-old.jsonl");
+        assert!(
+            path.ends_with("/.claude/projects/-wt-a/be-a.jsonl"),
+            "resolved path did not belong to the current backend: {path}"
+        );
+    }
+    assert!(
+        deps.settled.is_empty(),
+        "settled from a transcript path that belonged to the old backend: {:?}",
+        deps.settled
     );
 }
 

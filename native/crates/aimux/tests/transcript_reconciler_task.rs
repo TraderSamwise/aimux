@@ -73,7 +73,7 @@ impl TempProject {
     }
 
     fn write_transcript(&self, stop_reason: &str) -> PathBuf {
-        let path = self.0.join("transcript.jsonl");
+        let path = self.0.join("be-1.jsonl");
         fs::write(
             &path,
             format!(

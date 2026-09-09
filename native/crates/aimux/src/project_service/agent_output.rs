@@ -1,6 +1,9 @@
 use serde_json::{Map, Value, json};
-use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::fs;
+use std::process::{Command, Output, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 pub use crate::agent_prompt_delivery::normalize_submitted_prompt;
 use crate::agent_prompt_delivery::{PromptSubmitRuntime, wait_for_prompt_submit};
@@ -44,6 +47,8 @@ const AGENT_OUTPUT_READ_PURPOSES: &[&str] = &[
     "preview",
     "interrupt",
 ];
+const TMUX_COMMAND_TIMEOUT: Duration = Duration::from_secs(2);
+const TMUX_COMMAND_POLL: Duration = Duration::from_millis(10);
 
 static OPERATION_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -148,6 +153,104 @@ impl AgentOutputCaptureRuntime for SystemAgentOutputCaptureRuntime {
 
     fn send_escape(&mut self, window_id: &str) -> Result<(), String> {
         run_tmux_argv(
+            send_escape_argv(window_id),
+            format!("tmux send escape failed for {window_id}"),
+        )
+        .map(|_| ())
+    }
+}
+
+pub struct BoundedAgentOutputCaptureRuntime {
+    deadline: Instant,
+    cancelled: Arc<AtomicBool>,
+}
+
+impl BoundedAgentOutputCaptureRuntime {
+    pub fn new(deadline: Instant, cancelled: Arc<AtomicBool>) -> Self {
+        Self {
+            deadline,
+            cancelled,
+        }
+    }
+
+    fn run_tmux_argv(&self, argv: Vec<String>, fallback_error: String) -> Result<Output, String> {
+        run_tmux_argv_with_timeout(argv, fallback_error, self.remaining()?)
+    }
+
+    fn remaining(&self) -> Result<Duration, String> {
+        if self.cancelled.load(Ordering::SeqCst) {
+            return Err("agent output request cancelled".to_owned());
+        }
+        let now = Instant::now();
+        if now >= self.deadline {
+            return Err("agent output request timed out".to_owned());
+        }
+        Ok(self.deadline.saturating_duration_since(now))
+    }
+}
+
+impl AgentOutputCaptureRuntime for BoundedAgentOutputCaptureRuntime {
+    fn capture_pane(
+        &mut self,
+        window_id: &str,
+        options: CapturePaneOptions,
+    ) -> Result<String, String> {
+        let argv = capture_pane_argv(window_id, options);
+        let output =
+            self.run_tmux_argv(argv, format!("tmux capture-pane failed for {window_id}"))?;
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    }
+
+    fn resize_window(&mut self, window_id: &str, cols: i64, rows: i64) -> Result<(), String> {
+        self.run_tmux_argv(
+            resize_window_argv(window_id, cols, rows),
+            format!("tmux resize-window failed for {window_id}"),
+        )
+        .map(|_| ())
+    }
+
+    fn send_text(&mut self, window_id: &str, text: &str) -> Result<(), String> {
+        self.run_tmux_argv(
+            send_text_argv(window_id, text),
+            format!("tmux send-keys text failed for {window_id}"),
+        )
+        .map(|_| ())
+    }
+
+    fn send_key(&mut self, window_id: &str, key: &str) -> Result<(), String> {
+        self.run_tmux_argv(
+            send_key_argv(window_id, key),
+            format!("tmux send-keys {key} failed for {window_id}"),
+        )
+        .map(|_| ())
+    }
+
+    fn send_carriage_return(&mut self, window_id: &str) -> Result<(), String> {
+        self.run_tmux_argv(
+            send_carriage_return_argv(window_id),
+            format!("tmux send carriage return failed for {window_id}"),
+        )
+        .map(|_| ())
+    }
+
+    fn submit_prompt(&mut self, window_id: &str, draft: &str) -> Result<(), String> {
+        let generation = claim_submit_generation(window_id);
+        let mut runtime = BoundedPromptSubmitRuntime {
+            window_id: window_id.to_owned(),
+            generation,
+            deadline: self.deadline,
+            cancelled: Arc::clone(&self.cancelled),
+        };
+        let _ = wait_for_prompt_submit(&mut runtime, draft);
+        if self.cancelled.load(Ordering::SeqCst) || Instant::now() >= self.deadline {
+            Err("agent output request timed out".to_owned())
+        } else {
+            Ok(())
+        }
+    }
+
+    fn send_escape(&mut self, window_id: &str) -> Result<(), String> {
+        self.run_tmux_argv(
             send_escape_argv(window_id),
             format!("tmux send escape failed for {window_id}"),
         )
@@ -970,14 +1073,17 @@ fn collapse_whitespace(value: &str) -> String {
     output
 }
 
-fn run_tmux_argv(
+fn run_tmux_argv(argv: Vec<String>, fallback_error: String) -> Result<Output, String> {
+    run_tmux_argv_with_timeout(argv, fallback_error, TMUX_COMMAND_TIMEOUT)
+}
+
+fn run_tmux_argv_with_timeout(
     argv: Vec<String>,
     fallback_error: String,
-) -> Result<std::process::Output, String> {
-    let output = Command::new("tmux")
-        .args(argv)
-        .output()
-        .map_err(|error| error.to_string())?;
+    timeout: Duration,
+) -> Result<Output, String> {
+    let output = run_command_with_timeout("tmux", &argv, timeout)
+        .map_err(|error| format!("{fallback_error}: {error}"))?;
     if !output.status.success() {
         let error = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         return Err(if error.is_empty() {
@@ -987,6 +1093,62 @@ fn run_tmux_argv(
         });
     }
     Ok(output)
+}
+
+fn run_command_with_timeout(
+    program: &str,
+    argv: &[String],
+    timeout: Duration,
+) -> Result<Output, String> {
+    let nonce = OPERATION_SEQUENCE.fetch_add(1, Ordering::SeqCst);
+    let temp_prefix = format!("aimux-command-{}-{nonce}", std::process::id());
+    let stdout_path = std::env::temp_dir().join(format!("{temp_prefix}.stdout"));
+    let stderr_path = std::env::temp_dir().join(format!("{temp_prefix}.stderr"));
+    let stdout = fs::File::create(&stdout_path).map_err(|error| error.to_string())?;
+    let stderr = fs::File::create(&stderr_path).map_err(|error| error.to_string())?;
+    let mut child = Command::new(program)
+        .args(argv)
+        .stdout(Stdio::from(stdout))
+        .stderr(Stdio::from(stderr))
+        .spawn()
+        .map_err(|error| {
+            cleanup_command_output_files(&stdout_path, &stderr_path);
+            error.to_string()
+        })?;
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let output = Output {
+                    status,
+                    stdout: fs::read(&stdout_path).unwrap_or_default(),
+                    stderr: fs::read(&stderr_path).unwrap_or_default(),
+                };
+                cleanup_command_output_files(&stdout_path, &stderr_path);
+                return Ok(output);
+            }
+            Ok(None) => {}
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                cleanup_command_output_files(&stdout_path, &stderr_path);
+                return Err(error.to_string());
+            }
+        }
+        let now = Instant::now();
+        if now >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            cleanup_command_output_files(&stdout_path, &stderr_path);
+            return Err(format!("timed out after {timeout:?}"));
+        }
+        std::thread::sleep(TMUX_COMMAND_POLL.min(deadline.saturating_duration_since(now)));
+    }
+}
+
+fn cleanup_command_output_files(stdout_path: &std::path::Path, stderr_path: &std::path::Path) {
+    let _ = fs::remove_file(stdout_path);
+    let _ = fs::remove_file(stderr_path);
 }
 
 /// Newest submit generation per window.
@@ -1037,18 +1199,85 @@ impl PromptSubmitRuntime for SystemPromptSubmitRuntime {
             },
         );
         // A dead window is not an error worth panicking a detached thread over.
-        let output = Command::new("tmux").args(argv).output().ok()?;
+        let output = run_tmux_argv(
+            argv,
+            format!("tmux capture-pane failed for {}", self.window_id),
+        )
+        .ok()?;
         Some(String::from_utf8_lossy(&output.stdout).into_owned())
     }
 
     fn send_carriage_return(&mut self) {
-        let _ = Command::new("tmux")
-            .args(send_carriage_return_argv(&self.window_id))
-            .status();
+        let _ = run_tmux_argv(
+            send_carriage_return_argv(&self.window_id),
+            format!("tmux send carriage return failed for {}", self.window_id),
+        );
     }
 
     fn sleep(&mut self, millis: u64) {
         std::thread::sleep(std::time::Duration::from_millis(millis));
+    }
+}
+
+struct BoundedPromptSubmitRuntime {
+    window_id: String,
+    generation: u64,
+    deadline: Instant,
+    cancelled: Arc<AtomicBool>,
+}
+
+impl BoundedPromptSubmitRuntime {
+    fn active(&self) -> bool {
+        !self.cancelled.load(Ordering::SeqCst) && Instant::now() < self.deadline
+    }
+}
+
+impl PromptSubmitRuntime for BoundedPromptSubmitRuntime {
+    fn is_current(&mut self) -> bool {
+        self.active() && submit_generation_is_current(&self.window_id, self.generation)
+    }
+
+    fn capture(&mut self, start_line: i64) -> Option<String> {
+        if !self.active() {
+            return None;
+        }
+        let argv = capture_pane_argv(
+            &self.window_id,
+            CapturePaneOptions {
+                start_line: Some(start_line),
+                end_line: None,
+                include_escapes: false,
+            },
+        );
+        let remaining = self.deadline.saturating_duration_since(Instant::now());
+        let output = run_tmux_argv_with_timeout(
+            argv,
+            format!("tmux capture-pane failed for {}", self.window_id),
+            remaining,
+        )
+        .ok()?;
+        Some(String::from_utf8_lossy(&output.stdout).into_owned())
+    }
+
+    fn send_carriage_return(&mut self) {
+        if !self.active() {
+            return;
+        }
+        let remaining = self.deadline.saturating_duration_since(Instant::now());
+        let _ = run_tmux_argv_with_timeout(
+            send_carriage_return_argv(&self.window_id),
+            format!("tmux send carriage return failed for {}", self.window_id),
+            remaining,
+        );
+    }
+
+    fn sleep(&mut self, millis: u64) {
+        if !self.active() {
+            return;
+        }
+        let requested = Duration::from_millis(millis);
+        let remaining = self.deadline.saturating_duration_since(Instant::now());
+        std::thread::sleep(requested.min(remaining));
     }
 }
 
@@ -1151,5 +1380,38 @@ fn object_value(value: Value) -> Map<String, Value> {
     match value {
         Value::Object(map) => map,
         _ => Map::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn command_timeout_kills_a_blocked_child() {
+        let started = Instant::now();
+        let result =
+            run_command_with_timeout("/bin/sleep", &["5".to_owned()], Duration::from_millis(50));
+
+        assert!(result.is_err(), "sleep command unexpectedly completed");
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "timeout waited for the child to finish naturally"
+        );
+    }
+
+    #[test]
+    fn command_timeout_collects_large_output_without_pipe_deadlock() {
+        let result = run_command_with_timeout(
+            "/bin/sh",
+            &[
+                "-c".to_owned(),
+                "/usr/bin/yes x | /usr/bin/head -c 200000".to_owned(),
+            ],
+            Duration::from_secs(1),
+        )
+        .expect("large output command should complete");
+
+        assert_eq!(result.stdout.len(), 200_000);
     }
 }

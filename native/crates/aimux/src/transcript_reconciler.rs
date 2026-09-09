@@ -11,6 +11,7 @@
 //! All I/O is behind [`TranscriptReconcilerDeps`]; this module is pure.
 
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 
 use serde_json::Value;
 
@@ -162,7 +163,12 @@ impl TranscriptReconciler {
         deps: &mut dyn TranscriptReconcilerDeps,
     ) -> Option<String> {
         let context = session_field(metadata, &session.id, "context");
-        if let Some(stored) = context.and_then(|context| non_empty(context.get("transcriptPath"))) {
+        if let Some(stored) = context
+            .and_then(|context| non_empty(context.get("transcriptPath")))
+            .filter(|path| {
+                stored_transcript_path_matches_backend(path, session.backend_session_id.as_deref())
+            })
+        {
             return Some(stored);
         }
         let cwd = match &session.worktree_path {
@@ -238,4 +244,11 @@ fn non_empty(value: Option<&Value>) -> Option<String> {
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
+}
+
+fn stored_transcript_path_matches_backend(path: &str, backend_session_id: Option<&str>) -> bool {
+    let Some(backend_session_id) = backend_session_id else {
+        return false;
+    };
+    Path::new(path).file_stem().and_then(|stem| stem.to_str()) == Some(backend_session_id)
 }

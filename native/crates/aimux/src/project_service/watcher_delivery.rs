@@ -7,16 +7,17 @@
 //! cooldown unconsumed so the next scan tries again.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::json;
 
 use crate::project_api_contract::routes;
 
 use super::agent_output::{
-    SystemAgentOutputCaptureRuntime, route_agent_output_request_with_runtime,
+    BoundedAgentOutputCaptureRuntime, route_agent_output_request_with_runtime,
 };
 use super::router::ProjectServiceRequestContext;
 
@@ -30,18 +31,28 @@ pub fn deliver_agent_input(
 ) -> bool {
     let body = json!({ "sessionId": session_id, "text": text });
     let (tx, rx) = mpsc::channel();
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let deadline = Instant::now() + DELIVERY_TIMEOUT;
+    let worker_cancelled = Arc::clone(&cancelled);
     thread::spawn(move || {
+        let mut runtime = BoundedAgentOutputCaptureRuntime::new(deadline, worker_cancelled);
         let delivered = route_agent_output_request_with_runtime(
             &context,
             "POST",
             routes::agents::INPUT,
             Some(&body),
-            &mut SystemAgentOutputCaptureRuntime,
+            &mut runtime,
         )
         .is_some_and(|response| response.status == 200);
         let _ = tx.send(delivered);
     });
-    rx.recv_timeout(DELIVERY_TIMEOUT).unwrap_or(false)
+    match rx.recv_timeout(DELIVERY_TIMEOUT) {
+        Ok(delivered) => delivered,
+        Err(_) => {
+            cancelled.store(true, Ordering::SeqCst);
+            false
+        }
+    }
 }
 
 /// How long a single pane read may take before the rail gives up on it.
@@ -62,13 +73,17 @@ pub fn read_agent_output_tail(
 ) -> Option<String> {
     let session_id = session_id.to_owned();
     let (tx, rx) = mpsc::channel();
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let deadline = Instant::now() + READ_TIMEOUT;
+    let worker_cancelled = Arc::clone(&cancelled);
     thread::spawn(move || {
+        let mut runtime = BoundedAgentOutputCaptureRuntime::new(deadline, worker_cancelled);
         let read = super::agent_output::read_agent_output_payload(
             &context,
             &session_id,
             Some(start_line),
             super::agent_output::AgentOutputResponseMode::Full,
-            &mut SystemAgentOutputCaptureRuntime,
+            &mut runtime,
         )
         .ok()
         .and_then(|read| {
@@ -79,7 +94,13 @@ pub fn read_agent_output_tail(
         });
         let _ = tx.send(read);
     });
-    rx.recv_timeout(READ_TIMEOUT).ok().flatten()
+    match rx.recv_timeout(READ_TIMEOUT) {
+        Ok(read) => read,
+        Err(_) => {
+            cancelled.store(true, Ordering::SeqCst);
+            None
+        }
+    }
 }
 
 /// A wall-clock allowance for one task's turn on the rail.
