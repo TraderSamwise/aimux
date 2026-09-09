@@ -7,6 +7,16 @@ use serde_json::{Value, json};
 
 const TAIL_BYTES: u64 = 256 * 1024;
 
+/// Deterministic turn-state of an agent read from its on-disk transcript, with
+/// the stat that produced it so a caller can tell whether the file went quiet.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TranscriptProbe {
+    /// "complete" | "in_progress" | "unknown".
+    pub turn: String,
+    pub size: u64,
+    pub mtime_ms: u64,
+}
+
 pub fn transcript_turn_state_contract(case: &Value) -> Value {
     match case["api"].as_str().unwrap_or_default() {
         "claudeTurnState" => Value::String(claude_turn_state(
@@ -96,7 +106,7 @@ pub fn read_file_tail(path: impl AsRef<Path>, max_bytes: Option<u64>) -> Option<
     String::from_utf8(bytes).ok()
 }
 
-pub fn probe_transcript(tool_config_key: &str, path: impl AsRef<Path>) -> Option<Value> {
+pub fn probe_transcript(tool_config_key: &str, path: impl AsRef<Path>) -> Option<TranscriptProbe> {
     let path = path.as_ref();
     let metadata = fs::metadata(path).ok()?;
     let tail = read_file_tail(path, Some(TAIL_BYTES))?;
@@ -109,9 +119,19 @@ pub fn probe_transcript(tool_config_key: &str, path: impl AsRef<Path>) -> Option
         .modified()
         .ok()
         .and_then(|mtime| mtime.duration_since(UNIX_EPOCH).ok())
-        .map(|duration| duration.as_secs_f64() * 1000.0)
-        .unwrap_or(0.0);
-    Some(json!({ "turn": turn, "size": metadata.len(), "mtimeMs": mtime_ms }))
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0);
+    Some(TranscriptProbe {
+        turn,
+        size: metadata.len(),
+        mtime_ms,
+    })
+}
+
+/// Default Codex transcript root, honouring `CODEX_HOME` the way Node's
+/// `codexSessionsDir()` did.
+pub fn default_codex_sessions_dir() -> PathBuf {
+    crate::backend_session_ids::codex_sessions_dir(None)
 }
 
 pub fn find_codex_transcript_path(
@@ -149,14 +169,13 @@ fn probe_transcript_contract(case: &Value) -> Value {
         .contains("stat metadata")
     {
         json!({
-            "turn": probe.as_ref().and_then(|value| value["turn"].as_str()),
-            "sizePositive": probe.as_ref().and_then(|value| value["size"].as_u64()).is_some_and(|size| size > 0),
+            "turn": probe.as_ref().map(|probe| probe.turn.clone()),
+            "sizePositive": probe.as_ref().is_some_and(|probe| probe.size > 0),
             "mtimeMsType": "number",
         })
     } else {
         probe
-            .and_then(|value| value["turn"].as_str().map(str::to_owned))
-            .map(Value::String)
+            .map(|probe| Value::String(probe.turn))
             .unwrap_or(Value::Null)
     };
     let _ = fs::remove_file(path);

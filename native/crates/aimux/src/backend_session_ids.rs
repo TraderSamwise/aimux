@@ -526,7 +526,7 @@ fn claude_projects_dir(override_dir: Option<&Path>) -> PathBuf {
     })
 }
 
-fn codex_sessions_dir(override_dir: Option<&Path>) -> PathBuf {
+pub fn codex_sessions_dir(override_dir: Option<&Path>) -> PathBuf {
     override_dir.map(Path::to_path_buf).unwrap_or_else(|| {
         std::env::var("CODEX_HOME")
             .ok()
