@@ -140,6 +140,8 @@ struct DiskMaintenanceOptions {
     install_root: Option<String>,
     install_reference_text: Option<InstallReferenceText>,
     now_ms: Option<u128>,
+    env: Option<BTreeMap<String, String>>,
+    home: Option<PathBuf>,
 }
 
 struct DaemonProjectReadSnapshot {
@@ -1063,9 +1065,10 @@ fn run_daemon_disk_maintenance_once(
         .and_then(Value::as_bool)
         .unwrap_or(true)
         && is_primary_install_lane_with_home(
-            &std::env::vars().collect(),
-            std::env::var_os("HOME")
-                .map(PathBuf::from)
+            &options.env.unwrap_or_else(|| std::env::vars().collect()),
+            options
+                .home
+                .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
                 .unwrap_or_else(|| PathBuf::from(".")),
         )
     {
@@ -2869,6 +2872,11 @@ mod tests {
                     complete: true,
                 }),
                 now_ms: Some(10 * 86_400_000),
+                env: Some(BTreeMap::from([(
+                    "AIMUX_HOME".to_owned(),
+                    home.join(".aimux").to_string_lossy().into_owned(),
+                )])),
+                home: Some(home.clone()),
             },
         );
 
