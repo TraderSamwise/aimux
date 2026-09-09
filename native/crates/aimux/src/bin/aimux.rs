@@ -694,7 +694,10 @@ fn open_dashboard_target_from_foreground(
     target: &TmuxTarget,
     already_resolved: bool,
 ) -> Result<()> {
-    let foreground_tty = foreground_tty().or_else(|| single_attached_tmux_client_tty(tmux));
+    // Only ever consider THIS process's own terminal. Borrowing another attached
+    // client's tty made `aimux` switch that client's view and exit, so a second
+    // terminal could never attach while any client was attached anywhere.
+    let foreground_tty = foreground_tty();
     let inside_by_client = foreground_tty
         .as_deref()
         .is_some_and(|tty| tmux.find_client_by_tty(tty).is_some());
@@ -703,7 +706,9 @@ fn open_dashboard_target_from_foreground(
             .as_deref()
             == Some(env_socket.as_str())
     });
-    let inside_tmux = inside_by_client || inside_by_socket;
+    // Node gated this on isInsideTmux() alone: switch-client is only correct when
+    // the caller is itself a tmux client. Outside tmux we must attach.
+    let inside_tmux = tmux.is_inside_tmux() && (inside_by_client || inside_by_socket);
     let client_tty = if inside_tmux { foreground_tty } else { None };
     tmux.open_target(
         target,
@@ -716,14 +721,6 @@ fn open_dashboard_target_from_foreground(
     )
     .map_err(anyhow::Error::msg)?;
     Ok(())
-}
-
-fn single_attached_tmux_client_tty(tmux: &mut TmuxRuntimeManager) -> Option<String> {
-    let clients = tmux.list_clients();
-    if clients.len() == 1 {
-        return clients.first().map(|client| client.tty.clone());
-    }
-    None
 }
 
 fn should_open_dashboard_in_host_session(
