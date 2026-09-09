@@ -4,6 +4,9 @@ use aimux::project_service::agent_output::AgentOutputCaptureRuntime;
 use aimux::project_service::desktop_state::{
     DesktopStateInput, build_desktop_state, route_desktop_state_request_with_runtime,
 };
+use aimux::project_service::operation_failures::{
+    OperationFailureInput, add_dashboard_operation_failure,
+};
 use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
 use aimux::project_service::runtime_exchange::{runtime_exchange_path, write_runtime_exchange};
 use aimux::runtime_topology::{coerce_runtime_topology, runtime_topology_path};
@@ -245,6 +248,43 @@ fn route_desktop_state_reads_catalog_files_and_preserves_existing_snapshot_shape
     assert_eq!(existing.body["sessions"][0]["id"], "existing");
     assert!(existing.body["serviceInfo"].is_object());
     assert_eq!(existing.body["pendingInteractions"], json!([]));
+    cleanup(project);
+}
+
+#[test]
+fn route_desktop_state_reports_persisted_operation_failures() {
+    let (project, state_dir) = write_desktop_state_fixtures("operation-failures");
+    add_dashboard_operation_failure(
+        &state_dir,
+        OperationFailureInput {
+            target_kind: "worktree".into(),
+            operation: "create".into(),
+            title: "Worktree failed".into(),
+            message: "not a git repository".into(),
+            worktree_path: Some(
+                project
+                    .join(".aimux/worktrees/feature")
+                    .to_string_lossy()
+                    .into(),
+            ),
+            worktree_name: Some("feature".into()),
+            ..OperationFailureInput::default()
+        },
+    );
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let response = route_project_service_request(&context, "GET", routes::DESKTOP_STATE, None);
+
+    assert_eq!(response.status, 200);
+    let failures = response.body["operationFailures"]
+        .as_array()
+        .expect("operation failures");
+    assert_eq!(failures.len(), 1);
+    assert_eq!(failures[0]["targetKind"], "worktree");
+    assert_eq!(failures[0]["operation"], "create");
+    assert_eq!(failures[0]["title"], "Worktree failed");
+    assert_eq!(failures[0]["message"], "not a git repository");
+    assert_eq!(failures[0]["worktreeName"], "feature");
     cleanup(project);
 }
 

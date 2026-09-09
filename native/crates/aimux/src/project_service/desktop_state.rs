@@ -17,6 +17,7 @@ use super::agent_output::{AgentOutputCaptureRuntime, SystemAgentOutputCaptureRun
 use super::agents::topology_desktop_session_list;
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::http::query_params;
+use super::operation_failures::list_dashboard_operation_failures;
 use super::preview_snapshots::{
     DEFAULT_PREVIEW_CAPTURE_LINES, DEFAULT_PREVIEW_MAX_CHARS, capture_preview_snapshot,
 };
@@ -152,12 +153,19 @@ pub fn desktop_state_for_context(context: &ProjectServiceRequestContext) -> Resu
     let topology = read_runtime_topology(runtime_topology_path(&project_state_dir))?;
     let metadata = load_metadata_state(&project_state_dir);
     let exchange = read_runtime_exchange(runtime_exchange_path(&project_state_dir));
-    Ok(build_desktop_state(DesktopStateInput {
+    let mut state = build_desktop_state(DesktopStateInput {
         project_root: context.project_root().to_string_lossy().into_owned(),
         topology: &topology,
         metadata_sessions: &metadata.sessions,
         exchange: &exchange,
-    }))
+    });
+    if let Value::Object(object) = &mut state {
+        object.insert(
+            "operationFailures".into(),
+            Value::Array(list_dashboard_operation_failures(&project_state_dir)),
+        );
+    }
+    Ok(state)
 }
 
 pub struct DesktopStateInput<'a> {
