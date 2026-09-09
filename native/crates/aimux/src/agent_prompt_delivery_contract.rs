@@ -39,29 +39,11 @@ fn normalize_submitted_prompt(data: &str, submit: bool) -> String {
     if !submit {
         return data.to_owned();
     }
-    data.trim_end_matches(['\r', '\n'])
-        .split(['\r', '\n'])
-        .map(str::trim)
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join(" ")
+    crate::agent_prompt_delivery::normalize_submitted_prompt(data)
 }
 
 fn pane_still_contains_prompt_draft(pane: &str, draft: &str) -> bool {
-    let normalized_pane = normalize_words(pane);
-    let normalized_draft = normalize_words(draft);
-    if normalized_draft.is_empty() {
-        return false;
-    }
-    if normalized_pane.contains(&normalized_draft) || normalized_pane.contains("[pasted content") {
-        return true;
-    }
-    normalized_draft
-        .split_terminator(['.', '!', '?'])
-        .map(str::trim)
-        .filter(|fragment| fragment.len() >= 24)
-        .take(3)
-        .any(|fragment| normalized_pane.contains(fragment))
+    crate::agent_prompt_delivery::pane_still_contains_prompt_draft(pane, draft)
 }
 
 fn detect_visible_prompt_input_draft(pane: &str) -> Option<Value> {
@@ -395,14 +377,7 @@ impl ReplayRuntime {
     }
 
     fn capture_prompt_signature(&mut self) -> String {
-        normalize_words(&self.capture())
-            .chars()
-            .rev()
-            .take(240)
-            .collect::<String>()
-            .chars()
-            .rev()
-            .collect()
+        crate::agent_prompt_delivery::prompt_draft_signature(&self.capture())
     }
 }
 
@@ -429,15 +404,6 @@ fn continuation_stop(line: &str) -> bool {
         || lower.starts_with("sam@") && lower.contains(" ~/")
         || trimmed.chars().all(|ch| matches!(ch, '─' | '━'))
         || trimmed.starts_with(['✻', '✳', '✽', '⏺', '•', '⎿'])
-}
-
-fn normalize_words(value: &str) -> String {
-    value
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .trim()
-        .to_ascii_lowercase()
 }
 
 fn strip_ansi(value: &str) -> String {

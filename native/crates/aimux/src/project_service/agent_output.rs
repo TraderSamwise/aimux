@@ -2,6 +2,8 @@ use serde_json::{Map, Value, json};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+pub use crate::agent_prompt_delivery::normalize_submitted_prompt;
+use crate::agent_prompt_delivery::{PromptSubmitRuntime, wait_for_prompt_submit};
 use crate::daemon_state::load_metadata_state;
 use crate::project_api_contract::routes;
 use crate::remote_access::{RemoteActor, RemoteActorRole, parse_remote_actor};
@@ -84,7 +86,9 @@ pub trait AgentOutputCaptureRuntime {
         Err("agent input not supported by this service".into())
     }
 
-    fn submit_prompt(&mut self, window_id: &str) -> Result<(), String> {
+    /// Submit a prompt that was just pasted. `draft` is what to look for on
+    /// screen while waiting for the paste to render.
+    fn submit_prompt(&mut self, window_id: &str, _draft: &str) -> Result<(), String> {
         self.send_carriage_return(window_id)
     }
 
@@ -138,11 +142,8 @@ impl AgentOutputCaptureRuntime for SystemAgentOutputCaptureRuntime {
         .map(|_| ())
     }
 
-    fn submit_prompt(&mut self, window_id: &str) -> Result<(), String> {
-        spawn_tmux_argv(
-            send_carriage_return_argv(window_id),
-            format!("tmux submit prompt failed for {window_id}"),
-        )
+    fn submit_prompt(&mut self, window_id: &str, draft: &str) -> Result<(), String> {
+        spawn_prompt_submit(window_id, draft)
     }
 
     fn send_escape(&mut self, window_id: &str) -> Result<(), String> {
@@ -742,7 +743,7 @@ fn input_live_pane_route(
     if let Err(error) = send_prompt_to_tmux(runtime, &window_id, &prompt) {
         return json_error(500, error);
     }
-    if let Err(error) = runtime.submit_prompt(&window_id) {
+    if let Err(error) = runtime.submit_prompt(&window_id, &prompt) {
         return json_error(500, error);
     }
     ProjectServiceDispatchResponse::json(
@@ -838,40 +839,6 @@ fn flush_tmux_text(
     }
     pending.clear();
     Ok(())
-}
-
-pub fn normalize_submitted_prompt(data: &str) -> String {
-    let trimmed = data.trim_end_matches(['\r', '\n']);
-    let mut output = String::with_capacity(trimmed.len());
-    let mut whitespace = String::new();
-    let mut whitespace_has_line_break = false;
-    for character in trimmed.chars() {
-        if character.is_whitespace() {
-            if character == '\r' || character == '\n' {
-                whitespace_has_line_break = true;
-            }
-            whitespace.push(character);
-        } else {
-            if !whitespace.is_empty() {
-                if whitespace_has_line_break {
-                    output.push(' ');
-                } else {
-                    output.push_str(&whitespace);
-                }
-                whitespace.clear();
-                whitespace_has_line_break = false;
-            }
-            output.push(character);
-        }
-    }
-    if !whitespace.is_empty() {
-        if whitespace_has_line_break {
-            output.push(' ');
-        } else {
-            output.push_str(&whitespace);
-        }
-    }
-    output
 }
 
 fn remote_actor_from_headers(
@@ -1022,21 +989,88 @@ fn run_tmux_argv(
     Ok(output)
 }
 
-fn spawn_tmux_argv(argv: Vec<String>, fallback_error: String) -> Result<(), String> {
+/// Newest submit generation per window.
+///
+/// Two inputs sent to one window in quick succession used to leave two waiters
+/// racing: the first would submit both drafts concatenated, and the second
+/// would still fire its fallback carriage return ~5s later into whatever was on
+/// screen by then — a stray Enter that can answer a permission dialog. A submit
+/// bumps the generation, and a waiter that is no longer newest gives up.
+static SUBMIT_GENERATIONS: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<String, u64>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+fn claim_submit_generation(window_id: &str) -> u64 {
+    let mut generations = match SUBMIT_GENERATIONS.lock() {
+        Ok(generations) => generations,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let generation = generations.entry(window_id.to_owned()).or_insert(0);
+    *generation += 1;
+    *generation
+}
+
+fn submit_generation_is_current(window_id: &str, generation: u64) -> bool {
+    match SUBMIT_GENERATIONS.lock() {
+        Ok(generations) => generations.get(window_id).copied() == Some(generation),
+        Err(poisoned) => poisoned.into_inner().get(window_id).copied() == Some(generation),
+    }
+}
+
+struct SystemPromptSubmitRuntime {
+    window_id: String,
+    generation: u64,
+}
+
+impl PromptSubmitRuntime for SystemPromptSubmitRuntime {
+    fn is_current(&mut self) -> bool {
+        submit_generation_is_current(&self.window_id, self.generation)
+    }
+
+    fn capture(&mut self, start_line: i64) -> Option<String> {
+        let argv = capture_pane_argv(
+            &self.window_id,
+            CapturePaneOptions {
+                start_line: Some(start_line),
+                end_line: None,
+                include_escapes: false,
+            },
+        );
+        // A dead window is not an error worth panicking a detached thread over.
+        let output = Command::new("tmux").args(argv).output().ok()?;
+        Some(String::from_utf8_lossy(&output.stdout).into_owned())
+    }
+
+    fn send_carriage_return(&mut self) {
+        let _ = Command::new("tmux")
+            .args(send_carriage_return_argv(&self.window_id))
+            .status();
+    }
+
+    fn sleep(&mut self, millis: u64) {
+        std::thread::sleep(std::time::Duration::from_millis(millis));
+    }
+}
+
+/// Paste-then-submit runs off the request thread on purpose: confirming the
+/// submit takes seconds, and blocking the response on it is what made the app's
+/// send time out on prompts that flood the pane.
+fn spawn_prompt_submit(window_id: &str, draft: &str) -> Result<(), String> {
+    let generation = claim_submit_generation(window_id);
+    let mut runtime = SystemPromptSubmitRuntime {
+        window_id: window_id.to_owned(),
+        generation,
+    };
+    let draft = draft.to_owned();
     std::thread::Builder::new()
         .name("aimux-submit-prompt".into())
         .spawn(move || {
-            let _ = Command::new("tmux").args(argv).status();
+            // Advisory: a Codex transcript keeps showing the pasted-content
+            // marker after a successful send, so a false here is routine.
+            let _ = wait_for_prompt_submit(&mut runtime, &draft);
         })
         .map(|_| ())
-        .map_err(|error| {
-            let message = error.to_string();
-            if message.is_empty() {
-                fallback_error
-            } else {
-                message
-            }
-        })
+        .map_err(|error| error.to_string())
 }
 
 fn operation_id(operation: &str, target_id: &str) -> String {
