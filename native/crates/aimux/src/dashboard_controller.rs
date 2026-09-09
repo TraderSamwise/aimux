@@ -17,7 +17,7 @@ use crate::dashboard_tool_picker::{
 };
 use crate::project_api_contract::routes;
 use crate::project_service::work_outline::WorkOutlineEntry;
-use crate::terminal_key_parser::{KeyEvent, parse_keys};
+use crate::terminal_key_parser::{KeyEvent, command_key, is_shifted_letter_command, parse_keys};
 use serde_json::{Map, Value, json};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2667,6 +2667,10 @@ pub fn parse_dashboard_keys(bytes: &[u8]) -> Vec<DashboardKey> {
 }
 
 fn dashboard_keys_from_event(event: KeyEvent) -> Vec<DashboardKey> {
+    let lower_key = command_key(&event);
+    if let Some(key) = shifted_dashboard_command_key(&event, &lower_key) {
+        return vec![key];
+    }
     if event.ctrl && !event.alt && event.name.chars().count() == 1 {
         return vec![DashboardKey::Ctrl(
             event.name.chars().next().unwrap_or_default(),
@@ -2707,6 +2711,18 @@ fn dashboard_keys_from_event(event: KeyEvent) -> Vec<DashboardKey> {
         _ => DashboardKey::Other,
     };
     vec![key]
+}
+
+fn shifted_dashboard_command_key(event: &KeyEvent, lower_key: &str) -> Option<DashboardKey> {
+    for letter in ["h", "t", "l", "w", "d", "o", "p", "v", "x", "r", "s"] {
+        if is_shifted_letter_command(event, lower_key, letter) {
+            return letter
+                .chars()
+                .next()
+                .map(|ch| DashboardKey::Printable(ch.to_ascii_uppercase()));
+        }
+    }
+    None
 }
 
 fn normalize_dashboard_command_key(key: DashboardKey) -> DashboardKey {

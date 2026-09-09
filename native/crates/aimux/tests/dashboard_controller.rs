@@ -1417,6 +1417,18 @@ fn subscreen_dismiss_and_hotkeys_follow_typescript_screen_map() {
 }
 
 #[test]
+fn modified_shift_l_opens_library_like_typescript() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+
+    assert_eq!(
+        controller.handle_key(&snapshot, parse_dashboard_key(b"\x1b[76;2u")),
+        DashboardControllerEffect::Render
+    );
+    assert_eq!(controller.screen.as_str(), "library");
+}
+
+#[test]
 fn library_enter_flashes_selected_path() {
     let snapshot = snapshot();
     let mut controller = DashboardController::new(&snapshot);
@@ -2278,6 +2290,14 @@ fn parses_common_dashboard_key_sequences() {
     assert_eq!(parse_dashboard_key(b"v"), DashboardKey::Printable('v'));
     assert_eq!(parse_dashboard_key(b"f"), DashboardKey::Printable('f'));
     assert_eq!(parse_dashboard_key(b"S"), DashboardKey::Printable('S'));
+    assert_eq!(
+        parse_dashboard_key(b"\x1b[76;2u"),
+        DashboardKey::Printable('L')
+    );
+    assert_eq!(
+        parse_dashboard_key(b"\x1b[83;2u"),
+        DashboardKey::Printable('S')
+    );
     assert_eq!(parse_dashboard_key(b"\t"), DashboardKey::Tab);
     assert_eq!(parse_dashboard_key(b"\x1b[I"), DashboardKey::FocusIn);
     assert_eq!(parse_dashboard_key(b"\x7f"), DashboardKey::Backspace);
