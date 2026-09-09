@@ -7,7 +7,6 @@
   "native/crates/aimux/src/coordination_threads.rs": "Tracked Rust parity fixture; keep until promoted to production or removed by a cull.",
   "native/crates/aimux/src/debug_logging_contract.rs": "Tracked Rust parity fixture; keep until promoted to production or removed by a cull.",
   "native/crates/aimux/src/desktop_notifier_contract.rs": "Tracked Rust parity fixture; keep until promoted to production or removed by a cull.",
-  "native/crates/aimux/src/hosted_audit_contract.rs": "Tracked hosted parity fixture while hosted runtime behavior is still being promoted.",
   "native/crates/aimux/src/hosted_events_transport_contract.rs": "Tracked hosted parity fixture while hosted runtime behavior is still being promoted.",
   "native/crates/aimux/src/hosted_principals_contract.rs": "Tracked hosted parity fixture while hosted runtime behavior is still being promoted.",
   "native/crates/aimux/src/hosted_runtime_contract.rs": "Tracked hosted parity fixture while hosted runtime behavior is still being promoted.",
