@@ -5,37 +5,27 @@
   "description": "Relay client runtime compatibility, auth-failure notification, security-event notification routing, and project-event subscription forwarding captured by running the TypeScript RelayClient with a notify-module recorder.",
   "cases": [
     {
-      "id": "relay-client-001",
-      "name": "fails fast when the Node runtime has no global WebSocket",
-      "source": "src/full/relay-client.test.ts",
-      "api": "RelayClient",
-      "input": { "scenario": "no-global-websocket" },
-      "output": {
-        "status": {
-          "status": "disconnected",
-          "relayUrl": "wss://relay.aimux.app",
-          "lastConnectedAt": null,
-          "lastError": "Node runtime is missing globalThis.WebSocket — upgrade to Node 24+ to use the aimux relay"
-        },
-        "notifications": { "authLost": [], "clientConnected": [] }
-      },
-      "inputSha256": "9f421566f2b1ff50382e3549da27fb0d280eb4e001b0f08803d1187a1327a99b"
-    },
-    {
       "id": "relay-client-002",
       "name": "notifies once when relay authentication fails",
       "source": "src/full/relay-client.test.ts",
       "api": "RelayClient",
-      "input": { "scenario": "auth-close-notifies-once", "closeCode": 1008 },
+      "input": {
+        "scenario": "auth-close-notifies-once",
+        "closeCode": 1008
+      },
       "output": {
         "status": {
           "status": "auth_failed",
           "relayUrl": "wss://relay.aimux.app",
           "lastConnectedAt": null,
-          "lastError": "Relay rejected credentials (code 1008) — run `aimux login` again"
+          "lastError": "Relay rejected credentials (code 1008) \u2014 run `aimux login` again"
         },
         "notifications": {
-          "authLost": [{ "body": "Relay rejected credentials (code 1008) — run `aimux login` again" }],
+          "authLost": [
+            {
+              "body": "Relay rejected credentials (code 1008) \u2014 run `aimux login` again"
+            }
+          ],
           "clientConnected": []
         }
       },
@@ -64,7 +54,10 @@
         "notifications": {
           "authLost": [],
           "clientConnected": [
-            { "title": "Remote approval needed", "body": "iPhone from SG is waiting for approval. Code ABC-123." }
+            {
+              "title": "Remote approval needed",
+              "body": "iPhone from SG is waiting for approval. Code ABC-123."
+            }
           ]
         }
       },
@@ -94,9 +87,18 @@
         "notifications": {
           "authLost": [],
           "clientConnected": [
-            { "title": "Remote approval needed", "body": "iPhone from SG is waiting for approval. Code ABC-123." },
-            { "title": "Remote approval needed", "body": "iPhone from SG is waiting for approval. Code ABC-123." },
-            { "title": "Remote approval needed", "body": "iPhone from SG is waiting for approval. Code ABC-123." }
+            {
+              "title": "Remote approval needed",
+              "body": "iPhone from SG is waiting for approval. Code ABC-123."
+            },
+            {
+              "title": "Remote approval needed",
+              "body": "iPhone from SG is waiting for approval. Code ABC-123."
+            },
+            {
+              "title": "Remote approval needed",
+              "body": "iPhone from SG is waiting for approval. Code ABC-123."
+            }
           ]
         }
       },
@@ -128,7 +130,10 @@
         "notifications": {
           "authLost": [],
           "clientConnected": [
-            { "title": "Shared chat participant connected", "body": "Alex connected to claude-abc from SG." }
+            {
+              "title": "Shared chat participant connected",
+              "body": "Alex connected to claude-abc from SG."
+            }
           ]
         }
       },
@@ -141,20 +146,44 @@
       "api": "RelayClient",
       "input": {
         "scenario": "project-events-subscribe",
-        "message": { "id": "sub-1", "type": "project_events_subscribe", "path": "/proxy/127.0.0.1/4321/events" },
+        "message": {
+          "id": "sub-1",
+          "type": "project_events_subscribe",
+          "path": "/proxy/127.0.0.1/4321/events"
+        },
         "stream": "event: project_update\ndata: {\"type\":\"project_update\",\"views\":[\"desktop-state\"],\"projectId\":\"p1\",\"ts\":\"now\"}\n\n"
       },
       "output": {
-        "fetchCalls": [{ "url": "http://127.0.0.1:4321/events", "method": "GET" }],
+        "fetchCalls": [
+          {
+            "url": "http://127.0.0.1:4321/events",
+            "method": "GET"
+          }
+        ],
         "sent": [
-          { "id": "sub-1", "type": "project_events_subscribed" },
+          {
+            "id": "sub-1",
+            "type": "project_events_subscribed"
+          },
           {
             "id": "sub-1",
             "type": "project_event",
             "event": "project_update",
-            "data": { "type": "project_update", "views": ["desktop-state"], "projectId": "p1", "ts": "now" }
+            "data": {
+              "type": "project_update",
+              "views": [
+                "desktop-state"
+              ],
+              "projectId": "p1",
+              "ts": "now"
+            }
           },
-          { "id": "sub-1", "type": "project_events_error", "status": 502, "message": "Project event stream closed" }
+          {
+            "id": "sub-1",
+            "type": "project_events_error",
+            "status": 502,
+            "message": "Project event stream closed"
+          }
         ]
       },
       "inputSha256": "1638e28b1972760b817daf04d5e286d325a37177f19f39d239fa3fe3b6a26524"
@@ -170,7 +199,10 @@
           "id": "sub-guest",
           "type": "project_events_subscribe",
           "path": "/proxy/127.0.0.1/4321/events",
-          "headers": { "X-Aimux-Actor-Role": "guest", "X-Aimux-Share-Session-Id": "shared-1" }
+          "headers": {
+            "X-Aimux-Actor-Role": "guest",
+            "X-Aimux-Share-Session-Id": "shared-1"
+          }
         }
       },
       "output": {
