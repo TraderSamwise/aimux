@@ -2819,7 +2819,7 @@ fn current_unix_millis() -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::daemon_state::save_metadata_endpoint;
+    use crate::daemon_state::{ProjectServiceStatus, save_metadata_endpoint};
     use crate::tmux::TmuxSessionRef;
     use crate::tmux::project_session;
     use std::cell::RefCell;
@@ -3266,8 +3266,9 @@ mod tests {
         }
 
         fn persist_endpoint(&self, pid: i32) {
+            let mut resolver = self.resolver.clone();
             save_metadata_endpoint(
-                self.resolver.project_state_dir_for(&self.project_root),
+                resolver.project_state_dir_for(&self.project_root),
                 &MetadataApiEndpoint {
                     host: "127.0.0.1".to_owned(),
                     port: 45_901,
@@ -3293,7 +3294,7 @@ mod tests {
         }
 
         fn cleanup(self) {
-            let _ = remove_dir_all(self.root);
+            let _ = fs::remove_dir_all(self.root);
         }
     }
 
