@@ -2606,17 +2606,19 @@ const TERMINAL_OUTPUT_LINE_STYLE: TextStyle = {
 };
 const TERMINAL_OUTPUT_MAX_LINES = 500;
 
-function AgentTerminalOutputPane({
-  bottomContentInset,
-  dividerWidth,
-  sessionKey,
-  topContentInset,
-}: {
+type AgentTerminalOutputPaneProps = {
   bottomContentInset: number;
   dividerWidth: number;
   sessionKey: string;
   topContentInset: number;
-}) {
+};
+
+const AgentTerminalOutputPane = React.memo(function AgentTerminalOutputPane({
+  bottomContentInset,
+  dividerWidth,
+  sessionKey,
+  topContentInset,
+}: AgentTerminalOutputPaneProps) {
   useChatPerfProbe("terminal-pane", `${dividerWidth} ${sessionKey.slice(-6)}`);
   const outputPlain = useAtomValue(outputBufferFamily(sessionKey));
   const outputAnsi = useAtomValue(outputAnsiFamily(sessionKey));
@@ -2788,329 +2790,346 @@ function AgentTerminalOutputPane({
       )}
     </ScrollView>
   );
-}
+});
+AgentTerminalOutputPane.displayName = "AgentTerminalOutputPane";
 
-const AgentChatSessionViewport = React.forwardRef<
-  ChatSessionViewportHandle,
-  {
-    allMessages: readonly ChatMessage[];
-    bottomContentInset: number;
-    dividerWidth: number;
-    newMessageBadgeBottomOffset: number;
-    onChromeVisibleChange: (visible: boolean) => void;
-    onRetryTranscriptLoad: (purpose?: AgentOutputFeedPurpose) => void;
-    placeholderState: ChatTranscriptPlaceholderState;
-    serviceEndpoint: ServiceEndpoint;
-    sessionKey: string;
-    topContentInset: number;
-  }
->(function AgentChatSessionViewport(
-  {
-    allMessages,
-    bottomContentInset,
-    dividerWidth,
-    newMessageBadgeBottomOffset,
-    onChromeVisibleChange,
-    onRetryTranscriptLoad,
-    placeholderState,
-    serviceEndpoint,
-    sessionKey,
-    topContentInset,
-  },
-  ref,
-) {
-  useChatPerfProbe("chat-viewport", `${allMessages.length} ${sessionKey.slice(-6)}`);
-  const liveChatTranscript = useMemo(
-    () =>
-      chatVisibleTranscriptForPinned({
+type AgentChatSessionViewportProps = {
+  allMessages: readonly ChatMessage[];
+  bottomContentInset: number;
+  dividerWidth: number;
+  newMessageBadgeBottomOffset: number;
+  onChromeVisibleChange: (visible: boolean) => void;
+  onRetryTranscriptLoad: (purpose?: AgentOutputFeedPurpose) => void;
+  placeholderState: ChatTranscriptPlaceholderState;
+  serviceEndpoint: ServiceEndpoint;
+  sessionKey: string;
+  topContentInset: number;
+};
+
+const AgentChatSessionViewport = React.memo(
+  React.forwardRef<ChatSessionViewportHandle, AgentChatSessionViewportProps>(
+    function AgentChatSessionViewport(
+      {
+        allMessages,
+        bottomContentInset,
+        dividerWidth,
+        newMessageBadgeBottomOffset,
+        onChromeVisibleChange,
+        onRetryTranscriptLoad,
+        placeholderState,
+        serviceEndpoint,
+        sessionKey,
+        topContentInset,
+      },
+      ref,
+    ) {
+      useChatPerfProbe("chat-viewport", `${allMessages.length} ${sessionKey.slice(-6)}`);
+      const liveChatTranscript = useMemo(
+        () =>
+          chatVisibleTranscriptForPinned({
+            liveMessages: allMessages,
+            sessionKey,
+          }),
+        [allMessages, sessionKey],
+      );
+      const [visibleChatTranscript, setVisibleChatTranscript] = useState<
+        ChatVisibleTranscript<ChatMessage>
+      >(() => liveChatTranscript);
+      const chatScrollRef = useRef<ChatScrollHandle | null>(null);
+      const chatScrollMetricsRef = useRef<ChatScrollMetrics>({
+        contentHeight: 0,
+        offsetY: 0,
+        viewportHeight: 0,
+      });
+      const chatScrollPolicyRef = useRef<ChatScrollPolicy>(createChatScrollPolicy());
+      const chatScrollChromeRef = useRef<ChatScrollChromeState>(createChatScrollChromeState());
+      const chatScrollFrameRef = useRef<number | null>(null);
+      const chatScrollPendingCommandReasonRef = useRef<string | null>(null);
+      const liveChatTranscriptRef = useRef<ChatVisibleTranscript<ChatMessage>>(liveChatTranscript);
+      const visibleChatTranscriptRef =
+        useRef<ChatVisibleTranscript<ChatMessage>>(liveChatTranscript);
+      const chatInitialLayoutKeyRef = useRef<string | null>(null);
+      const newMessageBadgeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+      const newMessageBadgeFadeRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+      const newMessageBadgeAnnouncedCountRef = useRef(0);
+      const [newMessageBadge, setNewMessageBadge] = useState({ count: 0, visible: false });
+
+      const visibleMessages = chatVisibleTranscriptMessages(visibleChatTranscript, {
         liveMessages: allMessages,
         sessionKey,
-      }),
-    [allMessages, sessionKey],
-  );
-  const [visibleChatTranscript, setVisibleChatTranscript] = useState<
-    ChatVisibleTranscript<ChatMessage>
-  >(() => liveChatTranscript);
-  const chatScrollRef = useRef<ChatScrollHandle | null>(null);
-  const chatScrollMetricsRef = useRef<ChatScrollMetrics>({
-    contentHeight: 0,
-    offsetY: 0,
-    viewportHeight: 0,
-  });
-  const chatScrollPolicyRef = useRef<ChatScrollPolicy>(createChatScrollPolicy());
-  const chatScrollChromeRef = useRef<ChatScrollChromeState>(createChatScrollChromeState());
-  const chatScrollFrameRef = useRef<number | null>(null);
-  const chatScrollPendingCommandReasonRef = useRef<string | null>(null);
-  const liveChatTranscriptRef = useRef<ChatVisibleTranscript<ChatMessage>>(liveChatTranscript);
-  const visibleChatTranscriptRef = useRef<ChatVisibleTranscript<ChatMessage>>(liveChatTranscript);
-  const chatInitialLayoutKeyRef = useRef<string | null>(null);
-  const newMessageBadgeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const newMessageBadgeFadeRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const newMessageBadgeAnnouncedCountRef = useRef(0);
-  const [newMessageBadge, setNewMessageBadge] = useState({ count: 0, visible: false });
+      });
 
-  const visibleMessages = chatVisibleTranscriptMessages(visibleChatTranscript, {
-    liveMessages: allMessages,
-    sessionKey,
-  });
+      const applyVisibleChatTranscript = useCallback((next: ChatVisibleTranscript<ChatMessage>) => {
+        const current = visibleChatTranscriptRef.current;
+        if (current.sessionKey === next.sessionKey && current.messages === next.messages) return;
+        visibleChatTranscriptRef.current = next;
+        setVisibleChatTranscript(next);
+      }, []);
 
-  const applyVisibleChatTranscript = useCallback((next: ChatVisibleTranscript<ChatMessage>) => {
-    const current = visibleChatTranscriptRef.current;
-    if (current.sessionKey === next.sessionKey && current.messages === next.messages) return;
-    visibleChatTranscriptRef.current = next;
-    setVisibleChatTranscript(next);
-  }, []);
+      const showLiveChatTranscript = useCallback(() => {
+        const live = liveChatTranscriptRef.current;
+        if (live.sessionKey !== sessionKey) return;
+        applyVisibleChatTranscript(live);
+      }, [applyVisibleChatTranscript, sessionKey]);
 
-  const showLiveChatTranscript = useCallback(() => {
-    const live = liveChatTranscriptRef.current;
-    if (live.sessionKey !== sessionKey) return;
-    applyVisibleChatTranscript(live);
-  }, [applyVisibleChatTranscript, sessionKey]);
+      const clearNewMessageBadgeTimers = useCallback(() => {
+        if (newMessageBadgeDebounceRef.current !== null) {
+          clearTimeout(newMessageBadgeDebounceRef.current);
+          newMessageBadgeDebounceRef.current = null;
+        }
+        if (newMessageBadgeFadeRef.current !== null) {
+          clearTimeout(newMessageBadgeFadeRef.current);
+          newMessageBadgeFadeRef.current = null;
+        }
+      }, []);
 
-  const clearNewMessageBadgeTimers = useCallback(() => {
-    if (newMessageBadgeDebounceRef.current !== null) {
-      clearTimeout(newMessageBadgeDebounceRef.current);
-      newMessageBadgeDebounceRef.current = null;
-    }
-    if (newMessageBadgeFadeRef.current !== null) {
-      clearTimeout(newMessageBadgeFadeRef.current);
-      newMessageBadgeFadeRef.current = null;
-    }
-  }, []);
+      const resetNewMessageBadge = useCallback(() => {
+        clearNewMessageBadgeTimers();
+        newMessageBadgeAnnouncedCountRef.current = 0;
+        setNewMessageBadge((current) =>
+          current.count === 0 && !current.visible ? current : { count: 0, visible: false },
+        );
+      }, [clearNewMessageBadgeTimers]);
 
-  const resetNewMessageBadge = useCallback(() => {
-    clearNewMessageBadgeTimers();
-    newMessageBadgeAnnouncedCountRef.current = 0;
-    setNewMessageBadge((current) =>
-      current.count === 0 && !current.visible ? current : { count: 0, visible: false },
-    );
-  }, [clearNewMessageBadgeTimers]);
+      const fadeNewMessageBadgeLater = useCallback(() => {
+        if (newMessageBadgeFadeRef.current !== null) {
+          clearTimeout(newMessageBadgeFadeRef.current);
+        }
+        newMessageBadgeFadeRef.current = setTimeout(() => {
+          newMessageBadgeFadeRef.current = null;
+          setNewMessageBadge((current) => ({ ...current, visible: false }));
+        }, CHAT_NEW_MESSAGE_BADGE_VISIBLE_MS);
+      }, []);
 
-  const fadeNewMessageBadgeLater = useCallback(() => {
-    if (newMessageBadgeFadeRef.current !== null) {
-      clearTimeout(newMessageBadgeFadeRef.current);
-    }
-    newMessageBadgeFadeRef.current = setTimeout(() => {
-      newMessageBadgeFadeRef.current = null;
-      setNewMessageBadge((current) => ({ ...current, visible: false }));
-    }, CHAT_NEW_MESSAGE_BADGE_VISIBLE_MS);
-  }, []);
-
-  const cancelPendingChatScroll = useCallback(() => {
-    if (chatScrollFrameRef.current === null) return;
-    cancelAnimationFrame(chatScrollFrameRef.current);
-    chatScrollFrameRef.current = null;
-    chatScrollPendingCommandReasonRef.current = null;
-  }, []);
-
-  const executeChatScrollCommand = useCallback(
-    (command: ChatScrollCommand, noneReason = "unknown") => {
-      if (command.kind === "none") {
-        void noneReason;
-        return;
-      }
-      cancelPendingChatScroll();
-      chatScrollPendingCommandReasonRef.current = command.reason;
-      chatScrollFrameRef.current = requestAnimationFrame(() => {
+      const cancelPendingChatScroll = useCallback(() => {
+        if (chatScrollFrameRef.current === null) return;
+        cancelAnimationFrame(chatScrollFrameRef.current);
         chatScrollFrameRef.current = null;
         chatScrollPendingCommandReasonRef.current = null;
-        if (
-          command.reason !== "initial" &&
-          command.reason !== "navigation" &&
-          chatScrollPolicyRef.current.intent !== "pinned"
-        ) {
-          return;
-        }
-        chatScrollRef.current?.scrollToEnd({ animated: command.animated });
-      });
-    },
-    [cancelPendingChatScroll],
-  );
+      }, []);
 
-  const showNewest = useCallback(() => {
-    const live = chatVisibleTranscriptForPinned({
-      liveMessages: allMessages,
-      sessionKey,
-    });
-    liveChatTranscriptRef.current = live;
-    chatScrollPolicyRef.current = chatPolicyAfterNavigationFocus();
-    chatScrollChromeRef.current = createChatScrollChromeState();
-    resetNewMessageBadge();
-    onChromeVisibleChange(true);
-    applyVisibleChatTranscript(live);
-    executeChatScrollCommand(chatCommandForNavigationFocus());
-  }, [
-    allMessages,
-    applyVisibleChatTranscript,
-    executeChatScrollCommand,
-    onChromeVisibleChange,
-    resetNewMessageBadge,
-    sessionKey,
-  ]);
-
-  useImperativeHandle(ref, () => ({ showNewest }), [showNewest]);
-
-  useEffect(() => cancelPendingChatScroll, [cancelPendingChatScroll]);
-
-  useEffect(() => clearNewMessageBadgeTimers, [clearNewMessageBadgeTimers]);
-
-  useFocusEffect(
-    useCallback(() => {
-      chatInitialLayoutKeyRef.current = sessionKey || null;
-      chatScrollPolicyRef.current = chatPolicyAfterNavigationFocus();
-      chatScrollChromeRef.current = createChatScrollChromeState();
-      resetNewMessageBadge();
-      onChromeVisibleChange(true);
-      showLiveChatTranscript();
-      const interaction = InteractionManager.runAfterInteractions(() => {
-        executeChatScrollCommand(chatCommandForNavigationFocus());
-      });
-      return () => {
-        interaction.cancel();
-        cancelPendingChatScroll();
-      };
-    }, [
-      cancelPendingChatScroll,
-      executeChatScrollCommand,
-      onChromeVisibleChange,
-      resetNewMessageBadge,
-      sessionKey,
-      showLiveChatTranscript,
-    ]),
-  );
-
-  const handleChatLayout = useCallback(
-    (event: LayoutChangeEvent) => {
-      chatScrollMetricsRef.current = {
-        ...chatScrollMetricsRef.current,
-        viewportHeight: event.nativeEvent.layout.height,
-      };
-      const layoutKey = sessionKey || "unscoped";
-      if (chatInitialLayoutKeyRef.current !== layoutKey) {
-        chatInitialLayoutKeyRef.current = layoutKey;
-        executeChatScrollCommand(chatCommandForInitialLayout());
-        return;
-      }
-      executeChatScrollCommand(chatCommandForContentChange(chatScrollPolicyRef.current), "content");
-    },
-    [executeChatScrollCommand, sessionKey],
-  );
-
-  const handleChatContentSizeChange = useCallback(
-    (_contentWidth: number, contentHeight: number) => {
-      chatScrollMetricsRef.current = {
-        ...chatScrollMetricsRef.current,
-        contentHeight,
-      };
-      executeChatScrollCommand(chatCommandForContentChange(chatScrollPolicyRef.current), "content");
-    },
-    [executeChatScrollCommand],
-  );
-
-  const handleChatScroll = useCallback(
-    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      const metrics: ChatScrollMetrics = {
-        contentHeight: event.nativeEvent.contentSize.height,
-        offsetY: event.nativeEvent.contentOffset.y,
-        viewportHeight: event.nativeEvent.layoutMeasurement.height,
-      };
-      chatScrollMetricsRef.current = metrics;
-      const previousIntent = chatScrollPolicyRef.current.intent;
-      const nextPolicy = chatPolicyAfterUserScroll(chatScrollPolicyRef.current, metrics);
-      if (nextPolicy.intent === "reading") {
-        cancelPendingChatScroll();
-      }
-      chatScrollPolicyRef.current = nextPolicy;
-      const nextChrome = chatChromeAfterUserScroll(
-        chatScrollChromeRef.current,
-        nextPolicy,
-        metrics,
+      const executeChatScrollCommand = useCallback(
+        (command: ChatScrollCommand, noneReason = "unknown") => {
+          if (command.kind === "none") {
+            void noneReason;
+            return;
+          }
+          cancelPendingChatScroll();
+          chatScrollPendingCommandReasonRef.current = command.reason;
+          chatScrollFrameRef.current = requestAnimationFrame(() => {
+            chatScrollFrameRef.current = null;
+            chatScrollPendingCommandReasonRef.current = null;
+            if (
+              command.reason !== "initial" &&
+              command.reason !== "navigation" &&
+              chatScrollPolicyRef.current.intent !== "pinned"
+            ) {
+              return;
+            }
+            chatScrollRef.current?.scrollToEnd({ animated: command.animated });
+          });
+        },
+        [cancelPendingChatScroll],
       );
-      if (nextChrome !== chatScrollChromeRef.current) {
-        chatScrollChromeRef.current = nextChrome;
-        onChromeVisibleChange(nextChrome.visible);
-      }
-      if (previousIntent === "reading" && nextPolicy.intent === "pinned") {
+
+      const showNewest = useCallback(() => {
+        const live = chatVisibleTranscriptForPinned({
+          liveMessages: allMessages,
+          sessionKey,
+        });
+        liveChatTranscriptRef.current = live;
+        chatScrollPolicyRef.current = chatPolicyAfterNavigationFocus();
+        chatScrollChromeRef.current = createChatScrollChromeState();
         resetNewMessageBadge();
-        showLiveChatTranscript();
-      }
+        onChromeVisibleChange(true);
+        applyVisibleChatTranscript(live);
+        executeChatScrollCommand(chatCommandForNavigationFocus());
+      }, [
+        allMessages,
+        applyVisibleChatTranscript,
+        executeChatScrollCommand,
+        onChromeVisibleChange,
+        resetNewMessageBadge,
+        sessionKey,
+      ]);
+
+      useImperativeHandle(ref, () => ({ showNewest }), [showNewest]);
+
+      useEffect(() => cancelPendingChatScroll, [cancelPendingChatScroll]);
+
+      useEffect(() => clearNewMessageBadgeTimers, [clearNewMessageBadgeTimers]);
+
+      useFocusEffect(
+        useCallback(() => {
+          chatInitialLayoutKeyRef.current = sessionKey || null;
+          chatScrollPolicyRef.current = chatPolicyAfterNavigationFocus();
+          chatScrollChromeRef.current = createChatScrollChromeState();
+          resetNewMessageBadge();
+          onChromeVisibleChange(true);
+          showLiveChatTranscript();
+          const interaction = InteractionManager.runAfterInteractions(() => {
+            executeChatScrollCommand(chatCommandForNavigationFocus());
+          });
+          return () => {
+            interaction.cancel();
+            cancelPendingChatScroll();
+          };
+        }, [
+          cancelPendingChatScroll,
+          executeChatScrollCommand,
+          onChromeVisibleChange,
+          resetNewMessageBadge,
+          sessionKey,
+          showLiveChatTranscript,
+        ]),
+      );
+
+      const handleChatLayout = useCallback(
+        (event: LayoutChangeEvent) => {
+          chatScrollMetricsRef.current = {
+            ...chatScrollMetricsRef.current,
+            viewportHeight: event.nativeEvent.layout.height,
+          };
+          const layoutKey = sessionKey || "unscoped";
+          if (chatInitialLayoutKeyRef.current !== layoutKey) {
+            chatInitialLayoutKeyRef.current = layoutKey;
+            executeChatScrollCommand(chatCommandForInitialLayout());
+            return;
+          }
+          executeChatScrollCommand(
+            chatCommandForContentChange(chatScrollPolicyRef.current),
+            "content",
+          );
+        },
+        [executeChatScrollCommand, sessionKey],
+      );
+
+      const handleChatContentSizeChange = useCallback(
+        (_contentWidth: number, contentHeight: number) => {
+          chatScrollMetricsRef.current = {
+            ...chatScrollMetricsRef.current,
+            contentHeight,
+          };
+          executeChatScrollCommand(
+            chatCommandForContentChange(chatScrollPolicyRef.current),
+            "content",
+          );
+        },
+        [executeChatScrollCommand],
+      );
+
+      const handleChatScroll = useCallback(
+        (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+          const metrics: ChatScrollMetrics = {
+            contentHeight: event.nativeEvent.contentSize.height,
+            offsetY: event.nativeEvent.contentOffset.y,
+            viewportHeight: event.nativeEvent.layoutMeasurement.height,
+          };
+          chatScrollMetricsRef.current = metrics;
+          const previousIntent = chatScrollPolicyRef.current.intent;
+          const nextPolicy = chatPolicyAfterUserScroll(chatScrollPolicyRef.current, metrics);
+          if (nextPolicy.intent === "reading") {
+            cancelPendingChatScroll();
+          }
+          chatScrollPolicyRef.current = nextPolicy;
+          const nextChrome = chatChromeAfterUserScroll(
+            chatScrollChromeRef.current,
+            nextPolicy,
+            metrics,
+          );
+          if (nextChrome !== chatScrollChromeRef.current) {
+            chatScrollChromeRef.current = nextChrome;
+            onChromeVisibleChange(nextChrome.visible);
+          }
+          if (previousIntent === "reading" && nextPolicy.intent === "pinned") {
+            resetNewMessageBadge();
+            showLiveChatTranscript();
+          }
+        },
+        [
+          cancelPendingChatScroll,
+          onChromeVisibleChange,
+          resetNewMessageBadge,
+          showLiveChatTranscript,
+        ],
+      );
+
+      useEffect(() => {
+        liveChatTranscriptRef.current = liveChatTranscript;
+        const next = chatVisibleTranscriptForLiveChange(visibleChatTranscriptRef.current, {
+          intent: chatScrollPolicyRef.current.intent,
+          liveMessages: allMessages,
+          sessionKey,
+        });
+        applyVisibleChatTranscript(next);
+      }, [allMessages, applyVisibleChatTranscript, liveChatTranscript, sessionKey]);
+
+      useEffect(() => {
+        if (chatScrollPolicyRef.current.intent !== "reading") return;
+        const count = chatFrozenNewMessageCount({
+          frozenMessages: visibleChatTranscriptRef.current.messages,
+          liveMessages: allMessages,
+        });
+        if (count < newMessageBadgeAnnouncedCountRef.current) {
+          newMessageBadgeAnnouncedCountRef.current = count;
+        }
+        if (count <= newMessageBadgeAnnouncedCountRef.current) return;
+        if (count <= 0) return;
+        if (newMessageBadgeDebounceRef.current !== null) {
+          clearTimeout(newMessageBadgeDebounceRef.current);
+        }
+        newMessageBadgeDebounceRef.current = setTimeout(() => {
+          newMessageBadgeDebounceRef.current = null;
+          if (chatScrollPolicyRef.current.intent !== "reading") return;
+          const nextCount = chatFrozenNewMessageCount({
+            frozenMessages: visibleChatTranscriptRef.current.messages,
+            liveMessages: liveChatTranscriptRef.current.messages,
+          });
+          if (nextCount < newMessageBadgeAnnouncedCountRef.current) {
+            newMessageBadgeAnnouncedCountRef.current = nextCount;
+          }
+          if (nextCount <= newMessageBadgeAnnouncedCountRef.current) return;
+          if (nextCount <= 0) return;
+          newMessageBadgeAnnouncedCountRef.current = nextCount;
+          setNewMessageBadge({ count: nextCount, visible: true });
+          fadeNewMessageBadgeLater();
+        }, CHAT_NEW_MESSAGE_BADGE_DEBOUNCE_MS);
+      }, [allMessages, fadeNewMessageBadgeLater]);
+
+      return (
+        <View className="flex-1 bg-background">
+          <AgentChatTranscript
+            messages={visibleMessages}
+            onContentSizeChange={handleChatContentSizeChange}
+            onLayout={handleChatLayout}
+            onRetryTranscriptLoad={onRetryTranscriptLoad}
+            onScroll={handleChatScroll}
+            placeholderState={placeholderState}
+            ref={chatScrollRef}
+            serviceEndpoint={serviceEndpoint}
+            dividerWidth={dividerWidth}
+            bottomContentInset={bottomContentInset}
+            topContentInset={topContentInset}
+          />
+          <ChatNewMessagesBadge
+            count={newMessageBadge.count}
+            onPress={showNewest}
+            visible={newMessageBadge.visible && newMessageBadge.count > 0}
+            style={{
+              bottom: newMessageBadgeBottomOffset,
+              alignItems: "center",
+              left: 0,
+              position: "absolute",
+              right: 0,
+              zIndex: 20,
+            }}
+          />
+        </View>
+      );
     },
-    [cancelPendingChatScroll, onChromeVisibleChange, resetNewMessageBadge, showLiveChatTranscript],
-  );
-
-  useEffect(() => {
-    liveChatTranscriptRef.current = liveChatTranscript;
-    const next = chatVisibleTranscriptForLiveChange(visibleChatTranscriptRef.current, {
-      intent: chatScrollPolicyRef.current.intent,
-      liveMessages: allMessages,
-      sessionKey,
-    });
-    applyVisibleChatTranscript(next);
-  }, [allMessages, applyVisibleChatTranscript, liveChatTranscript, sessionKey]);
-
-  useEffect(() => {
-    if (chatScrollPolicyRef.current.intent !== "reading") return;
-    const count = chatFrozenNewMessageCount({
-      frozenMessages: visibleChatTranscriptRef.current.messages,
-      liveMessages: allMessages,
-    });
-    if (count < newMessageBadgeAnnouncedCountRef.current) {
-      newMessageBadgeAnnouncedCountRef.current = count;
-    }
-    if (count <= newMessageBadgeAnnouncedCountRef.current) return;
-    if (count <= 0) return;
-    if (newMessageBadgeDebounceRef.current !== null) {
-      clearTimeout(newMessageBadgeDebounceRef.current);
-    }
-    newMessageBadgeDebounceRef.current = setTimeout(() => {
-      newMessageBadgeDebounceRef.current = null;
-      if (chatScrollPolicyRef.current.intent !== "reading") return;
-      const nextCount = chatFrozenNewMessageCount({
-        frozenMessages: visibleChatTranscriptRef.current.messages,
-        liveMessages: liveChatTranscriptRef.current.messages,
-      });
-      if (nextCount < newMessageBadgeAnnouncedCountRef.current) {
-        newMessageBadgeAnnouncedCountRef.current = nextCount;
-      }
-      if (nextCount <= newMessageBadgeAnnouncedCountRef.current) return;
-      if (nextCount <= 0) return;
-      newMessageBadgeAnnouncedCountRef.current = nextCount;
-      setNewMessageBadge({ count: nextCount, visible: true });
-      fadeNewMessageBadgeLater();
-    }, CHAT_NEW_MESSAGE_BADGE_DEBOUNCE_MS);
-  }, [allMessages, fadeNewMessageBadgeLater]);
-
-  return (
-    <View className="flex-1 bg-background">
-      <AgentChatTranscript
-        messages={visibleMessages}
-        onContentSizeChange={handleChatContentSizeChange}
-        onLayout={handleChatLayout}
-        onRetryTranscriptLoad={onRetryTranscriptLoad}
-        onScroll={handleChatScroll}
-        placeholderState={placeholderState}
-        ref={chatScrollRef}
-        serviceEndpoint={serviceEndpoint}
-        dividerWidth={dividerWidth}
-        bottomContentInset={bottomContentInset}
-        topContentInset={topContentInset}
-      />
-      <ChatNewMessagesBadge
-        count={newMessageBadge.count}
-        onPress={showNewest}
-        visible={newMessageBadge.visible && newMessageBadge.count > 0}
-        style={{
-          bottom: newMessageBadgeBottomOffset,
-          alignItems: "center",
-          left: 0,
-          position: "absolute",
-          right: 0,
-          zIndex: 20,
-        }}
-      />
-    </View>
-  );
-});
+  ),
+);
+AgentChatSessionViewport.displayName = "AgentChatSessionViewport";
 
 type AgentChatTranscriptProps = {
   bottomContentInset: number;
