@@ -5,6 +5,8 @@ use std::collections::BTreeMap;
 const LAUNCHER_ENV: &str =
     include_str!("../../../../testdata/contracts/v1/launch/launcher-env.json");
 
+/// Two `spawn` cases are recorded to Rust's answer, not Node's; the fixture's
+/// `rustDivergences` field says why. Everything else is literal Node parity.
 #[test]
 fn fixture_launcher_env_matches_typescript() {
     let contract: Value =

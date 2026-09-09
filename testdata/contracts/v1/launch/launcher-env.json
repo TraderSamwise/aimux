@@ -8,6 +8,9 @@
   ],
   "generatedBy": "scripts/capture-launcher-env-contract.mjs",
   "description": "Stable CLI environment defaults, launcher core/main/expose routing, and entrypoint wrapper side effects captured by running TypeScript.",
+  "rustDivergences": [
+    "`spawn` answers \"core\" in Rust where Node answered \"main\". Node's core/main split existed so the fast path would not import the full CLI bundle, which kept isCoreCliCommand deliberately narrow. The Rust binary is one executable with no import to avoid, and run_core_cli implements spawn on the fast dispatch path, so the narrow list no longer describes anything real. Cases 004 and 005 are re-recorded to the Rust answer."
+  ],
   "cases": [
     {
       "id": "launch-launcher-env-001",
@@ -147,7 +150,7 @@
         { "argv": ["node", "/p/bin/aimux", "remote", "enable", "extra", "--debug"], "entry": "main" },
         { "argv": ["node", "/p/bin/aimux", "daemon", "project-ensure", "-h"], "entry": "main" },
         { "argv": ["node", "/p/bin/aimux", "expose", "--project-root", "/p"], "entry": "expose" },
-        { "argv": ["node", "/p/bin/aimux", "spawn"], "entry": "main" },
+        { "argv": ["node", "/p/bin/aimux", "spawn"], "entry": "core" },
         { "argv": ["node", "/p/bin/aimux", "daemon", "restart", "--project", "/p"], "entry": "main" },
         { "argv": ["node", "/p/bin/aimux", "serve", "--json"], "entry": "main" },
         { "argv": ["node", "/p/bin/aimux", "host", "stop", "--open"], "entry": "main" },
@@ -211,7 +214,7 @@
         { "argv": ["node", "/p/bin/aimux", "remote", "enable", "extra", "--debug"], "entry": "main" },
         { "argv": ["node", "/p/bin/aimux", "daemon", "project-ensure", "-h"], "entry": "main" },
         { "argv": ["node", "/p/bin/aimux", "expose", "--project-root", "/p"], "entry": "expose" },
-        { "argv": ["node", "/p/bin/aimux", "spawn"], "entry": "main" },
+        { "argv": ["node", "/p/bin/aimux", "spawn"], "entry": "core" },
         { "argv": ["node", "/p/bin/aimux", "daemon", "restart", "--project", "/p"], "entry": "main" },
         { "argv": ["node", "/p/bin/aimux", "serve", "--json"], "entry": "main" },
         { "argv": ["node", "/p/bin/aimux", "host", "stop", "--open"], "entry": "main" },
