@@ -12,6 +12,7 @@ use super::project_events::ProjectEventBus;
 use super::router::ProjectServiceRequestContext;
 use super::runtime_event_notifications::{notification_for_attention, notification_for_event};
 use super::runtime_event_state::{apply_agent_event, normalize_agent_event, set_derived_attention};
+use crate::runtime_topology_state_save::reconcile_runtime_topology_sessions_on_state_save_event;
 
 pub fn route_runtime_event(
     project_state_dir: impl AsRef<Path>,
@@ -53,6 +54,13 @@ fn route_runtime_event_inner(
     event: Value,
 ) -> Option<ProjectServiceDispatchResponse> {
     let normalized = normalize_agent_event(event);
+    if let Err(error) = reconcile_runtime_topology_sessions_on_state_save_event(
+        project_root,
+        project_state_dir,
+        &normalized,
+    ) {
+        return Some(json_response(500, json!({ "ok": false, "error": error })));
+    }
     let focused = is_session_notification_focused(project_state_dir, session_id);
     if let Err(error) = update_session_metadata(project_state_dir, session_id, |current| {
         apply_agent_event(current, normalized.clone(), focused)

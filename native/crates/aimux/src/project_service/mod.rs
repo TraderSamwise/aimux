@@ -43,7 +43,6 @@ pub mod runtime_event_notifications;
 pub mod runtime_event_state;
 pub mod runtime_events;
 pub mod runtime_exchange;
-pub mod runtime_topology_reconciler_task;
 pub mod scheduler;
 pub mod scribe_watcher_task;
 pub mod server;

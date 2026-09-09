@@ -27,7 +27,6 @@ use crate::plugin_project_service_host::{
 };
 use crate::project_service::builtin_metadata_task::builtin_metadata_task;
 use crate::project_service::loop_watcher_task::loop_watcher_task;
-use crate::project_service::runtime_topology_reconciler_task::runtime_topology_reconciler_task;
 use crate::project_service::scheduler::spawn_project_service_scheduler;
 use crate::project_service::scribe_watcher_task::scribe_watcher_task;
 use crate::project_service::transcript_reconciler_task::transcript_reconciler_task;
@@ -469,7 +468,6 @@ fn serve_project_service_listener(
     // the tightest on the rail, so it goes ahead of them — behind the metadata
     // watchers only, whose events it wants to read after, not settle over.
     periodic_tasks.push(builtin_metadata_task(&context));
-    periodic_tasks.push(runtime_topology_reconciler_task());
     periodic_tasks.push(transcript_reconciler_task(&context));
     periodic_tasks.push(loop_watcher_task(&context));
     periodic_tasks.push(scribe_watcher_task(&context));
