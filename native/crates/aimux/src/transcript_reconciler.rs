@@ -163,6 +163,12 @@ impl TranscriptReconciler {
         deps: &mut dyn TranscriptReconcilerDeps,
     ) -> Option<String> {
         let context = session_field(metadata, &session.id, "context");
+        // Claude stores transcripts as `<backendSessionId>.jsonl`, so a stem
+        // match lets us keep the cheap stored path. Codex uses
+        // `rollout-<ts>-<backendSessionId>.jsonl`; that intentionally misses this
+        // check and falls through to the backend-id-indexed Codex resolver/cache
+        // below. A successful lookup is cached, and misses back off, which is a
+        // better cost than trusting stale context after a rebind.
         if let Some(stored) = context
             .and_then(|context| non_empty(context.get("transcriptPath")))
             .filter(|path| {

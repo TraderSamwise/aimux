@@ -1389,15 +1389,36 @@ mod tests {
 
     #[test]
     fn command_timeout_kills_a_blocked_child() {
+        let pid_path = std::env::temp_dir().join(format!(
+            "aimux-timeout-child-{}-{}.pid",
+            std::process::id(),
+            OPERATION_SEQUENCE.fetch_add(1, Ordering::SeqCst)
+        ));
+        let script = format!("echo $$ > {:?}; exec /bin/sleep 5", pid_path);
         let started = Instant::now();
-        let result =
-            run_command_with_timeout("/bin/sleep", &["5".to_owned()], Duration::from_millis(50));
+        let result = run_command_with_timeout(
+            "/bin/sh",
+            &["-c".to_owned(), script],
+            Duration::from_millis(50),
+        );
 
         assert!(result.is_err(), "sleep command unexpectedly completed");
         assert!(
             started.elapsed() < Duration::from_secs(1),
             "timeout waited for the child to finish naturally"
         );
+        let pid = fs::read_to_string(&pid_path)
+            .expect("child wrote pid")
+            .trim()
+            .to_owned();
+        let _ = fs::remove_file(&pid_path);
+        for _ in 0..20 {
+            if !process_is_alive(&pid) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        panic!("timed-out child process {pid} was still alive");
     }
 
     #[test]
@@ -1413,5 +1434,14 @@ mod tests {
         .expect("large output command should complete");
 
         assert_eq!(result.stdout.len(), 200_000);
+    }
+
+    fn process_is_alive(pid: &str) -> bool {
+        Command::new("/bin/kill")
+            .args(["-0", pid])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
     }
 }
