@@ -23,6 +23,42 @@ pub use types::{
     RuntimeMigrationWrite,
 };
 
+pub fn build_runtime_exchange_from_legacy_snapshot(input: &Value) -> Value {
+    let now = string_field(input, "now").unwrap_or_else(|| "1970-01-01T00:00:00.000Z".into());
+    let threads = array_value_field(input, "threads");
+    let messages = array_value_field(input, "messages");
+    let tasks = array_value_field(input, "tasks");
+
+    let mut exchange = empty_runtime_exchange();
+    exchange["generatedAt"] = Value::String(now.clone());
+    exchange["threads"] = Value::Array(threads.iter().map(to_exchange_thread).collect());
+    exchange["messages"] = Value::Array(messages.iter().map(to_exchange_message).collect());
+    exchange["tasks"] = Value::Array(tasks.iter().map(to_exchange_task).collect());
+    exchange["handoffs"] = Value::Array(threads.iter().filter_map(build_handoff).collect());
+    exchange["reviews"] = Value::Array(tasks.iter().filter_map(build_review).collect());
+    exchange["waits"] = Value::Array(threads.iter().filter_map(build_thread_wait).collect());
+    exchange["inbox"] = Value::Array(threads.iter().flat_map(build_inbox_entries).collect());
+    exchange["planRefs"] = Value::Array(
+        string_array_field(input, "planPaths")
+            .iter()
+            .map(|path| plan_ref_from_path(path, &now))
+            .collect(),
+    );
+    exchange["continuityRefs"] = Value::Array(
+        continuity_paths(input)
+            .iter()
+            .map(|path| continuity_ref_from_path(path, &now))
+            .collect(),
+    );
+    exchange["attachmentRefs"] = Value::Array(
+        array_value_field(input, "attachments")
+            .iter()
+            .filter_map(attachment_ref_from_record)
+            .collect(),
+    );
+    exchange
+}
+
 pub fn build_runtime_migration_report(
     cwd: impl AsRef<Path>,
     now: Option<&str>,
@@ -405,37 +441,18 @@ fn build_exchange_from_legacy_files(paths: &ReadOnlyProjectPaths, now: &str) -> 
     ]
     .concat();
 
-    let mut exchange = empty_runtime_exchange();
-    exchange["generatedAt"] = Value::String(now.to_owned());
-    exchange["threads"] = Value::Array(threads.iter().map(to_exchange_thread).collect());
-    exchange["messages"] = Value::Array(messages.iter().map(to_exchange_message).collect());
-    exchange["tasks"] = Value::Array(tasks.iter().map(to_exchange_task).collect());
-    exchange["handoffs"] = Value::Array(threads.iter().filter_map(build_handoff).collect());
-    exchange["reviews"] = Value::Array(tasks.iter().filter_map(build_review).collect());
-    exchange["waits"] = Value::Array(threads.iter().filter_map(build_thread_wait).collect());
-    exchange["inbox"] = Value::Array(threads.iter().flat_map(build_inbox_entries).collect());
-    exchange["planRefs"] = Value::Array(
-        plan_paths
-            .iter()
-            .map(|path| plan_ref_from_path(path, now))
-            .collect(),
-    );
-    exchange["continuityRefs"] = Value::Array(
-        history_paths
-            .iter()
-            .chain(context_paths.iter())
-            .chain(recording_paths.iter())
-            .chain(status_paths.iter())
-            .map(|path| continuity_ref_from_path(path, now))
-            .collect(),
-    );
-    exchange["attachmentRefs"] = Value::Array(
-        attachments
-            .iter()
-            .filter_map(attachment_ref_from_record)
-            .collect(),
-    );
-    exchange
+    build_runtime_exchange_from_legacy_snapshot(&json!({
+        "now": now,
+        "threads": threads,
+        "messages": messages,
+        "tasks": tasks,
+        "planPaths": plan_paths.iter().map(path_string).collect::<Vec<_>>(),
+        "historyPaths": history_paths.iter().map(path_string).collect::<Vec<_>>(),
+        "contextPaths": context_paths.iter().map(path_string).collect::<Vec<_>>(),
+        "recordingPaths": recording_paths.iter().map(path_string).collect::<Vec<_>>(),
+        "statusPaths": status_paths.iter().map(path_string).collect::<Vec<_>>(),
+        "attachments": attachments,
+    }))
 }
 
 fn to_exchange_thread(thread: &Value) -> Value {
@@ -660,20 +677,11 @@ fn build_inbox_entries(thread: &Value) -> Vec<Value> {
         .collect()
 }
 
-fn plan_ref_from_path(path: &Path, now: &str) -> Value {
-    let session_id = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("")
-        .strip_suffix(".md")
-        .unwrap_or_else(|| {
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("")
-        });
+fn plan_ref_from_path(path: &str, now: &str) -> Value {
+    let session_id = basename(path).trim_end_matches(".md").to_owned();
     json!({
         "id": format!("plan:{session_id}"),
-        "path": path_string(path),
+        "path": path,
         "ownerSessionId": session_id,
         "title": session_id,
         "createdAt": now,
@@ -681,8 +689,8 @@ fn plan_ref_from_path(path: &Path, now: &str) -> Value {
     })
 }
 
-fn continuity_ref_from_path(path: &Path, now: &str) -> Value {
-    let normalized = path_string(path).replace('\\', "/");
+fn continuity_ref_from_path(path: &str, now: &str) -> Value {
+    let normalized = path.replace('\\', "/");
     let kind = if normalized.contains("/recordings/") {
         "recording"
     } else if normalized.contains("/status/") {
@@ -692,19 +700,16 @@ fn continuity_ref_from_path(path: &Path, now: &str) -> Value {
     } else {
         "context"
     };
-    let file = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("");
+    let file = basename(path);
     let session_id = file
         .strip_suffix(".jsonl")
         .or_else(|| file.strip_suffix(".md"))
         .or_else(|| file.strip_suffix(".txt"))
-        .unwrap_or(file);
+        .unwrap_or(&file);
     json!({
         "id": format!("{kind}:{session_id}:{file}"),
         "kind": kind,
-        "path": path_string(path),
+        "path": path,
         "sessionId": session_id,
         "createdAt": now,
         "updatedAt": now,
@@ -1080,6 +1085,30 @@ fn string_array_field(value: &Value, key: &str) -> Vec<String> {
         .filter(|value| !value.is_empty())
         .map(str::to_owned)
         .collect()
+}
+
+fn array_value_field(value: &Value, key: &str) -> Vec<Value> {
+    value
+        .get(key)
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+}
+
+fn continuity_paths(input: &Value) -> Vec<String> {
+    [
+        "historyPaths",
+        "contextPaths",
+        "recordingPaths",
+        "statusPaths",
+    ]
+    .into_iter()
+    .flat_map(|key| string_array_field(input, key))
+    .collect()
+}
+
+fn basename(path: &str) -> String {
+    path.rsplit('/').next().unwrap_or(path).to_owned()
 }
 
 fn unique(values: impl IntoIterator<Item = String>) -> Vec<String> {
