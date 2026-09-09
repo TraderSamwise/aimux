@@ -32,11 +32,11 @@ use super::watcher_delivery::RailBudget;
 /// A session with no live window has nothing to settle. Node passed exactly
 /// these three to `listTopologySessionStates`.
 const LIVE_SESSION_STATUSES: &[&str] = &["running", "idle", "starting"];
-/// Every agent that reads as working is probed each tick, not just a stranded
-/// one, so a busy project tail-reads up to 256KB per session per tick. Under the
-/// interval on purpose: a tick that cannot finish inside its own cadence should
-/// give up rather than push the next one out. Giving up costs one extra tick,
-/// because the dropped confirmation is rebuilt on the next scan.
+/// Bounds PROBING only, not the tick: the two corrections POST through the
+/// state-update lock and can each wait out its own timeout. Every agent that
+/// reads as working is probed each tick, not just a stranded one, so a busy
+/// project tail-reads up to 256KB per session per tick; giving up on that costs
+/// one extra tick, because the dropped confirmation is rebuilt on the next scan.
 const SCAN_BUDGET: Duration = Duration::from_secs(3);
 
 pub struct TranscriptReconcilerTask {

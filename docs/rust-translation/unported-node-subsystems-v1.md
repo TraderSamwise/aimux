@@ -32,12 +32,22 @@ Scope: what phase 8 deleted from `src/` (282 non-test TypeScript modules at
 | `src/full/relay-client.ts` | daemon's websocket client to the relay | daemon remote features |
 | `src/daemon-remote-features.ts`, `src/core-cli-remote-features.ts` | wiring that starts the relay client | daemon + core CLI |
 | `src/mobile-push-bridge.ts` | forwards every alert to the daemon's `/internal/push` | `metadata-server.ts:1060` |
-| `src/loop-watcher.ts` | scans loop agents, builds the overseer briefing, sends canned nudges | `multiplexer/dashboard-model.ts` |
-| `src/scribe-watcher.ts` | periodic scribe scan and briefing | `multiplexer/index.ts`, `dashboard-model.ts` |
 | `src/tool-output-watchers.ts` | `classifyToolPane` | `session-runtime-core.ts`, `context-bridge.ts` |
-| `src/multiplexer/transcript-reconciler.ts` | `TranscriptReconciler` | `multiplexer/dashboard-model.ts` |
 | `src/multiplexer/service-state-snapshot.ts` | persists runtime/service snapshots before a tmux stop | multiplexer lifecycle |
-| `src/multiplexer/transcript-reconciler.ts` (detail) | `transcript_turn_state.rs` is itself a twin, so nothing settles a stranded `running` or `needs_response` | — |
+
+## Ported since this inventory
+
+Each was a promotion, not a translation: the twin's logic lifted into a
+production module with real I/O behind a deps trait, wired to a real caller, the
+fixture test repointed at production, and the twin deleted in the same commit.
+
+| Node module | Rust production module | Scheduled task |
+| --- | --- | --- |
+| — | `project_service/scheduler.rs` (the rail every watcher lands on) | — |
+| `src/loop-watcher.ts` | `loop_watcher.rs` | `project_service/loop_watcher_task.rs` |
+| `src/scribe-watcher.ts` | `scribe_watcher.rs` | `project_service/scribe_watcher_task.rs` |
+| `src/builtin-metadata-watchers.ts` | `builtin_metadata_watchers.rs` | `project_service/builtin_metadata_task.rs` |
+| `src/multiplexer/transcript-reconciler.ts` | `transcript_reconciler.rs` | `project_service/transcript_reconciler_task.rs` |
 
 ## Re-audited and withdrawn
 
