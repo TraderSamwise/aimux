@@ -25,7 +25,6 @@
   "native/crates/aimux/src/project_connection_display_contract.rs": "Tracked project API parity fixture; keep until project API behavior is production-consumed natively or culled.",
   "native/crates/aimux/src/project_service/agent_tracker_derivation.rs": "Tracked project-service parity fixture; keep until project-service behavior is production-consumed natively or culled.",
   "native/crates/aimux/src/project_takeover_contract.rs": "Tracked project API parity fixture; keep until project API behavior is production-consumed natively or culled.",
-  "native/crates/aimux/src/prompt_context_contract.rs": "Tracked prompt-context parity fixture; keep until prompt-context behavior is production-consumed natively or culled.",
   "native/crates/aimux/src/release_contracts.rs": "Tracked release parity fixture; keep until release behavior is production-consumed natively or culled.",
   "native/crates/aimux/src/repair_events.rs": "Tracked repair parity fixture; keep until repair behavior is production-consumed natively or culled.",
   "native/crates/aimux/src/route_share_contract.rs": "Tracked route-share parity fixture; keep until route-share behavior is production-consumed natively or culled.",
