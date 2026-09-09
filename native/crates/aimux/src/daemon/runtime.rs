@@ -745,6 +745,14 @@ impl RealDaemonRuntime {
     }
 
     fn restart_control_plane_project(&mut self, project_root: &str) -> Value {
+        self.restart_control_plane_project_with(project_root, reload_dashboard_for_restart)
+    }
+
+    fn restart_control_plane_project_with(
+        &mut self,
+        project_root: &str,
+        reload_dashboard: impl FnOnce(&str) -> Result<DashboardTargetRef, String>,
+    ) -> Value {
         let mut result = empty_restart_project_result(project_root);
         let runtime_rebuild_required = read_runtime_rebuild_required(project_root);
         let runtime = if runtime_rebuild_required {
@@ -755,15 +763,11 @@ impl RealDaemonRuntime {
         } else {
             json!({ "status": "skipped" })
         };
-        let service =
-            match <Self as DaemonCoreCommandRuntime>::stop_project(self, project_root, false)
-                .and_then(|_| {
-                    <Self as DaemonCoreCommandRuntime>::ensure_project(self, project_root)
-                }) {
-                Ok(state) => json!({ "status": "ensured", "state": state }),
-                Err(error) => json!({ "status": "failed", "error": error }),
-            };
-        let dashboard = match reload_dashboard_for_restart(project_root) {
+        let service = match <Self as DaemonCoreCommandRuntime>::ensure_project(self, project_root) {
+            Ok(state) => json!({ "status": "ensured", "state": state }),
+            Err(error) => json!({ "status": "failed", "error": error }),
+        };
+        let dashboard = match reload_dashboard(project_root) {
             Ok(target) => {
                 self.refresh_project_statusline(project_root);
                 json!({
@@ -2815,14 +2819,57 @@ fn current_unix_millis() -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::daemon_state::save_metadata_endpoint;
+    use crate::tmux::TmuxSessionRef;
     use crate::tmux::project_session;
     use std::cell::RefCell;
     use std::ffi::CString;
     use std::os::unix::ffi::OsStrExt;
     use std::rc::Rc;
+    use std::sync::Mutex;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn control_plane_restart_keeps_current_live_project_service() {
+        let fixture = restart_service_fixture("restart-keep-current");
+        let project = fixture.project_root.clone();
+        let project_id = fixture.register_project();
+        fixture.persist_service(&project_id, 91_001, ProjectServiceStatus::Running);
+        fixture.persist_endpoint(91_001);
+        let launcher = Arc::new(RestartTestLauncher::new(91_101));
+        let verifier = Arc::new(RestartTestProcessVerifier::current_native([91_001]));
+        let mut runtime = fixture.runtime(launcher.clone(), verifier);
+
+        let result = runtime.restart_control_plane_project_with(&project, restart_test_dashboard);
+
+        assert_eq!(result["service"]["status"], "ensured");
+        assert_eq!(result["service"]["state"]["pid"], json!(91_001));
+        assert!(launcher.calls().is_empty());
+        assert!(launcher.terminations().is_empty());
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn control_plane_restart_replaces_previous_build_project_service() {
+        let fixture = restart_service_fixture("restart-replace-previous");
+        let project = fixture.project_root.clone();
+        let project_id = fixture.register_project();
+        fixture.persist_service(&project_id, 91_002, ProjectServiceStatus::Running);
+        fixture.persist_endpoint(91_002);
+        let launcher = Arc::new(RestartTestLauncher::new(91_202).with_endpoint(45_902));
+        let verifier = Arc::new(RestartTestProcessVerifier::previous_build([91_002]));
+        let mut runtime = fixture.runtime(launcher.clone(), verifier);
+
+        let result = runtime.restart_control_plane_project_with(&project, restart_test_dashboard);
+
+        assert_eq!(result["service"]["status"], "ensured");
+        assert_eq!(result["service"]["state"]["pid"], json!(91_202));
+        assert_eq!(launcher.calls(), vec![project]);
+        assert_eq!(launcher.terminations(), vec![(91_002, false)]);
+        fixture.cleanup();
+    }
 
     #[test]
     fn daemon_disk_maintenance_sweeps_recordings_and_installs_like_node() {
@@ -3179,6 +3226,218 @@ mod tests {
 
     fn fake_tmux_manager(state: Rc<RefCell<FakeTmuxState>>) -> TmuxRuntimeManager {
         TmuxRuntimeManager::with_exec(move |args, _options| state.borrow_mut().run(args))
+    }
+
+    struct RestartServiceFixture {
+        root: PathBuf,
+        project_root: String,
+        resolver: PathResolver,
+        daemon_info: AimuxDaemonInfo,
+    }
+
+    impl RestartServiceFixture {
+        fn register_project(&self) -> String {
+            let mut resolver = self.resolver.clone();
+            resolver
+                .register_project(&self.project_root)
+                .expect("register project")
+                .expect("project entry")
+                .id
+        }
+
+        fn persist_service(&self, project_id: &str, pid: i32, status: ProjectServiceStatus) {
+            let service = ProjectServiceState {
+                project_id: project_id.to_owned(),
+                project_root: self.project_root.clone(),
+                pid,
+                started_at: "then".to_owned(),
+                updated_at: "now".to_owned(),
+                status: Some(status),
+                restart_count: Some(0),
+                last_restart_at: None,
+                last_exit: None,
+            };
+            let mut state = DaemonState::empty();
+            state.projects.insert(
+                project_id.to_owned(),
+                serde_json::to_value(service).expect("service json"),
+            );
+            save_daemon_state(self.resolver.daemon_state_path(), &state).expect("daemon state");
+        }
+
+        fn persist_endpoint(&self, pid: i32) {
+            save_metadata_endpoint(
+                self.resolver.project_state_dir_for(&self.project_root),
+                &MetadataApiEndpoint {
+                    host: "127.0.0.1".to_owned(),
+                    port: 45_901,
+                    pid,
+                    updated_at: "now".to_owned(),
+                },
+            )
+            .expect("metadata endpoint");
+        }
+
+        fn runtime(
+            &self,
+            launcher: Arc<dyn ProjectServiceLauncher>,
+            verifier: Arc<dyn ProjectServiceProcessVerifier>,
+        ) -> RealDaemonRuntime {
+            RealDaemonRuntime::with_project_service_launcher_and_process_verifier(
+                self.resolver.clone(),
+                self.daemon_info.clone(),
+                launcher,
+                verifier,
+                0,
+            )
+        }
+
+        fn cleanup(self) {
+            let _ = remove_dir_all(self.root);
+        }
+    }
+
+    fn restart_service_fixture(label: &str) -> RestartServiceFixture {
+        let root = temp_root(label);
+        let home = root.join("home");
+        let project = root.join("repo");
+        fs::create_dir_all(project.join(".git")).expect("project git");
+        fs::create_dir_all(&home).expect("home");
+        let resolver = PathResolver::new(
+            &root,
+            &home,
+            Some(home.join(".aimux").to_string_lossy().into_owned()),
+        );
+        RestartServiceFixture {
+            root,
+            project_root: project.to_string_lossy().into_owned(),
+            resolver,
+            daemon_info: AimuxDaemonInfo {
+                pid: 90_000,
+                port: 43_190,
+                started_at: "then".to_owned(),
+                updated_at: "now".to_owned(),
+            },
+        }
+    }
+
+    fn restart_test_dashboard(project_root: &str) -> Result<DashboardTargetRef, String> {
+        Ok(DashboardTargetRef {
+            dashboard_session: TmuxSessionRef {
+                project_root: project_root.to_owned(),
+                project_id: "repo".to_owned(),
+                session_name: "aimux-repo-test".to_owned(),
+            },
+            dashboard_target: TmuxTarget {
+                session_name: "aimux-repo-test".to_owned(),
+                window_id: "@1".to_owned(),
+                window_index: 0,
+                window_name: "dashboard".to_owned(),
+                pane_dead: None,
+            },
+        })
+    }
+
+    struct RestartTestLauncher {
+        pid: i32,
+        endpoint_port: Option<u16>,
+        calls: Mutex<Vec<String>>,
+        terminations: Mutex<Vec<(i32, bool)>>,
+    }
+
+    impl RestartTestLauncher {
+        fn new(pid: i32) -> Self {
+            Self {
+                pid,
+                endpoint_port: None,
+                calls: Mutex::new(Vec::new()),
+                terminations: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn with_endpoint(mut self, port: u16) -> Self {
+            self.endpoint_port = Some(port);
+            self
+        }
+
+        fn calls(&self) -> Vec<String> {
+            self.calls.lock().expect("calls").clone()
+        }
+
+        fn terminations(&self) -> Vec<(i32, bool)> {
+            self.terminations.lock().expect("terminations").clone()
+        }
+    }
+
+    impl ProjectServiceLauncher for RestartTestLauncher {
+        fn launch(
+            &self,
+            _project_id: &str,
+            project_root: &Path,
+            project_state_dir: &Path,
+        ) -> Result<i32, String> {
+            self.calls
+                .lock()
+                .expect("calls")
+                .push(project_root.to_string_lossy().into_owned());
+            if let Some(port) = self.endpoint_port {
+                save_metadata_endpoint(
+                    project_state_dir,
+                    &MetadataApiEndpoint {
+                        host: "127.0.0.1".to_owned(),
+                        port,
+                        pid: self.pid,
+                        updated_at: "now".to_owned(),
+                    },
+                )
+                .map_err(|error| error.to_string())?;
+            }
+            Ok(self.pid)
+        }
+
+        fn terminate(&self, service: &ProjectServiceState, force: bool) -> Result<(), String> {
+            self.terminations
+                .lock()
+                .expect("terminations")
+                .push((service.pid, force));
+            Ok(())
+        }
+    }
+
+    struct RestartTestProcessVerifier {
+        live: BTreeSet<i32>,
+        current_native: BTreeSet<i32>,
+    }
+
+    impl RestartTestProcessVerifier {
+        fn current_native(pids: impl IntoIterator<Item = i32>) -> Self {
+            let current_native = pids.into_iter().collect::<BTreeSet<_>>();
+            Self {
+                live: current_native.clone(),
+                current_native,
+            }
+        }
+
+        fn previous_build(pids: impl IntoIterator<Item = i32>) -> Self {
+            Self {
+                live: pids.into_iter().collect(),
+                current_native: BTreeSet::new(),
+            }
+        }
+    }
+
+    impl ProjectServiceProcessVerifier for RestartTestProcessVerifier {
+        fn is_live(&self, pid: i32) -> bool {
+            self.live.contains(&pid)
+        }
+
+        fn is_live_native_project_service(&self, service: &ProjectServiceState) -> bool {
+            self.current_native.contains(&service.pid)
+        }
+
+        fn live_project_service_pids(&self, _project_id: &str, _project_root: &str) -> Vec<i32> {
+            Vec::new()
+        }
     }
 
     fn fake_window(id: &str, index: i64, name: &str, active: bool) -> FakeWindow {
