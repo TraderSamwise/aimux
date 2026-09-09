@@ -8,7 +8,9 @@ use crate::cli_launcher::{
     AimuxCliLaunchCommand, AimuxCliLaunchOptions, AimuxCliLaunchSource,
     get_aimux_current_cli_identity,
 };
-use crate::config::{load_config_for_project, load_global_config};
+use crate::config::{
+    load_config_for_project, load_global_config, load_global_config_with_resolver,
+};
 use crate::core_command_transport::{
     CoreCommandTransportError, DaemonHttpMethod, DaemonJsonRequest,
     execute_loopback_binary_request, execute_loopback_json_request,
@@ -69,6 +71,11 @@ use crate::dashboard_targets::{
     DashboardResolveOptions, DashboardTargetRef, resolve_dashboard_target,
 };
 use crate::event_loop_budget::assess_loop_budget;
+use crate::install_cleanup::{
+    InstallReferenceText, PlanInstallCleanupOptions, RunInstallCleanupInput, plan_install_cleanup,
+    run_install_cleanup,
+};
+use crate::install_config::{is_primary_install_lane_with_home, normalize_installs_config};
 use crate::logs::{LogSelectionOptions, clear_log_file, read_last_log_lines, selected_log_path};
 use crate::paths::{PathResolver, compute_project_id};
 use crate::process_inspector::{
@@ -78,6 +85,10 @@ use crate::process_inspector::{
 use crate::project_api_contract::routes as project_routes;
 use crate::project_catalog::{hidden_project_tmp_dirs, list_registered_desktop_projects};
 use crate::project_service_manifest::get_project_service_manifest;
+use crate::recording_cleanup::{
+    RunRecordingCleanupInput, normalize_recordings_config, plan_recording_cleanup,
+    run_recording_cleanup,
+};
 use crate::release_version_contract::{
     read_aimux_build_profile_from_package_root, read_aimux_runtime_version,
 };
@@ -96,6 +107,7 @@ use anyhow::{Context, Result};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::{self, Formatter};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -106,6 +118,9 @@ use std::time::{Duration, Instant};
 const OVERSEER_INPUT_READY_TIMEOUT_MS: u64 = 15_000;
 const PROJECT_ONLINE_AGENT_COUNT_CACHE_TTL_MS: u128 = 2_000;
 const PROJECT_ONLINE_AGENT_COUNT_TIMEOUT_MS: u64 = 500;
+const INSTALL_CLEANUP_INITIAL_DELAY_MS: u64 = 30 * 60_000;
+const INSTALL_CLEANUP_MAX_PER_SWEEP: usize = 50;
+const RECORDING_CLEANUP_MAX_PER_SWEEP: usize = 200;
 
 pub struct RealDaemonRuntime {
     resolver: PathResolver,
@@ -118,6 +133,13 @@ pub struct RealDaemonRuntime {
     global_expose_hot_snapshots: GlobalExposeHotSnapshotCoordinator,
     project_online_agent_count_cache: HashMap<String, ProjectOnlineAgentCountCacheEntry>,
     started_instant: Instant,
+}
+
+#[derive(Default)]
+struct DiskMaintenanceOptions {
+    install_root: Option<String>,
+    install_reference_text: Option<InstallReferenceText>,
+    now_ms: Option<u128>,
 }
 
 struct DaemonProjectReadSnapshot {
@@ -978,6 +1000,7 @@ pub fn run_daemon_internal() -> Result<()> {
     let _guard = DaemonInfoGuard {
         path: resolver.daemon_info_path(),
     };
+    start_daemon_disk_maintenance_background(resolver.clone());
     let runtime = Arc::new(Mutex::new(
         RealDaemonRuntime::new(resolver, info).with_global_expose_hot_snapshot_background_refresh(),
     ));
@@ -1010,6 +1033,126 @@ pub fn run_daemon_internal() -> Result<()> {
         },
     )
     .map_err(anyhow::Error::new)
+}
+
+fn start_daemon_disk_maintenance_background(resolver: PathResolver) {
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(INSTALL_CLEANUP_INITIAL_DELAY_MS));
+        loop {
+            let interval =
+                run_daemon_disk_maintenance_once(&resolver, DiskMaintenanceOptions::default());
+            thread::sleep(interval);
+        }
+    });
+}
+
+fn run_daemon_disk_maintenance_once(
+    resolver: &PathResolver,
+    options: DiskMaintenanceOptions,
+) -> Duration {
+    let global_config = load_global_config_with_resolver(resolver);
+    let installs_config =
+        normalize_installs_config(global_config.get("installs").unwrap_or(&Value::Null));
+    sweep_stale_recordings(resolver, &global_config, options.now_ms);
+    let interval = installs_config
+        .get("cleanupIntervalMs")
+        .and_then(Value::as_u64)
+        .unwrap_or(86_400_000);
+    if installs_config
+        .get("cleanupEnabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(true)
+        && is_primary_install_lane_with_home(
+            &std::env::vars().collect(),
+            std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(".")),
+        )
+    {
+        let keep_recent = installs_config
+            .get("keepRecent")
+            .and_then(Value::as_u64)
+            .and_then(|value| usize::try_from(value).ok());
+        let retention_days = installs_config.get("retentionDays").and_then(Value::as_u64);
+        let references = options.install_reference_text.clone();
+        let plan = plan_install_cleanup(PlanInstallCleanupOptions {
+            root: options.install_root,
+            keep_recent,
+            retention_days,
+            now_ms: options.now_ms,
+            list_reference_text: references
+                .map(|references| Box::new(move || references.clone()) as _),
+            measure_size: Some(Box::new(|_| 0)),
+            ..PlanInstallCleanupOptions::default()
+        });
+        if plan.references_complete && !plan.remove.is_empty() {
+            let _ = run_install_cleanup(
+                plan,
+                RunInstallCleanupInput {
+                    dry_run: Some(false),
+                    limit: Some(INSTALL_CLEANUP_MAX_PER_SWEEP),
+                    ..RunInstallCleanupInput::default()
+                },
+            );
+        }
+    }
+    Duration::from_millis(interval)
+}
+
+fn sweep_stale_recordings(resolver: &PathResolver, global_config: &Value, now_ms: Option<u128>) {
+    let recordings_config = normalize_recordings_config(global_config.get("recordings"));
+    if !recordings_config
+        .get("cleanupEnabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(true)
+    {
+        return;
+    }
+    let mut project_resolver = resolver.clone();
+    let extra_dirs = resolver
+        .load_registry()
+        .map(|registry| {
+            registry
+                .projects
+                .into_iter()
+                .map(|project| {
+                    project_resolver
+                        .aimux_dir_for(project.repo_root)
+                        .join("recordings")
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let retention_days = recordings_config
+        .get("retentionDays")
+        .and_then(Value::as_f64);
+    let now_ms = now_ms
+        .map(|value| value as f64)
+        .unwrap_or_else(|| current_epoch_ms() as f64);
+    let plan = plan_recording_cleanup(
+        resolver.global_aimux_dir().join("projects"),
+        &extra_dirs,
+        retention_days,
+        now_ms,
+    );
+    if plan.remove.is_empty() {
+        return;
+    }
+    let _ = run_recording_cleanup(
+        &plan,
+        RunRecordingCleanupInput {
+            dry_run: Some(false),
+            limit: Some(RECORDING_CLEANUP_MAX_PER_SWEEP),
+        },
+        |path| fs::remove_file(path).map_err(|error| error.to_string()),
+    );
+}
+
+fn current_epoch_ms() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
 }
 
 impl DaemonStatusRuntime for RealDaemonRuntime {
@@ -2648,7 +2791,95 @@ mod tests {
     use super::*;
     use crate::tmux::project_session;
     use std::cell::RefCell;
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
     use std::rc::Rc;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn daemon_disk_maintenance_sweeps_recordings_and_installs_like_node() {
+        let root = temp_root("disk-maintenance");
+        let home = root.join("home");
+        fs::create_dir_all(&home).expect("home");
+        let resolver = PathResolver::new(
+            &root,
+            &home,
+            Some(home.join(".aimux").to_string_lossy().into_owned()),
+        );
+        fs::create_dir_all(resolver.global_aimux_dir()).expect("aimux home");
+        fs::write(
+            resolver.global_config_path(),
+            json!({
+                "installs": {
+                    "cleanupEnabled": true,
+                    "retentionDays": 1,
+                    "keepRecent": 0,
+                    "cleanupIntervalMs": 3_600_000
+                },
+                "recordings": {
+                    "cleanupEnabled": true,
+                    "retentionDays": 1
+                }
+            })
+            .to_string(),
+        )
+        .expect("global config");
+
+        let project = root.join("project");
+        fs::create_dir_all(project.join(".git")).expect("project git");
+        let mut project_resolver = resolver.clone();
+        project_resolver
+            .register_project(&project)
+            .expect("register project");
+        let state_dir = project_resolver.project_state_dir_for(&project);
+        let global_recordings = state_dir.join("recordings");
+        let local_recordings = project.join(".aimux/recordings");
+        fs::create_dir_all(&global_recordings).expect("global recordings");
+        fs::create_dir_all(&local_recordings).expect("local recordings");
+        fs::write(
+            state_dir.join("state.json"),
+            json!({ "sessions": ["live"] }).to_string(),
+        )
+        .expect("state");
+        let stale_global = global_recordings.join("stale.log");
+        let live_global = global_recordings.join("live.log");
+        let stale_local = local_recordings.join("stale-local.txt");
+        for path in [&stale_global, &live_global, &stale_local] {
+            fs::write(path, "recording").expect("recording file");
+            set_mtime_ms(path, 0);
+        }
+
+        let install_root = root.join("installs");
+        let old_install = install_root.join("local-old");
+        let old_install_bin = old_install.join("bin");
+        fs::create_dir_all(&old_install_bin).expect("install bin");
+        fs::write(old_install_bin.join("aimux"), "binary").expect("install binary");
+        set_mtime_ms(&old_install_bin.join("aimux"), 0);
+        set_mtime_ms(&old_install_bin, 0);
+        set_mtime_ms(&old_install, 0);
+
+        let interval = run_daemon_disk_maintenance_once(
+            &resolver,
+            DiskMaintenanceOptions {
+                install_root: Some(install_root.to_string_lossy().into_owned()),
+                install_reference_text: Some(InstallReferenceText {
+                    text: Vec::new(),
+                    complete: true,
+                }),
+                now_ms: Some(10 * 86_400_000),
+            },
+        );
+
+        assert_eq!(interval, Duration::from_millis(3_600_000));
+        assert!(!stale_global.exists());
+        assert!(live_global.exists());
+        assert!(!stale_local.exists());
+        assert!(!old_install.exists());
+
+        let _ = fs::remove_dir_all(root);
+    }
 
     #[test]
     fn restart_all_project_roots_follow_daemon_state_and_registry() {
@@ -2940,5 +3171,31 @@ mod tests {
 
     fn split_session_window_id(target: &str) -> (&str, &str) {
         target.rsplit_once(':').unwrap_or(("", target))
+    }
+
+    fn temp_root(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "aimux-daemon-runtime-{label}-{}-{}",
+            std::process::id(),
+            TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
+
+    fn set_mtime_ms(path: &Path, mtime_ms: u128) {
+        let seconds = (mtime_ms / 1000) as libc::time_t;
+        let micros = ((mtime_ms % 1000) * 1000) as libc::suseconds_t;
+        let c_path = CString::new(path.as_os_str().as_bytes()).expect("path cstring");
+        let times = [
+            libc::timeval {
+                tv_sec: seconds,
+                tv_usec: micros,
+            },
+            libc::timeval {
+                tv_sec: seconds,
+                tv_usec: micros,
+            },
+        ];
+        let rc = unsafe { libc::utimes(c_path.as_ptr(), times.as_ptr()) };
+        assert_eq!(rc, 0, "utimes failed for {}", path.display());
     }
 }
