@@ -25,7 +25,8 @@ use crate::daemon::text::auth::AuthFlowResult;
 use crate::daemon::text::operations::RestartControlPlaneTextResult;
 use crate::daemon_state::EnsureDaemonRunningOptions;
 use crate::daemon_state::{
-    AimuxDaemonInfo, DaemonState, StoppedDaemonInfo, load_daemon_info, load_daemon_state,
+    AimuxDaemonInfo, DaemonState, StoppedDaemonInfo, get_daemon_port, load_daemon_info,
+    load_daemon_state,
 };
 use crate::daemon_supervisor::{
     assert_not_stopping_newer_daemon, ensure_daemon_running, ensure_project_service, stop_daemon,
@@ -350,6 +351,7 @@ impl CoreCliRuntime for RealCoreCliRuntime {
 fn restart_control_plane_from_cli(
     project_root: Option<&str>,
 ) -> Result<RestartControlPlaneTextResult, String> {
+    let _ = get_daemon_port()?;
     let resolver = PathResolver::from_env();
     let daemon_info = load_daemon_info(resolver.daemon_info_path());
     let daemon_state = load_daemon_state(resolver.daemon_state_path());

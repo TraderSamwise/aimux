@@ -531,7 +531,13 @@ fn notifications_test_stays_native_even_when_node_fallback_is_configured() {
 
 #[test]
 fn known_auxiliary_command_help_stays_native_even_when_node_fallback_is_configured() {
-    for command in ["metadata", "logs", "team", "outline", "attachment"] {
+    for (command, expected) in [
+        ("metadata", "Usage: aimux metadata [options] [command]"),
+        ("logs", "Usage: aimux logs [options] [command]"),
+        ("team", "Usage: aimux team [options] [command]"),
+        ("outline", "Usage: aimux outline [options] [command]"),
+        ("attachment", "Native CLI agent multiplexer"),
+    ] {
         let root = temp_root(&format!("native-{command}-help"));
         fs::create_dir_all(root.join("dist")).expect("create dist");
         fs::write(root.join("dist/launcher-bin.js"), "").expect("write launcher");
@@ -547,13 +553,89 @@ fn known_auxiliary_command_help_stays_native_even_when_node_fallback_is_configur
 
         assert!(output.status.success(), "{command} --help should succeed");
         assert!(
-            String::from_utf8_lossy(&output.stdout).contains("Native CLI agent multiplexer"),
+            String::from_utf8_lossy(&output.stdout).contains(expected),
             "{command} --help should render native help"
         );
         assert!(
             !log.exists(),
             "{command} --help should not invoke node fallback"
         );
+        cleanup(root);
+    }
+}
+
+#[test]
+fn domain11_cli_command_help_is_command_scoped() {
+    for (index, (args, expected)) in [
+        (
+            vec!["migration", "--help"],
+            "Usage: aimux migration [options] [command]",
+        ),
+        (
+            vec!["repair", "--help"],
+            "Usage: aimux repair [options] [command]",
+        ),
+        (
+            vec!["security", "--help"],
+            "Usage: aimux security [options] [command]",
+        ),
+        (vec!["whoami", "--help"], "Usage: aimux whoami [options]"),
+        (vec!["login", "--help"], "Usage: aimux login"),
+        (vec!["logout", "--help"], "Usage: aimux logout"),
+        (
+            vec!["remote", "--help"],
+            "Usage: aimux remote [options] [command]",
+        ),
+        (vec!["serve", "--help"], "Usage: aimux serve"),
+        (
+            vec!["notifications", "--help"],
+            "Usage: aimux notifications [options] [command]",
+        ),
+        (
+            vec!["dashboard-reload", "--help"],
+            "Usage: aimux dashboard-reload [options]",
+        ),
+        (
+            vec!["restart-runtime", "--help"],
+            "Usage: aimux restart-runtime [options]",
+        ),
+        (
+            vec!["id", "--help"],
+            "Usage: aimux id <sessionId> [options]",
+        ),
+        (
+            vec!["rename", "--help"],
+            "Usage: aimux rename <sessionId> [options]",
+        ),
+        (
+            vec!["stop", "--help"],
+            "Usage: aimux stop [sessionId] [options]",
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let root = temp_root(&format!("native-domain11-help-{index}"));
+        fs::create_dir_all(root.join("home")).expect("create home");
+        fs::create_dir_all(root.join("aimux-home")).expect("create aimux home");
+
+        let output = Command::new(env!("CARGO_BIN_EXE_aimux"))
+            .env("HOME", root.join("home"))
+            .env("AIMUX_HOME", root.join("aimux-home"))
+            .env("AIMUX_DAEMON_PORT", format!("{}", 46320 + index))
+            .args(args)
+            .output()
+            .expect("run native aimux command help");
+
+        assert!(output.status.success(), "{index} help should succeed");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stdout.contains(expected), "{stdout}");
+        assert!(
+            !stdout.contains("Usage: aimux [options] [command] [tool]"),
+            "{stdout}"
+        );
+        assert!(stderr.is_empty(), "{stderr}");
         cleanup(root);
     }
 }
