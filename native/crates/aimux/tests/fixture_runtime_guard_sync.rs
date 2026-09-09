@@ -1,4 +1,4 @@
-#[path = "../src/runtime_guard_sync_contract.rs"]
+#[path = "fixture_runtime_guard_sync_contract.rs"]
 mod runtime_guard_sync_contract;
 
 use runtime_guard_sync_contract::{
