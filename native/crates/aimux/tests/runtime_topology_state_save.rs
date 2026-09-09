@@ -113,7 +113,7 @@ fn state_save_reconciles_sessions_with_removed_session_ids_without_tmux_polling(
     assert_eq!(status(&topology, "stale-offline"), Some("offline"));
     assert_eq!(
         status(&topology, "quick-dead"),
-        Some("offline"),
+        None,
         "removedSessionIds from state save must prune unpreserved exits"
     );
     assert_eq!(
