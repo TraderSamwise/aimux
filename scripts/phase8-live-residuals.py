@@ -1452,6 +1452,381 @@ def run_bare_dashboard_tmux_smoke(aimux_bin: Path, mutation: str | None) -> dict
         }
 
 
+def run_daily_loop_smoke(aimux_bin: Path, mutation: str | None) -> dict[str, Any]:
+    tmux = find_tmux()
+    with Scope("daily-loop", aimux_bin) as scope:
+        socket_name = f"aimux-daily-loop-{os.getpid()}-{time.time_ns()}"
+        scope.tmux_socket_name = socket_name
+        install_tmux_socket_wrapper(scope, tmux, socket_name)
+        run([tmux, "-L", socket_name, "kill-server"], env=without_tmux(os.environ.copy()), timeout=10, check=False)
+        scope.init_git_project()
+        seed_initial_commit(scope)
+        run([str(aimux_bin), "init"], cwd=scope.project, env=scope.env, timeout=30)
+        install_agent_tool_config(scope, "claude")
+        install_agent_tool_config(scope, "codex")
+        install_agent_tool_config(scope, "aider")
+        project_root = scope.project.resolve()
+
+        proc, client_fd = start_process_capture_client(
+            scope,
+            [str(aimux_bin)],
+            cwd=project_root,
+            cols=120,
+            rows=30,
+        )
+
+        def attached_client_rows() -> list[dict[str, str]]:
+            result = tmux_cmd_for_socket(
+                tmux,
+                socket_name,
+                [
+                    "list-clients",
+                    "-F",
+                    "#{client_tty}\t#{session_name}\t#{window_id}\t#{window_name}\t#{client_name}\t#{client_pid}\t#{client_width}\t#{client_height}",
+                ],
+                check=False,
+            )
+            if result.returncode != 0:
+                return []
+            rows = []
+            for line in result.stdout.splitlines():
+                fields = line.split("\t")
+                if len(fields) == 8:
+                    rows.append({
+                        "tty": fields[0],
+                        "session": fields[1],
+                        "windowId": fields[2],
+                        "windowName": fields[3],
+                        "name": fields[4],
+                        "pid": fields[5],
+                        "width": fields[6],
+                        "height": fields[7],
+                    })
+            return rows
+
+        def client_for_tty(client_tty: str) -> dict[str, str] | None:
+            return next((item for item in attached_client_rows() if item["tty"] == client_tty), None)
+
+        def capture_client_window() -> str:
+            item = client_for_tty(client_tty)
+            if not item:
+                return ""
+            result = tmux_cmd_for_socket(
+                tmux,
+                socket_name,
+                ["capture-pane", "-p", "-J", "-t", item["windowId"]],
+                check=False,
+            )
+            return result.stdout if result.returncode == 0 else ""
+
+        def write_client_keys(*chunks: bytes) -> None:
+            for chunk in chunks:
+                os.write(client_fd, chunk)
+                time.sleep(0.05)
+
+        def wait_dashboard(label: str, timeout: float = 10) -> str:
+            return wait_until(
+                lambda: (
+                    frame
+                    if "agent multiplexer" in (frame := capture_client_window())
+                    and "Main Checkout" in frame
+                    else None
+                ),
+                timeout=timeout,
+                label=label,
+            )
+
+        def wait_client_dashboard(label: str, timeout: float = 8) -> dict[str, str]:
+            return wait_until(
+                lambda: (
+                    item
+                    if (item := client_for_tty(client_tty))
+                    and item["windowName"] == "dashboard"
+                    else None
+                ),
+                timeout=timeout,
+                label=label,
+            )
+
+        dashboard_client = wait_until(
+            lambda: next(
+                (
+                    item
+                    for item in attached_client_rows()
+                    if item["windowName"] == "dashboard"
+                ),
+                None,
+            ),
+            timeout=90,
+            label="daily loop bare aimux attaches managed dashboard",
+        )
+        client_tty = dashboard_client["tty"]
+        wait_dashboard("daily loop initial dashboard frame")
+        inline_output = drain_fd_now(client_fd)
+        if "agent multiplexer" in inline_output and not attached_client_rows():
+            raise LiveResidualFailure(f"daily loop rendered dashboard inline:\n{inline_output[-2000:]}")
+        if proc.poll() is not None:
+            raise LiveResidualFailure(
+                "daily loop bare aimux did not hold a real attached tmux client:\n"
+                + json.dumps({"returncode": proc.returncode, "output": inline_output[-2000:]}, indent=2)
+            )
+
+        write_client_keys(b"n")
+        wait_until(
+            lambda: frame if "SELECT TOOL" in (frame := capture_client_window()) else None,
+            timeout=5,
+            label="daily loop tool picker opens from n",
+        )
+        if mutation != "daily-loop-spawn-missing":
+            write_client_keys(b"\r")
+        _, session = wait_until(
+            lambda: ps_session_for_tool(scope, aimux_bin, "claude"),
+            timeout=12,
+            label="daily loop spawned claude session in ps",
+        )
+        session_id = str(session.get("id") or "")
+        if not session_id:
+            raise LiveResidualFailure(f"daily loop spawned session has no id: {session}")
+        wait_dashboard("daily loop dashboard after spawn", timeout=12)
+
+        shell_window_ids = {
+            fields[1]
+            for line in tmux_cmd_for_socket(
+                tmux,
+                socket_name,
+                ["list-windows", "-a", "-F", "#{window_name}\t#{window_id}"],
+            ).stdout.splitlines()
+            if (fields := line.split("\t")) and fields[0] in {"claude", "/bin/sh"}
+        }
+        shell_window_ids.discard("")
+        if not shell_window_ids:
+            raise LiveResidualFailure("daily loop spawned agent has no tmux window")
+
+        focused = None
+        for _ in range(3):
+            focused = client_for_tty(client_tty)
+            if focused:
+                if focused["windowId"] in shell_window_ids:
+                    break
+                focused = None
+            write_client_keys(b"\r")
+            deadline = time.monotonic() + 4
+            while time.monotonic() < deadline:
+                focused = client_for_tty(client_tty)
+                if focused and focused["windowId"] in shell_window_ids:
+                    break
+                time.sleep(0.05)
+            if focused and focused["windowId"] in shell_window_ids:
+                break
+        else:
+            raise LiveResidualFailure(
+                "daily loop Enter never focused the selected agent:\n"
+                + json.dumps({
+                    "clientTty": client_tty,
+                    "clients": attached_client_rows(),
+                    "agentWindowIds": sorted(shell_window_ids),
+                    "windows": tmux_cmd_for_socket(
+                        tmux,
+                        socket_name,
+                        ["list-windows", "-a", "-F", "#{session_name}\t#{window_id}\t#{window_index}\t#{window_name}"],
+                    ).stdout,
+                    "capture": capture_all_tmux(scope)[-2000:],
+                }, indent=2)
+            )
+
+        if mutation != "daily-loop-return-missing":
+            write_client_keys(b"\x01", b"d")
+        wait_client_dashboard("daily loop prefix+d returns to dashboard")
+        wait_dashboard("daily loop dashboard frame after agent return")
+
+        worktree = run(
+            [str(aimux_bin), "worktree", "add", "feat/daily-loop", "--json"],
+            cwd=scope.project,
+            env=scope.env,
+            timeout=45,
+        )
+        parse_json_stdout(worktree.stdout, "daily loop worktree add")
+        worktree_list = run(
+            [str(aimux_bin), "worktree", "list"],
+            cwd=scope.project,
+            env=scope.env,
+            timeout=30,
+        ).stdout
+        if "feat/daily-loop" not in worktree_list:
+            raise LiveResidualFailure(f"daily loop worktree add did not appear in list:\n{worktree_list}")
+        write_client_keys(b"2")
+        wait_until(
+            lambda: (
+                frame
+                if "feat/daily-loop" in (frame := capture_client_window())
+                else None
+            ),
+            timeout=8,
+            label="daily loop dashboard shows second worktree",
+        )
+
+        for key, anchor in [
+            (b"c", "coordination"),
+            (b"p", "project"),
+            (b"L", "library"),
+            (b"t", "topology"),
+            (b"g", "graveyard"),
+        ]:
+            write_client_keys(key)
+            wait_until(
+                lambda expected=anchor: (
+                    frame
+                    if expected in (frame := capture_client_window()).lower()
+                    else None
+                ),
+                timeout=8,
+                label=f"daily loop opens {anchor} screen",
+            )
+            write_client_keys(b"\x1b")
+            wait_dashboard(f"daily loop returns from {anchor} screen")
+
+        stop = run(
+            [str(aimux_bin), "stop", session_id, "--json"],
+            cwd=scope.project,
+            env=scope.env,
+            timeout=30,
+        )
+        stop_payload = parse_json_stdout(stop.stdout, "daily loop agent stop")
+        if stop_payload.get("status") != "graveyard":
+            raise LiveResidualFailure(f"daily loop stop did not graveyard the agent: {stop_payload}")
+        wait_until(
+            lambda: (
+                payload
+                if graveyard_contains_session((payload := graveyard_payload(scope, aimux_bin)), session_id)
+                else None
+            ),
+            timeout=10,
+            label="daily loop stopped agent appears in graveyard",
+        )
+        resurrect = run(
+            [str(aimux_bin), "graveyard", "resurrect", session_id, "--json"],
+            cwd=scope.project,
+            env=scope.env,
+            timeout=30,
+        )
+        resurrect_payload = parse_json_stdout(resurrect.stdout, "daily loop graveyard resurrect")
+        if resurrect_payload.get("status") != "offline":
+            raise LiveResidualFailure(f"daily loop resurrect returned wrong status: {resurrect_payload}")
+        stamp_backend_session(scope, session_id, "backend-daily-loop")
+        run_top_level_tool_restore(scope, aimux_bin, tmux, socket_name, project_root, session_id, "claude")
+        wait_until(
+            lambda: ps_contains_session(scope, aimux_bin, session_id),
+            timeout=10,
+            label="daily loop restored agent is running again",
+        )
+        write_client_keys(b"\x01", b"d")
+        wait_client_dashboard("daily loop primary client returns to dashboard after restore")
+        wait_dashboard("daily loop dashboard after restore")
+
+        drain_fd_now(client_fd)
+        set_pty_size(client_fd, 100, 26)
+        os.kill(proc.pid, signal.SIGWINCH)
+        dashboard_before_resize = wait_client_dashboard("daily loop client is on dashboard before resize")
+        if dashboard_before_resize:
+            tmux_cmd_for_socket(tmux, socket_name, ["resize-window", "-t", dashboard_before_resize["windowId"], "-x", "100", "-y", "26"])
+            tmux_cmd_for_socket(tmux, socket_name, ["resize-pane", "-t", dashboard_before_resize["windowId"], "-x", "100", "-y", "26"])
+            tmux_cmd_for_socket(tmux, socket_name, ["refresh-client", "-t", client_tty, "-S"], check=False)
+        resized = wait_until(
+            lambda: (
+                frame
+                if "agent multiplexer" in (frame := capture_client_window())
+                and frame_reaches_width(frame, 100)
+                else None
+            ),
+            timeout=10,
+            label="daily loop dashboard repaints after resize without input",
+        )
+        assert_frame_width(resized, 100, "daily loop resized dashboard")
+        try:
+            wait_client_dashboard("daily loop client remains on dashboard after resize")
+        except LiveResidualFailure as error:
+            raise LiveResidualFailure(
+                f"{error}\n"
+                + json.dumps({
+                    "clientTty": client_tty,
+                    "client": client_for_tty(client_tty),
+                    "clients": attached_client_rows(),
+                    "windows": tmux_cmd_for_socket(
+                        tmux,
+                        socket_name,
+                        ["list-windows", "-a", "-F", "#{session_name}\t#{window_id}\t#{window_index}\t#{window_name}\t#{pane_current_command}\t#{pane_dead}"],
+                        check=False,
+                    ).stdout,
+                    "clientCapture": capture_client_window()[-2000:],
+                    "allCapture": capture_all_tmux(scope)[-2000:],
+                }, indent=2)
+            ) from error
+
+        dashboard_before_quit = wait_client_dashboard("daily loop client is on dashboard before quit")
+        dashboard_window_before_quit = dashboard_before_quit["windowId"]
+        write_client_keys(b"q")
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline:
+            client_after_quit = client_for_tty(client_tty)
+            live_window_ids = {
+                fields[0]
+                for line in tmux_cmd_for_socket(
+                    tmux,
+                    socket_name,
+                    ["list-windows", "-a", "-F", "#{window_id}"],
+                    check=False,
+                ).stdout.splitlines()
+                if (fields := line.split("\t")) and fields[0]
+            }
+            if (
+                proc.poll() is not None
+                or not client_after_quit
+                or (
+                    client_after_quit["windowName"] != "dashboard"
+                    and dashboard_window_before_quit not in live_window_ids
+                )
+            ):
+                break
+            time.sleep(0.05)
+        else:
+            raise LiveResidualFailure(
+                "daily loop dashboard did not quit cleanly:\n"
+                + json.dumps({
+                    "returncode": proc.poll(),
+                    "client": client_for_tty(client_tty),
+                    "clients": attached_client_rows(),
+                    "windows": tmux_cmd_for_socket(
+                        tmux,
+                        socket_name,
+                        ["list-windows", "-a", "-F", "#{session_name}\t#{window_id}\t#{window_index}\t#{window_name}\t#{pane_current_command}\t#{pane_dead}"],
+                    ).stdout,
+                    "clientCapture": capture_client_window()[-2000:],
+                    "allCapture": capture_all_tmux(scope)[-2000:],
+                    "rawTail": drain_fd_now(client_fd)[-2000:],
+                }, indent=2)
+            )
+        return {
+            "name": "phase8-daily-loop-smoke",
+            "privateSocket": socket_name,
+            "sessionId": session_id,
+            "caught": [
+                "fresh git repo bare aimux opens a managed tmux dashboard through a real PTY",
+                "dashboard n opens the tool picker and spawns a configured agent",
+                "Enter focuses the selected agent and prefix+d returns to dashboard",
+                "worktree add appears in the dashboard loop",
+                "coordination/project/library/topology/graveyard screens open and return",
+                "stop moves an agent into graveyard and restore makes it running again",
+                "dashboard repaints after resize without another input key",
+                "dashboard quits cleanly",
+            ],
+            "notCaught": [
+                "real Claude/Codex credentials",
+                "manual mosh transport outside the private PTY",
+                "multi-hour agent output churn",
+            ],
+        }
+
+
 def run_expose_interaction_smoke(aimux_bin: Path, mutation: str | None) -> dict[str, Any]:
     tmux = find_tmux()
     with Scope("expose-interaction", aimux_bin) as scope:
@@ -3547,6 +3922,8 @@ def run_one(name: str, aimux_bin: Path, mutation: str | None) -> dict[str, Any]:
         return run_dashboard_attach_smoke(aimux_bin, mutation)
     if name == "bare-dashboard":
         return run_bare_dashboard_tmux_smoke(aimux_bin, mutation)
+    if name == "daily-loop":
+        return run_daily_loop_smoke(aimux_bin, mutation)
     if name == "dashboard-spawn":
         return run_dashboard_spawn_smoke(aimux_bin, mutation)
     if name == "expose-interaction":
@@ -3586,6 +3963,7 @@ def prove_failures(args: argparse.Namespace, aimux_bin: Path) -> list[dict[str, 
         ("dashboard-attach", "dashboard-attach-return-missing"),
         ("dashboard-attach", "dashboard-attach-digit-target-missing"),
         ("bare-dashboard", "bare-dashboard-inline"),
+        ("daily-loop", "daily-loop-return-missing"),
         ("dashboard", "dashboard-resize-width-overflow"),
         ("expose-interaction", "expose-entry-missing"),
         ("expose-interaction", "expose-navigation-inert"),
@@ -3667,6 +4045,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             "dashboard-input",
             "dashboard-attach",
             "bare-dashboard",
+            "daily-loop",
             "dashboard-spawn",
             "expose-interaction",
             "command-resolution",
@@ -3695,6 +4074,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "dashboard-attach-return-missing",
         "dashboard-attach-digit-target-missing",
         "bare-dashboard-inline",
+        "daily-loop-spawn-missing",
+        "daily-loop-return-missing",
         "expose-entry-missing",
         "expose-navigation-inert",
         "expose-resize-stale",
