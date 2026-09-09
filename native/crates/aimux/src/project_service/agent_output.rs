@@ -1,4 +1,5 @@
 use serde_json::{Map, Value, json};
+use sha1::{Digest, Sha1};
 use std::fs;
 use std::process::{Command, Output, Stdio};
 use std::sync::Arc;
@@ -8,6 +9,7 @@ use std::time::{Duration, Instant};
 pub use crate::agent_prompt_delivery::normalize_submitted_prompt;
 use crate::agent_prompt_delivery::{PromptSubmitRuntime, wait_for_prompt_submit};
 use crate::daemon_state::load_metadata_state;
+use crate::osc_notifications::OscNotificationOutput;
 use crate::project_api_contract::routes;
 use crate::remote_access::{RemoteActor, RemoteActorRole, parse_remote_actor};
 use crate::runtime_topology::{
@@ -28,6 +30,8 @@ use super::http::{
     trimmed_query,
 };
 use super::metadata::update_session_metadata;
+use super::notification_display_context::project_display_name;
+use super::notifications::{NotificationWriteInput, upsert_notification};
 use super::output_cache::AgentOutputCaptureCacheKey;
 use super::output_metrics::AgentOutputReadRecord;
 use super::prompt_context::{compose_with_prompt_context, get_prompt_context_text};
@@ -519,6 +523,17 @@ pub(super) fn read_agent_output_payload(
         Ok(output) => output,
         Err(error) => return Err(Box::new(json_error(500, error))),
     };
+    let osc_output = context
+        .osc_notifications
+        .process_capture(session_id, &output_ansi);
+    let output_ansi = osc_output
+        .cleaned_output
+        .as_deref()
+        .unwrap_or(&output_ansi)
+        .to_owned();
+    if let Err(error) = write_osc_notifications(context, session_id, &osc_output) {
+        return Err(Box::new(json_error(500, error)));
+    }
     let output = strip_sgr(&output_ansi);
     let metadata = load_metadata_state(&project_state_dir);
     let mut result = Map::new();
@@ -590,6 +605,84 @@ pub(super) fn read_agent_output_payload(
         payload: Value::Object(body),
         coalesced,
     })
+}
+
+fn write_osc_notifications(
+    context: &ProjectServiceRequestContext,
+    session_id: &str,
+    osc_output: &OscNotificationOutput,
+) -> Result<(), String> {
+    if osc_output.notifications.is_empty() {
+        return Ok(());
+    }
+    let project_state_dir = context.project_state_dir();
+    for notification in &osc_output.notifications {
+        let source = notification
+            .get("source")
+            .and_then(Value::as_str)
+            .unwrap_or("osc");
+        let raw_title = notification
+            .get("title")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        let raw_body = notification
+            .get("body")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        let title = if raw_title.is_empty() {
+            "Terminal notification"
+        } else {
+            raw_title
+        };
+        let body = if raw_body.is_empty() { title } else { raw_body };
+        let key = osc_notification_key(session_id, source, raw_title, raw_body);
+        let input = NotificationWriteInput {
+            title: title.to_owned(),
+            subtitle: Some(format!("Terminal OSC {source}")),
+            body: body.to_owned(),
+            session_id: Some(session_id.to_owned()),
+            target_key: Some(key.clone()),
+            target_kind: Some("session".to_owned()),
+            kind: Some("terminal".to_owned()),
+            project_name: Some(project_display_name(context.project_root())),
+            project_root: Some(context.project_root().to_string_lossy().into_owned()),
+            category_label: Some("Notification".to_owned()),
+            reason_label: Some("Terminal notification".to_owned()),
+            dedupe_key: Some(key),
+            ..NotificationWriteInput::default()
+        };
+        let record = upsert_notification(&project_state_dir, input.clone())?;
+        context.project_events.publish_alert_from_notification(
+            context.project_root(),
+            &input,
+            &record,
+        );
+    }
+    Ok(())
+}
+
+fn osc_notification_key(session_id: &str, source: &str, title: &str, body: &str) -> String {
+    let mut hasher = Sha1::new();
+    for part in [session_id, source, title, body] {
+        hasher.update(part.as_bytes());
+        hasher.update([0]);
+    }
+    format!(
+        "session:{session_id}:terminal-osc:{}",
+        hex_lower(&hasher.finalize())
+    )
+}
+
+fn hex_lower(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        output.push(HEX[(byte >> 4) as usize] as char);
+        output.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    output
 }
 
 fn attach_live_pane_route(

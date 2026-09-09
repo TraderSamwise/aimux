@@ -1,4 +1,5 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{Arc, Mutex};
 
 use serde_json::{Value, json};
 
@@ -16,6 +17,71 @@ struct KittyPending {
 pub struct OscNotificationParser {
     buffer: String,
     kitty_pending: BTreeMap<String, KittyPending>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct OscNotificationOutputState {
+    inner: Arc<Mutex<BTreeMap<String, OscNotificationSessionState>>>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct OscNotificationSessionState {
+    parser: OscNotificationParser,
+    last_output: String,
+    emitted: BTreeSet<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct OscNotificationOutput {
+    pub cleaned_output: Option<String>,
+    pub notifications: Vec<Value>,
+}
+
+impl OscNotificationOutputState {
+    pub fn process_capture(&self, session_id: &str, output: &str) -> OscNotificationOutput {
+        // This path runs for every pane capture. Most captures contain no OSC
+        // bytes, so avoid taking the parser lock, allocating state, or building
+        // JSON unless an OSC introducer is actually present.
+        if !contains_osc_start(output.as_bytes()) {
+            return OscNotificationOutput::default();
+        }
+
+        let cleaned_output = strip_osc_sequences(output);
+        let Ok(mut sessions) = self.inner.lock() else {
+            return OscNotificationOutput {
+                cleaned_output: Some(cleaned_output),
+                notifications: Vec::new(),
+            };
+        };
+        let session = sessions.entry(session_id.to_owned()).or_default();
+        let chunk = output
+            .strip_prefix(&session.last_output)
+            .unwrap_or(output)
+            .to_owned();
+        session.last_output = output.to_owned();
+
+        let parsed = session.parser.parse_chunk(&chunk);
+        let notifications = parsed
+            .get("notifications")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|notification| session.emitted.insert(notification_key(notification)))
+            .cloned()
+            .collect();
+        OscNotificationOutput {
+            cleaned_output: Some(cleaned_output),
+            notifications,
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn retained_session_count(&self) -> usize {
+        self.inner
+            .lock()
+            .map(|sessions| sessions.len())
+            .unwrap_or(0)
+    }
 }
 
 impl OscNotificationParser {
@@ -160,6 +226,33 @@ fn find_osc_start(bytes: &[u8], from: usize) -> Option<usize> {
     None
 }
 
+pub fn has_osc_start(text: &str) -> bool {
+    contains_osc_start(text.as_bytes())
+}
+
+fn contains_osc_start(bytes: &[u8]) -> bool {
+    find_osc_start(bytes, 0).is_some()
+}
+
+fn strip_osc_sequences(text: &str) -> String {
+    let mut parser = OscNotificationParser::new();
+    parser
+        .parse_chunk(text)
+        .get("cleaned")
+        .and_then(Value::as_str)
+        .unwrap_or(text)
+        .to_owned()
+}
+
+fn notification_key(notification: &Value) -> String {
+    serde_json::to_string(&json!({
+        "source": notification.get("source").and_then(Value::as_str).unwrap_or("osc"),
+        "title": notification.get("title").and_then(Value::as_str).unwrap_or(""),
+        "body": notification.get("body").and_then(Value::as_str).unwrap_or(""),
+    }))
+    .unwrap_or_default()
+}
+
 fn parse_osc9(payload: &str) -> Option<Value> {
     if payload.is_empty() || looks_like_conemu_osc9(payload) {
         return None;
@@ -239,17 +332,4 @@ fn decode_base64_utf8(input: &str) -> Option<String> {
         return None;
     }
     String::from_utf8(bytes).ok()
-}
-
-pub fn osc_notifications_contract(input: &Value) -> Value {
-    let mut parser = OscNotificationParser::new();
-    Value::Array(
-        input["chunks"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(Value::as_str)
-            .map(|chunk| parser.parse_chunk(chunk))
-            .collect(),
-    )
 }

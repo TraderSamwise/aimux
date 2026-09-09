@@ -1,4 +1,5 @@
 use aimux::daemon_state::{MetadataState, load_metadata_state, save_metadata_state};
+use aimux::osc_notifications::OscNotificationParser;
 use aimux::project_api_contract::routes;
 use aimux::project_service::agent_output::{
     AgentOutputCaptureRuntime, AgentOutputResponseMode, MAX_AGENT_OUTPUT_CAPTURE_LINES,
@@ -10,6 +11,7 @@ use aimux::project_service::agent_output_projection::{
     AgentOutputProjectionCache, project_agent_output,
 };
 use aimux::project_service::metadata::update_session_metadata;
+use aimux::project_service::notifications::{NotificationQuery, list_notification_snapshot};
 use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
 use aimux::runtime_topology::{coerce_runtime_topology, runtime_topology_path};
 use aimux::tmux::CapturePaneOptions;
@@ -23,6 +25,8 @@ use std::time::Duration;
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 const ATTACHMENT_TEXT: &str =
     include_str!("../../../../testdata/contracts/v1/attachments/text.json");
+const OSC_NOTIFICATIONS: &str =
+    include_str!("../../../../testdata/contracts/v1/notifications/osc.json");
 
 #[derive(Default)]
 struct FakeCaptureRuntime {
@@ -399,6 +403,132 @@ fn output_projection_cache_reuses_projection_for_same_output_version() {
     assert_eq!(projections, 1);
     assert_eq!(first.messages[0]["text"], "hi");
     assert_eq!(second.messages[0]["text"], "hi");
+}
+
+#[test]
+fn output_osc_parser_matches_typescript_contract() {
+    let contract: Value = serde_json::from_str(OSC_NOTIFICATIONS).expect("valid OSC fixture");
+    let cases = contract["cases"].as_array().expect("OSC cases");
+    assert_eq!(cases.len(), 7, "unexpected OSC case count");
+    let mut failures = Vec::new();
+    for case in cases {
+        let mut parser = OscNotificationParser::new();
+        let actual = Value::Array(
+            case["input"]["chunks"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(|chunk| parser.parse_chunk(chunk))
+                .collect(),
+        );
+        if actual != case["output"] {
+            failures.push(json!({
+                "id": case["id"],
+                "name": case["name"],
+                "expected": case["output"],
+                "actual": actual,
+            }));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} OSC notification production parser failures:\n{}",
+        failures.len(),
+        serde_json::to_string_pretty(&failures).expect("serialize failures")
+    );
+}
+
+#[test]
+fn output_route_writes_osc_terminal_notifications_and_cleans_output() {
+    let project = temp_project("osc-notification");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeCaptureRuntime {
+        output: "before \u{1b}]777;notify;Build finished;Tests passed\u{7} after".into(),
+        calls: Vec::new(),
+        actions: Vec::new(),
+    };
+
+    let response = route_agent_output_request_with_runtime(
+        &context,
+        "GET",
+        "/live-pane/output?sessionId=codex-1&purpose=terminal",
+        None,
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["output"], "before  after");
+    assert_eq!(response.body["outputAnsi"], "before  after");
+
+    let snapshot = list_notification_snapshot(&state_dir, NotificationQuery::default());
+    assert_eq!(snapshot.total, 1);
+    let notification = &snapshot.notifications[0];
+    assert_eq!(notification["title"], "Build finished");
+    assert_eq!(notification["body"], "Tests passed");
+    assert_eq!(notification["sessionId"], "codex-1");
+    assert_eq!(notification["kind"], "terminal");
+    assert_eq!(notification["subtitle"], "Terminal OSC osc777");
+    assert_eq!(notification["dedupeKey"], notification["targetKey"]);
+
+    let events = context.project_events.events_since(0, None);
+    assert!(
+        events
+            .iter()
+            .any(|event| event.event.get("type").and_then(Value::as_str) == Some("alert"))
+    );
+
+    let duplicate = route_agent_output_request_with_runtime(
+        &context,
+        "GET",
+        "/live-pane/output?sessionId=codex-1&purpose=poll",
+        None,
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(duplicate.status, 200);
+    assert_eq!(
+        list_notification_snapshot(&state_dir, NotificationQuery::default()).total,
+        1
+    );
+    cleanup(project);
+}
+
+#[test]
+fn output_route_no_osc_fast_path_keeps_parser_state_empty() {
+    let project = temp_project("osc-fast-path");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeCaptureRuntime {
+        output: "plain output without escape sequences".into(),
+        calls: Vec::new(),
+        actions: Vec::new(),
+    };
+
+    for _ in 0..5 {
+        let response = route_agent_output_request_with_runtime(
+            &context,
+            "GET",
+            "/live-pane/output?sessionId=codex-1&purpose=poll",
+            None,
+            &mut runtime,
+        )
+        .unwrap();
+        assert_eq!(response.status, 200);
+        assert_eq!(
+            response.body["output"],
+            "plain output without escape sequences"
+        );
+    }
+    assert_eq!(context.osc_notifications.retained_session_count(), 0);
+    assert_eq!(
+        list_notification_snapshot(&state_dir, NotificationQuery::default()).total,
+        0
+    );
+    cleanup(project);
 }
 
 #[test]

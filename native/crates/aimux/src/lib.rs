@@ -97,6 +97,7 @@ pub mod native_plugin_gh_pr_context;
 pub mod native_plugin_transcript_length;
 pub mod notification_deep_link;
 pub mod notification_policy_contract;
+pub mod osc_notifications;
 pub mod paths;
 pub mod plugin_api;
 pub mod plugin_project_service_host;

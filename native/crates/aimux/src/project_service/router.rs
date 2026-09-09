@@ -2,6 +2,7 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use crate::osc_notifications::OscNotificationOutputState;
 use crate::paths::PathResolver;
 use crate::plugin_api::NativePluginStatus;
 use crate::project_api_contract::{invalidations, project_api_views_for_mutation_route, routes};
@@ -55,6 +56,7 @@ pub struct ProjectServiceRequestContext {
     pub request_headers: BTreeMap<String, String>,
     pub desktop_state: Option<Value>,
     pub output_cache: AgentOutputCaptureCache,
+    pub osc_notifications: OscNotificationOutputState,
     pub output_projection_cache: AgentOutputProjectionCache,
     pub output_metrics: AgentOutputReadMetrics,
     pub project_events: ProjectEventBus,
@@ -71,6 +73,7 @@ impl ProjectServiceRequestContext {
             request_headers: BTreeMap::new(),
             desktop_state: None,
             output_cache: AgentOutputCaptureCache::default(),
+            osc_notifications: OscNotificationOutputState::default(),
             output_projection_cache: AgentOutputProjectionCache::default(),
             output_metrics: AgentOutputReadMetrics::default(),
             project_events: ProjectEventBus::default(),
@@ -90,6 +93,7 @@ impl ProjectServiceRequestContext {
             request_headers: BTreeMap::new(),
             desktop_state: None,
             output_cache: AgentOutputCaptureCache::default(),
+            osc_notifications: OscNotificationOutputState::default(),
             output_projection_cache: AgentOutputProjectionCache::default(),
             output_metrics: AgentOutputReadMetrics::default(),
             project_events: ProjectEventBus::default(),
