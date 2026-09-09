@@ -6,6 +6,8 @@ use serde_json::{Value, json};
 const ESC: u8 = 0x1b;
 const BEL: u8 = 0x07;
 const DEFAULT_KITTY_ID: &str = "__default__";
+const OSC_BUFFER_MAX_BYTES: usize = 8192;
+const OSC_KITTY_PENDING_MAX_BYTES: usize = 8192;
 
 #[derive(Debug, Clone, Default)]
 struct KittyPending {
@@ -17,6 +19,7 @@ struct KittyPending {
 pub struct OscNotificationParser {
     buffer: String,
     kitty_pending: BTreeMap<String, KittyPending>,
+    kitty_dropped: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -39,10 +42,19 @@ pub struct OscNotificationOutput {
 
 impl OscNotificationOutputState {
     pub fn process_capture(&self, session_id: &str, output: &str) -> OscNotificationOutput {
+        self.process_capture_with_hint(session_id, output, contains_osc_start(output.as_bytes()))
+    }
+
+    pub fn process_capture_with_hint(
+        &self,
+        session_id: &str,
+        output: &str,
+        contains_osc: bool,
+    ) -> OscNotificationOutput {
         // This path runs for every pane capture. Most captures contain no OSC
         // bytes, so avoid taking the parser lock, allocating state, or building
         // JSON unless an OSC introducer is actually present.
-        if !contains_osc_start(output.as_bytes()) {
+        if !contains_osc {
             return OscNotificationOutput::default();
         }
 
@@ -80,6 +92,19 @@ impl OscNotificationOutputState {
         self.inner
             .lock()
             .map(|sessions| sessions.len())
+            .unwrap_or(0)
+    }
+
+    #[doc(hidden)]
+    pub fn retained_bytes_for_session(&self, session_id: &str) -> usize {
+        self.inner
+            .lock()
+            .ok()
+            .and_then(|sessions| {
+                sessions
+                    .get(session_id)
+                    .map(|session| session.parser.retained_bytes())
+            })
             .unwrap_or(0)
     }
 }
@@ -121,7 +146,7 @@ impl OscNotificationParser {
             }
 
             let Some(end) = end else {
-                self.buffer = input[esc_index..].to_owned();
+                self.buffer = bounded_suffix(&input[esc_index..], OSC_BUFFER_MAX_BYTES);
                 return json!({ "cleaned": cleaned, "notifications": notifications });
             };
 
@@ -133,6 +158,16 @@ impl OscNotificationParser {
 
         self.buffer.clear();
         json!({ "cleaned": cleaned, "notifications": notifications })
+    }
+
+    #[doc(hidden)]
+    pub fn retained_bytes(&self) -> usize {
+        self.buffer.len()
+            + self
+                .kitty_pending
+                .values()
+                .map(|pending| pending.title.len() + pending.body.len())
+                .sum::<usize>()
     }
 
     fn parse_osc_payload(&mut self, payload: &str) -> Option<Value> {
@@ -184,12 +219,25 @@ impl OscNotificationParser {
         if base64 {
             raw_payload = decode_base64_utf8(&raw_payload)?;
         }
+        if self.kitty_dropped.contains(id) {
+            if done {
+                self.kitty_dropped.remove(id);
+            }
+            return None;
+        }
 
         let mut pending = self.kitty_pending.get(id).cloned().unwrap_or_default();
         if payload_kind == "title" {
             pending.title.push_str(&raw_payload);
         } else {
             pending.body.push_str(&raw_payload);
+        }
+        if pending.title.len() + pending.body.len() > OSC_KITTY_PENDING_MAX_BYTES {
+            self.kitty_pending.remove(id);
+            if !done {
+                self.kitty_dropped.insert(id.to_owned());
+            }
+            return None;
         }
 
         if !done {
@@ -232,6 +280,17 @@ pub fn has_osc_start(text: &str) -> bool {
 
 fn contains_osc_start(bytes: &[u8]) -> bool {
     find_osc_start(bytes, 0).is_some()
+}
+
+fn bounded_suffix(value: &str, max_bytes: usize) -> String {
+    if value.len() <= max_bytes {
+        return value.to_owned();
+    }
+    let mut start = value.len().saturating_sub(max_bytes);
+    while start < value.len() && !value.is_char_boundary(start) {
+        start += 1;
+    }
+    value[start..].to_owned()
 }
 
 fn strip_osc_sequences(text: &str) -> String {

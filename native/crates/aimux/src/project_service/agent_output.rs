@@ -10,7 +10,7 @@ pub use crate::agent_prompt_delivery::normalize_submitted_prompt;
 use crate::agent_prompt_delivery::{PromptSubmitRuntime, wait_for_prompt_submit};
 use crate::daemon_state::load_metadata_state;
 use crate::expose_pane_output_tap::EXPOSE_PANE_TAP_MAX_BYTES;
-use crate::osc_notifications::OscNotificationOutput;
+use crate::osc_notifications::{OscNotificationOutput, has_osc_start};
 use crate::project_api_contract::routes;
 use crate::remote_access::{RemoteActor, RemoteActorRole, parse_remote_actor};
 use crate::runtime_topology::{
@@ -525,21 +525,21 @@ pub(super) fn read_agent_output_payload(
         Ok(output) => output,
         Err(error) => return Err(Box::new(json_error(500, error))),
     };
-    let osc_output = context
-        .osc_notifications
-        .process_capture(session_id, &output_ansi);
-    let output_ansi = osc_output
-        .cleaned_output
-        .as_deref()
-        .unwrap_or(&output_ansi)
-        .to_owned();
+    let output_has_osc = has_osc_start(&output_ansi);
+    let osc_output = context.osc_notifications.process_capture_with_hint(
+        session_id,
+        &output_ansi,
+        output_has_osc,
+    );
+    let output_ansi = osc_output.cleaned_output.as_deref().unwrap_or(&output_ansi);
     if let Err(error) = write_osc_notifications(context, session_id, &osc_output) {
         return Err(Box::new(json_error(500, error)));
     }
-    if let Some(tapped_output) =
-        context
-            .osc_output_tap
-            .track_and_read(session_id, target, EXPOSE_PANE_TAP_MAX_BYTES)
+    if output_has_osc
+        && let Some(tapped_output) =
+            context
+                .osc_output_tap
+                .track_and_read(session_id, target, EXPOSE_PANE_TAP_MAX_BYTES)
     {
         let tapped_osc = context
             .osc_notifications
@@ -548,12 +548,12 @@ pub(super) fn read_agent_output_payload(
             return Err(Box::new(json_error(500, error)));
         }
     }
-    let output = strip_sgr(&output_ansi);
+    let output = strip_sgr(output_ansi);
     let metadata = load_metadata_state(&project_state_dir);
     let mut result = Map::new();
     insert_string(&mut result, "sessionId", session_id);
     insert_string(&mut result, "output", &output);
-    insert_string(&mut result, "outputAnsi", &output_ansi);
+    insert_string(&mut result, "outputAnsi", output_ansi);
     insert_number(&mut result, "startLine", capture_window.start_line);
     insert_number(
         &mut result,
@@ -645,25 +645,37 @@ fn write_osc_notifications(
             .and_then(Value::as_str)
             .unwrap_or("")
             .trim();
-        let title = if raw_title.is_empty() {
-            "Terminal notification"
+        let display_title = if raw_title.is_empty() {
+            raw_body
         } else {
             raw_title
         };
-        let body = if raw_body.is_empty() { title } else { raw_body };
+        let display_body = if raw_body.is_empty() {
+            display_title
+        } else {
+            raw_body
+        };
+        let title = format!("Terminal OSC from {session_id}");
+        let body = if display_body.is_empty() {
+            format!("Session {session_id} emitted an untrusted {source} notification request.")
+        } else {
+            format!(
+                "Session {session_id} emitted an untrusted {source} notification request: {display_title} — {display_body}"
+            )
+        };
         let key = osc_notification_key(session_id, source, raw_title, raw_body);
         let input = NotificationWriteInput {
-            title: title.to_owned(),
-            subtitle: Some(format!("Terminal OSC {source}")),
-            body: body.to_owned(),
+            title,
+            subtitle: Some(format!("Untrusted terminal OSC {source}")),
+            body,
             session_id: Some(session_id.to_owned()),
             target_key: Some(key.clone()),
             target_kind: Some("session".to_owned()),
             kind: Some("terminal".to_owned()),
             project_name: Some(project_display_name(context.project_root())),
             project_root: Some(context.project_root().to_string_lossy().into_owned()),
-            category_label: Some("Notification".to_owned()),
-            reason_label: Some("Terminal notification".to_owned()),
+            category_label: Some("Terminal OSC".to_owned()),
+            reason_label: Some("Untrusted terminal output".to_owned()),
             dedupe_key: Some(key),
             ..NotificationWriteInput::default()
         };

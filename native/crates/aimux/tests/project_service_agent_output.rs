@@ -12,7 +12,9 @@ use aimux::project_service::agent_output_projection::{
 };
 use aimux::project_service::metadata::update_session_metadata;
 use aimux::project_service::notifications::{NotificationQuery, list_notification_snapshot};
-use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
+use aimux::project_service::router::{
+    OscOutputTap, ProjectServiceRequestContext, route_project_service_request,
+};
 use aimux::runtime_topology::{coerce_runtime_topology, runtime_topology_path};
 use aimux::tmux::CapturePaneOptions;
 use serde_json::{Value, json};
@@ -466,11 +468,16 @@ fn output_route_writes_osc_terminal_notifications_and_cleans_output() {
     let snapshot = list_notification_snapshot(&state_dir, NotificationQuery::default());
     assert_eq!(snapshot.total, 1);
     let notification = &snapshot.notifications[0];
-    assert_eq!(notification["title"], "Build finished");
-    assert_eq!(notification["body"], "Tests passed");
+    assert_eq!(notification["title"], "Terminal OSC from codex-1");
+    assert_eq!(
+        notification["body"],
+        "Session codex-1 emitted an untrusted osc777 notification request: Build finished — Tests passed"
+    );
     assert_eq!(notification["sessionId"], "codex-1");
     assert_eq!(notification["kind"], "terminal");
-    assert_eq!(notification["subtitle"], "Terminal OSC osc777");
+    assert_eq!(notification["subtitle"], "Untrusted terminal OSC osc777");
+    assert_eq!(notification["categoryLabel"], "Terminal OSC");
+    assert_eq!(notification["reasonLabel"], "Untrusted terminal output");
     assert_eq!(notification["dedupeKey"], notification["targetKey"]);
 
     let events = context.project_events.events_since(0, None);
@@ -501,7 +508,9 @@ fn output_route_no_osc_fast_path_keeps_parser_state_empty() {
     let project = temp_project("osc-fast-path");
     let state_dir = project.join("state");
     write_state(&state_dir);
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let tap = OscOutputTap::counting_for_test();
+    context.osc_output_tap = tap.clone();
     let mut runtime = FakeCaptureRuntime {
         output: "plain output without escape sequences".into(),
         calls: Vec::new(),
@@ -524,11 +533,70 @@ fn output_route_no_osc_fast_path_keeps_parser_state_empty() {
         );
     }
     assert_eq!(context.osc_notifications.retained_session_count(), 0);
+    assert_eq!(tap.track_read_call_count(), 0);
     assert_eq!(
         list_notification_snapshot(&state_dir, NotificationQuery::default()).total,
         0
     );
     cleanup(project);
+}
+
+#[test]
+fn output_route_marks_osc_payload_as_untrusted_session_output() {
+    let project = temp_project("osc-untrusted");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeCaptureRuntime {
+        output: "\u{1b}]777;notify;Approve this;Looks safe\u{7}".into(),
+        calls: Vec::new(),
+        actions: Vec::new(),
+    };
+
+    let response = route_agent_output_request_with_runtime(
+        &context,
+        "GET",
+        "/live-pane/output?sessionId=codex-1&purpose=terminal",
+        None,
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    let snapshot = list_notification_snapshot(&state_dir, NotificationQuery::default());
+    assert_eq!(snapshot.total, 1);
+    let notification = &snapshot.notifications[0];
+    assert_eq!(notification["title"], "Terminal OSC from codex-1");
+    assert_ne!(notification["title"], "Approve this");
+    assert_eq!(
+        notification["body"],
+        "Session codex-1 emitted an untrusted osc777 notification request: Approve this — Looks safe"
+    );
+    cleanup(project);
+}
+
+#[test]
+fn output_osc_parser_caps_unterminated_sequence_buffer() {
+    let mut parser = OscNotificationParser::new();
+    let prefix = "\u{1b}]777;notify;Title;";
+    parser.parse_chunk(prefix);
+    for _ in 0..20 {
+        parser.parse_chunk(&"x".repeat(1024));
+    }
+
+    assert!(parser.retained_bytes() <= 8192);
+}
+
+#[test]
+fn output_osc_parser_caps_kitty_pending_payloads() {
+    let mut parser = OscNotificationParser::new();
+    for _ in 0..20 {
+        parser.parse_chunk(&format!("\u{1b}]99;p=title:d=0;{}\u{7}", "x".repeat(1024)));
+    }
+
+    assert!(parser.retained_bytes() <= 8192);
+    let parsed = parser.parse_chunk("\u{1b}]99;p=body:d=1;done\u{7}");
+    assert_eq!(parsed["notifications"], json!([]));
 }
 
 #[test]

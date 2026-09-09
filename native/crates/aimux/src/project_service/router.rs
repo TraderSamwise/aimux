@@ -1,6 +1,7 @@
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::expose_pane_output_tap::{
@@ -181,6 +182,7 @@ impl ProjectServiceRequestContext {
 #[derive(Clone, Default)]
 pub struct OscOutputTap {
     inner: Option<Arc<Mutex<SendableOscTap>>>,
+    track_read_calls: Arc<AtomicUsize>,
 }
 
 impl std::fmt::Debug for OscOutputTap {
@@ -203,7 +205,21 @@ impl OscOutputTap {
     fn enabled(tap: ExposePaneOutputTap<TmuxRuntimeManager>) -> Self {
         Self {
             inner: Some(Arc::new(Mutex::new(SendableOscTap(tap)))),
+            track_read_calls: Arc::new(AtomicUsize::new(0)),
         }
+    }
+
+    #[doc(hidden)]
+    pub fn counting_for_test() -> Self {
+        Self {
+            inner: None,
+            track_read_calls: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn track_read_call_count(&self) -> usize {
+        self.track_read_calls.load(Ordering::Relaxed)
     }
 
     pub fn track_and_read(
@@ -212,6 +228,7 @@ impl OscOutputTap {
         target: TmuxTarget,
         max_bytes: usize,
     ) -> Option<String> {
+        self.track_read_calls.fetch_add(1, Ordering::Relaxed);
         let Some(inner) = &self.inner else {
             return None;
         };
