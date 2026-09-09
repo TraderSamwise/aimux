@@ -842,7 +842,7 @@ fn history_dir(project_root: &Path) -> PathBuf {
     project_root.join(".aimux").join("history")
 }
 
-fn status_dir(project_root: &Path) -> PathBuf {
+pub fn status_dir(project_root: &Path) -> PathBuf {
     project_root.join(".aimux").join("status")
 }
 

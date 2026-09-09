@@ -67,6 +67,35 @@ pub fn read_plan_content(
     }
 }
 
+/// Every plan the authority directory holds, as (session id, content).
+///
+/// Node's plan-authority.ts listed these for the progress watcher; production
+/// only ever read one plan at a time.
+pub fn list_plan_authority_entries(project_root: impl AsRef<Path>) -> Vec<(String, String)> {
+    let dir = plan_authority_dir_for_project_root(project_root);
+    let Ok(entries) = fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut plans = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|extension| extension.to_str()) != Some("md") {
+            continue;
+        }
+        let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) else {
+            continue;
+        };
+        if validate_plan_session_id(stem).is_none() {
+            continue;
+        }
+        if let Ok(content) = fs::read_to_string(&path) {
+            plans.push((stem.to_owned(), content));
+        }
+    }
+    plans.sort_by(|left, right| left.0.cmp(&right.0));
+    plans
+}
+
 pub fn write_plan_content(
     project_root: impl AsRef<Path>,
     session_id: &str,

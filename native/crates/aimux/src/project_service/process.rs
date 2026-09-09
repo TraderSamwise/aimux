@@ -25,6 +25,7 @@ use crate::plugin_api::NativePluginStatus;
 use crate::plugin_project_service_host::{
     builtin_plugin_tick_tasks, native_plugin_statuses_for_context,
 };
+use crate::project_service::builtin_metadata_task::builtin_metadata_task;
 use crate::project_service::loop_watcher_task::loop_watcher_task;
 use crate::project_service::scheduler::spawn_project_service_scheduler;
 use crate::project_service::scribe_watcher_task::scribe_watcher_task;
@@ -463,6 +464,7 @@ fn serve_project_service_listener(
     let mut periodic_tasks = builtin_plugin_tick_tasks();
     periodic_tasks.push(loop_watcher_task(&context));
     periodic_tasks.push(scribe_watcher_task(&context));
+    periodic_tasks.push(builtin_metadata_task(&context));
     spawn_project_service_scheduler(Arc::clone(&context), periodic_tasks);
     for stream in listener.incoming() {
         let Ok(mut stream) = stream else {

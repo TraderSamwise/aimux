@@ -4,6 +4,7 @@ pub mod agent_output_projection;
 pub mod agent_tracker_derivation;
 pub mod agents;
 pub mod attachments;
+pub mod builtin_metadata_task;
 pub mod controls;
 pub mod coordination_mutations;
 pub mod coordination_worklist;
