@@ -15,39 +15,27 @@ binary either still does not perform or only preserves as an uncalled contract.
 
 Ranked by cost of absence, not by implementation size.
 
-1. **Runtime guard repair start.** The native dashboard probes runtime-guard
-   state and renders stale/rebuild/disconnected overlays, but no production path
-   starts the guarded dashboard repair workflow from that state. Cost: Sam sees
-   a stale or rebuild-required live TUI stay blocked until a manual CLI repair.
-   Size: days, mostly promotion plus dashboard/daemon integration.
-
-2. **Debug logging.** Native has log tail/clear helpers and parses debug flags,
-   but not Node's process-wide JSONL logger with env/CLI config, level/category
-   filtering, redaction, rotation, and always-on lifecycle warnings. Cost:
-   incident work loses the cause data needed to debug restart, repair, and
-   watcher failures. Size: days, translation plus promotion.
-
-3. **Lifecycle orphan cleanup.** Native can identify orphaned dashboards, but
+1. **Lifecycle orphan cleanup.** Native can identify orphaned dashboards, but
    restart still reports empty orphan cleanup and there is no production
    equivalent of Node's validation tmux/process and orphan dashboard cleanup.
    Cost: validation leftovers and stale dashboards can accumulate and make
    runtime state or restart reports misleading. Size: about a day to days,
    promotion with careful process/tmux integration.
 
-4. **Attachment text recovery.** Live Rust transcript projection has a simpler
+2. **Attachment text recovery.** Live Rust transcript projection has a simpler
    attached-files parser than Node's shared helper for tmux-wrapped attachment
    paths, multiple/bare references, and filename/mime recovery. Cost: wrapped
    or multi-attachment transcript blocks can render as plain text or lose labels
    in GUI chat/transcript views. Size: hours, promotion into the projection path.
 
-5. **Repair events.** `repair_events.rs` can append the JSONL record, but no
+3. **Repair events.** `repair_events.rs` can append the JSONL record, but no
    production repair/restart path calls it for control-plane restart,
    project-service ensure, tmux repair, dashboard reload, or orphan cleanup.
    Cost: repairs still work, but the durable repair timeline and notification
    trail are missing for postmortems. Size: hours, promotion into daemon/repair
    call sites.
 
-6. **OSC terminal notifications.** Routing parity was duplicate and removed, but
+4. **OSC terminal notifications.** Routing parity was duplicate and removed, but
    OSC 9/777/99 parsing is not wired to production terminal output. The parser
    and corpus remain as the tracked spec. Cost: terminal-emitted notifications
    do not become Aimux notifications; low frequency but real if tools depend on
@@ -87,5 +75,9 @@ Ranked by cost of absence, not by implementation size.
 The original 2026-09-09 audit entries for hosted mode, relay client, mobile
 push bridge, attachment hosting, tool-output watchers, service-state snapshots,
 runtime topology reconciliation, builtin metadata watchers, loop watcher,
-scribe watcher, transcript reconciler, and agent prompt delivery have all been
-ported and wired.
+scribe watcher, transcript reconciler, agent prompt delivery, runtime guard
+repair start, and debug logging have all been ported and wired. Debug logging
+now lives in native `debug_logging.rs` with production call sites for control
+plane restart, project-service ensure/startup, tmux repair, runtime-guard
+repair, and watcher rail diagnostics; the old debug parity fixtures were
+deleted.

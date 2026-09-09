@@ -62,7 +62,6 @@ pub mod dashboard_tool_picker;
 pub mod dashboard_tui_visibility;
 pub mod dashboard_ui_state;
 pub mod debug_logging;
-pub mod debug_logging_contract;
 pub mod debug_state;
 pub mod desktop_notifier;
 pub mod error_display_contract;

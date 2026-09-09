@@ -122,8 +122,6 @@ Binding statuses: PROVEN-FAILS 325, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
 | `fixture_dashboard_ui_state_store` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/dashboard-ui-state-store.json` | 12 | mutated fixture output failed owning Rust suite |
 | `fixture_dashboard_visibility` | PROVEN-FAILS | `testdata/contracts/v1/dashboard/visibility.json` | 4 | mutated fixture output failed owning Rust suite |
 | `fixture_dashboard_worktree_groups` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/dashboard-worktree-groups.json` | 7 | mutated fixture output failed owning Rust suite |
-| `fixture_debug_lifecycle_log` | PROVEN-FAILS | `testdata/contracts/v1/debug/lifecycle-log.json` | 3 | mutated fixture output failed owning Rust suite |
-| `fixture_debug_logging` | PROVEN-FAILS | `testdata/contracts/v1/debug/logging.json` | 7 | mutated fixture output failed owning Rust suite |
 | `fixture_debug_state` | PROVEN-FAILS | `testdata/contracts/v1/debug-state/report.json` | 8 | mutated fixture output failed owning Rust suite |
 | `fixture_default_plugin_gh_pr_context` | PROVEN-FAILS | `testdata/contracts/v1/default-plugins/gh-pr-context.json` | 4 | mutated fixture output failed owning Rust suite |
 | `fixture_default_plugin_transcript_length` | PROVEN-FAILS | `testdata/contracts/v1/default-plugins/transcript-length.json` | 4 | mutated fixture output failed owning Rust suite |
