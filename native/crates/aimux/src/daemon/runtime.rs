@@ -56,7 +56,9 @@ use crate::daemon::text::system::{DaemonSystemTextRuntime, OpenFocusRequest};
 use crate::daemon::text::team::DaemonTeamTextRuntime;
 use crate::daemon::text::worktrees::{CLI_PROJECT_MUTATION_TIMEOUT_MS, DaemonWorktreeTextRuntime};
 use crate::daemon::tmux_doctor::{system_tmux_doctor_report, system_tmux_repair_result};
-use crate::daemon_projects::{ProjectsRouteProject, build_projects_route_projects};
+use crate::daemon_projects::{
+    ProjectsRouteProject, build_projects_route_projects, count_online_desktop_agents,
+};
 use crate::daemon_state::{
     AimuxDaemonInfo, DaemonState, MetadataApiEndpoint, ProjectServiceState, clear_daemon_info,
     get_daemon_host, get_daemon_port, is_pid_alive, load_daemon_state, load_metadata_endpoint,
@@ -100,6 +102,8 @@ use std::thread;
 use std::time::Duration;
 
 const OVERSEER_INPUT_READY_TIMEOUT_MS: u64 = 15_000;
+const PROJECT_ONLINE_AGENT_COUNT_CACHE_TTL_MS: u128 = 2_000;
+const PROJECT_ONLINE_AGENT_COUNT_TIMEOUT_MS: u64 = 500;
 
 pub struct RealDaemonRuntime {
     resolver: PathResolver,
@@ -110,11 +114,18 @@ pub struct RealDaemonRuntime {
     project_service_startup_timeout_ms: u64,
     auth_flows: Mutex<HashMap<String, LoginFlowWaiter>>,
     global_expose_hot_snapshots: GlobalExposeHotSnapshotCoordinator,
+    project_online_agent_count_cache: HashMap<String, ProjectOnlineAgentCountCacheEntry>,
 }
 
 struct DaemonProjectReadSnapshot {
     resolver: PathResolver,
     project_service_process_verifier: Arc<dyn ProjectServiceProcessVerifier>,
+}
+
+#[derive(Debug, Clone)]
+struct ProjectOnlineAgentCountCacheEntry {
+    count: Option<usize>,
+    ts: u128,
 }
 
 pub trait ProjectServiceProcessVerifier: Send + Sync {
@@ -182,6 +193,10 @@ impl fmt::Debug for RealDaemonRuntime {
                 "global_expose_hot_snapshots",
                 &self.global_expose_hot_snapshots,
             )
+            .field(
+                "project_online_agent_count_cache_len",
+                &self.project_online_agent_count_cache.len(),
+            )
             .finish_non_exhaustive()
     }
 }
@@ -211,6 +226,7 @@ impl RealDaemonRuntime {
             project_service_startup_timeout_ms,
             auth_flows: Mutex::new(HashMap::new()),
             global_expose_hot_snapshots: GlobalExposeHotSnapshotCoordinator::default(),
+            project_online_agent_count_cache: HashMap::new(),
         }
     }
 
@@ -230,6 +246,7 @@ impl RealDaemonRuntime {
             project_service_startup_timeout_ms,
             auth_flows: Mutex::new(HashMap::new()),
             global_expose_hot_snapshots: GlobalExposeHotSnapshotCoordinator::default(),
+            project_online_agent_count_cache: HashMap::new(),
         }
     }
 
@@ -317,6 +334,46 @@ impl RealDaemonRuntime {
                 format!("Error: {error}"),
             )),
         }
+    }
+
+    fn read_project_online_agent_count(&mut self, project: &ProjectsRouteProject) -> Option<usize> {
+        if !project.service_alive {
+            self.project_online_agent_count_cache.remove(&project.id);
+            return Some(0);
+        }
+        let endpoint = project
+            .service_endpoint
+            .as_ref()
+            .and_then(|value| serde_json::from_value::<MetadataApiEndpoint>(value.clone()).ok())?;
+        let now = current_unix_millis();
+        if let Some(cached) = self.project_online_agent_count_cache.get(&project.id)
+            && now.saturating_sub(cached.ts) < PROJECT_ONLINE_AGENT_COUNT_CACHE_TTL_MS
+        {
+            return cached.count;
+        }
+        let request = DaemonJsonRequest {
+            url: format!(
+                "http://{}:{}{}",
+                endpoint.host,
+                endpoint.port,
+                project_routes::DESKTOP_STATE
+            ),
+            method: DaemonHttpMethod::Get,
+            headers: BTreeMap::from([("accept".to_owned(), "application/json".to_owned())]),
+            body: None,
+            timeout_ms: Some(PROJECT_ONLINE_AGENT_COUNT_TIMEOUT_MS),
+        };
+        let count = match execute_loopback_json_request(&request) {
+            Ok(response) if (200..300).contains(&response.status) => {
+                count_online_desktop_agents(&response.json)
+            }
+            _ => None,
+        };
+        self.project_online_agent_count_cache.insert(
+            project.id.clone(),
+            ProjectOnlineAgentCountCacheEntry { count, ts: now },
+        );
+        count
     }
 
     fn ensure_project_service_for_text_request(&mut self, project: &str) -> Result<String, String> {
@@ -967,6 +1024,14 @@ impl DaemonStatusRuntime for RealDaemonRuntime {
             resolver: self.resolver.clone(),
             project_service_process_verifier: Arc::clone(&self.project_service_process_verifier),
         })
+    }
+
+    fn list_projects_with_online_agent_counts_for_route(&mut self) -> Vec<ProjectsRouteProject> {
+        let mut projects = self.list_projects_for_route();
+        for project in &mut projects {
+            project.online_agent_count = self.read_project_online_agent_count(project);
+        }
+        projects
     }
 
     fn daemon_state(&self) -> DaemonState {

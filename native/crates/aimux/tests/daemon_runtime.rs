@@ -129,6 +129,63 @@ fn native_daemon_projects_report_live_service_from_state_without_hiding_catalog(
 }
 
 #[test]
+fn native_daemon_projects_route_reads_online_agent_count_from_live_project_service_and_caches() {
+    let fixture = RuntimeFixture::new("projects-online-count");
+    let project = fixture.project("live");
+    let mut resolver = fixture.resolver();
+    let entry = resolver
+        .register_project(&project)
+        .expect("register project")
+        .expect("project entry");
+    let server = ScriptedHttpServer::spawn(vec![json!({
+        "sessions": [
+            { "id": "codex-live", "status": "running" },
+            { "id": "codex-offline", "status": "offline" },
+            { "id": "codex-pending", "status": "offline", "pendingAction": "spawn" },
+            { "id": "claude-overseer", "status": "running", "overseer": true },
+            { "id": "claude-scribe", "status": "running", "team": { "role": "scribe" } }
+        ],
+        "teammates": [
+            { "id": "teammate-live", "status": "running" },
+            { "id": "teammate-exited", "status": "exited" }
+        ]
+    })]);
+    persist_service(
+        &resolver,
+        &entry.id,
+        &project,
+        std::process::id() as i32,
+        ProjectServiceStatus::Running,
+    );
+    save_metadata_endpoint(
+        resolver.project_state_dir_for(&project),
+        &MetadataApiEndpoint {
+            host: "127.0.0.1".into(),
+            port: server.port,
+            pid: std::process::id() as i32,
+            updated_at: "now".into(),
+        },
+    )
+    .expect("metadata endpoint");
+    let mut runtime = fixture.runtime();
+
+    let first = handle_daemon_runtime_request(&mut runtime, request("GET", "/projects"));
+    let first_json: Value = serde_json::from_slice(&first.body).expect("first projects json");
+    assert_eq!(first.status, 200);
+    assert_eq!(first_json["projects"][0]["onlineAgentCount"], json!(3));
+
+    let second = handle_daemon_runtime_request(&mut runtime, request("GET", "/projects"));
+    let second_json: Value = serde_json::from_slice(&second.body).expect("second projects json");
+    assert_eq!(second.status, 200);
+    assert_eq!(second_json["projects"][0]["onlineAgentCount"], json!(3));
+
+    let requests = server.join();
+    assert_eq!(requests.len(), 1);
+    assert_request_path(&requests[0], "GET", project_routes::DESKTOP_STATE);
+    fixture.cleanup();
+}
+
+#[test]
 fn native_daemon_http_routes_health_and_projects_through_real_runtime() {
     let fixture = RuntimeFixture::new("http");
     let project = fixture.project("repo");
