@@ -264,24 +264,31 @@ pub fn log_lifecycle_always(message: &str, category: &str, fields: Option<Value>
 pub fn sanitize_log_string(value: &str) -> String {
     let mut output = String::with_capacity(value.len());
     let mut index = 0;
-    while let Some(relative) = value[index..].find('=') {
-        let equals = index + relative;
-        let name_start = value[..equals]
+    while let Some(separator) = next_sensitive_assignment_separator(value, index) {
+        let name_start = value[..separator]
             .char_indices()
             .rev()
             .find_map(|(candidate, ch)| {
                 (!is_env_name_char(ch)).then_some(candidate + ch.len_utf8())
             })
             .unwrap_or(0);
-        let name = &value[name_start..equals];
+        let name = &value[name_start..separator];
         if !is_valid_env_name(name) || !is_sensitive_log_name(name) {
-            output.push_str(&value[index..=equals]);
-            index = equals + 1;
+            output.push_str(&value[index..=separator]);
+            index = separator + 1;
             continue;
         }
-        output.push_str(&value[index..equals + 1]);
+        output.push_str(&value[index..separator + 1]);
+        let mut value_start = separator + 1;
+        while let Some((_, ch)) = value[value_start..].char_indices().next() {
+            if !ch.is_whitespace() {
+                break;
+            }
+            output.push(ch);
+            value_start += ch.len_utf8();
+        }
         output.push_str("<redacted>");
-        index = assignment_value_end(value, equals + 1);
+        index = sensitive_value_end(value, value_start, value.as_bytes()[separator]);
     }
     output.push_str(&value[index..]);
     output
@@ -443,6 +450,12 @@ fn rotated_path(path: &Path, index: u64) -> PathBuf {
     PathBuf::from(format!("{}.{}", path.display(), index))
 }
 
+fn next_sensitive_assignment_separator(value: &str, start: usize) -> Option<usize> {
+    value[start..]
+        .char_indices()
+        .find_map(|(relative, ch)| matches!(ch, '=' | ':').then_some(start + relative))
+}
+
 fn normalize_level(value: Option<&str>, fallback: LogLevel) -> LogLevel {
     match value {
         Some("error") => LogLevel::Error,
@@ -530,6 +543,14 @@ fn assignment_value_end(value: &str, start: usize) -> usize {
     index
 }
 
+fn sensitive_value_end(value: &str, start: usize, separator: u8) -> usize {
+    if separator == b':' && value[start..].to_ascii_lowercase().starts_with("bearer ") {
+        let token_start = start + "bearer ".len();
+        return assignment_value_end(value, token_start);
+    }
+    assignment_value_end(value, start)
+}
+
 fn is_sensitive_log_name(name: &str) -> bool {
     let normalized = name.to_ascii_lowercase();
     normalized.contains("token")
@@ -584,6 +605,57 @@ mod tests {
                     "command": "SENTRY_AUTH_TOKEN=<redacted>"
                 },
                 "visible": ["AUTH_KEY=<redacted>", "PATH=/bin"]
+            })
+        );
+    }
+
+    #[test]
+    fn redacts_high_risk_runtime_secrets() {
+        let sanitized = sanitize_log_string(
+            "relay AIMUX_RELAY_TOKEN=relay-secret Authorization: Bearer hosted-secret webhook_secret: hook-secret PATH=/bin",
+        );
+        assert_eq!(
+            sanitized,
+            "relay AIMUX_RELAY_TOKEN=<redacted> Authorization: <redacted> webhook_secret: <redacted> PATH=/bin"
+        );
+        for secret in ["relay-secret", "hosted-secret", "hook-secret"] {
+            assert!(
+                !sanitized.contains(secret),
+                "sanitized string leaked {secret}"
+            );
+        }
+
+        let sanitized_value = sanitize_log_value(&json!({
+            "relayToken": "relay-secret",
+            "hosted": {
+                "authorization": "Bearer hosted-secret",
+                "webhookSecret": "hook-secret",
+                "credentials": ["password=credential-secret"]
+            },
+            "visible": "PATH=/bin"
+        }));
+        let rendered = serde_json::to_string(&sanitized_value).expect("sanitized value serializes");
+        for secret in [
+            "relay-secret",
+            "hosted-secret",
+            "hook-secret",
+            "credential-secret",
+        ] {
+            assert!(
+                !rendered.contains(secret),
+                "sanitized value leaked {secret}"
+            );
+        }
+        assert_eq!(
+            sanitized_value,
+            json!({
+                "relayToken": "<redacted>",
+                "hosted": {
+                    "authorization": "<redacted>",
+                    "webhookSecret": "<redacted>",
+                    "credentials": "<redacted>"
+                },
+                "visible": "PATH=/bin"
             })
         );
     }
