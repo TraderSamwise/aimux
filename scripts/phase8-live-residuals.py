@@ -53,12 +53,13 @@ class Scope:
         self.home = self.root / "home"
         self.aimux_home = self.root / "aimux-home"
         self.project = self.root / "project"
+        self.tmp = Path(tempfile.mkdtemp(prefix=f"aimux-phase8-{label}-{os.getpid()}-", dir="/tmp"))
         self.aimux_bin = aimux_bin
         self.procs: list[subprocess.Popen[Any]] = []
         self.fds: list[int] = []
         self.tmux_socket_name: str | None = None
         self.real_tmux: str | None = None
-        self.env = isolated_env(self.root, self.home, self.aimux_home, aimux_bin)
+        self.env = isolated_env(self.home, self.aimux_home, aimux_bin, self.tmp)
         self.home.mkdir(parents=True, exist_ok=True)
         self.aimux_home.mkdir(parents=True, exist_ok=True)
         self.project.mkdir(parents=True, exist_ok=True)
@@ -118,6 +119,7 @@ class Scope:
                 os.close(fd)
             except OSError:
                 pass
+        shutil.rmtree(self.tmp, ignore_errors=True)
         self.temp.cleanup()
 
     def stop_control_plane(self) -> None:
@@ -159,7 +161,7 @@ class Scope:
         self.cleanup()
 
 
-def isolated_env(root: Path, home: Path, aimux_home: Path, aimux_bin: Path) -> dict[str, str]:
+def isolated_env(home: Path, aimux_home: Path, aimux_bin: Path, tmp: Path) -> dict[str, str]:
     env = os.environ.copy()
     env["HOME"] = str(home)
     env["AIMUX_HOME"] = str(aimux_home)
@@ -169,7 +171,7 @@ def isolated_env(root: Path, home: Path, aimux_home: Path, aimux_bin: Path) -> d
     env["AIMUX_DAEMON_PORT"] = str(free_residual_daemon_port())
     env["AIMUX_DASHBOARD_IMPLEMENTATION"] = "native"
     env["TERM"] = "xterm-256color"
-    env["TMPDIR"] = str(root / "tmp")
+    env["TMPDIR"] = str(tmp)
     Path(env["TMPDIR"]).mkdir(parents=True, exist_ok=True)
     return without_tmux(env)
 
@@ -919,6 +921,190 @@ def run_dashboard_attach_smoke(aimux_bin: Path, mutation: str | None) -> dict[st
             "notCaught": [
                 "host-specific terminal emulator behavior outside tmux",
                 "native terminal emulator detach key translation outside tmux",
+            ],
+        }
+
+
+def run_bare_dashboard_tmux_smoke(aimux_bin: Path, mutation: str | None) -> dict[str, Any]:
+    tmux = find_tmux()
+    with Scope("bare-dashboard", aimux_bin) as scope:
+        socket_name = f"aimux-bare-dashboard-{os.getpid()}-{time.time_ns()}"
+        scope.tmux_socket_name = socket_name
+        install_tmux_socket_wrapper(scope, tmux, socket_name)
+        run([tmux, "-L", socket_name, "kill-server"], env=without_tmux(os.environ.copy()), timeout=10, check=False)
+        scope.init_git_project()
+        seed_initial_commit(scope)
+
+        proc, client_fd = start_process_capture_client(
+            scope,
+            [str(aimux_bin)],
+            cwd=scope.project.resolve(),
+            cols=120,
+            rows=30,
+        )
+
+        def attached_client_rows() -> list[dict[str, str]]:
+            result = tmux_cmd_for_socket(
+                tmux,
+                socket_name,
+                [
+                    "list-clients",
+                    "-F",
+                    "#{client_tty}\t#{session_name}\t#{window_id}\t#{window_name}\t#{client_name}",
+                ],
+                check=False,
+            )
+            if result.returncode != 0:
+                return []
+            rows = []
+            for line in result.stdout.splitlines():
+                fields = line.split("\t")
+                if len(fields) == 5:
+                    rows.append({
+                        "tty": fields[0],
+                        "session": fields[1],
+                        "windowId": fields[2],
+                        "windowName": fields[3],
+                        "name": fields[4],
+                    })
+            return rows
+
+        expected_window_name = "phase8-missing-dashboard" if mutation == "bare-dashboard-inline" else "dashboard"
+        dashboard_client = None
+        raw_output = ""
+        deadline = time.monotonic() + 35
+        while time.monotonic() < deadline:
+            raw_output += drain_fd_now(client_fd)
+            dashboard_client = next(
+                (
+                    item
+                    for item in attached_client_rows()
+                    if item["windowName"] == expected_window_name
+                ),
+                None,
+            )
+            if dashboard_client:
+                break
+            time.sleep(0.05)
+        if not dashboard_client:
+            sessions = tmux_cmd_for_socket(
+                tmux,
+                socket_name,
+                ["list-sessions", "-F", "#{session_name}\t#{session_windows}"],
+                check=False,
+            )
+            windows = tmux_cmd_for_socket(
+                tmux,
+                socket_name,
+                ["list-windows", "-a", "-F", "#{session_name}\t#{window_id}\t#{window_index}\t#{window_name}"],
+                check=False,
+            )
+            clients = tmux_cmd_for_socket(
+                tmux,
+                socket_name,
+                ["list-clients", "-F", "#{client_tty}\t#{session_name}\t#{window_id}\t#{window_name}\t#{client_name}"],
+                check=False,
+            )
+            raise LiveResidualFailure(
+                "timed out waiting for bare aimux to attach a tmux dashboard client:\n"
+                + json.dumps({
+                    "returncode": proc.poll(),
+                    "expectedWindowName": expected_window_name,
+                    "stdout": raw_output[-2000:],
+                    "sessions": sessions.stdout[-2000:],
+                    "sessionError": sessions.stderr[-1000:],
+                    "windows": windows.stdout[-2000:],
+                    "windowError": windows.stderr[-1000:],
+                    "clients": clients.stdout[-2000:],
+                    "clientError": clients.stderr[-1000:],
+                }, indent=2)
+            )
+        output = drain_fd_now(client_fd)
+        if "agent multiplexer" in output and not attached_client_rows():
+            raise LiveResidualFailure(f"bare aimux rendered inline instead of attaching tmux:\n{output[-2000:]}")
+        if proc.poll() is not None:
+            raise LiveResidualFailure(
+                "bare aimux exited before holding an attached tmux client:\n"
+                + json.dumps({
+                    "returncode": proc.returncode,
+                    "client": dashboard_client,
+                    "output": output[-2000:],
+                }, indent=2)
+            )
+        tmux_cmd_for_socket(tmux, socket_name, ["detach-client", "-t", dashboard_client["tty"]], check=False)
+        terminate_process(proc)
+
+        user_session = "phase8-user-shell"
+        tmux_cmd_for_socket(
+            tmux,
+            socket_name,
+            ["new-session", "-d", "-s", user_session, "-c", str(scope.project.resolve()), "sh"],
+        )
+        inside_proc, inside_fd = start_tmux_capture_client(
+            scope,
+            tmux,
+            socket_name,
+            [
+                "-f",
+                "/dev/null",
+                "attach-session",
+                "-t",
+                user_session,
+            ],
+            cwd=scope.project.resolve(),
+            cols=120,
+            rows=30,
+        )
+        inside_client = wait_until(
+            lambda: next(
+                (
+                    item
+                    for item in attached_client_rows()
+                    if item["session"] == user_session
+                ),
+                None,
+            ),
+            timeout=5,
+            label="bare aimux inside tmux attached shell client",
+        )
+        drain_fd_now(inside_fd)
+        if mutation != "bare-dashboard-inline":
+            os.write(inside_fd, f"{aimux_bin}\r".encode())
+        inside_dashboard_client = wait_until(
+            lambda: next(
+                (
+                    item
+                    for item in attached_client_rows()
+                    if item["tty"] == inside_client["tty"] and item["windowName"] == expected_window_name
+                ),
+                None,
+            ),
+            timeout=15,
+            label="bare aimux inside tmux switches client to dashboard",
+        )
+        if inside_dashboard_client["session"] == user_session:
+            raise LiveResidualFailure(
+                "bare aimux inside tmux stayed in the launching shell session:\n"
+                + json.dumps({
+                    "client": inside_dashboard_client,
+                    "output": drain_fd_now(inside_fd)[-2000:],
+                    "clients": attached_client_rows(),
+                }, indent=2)
+            )
+        tmux_cmd_for_socket(tmux, socket_name, ["detach-client", "-t", inside_client["tty"]], check=False)
+        terminate_process(inside_proc)
+        return {
+            "name": "phase8-live-bare-dashboard-tmux-smoke",
+            "privateSocket": socket_name,
+            "caught": [
+                "bare aimux opens the managed tmux dashboard instead of rendering inline",
+                "fresh git repo dashboard mode initializes and attaches a real tmux client",
+                "dashboard window is active after bare aimux",
+                "bare aimux inside an existing tmux client switches to the dashboard",
+            ],
+            "notCaught": [
+                "host terminal emulator behavior outside the private PTY",
+                "manual mosh transport quirks outside tmux's attached client state",
             ],
         }
 
@@ -2178,6 +2364,37 @@ def start_tmux_capture_client(
     return proc, master_fd
 
 
+def start_process_capture_client(
+    scope: Scope,
+    args: list[str],
+    *,
+    cwd: Path,
+    cols: int,
+    rows: int,
+) -> tuple[subprocess.Popen[Any], int]:
+    master_fd, slave_fd = pty.openpty()
+    set_pty_size(slave_fd, cols, rows)
+    scope.fds.append(master_fd)
+
+    def make_controlling_tty() -> None:
+        os.setsid()
+        fcntl.ioctl(slave_fd, termios.TIOCSCTTY, 0)
+
+    proc = subprocess.Popen(
+        args,
+        cwd=str(cwd),
+        env=scope.env,
+        stdin=slave_fd,
+        stdout=slave_fd,
+        stderr=slave_fd,
+        close_fds=True,
+        preexec_fn=make_controlling_tty,
+    )
+    os.close(slave_fd)
+    scope.procs.append(proc)
+    return proc, master_fd
+
+
 def set_pty_size(fd: int, cols: int, rows: int) -> None:
     winsize = struct.pack("HHHH", rows, cols, 0, 0)
     fcntl.ioctl(fd, termios.TIOCSWINSZ, winsize)
@@ -2648,6 +2865,8 @@ def run_one(name: str, aimux_bin: Path, mutation: str | None) -> dict[str, Any]:
         return run_dashboard_render_smoke(aimux_bin, mutation)
     if name == "dashboard-attach":
         return run_dashboard_attach_smoke(aimux_bin, mutation)
+    if name == "bare-dashboard":
+        return run_bare_dashboard_tmux_smoke(aimux_bin, mutation)
     if name == "dashboard-spawn":
         return run_dashboard_spawn_smoke(aimux_bin, mutation)
     if name == "command-resolution":
@@ -2683,6 +2902,7 @@ def prove_failures(args: argparse.Namespace, aimux_bin: Path) -> list[dict[str, 
         ("dashboard-attach", "dashboard-attach-terminal-error"),
         ("dashboard-attach", "dashboard-attach-focus-target-missing"),
         ("dashboard-attach", "dashboard-attach-return-missing"),
+        ("bare-dashboard", "bare-dashboard-inline"),
         ("dashboard", "dashboard-resize-width-overflow"),
         ("dashboard-spawn", "dashboard-spawn-missing-session"),
         ("command-resolution", "command-unsupported"),
@@ -2746,6 +2966,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             "dashboard",
             "dashboard-input",
             "dashboard-attach",
+            "bare-dashboard",
             "dashboard-spawn",
             "command-resolution",
             "agent-shell",
@@ -2771,6 +2992,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "dashboard-attach-terminal-error",
         "dashboard-attach-focus-target-missing",
         "dashboard-attach-return-missing",
+        "bare-dashboard-inline",
         "dashboard-spawn-missing-session",
         "command-unsupported",
         "command-silent-alias",
@@ -2801,6 +3023,7 @@ def main(argv: list[str]) -> int:
             "tmux",
             "dashboard",
             "dashboard-attach",
+            "bare-dashboard",
             "dashboard-spawn",
             "command-resolution",
             "agent-shell",

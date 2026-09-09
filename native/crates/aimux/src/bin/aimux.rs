@@ -7,6 +7,9 @@ use aimux::core_command_contract::CORE_COMMAND_NAMES;
 use aimux::daemon::runtime::run_daemon_internal;
 use aimux::daemon_state::get_daemon_base_url;
 use aimux::dashboard_internal::{NativeDashboardOptions, run_native_dashboard_internal};
+use aimux::dashboard_targets::{
+    DashboardResolveOptions, find_live_dashboard_target, resolve_dashboard_target,
+};
 use aimux::launcher_env::{CliEntry, cli_entry_for, prepare_stable_process_env};
 use aimux::local_ui_server::{
     DEFAULT_LOCAL_UI_HOST, DEFAULT_LOCAL_UI_PORT, LocalUiConfig, LocalUiServerOptions,
@@ -518,6 +521,13 @@ const SECURITY_HELP: &str = "Usage: aimux security [options] [command]\n\nManage
 const SECURITY_UNLOCK_HELP: &str = "Usage: aimux security unlock\n\nUnlock security credentials";
 
 fn run_root_dashboard_command() -> Result<ExitCode> {
+    let project_root = current_project_root()?;
+    let project_root_text = project_root.to_string_lossy().into_owned();
+    let mut tmux = TmuxRuntimeManager::new();
+    if !tmux.is_available() {
+        anyhow::bail!("aimux: tmux is not installed or not available in PATH");
+    }
+
     let serve_args = vec!["serve".to_owned()];
     let serve = run_core_cli(&serve_args);
     if serve.code != 0 {
@@ -530,7 +540,24 @@ fn run_root_dashboard_command() -> Result<ExitCode> {
         return Ok(ExitCode::from(serve.code as u8));
     }
 
-    run_root_native_dashboard()
+    if let Some(live) =
+        find_live_dashboard_target(&project_root_text, &mut tmux).map_err(anyhow::Error::msg)?
+    {
+        open_dashboard_target_from_foreground(&mut tmux, &live.dashboard_target, true)?;
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    let resolved = resolve_dashboard_target(
+        &project_root_text,
+        &mut tmux,
+        DashboardResolveOptions {
+            force_reload: false,
+            open_in_host_session: false,
+        },
+    )
+    .map_err(anyhow::Error::msg)?;
+    open_dashboard_target_from_foreground(&mut tmux, &resolved.dashboard_target, false)?;
+    Ok(ExitCode::SUCCESS)
 }
 
 fn run_root_native_dashboard() -> Result<ExitCode> {
@@ -609,11 +636,20 @@ fn open_payload_target_from_foreground(payload: &Value) -> Result<()> {
         .or_else(|| tmux_target_from_value(&payload["tmuxTarget"]))
         .ok_or_else(|| anyhow::anyhow!("tmux target missing from native launch response"))?;
     let mut tmux = TmuxRuntimeManager::new();
+    open_dashboard_target_from_foreground(&mut tmux, &target, false)
+}
+
+fn open_dashboard_target_from_foreground(
+    tmux: &mut TmuxRuntimeManager,
+    target: &TmuxTarget,
+    already_resolved: bool,
+) -> Result<()> {
     tmux.open_target(
-        &target,
+        target,
         OpenTargetOptions {
             inside_tmux: std::env::var_os("TMUX").is_some(),
             client_tty: foreground_tty(),
+            already_resolved,
             ..OpenTargetOptions::default()
         },
     )
