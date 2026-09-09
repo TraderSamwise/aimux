@@ -25,16 +25,44 @@ use aimux::daemon::text::team::DaemonTeamTextRuntime;
 use aimux::daemon::text::worktrees::DaemonWorktreeTextRuntime;
 use aimux::daemon_projects::ProjectsRouteProject;
 use aimux::daemon_state::{AimuxDaemonInfo, DaemonState, MetadataApiEndpoint};
+use aimux::hosted_config::HostedConfig;
+use aimux::hosted_principals::{HostedGrant, HostedPrincipalsStore};
+use aimux::hosted_server::{
+    HostedServerState, handle_hosted_daemon_request, start_hosted_server_background,
+};
+use aimux::paths::PathResolver;
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
+use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone)]
 struct FakeRuntime {
     calls: Vec<String>,
+    projects: Vec<ProjectsRouteProject>,
+    proxy_json: ProxyJsonResponse,
+    proxy_binary: ProxyBinaryResponse,
 }
 
 impl FakeRuntime {
+    fn empty() -> Self {
+        Self {
+            calls: Vec::new(),
+            projects: Vec::new(),
+            proxy_json: ProxyJsonResponse {
+                status: 200,
+                json: json!({ "ok": true }),
+            },
+            proxy_binary: ProxyBinaryResponse {
+                status: 200,
+                body: Vec::new(),
+                content_type: Some("image/png".into()),
+            },
+        }
+    }
+
     fn request(method: &str, path: &str) -> DaemonHttpRequest {
         DaemonHttpRequest {
             method: method.into(),
@@ -69,7 +97,7 @@ impl DaemonStatusRuntime for FakeRuntime {
     }
 
     fn list_projects_for_route(&self) -> Vec<ProjectsRouteProject> {
-        Vec::new()
+        self.projects.clone()
     }
 
     fn daemon_state(&self) -> DaemonState {
@@ -165,31 +193,30 @@ impl DaemonJsonRouteRuntime for FakeRuntime {
 
     fn proxy_json_request(
         &mut self,
-        _target_url: &str,
-        _method: &str,
+        target_url: &str,
+        method: &str,
         _headers: &BTreeMap<String, String>,
-        _body: Option<&Value>,
+        body: Option<&Value>,
         _timeout_ms: u64,
     ) -> Result<ProxyJsonResponse, String> {
-        Ok(ProxyJsonResponse {
-            status: 200,
-            json: json!({ "ok": true }),
-        })
+        self.calls.push(format!(
+            "proxy-json:{method}:{target_url}:{}",
+            body.cloned().unwrap_or(Value::Null)
+        ));
+        Ok(self.proxy_json.clone())
     }
 
     fn proxy_binary_request(
         &mut self,
-        _target_url: &str,
-        _method: &str,
+        target_url: &str,
+        method: &str,
         _headers: &BTreeMap<String, String>,
         _timeout_ms: u64,
         _max_bytes: usize,
     ) -> Result<ProxyBinaryResponse, String> {
-        Ok(ProxyBinaryResponse {
-            status: 200,
-            body: Vec::new(),
-            content_type: Some("image/png".into()),
-        })
+        self.calls
+            .push(format!("proxy-binary:{method}:{target_url}"));
+        Ok(self.proxy_binary.clone())
     }
 }
 
@@ -602,9 +629,85 @@ fn json_body(response: &aimux::daemon::http::PreparedDaemonResponse) -> Value {
     serde_json::from_slice(&response.body).expect("json body")
 }
 
+struct HostedFixture {
+    root: PathBuf,
+    resolver: PathResolver,
+}
+
+impl HostedFixture {
+    fn new(name: &str) -> Self {
+        let root = std::env::temp_dir().join(format!(
+            "aimux-hosted-server-test-{name}-{}-{}",
+            std::process::id(),
+            unix_millis(SystemTime::now())
+        ));
+        fs::create_dir_all(&root).expect("fixture root");
+        let resolver = PathResolver::new(
+            "/",
+            &root,
+            Some(root.join(".aimux").to_string_lossy().into_owned()),
+        );
+        Self { root, resolver }
+    }
+
+    fn state(&self, config: HostedConfig) -> HostedServerState {
+        HostedServerState::with_resolver(config, self.resolver.clone())
+    }
+}
+
+impl Drop for HostedFixture {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+fn hosted_project(path: &str, port: u64, live: bool) -> ProjectsRouteProject {
+    ProjectsRouteProject {
+        id: path.replace('/', "-"),
+        name: path.into(),
+        path: path.into(),
+        last_seen: None,
+        dashboard_session_name: "aimux-test".into(),
+        service: None,
+        service_alive: live,
+        service_endpoint: Some(json!({ "host": "127.0.0.1", "port": port })),
+        online_agent_count: None,
+    }
+}
+
+fn grant_hosted_operator(
+    resolver: &PathResolver,
+    label: &str,
+    project_root: &str,
+    session_id: &str,
+) -> String {
+    let store = HostedPrincipalsStore::with_resolver(resolver.clone());
+    let (principal, token) = store.create_principal(label).expect("create principal");
+    store
+        .grant_session(
+            &principal.id,
+            HostedGrant {
+                project_root: project_root.to_owned(),
+                session_id: session_id.to_owned(),
+            },
+        )
+        .expect("grant principal");
+    token
+}
+
+fn bearer(token: &str) -> BTreeMap<String, String> {
+    BTreeMap::from([("authorization".to_owned(), format!("Bearer {token}"))])
+}
+
+fn unix_millis(time: SystemTime) -> u128 {
+    time.duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+}
+
 #[test]
 fn runtime_processor_routes_health_through_status_contract() {
-    let mut runtime = FakeRuntime { calls: Vec::new() };
+    let mut runtime = FakeRuntime::empty();
     let response =
         handle_daemon_runtime_request(&mut runtime, FakeRuntime::request("GET", "/health"));
 
@@ -623,7 +726,7 @@ fn runtime_processor_routes_health_through_status_contract() {
 
 #[test]
 fn runtime_processor_parses_body_and_dispatches_json_routes() {
-    let mut runtime = FakeRuntime { calls: Vec::new() };
+    let mut runtime = FakeRuntime::empty();
     let mut request = FakeRuntime::request("POST", "/internal/push");
     request
         .headers
@@ -639,7 +742,7 @@ fn runtime_processor_parses_body_and_dispatches_json_routes() {
 
 #[test]
 fn runtime_processor_computes_remote_access_before_route_dispatch() {
-    let mut runtime = FakeRuntime { calls: Vec::new() };
+    let mut runtime = FakeRuntime::empty();
     let mut request = FakeRuntime::request("POST", "/internal/push");
     request
         .headers
@@ -661,7 +764,7 @@ fn runtime_processor_computes_remote_access_before_route_dispatch() {
 
 #[test]
 fn runtime_processor_preserves_binary_route_bodies() {
-    let mut runtime = FakeRuntime { calls: Vec::new() };
+    let mut runtime = FakeRuntime::empty();
     let response = handle_daemon_runtime_request(
         &mut runtime,
         FakeRuntime::request("GET", "/proxy/127.0.0.1/4321/attachments/file-1/content"),
@@ -672,5 +775,135 @@ fn runtime_processor_preserves_binary_route_bodies() {
     assert_eq!(
         response.headers.get("content-type").map(String::as_str),
         Some("image/png")
+    );
+}
+
+#[test]
+fn hosted_server_startup_is_default_off() {
+    let fixture = HostedFixture::new("default-off");
+    let runtime = Arc::new(Mutex::new(FakeRuntime::empty()));
+
+    let handle = start_hosted_server_background(
+        HostedConfig::default(),
+        fixture.resolver.clone(),
+        Arc::clone(&runtime),
+    )
+    .expect("hosted startup decision");
+
+    assert!(handle.is_none());
+}
+
+#[test]
+fn hosted_server_serves_health_and_rejects_unauthorized_without_cors() {
+    let fixture = HostedFixture::new("unauthorized");
+    let mut runtime = FakeRuntime::empty();
+    let config = HostedConfig {
+        enabled: true,
+        ..HostedConfig::default()
+    };
+    let state = fixture.state(config);
+
+    let health =
+        handle_hosted_daemon_request(&mut runtime, &state, FakeRuntime::request("GET", "/health"));
+    assert_eq!(health.status, 200);
+    assert_eq!(
+        json_body(&health),
+        json!({ "ok": true, "mode": "hosted", "lockdown": false })
+    );
+    assert!(!health.headers.contains_key("access-control-allow-origin"));
+
+    let mut request =
+        FakeRuntime::request("GET", "/proxy/127.0.0.1/43210/agents/output?sessionId=s");
+    request
+        .headers
+        .insert("origin".into(), "http://evil.example".into());
+    request
+        .headers
+        .insert("x-aimux-actor-role".into(), "owner".into());
+    let unauthorized = handle_hosted_daemon_request(&mut runtime, &state, request);
+    assert_eq!(unauthorized.status, 401);
+    assert_eq!(
+        json_body(&unauthorized),
+        json!({ "ok": false, "error": "unauthorized" })
+    );
+    assert!(
+        !unauthorized
+            .headers
+            .contains_key("access-control-allow-origin")
+    );
+    assert!(runtime.calls.is_empty());
+}
+
+#[test]
+fn hosted_server_routes_with_minted_operator_and_body_caps() {
+    let fixture = HostedFixture::new("route");
+    let token = grant_hosted_operator(&fixture.resolver, "grand", "/repo", "s");
+    let mut runtime = FakeRuntime::empty();
+    runtime.projects = vec![hosted_project("/repo", 43210, true)];
+    let state = fixture.state(HostedConfig {
+        enabled: true,
+        max_prompt_bytes: 64,
+        ..HostedConfig::default()
+    });
+
+    let mut request = FakeRuntime::request("POST", "/proxy/127.0.0.1/43210/agents/input");
+    request.headers = bearer(&token);
+    request
+        .headers
+        .insert("content-type".into(), "application/json".into());
+    request
+        .body_chunks
+        .push(br#"{"sessionId":"s","text":"hi"}"#.to_vec());
+    let routed = handle_hosted_daemon_request(&mut runtime, &state, request);
+
+    assert_eq!(routed.status, 200);
+    assert_eq!(
+        runtime.calls,
+        vec![
+            r#"proxy-json:POST:http://127.0.0.1:43210/agents/input:{"sessionId":"s","text":"hi"}"#
+        ]
+    );
+
+    let mut oversized = FakeRuntime::request("POST", "/proxy/127.0.0.1/43210/agents/input");
+    oversized.headers = bearer(&token);
+    oversized
+        .headers
+        .insert("content-type".into(), "application/json".into());
+    oversized.body_chunks.push(
+        serde_json::to_vec(&json!({ "sessionId": "s", "text": "x".repeat(500) })).expect("body"),
+    );
+    let refused = handle_hosted_daemon_request(&mut runtime, &state, oversized);
+
+    assert_eq!(refused.status, 413);
+    assert_eq!(runtime.calls.len(), 1);
+}
+
+#[test]
+fn hosted_server_refuses_unservable_binary_content_types() {
+    let fixture = HostedFixture::new("binary");
+    let token = grant_hosted_operator(&fixture.resolver, "grand", "/repo", "s");
+    let mut runtime = FakeRuntime::empty();
+    runtime.projects = vec![hosted_project("/repo", 43210, true)];
+    runtime.proxy_binary = ProxyBinaryResponse {
+        status: 200,
+        body: b"<svg/>".to_vec(),
+        content_type: Some("image/svg+xml".into()),
+    };
+    let state = fixture.state(HostedConfig {
+        enabled: true,
+        ..HostedConfig::default()
+    });
+
+    let mut request = FakeRuntime::request(
+        "GET",
+        "/proxy/127.0.0.1/43210/attachments/att_x/content?sessionId=s",
+    );
+    request.headers = bearer(&token);
+    let response = handle_hosted_daemon_request(&mut runtime, &state, request);
+
+    assert_eq!(response.status, 502);
+    assert_eq!(
+        json_body(&response),
+        json!({ "ok": false, "error": "upstream returned an unsupported content type" })
     );
 }

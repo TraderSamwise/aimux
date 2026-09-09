@@ -1036,8 +1036,15 @@ pub fn run_daemon_internal() -> Result<()> {
     };
     start_daemon_disk_maintenance_background(resolver.clone());
     let runtime = Arc::new(Mutex::new(
-        RealDaemonRuntime::new(resolver, info).with_global_expose_hot_snapshot_background_refresh(),
+        RealDaemonRuntime::new(resolver.clone(), info)
+            .with_global_expose_hot_snapshot_background_refresh(),
     ));
+    let hosted_config = crate::hosted_config::load_hosted_config_with_resolver(&resolver);
+    let _hosted_server = crate::hosted_server::start_hosted_server_background(
+        hosted_config,
+        resolver.clone(),
+        Arc::clone(&runtime),
+    )?;
     // A machine left logged in and enabled should come back on its own rather
     // than waiting for someone to run a CLI command.
     if let Ok(runtime) = runtime.lock() {
