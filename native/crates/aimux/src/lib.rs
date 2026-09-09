@@ -73,6 +73,7 @@ pub mod dashboard_model_services_lifecycle_contract;
 pub mod dashboard_navigation;
 pub mod dashboard_ops_helpers_contract;
 pub mod dashboard_ops_mutations_contract;
+pub mod dashboard_pending_actions;
 pub mod dashboard_processes;
 pub mod dashboard_project_events;
 pub mod dashboard_readiness;

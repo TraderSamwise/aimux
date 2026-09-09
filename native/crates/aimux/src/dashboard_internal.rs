@@ -21,6 +21,9 @@ use crate::dashboard_model::{
     DesktopStateGoldenFixture, DesktopStateSnapshot, SessionStatus, filter_dashboard_visible_model,
 };
 use crate::dashboard_navigation::DashboardEntryRef;
+use crate::dashboard_pending_actions::{
+    DashboardPendingActions, PendingTarget, pending_action_for_request,
+};
 use crate::dashboard_project_events::{
     DashboardProjectEvent, DashboardProjectRefreshState, dashboard_alert_footer_flash,
 };
@@ -207,6 +210,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
     let mut scroll_offset = 0;
     let mut latest_snapshot = None;
     let mut latest_endpoint = None;
+    let mut pending_actions = DashboardPendingActions::new();
     let mut ui_state = if options.once || options.desktop_state_file.is_some() {
         None
     } else {
@@ -354,15 +358,48 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                 match effect {
                     DashboardControllerEffect::Quit => return Ok(()),
                     DashboardControllerEffect::Request(request) => {
+                        // Paint the overlay before the round trip, so the row
+                        // reacts on the keypress rather than on the next refresh.
+                        let pending = pending_action_for_request(request.path, &request.body).map(
+                            |(target, id, kind)| {
+                                let token = match target {
+                                    PendingTarget::Session => pending_actions.set_session_action(
+                                        &id,
+                                        &kind,
+                                        None,
+                                        pending_action_now_ms(),
+                                    ),
+                                    PendingTarget::Service => pending_actions.set_service_action(
+                                        &id,
+                                        &kind,
+                                        None,
+                                        pending_action_now_ms(),
+                                    ),
+                                    PendingTarget::Worktree => pending_actions.set_worktree_action(
+                                        Some(id.as_str()),
+                                        &kind,
+                                        None,
+                                        pending_action_now_ms(),
+                                    ),
+                                };
+                                (target, id, token)
+                            },
+                        );
                         if let Some(endpoint) = latest_endpoint.as_ref() {
                             if let Err(error) =
                                 execute_dashboard_controller_action(endpoint, &request)
                             {
                                 controller.footer_message = Some(error.to_string());
+                                if let Some((target, id, token)) = pending.as_ref() {
+                                    pending_actions.clear_if_token(*target, id, *token);
+                                }
                             }
                         } else {
                             controller.footer_message =
                                 Some("Dashboard action requires a project-service endpoint".into());
+                            if let Some((target, id, token)) = pending.as_ref() {
+                                pending_actions.clear_if_token(*target, id, *token);
+                            }
                         }
                         render_now = true;
                         render_requested_by_input = true;
@@ -584,6 +621,8 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                 if let Some(ui_state) = ui_state.as_ref() {
                     ui_state.apply_order_to_snapshot(&mut loaded.snapshot);
                 }
+                pending_actions.reconcile(&loaded.snapshot, pending_action_now_ms());
+                pending_actions.apply(&mut loaded.snapshot);
                 let hide_offline_agents = controller
                     .as_ref()
                     .map(|controller| controller.hide_offline_agents)
@@ -1784,6 +1823,14 @@ fn restore_dashboard_navigation_for_render(
         return;
     };
     ui_state.restore_navigation(&mut controller.navigation, snapshot);
+}
+
+/// Wall-clock milliseconds, used only to age pending-action overlays.
+fn pending_action_now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as i64)
+        .unwrap_or_default()
 }
 
 #[cfg(test)]

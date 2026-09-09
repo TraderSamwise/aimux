@@ -574,7 +574,6 @@ fn string_field<'a>(value: &'a Value, field: &str) -> Option<&'a str> {
         .filter(|value| !value.is_empty())
 }
 
-
 fn number_field(value: &Value, field: &str) -> Option<i64> {
     value.get(field).and_then(Value::as_i64)
 }
