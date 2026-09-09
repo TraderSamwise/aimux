@@ -108,6 +108,19 @@ pub fn read_dashboard_keys(input: &mut impl Read) -> io::Result<Vec<DashboardKey
     }
 }
 
+pub fn ensure_dashboard_stdin_nonblocking() -> io::Result<()> {
+    let flags = unsafe { libc::fcntl(libc::STDIN_FILENO, libc::F_GETFL) };
+    if flags == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    if flags & libc::O_NONBLOCK == 0
+        && unsafe { libc::fcntl(libc::STDIN_FILENO, libc::F_SETFL, flags | libc::O_NONBLOCK) } == -1
+    {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
 pub fn terminal_size() -> Option<(usize, usize)> {
     terminal_size_for_fd(libc::STDOUT_FILENO)
         .or_else(|| terminal_size_for_fd(libc::STDIN_FILENO))

@@ -38,7 +38,8 @@ use crate::dashboard_service_input::{
     render_worktree_list_overlay, render_worktree_remove_confirm_overlay,
 };
 use crate::dashboard_terminal::{
-    DashboardTerminalGuard, consume_terminal_resize, read_dashboard_keys, terminal_size,
+    DashboardTerminalGuard, consume_terminal_resize, ensure_dashboard_stdin_nonblocking,
+    read_dashboard_keys, terminal_size,
 };
 use crate::dashboard_tool_picker::{enabled_dashboard_tools, render_tool_picker_overlay};
 use crate::dashboard_tui_visibility::{
@@ -62,7 +63,7 @@ use std::env;
 use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Output, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -92,6 +93,63 @@ struct DashboardViewport {
     rows: usize,
 }
 
+impl DashboardViewport {
+    fn key(self) -> String {
+        format!("{}x{}", self.cols, self.rows)
+    }
+}
+
+#[derive(Debug, Default)]
+struct DashboardViewportState {
+    last_size: Option<DashboardViewport>,
+    pending_expanded_size: Option<DashboardViewport>,
+    pending_expanded_count: usize,
+}
+
+impl DashboardViewportState {
+    fn get_viewport_size(&mut self, fallback: DashboardViewport) -> DashboardViewport {
+        let target = dashboard_tmux_pane_target();
+        if let Some(tmux_pane) = target.as_deref()
+            && let Some(size) = read_tmux_dashboard_pane_size(tmux_pane)
+        {
+            if let Some(previous) = self.last_size {
+                let expands = size.cols > previous.cols || size.rows > previous.rows;
+                if expands {
+                    let same_pending = self.pending_expanded_size == Some(size);
+                    self.pending_expanded_size = Some(size);
+                    self.pending_expanded_count = if same_pending {
+                        self.pending_expanded_count + 1
+                    } else {
+                        1
+                    };
+                    if self.pending_expanded_count < 2 {
+                        return previous;
+                    }
+                } else {
+                    self.pending_expanded_size = None;
+                    self.pending_expanded_count = 0;
+                }
+            }
+            self.last_size = Some(size);
+            self.pending_expanded_size = None;
+            self.pending_expanded_count = 0;
+            return size;
+        }
+
+        if target.is_some()
+            && let Some(size) = self.last_size
+        {
+            return size;
+        }
+
+        let size = terminal_size()
+            .map(|(cols, rows)| DashboardViewport { cols, rows })
+            .unwrap_or(fallback);
+        self.last_size = Some(size);
+        size
+    }
+}
+
 pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<()> {
     let mut controller: Option<DashboardController> = None;
     let mut focus_state = DashboardFocusState::default();
@@ -117,6 +175,12 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
         cols: options.cols,
         rows: options.rows,
     };
+    let live_dashboard = !options.once && options.desktop_state_file.is_none();
+    let mut viewport_state = DashboardViewportState::default();
+    if live_dashboard {
+        viewport = viewport_state.get_viewport_size(viewport);
+    }
+    let mut last_viewport_key = viewport.key();
     let mut last_tmux_viewport_check = Instant::now() - DASHBOARD_TERMINAL_SIZE_RECHECK_INTERVAL;
     let mut last_render = Instant::now();
     let clock_start = Instant::now();
@@ -144,31 +208,32 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
         } else {
             true
         };
+        ensure_dashboard_stdin_nonblocking().context("keep dashboard stdin nonblocking")?;
         let keys = read_dashboard_keys(&mut stdin).context("read dashboard key")?;
         if !keys.is_empty() {
             mark_dashboard_tui_visible(&mut visibility_state, now, None);
             dashboard_visible = true;
         }
-        let terminal_resized =
-            !options.once && options.desktop_state_file.is_none() && consume_terminal_resize();
+        let terminal_resized = live_dashboard && consume_terminal_resize();
         if terminal_resized {
+            viewport = viewport_state.get_viewport_size(viewport);
+            last_viewport_key = viewport.key();
             render_now = true;
             dashboard_visible = true;
         }
-        if !options.once && options.desktop_state_file.is_none() {
-            let tmux_viewport =
+        if live_dashboard {
+            let measured_viewport =
                 if last_tmux_viewport_check.elapsed() >= DASHBOARD_TERMINAL_SIZE_RECHECK_INTERVAL {
                     last_tmux_viewport_check = Instant::now();
-                    read_tmux_terminal_size()
+                    Some(viewport_state.get_viewport_size(viewport))
                 } else {
                     None
                 };
-            let measured_viewport = tmux_viewport
-                .or_else(|| terminal_size().map(|(cols, rows)| DashboardViewport { cols, rows }));
             if let Some(next_viewport) = measured_viewport
-                && next_viewport != viewport
+                && next_viewport.key() != last_viewport_key
             {
                 viewport = next_viewport;
+                last_viewport_key = viewport.key();
                 render_now = true;
                 dashboard_visible = true;
             }
@@ -398,6 +463,9 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
 
         let render_due = render_now || last_render.elapsed() >= DASHBOARD_FALLBACK_REFRESH_INTERVAL;
         if render_due {
+            if live_dashboard {
+                viewport = viewport_state.get_viewport_size(viewport);
+            }
             let cached_subscreen_snapshot = latest_snapshot.as_ref().filter(|_| {
                 render_now
                     && controller
@@ -692,17 +760,19 @@ fn elapsed_millis(start: Instant) -> i64 {
     start.elapsed().as_millis().min(i64::MAX as u128) as i64
 }
 
-fn read_tmux_terminal_size() -> Option<DashboardViewport> {
-    let tmux_pane = env::var("TMUX_PANE")
+fn dashboard_tmux_pane_target() -> Option<String> {
+    env::var("TMUX_PANE")
         .ok()
-        .filter(|value| !value.trim().is_empty());
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .or_else(current_process_tmux_pane_id)
+}
+
+fn read_tmux_dashboard_pane_size(tmux_pane: &str) -> Option<DashboardViewport> {
     let mut command = Command::new("tmux");
-    command.args(["display-message", "-p"]);
-    if let Some(tmux_pane) = tmux_pane.as_deref() {
-        command.args(["-t", tmux_pane]);
-    }
-    command.arg("#{window_width}x#{window_height}");
-    let output = command.output().ok()?;
+    command.args(["display-message", "-p", "-t", tmux_pane]);
+    command.arg("#{pane_width}x#{pane_height}");
+    let output = command_output_with_timeout(&mut command, Duration::from_millis(500)).ok()?;
     if !output.status.success() {
         return None;
     }
@@ -711,6 +781,61 @@ fn read_tmux_terminal_size() -> Option<DashboardViewport> {
     let cols = cols.trim().parse::<usize>().ok()?;
     let rows = rows.trim().parse::<usize>().ok()?;
     (cols > 0 && rows > 0).then_some(DashboardViewport { cols, rows })
+}
+
+fn current_process_tmux_pane_id() -> Option<String> {
+    let mut command = Command::new("tmux");
+    command.args([
+        "list-panes",
+        "-a",
+        "-F",
+        "#{pane_id}\t#{pane_pid}\t#{session_attached}\t#{window_active}",
+    ]);
+    let panes_output =
+        command_output_with_timeout(&mut command, Duration::from_millis(500)).ok()?;
+    if !panes_output.status.success() {
+        return None;
+    }
+    let panes_raw = String::from_utf8_lossy(&panes_output.stdout);
+    let panes = crate::dashboard_tui_visibility::parse_tmux_pane_rows(Some(&panes_raw));
+    let parents = crate::process_inspector::list_process_parents()
+        .into_iter()
+        .map(|(pid, ppid)| (i64::from(pid), i64::from(ppid)))
+        .collect();
+    crate::dashboard_tui_visibility::find_tmux_pane_for_process(
+        &panes,
+        &parents,
+        i64::from(std::process::id()),
+    )
+    .map(|pane| pane.pane_id)
+}
+
+fn command_output_with_timeout(command: &mut Command, timeout: Duration) -> io::Result<Output> {
+    let mut child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let deadline = Instant::now() + timeout;
+    loop {
+        if child.try_wait()?.is_some() {
+            return child.wait_with_output();
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let kill_deadline = Instant::now() + Duration::from_millis(100);
+            while Instant::now() < kill_deadline {
+                if child.try_wait().ok().flatten().is_some() {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(5));
+            }
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "timed out waiting for command output",
+            ));
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
 }
 
 fn execute_dashboard_controller_action(

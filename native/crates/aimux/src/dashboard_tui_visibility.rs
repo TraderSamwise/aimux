@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
-use std::process::Command;
+use std::io;
+use std::process::{Command, Output, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
 
 pub const DASHBOARD_TUI_VISIBILITY_CACHE_MS: i64 = 250;
 pub const DASHBOARD_VISIBLE_VISIBILITY_RECHECK_MS: i64 = 1_000;
@@ -232,6 +235,10 @@ pub fn read_tmux_tui_visibility() -> TuiVisibilitySnapshot {
     .ok()
     .map(|raw| parse_tmux_visibility(Some(&raw), Some(&pane_id)));
 
+    if let Some(snapshot) = direct_snapshot.as_ref().filter(|snapshot| snapshot.visible) {
+        return snapshot.clone();
+    }
+
     let process_resolution = tmux_output(&[
         "list-panes",
         "-a",
@@ -425,9 +432,40 @@ fn read_tmux_tui_visibility_from_process_rows(
 }
 
 fn tmux_output(args: &[&str]) -> Result<String, ()> {
-    let output = Command::new("tmux").args(args).output().map_err(|_| ())?;
+    let mut command = Command::new("tmux");
+    command.args(args);
+    let output =
+        command_output_with_timeout(&mut command, Duration::from_millis(500)).map_err(|_| ())?;
     if !output.status.success() {
         return Err(());
     }
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+fn command_output_with_timeout(command: &mut Command, timeout: Duration) -> io::Result<Output> {
+    let mut child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let deadline = Instant::now() + timeout;
+    loop {
+        if child.try_wait()?.is_some() {
+            return child.wait_with_output();
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let kill_deadline = Instant::now() + Duration::from_millis(100);
+            while Instant::now() < kill_deadline {
+                if child.try_wait().ok().flatten().is_some() {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(5));
+            }
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "timed out waiting for tmux output",
+            ));
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
 }
