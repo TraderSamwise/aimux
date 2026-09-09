@@ -159,6 +159,19 @@ impl CoreCliRuntime for FakeRuntime {
         unreachable!("top-level dispatch fixture does not exercise login")
     }
 
+    fn list_remote_security_devices(&self, _pending: bool) -> Result<Vec<Value>, String> {
+        Ok(Vec::new())
+    }
+
+    fn update_remote_security_device(
+        &self,
+        _device_id: &str,
+        _action: &str,
+        _approval_code: Option<&str>,
+    ) -> Result<Value, String> {
+        unreachable!("top-level dispatch fixture does not exercise security devices")
+    }
+
     fn request_core_command(&mut self, request: &CoreCommandCall) -> Result<CoreCommandOk, String> {
         Ok(CoreCommandOk {
             ok: true,

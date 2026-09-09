@@ -19,6 +19,7 @@ use crate::core_text::{
     render_core_project_restart_lines, render_core_project_serve_lines,
     render_core_project_stop_lines, render_core_projects_list_lines,
     render_core_remote_disable_lines, render_core_remote_enable_lines,
+    render_core_remote_security_device_mutation_line, render_core_remote_security_devices_lines,
     render_core_remote_status_lines, render_core_security_unlock_lines, render_core_whoami_lines,
 };
 use crate::daemon::text::auth::AuthFlowResult;
@@ -49,6 +50,7 @@ use crate::logs::{
 use crate::paths::{PathResolver, is_git_project_root, project_checkout_required_message};
 use crate::remote_credentials::{clear_credentials, load_credentials, set_remote_enabled};
 use crate::remote_login::{LoginAction, run_login_flow};
+use crate::remote_security_devices::{list_remote_security_devices, update_remote_security_device};
 use crate::runtime_migration::{
     build_runtime_migration_report, import_runtime_migration,
     render_runtime_migration_import_result, render_runtime_migration_report,
@@ -99,6 +101,13 @@ pub trait CoreCliRuntime {
     fn set_remote_enabled(&self, enabled: bool) -> Result<(), String>;
     fn clear_credentials(&self) -> String;
     fn run_login_flow(&self, security_unlock: bool) -> Result<AuthFlowResult, String>;
+    fn list_remote_security_devices(&self, pending: bool) -> Result<Vec<Value>, String>;
+    fn update_remote_security_device(
+        &self,
+        device_id: &str,
+        action: &str,
+        approval_code: Option<&str>,
+    ) -> Result<Value, String>;
     fn request_core_command(&mut self, request: &CoreCommandCall) -> Result<CoreCommandOk, String>;
     fn request_daemon_text(&mut self, path: &str, body: Option<Value>) -> Result<String, String>;
     fn selected_log_path(&self, options: &crate::core_cli_routing::CoreLogsArgs) -> PathBuf;
@@ -211,6 +220,19 @@ impl CoreCliRuntime for RealCoreCliRuntime {
             relay: Value::Null,
             messages: result.messages,
         })
+    }
+
+    fn list_remote_security_devices(&self, pending: bool) -> Result<Vec<Value>, String> {
+        list_remote_security_devices(pending)
+    }
+
+    fn update_remote_security_device(
+        &self,
+        device_id: &str,
+        action: &str,
+        approval_code: Option<&str>,
+    ) -> Result<Value, String> {
+        update_remote_security_device(device_id, action, approval_code)
     }
 
     fn request_core_command(&mut self, request: &CoreCommandCall) -> Result<CoreCommandOk, String> {
@@ -596,6 +618,25 @@ fn run_plan(
             }
             Ok(CoreCliExecution::ok(lines))
         }
+        CoreCliAction::SecurityDevices { json } => {
+            run_security_devices(json, false, output_mode, runtime)
+        }
+        CoreCliAction::SecurityDeviceApproveLive { device_id, json } => {
+            run_security_device_approve_live(device_id.as_deref(), json, output_mode, runtime)
+        }
+        CoreCliAction::SecurityDeviceUpdate {
+            device_id,
+            action,
+            approval_code,
+            json,
+        } => run_security_device_update(
+            &device_id,
+            action,
+            approval_code.as_deref(),
+            json,
+            output_mode,
+            runtime,
+        ),
         CoreCliAction::RestartControlPlane { project_root } => {
             run_restart_control_plane(project_root.as_deref(), output_mode, runtime)
         }
@@ -623,6 +664,83 @@ fn run_plan(
             run_notification_test(output_mode, &title, &body, runtime)
         }
     }
+}
+
+fn run_security_devices(
+    json_flag: bool,
+    pending: bool,
+    output_mode: CoreCliOutputMode,
+    runtime: &impl CoreCliRuntime,
+) -> Result<CoreCliExecution, String> {
+    let devices = runtime.list_remote_security_devices(pending)?;
+    if json_flag || output_mode == CoreCliOutputMode::Json {
+        return Ok(CoreCliExecution::ok(vec![
+            serde_json::to_string_pretty(&json!({ "devices": devices }))
+                .map_err(|error| error.to_string())?,
+        ]));
+    }
+    Ok(CoreCliExecution::ok(
+        render_core_remote_security_devices_lines(&devices),
+    ))
+}
+
+fn run_security_device_approve_live(
+    device_id: Option<&str>,
+    json_flag: bool,
+    output_mode: CoreCliOutputMode,
+    runtime: &impl CoreCliRuntime,
+) -> Result<CoreCliExecution, String> {
+    let devices = runtime.list_remote_security_devices(true)?;
+    let candidates = if let Some(device_id) = device_id {
+        devices
+            .into_iter()
+            .filter(|device| {
+                [device.get("id"), device.get("deviceId")]
+                    .into_iter()
+                    .flatten()
+                    .any(|value| value.as_str() == Some(device_id))
+            })
+            .collect::<Vec<_>>()
+    } else {
+        devices
+    };
+    if candidates.is_empty() {
+        if json_flag || output_mode == CoreCliOutputMode::Json {
+            return Ok(CoreCliExecution::ok(vec![
+                serde_json::to_string_pretty(
+                    &json!({ "ok": false, "devices": [], "error": "No live remote clients are waiting for approval" }),
+                )
+                .map_err(|error| error.to_string())?,
+            ]));
+        }
+        let message = device_id
+            .map(|device_id| {
+                format!("No live remote client is waiting for approval as {device_id}.")
+            })
+            .unwrap_or_else(|| "No live remote clients are waiting for approval.".into());
+        return Ok(CoreCliExecution::ok(vec![message]));
+    }
+    Err("Interactive approval requires a TTY. Run `aimux security device approve` in a terminal and type the code shown on the waiting device.".into())
+}
+
+fn run_security_device_update(
+    device_id: &str,
+    action: &str,
+    approval_code: Option<&str>,
+    json_flag: bool,
+    output_mode: CoreCliOutputMode,
+    runtime: &impl CoreCliRuntime,
+) -> Result<CoreCliExecution, String> {
+    let device = runtime.update_remote_security_device(device_id, action, approval_code)?;
+    if json_flag || output_mode == CoreCliOutputMode::Json {
+        return Ok(CoreCliExecution::ok(vec![
+            serde_json::to_string_pretty(&json!({ "device": device }))
+                .map_err(|error| error.to_string())?,
+        ]));
+    }
+    Ok(CoreCliExecution::ok(vec![
+        render_core_remote_security_device_mutation_line(action, &device),
+    ]))
 }
 
 fn resolve_path_from(cwd: &str, path: &str) -> PathBuf {

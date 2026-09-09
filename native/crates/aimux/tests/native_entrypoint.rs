@@ -579,6 +579,14 @@ fn domain11_cli_command_help_is_command_scoped() {
             vec!["security", "--help"],
             "Usage: aimux security [options] [command]",
         ),
+        (
+            vec!["security", "devices", "--help"],
+            "Usage: aimux security devices [options]",
+        ),
+        (
+            vec!["security", "approve", "--help"],
+            "Usage: aimux security approve <deviceId> [options]",
+        ),
         (vec!["whoami", "--help"], "Usage: aimux whoami [options]"),
         (vec!["login", "--help"], "Usage: aimux login"),
         (vec!["logout", "--help"], "Usage: aimux logout"),

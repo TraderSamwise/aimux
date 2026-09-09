@@ -1442,6 +1442,14 @@ fn core_cli_eligibility_matches_the_typescript_dispatch_boundary() {
         vec!["logout"],
         vec!["login"],
         vec!["security", "unlock"],
+        vec!["security", "devices"],
+        vec!["security", "devices", "--json"],
+        vec!["security", "device", "approve"],
+        vec!["security", "device", "approve", "dev-1", "--json"],
+        vec!["security", "approve", "dev-1", "--code", "123456"],
+        vec!["security", "block", "dev-1", "--json"],
+        vec!["security", "revoke", "dev-1"],
+        vec!["security", "unblock", "dev-1"],
         // Core intentionally claims malformed project-ensure to reject it safely.
         vec!["daemon", "project-ensure", "--dry-run"],
     ];
@@ -1500,6 +1508,12 @@ fn core_cli_eligibility_matches_the_typescript_dispatch_boundary() {
         vec!["graveyard", "send", "--help"],
         vec!["daemon", "project-ensure", "-h"],
         vec!["remote", "unlock"],
+        vec!["security", "devices", "extra"],
+        vec!["security", "device"],
+        vec!["security", "device", "approve", "--bad"],
+        vec!["security", "approve"],
+        vec!["security", "approve", "dev-1", "--code"],
+        vec!["security", "block", "dev-1", "--code=123456"],
         vec![],
     ];
     for args in rejected {

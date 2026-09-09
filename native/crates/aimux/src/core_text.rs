@@ -399,6 +399,59 @@ pub fn render_core_security_unlock_lines(payload: &Value) -> Vec<String> {
     lines
 }
 
+pub fn render_core_remote_security_devices_lines(devices: &[Value]) -> Vec<String> {
+    if devices.is_empty() {
+        return vec!["No remote client devices have connected.".into()];
+    }
+    let mut lines = vec!["Remote client devices (most recent first)".into()];
+    for device in devices {
+        let blocked = field(device, "blocked").and_then(Value::as_bool) == Some(true);
+        let approved = field(device, "approved").and_then(Value::as_bool) == Some(true);
+        let state = if blocked {
+            "blocked"
+        } else if approved {
+            "approved"
+        } else {
+            "pending"
+        };
+        let name = nullish_or(field(device, "name"), field(device, "kind"))
+            .map(|value| js_string(Some(value)))
+            .unwrap_or_else(|| "undefined".into());
+        let location = field(device, "lastCountry")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(|value| format!(" from {value}"))
+            .unwrap_or_default();
+        lines.push("".into());
+        lines.push(format!("{state:<8} {name}{location}"));
+        lines.push(format!("  id       {}", js_string(field(device, "id"))));
+        lines.push(format!(
+            "  platform {}",
+            nullish_or(field(device, "platform"), field(device, "kind"))
+                .map(|value| js_string(Some(value)))
+                .unwrap_or_else(|| "undefined".into())
+        ));
+        lines.push(format!(
+            "  seen     {}",
+            js_string(field(device, "lastSeenAt"))
+        ));
+    }
+    lines
+}
+
+pub fn render_core_remote_security_device_mutation_line(action: &str, device: &Value) -> String {
+    let id = js_string(field(device, "id"));
+    let name = nullish_or(field(device, "name"), field(device, "kind"))
+        .map(|value| js_string(Some(value)))
+        .unwrap_or_else(|| "undefined".into());
+    match action {
+        "approve" => format!("Approved {id} ({name})"),
+        "block" => format!("Blocked {id} ({name})"),
+        "unblock" => format!("Unblocked {id} ({name})"),
+        _ => format!("{action} {id} ({name})"),
+    }
+}
+
 pub fn render_core_lifecycle_spawn_lines(payload: &Value) -> Vec<String> {
     vec![format!(
         "spawned {}",

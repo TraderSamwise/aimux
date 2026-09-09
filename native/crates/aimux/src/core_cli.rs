@@ -157,6 +157,10 @@ pub enum CoreCliOperation {
     Logout,
     Login,
     SecurityUnlock,
+    SecurityDevices,
+    SecurityDeviceApprove,
+    SecurityDeviceBlock,
+    SecurityDeviceUnblock,
     DebugState,
 }
 
@@ -255,6 +259,19 @@ pub enum CoreCliAction {
     Login {
         security_unlock: bool,
         relay_enable: Option<CoreCommandCall>,
+    },
+    SecurityDevices {
+        json: bool,
+    },
+    SecurityDeviceApproveLive {
+        device_id: Option<String>,
+        json: bool,
+    },
+    SecurityDeviceUpdate {
+        device_id: String,
+        action: &'static str,
+        approval_code: Option<String>,
+        json: bool,
     },
     DebugState {
         target: String,
@@ -2120,6 +2137,56 @@ where
                 },
             )
         }
+        ("security", "devices") if args[2..].iter().all(|arg| arg == "--json") => (
+            CoreCliOperation::SecurityDevices,
+            CoreCliAction::SecurityDevices {
+                json: args[2..].iter().any(|arg| arg == "--json"),
+            },
+            CoreCliFallback::None,
+        ),
+        ("security", "device") if args.get(2).map(String::as_str) == Some("approve") => {
+            let parsed = parse_security_device_approve_live_args(&args).ok_or_else(|| {
+                CoreCliPlanError::InvalidArguments {
+                    args: args.clone(),
+                    message: "error: invalid security device approve arguments",
+                }
+            })?;
+            (
+                CoreCliOperation::SecurityDeviceApprove,
+                CoreCliAction::SecurityDeviceApproveLive {
+                    device_id: parsed.device_id,
+                    json: parsed.json,
+                },
+                CoreCliFallback::None,
+            )
+        }
+        ("security", "approve" | "block" | "revoke" | "unblock") => {
+            let parsed = parse_security_device_update_args(&args).ok_or_else(|| {
+                CoreCliPlanError::InvalidArguments {
+                    args: args.clone(),
+                    message: "error: invalid security device arguments",
+                }
+            })?;
+            (
+                match parsed.action {
+                    "approve" => CoreCliOperation::SecurityDeviceApprove,
+                    "block" | "revoke" => CoreCliOperation::SecurityDeviceBlock,
+                    "unblock" => CoreCliOperation::SecurityDeviceUnblock,
+                    _ => unreachable!("validated security action"),
+                },
+                CoreCliAction::SecurityDeviceUpdate {
+                    device_id: parsed.device_id,
+                    action: if parsed.action == "revoke" {
+                        "block"
+                    } else {
+                        parsed.action
+                    },
+                    approval_code: parsed.approval_code,
+                    json: parsed.json,
+                },
+                CoreCliFallback::None,
+            )
+        }
         _ => return Err(CoreCliPlanError::Unsupported { args }),
     };
 
@@ -2129,6 +2196,88 @@ where
         output_mode: mode,
         action,
         fallback,
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SecurityDeviceApproveLiveArgs {
+    device_id: Option<String>,
+    json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SecurityDeviceUpdateArgs {
+    device_id: String,
+    action: &'static str,
+    approval_code: Option<String>,
+    json: bool,
+}
+
+fn parse_security_device_approve_live_args(
+    args: &[String],
+) -> Option<SecurityDeviceApproveLiveArgs> {
+    let mut device_id = None;
+    let mut json = false;
+    let mut index = 3;
+    while index < args.len() {
+        let arg = args[index].as_str();
+        if arg == "--json" {
+            json = true;
+            index += 1;
+        } else if device_id.is_none() && !arg.starts_with('-') {
+            device_id = Some(arg.to_owned());
+            index += 1;
+        } else {
+            return None;
+        }
+    }
+    Some(SecurityDeviceApproveLiveArgs { device_id, json })
+}
+
+fn parse_security_device_update_args(args: &[String]) -> Option<SecurityDeviceUpdateArgs> {
+    let action = match args.get(1)?.as_str() {
+        "approve" => "approve",
+        "block" => "block",
+        "revoke" => "revoke",
+        "unblock" => "unblock",
+        _ => return None,
+    };
+    let mut device_id = None;
+    let mut approval_code = None;
+    let mut json = false;
+    let mut index = 2;
+    while index < args.len() {
+        let arg = args[index].as_str();
+        if arg == "--json" {
+            json = true;
+            index += 1;
+        } else if action == "approve" && arg == "--code" {
+            let value = args.get(index + 1)?;
+            if value.starts_with('-') {
+                return None;
+            }
+            approval_code = Some(value.clone());
+            index += 2;
+        } else if action == "approve"
+            && let Some(value) = arg.strip_prefix("--code=")
+        {
+            if value.is_empty() {
+                return None;
+            }
+            approval_code = Some(value.to_owned());
+            index += 1;
+        } else if device_id.is_none() && !arg.starts_with('-') {
+            device_id = Some(arg.to_owned());
+            index += 1;
+        } else {
+            return None;
+        }
+    }
+    Some(SecurityDeviceUpdateArgs {
+        device_id: device_id?,
+        action,
+        approval_code,
+        json,
     })
 }
 

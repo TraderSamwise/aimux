@@ -769,8 +769,64 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
         (Some("whoami"), _) => has_only_allowed_flags(&args[1..], &["--json"]),
         (Some("logout" | "login"), _) => args.len() == 1,
         (Some("security"), Some("unlock")) => args.len() == 2,
+        (Some("security"), Some("devices")) => has_only_allowed_flags(&args[2..], &["--json"]),
+        (Some("security"), Some("device")) => {
+            args.get(2).map(AsRef::as_ref) == Some("approve")
+                && security_device_approve_live_shape(args)
+        }
+        (Some("security"), Some("approve" | "block" | "revoke" | "unblock")) => {
+            security_device_mutation_shape(args)
+        }
         _ => false,
     }
+}
+
+fn security_device_approve_live_shape<S: AsRef<str>>(args: &[S]) -> bool {
+    let mut device_seen = false;
+    let mut index = 3;
+    while index < args.len() {
+        let arg = args[index].as_ref();
+        if arg == "--json" {
+            index += 1;
+        } else if !device_seen && !arg.starts_with('-') {
+            device_seen = true;
+            index += 1;
+        } else {
+            return false;
+        }
+    }
+    true
+}
+
+fn security_device_mutation_shape<S: AsRef<str>>(args: &[S]) -> bool {
+    let action = args.get(1).map(AsRef::as_ref).unwrap_or_default();
+    let mut device_seen = false;
+    let mut index = 2;
+    while index < args.len() {
+        let arg = args[index].as_ref();
+        if arg == "--json" {
+            index += 1;
+        } else if action == "approve" && arg == "--code" {
+            let Some(value) = args.get(index + 1).map(AsRef::as_ref) else {
+                return false;
+            };
+            if value.starts_with('-') {
+                return false;
+            }
+            index += 2;
+        } else if action == "approve" && arg.starts_with("--code=") {
+            if arg == "--code=" {
+                return false;
+            }
+            index += 1;
+        } else if !device_seen && !arg.starts_with('-') {
+            device_seen = true;
+            index += 1;
+        } else {
+            return false;
+        }
+    }
+    device_seen
 }
 
 fn parse_core_threads_alias_args<S: AsRef<str>>(args: &[S]) -> Option<CoreThreadArgs> {

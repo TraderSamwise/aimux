@@ -10,7 +10,7 @@ use aimux::native_cli_dispatch::{
     CORE_SCRIBE_STATUS_TEXT_ROUTE,
 };
 use serde_json::{Value, json};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
@@ -29,6 +29,9 @@ struct FakeRuntime {
     credentials: Option<Value>,
     cleared_credentials: Cell<usize>,
     remote_enabled: Cell<Option<bool>>,
+    security_devices: Vec<Value>,
+    pending_security_devices: Vec<Value>,
+    security_updates: RefCell<Vec<(String, String, Option<String>)>>,
     fail_commands: bool,
     git_project_root: bool,
     restart_failures: i64,
@@ -60,6 +63,9 @@ impl Default for FakeRuntime {
             credentials: None,
             cleared_credentials: Cell::new(0),
             remote_enabled: Cell::new(None),
+            security_devices: Vec::new(),
+            pending_security_devices: Vec::new(),
+            security_updates: RefCell::new(Vec::new()),
             fail_commands: false,
             git_project_root: true,
             restart_failures: 0,
@@ -145,6 +151,44 @@ impl CoreCliRuntime for FakeRuntime {
                 "If it doesn't open, visit:\n  https://aimux.app/cli-auth?callback=local\n".into(),
             ],
         })
+    }
+
+    fn list_remote_security_devices(&self, pending: bool) -> Result<Vec<Value>, String> {
+        Ok(if pending {
+            self.pending_security_devices.clone()
+        } else {
+            self.security_devices.clone()
+        })
+    }
+
+    fn update_remote_security_device(
+        &self,
+        device_id: &str,
+        action: &str,
+        approval_code: Option<&str>,
+    ) -> Result<Value, String> {
+        self.security_updates.borrow_mut().push((
+            device_id.to_owned(),
+            action.to_owned(),
+            approval_code.map(str::to_owned),
+        ));
+        let device = self
+            .security_devices
+            .iter()
+            .find(|device| device.get("id").and_then(Value::as_str) == Some(device_id))
+            .cloned()
+            .unwrap_or_else(|| {
+                json!({
+                    "id": device_id,
+                    "kind": "web",
+                    "name": "Browser",
+                    "platform": "macOS",
+                    "lastSeenAt": "2026-09-09T00:00:00.000Z",
+                    "approved": action == "approve",
+                    "blocked": action == "block"
+                })
+            });
+        Ok(device)
     }
 
     fn request_core_command(&mut self, request: &CoreCommandCall) -> Result<CoreCommandOk, String> {
@@ -2328,6 +2372,104 @@ fn security_unlock_uses_native_login_flow_without_daemon_relay_request_when_offl
         execution
             .stdout
             .contains(&"Remote access is enabled. The daemon will connect on next start.".into())
+    );
+}
+
+#[test]
+fn security_device_commands_match_node_cli_surface() {
+    let device = json!({
+        "id": "dev-1",
+        "deviceId": "browser-1",
+        "kind": "web",
+        "name": "Sam MBP",
+        "platform": "macOS",
+        "lastSeenAt": "2026-09-09T00:00:00.000Z",
+        "lastCountry": "SG",
+        "approved": false,
+        "blocked": false
+    });
+    let mut runtime = FakeRuntime {
+        credentials: Some(json!({
+            "userId": "user-1",
+            "relayUrl": "wss://relay.example",
+            "remoteEnabled": true
+        })),
+        security_devices: vec![device.clone()],
+        ..FakeRuntime::default()
+    };
+
+    let list = run_core_cli_with(&args(&["security", "devices"]), &mut runtime);
+    assert_eq!(list.code, 0);
+    assert_eq!(
+        list.stdout,
+        [
+            "Remote client devices (most recent first)",
+            "",
+            "pending  Sam MBP from SG",
+            "  id       dev-1",
+            "  platform macOS",
+            "  seen     2026-09-09T00:00:00.000Z"
+        ]
+    );
+
+    let list_json = run_core_cli_with(&args(&["security", "devices", "--json"]), &mut runtime);
+    assert_eq!(list_json.code, 0);
+    assert_eq!(
+        serde_json::from_str::<Value>(&list_json.stdout[0]).expect("devices json"),
+        json!({ "devices": [device] })
+    );
+
+    let approve = run_core_cli_with(
+        &args(&["security", "approve", "dev-1", "--code", "123456"]),
+        &mut runtime,
+    );
+    assert_eq!(approve.code, 0);
+    assert_eq!(approve.stdout, ["Approved dev-1 (Sam MBP)"]);
+    assert_eq!(
+        runtime.security_updates.borrow().as_slice(),
+        [("dev-1".into(), "approve".into(), Some("123456".into()))]
+    );
+
+    let revoke = run_core_cli_with(&args(&["security", "revoke", "dev-1"]), &mut runtime);
+    assert_eq!(revoke.code, 0);
+    assert_eq!(revoke.stdout, ["Blocked dev-1 (Sam MBP)"]);
+    assert_eq!(
+        runtime.security_updates.borrow().last(),
+        Some(&("dev-1".into(), "block".into(), None))
+    );
+}
+
+#[test]
+fn security_live_device_approval_matches_node_noninteractive_empty_state() {
+    let mut runtime = FakeRuntime {
+        credentials: Some(json!({
+            "userId": "user-1",
+            "relayUrl": "wss://relay.example",
+            "remoteEnabled": true
+        })),
+        pending_security_devices: Vec::new(),
+        ..FakeRuntime::default()
+    };
+
+    let text = run_core_cli_with(&args(&["security", "device", "approve"]), &mut runtime);
+    assert_eq!(text.code, 0);
+    assert_eq!(
+        text.stdout,
+        ["No live remote clients are waiting for approval."]
+    );
+
+    let json = run_core_cli_with(
+        &args(&["security", "device", "approve", "dev-2", "--json"]),
+        &mut runtime,
+    );
+    assert_eq!(json.code, 0);
+    assert_eq!(
+        serde_json::from_str::<Value>(&json.stdout[0]).expect("approve live json"),
+        serde_json::json!({
+            "ok": false,
+            "devices": [],
+            "error": "No live remote clients are waiting for approval"
+        })
     );
 }
 
