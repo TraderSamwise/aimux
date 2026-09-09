@@ -5,7 +5,7 @@ use aimux::core_cli_routing::core_command_args;
 use aimux::core_command_client::request_core_command;
 use aimux::core_command_contract::CORE_COMMAND_NAMES;
 use aimux::daemon::runtime::run_daemon_internal;
-use aimux::daemon_state::get_daemon_base_url;
+use aimux::daemon_state::{get_daemon_base_url, get_daemon_port};
 use aimux::dashboard_internal::{NativeDashboardOptions, run_native_dashboard_internal};
 use aimux::dashboard_targets::{
     DashboardResolveOptions, find_live_dashboard_target, resolve_dashboard_target,
@@ -563,6 +563,7 @@ const HOSTED_LOCKDOWN_HELP: &str = "Usage: aimux hosted lockdown <state>\n\nClos
 const HOSTED_AUDIT_HELP: &str = "Usage: aimux hosted audit [options] [command]\n\nInspect the hosted audit log\n\nCommands:\n  tail                        Show the most recent audit records";
 
 fn run_root_dashboard_command() -> Result<ExitCode> {
+    validate_daemon_port()?;
     let project_root = current_project_root()?;
     let project_root_text = project_root.to_string_lossy().into_owned();
     let mut tmux = TmuxRuntimeManager::new();
@@ -632,6 +633,7 @@ fn print_execution(execution: aimux::core_cli_executor::CoreCliExecution) {
 }
 
 fn run_root_resume_command(request: RootResumeRequest) -> Result<ExitCode> {
+    validate_daemon_port()?;
     let serve_args = vec!["serve".to_owned()];
     let serve = run_core_cli(&serve_args);
     if serve.code != 0 {
@@ -656,6 +658,7 @@ fn run_root_resume_command(request: RootResumeRequest) -> Result<ExitCode> {
 }
 
 fn run_root_tool_launch_command(args: &[String]) -> Result<ExitCode> {
+    validate_daemon_port()?;
     if args.first().map(String::as_str) != Some("spawn") {
         return run_core_command_and_print(args);
     }
@@ -667,6 +670,10 @@ fn run_root_tool_launch_command(args: &[String]) -> Result<ExitCode> {
     let payload = parse_single_json_stdout(&execution.stdout)?;
     open_payload_target_from_foreground(&payload)?;
     Ok(ExitCode::SUCCESS)
+}
+
+fn validate_daemon_port() -> Result<()> {
+    get_daemon_port().map(|_| ()).map_err(anyhow::Error::msg)
 }
 
 fn parse_single_json_stdout(stdout: &[String]) -> Result<Value> {
