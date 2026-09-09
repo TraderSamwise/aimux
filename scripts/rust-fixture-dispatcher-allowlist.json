@@ -1,6 +1,5 @@
 {
   "native/crates/aimux/src/agent_display_contract.rs": "Tracked Rust parity fixture; keep until promoted to production or removed by a cull.",
-  "native/crates/aimux/src/agent_io_methods_contract.rs": "Tracked Rust parity fixture; keep until promoted to production or removed by a cull.",
   "native/crates/aimux/src/ansi_sgr_spans.rs": "Tracked Rust parity fixture; keep until promoted to production or removed by a cull.",
   "native/crates/aimux/src/attachment_text_contract.rs": "Tracked Rust parity fixture; keep until promoted to production or removed by a cull.",
   "native/crates/aimux/src/cli_launcher_contract.rs": "Tracked CLI parity fixture; keep until CLI behavior is production-consumed natively or culled.",
@@ -36,8 +35,6 @@
   "native/crates/aimux/src/runtime_exchange_import.rs": "Tracked runtime-exchange parity fixture; keep until runtime-exchange behavior is production-consumed natively or culled.",
   "native/crates/aimux/src/runtime_guard_repair_start_contract.rs": "Tracked runtime-guard parity fixture; keep until runtime-guard behavior is production-consumed natively or culled.",
   "native/crates/aimux/src/runtime_guard_sync_contract.rs": "Tracked runtime-guard parity fixture; keep until runtime-guard behavior is production-consumed natively or culled.",
-  "native/crates/aimux/src/runtime_lifecycle_methods_contract.rs": "Tracked runtime parity fixture; keep until runtime behavior is production-consumed natively or culled.",
-  "native/crates/aimux/src/runtime_topology_worktrees_services_contract.rs": "Tracked runtime-topology parity fixture; keep until runtime-topology behavior is production-consumed natively or culled.",
   "native/crates/aimux/src/service_client_contract.rs": "Tracked service parity fixture; keep until service behavior is production-consumed natively or culled.",
   "native/crates/aimux/src/service_notify_contract.rs": "Tracked service parity fixture; keep until service behavior is production-consumed natively or culled.",
   "native/crates/aimux/src/session_launch_actions_contract.rs": "Tracked session-launch parity fixture; keep until session-launch behavior is production-consumed natively or culled.",

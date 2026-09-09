@@ -1,5 +1,4 @@
 pub mod agent_display_contract;
-pub mod agent_io_methods_contract;
 pub mod agent_output_liveness_contract;
 pub mod agent_prompt_delivery;
 pub mod agent_prompt_delivery_contract;
@@ -146,7 +145,6 @@ pub mod runtime_topology_sessions_contract;
 pub mod runtime_topology_state_save;
 pub mod runtime_topology_store_contract;
 pub mod runtime_topology_worktrees;
-pub mod runtime_topology_worktrees_services_contract;
 pub mod scribe_watcher;
 pub mod service_notify_contract;
 pub mod service_state_snapshot;
