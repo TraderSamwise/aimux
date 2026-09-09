@@ -1,6 +1,9 @@
-use crate::plugin_api::{NativePluginApiRequest, NativePluginHost, NativePluginStatus};
+use crate::plugin_api::{
+    NativePlugin, NativePluginApi, NativePluginApiRequest, NativePluginHost, NativePluginStatus,
+};
 use crate::plugin_registry::NativePluginRegistry;
 use crate::project_service::router::ProjectServiceRequestContext;
+use crate::project_service::scheduler::PeriodicTask;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -481,4 +484,54 @@ fn session_value(metadata: &Value, session_id: &str) -> Value {
         .and_then(|sessions| sessions.get(session_id))
         .cloned()
         .unwrap_or_else(|| json!({}))
+}
+
+/// One scheduled task per plugin.
+///
+/// The plugin is owned by its task and lives across ticks, because the builtins
+/// dedupe against their own last-rendered state — rebuilding the registry each
+/// tick would rewrite every session's statusline on every tick forever.
+pub struct PluginTickTask {
+    name: String,
+    interval_ms: i64,
+    plugin: Box<dyn NativePlugin + Send>,
+}
+
+impl PluginTickTask {
+    pub fn new(interval_ms: i64, plugin: Box<dyn NativePlugin + Send>) -> Self {
+        Self {
+            name: plugin.manifest().name,
+            interval_ms,
+            plugin,
+        }
+    }
+}
+
+impl PeriodicTask for PluginTickTask {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn interval_ms(&self) -> i64 {
+        self.interval_ms
+    }
+
+    fn run(&mut self, context: &ProjectServiceRequestContext) {
+        let mut host = ProjectServicePluginHost::new(context);
+        let plugin_name = self.name.clone();
+        let mut api = NativePluginApi::new(&plugin_name, &mut host);
+        // The builtins do their refresh in on_event; start() would re-subscribe.
+        let _ = self.plugin.on_event(json!({ "type": "tick" }), &mut api);
+    }
+}
+
+/// Derived from the one builtin list, so a plugin cannot be registered for a
+/// startup status and then silently never ticked.
+pub fn builtin_plugin_tick_tasks() -> Vec<Box<dyn PeriodicTask>> {
+    crate::plugin_registry::builtin_native_plugins()
+        .into_iter()
+        .map(|(interval_ms, plugin)| {
+            Box::new(PluginTickTask::new(interval_ms, plugin)) as Box<dyn PeriodicTask>
+        })
+        .collect()
 }

@@ -41,6 +41,7 @@ pub mod runtime_event_notifications;
 pub mod runtime_event_state;
 pub mod runtime_events;
 pub mod runtime_exchange;
+pub mod scheduler;
 pub mod server;
 pub mod session_semantics;
 pub mod shell_state;

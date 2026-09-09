@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use crate::config::load_config_for_project;
-use crate::daemon_state::{load_metadata_state, save_metadata_state};
+use crate::daemon_state::mutate_metadata_state;
 use crate::paths::{is_git_project_root, project_checkout_required_message};
 use crate::project_service::dispatcher::ProjectServiceDispatchResponse;
 use crate::project_service::graveyard_cleanup::build_graveyard_cleanup_plan;
@@ -954,10 +954,9 @@ pub(super) fn delete_agent_assets(
             .join(format!("{session_id}.json")),
         &mut removed_assets,
     );
-    let mut state = load_metadata_state(project_state_dir);
-    if state.sessions.remove(session_id).is_some() {
-        let _ = save_metadata_state(project_state_dir, &state);
-    }
+    let _ = mutate_metadata_state(project_state_dir, |state| {
+        state.sessions.remove(session_id).is_some()
+    });
     removed_assets
 }
 

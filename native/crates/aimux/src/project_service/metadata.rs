@@ -1,8 +1,10 @@
+use crate::state_update_lock::acquire_state_update_lock;
 use serde_json::{Map, Value, json};
 use std::path::Path;
 
 use crate::daemon_state::{
-    MetadataState, load_metadata_state, load_metadata_state_at_unix_millis, save_metadata_state,
+    MetadataState, load_metadata_state, load_metadata_state_at_unix_millis, metadata_state_path,
+    save_metadata_state,
 };
 use crate::project_api_contract::routes;
 
@@ -263,6 +265,11 @@ pub fn update_session_metadata_at(
     updater: impl FnOnce(Value) -> Value,
 ) -> Result<MetadataUpdateResult, String> {
     let project_state_dir = project_state_dir.as_ref();
+    // Held across the whole load-mutate-save: a periodic task and a request
+    // handler writing at once would otherwise lose one of the two updates.
+    // Propagated rather than ignored — proceeding unlocked would reopen exactly
+    // the race the lock exists to close.
+    let _lock = acquire_state_update_lock(&metadata_state_path(project_state_dir))?;
     let mut state = parse_iso_millis(now)
         .map(|now| load_metadata_state_at_unix_millis(project_state_dir, now))
         .unwrap_or_else(|| load_metadata_state(project_state_dir));

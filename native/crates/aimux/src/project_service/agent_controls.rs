@@ -1,6 +1,6 @@
 use serde_json::{Map, Value, json};
 
-use crate::daemon_state::{load_metadata_state, save_metadata_state};
+use crate::daemon_state::mutate_metadata_state;
 use crate::project_api_contract::routes;
 
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
@@ -97,30 +97,33 @@ pub fn set_project_session_flag_at(
         return clear_project_flag_at(project_state_dir, session_id, key, now);
     }
     let project_state_dir = project_state_dir.as_ref();
-    let mut state = load_metadata_state(project_state_dir);
-    for (id, session) in &mut state.sessions {
-        if id != session_id
-            && session
-                .get(key)
-                .and_then(Value::as_bool)
-                .is_some_and(|current| current)
-            && let Value::Object(map) = session
-        {
-            map.remove(key);
-            map.insert("updatedAt".into(), Value::String(now.to_owned()));
+    mutate_metadata_state(project_state_dir, |state| {
+        for (id, session) in &mut state.sessions {
+            if id != session_id
+                && session
+                    .get(key)
+                    .and_then(Value::as_bool)
+                    .is_some_and(|current| current)
+                && let Value::Object(map) = session
+            {
+                map.remove(key);
+                map.insert("updatedAt".into(), Value::String(now.to_owned()));
+            }
         }
-    }
-    let mut current = state
-        .sessions
-        .remove(session_id)
-        .map(object_value)
-        .unwrap_or_else(|| Map::from_iter([("updatedAt".into(), Value::String(now.to_owned()))]));
-    current.insert(key.into(), Value::Bool(true));
-    current.insert("updatedAt".into(), Value::String(now.to_owned()));
-    state
-        .sessions
-        .insert(session_id.to_owned(), Value::Object(current));
-    save_metadata_state(project_state_dir, &state).map_err(|error| error.to_string())
+        let mut current = state
+            .sessions
+            .remove(session_id)
+            .map(object_value)
+            .unwrap_or_else(|| {
+                Map::from_iter([("updatedAt".into(), Value::String(now.to_owned()))])
+            });
+        current.insert(key.into(), Value::Bool(true));
+        current.insert("updatedAt".into(), Value::String(now.to_owned()));
+        state
+            .sessions
+            .insert(session_id.to_owned(), Value::Object(current));
+        true
+    })
 }
 
 pub fn clear_project_flag_at(

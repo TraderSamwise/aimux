@@ -1,7 +1,7 @@
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
-use crate::daemon_state::{load_metadata_state, save_metadata_state};
+use crate::daemon_state::mutate_metadata_state;
 
 use super::ids::now_iso;
 use super::object_value;
@@ -81,17 +81,19 @@ fn encode_claude_project_path(cwd: &str) -> String {
 }
 
 pub(super) fn clear_session_transcript_path(project_state_dir: &Path, session_id: &str) {
-    let mut state = load_metadata_state(project_state_dir);
-    let Some(Value::Object(session)) = state.sessions.get_mut(session_id) else {
-        return;
-    };
-    let Some(Value::Object(context)) = session.get_mut("context") else {
-        return;
-    };
-    if context.remove("transcriptPath").is_some() {
+    let _ = mutate_metadata_state(project_state_dir, |state| {
+        let Some(Value::Object(session)) = state.sessions.get_mut(session_id) else {
+            return false;
+        };
+        let Some(Value::Object(context)) = session.get_mut("context") else {
+            return false;
+        };
+        if context.remove("transcriptPath").is_none() {
+            return false;
+        }
         session.insert("updatedAt".into(), Value::String(now_iso()));
-        let _ = save_metadata_state(project_state_dir, &state);
-    }
+        true
+    });
 }
 
 pub(super) fn set_session_control_flags(
@@ -103,35 +105,36 @@ pub(super) fn set_session_control_flags(
     if !overseer && !scribe {
         return;
     }
-    let mut state = load_metadata_state(project_state_dir);
     let now = now_iso();
-    for (id, session) in &mut state.sessions {
-        if id == session_id {
-            continue;
-        }
-        if let Value::Object(map) = session {
-            if overseer && map.remove("overseer").is_some() {
-                map.insert("updatedAt".into(), Value::String(now.clone()));
+    let _ = mutate_metadata_state(project_state_dir, |state| {
+        for (id, session) in &mut state.sessions {
+            if id == session_id {
+                continue;
             }
-            if scribe && map.remove("scribe").is_some() {
-                map.insert("updatedAt".into(), Value::String(now.clone()));
+            if let Value::Object(map) = session {
+                if overseer && map.remove("overseer").is_some() {
+                    map.insert("updatedAt".into(), Value::String(now.clone()));
+                }
+                if scribe && map.remove("scribe").is_some() {
+                    map.insert("updatedAt".into(), Value::String(now.clone()));
+                }
             }
         }
-    }
-    let mut current = state
-        .sessions
-        .remove(session_id)
-        .map(object_value)
-        .unwrap_or_default();
-    if overseer {
-        current.insert("overseer".into(), Value::Bool(true));
-    }
-    if scribe {
-        current.insert("scribe".into(), Value::Bool(true));
-    }
-    current.insert("updatedAt".into(), Value::String(now));
-    state
-        .sessions
-        .insert(session_id.to_owned(), Value::Object(current));
-    let _ = save_metadata_state(project_state_dir, &state);
+        let mut current = state
+            .sessions
+            .remove(session_id)
+            .map(object_value)
+            .unwrap_or_default();
+        if overseer {
+            current.insert("overseer".into(), Value::Bool(true));
+        }
+        if scribe {
+            current.insert("scribe".into(), Value::Bool(true));
+        }
+        current.insert("updatedAt".into(), Value::String(now));
+        state
+            .sessions
+            .insert(session_id.to_owned(), Value::Object(current));
+        true
+    });
 }

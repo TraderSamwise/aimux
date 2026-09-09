@@ -7,16 +7,37 @@ pub struct NativePluginRegistry {
     plugins: Vec<Box<dyn NativePlugin>>,
 }
 
+/// The builtin plugins, each with the cadence its own work can afford.
+///
+/// One list, so a plugin cannot be registered for a startup status and then
+/// silently never ticked. gh-pr-context shells out to `gh` per session, which
+/// is why it polls a minute apart rather than alongside the transcript plugin.
+pub fn builtin_native_plugins() -> Vec<(i64, Box<dyn NativePlugin + Send>)> {
+    vec![
+        (60_000, Box::new(GithubPrContextPlugin)),
+        (2_000, Box::new(TranscriptLengthPlugin::new("top"))),
+    ]
+}
+
 impl NativePluginRegistry {
     pub fn builtins() -> Self {
-        Self::new(vec![
-            Box::new(GithubPrContextPlugin),
-            Box::new(TranscriptLengthPlugin::new("top")),
-        ])
+        Self::new(
+            builtin_native_plugins()
+                .into_iter()
+                .map(|(_, plugin)| plugin as Box<dyn NativePlugin>)
+                .collect(),
+        )
     }
 
     pub fn new(plugins: Vec<Box<dyn NativePlugin>>) -> Self {
         Self { plugins }
+    }
+
+    pub fn plugin_names(&self) -> Vec<String> {
+        self.plugins
+            .iter()
+            .map(|plugin| plugin.manifest().name)
+            .collect()
     }
 
     pub fn start(&mut self, host: &mut dyn NativePluginHost) -> Vec<NativePluginStatus> {

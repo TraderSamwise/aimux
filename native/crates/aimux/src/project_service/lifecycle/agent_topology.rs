@@ -1,7 +1,7 @@
 use serde_json::{Map, Value, json};
 use std::path::Path;
 
-use crate::daemon_state::{load_metadata_state, save_metadata_state};
+use crate::daemon_state::mutate_metadata_state;
 use crate::tmux::{MANAGED_TMUX_AGENT_WINDOW_OPTIONS, TmuxTarget};
 
 use super::json_helpers::*;
@@ -9,28 +9,31 @@ use super::runtime_adapter::ProjectLifecycleRuntime;
 use super::{ensure_rig, existing_node_created_at, now_iso, upsert_array_item};
 
 pub(super) fn clear_session_derived_metadata(project_state_dir: &Path, session_id: &str) {
-    let mut state = load_metadata_state(project_state_dir);
-    if let Some(Value::Object(session)) = state.sessions.get_mut(session_id) {
+    let _ = mutate_metadata_state(project_state_dir, |state| {
+        let Some(Value::Object(session)) = state.sessions.get_mut(session_id) else {
+            return false;
+        };
         session.remove("derived");
         session.remove("status");
         session.remove("progress");
-        let _ = save_metadata_state(project_state_dir, &state);
-    }
+        true
+    });
 }
 
 pub(super) fn settle_running_activity_to_idle(project_state_dir: &Path, session_id: &str) {
-    let mut state = load_metadata_state(project_state_dir);
-    let mut changed = false;
-    if let Some(Value::Object(session)) = state.sessions.get_mut(session_id)
-        && let Some(Value::Object(derived)) = session.get_mut("derived")
-        && derived.get("activity").and_then(Value::as_str) == Some("running")
-    {
+    let _ = mutate_metadata_state(project_state_dir, |state| {
+        let Some(Value::Object(session)) = state.sessions.get_mut(session_id) else {
+            return false;
+        };
+        let Some(Value::Object(derived)) = session.get_mut("derived") else {
+            return false;
+        };
+        if derived.get("activity").and_then(Value::as_str) != Some("running") {
+            return false;
+        }
         derived.insert("activity".into(), Value::String("idle".into()));
-        changed = true;
-    }
-    if changed {
-        let _ = save_metadata_state(project_state_dir, &state);
-    }
+        true
+    });
 }
 
 pub(super) fn agent_window_metadata(

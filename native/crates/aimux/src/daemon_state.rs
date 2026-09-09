@@ -270,6 +270,26 @@ pub fn save_daemon_state(path: impl AsRef<Path>, state: &DaemonState) -> io::Res
     save_json_with_fallback(path, state)
 }
 
+/// Load, mutate and save the metadata state under the update lock.
+///
+/// The lock is inside the helper rather than at each call site so a new writer
+/// cannot forget it: `metadata.json` is read-modify-write, and atomic rename
+/// prevents a torn file but not a lost update.
+pub fn mutate_metadata_state(
+    project_state_dir: impl AsRef<Path>,
+    mutator: impl FnOnce(&mut MetadataState) -> bool,
+) -> Result<(), String> {
+    let project_state_dir = project_state_dir.as_ref();
+    let _lock = crate::state_update_lock::acquire_state_update_lock(&metadata_state_path(
+        project_state_dir,
+    ))?;
+    let mut state = load_metadata_state(project_state_dir);
+    if !mutator(&mut state) {
+        return Ok(());
+    }
+    save_metadata_state(project_state_dir, &state).map_err(|error| error.to_string())
+}
+
 pub fn metadata_state_path(project_state_dir: impl AsRef<Path>) -> PathBuf {
     project_state_dir.as_ref().join("metadata.json")
 }
