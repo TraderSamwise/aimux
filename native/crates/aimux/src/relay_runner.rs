@@ -393,6 +393,28 @@ fn is_project_event_frame(frame: &str) -> bool {
         == Some("project_event")
 }
 
+pub fn relay_status_json(handle: Option<&RelayHandle>) -> Value {
+    match handle {
+        Some(handle) => handle.status().to_json(),
+        // Node reported a bare "off" when no client existed at all, which is a
+        // different thing from a client that is disconnected.
+        None => json!({ "status": "off" }),
+    }
+}
+fn now_iso() -> String {
+    let now = time::OffsetDateTime::now_utc();
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+        now.year(),
+        u8::from(now.month()),
+        now.day(),
+        now.hour(),
+        now.minute(),
+        now.second(),
+        now.millisecond()
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::{MAX_RELAY_OUTBOX_FRAMES, push_outbox_frame};
@@ -466,25 +488,4 @@ impl CloseInfo {
     }
 }
 
-pub fn relay_status_json(handle: Option<&RelayHandle>) -> Value {
-    match handle {
-        Some(handle) => handle.status().to_json(),
-        // Node reported a bare "off" when no client existed at all, which is a
-        // different thing from a client that is disconnected.
-        None => json!({ "status": "off" }),
-    }
-}
 
-fn now_iso() -> String {
-    let now = time::OffsetDateTime::now_utc();
-    format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
-        now.year(),
-        u8::from(now.month()),
-        now.day(),
-        now.hour(),
-        now.minute(),
-        now.second(),
-        now.millisecond()
-    )
-}
