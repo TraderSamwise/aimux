@@ -28,6 +28,7 @@ use aimux::project_api_contract::routes as project_routes;
 use aimux::remote_credentials::{AimuxCredentials, load_credentials, save_credentials_at};
 use aimux::runtime_topology::{runtime_topology_path, write_runtime_topology};
 use aimux::tmux::TmuxTarget;
+use aimux::tmux_exec_metrics::{TmuxExecMode, record_tmux_exec, reset_tmux_exec_metrics};
 use aimux::tmux_expose::{ExposeScope, ExposeScopeView, ExposeSublabel};
 use aimux::tmux_expose_hot_snapshot::{HotExposeScopeKey, write_hot_expose_scope_view};
 use serde_json::{Map, Value, json};
@@ -207,6 +208,48 @@ fn native_daemon_http_routes_health_and_projects_through_real_runtime() {
     assert_eq!(projects_json["projects"].as_array().map(Vec::len), Some(1));
     assert_eq!(projects_json["projects"][0]["name"], "repo");
     assert_eq!(projects_json["projects"][0]["serviceAlive"], false);
+    fixture.cleanup();
+}
+
+#[test]
+fn native_daemon_loop_diagnostics_reports_tmux_exec_metrics_and_budget() {
+    reset_tmux_exec_metrics();
+    let fixture = RuntimeFixture::new("loop-diagnostics");
+    let mut runtime = fixture.runtime();
+    record_tmux_exec(
+        &["capture-pane".to_owned(), "-p".to_owned()],
+        42.0,
+        TmuxExecMode::Sync,
+    );
+
+    let response = handle_daemon_runtime_request(&mut runtime, request("GET", "/diagnostics/loop"));
+    let body: Value = serde_json::from_slice(&response.body).expect("diagnostics json");
+
+    assert_eq!(response.status, 200);
+    assert_eq!(body["ok"], true);
+    assert_eq!(body["pid"], json!(fixture.info.pid));
+    assert!(body["uptimeMs"].as_u64().is_some());
+    assert_eq!(body["eventLoop"]["monitoring"], true);
+    assert_eq!(body["tmuxExec"]["sync"]["count"], json!(1));
+    assert_eq!(body["tmuxExec"]["sync"]["totalMs"], json!(42));
+    assert_eq!(
+        body["tmuxExec"]["syncByVerb"]["capture-pane"]["count"],
+        json!(1)
+    );
+    assert_eq!(
+        body["budget"]["reasons"]
+            .as_array()
+            .expect("budget reasons")
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>(),
+        vec!["insufficient-sample"]
+    );
+    assert_eq!(
+        body["excludes"][0],
+        "expose-hot-snapshot-worker (worker thread)"
+    );
+    reset_tmux_exec_metrics();
     fixture.cleanup();
 }
 

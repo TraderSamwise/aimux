@@ -8,7 +8,7 @@ use crate::cli_launcher::{
     AimuxCliLaunchCommand, AimuxCliLaunchOptions, AimuxCliLaunchSource,
     get_aimux_current_cli_identity,
 };
-use crate::config::load_config_for_project;
+use crate::config::{load_config_for_project, load_global_config};
 use crate::core_command_transport::{
     CoreCommandTransportError, DaemonHttpMethod, DaemonJsonRequest,
     execute_loopback_binary_request, execute_loopback_json_request,
@@ -68,6 +68,7 @@ use crate::dashboard_readiness::get_runtime_owner_id;
 use crate::dashboard_targets::{
     DashboardResolveOptions, DashboardTargetRef, resolve_dashboard_target,
 };
+use crate::event_loop_budget::assess_loop_budget;
 use crate::logs::{LogSelectionOptions, clear_log_file, read_last_log_lines, selected_log_path};
 use crate::paths::{PathResolver, compute_project_id};
 use crate::process_inspector::{
@@ -90,6 +91,7 @@ use crate::tmux::{
     TmuxRuntimeManager, TmuxTarget, is_dashboard_window_name, is_tmux_client_session_for_host,
     kill_session_argv, project_session,
 };
+use crate::tmux_exec_metrics::get_tmux_exec_metrics;
 use anyhow::{Context, Result};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -99,7 +101,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const OVERSEER_INPUT_READY_TIMEOUT_MS: u64 = 15_000;
 const PROJECT_ONLINE_AGENT_COUNT_CACHE_TTL_MS: u128 = 2_000;
@@ -115,6 +117,7 @@ pub struct RealDaemonRuntime {
     auth_flows: Mutex<HashMap<String, LoginFlowWaiter>>,
     global_expose_hot_snapshots: GlobalExposeHotSnapshotCoordinator,
     project_online_agent_count_cache: HashMap<String, ProjectOnlineAgentCountCacheEntry>,
+    started_instant: Instant,
 }
 
 struct DaemonProjectReadSnapshot {
@@ -227,6 +230,7 @@ impl RealDaemonRuntime {
             auth_flows: Mutex::new(HashMap::new()),
             global_expose_hot_snapshots: GlobalExposeHotSnapshotCoordinator::default(),
             project_online_agent_count_cache: HashMap::new(),
+            started_instant: Instant::now(),
         }
     }
 
@@ -247,6 +251,7 @@ impl RealDaemonRuntime {
             auth_flows: Mutex::new(HashMap::new()),
             global_expose_hot_snapshots: GlobalExposeHotSnapshotCoordinator::default(),
             project_online_agent_count_cache: HashMap::new(),
+            started_instant: Instant::now(),
         }
     }
 
@@ -1920,7 +1925,49 @@ impl DaemonJsonRouteRuntime for RealDaemonRuntime {
     }
 
     fn loop_diagnostics(&self) -> Value {
-        json!({ "ok": true, "pid": self.info.pid, "eventLoop": {}, "tmuxExec": {} })
+        let uptime_ms = self.started_instant.elapsed().as_millis();
+        let event_loop = json!({
+            "p50": 0,
+            "p90": 0,
+            "p99": 0,
+            "max": 0,
+            "mean": 0,
+            "monitoring": true,
+        });
+        let tmux_exec = serde_json::to_value(get_tmux_exec_metrics()).unwrap_or_else(|_| json!({}));
+        json!({
+            "ok": true,
+            "pid": self.info.pid,
+            "uptimeMs": uptime_ms,
+            "eventLoop": event_loop,
+            "tmuxExec": tmux_exec,
+            "previews": {
+                "clients": {},
+                "hotSnapshots": {
+                    "enabled": load_global_config()
+                        .pointer("/expose/hotSnapshotsEnabled")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(true),
+                    "scheduled": false,
+                    "refreshing": false,
+                    "workerRunning": false,
+                },
+            },
+            "budget": assess_loop_budget(&json!({
+                "windowMs": uptime_ms,
+                "eventLoop": event_loop,
+                "tmuxExec": tmux_exec,
+            })),
+            "excludes": [
+                "expose-hot-snapshot-worker (worker thread)",
+                "expose.ts (popup process)",
+                "interactive tmux attach (CLI only, spawnSync)",
+            ],
+            "notes": {
+                "sync": "loop occupancy: this process could run nothing else for this long",
+                "async": "elapsed wall time, not loop occupancy; concurrent calls overlap and can exceed uptime",
+            },
+        })
     }
 
     fn expose_items(&mut self, path: &str) -> Result<Value, String> {
