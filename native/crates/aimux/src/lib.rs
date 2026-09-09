@@ -98,6 +98,7 @@ pub mod event_loop_budget;
 pub mod exchange_alert_routing;
 pub mod expose_pane_output_tap;
 pub mod expose_socket;
+pub mod hosted_cli;
 pub mod hotkeys;
 pub mod inbox_cleanup;
 pub mod install_cleanup;

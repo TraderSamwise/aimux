@@ -10,6 +10,7 @@ use aimux::dashboard_internal::{NativeDashboardOptions, run_native_dashboard_int
 use aimux::dashboard_targets::{
     DashboardResolveOptions, find_live_dashboard_target, resolve_dashboard_target,
 };
+use aimux::hosted_cli::run_hosted_cli_command;
 use aimux::launcher_env::{CliEntry, cli_entry_for, prepare_stable_process_env};
 use aimux::local_ui_server::{
     DEFAULT_LOCAL_UI_HOST, DEFAULT_LOCAL_UI_PORT, LocalUiConfig, LocalUiServerOptions,
@@ -184,6 +185,16 @@ fn main() -> Result<ExitCode> {
             if let Some(args) = native_tool_launch_args(&stripped_args) {
                 return run_root_tool_launch_command(&args);
             }
+            if stripped_args.first().map(String::as_str) == Some("hosted") {
+                let execution = run_hosted_cli_command(&stripped_args);
+                for line in execution.stdout {
+                    println!("{line}");
+                }
+                for line in execution.stderr {
+                    eprintln!("{line}");
+                }
+                return Ok(ExitCode::from(execution.code));
+            }
             if is_native_foreground_core_command(&stripped_args) {
                 return run_core_command_and_print(&stripped_args);
             }
@@ -321,6 +332,13 @@ fn core_command_help(args: &[String]) -> Option<&'static str> {
         .skip(1)
         .find(|arg| !arg.starts_with('-'))
         .map(String::as_str);
+    if matches!(command, "hosted")
+        && matches!(subcommand, Some("token" | "audit"))
+        && !help_requested
+        && args.len() > 2
+    {
+        return None;
+    }
     match (command, subcommand, help_requested) {
         ("host", None, _) => Some(HOST_HELP),
         ("host", Some("status"), true) => Some(HOST_STATUS_HELP),

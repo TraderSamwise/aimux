@@ -683,6 +683,192 @@ fn malformed_known_auxiliary_commands_fail_native_without_node_fallback() {
     }
 }
 
+#[test]
+fn hosted_status_entrypoint_matches_node_shape_without_node_fallback() {
+    let fixture = NativeEntrypointFixture::new("native-hosted-status", 46440);
+    fs::write(
+        fixture.aimux_home.join("config.json"),
+        r#"{
+  "hosted": {
+    "enabled": true,
+    "bindAddress": "0.0.0.0",
+    "port": 43210,
+    "retentionDays": 45,
+    "webhookUrl": "https://example.com/hook",
+    "trustedForwardedHeader": "x-forwarded-for"
+  }
+}
+"#,
+    )
+    .expect("write hosted config");
+
+    let output = fixture
+        .command()
+        .args(["hosted", "status", "--json"])
+        .output()
+        .expect("run hosted status");
+
+    assert!(output.status.success());
+    assert!(
+        !fixture.log.exists(),
+        "hosted status should not invoke node fallback"
+    );
+    let body: Value = serde_json::from_slice(&output.stdout).expect("hosted status json");
+    assert_eq!(body["enabled"], true);
+    assert_eq!(body["bindAddress"], "0.0.0.0");
+    assert_eq!(body["port"], 43210);
+    assert_eq!(body["webhookConfigured"], true);
+    assert_eq!(body["trustedForwardedHeader"], "x-forwarded-for");
+    assert_eq!(body["retentionDays"], 45);
+    assert_eq!(
+        body["principals"],
+        serde_json::json!({ "total": 0, "active": 0 })
+    );
+    assert_eq!(
+        body["lockdown"],
+        serde_json::json!({ "active": false, "since": null })
+    );
+    assert_eq!(body["startup"]["ok"], false);
+    assert!(
+        body["startup"]["error"]
+            .as_str()
+            .unwrap()
+            .contains("hosted mode refuses to bind 0.0.0.0")
+    );
+}
+
+#[test]
+fn hosted_token_grant_lockdown_and_audit_entrypoints_mutate_native_store() {
+    let fixture = NativeEntrypointFixture::new("native-hosted-roundtrip", 46470);
+    let create = fixture
+        .command()
+        .args(["hosted", "token", "create", "--label", "sam"])
+        .output()
+        .expect("create hosted token");
+    assert!(create.status.success());
+    assert!(
+        !fixture.log.exists(),
+        "hosted token create should not invoke node fallback"
+    );
+    let stdout = String::from_utf8_lossy(&create.stdout);
+    let principal_id = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("Principal: "))
+        .and_then(|line| line.split_whitespace().next())
+        .expect("principal id in output")
+        .to_owned();
+    assert!(principal_id.starts_with("prn_"));
+    let token = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("Token:     "))
+        .expect("token in output");
+    assert!(token.starts_with("amx_"));
+
+    let list = fixture
+        .command()
+        .args(["hosted", "token", "list", "--json"])
+        .output()
+        .expect("list hosted tokens");
+    assert!(list.status.success());
+    let listed: Value = serde_json::from_slice(&list.stdout).expect("principal list json");
+    assert_eq!(listed[0]["id"], principal_id);
+    assert_eq!(listed[0]["label"], "sam");
+    assert_eq!(listed[0]["role"], "operator");
+    assert_eq!(listed[0]["grants"], serde_json::json!([]));
+    assert!(
+        listed[0]["tokenHash"]
+            .as_str()
+            .unwrap()
+            .starts_with("sha256:")
+    );
+    assert!(!String::from_utf8_lossy(&list.stdout).contains(token));
+
+    let project = fixture.root.join("plain-project");
+    fs::create_dir_all(&project).expect("create project");
+    let grant = fixture
+        .command()
+        .args([
+            "hosted",
+            "grant",
+            &principal_id,
+            "--project",
+            project.to_str().unwrap(),
+            "--session",
+            "claude-1",
+        ])
+        .output()
+        .expect("grant hosted session");
+    assert!(grant.status.success());
+    assert!(
+        String::from_utf8_lossy(&grant.stdout)
+            .contains(&format!("Granted {principal_id} -> claude-1"))
+    );
+
+    let ungrant = fixture
+        .command()
+        .args([
+            "hosted",
+            "ungrant",
+            &principal_id,
+            "--project",
+            project.to_str().unwrap(),
+            "--session",
+            "claude-1",
+        ])
+        .output()
+        .expect("ungrant hosted session");
+    assert!(ungrant.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&ungrant.stdout).trim(),
+        format!("Removed claude-1 from {principal_id}")
+    );
+
+    let lockdown = fixture
+        .command()
+        .args(["hosted", "lockdown", "on"])
+        .output()
+        .expect("lock hosted mode");
+    assert!(lockdown.status.success());
+    assert!(fixture.aimux_home.join("hosted/lockdown.json").exists());
+
+    let revoke = fixture
+        .command()
+        .args(["hosted", "token", "revoke", &principal_id])
+        .output()
+        .expect("revoke hosted token");
+    assert!(revoke.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&revoke.stdout).trim(),
+        format!("Revoked {principal_id}")
+    );
+
+    let tail = fixture
+        .command()
+        .args(["hosted", "audit", "tail", "--lines", "10", "--json"])
+        .output()
+        .expect("tail hosted audit");
+    assert!(tail.status.success());
+    let audit: Value = serde_json::from_slice(&tail.stdout).expect("audit json");
+    let events = audit
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|entry| entry["event"].as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        events,
+        [
+            "hosted_grant_changed",
+            "hosted_grant_changed",
+            "hosted_lockdown",
+            "hosted_token_revoked"
+        ]
+    );
+    let outbox =
+        fs::read_to_string(fixture.aimux_home.join("hosted/outbox.jsonl")).expect("hosted outbox");
+    assert!(outbox.contains("hosted_token_revoked"));
+}
+
 #[cfg(unix)]
 #[test]
 fn unknown_main_commands_fail_native_without_node_fallback() {
