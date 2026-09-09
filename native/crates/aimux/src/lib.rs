@@ -108,6 +108,7 @@ pub mod launcher_env;
 pub mod lifecycle_orphans_contract;
 pub mod local_ui_server;
 pub mod logs;
+pub mod loop_watcher;
 pub mod managed_launch_env;
 pub mod monitor_capture_contract;
 pub mod monitor_targets_contract;

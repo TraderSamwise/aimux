@@ -19,6 +19,7 @@ pub mod http;
 pub mod interactions;
 pub mod library;
 pub mod lifecycle;
+pub mod loop_watcher_task;
 pub mod metadata;
 pub mod notification_context;
 pub mod notification_display_context;

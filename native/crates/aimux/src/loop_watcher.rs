@@ -1,145 +1,108 @@
+//! The managed-loop watcher.
+//!
+//! An agent in a managed loop that has stopped without waiting on a human is a
+//! nudge candidate. With an overseer present the watcher wakes the overseer with
+//! a briefing and lets it decide; without one it stays observe-only unless
+//! `loop.autoNudgeWithoutOverseer` is set. waiting/error/interrupted states are
+//! deliberately excluded — those are genuine pauses we must not steamroll.
+
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub fn run_loop_watcher_contract_case(input: &Value) -> Value {
-    match str_field(input, "api") {
-        "findLoopCandidates" => json!(find_loop_candidates(input)),
-        "buildOverseerBriefing" => {
-            let candidates = input
-                .get("candidates")
-                .and_then(Value::as_array)
-                .map(Vec::as_slice)
-                .unwrap_or(&[]);
-            let template = input.get("template").and_then(Value::as_str);
-            json!(build_overseer_briefing(candidates, template))
-        }
-        "LoopWatcher.scan" => run_loop_watcher_scan(input),
-        api => panic!("unknown loop watcher contract api: {api}"),
-    }
+/// One nudge the watcher wants delivered.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoopSend {
+    pub session_id: String,
+    pub text: String,
 }
 
-fn run_loop_watcher_scan(input: &Value) -> Value {
-    let mut now = input
-        .get("now")
-        .and_then(Value::as_i64)
-        .unwrap_or(1_000_000);
-    let mut sends = Vec::<Value>::new();
-    let mut outputs = Vec::<Value>::new();
-    let mut last_nudge_at = BTreeMap::<String, i64>::new();
-    let mut last_overseer_wake_at = 0;
-    let failures = input
-        .get("sendFailures")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .map(ToOwned::to_owned)
-        .collect::<BTreeSet<_>>();
+/// Cross-scan state: who was nudged when, and when the overseer was last woken.
+#[derive(Debug, Default)]
+pub struct LoopWatcher {
+    last_nudge_at: BTreeMap<String, i64>,
+    last_overseer_wake_at: i64,
+}
 
-    for op in array_field(input, "ops") {
-        match str_field(op, "kind") {
-            "advance" => {
-                now += op.get("ms").and_then(Value::as_i64).unwrap_or(0);
-                outputs.push(json!({ "kind": "advance", "now": now }));
+impl LoopWatcher {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Scan once and deliver.
+    ///
+    /// `input` carries `sessions`, `metadata`, `config` and `pendingInteractions`.
+    /// `deliver` reports whether the send landed: a cooldown only starts once a
+    /// message actually arrives, so a failed send must not silence the overseer
+    /// for a whole window.
+    pub fn scan(
+        &mut self,
+        input: &Value,
+        now_ms: i64,
+        deliver: &mut dyn FnMut(&LoopSend) -> bool,
+    ) -> Vec<LoopSend> {
+        let mut sends = Vec::new();
+        let metadata = input.get("metadata").unwrap_or(&Value::Null);
+        let overseer_id = find_overseer_session_id(metadata);
+        let candidates = find_loop_candidates_with_overseer(input, overseer_id.as_deref());
+        if candidates.is_empty() {
+            return sends;
+        }
+
+        let cooldown = input
+            .get("config")
+            .and_then(|config| config.get("nudgeCooldownMs"))
+            .and_then(Value::as_i64)
+            .unwrap_or(60_000);
+        let overseer_running = overseer_id
+            .as_deref()
+            .is_some_and(|id| session_exists(input, id));
+
+        if let Some(overseer_id) = overseer_id.filter(|_| overseer_running) {
+            if now_ms - self.last_overseer_wake_at < cooldown {
+                return sends;
             }
-            "scan" => {
-                scan_once(
-                    input,
-                    now,
-                    &mut sends,
-                    &mut last_nudge_at,
-                    &mut last_overseer_wake_at,
-                    &failures,
-                );
-                outputs.push(json!({ "kind": "scan", "sends": sends }));
+            let send = LoopSend {
+                session_id: overseer_id,
+                text: build_overseer_briefing(
+                    &candidates,
+                    config_string(input, "overseerBriefingTemplate"),
+                ),
+            };
+            if deliver(&send) {
+                self.last_overseer_wake_at = now_ms;
             }
-            kind => panic!("unknown loop watcher op: {kind}"),
+            sends.push(send);
+            return sends;
         }
-    }
 
-    if !input.get("ops").is_some_and(Value::is_array) {
-        scan_once(
-            input,
-            now,
-            &mut sends,
-            &mut last_nudge_at,
-            &mut last_overseer_wake_at,
-            &failures,
-        );
-        outputs.push(json!({ "kind": "scan", "sends": sends }));
-    }
-
-    json!(outputs)
-}
-
-fn scan_once(
-    input: &Value,
-    now: i64,
-    sends: &mut Vec<Value>,
-    last_nudge_at: &mut BTreeMap<String, i64>,
-    last_overseer_wake_at: &mut i64,
-    failures: &BTreeSet<String>,
-) {
-    let metadata = input.get("metadata").unwrap_or(&Value::Null);
-    let overseer_id = find_overseer_session_id(metadata);
-    let candidates = find_loop_candidates_with_overseer(input, overseer_id.as_deref());
-    if candidates.is_empty() {
-        return;
-    }
-
-    let cooldown = input
-        .get("config")
-        .and_then(|config| config.get("nudgeCooldownMs"))
-        .and_then(Value::as_i64)
-        .unwrap_or(60_000);
-    let overseer_running = overseer_id
-        .as_deref()
-        .is_some_and(|id| session_exists(input, id));
-
-    if let Some(overseer_id) = overseer_id.filter(|_| overseer_running) {
-        if now - *last_overseer_wake_at < cooldown {
-            return;
+        if !input
+            .get("config")
+            .and_then(|config| config.get("autoNudgeWithoutOverseer"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            return sends;
         }
-        sends.push(json!({
-            "sessionId": overseer_id,
-            "text": build_overseer_briefing(&candidates, config_string(input, "overseerBriefingTemplate")),
-        }));
-        if !failures.contains(&overseer_id) {
-            *last_overseer_wake_at = now;
-        }
-        return;
-    }
 
-    if !input
-        .get("config")
-        .and_then(|config| config.get("autoNudgeWithoutOverseer"))
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
-        return;
-    }
-
-    for candidate in candidates {
-        let id = str_field(&candidate, "id");
-        if now - last_nudge_at.get(id).copied().unwrap_or(0) < cooldown {
-            continue;
+        for candidate in candidates {
+            let id = str_field(&candidate, "id").to_owned();
+            if now_ms - self.last_nudge_at.get(&id).copied().unwrap_or(0) < cooldown {
+                continue;
+            }
+            let send = LoopSend {
+                session_id: id.clone(),
+                text: build_canned_nudge(&candidate),
+            };
+            if deliver(&send) {
+                self.last_nudge_at.insert(id, now_ms);
+            }
+            sends.push(send);
         }
-        sends.push(json!({
-            "sessionId": id,
-            "text": build_canned_nudge(&candidate),
-        }));
-        if !failures.contains(id) {
-            last_nudge_at.insert(id.to_string(), now);
-        }
+        sends
     }
 }
 
-fn find_loop_candidates(input: &Value) -> Vec<Value> {
-    let overseer_id = input.get("overseerId").and_then(Value::as_str);
-    find_loop_candidates_with_overseer(input, overseer_id)
-}
-
-fn find_loop_candidates_with_overseer(input: &Value, overseer_id: Option<&str>) -> Vec<Value> {
+pub fn find_loop_candidates_with_overseer(input: &Value, overseer_id: Option<&str>) -> Vec<Value> {
     let metadata = input.get("metadata").unwrap_or(&Value::Null);
     let metadata_sessions = match metadata.get("sessions").and_then(Value::as_object) {
         Some(sessions) => sessions,
@@ -209,7 +172,7 @@ fn find_loop_candidates_with_overseer(input: &Value, overseer_id: Option<&str>) 
         .collect()
 }
 
-fn build_overseer_briefing(candidates: &[Value], template: Option<&str>) -> String {
+pub fn build_overseer_briefing(candidates: &[Value], template: Option<&str>) -> String {
     if let Some(template) = template
         .map(str::trim)
         .filter(|template| !template.is_empty())
@@ -280,7 +243,7 @@ fn replace_template_token(template: &str, token: &str, replacement: &str) -> Str
     output
 }
 
-fn describe_candidate(candidate: &Value) -> String {
+pub fn describe_candidate(candidate: &Value) -> String {
     let id = str_field(candidate, "id");
     let tool = optional_str(candidate, "tool")
         .map(|tool| format!(" ({tool})"))
@@ -324,7 +287,7 @@ fn describe_candidate(candidate: &Value) -> String {
     format!("- {id}{tool}{where_text}{provenance}{last_action}{goal}")
 }
 
-fn build_canned_nudge(candidate: &Value) -> String {
+pub fn build_canned_nudge(candidate: &Value) -> String {
     let goal = optional_str(candidate, "goal")
         .map(|goal| format!(" with this goal: {goal}"))
         .unwrap_or_default();
@@ -340,7 +303,7 @@ fn build_canned_nudge(candidate: &Value) -> String {
     .join("\n")
 }
 
-fn find_overseer_session_id(metadata: &Value) -> Option<String> {
+pub fn find_overseer_session_id(metadata: &Value) -> Option<String> {
     metadata
         .get("sessions")
         .and_then(Value::as_object)

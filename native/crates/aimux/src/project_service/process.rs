@@ -25,6 +25,7 @@ use crate::plugin_api::NativePluginStatus;
 use crate::plugin_project_service_host::{
     builtin_plugin_tick_tasks, native_plugin_statuses_for_context,
 };
+use crate::project_service::loop_watcher_task::loop_watcher_task;
 use crate::project_service::scheduler::spawn_project_service_scheduler;
 use crate::runtime_lifecycle_methods::write_instruction_files;
 use crate::tmux_expose::{
@@ -458,7 +459,9 @@ fn serve_project_service_listener(
         .with_plugin_statuses(plugin_statuses)
         .with_hot_snapshot_background_refresh(),
     );
-    spawn_project_service_scheduler(Arc::clone(&context), builtin_plugin_tick_tasks());
+    let mut periodic_tasks = builtin_plugin_tick_tasks();
+    periodic_tasks.push(loop_watcher_task(&context));
+    spawn_project_service_scheduler(Arc::clone(&context), periodic_tasks);
     for stream in listener.incoming() {
         let Ok(mut stream) = stream else {
             continue;
