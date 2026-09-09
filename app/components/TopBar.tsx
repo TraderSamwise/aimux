@@ -123,9 +123,11 @@ function TopLevelExperienceNav() {
 
 export const TopBar = React.memo(function TopBar({ left }: { left?: React.ReactNode }) {
   const relayConfigured = useAtomValue(relayConfiguredAtom);
-  const { topBarCompact: compact } = useResponsiveViewport();
+  const { sidebarPresentation, topBarCompact: compact } = useResponsiveViewport();
   const insets = useSafeAreaInsets();
-  const topInset = resolveChromeTopInset(insets.top);
+  const topInset = resolveChromeTopInset(insets.top, {
+    reserveTopSafeArea: sidebarPresentation !== "persistent",
+  });
 
   return (
     <View

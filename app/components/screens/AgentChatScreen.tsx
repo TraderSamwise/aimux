@@ -545,6 +545,7 @@ export default function ChatScreen() {
     chatSplitWidth,
     layoutHeight: windowHeight,
     layoutWidth: width,
+    sidebarPresentation,
   } = useResponsiveViewport();
   const insets = useSafeAreaInsets();
   const keyboardVisible = useKeyboardVisible(Platform.OS !== "web");
@@ -855,7 +856,9 @@ export default function ChatScreen() {
     pathname !== "/shares" &&
     !pathname.startsWith("/shares/") &&
     !activeShare;
-  const resolvedTopInset = resolveChromeTopInset(insets.top);
+  const resolvedTopInset = resolveChromeTopInset(insets.top, {
+    reserveTopSafeArea: sidebarPresentation !== "persistent",
+  });
   const topBarHeight = chatTopBarReserveHeight({
     pairingBannerVisible: showPairingBanner,
     topInset: resolvedTopInset,

@@ -66,7 +66,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const Sidebar = isMonitorRoute ? MonitorSidebar : isSharedShell ? SharedSidebar : ProjectSidebar;
   const showPairingBanner = relayConfigured && relayStatus === "device_pending" && !isSharedShell;
   const overlayTopChrome = isChatRoute(pathname);
-  const resolvedTopInset = resolveChromeTopInset(insets.top);
+  const resolvedTopInset = resolveChromeTopInset(insets.top, {
+    reserveTopSafeArea: !usesPersistentSidebar,
+  });
   const topChromeHideDistance = chatTopBarReserveHeight({
     pairingBannerVisible: showPairingBanner,
     topInset: resolvedTopInset,
