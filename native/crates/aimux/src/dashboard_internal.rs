@@ -82,7 +82,7 @@ use serde_json::{Map, Value};
 use std::env;
 use std::fs;
 use std::io::{self, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
@@ -936,7 +936,7 @@ fn elapsed_millis(start: Instant) -> i64 {
 
 fn maybe_start_dashboard_runtime_guard_repair(
     runtime_guard: &mut DashboardRuntimeGuardStatus,
-    project_root: &PathBuf,
+    project_root: &Path,
 ) -> bool {
     let project_root_text = project_root.to_string_lossy().into_owned();
     let now_ms = current_time_ms();
@@ -1007,7 +1007,7 @@ fn maybe_start_dashboard_runtime_guard_repair(
 
 fn poll_dashboard_runtime_guard_repair(
     runtime_guard: &mut DashboardRuntimeGuardStatus,
-    project_root: &PathBuf,
+    project_root: &Path,
 ) -> bool {
     let mut changed = false;
     loop {
