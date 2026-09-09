@@ -17,7 +17,6 @@ import {
   ScrollView,
   Text as RNText,
   TextInput,
-  useWindowDimensions,
   View,
   type NativeSyntheticEvent,
   type NativeScrollEvent,
@@ -146,6 +145,7 @@ import { useAgentOutputFeed } from "@/lib/use-agent-output-feed";
 import type { AgentOutputFeedPurpose } from "@/lib/use-agent-output-feed";
 import { cn } from "@/lib/utils";
 import { resolveChromeBottomInset, resolveChromeTopInset } from "@/lib/native-safe-area";
+import { useResponsiveViewport } from "@/lib/responsive-viewport";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopSession } from "@/lib/desktop-state";
 import { singleRouteParam } from "@/lib/route-params";
@@ -542,7 +542,12 @@ export default function ChatScreen() {
   const { user } = useUser();
   const router = useRouter();
   const pathname = usePathname();
-  const { width, height: windowHeight } = useWindowDimensions();
+  const {
+    chatHeaderCompact: compactHeaderActions,
+    chatSplitWidth,
+    layoutHeight: windowHeight,
+    layoutWidth: width,
+  } = useResponsiveViewport();
   useChatPerfProbe("chat-screen", `${Math.round(width)} ${agentOutputViewMode}`);
   const insets = useSafeAreaInsets();
   const keyboardVisible = useKeyboardVisible(Platform.OS !== "web");
@@ -706,7 +711,7 @@ export default function ChatScreen() {
     session !== null &&
     session.status !== "offline" &&
     session.status !== "exited";
-  const canUseSplitView = canUseChatSplitView(width);
+  const canUseSplitView = canUseChatSplitView(chatSplitWidth);
   const {
     chatViewVisible,
     effectiveMode: effectiveAgentOutputViewMode,
@@ -714,7 +719,7 @@ export default function ChatScreen() {
   } = chatOutputPaneVisibility({
     mode: agentOutputViewMode,
     rawOutputAllowed: canUseOwnerControls,
-    width,
+    width: chatSplitWidth,
   });
   const agentOutputFeedMode = agentOutputModeForVisiblePane({ terminalViewVisible });
   const composerDraftKey = useMemo(() => {
@@ -833,7 +838,6 @@ export default function ChatScreen() {
   const activityLabelShimmer = shouldShimmerAgentActivityLabel(activity, activityLabel);
 
   const wideControls = composerWidth >= COMPOSER_CONTROL_LABEL_WIDTH;
-  const compactHeaderActions = width < 430;
   const headerActionsMaxWidth =
     Platform.OS === "web" ? undefined : Math.max(MIN_HEADER_ACTIONS_WIDTH, width * 0.52);
   const composerFooterBottomPadding =

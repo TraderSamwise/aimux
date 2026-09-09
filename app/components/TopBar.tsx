@@ -1,5 +1,5 @@
 import React from "react";
-import { Image, Pressable, View, useWindowDimensions } from "react-native";
+import { Image, Pressable, View } from "react-native";
 import { usePathname, useRouter, type Href } from "expo-router";
 import { useAtomValue } from "jotai";
 import { Bell, Camera, FolderKanban, MessageSquare, Share2 } from "lucide-react-native";
@@ -11,6 +11,7 @@ import { resolveChromeTopInset } from "@/lib/native-safe-area";
 import { cn } from "@/lib/utils";
 import { Text } from "@/components/ui/text";
 import { buildMainTabHref } from "@/lib/main-tabs";
+import { useResponsiveViewport } from "@/lib/responsive-viewport";
 import { useRouteShare } from "@/lib/use-route-share";
 import { relayConfiguredAtom } from "@/stores/relay";
 import { selectedProjectPathAtom } from "@/stores/projects";
@@ -49,7 +50,7 @@ function TopBarRouteButton({
 function TopLevelExperienceNav() {
   const pathname = usePathname();
   const router = useRouter();
-  const { width } = useWindowDimensions();
+  const { topBarCompact: compact } = useResponsiveViewport();
   const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
   const activeShare = useRouteShare();
   const { userId } = useAuth();
@@ -65,8 +66,6 @@ function TopLevelExperienceNav() {
     activeShare && activeShare.ownerUserId === userId
       ? activeShare.projectRoot
       : selectedProjectPath;
-  const compact = width < 640;
-
   const options = [
     {
       id: "projects",
@@ -122,12 +121,11 @@ function TopLevelExperienceNav() {
   );
 }
 
-export function TopBar({ left }: { left?: React.ReactNode }) {
+export const TopBar = React.memo(function TopBar({ left }: { left?: React.ReactNode }) {
   const relayConfigured = useAtomValue(relayConfiguredAtom);
-  const { width } = useWindowDimensions();
+  const { topBarCompact: compact } = useResponsiveViewport();
   const insets = useSafeAreaInsets();
   const topInset = resolveChromeTopInset(insets.top);
-  const compact = width < 640;
 
   return (
     <View
@@ -178,4 +176,5 @@ export function TopBar({ left }: { left?: React.ReactNode }) {
       <AuthMenu />
     </View>
   );
-}
+});
+TopBar.displayName = "TopBar";
