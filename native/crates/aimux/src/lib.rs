@@ -16,7 +16,7 @@ pub mod backend_id_reconcile_contract;
 pub mod backend_session_ids;
 pub mod backend_session_ids_contract;
 pub mod build_info;
-pub mod builtin_metadata_watchers_contract;
+pub mod builtin_metadata_watchers;
 pub mod cli_agent_list_contract;
 pub mod cli_attachment_contract;
 pub mod cli_launcher;

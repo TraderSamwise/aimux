@@ -1,17 +1,27 @@
-use serde_json::{Map, Value, json};
+//! The builtin metadata watchers.
+//!
+//! Four cheap pollers that turn files an agent writes into what the dashboard
+//! shows: plan progress, a status headline, task events, and prompt/response
+//! /git turns from history. Each one dedupes against what it last saw, and the
+//! task and history watchers deliberately stay quiet about whatever they find
+//! on their first look — otherwise every project-service restart would replay
+//! the whole backlog as fresh events.
+
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
-#[derive(Default)]
-struct Calls {
-    statuses: Vec<Value>,
-    progresses: Vec<Value>,
-    logs: Vec<Value>,
-    contexts: Vec<Value>,
-    events: Vec<Value>,
+/// What a scan wants written, as data rather than as writes.
+#[derive(Debug, Default)]
+pub struct MetadataEffects {
+    pub statuses: Vec<Value>,
+    pub progresses: Vec<Value>,
+    pub logs: Vec<Value>,
+    pub contexts: Vec<Value>,
+    pub events: Vec<Value>,
 }
 
-#[derive(Default)]
-struct WatcherState {
+#[derive(Debug, Default)]
+pub struct BuiltinMetadataWatchers {
     last_status_by_session: BTreeMap<String, String>,
     last_progress_by_session: BTreeMap<String, String>,
     last_task_by_session: BTreeMap<String, String>,
@@ -20,58 +30,41 @@ struct WatcherState {
     history_watcher_primed: bool,
 }
 
-pub fn builtin_metadata_watchers_contract(case: &Value) -> Value {
-    run_watcher_scenario(&case["input"])
-}
-
-fn run_watcher_scenario(input: &Value) -> Value {
-    let mut state = WatcherState::default();
-    let mut calls = Calls::default();
-    let mut exchange = input["exchange"].clone();
-    let mut history = input["history"].clone();
-
-    scan_plan_files(input, &mut state, &mut calls);
-    scan_status_files(input, &mut state, &mut calls);
-    scan_tasks(&exchange, &mut state, &mut calls);
-    scan_history(input, &history, &mut state, &mut calls);
-
-    if input.get("waitAfterStartMs").is_some() {
-        scan_plan_files(input, &mut state, &mut calls);
-        scan_status_files(input, &mut state, &mut calls);
-        scan_tasks(&exchange, &mut state, &mut calls);
-        scan_history(input, &history, &mut state, &mut calls);
+impl BuiltinMetadataWatchers {
+    pub fn new() -> Self {
+        Self::default()
     }
 
-    for operation in input["afterStart"].as_array().into_iter().flatten() {
-        match operation["op"].as_str().unwrap_or_default() {
-            "writeExchange" => exchange = operation["exchange"].clone(),
-            "appendTurn" => append_history_turn(&mut history, operation),
-            "wait" => {
-                scan_plan_files(input, &mut state, &mut calls);
-                scan_status_files(input, &mut state, &mut calls);
-                scan_tasks(&exchange, &mut state, &mut calls);
-                scan_history(input, &history, &mut state, &mut calls);
-            }
-            _ => {}
-        }
-    }
-
-    calls.into_value()
-}
-
-impl Calls {
-    fn into_value(self) -> Value {
-        json!({
-            "statuses": self.statuses,
-            "progresses": self.progresses,
-            "logs": self.logs,
-            "contexts": self.contexts,
-            "events": self.events,
-        })
+    /// Run all four watchers over one snapshot of the sources.
+    ///
+    /// Node ran them as four independent 2s pollers; collapsing them into one
+    /// pass keeps the same per-watcher dedupe and costs one directory read each
+    /// instead of four overlapping timers on a shared thread.
+    pub fn scan(&mut self, input: &Value) -> MetadataEffects {
+        let mut effects = MetadataEffects::default();
+        scan_plan_files(input, self, &mut effects);
+        scan_status_files(input, self, &mut effects);
+        scan_tasks(&input["exchange"], self, &mut effects);
+        scan_history(input, &input["history"], self, &mut effects);
+        effects
     }
 }
 
-fn scan_plan_files(input: &Value, state: &mut WatcherState, calls: &mut Calls) {
+impl MetadataEffects {
+    pub fn is_empty(&self) -> bool {
+        self.statuses.is_empty()
+            && self.progresses.is_empty()
+            && self.logs.is_empty()
+            && self.contexts.is_empty()
+            && self.events.is_empty()
+    }
+}
+
+pub fn scan_plan_files(
+    input: &Value,
+    state: &mut BuiltinMetadataWatchers,
+    calls: &mut MetadataEffects,
+) {
     let Some(files) = input.get("planFiles").and_then(Value::as_object) else {
         return;
     };
@@ -100,7 +93,11 @@ fn scan_plan_files(input: &Value, state: &mut WatcherState, calls: &mut Calls) {
     }
 }
 
-fn scan_status_files(input: &Value, state: &mut WatcherState, calls: &mut Calls) {
+pub fn scan_status_files(
+    input: &Value,
+    state: &mut BuiltinMetadataWatchers,
+    calls: &mut MetadataEffects,
+) {
     let Some(files) = input.get("statusFiles").and_then(Value::as_object) else {
         return;
     };
@@ -126,7 +123,11 @@ fn scan_status_files(input: &Value, state: &mut WatcherState, calls: &mut Calls)
     }
 }
 
-fn scan_tasks(exchange: &Value, state: &mut WatcherState, calls: &mut Calls) {
+pub fn scan_tasks(
+    exchange: &Value,
+    state: &mut BuiltinMetadataWatchers,
+    calls: &mut MetadataEffects,
+) {
     let mut latest_by_session = BTreeMap::new();
     for task in exchange["tasks"].as_array().into_iter().flatten() {
         let session_id = optional_string(task.get("assignedTo"))
@@ -186,7 +187,12 @@ fn scan_tasks(exchange: &Value, state: &mut WatcherState, calls: &mut Calls) {
     state.task_watcher_primed = true;
 }
 
-fn scan_history(input: &Value, history: &Value, state: &mut WatcherState, calls: &mut Calls) {
+pub fn scan_history(
+    input: &Value,
+    history: &Value,
+    state: &mut BuiltinMetadataWatchers,
+    calls: &mut MetadataEffects,
+) {
     for session_id in input["sessions"].as_array().into_iter().flatten() {
         let Some(session_id) = session_id.as_str() else {
             continue;
@@ -269,29 +275,13 @@ fn scan_history(input: &Value, history: &Value, state: &mut WatcherState, calls:
     state.history_watcher_primed = true;
 }
 
-fn append_history_turn(history: &mut Value, operation: &Value) {
-    let session_id = string_field(operation, "sessionId");
-    if !history.is_object() {
-        *history = Value::Object(Map::new());
-    }
-    let Some(history) = history.as_object_mut() else {
-        return;
-    };
-    let entry = history
-        .entry(session_id)
-        .or_insert_with(|| Value::Array(Vec::new()));
-    if let Some(turns) = entry.as_array_mut() {
-        turns.push(operation["turn"].clone());
-    }
+pub struct PlanProgress {
+    pub current: usize,
+    pub total: usize,
+    pub label: Option<&'static str>,
 }
 
-struct PlanProgress {
-    current: usize,
-    total: usize,
-    label: Option<&'static str>,
-}
-
-fn parse_plan_progress(content: &str) -> Option<PlanProgress> {
+pub fn parse_plan_progress(content: &str) -> Option<PlanProgress> {
     let mut total = 0;
     let mut current = 0;
     for line in content.lines() {
@@ -310,7 +300,7 @@ fn parse_plan_progress(content: &str) -> Option<PlanProgress> {
     })
 }
 
-fn parse_status_headline(content: &str) -> Option<String> {
+pub fn parse_status_headline(content: &str) -> Option<String> {
     content
         .lines()
         .map(str::trim)
