@@ -1665,10 +1665,11 @@ def run_daily_loop_smoke(aimux_bin: Path, mutation: str | None) -> dict[str, Any
             label="daily loop dashboard shows second worktree",
         )
 
+        library_key = b"l" if mutation == "daily-loop-shift-library-missing" else b"\x1b[76;2u"
         for key, anchor in [
             (b"c", "coordination"),
             (b"p", "project"),
-            (b"L", "library"),
+            (library_key, "library"),
             (b"t", "topology"),
             (b"g", "graveyard"),
         ]:
@@ -1814,7 +1815,7 @@ def run_daily_loop_smoke(aimux_bin: Path, mutation: str | None) -> dict[str, Any
                 "dashboard n opens the tool picker and spawns a configured agent",
                 "Enter focuses the selected agent and prefix+d returns to dashboard",
                 "worktree add appears in the dashboard loop",
-                "coordination/project/library/topology/graveyard screens open and return",
+                "coordination/project/modified-Shift-L-library/topology/graveyard screens open and return",
                 "stop moves an agent into graveyard and restore makes it running again",
                 "dashboard repaints after resize without another input key",
                 "dashboard quits cleanly",
@@ -3964,6 +3965,7 @@ def prove_failures(args: argparse.Namespace, aimux_bin: Path) -> list[dict[str, 
         ("dashboard-attach", "dashboard-attach-digit-target-missing"),
         ("bare-dashboard", "bare-dashboard-inline"),
         ("daily-loop", "daily-loop-return-missing"),
+        ("daily-loop", "daily-loop-shift-library-missing"),
         ("dashboard", "dashboard-resize-width-overflow"),
         ("expose-interaction", "expose-entry-missing"),
         ("expose-interaction", "expose-navigation-inert"),
@@ -4076,6 +4078,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "bare-dashboard-inline",
         "daily-loop-spawn-missing",
         "daily-loop-return-missing",
+        "daily-loop-shift-library-missing",
         "expose-entry-missing",
         "expose-navigation-inert",
         "expose-resize-stale",
