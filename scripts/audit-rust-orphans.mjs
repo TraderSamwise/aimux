@@ -1,11 +1,13 @@
 #!/usr/bin/env node
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
 const repoRoot = process.cwd();
 const crateRoot = join(repoRoot, 'native/crates/aimux');
 const srcRoot = join(crateRoot, 'src');
 const testsRoot = join(crateRoot, 'tests');
+const fixtureDispatcherAllowlistPath = join(repoRoot, 'scripts/rust-fixture-dispatcher-allowlist.json');
+const enforceFixtureDispatchers = process.argv.includes('--enforce-fixture-twins');
 
 const tuiOwnedPatterns = [
   /(^|\/)dashboard_renderer(\.rs|\/)/,
@@ -107,6 +109,9 @@ function findMatchingBrace(source, openIndex) {
 }
 
 function parseFunctions(file) {
+  if (!existsSync(file)) {
+    return [];
+  }
   const raw = readFileSync(file, 'utf8');
   const source = stripCommentsAndStrings(raw);
   const rel = relative(repoRoot, file);
@@ -223,6 +228,29 @@ function triage(def, testReachable) {
   return 'needs-node-caller-triage';
 }
 
+function loadFixtureDispatcherAllowlist() {
+  if (!existsSync(fixtureDispatcherAllowlistPath)) {
+    return {};
+  }
+  const parsed = JSON.parse(readFileSync(fixtureDispatcherAllowlistPath, 'utf8'));
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`${fixtureDispatcherAllowlistPath} must be an object keyed by Rust source path`);
+  }
+  for (const [file, reason] of Object.entries(parsed)) {
+    if (typeof reason !== 'string' || reason.trim() === '') {
+      throw new Error(`${fixtureDispatcherAllowlistPath} entry ${file} must have a one-line reason`);
+    }
+    if (reason.includes('\n')) {
+      throw new Error(`${fixtureDispatcherAllowlistPath} entry ${file} reason must be one line`);
+    }
+  }
+  return parsed;
+}
+
+function isFixtureDispatcherName(name) {
+  return /^(?:run_.*_case|.*_contract)$/.test(name);
+}
+
 const sourceFiles = [...walk(srcRoot), ...walk(testsRoot)];
 const defs = sourceFiles.flatMap(parseFunctions);
 const defsById = new Map(defs.map((def) => [def.id, def]));
@@ -284,11 +312,44 @@ const graphUnreachableCandidates = defs
   .sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line);
 const candidates = graphUnreachableCandidates.filter((candidate) => candidate.productionReferences === 0);
 
-const actionable = candidates.filter((candidate) => candidate.triage !== 'fixture-contract');
+const actionable = candidates;
 const countsByTriage = {};
 for (const candidate of actionable) {
   countsByTriage[candidate.triage] = (countsByTriage[candidate.triage] ?? 0) + 1;
 }
+const fixtureDispatcherAllowlist = loadFixtureDispatcherAllowlist();
+const fixtureDispatcherFiles = new Map();
+for (const def of defs.filter((def) => def.productionFile && def.public && isFixtureDispatcherName(def.name))) {
+  if (!fixtureDispatcherFiles.has(def.file)) {
+    fixtureDispatcherFiles.set(def.file, []);
+  }
+  fixtureDispatcherFiles.get(def.file).push(def);
+}
+const strandedFixtureDispatchers = [...fixtureDispatcherFiles.entries()]
+  .filter(([file, dispatchers]) => {
+    const publicFileDefinitions = defs.filter((def) => def.file === file && def.public);
+    return (
+      !publicFileDefinitions.some((def) => productionReachable.has(def.id)) &&
+      !dispatchers.some((def) => productionReferenceCountOutsideDefinitions(def.name) > 0)
+    );
+  })
+  .map(([file, dispatchers]) => ({
+    file,
+    dispatchers: dispatchers.map((def) => def.name).sort(),
+    reason: fixtureDispatcherAllowlist[file] ?? null,
+  }))
+  .sort((a, b) => a.file.localeCompare(b.file));
+const strandedFixtureDispatcherFiles = new Set(strandedFixtureDispatchers.map((entry) => entry.file));
+const untrackedFixtureDispatchers = strandedFixtureDispatchers.filter((entry) => !entry.reason);
+const staleFixtureDispatcherAllowlist = Object.keys(fixtureDispatcherAllowlist)
+  .filter((file) => !strandedFixtureDispatcherFiles.has(file))
+  .sort();
+const fixtureDispatcherGate = {
+  allowlistPath: relative(repoRoot, fixtureDispatcherAllowlistPath),
+  stranded: strandedFixtureDispatchers,
+  untracked: untrackedFixtureDispatchers,
+  stale: staleFixtureDispatcherAllowlist,
+};
 const json = process.argv.includes('--json');
 if (json) {
   console.log(JSON.stringify({
@@ -298,6 +359,7 @@ if (json) {
     countsByTriage,
     candidates,
     actionable,
+    fixtureDispatcherGate,
   }, null, 2));
 } else {
   console.log(`# Rust orphan sweep`);
@@ -305,7 +367,7 @@ if (json) {
   console.log(`Public functions checked: ${defs.filter((def) => def.productionFile && def.public).length}`);
   console.log(`Graph-unreachable public functions: ${graphUnreachableCandidates.length}`);
   console.log(`Unreferenced production public functions: ${candidates.length}`);
-  console.log(`Actionable after fixture/contract exclusions: ${actionable.length}`);
+  console.log(`Reported unreferenced production public functions: ${actionable.length}`);
   for (const [label, count] of Object.entries(countsByTriage).sort()) {
     console.log(`- ${label}: ${count}`);
   }
@@ -315,4 +377,30 @@ if (json) {
   for (const candidate of actionable) {
     console.log(`| ${candidate.file} | ${candidate.line} | \`${candidate.name}\` | ${candidate.reachableFromTests ? 'yes' : 'no'} | ${candidate.triage} |`);
   }
+  console.log('');
+  console.log('## Fixture dispatcher gate');
+  console.log(`Stranded dispatcher modules: ${strandedFixtureDispatchers.length}`);
+  console.log(`Tracked allowlist entries: ${Object.keys(fixtureDispatcherAllowlist).length}`);
+  console.log(`Untracked stranded modules: ${untrackedFixtureDispatchers.length}`);
+  console.log(`Stale allowlist entries: ${staleFixtureDispatcherAllowlist.length}`);
+  if (untrackedFixtureDispatchers.length > 0) {
+    console.log('');
+    console.log('| untracked file | dispatchers |');
+    console.log('| --- | --- |');
+    for (const entry of untrackedFixtureDispatchers) {
+      console.log(`| ${entry.file} | ${entry.dispatchers.map((name) => `\`${name}\``).join(', ')} |`);
+    }
+  }
+  if (staleFixtureDispatcherAllowlist.length > 0) {
+    console.log('');
+    console.log('| stale allowlist file |');
+    console.log('| --- |');
+    for (const file of staleFixtureDispatcherAllowlist) {
+      console.log(`| ${file} |`);
+    }
+  }
+}
+
+if (enforceFixtureDispatchers && (untrackedFixtureDispatchers.length > 0 || staleFixtureDispatcherAllowlist.length > 0)) {
+  process.exitCode = 1;
 }
