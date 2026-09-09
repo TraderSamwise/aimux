@@ -15,7 +15,6 @@ const allowedSrcFiles = new Set([
   "src/multiplexer/dashboard-alert-flash.contract.v1.json",
   "src/multiplexer/dashboard-footer-hints.contract.v1.json",
   "src/multiplexer/dashboard-interaction.contract.v1.json",
-  "src/multiplexer/dashboard-lifecycle.contract.v1.json",
   "src/multiplexer/dashboard-project-event-refresh.contract.v1.json",
   "src/multiplexer/dashboard-session-details.contract.v1.json",
   "src/multiplexer/dashboard-tui-visibility.contract.v1.json",
