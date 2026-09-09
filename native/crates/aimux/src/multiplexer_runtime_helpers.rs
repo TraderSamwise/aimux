@@ -1,4 +1,5 @@
 use crate::session_launch::resolve_default_scribe_launch;
+use crate::tool_output_watchers::{ToolPaneState, reconcile_agent_activity};
 use crate::tui_render::text::{
     strip_ansi, truncate_ansi, truncate_plain, wrap_key_value, wrap_text,
 };
@@ -354,11 +355,13 @@ fn session_runtime_core_helpers_case(input: &Value) -> Value {
     let activities = array_field(input, "activityCases")
         .iter()
         .map(|case| {
-            reconcile_agent_activity(
+            let pane_state = tool_pane_state_from_contract(value_field(case, "paneState"));
+            serde_json::to_value(reconcile_agent_activity(
                 case.get("reported").and_then(Value::as_str),
                 case.get("activityText").and_then(Value::as_str),
-                value_field(case, "paneState"),
-            )
+                &pane_state,
+            ))
+            .expect("activity state serializes")
         })
         .collect::<Vec<_>>();
     let resolve = ["live-1", "exited-1", "missing-1"]
@@ -1154,25 +1157,28 @@ fn apply_label_to_sessions(sessions: &mut [Value], session_id: &str, label: &str
     }
 }
 
-fn reconcile_agent_activity(
-    reported: Option<&str>,
-    activity_text: Option<&str>,
-    pane_state: &Value,
-) -> Value {
-    if pane_state
-        .get("interruptedVisible")
-        .and_then(Value::as_bool)
-        == Some(true)
-    {
-        return Value::String("interrupted".into());
-    }
-    let has_activity = activity_text.is_some_and(|text| !text.is_empty());
-    if !has_activity {
-        return reported.map(Value::from).unwrap_or(Value::Null);
-    }
-    match reported {
-        Some("waiting" | "error" | "interrupted") => Value::String(reported.unwrap().to_owned()),
-        _ => Value::String("running".into()),
+fn tool_pane_state_from_contract(value: &Value) -> ToolPaneState {
+    ToolPaneState {
+        prompt_visible: value
+            .get("promptVisible")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        error_visible: value
+            .get("errorVisible")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        interrupted_visible: value
+            .get("interruptedVisible")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        update_prompt_visible: value
+            .get("updatePromptVisible")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        blocked_message: value
+            .get("blockedMessage")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
     }
 }
 

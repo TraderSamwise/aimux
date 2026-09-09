@@ -13,6 +13,7 @@ use crate::tmux::{
     send_carriage_return_argv, send_escape_argv, send_key_argv, send_text_argv,
     split_text_for_tmux_send_keys,
 };
+use crate::tool_output_watchers::{classify_tool_pane, reconcile_agent_activity};
 
 use super::agent_output_projection::insert_projection_fields;
 use super::attachments::get_attachment_record;
@@ -304,7 +305,13 @@ pub fn project_agent_output_payload(
     let output_available = string_field(result, "output").is_some_and(|value| !value.is_empty())
         || string_field(result, "outputAnsi").is_some_and(|value| !value.is_empty());
     insert_bool(&mut base, "outputAvailable", output_available);
-    for key in ["messages", "activity", "activityText", "attention"] {
+    for key in [
+        "messages",
+        "activity",
+        "activityText",
+        "attention",
+        "paneState",
+    ] {
         insert_value(&mut base, key, result.get(key).cloned());
     }
     if mode == AgentOutputResponseMode::Full {
@@ -430,22 +437,38 @@ pub(super) fn read_agent_output_payload(
         "outputStartLineClamped",
         capture_window.clamped,
     );
-    if let Some(derived) = metadata
+    let derived = metadata
         .sessions
         .get(session_id)
-        .and_then(|metadata| metadata.get("derived"))
-    {
+        .and_then(|metadata| metadata.get("derived"));
+    if let Some(derived) = derived {
         for key in ["activity", "activityText", "attention"] {
             insert_value(&mut result, key, derived.get(key).cloned());
         }
     }
     let tool = resolve_session_tool(&topology, session_id);
+    let pane_state = classify_tool_pane(tool.as_deref().unwrap_or_default(), &output);
+    insert_value(
+        &mut result,
+        "paneState",
+        serde_json::to_value(&pane_state).ok(),
+    );
     insert_projection_fields(
         &mut result,
         &context.output_projection_cache,
         &output,
         tool.as_deref(),
     );
+    if pane_state.interrupted_visible {
+        result.insert("activityText".into(), Value::String(String::new()));
+    }
+    if let Some(activity) = reconcile_agent_activity(
+        derived.and_then(|derived| derived.get("activity").and_then(Value::as_str)),
+        result.get("activityText").and_then(Value::as_str),
+        &pane_state,
+    ) {
+        result.insert("activity".into(), Value::String(activity));
+    }
     let mut body = Map::new();
     body.insert("ok".into(), Value::Bool(true));
     let payload = project_agent_output_payload(

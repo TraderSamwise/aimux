@@ -1,15 +1,17 @@
-use serde_json::{Map, Value, json};
+use serde::Serialize;
 
-pub fn run_tool_output_watchers_contract_case(input: &Value) -> Value {
-    match str_field(input, "api") {
-        "classifyToolPane" => {
-            classify_tool_pane(str_field(input, "tool"), str_field(input, "text"))
-        }
-        api => panic!("unknown tool output watchers contract api: {api}"),
-    }
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolPaneState {
+    pub prompt_visible: bool,
+    pub error_visible: bool,
+    pub interrupted_visible: bool,
+    pub update_prompt_visible: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blocked_message: Option<String>,
 }
 
-fn classify_tool_pane(tool: &str, text: &str) -> Value {
+pub fn classify_tool_pane(tool: &str, text: &str) -> ToolPaneState {
     let last_line = last_meaningful_line(text);
     let (error_visible, interrupted_visible) = classify_active_tail_error(text);
     let (update_prompt_visible, blocked_message) = classify_tool_update_prompt(tool, text);
@@ -17,18 +19,30 @@ fn classify_tool_pane(tool: &str, text: &str) -> Value {
         && tracks_prompt_readiness(tool)
         && has_tool_input_prompt(tool, text, &last_line);
 
-    let mut output = Map::new();
-    output.insert("promptVisible".to_string(), json!(prompt_visible));
-    output.insert("errorVisible".to_string(), json!(error_visible));
-    output.insert("interruptedVisible".to_string(), json!(interrupted_visible));
-    output.insert(
-        "updatePromptVisible".to_string(),
-        json!(update_prompt_visible),
-    );
-    if let Some(blocked_message) = blocked_message {
-        output.insert("blockedMessage".to_string(), json!(blocked_message));
+    ToolPaneState {
+        prompt_visible,
+        error_visible,
+        interrupted_visible,
+        update_prompt_visible,
+        blocked_message,
     }
-    Value::Object(output)
+}
+
+pub fn reconcile_agent_activity(
+    reported: Option<&str>,
+    activity_text: Option<&str>,
+    pane_state: &ToolPaneState,
+) -> Option<String> {
+    if pane_state.interrupted_visible {
+        return Some("interrupted".into());
+    }
+    if activity_text.is_none_or(str::is_empty) {
+        return reported.map(str::to_owned);
+    }
+    if matches!(reported, Some("waiting" | "error" | "interrupted")) {
+        return reported.map(str::to_owned);
+    }
+    Some("running".into())
 }
 
 fn classify_active_tail_error(text: &str) -> (bool, bool) {
@@ -149,8 +163,4 @@ fn last_meaningful_line(text: &str) -> String {
 fn tail_lines(text: &str, count: usize) -> Vec<&str> {
     let lines = text.split('\n').collect::<Vec<_>>();
     lines[lines.len().saturating_sub(count)..].to_vec()
-}
-
-fn str_field<'a>(value: &'a Value, field: &str) -> &'a str {
-    value.get(field).and_then(Value::as_str).unwrap_or_default()
 }

@@ -342,6 +342,8 @@ fn output_route_captures_live_topology_target_and_shapes_full_payload() {
     assert_eq!(response.body["outputTailOnly"], true);
     assert_eq!(response.body["outputStartLineClamped"], true);
     assert_eq!(response.body["outputAvailable"], true);
+    assert_eq!(response.body["paneState"]["promptVisible"], false);
+    assert_eq!(response.body["paneState"]["interruptedVisible"], false);
     assert_eq!(response.body["activity"], "running");
     assert_eq!(response.body["attention"], "needs_input");
     assert_eq!(response.body["activityText"], "Working");
@@ -355,6 +357,64 @@ fn output_route_captures_live_topology_target_and_shapes_full_payload() {
             include_escapes: true,
         }
     );
+    cleanup(project);
+}
+
+#[test]
+fn output_route_classifies_live_pane_state_and_reconciles_activity() {
+    let project = temp_project("pane-state");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    update_session_metadata(&state_dir, "codex-1", |current| {
+        let mut object = current.as_object().cloned().unwrap_or_default();
+        object.insert(
+            "derived".into(),
+            json!({
+                "activity": "idle",
+                "attention": "normal"
+            }),
+        );
+        json!(object)
+    })
+    .expect("seed metadata");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeCaptureRuntime {
+        output: "Ready\n› ".into(),
+        calls: Vec::new(),
+        actions: Vec::new(),
+    };
+
+    let prompt = route_agent_output_request_with_runtime(
+        &context,
+        "GET",
+        "/agents/output?sessionId=codex-1",
+        None,
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(prompt.status, 200);
+    assert_eq!(prompt.body["paneState"]["promptVisible"], true);
+    assert_eq!(prompt.body["paneState"]["errorVisible"], false);
+    assert_eq!(prompt.body["activity"], "idle");
+
+    runtime.output =
+        "• Working (4s • esc to interrupt)\nInterrupted · What should Codex do instead?".into();
+    let interrupted = route_agent_output_request_with_runtime(
+        &context,
+        "GET",
+        "/agents/output?sessionId=codex-1&startLine=-119",
+        None,
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(interrupted.status, 200);
+    assert_eq!(interrupted.body["paneState"]["promptVisible"], false);
+    assert_eq!(interrupted.body["paneState"]["errorVisible"], true);
+    assert_eq!(interrupted.body["paneState"]["interruptedVisible"], true);
+    assert_eq!(interrupted.body["activityText"], "");
+    assert_eq!(interrupted.body["activity"], "interrupted");
     cleanup(project);
 }
 

@@ -1,9 +1,6 @@
-#[path = "../src/tool_output_watchers_contract.rs"]
-mod tool_output_watchers_contract;
-
+use aimux::tool_output_watchers::classify_tool_pane;
 use serde::Deserialize;
 use serde_json::Value;
-use tool_output_watchers_contract::run_tool_output_watchers_contract_case;
 
 const FIXTURE: &str =
     include_str!("../../../../testdata/contracts/v1/runtime-state/tool-output-watchers.json");
@@ -21,6 +18,17 @@ struct Case {
     name: String,
     input: Value,
     output: Value,
+}
+
+fn run_tool_output_watchers_contract_case(input: &Value) -> Value {
+    match str_field(input, "api") {
+        "classifyToolPane" => serde_json::to_value(classify_tool_pane(
+            str_field(input, "tool"),
+            str_field(input, "text"),
+        ))
+        .expect("tool pane state serializes"),
+        api => panic!("unknown tool output watchers contract api: {api}"),
+    }
 }
 
 #[test]
@@ -41,4 +49,8 @@ fn tool_output_watchers_contract_matches_typescript() {
     }
 
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+}
+
+fn str_field<'a>(value: &'a Value, field: &str) -> &'a str {
+    value.get(field).and_then(Value::as_str).unwrap_or_default()
 }
