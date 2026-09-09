@@ -337,3 +337,38 @@ impl RelaySupervisor {
         }
     }
 }
+
+/// Where the relay is and what proves us, resolved the way Node did.
+///
+/// An env override wins over stored credentials, and when either env var is
+/// set the pair alone decides whether the relay is on — otherwise the stored
+/// `remoteEnabled` flag does. That is what lets a test point a daemon at a
+/// local relay without touching the user's saved login.
+pub fn resolve_relay_target(
+    stored_url: Option<&str>,
+    stored_token: Option<&str>,
+    stored_enabled: bool,
+    env_url: Option<&str>,
+    env_token: Option<&str>,
+) -> Option<(String, String)> {
+    let has_env_override = env_url.is_some_and(|value| !value.trim().is_empty())
+        || env_token.is_some_and(|value| !value.trim().is_empty());
+    let url = env_url
+        .filter(|value| !value.trim().is_empty())
+        .or(stored_url)
+        .unwrap_or_default()
+        .trim()
+        .to_owned();
+    let token = env_token
+        .filter(|value| !value.trim().is_empty())
+        .or(stored_token)
+        .unwrap_or_default()
+        .trim()
+        .to_owned();
+    let enabled = if has_env_override {
+        !url.is_empty() && !token.is_empty()
+    } else {
+        stored_enabled
+    };
+    (enabled && !url.is_empty() && !token.is_empty()).then_some((url, token))
+}

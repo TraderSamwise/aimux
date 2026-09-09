@@ -74,3 +74,53 @@ fn the_loopback_port_follows_the_daemon_env_override() {
     let port = daemon_loopback_port();
     assert!(!port.is_empty());
 }
+
+#[test]
+fn stored_credentials_only_connect_when_remote_is_enabled() {
+    use aimux::daemon::relay::resolve_relay_target;
+    assert_eq!(
+        resolve_relay_target(Some("wss://r"), Some("tok"), true, None, None),
+        Some(("wss://r".to_owned(), "tok".to_owned()))
+    );
+    assert_eq!(
+        resolve_relay_target(Some("wss://r"), Some("tok"), false, None, None),
+        None,
+        "a saved login the user has switched off must not dial out"
+    );
+}
+
+#[test]
+fn an_env_override_decides_on_its_own_without_touching_the_saved_login() {
+    use aimux::daemon::relay::resolve_relay_target;
+    // remote_enabled is false, but the env pair is present: this is how a test
+    // daemon points at a local relay without editing the user's credentials.
+    assert_eq!(
+        resolve_relay_target(
+            Some("wss://saved"),
+            Some("saved-tok"),
+            false,
+            Some("wss://local"),
+            Some("local-tok")
+        ),
+        Some(("wss://local".to_owned(), "local-tok".to_owned()))
+    );
+    // Half an override is not an override that can connect.
+    assert_eq!(
+        resolve_relay_target(Some("wss://saved"), Some("saved-tok"), true, Some("wss://local"), None),
+        Some(("wss://local".to_owned(), "saved-tok".to_owned())),
+        "the url is overridden, the stored token still applies"
+    );
+    assert_eq!(
+        resolve_relay_target(None, None, true, Some("wss://local"), None),
+        None,
+        "an override with no token anywhere must not connect"
+    );
+}
+
+#[test]
+fn blank_or_whitespace_credentials_never_connect() {
+    use aimux::daemon::relay::resolve_relay_target;
+    assert_eq!(resolve_relay_target(Some("  "), Some("tok"), true, None, None), None);
+    assert_eq!(resolve_relay_target(Some("wss://r"), Some(""), true, None, None), None);
+    assert_eq!(resolve_relay_target(None, None, true, None, None), None);
+}

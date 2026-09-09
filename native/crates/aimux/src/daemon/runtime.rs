@@ -231,6 +231,29 @@ impl fmt::Debug for RealDaemonRuntime {
 }
 
 impl RealDaemonRuntime {
+    /// Dial the relay if the resolved target says we should.
+    fn start_relay(&self, credentials: &remote_credentials::AimuxCredentials, force: bool) {
+        let env_url = std::env::var("AIMUX_RELAY_URL").ok();
+        let env_token = std::env::var("AIMUX_RELAY_TOKEN").ok();
+        if let Some((url, token)) = crate::daemon::relay::resolve_relay_target(
+            Some(credentials.relay_url.as_str()),
+            Some(credentials.token.as_str()),
+            credentials.remote_enabled,
+            env_url.as_deref(),
+            env_token.as_deref(),
+        ) {
+            self.relay.connect(&url, &token, force);
+        }
+    }
+
+    /// Called once the daemon is up, so a machine that was left logged in and
+    /// enabled reconnects on its own rather than waiting for a CLI call.
+    pub fn connect_relay_on_startup(&self) {
+        if let Some(credentials) = remote_credentials::load_credentials(&self.resolver) {
+            self.start_relay(&credentials, false);
+        }
+    }
+
     pub fn new(resolver: PathResolver, info: AimuxDaemonInfo) -> Self {
         Self::with_project_service_launcher(
             resolver,
@@ -1015,6 +1038,11 @@ pub fn run_daemon_internal() -> Result<()> {
     let runtime = Arc::new(Mutex::new(
         RealDaemonRuntime::new(resolver, info).with_global_expose_hot_snapshot_background_refresh(),
     ));
+    // A machine left logged in and enabled should come back on its own rather
+    // than waiting for someone to run a CLI command.
+    if let Ok(runtime) = runtime.lock() {
+        runtime.connect_relay_on_startup();
+    }
     let stream_runtime = Arc::clone(&runtime);
     serve_daemon_http_with_metadata_and_interceptor(
         DaemonListenConfig { host, port },
@@ -1500,11 +1528,12 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
 
     fn enable_relay_for_user_request(&mut self) -> Value {
         match remote_credentials::set_remote_enabled(&self.resolver, true) {
-            Ok(Some(credentials)) => json!({
-                "status": "disconnected",
-                "relayUrl": credentials.relay_url,
-                "lastConnectedAt": Value::Null,
-            }),
+            Ok(Some(credentials)) => {
+                // Enabling used to only flip a flag and report "disconnected"
+                // forever, because nothing ever dialled the relay.
+                self.start_relay(&credentials, true);
+                self.relay.status()
+            }
             Ok(None) => json!({ "status": "off" }),
             Err(error) => json!({ "status": "auth_failed", "lastError": error.to_string() }),
         }
@@ -1512,6 +1541,7 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
 
     fn disable_relay(&mut self) -> Value {
         let _ = remote_credentials::set_remote_enabled(&self.resolver, false);
+        self.relay.disconnect();
         json!({ "status": "off" })
     }
 
