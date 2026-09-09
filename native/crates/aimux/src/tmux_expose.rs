@@ -179,6 +179,12 @@ struct RenderTileAtInput<'a> {
     options: &'a TmuxExposeOptions,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct RenderGridExposeState {
+    sort_mode: ExposeSortMode,
+    loading: bool,
+}
+
 pub trait ExposeHttpClient {
     fn request_json(&mut self, url: &str, request: ExposeHttpRequest) -> Result<Value, String>;
 }
@@ -385,6 +391,23 @@ pub fn next_expose_scope(scope: ExposeScope) -> ExposeScope {
     match scope {
         ExposeScope::Worktree => ExposeScope::Project,
         ExposeScope::Project | ExposeScope::Global => ExposeScope::Global,
+    }
+}
+
+fn default_expose_scope_view(scope: ExposeScope) -> ExposeScopeView {
+    ExposeScopeView {
+        scope,
+        scope_label: if scope == ExposeScope::Worktree {
+            "this worktree".into()
+        } else {
+            "all worktrees".into()
+        },
+        sublabel: if scope == ExposeScope::Worktree {
+            ExposeSublabel::None
+        } else {
+            ExposeSublabel::Worktree
+        },
+        items: Vec::new(),
     }
 }
 
@@ -874,6 +897,7 @@ pub fn run_tmux_expose_with_drivers(
         .is_some_and(is_meta_dashboard_window_name);
     let mut scope = initial_expose_scope(cross_project, &context, &options.expose_config);
     let mut view_stale = false;
+    let mut loading = false;
     let mut view = if let Some(hot_view) = read_hot_expose_scope_view(
         &options.project_state_dir,
         &hot_snapshot_key_for_scope(&options, scope),
@@ -881,27 +905,14 @@ pub fn run_tmux_expose_with_drivers(
         view_stale = true;
         hot_view
     } else {
-        match load_expose_scope_items_with(
-            scope,
-            &context,
-            &options.project_state_dir,
-            &deps,
-            client,
-        ) {
-            Ok(view) => {
-                write_loaded_hot_snapshot(&options, scope, &view);
-                view
-            }
-            Err(error) => {
-                let _ = writeln!(output, "aimux expose: {error}");
-                return 1;
-            }
-        }
+        loading = true;
+        default_expose_scope_view(scope)
     };
     let mut sort_mode = read_expose_ui_state(&options.project_state_dir).sort_mode;
     let mut items = order_items(&view, &options.project_root, sort_mode);
     let mut index = selected_or_current_index(&items, None, options.current_window_id.as_deref());
     let mut leader_pending = false;
+    let mut pending_keys: Vec<ExposeKey> = Vec::new();
     let mut captures = seed_preview_snapshots(&items);
     let mut refresh_tick = 0_u64;
     let client_baseline = match (options.columns, options.rows) {
@@ -910,113 +921,148 @@ pub fn run_tmux_expose_with_drivers(
     };
     let mut last_input_at: Option<Instant> = None;
     let mut last_resize_check_at = Some(Instant::now());
-    let mut layout =
-        render_grid_expose(output, &view, &items, &captures, index, &options, sort_mode)
-            .unwrap_or_else(|_| compute_layout(items.len() as i64, 80, 24));
-    if refresh_captures(&items, &mut captures, capture) {
-        layout = render_grid_expose(output, &view, &items, &captures, index, &options, sort_mode)
-            .unwrap_or(layout);
+    let mut static_size = expose_terminal_size_label(&options);
+    let mut render_state = RenderGridExposeState { sort_mode, loading };
+    let mut layout = render_grid_expose(
+        output,
+        &view,
+        &items,
+        &captures,
+        index,
+        &options,
+        render_state,
+    )
+    .unwrap_or_else(|_| compute_layout(items.len() as i64, 80, 24));
+    if !loading && refresh_captures(&items, &mut captures, capture) {
+        layout = render_grid_expose(
+            output,
+            &view,
+            &items,
+            &captures,
+            index,
+            &options,
+            render_state,
+        )
+        .unwrap_or(layout);
+        static_size = expose_terminal_size_label(&options);
     }
     let mut buffer = [0_u8; 8192];
     loop {
-        let count = match input.read_timeout(
-            &mut buffer,
-            Duration::from_millis(refresh_delay_ms(items.len())),
-        ) {
-            ExposeInputEvent::End => return finish_plain_expose(output, 0),
-            ExposeInputEvent::Error => return finish_plain_expose(output, 1),
-            ExposeInputEvent::Timeout => {
-                let now = Instant::now();
-                let input_quiet = last_input_at.is_some_and(|last_input_at| {
-                    now.duration_since(last_input_at).as_millis()
-                        < u128::from(INPUT_QUIET_BEFORE_REFRESH_MS)
-                });
-                if input_quiet {
-                    if last_resize_check_at.is_none() {
-                        last_resize_check_at = Some(now);
-                    }
-                    if last_resize_check_at.is_some_and(|last_check| {
-                        now.duration_since(last_check).as_millis()
-                            >= u128::from(RESIZE_CHECK_DURING_INPUT_MS)
-                    }) {
-                        last_resize_check_at = Some(now);
-                        if should_relaunch_for_resize(
-                            size_probe,
-                            options.client_tty.as_deref(),
-                            &client_baseline,
-                        ) {
-                            return finish_plain_expose(output, RELAUNCH_ON_RESIZE_EXIT);
+        let keys = if !loading && !pending_keys.is_empty() {
+            std::mem::take(&mut pending_keys)
+        } else {
+            let count = match input.read_timeout(
+                &mut buffer,
+                Duration::from_millis(refresh_delay_ms(items.len())),
+            ) {
+                ExposeInputEvent::End => return finish_plain_expose(output, 0),
+                ExposeInputEvent::Error => return finish_plain_expose(output, 1),
+                ExposeInputEvent::Timeout => {
+                    let now = Instant::now();
+                    let input_quiet = !loading
+                        && last_input_at.is_some_and(|last_input_at| {
+                            now.duration_since(last_input_at).as_millis()
+                                < u128::from(INPUT_QUIET_BEFORE_REFRESH_MS)
+                        });
+                    if input_quiet {
+                        if last_resize_check_at.is_none() {
+                            last_resize_check_at = Some(now);
                         }
+                        if last_resize_check_at.is_some_and(|last_check| {
+                            now.duration_since(last_check).as_millis()
+                                >= u128::from(RESIZE_CHECK_DURING_INPUT_MS)
+                        }) {
+                            last_resize_check_at = Some(now);
+                            if should_relaunch_for_resize(
+                                size_probe,
+                                options.client_tty.as_deref(),
+                                &client_baseline,
+                            ) {
+                                return finish_plain_expose(output, RELAUNCH_ON_RESIZE_EXIT);
+                            }
+                        }
+                        continue;
+                    }
+                    last_resize_check_at = Some(now);
+                    if should_relaunch_for_resize(
+                        size_probe,
+                        options.client_tty.as_deref(),
+                        &client_baseline,
+                    ) {
+                        return finish_plain_expose(output, RELAUNCH_ON_RESIZE_EXIT);
+                    }
+                    refresh_tick += 1;
+                    let reloaded = loading || refresh_tick >= ITEM_RELOAD_EVERY_TICKS;
+                    let mut changed = false;
+                    if reloaded {
+                        refresh_tick = 0;
+                        let selected_window_id =
+                            item_window_id(items.get(index)).map(str::to_owned);
+                        if let Ok(next_view) = load_expose_scope_items_with(
+                            scope,
+                            &context,
+                            &options.project_state_dir,
+                            &deps,
+                            client,
+                        ) {
+                            view = next_view;
+                            view_stale = false;
+                            loading = false;
+                            write_loaded_hot_snapshot(&options, scope, &view);
+                            items = order_items(&view, &options.project_root, sort_mode);
+                            captures = seed_preview_snapshots(&items);
+                            index = selected_or_current_index(
+                                &items,
+                                selected_window_id.as_deref(),
+                                options.current_window_id.as_deref(),
+                            );
+                            changed = true;
+                        }
+                    }
+                    render_state = RenderGridExposeState { sort_mode, loading };
+                    if !loading && refresh_captures(&items, &mut captures, capture) {
+                        changed = true;
+                    }
+                    let size_now = expose_terminal_size_label(&options);
+                    if changed || size_now != static_size {
+                        layout = render_grid_expose(
+                            output,
+                            &view,
+                            &items,
+                            &captures,
+                            index,
+                            &options,
+                            render_state,
+                        )
+                        .unwrap_or(layout);
+                        static_size = size_now;
                     }
                     continue;
                 }
-                last_resize_check_at = Some(now);
-                if should_relaunch_for_resize(
-                    size_probe,
-                    options.client_tty.as_deref(),
-                    &client_baseline,
-                ) {
-                    return finish_plain_expose(output, RELAUNCH_ON_RESIZE_EXIT);
-                }
-                refresh_tick += 1;
-                let reloaded = refresh_tick >= ITEM_RELOAD_EVERY_TICKS;
-                let mut changed = false;
-                if reloaded {
-                    refresh_tick = 0;
-                    let selected_window_id = item_window_id(items.get(index)).map(str::to_owned);
-                    if let Ok(next_view) = load_expose_scope_items_with(
-                        scope,
-                        &context,
-                        &options.project_state_dir,
-                        &deps,
-                        client,
+                ExposeInputEvent::Data(count) => count,
+            };
+            let keys = parse_key_events(&buffer[..count]);
+            if !keys.is_empty() {
+                let now = Instant::now();
+                last_input_at = Some(now);
+                if !client_baseline.is_empty()
+                    && last_resize_check_at.is_some_and(|last_check| {
+                        now.duration_since(last_check).as_millis()
+                            >= u128::from(RESIZE_CHECK_DURING_INPUT_MS)
+                    })
+                {
+                    last_resize_check_at = Some(now);
+                    if should_relaunch_for_resize(
+                        size_probe,
+                        options.client_tty.as_deref(),
+                        &client_baseline,
                     ) {
-                        view = next_view;
-                        view_stale = false;
-                        write_loaded_hot_snapshot(&options, scope, &view);
-                        items = order_items(&view, &options.project_root, sort_mode);
-                        captures = seed_preview_snapshots(&items);
-                        index = selected_or_current_index(
-                            &items,
-                            selected_window_id.as_deref(),
-                            options.current_window_id.as_deref(),
-                        );
-                        changed = true;
+                        return finish_plain_expose(output, RELAUNCH_ON_RESIZE_EXIT);
                     }
                 }
-                if refresh_captures(&items, &mut captures, capture) {
-                    changed = true;
-                }
-                if changed {
-                    layout = render_grid_expose(
-                        output, &view, &items, &captures, index, &options, sort_mode,
-                    )
-                    .unwrap_or(layout);
-                }
-                continue;
             }
-            ExposeInputEvent::Data(count) => count,
+            keys
         };
-        let keys = parse_key_events(&buffer[..count]);
-        if !keys.is_empty() {
-            let now = Instant::now();
-            last_input_at = Some(now);
-            if !client_baseline.is_empty()
-                && last_resize_check_at.is_some_and(|last_check| {
-                    now.duration_since(last_check).as_millis()
-                        >= u128::from(RESIZE_CHECK_DURING_INPUT_MS)
-                })
-            {
-                last_resize_check_at = Some(now);
-                if should_relaunch_for_resize(
-                    size_probe,
-                    options.client_tty.as_deref(),
-                    &client_baseline,
-                ) {
-                    return finish_plain_expose(output, RELAUNCH_ON_RESIZE_EXIT);
-                }
-            }
-        }
         for key in keys {
             if matches!(
                 key,
@@ -1034,6 +1080,10 @@ pub fn run_tmux_expose_with_drivers(
                 leader_pending = true;
                 continue;
             }
+            if loading {
+                pending_keys.push(key);
+                continue;
+            }
             if key == ExposeKey::Char('r') {
                 let selected_window_id = item_window_id(items.get(index)).map(str::to_owned);
                 sort_mode = if sort_mode == ExposeSortMode::RecentOutput {
@@ -1043,6 +1093,7 @@ pub fn run_tmux_expose_with_drivers(
                 };
                 let _ =
                     write_expose_ui_state(&options.project_state_dir, ExposeUiState { sort_mode });
+                render_state = RenderGridExposeState { sort_mode, loading };
                 items = order_items(&view, &options.project_root, sort_mode);
                 captures = seed_preview_snapshots(&items);
                 index = selected_window_id
@@ -1053,9 +1104,16 @@ pub fn run_tmux_expose_with_drivers(
                     })
                     .unwrap_or_else(|| index.min(items.len().saturating_sub(1)));
                 layout = render_grid_expose(
-                    output, &view, &items, &captures, index, &options, sort_mode,
+                    output,
+                    &view,
+                    &items,
+                    &captures,
+                    index,
+                    &options,
+                    render_state,
                 )
                 .unwrap_or(layout);
+                static_size = expose_terminal_size_label(&options);
                 continue;
             }
             if key == ExposeKey::Char('g') {
@@ -1067,13 +1125,21 @@ pub fn run_tmux_expose_with_drivers(
                 ) {
                     view = hot_view;
                     view_stale = true;
+                    render_state = RenderGridExposeState { sort_mode, loading };
                     items = order_items(&view, &options.project_root, sort_mode);
                     captures = seed_preview_snapshots(&items);
                     index = index.min(items.len().saturating_sub(1));
                     layout = render_grid_expose(
-                        output, &view, &items, &captures, index, &options, sort_mode,
+                        output,
+                        &view,
+                        &items,
+                        &captures,
+                        index,
+                        &options,
+                        render_state,
                     )
                     .unwrap_or(layout);
+                    static_size = expose_terminal_size_label(&options);
                 } else if let Ok(next_view) = load_expose_scope_items_with(
                     scope,
                     &context,
@@ -1083,6 +1149,7 @@ pub fn run_tmux_expose_with_drivers(
                 ) {
                     view = next_view;
                     view_stale = false;
+                    render_state = RenderGridExposeState { sort_mode, loading };
                     write_loaded_hot_snapshot(&options, scope, &view);
                     items = order_items(&view, &options.project_root, sort_mode);
                     captures = seed_preview_snapshots(&items);
@@ -1093,9 +1160,16 @@ pub fn run_tmux_expose_with_drivers(
                     );
                     let _ = refresh_captures(&items, &mut captures, capture);
                     layout = render_grid_expose(
-                        output, &view, &items, &captures, index, &options, sort_mode,
+                        output,
+                        &view,
+                        &items,
+                        &captures,
+                        index,
+                        &options,
+                        render_state,
                     )
                     .unwrap_or(layout);
+                    static_size = expose_terminal_size_label(&options);
                 }
                 continue;
             }
@@ -1111,15 +1185,29 @@ pub fn run_tmux_expose_with_drivers(
                             return finish_plain_expose(output, 0);
                         }
                         layout = render_grid_expose(
-                            output, &view, &items, &captures, index, &options, sort_mode,
+                            output,
+                            &view,
+                            &items,
+                            &captures,
+                            index,
+                            &options,
+                            render_state,
                         )
                         .unwrap_or(layout);
+                        static_size = expose_terminal_size_label(&options);
                     }
                     _ => {
                         layout = render_grid_expose(
-                            output, &view, &items, &captures, index, &options, sort_mode,
+                            output,
+                            &view,
+                            &items,
+                            &captures,
+                            index,
+                            &options,
+                            render_state,
                         )
                         .unwrap_or(layout);
+                        static_size = expose_terminal_size_label(&options);
                     }
                 }
                 continue;
@@ -1144,15 +1232,23 @@ pub fn run_tmux_expose_with_drivers(
                     ) {
                         view = next_view;
                         view_stale = false;
+                        render_state = RenderGridExposeState { sort_mode, loading };
                         write_loaded_hot_snapshot(&options, scope, &view);
                         items = order_items(&view, &options.project_root, sort_mode);
                         captures = seed_preview_snapshots(&items);
                         let _ = refresh_captures(&items, &mut captures, capture);
                     }
                     layout = render_grid_expose(
-                        output, &view, &items, &captures, index, &options, sort_mode,
+                        output,
+                        &view,
+                        &items,
+                        &captures,
+                        index,
+                        &options,
+                        render_state,
                     )
                     .unwrap_or(layout);
+                    static_size = expose_terminal_size_label(&options);
                 }
                 continue;
             }
@@ -1191,9 +1287,16 @@ pub fn run_tmux_expose_with_drivers(
             }
             if previous != index {
                 layout = render_grid_expose(
-                    output, &view, &items, &captures, index, &options, sort_mode,
+                    output,
+                    &view,
+                    &items,
+                    &captures,
+                    index,
+                    &options,
+                    render_state,
                 )
                 .unwrap_or(layout);
+                static_size = expose_terminal_size_label(&options);
             }
         }
     }
@@ -1600,10 +1703,11 @@ fn render_grid_expose(
     captures: &BTreeMap<String, String>,
     selected_index: usize,
     options: &TmuxExposeOptions,
-    sort_mode: ExposeSortMode,
+    state: RenderGridExposeState,
 ) -> std::io::Result<GridLayout> {
-    let cols = options.columns.unwrap_or(80) as i64;
-    let rows = options.rows.unwrap_or(24) as i64;
+    let sort_mode = state.sort_mode;
+    let loading = state.loading;
+    let (cols, rows) = expose_terminal_size(options);
     let layout = compute_layout(items.len() as i64, cols, rows);
     let visible_count = (layout.visible_count.max(0) as usize).min(items.len());
     let selected_index = selected_index.min(visible_count.saturating_sub(1));
@@ -1640,7 +1744,11 @@ fn render_grid_expose(
     let mut rendered = "\x1b[?2026h\x1b[2J".to_owned();
     rendered.push_str(&format!("\x1b[{TITLE_ROW};{}H{title}", CONTENT_LEFT + 1));
     if visible_count == 0 {
-        let message = format!("No active agents in {}.", view.scope_label);
+        let message = if loading {
+            "Loading sessions...".to_owned()
+        } else {
+            format!("No active agents in {}.", view.scope_label)
+        };
         let message_col = CONTENT_LEFT + ((cols - message.chars().count() as i64) / 2).max(0);
         let message_row = (rows / 2).max(1);
         rendered.push_str(&format!(
@@ -1668,6 +1776,41 @@ fn render_grid_expose(
     output.write_all(rendered.as_bytes())?;
     output.flush()?;
     Ok(layout)
+}
+
+fn expose_terminal_size_label(options: &TmuxExposeOptions) -> String {
+    let (cols, rows) = expose_terminal_size(options);
+    format!("{cols}x{rows}")
+}
+
+fn expose_terminal_size(options: &TmuxExposeOptions) -> (i64, i64) {
+    if let Some(size) = stdout_terminal_size() {
+        return size;
+    }
+    (
+        options.columns.unwrap_or(80) as i64,
+        options.rows.unwrap_or(24) as i64,
+    )
+}
+
+#[cfg(unix)]
+fn stdout_terminal_size() -> Option<(i64, i64)> {
+    let mut winsize = libc::winsize {
+        ws_row: 0,
+        ws_col: 0,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+    let status = unsafe { libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &mut winsize) };
+    if status == 0 && winsize.ws_col > 0 && winsize.ws_row > 0 {
+        return Some((i64::from(winsize.ws_col), i64::from(winsize.ws_row)));
+    }
+    None
+}
+
+#[cfg(not(unix))]
+fn stdout_terminal_size() -> Option<(i64, i64)> {
+    None
 }
 
 fn render_tile_at(input: RenderTileAtInput<'_>) -> String {

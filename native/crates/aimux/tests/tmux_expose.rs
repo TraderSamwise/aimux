@@ -155,7 +155,7 @@ fn context() -> FastControlContext {
         current_window: Some("codex".into()),
         current_window_id: Some("@1".into()),
         current_client_session: Some("aimux-test-client-12345678".into()),
-        client_tty: Some("/dev/ttys001".into()),
+        client_tty: Some("/dev/aimux-test-tty".into()),
     }
 }
 
@@ -323,7 +323,7 @@ fn focus_routes_local_items_to_project_service_and_global_items_to_daemon() {
         Some(json!({
             "windowId": "@1",
             "currentClientSession": "aimux-test-client-12345678",
-            "clientTty": "/dev/ttys001",
+            "clientTty": "/dev/aimux-test-tty",
             "focus": true
         }))
     );
@@ -337,7 +337,7 @@ fn focus_routes_local_items_to_project_service_and_global_items_to_daemon() {
             "windowId": "@9",
             "projectRoot": "/other-repo",
             "currentClientSession": "aimux-test-client-12345678",
-            "clientTty": "/dev/ttys001",
+            "clientTty": "/dev/aimux-test-tty",
             "focus": true
         }))
     );
@@ -543,10 +543,13 @@ fn runner_closes_opens_dashboard_and_focuses_numbered_global_tile() {
         json!({ "ok": true }),
     ]);
     let mut focus_capture = FakeCapture::default();
-    let mut focus_input: &[u8] = b"1";
+    let mut focus_input = ScriptedInput::new([
+        ScriptedInputEvent::Timeout,
+        ScriptedInputEvent::Bytes(b"1".to_vec()),
+    ]);
     let mut focus_output = Vec::new();
     assert_eq!(
-        run_tmux_expose_with_client_and_capture(
+        run_tmux_expose_with_input_source(
             options.clone(),
             &mut focus_input,
             &mut focus_output,
@@ -558,6 +561,48 @@ fn runner_closes_opens_dashboard_and_focuses_numbered_global_tile() {
     assert_eq!(
         focus_client.requests[1].0,
         format!("http://127.0.0.1:43190{}", CORE_API_ROUTES.expose_focus)
+    );
+    cleanup(state_dir);
+}
+
+#[test]
+fn runner_moves_selection_with_n_before_closing() {
+    let state_dir = temp_dir("runner-move-n");
+    let mut options = parsed_options(&state_dir);
+    options.current_window = Some("shell".into());
+    options.current_window_id = Some("@1".into());
+    options.expose_config.initial_scope = Some(ExposeScope::Worktree);
+    let mut client = FakeHttp::with_responses([json!({
+        "ok": true,
+        "items": [
+            hot_item("@1", "first preview\n"),
+            hot_item("@2", "second preview\n")
+        ]
+    })]);
+    let mut capture =
+        FakeCapture::with_responses([Ok("first live\n".into()), Ok("second live\n".into())]);
+    let mut input = ScriptedInput::new([
+        ScriptedInputEvent::Timeout,
+        ScriptedInputEvent::Bytes(b"nq".to_vec()),
+    ]);
+    let mut output = Vec::new();
+
+    assert_eq!(
+        run_tmux_expose_with_input_source(
+            options,
+            &mut input,
+            &mut output,
+            &mut client,
+            &mut capture,
+        ),
+        0
+    );
+
+    let rendered = String::from_utf8(output).expect("utf8 output");
+    let last_frame = last_synchronized_frame(&rendered);
+    assert!(
+        last_frame.contains("▸\u{1b}[0m \u{1b}[1;33m2"),
+        "expected n to move selection to tile 2:\n{rendered}"
     );
     cleanup(state_dir);
 }
@@ -579,11 +624,14 @@ fn runner_reloads_scope_toggles_sort_and_uses_same_project_selection_file() {
         ]
     })]);
     let mut capture = FakeCapture::default();
-    let mut input: &[u8] = b"r1";
+    let mut input = ScriptedInput::new([
+        ScriptedInputEvent::Timeout,
+        ScriptedInputEvent::Bytes(b"r1".to_vec()),
+    ]);
     let mut output = Vec::new();
 
     assert_eq!(
-        run_tmux_expose_with_client_and_capture(
+        run_tmux_expose_with_input_source(
             options,
             &mut input,
             &mut output,
@@ -629,11 +677,14 @@ fn runner_renders_hot_snapshot_without_blocking_on_item_discovery() {
     options.expose_config.initial_scope = Some(ExposeScope::Project);
     let mut client = FakeHttp::default();
     let mut capture = FakeCapture::with_responses([Err("tmux unavailable".into())]);
-    let mut input: &[u8] = b"q";
+    let mut input = ScriptedInput::new([
+        ScriptedInputEvent::Timeout,
+        ScriptedInputEvent::Bytes(b"q".to_vec()),
+    ]);
     let mut output = Vec::new();
 
     assert_eq!(
-        run_tmux_expose_with_client_and_capture(
+        run_tmux_expose_with_input_source(
             options,
             &mut input,
             &mut output,
@@ -645,6 +696,92 @@ fn runner_renders_hot_snapshot_without_blocking_on_item_discovery() {
 
     assert!(client.requests.is_empty());
     assert!(String::from_utf8_lossy(&output).contains("hot preview line"));
+    cleanup(state_dir);
+}
+
+#[test]
+fn runner_renders_loading_frame_before_initial_item_discovery() {
+    let state_dir = temp_dir("runner-loading-before-discovery");
+    let mut options = parsed_options(&state_dir);
+    options.current_window = Some("codex".into());
+    options.current_window_id = Some("@1".into());
+    options.expose_config.initial_scope = Some(ExposeScope::Project);
+    let mut client = FakeHttp::with_responses([json!({
+        "ok": true,
+        "items": [hot_item("@1", "loaded preview line\n")]
+    })]);
+    let mut capture = FakeCapture::with_responses([Err("tmux unavailable".into())]);
+    let mut input = ScriptedInput::new([
+        ScriptedInputEvent::Timeout,
+        ScriptedInputEvent::Bytes(b"q".to_vec()),
+    ]);
+    let mut output = Vec::new();
+
+    assert_eq!(
+        run_tmux_expose_with_input_source(
+            options,
+            &mut input,
+            &mut output,
+            &mut client,
+            &mut capture,
+        ),
+        0
+    );
+
+    let rendered = String::from_utf8(output).expect("utf8 output");
+    let first_frame = first_synchronized_frame(&rendered);
+    let last_frame = last_synchronized_frame(&rendered);
+    assert!(first_frame.contains("Loading sessions..."));
+    assert!(!first_frame.contains("loaded preview line"));
+    assert!(last_frame.contains("loaded preview line"));
+    assert_eq!(client.requests.len(), 1);
+    assert_eq!(capture.calls, vec!["@1"]);
+    cleanup(state_dir);
+}
+
+#[test]
+fn runner_applies_pending_navigation_after_initial_item_discovery() {
+    let state_dir = temp_dir("runner-pending-navigation");
+    let mut options = parsed_options(&state_dir);
+    options.current_window = Some("shell".into());
+    options.current_window_id = Some("@1".into());
+    options.expose_config.initial_scope = Some(ExposeScope::Worktree);
+    let mut client = FakeHttp::with_responses([
+        json!({
+            "ok": true,
+            "items": [
+                hot_item("@1", "first preview\n"),
+                hot_item("@2", "second preview\n")
+            ]
+        }),
+        json!({ "ok": true }),
+    ]);
+    let mut capture = FakeCapture::with_responses([
+        Err("tmux unavailable".into()),
+        Err("tmux unavailable".into()),
+    ]);
+    let mut input = ScriptedInput::new([
+        ScriptedInputEvent::Bytes(b"n\r".to_vec()),
+        ScriptedInputEvent::Timeout,
+    ]);
+    let mut output = Vec::new();
+
+    assert_eq!(
+        run_tmux_expose_with_input_source(
+            options,
+            &mut input,
+            &mut output,
+            &mut client,
+            &mut capture,
+        ),
+        0
+    );
+
+    assert_eq!(client.requests.len(), 2);
+    assert_eq!(
+        client.requests[1].1.body.as_ref().unwrap()["windowId"],
+        "@2"
+    );
     cleanup(state_dir);
 }
 
@@ -810,11 +947,14 @@ fn runner_replaces_preview_snapshot_with_live_capture_output() {
         "items": [hot_item("@1", "warm preview line\n")]
     })]);
     let mut capture = FakeCapture::with_responses([Ok("live capture line\n".into())]);
-    let mut input: &[u8] = b"q";
+    let mut input = ScriptedInput::new([
+        ScriptedInputEvent::Timeout,
+        ScriptedInputEvent::Bytes(b"q".to_vec()),
+    ]);
     let mut output = Vec::new();
 
     assert_eq!(
-        run_tmux_expose_with_client_and_capture(
+        run_tmux_expose_with_input_source(
             options,
             &mut input,
             &mut output,
@@ -825,7 +965,6 @@ fn runner_replaces_preview_snapshot_with_live_capture_output() {
     );
 
     let rendered = String::from_utf8_lossy(&output);
-    assert!(rendered.contains("warm preview line"));
     assert!(rendered.contains("live capture line"));
     assert_eq!(capture.calls, vec!["@1"]);
     cleanup(state_dir);
@@ -842,11 +981,14 @@ fn runner_writes_loaded_items_to_hot_snapshot_cache() {
         "items": [hot_item("@9", "loaded preview line\n")]
     })]);
     let mut capture = FakeCapture::with_responses([Err("tmux unavailable".into())]);
-    let mut input: &[u8] = b"q";
+    let mut input = ScriptedInput::new([
+        ScriptedInputEvent::Timeout,
+        ScriptedInputEvent::Bytes(b"q".to_vec()),
+    ]);
     let mut output = Vec::new();
 
     assert_eq!(
-        run_tmux_expose_with_client_and_capture(
+        run_tmux_expose_with_input_source(
             options,
             &mut input,
             &mut output,
@@ -898,11 +1040,14 @@ fn runner_writes_zoomed_project_items_to_hot_snapshot_cache() {
         Err("tmux unavailable".into()),
         Err("tmux unavailable".into()),
     ]);
-    let mut input: &[u8] = b"gq";
+    let mut input = ScriptedInput::new([
+        ScriptedInputEvent::Timeout,
+        ScriptedInputEvent::Bytes(b"gq".to_vec()),
+    ]);
     let mut output = Vec::new();
 
     assert_eq!(
-        run_tmux_expose_with_client_and_capture(
+        run_tmux_expose_with_input_source(
             options,
             &mut input,
             &mut output,
@@ -944,6 +1089,7 @@ fn runner_refreshes_live_captures_on_timeout_tick() {
     ]);
     let mut input = ScriptedInput::new([
         ScriptedInputEvent::Timeout,
+        ScriptedInputEvent::Timeout,
         ScriptedInputEvent::Bytes(b"q".to_vec()),
     ]);
     let mut output = Vec::new();
@@ -960,7 +1106,6 @@ fn runner_refreshes_live_captures_on_timeout_tick() {
     );
 
     let rendered = String::from_utf8_lossy(&output);
-    assert!(rendered.contains("warm preview line"));
     assert!(rendered.contains("first live line"));
     assert!(rendered.contains("second live line"));
     assert_eq!(capture.calls, vec!["@1", "@1"]);
@@ -993,6 +1138,7 @@ fn runner_reloads_items_every_fifth_timeout_tick() {
         Err("tmux unavailable".into()),
     ]);
     let mut input = ScriptedInput::new([
+        ScriptedInputEvent::Timeout,
         ScriptedInputEvent::Timeout,
         ScriptedInputEvent::Timeout,
         ScriptedInputEvent::Timeout,
@@ -1062,8 +1208,8 @@ fn runner_returns_relaunch_code_when_client_size_changes() {
         RELAUNCH_ON_RESIZE_EXIT
     );
     assert_eq!(size_probe.calls, vec![Some("/dev/ttys001".to_owned())]);
-    assert_eq!(client.requests.len(), 1);
-    assert_eq!(capture.calls, vec!["@1"]);
+    assert!(client.requests.is_empty());
+    assert!(capture.calls.is_empty());
     cleanup(state_dir);
 }
 
@@ -1136,6 +1282,17 @@ fn expose_sublabel_value(value: &Value) -> ExposeSublabel {
 fn first_synchronized_frame(output: &str) -> &str {
     let start = output
         .find("\x1b[?2026h")
+        .expect("synchronized frame start");
+    let end = output[start..]
+        .find("\x1b[?2026l")
+        .map(|offset| start + offset + "\x1b[?2026l".len())
+        .expect("synchronized frame end");
+    &output[start..end]
+}
+
+fn last_synchronized_frame(output: &str) -> &str {
+    let start = output
+        .rfind("\x1b[?2026h")
         .expect("synchronized frame start");
     let end = output[start..]
         .find("\x1b[?2026l")

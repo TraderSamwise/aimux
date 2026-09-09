@@ -25,7 +25,9 @@ use crate::plugin_api::NativePluginStatus;
 use crate::plugin_project_service_host::native_plugin_statuses_for_context;
 use crate::runtime_lifecycle_methods::write_instruction_files;
 use crate::tmux_expose::{
-    SystemExposeHttpClient, run_tmux_expose_with_client, tmux_expose_options_from_socket_header,
+    ExposeHttpClient, ExposeHttpRequest, ExposeInputEvent, ExposeInputSource,
+    SystemExposeHttpClient, run_tmux_expose_with_input_source,
+    tmux_expose_options_from_socket_header,
 };
 
 use super::agent_output::{
@@ -528,12 +530,73 @@ fn handle_expose_socket_stream(
         fallback_project_state_dir,
     );
     let mut input = PrefixedRead::new(parsed.rest, input);
-    let mut client = SystemExposeHttpClient;
-    let code = run_tmux_expose_with_client(options, &mut input, &mut stream, &mut client);
+    let context = ProjectServiceRequestContext::with_project_state_dir(
+        fallback_project_root,
+        fallback_project_state_dir,
+    );
+    let mut client = ProjectServiceExposeHttpClient {
+        context,
+        fallback: SystemExposeHttpClient,
+    };
+    let mut capture = crate::tmux_expose::SystemExposeTmuxCapture::default();
+    let code = run_tmux_expose_with_input_source(
+        options,
+        &mut input,
+        &mut stream,
+        &mut client,
+        &mut capture,
+    );
     if let Some(status_path) = status_path {
         let _ = fs::write(status_path, format!("{code}\n"));
     }
     Ok(())
+}
+
+#[cfg(unix)]
+struct ProjectServiceExposeHttpClient {
+    context: ProjectServiceRequestContext,
+    fallback: SystemExposeHttpClient,
+}
+
+#[cfg(unix)]
+impl ExposeHttpClient for ProjectServiceExposeHttpClient {
+    fn request_json(
+        &mut self,
+        url: &str,
+        request: ExposeHttpRequest,
+    ) -> Result<serde_json::Value, String> {
+        let Some(path) = local_project_service_request_path(url) else {
+            return self.fallback.request_json(url, request);
+        };
+        let response = route_project_service_request(
+            &self.context,
+            request.method.as_str(),
+            &path,
+            request.body.as_ref(),
+        );
+        if response.status >= 400 {
+            return Err(response
+                .body
+                .get("error")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("project service expose request failed")
+                .to_owned());
+        }
+        Ok(response.body)
+    }
+}
+
+#[cfg(unix)]
+fn local_project_service_request_path(url: &str) -> Option<String> {
+    let after_scheme = url.split_once("://")?.1;
+    let slash = after_scheme.find('/')?;
+    let path = &after_scheme[slash..];
+    if path.starts_with(crate::project_api_contract::routes::controls::SWITCHABLE_AGENTS)
+        || path.starts_with(crate::project_api_contract::routes::controls::FOCUS_WINDOW)
+    {
+        return Some(path.to_owned());
+    }
+    None
 }
 
 #[cfg(unix)]
@@ -564,6 +627,37 @@ impl<R: Read> Read for PrefixedRead<R> {
             return Ok(count);
         }
         self.inner.read(buffer)
+    }
+}
+
+#[cfg(unix)]
+impl ExposeInputSource for PrefixedRead<UnixStream> {
+    fn read_timeout(&mut self, buffer: &mut [u8], timeout: Duration) -> ExposeInputEvent {
+        if self.offset < self.prefix.len() {
+            let available = self.prefix.len() - self.offset;
+            let count = available.min(buffer.len());
+            buffer[..count].copy_from_slice(&self.prefix[self.offset..self.offset + count]);
+            self.offset += count;
+            return ExposeInputEvent::Data(count);
+        }
+        let _ = self.inner.set_read_timeout(Some(timeout));
+        let event = match self.inner.read(buffer) {
+            Ok(0) => ExposeInputEvent::End,
+            Ok(count) => ExposeInputEvent::Data(count),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock
+                        | io::ErrorKind::TimedOut
+                        | io::ErrorKind::Interrupted
+                ) =>
+            {
+                ExposeInputEvent::Timeout
+            }
+            Err(_) => ExposeInputEvent::Error,
+        };
+        let _ = self.inner.set_read_timeout(None);
+        event
     }
 }
 

@@ -676,21 +676,34 @@ def run_dashboard_attach_smoke(aimux_bin: Path, mutation: str | None) -> dict[st
         scope.init_git_project()
         run([str(aimux_bin), "init"], cwd=scope.project, env=scope.env, timeout=30)
         install_shell_tool_config(scope)
-        spawned = run(
-            [str(aimux_bin), "spawn", "--tool", "shell", "--no-open", "--json"],
-            cwd=scope.project,
-            env=scope.env,
-            timeout=30,
-        )
-        spawn_payload = parse_json_stdout(spawned.stdout, "dashboard attach shell spawn")
-        target = spawn_payload.get("tmuxTarget")
-        if not isinstance(target, dict):
-            raise LiveResidualFailure(f"dashboard attach spawn did not return a tmuxTarget: {spawn_payload}")
-        shell_window_id = str(target.get("windowId") or "")
-        shell_window_name = str(target.get("windowName") or "")
-        host_session_name = str(target.get("sessionName") or "")
-        if not shell_window_id or not shell_window_name or not host_session_name:
-            raise LiveResidualFailure(f"dashboard attach spawn returned an incomplete target: {spawn_payload}")
+        shell_targets = []
+        for _ in range(2):
+            spawned = run(
+                [str(aimux_bin), "spawn", "--tool", "shell", "--no-open", "--json"],
+                cwd=scope.project,
+                env=scope.env,
+                timeout=30,
+            )
+            spawn_payload = parse_json_stdout(spawned.stdout, "dashboard attach shell spawn")
+            target = spawn_payload.get("tmuxTarget")
+            if not isinstance(target, dict):
+                raise LiveResidualFailure(f"dashboard attach spawn did not return a tmuxTarget: {spawn_payload}")
+            shell_targets.append(target)
+        first_target = shell_targets[0]
+        second_target = shell_targets[1]
+        shell_window_id = str(first_target.get("windowId") or "")
+        shell_window_name = str(first_target.get("windowName") or "")
+        second_shell_window_id = str(second_target.get("windowId") or "")
+        second_shell_window_name = str(second_target.get("windowName") or "")
+        host_session_name = str(first_target.get("sessionName") or "")
+        if (
+            not shell_window_id
+            or not shell_window_name
+            or not second_shell_window_id
+            or not second_shell_window_name
+            or not host_session_name
+        ):
+            raise LiveResidualFailure(f"dashboard attach spawn returned incomplete targets: {shell_targets}")
         run([str(aimux_bin), "dashboard-reload"], cwd=scope.project, env=scope.env, timeout=30)
         session = "phase8-attach"
         project_root = scope.project.resolve()
@@ -710,7 +723,7 @@ def run_dashboard_attach_smoke(aimux_bin: Path, mutation: str | None) -> dict[st
             rows=30,
         )
         output = ""
-        deadline = time.monotonic() + 15
+        deadline = time.monotonic() + 35
         while time.monotonic() < deadline:
             try:
                 output = capture_all_tmux(scope)
@@ -734,18 +747,24 @@ def run_dashboard_attach_smoke(aimux_bin: Path, mutation: str | None) -> dict[st
             raw = tmux_cmd_for_socket(
                 tmux,
                 socket_name,
-                ["list-clients", "-F", "#{client_tty}\t#{session_name}\t#{window_id}\t#{window_name}\t#{client_name}"],
+                [
+                    "list-clients",
+                    "-F",
+                    "#{client_tty}\t#{session_name}\t#{window_id}\t#{window_name}\t#{client_name}\t#{client_width}\t#{client_height}",
+                ],
             ).stdout
             rows = []
             for line in raw.splitlines():
                 fields = line.split("\t")
-                if len(fields) == 5:
+                if len(fields) == 7:
                     rows.append({
                         "tty": fields[0],
                         "session": fields[1],
                         "windowId": fields[2],
                         "windowName": fields[3],
                         "name": fields[4],
+                        "width": fields[5],
+                        "height": fields[6],
                     })
             return rows
 
@@ -756,7 +775,13 @@ def run_dashboard_attach_smoke(aimux_bin: Path, mutation: str | None) -> dict[st
         )
         client_tty = client["tty"]
         client_name = client["name"]
-        tmux_cmd_for_socket(tmux, socket_name, ["send-keys", "-t", client["windowId"], "Enter"])
+
+        def write_client_keys(*chunks: bytes) -> None:
+            for chunk in chunks:
+                os.write(client_fd, chunk)
+                time.sleep(0.05)
+
+        write_client_keys(b"\r")
         selection_frame = None
         selection_deadline = time.monotonic() + 5
         while time.monotonic() < selection_deadline:
@@ -778,12 +803,7 @@ def run_dashboard_attach_smoke(aimux_bin: Path, mutation: str | None) -> dict[st
             (item for item in attached_client_rows() if item["tty"] == client_tty),
             client,
         )
-        tmux_cmd_for_socket(tmux, socket_name, ["send-keys", "-t", focused_dashboard["windowId"], "Enter"])
-        expected_window_id = (
-            "@phase8-attach-mutation-missing"
-            if mutation == "dashboard-attach-focus-target-missing"
-            else shell_window_id
-        )
+        write_client_keys(b"\r")
         focused = None
         focus_deadline = time.monotonic() + 8
         while time.monotonic() < focus_deadline:
@@ -791,7 +811,12 @@ def run_dashboard_attach_smoke(aimux_bin: Path, mutation: str | None) -> dict[st
                 (
                     item
                     for item in attached_client_rows()
-                    if item["tty"] == client_tty and item["windowId"] == expected_window_id
+                    if item["tty"] == client_tty
+                    and (
+                        item["windowId"] == "@phase8-attach-mutation-missing"
+                        if mutation == "dashboard-attach-focus-target-missing"
+                        else item["windowId"] in {shell_window_id, second_shell_window_id}
+                    )
                 ),
                 None,
             )
@@ -808,10 +833,10 @@ def run_dashboard_attach_smoke(aimux_bin: Path, mutation: str | None) -> dict[st
                     "capture": capture_all_tmux(scope)[-2000:],
                 }, indent=2)
             )
-        if focused["windowName"] != shell_window_name:
+        if focused["windowName"] not in {shell_window_name, second_shell_window_name}:
             raise LiveResidualFailure(
                 "dashboard attach focused the wrong target:\n"
-                + json.dumps({"expected": target, "focused": focused}, indent=2)
+                + json.dumps({"expected": shell_targets, "focused": focused}, indent=2)
             )
 
         project_state_dirs = sorted((scope.aimux_home / "projects").glob("*"))
@@ -910,6 +935,39 @@ def run_dashboard_attach_smoke(aimux_bin: Path, mutation: str | None) -> dict[st
                     "capture": returned_frame[-2000:],
                 }, indent=2)
             )
+
+        write_client_keys(b"\r")
+        wait_until(
+            lambda: capture_all_tmux(scope)
+            if any(marker in capture_all_tmux(scope) for marker in ["▸ ●", "▸ ◆", "▸ ◇", "> ●", "> ◆", "> ◇"])
+            else None,
+            timeout=5,
+            label="dashboard attach returns to session selection for digit entry",
+        )
+        if mutation != "dashboard-attach-digit-target-missing":
+            write_client_keys(b"2")
+        expected_digit_window_id = (
+            "@phase8-attach-digit-mutation-missing"
+            if mutation == "dashboard-attach-digit-target-missing"
+            else second_shell_window_id
+        )
+        digit_focused = wait_until(
+            lambda: next(
+                (
+                    item
+                    for item in attached_client_rows()
+                    if item["tty"] == client_tty and item["windowId"] == expected_digit_window_id
+                ),
+                None,
+            ),
+            timeout=8,
+            label="dashboard digit focuses numbered session from attached client",
+        )
+        if digit_focused["windowName"] != second_shell_window_name:
+            raise LiveResidualFailure(
+                "dashboard digit focused the wrong target:\n"
+                + json.dumps({"expected": second_target, "focused": digit_focused}, indent=2)
+            )
         return {
             "name": "phase8-live-dashboard-attach-smoke",
             "privateSocket": socket_name,
@@ -917,6 +975,7 @@ def run_dashboard_attach_smoke(aimux_bin: Path, mutation: str | None) -> dict[st
                 "managed native TUI renders inside a real tmux client",
                 "dashboard Enter focuses the selected managed session from an attached tmux client",
                 "managed prefix+d returns the attached client to the dashboard",
+                "dashboard digit focuses a numbered session from an attached tmux client",
             ],
             "notCaught": [
                 "host-specific terminal emulator behavior outside tmux",
@@ -1105,6 +1164,330 @@ def run_bare_dashboard_tmux_smoke(aimux_bin: Path, mutation: str | None) -> dict
             "notCaught": [
                 "host terminal emulator behavior outside the private PTY",
                 "manual mosh transport quirks outside tmux's attached client state",
+            ],
+        }
+
+
+def run_expose_interaction_smoke(aimux_bin: Path, mutation: str | None) -> dict[str, Any]:
+    tmux = find_tmux()
+    with Scope("expose-interaction", aimux_bin) as scope:
+        socket_name = f"aimux-expose-{os.getpid()}-{time.time_ns()}"
+        scope.tmux_socket_name = socket_name
+        install_tmux_socket_wrapper(scope, tmux, socket_name)
+        run([tmux, "-L", socket_name, "kill-server"], env=without_tmux(os.environ.copy()), timeout=10, check=False)
+        scope.init_git_project()
+        seed_initial_commit(scope)
+        run([str(aimux_bin), "init"], cwd=scope.project, env=scope.env, timeout=30)
+        install_shell_tool_config(scope)
+        config_path = scope.project / ".aimux" / "config.json"
+        config = json.loads(config_path.read_text())
+        config["tools"]["shell"]["args"] = ["-lc", "printf 'phase8-agent-tool-ready\\n'; sleep 90"]
+        config["tools"]["shell"]["promptPatterns"] = ["phase8-agent-tool-ready"]
+        config_path.write_text(json.dumps(config, indent=2) + "\n")
+
+        first = parse_json_stdout(
+            run(
+                [str(aimux_bin), "spawn", "--tool", "shell", "--no-open", "--json"],
+                cwd=scope.project,
+                env=scope.env,
+                timeout=30,
+            ).stdout,
+            "expose first shell spawn",
+        )
+        second = parse_json_stdout(
+            run(
+                [str(aimux_bin), "spawn", "--tool", "shell", "--no-open", "--json"],
+                cwd=scope.project,
+                env=scope.env,
+                timeout=30,
+            ).stdout,
+            "expose second shell spawn",
+        )
+        first_target = first.get("tmuxTarget")
+        second_target = second.get("tmuxTarget")
+        if not isinstance(first_target, dict) or not isinstance(second_target, dict):
+            raise LiveResidualFailure(f"expose spawn targets missing: {first} {second}")
+        shell_window_ids = {
+            str(first_target.get("windowId") or ""),
+            str(second_target.get("windowId") or ""),
+        }
+        shell_window_ids.discard("")
+        host_session_name = str(first_target.get("sessionName") or "")
+        if len(shell_window_ids) < 2 or not host_session_name:
+            raise LiveResidualFailure(f"expose spawn returned incomplete targets: {first} {second}")
+        wait_for_project_service_endpoint(scope)
+
+        def expose_socket_ready() -> Path | None:
+            for state_dir in sorted((scope.aimux_home / "projects").glob("*")):
+                path_file = state_dir / "expose.sock.path"
+                candidates = []
+                if path_file.exists():
+                    candidates.extend(
+                        Path(line.strip())
+                        for line in path_file.read_text(errors="replace").splitlines()
+                        if line.strip()
+                    )
+                candidates.append(state_dir / "expose.sock")
+                for candidate in candidates:
+                    if candidate.exists():
+                        return candidate
+            return None
+
+        expose_socket = wait_until(
+            expose_socket_ready,
+            timeout=10,
+            label="project-service expose socket",
+        )
+
+        run([str(aimux_bin), "dashboard-reload"], cwd=scope.project, env=scope.env, timeout=30)
+        project_root = scope.project.resolve()
+        proc, client_fd = start_tmux_capture_client(
+            scope,
+            tmux,
+            socket_name,
+            [
+                "-f",
+                "/dev/null",
+                "attach-session",
+                "-t",
+                f"{host_session_name}:0",
+            ],
+            cwd=project_root,
+            cols=120,
+            rows=30,
+        )
+
+        wait_until(
+            lambda: capture_all_tmux(scope)
+            if "agent multiplexer" in capture_all_tmux(scope) and "Main Checkout" in capture_all_tmux(scope)
+            else None,
+            timeout=10,
+            label="expose dashboard attach",
+        )
+
+        def attached_client_rows() -> list[dict[str, str]]:
+            raw = tmux_cmd_for_socket(
+                tmux,
+                socket_name,
+                [
+                    "list-clients",
+                    "-F",
+                    "#{client_tty}\t#{session_name}\t#{window_id}\t#{window_name}\t#{client_name}\t#{client_width}\t#{client_height}",
+                ],
+            ).stdout
+            rows = []
+            for line in raw.splitlines():
+                fields = line.split("\t")
+                if len(fields) == 7:
+                    rows.append({
+                        "tty": fields[0],
+                        "session": fields[1],
+                        "windowId": fields[2],
+                        "windowName": fields[3],
+                        "name": fields[4],
+                        "width": fields[5],
+                        "height": fields[6],
+                    })
+            return rows
+
+        client = wait_until(
+            lambda: (rows[0] if (rows := attached_client_rows()) else None),
+            timeout=5,
+            label="expose attached tmux client",
+        )
+        client_tty = client["tty"]
+
+        def write_client_keys(*chunks: bytes) -> None:
+            for chunk in chunks:
+                os.write(client_fd, chunk)
+                time.sleep(0.05)
+
+        def wait_for_client_screen(
+            predicate: Any,
+            *,
+            cols: int,
+            rows: int,
+            timeout: float,
+            label: str,
+        ) -> str:
+            deadline = time.monotonic() + timeout
+            raw = ""
+            last_screen = ""
+            while time.monotonic() < deadline:
+                raw += drain_fd_now(client_fd)
+                last_screen = terminal_screen_from_output(raw, cols, rows, label)
+                if predicate(last_screen):
+                    return last_screen
+                time.sleep(0.05)
+            raise LiveResidualFailure(
+                f"timed out waiting for {label}:\n"
+                + json.dumps({
+                    "client": next(
+                        (item for item in attached_client_rows() if item["tty"] == client_tty),
+                        None,
+                    ),
+                    "screen": last_screen,
+                    "rawTail": raw[-2000:],
+                    "paneCapture": capture_all_tmux(scope)[-2000:],
+                }, indent=2)
+            )
+
+        def attached_client_size() -> str:
+            row = next(
+                (item for item in attached_client_rows() if item["tty"] == client_tty),
+                None,
+            )
+            if not row:
+                return ""
+            return f"{row['width']}x{row['height']}"
+
+        def open_expose(label: str, *, cols: int = 120, rows: int = 30) -> str:
+            drain_fd_now(client_fd)
+            if mutation != "expose-entry-missing":
+                write_client_keys(b"\x01", b"g")
+            return wait_for_client_screen(
+                lambda screen: "Exposé" in screen and "1-9 open" in screen,
+                cols=cols,
+                rows=rows,
+                timeout=8,
+                label=label,
+            )
+
+        write_client_keys(b"\r")
+        wait_until(
+            lambda: capture_all_tmux(scope)
+            if any(marker in capture_all_tmux(scope) for marker in ["▸ ●", "▸ ◆", "▸ ◇", "> ●", "> ◆", "> ◇"])
+            else None,
+            timeout=5,
+            label="expose dashboard session selection",
+        )
+        write_client_keys(b"\r")
+        current_agent = wait_until(
+            lambda: next(
+                (
+                    item
+                    for item in attached_client_rows()
+                    if item["tty"] == client_tty and item["windowId"] in shell_window_ids
+                ),
+                None,
+            ),
+            timeout=8,
+            label="expose dashboard focuses first agent",
+        )
+        open_expose("managed prefix+g opens expose")
+        if mutation != "expose-exit-missing":
+            write_client_keys(b"q")
+        exited_client = wait_until(
+            lambda: next(
+                (
+                    item
+                    for item in attached_client_rows()
+                    if item["tty"] == client_tty and item["windowId"] == current_agent["windowId"]
+                ),
+                None,
+            ),
+            timeout=5,
+            label="expose q exits to the launch window",
+        )
+
+        write_client_keys(b"\x01", b"d")
+        wait_until(
+            lambda: next(
+                (
+                    item
+                    for item in attached_client_rows()
+                    if item["tty"] == client_tty and item["windowName"] == "dashboard"
+                ),
+                None,
+            ),
+            timeout=5,
+            label="expose returns to dashboard before navigation",
+        )
+        open_expose("managed expose reopens for navigation from dashboard")
+        wait_for_client_screen(
+            lambda screen: "Exposé" in screen and "(2)" in screen,
+            cols=120,
+            rows=30,
+            timeout=8,
+            label="expose loads project tiles before navigation",
+        )
+        drain_fd_now(client_fd)
+        if mutation != "expose-navigation-inert":
+            write_client_keys(b"n")
+        time.sleep(0.2)
+        screen_after_move = terminal_screen_from_output(drain_fd_now(client_fd), 120, 30, "expose after n")
+        write_client_keys(b"\r")
+        focused_agent = None
+        focus_deadline = time.monotonic() + 8
+        while time.monotonic() < focus_deadline:
+            focused_agent = next(
+                (
+                    item
+                    for item in attached_client_rows()
+                    if item["tty"] == client_tty
+                    and item["windowId"] in shell_window_ids
+                    and item["windowId"] == second_target["windowId"]
+                ),
+                None,
+            )
+            if focused_agent:
+                break
+            time.sleep(0.05)
+        if not focused_agent:
+            raise LiveResidualFailure(
+                "timed out waiting for expose enter focuses selected tile:\n"
+                + json.dumps({
+                    "previousWindowId": exited_client["windowId"],
+                    "expectedWindowId": second_target["windowId"],
+                    "screenAfterMove": screen_after_move,
+                    "clients": attached_client_rows(),
+                    "windows": tmux_cmd_for_socket(
+                        tmux,
+                        socket_name,
+                        ["list-windows", "-a", "-F", "#{session_name}\t#{window_id}\t#{window_index}\t#{window_name}"],
+                    ).stdout,
+                    "paneCapture": capture_all_tmux(scope)[-2000:],
+                }, indent=2)
+            )
+
+        open_expose("managed expose opens before resize")
+        drain_fd_now(client_fd)
+        if mutation != "expose-resize-stale":
+            set_pty_size(client_fd, 100, 26)
+            os.kill(proc.pid, signal.SIGWINCH)
+            tmux_cmd_for_socket(tmux, socket_name, ["resize-window", "-t", focused_agent["windowId"], "-x", "100", "-y", "26"])
+            tmux_cmd_for_socket(tmux, socket_name, ["resize-pane", "-t", focused_agent["windowId"], "-x", "100", "-y", "26"])
+            tmux_cmd_for_socket(tmux, socket_name, ["refresh-client", "-t", client_tty, "-S"], check=False)
+        wait_until(
+            lambda: attached_client_size() == "100x26",
+            timeout=5,
+            label="expose attached client resized to 100x26",
+        )
+        resized_screen = wait_for_client_screen(
+            lambda screen: "1-9 open" in screen and frame_reaches_width(screen, 100),
+            cols=100,
+            rows=26,
+            timeout=10,
+            label="expose repaints after client resize",
+        )
+        assert_frame_width(resized_screen, 100, "resized expose popup")
+        write_client_keys(b"q")
+        terminate_process(proc)
+
+        return {
+            "name": "phase8-live-expose-interaction-smoke",
+            "privateSocket": socket_name,
+            "exposeSocket": str(expose_socket),
+            "caught": [
+                "managed prefix+g opens Exposé from the dashboard",
+                "Exposé q exits back to the dashboard",
+                "Exposé n moves selection between tiles",
+                "Exposé Enter focuses the selected tile",
+                "Exposé relaunches/repaints after client resize",
+            ],
+            "notCaught": [
+                "host terminal behavior outside a private tmux client",
+                "long-running capture refresh under sustained agent output",
             ],
         }
 
@@ -2869,6 +3252,8 @@ def run_one(name: str, aimux_bin: Path, mutation: str | None) -> dict[str, Any]:
         return run_bare_dashboard_tmux_smoke(aimux_bin, mutation)
     if name == "dashboard-spawn":
         return run_dashboard_spawn_smoke(aimux_bin, mutation)
+    if name == "expose-interaction":
+        return run_expose_interaction_smoke(aimux_bin, mutation)
     if name == "command-resolution":
         return run_command_resolution_smoke(aimux_bin, mutation)
     if name == "agent-shell":
@@ -2902,8 +3287,12 @@ def prove_failures(args: argparse.Namespace, aimux_bin: Path) -> list[dict[str, 
         ("dashboard-attach", "dashboard-attach-terminal-error"),
         ("dashboard-attach", "dashboard-attach-focus-target-missing"),
         ("dashboard-attach", "dashboard-attach-return-missing"),
+        ("dashboard-attach", "dashboard-attach-digit-target-missing"),
         ("bare-dashboard", "bare-dashboard-inline"),
         ("dashboard", "dashboard-resize-width-overflow"),
+        ("expose-interaction", "expose-entry-missing"),
+        ("expose-interaction", "expose-navigation-inert"),
+        ("expose-interaction", "expose-resize-stale"),
         ("dashboard-spawn", "dashboard-spawn-missing-session"),
         ("command-resolution", "command-unsupported"),
         ("command-resolution", "command-silent-alias"),
@@ -2968,6 +3357,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             "dashboard-attach",
             "bare-dashboard",
             "dashboard-spawn",
+            "expose-interaction",
             "command-resolution",
             "agent-shell",
             "shell-service",
@@ -2992,7 +3382,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "dashboard-attach-terminal-error",
         "dashboard-attach-focus-target-missing",
         "dashboard-attach-return-missing",
+        "dashboard-attach-digit-target-missing",
         "bare-dashboard-inline",
+        "expose-entry-missing",
+        "expose-navigation-inert",
+        "expose-resize-stale",
         "dashboard-spawn-missing-session",
         "command-unsupported",
         "command-silent-alias",
@@ -3025,6 +3419,7 @@ def main(argv: list[str]) -> int:
             "dashboard-attach",
             "bare-dashboard",
             "dashboard-spawn",
+            "expose-interaction",
             "command-resolution",
             "agent-shell",
             "shell-service",
