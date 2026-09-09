@@ -68,8 +68,9 @@ use crate::daemon_state::{
 };
 use crate::dashboard_readiness::get_runtime_owner_id;
 use crate::dashboard_targets::{
-    DashboardResolveOptions, DashboardTargetRef, resolve_dashboard_target,
-    resolve_dashboard_target_for_restart,
+    DashboardResolveOptions, DashboardTargetContext, DashboardTargetRef, DashboardTargetTmux,
+    find_live_dashboard_target_with_context, resolve_dashboard_target,
+    resolve_dashboard_target_for_restart_with_context,
 };
 use crate::event_loop_budget::{
     assess_loop_budget, get_event_loop_delay, start_event_loop_monitor,
@@ -104,7 +105,8 @@ use crate::runtime_coherence::{
 use crate::runtime_guard::read_runtime_rebuild_required;
 use crate::service_state_snapshot::stop_project_tmux_runtime_with_service_snapshots;
 use crate::tmux::{
-    TmuxRuntimeManager, TmuxTarget, is_dashboard_window_name, is_tmux_client_session_for_host,
+    TMUX_DASHBOARD_BUILD_OPTION, TmuxRuntimeManager, TmuxTarget, is_dashboard_window_name,
+    is_tmux_client_session_for_host,
 };
 use crate::tmux_exec_metrics::get_tmux_exec_metrics;
 use anyhow::{Context, Result};
@@ -157,6 +159,35 @@ struct DaemonProjectReadSnapshot {
 struct ProjectOnlineAgentCountCacheEntry {
     count: Option<usize>,
     ts: u128,
+}
+
+struct RestartDashboardTarget {
+    target: DashboardTargetRef,
+    retained: bool,
+}
+
+impl RestartDashboardTarget {
+    fn reloaded(target: DashboardTargetRef) -> Self {
+        Self {
+            target,
+            retained: false,
+        }
+    }
+
+    fn retained(target: DashboardTargetRef) -> Self {
+        Self {
+            target,
+            retained: true,
+        }
+    }
+
+    fn status(&self) -> &'static str {
+        if self.retained {
+            "retained"
+        } else {
+            "reloaded"
+        }
+    }
 }
 
 pub trait ProjectServiceProcessVerifier: Send + Sync {
@@ -751,7 +782,7 @@ impl RealDaemonRuntime {
     fn restart_control_plane_project_with(
         &mut self,
         project_root: &str,
-        reload_dashboard: impl FnOnce(&str) -> Result<DashboardTargetRef, String>,
+        reload_dashboard: impl FnOnce(&str) -> Result<RestartDashboardTarget, String>,
     ) -> Value {
         let mut result = empty_restart_project_result(project_root);
         let runtime_rebuild_required = read_runtime_rebuild_required(project_root);
@@ -768,10 +799,14 @@ impl RealDaemonRuntime {
             Err(error) => json!({ "status": "failed", "error": error }),
         };
         let dashboard = match reload_dashboard(project_root) {
-            Ok(target) => {
-                self.refresh_project_statusline(project_root);
+            Ok(restart_dashboard) => {
+                if !restart_dashboard.retained {
+                    self.refresh_project_statusline(project_root);
+                }
+                let status = restart_dashboard.status();
+                let target = restart_dashboard.target;
                 json!({
-                    "status": "reloaded",
+                    "status": status,
                     "sessionName": target.dashboard_session.session_name,
                     "target": tmux_target_json(&target.dashboard_target),
                 })
@@ -2451,10 +2486,15 @@ fn session_prefix_for_project(project_root: &str) -> String {
         .to_owned()
 }
 
-fn reload_dashboard_for_restart(project_root: &str) -> Result<DashboardTargetRef, String> {
+fn reload_dashboard_for_restart(project_root: &str) -> Result<RestartDashboardTarget, String> {
     let mut tmux = TmuxRuntimeManager::new();
+    if let Some(target) = retained_dashboard_for_restart(project_root, &mut tmux)? {
+        return Ok(target);
+    }
+    let context = DashboardTargetContext::for_project(project_root)?;
     let active_windows = capture_active_non_dashboard_windows(project_root, &mut tmux);
-    let resolved = resolve_dashboard_target_for_restart(project_root, &mut tmux);
+    let resolved =
+        resolve_dashboard_target_for_restart_with_context(project_root, &mut tmux, &context);
     let result = match resolved {
         Ok(target) => {
             let mut errors = cleanup_host_dashboard_session(
@@ -2468,7 +2508,7 @@ fn reload_dashboard_for_restart(project_root: &str) -> Result<DashboardTargetRef
                 &target.dashboard_target,
             ));
             if errors.is_empty() {
-                Ok(target)
+                Ok(RestartDashboardTarget::reloaded(target))
             } else {
                 Err(format!("dashboard relink failed for {}", errors.join("; ")))
             }
@@ -2477,6 +2517,23 @@ fn reload_dashboard_for_restart(project_root: &str) -> Result<DashboardTargetRef
     };
     restore_active_windows(&mut tmux, &active_windows);
     result
+}
+
+fn retained_dashboard_for_restart(
+    project_root: &str,
+    tmux: &mut impl DashboardTargetTmux,
+) -> Result<Option<RestartDashboardTarget>, String> {
+    let context = DashboardTargetContext::for_project(project_root)?;
+    let Some(target) = find_live_dashboard_target_with_context(project_root, tmux, &context)?
+    else {
+        return Ok(None);
+    };
+    tmux.set_session_option(
+        &target.dashboard_session.session_name,
+        TMUX_DASHBOARD_BUILD_OPTION,
+        &context.dashboard_build_stamp,
+    )?;
+    Ok(Some(RestartDashboardTarget::retained(target)))
 }
 
 fn capture_active_non_dashboard_windows(
@@ -2820,8 +2877,11 @@ fn current_unix_millis() -> u128 {
 mod tests {
     use super::*;
     use crate::daemon_state::{ProjectServiceStatus, save_metadata_endpoint};
-    use crate::tmux::TmuxSessionRef;
     use crate::tmux::project_session;
+    use crate::tmux::{
+        TMUX_DASHBOARD_OWNER_OPTION, TMUX_DASHBOARD_READY_OPTION, TMUX_RUNTIME_OWNER_OPTION,
+        TmuxCommandSpec, TmuxSessionRef, TmuxWindowInfo,
+    };
     use std::cell::RefCell;
     use std::ffi::CString;
     use std::os::unix::ffi::OsStrExt;
@@ -2869,6 +2929,43 @@ mod tests {
         assert_eq!(launcher.calls(), vec![project]);
         assert_eq!(launcher.terminations(), vec![(91_002, false)]);
         fixture.cleanup();
+    }
+
+    #[test]
+    fn control_plane_restart_reports_retained_dashboard_without_reload() {
+        let fixture = restart_service_fixture("restart-retained-dashboard");
+        let project = fixture.project_root.clone();
+        let project_id = fixture.register_project();
+        fixture.persist_service(&project_id, 91_003, ProjectServiceStatus::Running);
+        fixture.persist_endpoint(91_003);
+        let launcher = Arc::new(RestartTestLauncher::new(91_103));
+        let verifier = Arc::new(RestartTestProcessVerifier::current_native([91_003]));
+        let mut runtime = fixture.runtime(launcher.clone(), verifier);
+
+        let result =
+            runtime.restart_control_plane_project_with(&project, restart_test_retained_dashboard);
+
+        assert_eq!(result["dashboard"]["status"], "retained");
+        assert_eq!(result["dashboard"]["target"]["windowId"], "@1");
+        assert!(launcher.calls().is_empty());
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn restart_dashboard_fast_path_retains_usable_live_dashboard() {
+        let project_root = "/repo/live-dashboard";
+        let context = DashboardTargetContext::for_project(project_root).expect("context");
+        let mut tmux = RestartDashboardFastPathTmux::new(project_root, &context);
+
+        let target = retained_dashboard_for_restart(project_root, &mut tmux)
+            .expect("retained check")
+            .expect("retained dashboard");
+
+        assert!(target.retained);
+        assert_eq!(target.target.dashboard_target.window_id, "@1");
+        assert_eq!(tmux.set_session_option_calls, 1);
+        assert_eq!(tmux.ensure_dashboard_window_calls, 0);
+        assert_eq!(tmux.replace_window_when_ready_calls, 0);
     }
 
     #[test]
@@ -3322,8 +3419,8 @@ mod tests {
         }
     }
 
-    fn restart_test_dashboard(project_root: &str) -> Result<DashboardTargetRef, String> {
-        Ok(DashboardTargetRef {
+    fn restart_test_dashboard_ref(project_root: &str) -> DashboardTargetRef {
+        DashboardTargetRef {
             dashboard_session: TmuxSessionRef {
                 project_root: project_root.to_owned(),
                 project_id: "repo".to_owned(),
@@ -3336,7 +3433,168 @@ mod tests {
                 window_name: "dashboard".to_owned(),
                 pane_dead: None,
             },
-        })
+        }
+    }
+
+    fn restart_test_dashboard(project_root: &str) -> Result<RestartDashboardTarget, String> {
+        Ok(RestartDashboardTarget::reloaded(
+            restart_test_dashboard_ref(project_root),
+        ))
+    }
+
+    fn restart_test_retained_dashboard(
+        project_root: &str,
+    ) -> Result<RestartDashboardTarget, String> {
+        Ok(RestartDashboardTarget::retained(
+            restart_test_dashboard_ref(project_root),
+        ))
+    }
+
+    struct RestartDashboardFastPathTmux {
+        project_root: String,
+        session_name: String,
+        build_stamp: String,
+        owner_id: String,
+        set_session_option_calls: usize,
+        ensure_dashboard_window_calls: usize,
+        replace_window_when_ready_calls: usize,
+    }
+
+    impl RestartDashboardFastPathTmux {
+        fn new(project_root: &str, context: &DashboardTargetContext) -> Self {
+            Self {
+                project_root: project_root.to_owned(),
+                session_name: "aimux-live-dashboard".to_owned(),
+                build_stamp: context.dashboard_build_stamp.clone(),
+                owner_id: context.runtime_owner_id.clone(),
+                set_session_option_calls: 0,
+                ensure_dashboard_window_calls: 0,
+                replace_window_when_ready_calls: 0,
+            }
+        }
+    }
+
+    impl DashboardTargetTmux for RestartDashboardFastPathTmux {
+        fn get_project_session(&mut self, project_root: &str) -> TmuxSessionRef {
+            TmuxSessionRef {
+                project_root: project_root.to_owned(),
+                project_id: "live-dashboard".to_owned(),
+                session_name: self.session_name.clone(),
+            }
+        }
+
+        fn is_inside_tmux(&mut self) -> bool {
+            false
+        }
+
+        fn get_open_session_name(&mut self, session_name: &str, _inside_tmux: bool) -> String {
+            session_name.to_owned()
+        }
+
+        fn current_client_session(&mut self) -> Option<String> {
+            None
+        }
+
+        fn list_session_names(&mut self) -> Vec<String> {
+            vec![self.session_name.clone()]
+        }
+
+        fn has_session(&mut self, session_name: &str) -> bool {
+            session_name == self.session_name
+        }
+
+        fn list_windows(&mut self, session_name: &str) -> Vec<TmuxWindowInfo> {
+            if session_name != self.session_name {
+                return Vec::new();
+            }
+            vec![TmuxWindowInfo {
+                id: "@1".to_owned(),
+                index: 0,
+                name: "dashboard".to_owned(),
+                active: true,
+                activity: None,
+                pane_dead: Some(false),
+            }]
+        }
+
+        fn get_window_option(&mut self, _target: &TmuxTarget, key: &str) -> Option<String> {
+            match key {
+                TMUX_DASHBOARD_BUILD_OPTION | TMUX_DASHBOARD_READY_OPTION => {
+                    Some(self.build_stamp.clone())
+                }
+                TMUX_DASHBOARD_OWNER_OPTION => Some(self.owner_id.clone()),
+                _ => None,
+            }
+        }
+
+        fn get_session_option(&mut self, _session_name: &str, key: &str) -> Option<String> {
+            match key {
+                TMUX_RUNTIME_OWNER_OPTION => Some(self.owner_id.clone()),
+                "@aimux-project-root" => Some(self.project_root.clone()),
+                _ => None,
+            }
+        }
+
+        fn display_message(&mut self, _format: &str, _target: &str) -> Option<String> {
+            Some("aimux".to_owned())
+        }
+
+        fn capture_target(&mut self, _target: &TmuxTarget, _start_line: i64) -> Option<String> {
+            None
+        }
+
+        fn is_window_alive(&mut self, _target: &TmuxTarget) -> bool {
+            true
+        }
+
+        fn ensure_project_session(
+            &mut self,
+            project_root: &str,
+            _dashboard_command: &TmuxCommandSpec,
+        ) -> Result<TmuxSessionRef, String> {
+            Ok(self.get_project_session(project_root))
+        }
+
+        fn ensure_dashboard_window(
+            &mut self,
+            _session_name: &str,
+            _project_root: &str,
+            _dashboard_command: &TmuxCommandSpec,
+        ) -> Result<(TmuxTarget, bool), String> {
+            self.ensure_dashboard_window_calls += 1;
+            Err("unexpected dashboard ensure".to_owned())
+        }
+
+        fn replace_window_when_ready(
+            &mut self,
+            _target: &TmuxTarget,
+            _dashboard_command: &TmuxCommandSpec,
+            _readiness_option: &str,
+            _readiness_value: &str,
+            _timeout_ms: u64,
+        ) -> Result<TmuxTarget, String> {
+            self.replace_window_when_ready_calls += 1;
+            Err("unexpected dashboard replace".to_owned())
+        }
+
+        fn set_session_option(
+            &mut self,
+            _session_name: &str,
+            _key: &str,
+            _value: &str,
+        ) -> Result<(), String> {
+            self.set_session_option_calls += 1;
+            Ok(())
+        }
+
+        fn set_window_option(
+            &mut self,
+            _target: &TmuxTarget,
+            _key: &str,
+            _value: &str,
+        ) -> Result<(), String> {
+            Ok(())
+        }
     }
 
     struct RestartTestLauncher {
