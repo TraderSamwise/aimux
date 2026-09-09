@@ -6,9 +6,7 @@ import {
 import { isDesktopNativeRuntime } from "@/lib/runtime-tuning";
 
 export function useResponsiveViewportValue(width: number, height: number): ResponsiveViewport {
-  const roundedWidth = Math.max(0, Math.round(width));
-  const roundedHeight = Math.max(0, Math.round(height));
-  const isDesktopNative = isDesktopNativeRuntime(roundedWidth, roundedHeight);
+  const isDesktopNative = isDesktopNativeRuntime(width, height);
   const value = createResponsiveViewportValue({ height, isDesktopNative, width });
 
   return useMemo(
