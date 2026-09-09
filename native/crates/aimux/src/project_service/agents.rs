@@ -1,5 +1,5 @@
 use serde_json::{Map, Value, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::config::default_config;
 use crate::daemon_state::load_metadata_state;
@@ -14,6 +14,24 @@ use super::router::ProjectServiceRequestContext;
 use super::runtime_exchange::{read_runtime_exchange, runtime_exchange_path};
 
 const ACTIVE_AGENT_STATUSES: &[&str] = &["starting", "running", "idle", "offline"];
+
+/// Statuses that claim the session is backed by a live tmux window.
+const LIVE_AGENT_STATUSES: &[&str] = &["starting", "running", "idle"];
+
+/// A session claiming a live status is only live if its tmux window still exists.
+///
+/// Node rebuilt topology from live SessionRuntime objects on every save, so a dead
+/// window dropped out on its own. The native service has no such runtime object and
+/// treats topology as durable, so liveness has to be re-derived from tmux on read;
+/// otherwise a killed tmux server leaves every session reading `running` forever.
+fn session_is_backed_by_live_window(session: &Value, live_window_ids: &BTreeSet<String>) -> bool {
+    session
+        .get("tmuxTarget")
+        .and_then(|target| target.get("windowId"))
+        .and_then(Value::as_str)
+        .map(|window_id| live_window_ids.contains(window_id))
+        .unwrap_or(false)
+}
 
 pub fn route_agent_read_request(
     context: &ProjectServiceRequestContext,
@@ -83,12 +101,19 @@ pub fn topology_desktop_session_list(
     metadata_sessions: &BTreeMap<String, Value>,
     tools: &Map<String, Value>,
 ) -> Vec<Value> {
+    let live_window_ids = crate::tmux::TmuxRuntimeManager::new().live_window_ids();
     list_topology_session_states(topology, Some(ACTIVE_AGENT_STATUSES))
         .into_iter()
         .map(|mut session| {
-            let status = string_field(&session, "status")
+            let mut status = string_field(&session, "status")
                 .unwrap_or("offline")
                 .to_owned();
+            if LIVE_AGENT_STATUSES.contains(&status.as_str())
+                && !session_is_backed_by_live_window(&session, &live_window_ids)
+            {
+                status = "offline".to_owned();
+                set_value(&mut session, "status", Value::String(status.clone()));
+            }
             if status == "offline" {
                 let fresh_relaunch_allowed =
                     should_relaunch_fresh_session(&session, metadata_sessions);
