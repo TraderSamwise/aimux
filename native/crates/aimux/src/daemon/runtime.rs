@@ -1384,6 +1384,8 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
             && service.status != Some(crate::daemon_state::ProjectServiceStatus::Stopped)
             && self.project_service_process_verifier.is_live(service.pid)
         {
+            let was_running =
+                service.status == Some(crate::daemon_state::ProjectServiceStatus::Running);
             if self
                 .project_service_process_verifier
                 .is_live_native_project_service(&service)
@@ -1399,8 +1401,10 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
                     .is_some()
                 {
                     service.status = Some(crate::daemon_state::ProjectServiceStatus::Running);
-                    service.updated_at = now_iso();
-                    self.save_project_service_state(&service)?;
+                    if !was_running {
+                        service.updated_at = now_iso();
+                        self.save_project_service_state(&service)?;
+                    }
                     log_at(
                         LogLevel::Debug,
                         "project service ensure reused live service",
@@ -2634,7 +2638,8 @@ fn retained_dashboard_for_restart(
     tmux: &mut impl DashboardTargetTmux,
 ) -> Result<Option<RestartDashboardTarget>, String> {
     let context = DashboardTargetContext::for_project(project_root)?;
-    let Some(target) = find_live_dashboard_target_with_context(project_root, tmux, &context)? else {
+    let Some(target) = find_live_dashboard_target_with_context(project_root, tmux, &context)?
+    else {
         return Ok(None);
     };
     tmux.set_session_option(
@@ -2986,11 +2991,11 @@ fn current_unix_millis() -> u128 {
 mod tests {
     use super::*;
     use crate::daemon_state::{ProjectServiceStatus, save_metadata_endpoint};
+    use crate::tmux::project_session;
     use crate::tmux::{
         TMUX_DASHBOARD_OWNER_OPTION, TMUX_DASHBOARD_READY_OPTION, TMUX_RUNTIME_OWNER_OPTION,
         TmuxCommandSpec, TmuxSessionRef, TmuxWindowInfo,
     };
-    use crate::tmux::project_session;
     use std::cell::RefCell;
     use std::ffi::CString;
     use std::os::unix::ffi::OsStrExt;
@@ -3015,6 +3020,7 @@ mod tests {
 
         assert_eq!(result["service"]["status"], "ensured");
         assert_eq!(result["service"]["state"]["pid"], json!(91_001));
+        assert_eq!(result["service"]["state"]["updatedAt"], json!("now"));
         assert!(launcher.calls().is_empty());
         assert!(launcher.terminations().is_empty());
         fixture.cleanup();
