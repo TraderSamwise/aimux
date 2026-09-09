@@ -8,7 +8,7 @@
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -24,6 +24,18 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// An event stream is meant to be idle most of the time, so its read timeout is
 /// how often the reader notices it has been cancelled, not a failure threshold.
 const STREAM_POLL: Duration = Duration::from_millis(500);
+/// Relay request/response traffic is control JSON, not attachment bytes or bulk
+/// terminal history. Four MiB leaves room for large project lists and tails while
+/// refusing a relay-triggered bulk read into daemon memory.
+pub const MAX_RELAY_DAEMON_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
+/// A real relay client should need one project event stream per visible remote
+/// surface, plus a little reconnect overlap. Sixteen covers desktop, browser and
+/// mobile clients for one project without allowing unbounded reader threads.
+pub const MAX_RELAY_EVENT_SUBSCRIPTIONS: usize = 16;
+/// Project event SSE frames are compact state notifications. Full output and
+/// attachments use other routes, so a partial SSE frame over 256 KiB is treated
+/// as a malformed stream instead of buffering forever.
+pub const MAX_RELAY_SSE_BUFFER_BYTES: usize = 256 * 1024;
 
 pub fn daemon_loopback_port() -> String {
     std::env::var("AIMUX_DAEMON_PORT")
@@ -35,12 +47,14 @@ pub fn daemon_loopback_port() -> String {
 
 pub struct LoopbackRelayBridge {
     port: String,
+    active_event_subscriptions: Arc<AtomicUsize>,
 }
 
 impl Default for LoopbackRelayBridge {
     fn default() -> Self {
         Self {
             port: daemon_loopback_port(),
+            active_event_subscriptions: Arc::new(AtomicUsize::new(0)),
         }
     }
 }
@@ -61,6 +75,39 @@ impl LoopbackRelayBridge {
     fn port_number(&self) -> u16 {
         self.port.parse().unwrap_or(43_190)
     }
+
+    fn acquire_event_subscription(&self) -> Result<EventSubscriptionPermit, (u16, String)> {
+        loop {
+            let active = self.active_event_subscriptions.load(Ordering::SeqCst);
+            if active >= MAX_RELAY_EVENT_SUBSCRIPTIONS {
+                return Err((
+                    429,
+                    format!(
+                        "too many relay project event subscriptions; max {MAX_RELAY_EVENT_SUBSCRIPTIONS}"
+                    ),
+                ));
+            }
+            if self
+                .active_event_subscriptions
+                .compare_exchange(active, active + 1, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+            {
+                return Ok(EventSubscriptionPermit {
+                    active: Arc::clone(&self.active_event_subscriptions),
+                });
+            }
+        }
+    }
+}
+
+struct EventSubscriptionPermit {
+    active: Arc<AtomicUsize>,
+}
+
+impl Drop for EventSubscriptionPermit {
+    fn drop(&mut self) {
+        self.active.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 pub fn build_request_head(
@@ -70,6 +117,11 @@ pub fn build_request_head(
     body: Option<&str>,
     port: &str,
 ) -> String {
+    // The request LINE is as attacker-influenced as the headers: method and
+    // path come straight off a relay frame. Filtering headers for CRLF while
+    // writing these raw would leave the smuggling hole wide open.
+    let method = sanitize_request_token(method, "GET");
+    let path = sanitize_request_token(path, "/");
     let mut wire = format!("{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n");
     if let Some(map) = headers.as_object() {
         for (name, value) in map {
@@ -115,11 +167,17 @@ fn write_request(
         .map_err(|error| error.to_string())
 }
 
-fn read_status_and_body(stream: &mut TcpStream) -> Result<(u16, String), String> {
+pub fn read_status_and_body(stream: &mut impl Read) -> Result<(u16, String), String> {
     let mut raw = Vec::new();
     stream
+        .take((MAX_RELAY_DAEMON_RESPONSE_BYTES + 1) as u64)
         .read_to_end(&mut raw)
         .map_err(|error| error.to_string())?;
+    if raw.len() > MAX_RELAY_DAEMON_RESPONSE_BYTES {
+        return Err(format!(
+            "daemon response exceeded relay limit of {MAX_RELAY_DAEMON_RESPONSE_BYTES} bytes"
+        ));
+    }
     let text = String::from_utf8_lossy(&raw).into_owned();
     let (head, body) = text
         .split_once("\r\n\r\n")
@@ -177,6 +235,7 @@ impl DaemonRelayBridge for LoopbackRelayBridge {
         // the other end of the relay, so dialling first and checking after
         // would already have made the connection.
         let target = resolve_project_event_stream(path, headers)?;
+        let permit = self.acquire_event_subscription()?;
         let (host, port, request_path) = split_http_url(&target)
             .ok_or_else(|| (502u16, "unusable event stream target".to_owned()))?;
         let mut stream = TcpStream::connect((host.as_str(), port))
@@ -223,15 +282,22 @@ impl DaemonRelayBridge for LoopbackRelayBridge {
         std::thread::Builder::new()
             .name("aimux-relay-events".into())
             .spawn(move || {
+                let _permit = permit;
                 let mut buffer = String::new();
                 let mut chunk = [0u8; 4096];
+                let mut close_message = "Project event stream closed";
                 while !cancelled.load(Ordering::SeqCst) {
                     match reader.read(&mut chunk) {
                         Ok(0) => break,
                         Ok(read) => {
-                            buffer.push_str(&String::from_utf8_lossy(&chunk[..read]));
-                            let (frames, remainder) = split_sse_frames(&buffer);
-                            buffer = remainder;
+                            let frames = match append_limited_sse_chunk(&mut buffer, &chunk[..read])
+                            {
+                                Ok(frames) => frames,
+                                Err(message) => {
+                                    close_message = message;
+                                    break;
+                                }
+                            };
                             for frame in frames {
                                 if let Some(payload) = project_event_frame(&subscription_id, &frame)
                                 {
@@ -254,7 +320,7 @@ impl DaemonRelayBridge for LoopbackRelayBridge {
                     send(project_events_error_frame(
                         &subscription_id,
                         502,
-                        "Project event stream closed",
+                        close_message,
                     ));
                 }
             })
@@ -275,6 +341,20 @@ impl DaemonRelayBridge for LoopbackRelayBridge {
             non_empty(message).unwrap_or("Remote access is disconnected. Run `aimux login` again."),
         );
     }
+}
+
+pub fn append_limited_sse_chunk(
+    buffer: &mut String,
+    chunk: &[u8],
+) -> Result<Vec<String>, &'static str> {
+    if buffer.len().saturating_add(chunk.len()) > MAX_RELAY_SSE_BUFFER_BYTES {
+        buffer.clear();
+        return Err("project event stream exceeded relay SSE buffer limit");
+    }
+    buffer.push_str(&String::from_utf8_lossy(chunk));
+    let (frames, remainder) = split_sse_frames(buffer);
+    *buffer = remainder;
+    Ok(frames)
 }
 
 fn non_empty(value: &str) -> Option<&str> {
@@ -421,10 +501,7 @@ const PROXY_ALLOWED_HOSTS: &[&str] = &["127.0.0.1", "localhost"];
 /// host is one we proxy to, and whether the route is the event stream rather
 /// than some other project-service endpoint. Skipping any of them turns the
 /// relay into an open proxy into the user's machine.
-pub fn resolve_project_event_stream(
-    path: &str,
-    headers: &Value,
-) -> Result<String, (u16, String)> {
+pub fn resolve_project_event_stream(path: &str, headers: &Value) -> Result<String, (u16, String)> {
     let route_url = crate::daemon::routing::DaemonRouteUrl::parse(path);
     let pathname = route_url.pathname().to_owned();
 
@@ -492,4 +569,20 @@ fn split_http_url(url: &str) -> Option<(String, u16, String)> {
     let (authority, path) = rest.split_once('/')?;
     let (host, port) = authority.rsplit_once(':')?;
     Some((host.to_owned(), port.parse().ok()?, format!("/{path}")))
+}
+
+/// Reject a method or path that could break out of the request line.
+///
+/// Anything carrying CR, LF, a space or a control character is replaced with a
+/// safe default rather than escaped — a relay has no legitimate reason to send
+/// one, and a rejected request is a far better outcome than a smuggled one.
+fn sanitize_request_token(value: &str, fallback: &str) -> String {
+    let unsafe_token = value.is_empty()
+        || value
+            .chars()
+            .any(|character| character.is_whitespace() || character.is_control());
+    if unsafe_token {
+        return fallback.to_owned();
+    }
+    value.to_owned()
 }

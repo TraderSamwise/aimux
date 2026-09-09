@@ -70,7 +70,10 @@ fn run_case(input: &Value) -> Option<Value> {
 }
 
 fn auth_close_case(input: &Value) -> Value {
-    let code = input.get("closeCode").and_then(Value::as_u64).unwrap_or(1008) as u16;
+    let code = input
+        .get("closeCode")
+        .and_then(Value::as_u64)
+        .unwrap_or(1008) as u16;
     let recorder = Arc::new(Recorder::default());
     let runner = RelayRunner::new(
         RELAY_URL,
@@ -80,10 +83,7 @@ fn auth_close_case(input: &Value) -> Value {
         }),
     );
     // Twice, to prove the auth-lost notification is raised once and not per attempt.
-    let mut connector = FakeConnector::new(vec![
-        Ok(vec![closed(code)]),
-        Ok(vec![closed(code)]),
-    ]);
+    let mut connector = FakeConnector::new(vec![Ok(vec![closed(code)]), Ok(vec![closed(code)])]);
     Arc::clone(&runner).run(&mut connector, &mut |_| {});
 
     let status = runner.handle().status();
@@ -129,7 +129,14 @@ fn subscribe_case(input: &Value) -> Value {
 
     // The resolver decides what the daemon would have fetched.
     let url = resolve_project_event_stream(path, &json!({})).expect("owner subscription resolves");
-    let mut sent = vec![json!({ "id": subscription_id, "type": "project_events_subscribed" })];
+    // The ack is produced by the runner, not by this adapter — injecting it
+    // here was hiding that production never sent one at all.
+    let mut sent = vec![
+        serde_json::from_str::<Value>(&aimux::relay_client::project_events_subscribed_frame(
+            subscription_id,
+        ))
+        .expect("ack is json"),
+    ];
     let (frames, _remainder) = aimux::relay_client::split_sse_frames(stream);
     for frame in frames {
         if let Some(payload) = project_event_frame(subscription_id, &frame) {

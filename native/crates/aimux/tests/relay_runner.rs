@@ -381,3 +381,45 @@ fn a_flaky_network_never_looks_like_a_dead_token() {
     );
     assert_eq!(*harness.attempts.lock().unwrap(), 8, "it must keep trying");
 }
+
+#[test]
+fn a_successful_subscription_acknowledges_itself() {
+    // Without this the relay never learns the subscription is live. It was
+    // missing entirely, and the corpus fixture hid it by injecting the ack.
+    let mut harness = harness(
+        vec![Ok(vec![
+            text(json!({"id":"s1","type":"project_events_subscribe","path":"/proxy/127.0.0.1/4321/events"})),
+            closed(1000),
+        ])],
+        None,
+    );
+    harness.run();
+
+    let sent = harness.sent();
+    assert_eq!(sent.len(), 1, "expected exactly the ack, got {sent:?}");
+    let frame: Value = serde_json::from_str(&sent[0]).unwrap();
+    assert_eq!(frame["type"], "project_events_subscribed");
+    assert_eq!(frame["id"], "s1");
+}
+
+#[test]
+fn a_failed_subscription_acknowledges_nothing() {
+    let mut harness = harness(
+        vec![Ok(vec![
+            text(json!({"id":"s1","type":"project_events_subscribe","path":"/x"})),
+            closed(1000),
+        ])],
+        Some((404, "nope".to_owned())),
+    );
+    harness.run();
+
+    let frames: Vec<Value> = harness
+        .sent()
+        .iter()
+        .map(|frame| serde_json::from_str(frame).unwrap())
+        .collect();
+    assert!(
+        frames.iter().all(|frame| frame["type"] != "project_events_subscribed"),
+        "acknowledged a subscription that never started: {frames:?}"
+    );
+}

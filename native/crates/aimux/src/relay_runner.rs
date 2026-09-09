@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 
 use crate::relay_client::{
     CloseDecision, RelayAction, RelayStatus, RelayStatusSnapshot, decide_close, handle_frame,
-    project_events_error_frame, response_frame,
+    project_events_error_frame, project_events_subscribed_frame, response_frame,
 };
 use crate::websocket::{
     INITIAL_RETRY_MS, MAX_HANDSHAKE_FAILURES, WebSocketConnection, WebSocketConnector,
@@ -287,12 +287,18 @@ impl RelayRunner {
                 queue.push(frame);
             }
         });
-        if let Err((status, message)) =
-            self.bridge
-                .subscribe_project_events(id, path, headers, sender, Arc::clone(&cancelled))
+        match self
+            .bridge
+            .subscribe_project_events(id, path, headers, sender, Arc::clone(&cancelled))
         {
-            self.queue(project_events_error_frame(id, status, &message));
-            self.abort_subscription(id);
+            // The relay waits for this before treating the subscription as
+            // live. It was missing entirely: nothing in production ever sent
+            // it, and the corpus fixture hid that by building it by hand.
+            Ok(()) => self.queue(project_events_subscribed_frame(id)),
+            Err((status, message)) => {
+                self.queue(project_events_error_frame(id, status, &message));
+                self.abort_subscription(id);
+            }
         }
     }
 
