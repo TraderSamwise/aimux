@@ -2166,17 +2166,20 @@ def run_expose_interaction_smoke(aimux_bin: Path, mutation: str | None) -> dict[
         open_expose("managed prefix+g opens expose")
         if mutation != "expose-exit-missing":
             write_client_keys(b"q")
-        exited_client = wait_until(
-            lambda: next(
-                (
-                    item
-                    for item in attached_client_rows()
-                    if item["tty"] == client_tty and item["windowId"] == current_agent["windowId"]
-                ),
-                None,
-            ),
+        wait_for_client_screen(
+            lambda screen: "Exposé" not in screen and "phase8-agent-tool-ready" in screen,
+            cols=120,
+            rows=30,
             timeout=5,
             label="expose q exits to the launch window",
+        )
+        exited_client = next(
+            (
+                item
+                for item in attached_client_rows()
+                if item["tty"] == client_tty and item["windowId"] == current_agent["windowId"]
+            ),
+            current_agent,
         )
 
         write_client_keys(b"\x01", b"d")
@@ -4129,6 +4132,7 @@ def prove_failures(args: argparse.Namespace, aimux_bin: Path) -> list[dict[str, 
         ("daily-loop", "daily-loop-relink-stale"),
         ("dashboard", "dashboard-resize-width-overflow"),
         ("expose-interaction", "expose-entry-missing"),
+        ("expose-interaction", "expose-exit-missing"),
         ("expose-interaction", "expose-navigation-inert"),
         ("expose-interaction", "expose-resize-stale"),
         ("dashboard-spawn", "dashboard-spawn-missing-session"),
@@ -4244,6 +4248,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "daily-loop-shift-library-missing",
         "daily-loop-relink-stale",
         "expose-entry-missing",
+        "expose-exit-missing",
         "expose-navigation-inert",
         "expose-resize-stale",
         "dashboard-spawn-missing-session",

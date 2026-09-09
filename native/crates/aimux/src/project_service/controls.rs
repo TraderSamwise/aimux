@@ -16,8 +16,9 @@ use super::metadata::update_session_metadata;
 use super::router::ProjectServiceRequestContext;
 use super::switchable_agents::{
     AgentListScope, ManagedWindowEntry, SwitchableAgentItem, SwitchableContext,
-    SwitchableListOptions, list_switchable_agent_items, resolve_next_agent, resolve_prev_agent,
-    serialize_fast_control_item, topology_switchable_entries,
+    SwitchableListOptions, find_managed_window_item, list_switchable_agent_items,
+    resolve_next_agent, resolve_prev_agent, serialize_fast_control_item,
+    topology_switchable_entries,
 };
 use super::usage::{MarkLastUsedOptions, load_last_used_state, mark_last_used};
 
@@ -232,18 +233,14 @@ fn route_focus_window<R: ProjectControlRuntime>(
         Ok(model) => model,
         Err(error) => return json_response(500, json!({ "ok": false, "error": error })),
     };
-    let Some(item) = model
-        .items
-        .iter()
-        .find(|item| target_string_field(&item.target, "windowId") == Some(window_id))
-    else {
+    let Some(item) = model.find_window(context, window_id) else {
         return json_response(404, json!({ "ok": false, "error": "window not found" }));
     };
     open_control_item(
         context.project_state_dir(),
         runtime,
         input,
-        item,
+        &item,
         "focus-window",
     )
 }
@@ -268,13 +265,10 @@ fn route_active_window(
         Ok(model) => model,
         Err(error) => return json_response(500, json!({ "ok": false, "error": error })),
     };
-    let Some(item) = model
-        .items
-        .iter()
-        .find(|item| target_string_field(&item.target, "windowId") == Some(current_window_id))
-    else {
+    let Some(item) = model.find_window(context, current_window_id) else {
         return json_response(404, json!({ "ok": false, "error": "window not found" }));
     };
+    let item = &item;
     mark_target_used(
         context.project_state_dir(),
         item,
@@ -356,6 +350,31 @@ struct ControlModel {
     entries: Vec<ManagedWindowEntry>,
     items: Vec<SwitchableAgentItem>,
     last_used: Value,
+}
+
+impl ControlModel {
+    /// Resolve a tmux window id against every live managed window.
+    ///
+    /// `items` is the switch-cycle list and deliberately omits scribes,
+    /// overseers and teammates, so resolving an explicit window id through it
+    /// made focusing those windows 404.
+    fn find_window(
+        &self,
+        context: &ProjectServiceRequestContext,
+        window_id: &str,
+    ) -> Option<SwitchableAgentItem> {
+        let switch_context = SwitchableContext {
+            project_root: context.project_root().to_string_lossy().into_owned(),
+            ..SwitchableContext::default()
+        };
+        find_managed_window_item(
+            &self.entries,
+            &self.metadata.sessions,
+            &switch_context,
+            &self.last_used,
+            window_id,
+        )
+    }
 }
 
 fn load_control_model(context: &ProjectServiceRequestContext) -> Result<ControlModel, String> {
@@ -555,9 +574,6 @@ fn string_field<'a>(value: &'a Value, field: &str) -> Option<&'a str> {
         .filter(|value| !value.is_empty())
 }
 
-fn target_string_field<'a>(target: &'a Value, field: &str) -> Option<&'a str> {
-    target.get(field).and_then(Value::as_str)
-}
 
 fn number_field(value: &Value, field: &str) -> Option<i64> {
     value.get(field).and_then(Value::as_i64)

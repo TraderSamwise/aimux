@@ -221,6 +221,47 @@ fn active_window_requires_client_and_window_then_marks_current_seen() {
     cleanup(project);
 }
 
+#[test]
+fn focus_window_reaches_a_scribe_window_hidden_from_switch_cycling() {
+    let project = temp_project("focus-scribe");
+    let state_dir = project.join("state");
+    let mut topology = topology_fixture();
+    topology["nodes"].as_array_mut().unwrap().push(json!({
+        "id": "node-scribe", "rigId": "rig-1", "logicalId": "claude-scribe",
+        "role": "scribe", "toolConfigKey": "claude", "cwd": "/repo/wt",
+        "label": "claude", "createdAt": "2026-09-05T00:00:00.000Z"
+    }));
+    topology["bindings"].as_array_mut().unwrap().push(json!({
+        "id": "binding-scribe", "nodeId": "node-scribe", "tmuxSession": "aimux-repo",
+        "tmuxWindowId": "@7", "tmuxWindowIndex": 7, "tmuxWindowName": "claude",
+        "updatedAt": "2026-09-05T00:00:00.000Z"
+    }));
+    topology["sessions"].as_array_mut().unwrap().push(json!({
+        "id": "claude-scribe", "nodeId": "node-scribe", "status": "running",
+        "tool": "claude", "command": "claude", "worktreePath": "/repo/wt",
+        "team": { "teamId": "scribe", "parentSessionId": "", "role": "scribe" },
+        "createdAt": "2026-09-05T00:00:00.000Z", "updatedAt": "2026-09-05T00:00:00.000Z"
+    }));
+    write_topology(&state_dir, topology);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeControlRuntime::default();
+
+    let response = route_control_request_with_runtime(
+        &context,
+        "POST",
+        routes::controls::FOCUS_WINDOW,
+        Some(&json!({ "windowId": "@7", "focus": true })),
+        &mut runtime,
+    )
+    .expect("focus-window route");
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["itemId"], "claude-scribe");
+    assert_eq!(response.body["focused"], true);
+    assert_eq!(runtime.focused.borrow()[0]["windowId"], "@7");
+    cleanup(project);
+}
+
 fn write_topology(state_dir: &PathBuf, topology: Value) {
     create_dir_all(state_dir).unwrap();
     write(

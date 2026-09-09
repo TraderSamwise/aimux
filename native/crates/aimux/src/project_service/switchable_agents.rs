@@ -423,31 +423,56 @@ fn build_switchable_agent_items(
     });
     order_managed_entries_by_display_order(managed, &options.display_order_ids)
         .into_iter()
-        .map(|(_, entry)| {
-            let id = string_field(&entry.metadata, "sessionId")
-                .unwrap_or("")
-                .to_owned();
-            let last_used_at = last_used_at(last_used, &id).map(str::to_owned);
-            let recent_rank =
-                recent_rank(last_used, context.current_client_session.as_deref(), &id);
-            SwitchableAgentItem {
-                id: id.clone(),
-                target: entry.target.clone(),
-                metadata: entry.metadata.clone(),
-                label: compact_session_title(&entry.metadata),
-                urgency: urgency_for(metadata_sessions, &id),
-                activity: entry.activity,
-                last_used_at,
-                recent_rank,
-                overseer: is_overseer_window(metadata_sessions, &entry.metadata),
-                scribe: is_scribe_window(metadata_sessions, &entry.metadata),
-                alive: entry.alive,
-                project_id: None,
-                project_root: None,
-                project_name: None,
-            }
-        })
+        .map(|(_, entry)| managed_window_item(entry, metadata_sessions, context, last_used))
         .collect()
+}
+
+/// Build one item from a managed window entry, with no switch-cycle filtering.
+pub fn managed_window_item(
+    entry: &ManagedWindowEntry,
+    metadata_sessions: &BTreeMap<String, Value>,
+    context: &SwitchableContext,
+    last_used: &Value,
+) -> SwitchableAgentItem {
+    let id = string_field(&entry.metadata, "sessionId")
+        .unwrap_or("")
+        .to_owned();
+    let last_used_at = last_used_at(last_used, &id).map(str::to_owned);
+    let recent_rank = recent_rank(last_used, context.current_client_session.as_deref(), &id);
+    SwitchableAgentItem {
+        id: id.clone(),
+        target: entry.target.clone(),
+        metadata: entry.metadata.clone(),
+        label: compact_session_title(&entry.metadata),
+        urgency: urgency_for(metadata_sessions, &id),
+        activity: entry.activity,
+        last_used_at,
+        recent_rank,
+        overseer: is_overseer_window(metadata_sessions, &entry.metadata),
+        scribe: is_scribe_window(metadata_sessions, &entry.metadata),
+        alive: entry.alive,
+        project_id: None,
+        project_root: None,
+        project_name: None,
+    }
+}
+
+/// Find a managed window by tmux window id across every live entry.
+///
+/// Window-id-addressed routes must reach scribes, overseers and teammates that
+/// `list_switchable_agent_items` hides from next/prev cycling; Node resolved
+/// them from the live tmux window list, which applied none of those filters.
+pub fn find_managed_window_item(
+    entries: &[ManagedWindowEntry],
+    metadata_sessions: &BTreeMap<String, Value>,
+    context: &SwitchableContext,
+    last_used: &Value,
+    window_id: &str,
+) -> Option<SwitchableAgentItem> {
+    entries
+        .iter()
+        .find(|entry| target_string_field(&entry.target, "windowId") == Some(window_id))
+        .map(|entry| managed_window_item(entry, metadata_sessions, context, last_used))
 }
 
 fn session_switchable_entry(
