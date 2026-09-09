@@ -211,6 +211,10 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
     let mut latest_snapshot = None;
     let mut latest_endpoint = None;
     let mut pending_actions = DashboardPendingActions::new();
+    let mut deferred_requests: Vec<(
+        DashboardActionRequest,
+        Option<(PendingTarget, String, u64)>,
+    )> = Vec::new();
     let mut ui_state = if options.once || options.desktop_state_file.is_some() {
         None
     } else {
@@ -358,8 +362,10 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                 match effect {
                     DashboardControllerEffect::Quit => return Ok(()),
                     DashboardControllerEffect::Request(request) => {
-                        // Paint the overlay before the round trip, so the row
-                        // reacts on the keypress rather than on the next refresh.
+                        // Record the overlay now but send the request after the
+                        // frame is written: the round trip blocks, and the first
+                        // refresh after it already reports the settled state, so
+                        // sending first means the overlay never reaches a frame.
                         let pending = pending_action_for_request(request.path, &request.body).map(
                             |(target, id, kind)| {
                                 let token = match target {
@@ -385,22 +391,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                                 (target, id, token)
                             },
                         );
-                        if let Some(endpoint) = latest_endpoint.as_ref() {
-                            if let Err(error) =
-                                execute_dashboard_controller_action(endpoint, &request)
-                            {
-                                controller.footer_message = Some(error.to_string());
-                                if let Some((target, id, token)) = pending.as_ref() {
-                                    pending_actions.clear_if_token(*target, id, *token);
-                                }
-                            }
-                        } else {
-                            controller.footer_message =
-                                Some("Dashboard action requires a project-service endpoint".into());
-                            if let Some((target, id, token)) = pending.as_ref() {
-                                pending_actions.clear_if_token(*target, id, *token);
-                            }
-                        }
+                        deferred_requests.push((request, pending));
                         render_now = true;
                         render_requested_by_input = true;
                     }

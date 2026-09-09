@@ -18,6 +18,13 @@ use crate::dashboard_model::{
 const PENDING_ACTION_TIMEOUT_MS: i64 = 15_000;
 /// A "starting" overlay is a hint, not a claim; it expires on its own.
 const STARTING_SETTLE_AGE_MS: i64 = 5_000;
+/// Hold an overlay this long even if the model already agrees.
+///
+/// A dashboard mutation is a blocking round trip, so the very first refresh
+/// after it usually already reports the settled state. Without a floor the
+/// overlay would be reconciled away before a single frame carried it and the
+/// action would look instant-but-invisible.
+const MIN_VISIBLE_MS: i64 = 400;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum PendingTarget {
@@ -158,16 +165,16 @@ impl DashboardPendingActions {
             .map(|group| worktree_key(group.path.as_deref()))
             .collect::<Vec<_>>();
         self.entries.retain(|(target, id), entry| {
-            if now_ms.saturating_sub(entry.started_at_ms) >= PENDING_ACTION_TIMEOUT_MS {
+            let age_ms = now_ms.saturating_sub(entry.started_at_ms);
+            if age_ms >= PENDING_ACTION_TIMEOUT_MS {
                 return false;
             }
+            if age_ms < MIN_VISIBLE_MS {
+                return true;
+            }
             let settled = match target {
-                PendingTarget::Session => {
-                    session_settled(&entry.kind, id, &sessions, now_ms - entry.started_at_ms)
-                }
-                PendingTarget::Service => {
-                    service_settled(&entry.kind, id, &services, now_ms - entry.started_at_ms)
-                }
+                PendingTarget::Session => session_settled(&entry.kind, id, &sessions, age_ms),
+                PendingTarget::Service => service_settled(&entry.kind, id, &services, age_ms),
                 PendingTarget::Worktree => worktree_settled(&entry.kind, id, &worktree_keys),
             };
             !settled
