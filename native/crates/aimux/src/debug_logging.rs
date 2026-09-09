@@ -733,4 +733,52 @@ mod tests {
             LoggingCliOptions::default()
         );
     }
+
+    #[test]
+    fn rotates_jsonl_logs_before_exceeding_configured_cap() {
+        let root = std::env::temp_dir().join(format!(
+            "aimux-debug-rotation-{}-{}",
+            std::process::id(),
+            OffsetDateTime::now_utc().unix_timestamp_nanos()
+        ));
+        let path = root.join("aimux.jsonl");
+        let config = LoggingRuntimeConfig {
+            enabled: true,
+            level: LogLevel::Debug,
+            categories: vec!["*".to_owned()],
+            max_bytes: 180,
+            max_files: 2,
+            path: path.clone(),
+            process_kind: "test".to_owned(),
+            project_id: None,
+            project_root: None,
+        };
+
+        for index in 0..5 {
+            write_record(
+                &config,
+                LogLevel::Info,
+                &format!("rotation record {index} with enough payload to rotate"),
+                "rotation",
+                None,
+            );
+        }
+
+        assert!(path.exists(), "active log exists after writes");
+        assert!(rotated_path(&path, 1).exists(), "first rotated log exists");
+        assert!(rotated_path(&path, 2).exists(), "second rotated log exists");
+        assert!(
+            !rotated_path(&path, 3).exists(),
+            "rotation honors max_files"
+        );
+        for file in [&path, &rotated_path(&path, 1), &rotated_path(&path, 2)] {
+            let metadata = std::fs::metadata(file).expect("log file metadata");
+            assert!(
+                metadata.len() <= config.max_bytes + 180,
+                "log file remains bounded: {} bytes",
+                metadata.len()
+            );
+        }
+        let _ = std::fs::remove_dir_all(root);
+    }
 }
