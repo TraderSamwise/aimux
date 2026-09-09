@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use crate::config::load_config_for_project;
 use crate::daemon_state::{load_metadata_state, save_metadata_state};
+use crate::paths::{is_git_project_root, project_checkout_required_message};
 use crate::project_service::dispatcher::ProjectServiceDispatchResponse;
 use crate::project_service::graveyard_cleanup::build_graveyard_cleanup_plan;
 use crate::project_service::router::ProjectServiceRequestContext;
@@ -207,6 +208,9 @@ pub(super) fn route_worktree_remove(
     if path == project_root {
         return json_error(500, "Cannot remove the main checkout");
     }
+    if !is_git_project_root(&project_root) {
+        return json_error(500, project_checkout_required_message(&project_root));
+    }
     let project_state_dir = context.project_state_dir();
     let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
         Ok(topology) => topology,
@@ -391,6 +395,9 @@ pub(super) fn route_graveyard_worktree_delete(
     let project_root = context.project_root().to_string_lossy().into_owned();
     if path == project_root {
         return json_error(500, "Cannot remove the main checkout");
+    }
+    if !is_git_project_root(&project_root) {
+        return json_error(500, project_checkout_required_message(&project_root));
     }
     let project_state_dir = context.project_state_dir();
     let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {

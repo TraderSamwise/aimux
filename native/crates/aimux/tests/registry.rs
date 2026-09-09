@@ -104,7 +104,7 @@ fn load_registry_filters_invalid_roots_and_keeps_last_duplicate_value() {
             null,
             { "id": "missing-root", "name": "missing", "lastSeen": "old" },
             { "id": "blank", "name": "blank", "repoRoot": "  ", "lastSeen": "old" },
-            { "id": "non-git", "name": "bad", "repoRoot": non_git, "lastSeen": "old" },
+            { "id": "non-git", "name": "plain", "repoRoot": non_git, "lastSeen": "old" },
             { "id": "temporary", "name": "temporary", "repoRoot": ephemeral, "lastSeen": "old" },
             { "id": "same", "name": "first", "repoRoot": repo_a, "lastSeen": "first" },
             { "id": "other", "name": "other", "repoRoot": repo_b, "lastSeen": "other" },
@@ -115,11 +115,13 @@ fn load_registry_filters_invalid_roots_and_keeps_last_duplicate_value() {
 
     let loaded = resolver.load_registry().expect("load registry");
     assert_eq!(loaded.version, 1);
-    assert_eq!(loaded.projects.len(), 2);
-    assert_eq!(loaded.projects[0].id, "same");
-    assert_eq!(loaded.projects[0].name, "last");
-    assert_eq!(loaded.projects[0].last_seen, "last");
-    assert_eq!(loaded.projects[1].id, "other");
+    assert_eq!(loaded.projects.len(), 3);
+    assert_eq!(loaded.projects[0].id, "non-git");
+    assert_eq!(loaded.projects[0].name, "plain");
+    assert_eq!(loaded.projects[1].id, "same");
+    assert_eq!(loaded.projects[1].name, "last");
+    assert_eq!(loaded.projects[1].last_seen, "last");
+    assert_eq!(loaded.projects[2].id, "other");
 
     fs::remove_dir_all(ephemeral).expect("remove ephemeral repo");
 }
@@ -250,16 +252,16 @@ fn register_project_skips_ineligible_roots_and_updates_existing_entry() {
     )));
     let mut resolver = resolver(&test_dir);
 
-    assert_eq!(
-        resolver.register_project(&non_git).expect("skip non-git"),
-        None
-    );
+    let plain = resolver
+        .register_project(&non_git)
+        .expect("register non-git")
+        .expect("non-git project");
+    assert_eq!(plain.name, "plain-directory");
+    assert_eq!(plain.repo_root, non_git.to_string_lossy());
     assert_eq!(
         resolver.register_project(&ephemeral).expect("skip temp"),
         None
     );
-    assert!(!resolver.projects_registry_path().exists());
-
     let first = resolver
         .register_project(&repo)
         .expect("register project")
@@ -279,7 +281,7 @@ fn register_project_skips_ineligible_roots_and_updates_existing_entry() {
         .expect("eligible project");
     assert_eq!(second.id, first.id);
     let projects = resolver.list_projects().expect("list projects");
-    assert_eq!(projects.len(), 1);
+    assert_eq!(projects.len(), 2);
 
     let serialized = fs::read_to_string(resolver.projects_registry_path()).expect("read registry");
     assert!(serialized.ends_with("\n"));

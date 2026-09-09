@@ -60,9 +60,6 @@ pub fn should_hide_desktop_project(project_path: impl AsRef<Path>, tmp_dirs: &[P
     if project_path.as_os_str().is_empty() || !project_path.exists() {
         return true;
     }
-    if !is_git_project_root(project_path) {
-        return true;
-    }
     let name = project_path
         .file_name()
         .and_then(|value| value.to_str())

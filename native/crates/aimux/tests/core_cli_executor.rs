@@ -485,7 +485,7 @@ fn init_executes_locally_without_daemon_fallback() {
 }
 
 #[test]
-fn project_commands_refuse_non_git_directory_with_actionable_message() {
+fn non_git_projects_allow_project_commands_but_gate_worktree_operations() {
     let mut runtime = FakeRuntime {
         git_project_root: false,
         ..FakeRuntime::default()
@@ -493,7 +493,10 @@ fn project_commands_refuse_non_git_directory_with_actionable_message() {
     let expected =
         "/repo is not a git repository. Run `git init` first, or cd into a repo.".to_owned();
 
-    for command in [["init"].as_slice(), ["ps"].as_slice(), ["serve"].as_slice()] {
+    for command in [
+        ["worktree", "list"].as_slice(),
+        ["migrate", "agent-1", "--worktree", "feature"].as_slice(),
+    ] {
         let execution = run_core_cli_with(&args(command), &mut runtime);
         assert_eq!(execution.code, 1, "{command:?}");
         assert_eq!(
@@ -503,9 +506,13 @@ fn project_commands_refuse_non_git_directory_with_actionable_message() {
         );
     }
 
+    for command in [["init"].as_slice(), ["ps"].as_slice(), ["serve"].as_slice()] {
+        let execution = run_core_cli_with(&args(command), &mut runtime);
+        assert_ne!(execution.code, 1, "{command:?}");
+    }
+
     let projects = run_core_cli_with(&args(&["projects"]), &mut runtime);
     assert_eq!(projects.code, 0);
-    assert!(runtime.text_routes.is_empty());
 }
 
 #[test]

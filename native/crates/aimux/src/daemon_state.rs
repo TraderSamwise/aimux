@@ -1,5 +1,4 @@
 use crate::atomic_write::{atomic_write, quarantine_corrupt_file, write_json_atomic};
-use crate::project_catalog::is_git_project_root;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
@@ -238,7 +237,7 @@ pub fn clear_daemon_info(path: impl AsRef<Path>) -> io::Result<()> {
 }
 
 pub fn load_daemon_state(path: impl AsRef<Path>) -> DaemonState {
-    load_daemon_state_with(path, |path| is_git_project_root(path))
+    load_daemon_state_with(path, |_| true)
 }
 
 pub fn load_daemon_state_with(

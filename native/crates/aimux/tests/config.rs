@@ -69,7 +69,7 @@ fn init_project_creates_local_and_global_state_without_overwriting_config() {
 }
 
 #[test]
-fn init_project_refuses_non_git_directories_without_creating_aimux_dir() {
+fn init_project_allows_non_git_directories_like_typescript() {
     let temp = temp_path("non-git-init");
     let repo = temp.join("repo");
     let home = temp.join("home");
@@ -77,16 +77,13 @@ fn init_project_refuses_non_git_directories_without_creating_aimux_dir() {
     fs::create_dir_all(&home).expect("home");
     let mut resolver = PathResolver::new(&repo, &home, None);
 
-    let error = init_project_with_resolver(&mut resolver, &repo).expect_err("non-git init");
+    init_project_with_resolver(&mut resolver, &repo).expect("non-git init");
 
-    assert_eq!(
-        error,
-        format!(
-            "{} is not a git repository. Run `git init` first, or cd into a repo.",
-            repo.display()
-        )
-    );
-    assert!(!repo.join(".aimux").exists());
+    for subdir in ["plans", "context", "history", "status"] {
+        assert!(repo.join(".aimux").join(subdir).is_dir(), "{subdir}");
+    }
+    assert!(repo.join(".aimux/config.json").is_file());
+    assert!(repo.join(".aimux/.gitignore").is_file());
     fs::remove_dir_all(temp).expect("cleanup");
 }
 

@@ -10,10 +10,26 @@ use std::os::unix::fs::PermissionsExt;
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[test]
-fn project_scoped_cli_refuses_non_git_cwd_before_daemon_activation() {
+fn project_scoped_cli_activates_non_git_cwd_like_typescript() {
     let fixture = CliFixture::new("non-git", 46520);
     let plain = fixture.root.join("plain");
     fs::create_dir_all(&plain).expect("create plain dir");
+
+    let init = fixture
+        .command()
+        .current_dir(&plain)
+        .args(["init"])
+        .output()
+        .expect("run aimux init");
+    assert!(
+        init.status.success(),
+        "{}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    assert!(
+        plain.join(".aimux/config.json").exists(),
+        "non-git project init should initialize the project directory"
+    );
 
     let output = fixture
         .command()
@@ -22,23 +38,20 @@ fn project_scoped_cli_refuses_non_git_cwd_before_daemon_activation() {
         .output()
         .expect("run aimux ps");
 
-    assert_eq!(output.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&output.stdout).is_empty());
-    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains(&format!(
-            "{} is not a git repository. Run `git init` first, or cd into a repo.",
-            plain.display()
-        )),
-        "{stderr}"
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
     );
+    let body: Value = serde_json::from_slice(&output.stdout).expect("agent list json");
+    assert_eq!(body.as_array().expect("agent list").len(), 0);
     assert!(
         !fixture.node_log.exists(),
-        "non-git refusal should not invoke node fallback"
+        "non-git project activation should not invoke node fallback"
     );
     assert!(
-        !fixture.aimux_home.join("daemon/daemon.json").exists(),
-        "non-git refusal should not start the daemon"
+        fixture.aimux_home.join("daemon/daemon.json").exists(),
+        "non-git project activation should start the isolated daemon"
     );
 }
 

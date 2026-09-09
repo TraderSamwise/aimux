@@ -6,7 +6,6 @@ use crate::daemon_state::load_metadata_endpoint;
 use crate::dashboard_actions::DashboardActionRequest;
 use crate::dashboard_model::DesktopStateSnapshot;
 use crate::paths::PathResolver;
-use crate::paths::{is_git_project_root, project_checkout_required_message};
 use crate::project_api_contract::routes;
 use anyhow::{Context, Result, anyhow};
 use serde_json::{Value, json};
@@ -20,9 +19,6 @@ pub struct ProjectServiceEndpoint {
 }
 
 pub fn resolve_project_service_endpoint(project_root: &Path) -> Result<ProjectServiceEndpoint> {
-    if !is_git_project_root(project_root) {
-        return Err(anyhow!(project_checkout_required_message(project_root)));
-    }
     if let Some(endpoint) = resolve_project_service_endpoint_from_disk(project_root) {
         return Ok(endpoint);
     }
@@ -42,9 +38,6 @@ pub fn find_project_service_endpoint(
     projects: &Value,
     project_root: &Path,
 ) -> Result<ProjectServiceEndpoint> {
-    if !is_git_project_root(project_root) {
-        return Err(anyhow!(project_checkout_required_message(project_root)));
-    }
     let root_text = project_root.to_string_lossy();
     let project = projects
         .get("projects")

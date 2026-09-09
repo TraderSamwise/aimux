@@ -2369,6 +2369,34 @@ fn worktree_graveyard_rejects_attached_live_agent() {
 }
 
 #[test]
+fn worktree_remove_in_non_git_project_returns_shared_checkout_message() {
+    let project = temp_plain_project("worktree-remove-non-git");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+    let path = project.join(".aimux/worktrees/demo");
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::worktree_actions::REMOVE,
+        Some(&json!({ "path": path })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 500);
+    assert_eq!(
+        response.body["error"],
+        format!(
+            "{} is not a git repository. Run `git init` first, or cd into a repo.",
+            project.display()
+        )
+    );
+    assert!(runtime.killed.is_empty());
+    cleanup(project);
+}
+
+#[test]
 fn worktree_remove_missing_checkout_removes_topology_and_stops_services() {
     let project = temp_project("worktree-remove");
     let state_dir = project.join("state");
@@ -3438,6 +3466,12 @@ fn find(topology: &Value, key: &str, id: &str) -> Option<Value> {
 }
 
 fn temp_project(label: &str) -> PathBuf {
+    let path = temp_plain_project(label);
+    fs::create_dir_all(path.join(".git")).expect("create git marker");
+    path
+}
+
+fn temp_plain_project(label: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!(
         "aimux-rust-project-service-lifecycle-{label}-{}-{}",
         std::process::id(),

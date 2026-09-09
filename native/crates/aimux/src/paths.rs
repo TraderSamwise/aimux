@@ -249,9 +249,7 @@ impl PathResolver {
 
     pub fn register_project(&mut self, cwd: impl AsRef<Path>) -> Result<Option<ProjectEntry>> {
         let repo_root = self.resolve_repo_root(cwd);
-        if is_ephemeral_temp_project_root_from(&repo_root, &self.process_cwd)
-            || !is_git_project_root_from(&repo_root, &self.process_cwd)
-        {
+        if is_ephemeral_temp_project_root_from(&repo_root, &self.process_cwd) {
             return Ok(None);
         }
 
@@ -349,7 +347,7 @@ fn normalize_registry(
     for project in entries {
         if project.repo_root.trim().is_empty()
             || is_ephemeral_temp_project_root_from(Path::new(&project.repo_root), process_cwd)
-            || !is_git_project_root_from(Path::new(&project.repo_root), process_cwd)
+            || !Path::new(&project.repo_root).exists()
         {
             continue;
         }

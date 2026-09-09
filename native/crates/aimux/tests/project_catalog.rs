@@ -63,7 +63,7 @@ fn registered_desktop_projects_keep_known_projects_without_services() {
 }
 
 #[test]
-fn hides_missing_non_git_and_tmp_aimux_projects_but_keeps_tmp_prefix_siblings() {
+fn hides_missing_and_tmp_aimux_projects_but_keeps_non_git_and_tmp_prefix_siblings() {
     let root = std::env::temp_dir().join(format!("aimux-rust-catalog-hide-{}", std::process::id()));
     let tmp_dir = root.join("tmp");
     let tmp_aimux = tmp_dir.join("aimux-agent-tracker-123");
@@ -92,7 +92,7 @@ fn hides_missing_non_git_and_tmp_aimux_projects_but_keeps_tmp_prefix_siblings() 
         .map(|project| project.id.as_str())
         .collect::<Vec<_>>();
 
-    assert_eq!(ids, vec!["tmp-sibling", "valid"]);
+    assert_eq!(ids, vec!["non-git", "tmp-sibling", "valid"]);
 
     fs::remove_dir_all(&root).expect("remove temp catalog root");
 }

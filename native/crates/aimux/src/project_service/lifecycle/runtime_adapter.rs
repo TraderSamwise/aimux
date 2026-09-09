@@ -3,6 +3,7 @@ use std::process::Command;
 
 use serde_json::Value;
 
+use crate::paths::{is_git_project_root, project_checkout_required_message};
 use crate::tmux::{
     TmuxRuntimeManager, TmuxTarget, clear_history_argv, kill_window_argv, new_window_argv,
     rename_window_argv, set_window_option_argv,
@@ -172,6 +173,9 @@ fn run_tmux_argv_output(argv: Vec<String>, fallback_error: String) -> Result<Str
 }
 
 fn find_git_main_repo(cwd: &str) -> Result<String, String> {
+    if !is_git_project_root(cwd) {
+        return Err(project_checkout_required_message(cwd));
+    }
     let output = run_git_argv_output(
         cwd,
         &["worktree", "list", "--porcelain"],

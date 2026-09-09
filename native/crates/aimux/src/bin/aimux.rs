@@ -19,7 +19,7 @@ use aimux::native_cli_dispatch::{
     is_known_aimux_command_word, native_root_tool_launch_args_for_config,
     normalize_root_dispatch_args,
 };
-use aimux::paths::{PathResolver, project_checkout_required_message};
+use aimux::paths::PathResolver;
 use aimux::project_service::process::{
     ProjectServiceInternalOptions, run_project_service_internal,
 };
@@ -737,9 +737,6 @@ fn current_project_root() -> Result<PathBuf> {
     let cwd = std::env::current_dir()?;
     let mut resolver = PathResolver::from_env();
     let project_root = resolver.resolve_repo_root(cwd);
-    if !aimux::paths::is_git_project_root(&project_root) {
-        anyhow::bail!("{}", project_checkout_required_message(&project_root));
-    }
     Ok(project_root)
 }
 

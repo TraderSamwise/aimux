@@ -463,27 +463,20 @@ pub fn run_core_cli_with(
 }
 
 fn operation_requires_git_project(operation: CoreCliOperation) -> bool {
-    !matches!(
+    matches!(
         operation,
-        CoreCliOperation::DaemonEnsure
-            | CoreCliOperation::DaemonStop
-            | CoreCliOperation::DaemonKill
-            | CoreCliOperation::DaemonRestart
-            | CoreCliOperation::DaemonStatus
-            | CoreCliOperation::DaemonProjects
-            | CoreCliOperation::DoctorVersions
-            | CoreCliOperation::DoctorInstalls
-            | CoreCliOperation::DoctorNotifications
-            | CoreCliOperation::ProjectsList
-            | CoreCliOperation::Restart
-            | CoreCliOperation::RemoteStatus
-            | CoreCliOperation::RemoteEnable
-            | CoreCliOperation::RemoteDisable
-            | CoreCliOperation::Whoami
-            | CoreCliOperation::Logout
-            | CoreCliOperation::Login
-            | CoreCliOperation::SecurityUnlock
-            | CoreCliOperation::DebugState
+        CoreCliOperation::AgentMigrate
+            | CoreCliOperation::WorktreeList
+            | CoreCliOperation::WorktreeCreate
+            | CoreCliOperation::WorktreeCacheCleanup
+            | CoreCliOperation::WorktreeRemove
+            | CoreCliOperation::WorktreeGraveyard
+            | CoreCliOperation::WorktreeResurrect
+            | CoreCliOperation::WorktreeDeleteGraveyard
+            | CoreCliOperation::GraveyardList
+            | CoreCliOperation::GraveyardSend
+            | CoreCliOperation::GraveyardResurrect
+            | CoreCliOperation::GraveyardCleanup
     )
 }
 

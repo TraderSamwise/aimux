@@ -73,17 +73,31 @@ fn rejects_missing_or_non_loopback_project_service_endpoint() {
 }
 
 #[test]
-fn dashboard_endpoint_rejects_non_git_directory_with_actionable_message() {
+fn dashboard_endpoint_accepts_non_git_registered_project_like_typescript() {
     let repo = temp_plain_dir("dashboard-client-non-git");
-    let error =
-        find_project_service_endpoint(&json!({ "projects": [] }), &repo).expect_err("non-git");
+    let repo_text = repo.to_string_lossy().into_owned();
+    let endpoint = find_project_service_endpoint(
+        &json!({
+            "projects": [
+                {
+                    "projectRoot": repo_text,
+                    "serviceEndpoint": {
+                        "host": "127.0.0.1",
+                        "port": 44191
+                    }
+                }
+            ]
+        }),
+        &repo,
+    )
+    .expect("non-git endpoint");
 
     assert_eq!(
-        error.to_string(),
-        format!(
-            "{} is not a git repository. Run `git init` first, or cd into a repo.",
-            repo.display()
-        )
+        endpoint,
+        ProjectServiceEndpoint {
+            host: "127.0.0.1".into(),
+            port: 44191,
+        }
     );
     fs::remove_dir_all(repo).expect("cleanup");
 }
