@@ -743,7 +743,15 @@ fn renders_live_agent_rows_without_jamming_identity_status_or_activity() {
     session.label = None;
     session.last_output_at = Some("2026-01-01T00:00:00.000Z".into());
     session.unseen_count = 1;
-    session.semantic = None;
+    session.semantic = Some(
+        serde_json::from_value(json!({
+            "user": { "label": "ready", "attention": "normal" },
+            "notifications": { "unreadCount": 0 },
+            "presentation": { "statusLabel": "Ready", "compactHint": null, "attentionScore": 1 },
+            "activityNewCount": 1
+        }))
+        .expect("semantic parses"),
+    );
     snapshot.worktree_groups[0].sessions[0] = session.clone();
 
     let result = render_dashboard_frame(&DashboardRenderInput {
@@ -769,11 +777,12 @@ fn renders_live_agent_rows_without_jamming_identity_status_or_activity() {
     });
     let plain = strip_ansi(&result.frame);
 
-    assert!(plain.contains("claude (3c4d"));
+    assert!(plain.contains("claude (3c4dme) Ready"));
     assert!(plain.contains("Ready"));
     assert!(plain.contains("output "));
     assert!(plain.contains("1 unseen"));
-    assert!(!plain.contains("(3c4dmeReady"));
+    assert!(!plain.contains("(3c4dmezz"));
+    assert!(!plain.contains("3c4dme…Ready"));
 }
 
 #[test]

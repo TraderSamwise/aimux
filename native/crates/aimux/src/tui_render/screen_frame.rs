@@ -91,7 +91,6 @@ pub fn compose_screen_frame(input: &ScreenFrameInput<'_>) -> ScreenFrameResult {
             compose_two_pane(&visible, right_panel, content_width, Some("   "))
                 .into_iter()
                 .take(viewport_height)
-                .map(|line| truncate_ansi(&line, cols))
                 .collect()
         } else {
             visible

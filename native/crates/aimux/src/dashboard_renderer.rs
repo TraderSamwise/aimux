@@ -1176,7 +1176,20 @@ fn agent_identity(session: &DashboardSession) -> String {
     let prefix = format!("{}-", session.command);
     let short_id = session.id.strip_prefix(&prefix).unwrap_or(&session.id);
     let suffix = if !short_id.is_empty() && short_id != label {
-        format!(" {}", style(&format!("({short_id})"), Tone::Muted))
+        let short_id_len = short_id.chars().count();
+        let max_short_id_for_gap = COL_IDENTITY
+            .saturating_sub(1)
+            .saturating_sub(js_len(label))
+            .saturating_sub(3);
+        let display_id = if short_id_len <= 8 && short_id_len > max_short_id_for_gap {
+            short_id
+                .chars()
+                .take(max_short_id_for_gap.max(1))
+                .collect::<String>()
+        } else {
+            short_id.to_owned()
+        };
+        format!(" {}", style(&format!("({display_id})"), Tone::Muted))
     } else {
         String::new()
     };
