@@ -18,4 +18,4 @@ serde_yaml = "0.9"
 libc = "0.2"
 sha1 = "0.10"
 sha2 = "0.10"
-time = { version = "0.3", features = ["formatting"] }
+time = { version = "0.3", features = ["formatting", "parsing"] }
