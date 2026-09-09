@@ -715,6 +715,35 @@ mod tests {
     }
 
     #[test]
+    fn lifecycle_cleanup_never_reaps_native_dashboard_pane_process() {
+        let mut runtime = FakeLifecycleRuntime {
+            processes: vec![ProcessArgsEntry {
+                pid: 11,
+                args:
+                    "/Users/sam/.aimux/native/local-current/bin/aimux __dashboard-internal-native"
+                        .into(),
+            }],
+            parents: BTreeMap::from([(11, 111), (111, 1)]),
+            alive_pids: HashSet::from([11]),
+            tmux_available: true,
+            live_pane_pids: BTreeSet::from([11]),
+            ..Default::default()
+        };
+
+        let result = cleanup_lifecycle_validation_orphans(
+            &mut runtime,
+            CleanupLifecycleOrphansOptions {
+                current_pid: 999,
+                process_exit_timeout_ms: 0,
+                process_kill_grace_ms: 0,
+            },
+        );
+
+        assert!(result.attempted_process_pids.is_empty());
+        assert!(runtime.killed_pids.is_empty());
+    }
+
+    #[test]
     fn lifecycle_cleanup_does_not_reap_normal_session_with_lifecycle_words_in_project_path() {
         let mut runtime = FakeLifecycleRuntime {
             tmux_available: true,

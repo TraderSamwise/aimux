@@ -63,13 +63,19 @@ fn is_orphaned_dashboard(
     parents: &BTreeMap<i32, i32>,
     live_pane_pids: &BTreeSet<i32>,
 ) -> bool {
+    if live_pane_pids.contains(&pid) {
+        return false;
+    }
     let Some(shell) = parents.get(&pid).copied() else {
         return false;
     };
+    if has_live_pane_ancestor(pid, parents, live_pane_pids) {
+        return false;
+    }
     if parents.get(&shell).copied() == Some(1) {
         return true;
     }
-    !live_pane_pids.is_empty() && !has_live_pane_ancestor(pid, parents, live_pane_pids)
+    !live_pane_pids.is_empty()
 }
 
 fn has_live_pane_ancestor(
