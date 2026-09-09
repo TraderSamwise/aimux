@@ -146,7 +146,7 @@ impl ProjectLifecycleRuntime for FakeLifecycleRuntime {
 }
 
 #[test]
-fn agent_stop_moves_session_to_recoverable_graveyard_and_kills_window() {
+fn agent_stop_takes_session_offline_and_kills_window() {
     let project = temp_project("agent-stop");
     let state_dir = project.join("state");
     write_lifecycle_topology(&state_dir);
@@ -166,15 +166,15 @@ fn agent_stop_moves_session_to_recoverable_graveyard_and_kills_window() {
     assert_eq!(response.status, 200);
     assert_eq!(response.body["ok"], true);
     assert_eq!(response.body["sessionId"], "codex-live");
-    assert_eq!(response.body["status"], "graveyard");
+    assert_eq!(response.body["status"], "offline");
     assert_eq!(response.body["transition"]["operation"], "agent.stop");
     assert_eq!(response.body["transition"]["phase"], "succeeded");
     assert_eq!(runtime.killed, vec!["@agent"]);
     let topology = read_topology(&state_dir);
     let session = session(&topology, "codex-live");
-    assert_eq!(session["status"], "graveyard");
-    assert!(session["graveyardedAt"].as_str().is_some());
-    assert_eq!(session["graveyardReason"], "stopped");
+    assert_eq!(session["status"], "offline");
+    assert!(session["graveyardedAt"].is_null());
+    assert!(session["graveyardReason"].is_null());
     assert!(
         topology["bindings"]
             .as_array()
@@ -701,12 +701,12 @@ fn teammate_stop_routes_through_agent_stop_with_parent_metadata() {
     assert_eq!(response.body["parentSessionId"], "codex-parent");
     assert_eq!(response.body["teammateSessionId"], "codex-child");
     assert_eq!(response.body["sessionId"], "codex-child");
-    assert_eq!(response.body["status"], "graveyard");
+    assert_eq!(response.body["status"], "offline");
     assert_eq!(response.body["transition"]["operation"], "agent.stop");
     assert_eq!(runtime.killed, vec!["@child"]);
     assert_eq!(
         session(&read_topology(&state_dir), "codex-child")["status"],
-        "graveyard"
+        "offline"
     );
     cleanup(project);
 }

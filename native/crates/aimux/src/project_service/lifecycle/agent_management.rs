@@ -43,23 +43,15 @@ pub(super) fn route_agent_stop(
     }
     clear_prompt_context(&project_state_dir, &session_id);
     let window_id = live_window_id_for_session(&topology, &session);
+    // Stop takes a session offline and keeps the record; only kill and the
+    // graveyard routes remove it from the list.
     let result = update_runtime_topology(runtime_topology_path(&project_state_dir), |topology| {
         let now = now_iso();
         map_topology_array(topology, "sessions", |mut current| {
             if string_field(&current, "id") == session_id {
-                object_insert_mut(&mut current, "status", Value::String("graveyard".into()));
+                object_insert_mut(&mut current, "status", Value::String("offline".into()));
                 object_insert_mut(&mut current, "updatedAt", Value::String(now.clone()));
-                if current.get("graveyardedAt").is_none() {
-                    object_insert_mut(&mut current, "graveyardedAt", Value::String(now.clone()));
-                }
                 object_insert_mut(&mut current, "restoreBlockedReason", Value::Null);
-                if current.get("graveyardReason").is_none() {
-                    object_insert_mut(
-                        &mut current,
-                        "graveyardReason",
-                        Value::String("stopped".into()),
-                    );
-                }
             }
             current
         })
@@ -71,7 +63,7 @@ pub(super) fn route_agent_stop(
         let _ = runtime.kill_window(&window_id);
     }
     lifecycle_response(
-        json!({ "sessionId": session_id, "status": "graveyard" }),
+        json!({ "sessionId": session_id, "status": "offline" }),
         "agent.stop",
         "agent",
         Some(&session_id),

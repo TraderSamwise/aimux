@@ -1892,6 +1892,7 @@ mod tests {
             &mut controller,
             &reordered,
             false,
+            false,
         );
 
         assert_eq!(controller.navigation.item_index, 0);
@@ -1929,7 +1930,13 @@ mod tests {
         reordered.worktree_groups[0].sessions.swap(0, 1);
         controller.navigation.item_index = 1;
         let expected_id = reordered.worktree_groups[0].sessions[1].id.clone();
-        restore_dashboard_navigation_for_render(Some(&ui_state), &mut controller, &reordered, true);
+        restore_dashboard_navigation_for_render(
+            Some(&ui_state),
+            &mut controller,
+            &reordered,
+            true,
+            false,
+        );
 
         assert_eq!(controller.navigation.item_index, 1);
         let Some(DashboardEntryRef::Session(selected)) =
