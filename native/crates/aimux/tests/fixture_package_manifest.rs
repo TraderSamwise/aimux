@@ -1,4 +1,6 @@
-use aimux::release_contracts::run_package_manifest_contract_case;
+mod fixture_release_contracts;
+
+use fixture_release_contracts::run_package_manifest_contract_case;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};

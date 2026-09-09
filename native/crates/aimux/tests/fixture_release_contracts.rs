@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use serde_json::{Value, json};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -66,14 +68,13 @@ pub fn run_package_manifest_contract_case(repo_root: &Path, input: &Value) -> Va
         &fs::read_to_string(repo_root.join(source_path)).expect("read package manifest"),
     )
     .expect("parse package manifest");
-    let files = package
-        .get("files")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
 
     json!({
-        "files": files,
+        "files": package
+            .get("files")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default(),
         "required": presence_entries(input, "requiredFiles", &package["files"]),
         "forbidden": presence_entries(input, "forbiddenFiles", &package["files"]),
     })
