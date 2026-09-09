@@ -110,8 +110,7 @@ pub fn run_project_service_internal(options: ProjectServiceInternalOptions) -> R
     let startup_context = ProjectServiceRequestContext::with_project_state_dir(
         startup.project_root.clone(),
         startup.project_state_dir.clone(),
-    )
-    .with_osc_output_tap();
+    );
     let plugin_statuses = native_plugin_statuses_for_context(&startup_context);
     let startup_context = startup_context.with_plugin_statuses(plugin_statuses.clone());
     run_project_service_startup_tasks(&startup, &startup_context, &mut lifecycle_runtime);
@@ -490,6 +489,7 @@ fn serve_project_service_listener(
             startup.project_root,
             startup.project_state_dir,
         )
+        .with_osc_output_tap()
         .with_plugin_statuses(plugin_statuses)
         .with_hot_snapshot_background_refresh(),
     );
