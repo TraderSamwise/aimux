@@ -738,7 +738,7 @@ fn renders_live_agent_rows_without_jamming_identity_status_or_activity() {
         serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
     let mut snapshot = fixture.runtime_light.clone();
     let session = &mut snapshot.sessions[0];
-    session.id = "claude-3c4dmezz".into();
+    session.id = "claude-08h5sggs".into();
     session.command = "claude".into();
     session.label = None;
     session.last_output_at = Some("2026-01-01T00:00:00.000Z".into());
@@ -761,7 +761,7 @@ fn renders_live_agent_rows_without_jamming_identity_status_or_activity() {
         cols: 140,
         rows: 24,
         nav_level: DashboardNavLevel::Sessions,
-        selected_session_id: Some("claude-3c4dmezz"),
+        selected_session_id: Some("claude-08h5sggs"),
         selected_service_id: None,
         focused_worktree_path: None,
         runtime_label: None,
@@ -777,12 +777,11 @@ fn renders_live_agent_rows_without_jamming_identity_status_or_activity() {
     });
     let plain = strip_ansi(&result.frame);
 
-    assert!(plain.contains("claude (3c4dme) Ready"));
+    assert!(plain.contains("claude (08h5sggs) Ready"));
     assert!(plain.contains("Ready"));
     assert!(plain.contains("output "));
     assert!(plain.contains("1 unseen"));
-    assert!(!plain.contains("(3c4dmezz"));
-    assert!(!plain.contains("3c4dme…Ready"));
+    assert!(!plain.contains("08h5sgg…Ready"));
 }
 
 #[test]

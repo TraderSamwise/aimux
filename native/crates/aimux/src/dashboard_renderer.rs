@@ -1007,6 +1007,7 @@ fn agent_row(
         .unwrap_or_default();
     let dot = format!("{} ", session_status_dot(session));
     let identity = agent_identity(session);
+    let identity_width = agent_identity_column_width(session, &identity);
     let status = session_status_cell(session, &derived_status_label(session));
     let grid = grid_cols(&[
         Column {
@@ -1023,7 +1024,7 @@ fn agent_row(
         },
         Column {
             content: &identity,
-            width: COL_IDENTITY,
+            width: identity_width,
         },
         Column {
             content: &status,
@@ -1176,24 +1177,25 @@ fn agent_identity(session: &DashboardSession) -> String {
     let prefix = format!("{}-", session.command);
     let short_id = session.id.strip_prefix(&prefix).unwrap_or(&session.id);
     let suffix = if !short_id.is_empty() && short_id != label {
-        let short_id_len = short_id.chars().count();
-        let max_short_id_for_gap = COL_IDENTITY
-            .saturating_sub(1)
-            .saturating_sub(js_len(label))
-            .saturating_sub(3);
-        let display_id = if short_id_len <= 8 && short_id_len > max_short_id_for_gap {
-            short_id
-                .chars()
-                .take(max_short_id_for_gap.max(1))
-                .collect::<String>()
-        } else {
-            short_id.to_owned()
-        };
-        format!(" {}", style(&format!("({display_id})"), Tone::Muted))
+        format!(" {}", style(&format!("({short_id})"), Tone::Muted))
     } else {
         String::new()
     };
     format!("{}{}", style(label, Tone::Strong), suffix)
+}
+
+fn agent_identity_column_width(session: &DashboardSession, identity: &str) -> usize {
+    let label = session.label.as_deref().unwrap_or(&session.command);
+    let prefix = format!("{}-", session.command);
+    let short_id = session.id.strip_prefix(&prefix).unwrap_or(&session.id);
+    if session.label.is_none()
+        && short_id.chars().count() <= 8
+        && short_id != label
+        && visible_width(identity) >= COL_IDENTITY
+    {
+        return visible_width(identity) + 1;
+    }
+    COL_IDENTITY
 }
 
 fn row_state_label(value: &str) -> &str {
