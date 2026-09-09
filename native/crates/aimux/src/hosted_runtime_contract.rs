@@ -2,8 +2,10 @@ use aimux::hosted_config::{
     HostedConfig, hosted_config_to_value, is_loopback_bind_address, normalize_hosted_config,
     normalize_hosted_config_value, validate_hosted_startup,
 };
+use aimux::hosted_rate_limit::{HostedLimitOutcome, HostedRateLimitOptions, HostedRateLimiter};
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 pub fn run_hosted_runtime_contract_case(input: &Value) -> Value {
     match str_field(input, "api") {
@@ -186,167 +188,125 @@ fn validate_hosted_startup_case(input: &Value) -> Value {
     validate_hosted_startup(&config, active)
 }
 
-#[derive(Clone)]
-struct Bucket {
-    tokens: f64,
-    byte_tokens: f64,
-    updated_at: f64,
-    in_flight: i64,
-}
-
-struct HostedRateLimiter {
-    requests_per_minute: f64,
-    max_concurrent: i64,
-    bytes_per_minute: f64,
-    now: f64,
-    buckets: BTreeMap<String, Bucket>,
-}
-
-impl HostedRateLimiter {
-    fn new(options: &Value) -> Self {
-        Self {
-            requests_per_minute: number_field(options, "requestsPerMinute", 3.0),
-            max_concurrent: number_field(options, "maxConcurrent", 2.0) as i64,
-            bytes_per_minute: number_field(options, "bytesPerMinute", f64::NAN),
-            now: 0.0,
-            buckets: BTreeMap::new(),
-        }
-    }
-
-    fn advance(&mut self, ms: f64) {
-        self.now += ms;
-    }
-
-    fn acquire(&mut self, key: &str) -> Value {
-        let max_concurrent = self.max_concurrent;
-        let requests_per_minute = self.requests_per_minute;
-        let bytes_per_minute = self.bytes_per_minute;
-        let now = self.now;
-        let bucket = self.bucket_for(key);
-        refill_bucket(bucket, requests_per_minute, bytes_per_minute, now);
-        if bucket.in_flight >= max_concurrent {
-            return json!({ "ok": false, "reason": "concurrency" });
-        }
-        if bucket.tokens < 1.0 {
-            return json!({ "ok": false, "reason": "rate" });
-        }
-        bucket.tokens -= 1.0;
-        bucket.in_flight += 1;
-        json!({ "ok": true })
-    }
-
-    fn release(&mut self, key: &str) {
-        if let Some(bucket) = self.buckets.get_mut(key) {
-            bucket.in_flight = 0.max(bucket.in_flight - 1);
-        }
-    }
-
-    fn charge(&mut self, key: &str, bytes: f64) -> bool {
-        if bytes <= 0.0 {
-            return true;
-        }
-        let requests_per_minute = self.requests_per_minute;
-        let bytes_per_minute = self.bytes_per_minute;
-        let now = self.now;
-        let bucket = self.bucket_for(key);
-        refill_bucket(bucket, requests_per_minute, bytes_per_minute, now);
-        if bucket.byte_tokens < bytes {
-            bucket.byte_tokens = 0.0;
-            return false;
-        }
-        bucket.byte_tokens -= bytes;
-        true
-    }
-
-    fn prune(&mut self, idle_ms: f64) {
-        let now = self.now;
-        self.buckets
-            .retain(|_, bucket| bucket.in_flight != 0 || now - bucket.updated_at <= idle_ms);
-    }
-
-    fn bucket_for(&mut self, key: &str) -> &mut Bucket {
-        self.buckets.entry(key.to_owned()).or_insert(Bucket {
-            tokens: self.requests_per_minute,
-            byte_tokens: self.bytes_per_minute,
-            updated_at: self.now,
-            in_flight: 0,
-        })
-    }
-}
-
-fn refill_bucket(bucket: &mut Bucket, requests_per_minute: f64, bytes_per_minute: f64, now: f64) {
-    let elapsed = (now - bucket.updated_at).max(0.0);
-    let share = elapsed / 60_000.0;
-    bucket.tokens = requests_per_minute.min(bucket.tokens + share * requests_per_minute);
-    bucket.byte_tokens = bytes_per_minute.min(bucket.byte_tokens + share * bytes_per_minute);
-    bucket.updated_at = now;
-}
-
 fn hosted_rate_limiter_case(input: &Value) -> Value {
     let scenario = str_field(input, "scenario");
-    let mut limiter = HostedRateLimiter::new(input.get("options").unwrap_or(&Value::Null));
+    let now = Arc::new(AtomicU64::new(0));
+    let limiter = HostedRateLimiter::with_now(rate_limit_options(input), {
+        let now = Arc::clone(&now);
+        move || now.load(Ordering::SeqCst) as f64
+    });
     match scenario {
         "per-minute-budget" => {
             let mut results = Vec::new();
             for _ in 0..3 {
-                results.push(limiter.acquire("prn_a"));
-                limiter.release("prn_a");
+                let outcome = limiter.acquire("prn_a");
+                release_if_allowed(&outcome);
+                results.push(limit_outcome_value(&outcome));
             }
-            results.push(limiter.acquire("prn_a"));
+            results.push(limit_outcome_value(&limiter.acquire("prn_a")));
             Value::Array(results)
         }
         "refill-over-time" => {
             for _ in 0..60 {
-                limiter.acquire("prn_a");
-                limiter.release("prn_a");
+                let outcome = limiter.acquire("prn_a");
+                release_if_allowed(&outcome);
             }
             let before = limiter.acquire("prn_a");
-            limiter.advance(number_field(input, "advanceMs", 0.0));
+            now.fetch_add(
+                number_field(input, "advanceMs", 0.0) as u64,
+                Ordering::SeqCst,
+            );
             let after = limiter.acquire("prn_a");
-            limiter.release("prn_a");
-            json!({ "before": before, "after": after })
+            release_if_allowed(&after);
+            json!({ "before": limit_outcome_value(&before), "after": limit_outcome_value(&after) })
         }
         "concurrency" => {
             let first = limiter.acquire("prn_a");
             let second = limiter.acquire("prn_a");
             let third = limiter.acquire("prn_a");
-            limiter.release("prn_a");
+            release_if_allowed(&first);
             let after_release = limiter.acquire("prn_a");
-            json!({ "first": first, "second": second, "third": third, "afterRelease": after_release })
+            json!({
+                "first": limit_outcome_value(&first),
+                "second": limit_outcome_value(&second),
+                "third": limit_outcome_value(&third),
+                "afterRelease": limit_outcome_value(&after_release),
+            })
         }
         "independent-principals" => {
             let a = limiter.acquire("prn_a");
             let a_again = limiter.acquire("prn_a");
             let b = limiter.acquire("prn_b");
-            json!({ "a": a, "aAgain": a_again, "b": b })
+            json!({
+                "a": limit_outcome_value(&a),
+                "aAgain": limit_outcome_value(&a_again),
+                "b": limit_outcome_value(&b),
+            })
         }
         "double-release" => {
             let initial = limiter.acquire("prn_a");
-            limiter.release("prn_a");
-            limiter.release("prn_a");
+            release_if_allowed(&initial);
+            release_if_allowed(&initial);
             let after_double_release = limiter.acquire("prn_a");
             let next = limiter.acquire("prn_a");
-            json!({ "initial": initial, "afterDoubleRelease": after_double_release, "next": next })
+            json!({
+                "initial": limit_outcome_value(&initial),
+                "afterDoubleRelease": limit_outcome_value(&after_double_release),
+                "next": limit_outcome_value(&next),
+            })
         }
         "prune-idle" => {
             let held = limiter.acquire("prn_busy");
-            limiter.acquire("prn_idle");
-            limiter.release("prn_idle");
-            limiter.advance(number_field(input, "advanceMs", 0.0));
+            let done = limiter.acquire("prn_idle");
+            release_if_allowed(&done);
+            now.fetch_add(
+                number_field(input, "advanceMs", 0.0) as u64,
+                Ordering::SeqCst,
+            );
             limiter.prune(300_000.0);
             let idle_after_prune = limiter.acquire("prn_idle");
-            json!({ "held": held, "idleAfterPrune": idle_after_prune })
+            json!({
+                "held": limit_outcome_value(&held),
+                "idleAfterPrune": limit_outcome_value(&idle_after_prune),
+            })
         }
         "byte-budget" => {
             let charges = array_field(input, "charges");
             let first = limiter.charge("prn_a", charges[0].as_f64().unwrap_or_default());
             let second = limiter.charge("prn_a", charges[1].as_f64().unwrap_or_default());
-            limiter.advance(number_field(input, "advanceBeforeThirdMs", 0.0));
+            now.fetch_add(
+                number_field(input, "advanceBeforeThirdMs", 0.0) as u64,
+                Ordering::SeqCst,
+            );
             let third = limiter.charge("prn_a", charges[2].as_f64().unwrap_or_default());
             let zero = limiter.charge("prn_a", charges[3].as_f64().unwrap_or_default());
             json!([first, second, third, zero])
         }
         scenario => panic!("unknown hosted rate limiter scenario: {scenario}"),
+    }
+}
+
+fn rate_limit_options(input: &Value) -> HostedRateLimitOptions {
+    let options = input.get("options").unwrap_or(&Value::Null);
+    HostedRateLimitOptions {
+        requests_per_minute: number_field(options, "requestsPerMinute", 3.0),
+        max_concurrent: number_field(options, "maxConcurrent", 2.0) as i64,
+        bytes_per_minute: number_field(options, "bytesPerMinute", f64::NAN),
+    }
+}
+
+fn release_if_allowed(outcome: &HostedLimitOutcome) {
+    if let HostedLimitOutcome::Allowed(release) = outcome {
+        release.release();
+    }
+}
+
+fn limit_outcome_value(outcome: &HostedLimitOutcome) -> Value {
+    match outcome {
+        HostedLimitOutcome::Allowed(_) => json!({ "ok": true }),
+        HostedLimitOutcome::Denied(denied) => {
+            json!({ "ok": denied.ok, "reason": denied.reason })
+        }
     }
 }
 
