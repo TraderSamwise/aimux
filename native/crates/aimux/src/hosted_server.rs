@@ -2,14 +2,15 @@ use crate::daemon::access::{build_hosted_daemon_route_context, resolve_hosted_op
 use crate::daemon::http::{DaemonResponseBody, PreparedDaemonResponse, prepare_daemon_response};
 use crate::daemon::json::ProjectEventStreamTarget;
 use crate::daemon::listener::{
-    DaemonRequestMetadata, handle_daemon_stream_with_metadata_and_interceptor,
-    prepared_response_bytes,
+    DaemonRequestBodyLimit, DaemonRequestHead, DaemonRequestMetadata,
+    handle_daemon_stream_with_metadata_and_interceptor_and_body_limit, prepared_response_bytes,
 };
 use crate::daemon::router::{DaemonRouteRuntime, route_daemon_request};
 use crate::daemon::routing::DaemonRouteUrl;
 use crate::daemon::server::DaemonHttpRequest;
 use crate::daemon::stream::{
-    HostAgentStreamError, HostAgentStreamRequestOptions, pipe_project_event_stream_from_url,
+    HostAgentStreamError, HostAgentStreamRequestOptions, ProjectEventStreamChunk,
+    open_project_event_stream_from_url,
 };
 use crate::hosted_audit::{HostedAuditRecord, HostedAuditStore, HostedPromptRecord, hash_prompt};
 use crate::hosted_auth::{authenticate_hosted, strip_trusted_headers};
@@ -19,7 +20,9 @@ use crate::hosted_events::{
 };
 use crate::hosted_lockdown::HostedLockdownStore;
 use crate::hosted_outbox::HostedOutboxStore;
-use crate::hosted_principals::{HostedPrincipal, HostedPrincipalsStore};
+use crate::hosted_principals::{
+    HostedGrant, HostedPrincipal, HostedPrincipalsStore, principal_has_grant,
+};
 use crate::hosted_rate_limit::{HostedLimitOutcome, HostedRateLimitOptions, HostedRateLimiter};
 use crate::paths::PathResolver;
 use crate::project_api_contract::routes as project_routes;
@@ -31,7 +34,7 @@ use std::io::Write;
 use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const MAX_AUDIT_PROMPT_CHARS: usize = 1_024;
 const MAX_AUDIT_FIELD_CHARS: usize = 256;
@@ -40,6 +43,32 @@ const OUTBOX_INTERVAL_MS: u64 = 5_000;
 const PRUNE_INTERVAL_MS: u64 = 300_000;
 const PRUNE_IDLE_MS: f64 = 300_000.0;
 const SERVABLE_BINARY_TYPES: &[&str] = &["image/png", "image/jpeg", "image/webp", "image/gif"];
+const MAX_STREAMS_PER_PRINCIPAL: usize = 2;
+const STREAM_MAX_LIFETIME_MS: u64 = 600_000;
+const STREAM_IDLE_TIMEOUT_MS: u64 = 120_000;
+const STREAM_MAX_BYTES: usize = 64 * 1024 * 1024;
+const STREAM_REAUTH_INTERVAL_MS: u64 = 5_000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HostedStreamLimits {
+    pub max_per_principal: usize,
+    pub max_lifetime_ms: u64,
+    pub idle_timeout_ms: u64,
+    pub max_bytes: usize,
+    pub reauth_interval_ms: u64,
+}
+
+impl Default for HostedStreamLimits {
+    fn default() -> Self {
+        Self {
+            max_per_principal: MAX_STREAMS_PER_PRINCIPAL,
+            max_lifetime_ms: STREAM_MAX_LIFETIME_MS,
+            idle_timeout_ms: STREAM_IDLE_TIMEOUT_MS,
+            max_bytes: STREAM_MAX_BYTES,
+            reauth_interval_ms: STREAM_REAUTH_INTERVAL_MS,
+        }
+    }
+}
 
 pub struct HostedServerState {
     config: HostedConfig,
@@ -51,10 +80,20 @@ pub struct HostedServerState {
     limiter: HostedRateLimiter,
     peer_limiter: HostedRateLimiter,
     delivery: Mutex<HostedEventDelivery>,
+    streams_by_principal: Mutex<BTreeMap<String, usize>>,
+    stream_limits: HostedStreamLimits,
 }
 
 impl HostedServerState {
     pub fn with_resolver(config: HostedConfig, resolver: PathResolver) -> Self {
+        Self::with_resolver_and_stream_limits(config, resolver, HostedStreamLimits::default())
+    }
+
+    pub fn with_resolver_and_stream_limits(
+        config: HostedConfig,
+        resolver: PathResolver,
+        stream_limits: HostedStreamLimits,
+    ) -> Self {
         let limiter = HostedRateLimiter::new(HostedRateLimitOptions {
             requests_per_minute: config.rate_limit.requests_per_minute as f64,
             max_concurrent: config.rate_limit.max_concurrent,
@@ -76,6 +115,8 @@ impl HostedServerState {
             outbox: HostedOutboxStore::with_resolver(resolver),
             limiter,
             peer_limiter,
+            streams_by_principal: Mutex::new(BTreeMap::new()),
+            stream_limits,
         }
     }
 
@@ -101,6 +142,34 @@ impl HostedServerState {
             for event in events {
                 delivery.enqueue(event);
             }
+        }
+    }
+
+    fn acquire_stream(&self, principal_id: &str) -> bool {
+        let Ok(mut streams) = self.streams_by_principal.lock() else {
+            return false;
+        };
+        let open = streams.get(principal_id).copied().unwrap_or(0);
+        if open >= self.stream_limits.max_per_principal {
+            return false;
+        }
+        streams.insert(principal_id.to_owned(), open + 1);
+        true
+    }
+
+    fn release_stream(&self, principal_id: &str) {
+        let Ok(mut streams) = self.streams_by_principal.lock() else {
+            return;
+        };
+        let open = streams
+            .get(principal_id)
+            .copied()
+            .unwrap_or(1)
+            .saturating_sub(1);
+        if open == 0 {
+            streams.remove(principal_id);
+        } else {
+            streams.insert(principal_id.to_owned(), open);
         }
     }
 }
@@ -163,35 +232,58 @@ where
             let intercept_runtime = Arc::clone(&stream_runtime);
             let intercept_state = Arc::clone(&stream_state);
             thread::spawn(move || {
-                let _ = handle_daemon_stream_with_metadata_and_interceptor(
+                let _ = handle_hosted_daemon_stream(
+                    &handle_runtime,
+                    &handle_state,
+                    &intercept_runtime,
+                    &intercept_state,
                     &mut stream,
                     DaemonRequestMetadata {
                         issued_at: now_iso(),
                         stopping: false,
                     },
-                    &mut |request, writer| {
-                        maybe_handle_hosted_operator_stream_request(
-                            &intercept_runtime,
-                            &intercept_state,
-                            request,
-                            writer,
-                        )
-                        .map_err(|error| {
-                            crate::daemon::listener::DaemonListenerError::Io(std::io::Error::other(
-                                error.to_string(),
-                            ))
-                        })
-                    },
-                    &mut |request| {
-                        let mut runtime = handle_runtime
-                            .lock()
-                            .expect("hosted daemon runtime mutex poisoned");
-                        handle_hosted_daemon_request(&mut *runtime, &handle_state, request)
-                    },
                 );
             });
         }
     })))
+}
+
+pub fn handle_hosted_daemon_stream<Runtime, Stream>(
+    handle_runtime: &Arc<Mutex<Runtime>>,
+    handle_state: &Arc<HostedServerState>,
+    intercept_runtime: &Arc<Mutex<Runtime>>,
+    intercept_state: &Arc<HostedServerState>,
+    stream: &mut Stream,
+    metadata: DaemonRequestMetadata,
+) -> Result<(), crate::daemon::listener::DaemonListenerError>
+where
+    Runtime: DaemonRouteRuntime,
+    Stream: std::io::Read + Write,
+{
+    handle_daemon_stream_with_metadata_and_interceptor_and_body_limit(
+        stream,
+        metadata,
+        &mut |head| hosted_body_limit_for_head(&handle_state.config, head),
+        &mut |request, writer| {
+            maybe_handle_hosted_operator_stream_request(
+                intercept_runtime,
+                intercept_state,
+                request,
+                writer,
+            )
+            .map_err(|error| {
+                crate::daemon::listener::DaemonListenerError::Io(std::io::Error::other(
+                    error.to_string(),
+                ))
+            })
+        },
+        &mut |request| {
+            let mut runtime = handle_runtime
+                .lock()
+                .expect("hosted daemon runtime mutex poisoned");
+            handle_hosted_daemon_request(&mut *runtime, handle_state, request)
+        },
+    )
 }
 
 pub fn maybe_handle_hosted_operator_stream_request<Runtime>(
@@ -307,31 +399,259 @@ where
             return Ok(true);
         }
     };
+    if !state.acquire_stream(&principal.id) {
+        peer_slot.release();
+        write_prepared(
+            writer,
+            &hosted_json(
+                429,
+                json!({ "ok": false, "error": "too many concurrent streams" }),
+            ),
+        )?;
+        return Ok(true);
+    }
     peer_slot.release();
-    pipe_project_event_stream_from_url(
+    pipe_hosted_project_event_stream(
+        state,
         writer,
+        &principal,
+        route_url,
+        &target.project_root,
         &ProjectEventStreamTarget {
             url: target.url,
             headers: BTreeMap::new(),
         },
-        HostAgentStreamRequestOptions::default(),
-    )?;
+    );
+    state.release_stream(&principal.id);
+    Ok(true)
+}
+
+fn pipe_hosted_project_event_stream(
+    state: &HostedServerState,
+    writer: &mut impl Write,
+    principal: &HostedPrincipal,
+    route_url: DaemonRouteUrl,
+    project_root: &str,
+    target: &ProjectEventStreamTarget,
+) {
+    let stream_ref = random_uuid_like();
+    let started = Instant::now();
+    let mut response_bytes = 0_usize;
+    let mut status = 200_u16;
+    audit_stream(
+        state,
+        principal,
+        HostedStreamAudit {
+            route_url: &route_url,
+            status: 200,
+            event: "open",
+            response_bytes: 0,
+            duration_ms: 0,
+            stream_ref: Some(&stream_ref),
+        },
+    );
+
+    let read_timeout_ms = state.stream_limits.reauth_interval_ms.max(1).min(
+        HostAgentStreamRequestOptions::default()
+            .timeout_ms
+            .unwrap_or(10_000),
+    );
+    let mut opened = match open_project_event_stream_from_url(
+        target,
+        HostAgentStreamRequestOptions {
+            timeout_ms: Some(read_timeout_ms),
+        },
+    ) {
+        Ok(opened) => opened,
+        Err(error) => {
+            status = 502;
+            let close_reason = "upstream";
+            let _ = write_prepared(
+                writer,
+                &hosted_json(502, json!({ "ok": false, "error": error.to_string() })),
+            );
+            audit_stream(
+                state,
+                principal,
+                HostedStreamAudit {
+                    route_url: &route_url,
+                    status,
+                    event: &format!("closed:{close_reason}"),
+                    response_bytes,
+                    duration_ms: started.elapsed().as_millis(),
+                    stream_ref: Some(&stream_ref),
+                },
+            );
+            return;
+        }
+    };
+    if !(200..300).contains(&opened.status()) {
+        status = 502;
+        let close_reason = "upstream";
+        let message = opened.body_text().trim().to_owned();
+        let _ = write_prepared(
+            writer,
+            &hosted_json(
+                502,
+                json!({ "ok": false, "error": if message.is_empty() { "upstream stream unavailable" } else { &message } }),
+            ),
+        );
+        audit_stream(
+            state,
+            principal,
+            HostedStreamAudit {
+                route_url: &route_url,
+                status,
+                event: &format!("closed:{close_reason}"),
+                response_bytes,
+                duration_ms: started.elapsed().as_millis(),
+                stream_ref: Some(&stream_ref),
+            },
+        );
+        return;
+    }
+
+    if write_hosted_stream_headers(writer).is_err() {
+        let close_reason = "client";
+        audit_stream(
+            state,
+            principal,
+            HostedStreamAudit {
+                route_url: &route_url,
+                status,
+                event: &format!("closed:{close_reason}"),
+                response_bytes,
+                duration_ms: started.elapsed().as_millis(),
+                stream_ref: Some(&stream_ref),
+            },
+        );
+        return;
+    }
+
+    let granted_session_id = route_url
+        .search_param("sessionId")
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_owned();
+    let mut last_chunk_at = Instant::now();
+    let mut last_reauth_at = Instant::now();
+    let close_reason;
+    loop {
+        let now = Instant::now();
+        if now.duration_since(started).as_millis() >= state.stream_limits.max_lifetime_ms as u128 {
+            close_reason = "lifetime";
+            break;
+        }
+        if now.duration_since(last_chunk_at).as_millis()
+            >= state.stream_limits.idle_timeout_ms as u128
+        {
+            close_reason = "idle";
+            break;
+        }
+        if now.duration_since(last_reauth_at).as_millis()
+            >= state.stream_limits.reauth_interval_ms as u128
+        {
+            last_reauth_at = now;
+            if !stream_principal_still_allowed(
+                state,
+                &principal.id,
+                project_root,
+                &granted_session_id,
+            ) {
+                close_reason = "revoked";
+                break;
+            }
+        }
+
+        match opened.next_chunk() {
+            Ok(ProjectEventStreamChunk::Data(chunk)) => {
+                let next_bytes = response_bytes.saturating_add(chunk.len());
+                if next_bytes > state.stream_limits.max_bytes {
+                    close_reason = "budget";
+                    break;
+                }
+                if writer.write_all(&chunk).is_err() {
+                    close_reason = "client";
+                    break;
+                }
+                response_bytes = next_bytes;
+                last_chunk_at = Instant::now();
+            }
+            Ok(ProjectEventStreamChunk::Timeout) => {}
+            Ok(ProjectEventStreamChunk::Eof) => {
+                close_reason = "eof";
+                break;
+            }
+            Err(_) => {
+                status = 502;
+                close_reason = "error";
+                break;
+            }
+        }
+    }
+    audit_stream(
+        state,
+        principal,
+        HostedStreamAudit {
+            route_url: &route_url,
+            status,
+            event: &format!("closed:{close_reason}"),
+            response_bytes,
+            duration_ms: started.elapsed().as_millis(),
+            stream_ref: Some(&stream_ref),
+        },
+    );
+}
+
+fn stream_principal_still_allowed(
+    state: &HostedServerState,
+    principal_id: &str,
+    project_root: &str,
+    session_id: &str,
+) -> bool {
+    let Ok(Some(principal)) = state.principals.find_principal_by_id(principal_id) else {
+        return false;
+    };
+    principal_has_grant(
+        &principal,
+        &HostedGrant {
+            project_root: project_root.to_owned(),
+            session_id: session_id.to_owned(),
+        },
+    )
+}
+
+struct HostedStreamAudit<'a> {
+    route_url: &'a DaemonRouteUrl,
+    status: u16,
+    event: &'a str,
+    response_bytes: usize,
+    duration_ms: u128,
+    stream_ref: Option<&'a str>,
+}
+
+fn audit_stream(
+    state: &HostedServerState,
+    principal: &HostedPrincipal,
+    audit: HostedStreamAudit<'_>,
+) {
     state.audit.append_audit(&HostedAuditRecord {
         ts: now_iso(),
         principal_id: principal.id.clone(),
         label: bounded_field(Some(principal.label.as_str())).unwrap_or_else(|| "-".to_owned()),
         method: "GET".to_owned(),
-        path: bounded_field(Some(route_url.pathname())).unwrap_or_default(),
-        session_id: bounded_field(route_url.search_param("sessionId")),
-        status: 200,
+        path: bounded_field(Some(audit.route_url.pathname())).unwrap_or_default(),
+        session_id: bounded_field(audit.route_url.search_param("sessionId")),
+        status: audit.status.into(),
         request_bytes: 0,
-        response_bytes: 0,
+        response_bytes: audit.response_bytes as i64,
         prompt_hash: None,
         prompt_ref: None,
-        event: Some("hosted_stream_closed".to_owned()),
-        detail: None,
+        event: Some(format!("hosted_stream_{}", audit.event)),
+        detail: audit
+            .stream_ref
+            .map(|stream_ref| format!("{stream_ref} {}ms", audit.duration_ms)),
     });
-    Ok(true)
 }
 
 pub fn handle_hosted_daemon_request(
@@ -684,6 +1004,42 @@ fn hosted_json(status: u16, body: Value) -> PreparedDaemonResponse {
         .headers
         .insert("cache-control".to_owned(), "no-store".to_owned());
     response
+}
+
+fn hosted_body_limit_for_head(
+    config: &HostedConfig,
+    head: &DaemonRequestHead,
+) -> Option<DaemonRequestBodyLimit> {
+    let method = head.method.to_ascii_uppercase();
+    if method == "GET" || method == "HEAD" {
+        let has_body = head
+            .headers
+            .get("content-length")
+            .and_then(|value| value.parse::<usize>().ok())
+            .is_some_and(|length| length > 0)
+            || head
+                .headers
+                .get("transfer-encoding")
+                .is_some_and(|value| value.to_ascii_lowercase().contains("chunked"));
+        if !has_body {
+            return None;
+        }
+    }
+    Some(DaemonRequestBodyLimit {
+        max_bytes: body_cap(config, DaemonRouteUrl::parse(&head.path).pathname()),
+        too_large_response: hosted_json(
+            413,
+            json!({ "ok": false, "error": "request body too large" }),
+        ),
+    })
+}
+
+fn write_hosted_stream_headers(writer: &mut impl Write) -> Result<(), HostAgentStreamError> {
+    writer
+        .write_all(
+            b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncache-control: no-store\r\nx-accel-buffering: no\r\nconnection: close\r\n\r\n",
+        )
+        .map_err(|error| HostAgentStreamError::Io(error.to_string()))
 }
 
 fn read_hosted_json_body(chunks: &[Vec<u8>]) -> Result<Value> {

@@ -25,18 +25,23 @@ use aimux::daemon::text::team::DaemonTeamTextRuntime;
 use aimux::daemon::text::worktrees::DaemonWorktreeTextRuntime;
 use aimux::daemon_projects::ProjectsRouteProject;
 use aimux::daemon_state::{AimuxDaemonInfo, DaemonState, MetadataApiEndpoint};
+use aimux::hosted_audit::HostedAuditStore;
 use aimux::hosted_config::HostedConfig;
 use aimux::hosted_principals::{HostedGrant, HostedPrincipalsStore};
 use aimux::hosted_server::{
-    HostedServerState, handle_hosted_daemon_request, start_hosted_server_background,
+    HostedServerState, HostedStreamLimits, handle_hosted_daemon_request,
+    handle_hosted_daemon_stream, start_hosted_server_background,
 };
 use aimux::paths::PathResolver;
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::{Read, Write};
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, Mutex, mpsc};
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone)]
 struct FakeRuntime {
@@ -634,6 +639,112 @@ struct HostedFixture {
     resolver: PathResolver,
 }
 
+struct MemoryHttpStream {
+    input: Vec<u8>,
+    offset: usize,
+    output: Vec<u8>,
+}
+
+impl MemoryHttpStream {
+    fn new(input: &[u8]) -> Self {
+        Self {
+            input: input.to_vec(),
+            offset: 0,
+            output: Vec::new(),
+        }
+    }
+}
+
+impl Read for MemoryHttpStream {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        if self.offset >= self.input.len() {
+            return Ok(0);
+        }
+        let count = buffer.len().min(self.input.len() - self.offset);
+        buffer[..count].copy_from_slice(&self.input[self.offset..self.offset + count]);
+        self.offset += count;
+        Ok(count)
+    }
+}
+
+impl Write for MemoryHttpStream {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        self.output.extend_from_slice(buffer);
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+struct HeldSseServer {
+    port: u16,
+    opened: mpsc::Receiver<()>,
+    stop: mpsc::Sender<()>,
+    worker: Mutex<Option<thread::JoinHandle<()>>>,
+}
+
+impl HeldSseServer {
+    fn spawn() -> Self {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind upstream");
+        listener
+            .set_nonblocking(true)
+            .expect("nonblocking upstream");
+        let port = listener.local_addr().expect("upstream addr").port();
+        let (opened_tx, opened_rx) = mpsc::channel();
+        let (stop_tx, stop_rx) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            let (mut stream, _) = loop {
+                match listener.accept() {
+                    Ok(value) => break value,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        if stop_rx.try_recv().is_ok() {
+                            return;
+                        }
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("accept upstream stream: {error}"),
+                }
+            };
+            let mut buffer = [0_u8; 1024];
+            let _ = stream.read(&mut buffer);
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\ncontent-type: text/event-stream\r\n\r\nd\r\ndata: first\n\n\r\n",
+                )
+                .expect("write first event");
+            opened_tx.send(()).expect("signal opened");
+            while stop_rx.recv_timeout(Duration::from_millis(25)).is_err() {}
+        });
+        Self {
+            port,
+            opened: opened_rx,
+            stop: stop_tx,
+            worker: Mutex::new(Some(worker)),
+        }
+    }
+
+    fn wait_until_open(&self) {
+        self.opened
+            .recv_timeout(Duration::from_secs(2))
+            .expect("upstream opened");
+    }
+
+    fn stop(&self) {
+        let _ = self.stop.send(());
+        if let Some(worker) = self.worker.lock().expect("worker lock").take() {
+            worker.join().expect("upstream worker");
+        }
+    }
+}
+
+impl Drop for HeldSseServer {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
 impl HostedFixture {
     fn new(name: &str) -> Self {
         let root = std::env::temp_dir().join(format!(
@@ -876,6 +987,132 @@ fn hosted_server_routes_with_minted_operator_and_body_caps() {
 
     assert_eq!(refused.status, 413);
     assert_eq!(runtime.calls.len(), 1);
+}
+
+#[test]
+fn hosted_connection_rejects_oversized_content_length_before_auth() {
+    let fixture = HostedFixture::new("preauth-body-cap");
+    let runtime = Arc::new(Mutex::new(FakeRuntime::empty()));
+    let state = Arc::new(fixture.state(HostedConfig {
+        enabled: true,
+        max_prompt_bytes: 64,
+        ..HostedConfig::default()
+    }));
+    let body = "x".repeat(128);
+    let request = format!(
+        "POST /proxy/127.0.0.1/43210/agents/input HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: {}\r\n\r\n{}",
+        body.len(),
+        body
+    );
+    let header_len = request.find("\r\n\r\n").expect("headers") + 4;
+    let mut stream = MemoryHttpStream::new(request.as_bytes());
+
+    handle_hosted_daemon_stream(
+        &runtime,
+        &state,
+        &runtime,
+        &state,
+        &mut stream,
+        aimux::daemon::listener::DaemonRequestMetadata {
+            issued_at: "issued".into(),
+            stopping: false,
+        },
+    )
+    .expect("hosted response");
+
+    let response = String::from_utf8(stream.output).expect("response utf8");
+    assert!(response.starts_with("HTTP/1.1 413 Payload Too Large\r\n"));
+    assert!(response.ends_with(r#"{"ok":false,"error":"request body too large"}"#));
+    assert_eq!(stream.offset, header_len);
+    assert!(runtime.lock().expect("runtime").calls.is_empty());
+}
+
+#[test]
+fn hosted_operator_stream_stops_after_principal_revocation() {
+    let fixture = HostedFixture::new("stream-revoked");
+    let upstream = HeldSseServer::spawn();
+    let store = HostedPrincipalsStore::with_resolver(fixture.resolver.clone());
+    let (principal, token) = store.create_principal("grand").expect("create principal");
+    store
+        .grant_session(
+            &principal.id,
+            HostedGrant {
+                project_root: "/repo".into(),
+                session_id: "s".into(),
+            },
+        )
+        .expect("grant principal");
+    let mut runtime = FakeRuntime::empty();
+    runtime.projects = vec![hosted_project("/repo", upstream.port as u64, true)];
+    let runtime = Arc::new(Mutex::new(runtime));
+    let state = Arc::new(HostedServerState::with_resolver_and_stream_limits(
+        HostedConfig {
+            enabled: true,
+            ..HostedConfig::default()
+        },
+        fixture.resolver.clone(),
+        HostedStreamLimits {
+            max_per_principal: 2,
+            max_lifetime_ms: 10_000,
+            idle_timeout_ms: 10_000,
+            max_bytes: 1024 * 1024,
+            reauth_interval_ms: 50,
+        },
+    ));
+    let request = format!(
+        "GET /proxy/127.0.0.1/{}/agents/output/stream?sessionId=s HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {token}\r\n\r\n",
+        upstream.port
+    );
+    let (done_tx, done_rx) = mpsc::channel();
+    let handle_runtime = Arc::clone(&runtime);
+    let handle_state = Arc::clone(&state);
+    let intercept_runtime = Arc::clone(&runtime);
+    let intercept_state = Arc::clone(&state);
+    let worker = thread::spawn(move || {
+        let mut stream = MemoryHttpStream::new(request.as_bytes());
+        handle_hosted_daemon_stream(
+            &handle_runtime,
+            &handle_state,
+            &intercept_runtime,
+            &intercept_state,
+            &mut stream,
+            aimux::daemon::listener::DaemonRequestMetadata {
+                issued_at: "issued".into(),
+                stopping: false,
+            },
+        )
+        .expect("hosted stream handled");
+        done_tx.send(stream.output).expect("send output");
+    });
+
+    upstream.wait_until_open();
+    store
+        .revoke_principal(&principal.id)
+        .expect("revoke principal");
+    let output = match done_rx.recv_timeout(Duration::from_secs(2)) {
+        Ok(output) => output,
+        Err(error) => {
+            upstream.stop();
+            panic!("stream did not stop after revocation: {error}");
+        }
+    };
+    upstream.stop();
+    worker.join().expect("hosted stream worker");
+
+    let response = String::from_utf8(output).expect("stream response");
+    assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
+    assert!(response.contains("data: first\n\n"));
+    let events = HostedAuditStore::with_resolver(fixture.resolver.clone())
+        .tail_audit(10)
+        .into_iter()
+        .filter_map(|record| record.event)
+        .collect::<Vec<_>>();
+    assert!(events.iter().any(|event| event == "hosted_stream_open"));
+    assert!(
+        events
+            .iter()
+            .any(|event| event == "hosted_stream_closed:revoked")
+    );
 }
 
 #[test]
