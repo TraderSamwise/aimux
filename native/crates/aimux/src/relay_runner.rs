@@ -415,6 +415,20 @@ fn now_iso() -> String {
     )
 }
 
+struct CloseInfo {
+    code: Option<u16>,
+    reason: Option<String>,
+}
+
+/// Only used to keep the unused-field lint honest about `reason`, which is kept
+/// because a close reason is what a relay sends when it refuses a token.
+impl CloseInfo {
+    #[allow(dead_code)]
+    fn reason(&self) -> Option<&str> {
+        self.reason.as_deref()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{MAX_RELAY_OUTBOX_FRAMES, push_outbox_frame};
@@ -473,19 +487,3 @@ mod tests {
         );
     }
 }
-
-struct CloseInfo {
-    code: Option<u16>,
-    reason: Option<String>,
-}
-
-/// Only used to keep the unused-field lint honest about `reason`, which is kept
-/// because a close reason is what a relay sends when it refuses a token.
-impl CloseInfo {
-    #[allow(dead_code)]
-    fn reason(&self) -> Option<&str> {
-        self.reason.as_deref()
-    }
-}
-
-
