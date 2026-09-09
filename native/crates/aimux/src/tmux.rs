@@ -29,6 +29,7 @@ pub const TMUX_DASHBOARD_OWNER_OPTION: &str = "@aimux-dashboard-owner";
 pub const TMUX_DASHBOARD_READY_OPTION: &str = "@aimux-dashboard-ready";
 pub const TMUX_DASHBOARD_BUILD_OPTION: &str = "@aimux-dashboard-build";
 pub const TMUX_RUNTIME_CONTRACT_OPTION: &str = "@aimux-runtime-contract";
+pub const TMUX_RUNTIME_REBUILD_REQUIRED_OPTION: &str = "@aimux-runtime-rebuild-required";
 pub const AIMUX_TMUX_RUNTIME_CONTRACT_VERSION: &str = "2";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

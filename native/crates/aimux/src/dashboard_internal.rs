@@ -52,7 +52,13 @@ use crate::project_service::work_outline::{
     WorkOutlineEntry, WorkOutlineQuery, list_work_outline_entries,
 };
 use crate::release_version_contract::read_aimux_runtime_version;
+use crate::runtime_guard::{
+    RuntimeGuardState, probe_runtime_guard, runtime_guard_overlay_copy,
+    stabilize_runtime_guard_probe,
+};
 use crate::tmux::TmuxRuntimeManager;
+use crate::tui_render::theme::{Tone, style};
+use crate::tui_render::{OverlayBoxSpec, OverlayVariant, render_overlay_box};
 use crate::tui_screen_renderers::{
     render_overseer_overlay_output, render_overseer_watch_instructions_overlay_output,
     render_work_outline_overlay_output,
@@ -72,6 +78,7 @@ const DASHBOARD_HIDDEN_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const DASHBOARD_STREAM_RETRY_INTERVAL: Duration = Duration::from_secs(2);
 const DASHBOARD_FALLBACK_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 const DASHBOARD_TERMINAL_SIZE_RECHECK_INTERVAL: Duration = Duration::from_millis(250);
+const DASHBOARD_RUNTIME_GUARD_INTERVAL: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone)]
 pub struct NativeDashboardOptions {
@@ -87,10 +94,53 @@ struct DashboardSnapshotLoad {
     endpoint: Option<ProjectServiceEndpoint>,
 }
 
+#[derive(Debug, Clone)]
+struct DashboardRuntimeGuardStatus {
+    state: RuntimeGuardState,
+    disconnected_probe_count: usize,
+    entered_at: Option<Instant>,
+}
+
+impl Default for DashboardRuntimeGuardStatus {
+    fn default() -> Self {
+        Self {
+            state: RuntimeGuardState::Ok,
+            disconnected_probe_count: 0,
+            entered_at: None,
+        }
+    }
+}
+
+impl DashboardRuntimeGuardStatus {
+    fn set_state(&mut self, state: RuntimeGuardState) -> bool {
+        if self.state == state {
+            return false;
+        }
+        self.entered_at = (!state.is_ok()).then(Instant::now);
+        self.state = state;
+        true
+    }
+
+    fn active_ms(&self) -> i64 {
+        self.entered_at
+            .map(|entered_at| entered_at.elapsed().as_millis().min(i64::MAX as u128) as i64)
+            .unwrap_or_default()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct DashboardViewport {
     cols: usize,
     rows: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct DashboardSnapshotRenderContext<'a> {
+    viewport: DashboardViewport,
+    endpoint: Option<&'a ProjectServiceEndpoint>,
+    hidden_offline_agent_count: usize,
+    scroll_offset: usize,
+    runtime_guard: Option<&'a DashboardRuntimeGuardStatus>,
 }
 
 impl DashboardViewport {
@@ -169,6 +219,8 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
         started_in_dashboard: !options.once && options.desktop_state_file.is_none(),
         ..DashboardTuiVisibilityState::default()
     };
+    let mut runtime_guard = DashboardRuntimeGuardStatus::default();
+    let mut last_runtime_guard_probe = Instant::now() - DASHBOARD_RUNTIME_GUARD_INTERVAL;
     let mut render_now = true;
     let mut rendered_once = false;
     let mut viewport = DashboardViewport {
@@ -266,6 +318,21 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
             latest_endpoint.as_ref(),
             options.once || options.desktop_state_file.is_some(),
         );
+        if live_dashboard && last_runtime_guard_probe.elapsed() >= DASHBOARD_RUNTIME_GUARD_INTERVAL
+        {
+            last_runtime_guard_probe = Instant::now();
+            let raw_probe = probe_runtime_guard(&options.project_root);
+            let (next_state, disconnected_probe_count) = stabilize_runtime_guard_probe(
+                &runtime_guard.state,
+                raw_probe,
+                runtime_guard.disconnected_probe_count,
+                2,
+            );
+            runtime_guard.disconnected_probe_count = disconnected_probe_count;
+            if runtime_guard.set_state(next_state) {
+                render_now = true;
+            }
+        }
         if rendered_once && !keys.is_empty() {
             mark_dashboard_tui_visible(&mut visibility_state, elapsed_millis(clock_start), None);
             let Some(snapshot) = latest_snapshot.as_ref() else {
@@ -477,12 +544,15 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
             {
                 let frame = render_dashboard_snapshot(
                     &options,
-                    viewport,
                     controller,
                     snapshot,
-                    latest_endpoint.as_ref(),
-                    0,
-                    scroll_offset,
+                    DashboardSnapshotRenderContext {
+                        viewport,
+                        endpoint: latest_endpoint.as_ref(),
+                        hidden_offline_agent_count: 0,
+                        scroll_offset,
+                        runtime_guard: Some(&runtime_guard),
+                    },
                 );
                 write_dashboard_frame(&mut *output, frame.frame.as_bytes())?;
                 rendered_once = true;
@@ -556,12 +626,15 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                 );
                 let frame = render_dashboard_snapshot(
                     &options,
-                    viewport,
                     controller,
                     &visible_model.snapshot,
-                    loaded.endpoint.as_ref(),
-                    visible_model.hidden_offline_agent_count,
-                    scroll_offset,
+                    DashboardSnapshotRenderContext {
+                        viewport,
+                        endpoint: loaded.endpoint.as_ref(),
+                        hidden_offline_agent_count: visible_model.hidden_offline_agent_count,
+                        scroll_offset,
+                        runtime_guard: Some(&runtime_guard),
+                    },
                 );
                 write_dashboard_frame(&mut *output, frame.frame.as_bytes())?;
                 rendered_once = true;
@@ -1025,15 +1098,18 @@ fn find_dashboard_session<'a>(
 
 fn render_dashboard_snapshot(
     options: &NativeDashboardOptions,
-    viewport: DashboardViewport,
     controller: &mut DashboardController,
     snapshot: &DesktopStateSnapshot,
-    endpoint: Option<&ProjectServiceEndpoint>,
-    hidden_offline_agent_count: usize,
-    scroll_offset: usize,
+    context: DashboardSnapshotRenderContext<'_>,
 ) -> crate::tui_render::screen_frame::ScreenFrameResult {
+    let viewport = context.viewport;
     if controller.screen != DashboardScreen::Dashboard {
-        return render_dashboard_subscreen_snapshot(viewport, controller, endpoint, scroll_offset);
+        return render_dashboard_subscreen_snapshot(
+            viewport,
+            controller,
+            context.endpoint,
+            context.scroll_offset,
+        );
     }
     controller.navigation.clamp(snapshot);
     let (selected_session_id, selected_service_id) =
@@ -1081,8 +1157,8 @@ fn render_dashboard_snapshot(
         version: Some(&runtime_version),
         is_dev_runtime: cfg!(debug_assertions),
         hide_offline_agents: controller.hide_offline_agents,
-        hidden_offline_agent_count,
-        scroll_offset,
+        hidden_offline_agent_count: context.hidden_offline_agent_count,
+        scroll_offset: context.scroll_offset,
         footer_message: controller.footer_message.as_deref(),
         details_sidebar_visible: controller.details_sidebar_visible,
         preview_source: &controller.preview_source,
@@ -1315,7 +1391,43 @@ fn render_dashboard_snapshot(
             scroll_offset: frame.scroll_offset,
         };
     }
+    if let Some(overlay) = render_dashboard_runtime_guard_overlay(context.runtime_guard, viewport) {
+        let mut output = frame.frame;
+        output.push_str(&overlay);
+        return crate::tui_render::screen_frame::ScreenFrameResult {
+            frame: output,
+            scroll_offset: frame.scroll_offset,
+        };
+    }
     frame
+}
+
+fn render_dashboard_runtime_guard_overlay(
+    runtime_guard: Option<&DashboardRuntimeGuardStatus>,
+    viewport: DashboardViewport,
+) -> Option<String> {
+    let runtime_guard = runtime_guard.filter(|runtime_guard| !runtime_guard.state.is_ok())?;
+    let copy = runtime_guard_overlay_copy(&runtime_guard.state, runtime_guard.active_ms(), false);
+    if copy.title.is_empty() {
+        return None;
+    }
+    let mut body = copy
+        .lines
+        .iter()
+        .map(|line| style(line, Tone::Muted))
+        .collect::<Vec<_>>();
+    if copy.waiting {
+        body.push(style("", Tone::Muted));
+        body.push(style("Please wait.", Tone::Muted));
+    }
+    Some(render_overlay_box(&OverlayBoxSpec {
+        title: copy.title,
+        body: &body,
+        cols: viewport.cols,
+        rows: viewport.rows,
+        variant: OverlayVariant::Red,
+        icon: Some("!"),
+    }))
 }
 
 fn dashboard_runtime_version() -> String {

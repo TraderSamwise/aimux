@@ -175,7 +175,11 @@ pub fn get_project_service_manifest() -> io::Result<ProjectServiceManifest> {
 }
 
 pub fn compute_current_project_service_manifest() -> io::Result<ProjectServiceManifest> {
-    get_project_service_manifest()
+    Ok(ProjectServiceManifest {
+        api_version: PROJECT_SERVICE_API_VERSION,
+        capabilities: project_service_capabilities(),
+        build_stamp: compute_project_service_build_stamp(source_project_service_module_dir())?,
+    })
 }
 
 pub fn project_service_build_stamp() -> io::Result<String> {
