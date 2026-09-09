@@ -22,3 +22,6 @@ time = { version = "0.3", features = ["formatting"] }
 # Sync websocket client: this crate is threads-and-blocking-IO throughout, so a
 # tokio-based stack would drag an async runtime in for one subsystem.
 tungstenite = { version = "0.24", default-features = false, features = ["handshake", "rustls-tls-native-roots"] }
+# Blocking HTTPS for relay attachment uploads. rustls again, so there is one
+# TLS stack in the binary and no system openssl on any target.
+ureq = { version = "2", default-features = false, features = ["tls", "json"] }

@@ -115,3 +115,80 @@ pub fn base64_encode(bytes: &[u8]) -> String {
     }
     out
 }
+
+/// What the uploader needs, so the decision logic can be tested without a relay.
+pub trait AttachmentUploader {
+    fn post_json(&self, url: &str, token: &str, body: &Value) -> Result<(u16, Value), String>;
+}
+
+pub struct HttpAttachmentUploader;
+
+impl AttachmentUploader for HttpAttachmentUploader {
+    fn post_json(&self, url: &str, token: &str, body: &Value) -> Result<(u16, Value), String> {
+        let response = ureq::post(url)
+            .timeout(std::time::Duration::from_secs(UPLOAD_TIMEOUT_SECS))
+            .set("authorization", &format!("Bearer {token}"))
+            .set("content-type", "application/json")
+            .send_string(&body.to_string());
+        match response {
+            Ok(response) => {
+                let status = response.status();
+                let json = response.into_json::<Value>().unwrap_or(Value::Null);
+                Ok((status, json))
+            }
+            // A 4xx/5xx is an answer, not a transport failure: the relay's own
+            // error message is more useful than "request failed".
+            Err(ureq::Error::Status(status, response)) => {
+                let json = response.into_json::<Value>().unwrap_or(Value::Null);
+                Ok((status, json))
+            }
+            Err(error) => Err(error.to_string()),
+        }
+    }
+}
+
+pub struct PublishedAttachmentHostInput<'a> {
+    pub source_path: &'a std::path::Path,
+    pub filename: &'a str,
+    pub mime_type: &'a str,
+    pub session_id: &'a str,
+}
+
+/// Host a published attachment on the relay, or return `None` and leave the
+/// attachment local.
+///
+/// Every failure here is non-fatal by design: publishing must still work when
+/// the relay is off, unreachable, or refuses the file.
+pub fn maybe_host_published_attachment(
+    input: &PublishedAttachmentHostInput<'_>,
+    relay_url: &str,
+    token: &str,
+    remote_enabled: bool,
+    uploader: &dyn AttachmentUploader,
+) -> Option<HostedAttachment> {
+    if !remote_enabled || token.is_empty() {
+        return None;
+    }
+    let base = relay_http_url(relay_url)?;
+    let bytes = std::fs::read(input.source_path).ok()?;
+    let body = upload_body(
+        input.filename,
+        input.mime_type,
+        &base64_encode(&bytes),
+        input.session_id,
+    );
+    let url = format!("{base}/attachments/hosted");
+    match uploader.post_json(&url, token, &body) {
+        Ok((status, response)) => match parse_hosted_response(status, &response) {
+            Ok(hosted) => Some(hosted),
+            Err(error) => {
+                eprintln!("aimux: warning: relay attachment hosting failed: {error}");
+                None
+            }
+        },
+        Err(error) => {
+            eprintln!("aimux: warning: relay attachment hosting failed: {error}");
+            None
+        }
+    }
+}

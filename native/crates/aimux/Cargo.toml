@@ -20,3 +20,4 @@ sha1.workspace = true
 sha2.workspace = true
 time.workspace = true
 tungstenite.workspace = true
+ureq.workspace = true
