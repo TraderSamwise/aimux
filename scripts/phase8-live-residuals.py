@@ -815,30 +815,10 @@ def run_dashboard_attach_smoke(aimux_bin: Path, mutation: str | None) -> dict[st
         project_state_dirs = sorted((scope.aimux_home / "projects").glob("*"))
         if not project_state_dirs:
             raise LiveResidualFailure("dashboard attach could not find project state dir")
-        return_control = run(
-            [
-                str(aimux_bin),
-                "__tmux-control-internal",
-                "dashboard",
-                "--project-root",
-                str(project_root),
-                "--project-state-dir",
-                str(project_state_dirs[0]),
-                "--current-client-session",
-                focused["session"],
-                "--client-tty",
-                client_tty,
-                "--current-window",
-                focused["windowName"],
-                "--current-window-id",
-                focused["windowId"],
-                "--current-path",
-                str(project_root),
-            ],
-            cwd=project_root,
-            env=scope.env,
-            timeout=20,
-        )
+        if mutation != "dashboard-attach-return-missing":
+            os.write(client_fd, b"\x01")
+            time.sleep(0.05)
+            os.write(client_fd, b"d")
         expected_dashboard_name = (
             "phase8-attach-mutation-missing"
             if mutation == "dashboard-attach-return-missing"
@@ -894,11 +874,8 @@ def run_dashboard_attach_smoke(aimux_bin: Path, mutation: str | None) -> dict[st
                 "timed out waiting for dashboard attach return to dashboard:\n"
                 + json.dumps({
                     "clientTty": client_tty,
-                    "returnControl": {
-                        "stdout": return_control.stdout[-2000:],
-                        "stderr": return_control.stderr[-2000:],
-                        "returncode": return_control.returncode,
-                    },
+                    "returnPath": "managed tmux prefix+d key binding",
+                    "productKeySent": mutation != "dashboard-attach-return-missing",
                     "manualReturn": {
                         "stdout": manual_return.stdout[-2000:],
                         "stderr": manual_return.stderr[-2000:],
@@ -920,6 +897,15 @@ def run_dashboard_attach_smoke(aimux_bin: Path, mutation: str | None) -> dict[st
                     ).stdout,
                     "debugLog": debug_log.read_text(errors="replace")[-2000:] if debug_log.exists() else "",
                     "capture": capture_all_tmux(scope)[-2000:],
+                }, indent=2)
+            )
+        returned_frame = capture_all_tmux(scope)
+        if "agent multiplexer" not in returned_frame or "Main Checkout" not in returned_frame:
+            raise LiveResidualFailure(
+                "dashboard attach returned to a dashboard window without a complete dashboard frame:\n"
+                + json.dumps({
+                    "client": dashboard_client,
+                    "capture": returned_frame[-2000:],
                 }, indent=2)
             )
         return {
