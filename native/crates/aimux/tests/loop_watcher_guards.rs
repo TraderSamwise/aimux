@@ -200,11 +200,12 @@ mod scribe_spellings {
     fn a_scribe_by_team_role_is_recognised_as_well_as_by_flag() {
         let metadata = json!({ "sessions": {
             "flagged":  { "scribe": true },
-            "by-role":  { "team": { "teamId": "scribe", "role": "scribe" } },
+            "by-role":  {},
             "worker":   {}
         }});
         let scribe_by_flag = json!({ "id": "flagged" });
-        let scribe_by_role = json!({ "id": "by-role" });
+        let scribe_by_role =
+            json!({ "id": "by-role", "team": { "teamId": "scribe", "role": "scribe" } });
         let worker = json!({ "id": "worker" });
 
         assert!(is_scribe(&metadata, &scribe_by_flag));
@@ -217,5 +218,15 @@ mod scribe_spellings {
         let metadata = json!({ "sessions": {} });
         let session = json!({ "id": "s", "team": { "role": "scribe" } });
         assert!(is_scribe(&metadata, &session));
+    }
+
+    #[test]
+    fn an_explicit_scribe_false_in_metadata_wins_over_the_session_role() {
+        let metadata = json!({ "sessions": { "s": { "scribe": false } } });
+        let session = json!({ "id": "s", "team": { "role": "scribe" } });
+        assert!(
+            !is_scribe(&metadata, &session),
+            "the negation must be honoured"
+        );
     }
 }

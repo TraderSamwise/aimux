@@ -5,26 +5,20 @@
 //! decides which sessions the watcher is even allowed to see.
 
 use std::sync::Arc;
-use std::sync::mpsc;
-use std::thread;
-use std::time::Duration;
 
 use serde_json::{Value, json};
 
 use crate::config::load_config_for_project;
 use crate::daemon_state::load_metadata_state;
 use crate::loop_watcher::{LoopSend, LoopWatcher};
-use crate::project_api_contract::routes;
 use crate::runtime_topology::{
     list_topology_session_states, read_runtime_topology, runtime_topology_path,
 };
 
-use super::agent_output::{
-    SystemAgentOutputCaptureRuntime, route_agent_output_request_with_runtime,
-};
 use super::interactions::pending_interactions_for_stream;
 use super::router::ProjectServiceRequestContext;
 use super::scheduler::PeriodicTask;
+use super::watcher_delivery::deliver_agent_input;
 
 /// Only a session backed by a live window can be nudged. This is also what
 /// keeps a graveyarded or offline session with stale `loop.active` metadata
@@ -33,8 +27,6 @@ pub const NUDGEABLE_SESSION_STATUSES: &[&str] = &["starting", "running", "idle"]
 const DEFAULT_SCAN_INTERVAL_MS: i64 = 15_000;
 /// Blast-radius cap: no single scan may message more agents than this.
 const MAX_SENDS_PER_SCAN: usize = 8;
-/// How long a single delivery may take before the rail gives up on it.
-const DELIVERY_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub struct LoopWatcherTask {
     project_root: String,
@@ -89,7 +81,7 @@ impl PeriodicTask for LoopWatcherTask {
                 return false;
             }
             delivered += 1;
-            deliver_agent_input(Arc::clone(&delivery_context), send)
+            deliver_agent_input(Arc::clone(&delivery_context), &send.session_id, &send.text)
         };
         self.watcher.scan(&input, now_ms(), &mut deliver);
     }
@@ -128,50 +120,21 @@ pub fn build_scan_input(
 
 /// The scribe narrates the project; nudging it as if it were doing loop work is
 /// never what the loop meant, even if something set `loop.active` on it.
-pub fn is_scribe(metadata: &Value, session: &Value) -> bool {
-    let Some(id) = session.get("id").and_then(Value::as_str) else {
-        return false;
-    };
-    let meta = metadata
-        .get("sessions")
-        .and_then(|sessions| sessions.get(id));
-    if meta
-        .and_then(|meta| meta.get("scribe"))
-        .and_then(Value::as_bool)
-        == Some(true)
-    {
-        return true;
-    }
-    // A scribe by team role carries no `scribe` flag; both spellings count,
-    // matching how the rest of the product classifies one.
-    [meta.and_then(|meta| meta.get("team")), session.get("team")]
-        .into_iter()
-        .flatten()
-        .any(|team| team.get("role").and_then(Value::as_str) == Some("scribe"))
-}
-
-/// Deliver over the same route the CLI and daemon use.
 ///
-/// Run off the rail with a bounded wait: one send is roughly a tmux spawn per
-/// line of the briefing and `tmux` has no timeout of its own, so a wedged
-/// server would otherwise block the single scheduler thread forever and
-/// silence every other task. A timeout reads as a failed send, which leaves
-/// the cooldown unconsumed so the next scan tries again.
-fn deliver_agent_input(context: Arc<ProjectServiceRequestContext>, send: &LoopSend) -> bool {
-    let body = json!({ "sessionId": send.session_id, "text": send.text });
-    let (tx, rx) = mpsc::channel();
-    thread::spawn(move || {
-        let delivered = route_agent_output_request_with_runtime(
-            &context,
-            "POST",
-            routes::agents::INPUT,
-            Some(&body),
-            &mut SystemAgentOutputCaptureRuntime,
-        )
-        .is_some_and(|response| response.status == 200);
-        let _ = tx.send(delivered);
-    });
-    rx.recv_timeout(DELIVERY_TIMEOUT).unwrap_or(false)
+/// Delegates to the project's own definition rather than growing another —
+/// there were already four spellings of "is this the scribe" in the tree.
+pub fn is_scribe(metadata: &Value, session: &Value) -> bool {
+    let sessions = metadata
+        .get("sessions")
+        .and_then(Value::as_object)
+        .map(|sessions| {
+            sessions
+                .iter()
+                .map(|(id, value)| (id.clone(), value.clone()))
+                .collect::<std::collections::BTreeMap<_, _>>()
+        })
+        .unwrap_or_default();
+    super::lifecycle::is_scribe_session(session, &sessions)
 }
 
 fn now_ms() -> i64 {

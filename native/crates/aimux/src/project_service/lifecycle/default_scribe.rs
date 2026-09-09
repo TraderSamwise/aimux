@@ -152,7 +152,10 @@ fn is_live_scribe_status(status: Option<&str>) -> bool {
     )
 }
 
-fn is_scribe_session(session: &Value, metadata_sessions: &BTreeMap<String, Value>) -> bool {
+pub(crate) fn is_scribe_session(
+    session: &Value,
+    metadata_sessions: &BTreeMap<String, Value>,
+) -> bool {
     let session_id = string_field(session, "id");
     let metadata_scribe = metadata_sessions
         .get(&session_id)

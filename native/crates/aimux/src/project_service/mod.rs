@@ -52,6 +52,7 @@ pub mod team;
 pub mod topology;
 pub mod usage;
 pub mod visual_clients;
+pub mod watcher_delivery;
 pub mod work_outline;
 pub mod worktree_cache_cleanup;
 pub mod worktree_colors_contract;

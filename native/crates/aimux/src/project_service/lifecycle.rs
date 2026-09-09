@@ -28,6 +28,7 @@ use agent_launch_routes::*;
 use agent_management::*;
 use agent_session_launch::*;
 pub use default_scribe::ensure_default_scribe_agent;
+pub(crate) use default_scribe::is_scribe_session;
 use ids::*;
 use json_helpers::*;
 use response_helpers::*;
