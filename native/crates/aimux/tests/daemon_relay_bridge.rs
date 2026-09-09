@@ -124,3 +124,74 @@ fn blank_or_whitespace_credentials_never_connect() {
     assert_eq!(resolve_relay_target(Some("wss://r"), Some(""), true, None, None), None);
     assert_eq!(resolve_relay_target(None, None, true, None, None), None);
 }
+
+// A relay subscription path is supplied by whoever is on the other end. It
+// decides what this daemon connects to, so it is an authorization boundary.
+mod project_event_stream {
+    use aimux::daemon::relay::resolve_project_event_stream;
+    use serde_json::json;
+
+    #[test]
+    fn a_well_formed_owner_subscription_resolves_to_the_project_service() {
+        let url = resolve_project_event_stream(
+            "/proxy/127.0.0.1/4321/events?since=7",
+            &json!({}),
+        )
+        .expect("resolved");
+        assert_eq!(url, "http://127.0.0.1:4321/events?since=7");
+    }
+
+    #[test]
+    fn a_host_outside_the_allowlist_is_refused() {
+        // Without this the relay is an open proxy: anything on the other end
+        // could make this daemon dial an arbitrary host from inside the LAN.
+        let error = resolve_project_event_stream("/proxy/evil.example/80/events", &json!({}))
+            .expect_err("must refuse");
+        assert_eq!(error.0, 403);
+        assert!(error.1.contains("proxy host not allowed"), "{error:?}");
+
+        assert!(resolve_project_event_stream("/proxy/10.0.0.1/80/events", &json!({})).is_err());
+        assert!(resolve_project_event_stream("/proxy/169.254.169.254/80/events", &json!({})).is_err());
+    }
+
+    #[test]
+    fn only_the_event_stream_route_is_reachable_this_way() {
+        // A subscription must not become a way to call arbitrary project
+        // service endpoints with the stream's privileges.
+        let error =
+            resolve_project_event_stream("/proxy/127.0.0.1/4321/agents/kill", &json!({}))
+                .expect_err("must refuse");
+        assert_eq!(error.0, 403);
+        assert!(error.1.contains("not a project event stream"), "{error:?}");
+    }
+
+    #[test]
+    fn a_non_proxy_path_is_not_found_rather_than_dialled() {
+        let error = resolve_project_event_stream("/events", &json!({})).expect_err("must refuse");
+        assert_eq!(error.0, 404);
+    }
+
+    #[test]
+    fn a_non_numeric_port_cannot_smuggle_a_target_past_the_allowlist() {
+        // "/proxy/127.0.0.1/80@evil.example/events" style paths.
+        assert!(
+            resolve_project_event_stream("/proxy/127.0.0.1/80@evil/events", &json!({})).is_err()
+        );
+        assert!(resolve_project_event_stream("/proxy/127.0.0.1//events", &json!({})).is_err());
+    }
+
+    #[test]
+    fn a_shared_guest_without_a_session_id_is_denied() {
+        // The case the corpus pins: a guest actor may only reach a stream
+        // scoped to its own shared session.
+        let error = resolve_project_event_stream(
+            "/proxy/127.0.0.1/4321/events",
+            &json!({
+                "x-aimux-actor-role": "guest",
+                "x-aimux-share-session-id": "shared-1",
+            }),
+        )
+        .expect_err("a guest without a session-scoped route must be refused");
+        assert_eq!(error.0, 403, "{error:?}");
+    }
+}

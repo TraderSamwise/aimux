@@ -73,7 +73,9 @@ pub fn build_request_head(
     let mut wire = format!("{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n");
     if let Some(map) = headers.as_object() {
         for (name, value) in map {
-            let Some(value) = value.as_str() else { continue };
+            let Some(value) = value.as_str() else {
+                continue;
+            };
             let lower = name.to_ascii_lowercase();
             if matches!(
                 lower.as_str(),
@@ -171,9 +173,26 @@ impl DaemonRelayBridge for LoopbackRelayBridge {
         send: Arc<dyn Fn(String) + Send + Sync>,
         cancelled: Arc<AtomicBool>,
     ) -> Result<(), (u16, String)> {
-        let mut stream = self.connect(STREAM_POLL).map_err(|error| (502u16, error))?;
-        write_request(&mut stream, "GET", path, headers, None, &self.port)
-            .map_err(|error| (502u16, error))?;
+        // Authorize and resolve BEFORE opening anything. The path comes from
+        // the other end of the relay, so dialling first and checking after
+        // would already have made the connection.
+        let target = resolve_project_event_stream(path, headers)?;
+        let (host, port, request_path) = split_http_url(&target)
+            .ok_or_else(|| (502u16, "unusable event stream target".to_owned()))?;
+        let mut stream = TcpStream::connect((host.as_str(), port))
+            .map_err(|error| (502u16, error.to_string()))?;
+        stream
+            .set_read_timeout(Some(STREAM_POLL))
+            .map_err(|error| (502u16, error.to_string()))?;
+        write_request(
+            &mut stream,
+            "GET",
+            &request_path,
+            headers,
+            None,
+            &port.to_string(),
+        )
+        .map_err(|error| (502u16, error))?;
 
         let mut reader = BufReader::new(stream);
         let mut head = String::new();
@@ -389,4 +408,88 @@ pub fn resolve_relay_target(
         stored_enabled
     };
     (enabled && !url.is_empty() && !token.is_empty()).then_some((url, token))
+}
+
+/// Hosts a relay subscription may be proxied to. Node's `PROXY_ALLOWED_HOSTS`.
+const PROXY_ALLOWED_HOSTS: &[&str] = &["127.0.0.1", "localhost"];
+
+/// Where a relay's project-event subscription is actually allowed to point.
+///
+/// This is an authorization boundary, not a URL parser. The path arrives from
+/// whoever is on the other end of the relay, so it decides three things in
+/// order: whether this actor may read the stream at all, whether the target
+/// host is one we proxy to, and whether the route is the event stream rather
+/// than some other project-service endpoint. Skipping any of them turns the
+/// relay into an open proxy into the user's machine.
+pub fn resolve_project_event_stream(
+    path: &str,
+    headers: &Value,
+) -> Result<String, (u16, String)> {
+    let route_url = crate::daemon::routing::DaemonRouteUrl::parse(path);
+    let pathname = route_url.pathname().to_owned();
+
+    let header_map = headers
+        .as_object()
+        .map(|map| {
+            map.iter()
+                .filter_map(|(name, value)| {
+                    value
+                        .as_str()
+                        .map(|value| (name.to_ascii_lowercase(), value.to_owned()))
+                })
+                .collect::<std::collections::BTreeMap<String, String>>()
+        })
+        .unwrap_or_default();
+    let actor = crate::remote_access::parse_remote_actor(&header_map);
+    let decision = crate::remote_access::assert_remote_access_allowed(
+        actor.as_ref(),
+        "GET",
+        &pathname,
+        &route_url,
+        crate::remote_access::RemoteAccessContext {
+            body: None,
+            project_root: None,
+        },
+    );
+    if !decision.ok {
+        return Err((
+            decision.status.unwrap_or(403),
+            decision
+                .error
+                .unwrap_or_else(|| "remote access denied".to_owned()),
+        ));
+    }
+
+    let (host, port, sub_path) = parse_proxy_path(&pathname)
+        .ok_or_else(|| (404u16, "project event stream not found".to_owned()))?;
+    if !PROXY_ALLOWED_HOSTS.contains(&host.as_str()) {
+        return Err((403, "proxy host not allowed".to_owned()));
+    }
+    if sub_path != crate::project_api_contract::routes::EVENTS {
+        return Err((403, "route is not a project event stream".to_owned()));
+    }
+    Ok(format!(
+        "http://{host}:{port}{sub_path}{}",
+        route_url.search()
+    ))
+}
+
+/// `/proxy/<host>/<port>/<rest>` — the port must be all digits, or a host with
+/// a colon in it could smuggle a different target past the allowlist.
+fn parse_proxy_path(pathname: &str) -> Option<(String, String, String)> {
+    let rest = pathname.strip_prefix("/proxy/")?;
+    let (host, rest) = rest.split_once('/')?;
+    let (port, sub_path) = rest.split_once('/')?;
+    if host.is_empty() || port.is_empty() || !port.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    Some((host.to_owned(), port.to_owned(), format!("/{sub_path}")))
+}
+
+/// Split an already-validated `http://host:port/path?query` into its parts.
+fn split_http_url(url: &str) -> Option<(String, u16, String)> {
+    let rest = url.strip_prefix("http://")?;
+    let (authority, path) = rest.split_once('/')?;
+    let (host, port) = authority.rsplit_once(':')?;
+    Some((host.to_owned(), port.parse().ok()?, format!("/{path}")))
 }
