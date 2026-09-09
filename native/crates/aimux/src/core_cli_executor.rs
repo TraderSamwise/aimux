@@ -30,8 +30,7 @@ use crate::daemon_state::{
     load_daemon_state,
 };
 use crate::daemon_supervisor::{
-    assert_not_stopping_newer_daemon, ensure_daemon_running, ensure_project_service, stop_daemon,
-    stop_daemon_info,
+    assert_not_stopping_newer_daemon, ensure_daemon_running, stop_daemon, stop_daemon_info,
 };
 use crate::debug_state::{build_debug_state_report, render_debug_state_report};
 use crate::desktop_notifier::{
@@ -388,26 +387,75 @@ fn restart_control_plane_from_cli(
     let resolver = PathResolver::from_env();
     let daemon_info = load_daemon_info(resolver.daemon_info_path());
     let daemon_state = load_daemon_state(resolver.daemon_state_path());
-    let registry_project_roots = resolver
-        .list_projects()
-        .unwrap_or_default()
-        .into_iter()
-        .map(|entry| entry.repo_root);
-    let project_roots =
-        restart_bootstrap_project_roots(project_root, &daemon_state, registry_project_roots);
+    let should_stop_daemon = daemon_info.is_some();
 
-    if let Some(info) = daemon_info.as_ref() {
-        assert_not_stopping_newer_daemon().map_err(|error| error.to_string())?;
-        stop_daemon_info(&resolver, info, daemon_state.clone(), "SIGTERM")
-            .map_err(|error| error.to_string())?;
+    restart_control_plane_from_cli_with(
+        project_root,
+        RestartControlPlaneCliDeps {
+            should_stop_daemon,
+            daemon_state,
+            assert_not_stopping_newer_daemon: || {
+                assert_not_stopping_newer_daemon().map_err(|error| error.to_string())
+            },
+            stop_daemon_info: |state| {
+                let info = daemon_info
+                    .as_ref()
+                    .ok_or_else(|| "daemon info missing".to_owned())?;
+                stop_daemon_info(&resolver, info, state, "SIGTERM")
+                    .map(|_| ())
+                    .map_err(|error| error.to_string())
+            },
+            ensure_daemon_running: || {
+                ensure_daemon_running(EnsureDaemonRunningOptions {
+                    adopt_existing: Some(false),
+                })
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+            },
+            request_core_command: |command, payload, options| {
+                request_core_command(command, payload, options).map_err(|error| error.to_string())
+            },
+        },
+    )
+}
+
+struct RestartControlPlaneCliDeps<AssertNewer, StopDaemon, EnsureDaemon, RequestRestart> {
+    should_stop_daemon: bool,
+    daemon_state: DaemonState,
+    assert_not_stopping_newer_daemon: AssertNewer,
+    stop_daemon_info: StopDaemon,
+    ensure_daemon_running: EnsureDaemon,
+    request_core_command: RequestRestart,
+}
+
+fn restart_control_plane_from_cli_with<AssertNewer, StopDaemon, EnsureDaemon, RequestRestart>(
+    project_root: Option<&str>,
+    deps: RestartControlPlaneCliDeps<AssertNewer, StopDaemon, EnsureDaemon, RequestRestart>,
+) -> Result<RestartControlPlaneTextResult, String>
+where
+    AssertNewer: FnMut() -> Result<(), String>,
+    StopDaemon: FnMut(DaemonState) -> Result<(), String>,
+    EnsureDaemon: FnMut() -> Result<(), String>,
+    RequestRestart: FnMut(
+        &'static str,
+        Option<Value>,
+        CoreCommandRequestOptions,
+    ) -> Result<CoreCommandOk, String>,
+{
+    let RestartControlPlaneCliDeps {
+        should_stop_daemon,
+        daemon_state,
+        mut assert_not_stopping_newer_daemon,
+        mut stop_daemon_info,
+        mut ensure_daemon_running,
+        mut request_core_command,
+    } = deps;
+
+    if should_stop_daemon {
+        assert_not_stopping_newer_daemon()?;
+        stop_daemon_info(daemon_state.clone())?;
     }
-    ensure_daemon_running(EnsureDaemonRunningOptions {
-        adopt_existing: Some(false),
-    })
-    .map_err(|error| error.to_string())?;
-    for project_root in project_roots {
-        ensure_project_service(&project_root).map_err(|error| error.to_string())?;
-    }
+    ensure_daemon_running()?;
     let response = request_core_command(
         CORE_COMMAND_NAMES.restart,
         project_root.map(|project_root| json!({ "projectRoot": project_root })),
@@ -415,8 +463,7 @@ fn restart_control_plane_from_cli(
             ensure_daemon: false,
             timeout_ms: None,
         },
-    )
-    .map_err(|error| error.to_string())?;
+    )?;
     let restart = response
         .result
         .get("restart")
@@ -429,32 +476,6 @@ fn restart_control_plane_from_cli(
         .map(str::to_owned)
         .unwrap_or_else(|| "Aimux Restart\n  failures: 0".into());
     Ok(RestartControlPlaneTextResult { restart, text })
-}
-
-fn restart_bootstrap_project_roots(
-    project_root: Option<&str>,
-    state: &DaemonState,
-    registry_project_roots: impl IntoIterator<Item = String>,
-) -> Vec<String> {
-    if let Some(project_root) = project_root {
-        return vec![project_root.to_owned()];
-    }
-    state
-        .projects
-        .values()
-        .filter_map(|project| project.get("projectRoot").and_then(Value::as_str))
-        .map(str::trim)
-        .filter(|project_root| !project_root.is_empty())
-        .map(str::to_owned)
-        .chain(
-            registry_project_roots
-                .into_iter()
-                .map(|project_root| project_root.trim().to_owned())
-                .filter(|project_root| !project_root.is_empty()),
-        )
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect()
 }
 
 pub fn run_core_cli(raw_args: &[String]) -> CoreCliExecution {
@@ -1315,45 +1336,76 @@ fn js_string(value: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::Map;
+    use std::cell::RefCell;
 
     #[test]
-    fn restart_bootstrap_project_roots_follow_saved_daemon_state() {
+    fn cli_restart_delegates_project_work_to_daemon_restart_command() {
         let state = DaemonState {
             version: 1,
             updated_at: Some(json!("now")),
             projects: Map::from_iter([
                 ("beta".into(), json!({ "projectRoot": "/repo/beta" })),
-                ("empty".into(), json!({ "projectRoot": " " })),
-                ("missing".into(), json!({ "pid": 42 })),
                 ("alpha".into(), json!({ "projectRoot": "/repo/alpha" })),
-                ("dup".into(), json!({ "projectRoot": "/repo/beta" })),
             ]),
         };
+        let calls = RefCell::new(Vec::<String>::new());
 
+        let result = restart_control_plane_from_cli_with(
+            None,
+            RestartControlPlaneCliDeps {
+                should_stop_daemon: true,
+                daemon_state: state,
+                assert_not_stopping_newer_daemon: || {
+                    calls.borrow_mut().push("assert-not-stale".into());
+                    Ok(())
+                },
+                stop_daemon_info: |state: DaemonState| {
+                    calls
+                        .borrow_mut()
+                        .push(format!("stop-daemon projects={}", state.projects.len()));
+                    Ok(())
+                },
+                ensure_daemon_running: || {
+                    calls.borrow_mut().push("ensure-daemon fresh".into());
+                    Ok(())
+                },
+                request_core_command:
+                    |command: &'static str,
+                     payload: Option<Value>,
+                     options: CoreCommandRequestOptions| {
+                        calls.borrow_mut().push(format!(
+                            "request command={command} payload={} ensure_daemon={} timeout={}",
+                            payload.unwrap_or(Value::Null),
+                            options.ensure_daemon,
+                            options
+                                .timeout_ms
+                                .map(|value| value.to_string())
+                                .unwrap_or_else(|| "none".into())
+                        ));
+                        Ok(CoreCommandOk {
+                            ok: true,
+                            id: "test".into(),
+                            command: command.into(),
+                            issued_at: "2026-01-01T00:00:00.000Z".into(),
+                            result: json!({
+                                "restart": { "summary": { "failures": 0 } },
+                                "text": "restart text",
+                            }),
+                        })
+                    },
+            },
+        )
+        .expect("restart bootstrap succeeds");
+
+        assert_eq!(result.text, "restart text");
         assert_eq!(
-            restart_bootstrap_project_roots(
-                None,
-                &state,
-                [
-                    "/repo/beta".to_owned(),
-                    "/repo/gamma".to_owned(),
-                    " ".to_owned(),
-                ],
-            ),
+            calls.into_inner(),
             vec![
-                "/repo/alpha".to_owned(),
-                "/repo/beta".to_owned(),
-                "/repo/gamma".to_owned()
+                "assert-not-stale",
+                "stop-daemon projects=2",
+                "ensure-daemon fresh",
+                "request command=core.restart payload=null ensure_daemon=false timeout=none",
             ]
-        );
-        assert_eq!(
-            restart_bootstrap_project_roots(
-                Some("/repo/only"),
-                &state,
-                ["/repo/ignored".to_owned()],
-            ),
-            vec!["/repo/only".to_owned()]
         );
     }
 }
