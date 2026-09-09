@@ -520,6 +520,46 @@ pub fn stop_daemon_info(
     )
 }
 
+pub fn stop_daemon_process_info(
+    resolver: &PathResolver,
+    info: &AimuxDaemonInfo,
+    signal: &str,
+) -> Result<StoppedDaemonInfo, DaemonSupervisorError> {
+    stop_daemon_process_info_with(
+        resolver,
+        info,
+        signal,
+        |info| is_aimux_daemon_process(info.pid),
+        send_signal,
+    )
+}
+
+pub fn stop_daemon_process_info_with<VerifyDaemon, Signal>(
+    resolver: &PathResolver,
+    info: &AimuxDaemonInfo,
+    signal: &str,
+    verify_daemon_process: VerifyDaemon,
+    mut send_signal_to_pid: Signal,
+) -> Result<StoppedDaemonInfo, DaemonSupervisorError>
+where
+    VerifyDaemon: Fn(&AimuxDaemonInfo) -> bool,
+    Signal: FnMut(i32, &str) -> io::Result<()>,
+{
+    signal_to_number(signal)?;
+    if !verify_daemon_process(info) {
+        return Err(DaemonSupervisorError::Message(format!(
+            "refusing to signal unverified aimux daemon pid={}",
+            info.pid
+        )));
+    }
+    send_signal_to_pid(info.pid, signal)?;
+    clear_daemon_info(resolver.daemon_info_path())?;
+    Ok(StoppedDaemonInfo {
+        daemon: info.clone(),
+        stopped_project_services: Vec::new(),
+    })
+}
+
 pub fn stop_daemon_info_with<VerifyProject, VerifyDaemon, Signal>(
     resolver: &PathResolver,
     info: &AimuxDaemonInfo,

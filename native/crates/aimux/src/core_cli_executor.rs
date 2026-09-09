@@ -30,7 +30,7 @@ use crate::daemon_state::{
     load_daemon_state,
 };
 use crate::daemon_supervisor::{
-    assert_not_stopping_newer_daemon, ensure_daemon_running, stop_daemon, stop_daemon_info,
+    assert_not_stopping_newer_daemon, ensure_daemon_running, stop_daemon, stop_daemon_process_info,
 };
 use crate::debug_state::{build_debug_state_report, render_debug_state_report};
 use crate::desktop_notifier::{
@@ -394,22 +394,20 @@ fn restart_control_plane_from_cli(
     let _ = get_daemon_port()?;
     let resolver = PathResolver::from_env();
     let daemon_info = load_daemon_info(resolver.daemon_info_path());
-    let daemon_state = load_daemon_state(resolver.daemon_state_path());
     let should_stop_daemon = daemon_info.is_some();
 
     restart_control_plane_from_cli_with(
         project_root,
         RestartControlPlaneCliDeps {
             should_stop_daemon,
-            daemon_state,
             assert_not_stopping_newer_daemon: || {
                 assert_not_stopping_newer_daemon().map_err(|error| error.to_string())
             },
-            stop_daemon_info: |state| {
+            stop_daemon_process: || {
                 let info = daemon_info
                     .as_ref()
                     .ok_or_else(|| "daemon info missing".to_owned())?;
-                stop_daemon_info(&resolver, info, state, "SIGTERM")
+                stop_daemon_process_info(&resolver, info, "SIGTERM")
                     .map(|_| ())
                     .map_err(|error| error.to_string())
             },
@@ -429,9 +427,8 @@ fn restart_control_plane_from_cli(
 
 struct RestartControlPlaneCliDeps<AssertNewer, StopDaemon, EnsureDaemon, RequestRestart> {
     should_stop_daemon: bool,
-    daemon_state: DaemonState,
     assert_not_stopping_newer_daemon: AssertNewer,
-    stop_daemon_info: StopDaemon,
+    stop_daemon_process: StopDaemon,
     ensure_daemon_running: EnsureDaemon,
     request_core_command: RequestRestart,
 }
@@ -442,7 +439,7 @@ fn restart_control_plane_from_cli_with<AssertNewer, StopDaemon, EnsureDaemon, Re
 ) -> Result<RestartControlPlaneTextResult, String>
 where
     AssertNewer: FnMut() -> Result<(), String>,
-    StopDaemon: FnMut(DaemonState) -> Result<(), String>,
+    StopDaemon: FnMut() -> Result<(), String>,
     EnsureDaemon: FnMut() -> Result<(), String>,
     RequestRestart: FnMut(
         &'static str,
@@ -452,16 +449,15 @@ where
 {
     let RestartControlPlaneCliDeps {
         should_stop_daemon,
-        daemon_state,
         mut assert_not_stopping_newer_daemon,
-        mut stop_daemon_info,
+        mut stop_daemon_process,
         mut ensure_daemon_running,
         mut request_core_command,
     } = deps;
 
     if should_stop_daemon {
         assert_not_stopping_newer_daemon()?;
-        stop_daemon_info(daemon_state.clone())?;
+        stop_daemon_process()?;
     }
     ensure_daemon_running()?;
     let response = request_core_command(
@@ -1351,29 +1347,18 @@ mod tests {
 
     #[test]
     fn cli_restart_delegates_project_work_to_daemon_restart_command() {
-        let state = DaemonState {
-            version: 1,
-            updated_at: Some(json!("now")),
-            projects: Map::from_iter([
-                ("beta".into(), json!({ "projectRoot": "/repo/beta" })),
-                ("alpha".into(), json!({ "projectRoot": "/repo/alpha" })),
-            ]),
-        };
         let calls = RefCell::new(Vec::<String>::new());
 
         let result = restart_control_plane_from_cli_with(
             None,
             RestartControlPlaneCliDeps {
                 should_stop_daemon: true,
-                daemon_state: state,
                 assert_not_stopping_newer_daemon: || {
                     calls.borrow_mut().push("assert-not-stale".into());
                     Ok(())
                 },
-                stop_daemon_info: |state: DaemonState| {
-                    calls
-                        .borrow_mut()
-                        .push(format!("stop-daemon projects={}", state.projects.len()));
+                stop_daemon_process: || {
+                    calls.borrow_mut().push("stop-daemon-process".into());
                     Ok(())
                 },
                 ensure_daemon_running: || {
@@ -1413,7 +1398,7 @@ mod tests {
             calls.into_inner(),
             vec![
                 "assert-not-stale",
-                "stop-daemon projects=2",
+                "stop-daemon-process",
                 "ensure-daemon fresh",
                 "request command=core.restart payload=null ensure_daemon=false timeout=none",
             ]

@@ -6,7 +6,7 @@ use aimux::daemon_supervisor::{
     DAEMON_HEALTH_KIND, DAEMON_START_LOCK_STALE_MS, assert_not_stale_against_daemon_with,
     daemon_start_lock_path, is_aimux_daemon_health, is_lock_stale, is_matching_daemon_health,
     read_lock_pid, release_daemon_start_lock, signal_number, signal_to_number,
-    stop_daemon_info_with, try_acquire_daemon_start_lock_with,
+    stop_daemon_info_with, stop_daemon_process_info_with, try_acquire_daemon_start_lock_with,
 };
 use aimux::paths::PathResolver;
 use aimux::project_service_manifest::{
@@ -233,6 +233,61 @@ fn stop_daemon_info_clears_state_and_returns_only_verified_services() {
         DaemonState::empty()
     );
     clear_daemon_info(resolver.daemon_info_path()).expect("clear is idempotent");
+}
+
+#[test]
+fn stop_daemon_process_info_preserves_project_state_and_signals_only_daemon() {
+    let test_dir = TestDir::new();
+    let resolver = test_dir.resolver();
+    let info = AimuxDaemonInfo {
+        pid: 9_999_991,
+        port: 43190,
+        started_at: "then".into(),
+        updated_at: "now".into(),
+    };
+    let project = ProjectServiceState {
+        project_id: "project-1".into(),
+        project_root: "/repo".into(),
+        pid: 9_999_992,
+        started_at: "then".into(),
+        updated_at: "now".into(),
+        status: None,
+        restart_count: None,
+        last_restart_at: None,
+        last_exit: None,
+    };
+    let state = DaemonState {
+        version: 1,
+        updated_at: Some(json!("now")),
+        projects: Map::from_iter([(
+            "project-1".into(),
+            serde_json::to_value(project).expect("project JSON"),
+        )]),
+    };
+    save_daemon_info(resolver.daemon_info_path(), &info).expect("save daemon info");
+    save_daemon_state(resolver.daemon_state_path(), &state).expect("save daemon state");
+
+    let mut signaled = Vec::new();
+    let stopped = stop_daemon_process_info_with(
+        &resolver,
+        &info,
+        "SIGTERM",
+        |_| true,
+        |pid, signal| {
+            signaled.push((pid, signal.to_owned()));
+            Ok(())
+        },
+    )
+    .expect("stop daemon process");
+
+    assert_eq!(stopped.daemon, info);
+    assert!(stopped.stopped_project_services.is_empty());
+    assert_eq!(signaled, vec![(9_999_991, "SIGTERM".into())]);
+    assert_eq!(
+        fs::read_to_string(resolver.daemon_info_path()).expect("read daemon info"),
+        ""
+    );
+    assert_eq!(load_daemon_state(resolver.daemon_state_path()), state);
 }
 
 #[test]
