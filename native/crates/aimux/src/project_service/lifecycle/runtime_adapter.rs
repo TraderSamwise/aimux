@@ -31,6 +31,7 @@ pub trait ProjectLifecycleRuntime {
     fn set_window_metadata(&mut self, window_id: &str, metadata: &Value) -> Result<(), String>;
     fn set_window_option(&mut self, window_id: &str, key: &str, value: &str) -> Result<(), String>;
     fn clear_history(&mut self, window_id: &str) -> Result<(), String>;
+    fn has_window(&mut self, target: &TmuxTarget) -> bool;
     fn kill_window(&mut self, window_id: &str) -> Result<(), String>;
     fn rename_window(&mut self, window_id: &str, name: &str) -> Result<(), String>;
 }
@@ -95,6 +96,10 @@ impl ProjectLifecycleRuntime for SystemProjectLifecycleRuntime {
             clear_history_argv(window_id),
             format!("tmux clear-history failed for {window_id}"),
         )
+    }
+
+    fn has_window(&mut self, target: &TmuxTarget) -> bool {
+        TmuxRuntimeManager::new().has_window(target)
     }
 
     fn kill_window(&mut self, window_id: &str) -> Result<(), String> {

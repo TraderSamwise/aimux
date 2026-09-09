@@ -27,6 +27,7 @@ struct FakeLifecycleRuntime {
     metadata: Vec<(String, Value)>,
     options: Vec<(String, String, String)>,
     killed: Vec<String>,
+    existing_windows: Vec<String>,
     renamed: Vec<(String, String)>,
     main_repo: Option<String>,
     worktrees_created: Vec<FakeCreateWorktree>,
@@ -122,6 +123,10 @@ impl ProjectLifecycleRuntime for FakeLifecycleRuntime {
     fn clear_history(&mut self, window_id: &str) -> Result<(), String> {
         self.cleared.push(window_id.to_owned());
         Ok(())
+    }
+
+    fn has_window(&mut self, target: &TmuxTarget) -> bool {
+        self.existing_windows.contains(&target.window_id)
     }
 
     fn kill_window(&mut self, window_id: &str) -> Result<(), String> {
@@ -1720,7 +1725,10 @@ fn service_remove_kills_retained_saved_target_for_stopped_service() {
     )
     .unwrap();
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
-    let mut runtime = FakeLifecycleRuntime::default();
+    let mut runtime = FakeLifecycleRuntime {
+        existing_windows: vec!["@retained".to_owned()],
+        ..Default::default()
+    };
 
     let response = route_lifecycle_request_with_runtime(
         &context,
@@ -1733,6 +1741,57 @@ fn service_remove_kills_retained_saved_target_for_stopped_service() {
 
     assert_eq!(response.status, 200);
     assert_eq!(runtime.killed, vec!["@retained"]);
+    assert_eq!(read_state(&state_dir)["services"], json!([]));
+    cleanup(project);
+}
+
+#[test]
+fn service_remove_ignores_retained_saved_target_when_window_is_absent() {
+    let project = temp_project("service-remove-retained-absent");
+    let state_dir = project.join("state");
+    write_lifecycle_topology(&state_dir);
+    let mut topology = read_topology(&state_dir);
+    topology["services"].as_array_mut().unwrap()[0]["status"] = json!("stopped");
+    topology["bindings"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|binding| binding["nodeId"] != "node-service");
+    write_runtime_topology(runtime_topology_path(&state_dir), &topology).unwrap();
+    std::fs::create_dir_all(&state_dir).unwrap();
+    std::fs::write(
+        state_dir.join("state.json"),
+        serde_json::to_string_pretty(&json!({
+            "savedAt": "2026-01-01T00:00:00.000Z",
+            "cwd": "/repo",
+            "services": [{
+                "id": "svc-web",
+                "label": "web",
+                "launchCommandLine": "yarn dev",
+                "tmuxTarget": {
+                    "sessionName": "aimux",
+                    "windowId": "@retained",
+                    "windowIndex": 2,
+                    "windowName": "web"
+                }
+            }]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::services::REMOVE,
+        Some(&json!({ "serviceId": "svc-web" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert!(runtime.killed.is_empty());
     assert_eq!(read_state(&state_dir)["services"], json!([]));
     cleanup(project);
 }

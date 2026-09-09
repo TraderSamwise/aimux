@@ -280,8 +280,11 @@ pub(super) fn route_service_remove(
         return json_error(404, format!("Service \"{service_id}\" not found"));
     };
     let node_id = string_field(&service, "nodeId");
-    let window_id = live_window_id_for_service(&topology, &service)
-        .or_else(|| saved_service_tmux_window_id(&project_state_dir, &service_id));
+    let window_id = live_window_id_for_service(&topology, &service).or_else(|| {
+        saved_service_tmux_target(&project_state_dir, &service_id)
+            .filter(|target| runtime.has_window(target))
+            .map(|target| target.window_id)
+    });
     let result =
         update_runtime_topology(runtime_topology_path(&project_state_dir), |mut topology| {
             let mut services = array_field(&topology, "services");
@@ -543,10 +546,10 @@ pub(super) fn commit_service_state(
     write_json_atomic(state_path, &Value::Object(state)).map_err(|error| error.to_string())
 }
 
-pub(super) fn saved_service_tmux_window_id(
+pub(super) fn saved_service_tmux_target(
     project_state_dir: &Path,
     service_id: &str,
-) -> Option<String> {
+) -> Option<TmuxTarget> {
     read_json_object(&project_state_dir.join("state.json"))
         .get("services")
         .and_then(Value::as_array)
@@ -556,7 +559,18 @@ pub(super) fn saved_service_tmux_window_id(
                 .find(|service| string_field(service, "id") == service_id)
         })
         .and_then(|service| service.get("tmuxTarget"))
-        .and_then(|target| trimmed_string(target.get("windowId")))
+        .and_then(|target| {
+            Some(TmuxTarget {
+                session_name: trimmed_string(target.get("sessionName"))?,
+                window_id: trimmed_string(target.get("windowId"))?,
+                window_index: target
+                    .get("windowIndex")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(0),
+                window_name: trimmed_string(target.get("windowName")).unwrap_or_default(),
+                pane_dead: None,
+            })
+        })
 }
 
 pub(super) fn service_node(topology: &Value, service: &Value) -> Option<Value> {
