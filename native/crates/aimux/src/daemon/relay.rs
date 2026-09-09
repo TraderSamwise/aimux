@@ -325,6 +325,24 @@ impl RelaySupervisor {
         }
     }
 
+    /// Send a notification over the live relay, or say why it could not go.
+    ///
+    /// The caller reports this to the project service, so the reason has to
+    /// distinguish "no relay configured" from "relay is configured but down" —
+    /// otherwise a broken connection looks like an intentional setting.
+    pub fn push(&self, notification: &Value) -> Result<(), String> {
+        let Ok(current) = self.current.lock() else {
+            return Err("relay_unavailable".to_owned());
+        };
+        let Some((runner, handle)) = current.as_ref() else {
+            return Err("relay_off".to_owned());
+        };
+        if handle.status().status != Some(crate::relay_client::RelayStatus::Connected) {
+            return Err("relay_disconnected".to_owned());
+        }
+        runner.push_notification(notification)
+    }
+
     /// `off` means there is no client at all, which is a different thing from a
     /// client that exists and is disconnected.
     pub fn status(&self) -> Value {

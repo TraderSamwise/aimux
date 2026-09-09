@@ -113,6 +113,7 @@ pub mod local_ui_server;
 pub mod logs;
 pub mod loop_watcher;
 pub mod managed_launch_env;
+pub mod mobile_push_bridge;
 pub mod monitor_capture_contract;
 pub mod monitor_targets_contract;
 pub mod multiplexer_dashboard_state_helpers;

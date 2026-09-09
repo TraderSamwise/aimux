@@ -2114,8 +2114,16 @@ impl DaemonAuthTextRuntime for RealDaemonRuntime {
 }
 
 impl DaemonJsonRouteRuntime for RealDaemonRuntime {
-    fn push_notification(&mut self, _payload: &Value) -> Value {
-        json!({ "ok": true, "suppressed": true, "reason": "relay_unavailable" })
+    /// Relay a push to the owner's devices.
+    ///
+    /// This used to answer `suppressed: relay_unavailable` unconditionally,
+    /// which was true only because nothing ever held a relay connection.
+    fn push_notification(&mut self, payload: &Value) -> Value {
+        let notification = crate::mobile_push_bridge::relay_notification(payload);
+        match self.relay.push(&notification) {
+            Ok(()) => json!({ "ok": true, "suppressed": false }),
+            Err(reason) => json!({ "ok": true, "suppressed": true, "reason": reason }),
+        }
     }
 
     fn loop_diagnostics(&self) -> Value {

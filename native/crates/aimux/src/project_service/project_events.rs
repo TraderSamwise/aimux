@@ -198,7 +198,10 @@ impl ProjectEventBus {
         {
             event.insert("interaction".to_owned(), interaction);
         }
-        self.publish(Value::Object(event));
+        let event = Value::Object(event);
+        // Hand off to the daemon's push route. Nothing here waits on it.
+        crate::mobile_push_bridge::forward_alert_to_mobile_push(&event);
+        self.publish(event);
         self.publish_project_update(
             project_root,
             invalidations::NOTIFICATIONS.to_vec(),

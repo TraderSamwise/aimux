@@ -291,6 +291,20 @@ impl RelayRunner {
         }
     }
 
+    /// Queue a notification for the relay.
+    ///
+    /// The socket belongs to the pump thread, so this cannot write directly —
+    /// it goes on the same outbox the project-event readers use and leaves on
+    /// the next drain. A titleless notification is dropped rather than sent
+    /// blank, matching what Node did.
+    pub fn push_notification(&self, notification: &Value) -> Result<(), String> {
+        let Some(frame) = crate::relay_client::notification_push_frame(notification) else {
+            return Err("notification_missing_title".to_owned());
+        };
+        self.queue(frame);
+        Ok(())
+    }
+
     fn queue(&self, frame: String) {
         if let Ok(mut outbox) = self.outbox.lock() {
             outbox.push(frame);
