@@ -57,6 +57,13 @@ When changing dashboard or app behavior, preserve that boundary:
   thread/task/review state, topology, worktree, or graveyard state.
 - Treat `statusline.json` as derived/debug state, not a primary transport.
 
+## Background Work
+
+Background work belongs on the shared periodic rail, never a bare
+`setInterval`-style loop. Schedule the next run from when work finishes, not
+from when it fell due. If an event already reports the change, drive the work
+from that event and keep any periodic scan as a slow backstop only.
+
 ## App (`app/`)
 
 The browser and native clients live in `app/`. It is one Expo Router app for
