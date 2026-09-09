@@ -1,5 +1,5 @@
 import React from "react";
-import { Image, Pressable, View, useWindowDimensions } from "react-native";
+import { Image, Pressable, View } from "react-native";
 import { usePathname, useRouter, type Href } from "expo-router";
 import { useAtomValue } from "jotai";
 import { Bell, Camera, FolderKanban, MessageSquare, Share2 } from "lucide-react-native";
@@ -11,6 +11,7 @@ import { resolveChromeTopInset } from "@/lib/native-safe-area";
 import { cn } from "@/lib/utils";
 import { Text } from "@/components/ui/text";
 import { buildMainTabHref } from "@/lib/main-tabs";
+import { useResponsiveViewport } from "@/lib/responsive-viewport";
 import { useRouteShare } from "@/lib/use-route-share";
 import { relayConfiguredAtom } from "@/stores/relay";
 import { selectedProjectPathAtom } from "@/stores/projects";
@@ -49,22 +50,22 @@ function TopBarRouteButton({
 function TopLevelExperienceNav() {
   const pathname = usePathname();
   const router = useRouter();
-  const { width } = useWindowDimensions();
+  const { topBarCompact: compact } = useResponsiveViewport();
   const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
   const activeShare = useRouteShare();
   const { userId } = useAuth();
   const active =
-    pathname === "/monitor" || pathname.startsWith("/monitor/")
-      ? "monitor"
-      : pathname === "/shares" || pathname.startsWith("/shares/")
-        ? "shared"
-        : "projects";
+    pathname === "/global-notifications" || pathname.startsWith("/global-notifications/")
+      ? "inbox"
+      : pathname === "/monitor" || pathname.startsWith("/monitor/")
+        ? "monitor"
+        : pathname === "/shares" || pathname.startsWith("/shares/")
+          ? "shared"
+          : "projects";
   const projectTargetPath =
     activeShare && activeShare.ownerUserId === userId
       ? activeShare.projectRoot
       : selectedProjectPath;
-  const compact = width < 640;
-
   const options = [
     {
       id: "projects",
@@ -74,6 +75,9 @@ function TopLevelExperienceNav() {
     },
     { id: "shared", label: "Shared", icon: Share2, href: "/shares" as Href },
     { id: "monitor", label: "Monitor", icon: Camera, href: "/monitor" as Href },
+    ...(compact
+      ? [{ id: "inbox", label: "Inbox", icon: Bell, href: "/global-notifications" as Href }]
+      : []),
   ] as const;
 
   return (
@@ -86,7 +90,12 @@ function TopLevelExperienceNav() {
             key={option.id}
             accessibilityLabel={option.label}
             onPress={() => {
-              if (!selected) router.navigate(option.href);
+              if (selected) return;
+              if (option.id === "inbox") {
+                router.push(option.href);
+                return;
+              }
+              router.navigate(option.href);
             }}
             className={cn(
               "h-9 flex-row items-center justify-center active:bg-accent",
@@ -112,12 +121,13 @@ function TopLevelExperienceNav() {
   );
 }
 
-export function TopBar({ left }: { left?: React.ReactNode }) {
+export const TopBar = React.memo(function TopBar({ left }: { left?: React.ReactNode }) {
   const relayConfigured = useAtomValue(relayConfiguredAtom);
-  const { width } = useWindowDimensions();
+  const { sidebarPresentation, topBarCompact: compact } = useResponsiveViewport();
   const insets = useSafeAreaInsets();
-  const topInset = resolveChromeTopInset(insets.top);
-  const compact = width < 640;
+  const topInset = resolveChromeTopInset(insets.top, {
+    reserveTopSafeArea: sidebarPresentation !== "persistent",
+  });
 
   return (
     <View
@@ -168,4 +178,5 @@ export function TopBar({ left }: { left?: React.ReactNode }) {
       <AuthMenu />
     </View>
   );
-}
+});
+TopBar.displayName = "TopBar";

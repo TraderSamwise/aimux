@@ -1,14 +1,22 @@
-import React, { useCallback, useEffect, useMemo, useRef } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
-import { AlertTriangle, Bell, RotateCw } from "lucide-react-native";
+import ReanimatedSwipeable from "react-native-gesture-handler/ReanimatedSwipeable";
+import { AlertTriangle, Bell, Check, RotateCw } from "lucide-react-native";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
+import { Card, PressableCard } from "@/components/ui/card";
 import { Page, PageHeader, PageStateCard } from "@/components/PageLayout";
+import { SegmentedControl, type SegmentOption } from "@/components/ui/segmented-control";
 import { Text } from "@/components/ui/text";
-import { listNotifications } from "@/lib/api";
+import { listNotifications, markNotificationsRead } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import {
+  filterGlobalNotificationRows,
+  splitGlobalNotificationRows,
+  sortGlobalNotificationRows,
+  type GlobalNotificationScope,
+} from "@/lib/global-notification-feed";
 import {
   buildViewHref,
   buildViewPath,
@@ -26,7 +34,17 @@ import {
   settleGlobalNotificationRefreshAtom,
   type GlobalNotificationRow,
 } from "@/stores/globalInbox";
-import { projectsAtom, selectProjectAtom, selectedSessionIdAtom } from "@/stores/projects";
+import {
+  notificationEffectiveUnread,
+  notificationLocalReadStateAtom,
+  markNotificationRecordsReadLocalAtom,
+} from "@/stores/notifications";
+import {
+  projectsAtom,
+  selectProjectAtom,
+  selectedProjectPathAtom,
+  selectedSessionIdAtom,
+} from "@/stores/projects";
 
 function relativeTime(value: string): string {
   const then = Date.parse(value);
@@ -42,11 +60,117 @@ function relativeTime(value: string): string {
   return new Date(then).toLocaleDateString();
 }
 
-function sortNotificationRows(a: GlobalNotificationRow, b: GlobalNotificationRow): number {
-  if (a.notification.unread !== b.notification.unread) return a.notification.unread ? -1 : 1;
-  const aTime = Date.parse(a.notification.createdAt);
-  const bTime = Date.parse(b.notification.createdAt);
-  return (Number.isFinite(bTime) ? bTime : 0) - (Number.isFinite(aTime) ? aTime : 0);
+function SwipeReadAction({ onPress }: { onPress: () => void }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      className="mb-2 ml-2 w-24 items-center justify-center rounded-lg border border-emerald-500/40 bg-emerald-500/15 active:opacity-80"
+      accessibilityRole="button"
+      accessibilityLabel="Read notification"
+    >
+      <Check size={18} color="#22c55e" />
+      <Text className="mt-1 text-xs font-semibold text-emerald-500">Read</Text>
+    </Pressable>
+  );
+}
+
+function GlobalNotificationCard({
+  row,
+  onOpen,
+  onRead,
+}: {
+  row: GlobalNotificationRow;
+  onOpen: (row: GlobalNotificationRow) => void;
+  onRead: (row: GlobalNotificationRow) => void;
+}) {
+  const iconColor = row.notification.unread ? "#f59e0b" : "#a1a1aa";
+  const card = (
+    <PressableCard
+      onPress={() => onOpen(row)}
+      className="mb-2 rounded-lg p-3 active:bg-accent/60"
+      accessibilityRole="button"
+      accessibilityLabel={`Open notification ${row.notification.title}`}
+    >
+      <View className="flex-row items-start gap-3">
+        <View className="mt-0.5 rounded-md border border-border bg-background p-2">
+          {row.notification.unread ? (
+            <AlertTriangle size={16} color={iconColor} />
+          ) : (
+            <Bell size={16} color={iconColor} />
+          )}
+        </View>
+        <View className="min-w-0 flex-1">
+          <View className="flex-row items-center">
+            {row.notification.unread ? (
+              <View className="mr-2 h-2 w-2 rounded-full bg-emerald-500" />
+            ) : null}
+            <Text className="min-w-0 flex-1 text-base font-medium text-foreground">
+              {row.notification.title}
+            </Text>
+          </View>
+          <Text className="mt-1 text-xs text-muted-foreground" numberOfLines={1}>
+            {row.projectName}
+            {row.notification.kind ? ` · ${row.notification.kind}` : ""}
+            {relativeTime(row.notification.createdAt)
+              ? ` · ${relativeTime(row.notification.createdAt)}`
+              : ""}
+          </Text>
+          <Text className="mt-2 text-sm text-foreground/90" numberOfLines={3}>
+            {row.notification.body}
+          </Text>
+        </View>
+      </View>
+    </PressableCard>
+  );
+
+  if (Platform.OS === "web" || !row.notification.unread) return card;
+
+  return (
+    <ReanimatedSwipeable
+      friction={2}
+      rightThreshold={42}
+      overshootRight={false}
+      enableTrackpadTwoFingerGesture
+      onSwipeableOpen={() => onRead(row)}
+      renderRightActions={() => <SwipeReadAction onPress={() => onRead(row)} />}
+    >
+      {card}
+    </ReanimatedSwipeable>
+  );
+}
+
+function NotificationSection({
+  count,
+  label,
+  rows,
+  onOpen,
+  onRead,
+}: {
+  count: number;
+  label: string;
+  rows: GlobalNotificationRow[];
+  onOpen: (row: GlobalNotificationRow) => void;
+  onRead: (row: GlobalNotificationRow) => void;
+}) {
+  if (rows.length === 0) return null;
+  return (
+    <View className="mb-4">
+      <View className="mb-2 flex-row items-center justify-between">
+        <Text className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+          {label}
+        </Text>
+        <Text className="text-xs text-muted-foreground">{count}</Text>
+      </View>
+      {rows.map((row) => (
+        <GlobalNotificationCard
+          key={`${row.projectPath}:${row.notification.id}`}
+          row={row}
+          onOpen={onOpen}
+          onRead={onRead}
+        />
+      ))}
+    </View>
+  );
 }
 
 export default function GlobalNotificationsScreen() {
@@ -54,12 +178,16 @@ export default function GlobalNotificationsScreen() {
   const selectProject = useSetAtom(selectProjectAtom);
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const projects = useAtomValue(projectsAtom);
+  const selectedProjectPath = useAtomValue(selectedProjectPathAtom);
+  const [notificationScope, setNotificationScope] = useState<GlobalNotificationScope>("all");
   const { getToken } = useAuth();
   const resource = useAtomValue(globalNotificationResourceAtom);
   const beginRefresh = useSetAtom(beginGlobalNotificationRefreshAtom);
   const applySuccess = useSetAtom(applyGlobalNotificationSuccessAtom);
   const applyFailure = useSetAtom(applyGlobalNotificationFailureAtom);
   const settleRefresh = useSetAtom(settleGlobalNotificationRefreshAtom);
+  const readState = useAtomValue(notificationLocalReadStateAtom);
+  const markNotificationsReadLocal = useSetAtom(markNotificationRecordsReadLocalAtom);
   const getTokenRef = useRef(getToken);
 
   const onlineProjects = useMemo(
@@ -79,10 +207,61 @@ export default function GlobalNotificationsScreen() {
   const onlineProjectsRef = useRef(onlineProjects);
   const onlineProjectKeyRef = useRef(onlineProjectKey);
   const resourceRef = useRef(resource);
-  const rows = resource.value?.rows ?? [];
+  const rows = useMemo(
+    () =>
+      (resource.value?.rows ?? [])
+        .map((row) => ({
+          ...row,
+          notification: {
+            ...row.notification,
+            unread: notificationEffectiveUnread({
+              projectPath: row.projectPath,
+              notification: row.notification,
+              readState,
+            }),
+          },
+        }))
+        .sort(sortGlobalNotificationRows),
+    [readState, resource.value?.rows],
+  );
+  const scopeProject = useMemo(
+    () => projects.find((project) => project.path === selectedProjectPath) ?? null,
+    [projects, selectedProjectPath],
+  );
+  const scopeProjectPath = scopeProject?.path ?? selectedProjectPath;
+  const activeNotificationScope =
+    notificationScope === "project" && scopeProjectPath ? notificationScope : "all";
+  const visibleRows = useMemo(
+    () => filterGlobalNotificationRows(rows, activeNotificationScope, scopeProjectPath),
+    [activeNotificationScope, rows, scopeProjectPath],
+  );
+  const sections = useMemo(() => splitGlobalNotificationRows(visibleRows), [visibleRows]);
   const errors = [...(resource.value?.errors ?? []), ...(resource.error ? [resource.error] : [])];
   const loading = resource.pending;
   const unreadCount = rows.filter((row) => row.notification.unread).length;
+  const visibleUnreadCount = sections.unread.length;
+  const inboxSubtitle =
+    activeNotificationScope === "project" && scopeProject
+      ? `${visibleUnreadCount} unread in ${scopeProject.name}`
+      : `${visibleUnreadCount} unread across ${onlineProjects.length} online project${
+          onlineProjects.length === 1 ? "" : "s"
+        }`;
+  const projectUnreadCount = rows.filter(
+    (row) => row.notification.unread && row.projectPath === scopeProjectPath,
+  ).length;
+  const scopeOptions = useMemo(() => {
+    const options: Array<SegmentOption<GlobalNotificationScope>> = [
+      { value: "all", label: "All", count: unreadCount },
+    ];
+    if (scopeProjectPath) {
+      options.push({
+        value: "project",
+        label: scopeProject?.name ?? "Project",
+        count: projectUnreadCount,
+      });
+    }
+    return options;
+  }, [projectUnreadCount, scopeProject?.name, scopeProjectPath, unreadCount]);
 
   useEffect(() => {
     onlineProjectsRef.current = onlineProjects;
@@ -134,7 +313,7 @@ export default function GlobalNotificationsScreen() {
         resourceRef.current.value?.rows ?? [],
         nextRows,
         failedProjectPaths,
-      ).sort(sortNotificationRows);
+      ).sort(sortGlobalNotificationRows);
       applySuccess({
         requestKey,
         value: {
@@ -160,7 +339,26 @@ export default function GlobalNotificationsScreen() {
     void refresh();
   }, [onlineProjectKey, refresh]);
 
+  const markRowRead = useCallback(
+    (row: GlobalNotificationRow) => {
+      markNotificationsReadLocal({ projectPath: row.projectPath, ids: [row.notification.id] });
+      void (async () => {
+        const project = onlineProjectsRef.current.find((item) => item.path === row.projectPath);
+        const endpoint = project ? getProjectServiceEndpoint(project) : null;
+        if (!endpoint) return;
+        try {
+          const token = await getTokenRef.current();
+          await markNotificationsRead(endpoint, { id: row.notification.id }, { token });
+        } catch {
+          // Device-local read state keeps the row settled if the host drops mid-action.
+        }
+      })();
+    },
+    [markNotificationsReadLocal],
+  );
+
   function openRow(row: GlobalNotificationRow) {
+    markRowRead(row);
     selectProject(row.projectPath);
     const sessionId = row.notification.sessionId;
     if (sessionId) {
@@ -170,7 +368,7 @@ export default function GlobalNotificationsScreen() {
         window.location.assign(String(webHref));
         return;
       }
-      router.navigate(detailHrefForPath("/project", "agent", sessionId, row.projectPath));
+      router.push(detailHrefForPath("/project", "agent", sessionId, row.projectPath));
       return;
     }
     const inboxHref = buildViewPath("/notifications", { project: row.projectPath });
@@ -178,17 +376,17 @@ export default function GlobalNotificationsScreen() {
       window.location.assign(String(inboxHref));
       return;
     }
-    router.navigate(buildViewHref("/notifications", { project: row.projectPath }));
+    router.push(buildViewHref("/notifications", { project: row.projectPath }));
   }
 
   return (
     <Page>
       <PageHeader
-        eyebrow="All Projects"
+        eyebrow={
+          activeNotificationScope === "project" && scopeProject ? scopeProject.name : "All Projects"
+        }
         title="Inbox"
-        subtitle={`${unreadCount} unread across ${onlineProjects.length} online project${
-          onlineProjects.length === 1 ? "" : "s"
-        }`}
+        subtitle={inboxSubtitle}
         actions={
           <Button
             variant="outline"
@@ -202,6 +400,14 @@ export default function GlobalNotificationsScreen() {
         }
       />
 
+      <SegmentedControl
+        options={scopeOptions}
+        value={activeNotificationScope}
+        onChange={setNotificationScope}
+        fullWidth
+        className="mb-4"
+      />
+
       {hasFetchError ? (
         <Card className="mb-4 rounded-lg border-amber-500/40 bg-amber-500/10">
           <Text className="text-sm font-semibold text-foreground">Some projects failed</Text>
@@ -209,60 +415,38 @@ export default function GlobalNotificationsScreen() {
         </Card>
       ) : null}
 
-      {rows.length === 0 && hasFetchError && !loading ? (
+      {visibleRows.length === 0 && hasFetchError && !loading ? (
         <PageStateCard
           title="Unable to load inbox"
           body="Fix the failed project connection or refresh to try again."
           tone="warning"
         />
-      ) : rows.length === 0 ? (
+      ) : visibleRows.length === 0 ? (
         <PageStateCard
           title={loading ? "Loading inbox..." : "All caught up"}
-          body="Project-scoped notifications will appear here as a flattened feed."
+          body={
+            activeNotificationScope === "project" && scopeProject
+              ? `${scopeProject.name} notifications will appear here.`
+              : "Project-scoped notifications will appear here as a flattened feed."
+          }
         />
       ) : (
-        rows.map((row) => {
-          const iconColor = row.notification.unread ? "#f59e0b" : "#a1a1aa";
-          return (
-            <Pressable
-              key={`${row.projectPath}:${row.notification.id}`}
-              onPress={() => openRow(row)}
-              className="mb-2"
-            >
-              <Card className="rounded-lg p-3 active:bg-accent/60">
-                <View className="flex-row items-start gap-3">
-                  <View className="mt-0.5 rounded-md border border-border bg-background p-2">
-                    {row.notification.unread ? (
-                      <AlertTriangle size={16} color={iconColor} />
-                    ) : (
-                      <Bell size={16} color={iconColor} />
-                    )}
-                  </View>
-                  <View className="min-w-0 flex-1">
-                    <View className="flex-row items-center">
-                      {row.notification.unread ? (
-                        <View className="mr-2 h-2 w-2 rounded-full bg-emerald-500" />
-                      ) : null}
-                      <Text className="min-w-0 flex-1 text-base font-medium text-foreground">
-                        {row.notification.title}
-                      </Text>
-                    </View>
-                    <Text className="mt-1 text-xs text-muted-foreground" numberOfLines={1}>
-                      {row.projectName}
-                      {row.notification.kind ? ` · ${row.notification.kind}` : ""}
-                      {relativeTime(row.notification.createdAt)
-                        ? ` · ${relativeTime(row.notification.createdAt)}`
-                        : ""}
-                    </Text>
-                    <Text className="mt-2 text-sm text-foreground/90" numberOfLines={3}>
-                      {row.notification.body}
-                    </Text>
-                  </View>
-                </View>
-              </Card>
-            </Pressable>
-          );
-        })
+        <>
+          <NotificationSection
+            label="Unread"
+            count={sections.unread.length}
+            rows={sections.unread}
+            onOpen={openRow}
+            onRead={markRowRead}
+          />
+          <NotificationSection
+            label="Read"
+            count={sections.read.length}
+            rows={sections.read}
+            onOpen={openRow}
+            onRead={markRowRead}
+          />
+        </>
       )}
     </Page>
   );

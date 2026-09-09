@@ -1,4 +1,12 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ActivityIndicator,
   AppState,
@@ -7,26 +15,40 @@ import {
   Platform,
   Pressable,
   ScrollView,
+  Text as RNText,
   TextInput,
-  useWindowDimensions,
   View,
   type NativeSyntheticEvent,
   type NativeScrollEvent,
-  type TextInputContentSizeChangeEventData,
+  type TextStyle,
+  type ViewStyle,
 } from "react-native";
 import type { LayoutChangeEvent } from "react-native";
 import { useFocusEffect, useLocalSearchParams, usePathname, useRouter } from "expo-router";
-import { useAtomValue, useSetAtom } from "jotai";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
+import { useColorScheme } from "nativewind";
 import { KeyboardChatScrollView, KeyboardStickyView } from "react-native-keyboard-controller";
+import Reanimated, {
+  Easing as ReanimatedEasing,
+  interpolateColor,
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withTiming,
+  type SharedValue,
+} from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   ArrowUp,
   ChevronDown,
   ChevronLeft,
   CircleAlert,
+  Columns2,
+  MessageSquareText,
   Plus,
   SlidersHorizontal,
   Square,
+  Terminal,
   UserPlus,
   X,
 } from "lucide-react-native";
@@ -34,19 +56,30 @@ import { Text } from "@/components/ui/text";
 import { AgentActions } from "@/components/agent-actions";
 import { AgentManagementPanel } from "@/components/agent-management-panel";
 import { TeammatePanel } from "@/components/teammate-panel";
+import { ChatChromeMotion } from "@/components/ChatChromeMotion";
+import { ChatNewMessagesBadge } from "@/components/ChatNewMessagesBadge";
 import { Button } from "@/components/ui/button";
 import { Input, NO_BROWSER_FOCUS_RING } from "@/components/ui/input";
 import { MessageBlock } from "@/components/MessageBlock";
 import { ComposerControl, COMPOSER_CONTROL_LABEL_WIDTH } from "@/components/ComposerControl";
 import { AttachmentDropZone } from "@/components/AttachmentDropZone";
+import {
+  CHAT_RECONNECTING_PANEL_RESERVE,
+  CHAT_SESSION_HEADER_HEIGHT,
+  chatControlPanelReserveHeight,
+  chatOverlayPanelReserveHeight,
+  chatTopBarReserveHeight,
+  chatTranscriptTopReserveHeight,
+} from "@/lib/chat-chrome-layout";
 import { useAuth, useUser } from "@/lib/auth";
-import { agentActivityLabel } from "@/lib/activity-label";
+import { agentActivityLabel, shouldShimmerAgentActivityLabel } from "@/lib/activity-label";
 import { blurWebActiveElement } from "@/lib/blur-web-active-element";
 import {
   createShareInvite,
   getShare,
   leaveShare,
   listShares,
+  markNotificationsRead,
   removeShareParticipant,
   revokeShareInvite,
   interruptLivePane,
@@ -76,17 +109,41 @@ import {
   chatCommandForContentChange,
   chatCommandForInitialLayout,
   chatCommandForNavigationFocus,
+  chatChromeAfterUserScroll,
   chatPolicyAfterNavigationFocus,
   chatPolicyAfterUserScroll,
+  createChatScrollChromeState,
   createChatScrollPolicy,
+  type ChatScrollChromeState,
   type ChatScrollCommand,
   type ChatScrollMetrics,
   type ChatScrollPolicy,
 } from "@/lib/chat-scroll-policy";
+import {
+  chatVisibleTranscriptForLiveChange,
+  chatVisibleTranscriptForPinned,
+  chatVisibleTranscriptMessages,
+  type ChatVisibleTranscript,
+} from "@/lib/chat-visible-transcript";
+import { chatFrozenNewMessageCount } from "@/lib/chat-new-message-badge";
+import { canUseChatSplitView, chatOutputPaneVisibility } from "@/lib/chat-output-mode";
+import { chatViewportKeyForRoute } from "@/lib/chat-viewport-key";
 import { CHAT_OUTPUT_CAPTURE_START_LINE } from "@/lib/chat-output-constants";
+import {
+  agentOutputModeForVisiblePane,
+  chatTranscriptPlaceholderState,
+  type ChatTranscriptPlaceholderState,
+} from "@/lib/chat-loading";
+import { formatTerminalOutputForDisplay } from "@/lib/terminal-output";
+import {
+  terminalVisibleOutputForLiveChange,
+  terminalVisibleOutputForPinned,
+} from "@/lib/terminal-visible-output";
 import { useAgentOutputFeed } from "@/lib/use-agent-output-feed";
+import type { AgentOutputFeedPurpose } from "@/lib/use-agent-output-feed";
 import { cn } from "@/lib/utils";
-import { resolveChromeBottomInset } from "@/lib/native-safe-area";
+import { resolveChromeBottomInset, resolveChromeTopInset } from "@/lib/native-safe-area";
+import { useResponsiveViewport } from "@/lib/responsive-viewport";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopSession } from "@/lib/desktop-state";
 import { singleRouteParam } from "@/lib/route-params";
@@ -98,26 +155,39 @@ import {
 import { toChatMessages } from "@/lib/transcript-view";
 import { useRouteProject } from "@/lib/use-route-project";
 import { useRouteShare } from "@/lib/use-route-share";
+import {
+  getNativeHardwareKeyboardConnected,
+  setNativeChatComposerFocused,
+  subscribeNativeAppCommands,
+} from "@/lib/native-app-commands";
 import { resolveSharedChatActor } from "@/lib/shared-chat-actor";
 import { worktreeIdentity, worktreeTone } from "@/lib/worktree-tone";
-import { parentViewHrefForPath } from "@/lib/view-location";
+import { buildMainTabHref } from "@/lib/main-tabs";
 import { useKeyboardVisible } from "@/lib/use-keyboard-visible";
 import { isTransientRequestError } from "@/lib/request-errors";
 import {
   activityFamily,
   activityTextFamily,
   clearLocalInterruptHoldAtom,
+  lastErrorFamily,
+  outputAnsiFamily,
+  outputAvailableFamily,
+  outputBufferFamily,
   markOutputInterruptedAtom,
   transcriptFamily,
 } from "@/stores/chat";
 import { desktopStateFamily, worktreeGroupsFamily } from "@/stores/desktopState";
 import { selectedSessionIdAtom } from "@/stores/projects";
 import { relayConfiguredAtom, relayStatusAtom } from "@/stores/relay";
+import { markNotificationRecordsReadLocalAtom } from "@/stores/notifications";
 import {
   acceptedSharedSessionsAtom,
   activeSharedSessionAtom,
+  agentOutputViewModeAtom,
+  type AgentOutputViewMode,
   type ActiveSharedSession,
 } from "@/stores/settings";
+import { chatChromeVisibleAtom } from "@/stores/ui";
 import type { ChatMessage, HistoryPart } from "@/lib/events";
 
 const MAX_PENDING_ATTACHMENTS = 4;
@@ -128,16 +198,32 @@ const CHAT_DIVIDER_WIDTH_SAFETY = Platform.OS === "web" ? 4 : 6;
 const MIN_CHAT_DIVIDER_WIDTH = 16;
 const MAX_CHAT_DIVIDER_WIDTH = Platform.OS === "web" ? 72 : 24;
 type ChatScrollHandle = Pick<ScrollView, "scrollToEnd">;
+type ChatSessionViewportHandle = {
+  showNewest: () => void;
+};
 const COMPOSER_INPUT_FONT_SIZE = 14;
 const COMPOSER_INPUT_LINE_HEIGHT = 20;
+const COMPOSER_INPUT_MAX_LINES = 4;
 const COMPOSER_INPUT_VERTICAL_PADDING = 6;
 const COMPOSER_INPUT_MIN_HEIGHT = COMPOSER_INPUT_LINE_HEIGHT + COMPOSER_INPUT_VERTICAL_PADDING * 2;
 const COMPOSER_INPUT_MAX_HEIGHT =
-  COMPOSER_INPUT_LINE_HEIGHT * 4 + COMPOSER_INPUT_VERTICAL_PADDING * 2;
-const COMPOSER_INPUT_HEIGHT_SLOP = 4;
+  COMPOSER_INPUT_LINE_HEIGHT * COMPOSER_INPUT_MAX_LINES + COMPOSER_INPUT_VERTICAL_PADDING * 2;
 const COMPOSER_INPUT_HORIZONTAL_PADDING = 4;
 const COMPOSER_FOOTER_VERTICAL_PADDING = 12;
 const COMPOSER_SEND_ACK_TIMEOUT_MS = 10_000;
+const CHAT_COMPOSER_CONTROL_ROW_HEIGHT = 34;
+const CHAT_COMPOSER_RESERVE_GAP = 8;
+const CHAT_ATTACHMENT_STRIP_RESERVE = 88;
+const CHAT_NEW_MESSAGE_BADGE_DEBOUNCE_MS = 180;
+const CHAT_NEW_MESSAGE_BADGE_VISIBLE_MS = 3200;
+const FOOTER_LABEL_SHIMMER_DURATION_MS = 1700;
+/** How much of the label the travelling highlight covers, as a fraction of its width. */
+const FOOTER_LABEL_SHIMMER_BAND = 0.3;
+/** muted-foreground -> foreground, per theme (see app/global.css). */
+const FOOTER_LABEL_SHIMMER_COLORS = {
+  dark: { base: "#a1a1aa", highlight: "#fafafa" },
+  light: { base: "#71717a", highlight: "#09090b" },
+} as const;
 const MIN_HEADER_ACTIONS_WIDTH = 156;
 const CHAT_INPUT_NATIVE_ID = "aimux-chat-input";
 const COMPOSER_WEB_INPUT_PROPS =
@@ -237,7 +323,6 @@ type PendingAttachment = PickedAttachment & {
 
 type ComposerDraftSnapshot = {
   draft: string;
-  inputContentHeight: number;
   pendingAttachments: PendingAttachment[];
 };
 
@@ -264,14 +349,6 @@ const composerDraftsByKey = new Map<string, ComposerDraftSnapshot>();
 
 function hasComposerDraftContent(text: string): boolean {
   return /\S/.test(text);
-}
-
-function composerInputHeightForContentHeight(contentHeight: number): number {
-  const measured = Number.isFinite(contentHeight) ? Math.ceil(contentHeight) : 0;
-  return Math.min(
-    COMPOSER_INPUT_MAX_HEIGHT,
-    Math.max(COMPOSER_INPUT_MIN_HEIGHT, measured + COMPOSER_INPUT_HEIGHT_SLOP),
-  );
 }
 
 function rememberComposerDraft(key: string | null, snapshot: ComposerDraftSnapshot) {
@@ -429,11 +506,14 @@ function isMultiplexedShare(summary: SharedSessionSummary | null): boolean {
 export default function ChatScreen() {
   const params = useLocalSearchParams<{
     focusToken?: string | string[];
+    notificationId?: string | string[];
     ownerUserId?: string | string[];
     sessionId?: string | string[];
     shareId?: string | string[];
   }>();
   const routeOwnerUserId = singleRouteParam(params.ownerUserId);
+  const routeFocusToken = singleRouteParam(params.focusToken) ?? "";
+  const routeNotificationId = singleRouteParam(params.notificationId) ?? "";
   const sessionId = singleRouteParam(params.sessionId);
   const routeShareId = singleRouteParam(params.shareId);
   const sessionKey = sessionId ?? "";
@@ -444,9 +524,13 @@ export default function ChatScreen() {
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const markOutputInterrupted = useSetAtom(markOutputInterruptedAtom);
   const clearLocalInterruptHold = useSetAtom(clearLocalInterruptHoldAtom);
+  const setGlobalChatChromeVisible = useSetAtom(chatChromeVisibleAtom);
+  const markNotificationsReadLocal = useSetAtom(markNotificationRecordsReadLocalAtom);
   const transcript = useAtomValue(transcriptFamily(sessionKey));
+  const transcriptLastError = useAtomValue(lastErrorFamily(sessionKey));
   const activity = useAtomValue(activityFamily(sessionKey));
   const activityText = useAtomValue(activityTextFamily(sessionKey));
+  const [agentOutputViewMode, setAgentOutputViewMode] = useAtom(agentOutputViewModeAtom);
   const relayConfigured = useAtomValue(relayConfiguredAtom);
   const relayStatus = useAtomValue(relayStatusAtom);
   const activeShare = useRouteShare();
@@ -456,7 +540,13 @@ export default function ChatScreen() {
   const { user } = useUser();
   const router = useRouter();
   const pathname = usePathname();
-  const { width, height: windowHeight } = useWindowDimensions();
+  const {
+    chatHeaderCompact: compactHeaderActions,
+    chatSplitWidth,
+    layoutHeight: windowHeight,
+    layoutWidth: width,
+    sidebarPresentation,
+  } = useResponsiveViewport();
   const insets = useSafeAreaInsets();
   const keyboardVisible = useKeyboardVisible(Platform.OS !== "web");
   const appVisible = useAppVisible();
@@ -479,22 +569,28 @@ export default function ChatScreen() {
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [sendBusy, setSendBusy] = useState(false);
   const [composerWidth, setComposerWidth] = useState(0);
-  const [composerInputContentHeight, setComposerInputContentHeight] =
-    useState(COMPOSER_INPUT_MIN_HEIGHT);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [chatChromeVisible, setChatChromeVisible] = useState(true);
+  const [composerFocused, setComposerFocused] = useState(false);
   const [lastConnectedEndpoint, setLastConnectedEndpoint] = useState<{
     endpoint: ServiceEndpoint;
     projectPath: string;
   } | null>(null);
   const activeShareForRoute =
     activeShare && activeShare.sessionId === sessionId ? activeShare : null;
+  const chatViewportKey = chatViewportKeyForRoute({
+    focusToken: routeFocusToken,
+    projectPath: stateProjectPath,
+    sessionKey,
+    share: activeShareForRoute,
+  });
   const isCanonicalSharedRoute = Boolean(
     pathname.startsWith("/shares/") && routeOwnerUserId && routeShareId && sessionId,
   );
   const isSharedSessionView = Boolean(activeShareForRoute);
   const isSharedConversation =
     isCanonicalSharedRoute || isSharedSessionView || isMultiplexedShare(shareSummary);
-  const canUseOwnerControls = !isSharedSessionView;
+  const canUseOwnerControls = !isCanonicalSharedRoute && !isSharedSessionView;
   const userEmail =
     user?.primaryEmailAddress?.emailAddress?.trim() ||
     user?.emailAddresses?.[0]?.emailAddress?.trim() ||
@@ -588,21 +684,17 @@ export default function ChatScreen() {
   );
   const sendBusyRef = useRef(false);
   const composerInputRef = useRef<TextInput | null>(null);
-  const chatScrollRef = useRef<ChatScrollHandle | null>(null);
-  const chatScrollMetricsRef = useRef<ChatScrollMetrics>({
-    contentHeight: 0,
-    offsetY: 0,
-    viewportHeight: 0,
-  });
-  const chatScrollPolicyRef = useRef<ChatScrollPolicy>(createChatScrollPolicy());
-  const chatScrollFrameRef = useRef<number | null>(null);
-  const chatInitialLayoutKeyRef = useRef<string | null>(null);
+  const chatViewportRef = useRef<ChatSessionViewportHandle | null>(null);
   const activeComposerDraftKeyRef = useRef<string | null>(null);
+  const composerFocusedRef = useRef(false);
+  const nativeChatSendRef = useRef<() => void>(() => {});
+  const nativeChatInterruptRef = useRef<() => void>(() => {});
+  const routeNotificationLocalReadKeyRef = useRef<string | null>(null);
+  const routeNotificationServerReadKeyRef = useRef<string | null>(null);
   const sendOperationIdRef = useRef(0);
   const interruptInFlightRef = useRef(false);
   const composerDraftSnapshotRef = useRef<ComposerDraftSnapshot>({
     draft: "",
-    inputContentHeight: COMPOSER_INPUT_MIN_HEIGHT,
     pendingAttachments: [],
   });
   const session = sessionId
@@ -617,6 +709,17 @@ export default function ChatScreen() {
     session !== null &&
     session.status !== "offline" &&
     session.status !== "exited";
+  const canUseSplitView = canUseChatSplitView(chatSplitWidth);
+  const {
+    chatViewVisible,
+    effectiveMode: effectiveAgentOutputViewMode,
+    terminalViewVisible,
+  } = chatOutputPaneVisibility({
+    mode: agentOutputViewMode,
+    rawOutputAllowed: canUseOwnerControls,
+    width: chatSplitWidth,
+  });
+  const agentOutputFeedMode = agentOutputModeForVisiblePane({ terminalViewVisible });
   const composerDraftKey = useMemo(() => {
     if (!sessionId) return null;
     if (activeShareForRoute) {
@@ -635,10 +738,9 @@ export default function ChatScreen() {
   useEffect(() => {
     composerDraftSnapshotRef.current = {
       draft,
-      inputContentHeight: composerInputContentHeight,
       pendingAttachments,
     };
-  }, [composerInputContentHeight, draft, pendingAttachments]);
+  }, [draft, pendingAttachments]);
 
   useEffect(() => {
     const previousKey = activeComposerDraftKeyRef.current;
@@ -652,7 +754,6 @@ export default function ChatScreen() {
     setDraft(saved?.draft ?? "");
     setDraftHasContent(hasComposerDraftContent(saved?.draft ?? ""));
     setPendingAttachments(saved?.pendingAttachments ? [...saved.pendingAttachments] : []);
-    setComposerInputContentHeight(saved?.inputContentHeight ?? COMPOSER_INPUT_MIN_HEIGHT);
     setPendingComposerAck(null);
     setAcceptedComposerMessages([]);
     setSendBusy(false);
@@ -672,6 +773,29 @@ export default function ChatScreen() {
     if (!sessionId) return;
     selectSession(sessionId);
   }, [sessionId, selectSession]);
+
+  useEffect(() => {
+    if (!routeNotificationId || !stateProjectPath) return;
+    const readKey = `${stateProjectPath}\u0000${routeNotificationId}`;
+
+    if (routeNotificationLocalReadKeyRef.current !== readKey) {
+      routeNotificationLocalReadKeyRef.current = readKey;
+      markNotificationsReadLocal({ projectPath: stateProjectPath, ids: [routeNotificationId] });
+    }
+    if (!serviceEndpoint) return;
+    const serverReadKey = `${readKey}\u0000${token ?? ""}`;
+    if (routeNotificationServerReadKeyRef.current === serverReadKey) return;
+    routeNotificationServerReadKeyRef.current = serverReadKey;
+    void markNotificationsRead(
+      serviceEndpoint,
+      { id: routeNotificationId },
+      { token: token ?? undefined },
+    ).catch(() => {
+      if (routeNotificationServerReadKeyRef.current === serverReadKey) {
+        routeNotificationServerReadKeyRef.current = null;
+      }
+    });
+  }, [markNotificationsReadLocal, routeNotificationId, serviceEndpoint, stateProjectPath, token]);
 
   useEffect(() => {
     let cancelled = false;
@@ -709,21 +833,15 @@ export default function ChatScreen() {
     () => agentActivityLabel(activity, activityText),
     [activity, activityText],
   );
+  const activityLabelShimmer = shouldShimmerAgentActivityLabel(activity, activityLabel);
 
   const wideControls = composerWidth >= COMPOSER_CONTROL_LABEL_WIDTH;
-  const compactHeaderActions = width < 430;
   const headerActionsMaxWidth =
     Platform.OS === "web" ? undefined : Math.max(MIN_HEADER_ACTIONS_WIDTH, width * 0.52);
-  const composerInputScrollEnabled =
-    composerInputContentHeight > COMPOSER_INPUT_MAX_HEIGHT - COMPOSER_INPUT_HEIGHT_SLOP;
-  const composerInputHeight = composerInputHeightForContentHeight(composerInputContentHeight);
   const composerFooterBottomPadding =
     Platform.OS === "web" || keyboardVisible
       ? COMPOSER_FOOTER_VERTICAL_PADDING
       : COMPOSER_FOOTER_VERTICAL_PADDING + resolveChromeBottomInset(insets.bottom);
-  const heartbeatReady = isSharedSessionView || !relayConfigured || relayStatus === "connected";
-  const endpointHost = serviceEndpoint?.host ?? null;
-  const endpointPort = serviceEndpoint?.port ?? null;
   const displayServiceEndpoint =
     serviceEndpoint ??
     (lastConnectedEndpoint?.projectPath === stateProjectPath
@@ -731,11 +849,70 @@ export default function ChatScreen() {
       : null);
   const serviceDisconnected =
     !routeSessionMissing && !serviceEndpoint && Boolean(displayServiceEndpoint);
+  const showComposerFooter = !routeSessionMissing && Boolean(displayServiceEndpoint);
+  const showPairingBanner =
+    relayConfigured &&
+    relayStatus === "device_pending" &&
+    pathname !== "/shares" &&
+    !pathname.startsWith("/shares/") &&
+    !activeShare;
+  const resolvedTopInset = resolveChromeTopInset(insets.top, {
+    reserveTopSafeArea: sidebarPresentation !== "persistent",
+  });
+  const topBarHeight = chatTopBarReserveHeight({
+    pairingBannerVisible: showPairingBanner,
+    topInset: resolvedTopInset,
+  });
+  const chatHeaderTopReserve = topBarHeight + CHAT_SESSION_HEADER_HEIGHT;
+  const chatOverlayPanelReserve = chatOverlayPanelReserveHeight({
+    manageOpen: managePanelOpen,
+    serviceDisconnected,
+    shareDetailsExpanded: shareDetailsExpanded || !activeShare,
+    shareOpen: sharePanelOpen,
+    windowHeight,
+  });
+  const chatControlPanelReserve = chatControlPanelReserveHeight({
+    manageOpen: managePanelOpen,
+    shareDetailsExpanded: shareDetailsExpanded || !activeShare,
+    shareOpen: sharePanelOpen,
+    windowHeight,
+  });
+  const chatControlPanelTopReserve =
+    chatHeaderTopReserve + (serviceDisconnected ? CHAT_RECONNECTING_PANEL_RESERVE : 0);
+  const chatTopContentReserve = chatTranscriptTopReserveHeight({
+    pairingBannerVisible: showPairingBanner,
+    panelReserveHeight: chatOverlayPanelReserve,
+    topInset: resolvedTopInset,
+  });
+  const chatBottomContentReserve =
+    COMPOSER_FOOTER_VERTICAL_PADDING +
+    COMPOSER_INPUT_MAX_HEIGHT +
+    CHAT_COMPOSER_RESERVE_GAP +
+    CHAT_COMPOSER_CONTROL_ROW_HEIGHT +
+    composerFooterBottomPadding +
+    (pendingAttachments.length > 0 ? CHAT_ATTACHMENT_STRIP_RESERVE : 0);
+  const effectiveChatChromeVisible =
+    chatChromeVisible ||
+    keyboardVisible ||
+    composerFocused ||
+    pendingAttachments.length > 0 ||
+    sharePanelOpen ||
+    managePanelOpen ||
+    serviceDisconnected ||
+    routeSessionMissing ||
+    !displayServiceEndpoint;
+  const newMessageBadgeBottomOffset = effectiveChatChromeVisible
+    ? chatBottomContentReserve + 10
+    : composerFooterBottomPadding + 8;
+  const heartbeatReady = isSharedSessionView || !relayConfigured || relayStatus === "connected";
+  const endpointHost = serviceEndpoint?.host ?? null;
+  const endpointPort = serviceEndpoint?.port ?? null;
   const useScrollableNativeHeader = Platform.OS !== "web";
   const chatBubbleMaxWidth = Math.max(
     260,
     Math.floor((width - CHAT_SCROLL_HORIZONTAL_PADDING) * CHAT_ASSISTANT_BUBBLE_MAX_RATIO),
   );
+
   const chatDividerWidth = Math.max(
     MIN_CHAT_DIVIDER_WIDTH,
     Math.min(
@@ -745,89 +922,6 @@ export default function ChatScreen() {
           CHAT_DIVIDER_WIDTH_SAFETY,
       ),
     ),
-  );
-
-  const cancelPendingChatScroll = useCallback(() => {
-    if (chatScrollFrameRef.current === null) return;
-    cancelAnimationFrame(chatScrollFrameRef.current);
-    chatScrollFrameRef.current = null;
-  }, []);
-
-  const executeChatScrollCommand = useCallback(
-    (command: ChatScrollCommand) => {
-      if (command.kind === "none") return;
-      cancelPendingChatScroll();
-      chatScrollFrameRef.current = requestAnimationFrame(() => {
-        chatScrollFrameRef.current = null;
-        if (
-          command.reason !== "initial" &&
-          command.reason !== "navigation" &&
-          chatScrollPolicyRef.current.intent !== "pinned"
-        ) {
-          return;
-        }
-        chatScrollRef.current?.scrollToEnd({ animated: command.animated });
-      });
-    },
-    [cancelPendingChatScroll],
-  );
-
-  useEffect(() => cancelPendingChatScroll, [cancelPendingChatScroll]);
-
-  useFocusEffect(
-    useCallback(() => {
-      chatInitialLayoutKeyRef.current = sessionId ?? null;
-      chatScrollPolicyRef.current = chatPolicyAfterNavigationFocus();
-      const interaction = InteractionManager.runAfterInteractions(() => {
-        executeChatScrollCommand(chatCommandForNavigationFocus());
-      });
-      return () => interaction.cancel();
-    }, [executeChatScrollCommand, sessionId]),
-  );
-
-  const handleChatLayout = useCallback(
-    (event: LayoutChangeEvent) => {
-      chatScrollMetricsRef.current = {
-        ...chatScrollMetricsRef.current,
-        viewportHeight: event.nativeEvent.layout.height,
-      };
-      const layoutKey = sessionId ?? "unscoped";
-      if (chatInitialLayoutKeyRef.current !== layoutKey) {
-        chatInitialLayoutKeyRef.current = layoutKey;
-        executeChatScrollCommand(chatCommandForInitialLayout());
-        return;
-      }
-      executeChatScrollCommand(chatCommandForContentChange(chatScrollPolicyRef.current));
-    },
-    [executeChatScrollCommand, sessionId],
-  );
-
-  const handleChatContentSizeChange = useCallback(
-    (_contentWidth: number, contentHeight: number) => {
-      chatScrollMetricsRef.current = {
-        ...chatScrollMetricsRef.current,
-        contentHeight,
-      };
-      executeChatScrollCommand(chatCommandForContentChange(chatScrollPolicyRef.current));
-    },
-    [executeChatScrollCommand],
-  );
-
-  const handleChatScroll = useCallback(
-    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-      const metrics: ChatScrollMetrics = {
-        contentHeight: event.nativeEvent.contentSize.height,
-        offsetY: event.nativeEvent.contentOffset.y,
-        viewportHeight: event.nativeEvent.layoutMeasurement.height,
-      };
-      chatScrollMetricsRef.current = metrics;
-      const nextPolicy = chatPolicyAfterUserScroll(chatScrollPolicyRef.current, metrics);
-      if (nextPolicy.intent === "reading") {
-        cancelPendingChatScroll();
-      }
-      chatScrollPolicyRef.current = nextPolicy;
-    },
-    [cancelPendingChatScroll],
   );
 
   useEffect(() => {
@@ -850,11 +944,32 @@ export default function ChatScreen() {
     return () => clearTimeout(timer);
   }, [endpointHost, endpointPort, stateProjectPath]);
 
-  const { refreshOutputSnapshot } = useAgentOutputFeed({
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- a new chat route starts with chrome visible
+    setChatChromeVisible(true);
+    setGlobalChatChromeVisible(true);
+  }, [chatViewportKey, setGlobalChatChromeVisible]);
+
+  const handleChatChromeVisibleChange = useCallback(
+    (visible: boolean) => {
+      setChatChromeVisible((current) => (current === visible ? current : visible));
+    },
+    [setChatChromeVisible],
+  );
+
+  useEffect(() => {
+    setGlobalChatChromeVisible(effectiveChatChromeVisible);
+  }, [effectiveChatChromeVisible, setGlobalChatChromeVisible]);
+
+  useEffect(() => {
+    return () => setGlobalChatChromeVisible(true);
+  }, [setGlobalChatChromeVisible]);
+
+  const { initialStatus: initialOutputStatus, refreshOutputSnapshot } = useAgentOutputFeed({
     appVisible,
     enabled: heartbeatReady && !routeSessionMissing,
     endpoint: serviceEndpoint ?? null,
-    mode: "chat",
+    mode: agentOutputFeedMode,
     sessionId,
     startLine: CHAT_OUTPUT_CAPTURE_START_LINE,
     token,
@@ -870,6 +985,15 @@ export default function ChatScreen() {
   const allMessages = useMemo<ChatMessage[]>(() => {
     return mergeAcceptedComposerMessages(parsedMessages, acceptedComposerMessages);
   }, [acceptedComposerMessages, parsedMessages]);
+  const chatPlaceholderState = useMemo(
+    () =>
+      chatTranscriptPlaceholderState({
+        initialStatus: initialOutputStatus,
+        lastError: transcriptLastError,
+        messageCount: allMessages.length,
+      }),
+    [allMessages.length, initialOutputStatus, transcriptLastError],
+  );
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- parsed transcript updates settle local accepted composer echoes
@@ -895,10 +1019,17 @@ export default function ChatScreen() {
     () => allMessages.reduce((count, message) => count + (message.role === "user" ? 1 : 0), 0),
     [allMessages],
   );
+  const userMessageCountRef = useRef(userMessageCount);
+  const allMessageCountRef = useRef(allMessages.length);
   const composerSendAcknowledged = pendingComposerAck
     ? userMessageAcknowledgesComposerSend(allMessages, pendingComposerAck)
     : false;
   const composerAwaitingAck = pendingComposerAck !== null && !pendingComposerAck.timedOut;
+
+  useLayoutEffect(() => {
+    userMessageCountRef.current = userMessageCount;
+    allMessageCountRef.current = allMessages.length;
+  }, [allMessages.length, userMessageCount]);
 
   useEffect(() => {
     if (!pendingComposerAck) return;
@@ -917,7 +1048,6 @@ export default function ChatScreen() {
       setDraft("");
       setDraftHasContent(false);
       setPendingAttachments([]);
-      setComposerInputContentHeight(COMPOSER_INPUT_MIN_HEIGHT);
     }
     setSendError(null);
     setPendingComposerAck(null);
@@ -985,16 +1115,10 @@ export default function ChatScreen() {
       session?.label ||
       sessionId ||
       "Unknown session";
-  const sessionToolLabel =
-    routeSessionMissing || compactHeaderActions ? "" : (session?.command ?? "");
-  // Status and branch, then the id last: the id is the only part that never helps
-  // you tell two of these apart at a glance, but it is still what you quote in a
-  // bug report, so it stays reachable rather than gone.
+  // Keep the chat header focused on human context; ids remain in error states.
   const sessionSubtitle = routeSessionMissing
     ? `${sessionId} · not found`
-    : [headerWorktreeBranch, session?.status ?? "unknown", session?.command, sessionId]
-        .filter(Boolean)
-        .join(" · ");
+    : [headerWorktreeBranch, session?.status ?? "unknown"].filter(Boolean).join(" · ");
   const composerSendText =
     draftHasContent && serviceEndpoint && sessionId && !routeSessionMissing && !sendBusy
       ? draft
@@ -1010,143 +1134,195 @@ export default function ChatScreen() {
     (composerSendText || hasPendingAttachments),
   );
 
-  async function handleSendMessage() {
-    const text = normalizeComposerDraft(composerSendText ?? "") ?? "";
-    const attachments = [...pendingAttachments];
-    if (
-      !serviceEndpoint ||
-      !sessionId ||
-      !session ||
-      ownerShareStatusPending ||
-      sendBusyRef.current ||
-      composerAwaitingAck ||
-      (!text && attachments.length === 0)
-    ) {
-      return;
-    }
-    sendBusyRef.current = true;
-    const sendOperationId = sendOperationIdRef.current + 1;
-    sendOperationIdRef.current = sendOperationId;
-    const sendComposerDraftKey = composerDraftKey;
-    clearLocalInterruptHold(sessionId);
-    const baselineUserMessageCount = userMessageCount;
-    const baselineMessageCount = allMessages.length;
-    setSendBusy(true);
-    setSendError(null);
-    const sendStillOwnsActiveComposer = () =>
-      sendOperationIdRef.current === sendOperationId &&
-      activeComposerDraftKeyRef.current === sendComposerDraftKey;
-    try {
-      for (let idx = 0; idx < attachments.length; idx += 1) {
-        const attachment = attachments[idx];
-        if (attachment.uploadedAttachmentId) continue;
-        const uploaded = await uploadAttachment(
-          serviceEndpoint,
-          {
-            kind: attachment.kind,
-            filename: attachment.filename,
-            mimeType: attachment.mimeType,
-            dataBase64: await pickedAttachmentDataBase64(attachment),
-            sessionId: sessionKey,
-          },
-          { token },
-        );
-        attachments[idx] = {
-          ...attachment,
-          uploadedAttachmentId: uploaded.attachment.id,
-        };
-      }
-      await sendLivePaneInput(serviceEndpoint, sessionId, text, {
-        token,
-        attachmentIds: attachments
-          .map((attachment) => attachment.uploadedAttachmentId)
-          .filter((id): id is string => Boolean(id)),
-        ...(sharedChatActor ? { sharedChatActor } : {}),
-      });
-      const acceptedPending: PendingComposerAck = {
-        attachmentCount: attachments.length,
-        attachmentIds: attachments
-          .map((attachment) => attachment.uploadedAttachmentId)
-          .filter((id): id is string => Boolean(id)),
-        attachmentFilenames: attachments.map((attachment) => attachment.filename),
-        baselineUserMessageCount,
-        id: Date.now(),
-        showTimeoutError: false,
-        text,
-        timedOut: false,
-      };
-      const clientMessageId = `composer:${sessionKey}:${acceptedPending.id}`;
-      const acceptedMessage = buildAcceptedComposerMessage({
-        attachments,
-        clientMessageId,
-        sessionKey,
-        text,
-      });
-      releasePendingAttachmentPreviews(attachments);
-      if (!sendStillOwnsActiveComposer()) {
-        if (sendComposerDraftKey) composerDraftsByKey.delete(sendComposerDraftKey);
+  const handleSendMessage = useCallback(
+    async (options?: { preserveFocus?: boolean }) => {
+      const preserveFocus = options?.preserveFocus === true;
+      const text = normalizeComposerDraft(composerSendText ?? "") ?? "";
+      const attachments = [...pendingAttachments];
+      if (
+        !serviceEndpoint ||
+        !sessionId ||
+        !session ||
+        ownerShareStatusPending ||
+        sendBusyRef.current ||
+        composerAwaitingAck ||
+        (!text && attachments.length === 0)
+      ) {
         return;
       }
-      setAcceptedComposerMessages((current) =>
-        [
-          ...current,
-          {
-            baselineMessageCount,
-            clientMessageId,
-            message: acceptedMessage,
-            pending: acceptedPending,
-          },
-        ].slice(-20),
-      );
-      setDraft("");
-      setDraftHasContent(false);
-      setPendingAttachments([]);
-      setComposerInputContentHeight(COMPOSER_INPUT_MIN_HEIGHT);
-      setPendingComposerAck(null);
-      if (sendComposerDraftKey) composerDraftsByKey.delete(sendComposerDraftKey);
-      void refreshOutputSnapshot().catch(() => {});
-    } catch (err) {
-      if (!sendStillOwnsActiveComposer()) {
-        if (sendComposerDraftKey) {
-          rememberComposerDraft(sendComposerDraftKey, {
-            draft: text,
-            inputContentHeight: composerInputContentHeight,
-            pendingAttachments: attachments,
-          });
-        } else {
-          releasePendingAttachmentPreviews(attachments);
+      sendBusyRef.current = true;
+      const sendOperationId = sendOperationIdRef.current + 1;
+      sendOperationIdRef.current = sendOperationId;
+      const sendComposerDraftKey = composerDraftKey;
+      clearLocalInterruptHold(sessionId);
+      const baselineUserMessageCount = userMessageCountRef.current;
+      const baselineMessageCount = allMessageCountRef.current;
+      chatViewportRef.current?.showNewest();
+      setSendBusy(true);
+      setSendError(null);
+      const sendStillOwnsActiveComposer = () =>
+        sendOperationIdRef.current === sendOperationId &&
+        activeComposerDraftKeyRef.current === sendComposerDraftKey;
+      try {
+        for (let idx = 0; idx < attachments.length; idx += 1) {
+          const attachment = attachments[idx];
+          if (attachment.uploadedAttachmentId) continue;
+          const uploaded = await uploadAttachment(
+            serviceEndpoint,
+            {
+              kind: attachment.kind,
+              filename: attachment.filename,
+              mimeType: attachment.mimeType,
+              dataBase64: await pickedAttachmentDataBase64(attachment),
+              sessionId: sessionKey,
+            },
+            { token },
+          );
+          attachments[idx] = {
+            ...attachment,
+            uploadedAttachmentId: uploaded.attachment.id,
+          };
         }
+        await sendLivePaneInput(serviceEndpoint, sessionId, text, {
+          token,
+          attachmentIds: attachments
+            .map((attachment) => attachment.uploadedAttachmentId)
+            .filter((id): id is string => Boolean(id)),
+          ...(sharedChatActor ? { sharedChatActor } : {}),
+        });
+        const acceptedPending: PendingComposerAck = {
+          attachmentCount: attachments.length,
+          attachmentIds: attachments
+            .map((attachment) => attachment.uploadedAttachmentId)
+            .filter((id): id is string => Boolean(id)),
+          attachmentFilenames: attachments.map((attachment) => attachment.filename),
+          baselineUserMessageCount,
+          id: Date.now(),
+          showTimeoutError: false,
+          text,
+          timedOut: false,
+        };
+        const clientMessageId = `composer:${sessionKey}:${acceptedPending.id}`;
+        const acceptedMessage = buildAcceptedComposerMessage({
+          attachments,
+          clientMessageId,
+          sessionKey,
+          text,
+        });
+        releasePendingAttachmentPreviews(attachments);
+        if (!sendStillOwnsActiveComposer()) {
+          if (sendComposerDraftKey) composerDraftsByKey.delete(sendComposerDraftKey);
+          return;
+        }
+        setAcceptedComposerMessages((current) =>
+          [
+            ...current,
+            {
+              baselineMessageCount,
+              clientMessageId,
+              message: acceptedMessage,
+              pending: acceptedPending,
+            },
+          ].slice(-20),
+        );
+        setDraft("");
+        setDraftHasContent(false);
+        setPendingAttachments([]);
+        setPendingComposerAck(null);
+        if (sendComposerDraftKey) composerDraftsByKey.delete(sendComposerDraftKey);
+        void refreshOutputSnapshot().catch(() => {});
+      } catch (err) {
+        if (!sendStillOwnsActiveComposer()) {
+          if (sendComposerDraftKey) {
+            rememberComposerDraft(sendComposerDraftKey, {
+              draft: text,
+              pendingAttachments: attachments,
+            });
+          } else {
+            releasePendingAttachmentPreviews(attachments);
+          }
+          return;
+        }
+        setPendingComposerAck(
+          isTransientRequestError(err)
+            ? {
+                attachmentCount: attachments.length,
+                attachmentIds: attachments
+                  .map((attachment) => attachment.uploadedAttachmentId)
+                  .filter((id): id is string => Boolean(id)),
+                attachmentFilenames: attachments.map((attachment) => attachment.filename),
+                baselineUserMessageCount,
+                id: Date.now(),
+                showTimeoutError: true,
+                text,
+                timedOut: true,
+              }
+            : null,
+        );
+        setDraft(text);
+        setDraftHasContent(hasComposerDraftContent(text));
+        setPendingAttachments(attachments);
+        setSendError(formatComposerSendFailure(err));
+      } finally {
+        if (sendOperationIdRef.current === sendOperationId) {
+          sendBusyRef.current = false;
+          setSendBusy(false);
+        }
+        if (preserveFocus) {
+          requestAnimationFrame(() => composerInputRef.current?.focus());
+        }
+      }
+    },
+    [
+      clearLocalInterruptHold,
+      composerAwaitingAck,
+      composerDraftKey,
+      composerSendText,
+      ownerShareStatusPending,
+      pendingAttachments,
+      refreshOutputSnapshot,
+      serviceEndpoint,
+      session,
+      sessionId,
+      sessionKey,
+      setAcceptedComposerMessages,
+      setDraft,
+      setDraftHasContent,
+      setPendingAttachments,
+      setPendingComposerAck,
+      setSendBusy,
+      setSendError,
+      sharedChatActor,
+      token,
+    ],
+  );
+
+  const handleSendPress = useCallback(() => {
+    void handleSendMessage({ preserveFocus: true });
+  }, [handleSendMessage]);
+
+  const appendPendingAttachments = useCallback(
+    (attachments: PickedAttachment[]) => {
+      if (attachments.length === 0) return;
+      const slots = MAX_PENDING_ATTACHMENTS - pendingAttachments.length;
+      if (slots <= 0) {
+        releasePendingAttachmentPreviews(attachments);
+        setSendError(`Attach up to ${MAX_PENDING_ATTACHMENTS} files.`);
         return;
       }
-      setPendingComposerAck(
-        isTransientRequestError(err)
-          ? {
-              attachmentCount: attachments.length,
-              attachmentIds: attachments
-                .map((attachment) => attachment.uploadedAttachmentId)
-                .filter((id): id is string => Boolean(id)),
-              attachmentFilenames: attachments.map((attachment) => attachment.filename),
-              baselineUserMessageCount,
-              id: Date.now(),
-              showTimeoutError: true,
-              text,
-              timedOut: true,
-            }
+      const accepted = attachments.slice(0, slots);
+      releasePendingAttachmentPreviews(attachments.slice(slots));
+      setPendingAttachments((current) => [...current, ...accepted]);
+      setSendError(
+        accepted.length < attachments.length
+          ? `Attach up to ${MAX_PENDING_ATTACHMENTS} files.`
           : null,
       );
-      setDraft(text);
-      setDraftHasContent(hasComposerDraftContent(text));
-      setPendingAttachments(attachments);
-      setSendError(formatComposerSendFailure(err));
-    } finally {
-      if (sendOperationIdRef.current === sendOperationId) {
-        sendBusyRef.current = false;
-        setSendBusy(false);
-      }
-    }
-  }
+    },
+    [pendingAttachments.length, setPendingAttachments, setSendError],
+  );
 
-  async function handleAttachAttachment() {
+  const handleAttachAttachment = useCallback(async () => {
     if (sendBusy || sendBusyRef.current || composerAwaitingAck) return;
     setSendError(null);
     try {
@@ -1160,63 +1336,60 @@ export default function ChatScreen() {
     } catch (err) {
       setSendError(err instanceof Error ? err.message : String(err));
     }
-  }
+  }, [
+    appendPendingAttachments,
+    composerAwaitingAck,
+    pendingAttachments.length,
+    sendBusy,
+    setSendError,
+  ]);
 
-  function handleDropAttachments(attachments: PickedAttachment[]) {
-    if (sendBusy || sendBusyRef.current || composerAwaitingAck) {
-      releasePendingAttachmentPreviews(attachments);
-      return;
-    }
-    setSendError(null);
-    appendPendingAttachments(attachments);
-  }
-
-  async function handleComposerPaste(event: {
-    clipboardData?: ClipboardFileSource | null;
-    nativeEvent?: { clipboardData?: ClipboardFileSource | null };
-    preventDefault?: () => void;
-  }) {
-    if (Platform.OS !== "web" || sendBusy || sendBusyRef.current || composerAwaitingAck) return;
-    const clipboardData = event.clipboardData ?? event.nativeEvent?.clipboardData;
-    if (!clipboardDataHasFile(clipboardData)) return;
-    event.preventDefault?.();
-    setSendError(null);
-    try {
-      const attachments = await attachmentsFromClipboardData(clipboardData);
-      if (attachments.length === 0) {
-        setSendError("Pasted files are not supported.");
+  const handleDropAttachments = useCallback(
+    (attachments: PickedAttachment[]) => {
+      if (sendBusy || sendBusyRef.current || composerAwaitingAck) {
+        releasePendingAttachmentPreviews(attachments);
         return;
       }
+      setSendError(null);
       appendPendingAttachments(attachments);
-    } catch (err) {
-      setSendError(err instanceof Error ? err.message : String(err));
-    }
-  }
+    },
+    [appendPendingAttachments, composerAwaitingAck, sendBusy, setSendError],
+  );
 
-  function appendPendingAttachments(attachments: PickedAttachment[]) {
-    if (attachments.length === 0) return;
-    const slots = MAX_PENDING_ATTACHMENTS - pendingAttachments.length;
-    if (slots <= 0) {
-      releasePendingAttachmentPreviews(attachments);
-      setSendError(`Attach up to ${MAX_PENDING_ATTACHMENTS} files.`);
-      return;
-    }
-    const accepted = attachments.slice(0, slots);
-    releasePendingAttachmentPreviews(attachments.slice(slots));
-    setPendingAttachments((current) => [...current, ...accepted]);
-    setSendError(
-      accepted.length < attachments.length
-        ? `Attach up to ${MAX_PENDING_ATTACHMENTS} files.`
-        : null,
-    );
-  }
+  const handleComposerPaste = useCallback(
+    async (event: {
+      clipboardData?: ClipboardFileSource | null;
+      nativeEvent?: { clipboardData?: ClipboardFileSource | null };
+      preventDefault?: () => void;
+    }) => {
+      if (Platform.OS !== "web" || sendBusy || sendBusyRef.current || composerAwaitingAck) return;
+      const clipboardData = event.clipboardData ?? event.nativeEvent?.clipboardData;
+      if (!clipboardDataHasFile(clipboardData)) return;
+      event.preventDefault?.();
+      setSendError(null);
+      try {
+        const attachments = await attachmentsFromClipboardData(clipboardData);
+        if (attachments.length === 0) {
+          setSendError("Pasted files are not supported.");
+          return;
+        }
+        appendPendingAttachments(attachments);
+      } catch (err) {
+        setSendError(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [appendPendingAttachments, composerAwaitingAck, sendBusy, setSendError],
+  );
 
-  function removePendingAttachment(id: string) {
-    setPendingAttachments((current) => {
-      releasePendingAttachmentPreviews(current.filter((attachment) => attachment.id === id));
-      return current.filter((attachment) => attachment.id !== id);
-    });
-  }
+  const removePendingAttachment = useCallback(
+    (id: string) => {
+      setPendingAttachments((current) => {
+        releasePendingAttachmentPreviews(current.filter((attachment) => attachment.id === id));
+        return current.filter((attachment) => attachment.id !== id);
+      });
+    },
+    [setPendingAttachments],
+  );
 
   /**
    * Interrupt is offered unconditionally rather than only while we believe the
@@ -1224,7 +1397,7 @@ export default function ChatScreen() {
    * on our guess about busy-ness only makes it unavailable exactly when the
    * guess is wrong.
    */
-  async function handleInterrupt() {
+  const handleInterrupt = useCallback(async () => {
     if (!endpointHost || !endpointPort || !sessionId) return;
     markOutputInterrupted(sessionId);
     if (interruptInFlightRef.current) return;
@@ -1238,47 +1411,148 @@ export default function ChatScreen() {
     } finally {
       interruptInFlightRef.current = false;
     }
-  }
+  }, [
+    endpointHost,
+    endpointPort,
+    markOutputInterrupted,
+    refreshOutputSnapshot,
+    sessionId,
+    setSendError,
+    token,
+  ]);
 
-  function handleComposerKeyPress(event: {
-    nativeEvent: {
+  const handleRetryTranscriptLoad = useCallback(
+    (purpose: AgentOutputFeedPurpose = "poll") => {
+      void refreshOutputSnapshot(purpose, { surfaceError: true }).catch(() => {});
+    },
+    [refreshOutputSnapshot],
+  );
+
+  useEffect(() => {
+    nativeChatSendRef.current = () => {
+      if (!composerFocusedRef.current) return;
+      void handleSendMessage({ preserveFocus: true });
+    };
+  }, [handleSendMessage]);
+
+  useEffect(() => {
+    nativeChatInterruptRef.current = () => {
+      if (canUseOwnerControls) void handleInterrupt();
+    };
+  }, [canUseOwnerControls, handleInterrupt]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (Platform.OS === "web" || !sessionId) return undefined;
+      let active = true;
+      let task: { cancel: () => void } | null = null;
+      const focusTargetKey = chatViewportKey;
+      void getNativeHardwareKeyboardConnected().then((connected) => {
+        if (!active || !connected || !focusTargetKey) return;
+        task = InteractionManager.runAfterInteractions(() => {
+          if (active) composerInputRef.current?.focus();
+        });
+      });
+      return () => {
+        active = false;
+        task?.cancel();
+      };
+    }, [chatViewportKey, sessionId]),
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      if (Platform.OS === "web") return undefined;
+      const unsubscribe = subscribeNativeAppCommands((command) => {
+        if (command === "chatSend") {
+          nativeChatSendRef.current();
+          return;
+        }
+        if (command === "chatInterrupt") nativeChatInterruptRef.current();
+      });
+      return () => {
+        composerFocusedRef.current = false;
+        setComposerFocused(false);
+        setNativeChatComposerFocused(false);
+        unsubscribe();
+      };
+    }, [setComposerFocused]),
+  );
+
+  const handleComposerKeyboardEvent = useCallback(
+    (event: {
       key?: string;
       shiftKey?: boolean;
       ctrlKey?: boolean;
       metaKey?: boolean;
       altKey?: boolean;
-    };
-    preventDefault?: () => void;
-  }) {
-    if (Platform.OS !== "web") return;
-    if (shouldSubmitComposerKey(event.nativeEvent)) {
-      event.preventDefault?.();
-      void handleSendMessage();
-    }
-  }
+      nativeEvent?: {
+        key?: string;
+        shiftKey?: boolean;
+        ctrlKey?: boolean;
+        metaKey?: boolean;
+        altKey?: boolean;
+      };
+      preventDefault?: () => void;
+    }) => {
+      if (Platform.OS !== "web") return;
+      const keyEvent = {
+        key: event.nativeEvent?.key ?? event.key,
+        shiftKey: event.nativeEvent?.shiftKey ?? event.shiftKey,
+        ctrlKey: event.nativeEvent?.ctrlKey ?? event.ctrlKey,
+        metaKey: event.nativeEvent?.metaKey ?? event.metaKey,
+        altKey: event.nativeEvent?.altKey ?? event.altKey,
+      };
+      if (keyEvent.key === "Escape") {
+        event.preventDefault?.();
+        if (canUseOwnerControls) void handleInterrupt();
+        return;
+      }
+      if (shouldSubmitComposerKey(keyEvent)) {
+        event.preventDefault?.();
+        void handleSendMessage({ preserveFocus: true });
+      }
+    },
+    [canUseOwnerControls, handleInterrupt, handleSendMessage],
+  );
 
-  function handleComposerContentSizeChange(
-    event: NativeSyntheticEvent<TextInputContentSizeChangeEventData>,
-  ) {
-    const nextHeight = Math.max(
-      COMPOSER_INPUT_MIN_HEIGHT,
-      Math.ceil(event.nativeEvent.contentSize.height),
-    );
-    setComposerInputContentHeight((current) => (current === nextHeight ? current : nextHeight));
-  }
+  const handleDraftChange = useCallback(
+    (text: string) => {
+      setDraft(text);
+      const nextHasContent = hasComposerDraftContent(text);
+      setDraftHasContent((current) => (current === nextHasContent ? current : nextHasContent));
+      if (sendError) setSendError(null);
+    },
+    [sendError, setDraft, setDraftHasContent, setSendError],
+  );
 
-  function handleDraftChange(text: string) {
-    setDraft(text);
-    const nextHasContent = hasComposerDraftContent(text);
-    setDraftHasContent((current) => (current === nextHasContent ? current : nextHasContent));
-    if (!text) setComposerInputContentHeight(COMPOSER_INPUT_MIN_HEIGHT);
-    if (sendError) setSendError(null);
-  }
+  const composerPasteProps = useMemo(
+    () =>
+      Platform.OS === "web"
+        ? ({ onPaste: handleComposerPaste } as Record<string, unknown>)
+        : undefined,
+    [handleComposerPaste],
+  );
 
-  const composerPasteProps =
-    Platform.OS === "web"
-      ? ({ onPaste: handleComposerPaste } as Record<string, unknown>)
-      : undefined;
+  const composerKeyboardProps = useMemo(
+    () =>
+      Platform.OS === "web"
+        ? ({
+            onKeyDown: handleComposerKeyboardEvent,
+          } as unknown as Partial<React.ComponentProps<typeof TextInput>>)
+        : {},
+    [handleComposerKeyboardEvent],
+  );
+
+  const setComposerNativeFocus = useCallback(
+    (focused: boolean, updateFocusShell: () => void) => {
+      composerFocusedRef.current = focused;
+      setComposerFocused((current) => (current === focused ? current : focused));
+      setNativeChatComposerFocused(focused);
+      updateFocusShell();
+    },
+    [setComposerFocused],
+  );
 
   useEffect(() => {
     if (!shouldLoadShareSummary) {
@@ -1434,202 +1708,287 @@ export default function ChatScreen() {
   function goBack() {
     blurWebActiveElement();
     if (isSharedSessionView) {
-      router.replace("/shares");
+      router.dismissTo("/shares");
       return;
     }
-    if (router.canGoBack()) router.back();
-    else router.replace(parentViewHrefForPath(pathname, projectPath));
+    router.dismissTo(buildMainTabHref("project", projectPath));
   }
 
-  const composerFooterContent = (
-    <View
-      className="border-t border-border bg-background px-3 py-3"
-      style={{
-        flexShrink: 0,
-        paddingBottom: composerFooterBottomPadding,
-      }}
-    >
-      {pendingAttachments.length > 0 ? (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-2">
-          <View className="flex-row gap-2">
-            {pendingAttachments.map((attachment) => (
-              <View
-                key={attachment.id}
-                className="w-24 rounded-md border border-border bg-card p-1"
-              >
-                {attachment.kind === "image" || attachment.mimeType.startsWith("image/") ? (
-                  <Image
-                    source={{ uri: attachment.previewUri }}
-                    className="h-14 w-full rounded"
-                    resizeMode="cover"
-                  />
-                ) : (
-                  <View className="h-14 w-full items-center justify-center rounded bg-muted px-1">
-                    <Text className="text-center text-[10px] font-semibold uppercase text-muted-foreground">
-                      {attachment.kind}
-                    </Text>
-                  </View>
-                )}
-                <Text className="mt-1 text-[10px] text-muted-foreground" numberOfLines={1}>
-                  {attachment.filename}
-                </Text>
-                <Pressable
-                  onPress={() => removePendingAttachment(attachment.id)}
-                  accessibilityLabel={`Remove ${attachment.filename}`}
-                  className="absolute right-1 top-1 h-5 w-5 items-center justify-center rounded-full bg-background/90"
+  function toggleSharePanel() {
+    setSharePanelOpen((open) => {
+      const next = !open;
+      if (next) setManagePanelOpen(false);
+      return next;
+    });
+  }
+
+  function toggleManagePanel() {
+    setManagePanelOpen((open) => {
+      const next = !open;
+      if (next) setSharePanelOpen(false);
+      return next;
+    });
+  }
+
+  const composerFooterContent = useMemo(
+    () => (
+      <View
+        className="border-t border-border bg-background px-3 py-3"
+        style={{
+          flexShrink: 0,
+          paddingBottom: composerFooterBottomPadding,
+        }}
+      >
+        {pendingAttachments.length > 0 ? (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-2">
+            <View className="flex-row gap-2">
+              {pendingAttachments.map((attachment) => (
+                <View
+                  key={attachment.id}
+                  className="w-24 rounded-md border border-border bg-card p-1"
                 >
-                  <X size={12} color="#a1a1aa" />
-                </Pressable>
-              </View>
-            ))}
-          </View>
-        </ScrollView>
-      ) : null}
-      {/*
+                  {attachment.kind === "image" || attachment.mimeType.startsWith("image/") ? (
+                    <Image
+                      source={{ uri: attachment.previewUri }}
+                      className="h-14 w-full rounded"
+                      resizeMode="cover"
+                    />
+                  ) : (
+                    <View className="h-14 w-full items-center justify-center rounded bg-muted px-1">
+                      <Text className="text-center text-[10px] font-semibold uppercase text-muted-foreground">
+                        {attachment.kind}
+                      </Text>
+                    </View>
+                  )}
+                  <Text className="mt-1 text-[10px] text-muted-foreground" numberOfLines={1}>
+                    {attachment.filename}
+                  </Text>
+                  <Pressable
+                    onPress={() => removePendingAttachment(attachment.id)}
+                    accessibilityLabel={`Remove ${attachment.filename}`}
+                    className="absolute right-1 top-1 h-5 w-5 items-center justify-center rounded-full bg-background/90"
+                  >
+                    <X size={12} color="#a1a1aa" />
+                  </Pressable>
+                </View>
+              ))}
+            </View>
+          </ScrollView>
+        ) : null}
+        {/*
       One card holding the message and the controls that act on it, so the
       composer reads as a single object rather than a field with things parked
       either side of it. The controls sit under the text because that is where
       the width is: flanking them costs a third of a phone screen, and the text
       is the part that needs it.
     */}
-      <AttachmentDropZone
-        disabled={
-          sendBusy || composerAwaitingAck || pendingAttachments.length >= MAX_PENDING_ATTACHMENTS
-        }
-        onDropAttachments={handleDropAttachments}
-        onDropRejected={setSendError}
-        onPasteAttachments={handleDropAttachments}
-        onPasteRejected={setSendError}
-      >
-        {({ dragging }) => (
-          <ComposerFocusShell
-            dragging={dragging}
-            sending={sendBusy || composerAwaitingAck}
-            onLayout={(event: LayoutChangeEvent) =>
-              setComposerWidth(event.nativeEvent.layout.width)
-            }
-          >
-            {({ onBlur, onFocus }) => (
-              <>
-                <TextInput
-                  ref={composerInputRef}
-                  accessibilityLabel="Message the agent"
-                  nativeID={CHAT_INPUT_NATIVE_ID}
-                  autoComplete="off"
-                  autoCapitalize="sentences"
-                  importantForAutofill="no"
-                  inputMode="text"
-                  textContentType="none"
-                  onFocus={onFocus}
-                  onBlur={onBlur}
-                  value={draft}
-                  onChangeText={handleDraftChange}
-                  onKeyPress={handleComposerKeyPress}
-                  {...COMPOSER_WEB_INPUT_PROPS}
-                  {...composerPasteProps}
-                  onContentSizeChange={handleComposerContentSizeChange}
-                  placeholder="Ask the agent…"
-                  placeholderTextColor="#71717a"
-                  multiline
-                  lineBreakStrategyIOS="standard"
-                  editable={!sendBusy && !composerAwaitingAck}
-                  scrollEnabled={composerInputScrollEnabled}
-                  textBreakStrategy="balanced"
-                  className="w-full text-sm text-foreground"
-                  style={[
-                    NO_BROWSER_FOCUS_RING,
-                    {
-                      alignSelf: "stretch",
-                      flexGrow: 0,
-                      flexShrink: 1,
-                      fontSize: COMPOSER_INPUT_FONT_SIZE,
-                      height: composerInputHeight,
-                      lineHeight: COMPOSER_INPUT_LINE_HEIGHT,
-                      maxWidth: "100%",
-                      maxHeight: COMPOSER_INPUT_MAX_HEIGHT,
-                      minHeight: COMPOSER_INPUT_MIN_HEIGHT,
-                      minWidth: 0,
-                      paddingHorizontal: COMPOSER_INPUT_HORIZONTAL_PADDING,
-                      paddingTop: COMPOSER_INPUT_VERTICAL_PADDING,
-                      paddingBottom: COMPOSER_INPUT_VERTICAL_PADDING,
-                      opacity: sendBusy || composerAwaitingAck ? 0.55 : 1,
-                      width: "100%",
-                    },
-                  ]}
-                  textAlignVertical="top"
-                />
-                <View className="flex-row items-center gap-2">
-                  <ComposerControl
-                    wide={wideControls}
-                    label="Attach"
-                    accessibilityLabel="Attach a file"
-                    icon={<Plus size={17} color={CONTROL_INK} />}
-                    disabled={
-                      sendBusy ||
-                      composerAwaitingAck ||
-                      pendingAttachments.length >= MAX_PENDING_ATTACHMENTS
-                    }
-                    onPress={handleAttachAttachment}
+        <AttachmentDropZone
+          disabled={
+            sendBusy || composerAwaitingAck || pendingAttachments.length >= MAX_PENDING_ATTACHMENTS
+          }
+          onDropAttachments={handleDropAttachments}
+          onDropRejected={setSendError}
+          onPasteAttachments={handleDropAttachments}
+          onPasteRejected={setSendError}
+        >
+          {({ dragging }) => (
+            <ComposerFocusShell
+              dragging={dragging}
+              sending={sendBusy || composerAwaitingAck}
+              onLayout={(event: LayoutChangeEvent) => {
+                const nextWidth = event.nativeEvent.layout.width;
+                setComposerWidth((currentWidth) =>
+                  currentWidth === nextWidth ? currentWidth : nextWidth,
+                );
+              }}
+            >
+              {({ onBlur, onFocus }) => (
+                <>
+                  <TextInput
+                    ref={composerInputRef}
+                    accessibilityLabel="Message the agent"
+                    nativeID={CHAT_INPUT_NATIVE_ID}
+                    autoComplete="off"
+                    autoCapitalize="sentences"
+                    importantForAutofill="no"
+                    inputMode="text"
+                    textContentType="none"
+                    onFocus={() => setComposerNativeFocus(true, onFocus)}
+                    onBlur={() => setComposerNativeFocus(false, onBlur)}
+                    value={draft}
+                    onChangeText={handleDraftChange}
+                    {...composerKeyboardProps}
+                    {...COMPOSER_WEB_INPUT_PROPS}
+                    {...composerPasteProps}
+                    placeholder="Ask the agent…"
+                    placeholderTextColor="#71717a"
+                    multiline
+                    lineBreakStrategyIOS="standard"
+                    editable={!sendBusy && !composerAwaitingAck}
+                    scrollEnabled
+                    textBreakStrategy="balanced"
+                    className="w-full text-sm text-foreground"
+                    style={[
+                      NO_BROWSER_FOCUS_RING,
+                      {
+                        alignSelf: "stretch",
+                        fontSize: COMPOSER_INPUT_FONT_SIZE,
+                        lineHeight: COMPOSER_INPUT_LINE_HEIGHT,
+                        maxWidth: "100%",
+                        maxHeight: COMPOSER_INPUT_MAX_HEIGHT,
+                        minHeight: COMPOSER_INPUT_MIN_HEIGHT,
+                        minWidth: 0,
+                        paddingHorizontal: COMPOSER_INPUT_HORIZONTAL_PADDING,
+                        paddingTop: COMPOSER_INPUT_VERTICAL_PADDING,
+                        paddingBottom: COMPOSER_INPUT_VERTICAL_PADDING,
+                        opacity: sendBusy || composerAwaitingAck ? 0.55 : 1,
+                        width: "100%",
+                      },
+                    ]}
+                    textAlignVertical="top"
                   />
-                  <View className="min-w-0 flex-1 px-1">
-                    {sendError ? (
-                      <View className="min-w-0 flex-row items-center gap-1.5">
-                        <CircleAlert size={13} color="#f87171" />
-                        <Text className="min-w-0 flex-1 text-xs text-destructive" numberOfLines={1}>
-                          {sendError}
-                        </Text>
-                      </View>
-                    ) : sendBusy || composerAwaitingAck ? (
-                      <View className="min-w-0 flex-row items-center gap-1.5">
-                        <ActivityIndicator size="small" color="#a1a1aa" />
-                        <Text className="text-xs text-muted-foreground" numberOfLines={1}>
-                          Sending...
-                        </Text>
-                      </View>
-                    ) : activityLabel ? (
-                      <ActivityFooterLabel label={activityLabel} />
-                    ) : null}
-                  </View>
-                  {/*
+                  <View className="flex-row items-center gap-2">
+                    <ComposerControl
+                      wide={wideControls}
+                      label="Attach"
+                      accessibilityLabel="Attach a file"
+                      icon={<Plus size={17} color={CONTROL_INK} />}
+                      disabled={
+                        sendBusy ||
+                        composerAwaitingAck ||
+                        pendingAttachments.length >= MAX_PENDING_ATTACHMENTS
+                      }
+                      onPress={handleAttachAttachment}
+                    />
+                    <View className="min-w-0 flex-1 px-1">
+                      {sendError ? (
+                        <View className="min-w-0 flex-row items-center gap-1.5">
+                          <CircleAlert size={13} color="#f87171" />
+                          <Text
+                            className="min-w-0 flex-1 text-xs text-destructive"
+                            numberOfLines={1}
+                          >
+                            {sendError}
+                          </Text>
+                        </View>
+                      ) : sendBusy || composerAwaitingAck ? (
+                        <View className="min-w-0 flex-row items-center gap-1.5">
+                          <ActivityIndicator size="small" color="#a1a1aa" />
+                          <Text className="text-xs text-muted-foreground" numberOfLines={1}>
+                            Sending...
+                          </Text>
+                        </View>
+                      ) : activityLabel ? (
+                        <ActivityFooterLabel label={activityLabel} shimmer={activityLabelShimmer} />
+                      ) : null}
+                    </View>
+                    {/*
                   Always offered, never revealed only while we think the agent is
                   busy. Interrupt is a single ESC, which an idle tool ignores, so
                   gating it on that guess only makes it unavailable exactly when
                   the guess is wrong.
                 */}
-                  {!isSharedSessionView ? (
+                    {!isSharedSessionView ? (
+                      <ComposerControl
+                        wide={wideControls}
+                        label="Stop"
+                        accessibilityLabel="Interrupt the agent"
+                        // Filled, because a stop is a stop and an outline reads as
+                        // a checkbox at this size.
+                        icon={<Square size={13} color={CONTROL_INK} fill={CONTROL_INK} />}
+                        onPress={handleInterrupt}
+                      />
+                    ) : null}
                     <ComposerControl
                       wide={wideControls}
-                      label="Stop"
-                      accessibilityLabel="Interrupt the agent"
-                      // Filled, because a stop is a stop and an outline reads as
-                      // a checkbox at this size.
-                      icon={<Square size={13} color={CONTROL_INK} fill={CONTROL_INK} />}
-                      onPress={handleInterrupt}
+                      brand
+                      label="Send"
+                      accessibilityLabel="Send the message"
+                      icon={<ArrowUp size={18} color={CONTROL_ON_BRAND} />}
+                      disabled={!canSendMessage}
+                      onPress={handleSendPress}
                     />
-                  ) : null}
-                  <ComposerControl
-                    wide={wideControls}
-                    brand
-                    label="Send"
-                    accessibilityLabel="Send the message"
-                    icon={<ArrowUp size={18} color={CONTROL_ON_BRAND} />}
-                    disabled={!canSendMessage}
-                    onPress={handleSendMessage}
-                  />
-                </View>
-              </>
-            )}
-          </ComposerFocusShell>
-        )}
-      </AttachmentDropZone>
-    </View>
+                  </View>
+                </>
+              )}
+            </ComposerFocusShell>
+          )}
+        </AttachmentDropZone>
+      </View>
+    ),
+    [
+      activityLabel,
+      activityLabelShimmer,
+      canSendMessage,
+      composerAwaitingAck,
+      composerFooterBottomPadding,
+      composerKeyboardProps,
+      composerPasteProps,
+      draft,
+      handleAttachAttachment,
+      handleDraftChange,
+      handleDropAttachments,
+      handleInterrupt,
+      handleSendPress,
+      isSharedSessionView,
+      pendingAttachments,
+      removePendingAttachment,
+      sendBusy,
+      sendError,
+      setComposerWidth,
+      setComposerNativeFocus,
+      setSendError,
+      wideControls,
+    ],
   );
-  const composerFooter =
-    Platform.OS === "web" ? (
-      composerFooterContent
+  const composerFooter = useMemo(() => {
+    const composerChromeStyle: ViewStyle = {
+      bottom: 0,
+      left: 0,
+      position: "absolute",
+      right: 0,
+      zIndex: 30,
+    };
+    return Platform.OS === "web" ? (
+      <ChatChromeMotion
+        direction="bottom"
+        distance={chatBottomContentReserve}
+        style={composerChromeStyle}
+        visible={effectiveChatChromeVisible}
+      >
+        {composerFooterContent}
+      </ChatChromeMotion>
     ) : (
-      <KeyboardStickyView style={{ flexShrink: 0 }}>{composerFooterContent}</KeyboardStickyView>
+      <KeyboardStickyView style={composerChromeStyle}>
+        <ChatChromeMotion
+          direction="bottom"
+          distance={chatBottomContentReserve}
+          visible={effectiveChatChromeVisible}
+        >
+          {composerFooterContent}
+        </ChatChromeMotion>
+      </KeyboardStickyView>
     );
+  }, [chatBottomContentReserve, composerFooterContent, effectiveChatChromeVisible]);
+  const modeControls = useMemo(
+    () =>
+      session && canUseOwnerControls ? (
+        <AgentOutputModeControl
+          canUseSplitView={canUseSplitView}
+          mode={agentOutputViewMode}
+          selectedMode={effectiveAgentOutputViewMode}
+          onChange={setAgentOutputViewMode}
+        />
+      ) : null,
+    [
+      agentOutputViewMode,
+      canUseSplitView,
+      canUseOwnerControls,
+      effectiveAgentOutputViewMode,
+      session,
+      setAgentOutputViewMode,
+    ],
+  );
 
   return (
     <View style={{ flex: 1 }}>
@@ -1640,8 +1999,19 @@ export default function ChatScreen() {
         >
           {Platform.OS !== "web" ? null /* sidebar lives in (main)/_layout on web */ : null}
           <View className="flex-1">
-            <View style={{ flexShrink: 0 }}>
-              <View className="border-b border-border px-4 py-3 flex-row items-center justify-between">
+            <ChatChromeMotion
+              direction="top"
+              distance={chatTopContentReserve}
+              style={{
+                left: 0,
+                position: "absolute",
+                right: 0,
+                top: topBarHeight,
+                zIndex: 25,
+              }}
+              visible={effectiveChatChromeVisible}
+            >
+              <View className="border-b border-border bg-background px-4 py-3 flex-row items-center justify-between">
                 {useScrollableNativeHeader ? (
                   <ScrollView
                     horizontal
@@ -1680,15 +2050,6 @@ export default function ChatScreen() {
                           >
                             {sessionTitle}
                           </Text>
-                          {sessionToolLabel ? (
-                            <Text
-                              className="text-xs text-muted-foreground"
-                              numberOfLines={1}
-                              style={{ flexShrink: 0 }}
-                            >
-                              {sessionToolLabel}
-                            </Text>
-                          ) : null}
                         </View>
                         <Text
                           className="text-xs text-muted-foreground"
@@ -1698,6 +2059,7 @@ export default function ChatScreen() {
                           {sessionSubtitle}
                         </Text>
                       </View>
+                      {modeControls ? <View className="mr-2">{modeControls}</View> : null}
                       {session && canUseOwnerControls ? (
                         <>
                           <View className="mr-2">
@@ -1712,14 +2074,14 @@ export default function ChatScreen() {
                             />
                           </View>
                           <Pressable
-                            onPress={() => setSharePanelOpen((open) => !open)}
+                            onPress={toggleSharePanel}
                             accessibilityLabel="Invite collaborator"
                             className="h-8 w-8 items-center justify-center rounded-md border border-border mr-2"
                           >
                             <UserPlus size={15} color="#a1a1aa" />
                           </Pressable>
                           <Pressable
-                            onPress={() => setManagePanelOpen((open) => !open)}
+                            onPress={toggleManagePanel}
                             accessibilityLabel="Manage agent"
                             accessibilityState={{ expanded: managePanelOpen }}
                             className={cn(
@@ -1782,15 +2144,6 @@ export default function ChatScreen() {
                         >
                           {sessionTitle}
                         </Text>
-                        {sessionToolLabel && !compactHeaderActions ? (
-                          <Text
-                            className="text-xs text-muted-foreground"
-                            numberOfLines={1}
-                            style={{ minWidth: 0, flexShrink: 1 }}
-                          >
-                            {sessionToolLabel}
-                          </Text>
-                        ) : null}
                       </View>
                       <Text
                         className="text-xs text-muted-foreground"
@@ -1800,6 +2153,9 @@ export default function ChatScreen() {
                         {sessionSubtitle}
                       </Text>
                     </View>
+                    {modeControls ? (
+                      <View className="mx-2 flex-shrink-0">{modeControls}</View>
+                    ) : null}
                     {session ? (
                       <ScrollView
                         horizontal
@@ -1822,14 +2178,14 @@ export default function ChatScreen() {
                                 />
                               </View>
                               <Pressable
-                                onPress={() => setSharePanelOpen((open) => !open)}
+                                onPress={toggleSharePanel}
                                 accessibilityLabel="Invite collaborator"
                                 className="h-8 w-8 items-center justify-center rounded-md border border-border mr-2"
                               >
                                 <UserPlus size={15} color="#a1a1aa" />
                               </Pressable>
                               <Pressable
-                                onPress={() => setManagePanelOpen((open) => !open)}
+                                onPress={toggleManagePanel}
                                 accessibilityLabel="Manage agent"
                                 accessibilityState={{ expanded: managePanelOpen }}
                                 className={cn(
@@ -1868,14 +2224,23 @@ export default function ChatScreen() {
                   </>
                 )}
               </View>
-            </View>
+            </ChatChromeMotion>
             {/*
             Closed by default. These are settings, and pinning them above every
             conversation cost the chat ~250px on every screen for controls with
             no recorded use.
           */}
             {session && managePanelOpen && canUseOwnerControls ? (
-              <View style={{ flexShrink: 0, maxHeight: Math.round(windowHeight * 0.6) }}>
+              <View
+                style={{
+                  left: 0,
+                  maxHeight: Math.round(windowHeight * 0.6),
+                  position: "absolute",
+                  right: 0,
+                  top: chatControlPanelTopReserve,
+                  zIndex: 24,
+                }}
+              >
                 <ScrollView>
                   {compactHeaderActions && !useScrollableNativeHeader ? (
                     <View className="border-b border-border bg-card px-4 py-3">
@@ -1913,160 +2278,175 @@ export default function ChatScreen() {
             {sharePanelOpen ? (
               <View
                 className={cn("border-b border-border bg-card px-4", activeShare ? "py-2" : "py-3")}
-                style={{ flexShrink: 0 }}
+                style={{
+                  left: 0,
+                  maxHeight: chatControlPanelReserve || undefined,
+                  position: "absolute",
+                  right: 0,
+                  top: chatControlPanelTopReserve,
+                  zIndex: 23,
+                }}
               >
-                {activeShare ? (
-                  <>
-                    <View className="flex-row items-center justify-between gap-3">
-                      <Pressable
-                        onPress={() => setShareDetailsExpanded((expanded) => !expanded)}
-                        accessibilityRole="button"
-                        accessibilityLabel="Toggle shared chat details"
-                        accessibilityState={{ expanded: shareDetailsExpanded }}
-                        className="flex-1 flex-row items-center gap-2 active:opacity-70"
-                      >
-                        <ChevronDown
-                          size={16}
-                          color="#a1a1aa"
-                          style={{
-                            transform: [{ rotate: shareDetailsExpanded ? "0deg" : "-90deg" }],
-                          }}
-                        />
-                        <View className="flex-1">
-                          <Text className="text-xs font-semibold uppercase tracking-widest text-foreground">
-                            Shared chat
-                          </Text>
-                          <Text className="mt-1 text-xs text-muted-foreground" numberOfLines={1}>
-                            Replying as {sharedChatDisplayName}
-                            {sharedChatParticipantCount
-                              ? ` · ${sharedChatParticipantCount} participant${
-                                  sharedChatParticipantCount === 1 ? "" : "s"
-                                }`
-                              : ""}
-                          </Text>
-                        </View>
-                      </Pressable>
-                      {!currentUserIsShareOwner ? (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          label={shareAction ? "Leaving..." : "Leave"}
-                          disabled={!token || Boolean(shareAction)}
-                          onPress={handleLeaveShare}
-                        />
-                      ) : null}
-                    </View>
-                  </>
-                ) : (
-                  <View className="flex-row items-center gap-2">
-                    <Input
-                      value={inviteEmail}
-                      onChangeText={setInviteEmail}
-                      placeholder="Email address"
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                      keyboardType="email-address"
-                      className="flex-1 h-9 text-sm"
-                    />
-                    <Button
-                      size="sm"
-                      label={inviteBusy ? "Sending..." : "Invite"}
-                      disabled={
-                        inviteBusy ||
-                        !relayConfigured ||
-                        !token ||
-                        !project?.path ||
-                        !sessionId ||
-                        !inviteEmail.trim()
-                      }
-                      onPress={handleSendInvite}
-                    />
-                  </View>
-                )}
-                {shareSummary && (!activeShare || shareDetailsExpanded) ? (
-                  <View className="mt-3 border-t border-border pt-3">
-                    <Text className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-                      Participants
-                    </Text>
-                    {shareSummary.participants.map((participant) => (
-                      <View
-                        key={participant.userId}
-                        className="mt-2 flex-row items-center justify-between gap-3"
-                      >
-                        <View className="flex-1">
-                          <Text className="text-sm text-foreground" numberOfLines={1}>
-                            {participant.displayName}
-                          </Text>
-                          <Text className="text-xs text-muted-foreground" numberOfLines={1}>
-                            {participant.role} · {formatShareParticipantStatus(participant)}
-                            {participant.email ? ` · ${participant.email}` : ""}
-                          </Text>
-                        </View>
-                        {canManageShare &&
-                        participant.role !== "owner" &&
-                        participant.status === "active" ? (
+                <ScrollView keyboardShouldPersistTaps="handled">
+                  {activeShare ? (
+                    <>
+                      <View className="flex-row items-center justify-between gap-3">
+                        <Pressable
+                          onPress={() => setShareDetailsExpanded((expanded) => !expanded)}
+                          accessibilityRole="button"
+                          accessibilityLabel="Toggle shared chat details"
+                          accessibilityState={{ expanded: shareDetailsExpanded }}
+                          className="flex-1 flex-row items-center gap-2 active:opacity-70"
+                        >
+                          <ChevronDown
+                            size={16}
+                            color="#a1a1aa"
+                            style={{
+                              transform: [{ rotate: shareDetailsExpanded ? "0deg" : "-90deg" }],
+                            }}
+                          />
+                          <View className="flex-1">
+                            <Text className="text-xs font-semibold uppercase tracking-widest text-foreground">
+                              Shared chat
+                            </Text>
+                            <Text className="mt-1 text-xs text-muted-foreground" numberOfLines={1}>
+                              Replying as {sharedChatDisplayName}
+                              {sharedChatParticipantCount
+                                ? ` · ${sharedChatParticipantCount} participant${
+                                    sharedChatParticipantCount === 1 ? "" : "s"
+                                  }`
+                                : ""}
+                            </Text>
+                          </View>
+                        </Pressable>
+                        {!currentUserIsShareOwner ? (
                           <Button
                             size="sm"
                             variant="outline"
-                            label={shareAction === participant.userId ? "Removing..." : "Remove"}
+                            label={shareAction ? "Leaving..." : "Leave"}
                             disabled={!token || Boolean(shareAction)}
-                            onPress={() => handleRemoveParticipant(participant.userId)}
+                            onPress={handleLeaveShare}
                           />
                         ) : null}
                       </View>
-                    ))}
-                    {canManageShare && visibleShareInvites.length > 0 ? (
-                      <View className="mt-3">
-                        <Text className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-                          Invites
-                        </Text>
-                        {visibleShareInvites.map((invite) => (
-                          <View
-                            key={invite.id}
-                            className="mt-2 flex-row items-center justify-between gap-3"
-                          >
-                            <View className="flex-1">
-                              <Text className="text-sm text-foreground" numberOfLines={1}>
-                                {invite.email}
-                              </Text>
-                              <Text className="text-xs text-muted-foreground" numberOfLines={1}>
-                                {formatShareInviteStatus(invite)}
-                              </Text>
-                            </View>
-                            {invite.status === "pending" ? (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                label={
-                                  shareAction === `invite:${invite.id}` ? "Revoking..." : "Revoke"
-                                }
-                                disabled={!token || Boolean(shareAction)}
-                                onPress={() => handleRevokeInvite(invite.id, invite.email)}
-                              />
-                            ) : null}
+                    </>
+                  ) : (
+                    <View className="flex-row items-center gap-2">
+                      <Input
+                        value={inviteEmail}
+                        onChangeText={setInviteEmail}
+                        placeholder="Email address"
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        keyboardType="email-address"
+                        className="flex-1 h-9 text-sm"
+                      />
+                      <Button
+                        size="sm"
+                        label={inviteBusy ? "Sending..." : "Invite"}
+                        disabled={
+                          inviteBusy ||
+                          !relayConfigured ||
+                          !token ||
+                          !project?.path ||
+                          !sessionId ||
+                          !inviteEmail.trim()
+                        }
+                        onPress={handleSendInvite}
+                      />
+                    </View>
+                  )}
+                  {shareSummary && (!activeShare || shareDetailsExpanded) ? (
+                    <View className="mt-3 border-t border-border pt-3">
+                      <Text className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                        Participants
+                      </Text>
+                      {shareSummary.participants.map((participant) => (
+                        <View
+                          key={participant.userId}
+                          className="mt-2 flex-row items-center justify-between gap-3"
+                        >
+                          <View className="flex-1">
+                            <Text className="text-sm text-foreground" numberOfLines={1}>
+                              {participant.displayName}
+                            </Text>
+                            <Text className="text-xs text-muted-foreground" numberOfLines={1}>
+                              {participant.role} · {formatShareParticipantStatus(participant)}
+                              {participant.email ? ` · ${participant.email}` : ""}
+                            </Text>
                           </View>
-                        ))}
-                      </View>
-                    ) : null}
-                  </View>
-                ) : null}
-                {!relayConfigured ? (
-                  <Text className="text-xs text-muted-foreground mt-2">
-                    Remote mode is required for shared session invites.
-                  </Text>
-                ) : !token ? (
-                  <Text className="text-xs text-muted-foreground mt-2">
-                    Sign in is required to send invites.
-                  </Text>
-                ) : inviteStatus ? (
-                  <Text className="text-xs text-muted-foreground mt-2">{inviteStatus}</Text>
-                ) : null}
+                          {canManageShare &&
+                          participant.role !== "owner" &&
+                          participant.status === "active" ? (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              label={shareAction === participant.userId ? "Removing..." : "Remove"}
+                              disabled={!token || Boolean(shareAction)}
+                              onPress={() => handleRemoveParticipant(participant.userId)}
+                            />
+                          ) : null}
+                        </View>
+                      ))}
+                      {canManageShare && visibleShareInvites.length > 0 ? (
+                        <View className="mt-3">
+                          <Text className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                            Invites
+                          </Text>
+                          {visibleShareInvites.map((invite) => (
+                            <View
+                              key={invite.id}
+                              className="mt-2 flex-row items-center justify-between gap-3"
+                            >
+                              <View className="flex-1">
+                                <Text className="text-sm text-foreground" numberOfLines={1}>
+                                  {invite.email}
+                                </Text>
+                                <Text className="text-xs text-muted-foreground" numberOfLines={1}>
+                                  {formatShareInviteStatus(invite)}
+                                </Text>
+                              </View>
+                              {invite.status === "pending" ? (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  label={
+                                    shareAction === `invite:${invite.id}` ? "Revoking..." : "Revoke"
+                                  }
+                                  disabled={!token || Boolean(shareAction)}
+                                  onPress={() => handleRevokeInvite(invite.id, invite.email)}
+                                />
+                              ) : null}
+                            </View>
+                          ))}
+                        </View>
+                      ) : null}
+                    </View>
+                  ) : null}
+                  {!relayConfigured ? (
+                    <Text className="text-xs text-muted-foreground mt-2">
+                      Remote mode is required for shared session invites.
+                    </Text>
+                  ) : !token ? (
+                    <Text className="text-xs text-muted-foreground mt-2">
+                      Sign in is required to send invites.
+                    </Text>
+                  ) : inviteStatus ? (
+                    <Text className="text-xs text-muted-foreground mt-2">{inviteStatus}</Text>
+                  ) : null}
+                </ScrollView>
               </View>
             ) : null}
             {serviceDisconnected ? (
               <View
                 className="border-b border-border bg-card/80 px-4 py-2"
-                style={{ flexShrink: 0 }}
+                style={{
+                  left: 0,
+                  position: "absolute",
+                  right: 0,
+                  top: chatHeaderTopReserve,
+                  zIndex: 22,
+                }}
               >
                 <Text className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
                   Reconnecting
@@ -2078,7 +2458,13 @@ export default function ChatScreen() {
             ) : null}
 
             {routeSessionMissing ? (
-              <View className="flex-1 p-4">
+              <View
+                className="flex-1 p-4"
+                style={{
+                  paddingBottom: showComposerFooter ? chatBottomContentReserve : 16,
+                  paddingTop: chatTopContentReserve + 16,
+                }}
+              >
                 <View className="rounded-lg border border-border bg-card p-4">
                   <Text className="text-base font-semibold text-foreground">
                     Agent no longer exists.
@@ -2091,25 +2477,62 @@ export default function ChatScreen() {
                 </View>
               </View>
             ) : !displayServiceEndpoint ? (
-              <View className="flex-1 p-4">
+              <View
+                className="flex-1 p-4"
+                style={{
+                  paddingBottom: showComposerFooter ? chatBottomContentReserve : 16,
+                  paddingTop: chatTopContentReserve + 16,
+                }}
+              >
                 <Text className="text-sm text-muted-foreground">
                   Project service not running. Start the project host to view this session.
                 </Text>
               </View>
             ) : (
-              <View className="flex-1 bg-background">
-                <AgentChatTranscript
-                  messages={allMessages}
-                  onContentSizeChange={handleChatContentSizeChange}
-                  onLayout={handleChatLayout}
-                  onScroll={handleChatScroll}
-                  ref={chatScrollRef}
-                  serviceEndpoint={displayServiceEndpoint}
-                  dividerWidth={chatDividerWidth}
-                />
-                {composerFooter}
+              <View
+                className="flex-1 bg-background"
+                style={
+                  effectiveAgentOutputViewMode === "split" ? { flexDirection: "row" } : undefined
+                }
+              >
+                {chatViewVisible ? (
+                  <View
+                    className="flex-1 bg-background"
+                    style={
+                      effectiveAgentOutputViewMode === "split"
+                        ? { borderRightWidth: 1, borderRightColor: "#27272a", minWidth: 0 }
+                        : undefined
+                    }
+                  >
+                    <AgentChatSessionViewport
+                      key={chatViewportKey}
+                      allMessages={allMessages}
+                      bottomContentInset={chatBottomContentReserve}
+                      dividerWidth={chatDividerWidth}
+                      newMessageBadgeBottomOffset={newMessageBadgeBottomOffset}
+                      placeholderState={chatPlaceholderState}
+                      ref={chatViewportRef}
+                      onChromeVisibleChange={handleChatChromeVisibleChange}
+                      onRetryTranscriptLoad={handleRetryTranscriptLoad}
+                      serviceEndpoint={displayServiceEndpoint}
+                      sessionKey={sessionKey}
+                      topContentInset={chatTopContentReserve}
+                    />
+                  </View>
+                ) : null}
+                {terminalViewVisible ? (
+                  <View className="flex-1 bg-background" style={{ minWidth: 0 }}>
+                    <AgentTerminalOutputPane
+                      bottomContentInset={chatBottomContentReserve}
+                      dividerWidth={chatDividerWidth}
+                      sessionKey={sessionKey}
+                      topContentInset={chatTopContentReserve}
+                    />
+                  </View>
+                ) : null}
               </View>
             )}
+            {showComposerFooter ? composerFooter : null}
           </View>
         </View>
       </View>
@@ -2117,53 +2540,690 @@ export default function ChatScreen() {
   );
 }
 
-const AgentChatTranscript = React.forwardRef<
-  ChatScrollHandle,
-  {
-    dividerWidth: number;
-    messages: readonly ChatMessage[];
-    onContentSizeChange: (contentWidth: number, contentHeight: number) => void;
-    onLayout: (event: LayoutChangeEvent) => void;
-    onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
-    serviceEndpoint: ServiceEndpoint;
-  }
->(function AgentChatTranscript(
-  { dividerWidth, messages, onContentSizeChange, onLayout, onScroll, serviceEndpoint },
-  ref,
-) {
-  const content =
-    messages.length === 0 ? null : (
-      <View className="w-full gap-1">
-        {messages.map((message, index) => (
-          <View
-            key={message.id ?? message.clientMessageId ?? `message:${index}`}
-            style={{ flexShrink: 0 }}
-          >
-            <MessageBlock
-              dividerWidth={dividerWidth}
-              message={message}
-              serviceEndpoint={serviceEndpoint}
-            />
-          </View>
-        ))}
-      </View>
-    );
-  const contentContainerStyle = {
-    flexGrow: 1,
-    justifyContent: "flex-end" as const,
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 18,
-  };
+type AgentOutputModeOption = Exclude<AgentOutputViewMode, "split"> | "split";
 
-  if (Platform.OS !== "web") {
+function AgentOutputModeControl({
+  canUseSplitView,
+  mode,
+  onChange,
+  selectedMode,
+}: {
+  canUseSplitView: boolean;
+  mode: AgentOutputViewMode;
+  onChange: (mode: AgentOutputViewMode) => void;
+  selectedMode: AgentOutputViewMode;
+}) {
+  const options: AgentOutputModeOption[] = canUseSplitView
+    ? ["chat", "split", "terminal"]
+    : ["chat", "terminal"];
+
+  return (
+    <View className="h-8 flex-row overflow-hidden rounded-md border border-border bg-background">
+      {options.map((option) => {
+        const selected = selectedMode === option;
+        const ink = selected ? CONTROL_ON_BRAND : "#a1a1aa";
+        return (
+          <Pressable
+            key={option}
+            accessibilityLabel={agentOutputModeLabel(option)}
+            accessibilityRole="button"
+            accessibilityState={{ selected }}
+            onPress={() => {
+              if (mode !== option) onChange(option);
+            }}
+            className={cn(
+              "h-8 w-9 items-center justify-center border-r border-border last:border-r-0",
+              selected ? "bg-primary" : "bg-background active:bg-accent",
+            )}
+          >
+            {agentOutputModeIcon(option, ink)}
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+function agentOutputModeLabel(mode: AgentOutputModeOption): string {
+  if (mode === "chat") return "Show chat";
+  if (mode === "split") return "Show chat and output";
+  return "Show output";
+}
+
+function agentOutputModeIcon(mode: AgentOutputModeOption, color: string) {
+  if (mode === "chat") return <MessageSquareText size={15} color={color} />;
+  if (mode === "split") return <Columns2 size={15} color={color} />;
+  return <Terminal size={15} color={color} />;
+}
+
+const TERMINAL_OUTPUT_LINE_STYLE: TextStyle = {
+  color: "#e4e4e7",
+  fontFamily: Platform.select({
+    android: "monospace",
+    default: "Menlo",
+    ios: "Menlo",
+    web: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+  }),
+  fontSize: 12,
+  lineHeight: 17,
+};
+const TERMINAL_OUTPUT_MAX_LINES = 500;
+
+type AgentTerminalOutputPaneProps = {
+  bottomContentInset: number;
+  dividerWidth: number;
+  sessionKey: string;
+  topContentInset: number;
+};
+
+const AgentTerminalOutputPane = React.memo(function AgentTerminalOutputPane({
+  bottomContentInset,
+  dividerWidth,
+  sessionKey,
+  topContentInset,
+}: AgentTerminalOutputPaneProps) {
+  const outputPlain = useAtomValue(outputBufferFamily(sessionKey));
+  const outputAnsi = useAtomValue(outputAnsiFamily(sessionKey));
+  const outputAvailable = useAtomValue(outputAvailableFamily(sessionKey));
+  const scrollRef = useRef<ScrollView | null>(null);
+  const output = outputAnsi || outputPlain;
+  const outputTail = useMemo(
+    () => output.replace(/\r/g, "").split("\n").slice(-TERMINAL_OUTPUT_MAX_LINES).join("\n"),
+    [output],
+  );
+  const liveLines = useMemo(
+    () =>
+      formatTerminalOutputForDisplay(outputTail, {
+        dividerWidth: Math.max(48, dividerWidth * 2),
+      }),
+    [dividerWidth, outputTail],
+  );
+  const liveOutput = useMemo(
+    () =>
+      terminalVisibleOutputForPinned({
+        lines: liveLines,
+        outputAvailable,
+        outputText: outputTail,
+        sessionKey,
+      }),
+    [liveLines, outputAvailable, outputTail, sessionKey],
+  );
+  const [visibleOutput, setVisibleOutput] = useState(liveOutput);
+  const terminalScrollPolicyRef = useRef<ChatScrollPolicy>(createChatScrollPolicy());
+  const terminalScrollFrameRef = useRef<number | null>(null);
+  const terminalInitialLayoutKeyRef = useRef<string | null>(null);
+  const visibleLines = visibleOutput.sessionKey === sessionKey ? visibleOutput.lines : liveLines;
+  const visibleOutputText =
+    visibleOutput.sessionKey === sessionKey ? visibleOutput.outputText : outputTail;
+  const visibleOutputAvailable =
+    visibleOutput.sessionKey === sessionKey ? visibleOutput.outputAvailable : outputAvailable;
+  const hasOutput = visibleOutputText.trim().length > 0 || visibleOutputAvailable;
+
+  const cancelPendingTerminalScroll = useCallback(() => {
+    if (terminalScrollFrameRef.current === null) return;
+    cancelAnimationFrame(terminalScrollFrameRef.current);
+    terminalScrollFrameRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    return cancelPendingTerminalScroll;
+  }, [cancelPendingTerminalScroll]);
+
+  const executeTerminalScrollCommand = useCallback(
+    (command: ChatScrollCommand) => {
+      if (command.kind === "none") return;
+      cancelPendingTerminalScroll();
+      terminalScrollFrameRef.current = requestAnimationFrame(() => {
+        terminalScrollFrameRef.current = null;
+        if (
+          command.reason !== "initial" &&
+          command.reason !== "navigation" &&
+          terminalScrollPolicyRef.current.intent !== "pinned"
+        ) {
+          return;
+        }
+        scrollRef.current?.scrollToEnd({ animated: command.animated });
+      });
+    },
+    [cancelPendingTerminalScroll],
+  );
+
+  useEffect(() => {
+    terminalScrollPolicyRef.current = chatPolicyAfterNavigationFocus();
+    terminalInitialLayoutKeyRef.current = null;
+    executeTerminalScrollCommand(chatCommandForNavigationFocus());
+  }, [executeTerminalScrollCommand, sessionKey]);
+
+  useEffect(() => {
+    const next = terminalVisibleOutputForLiveChange(visibleOutput, {
+      intent: terminalScrollPolicyRef.current.intent,
+      liveOutput,
+    });
+    if (next !== visibleOutput) setVisibleOutput(next);
+  }, [liveOutput, visibleOutput]);
+
+  const handleTerminalLayout = useCallback(
+    (_event: LayoutChangeEvent) => {
+      if (terminalInitialLayoutKeyRef.current !== sessionKey) {
+        terminalInitialLayoutKeyRef.current = sessionKey;
+        executeTerminalScrollCommand(chatCommandForInitialLayout());
+        return;
+      }
+      executeTerminalScrollCommand(chatCommandForContentChange(terminalScrollPolicyRef.current));
+    },
+    [executeTerminalScrollCommand, sessionKey],
+  );
+
+  const handleTerminalContentSizeChange = useCallback(
+    (_contentWidth: number, _contentHeight: number) => {
+      executeTerminalScrollCommand(chatCommandForContentChange(terminalScrollPolicyRef.current));
+    },
+    [executeTerminalScrollCommand],
+  );
+
+  const handleTerminalScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const metrics: ChatScrollMetrics = {
+        contentHeight: event.nativeEvent.contentSize.height,
+        offsetY: event.nativeEvent.contentOffset.y,
+        viewportHeight: event.nativeEvent.layoutMeasurement.height,
+      };
+      const previousIntent = terminalScrollPolicyRef.current.intent;
+      const nextPolicy = chatPolicyAfterUserScroll(terminalScrollPolicyRef.current, metrics);
+      if (nextPolicy.intent === "reading") {
+        cancelPendingTerminalScroll();
+      }
+      terminalScrollPolicyRef.current = nextPolicy;
+      if (previousIntent === "reading" && nextPolicy.intent === "pinned") {
+        setVisibleOutput(liveOutput);
+      }
+    },
+    [cancelPendingTerminalScroll, liveOutput],
+  );
+
+  return (
+    <ScrollView
+      ref={scrollRef}
+      className="flex-1 bg-background"
+      contentContainerStyle={{
+        flexGrow: 1,
+        justifyContent: "flex-end",
+        paddingBottom: bottomContentInset + 18,
+        paddingHorizontal: 12,
+        paddingTop: topContentInset + 16,
+      }}
+      keyboardDismissMode={Platform.OS === "web" ? "on-drag" : "interactive"}
+      keyboardShouldPersistTaps="handled"
+      onContentSizeChange={handleTerminalContentSizeChange}
+      onLayout={handleTerminalLayout}
+      onScroll={handleTerminalScroll}
+      scrollEventThrottle={16}
+      showsVerticalScrollIndicator
+    >
+      {hasOutput ? (
+        <View className="rounded-lg border border-border bg-card/80 px-3 py-2">
+          {visibleLines.map((line, lineIndex) => (
+            <RNText key={lineIndex} style={TERMINAL_OUTPUT_LINE_STYLE}>
+              {line.length === 0
+                ? "\u00a0"
+                : line.map((span, spanIndex) => (
+                    <RNText key={spanIndex} style={span.style}>
+                      {span.text}
+                    </RNText>
+                  ))}
+            </RNText>
+          ))}
+        </View>
+      ) : (
+        <View className="items-center justify-center px-4 py-10">
+          <View
+            className="max-w-[90%] flex-row items-center gap-2 rounded-lg border border-border bg-card px-3 py-2"
+            style={{ minWidth: 220 }}
+          >
+            <ActivityIndicator size="small" color="#a1a1aa" />
+            <View className="min-w-0 shrink">
+              <Text className="text-sm text-muted-foreground">Loading output</Text>
+              <Text className="mt-1 text-xs text-muted-foreground">
+                Waiting for terminal output from the project service.
+              </Text>
+            </View>
+          </View>
+        </View>
+      )}
+    </ScrollView>
+  );
+});
+AgentTerminalOutputPane.displayName = "AgentTerminalOutputPane";
+
+type AgentChatSessionViewportProps = {
+  allMessages: readonly ChatMessage[];
+  bottomContentInset: number;
+  dividerWidth: number;
+  newMessageBadgeBottomOffset: number;
+  onChromeVisibleChange: (visible: boolean) => void;
+  onRetryTranscriptLoad: (purpose?: AgentOutputFeedPurpose) => void;
+  placeholderState: ChatTranscriptPlaceholderState;
+  serviceEndpoint: ServiceEndpoint;
+  sessionKey: string;
+  topContentInset: number;
+};
+
+const AgentChatSessionViewport = React.memo(
+  React.forwardRef<ChatSessionViewportHandle, AgentChatSessionViewportProps>(
+    function AgentChatSessionViewport(
+      {
+        allMessages,
+        bottomContentInset,
+        dividerWidth,
+        newMessageBadgeBottomOffset,
+        onChromeVisibleChange,
+        onRetryTranscriptLoad,
+        placeholderState,
+        serviceEndpoint,
+        sessionKey,
+        topContentInset,
+      },
+      ref,
+    ) {
+      const liveChatTranscript = useMemo(
+        () =>
+          chatVisibleTranscriptForPinned({
+            liveMessages: allMessages,
+            sessionKey,
+          }),
+        [allMessages, sessionKey],
+      );
+      const [visibleChatTranscript, setVisibleChatTranscript] = useState<
+        ChatVisibleTranscript<ChatMessage>
+      >(() => liveChatTranscript);
+      const chatScrollRef = useRef<ChatScrollHandle | null>(null);
+      const chatScrollMetricsRef = useRef<ChatScrollMetrics>({
+        contentHeight: 0,
+        offsetY: 0,
+        viewportHeight: 0,
+      });
+      const chatScrollPolicyRef = useRef<ChatScrollPolicy>(createChatScrollPolicy());
+      const chatScrollChromeRef = useRef<ChatScrollChromeState>(createChatScrollChromeState());
+      const chatScrollFrameRef = useRef<number | null>(null);
+      const chatScrollPendingCommandReasonRef = useRef<string | null>(null);
+      const liveChatTranscriptRef = useRef<ChatVisibleTranscript<ChatMessage>>(liveChatTranscript);
+      const visibleChatTranscriptRef =
+        useRef<ChatVisibleTranscript<ChatMessage>>(liveChatTranscript);
+      const chatInitialLayoutKeyRef = useRef<string | null>(null);
+      const newMessageBadgeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+      const newMessageBadgeFadeRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+      const newMessageBadgeAnnouncedCountRef = useRef(0);
+      const [newMessageBadge, setNewMessageBadge] = useState({ count: 0, visible: false });
+
+      const visibleMessages = chatVisibleTranscriptMessages(visibleChatTranscript, {
+        liveMessages: allMessages,
+        sessionKey,
+      });
+
+      const applyVisibleChatTranscript = useCallback((next: ChatVisibleTranscript<ChatMessage>) => {
+        const current = visibleChatTranscriptRef.current;
+        if (current.sessionKey === next.sessionKey && current.messages === next.messages) return;
+        visibleChatTranscriptRef.current = next;
+        setVisibleChatTranscript(next);
+      }, []);
+
+      const showLiveChatTranscript = useCallback(() => {
+        const live = liveChatTranscriptRef.current;
+        if (live.sessionKey !== sessionKey) return;
+        applyVisibleChatTranscript(live);
+      }, [applyVisibleChatTranscript, sessionKey]);
+
+      const clearNewMessageBadgeTimers = useCallback(() => {
+        if (newMessageBadgeDebounceRef.current !== null) {
+          clearTimeout(newMessageBadgeDebounceRef.current);
+          newMessageBadgeDebounceRef.current = null;
+        }
+        if (newMessageBadgeFadeRef.current !== null) {
+          clearTimeout(newMessageBadgeFadeRef.current);
+          newMessageBadgeFadeRef.current = null;
+        }
+      }, []);
+
+      const resetNewMessageBadge = useCallback(() => {
+        clearNewMessageBadgeTimers();
+        newMessageBadgeAnnouncedCountRef.current = 0;
+        setNewMessageBadge((current) =>
+          current.count === 0 && !current.visible ? current : { count: 0, visible: false },
+        );
+      }, [clearNewMessageBadgeTimers]);
+
+      const fadeNewMessageBadgeLater = useCallback(() => {
+        if (newMessageBadgeFadeRef.current !== null) {
+          clearTimeout(newMessageBadgeFadeRef.current);
+        }
+        newMessageBadgeFadeRef.current = setTimeout(() => {
+          newMessageBadgeFadeRef.current = null;
+          setNewMessageBadge((current) => ({ ...current, visible: false }));
+        }, CHAT_NEW_MESSAGE_BADGE_VISIBLE_MS);
+      }, []);
+
+      const cancelPendingChatScroll = useCallback(() => {
+        if (chatScrollFrameRef.current === null) return;
+        cancelAnimationFrame(chatScrollFrameRef.current);
+        chatScrollFrameRef.current = null;
+        chatScrollPendingCommandReasonRef.current = null;
+      }, []);
+
+      const executeChatScrollCommand = useCallback(
+        (command: ChatScrollCommand, noneReason = "unknown") => {
+          if (command.kind === "none") {
+            void noneReason;
+            return;
+          }
+          cancelPendingChatScroll();
+          chatScrollPendingCommandReasonRef.current = command.reason;
+          chatScrollFrameRef.current = requestAnimationFrame(() => {
+            chatScrollFrameRef.current = null;
+            chatScrollPendingCommandReasonRef.current = null;
+            if (
+              command.reason !== "initial" &&
+              command.reason !== "navigation" &&
+              chatScrollPolicyRef.current.intent !== "pinned"
+            ) {
+              return;
+            }
+            chatScrollRef.current?.scrollToEnd({ animated: command.animated });
+          });
+        },
+        [cancelPendingChatScroll],
+      );
+
+      const showNewest = useCallback(() => {
+        const live = chatVisibleTranscriptForPinned({
+          liveMessages: allMessages,
+          sessionKey,
+        });
+        liveChatTranscriptRef.current = live;
+        chatScrollPolicyRef.current = chatPolicyAfterNavigationFocus();
+        chatScrollChromeRef.current = createChatScrollChromeState();
+        resetNewMessageBadge();
+        onChromeVisibleChange(true);
+        applyVisibleChatTranscript(live);
+        executeChatScrollCommand(chatCommandForNavigationFocus());
+      }, [
+        allMessages,
+        applyVisibleChatTranscript,
+        executeChatScrollCommand,
+        onChromeVisibleChange,
+        resetNewMessageBadge,
+        sessionKey,
+      ]);
+
+      useImperativeHandle(ref, () => ({ showNewest }), [showNewest]);
+
+      useEffect(() => cancelPendingChatScroll, [cancelPendingChatScroll]);
+
+      useEffect(() => clearNewMessageBadgeTimers, [clearNewMessageBadgeTimers]);
+
+      useFocusEffect(
+        useCallback(() => {
+          chatInitialLayoutKeyRef.current = sessionKey || null;
+          chatScrollPolicyRef.current = chatPolicyAfterNavigationFocus();
+          chatScrollChromeRef.current = createChatScrollChromeState();
+          resetNewMessageBadge();
+          onChromeVisibleChange(true);
+          showLiveChatTranscript();
+          const interaction = InteractionManager.runAfterInteractions(() => {
+            executeChatScrollCommand(chatCommandForNavigationFocus());
+          });
+          return () => {
+            interaction.cancel();
+            cancelPendingChatScroll();
+          };
+        }, [
+          cancelPendingChatScroll,
+          executeChatScrollCommand,
+          onChromeVisibleChange,
+          resetNewMessageBadge,
+          sessionKey,
+          showLiveChatTranscript,
+        ]),
+      );
+
+      const handleChatLayout = useCallback(
+        (event: LayoutChangeEvent) => {
+          chatScrollMetricsRef.current = {
+            ...chatScrollMetricsRef.current,
+            viewportHeight: event.nativeEvent.layout.height,
+          };
+          const layoutKey = sessionKey || "unscoped";
+          if (chatInitialLayoutKeyRef.current !== layoutKey) {
+            chatInitialLayoutKeyRef.current = layoutKey;
+            executeChatScrollCommand(chatCommandForInitialLayout());
+            return;
+          }
+          executeChatScrollCommand(
+            chatCommandForContentChange(chatScrollPolicyRef.current),
+            "content",
+          );
+        },
+        [executeChatScrollCommand, sessionKey],
+      );
+
+      const handleChatContentSizeChange = useCallback(
+        (_contentWidth: number, contentHeight: number) => {
+          chatScrollMetricsRef.current = {
+            ...chatScrollMetricsRef.current,
+            contentHeight,
+          };
+          executeChatScrollCommand(
+            chatCommandForContentChange(chatScrollPolicyRef.current),
+            "content",
+          );
+        },
+        [executeChatScrollCommand],
+      );
+
+      const handleChatScroll = useCallback(
+        (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+          const metrics: ChatScrollMetrics = {
+            contentHeight: event.nativeEvent.contentSize.height,
+            offsetY: event.nativeEvent.contentOffset.y,
+            viewportHeight: event.nativeEvent.layoutMeasurement.height,
+          };
+          chatScrollMetricsRef.current = metrics;
+          const previousIntent = chatScrollPolicyRef.current.intent;
+          const nextPolicy = chatPolicyAfterUserScroll(chatScrollPolicyRef.current, metrics);
+          if (nextPolicy.intent === "reading") {
+            cancelPendingChatScroll();
+          }
+          chatScrollPolicyRef.current = nextPolicy;
+          const nextChrome = chatChromeAfterUserScroll(
+            chatScrollChromeRef.current,
+            nextPolicy,
+            metrics,
+          );
+          if (nextChrome !== chatScrollChromeRef.current) {
+            chatScrollChromeRef.current = nextChrome;
+            onChromeVisibleChange(nextChrome.visible);
+          }
+          if (previousIntent === "reading" && nextPolicy.intent === "pinned") {
+            resetNewMessageBadge();
+            showLiveChatTranscript();
+          }
+        },
+        [
+          cancelPendingChatScroll,
+          onChromeVisibleChange,
+          resetNewMessageBadge,
+          showLiveChatTranscript,
+        ],
+      );
+
+      useEffect(() => {
+        liveChatTranscriptRef.current = liveChatTranscript;
+        const next = chatVisibleTranscriptForLiveChange(visibleChatTranscriptRef.current, {
+          intent: chatScrollPolicyRef.current.intent,
+          liveMessages: allMessages,
+          sessionKey,
+        });
+        applyVisibleChatTranscript(next);
+      }, [allMessages, applyVisibleChatTranscript, liveChatTranscript, sessionKey]);
+
+      useEffect(() => {
+        if (chatScrollPolicyRef.current.intent !== "reading") return;
+        const count = chatFrozenNewMessageCount({
+          frozenMessages: visibleChatTranscriptRef.current.messages,
+          liveMessages: allMessages,
+        });
+        if (count < newMessageBadgeAnnouncedCountRef.current) {
+          newMessageBadgeAnnouncedCountRef.current = count;
+        }
+        if (count <= newMessageBadgeAnnouncedCountRef.current) return;
+        if (count <= 0) return;
+        if (newMessageBadgeDebounceRef.current !== null) {
+          clearTimeout(newMessageBadgeDebounceRef.current);
+        }
+        newMessageBadgeDebounceRef.current = setTimeout(() => {
+          newMessageBadgeDebounceRef.current = null;
+          if (chatScrollPolicyRef.current.intent !== "reading") return;
+          const nextCount = chatFrozenNewMessageCount({
+            frozenMessages: visibleChatTranscriptRef.current.messages,
+            liveMessages: liveChatTranscriptRef.current.messages,
+          });
+          if (nextCount < newMessageBadgeAnnouncedCountRef.current) {
+            newMessageBadgeAnnouncedCountRef.current = nextCount;
+          }
+          if (nextCount <= newMessageBadgeAnnouncedCountRef.current) return;
+          if (nextCount <= 0) return;
+          newMessageBadgeAnnouncedCountRef.current = nextCount;
+          setNewMessageBadge({ count: nextCount, visible: true });
+          fadeNewMessageBadgeLater();
+        }, CHAT_NEW_MESSAGE_BADGE_DEBOUNCE_MS);
+      }, [allMessages, fadeNewMessageBadgeLater]);
+
+      return (
+        <View className="flex-1 bg-background">
+          <AgentChatTranscript
+            messages={visibleMessages}
+            onContentSizeChange={handleChatContentSizeChange}
+            onLayout={handleChatLayout}
+            onRetryTranscriptLoad={onRetryTranscriptLoad}
+            onScroll={handleChatScroll}
+            placeholderState={placeholderState}
+            ref={chatScrollRef}
+            serviceEndpoint={serviceEndpoint}
+            dividerWidth={dividerWidth}
+            bottomContentInset={bottomContentInset}
+            topContentInset={topContentInset}
+          />
+          <ChatNewMessagesBadge
+            count={newMessageBadge.count}
+            onPress={showNewest}
+            visible={newMessageBadge.visible && newMessageBadge.count > 0}
+            style={{
+              bottom: newMessageBadgeBottomOffset,
+              alignItems: "center",
+              left: 0,
+              position: "absolute",
+              right: 0,
+              zIndex: 20,
+            }}
+          />
+        </View>
+      );
+    },
+  ),
+);
+AgentChatSessionViewport.displayName = "AgentChatSessionViewport";
+
+type AgentChatTranscriptProps = {
+  bottomContentInset: number;
+  dividerWidth: number;
+  messages: readonly ChatMessage[];
+  onContentSizeChange: (contentWidth: number, contentHeight: number) => void;
+  onLayout: (event: LayoutChangeEvent) => void;
+  onRetryTranscriptLoad: (purpose?: AgentOutputFeedPurpose) => void;
+  onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
+  placeholderState: ChatTranscriptPlaceholderState;
+  serviceEndpoint: ServiceEndpoint;
+  topContentInset: number;
+};
+
+const AgentChatTranscript = React.memo(
+  React.forwardRef<ChatScrollHandle, AgentChatTranscriptProps>(function AgentChatTranscript(
+    {
+      bottomContentInset,
+      dividerWidth,
+      messages,
+      onContentSizeChange,
+      onLayout,
+      onRetryTranscriptLoad,
+      onScroll,
+      placeholderState,
+      serviceEndpoint,
+      topContentInset,
+    },
+    ref,
+  ) {
+    const extraContentPadding = useSharedValue(bottomContentInset);
+
+    useEffect(() => {
+      extraContentPadding.value = bottomContentInset;
+    }, [bottomContentInset, extraContentPadding]);
+
+    const content =
+      messages.length === 0 ? (
+        <ChatTranscriptPlaceholder
+          state={placeholderState}
+          onRetryTranscriptLoad={onRetryTranscriptLoad}
+        />
+      ) : (
+        <View className="w-full gap-1">
+          {messages.map((message, index) => (
+            <View
+              key={message.id ?? message.clientMessageId ?? `message:${index}`}
+              style={{ flexShrink: 0 }}
+            >
+              <MessageBlock
+                dividerWidth={dividerWidth}
+                message={message}
+                serviceEndpoint={serviceEndpoint}
+              />
+            </View>
+          ))}
+        </View>
+      );
+    const contentContainerStyle = {
+      flexGrow: 1,
+      justifyContent: "flex-end" as const,
+      paddingHorizontal: 16,
+      paddingTop: topContentInset + 16,
+      paddingBottom: Platform.OS === "web" ? bottomContentInset + 18 : 18,
+    };
+
+    if (Platform.OS !== "web") {
+      return (
+        <KeyboardChatScrollView
+          ref={ref as React.Ref<React.ElementRef<typeof KeyboardChatScrollView>>}
+          className="flex-1 bg-background"
+          contentContainerStyle={contentContainerStyle}
+          extraContentPadding={extraContentPadding}
+          keyboardDismissMode="interactive"
+          keyboardLiftBehavior="whenAtEnd"
+          keyboardShouldPersistTaps="handled"
+          onContentSizeChange={onContentSizeChange}
+          onLayout={onLayout}
+          onScroll={onScroll}
+          scrollEventThrottle={16}
+          showsVerticalScrollIndicator
+        >
+          {content}
+        </KeyboardChatScrollView>
+      );
+    }
+
     return (
-      <KeyboardChatScrollView
-        ref={ref as React.Ref<React.ElementRef<typeof KeyboardChatScrollView>>}
+      <ScrollView
+        ref={ref as React.Ref<ScrollView>}
         className="flex-1 bg-background"
         contentContainerStyle={contentContainerStyle}
-        keyboardDismissMode="interactive"
-        keyboardLiftBehavior="whenAtEnd"
+        keyboardDismissMode="on-drag"
         keyboardShouldPersistTaps="handled"
         onContentSizeChange={onContentSizeChange}
         onLayout={onLayout}
@@ -2172,27 +3232,52 @@ const AgentChatTranscript = React.forwardRef<
         showsVerticalScrollIndicator
       >
         {content}
-      </KeyboardChatScrollView>
+      </ScrollView>
     );
-  }
+  }),
+);
+AgentChatTranscript.displayName = "AgentChatTranscript";
 
+function ChatTranscriptPlaceholder({
+  onRetryTranscriptLoad,
+  state,
+}: {
+  onRetryTranscriptLoad: (purpose?: AgentOutputFeedPurpose) => void;
+  state: ChatTranscriptPlaceholderState;
+}) {
+  if (state.kind === "none") return null;
+  const retryable = state.kind === "timed-out" || state.kind === "error";
+  const loading = state.kind === "loading";
   return (
-    <ScrollView
-      ref={ref as React.Ref<ScrollView>}
-      className="flex-1 bg-background"
-      contentContainerStyle={contentContainerStyle}
-      keyboardDismissMode="on-drag"
-      keyboardShouldPersistTaps="handled"
-      onContentSizeChange={onContentSizeChange}
-      onLayout={onLayout}
-      onScroll={onScroll}
-      scrollEventThrottle={16}
-      showsVerticalScrollIndicator
-    >
-      {content}
-    </ScrollView>
+    <View className="flex-1 items-center justify-center px-4 py-10">
+      <View
+        className="max-w-[90%] rounded-lg border border-border bg-card px-3 py-2 shadow-sm"
+        style={{ minWidth: 240 }}
+      >
+        <View className="flex-row items-center gap-2">
+          {loading ? (
+            <ActivityIndicator size="small" color="#a1a1aa" />
+          ) : state.kind === "error" ? (
+            <CircleAlert size={18} color="#f87171" />
+          ) : null}
+          <View className="min-w-0 shrink">
+            <Text className="text-sm text-muted-foreground">{state.title}</Text>
+            <Text className="mt-1 text-xs text-muted-foreground">{state.message}</Text>
+          </View>
+        </View>
+        {retryable ? (
+          <Button
+            className="mt-2 self-start"
+            size="sm"
+            variant="outline"
+            label={state.retryLabel}
+            onPress={() => onRetryTranscriptLoad(state.kind === "timed-out" ? "initial" : "poll")}
+          />
+        ) : null}
+      </View>
+    </View>
   );
-});
+}
 
 function ComposerFocusShell({
   children,
@@ -2253,14 +3338,6 @@ function ComposerFocusShell({
   );
 }
 
-function ActivityFooterLabel({ label }: { label: string }) {
-  return (
-    <Text className="text-xs text-muted-foreground" numberOfLines={1}>
-      {label}
-    </Text>
-  );
-}
-
 function sessionFromActiveShare(activeShare: ActiveSharedSession): DesktopSession {
   const worktreeName = activeShare.projectRoot.split("/").filter(Boolean).pop() || "Shared project";
   return {
@@ -2272,4 +3349,82 @@ function sessionFromActiveShare(activeShare: ActiveSharedSession): DesktopSessio
     worktreeName,
     label: "Shared session",
   };
+}
+
+function ActivityFooterLabel({ label, shimmer }: { label: string; shimmer: boolean }) {
+  const { colorScheme } = useColorScheme();
+  const palette = FOOTER_LABEL_SHIMMER_COLORS[colorScheme === "light" ? "light" : "dark"];
+  const sweep = useSharedValue(0);
+
+  useEffect(() => {
+    if (!shimmer) {
+      sweep.value = 0;
+      return;
+    }
+    sweep.value = 0;
+    sweep.value = withRepeat(
+      withTiming(1, {
+        duration: FOOTER_LABEL_SHIMMER_DURATION_MS,
+        easing: ReanimatedEasing.linear,
+      }),
+      -1,
+      false,
+    );
+    return () => {
+      sweep.value = 0;
+    };
+  }, [shimmer, sweep]);
+
+  if (!shimmer) {
+    return (
+      <Text className="text-xs text-muted-foreground" numberOfLines={1}>
+        {label}
+      </Text>
+    );
+  }
+
+  const characters = Array.from(label);
+  return (
+    <Text
+      accessibilityLabel={label}
+      className="text-xs"
+      numberOfLines={1}
+      style={{ color: palette.base }}
+    >
+      {characters.map((character, index) => (
+        <ActivityFooterLabelCharacter
+          key={`${index}-${character}`}
+          character={character}
+          palette={palette}
+          phase={characters.length > 1 ? index / (characters.length - 1) : 0}
+          sweep={sweep}
+        />
+      ))}
+    </Text>
+  );
+}
+
+function ActivityFooterLabelCharacter({
+  character,
+  palette,
+  phase,
+  sweep,
+}: {
+  character: string;
+  palette: { base: string; highlight: string };
+  phase: number;
+  sweep: SharedValue<number>;
+}) {
+  const animatedStyle = useAnimatedStyle(() => {
+    const center = sweep.value * (1 + 2 * FOOTER_LABEL_SHIMMER_BAND) - FOOTER_LABEL_SHIMMER_BAND;
+    const distance = Math.abs(phase - center);
+    const intensity = Math.max(0, 1 - distance / FOOTER_LABEL_SHIMMER_BAND);
+    return { color: interpolateColor(intensity, [0, 1], [palette.base, palette.highlight]) };
+  }, [palette.base, palette.highlight, phase]);
+
+  return (
+    <Reanimated.Text style={[{ fontSize: 12, lineHeight: 16 }, animatedStyle]}>
+      {character}
+    </Reanimated.Text>
+  );
 }

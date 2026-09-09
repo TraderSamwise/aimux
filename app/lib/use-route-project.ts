@@ -52,7 +52,16 @@ export function useRouteProject(): RouteProject {
   const projectLoading = Boolean(
     routeProjectPath && !routeProject && !lastSyncAt && !relayUnavailable,
   );
-  const endpoint = useMemo(() => getProjectServiceEndpoint(project), [project]);
+  const routeEndpoint = getProjectServiceEndpoint(project);
+  const endpointHost = routeEndpoint?.host ?? null;
+  const endpointPort = routeEndpoint?.port ?? null;
+  const endpoint = useMemo<ServiceEndpoint | null>(
+    () =>
+      endpointHost !== null && endpointPort !== null
+        ? { host: endpointHost, port: endpointPort }
+        : null,
+    [endpointHost, endpointPort],
+  );
 
   return useMemo(
     () => ({

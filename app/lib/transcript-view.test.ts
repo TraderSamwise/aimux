@@ -230,6 +230,26 @@ describe("toChatMessages", () => {
     expect(chat!.parts).toEqual([{ type: "text", text: "hello" }]);
   });
 
+  it("reuses normalized messages when transcript rows are unchanged", () => {
+    const first = toChatMessages(
+      [
+        message({ id: "assistant:stable", parts: [{ type: "text", text: "stable" }] }),
+        message({ id: "assistant:latest", latest: true, parts: [{ type: "text", text: "one" }] }),
+      ],
+      "codex-1",
+    );
+    const second = toChatMessages(
+      [
+        message({ id: "assistant:stable", parts: [{ type: "text", text: "stable" }] }),
+        message({ id: "assistant:latest", latest: true, parts: [{ type: "text", text: "two" }] }),
+      ],
+      "codex-1",
+    );
+
+    expect(second[0]).toBe(first[0]);
+    expect(second[1]).not.toBe(first[1]);
+  });
+
   it("drops whitespace-only text messages before rendering chat bubbles", () => {
     const chat = toChatMessages(
       [

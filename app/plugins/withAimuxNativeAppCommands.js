@@ -65,6 +65,22 @@ function patchMenu(contents) {
       ]
     )
     builder.insertChild(zoomMenu, atStartOfMenu: .view)
+
+    let chatMenu = UIMenu(
+      title: "Chat",
+      options: .displayInline,
+      children: [
+        UIKeyCommand(
+          title: "Interrupt Agent",
+          image: nil,
+          action: #selector(UIApplication.aimuxChatInterrupt(_:)),
+          input: UIKeyCommand.inputEscape,
+          modifierFlags: [],
+          propertyList: nil
+        ),
+      ]
+    )
+    builder.insertChild(chatMenu, atStartOfMenu: .edit)
   }
 `;
 

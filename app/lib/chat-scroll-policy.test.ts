@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   CHAT_SCROLL_END_THRESHOLD,
+  chatChromeAfterUserScroll,
   chatCommandForContentChange,
   chatCommandForInitialLayout,
   chatCommandForKeyboardChange,
@@ -9,6 +10,8 @@ import {
   chatDistanceFromEnd,
   chatPolicyAfterNavigationFocus,
   chatPolicyAfterUserScroll,
+  chatScrollDirection,
+  createChatScrollChromeState,
   createChatScrollPolicy,
   isChatPinnedToEnd,
 } from "./chat-scroll-policy";
@@ -92,5 +95,64 @@ describe("chat scroll policy", () => {
       kind: "scrollToEnd",
       reason: "initial",
     });
+  });
+
+  it("detects scroll direction with hysteresis", () => {
+    expect(chatScrollDirection(null, 100)).toBe("none");
+    expect(chatScrollDirection(100, 96)).toBe("none");
+    expect(chatScrollDirection(100, 93)).toBe("towardHistory");
+    expect(chatScrollDirection(100, 107)).toBe("towardNewest");
+  });
+
+  it("hides chat chrome only on deliberate scrollback", () => {
+    expect(
+      chatChromeAfterUserScroll(
+        createChatScrollChromeState(),
+        { intent: "reading" },
+        {
+          contentHeight: 1600,
+          offsetY: 900,
+          viewportHeight: 400,
+        },
+      ),
+    ).toEqual({ lastOffsetY: 900, visible: true });
+
+    expect(
+      chatChromeAfterUserScroll(
+        { lastOffsetY: 900, visible: true },
+        { intent: "reading" },
+        {
+          contentHeight: 1600,
+          offsetY: 880,
+          viewportHeight: 400,
+        },
+      ),
+    ).toEqual({ lastOffsetY: 880, visible: false });
+  });
+
+  it("reveals chat chrome on scroll toward newest and while pinned", () => {
+    expect(
+      chatChromeAfterUserScroll(
+        { lastOffsetY: 700, visible: false },
+        { intent: "reading" },
+        {
+          contentHeight: 1600,
+          offsetY: 720,
+          viewportHeight: 400,
+        },
+      ),
+    ).toEqual({ lastOffsetY: 720, visible: true });
+
+    expect(
+      chatChromeAfterUserScroll(
+        { lastOffsetY: 1000, visible: false },
+        { intent: "reading" },
+        {
+          contentHeight: 1600,
+          offsetY: 1200,
+          viewportHeight: 400,
+        },
+      ),
+    ).toEqual({ lastOffsetY: 1200, visible: true });
   });
 });

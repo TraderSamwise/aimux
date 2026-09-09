@@ -14,3 +14,5 @@ export const sidebarShowProjectPickerAtom = atom<boolean>(false);
 
 // Ephemeral — the project picker defaults to active projects on every app load.
 export const sidebarProjectPickerShowAllAtom = atom<boolean>(false);
+
+export const chatChromeVisibleAtom = atom<boolean>(true);

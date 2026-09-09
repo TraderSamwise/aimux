@@ -14,10 +14,12 @@ const LEGACY_SHARED_MESSAGE_RE = /^Message from ([^\n]+?) via Aimux shared chat:
 const BRACKETED_SHARED_MESSAGE_RE = /^\[[^\]\n]{1,120}\]\s+[\s\S]+$/;
 const LEGACY_ATTACHMENTS_HEADER = /\bAttached (?:image )?files:\s*/i;
 const EXCESSIVE_BLANK_LINES = /\n(?:[ \t]*\n){3,}/g;
+const CHAT_MESSAGE_CACHE_LIMIT = 2_000;
 const LEGACY_ATTACHMENT_ITEM = new RegExp(
   `-\\s+(.+?)\\s+\\((${ATTACHMENT_MIME_PATTERN}),\\s+\\d+\\s+bytes\\):\\s+(\\S*?\\.aimux\\/attachments\\/(att_[A-Za-z0-9_-]+)\\.[^\\s/]+)`,
   "g",
 );
+const chatMessageCache = new Map<string, ChatMessage>();
 
 function normalizeSharedText(text: string): string {
   if (BRACKETED_SHARED_MESSAGE_RE.test(text)) return text;
@@ -176,6 +178,34 @@ function toHistoryPart(part: HistoryPart, sessionId: string, shared: boolean): H
   };
 }
 
+function chatMessageCacheKey(
+  message: AgentTranscriptMessage,
+  sessionId: string,
+  shared: boolean,
+): string {
+  return JSON.stringify([
+    sessionId,
+    shared,
+    message.id,
+    message.latest === true,
+    message.role,
+    message.parts,
+  ]);
+}
+
+function cachedChatMessage(key: string, build: () => ChatMessage | null): ChatMessage | null {
+  const cached = chatMessageCache.get(key);
+  if (cached) return cached;
+  const next = build();
+  if (!next) return null;
+  chatMessageCache.set(key, next);
+  if (chatMessageCache.size > CHAT_MESSAGE_CACHE_LIMIT) {
+    const first = chatMessageCache.keys().next().value;
+    if (first) chatMessageCache.delete(first);
+  }
+  return next;
+}
+
 /**
  * The service's transcript, dressed for this client.
  *
@@ -187,14 +217,16 @@ export function toChatMessages(
   options: ChatMessageOptions = {},
 ): ChatMessage[] {
   const shared = options.shared === true;
-  return transcript
-    .map((message) => {
+  return transcript.flatMap((message) => {
+    const cacheKey = chatMessageCacheKey(message, sessionId, shared);
+    const chatMessage = cachedChatMessage(cacheKey, () => {
       const parts = normalizeLegacyAttachmentParts(message.parts)
         .map(normalizeAttachmentReferencePart)
         .map(
           (part): HistoryPart => toHistoryPart(part, sessionId, shared && message.role === "user"),
         )
         .filter((part) => part.type !== "text" || part.text.length > 0);
+      if (parts.length === 0) return null;
       return {
         // Keyed by position while it is the newest. Its content changes as the
         // agent writes into it, so a content-derived key would tear the bubble
@@ -203,8 +235,9 @@ export function toChatMessages(
         role: message.role,
         parts,
       };
-    })
-    .filter((message) => message.parts.length > 0);
+    });
+    return chatMessage ? [chatMessage] : [];
+  });
 }
 
 /**

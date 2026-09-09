@@ -49,7 +49,5 @@ export function agentRoleLabel(agent: AgentDisplayInput): string {
 }
 
 export function agentCompactIdentity(agent: AgentDisplayInput): string {
-  const name = agentShortName(agent);
-  const role = agentRoleLabel(agent);
-  return role ? `${name} (${role})` : name;
+  return agentShortName(agent);
 }

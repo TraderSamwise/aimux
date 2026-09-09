@@ -62,7 +62,7 @@ describe("monitor targets", () => {
 
     expect(monitorSessionTargetsForProject(project, generatedState)[0]).toMatchObject({
       sessionId: "codex-o6o4kf",
-      sessionLabel: "codex (coder)",
+      sessionLabel: "codex",
     });
   });
 

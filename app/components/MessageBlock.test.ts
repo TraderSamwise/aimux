@@ -299,6 +299,41 @@ describe("MessageBlock table text", () => {
     ]);
   });
 
+  it("splits loose pipe table blocks without separator rows", () => {
+    expect(
+      splitMarkdownTableSegments(
+        [
+          "Before",
+          "",
+          "| stage | seat map label | reservation label |",
+          '| minted, untouched | amber hollow, "In an invitation" | In an invitation |',
+          '| guest holding it | still "In an invitation" | In an invitation |',
+          "| bought | Sold | Sold |",
+          "",
+          "After",
+        ].join("\n"),
+      ),
+    ).toEqual([
+      { kind: "text", text: "Before" },
+      {
+        kind: "table",
+        text: [
+          "| stage | seat map label | reservation label |",
+          '| minted, untouched | amber hollow, "In an invitation" | In an invitation |',
+          '| guest holding it | still "In an invitation" | In an invitation |',
+          "| bought | Sold | Sold |",
+        ].join("\n"),
+      },
+      { kind: "text", text: "After" },
+    ]);
+  });
+
+  it("does not promote ordinary prose with isolated pipes", () => {
+    expect(splitMarkdownTableSegments("Before\nmaybe a | b\nanother c | d\nAfter")).toEqual([
+      { kind: "text", text: "Before\nmaybe a | b\nanother c | d\nAfter" },
+    ]);
+  });
+
   it("splits terminal box tables into horizontally scrollable text segments", () => {
     expect(
       splitMarkdownTableSegments(
@@ -327,6 +362,45 @@ describe("MessageBlock table text", () => {
         ].join("\n"),
       },
       { kind: "text", text: "After" },
+    ]);
+  });
+
+  it("does not promote vertical-only box glyph output to a table", () => {
+    expect(
+      splitMarkdownTableSegments(
+        [
+          "299 +fn footer_hint_text(input:",
+          "&DashboardRenderInput<'_>) -> String {",
+          "300 +  if !input.snapshot.",
+          "worktree_groups.is_empty() &&",
+          "input.nav_level == DashboardNavLevel:",
+          ":Worktrees {",
+          '301 +    return "↑↓/jk worktrees [1-9]',
+          "worktree [Enter/→/l] step in [Tab] details [n]",
+          'agent [v] service [q] quit"',
+          "302 +  }",
+          "│││││  ││ ││││││││",
+          "│││││  ││ ││││││││",
+        ].join("\n"),
+      ),
+    ).toEqual([
+      {
+        kind: "text",
+        text: [
+          "299 +fn footer_hint_text(input:",
+          "&DashboardRenderInput<'_>) -> String {",
+          "300 +  if !input.snapshot.",
+          "worktree_groups.is_empty() &&",
+          "input.nav_level == DashboardNavLevel:",
+          ":Worktrees {",
+          '301 +    return "↑↓/jk worktrees [1-9]',
+          "worktree [Enter/→/l] step in [Tab] details [n]",
+          'agent [v] service [q] quit"',
+          "302 +  }",
+          "│││││  ││ ││││││││",
+          "│││││  ││ ││││││││",
+        ].join("\n"),
+      },
     ]);
   });
 });

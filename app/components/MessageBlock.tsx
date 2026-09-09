@@ -153,6 +153,16 @@ function isMarkdownTableSeparator(line: string): boolean {
   return cells.length >= 2 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
 }
 
+function isLooseMarkdownTableBlock(lines: readonly string[]): boolean {
+  if (lines.length < 2) return false;
+  const boundaryRows = lines.filter((line) => /^\s*\|/.test(line) || /\|\s*$/.test(line)).length;
+  const maxCells = Math.max(...lines.map((line) => markdownTableCells(line).length));
+  const pipeCount = lines.reduce((sum, line) => sum + (line.match(/\|/g)?.length ?? 0), 0);
+  return (
+    boundaryRows >= Math.ceil(lines.length / 2) && (maxCells >= 3 || pipeCount >= lines.length * 2)
+  );
+}
+
 function markdownTableCells(line: string): string[] {
   const trimmed = line.trim();
   if (!trimmed.includes("|")) return [];
@@ -365,6 +375,29 @@ function splitMarkdownTableSegmentsWithRanges(text: string): TextSegmentWithRang
       textEnd = textStart;
       continue;
     }
+    if (isMarkdownTableRow(lines[index] ?? "")) {
+      const tableStartIndex = index;
+      const tableStart = lineStarts[index] ?? 0;
+      const tableLines: string[] = [];
+      while (index < lines.length && isMarkdownTableRow(lines[index] ?? "")) {
+        tableLines.push(lines[index] ?? "");
+        index += 1;
+      }
+      if (isLooseMarkdownTableBlock(tableLines)) {
+        flushText();
+        const tableText = tableLines.join("\n");
+        segments.push({
+          kind: "table",
+          text: tableText,
+          start: tableStart,
+          end: tableStart + tableText.length,
+        });
+        textStart = lineStarts[index] ?? text.length;
+        textEnd = textStart;
+        continue;
+      }
+      index = tableStartIndex;
+    }
     if (isTerminalBoxTableLine(lines[index] ?? "")) {
       const tableStartIndex = index;
       const tableStart = lineStarts[index] ?? 0;
@@ -373,7 +406,7 @@ function splitMarkdownTableSegmentsWithRanges(text: string): TextSegmentWithRang
         tableLines.push(lines[index] ?? "");
         index += 1;
       }
-      if (tableLines.length >= 2) {
+      if (isTerminalBoxTableBlock(tableLines)) {
         flushText();
         const tableText = tableLines.join("\n");
         segments.push({
@@ -406,6 +439,11 @@ function isTerminalBoxTableLine(line: string): boolean {
   const trimmed = line.trim();
   if (trimmed.length < 2) return false;
   return BOX_TABLE_CHARS.test(trimmed);
+}
+
+function isTerminalBoxTableBlock(lines: readonly string[]): boolean {
+  if (lines.length < 2) return false;
+  return lines.some((line) => /[─═]/.test(line)) && lines.some((line) => /[│║]/.test(line));
 }
 
 export function canRenderRichText(
@@ -508,7 +546,7 @@ function MarkdownTableText({ className, text }: { className: string; text: strin
     >
       <Text
         className={`${className} font-mono`}
-        style={[MESSAGE_TEXT_STYLE, { flexWrap: "nowrap" }]}
+        style={[MESSAGE_CODE_EDIT_DIFF_STYLE, { flexWrap: "nowrap" }]}
       >
         {text}
       </Text>

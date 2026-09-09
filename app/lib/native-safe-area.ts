@@ -6,7 +6,11 @@ import { Platform } from "react-native";
 export const IOS_MIN_TOP_INSET = 54;
 export const IOS_MIN_BOTTOM_INSET = 24;
 
-export function resolveChromeTopInset(topInset: number): number {
+export function resolveChromeTopInset(
+  topInset: number,
+  options: { reserveTopSafeArea?: boolean } = {},
+): number {
+  if (options.reserveTopSafeArea === false) return 0;
   if (Platform.OS === "web") return 0;
   if (Platform.OS === "ios") return Math.max(topInset, IOS_MIN_TOP_INSET);
   return topInset;

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Pressable, View } from "react-native";
+import { Pressable, ScrollView, View } from "react-native";
 import { usePathname, useRouter } from "expo-router";
 import { useAtomValue, useSetAtom } from "jotai";
 import { AgentCreatePanel } from "@/components/agent-create-panel";
@@ -9,12 +9,13 @@ import { Text } from "@/components/ui/text";
 import { ServiceActions } from "@/components/service-actions";
 import { WorktreeManagementPanel } from "@/components/worktree-management-panel";
 import { StatusDotMini } from "@/components/status-dot";
-import { agentRoleLabel, agentShortName } from "@/lib/agent-display";
+import { agentShortName } from "@/lib/agent-display";
 import { useAuth } from "@/lib/auth";
 import { blurWebActiveElement } from "@/lib/blur-web-active-element";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopService, DesktopSession, WorktreeBucket } from "@/lib/desktop-state";
 import { filterWorktreeBucketToActiveEntries } from "@/lib/desktop-state";
+import { formatServiceRecency, formatSessionRecency } from "@/lib/recency";
 import {
   agentStatusKind,
   appStatusClasses,
@@ -42,6 +43,7 @@ import {
 // dashboard's card/dot/[n]/pill language. Palette: card #15161a · border
 // #26272d · hairline #202127 · text #edeef0 / muted #7c7e88 / faint #565862.
 const PRESS = "hover:bg-[#1f2025] active:bg-[#232733]";
+const WORKTREE_CARD_MIN_WIDTH = 420;
 
 function worktreeHasChildren(bucket: WorktreeBucket): boolean {
   return bucket.sessions.length > 0 || bucket.services.length > 0;
@@ -75,11 +77,9 @@ function deriveAgentState(session: DesktopSession): AgentState {
     case "needs_response":
       return { label: "Needs reply", kind: "needs", pill: true };
   }
-  const kind = agentStatusKind(session);
-  if (session.status === "running") return { label: "Running", kind, pill: true };
-  if (session.status === "waiting") return { label: "Waiting", kind, pill: true };
+  if (session.status === "running") return { label: "Running", kind: "working", pill: true };
+  if (session.status === "waiting") return { label: "Waiting", kind: "needs", pill: true };
   if (session.status === "idle") return { label: "Idle", kind: "idle", pill: false };
-  if (session.status === "exited") return { label: "Exited", kind, pill: false };
   return { label: "Offline", kind: "offline", pill: false };
 }
 
@@ -121,14 +121,41 @@ function SelectMark({ selected }: { selected: boolean }) {
 }
 
 function TrailingHint({ text }: { text?: string }) {
-  if (!text) return <View className="min-w-0 flex-1" />;
+  if (!text) return null;
   return (
     <Text
-      className="min-w-0 flex-1 font-mono text-[12px] text-[#565862]"
+      className="min-w-0 shrink font-mono text-[12px] text-[#565862]"
+      style={{ maxWidth: 220 }}
       numberOfLines={1}
       ellipsizeMode="tail"
     >
       {`· ${text}`}
+    </Text>
+  );
+}
+
+function joinHints(...parts: Array<string | null | undefined>): string | undefined {
+  const text = parts.filter((part): part is string => Boolean(part)).join(" · ");
+  return text || undefined;
+}
+
+function agentRecencyText(session: DesktopSession): string | null {
+  return formatSessionRecency(session);
+}
+
+function serviceRecencyText(service: DesktopService): string | null {
+  return formatServiceRecency(service);
+}
+
+function CompactRecency({ text }: { text?: string | null }) {
+  if (!text) return null;
+  return (
+    <Text
+      className="ml-20 mt-0.5 font-mono text-[11px] text-[#565862]"
+      numberOfLines={1}
+      ellipsizeMode="tail"
+    >
+      {text}
     </Text>
   );
 }
@@ -157,8 +184,9 @@ function AgentRow({
   onPress: () => void;
 }) {
   const shortName = agentShortName(session);
-  const role = agentRoleLabel(session);
   const state = deriveAgentState(session);
+  const recency = agentRecencyText(session);
+  const fullHint = joinHints(recency, session.headline || session.previewLine);
   const identity = (
     <>
       <SelectMark selected={selected} />
@@ -179,18 +207,8 @@ function AgentRow({
         >
           {shortName}
         </Text>
-        {role ? (
-          <Text
-            className={cn("shrink-0 font-mono text-[12px] text-[#7c7e88]", compact && "ml-auto")}
-            numberOfLines={1}
-          >
-            {role}
-          </Text>
-        ) : null}
       </View>
-      {compact ? null : (
-        <TrailingHint text={session.headline || session.previewLine || undefined} />
-      )}
+      {compact ? null : <TrailingHint text={fullHint} />}
     </>
   );
 
@@ -200,12 +218,10 @@ function AgentRow({
     return (
       <Pressable
         onPress={onPress}
-        className={cn(
-          "flex-row items-center gap-2 rounded-md px-2.5 py-2",
-          selected ? "bg-[#232733]" : PRESS,
-        )}
+        className={cn("rounded-md px-2.5 py-2", selected ? "bg-[#232733]" : PRESS)}
       >
-        {identity}
+        <View className="flex-row items-center gap-2">{identity}</View>
+        <CompactRecency text={recency} />
       </Pressable>
     );
   }
@@ -219,11 +235,11 @@ function AgentRow({
     >
       <Pressable
         onPress={onPress}
-        className="min-w-0 flex-1 flex-row items-center gap-2 active:opacity-70"
+        className="min-w-0 shrink flex-row items-center gap-2 active:opacity-70"
       >
         {identity}
       </Pressable>
-      <View className="shrink-0 flex-row items-center gap-3 pl-2">
+      <View className="shrink-0 flex-row items-center gap-3 pl-3">
         <StatusCell state={state} />
         <AgentActions
           session={session}
@@ -259,6 +275,8 @@ function ServiceRow({
   const detail = service.shellCommand ?? service.previewLine ?? service.command ?? "";
   const stateKind = serviceStatusKind(service);
   const tone = appStatusClasses(stateKind);
+  const recency = serviceRecencyText(service);
+  const fullHint = joinHints(recency, detail);
   const identity = (
     <>
       <SelectMark selected={false} />
@@ -284,7 +302,7 @@ function ServiceRow({
           svc
         </Text>
       </View>
-      {compact ? null : <TrailingHint text={detail || undefined} />}
+      {compact ? null : <TrailingHint text={fullHint} />}
     </>
   );
 
@@ -292,9 +310,10 @@ function ServiceRow({
     return (
       <Pressable
         onPress={onPress}
-        className="flex-row items-center gap-2 rounded-md px-2.5 py-2 hover:bg-[#1f2025] active:opacity-70"
+        className="rounded-md px-2.5 py-2 hover:bg-[#1f2025] active:opacity-70"
       >
-        {identity}
+        <View className="flex-row items-center gap-2">{identity}</View>
+        <CompactRecency text={recency} />
       </Pressable>
     );
   }
@@ -303,11 +322,11 @@ function ServiceRow({
     <View className="flex-row items-center gap-2 rounded-md px-2.5 py-2 hover:bg-[#1f2025]">
       <Pressable
         onPress={onPress}
-        className="min-w-0 flex-1 flex-row items-center gap-2 active:opacity-70"
+        className="min-w-0 shrink flex-row items-center gap-2 active:opacity-70"
       >
         {identity}
       </Pressable>
-      <View className="shrink-0 flex-row items-center gap-3 pl-2">
+      <View className="shrink-0 flex-row items-center gap-3 pl-3">
         <Text
           className={cn("font-mono text-[12px]", tone.text)}
           style={{ color: tone.hex }}
@@ -342,7 +361,7 @@ function worktreeCountChips(bucket: WorktreeBucket): CountChip[] {
   let idle = 0;
   let offline = 0;
   for (const session of bucket.sessions) {
-    const kind = agentStatusKind(session);
+    const kind = deriveAgentState(session).kind;
     if (kind === "working") working++;
     else if (kind === "needs") needs++;
     else if (kind === "blocked") blocked++;
@@ -397,21 +416,8 @@ function WorktreeCard({
   const containsSelected = bucket.sessions.some((s) => s.id === selectedSessionId);
   const barColor = identityTone;
   const chips = worktreeCountChips(bucket);
-
-  return (
-    <View
-      className={cn(
-        "overflow-hidden rounded-xl",
-        compact ? "mb-2" : "mb-3",
-        containsSelected ? "bg-[#181a1f]" : "bg-[#15161a]",
-      )}
-      style={{
-        borderWidth: 1,
-        borderColor: containsSelected ? "#3a3c44" : "#26272d",
-        borderLeftWidth: 3,
-        borderLeftColor: barColor,
-      }}
-    >
+  const content = (
+    <>
       <View
         className={cn("flex-row items-center gap-2.5", compact ? "px-3 py-2" : "px-3.5 py-2.5")}
       >
@@ -480,6 +486,37 @@ function WorktreeCard({
           ))}
         </View>
       ) : null}
+    </>
+  );
+
+  return (
+    <View
+      className={cn(
+        "overflow-hidden rounded-xl",
+        compact ? "mb-2" : "mb-3",
+        containsSelected ? "bg-[#181a1f]" : "bg-[#15161a]",
+      )}
+      style={{
+        borderWidth: 1,
+        borderColor: containsSelected ? "#3a3c44" : "#26272d",
+        borderLeftWidth: 3,
+        borderLeftColor: barColor,
+      }}
+    >
+      {compact ? (
+        content
+      ) : (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={{ flexGrow: 1 }}
+        >
+          <View className="flex-1" style={{ minWidth: WORKTREE_CARD_MIN_WIDTH }}>
+            {content}
+          </View>
+        </ScrollView>
+      )}
     </View>
   );
 }
@@ -543,8 +580,9 @@ export function WorktreeList({
   const identityToneForBucket = (bucket: WorktreeBucket) =>
     worktreeToneForBucket(bucket, projectPath);
 
-  return (
-    <View className={cn("py-3", padded && "px-4")}>
+  const listClassName = cn("py-3", padded && "px-4");
+  const content = (
+    <>
       {main ? (
         <WorktreeCard bucket={main} identityTone={identityToneForBucket(main)} {...cardProps} />
       ) : null}
@@ -588,8 +626,14 @@ export function WorktreeList({
             : null}
         </View>
       ) : null}
-    </View>
+    </>
   );
+
+  if (compact) {
+    return <View className={listClassName}>{content}</View>;
+  }
+
+  return <View className={listClassName}>{content}</View>;
 }
 
 // Self-contained worktree dashboard (state handling + list). `padded` adds the

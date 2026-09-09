@@ -6,6 +6,7 @@ import { DarkTheme, DefaultTheme, ThemeProvider } from "@react-navigation/native
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { KeyboardProvider } from "react-native-keyboard-controller";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { AuthProvider, LOCAL_MODE, useAuth } from "@/lib/auth";
 import { sanitizeRedirect } from "@/lib/clerk-errors";
 import { singleRouteParam } from "@/lib/route-params";
@@ -62,23 +63,25 @@ export default function RootLayout() {
   }, []);
 
   return (
-    <SafeAreaProvider>
-      <KeyboardProvider>
-        <ThemeProvider value={navTheme}>
-          <AuthProvider>
-            <AuthGate>
-              <StatusBar style={colorScheme === "dark" ? "light" : "dark"} />
-              <Stack screenOptions={stackScreenOptions}>
-                <Stack.Screen name="(main)" />
-                <Stack.Screen name="inbox" />
-                <Stack.Screen name="auth" />
-                <Stack.Screen name="shares/invite/[ownerUserId]/[token]/accept" />
-                <Stack.Screen name="cli-auth" />
-              </Stack>
-            </AuthGate>
-          </AuthProvider>
-        </ThemeProvider>
-      </KeyboardProvider>
-    </SafeAreaProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
+        <KeyboardProvider>
+          <ThemeProvider value={navTheme}>
+            <AuthProvider>
+              <AuthGate>
+                <StatusBar style={colorScheme === "dark" ? "light" : "dark"} />
+                <Stack screenOptions={stackScreenOptions}>
+                  <Stack.Screen name="(main)" />
+                  <Stack.Screen name="inbox" />
+                  <Stack.Screen name="auth" />
+                  <Stack.Screen name="shares/invite/[ownerUserId]/[token]/accept" />
+                  <Stack.Screen name="cli-auth" />
+                </Stack>
+              </AuthGate>
+            </AuthProvider>
+          </ThemeProvider>
+        </KeyboardProvider>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }

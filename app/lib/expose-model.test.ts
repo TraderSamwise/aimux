@@ -112,12 +112,12 @@ describe("expose model", () => {
 
     expect(generated).toMatchObject({
       label: "codex-o6o4kf",
-      displayLabel: "codex (coder)",
+      displayLabel: "codex",
       sessionId: "codex-o6o4kf",
     });
     expect(custom).toMatchObject({
       label: "overseer",
-      displayLabel: "overseer (reviewer)",
+      displayLabel: "overseer",
       sessionId: "claude-k9czzb",
     });
   });

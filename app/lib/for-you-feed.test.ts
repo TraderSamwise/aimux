@@ -192,7 +192,7 @@ describe("For You feed classifier", () => {
 
     expect(feed.cards[0]).toMatchObject({
       id: "agent:codex-o6o4kf:attention",
-      title: "codex (coder)",
+      title: "codex",
       sessionId: "codex-o6o4kf",
     });
   });
