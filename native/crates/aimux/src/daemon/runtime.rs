@@ -143,6 +143,7 @@ pub struct RealDaemonRuntime {
     auth_flows: Mutex<HashMap<String, LoginFlowWaiter>>,
     global_expose_hot_snapshots: GlobalExposeHotSnapshotCoordinator,
     project_online_agent_count_cache: HashMap<String, ProjectOnlineAgentCountCacheEntry>,
+    restart_live_project_service_pids: Option<BTreeMap<String, Vec<i32>>>,
     started_instant: Instant,
     relay: Arc<crate::daemon::relay::RelaySupervisor>,
 }
@@ -200,6 +201,20 @@ pub trait ProjectServiceProcessVerifier: Send + Sync {
     fn is_live(&self, pid: i32) -> bool;
     fn is_live_native_project_service(&self, service: &ProjectServiceState) -> bool;
     fn live_project_service_pids(&self, project_id: &str, project_root: &str) -> Vec<i32>;
+    fn live_project_service_pids_by_project(
+        &self,
+        projects: &[(String, String)],
+    ) -> BTreeMap<String, Vec<i32>> {
+        projects
+            .iter()
+            .map(|(project_id, project_root)| {
+                (
+                    project_id.clone(),
+                    self.live_project_service_pids(project_id, project_root),
+                )
+            })
+            .collect()
+    }
 }
 
 #[derive(Debug, Default)]
@@ -239,6 +254,38 @@ impl ProjectServiceProcessVerifier for SystemProjectServiceProcessVerifier {
             })
             .map(|entry| entry.pid)
             .collect()
+    }
+
+    fn live_project_service_pids_by_project(
+        &self,
+        projects: &[(String, String)],
+    ) -> BTreeMap<String, Vec<i32>> {
+        let mut by_project = projects
+            .iter()
+            .map(|(project_id, _)| (project_id.clone(), Vec::new()))
+            .collect::<BTreeMap<_, _>>();
+        let processes = list_process_args();
+        for entry in processes
+            .into_iter()
+            .filter(|entry| entry.args.contains("__project-service-internal"))
+        {
+            if !is_pid_alive(entry.pid) {
+                continue;
+            }
+            for (project_id, project_root) in projects {
+                let expected = ProjectServiceProcessIdentity {
+                    project_id: Some(project_id.clone()),
+                    project_root: Some(project_root.clone()),
+                };
+                if is_aimux_project_service_process_args(&entry.args, None, &expected) {
+                    by_project
+                        .entry(project_id.clone())
+                        .or_default()
+                        .push(entry.pid);
+                }
+            }
+        }
+        by_project
     }
 }
 
@@ -319,6 +366,7 @@ impl RealDaemonRuntime {
             auth_flows: Mutex::new(HashMap::new()),
             global_expose_hot_snapshots: GlobalExposeHotSnapshotCoordinator::default(),
             project_online_agent_count_cache: HashMap::new(),
+            restart_live_project_service_pids: None,
             started_instant: Instant::now(),
             relay: Arc::new(crate::daemon::relay::RelaySupervisor::default()),
         }
@@ -342,6 +390,7 @@ impl RealDaemonRuntime {
             auth_flows: Mutex::new(HashMap::new()),
             global_expose_hot_snapshots: GlobalExposeHotSnapshotCoordinator::default(),
             project_online_agent_count_cache: HashMap::new(),
+            restart_live_project_service_pids: None,
             started_instant: Instant::now(),
             relay: Arc::new(crate::daemon::relay::RelaySupervisor::default()),
         }
@@ -597,13 +646,18 @@ impl RealDaemonRuntime {
         project_root: &str,
         keep_pid: Option<i32>,
         skip_pids: &BTreeSet<i32>,
+        known_live_project_service_pids: Option<&BTreeMap<String, Vec<i32>>>,
     ) -> Vec<i32> {
         let now = now_iso();
         let mut terminated = Vec::new();
-        for pid in self
-            .project_service_process_verifier
-            .live_project_service_pids(project_id, project_root)
-        {
+        let live_pids = known_live_project_service_pids
+            .or(self.restart_live_project_service_pids.as_ref())
+            .and_then(|pids_by_project| pids_by_project.get(project_id).cloned())
+            .unwrap_or_else(|| {
+                self.project_service_process_verifier
+                    .live_project_service_pids(project_id, project_root)
+            });
+        for pid in live_pids {
             if Some(pid) == keep_pid || skip_pids.contains(&pid) {
                 continue;
             }
@@ -721,6 +775,19 @@ impl RealDaemonRuntime {
         issued_at: &str,
         project_root: Option<&str>,
     ) -> RestartControlPlaneTextResult {
+        self.restart_control_plane_runtime_with(
+            issued_at,
+            project_root,
+            reload_dashboard_for_restart,
+        )
+    }
+
+    fn restart_control_plane_runtime_with(
+        &mut self,
+        issued_at: &str,
+        project_root: Option<&str>,
+        mut reload_dashboard: impl FnMut(&str) -> Result<RestartDashboardTarget, String>,
+    ) -> RestartControlPlaneTextResult {
         log_lifecycle_always(
             "control plane restart started",
             "daemon",
@@ -731,6 +798,8 @@ impl RealDaemonRuntime {
         );
         let before = restart_before_report(self, issued_at);
         let project_roots = self.restart_project_roots(project_root);
+        let restart_live_project_service_pids =
+            self.live_project_service_pids_for_restart_projects(&project_roots);
         log_at(
             LogLevel::Debug,
             "control plane restart projects resolved",
@@ -743,9 +812,15 @@ impl RealDaemonRuntime {
         let project_root_set = project_roots.iter().cloned().collect::<HashSet<_>>();
         stop_pre_restart_dashboard_repair_windows(&before, &project_root_set);
         let mut projects = Vec::with_capacity(project_roots.len());
+        self.restart_live_project_service_pids = Some(restart_live_project_service_pids);
         for project_root in project_roots {
-            projects.push(self.restart_control_plane_project(&project_root));
+            projects.push(
+                self.restart_control_plane_project_with(&project_root, |project_root| {
+                    reload_dashboard(project_root)
+                }),
+            );
         }
+        self.restart_live_project_service_pids = None;
         let current = self.current_daemon_info(issued_at);
         let summary = restart_summary(&projects);
         let restart = json!({
@@ -807,8 +882,21 @@ impl RealDaemonRuntime {
         }
     }
 
-    fn restart_control_plane_project(&mut self, project_root: &str) -> Value {
-        self.restart_control_plane_project_with(project_root, reload_dashboard_for_restart)
+    fn live_project_service_pids_for_restart_projects(
+        &self,
+        project_roots: &[String],
+    ) -> BTreeMap<String, Vec<i32>> {
+        let projects = project_roots
+            .iter()
+            .map(|project_root| {
+                (
+                    compute_project_id(Path::new(project_root)),
+                    project_root.clone(),
+                )
+            })
+            .collect::<Vec<_>>();
+        self.project_service_process_verifier
+            .live_project_service_pids_by_project(&projects)
     }
 
     fn restart_control_plane_project_with(
@@ -1436,6 +1524,7 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
                     &project_root,
                     Some(service.pid),
                     &signaled_pids,
+                    None,
                 );
                 if self
                     .wait_for_live_project_service(&project_state_dir, service.pid)
@@ -1508,8 +1597,13 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
             signaled_pids.insert(service.pid);
             remove_metadata_endpoint(&project_state_dir);
         }
-        let extra_pids =
-            self.terminate_extra_project_services(&project_id, &project_root, None, &signaled_pids);
+        let extra_pids = self.terminate_extra_project_services(
+            &project_id,
+            &project_root,
+            None,
+            &signaled_pids,
+            None,
+        );
         if !extra_pids.is_empty() {
             signaled_pids.extend(extra_pids);
             log_lifecycle_always(
@@ -1558,6 +1652,7 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
             &project_root,
             Some(pid),
             &signaled_pids,
+            None,
         );
         let now = now_iso();
         let mut service = ProjectServiceState {
@@ -3239,6 +3334,51 @@ mod tests {
     }
 
     #[test]
+    fn control_plane_restart_batches_extra_service_pid_discovery() {
+        let fixture = restart_service_fixture("restart-batched-pids-one");
+        let other_project_path = fixture.root.join("other-repo");
+        fs::create_dir_all(other_project_path.join(".git")).expect("other project git");
+        let other_project = other_project_path.to_string_lossy().into_owned();
+        let project_id = fixture.register_project();
+        let other_project_id = {
+            let mut resolver = fixture.resolver.clone();
+            resolver
+                .register_project(&other_project)
+                .expect("register other project")
+                .expect("other project entry")
+                .id
+        };
+        fixture.persist_service(&project_id, 91_004, ProjectServiceStatus::Running);
+        fixture.persist_endpoint(91_004);
+        fixture.persist_service_for(
+            &other_project,
+            &other_project_id,
+            91_005,
+            ProjectServiceStatus::Running,
+        );
+        fixture.persist_endpoint_for(&other_project, 91_005, 45_905);
+        let launcher = Arc::new(RestartTestLauncher::new(91_104));
+        let verifier = Arc::new(
+            RestartTestProcessVerifier::current_native([91_004, 91_005])
+                .with_project_service_pids(&project_id, [91_004, 91_204])
+                .with_project_service_pids(&other_project_id, [91_005]),
+        );
+        let mut runtime = fixture.runtime(launcher.clone(), verifier.clone());
+
+        let result = runtime.restart_control_plane_runtime_with(
+            "2026-01-01T00:00:00.000Z",
+            None,
+            restart_test_dashboard,
+        );
+
+        assert_eq!(result.restart["summary"]["projects"], json!(2));
+        assert_eq!(launcher.terminations(), vec![(91_204, false)]);
+        assert_eq!(verifier.batch_project_counts(), vec![2]);
+        assert_eq!(verifier.single_project_scan_count(), 0);
+        fixture.cleanup();
+    }
+
+    #[test]
     fn daemon_disk_maintenance_sweeps_recordings_and_installs_like_node() {
         let root = temp_root("disk-maintenance");
         let home = root.join("home");
@@ -3613,9 +3753,19 @@ mod tests {
         }
 
         fn persist_service(&self, project_id: &str, pid: i32, status: ProjectServiceStatus) {
+            self.persist_service_for(&self.project_root, project_id, pid, status);
+        }
+
+        fn persist_service_for(
+            &self,
+            project_root: &str,
+            project_id: &str,
+            pid: i32,
+            status: ProjectServiceStatus,
+        ) {
             let service = ProjectServiceState {
                 project_id: project_id.to_owned(),
-                project_root: self.project_root.clone(),
+                project_root: project_root.to_owned(),
                 pid,
                 started_at: "then".to_owned(),
                 updated_at: "now".to_owned(),
@@ -3624,7 +3774,7 @@ mod tests {
                 last_restart_at: None,
                 last_exit: None,
             };
-            let mut state = DaemonState::empty();
+            let mut state = load_daemon_state(self.resolver.daemon_state_path());
             state.projects.insert(
                 project_id.to_owned(),
                 serde_json::to_value(service).expect("service json"),
@@ -3633,12 +3783,16 @@ mod tests {
         }
 
         fn persist_endpoint(&self, pid: i32) {
+            self.persist_endpoint_for(&self.project_root, pid, 45_901);
+        }
+
+        fn persist_endpoint_for(&self, project_root: &str, pid: i32, port: u16) {
             let mut resolver = self.resolver.clone();
             save_metadata_endpoint(
-                resolver.project_state_dir_for(&self.project_root),
+                resolver.project_state_dir_for(project_root),
                 &MetadataApiEndpoint {
                     host: "127.0.0.1".to_owned(),
-                    port: 45_901,
+                    port,
                     pid,
                     updated_at: "now".to_owned(),
                 },
@@ -3946,6 +4100,9 @@ mod tests {
     struct RestartTestProcessVerifier {
         live: BTreeSet<i32>,
         current_native: BTreeSet<i32>,
+        project_service_pids: BTreeMap<String, Vec<i32>>,
+        batch_project_counts: Mutex<Vec<usize>>,
+        single_project_scan_count: Mutex<usize>,
     }
 
     impl RestartTestProcessVerifier {
@@ -3954,6 +4111,9 @@ mod tests {
             Self {
                 live: current_native.clone(),
                 current_native,
+                project_service_pids: BTreeMap::new(),
+                batch_project_counts: Mutex::new(Vec::new()),
+                single_project_scan_count: Mutex::new(0),
             }
         }
 
@@ -3961,7 +4121,34 @@ mod tests {
             Self {
                 live: pids.into_iter().collect(),
                 current_native: BTreeSet::new(),
+                project_service_pids: BTreeMap::new(),
+                batch_project_counts: Mutex::new(Vec::new()),
+                single_project_scan_count: Mutex::new(0),
             }
+        }
+
+        fn with_project_service_pids(
+            mut self,
+            project_id: &str,
+            pids: impl IntoIterator<Item = i32>,
+        ) -> Self {
+            self.project_service_pids
+                .insert(project_id.to_owned(), pids.into_iter().collect());
+            self
+        }
+
+        fn batch_project_counts(&self) -> Vec<usize> {
+            self.batch_project_counts
+                .lock()
+                .expect("batch project counts")
+                .clone()
+        }
+
+        fn single_project_scan_count(&self) -> usize {
+            *self
+                .single_project_scan_count
+                .lock()
+                .expect("single project scan count")
         }
     }
 
@@ -3975,7 +4162,33 @@ mod tests {
         }
 
         fn live_project_service_pids(&self, _project_id: &str, _project_root: &str) -> Vec<i32> {
+            *self
+                .single_project_scan_count
+                .lock()
+                .expect("single project scan count") += 1;
             Vec::new()
+        }
+
+        fn live_project_service_pids_by_project(
+            &self,
+            projects: &[(String, String)],
+        ) -> BTreeMap<String, Vec<i32>> {
+            self.batch_project_counts
+                .lock()
+                .expect("batch project counts")
+                .push(projects.len());
+            projects
+                .iter()
+                .map(|(project_id, _)| {
+                    (
+                        project_id.clone(),
+                        self.project_service_pids
+                            .get(project_id)
+                            .cloned()
+                            .unwrap_or_default(),
+                    )
+                })
+                .collect()
         }
     }
 
