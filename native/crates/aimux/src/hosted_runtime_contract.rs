@@ -1,3 +1,7 @@
+use aimux::hosted_config::{
+    HostedConfig, hosted_config_to_value, is_loopback_bind_address, normalize_hosted_config,
+    normalize_hosted_config_value, validate_hosted_startup,
+};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
@@ -19,7 +23,7 @@ pub fn run_hosted_runtime_contract_case(input: &Value) -> Value {
         "normalizeHostedConfig" => normalize_hosted_config_case(input),
         "loadHostedConfig" => load_hosted_config_case(input),
         "loadHostedConfig/loadConfig" => json!({
-            "hostedConfig": default_hosted_config(),
+            "hostedConfig": hosted_config_to_value(&HostedConfig::default()),
             "projectHosted": null,
         }),
         "loadConfig" => input
@@ -78,31 +82,11 @@ fn crop_expose_preview_footer(input: &Value) -> Value {
     Value::Array(source[start..].to_vec())
 }
 
-fn default_hosted_config() -> Value {
-    json!({
-        "enabled": false,
-        "bindAddress": "127.0.0.1",
-        "port": 43195,
-        "rateLimit": {
-            "requestsPerMinute": 60,
-            "maxConcurrent": 4,
-            "bytesPerMinute": 50_331_648,
-        },
-        "maxPromptBytes": 16_384,
-        "maxResponseBytes": 1_048_576,
-        "maxAttachmentBytes": 14_680_064,
-        "maxContextBytes": 8_192,
-        "auditPromptBodies": true,
-        "webhookUrl": null,
-        "webhookSecretEnv": "AIMUX_HOSTED_WEBHOOK_SECRET",
-        "trustedForwardedHeader": null,
-        "retentionDays": 30,
-    })
-}
-
 fn normalize_hosted_config_case(input: &Value) -> Value {
     if input.get("mutateNormalizedRateLimit").is_some() {
-        return json!({ "defaultRequestsPerMinute": 60 });
+        let mut normalized = normalize_hosted_config(input.get("value").unwrap_or(&Value::Null));
+        normalized.rate_limit.requests_per_minute = 1;
+        return json!({ "defaultRequestsPerMinute": HostedConfig::default().rate_limit.requests_per_minute });
     }
     if let Some(values) = input.get("values").and_then(Value::as_array) {
         if values
@@ -112,7 +96,9 @@ fn normalize_hosted_config_case(input: &Value) -> Value {
             return json!(
                 values
                     .iter()
-                    .map(|value| json!({ "value": normalize_hosted_config(value)["maxContextBytes"].clone() }))
+                    .map(
+                        |value| json!({ "value": normalize_hosted_config(value).max_context_bytes })
+                    )
                     .collect::<Vec<_>>()
             );
         }
@@ -124,7 +110,7 @@ fn normalize_hosted_config_case(input: &Value) -> Value {
             return json!(
                 values
                     .iter()
-                    .map(|value| json!({ "value": normalize_hosted_config(value)["trustedForwardedHeader"].clone() }))
+                    .map(|value| json!({ "value": normalize_hosted_config(value).trusted_forwarded_header }))
                     .collect::<Vec<_>>()
             );
         }
@@ -137,7 +123,10 @@ fn normalize_hosted_config_case(input: &Value) -> Value {
                             .as_str()
                             .map(|text| json!({ "trustedForwardedHeader": text }))
                             .unwrap_or_else(|| value.clone());
-                        normalize_hosted_config(&raw)["trustedForwardedHeader"].clone()
+                        normalize_hosted_config(&raw)
+                            .trusted_forwarded_header
+                            .map(Value::String)
+                            .unwrap_or(Value::Null)
                     })
                     .collect::<Vec<_>>()
             );
@@ -149,100 +138,27 @@ fn normalize_hosted_config_case(input: &Value) -> Value {
             return json!(
                 values
                     .iter()
-                    .map(|value| json!({ "value": normalize_hosted_config(value)["retentionDays"].clone() }))
+                    .map(|value| json!({ "value": normalize_hosted_config(value).retention_days }))
                     .collect::<Vec<_>>()
             );
         }
-        return Value::Array(values.iter().map(normalize_hosted_config).collect());
+        return Value::Array(values.iter().map(normalize_hosted_config_value).collect());
     }
-    normalize_hosted_config(input.get("value").unwrap_or(&Value::Null))
+    normalize_hosted_config_value(input.get("value").unwrap_or(&Value::Null))
 }
 
 fn load_hosted_config_case(input: &Value) -> Value {
     if input.get("globalConfigText").is_some() {
         return json!({
-            "config": default_hosted_config(),
+            "config": hosted_config_to_value(&HostedConfig::default()),
             "quarantined": true,
         });
     }
     input
         .get("globalConfig")
         .and_then(|config| config.get("hosted"))
-        .map(normalize_hosted_config)
-        .unwrap_or_else(default_hosted_config)
-}
-
-fn normalize_hosted_config(raw: &Value) -> Value {
-    let default = default_hosted_config();
-    let Some(value) = raw.as_object() else {
-        return default;
-    };
-    let rate_limit = value.get("rateLimit").and_then(Value::as_object);
-    json!({
-        "enabled": bool_or(value.get("enabled"), false),
-        "bindAddress": non_empty_string(value.get("bindAddress"), "127.0.0.1"),
-        "port": bounded_int(value.get("port"), 43_195, 1, 65_535),
-        "rateLimit": {
-            "requestsPerMinute": bounded_int(rate_limit.and_then(|rate| rate.get("requestsPerMinute")), 60, 1, 100_000),
-            "maxConcurrent": bounded_int(rate_limit.and_then(|rate| rate.get("maxConcurrent")), 4, 1, 1_000),
-            "bytesPerMinute": bounded_int(rate_limit.and_then(|rate| rate.get("bytesPerMinute")), 50_331_648, 65_536, 1_073_741_824),
-        },
-        "maxPromptBytes": bounded_int(value.get("maxPromptBytes"), 16_384, 1, 10_485_760),
-        "maxAttachmentBytes": bounded_int(value.get("maxAttachmentBytes"), 14_680_064, 16_384, 104_857_600),
-        "maxContextBytes": bounded_int(value.get("maxContextBytes"), 8_192, 8_192, 1_048_576),
-        "maxResponseBytes": bounded_int(value.get("maxResponseBytes"), 1_048_576, 4_096, 104_857_600),
-        "auditPromptBodies": bool_or(value.get("auditPromptBodies"), true),
-        "webhookUrl": value.get("webhookUrl").and_then(Value::as_str).and_then(|text| {
-            let trimmed = text.trim();
-            (!trimmed.is_empty()).then(|| Value::String(trimmed.to_owned()))
-        }).unwrap_or(Value::Null),
-        "webhookSecretEnv": non_empty_string(value.get("webhookSecretEnv"), "AIMUX_HOSTED_WEBHOOK_SECRET"),
-        "trustedForwardedHeader": normalize_forwarded_header(value.get("trustedForwardedHeader")),
-        "retentionDays": bounded_int(value.get("retentionDays"), 30, 1, 3_650),
-    })
-}
-
-fn bool_or(value: Option<&Value>, fallback: bool) -> bool {
-    value.and_then(Value::as_bool).unwrap_or(fallback)
-}
-
-fn non_empty_string(value: Option<&Value>, fallback: &str) -> String {
-    value
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|text| !text.is_empty())
-        .unwrap_or(fallback)
-        .to_owned()
-}
-
-fn bounded_int(value: Option<&Value>, fallback: i64, min: i64, max: i64) -> i64 {
-    let Some(value) = value.and_then(Value::as_f64) else {
-        return fallback;
-    };
-    if !value.is_finite() {
-        return fallback;
-    }
-    let rounded = value.trunc() as i64;
-    if rounded < min || rounded > max {
-        fallback
-    } else {
-        rounded
-    }
-}
-
-fn normalize_forwarded_header(value: Option<&Value>) -> Value {
-    let Some(name) = value
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|text| !text.is_empty())
-        .map(str::to_lowercase)
-    else {
-        return Value::Null;
-    };
-    match name.as_str() {
-        "cf-connecting-ip" | "x-forwarded-for" | "true-client-ip" => Value::String(name),
-        _ => Value::Null,
-    }
+        .map(normalize_hosted_config_value)
+        .unwrap_or_else(|| hosted_config_to_value(&HostedConfig::default()))
 }
 
 fn validate_hosted_startup_case(input: &Value) -> Value {
@@ -251,87 +167,23 @@ fn validate_hosted_startup_case(input: &Value) -> Value {
             cases
                 .iter()
                 .map(|case| {
-                    validate_hosted_startup(
-                        case.get("config").unwrap_or(&Value::Null),
-                        case.get("activePrincipalCount")
-                            .and_then(Value::as_i64)
-                            .unwrap_or_default(),
-                    )
+                    let config =
+                        normalize_hosted_config(case.get("config").unwrap_or(&Value::Null));
+                    let active = case
+                        .get("activePrincipalCount")
+                        .and_then(Value::as_u64)
+                        .unwrap_or_default() as usize;
+                    validate_hosted_startup(&config, active)
                 })
                 .collect(),
         );
     }
-    validate_hosted_startup(
-        input.get("config").unwrap_or(&Value::Null),
-        input
-            .get("activePrincipalCount")
-            .and_then(Value::as_i64)
-            .unwrap_or_default(),
-    )
-}
-
-fn validate_hosted_startup(config: &Value, active_principal_count: i64) -> Value {
-    let normalized_storage;
-    let config = if config.get("bindAddress").is_none() {
-        normalized_storage = normalize_hosted_config(config);
-        &normalized_storage
-    } else {
-        config
-    };
-    if !config
-        .get("enabled")
-        .and_then(Value::as_bool)
-        .unwrap_or_default()
-    {
-        return json!({ "ok": true });
-    }
-    let bind_address = str_field(config, "bindAddress");
-    if !is_loopback_bind_address(bind_address) && active_principal_count <= 0 {
-        return json!({
-            "ok": false,
-            "error": format!("hosted mode refuses to bind {bind_address} with no principals \u{2014} run \"aimux hosted token create\" first"),
-        });
-    }
-    let webhook_secret_env = str_field(config, "webhookSecretEnv");
-    if !webhook_secret_env.starts_with("AIMUX_") {
-        return json!({
-            "ok": false,
-            "error": format!("hosted webhookSecretEnv must name an AIMUX_* variable, not {webhook_secret_env}"),
-        });
-    }
-    if let Some(webhook_url) = config.get("webhookUrl").and_then(Value::as_str) {
-        let Some((protocol, rest)) = webhook_url.split_once("://") else {
-            return json!({ "ok": false, "error": "hosted webhookUrl is not a valid URL" });
-        };
-        let hostname = rest.split(['/', ':', '?', '#']).next().unwrap_or_default();
-        if protocol != "https" && !is_loopback_bind_address(hostname) {
-            return json!({ "ok": false, "error": "hosted webhookUrl must be https unless it targets loopback" });
-        }
-    }
-    json!({ "ok": true })
-}
-
-fn is_loopback_bind_address(address: &str) -> bool {
-    let host = address
-        .trim()
-        .to_lowercase()
-        .trim_start_matches('[')
-        .trim_end_matches(']')
-        .to_owned();
-    host == "localhost"
-        || host == "::1"
-        || host == "::ffff:127.0.0.1"
-        || host.split('.').collect::<Vec<_>>().as_slice() == ["127", "0", "0", "1"]
-        || is_127_quad(&host)
-}
-
-fn is_127_quad(host: &str) -> bool {
-    let parts = host.split('.').collect::<Vec<_>>();
-    parts.len() == 4
-        && parts[0] == "127"
-        && parts[1..].iter().all(|part| {
-            !part.is_empty() && part.len() <= 3 && part.chars().all(|ch| ch.is_ascii_digit())
-        })
+    let config = normalize_hosted_config(input.get("config").unwrap_or(&Value::Null));
+    let active = input
+        .get("activePrincipalCount")
+        .and_then(Value::as_u64)
+        .unwrap_or_default() as usize;
+    validate_hosted_startup(&config, active)
 }
 
 #[derive(Clone)]

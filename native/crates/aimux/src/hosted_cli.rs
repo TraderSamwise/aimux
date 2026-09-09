@@ -1,4 +1,7 @@
 use crate::atomic_write::atomic_write_with_mode;
+use crate::hosted_config::{
+    HostedConfig, load_hosted_config_with_resolver, validate_hosted_startup,
+};
 use crate::paths::PathResolver;
 use anyhow::{Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
@@ -11,7 +14,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const TOKEN_PREFIX: &str = "amx_";
 const HASH_PREFIX: &str = "sha256:";
-const HOSTED_DEFAULT_PORT: u16 = 43_195;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -80,24 +82,6 @@ pub struct HostedAuditRecord {
     pub event: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct HostedConfig {
-    enabled: bool,
-    bind_address: String,
-    port: u16,
-    rate_limit: Value,
-    max_prompt_bytes: i64,
-    max_response_bytes: i64,
-    max_attachment_bytes: i64,
-    max_context_bytes: i64,
-    audit_prompt_bodies: bool,
-    webhook_url: Option<String>,
-    webhook_secret_env: String,
-    trusted_forwarded_header: Option<String>,
-    retention_days: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -466,13 +450,7 @@ impl HostedStore {
     }
 
     fn load_config(&self) -> HostedConfig {
-        let path = self.resolver.global_config_path();
-        let value = fs::read_to_string(path)
-            .ok()
-            .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
-            .and_then(|value| value.get("hosted").cloned())
-            .unwrap_or(Value::Null);
-        normalize_hosted_config(&value)
+        load_hosted_config_with_resolver(&self.resolver)
     }
 
     fn load_principals(&self) -> Result<HostedPrincipalsState> {
@@ -720,130 +698,6 @@ fn normalize_grant_value(value: &Value) -> Option<HostedGrant> {
         project_root: Path::new(project_root).to_string_lossy().into_owned(),
         session_id: session_id.to_owned(),
     })
-}
-
-fn normalize_hosted_config(raw: &Value) -> HostedConfig {
-    let rate_limit = raw.get("rateLimit").cloned().unwrap_or_else(|| json!({}));
-    HostedConfig {
-        enabled: raw.get("enabled").and_then(Value::as_bool).unwrap_or(false),
-        bind_address: non_empty_string(raw.get("bindAddress"), "127.0.0.1"),
-        port: bounded_u16(raw.get("port"), HOSTED_DEFAULT_PORT),
-        rate_limit: json!({
-            "requestsPerMinute": bounded_i64(rate_limit.get("requestsPerMinute"), 60, 1, 100_000),
-            "maxConcurrent": bounded_i64(rate_limit.get("maxConcurrent"), 4, 1, 1_000),
-            "bytesPerMinute": bounded_i64(rate_limit.get("bytesPerMinute"), 50_331_648, 65_536, 1_073_741_824),
-        }),
-        max_prompt_bytes: bounded_i64(raw.get("maxPromptBytes"), 16_384, 1, 10_485_760),
-        max_response_bytes: bounded_i64(raw.get("maxResponseBytes"), 1_048_576, 4_096, 104_857_600),
-        max_attachment_bytes: bounded_i64(
-            raw.get("maxAttachmentBytes"),
-            14_680_064,
-            16_384,
-            104_857_600,
-        ),
-        max_context_bytes: bounded_i64(raw.get("maxContextBytes"), 8_192, 8_192, 1_048_576),
-        audit_prompt_bodies: raw
-            .get("auditPromptBodies")
-            .and_then(Value::as_bool)
-            .unwrap_or(true),
-        webhook_url: raw
-            .get("webhookUrl")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_owned),
-        webhook_secret_env: non_empty_string(
-            raw.get("webhookSecretEnv"),
-            "AIMUX_HOSTED_WEBHOOK_SECRET",
-        ),
-        trusted_forwarded_header: raw
-            .get("trustedForwardedHeader")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_lowercase),
-        retention_days: bounded_i64(raw.get("retentionDays"), 30, 1, 3650),
-    }
-}
-
-fn validate_hosted_startup(config: &HostedConfig, active_principal_count: usize) -> Value {
-    if config.enabled
-        && !is_loopback_bind_address(&config.bind_address)
-        && active_principal_count == 0
-    {
-        return json!({
-            "ok": false,
-            "error": format!(
-                "hosted mode refuses to bind {} with no principals -- run \"aimux hosted token create\" first",
-                config.bind_address
-            )
-        });
-    }
-    if !config.webhook_secret_env.starts_with("AIMUX_") {
-        return json!({
-            "ok": false,
-            "error": format!(
-                "hosted webhookSecretEnv must name an AIMUX_* variable, not {}",
-                config.webhook_secret_env
-            )
-        });
-    }
-    if let Some(url) = &config.webhook_url
-        && !(url.starts_with("https://")
-            || url.starts_with("http://127.")
-            || url.starts_with("http://localhost")
-            || url.starts_with("http://[::1]"))
-    {
-        return json!({ "ok": false, "error": "hosted webhookUrl must be https unless it targets loopback" });
-    }
-    json!({ "ok": true })
-}
-
-fn is_loopback_bind_address(address: &str) -> bool {
-    let host = address
-        .trim()
-        .to_lowercase()
-        .trim_start_matches('[')
-        .trim_end_matches(']')
-        .to_owned();
-    host == "localhost"
-        || host == "::1"
-        || host == "::ffff:127.0.0.1"
-        || (host.starts_with("127.")
-            && host
-                .split('.')
-                .all(|part| part.parse::<u16>().is_ok_and(|value| value <= 255)))
-}
-
-fn non_empty_string(value: Option<&Value>, fallback: &str) -> String {
-    value
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|text| !text.is_empty())
-        .unwrap_or(fallback)
-        .to_owned()
-}
-
-fn bounded_i64(value: Option<&Value>, fallback: i64, min: i64, max: i64) -> i64 {
-    let Some(value) = value.and_then(Value::as_i64) else {
-        return fallback;
-    };
-    if value < min || value > max {
-        fallback
-    } else {
-        value
-    }
-}
-
-fn bounded_u16(value: Option<&Value>, fallback: u16) -> u16 {
-    let Some(value) = value.and_then(Value::as_u64) else {
-        return fallback;
-    };
-    if value == 0 || value > 65_535 {
-        fallback
-    } else {
-        value as u16
-    }
 }
 
 fn option_value<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
