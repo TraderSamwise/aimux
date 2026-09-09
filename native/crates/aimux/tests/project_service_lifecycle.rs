@@ -1595,6 +1595,55 @@ fn service_resume_recreates_stopped_service_from_persisted_launch_state() {
 }
 
 #[test]
+fn service_lifecycle_status_surfaces_in_gui_read_models() {
+    let project = temp_project("service-gui-status");
+    let state_dir = project.join("state");
+    write_lifecycle_topology(&state_dir);
+    move_fixture_service_to_project_root(&state_dir, &project);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    assert_gui_service_status(&context, "svc-web", "running");
+
+    let stopped = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::services::STOP,
+        Some(&json!({ "serviceId": "svc-web" })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(stopped.status, 200);
+    assert_eq!(stopped.body["status"], "stopped");
+    assert_gui_service_status(&context, "svc-web", "exited");
+
+    let resumed = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::services::RESUME,
+        Some(&json!({ "serviceId": "svc-web" })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(resumed.status, 200);
+    assert_eq!(resumed.body["status"], "running");
+    assert_gui_service_status(&context, "svc-web", "running");
+
+    let removed = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::services::REMOVE,
+        Some(&json!({ "serviceId": "svc-web" })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(removed.status, 200);
+    assert_eq!(removed.body["status"], "removed");
+    assert_gui_service_absent(&context, "svc-web");
+    cleanup(project);
+}
+
+#[test]
 fn service_resume_kills_stale_retained_binding_before_recreate() {
     let project = temp_project("service-resume-stale");
     let state_dir = project.join("state");
@@ -3160,6 +3209,28 @@ fn write_lifecycle_topology(state_dir: &PathBuf) {
     write_runtime_topology(runtime_topology_path(state_dir), &topology).unwrap();
 }
 
+fn move_fixture_service_to_project_root(state_dir: &PathBuf, project: &Path) {
+    let project_path = project.to_string_lossy();
+    let mut topology = read_topology(state_dir);
+    topology["rigs"][0]["projectRoot"] = json!(project_path.as_ref());
+    topology["nodes"][0]["cwd"] = json!(project_path.as_ref());
+    topology["nodes"][1]["cwd"] = json!(project_path.as_ref());
+    topology["sessions"][0]["worktreePath"] = json!(project_path.as_ref());
+    topology["services"][0]["worktreePath"] = json!(project_path.as_ref());
+    topology["services"][0]["cwd"] = json!(project_path.as_ref());
+    topology["worktrees"] = json!([{
+        "id": "wt-main",
+        "rigId": "rig-1",
+        "path": project_path.as_ref(),
+        "name": "Main Checkout",
+        "status": "active",
+        "branch": "master",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+    }]);
+    write_runtime_topology(runtime_topology_path(state_dir), &topology).unwrap();
+}
+
 fn write_agent_resume_topology(state_dir: &PathBuf, session: Value) {
     let topology = coerce_runtime_topology(&json!({
         "version": 1,
@@ -3274,6 +3345,87 @@ fn session(topology: &Value, id: &str) -> Value {
 
 fn service(topology: &Value, id: &str) -> Value {
     find(topology, "services", id).unwrap()
+}
+
+fn assert_gui_service_status(
+    context: &ProjectServiceRequestContext,
+    service_id: &str,
+    status: &str,
+) {
+    let desktop = route_project_service_request(context, "GET", routes::DESKTOP_STATE, None);
+    assert_eq!(desktop.status, 200);
+    let desktop_service = find_body_array_item(&desktop.body, "services", service_id);
+    assert_eq!(desktop_service["status"], status);
+    let group_service = desktop.body["worktreeGroups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|group| group["services"].as_array().into_iter().flatten())
+        .find(|service| service["id"] == service_id)
+        .expect("worktree group service");
+    assert_eq!(group_service["status"], status);
+
+    let topology = route_project_service_request(context, "GET", routes::TOPOLOGY, None);
+    assert_eq!(topology.status, 200);
+    assert_eq!(topology.body["topology"]["counts"]["services"], 1);
+    let topology_row = topology.body["topology"]["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["kind"] == "service" && row["serviceId"] == service_id)
+        .expect("service topology row");
+    assert_eq!(topology_row["status"], status);
+
+    let observability =
+        route_project_service_request(context, "GET", routes::PROJECT_OBSERVABILITY, None);
+    assert_eq!(observability.status, 200);
+    assert_eq!(observability.body["project"]["summary"]["services"], 1);
+}
+
+fn assert_gui_service_absent(context: &ProjectServiceRequestContext, service_id: &str) {
+    let desktop = route_project_service_request(context, "GET", routes::DESKTOP_STATE, None);
+    assert_eq!(desktop.status, 200);
+    assert!(
+        desktop.body["services"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|service| service["id"] != service_id)
+    );
+    assert!(
+        desktop.body["worktreeGroups"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|group| group["services"].as_array().into_iter().flatten())
+            .all(|service| service["id"] != service_id)
+    );
+
+    let topology = route_project_service_request(context, "GET", routes::TOPOLOGY, None);
+    assert_eq!(topology.status, 200);
+    assert_eq!(topology.body["topology"]["counts"]["services"], 0);
+    assert!(
+        topology.body["topology"]["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["serviceId"] != service_id)
+    );
+
+    let observability =
+        route_project_service_request(context, "GET", routes::PROJECT_OBSERVABILITY, None);
+    assert_eq!(observability.status, 200);
+    assert_eq!(observability.body["project"]["summary"]["services"], 0);
+}
+
+fn find_body_array_item(body: &Value, key: &str, id: &str) -> Value {
+    body[key]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["id"] == id)
+        .cloned()
+        .expect("body array item")
 }
 
 fn find(topology: &Value, key: &str, id: &str) -> Option<Value> {
