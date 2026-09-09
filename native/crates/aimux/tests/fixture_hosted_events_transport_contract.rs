@@ -3,9 +3,10 @@ use aimux::hosted_events::{
     HostedEventDeliveryConfig, HostedEventSender, SeenDeviceInput, client_address,
     device_fingerprint, sign_hosted_event,
 };
+use aimux::mobile_push_bridge::build_push_payload;
 use aimux::paths::PathResolver;
 use anyhow::{Result, anyhow};
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 use std::collections::{BTreeMap, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -44,7 +45,7 @@ pub fn run_mobile_push_contract_case(input: &Value) -> Value {
             "method": "POST",
             "path": "/internal/push",
             "contentType": "application/json",
-            "body": mobile_push_body(event),
+            "body": build_push_payload(event, "<cwd>"),
         }
     ])
 }
@@ -383,44 +384,6 @@ fn header(post: &SentPost, name: &str) -> Option<String> {
 
 fn is_hash_prefix(value: &str) -> bool {
     value.len() == 32 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
-}
-
-fn mobile_push_body(event: &Value) -> Value {
-    let mut body = Map::new();
-    let title = opt_str(event, "title")
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "aimux".to_owned());
-    let message = opt_str(event, "message")
-        .filter(|value| !value.is_empty())
-        .or_else(|| opt_str(event, "sessionId"))
-        .or_else(|| opt_str(event, "kind"))
-        .unwrap_or_default();
-    body.insert("title".into(), Value::String(title));
-    body.insert("body".into(), Value::String(message));
-    copy_if_present(event, &mut body, "kind");
-    copy_if_present(event, &mut body, "sessionId");
-    copy_if_present(event, &mut body, "projectId");
-    copy_if_present(event, &mut body, "notificationId");
-    copy_if_present(event, &mut body, "projectName");
-    copy_if_present(event, &mut body, "worktreePath");
-    copy_if_present(event, &mut body, "worktreeName");
-    copy_if_present(event, &mut body, "branch");
-    copy_if_present(event, &mut body, "categoryLabel");
-    copy_if_present(event, &mut body, "reasonLabel");
-    body.insert(
-        "projectRoot".into(),
-        opt_str(event, "projectRoot")
-            .map(Value::String)
-            .unwrap_or_else(|| Value::String("<cwd>".into())),
-    );
-    copy_if_present(event, &mut body, "dedupeKey");
-    Value::Object(body)
-}
-
-fn copy_if_present(source: &Value, target: &mut Map<String, Value>, field: &str) {
-    if let Some(value) = source.get(field).filter(|value| !value.is_null()) {
-        target.insert(field.into(), value.clone());
-    }
 }
 
 #[cfg(unix)]

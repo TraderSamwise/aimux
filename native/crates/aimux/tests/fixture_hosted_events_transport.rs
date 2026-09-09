@@ -1,4 +1,4 @@
-#[path = "../src/hosted_events_transport_contract.rs"]
+#[path = "fixture_hosted_events_transport_contract.rs"]
 mod hosted_events_transport_contract;
 
 use hosted_events_transport_contract::{
