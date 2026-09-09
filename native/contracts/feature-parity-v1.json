@@ -55,8 +55,7 @@
       "id": "runtime-exchange",
       "sourceSpec": [
         "testdata/contracts/v1/runtime-state",
-        "testdata/contracts/v1/runtime-coherence",
-        "testdata/contracts/v1/project-takeover"
+        "testdata/contracts/v1/runtime-coherence"
       ],
       "nativeOwner": "native/crates/aimux/src/runtime_core",
       "parityGate": "task, handoff, thread, notification, topology, and graveyard stores round-trip"

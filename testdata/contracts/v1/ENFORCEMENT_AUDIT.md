@@ -219,7 +219,6 @@ Binding statuses: PROVEN-FAILS 325, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
 | `fixture_project_event_stream` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/project-event-stream.json` | 39 | mutated fixture output failed owning Rust suite |
 | `fixture_project_observability` | PROVEN-FAILS | `testdata/contracts/v1/project-observability/observability.json` | 5 | mutated fixture output failed owning Rust suite |
 | `fixture_project_scanner` | PROVEN-FAILS | `testdata/contracts/v1/project-catalog/scanner.json` | 8 | mutated fixture output failed owning Rust suite |
-| `fixture_project_takeover` | PROVEN-FAILS | `testdata/contracts/v1/project-takeover/takeover.json` | 5 | mutated fixture output failed owning Rust suite |
 | `fixture_project_topology` | PROVEN-FAILS | `testdata/contracts/v1/project-topology/topology.json` | 15 | mutated fixture output failed owning Rust suite |
 | `fixture_prompt_context` | PROVEN-FAILS | `testdata/contracts/v1/prompt-context/context.json` | 28 | mutated fixture output failed owning Rust suite |
 | `fixture_proxy_project_binding` | PROVEN-FAILS | `testdata/contracts/v1/proxy/project-binding.json` | 11 | mutated fixture output failed owning Rust suite |

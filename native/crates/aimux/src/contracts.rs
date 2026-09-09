@@ -70,7 +70,6 @@ const AREAS: &[ContractArea] = &[
         source_spec: &[
             "testdata/contracts/v1/runtime-state",
             "testdata/contracts/v1/runtime-coherence",
-            "testdata/contracts/v1/project-takeover",
         ],
         native_owner: "native/crates/aimux/src/runtime_core",
         parity_gate: "task, handoff, thread, notification, topology, and graveyard stores round-trip",
