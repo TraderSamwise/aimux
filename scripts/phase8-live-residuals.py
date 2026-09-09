@@ -635,6 +635,12 @@ def run_dashboard_render_smoke(aimux_bin: Path, mutation: str | None) -> dict[st
             ("w", "worktree-create", "CREATE WORKTREE", "Escape"),
             ("v", "service-create", "CREATE SERVICE", "Escape"),
             ("Tab", "details-toggle", None, "Tab"),
+            ("c", "coordination-screen", "— coordination", "Escape"),
+            ("p", "project-screen", "— project", "Escape"),
+            ("L", "library-screen", "— library", "Escape"),
+            ("t", "topology-screen", "— topology", "Escape"),
+            ("g", "graveyard-screen", "— graveyard", "Escape"),
+            ("a", "hide-offline-toggle", "Offline agents hidden", "a"),
         ]
         if mutation == "dashboard-input-dead":
             key_specs = key_specs[:1]
