@@ -67,7 +67,8 @@ fn normalize_dashboard_stamps_inner(value: Value, stamps: &mut Vec<String>) -> V
                 .collect(),
         ),
         Value::String(text) => {
-            let text = normalize_dashboard_launcher_path(&text);
+            let text =
+                normalize_dashboard_launcher_command(&normalize_dashboard_launcher_path(&text));
             if !is_dashboard_stamp(&text) {
                 return Value::String(text);
             }
@@ -97,6 +98,10 @@ fn normalize_dashboard_launcher_path(value: &str) -> String {
     }
     normalized.push_str(rest);
     normalized
+}
+
+fn normalize_dashboard_launcher_command(value: &str) -> String {
+    value.replace("env -u 'AIMUX_ROOT' -u 'AIMUX_NATIVE_BIN' ", "env ")
 }
 
 fn is_dashboard_stamp(value: &str) -> bool {

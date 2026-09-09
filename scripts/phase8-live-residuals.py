@@ -1026,7 +1026,7 @@ def run_bare_dashboard_tmux_smoke(aimux_bin: Path, mutation: str | None) -> dict
                 [
                     "list-clients",
                     "-F",
-                    "#{client_tty}\t#{session_name}\t#{window_id}\t#{window_name}\t#{client_name}",
+                    "#{client_tty}\t#{session_name}\t#{window_id}\t#{window_name}\t#{client_name}\t#{client_pid}",
                 ],
                 check=False,
             )
@@ -1035,14 +1035,58 @@ def run_bare_dashboard_tmux_smoke(aimux_bin: Path, mutation: str | None) -> dict
             rows = []
             for line in result.stdout.splitlines():
                 fields = line.split("\t")
-                if len(fields) == 5:
+                if len(fields) == 6:
                     rows.append({
                         "tty": fields[0],
                         "session": fields[1],
                         "windowId": fields[2],
                         "windowName": fields[3],
                         "name": fields[4],
+                        "pid": fields[5],
                     })
+            return rows
+
+        def managed_window_debug() -> list[dict[str, str]]:
+            def tmux_option(args: list[str]) -> str:
+                return tmux_cmd_for_socket(tmux, socket_name, args, check=False).stdout.strip()
+
+            result = tmux_cmd_for_socket(
+                tmux,
+                socket_name,
+                [
+                    "list-windows",
+                    "-a",
+                    "-F",
+                    "#{session_name}\t#{window_id}\t#{window_index}\t#{window_name}",
+                ],
+                check=False,
+            )
+            rows = []
+            for line in result.stdout.splitlines():
+                fields = line.split("\t")
+                if len(fields) != 4:
+                    continue
+                session_name, window_id, window_index, window_name = fields
+                pane_command = tmux_cmd_for_socket(
+                    tmux,
+                    socket_name,
+                    ["display-message", "-p", "-t", window_id, "#{pane_current_command}"],
+                    check=False,
+                )
+                rows.append({
+                    "session": session_name,
+                    "windowId": window_id,
+                    "windowIndex": window_index,
+                    "windowName": window_name,
+                    "projectRoot": tmux_option(["show-options", "-v", "-t", session_name, "@aimux-project-root"]),
+                    "runtimeOwner": tmux_option(["show-options", "-v", "-t", session_name, "@aimux-runtime-owner"]),
+                    "sessionDashboardBuild": tmux_option(["show-options", "-v", "-t", session_name, "@aimux-dashboard-build"]),
+                    "dashboardOwner": tmux_option(["show-window-options", "-v", "-t", window_id, "@aimux-dashboard-owner"]),
+                    "dashboardReady": tmux_option(["show-window-options", "-v", "-t", window_id, "@aimux-dashboard-ready"]),
+                    "dashboardBuild": tmux_option(["show-window-options", "-v", "-t", window_id, "@aimux-dashboard-build"]),
+                    "paneCommand": pane_command.stdout.strip(),
+                    "paneCommandError": pane_command.stderr,
+                })
             return rows
 
         expected_window_name = "phase8-missing-dashboard" if mutation == "bare-dashboard-inline" else "dashboard"
@@ -1121,6 +1165,11 @@ def run_bare_dashboard_tmux_smoke(aimux_bin: Path, mutation: str | None) -> dict
         seed_tmux_socket_environment(tmux, socket_name, scope)
         same_socket_go = scope.tmp / "same-socket-go"
         same_socket_log = scope.tmp / "same-socket-aimux.log"
+        private_aimux_env = " ".join(
+            f"{key}={shlex.quote(value)}"
+            for key in TMUX_SESSION_ENV_KEYS
+            if (value := scope.env.get(key))
+        )
         same_socket_shell_command = (
             "sh"
             if mutation == "bare-dashboard-inline"
@@ -1128,7 +1177,7 @@ def run_bare_dashboard_tmux_smoke(aimux_bin: Path, mutation: str | None) -> dict
                 "sh -lc "
                 + shlex.quote(
                     f"while [ ! -f {shlex.quote(str(same_socket_go))} ]; do sleep 0.05; done; "
-                    f"exec {shlex.quote(str(aimux_bin))} > {shlex.quote(str(same_socket_log))} 2>&1"
+                    f"exec env {private_aimux_env} {shlex.quote(str(aimux_bin))} > {shlex.quote(str(same_socket_log))} 2>&1"
                 )
             )
         )
@@ -1208,6 +1257,7 @@ def run_bare_dashboard_tmux_smoke(aimux_bin: Path, mutation: str | None) -> dict
                     "managedWindows": windows.stdout[-2000:],
                     "managedClients": clients.stdout[-2000:],
                     "managedClientError": clients.stderr[-1000:],
+                    "managedWindowDebug": managed_window_debug(),
                     "aimuxLog": same_socket_log.read_text(errors="replace")[-2000:]
                     if same_socket_log.exists()
                     else "",
@@ -1225,8 +1275,20 @@ def run_bare_dashboard_tmux_smoke(aimux_bin: Path, mutation: str | None) -> dict
             )
         tmux_cmd_for_socket(tmux, socket_name, ["detach-client", "-t", inside_client["tty"]], check=False)
         terminate_process(inside_proc)
+        wait_until(
+            lambda: not any(item["tty"] == inside_client["tty"] for item in attached_client_rows()),
+            timeout=5,
+            label="bare aimux same-socket dashboard client detached before cross-socket case",
+        )
 
-        existing_dashboard_client_ttys = {dashboard_client["tty"]}
+        tmux_cmd_for_socket(tmux, socket_name, ["detach-client", "-t", dashboard_client["tty"]], check=False)
+        terminate_process(proc)
+        wait_until(
+            lambda: not any(item["tty"] == dashboard_client["tty"] for item in attached_client_rows()),
+            timeout=5,
+            label="bare aimux initial dashboard client detached before cross-socket case",
+        )
+        existing_dashboard_client_pids: set[str] = set()
         outer_socket_name = f"{socket_name}-outer"
         scope.extra_tmux_socket_names.append(outer_socket_name)
         run([tmux, "-L", outer_socket_name, "kill-server"], env=without_tmux(os.environ.copy()), timeout=10, check=False)
@@ -1241,7 +1303,7 @@ def run_bare_dashboard_tmux_smoke(aimux_bin: Path, mutation: str | None) -> dict
                 "sh -lc "
                 + shlex.quote(
                     f"while [ ! -f {shlex.quote(str(outer_socket_go))} ]; do sleep 0.05; done; "
-                    f"exec {shlex.quote(str(aimux_bin))} > {shlex.quote(str(outer_socket_log))} 2>&1"
+                    f"exec env {private_aimux_env} {shlex.quote(str(aimux_bin))}"
                 )
             )
         )
@@ -1321,7 +1383,7 @@ def run_bare_dashboard_tmux_smoke(aimux_bin: Path, mutation: str | None) -> dict
                     item
                     for item in attached_client_rows()
                     if item["windowName"] == expected_window_name
-                    and item["tty"] not in existing_dashboard_client_ttys
+                    and item["pid"] not in existing_dashboard_client_pids
                 ),
                 None,
             )
@@ -1353,6 +1415,8 @@ def run_bare_dashboard_tmux_smoke(aimux_bin: Path, mutation: str | None) -> dict
                     "outerOutput": drain_fd_now(outer_fd)[-2000:],
                     "managedWindows": windows.stdout[-2000:],
                     "managedClients": clients.stdout[-2000:],
+                    "managedClientRows": attached_client_rows(),
+                    "existingDashboardClientPids": sorted(existing_dashboard_client_pids),
                     "managedClientError": clients.stderr[-1000:],
                     "outerClients": outer_clients.stdout[-2000:],
                     "outerClientError": outer_clients.stderr[-1000:],
@@ -1371,8 +1435,6 @@ def run_bare_dashboard_tmux_smoke(aimux_bin: Path, mutation: str | None) -> dict
         tmux_cmd_for_socket(tmux, socket_name, ["detach-client", "-t", cross_socket_dashboard_client["tty"]], check=False)
         tmux_cmd_for_socket(tmux, outer_socket_name, ["detach-client"], check=False)
         terminate_process(outer_proc)
-        tmux_cmd_for_socket(tmux, socket_name, ["detach-client", "-t", dashboard_client["tty"]], check=False)
-        terminate_process(proc)
         return {
             "name": "phase8-live-bare-dashboard-tmux-smoke",
             "privateSocket": socket_name,
@@ -3094,7 +3156,8 @@ def install_tmux_socket_wrapper(scope: Scope, real_tmux: str, socket_name: str) 
         "#!/bin/sh\n"
         f"case \"$TMUX\" in\n"
         f"  {shlex.quote('/private/tmp/tmux-' + str(os.getuid()) + '/' + socket_name)},*) exec {shlex.quote(real_tmux)} \"$@\" ;;\n"
-        f"  *) exec {shlex.quote(real_tmux)} -L {shlex.quote(socket_name)} \"$@\" ;;\n"
+        f"  {shlex.quote('/tmp/tmux-' + str(os.getuid()) + '/' + socket_name)},*) exec {shlex.quote(real_tmux)} \"$@\" ;;\n"
+        f"  *) unset TMUX TMUX_PANE; exec {shlex.quote(real_tmux)} -L {shlex.quote(socket_name)} \"$@\" ;;\n"
         f"esac\n"
     )
     wrapper.chmod(0o755)
@@ -3544,8 +3607,13 @@ def prove_failures(args: argparse.Namespace, aimux_bin: Path) -> list[dict[str, 
         ("sse", "sse-reorder"),
         ("process", "process-delete-endpoint"),
     ]
+    selected_mutations = [
+        (suite, mutation)
+        for suite, mutation in mutations
+        if args.only == "all" or suite == args.only
+    ]
     proof = []
-    for suite, mutation in mutations:
+    for suite, mutation in selected_mutations:
         command = [
             sys.executable,
             str(Path(__file__).resolve()),
@@ -3557,7 +3625,16 @@ def prove_failures(args: argparse.Namespace, aimux_bin: Path) -> list[dict[str, 
             str(aimux_bin),
             "--skip-build",
         ]
-        result = run(command, timeout=90, check=False)
+        try:
+            result = run(command, timeout=90, check=False)
+        except subprocess.TimeoutExpired as error:
+            proof.append({
+                "suite": suite,
+                "mutation": mutation,
+                "status": "PROVEN-FAILS",
+                "failureExcerpt": f"mutation timed out after {error.timeout} seconds",
+            })
+            continue
         if result.returncode == 0:
             raise LiveResidualFailure(f"{suite} mutation {mutation} unexpectedly passed")
         proof.append({

@@ -246,10 +246,11 @@ pub fn find_live_dashboard_target_with_context(
     let preferred_open_session =
         tmux.get_open_session_name(&dashboard_session.session_name, inside_tmux);
     let current_client_session = tmux.current_client_session();
-    let same_project_current_client_session = current_client_session.filter(|session_name| {
-        session_name == &dashboard_session.session_name
-            || is_tmux_client_session_for_host(session_name, &dashboard_session.session_name)
-    });
+    let same_project_current_client_session =
+        current_client_session.clone().filter(|session_name| {
+            session_name == &dashboard_session.session_name
+                || is_tmux_client_session_for_host(session_name, &dashboard_session.session_name)
+        });
     let mut seen = BTreeSet::new();
     let mut candidate_sessions = Vec::new();
     for session_name in [
@@ -271,9 +272,9 @@ pub fn find_live_dashboard_target_with_context(
             candidate_sessions.push(session_name);
         }
     }
-
     for session_name in candidate_sessions {
-        if !tmux.has_session(&session_name) {
+        let has_session = tmux.has_session(&session_name);
+        if !has_session {
             continue;
         }
         for window in tmux.list_windows(&session_name) {
@@ -427,15 +428,39 @@ pub fn is_usable_dashboard_target(
     } else {
         String::new()
     };
-    tmux.is_window_alive(dashboard_target)
-        && target_project_root.as_deref() == Some(project_root)
-        && target_runtime_owner.as_deref() == Some(context.runtime_owner_id.as_str())
-        && target_dashboard_owner.as_deref() == Some(context.runtime_owner_id.as_str())
-        && current_build_stamp.as_deref() == Some(context.dashboard_build_stamp.as_str())
-        && current_ready_stamp.as_deref() == Some(context.dashboard_build_stamp.as_str())
-        && pane_command != "cat"
-        && pane_command != "tail"
-        && !pane_tail.contains("aimux dashboard failed to start.")
+    let window_alive = tmux.is_window_alive(dashboard_target);
+    let project_root_matches = target_project_root
+        .as_deref()
+        .is_some_and(|target_project_root| project_roots_match(project_root, target_project_root));
+    let runtime_owner_matches =
+        target_runtime_owner.as_deref() == Some(context.runtime_owner_id.as_str());
+    let dashboard_owner_matches =
+        target_dashboard_owner.as_deref() == Some(context.runtime_owner_id.as_str());
+    let build_matches =
+        current_build_stamp.as_deref() == Some(context.dashboard_build_stamp.as_str());
+    let ready_matches =
+        current_ready_stamp.as_deref() == Some(context.dashboard_build_stamp.as_str());
+    let command_ok = pane_command != "cat" && pane_command != "tail";
+    let tail_ok = !pane_tail.contains("aimux dashboard failed to start.");
+    window_alive
+        && project_root_matches
+        && runtime_owner_matches
+        && dashboard_owner_matches
+        && build_matches
+        && ready_matches
+        && command_ok
+        && tail_ok
+}
+
+fn project_roots_match(expected: &str, actual: &str) -> bool {
+    expected == actual || canonicalize_project_root(expected) == canonicalize_project_root(actual)
+}
+
+fn canonicalize_project_root(project_root: &str) -> String {
+    fs::canonicalize(project_root)
+        .unwrap_or_else(|_| PathBuf::from(project_root))
+        .to_string_lossy()
+        .into_owned()
 }
 
 pub fn run_dashboard_targets_contract_case(case_id: &str, input: &Value) -> Value {
