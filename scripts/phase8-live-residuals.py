@@ -229,7 +229,13 @@ def default_daemon_listener_snapshot() -> str:
         raise LiveResidualFailure(
             f"expected an existing non-harness listener on {DEFAULT_DAEMON_PORT}; lsof returned {result.returncode}"
         )
-    return result.stdout.strip()
+    lines = result.stdout.strip().splitlines()
+    if len(lines) < 2:
+        return result.stdout.strip()
+    fields = lines[1].split()
+    if len(fields) < 2:
+        return result.stdout.strip()
+    return "\t".join([fields[0], fields[1], fields[-1]])
 
 
 def assert_default_daemon_listener_unchanged(before: str) -> None:
@@ -1519,6 +1525,18 @@ def run_daily_loop_smoke(aimux_bin: Path, mutation: str | None) -> dict[str, Any
             )
             return result.stdout if result.returncode == 0 else ""
 
+        def capture_client_window_escaped() -> str:
+            item = client_for_tty(client_tty)
+            if not item:
+                return ""
+            result = tmux_cmd_for_socket(
+                tmux,
+                socket_name,
+                ["capture-pane", "-p", "-e", "-J", "-t", item["windowId"]],
+                check=False,
+            )
+            return result.stdout if result.returncode == 0 else ""
+
         def write_client_keys(*chunks: bytes) -> None:
             for chunk in chunks:
                 os.write(client_fd, chunk)
@@ -1548,6 +1566,61 @@ def run_daily_loop_smoke(aimux_bin: Path, mutation: str | None) -> dict[str, Any
                 label=label,
             )
 
+        def assert_overlay_recedes_base_frame() -> None:
+            plain = capture_client_window_escaped()
+            drain_fd_now(client_fd)
+            write_client_keys(b"n")
+            wait_until(
+                lambda: frame if "SELECT TOOL" in (frame := capture_client_window()) else None,
+                timeout=5,
+                label="daily loop tool picker overlay opens",
+            )
+            escaped = capture_client_window_escaped()
+            if mutation == "daily-loop-overlay-dimming-missing":
+                escaped = plain
+            plain_dim_count = plain.count("\x1b[2m") + plain.count("\x1b[0;2m")
+            overlay_dim_count = escaped.count("\x1b[2m") + escaped.count("\x1b[0;2m")
+            if overlay_dim_count <= plain_dim_count:
+                raise LiveResidualFailure(
+                    "daily loop overlay did not dim the base dashboard frame:\n"
+                    + json.dumps({
+                        "plainDimCount": plain_dim_count,
+                        "overlayDimCount": overlay_dim_count,
+                        "overlayHead": repr(escaped[:1000]),
+                    }, indent=2)
+                )
+            write_client_keys(b"\x1b")
+            wait_until(
+                lambda: (
+                    frame
+                    if "agent multiplexer" in (frame := capture_client_window())
+                    and "SELECT TOOL" not in frame
+                    else None
+                ),
+                timeout=5,
+                label="daily loop returns from tool picker overlay",
+            )
+
+        def assert_operation_failure_reaches_dashboard(endpoint: str) -> None:
+            title = "Phase 8 live failed operation"
+            if mutation != "daily-loop-operation-failure-missing":
+                write_dashboard_operation_failure(scope, title)
+            desktop_state = http_json(endpoint, "GET", "/desktop-state")
+            failures = desktop_state.get("operationFailures") or []
+            if not any(failure.get("title") == title for failure in failures):
+                raise LiveResidualFailure(f"daily loop operation failure missing from desktop-state: {failures}")
+            write_client_keys(b"\t")
+            wait_until(
+                lambda: (
+                    frame
+                    if "FAILED OPERATIONS" in (frame := capture_client_window())
+                    and title in frame
+                    else None
+                ),
+                timeout=8,
+                label="daily loop operation failure appears in rendered dashboard",
+            )
+
         dashboard_client = wait_until(
             lambda: next(
                 (
@@ -1570,6 +1643,9 @@ def run_daily_loop_smoke(aimux_bin: Path, mutation: str | None) -> dict[str, Any
                 "daily loop bare aimux did not hold a real attached tmux client:\n"
                 + json.dumps({"returncode": proc.returncode, "output": inline_output[-2000:]}, indent=2)
             )
+        assert_overlay_recedes_base_frame()
+        endpoint = wait_for_project_service_endpoint(scope)
+        assert_operation_failure_reaches_dashboard(endpoint)
 
         write_client_keys(b"n")
         wait_until(
@@ -1724,6 +1800,55 @@ def run_daily_loop_smoke(aimux_bin: Path, mutation: str | None) -> dict[str, Any
         wait_client_dashboard("daily loop primary client returns to dashboard after restore")
         wait_dashboard("daily loop dashboard after restore")
 
+        reload_result = run(
+            [str(aimux_bin), "dashboard-reload", "--json"],
+            cwd=scope.project,
+            env=scope.env,
+            timeout=45,
+        )
+        reload_payload = parse_json_stdout(reload_result.stdout, "daily loop dashboard reload relink")
+        target = reload_payload.get("tmuxTarget") or reload_payload.get("target") or reload_payload.get("dashboardTarget")
+        if not isinstance(target, dict):
+            raise LiveResidualFailure(f"daily loop dashboard reload did not report a tmux target: {reload_payload}")
+        reported_window_id = str(target.get("windowId") or "")
+        if mutation == "daily-loop-relink-stale":
+            reported_window_id = "@phase8-stale-link"
+        relinked = wait_client_dashboard("daily loop client remains linked to dashboard after reload", timeout=12)
+        live_dashboard_ids = {
+            fields[0]
+            for line in tmux_cmd_for_socket(
+                tmux,
+                socket_name,
+                ["list-windows", "-a", "-F", "#{window_id}\t#{window_name}\t#{pane_dead}"],
+                check=False,
+            ).stdout.splitlines()
+            if (fields := line.split("\t")) and len(fields) == 3 and fields[1] == "dashboard" and fields[2] == "0"
+        }
+        if reported_window_id not in live_dashboard_ids:
+            raise LiveResidualFailure(
+                "daily loop dashboard reload reported a target that is not live:\n"
+                + json.dumps({
+                    "reported": target,
+                    "liveDashboardWindowIds": sorted(live_dashboard_ids),
+                    "windows": tmux_cmd_for_socket(
+                        tmux,
+                        socket_name,
+                        ["list-windows", "-a", "-F", "#{session_name}\t#{window_id}\t#{window_index}\t#{window_name}\t#{pane_dead}"],
+                        check=False,
+                    ).stdout,
+                }, indent=2)
+            )
+        if relinked["windowId"] != reported_window_id:
+            raise LiveResidualFailure(
+                "daily loop client was not relinked to the live dashboard window:\n"
+                + json.dumps({
+                    "reported": target,
+                    "client": relinked,
+                    "liveDashboardWindowIds": sorted(live_dashboard_ids),
+                }, indent=2)
+            )
+        wait_dashboard("daily loop dashboard after reload relink", timeout=12)
+
         drain_fd_now(client_fd)
         set_pty_size(client_fd, 100, 26)
         os.kill(proc.pid, signal.SIGWINCH)
@@ -1812,11 +1937,14 @@ def run_daily_loop_smoke(aimux_bin: Path, mutation: str | None) -> dict[str, Any
             "sessionId": session_id,
             "caught": [
                 "fresh git repo bare aimux opens a managed tmux dashboard through a real PTY",
+                "failed operations reach desktop-state and the rendered FAILED OPERATIONS card",
+                "tool picker overlay dims the base dashboard frame",
                 "dashboard n opens the tool picker and spawns a configured agent",
                 "Enter focuses the selected agent and prefix+d returns to dashboard",
                 "worktree add appears in the dashboard loop",
                 "coordination/project/modified-Shift-L-library/topology/graveyard screens open and return",
                 "stop moves an agent into graveyard and restore makes it running again",
+                "dashboard reload relinks the attached client to a live dashboard target",
                 "dashboard repaints after resize without another input key",
                 "dashboard quits cleanly",
             ],
@@ -1824,6 +1952,7 @@ def run_daily_loop_smoke(aimux_bin: Path, mutation: str | None) -> dict[str, Any
                 "real Claude/Codex credentials",
                 "manual mosh transport outside the private PTY",
                 "multi-hour agent output churn",
+                "runtime self-drift without mutating the real binary or changing launcher env",
             ],
         }
 
@@ -3692,6 +3821,35 @@ def wait_for_project_service_endpoint(scope: Scope) -> str:
     return wait_until(probe, timeout=10, label="metadata-api.txt")
 
 
+def project_service_state_dir(scope: Scope) -> Path:
+    matches = sorted(glob.glob(str(scope.aimux_home / "projects" / "*" / "metadata-api.txt")))
+    if not matches:
+        raise LiveResidualFailure("project service state directory is unavailable")
+    return Path(matches[0]).parent
+
+
+def write_dashboard_operation_failure(scope: Scope, title: str) -> None:
+    state_dir = project_service_state_dir(scope)
+    now = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
+    payload = {
+        "version": 1,
+        "failures": [
+            {
+                "id": "phase8-live-operation-failure",
+                "targetKind": "worktree",
+                "operation": "phase8-live",
+                "title": title,
+                "message": "phase8 live residual injected operation failure",
+                "createdAt": now,
+                "updatedAt": now,
+                "count": 1,
+                "context": {"source": "phase8-live-residuals"},
+            }
+        ],
+    }
+    (state_dir / "dashboard-operation-failures.json").write_text(json.dumps(payload, indent=2) + "\n")
+
+
 def http_json(endpoint: str, method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
     parsed = urlparse(endpoint)
     conn = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=5)
@@ -3964,8 +4122,11 @@ def prove_failures(args: argparse.Namespace, aimux_bin: Path) -> list[dict[str, 
         ("dashboard-attach", "dashboard-attach-return-missing"),
         ("dashboard-attach", "dashboard-attach-digit-target-missing"),
         ("bare-dashboard", "bare-dashboard-inline"),
+        ("daily-loop", "daily-loop-operation-failure-missing"),
+        ("daily-loop", "daily-loop-overlay-dimming-missing"),
         ("daily-loop", "daily-loop-return-missing"),
         ("daily-loop", "daily-loop-shift-library-missing"),
+        ("daily-loop", "daily-loop-relink-stale"),
         ("dashboard", "dashboard-resize-width-overflow"),
         ("expose-interaction", "expose-entry-missing"),
         ("expose-interaction", "expose-navigation-inert"),
@@ -4077,8 +4238,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "dashboard-attach-digit-target-missing",
         "bare-dashboard-inline",
         "daily-loop-spawn-missing",
+        "daily-loop-operation-failure-missing",
+        "daily-loop-overlay-dimming-missing",
         "daily-loop-return-missing",
         "daily-loop-shift-library-missing",
+        "daily-loop-relink-stale",
         "expose-entry-missing",
         "expose-navigation-inert",
         "expose-resize-stale",
