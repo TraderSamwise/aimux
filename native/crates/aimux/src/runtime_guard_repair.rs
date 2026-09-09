@@ -1,6 +1,7 @@
 use crate::core_command_contract::CORE_API_ROUTES;
 use crate::core_command_transport::{DaemonHttpMethod, DaemonRequestInit, request_daemon_json};
 use crate::daemon_state::is_pid_alive;
+use crate::debug_logging::log_lifecycle_always;
 use crate::runtime_guard::{RuntimeGuardStaleReason, RuntimeGuardState};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -166,7 +167,15 @@ pub fn current_time_ms() -> i64 {
 }
 
 pub fn start_runtime_guard_repair_daemon_request(project_root: &str) -> Result<Value, String> {
-    request_daemon_json(
+    log_lifecycle_always(
+        "runtime guard repair requested",
+        "tmux",
+        Some(json!({
+            "projectRoot": project_root,
+            "reason": "dashboard-runtime-guard-repair",
+        })),
+    );
+    let result = request_daemon_json(
         &format!("{}?json=1", runtime_guard_repair_daemon_path()),
         DaemonRequestInit {
             method: Some(DaemonHttpMethod::Post),
@@ -175,7 +184,18 @@ pub fn start_runtime_guard_repair_daemon_request(project_root: &str) -> Result<V
             timeout_ms: Some(RUNTIME_GUARD_REPAIR_TIMEOUT.as_millis() as u64),
         },
     )
-    .map_err(|error| error.to_string())
+    .map_err(|error| error.to_string());
+    if let Err(error) = &result {
+        log_lifecycle_always(
+            "runtime guard repair request failed",
+            "tmux",
+            Some(json!({
+                "projectRoot": project_root,
+                "error": error,
+            })),
+        );
+    }
+    result
 }
 
 fn acquire_lock_dir(lock_path: &Path, project_root: &str, now_ms: i64) -> io::Result<bool> {

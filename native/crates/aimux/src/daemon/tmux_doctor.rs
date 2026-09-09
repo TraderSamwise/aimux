@@ -1,6 +1,7 @@
 use crate::config::load_config_for_project;
 use crate::daemon_state::DEFAULT_DAEMON_PORT;
 use crate::dashboard_command_spec::get_dashboard_command_spec;
+use crate::debug_logging::log_lifecycle_always;
 use crate::paths::PathResolver;
 use crate::shell_hooks::shell_quote;
 use crate::tmux::{
@@ -14,7 +15,7 @@ use crate::tmux::{
     respawn_window_argv, set_session_option_argv, set_window_option_argv, switch_client_argv,
 };
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -239,6 +240,14 @@ pub fn system_tmux_repair_result(
     project_root: &str,
     open: bool,
 ) -> Result<(Value, String), String> {
+    log_lifecycle_always(
+        "tmux repair started",
+        "tmux",
+        Some(json!({
+            "projectRoot": project_root,
+            "open": open,
+        })),
+    );
     let session_prefix = load_config_for_project(project_root)
         .pointer("/runtime/tmux/sessionPrefix")
         .and_then(Value::as_str)
@@ -258,8 +267,32 @@ pub fn system_tmux_repair_result(
         open,
     };
     let mut runner = SystemTmuxDoctorCommandRunner;
-    let result = repair_tmux_runtime(&mut runner, &input)?;
+    let result = match repair_tmux_runtime(&mut runner, &input) {
+        Ok(result) => result,
+        Err(error) => {
+            log_lifecycle_always(
+                "tmux repair failed",
+                "tmux",
+                Some(json!({
+                    "projectRoot": project_root,
+                    "error": error,
+                })),
+            );
+            return Err(error);
+        }
+    };
     let text = render_tmux_repair_result(&result);
+    log_lifecycle_always(
+        "tmux repair finished",
+        "tmux",
+        Some(json!({
+            "projectRoot": project_root,
+            "repairedSessions": result.repaired_sessions.len(),
+            "repairedWindows": result.repaired_windows.len(),
+            "dashboardSessionName": result.dashboard_session_name.clone(),
+            "dashboardWindowId": result.dashboard_window_id.clone(),
+        })),
+    );
     let result = serde_json::to_value(result).map_err(|error| error.to_string())?;
     Ok((result, text))
 }

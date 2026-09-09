@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use serde_json::json;
 use sha1::{Digest, Sha1};
 use std::fs;
 use std::io::{self, Read};
@@ -16,6 +17,7 @@ use crate::daemon::listener::{
 };
 use crate::daemon::server::DaemonHttpRequest;
 use crate::daemon_state::{MetadataApiEndpoint, remove_metadata_endpoint, save_metadata_endpoint};
+use crate::debug_logging::{LogLevel, log_at, log_lifecycle_always};
 use crate::expose_socket::{
     EXPOSE_SOCKET_HEADER_TIMEOUT_MS, clear_expose_socket_path, expose_socket_path,
     publish_expose_socket_path, read_expose_socket_header,
@@ -71,6 +73,15 @@ pub struct ProjectServiceStartup {
 
 pub fn run_project_service_internal(options: ProjectServiceInternalOptions) -> Result<()> {
     let startup = prepare_project_service_startup(options)?;
+    log_lifecycle_always(
+        "project service starting",
+        "project-service",
+        Some(json!({
+            "projectId": startup.project_id.clone(),
+            "projectRoot": startup.project_root.to_string_lossy(),
+            "desiredPort": startup.desired_port,
+        })),
+    );
     if std::env::current_dir().ok().as_deref() != Some(startup.project_root.as_path()) {
         std::env::set_current_dir(&startup.project_root)
             .with_context(|| format!("chdir {}", startup.project_root.display()))?;
@@ -81,6 +92,15 @@ pub fn run_project_service_internal(options: ProjectServiceInternalOptions) -> R
         .context("read project-service listener address")?
         .port();
     publish_project_service_endpoint(&startup.project_state_dir, port)?;
+    log_lifecycle_always(
+        "project service listener published",
+        "project-service",
+        Some(json!({
+            "projectId": startup.project_id.clone(),
+            "projectRoot": startup.project_root.to_string_lossy(),
+            "port": port,
+        })),
+    );
     let _endpoint_guard = ProjectServiceEndpointGuard {
         project_state_dir: startup.project_state_dir.clone(),
     };
@@ -94,6 +114,16 @@ pub fn run_project_service_internal(options: ProjectServiceInternalOptions) -> R
     let plugin_statuses = native_plugin_statuses_for_context(&startup_context);
     let startup_context = startup_context.with_plugin_statuses(plugin_statuses.clone());
     run_project_service_startup_tasks(&startup, &startup_context, &mut lifecycle_runtime);
+    log_at(
+        LogLevel::Debug,
+        "project service startup tasks finished",
+        "project-service",
+        Some(json!({
+            "projectId": startup.project_id.clone(),
+            "projectRoot": startup.project_root.to_string_lossy(),
+            "pluginCount": plugin_statuses.len(),
+        })),
+    );
     serve_project_service_listener(listener, startup, plugin_statuses);
     Ok(())
 }
@@ -471,7 +501,24 @@ fn serve_project_service_listener(
     periodic_tasks.push(transcript_reconciler_task(&context));
     periodic_tasks.push(loop_watcher_task(&context));
     periodic_tasks.push(scribe_watcher_task(&context));
+    log_lifecycle_always(
+        "project service watcher rail starting",
+        "watcher",
+        Some(json!({
+            "taskCount": periodic_tasks.len(),
+            "projectRoot": context.project_root().to_string_lossy(),
+            "projectStateDir": context.project_state_dir().to_string_lossy(),
+        })),
+    );
     spawn_project_service_scheduler(Arc::clone(&context), periodic_tasks);
+    log_lifecycle_always(
+        "project service serving",
+        "project-service",
+        Some(json!({
+            "projectRoot": context.project_root().to_string_lossy(),
+            "projectStateDir": context.project_state_dir().to_string_lossy(),
+        })),
+    );
     for stream in listener.incoming() {
         let Ok(mut stream) = stream else {
             continue;

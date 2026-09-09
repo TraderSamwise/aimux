@@ -5,8 +5,8 @@ use serde_json::{Map, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
-use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
 
 const DEFAULT_MAX_BYTES: u64 = 10_000_000;
 const DEFAULT_MAX_FILES: u64 = 5;
@@ -250,7 +250,13 @@ pub fn log_always_at(level: LogLevel, message: &str, category: &str, fields: Opt
 }
 
 pub fn log_lifecycle_always(message: &str, category: &str, fields: Option<Value>) {
-    let mut config = get_logging_config();
+    let Some(lock) = RUNTIME_CONFIG.get() else {
+        return;
+    };
+    let Ok(runtime_config) = lock.lock() else {
+        return;
+    };
+    let mut config = runtime_config.clone();
     let resolver = PathResolver::from_env();
     config.path = resolver.daemon_log_path();
     config.process_kind = if config.process_kind.is_empty() {
@@ -418,7 +424,12 @@ fn write_record(
             return;
         }
     }
-    rotate_if_needed(&config.path, line.len() as u64, config.max_bytes, config.max_files);
+    rotate_if_needed(
+        &config.path,
+        line.len() as u64,
+        config.max_bytes,
+        config.max_files,
+    );
     let _ = fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -495,9 +506,7 @@ fn is_explicit_false(value: &str) -> bool {
 }
 
 fn env_string(env: &Map<String, Value>, key: &str) -> Option<String> {
-    env.get(key)
-        .and_then(Value::as_str)
-        .map(ToOwned::to_owned)
+    env.get(key).and_then(Value::as_str).map(ToOwned::to_owned)
 }
 
 fn value_string(value: &Value, key: &str) -> Option<String> {

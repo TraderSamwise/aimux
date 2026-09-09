@@ -72,6 +72,7 @@ use crate::dashboard_targets::{
     find_live_dashboard_target_with_context, resolve_dashboard_target,
     resolve_dashboard_target_for_restart_with_context,
 };
+use crate::debug_logging::{LogLevel, log_at, log_lifecycle_always};
 use crate::event_loop_budget::{
     assess_loop_budget, get_event_loop_delay, start_event_loop_monitor,
 };
@@ -715,8 +716,25 @@ impl RealDaemonRuntime {
         issued_at: &str,
         project_root: Option<&str>,
     ) -> RestartControlPlaneTextResult {
+        log_lifecycle_always(
+            "control plane restart started",
+            "daemon",
+            Some(json!({
+                "issuedAt": issued_at,
+                "projectRoot": project_root,
+            })),
+        );
         let before = restart_before_report(self, issued_at);
         let project_roots = self.restart_project_roots(project_root);
+        log_at(
+            LogLevel::Debug,
+            "control plane restart projects resolved",
+            "daemon",
+            Some(json!({
+                "projectCount": project_roots.len(),
+                "projectRoots": project_roots.clone(),
+            })),
+        );
         let project_root_set = project_roots.iter().cloned().collect::<HashSet<_>>();
         stop_pre_restart_dashboard_repair_windows(&before, &project_root_set);
         let mut projects = Vec::with_capacity(project_roots.len());
@@ -745,8 +763,17 @@ impl RealDaemonRuntime {
                 "errors": [],
             },
             "projects": projects,
-            "summary": summary,
+            "summary": summary.clone(),
         });
+        log_lifecycle_always(
+            "control plane restart finished",
+            "daemon",
+            Some(json!({
+                "issuedAt": issued_at,
+                "projectCount": projects.len(),
+                "summary": summary,
+            })),
+        );
         let text = render_runtime_restart_result(&restart);
         RestartControlPlaneTextResult { restart, text }
     }
@@ -1085,6 +1112,15 @@ pub fn run_daemon_internal() -> Result<()> {
         started_at: now.clone(),
         updated_at: now,
     };
+    log_lifecycle_always(
+        "daemon starting",
+        "daemon",
+        Some(json!({
+            "pid": info.pid,
+            "host": host.clone(),
+            "port": port,
+        })),
+    );
     save_daemon_info(resolver.daemon_info_path(), &info).context("save daemon info")?;
     let _guard = DaemonInfoGuard {
         path: resolver.daemon_info_path(),
@@ -1330,6 +1366,15 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
         let project_root_path = resolver.resolve_repo_root(project_root);
         let project_root = project_root_path.to_string_lossy().into_owned();
         let project_id = compute_project_id(&project_root_path);
+        log_at(
+            LogLevel::Debug,
+            "project service ensure started",
+            "project-service",
+            Some(json!({
+                "projectId": project_id.clone(),
+                "projectRoot": project_root.clone(),
+            })),
+        );
         resolver
             .register_project(&project_root)
             .map_err(|error| error.to_string())?;
@@ -1356,11 +1401,39 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
                     service.status = Some(crate::daemon_state::ProjectServiceStatus::Running);
                     service.updated_at = now_iso();
                     self.save_project_service_state(&service)?;
+                    log_at(
+                        LogLevel::Debug,
+                        "project service ensure reused live service",
+                        "project-service",
+                        Some(json!({
+                            "projectId": project_id.clone(),
+                            "projectRoot": project_root.clone(),
+                            "pid": service.pid,
+                        })),
+                    );
                 } else {
                     service.status = Some(crate::daemon_state::ProjectServiceStatus::Starting);
+                    log_lifecycle_always(
+                        "project service ensure found live process without endpoint",
+                        "project-service",
+                        Some(json!({
+                            "projectId": project_id.clone(),
+                            "projectRoot": project_root.clone(),
+                            "pid": service.pid,
+                        })),
+                    );
                 }
                 return serde_json::to_value(service).map_err(|error| error.to_string());
             }
+            log_lifecycle_always(
+                "project service ensure terminating invalid service",
+                "project-service",
+                Some(json!({
+                    "projectId": project_id.clone(),
+                    "projectRoot": project_root.clone(),
+                    "pid": service.pid,
+                })),
+            );
             let _ = self.project_service_launcher.terminate(&service, false);
             signaled_pids.insert(service.pid);
             remove_metadata_endpoint(&project_state_dir);
@@ -1369,6 +1442,15 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
             self.terminate_extra_project_services(&project_id, &project_root, None, &signaled_pids);
         if !extra_pids.is_empty() {
             signaled_pids.extend(extra_pids);
+            log_lifecycle_always(
+                "project service ensure terminated extra services",
+                "project-service",
+                Some(json!({
+                    "projectId": project_id.clone(),
+                    "projectRoot": project_root.clone(),
+                    "pids": signaled_pids.clone(),
+                })),
+            );
             remove_metadata_endpoint(&project_state_dir);
         }
         let pid = self.project_service_launcher.launch(
@@ -1376,6 +1458,15 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
             &project_root_path,
             &project_state_dir,
         )?;
+        log_lifecycle_always(
+            "project service ensure launched service",
+            "project-service",
+            Some(json!({
+                "projectId": project_id.clone(),
+                "projectRoot": project_root.clone(),
+                "pid": pid,
+            })),
+        );
         self.terminate_extra_project_services(
             &project_id,
             &project_root,
@@ -1384,8 +1475,8 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
         );
         let now = now_iso();
         let mut service = ProjectServiceState {
-            project_id,
-            project_root,
+            project_id: project_id.clone(),
+            project_root: project_root.clone(),
             pid,
             started_at: now.clone(),
             updated_at: now,
@@ -1402,6 +1493,25 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
             service.status = Some(crate::daemon_state::ProjectServiceStatus::Running);
             service.updated_at = now_iso();
             self.save_project_service_state(&service)?;
+            log_lifecycle_always(
+                "project service ensure reached running",
+                "project-service",
+                Some(json!({
+                    "projectId": project_id.clone(),
+                    "projectRoot": project_root.clone(),
+                    "pid": pid,
+                })),
+            );
+        } else {
+            log_lifecycle_always(
+                "project service ensure left service starting",
+                "project-service",
+                Some(json!({
+                    "projectId": project_id.clone(),
+                    "projectRoot": project_root.clone(),
+                    "pid": pid,
+                })),
+            );
         }
         serde_json::to_value(service).map_err(|error| error.to_string())
     }
@@ -2524,8 +2634,7 @@ fn retained_dashboard_for_restart(
     tmux: &mut impl DashboardTargetTmux,
 ) -> Result<Option<RestartDashboardTarget>, String> {
     let context = DashboardTargetContext::for_project(project_root)?;
-    let Some(target) = find_live_dashboard_target_with_context(project_root, tmux, &context)?
-    else {
+    let Some(target) = find_live_dashboard_target_with_context(project_root, tmux, &context)? else {
         return Ok(None);
     };
     tmux.set_session_option(
@@ -2877,11 +2986,11 @@ fn current_unix_millis() -> u128 {
 mod tests {
     use super::*;
     use crate::daemon_state::{ProjectServiceStatus, save_metadata_endpoint};
-    use crate::tmux::project_session;
     use crate::tmux::{
         TMUX_DASHBOARD_OWNER_OPTION, TMUX_DASHBOARD_READY_OPTION, TMUX_RUNTIME_OWNER_OPTION,
         TmuxCommandSpec, TmuxSessionRef, TmuxWindowInfo,
     };
+    use crate::tmux::project_session;
     use std::cell::RefCell;
     use std::ffi::CString;
     use std::os::unix::ffi::OsStrExt;

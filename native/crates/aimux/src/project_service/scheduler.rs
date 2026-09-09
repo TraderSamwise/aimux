@@ -8,7 +8,11 @@
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use serde_json::json;
+
+use crate::debug_logging::{LogLevel, log_at, log_lifecycle_always};
 
 use super::router::ProjectServiceRequestContext;
 
@@ -16,6 +20,7 @@ use super::router::ProjectServiceRequestContext;
 const IDLE_SLEEP: Duration = Duration::from_millis(1_000);
 /// Floor on a task's interval, so a misconfigured value cannot spin the thread.
 const MIN_INTERVAL_MS: i64 = 250;
+const SLOW_TASK_WARNING_MS: i64 = 5_000;
 
 pub trait PeriodicTask: Send {
     fn name(&self) -> &str;
@@ -84,10 +89,44 @@ impl PeriodicScheduler {
             }
             let name = scheduled.task.name().to_owned();
             let task = &mut scheduled.task;
-            let _ = catch_unwind(AssertUnwindSafe(|| task.run(context)));
+            let started = Instant::now();
+            let outcome = catch_unwind(AssertUnwindSafe(|| task.run(context)));
+            let elapsed_ms = started.elapsed().as_millis().min(i64::MAX as u128) as i64;
             let finished_ms = clock();
-            scheduled.next_due_ms =
-                finished_ms.saturating_add(interval_of(scheduled.task.as_ref()));
+            let interval_ms = interval_of(scheduled.task.as_ref());
+            scheduled.next_due_ms = finished_ms.saturating_add(interval_ms);
+            log_at(
+                LogLevel::Debug,
+                "watcher rail task ran",
+                "watcher",
+                Some(json!({
+                    "task": name.clone(),
+                    "elapsedMs": elapsed_ms,
+                    "intervalMs": interval_ms,
+                    "panicked": outcome.is_err(),
+                })),
+            );
+            if outcome.is_err() {
+                log_lifecycle_always(
+                    "watcher rail task panicked",
+                    "watcher",
+                    Some(json!({
+                        "task": name.clone(),
+                        "elapsedMs": elapsed_ms,
+                        "intervalMs": interval_ms,
+                    })),
+                );
+            } else if elapsed_ms >= SLOW_TASK_WARNING_MS {
+                log_lifecycle_always(
+                    "watcher rail task slow",
+                    "watcher",
+                    Some(json!({
+                        "task": name.clone(),
+                        "elapsedMs": elapsed_ms,
+                        "intervalMs": interval_ms,
+                    })),
+                );
+            }
             ran.push(name);
         }
         ran
