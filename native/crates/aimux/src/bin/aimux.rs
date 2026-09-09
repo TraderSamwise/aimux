@@ -416,6 +416,13 @@ fn core_command_help(args: &[String]) -> Option<&'static str> {
         ("logout", _, true) => Some(LOGOUT_HELP),
         ("security", None, _) => Some(SECURITY_HELP),
         ("security", Some("unlock"), true) => Some(SECURITY_UNLOCK_HELP),
+        ("hosted", None, _) => Some(HOSTED_HELP),
+        ("hosted", Some("status"), true) => Some(HOSTED_STATUS_HELP),
+        ("hosted", Some("grant"), true) => Some(HOSTED_GRANT_HELP),
+        ("hosted", Some("ungrant"), true) => Some(HOSTED_UNGRANT_HELP),
+        ("hosted", Some("lockdown"), true) => Some(HOSTED_LOCKDOWN_HELP),
+        ("hosted", Some("token"), _) => Some(HOSTED_TOKEN_HELP),
+        ("hosted", Some("audit"), _) => Some(HOSTED_AUDIT_HELP),
         _ => None,
     }
 }
@@ -519,6 +526,13 @@ const LOGIN_HELP: &str = "Usage: aimux login\n\nAuthenticate remote access";
 const LOGOUT_HELP: &str = "Usage: aimux logout\n\nClear remote access credentials";
 const SECURITY_HELP: &str = "Usage: aimux security [options] [command]\n\nManage local security credentials\n\nCommands:\n  unlock                      Unlock security credentials";
 const SECURITY_UNLOCK_HELP: &str = "Usage: aimux security unlock\n\nUnlock security credentials";
+const HOSTED_HELP: &str = "Usage: aimux hosted [options] [command]\n\nManage hosted mode: principals, grants, audit, lockdown\n\nCommands:\n  status                      Show hosted mode configuration and principals\n  token                       Manage hosted bearer tokens\n  grant <principalId>         Allow a principal to converse with one session\n  ungrant <principalId>       Remove a principal's access to one session\n  lockdown <state>            Close or reopen the hosted listener\n  audit                       Inspect the hosted audit log";
+const HOSTED_STATUS_HELP: &str = "Usage: aimux hosted status [options]\n\nShow hosted mode configuration and principals\n\nOptions:\n  --json                      Emit JSON";
+const HOSTED_TOKEN_HELP: &str = "Usage: aimux hosted token [options] [command]\n\nManage hosted bearer tokens\n\nCommands:\n  create                      Create a principal and print its token once\n  list                        List principals\n  revoke <principalId>        Revoke a principal's token";
+const HOSTED_GRANT_HELP: &str = "Usage: aimux hosted grant <principalId> [options]\n\nAllow a principal to converse with one session\n\nOptions:\n  --project <root>            Project root the session belongs to\n  --session <id>              Session id";
+const HOSTED_UNGRANT_HELP: &str = "Usage: aimux hosted ungrant <principalId> [options]\n\nRemove a principal's access to one session\n\nOptions:\n  --project <root>            Project root the session belongs to\n  --session <id>              Session id";
+const HOSTED_LOCKDOWN_HELP: &str = "Usage: aimux hosted lockdown <state>\n\nClose or reopen the hosted listener (\"on\" or \"off\")";
+const HOSTED_AUDIT_HELP: &str = "Usage: aimux hosted audit [options] [command]\n\nInspect the hosted audit log\n\nCommands:\n  tail                        Show the most recent audit records";
 
 fn run_root_dashboard_command() -> Result<ExitCode> {
     let project_root = current_project_root()?;

@@ -592,6 +592,10 @@ fn domain11_cli_command_help_is_command_scoped() {
             "Usage: aimux notifications [options] [command]",
         ),
         (
+            vec!["hosted", "--help"],
+            "Usage: aimux hosted [options] [command]",
+        ),
+        (
             vec!["dashboard-reload", "--help"],
             "Usage: aimux dashboard-reload [options]",
         ),
