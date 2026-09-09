@@ -50,12 +50,12 @@ pub fn list_managed_project_session_names<T: TmuxRuntimeStopManager>(
 pub fn stop_project_tmux_runtime<T: TmuxRuntimeStopManager>(
     tmux: &mut T,
     project_root: &str,
-    persist_snapshots_before_stop: impl FnOnce(&mut T, &str),
+    persist_snapshots_before_stop: impl FnOnce(&mut T, &str) -> Result<(), String>,
 ) -> Result<Vec<String>, String> {
     if !tmux.is_available() {
         return Ok(Vec::new());
     }
-    persist_snapshots_before_stop(tmux, project_root);
+    persist_snapshots_before_stop(tmux, project_root)?;
     let mut killed = Vec::new();
     for session_name in list_managed_project_session_names(tmux, project_root) {
         if !tmux.has_session(&session_name) {

@@ -54,6 +54,7 @@ fn stop_case(tmux: &mut FakeTmux, repo_root: &str) -> Value {
     match stop_project_tmux_runtime(tmux, repo_root, |tmux, project_root| {
         tmux.calls
             .push(json!(["listProjectManagedWindows", project_root]));
+        Ok(())
     }) {
         Ok(killed) => ok(json!({ "killed": killed, "calls": tmux.calls })),
         Err(error) => json!({ "thrown": error, "snapshot": Value::Null }),

@@ -1,6 +1,17 @@
-use aimux::runtime_topology::empty_runtime_topology;
-use aimux::runtime_topology_services::{list_topology_service_states, upsert_topology_service};
-use serde_json::{Map, Value, json};
+use aimux::runtime_topology::{
+    empty_runtime_topology, read_runtime_topology, runtime_topology_path, write_runtime_topology,
+};
+use aimux::runtime_topology_services::list_topology_service_states;
+use aimux::service_state_snapshot::{
+    ServiceStateSnapshotRuntime, merge_runtime_snapshots, merge_service_snapshots,
+    persist_project_runtime_snapshots_before_tmux_stop_at, snapshot_project_service_windows,
+};
+use aimux::tmux::{TmuxManagedWindow, TmuxTarget};
+use serde_json::{Value, json};
+use std::collections::BTreeSet;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 const SERVICE_STATE_SNAPSHOT: &str =
     include_str!("../../../../testdata/contracts/v1/runtime-state/service-state-snapshot.json");
@@ -42,12 +53,19 @@ fn fixture_service_state_snapshot_matches_typescript() {
 
 fn service_state_snapshot_contract(case: &Value) -> Value {
     match case["api"].as_str().unwrap_or_default() {
-        "mergeServiceSnapshots" => merge_runtime_snapshots(
-            case["input"].get("existing"),
-            case["input"].get("snapshots"),
-            case["input"]["cwd"].as_str().unwrap_or("<repo>"),
-            case["input"]["savedAt"].as_str().unwrap_or("<ts:1>"),
-        ),
+        "mergeServiceSnapshots" => {
+            let snapshots = case["input"]
+                .get("snapshots")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            merge_service_snapshots(
+                case["input"].get("existing"),
+                &snapshots,
+                case["input"]["cwd"].as_str().unwrap_or("<repo>"),
+                case["input"]["savedAt"].as_str().unwrap_or("<ts:1>"),
+            )
+        }
         "mergeRuntimeSnapshots" => json!({
             "merged": merge_runtime_snapshots(
                 case["input"].get("existing"),
@@ -58,93 +76,180 @@ fn service_state_snapshot_contract(case: &Value) -> Value {
             "topologySessions": [],
         }),
         "persistProjectRuntimeSnapshotsBeforeTmuxStop" => {
-            let mut service = case["input"]["service"].clone();
-            service["createdAt"] = case["input"]["metadataCreatedAt"].clone();
-            service["cwd"] = Value::String("<repo>".into());
-            let mut topology = empty_runtime_topology();
-            upsert_topology_service(
-                &mut topology,
-                &service,
-                "stopped",
-                "<repo>",
+            let root = temp_root("service-state-snapshot-persist");
+            let repo_root = root.join("repo");
+            let state_dir = root.join("state");
+            fs::create_dir_all(&repo_root).expect("repo root");
+            fs::create_dir_all(&state_dir).expect("state dir");
+            write_runtime_topology(runtime_topology_path(&state_dir), &empty_runtime_topology())
+                .expect("seed topology");
+            let mut tmux =
+                FakeSnapshotRuntime::new(vec![service_window_from_case(case, &repo_root)]);
+            persist_project_runtime_snapshots_before_tmux_stop_at(
+                &repo_root,
+                &state_dir,
+                &mut tmux,
                 case["input"]["metadataCreatedAt"]
                     .as_str()
                     .unwrap_or("<ts:1>"),
-            );
-            json!({ "stopped": list_topology_service_states(&topology, Some(&["stopped"])) })
+            )
+            .expect("persist snapshots");
+            let topology =
+                read_runtime_topology(runtime_topology_path(&state_dir)).expect("read topology");
+            json!({ "stopped": normalize_paths(
+                list_topology_service_states(&topology, Some(&["stopped"])),
+                &repo_root
+            ) })
         }
-        "persistNoWindows" => json!({
-            "result": { "sessions": [], "services": [] },
-            "state": {
-                "savedAt": "<ts:1>",
-                "cwd": case["input"]["state"]["cwd"],
-                "services": [],
-            },
-        }),
+        "persistNoWindows" => {
+            let root = temp_root("service-state-snapshot-none");
+            let repo_root = root.join("repo");
+            let state_dir = root.join("state");
+            fs::create_dir_all(&repo_root).expect("repo root");
+            fs::create_dir_all(&state_dir).expect("state dir");
+            write_runtime_topology(runtime_topology_path(&state_dir), &empty_runtime_topology())
+                .expect("seed topology");
+            fs::write(
+                state_dir.join("state.json"),
+                serde_json::to_vec_pretty(&case["input"]["state"]).expect("state json"),
+            )
+            .expect("write existing state");
+            let mut tmux = FakeSnapshotRuntime::new(Vec::new());
+            let result = persist_project_runtime_snapshots_before_tmux_stop_at(
+                &repo_root, &state_dir, &mut tmux, "<ts:1>",
+            )
+            .expect("persist no windows");
+            let state: Value = serde_json::from_slice(
+                &fs::read(state_dir.join("state.json")).expect("read state"),
+            )
+            .expect("parse state");
+            json!({ "result": result, "state": normalize_value_paths(state, &repo_root) })
+        }
         "snapshotProjectServiceWindows" => {
-            let snapshots = case["input"]["windows"]
+            let root = temp_root("service-state-snapshot-windows");
+            let state_dir = root.join("state");
+            fs::create_dir_all(&state_dir).expect("state dir");
+            write_runtime_topology(runtime_topology_path(&state_dir), &empty_runtime_topology())
+                .expect("seed topology");
+            let windows = case["input"]["windows"]
                 .as_array()
                 .into_iter()
                 .flatten()
-                .filter_map(snapshot_service_window)
+                .map(window_from_value)
                 .collect::<Vec<_>>();
-            Value::Array(snapshots)
+            let mut tmux = FakeSnapshotRuntime::new(windows);
+            Value::Array(snapshot_project_service_windows(
+                PathBuf::from("<repo>"),
+                &state_dir,
+                &mut tmux,
+            ))
         }
         _ => Value::Null,
     }
 }
 
-fn merge_runtime_snapshots(
-    existing: Option<&Value>,
-    snapshots: Option<&Value>,
-    cwd: &str,
-    saved_at: &str,
-) -> Value {
-    let mut services_by_id = Map::new();
-    for service in snapshots.and_then(Value::as_array).into_iter().flatten() {
-        if let Some(id) = service.get("id").and_then(Value::as_str) {
-            let mut service = service.as_object().cloned().unwrap_or_default();
-            service.remove("tmuxTarget");
-            service.remove("retained");
-            services_by_id.insert(id.into(), Value::Object(service));
-        }
-    }
-    json!({
-        "savedAt": saved_at,
-        "cwd": existing
-            .and_then(|value| value.get("cwd"))
-            .and_then(Value::as_str)
-            .unwrap_or(cwd),
-        "services": services_by_id.into_values().collect::<Vec<_>>(),
-    })
+fn service_window_from_case(case: &Value, repo_root: &Path) -> TmuxManagedWindow {
+    let service = &case["input"]["service"];
+    let mut metadata = service.clone();
+    metadata["kind"] = Value::String("service".into());
+    metadata["sessionId"] = service["id"].clone();
+    metadata["createdAt"] = case["input"]["metadataCreatedAt"].clone();
+    metadata["worktreePath"] = Value::String(repo_root.to_string_lossy().into_owned());
+    metadata["args"] = Value::Array(Vec::new());
+    let target = target_from_value(&service["tmuxTarget"]);
+    TmuxManagedWindow { target, metadata }
 }
 
-fn snapshot_service_window(window: &Value) -> Option<Value> {
-    let metadata = window.get("metadata")?;
-    if metadata.get("kind").and_then(Value::as_str) != Some("service") {
-        return None;
+fn window_from_value(window: &Value) -> TmuxManagedWindow {
+    TmuxManagedWindow {
+        target: target_from_value(&window["target"]),
+        metadata: window["metadata"].clone(),
     }
-    let worktree_path = metadata.get("worktreePath").and_then(Value::as_str);
-    if worktree_path.is_some_and(|path| path.contains("/missing")) {
-        return None;
+}
+
+fn target_from_value(value: &Value) -> TmuxTarget {
+    TmuxTarget {
+        session_name: value["sessionName"]
+            .as_str()
+            .unwrap_or("aimux-repo")
+            .to_owned(),
+        window_id: value["windowId"].as_str().unwrap_or("@1").to_owned(),
+        window_index: value["windowIndex"].as_i64().unwrap_or(1),
+        window_name: value["windowName"].as_str().unwrap_or("window").to_owned(),
+        pane_dead: None,
     }
-    let id = metadata.get("sessionId").cloned()?;
-    let mut service = Map::new();
-    service.insert("id".into(), id);
-    for key in [
-        "command",
-        "args",
-        "launchCommandLine",
-        "worktreePath",
-        "label",
-        "createdAt",
-    ] {
-        if let Some(value) = metadata.get(key) {
-            service.insert(key.into(), value.clone());
+}
+
+struct FakeSnapshotRuntime {
+    windows: Vec<TmuxManagedWindow>,
+    dead_windows: BTreeSet<String>,
+}
+
+impl FakeSnapshotRuntime {
+    fn new(windows: Vec<TmuxManagedWindow>) -> Self {
+        Self {
+            windows,
+            dead_windows: BTreeSet::new(),
         }
     }
-    if let Some(target) = window.get("target") {
-        service.insert("tmuxTarget".into(), target.clone());
+}
+
+impl ServiceStateSnapshotRuntime for FakeSnapshotRuntime {
+    fn list_project_managed_windows(&mut self, _project_root: &Path) -> Vec<TmuxManagedWindow> {
+        self.windows.clone()
     }
-    Some(Value::Object(service))
+
+    fn display_message(&mut self, _format: &str, target: &str) -> Option<String> {
+        if target == "@2" {
+            Some("<repo>".into())
+        } else {
+            None
+        }
+    }
+
+    fn is_window_alive(&mut self, target: &TmuxTarget) -> bool {
+        !self.dead_windows.contains(&target.window_id)
+    }
+
+    fn path_exists(&mut self, path: &str) -> bool {
+        !path.contains("/missing")
+    }
+}
+
+fn normalize_paths(values: Vec<Value>, repo_root: &Path) -> Vec<Value> {
+    values
+        .into_iter()
+        .map(|value| normalize_value_paths(value, repo_root))
+        .collect()
+}
+
+fn normalize_value_paths(value: Value, repo_root: &Path) -> Value {
+    match value {
+        Value::String(value) => {
+            Value::String(value.replace(repo_root.to_string_lossy().as_ref(), "<repo>"))
+        }
+        Value::Array(items) => Value::Array(
+            items
+                .into_iter()
+                .map(|value| normalize_value_paths(value, repo_root))
+                .collect(),
+        ),
+        Value::Object(map) => Value::Object(
+            map.into_iter()
+                .map(|(key, value)| (key, normalize_value_paths(value, repo_root)))
+                .collect(),
+        ),
+        value => value,
+    }
+}
+
+fn temp_root(prefix: &str) -> PathBuf {
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    let path = std::env::temp_dir().join(format!(
+        "{prefix}-{}-{}",
+        std::process::id(),
+        SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    ));
+    let _ = fs::remove_dir_all(&path);
+    path
 }

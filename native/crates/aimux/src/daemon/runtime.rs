@@ -98,9 +98,9 @@ use crate::runtime_coherence::{
     RuntimeCoherenceHealth, RuntimeCoherenceHealthProbe, RuntimeCoherenceInput,
     RuntimeCoherenceTmux, build_runtime_coherence_report, render_runtime_coherence_report,
 };
+use crate::service_state_snapshot::stop_project_tmux_runtime_with_service_snapshots;
 use crate::tmux::{
     TmuxRuntimeManager, TmuxTarget, is_dashboard_window_name, is_tmux_client_session_for_host,
-    kill_session_argv, project_session,
 };
 use crate::tmux_exec_metrics::get_tmux_exec_metrics;
 use anyhow::{Context, Result};
@@ -109,7 +109,6 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::{self, Formatter};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -617,7 +616,10 @@ impl RealDaemonRuntime {
         open: Option<DashboardOpenRequest>,
     ) -> Result<Value, String> {
         let _ = <Self as DaemonCoreCommandRuntime>::stop_project(self, project_root, false);
-        let tmux_sessions_killed = stop_project_tmux_runtime(project_root);
+        let project_state_dir = self.resolver.project_state_dir_for(project_root);
+        let tmux_sessions_killed =
+            stop_project_tmux_runtime_with_service_snapshots(project_root, &project_state_dir)
+                .unwrap_or_default();
         let project = <Self as DaemonCoreCommandRuntime>::ensure_project(self, project_root)?;
         let mut tmux = TmuxRuntimeManager::new();
         let target = resolve_dashboard_target(
@@ -2622,48 +2624,6 @@ fn tmux_target_json(target: &TmuxTarget) -> Value {
         "windowIndex": target.window_index,
         "windowName": target.window_name,
     })
-}
-
-fn stop_project_tmux_runtime(project_root: &str) -> Vec<String> {
-    let session_prefix = session_prefix_for_project(project_root);
-    let host_session = project_session(project_root, &session_prefix).session_name;
-    let sessions = tmux_session_names();
-    let killed = sessions
-        .into_iter()
-        .filter(|session_name| {
-            session_name == &host_session
-                || is_tmux_client_session_for_host(session_name, &host_session)
-        })
-        .filter(|session_name| run_tmux_status(kill_session_argv(session_name)).is_ok())
-        .collect::<Vec<_>>();
-    let _ = run_tmux_status(crate::tmux::refresh_status_argv());
-    killed
-}
-
-fn tmux_session_names() -> Vec<String> {
-    let Ok(output) = Command::new("tmux")
-        .args(["list-sessions", "-F", "#{session_name}"])
-        .output()
-    else {
-        return Vec::new();
-    };
-    if !output.status.success() {
-        return Vec::new();
-    }
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .map(str::to_owned)
-        .collect()
-}
-
-fn run_tmux_status(argv: Vec<String>) -> Result<(), String> {
-    match Command::new("tmux").args(argv).status() {
-        Ok(status) if status.success() => Ok(()),
-        Ok(status) => Err(format!("tmux exited with {status}")),
-        Err(error) => Err(error.to_string()),
-    }
 }
 
 fn restart_before_report(runtime: &impl DaemonStatusRuntime, issued_at: &str) -> Value {
