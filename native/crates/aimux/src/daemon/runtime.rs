@@ -81,6 +81,10 @@ use crate::install_cleanup::{
     run_install_cleanup,
 };
 use crate::install_config::{is_primary_install_lane_with_home, normalize_installs_config};
+use crate::lifecycle_orphans::{
+    CleanupLifecycleOrphansOptions, SystemLifecycleOrphanRuntime,
+    cleanup_lifecycle_validation_orphans, plan_lifecycle_validation_orphans,
+};
 use crate::logs::{LogSelectionOptions, clear_log_file, read_last_log_lines, selected_log_path};
 use crate::paths::{PathResolver, compute_project_id};
 use crate::process_inspector::{
@@ -101,8 +105,8 @@ use crate::remote_credentials;
 use crate::remote_login::{self, LoginAction, LoginFlowWaiter};
 use crate::repair_events::{
     ACTION_CONTROL_PLANE_RESTART, ACTION_DASHBOARD_RELOAD, ACTION_PROJECT_SERVICE_ENSURE,
-    STATUS_FAILED, STATUS_REPAIRED, STATUS_SKIPPED, STATUS_STARTED,
-    record_repair_event_for_project, record_repair_event_from_env,
+    ACTION_VALIDATION_ORPHAN_CLEANUP, STATUS_FAILED, STATUS_REPAIRED, STATUS_SKIPPED,
+    STATUS_STARTED, record_repair_event_for_project, record_repair_event_from_env,
 };
 use crate::runtime_coherence::{
     RuntimeCoherenceHealth, RuntimeCoherenceHealthProbe, RuntimeCoherenceInput,
@@ -788,6 +792,23 @@ impl RealDaemonRuntime {
         project_root: Option<&str>,
         mut reload_dashboard: impl FnMut(&str) -> Result<RestartDashboardTarget, String>,
     ) -> RestartControlPlaneTextResult {
+        self.restart_control_plane_runtime_with_cleanup(
+            issued_at,
+            project_root,
+            &mut reload_dashboard,
+            |runtime, project_roots| {
+                runtime.cleanup_lifecycle_validation_orphans_for_restart(project_roots)
+            },
+        )
+    }
+
+    fn restart_control_plane_runtime_with_cleanup(
+        &mut self,
+        issued_at: &str,
+        project_root: Option<&str>,
+        mut reload_dashboard: impl FnMut(&str) -> Result<RestartDashboardTarget, String>,
+        cleanup_orphans: impl FnOnce(&Self, &[String]) -> Value,
+    ) -> RestartControlPlaneTextResult {
         log_lifecycle_always(
             "control plane restart started",
             "daemon",
@@ -811,6 +832,7 @@ impl RealDaemonRuntime {
         );
         let project_root_set = project_roots.iter().cloned().collect::<HashSet<_>>();
         stop_pre_restart_dashboard_repair_windows(&before, &project_root_set);
+        let orphan_cleanup = cleanup_orphans(self, &project_roots);
         let mut projects = Vec::with_capacity(project_roots.len());
         self.restart_live_project_service_pids = Some(restart_live_project_service_pids);
         for project_root in project_roots {
@@ -822,7 +844,7 @@ impl RealDaemonRuntime {
         }
         self.restart_live_project_service_pids = None;
         let current = self.current_daemon_info(issued_at);
-        let summary = restart_summary(&projects);
+        let summary = restart_summary(&projects, &orphan_cleanup);
         let restart = json!({
             "startedAt": issued_at,
             "finishedAt": now_iso(),
@@ -837,11 +859,7 @@ impl RealDaemonRuntime {
                 "current": current,
                 "retained": true,
             },
-            "orphanCleanup": {
-                "processPids": [],
-                "tmuxSessions": [],
-                "errors": [],
-            },
+            "orphanCleanup": orphan_cleanup,
             "projects": projects,
             "summary": summary.clone(),
         });
@@ -856,6 +874,56 @@ impl RealDaemonRuntime {
         );
         let text = render_runtime_restart_result(&restart);
         RestartControlPlaneTextResult { restart, text }
+    }
+
+    fn cleanup_lifecycle_validation_orphans_for_restart(&self, project_roots: &[String]) -> Value {
+        let mut plan_runtime = SystemLifecycleOrphanRuntime::new();
+        let plan = plan_lifecycle_validation_orphans(
+            &mut plan_runtime,
+            std::process::id().try_into().unwrap_or(i32::MAX),
+        );
+        let plan_value = serde_json::to_value(&plan).unwrap_or(Value::Null);
+        for project_root in project_roots {
+            record_repair_event_for_project(
+                &self.resolver,
+                project_root,
+                ACTION_VALIDATION_ORPHAN_CLEANUP,
+                "control-plane-restart",
+                STATUS_STARTED,
+                Some(json!({ "wouldRemove": plan_value.clone() })),
+            );
+        }
+
+        let mut cleanup_runtime = SystemLifecycleOrphanRuntime::new();
+        let result = cleanup_lifecycle_validation_orphans(
+            &mut cleanup_runtime,
+            CleanupLifecycleOrphansOptions::default(),
+        );
+        let status = if !result.failed_process_pids.is_empty()
+            || !result.failed_tmux_sessions.is_empty()
+            || !result.errors.is_empty()
+        {
+            STATUS_FAILED
+        } else if result.process_pids.is_empty() && result.tmux_sessions.is_empty() {
+            STATUS_SKIPPED
+        } else {
+            STATUS_REPAIRED
+        };
+        let result_value = serde_json::to_value(&result).unwrap_or(Value::Null);
+        for project_root in project_roots {
+            record_repair_event_for_project(
+                &self.resolver,
+                project_root,
+                ACTION_VALIDATION_ORPHAN_CLEANUP,
+                "control-plane-restart",
+                status,
+                Some(json!({
+                    "wouldRemove": plan_value.clone(),
+                    "result": result_value.clone(),
+                })),
+            );
+        }
+        result_value
     }
 
     fn restart_project_roots(&self, project_root: Option<&str>) -> Vec<String> {
@@ -3119,7 +3187,7 @@ fn restart_before_report(runtime: &impl DaemonStatusRuntime, issued_at: &str) ->
     })
 }
 
-fn restart_summary(projects: &[Value]) -> Value {
+fn restart_summary(projects: &[Value], orphan_cleanup: &Value) -> Value {
     let services_ensured = projects
         .iter()
         .filter(|project| restart_step_status(project, "service") == Some("ensured"))
@@ -3155,8 +3223,16 @@ fn restart_summary(projects: &[Value]) -> Value {
         "runtimeRepairs": runtime_repairs,
         "dashboardsReloaded": dashboards_reloaded,
         "runtimeRebuildRequired": runtime_rebuild_required,
-        "orphanProcessesCleaned": 0,
-        "orphanTmuxSessionsCleaned": 0,
+        "orphanProcessesCleaned": orphan_cleanup
+            .get("processPids")
+            .and_then(Value::as_array)
+            .map(Vec::len)
+            .unwrap_or(0),
+        "orphanTmuxSessionsCleaned": orphan_cleanup
+            .get("tmuxSessions")
+            .and_then(Value::as_array)
+            .map(Vec::len)
+            .unwrap_or(0),
         "failures": project_failures,
     })
 }
@@ -3365,13 +3441,32 @@ mod tests {
         );
         let mut runtime = fixture.runtime(launcher.clone(), verifier.clone());
 
-        let result = runtime.restart_control_plane_runtime_with(
+        let result = runtime.restart_control_plane_runtime_with_cleanup(
             "2026-01-01T00:00:00.000Z",
             None,
             restart_test_dashboard,
+            |_runtime, _project_roots| {
+                json!({
+                    "attemptedProcessPids": [701, 702],
+                    "processPids": [701, 702],
+                    "failedProcessPids": [],
+                    "attemptedTmuxSessions": ["aimux-aimux-lifecycle-validate25"],
+                    "tmuxSessions": ["aimux-aimux-lifecycle-validate25"],
+                    "failedTmuxSessions": [],
+                    "errors": [],
+                })
+            },
         );
 
         assert_eq!(result.restart["summary"]["projects"], json!(2));
+        assert_eq!(
+            result.restart["summary"]["orphanProcessesCleaned"],
+            json!(2)
+        );
+        assert_eq!(
+            result.restart["summary"]["orphanTmuxSessionsCleaned"],
+            json!(1)
+        );
         assert_eq!(launcher.terminations(), vec![(91_204, false)]);
         assert_eq!(verifier.batch_project_counts(), vec![2]);
         assert_eq!(verifier.single_project_scan_count(), 0);
