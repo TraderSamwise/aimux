@@ -132,6 +132,7 @@ pub struct RealDaemonRuntime {
     global_expose_hot_snapshots: GlobalExposeHotSnapshotCoordinator,
     project_online_agent_count_cache: HashMap<String, ProjectOnlineAgentCountCacheEntry>,
     started_instant: Instant,
+    relay: Arc<crate::daemon::relay::RelaySupervisor>,
 }
 
 #[derive(Default)]
@@ -254,6 +255,7 @@ impl RealDaemonRuntime {
             global_expose_hot_snapshots: GlobalExposeHotSnapshotCoordinator::default(),
             project_online_agent_count_cache: HashMap::new(),
             started_instant: Instant::now(),
+            relay: Arc::new(crate::daemon::relay::RelaySupervisor::default()),
         }
     }
 
@@ -275,6 +277,7 @@ impl RealDaemonRuntime {
             global_expose_hot_snapshots: GlobalExposeHotSnapshotCoordinator::default(),
             project_online_agent_count_cache: HashMap::new(),
             started_instant: Instant::now(),
+            relay: Arc::new(crate::daemon::relay::RelaySupervisor::default()),
         }
     }
 
@@ -1191,7 +1194,16 @@ impl DaemonStatusRuntime for RealDaemonRuntime {
         load_daemon_state(self.resolver.daemon_state_path())
     }
 
+    /// The live client's own state. This used to answer a hardcoded
+    /// "disconnected" whenever remote was enabled, which was indistinguishable
+    /// from a relay that was up and working.
     fn relay_status(&self) -> Value {
+        let status = self.relay.status();
+        if status.get("status").and_then(Value::as_str) != Some("off") {
+            return status;
+        }
+        // No client running: report off unless the user has asked for remote,
+        // in which case they are waiting on a connection that has not started.
         let Some(credentials) = remote_credentials::load_credentials(&self.resolver) else {
             return json!({ "status": "off" });
         };

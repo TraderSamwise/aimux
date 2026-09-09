@@ -6,6 +6,7 @@ pub mod http;
 pub mod json;
 pub mod listener;
 pub mod process;
+pub mod relay;
 pub mod router;
 pub mod routing;
 pub mod runtime;
