@@ -6,6 +6,10 @@ use aimux::core_command_client::request_core_command;
 use aimux::core_command_contract::CORE_COMMAND_NAMES;
 use aimux::daemon::runtime::run_daemon_internal;
 use aimux::daemon_state::{get_daemon_base_url, get_daemon_port};
+use aimux::debug_logging::{
+    LogLevel, configure_daemon_logging, configure_process_logging, log_at,
+    parse_logging_cli_options,
+};
 use aimux::dashboard_internal::{NativeDashboardOptions, run_native_dashboard_internal};
 use aimux::dashboard_targets::{
     DashboardResolveOptions, find_live_dashboard_target, resolve_dashboard_target,
@@ -138,6 +142,7 @@ fn main() -> Result<ExitCode> {
     prepare_stable_process_env();
     let raw_args = std::env::args().skip(1).collect::<Vec<_>>();
     let stripped_args = normalize_root_dispatch_args(&core_command_args(&raw_args));
+    let logging_cli = parse_logging_cli_options(&raw_args);
     if is_root_version_request(&stripped_args) {
         println!("{}", aimux_package_version());
         return Ok(ExitCode::SUCCESS);
@@ -150,6 +155,15 @@ fn main() -> Result<ExitCode> {
         println!("{help}");
         return Ok(ExitCode::SUCCESS);
     }
+    configure_process_logging(std::env::current_dir()?, "cli", logging_cli.clone());
+    log_at(
+        LogLevel::Info,
+        "logging configured",
+        "logging",
+        Some(serde_json::json!({
+            "processKind": "cli",
+        })),
+    );
     let process_argv = std::iter::once("node".to_owned())
         .chain(std::iter::once("aimux".to_owned()))
         .chain(raw_args.clone())
@@ -228,6 +242,8 @@ fn main() -> Result<ExitCode> {
         Command::Daemon {
             command: DaemonCommand::Run,
         } => {
+            configure_daemon_logging(logging_cli.clone());
+            log_at(LogLevel::Info, "logging configured", "logging", None);
             run_daemon_internal()?;
             Ok(())
         }
@@ -248,6 +264,16 @@ fn main() -> Result<ExitCode> {
             project_id,
             project_root,
         } => {
+            let logging_project_root = project_root
+                .as_deref()
+                .map(PathBuf::from)
+                .unwrap_or(std::env::current_dir()?);
+            configure_process_logging(
+                &logging_project_root,
+                "project-service",
+                logging_cli.clone(),
+            );
+            log_at(LogLevel::Info, "logging configured", "logging", None);
             run_project_service_internal(ProjectServiceInternalOptions {
                 project_id,
                 project_root,
@@ -261,6 +287,12 @@ fn main() -> Result<ExitCode> {
             rows,
             once,
         } => {
+            let logging_project_root = project_root
+                .as_deref()
+                .map(PathBuf::from)
+                .unwrap_or(std::env::current_dir()?);
+            configure_process_logging(&logging_project_root, "dashboard", logging_cli.clone());
+            log_at(LogLevel::Info, "logging configured", "logging", None);
             let (resolved_cols, resolved_rows) = resolve_dashboard_dimensions(cols, rows);
             run_native_dashboard_internal(NativeDashboardOptions {
                 project_root: project_root.unwrap_or(std::env::current_dir()?),

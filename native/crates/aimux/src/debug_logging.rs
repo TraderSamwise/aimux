@@ -216,6 +216,23 @@ pub fn configure_process_logging(
     }));
 }
 
+pub fn configure_daemon_logging(cli: LoggingCliOptions) {
+    let config = config::load_global_config();
+    let env = std::env::vars()
+        .map(|(key, value)| (key, Value::String(value)))
+        .collect::<Map<_, _>>();
+    let resolver = PathResolver::from_env();
+    configure_logging(resolve_logging_runtime_config(ResolveLoggingOptions {
+        config: &config["logging"],
+        env: &env,
+        cli,
+        path: resolver.daemon_log_path(),
+        process_kind: "daemon".to_owned(),
+        project_id: None,
+        project_root: None,
+    }));
+}
+
 pub fn log_at(level: LogLevel, message: &str, category: &str, fields: Option<Value>) {
     let config = get_logging_config();
     if !should_log(&config, level, category) {
@@ -619,5 +636,29 @@ mod tests {
         assert_eq!(resolved.categories, ["http"]);
         assert_eq!(resolved.max_bytes, 123);
         assert_eq!(resolved.max_files, 2);
+    }
+
+    #[test]
+    fn parses_global_logging_cli_options() {
+        assert_eq!(
+            parse_logging_cli_options(&[
+                "remote",
+                "--debug",
+                "--log-level",
+                "warn",
+                "--log-category=daemon,tmux",
+                "--trace",
+            ]),
+            LoggingCliOptions {
+                debug: true,
+                trace: true,
+                log_level: Some("warn".to_owned()),
+                log_category: Some("daemon,tmux".to_owned()),
+            }
+        );
+        assert_eq!(
+            parse_logging_cli_options(&["logs", "--log-level", "--daemon", "--log-category="]),
+            LoggingCliOptions::default()
+        );
     }
 }
