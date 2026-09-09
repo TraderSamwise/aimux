@@ -1,0 +1,161 @@
+{
+  "version": 1,
+  "source": "app/lib/monitor-capture.test.ts",
+  "generatedBy": "scripts/capture-monitor-capture-contract.mjs",
+  "description": "App monitor capture filename, base64 stripping, decoded-size estimation, and sample text formatting behavior captured by running TypeScript monitor-capture helpers.",
+  "cases": [
+    {
+      "id": "monitor-capture-001",
+      "name": "builds stable jpeg filenames from capture timestamps",
+      "source": "app/lib/monitor-capture.test.ts",
+      "api": "monitorFrameFilename",
+      "input": {
+        "name": "builds stable jpeg filenames from capture timestamps",
+        "api": "monitorFrameFilename",
+        "capturedAt": "2026-08-14T01:02:03.456Z"
+      },
+      "output": "monitor-2026-08-14T01-02-03-456Z.jpg",
+      "inputSha256": "56b167ff78602d9af6f4ced5a98e3bf4b873d8ce079dd71cd7edef8d0070e7e4"
+    },
+    {
+      "id": "monitor-capture-002",
+      "name": "falls back to epoch filenames for invalid timestamps",
+      "source": "app/lib/monitor-capture.test.ts",
+      "api": "monitorFrameFilename",
+      "input": {
+        "name": "falls back to epoch filenames for invalid timestamps",
+        "api": "monitorFrameFilename",
+        "capturedAt": "not a date"
+      },
+      "output": "monitor-1970-01-01T00-00-00-000Z.jpg",
+      "inputSha256": "1baedfde13da8831bdb0f70eac0e36e7c3d95d6d978f38e433536cb684724d2f"
+    },
+    {
+      "id": "monitor-capture-003",
+      "name": "strips data-url prefixes",
+      "source": "app/lib/monitor-capture.test.ts",
+      "api": "stripDataUrlBase64",
+      "input": {
+        "name": "strips data-url prefixes",
+        "api": "stripDataUrlBase64",
+        "value": "data:image/jpeg;base64,aGVsbG8="
+      },
+      "output": "aGVsbG8=",
+      "inputSha256": "ce00c2f7a6fee120c6bb80b255c7915e1fd0e152dc2a79975c318bf0719bb92f"
+    },
+    {
+      "id": "monitor-capture-004",
+      "name": "leaves raw base64 unchanged",
+      "source": "app/lib/monitor-capture.test.ts",
+      "api": "stripDataUrlBase64",
+      "input": { "name": "leaves raw base64 unchanged", "api": "stripDataUrlBase64", "value": "aGVsbG8=" },
+      "output": "aGVsbG8=",
+      "inputSha256": "caf5180654baedbf04a0677814023ec462eb9cc0d767e11153597d4dccc3b445"
+    },
+    {
+      "id": "monitor-capture-005",
+      "name": "estimates decoded raw base64 bytes",
+      "source": "app/lib/monitor-capture.test.ts",
+      "api": "estimateBase64DecodedBytes",
+      "input": {
+        "name": "estimates decoded raw base64 bytes",
+        "api": "estimateBase64DecodedBytes",
+        "value": "aGVsbG8="
+      },
+      "output": 5,
+      "inputSha256": "d84979144685c63869b8c6d70eecbc0063ae20017ae1cab7663b8b8ac836ecf1"
+    },
+    {
+      "id": "monitor-capture-006",
+      "name": "estimates decoded data-url bytes",
+      "source": "app/lib/monitor-capture.test.ts",
+      "api": "estimateBase64DecodedBytes",
+      "input": {
+        "name": "estimates decoded data-url bytes",
+        "api": "estimateBase64DecodedBytes",
+        "value": "data:image/jpeg;base64,aGVsbG8="
+      },
+      "output": 5,
+      "inputSha256": "337c9d341f3bfdd51058dd15de8759e5644c527d7d61102a280506c402d717f1"
+    },
+    {
+      "id": "monitor-capture-007",
+      "name": "ignores whitespace when estimating base64",
+      "source": "app/lib/monitor-capture.test.ts",
+      "api": "estimateBase64DecodedBytes",
+      "input": {
+        "name": "ignores whitespace when estimating base64",
+        "api": "estimateBase64DecodedBytes",
+        "value": "aGVs bG8=\n"
+      },
+      "output": 5,
+      "inputSha256": "0c76c802ae7725765dad98b9030e19c8f6b1e0c0b586ec89717260e9d90cb597"
+    },
+    {
+      "id": "monitor-capture-008",
+      "name": "returns zero bytes for empty base64",
+      "source": "app/lib/monitor-capture.test.ts",
+      "api": "estimateBase64DecodedBytes",
+      "input": { "name": "returns zero bytes for empty base64", "api": "estimateBase64DecodedBytes", "value": "" },
+      "output": 0,
+      "inputSha256": "2966c72c106b53a9d71abbb313370bbb9c196fa1b2179e7bb7ac0b75a2058580"
+    },
+    {
+      "id": "monitor-capture-009",
+      "name": "formats monitor samples with frame transcript and sample-rate context",
+      "source": "app/lib/monitor-capture.test.ts",
+      "api": "formatMonitorSampleText",
+      "input": {
+        "name": "formats monitor samples with frame transcript and sample-rate context",
+        "api": "formatMonitorSampleText",
+        "value": {
+          "capturedAt": "2026-08-14T01:02:03.456Z",
+          "captureMode": "camera-audio",
+          "frameAttached": true,
+          "transcript": "ship the notes",
+          "audioSampleRate": 16000
+        }
+      },
+      "output": "Monitor sample captured at 2026-08-14T01:02:03.456Z. A camera frame is attached. Audio sample rate: 16000 Hz. Speech transcript: ship the notes",
+      "inputSha256": "d95a203b2cdc449396f62fbe51b6101a75648e31989c5bd3fd430a937b84e022"
+    },
+    {
+      "id": "monitor-capture-010",
+      "name": "formats text-only monitor samples with skipped frame reason",
+      "source": "app/lib/monitor-capture.test.ts",
+      "api": "formatMonitorSampleText",
+      "input": {
+        "name": "formats text-only monitor samples with skipped frame reason",
+        "api": "formatMonitorSampleText",
+        "value": {
+          "capturedAt": "2026-08-14T01:02:03.456Z",
+          "captureMode": "camera-audio",
+          "frameSkippedReason": "shared chat image delivery is not enabled yet",
+          "transcript": "debug the screen",
+          "audioSampleRate": 16000
+        }
+      },
+      "output": "Monitor sample captured at 2026-08-14T01:02:03.456Z. Camera frame not attached: shared chat image delivery is not enabled yet. Audio sample rate: 16000 Hz. Speech transcript: debug the screen",
+      "inputSha256": "1e992f0e2dc7a3db3eca2fb968133b920a7c210a0050576489bdcc1011b89768"
+    },
+    {
+      "id": "monitor-capture-011",
+      "name": "omits audio context for camera-only samples",
+      "source": "app/lib/monitor-capture.test.ts",
+      "api": "formatMonitorSampleText",
+      "input": {
+        "name": "omits audio context for camera-only samples",
+        "api": "formatMonitorSampleText",
+        "value": {
+          "capturedAt": "2026-08-14T01:02:03.456Z",
+          "captureMode": "camera",
+          "frameAttached": true,
+          "transcript": "  ",
+          "audioSampleRate": 16000
+        }
+      },
+      "output": "Monitor sample captured at 2026-08-14T01:02:03.456Z. A camera frame is attached.",
+      "inputSha256": "fc4e426c625a39398c9225137eb33f4d0ec6fd72035964e1ac6a6c82e99f874b"
+    }
+  ]
+}

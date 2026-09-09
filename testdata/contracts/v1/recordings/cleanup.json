@@ -1,0 +1,311 @@
+{
+  "version": 1,
+  "source": "src/recording-cleanup.test.ts",
+  "generatedBy": "scripts/capture-recordings-contract.mjs",
+  "description": "Recording cleanup planning, execution, retention defaults, live-session guards, size ordering, limits, and side effects captured by running TypeScript.",
+  "cases": [
+    {
+      "id": "recordings-cleanup-001",
+      "name": "removes recordings past retention across every project",
+      "source": "src/recording-cleanup.test.ts",
+      "api": "planRecordingCleanup",
+      "input": {
+        "api": "planRecordingCleanup",
+        "now": 1786147200000,
+        "projects": [
+          { "project": "alpha", "name": "claude-a.log", "ageDays": 90, "bytes": 512 },
+          { "project": "beta", "name": "codex-b.log", "ageDays": 45, "bytes": 512 }
+        ]
+      },
+      "output": {
+        "retentionDays": 30,
+        "remove": [
+          {
+            "path": "<projectsRoot>/alpha/recordings/claude-a.log",
+            "name": "claude-a.log",
+            "ageDays": 90,
+            "sizeBytes": 512
+          },
+          {
+            "path": "<projectsRoot>/beta/recordings/codex-b.log",
+            "name": "codex-b.log",
+            "ageDays": 45,
+            "sizeBytes": 512
+          }
+        ],
+        "keptCount": 0,
+        "reclaimableBytes": 1024
+      },
+      "inputSha256": "1c736f7eba65c6bcbd8abacb69ba740aa1f9b8ff78a22bbbe6a252983418b371"
+    },
+    {
+      "id": "recordings-cleanup-002",
+      "name": "keeps a recording a live session is still writing",
+      "source": "src/recording-cleanup.test.ts",
+      "api": "planRecordingCleanup",
+      "input": {
+        "api": "planRecordingCleanup",
+        "now": 1786147200000,
+        "projects": [{ "project": "alpha", "name": "claude-live.log", "ageDays": 0, "bytes": 512 }]
+      },
+      "output": { "retentionDays": 30, "remove": [], "keptCount": 1, "reclaimableBytes": 0 },
+      "inputSha256": "649f852c4e235fa5247be5e2ecd0ea8bdd9004e51e352c734e7bfebea403d86b"
+    },
+    {
+      "id": "recordings-cleanup-003",
+      "name": "reaches recordings whose session no longer exists in project state",
+      "source": "src/recording-cleanup.test.ts",
+      "api": "planRecordingCleanup",
+      "input": {
+        "api": "planRecordingCleanup",
+        "now": 1786147200000,
+        "projects": [{ "project": "alpha", "name": "claude-orphaned.log", "ageDays": 400, "bytes": 4096 }]
+      },
+      "output": {
+        "retentionDays": 30,
+        "remove": [
+          {
+            "path": "<projectsRoot>/alpha/recordings/claude-orphaned.log",
+            "name": "claude-orphaned.log",
+            "ageDays": 400,
+            "sizeBytes": 4096
+          }
+        ],
+        "keptCount": 0,
+        "reclaimableBytes": 4096
+      },
+      "inputSha256": "60352f6f2f1849216c72a9f0047b2130242a8847694a98b12dd6e345e47ec909"
+    },
+    {
+      "id": "recordings-cleanup-004",
+      "name": "offers the biggest recordings first",
+      "source": "src/recording-cleanup.test.ts",
+      "api": "planRecordingCleanup",
+      "input": {
+        "api": "planRecordingCleanup",
+        "now": 1786147200000,
+        "projects": [
+          { "project": "alpha", "name": "small.log", "ageDays": 90, "bytes": 100 },
+          { "project": "alpha", "name": "huge.log", "ageDays": 90, "bytes": 9000 },
+          { "project": "alpha", "name": "medium.log", "ageDays": 90, "bytes": 1000 }
+        ]
+      },
+      "output": {
+        "retentionDays": 30,
+        "remove": [
+          { "path": "<projectsRoot>/alpha/recordings/huge.log", "name": "huge.log", "ageDays": 90, "sizeBytes": 9000 },
+          {
+            "path": "<projectsRoot>/alpha/recordings/medium.log",
+            "name": "medium.log",
+            "ageDays": 90,
+            "sizeBytes": 1000
+          },
+          { "path": "<projectsRoot>/alpha/recordings/small.log", "name": "small.log", "ageDays": 90, "sizeBytes": 100 }
+        ],
+        "keptCount": 0,
+        "reclaimableBytes": 10100
+      },
+      "inputSha256": "22dd6c1a509fa8addbead6fc45501c70e1c6eebd7899799ac7c70c49d50e8d97"
+    },
+    {
+      "id": "recordings-cleanup-005",
+      "name": "returns an empty plan when no projects directory exists",
+      "source": "src/recording-cleanup.test.ts",
+      "api": "planRecordingCleanup",
+      "input": { "api": "planRecordingCleanup", "now": 1786147200000, "missingProjectsRoot": true },
+      "output": { "retentionDays": 30, "remove": [], "keptCount": 0, "reclaimableBytes": 0 },
+      "inputSha256": "d63be2648be4faf3d86e1d68f4f2446c4e2656f8824307bd59405412b3104dd7"
+    },
+    {
+      "id": "recordings-cleanup-006",
+      "name": "removes nothing unless the caller opts in",
+      "source": "src/recording-cleanup.test.ts",
+      "api": "runRecordingCleanup",
+      "input": {
+        "api": "runRecordingCleanup",
+        "now": 1786147200000,
+        "projects": [{ "project": "alpha", "name": "old.log", "ageDays": 90, "bytes": 512 }],
+        "run": {}
+      },
+      "output": {
+        "dryRun": true,
+        "plan": {
+          "retentionDays": 30,
+          "remove": [
+            { "path": "<projectsRoot>/alpha/recordings/old.log", "name": "old.log", "ageDays": 90, "sizeBytes": 512 }
+          ],
+          "keptCount": 0,
+          "reclaimableBytes": 512
+        },
+        "removed": 0,
+        "failed": 0,
+        "reclaimedBytes": 0,
+        "removedPaths": []
+      },
+      "inputSha256": "7208ce81a473ceb34ee8d5209f2e7b9e02f561d6dd6d53e22ab14c4815158dcf"
+    },
+    {
+      "id": "recordings-cleanup-007",
+      "name": "removes the planned recordings when asked",
+      "source": "src/recording-cleanup.test.ts",
+      "api": "runRecordingCleanup",
+      "input": {
+        "api": "runRecordingCleanup",
+        "now": 1786147200000,
+        "projects": [{ "project": "alpha", "name": "old.log", "ageDays": 90, "bytes": 2048 }],
+        "run": { "dryRun": false }
+      },
+      "output": {
+        "dryRun": false,
+        "plan": {
+          "retentionDays": 30,
+          "remove": [
+            { "path": "<projectsRoot>/alpha/recordings/old.log", "name": "old.log", "ageDays": 90, "sizeBytes": 2048 }
+          ],
+          "keptCount": 0,
+          "reclaimableBytes": 2048
+        },
+        "removed": 1,
+        "failed": 0,
+        "reclaimedBytes": 2048,
+        "removedPaths": ["<projectsRoot>/alpha/recordings/old.log"]
+      },
+      "inputSha256": "52bf900984444e8ca02d0ab9f8fa3cae5b9726480bf88a731954d86c699d4415"
+    },
+    {
+      "id": "recordings-cleanup-008",
+      "name": "counts a failed removal without aborting the sweep",
+      "source": "src/recording-cleanup.test.ts",
+      "api": "runRecordingCleanup",
+      "input": {
+        "api": "runRecordingCleanup",
+        "now": 1786147200000,
+        "projects": [
+          { "project": "alpha", "name": "bad.log", "ageDays": 90, "bytes": 512 },
+          { "project": "alpha", "name": "good.log", "ageDays": 91, "bytes": 512 }
+        ],
+        "run": { "dryRun": false, "failNames": ["bad.log"] }
+      },
+      "output": {
+        "dryRun": false,
+        "plan": {
+          "retentionDays": 30,
+          "remove": [
+            { "path": "<projectsRoot>/alpha/recordings/bad.log", "name": "bad.log", "ageDays": 90, "sizeBytes": 512 },
+            { "path": "<projectsRoot>/alpha/recordings/good.log", "name": "good.log", "ageDays": 91, "sizeBytes": 512 }
+          ],
+          "keptCount": 0,
+          "reclaimableBytes": 1024
+        },
+        "removed": 1,
+        "failed": 1,
+        "reclaimedBytes": 512,
+        "removedPaths": ["<projectsRoot>/alpha/recordings/good.log"]
+      },
+      "inputSha256": "145e86a6eed4aa4e65d35cf7d044f17cf9eb3b914db21b60e145d2ca8e45e9c5"
+    },
+    {
+      "id": "recordings-cleanup-009",
+      "name": "caps how many it removes in one sweep",
+      "source": "src/recording-cleanup.test.ts",
+      "api": "runRecordingCleanup",
+      "input": {
+        "api": "runRecordingCleanup",
+        "now": 1786147200000,
+        "projects": [
+          { "project": "alpha", "name": "a.log", "ageDays": 90, "bytes": 300 },
+          { "project": "alpha", "name": "b.log", "ageDays": 90, "bytes": 200 },
+          { "project": "alpha", "name": "c.log", "ageDays": 90, "bytes": 100 }
+        ],
+        "run": { "dryRun": false, "limit": 2 }
+      },
+      "output": {
+        "dryRun": false,
+        "plan": {
+          "retentionDays": 30,
+          "remove": [
+            { "path": "<projectsRoot>/alpha/recordings/a.log", "name": "a.log", "ageDays": 90, "sizeBytes": 300 },
+            { "path": "<projectsRoot>/alpha/recordings/b.log", "name": "b.log", "ageDays": 90, "sizeBytes": 200 },
+            { "path": "<projectsRoot>/alpha/recordings/c.log", "name": "c.log", "ageDays": 90, "sizeBytes": 100 }
+          ],
+          "keptCount": 0,
+          "reclaimableBytes": 600
+        },
+        "removed": 2,
+        "failed": 0,
+        "reclaimedBytes": 500,
+        "removedPaths": ["<projectsRoot>/alpha/recordings/a.log", "<projectsRoot>/alpha/recordings/b.log"]
+      },
+      "inputSha256": "e68452ddf4d9883b18ba25eab3cd2be65d0facf5745f96b1fc79713936cacc4f"
+    },
+    {
+      "id": "recordings-cleanup-010",
+      "name": "keeps a recording whose session the project still knows about",
+      "source": "src/recording-cleanup.test.ts",
+      "api": "planRecordingCleanup",
+      "input": {
+        "api": "planRecordingCleanup",
+        "now": 1786147200000,
+        "projects": [{ "project": "alpha", "name": "claude-idle.log", "ageDays": 400, "bytes": 512 }],
+        "state": { "alpha": { "sessions": [{ "id": "claude-idle" }] } }
+      },
+      "output": { "retentionDays": 30, "remove": [], "keptCount": 1, "reclaimableBytes": 0 },
+      "inputSha256": "96076a7fa723fa54ac890c39a70834469c7e9e70c273126fed7f0e1767948592"
+    },
+    {
+      "id": "recordings-cleanup-011",
+      "name": "still removes a recording whose session is gone from state",
+      "source": "src/recording-cleanup.test.ts",
+      "api": "planRecordingCleanup",
+      "input": {
+        "api": "planRecordingCleanup",
+        "now": 1786147200000,
+        "projects": [{ "project": "alpha", "name": "claude-gone.log", "ageDays": 400, "bytes": 512 }],
+        "state": { "alpha": { "sessions": [] } }
+      },
+      "output": {
+        "retentionDays": 30,
+        "remove": [
+          {
+            "path": "<projectsRoot>/alpha/recordings/claude-gone.log",
+            "name": "claude-gone.log",
+            "ageDays": 400,
+            "sizeBytes": 512
+          }
+        ],
+        "keptCount": 0,
+        "reclaimableBytes": 512
+      },
+      "inputSha256": "0ad058bcd918fdd595c0c96537bdbd4968b9d7e75a22ffc22efdb329655ca962"
+    },
+    {
+      "id": "recordings-cleanup-012",
+      "name": "sweeps recordings kept beside a repo, not just the global layout",
+      "source": "src/recording-cleanup.test.ts",
+      "api": "planRecordingCleanup",
+      "input": {
+        "api": "planRecordingCleanup",
+        "now": 1786147200000,
+        "extraDirs": [{ "token": "<extra:local>", "name": "codex-local.log", "ageDays": 90, "bytes": 256 }]
+      },
+      "output": {
+        "retentionDays": 30,
+        "remove": [
+          { "path": "<extra:local>/codex-local.log", "name": "codex-local.log", "ageDays": 90, "sizeBytes": 256 }
+        ],
+        "keptCount": 0,
+        "reclaimableBytes": 256
+      },
+      "inputSha256": "5e1731c1771e1dc14014d8239a52c47ba1c3578319b2bdb7efa3faaed984fa85"
+    },
+    {
+      "id": "recordings-cleanup-013",
+      "name": "defaults to a conservative retention",
+      "source": "src/recording-cleanup.test.ts",
+      "api": "DEFAULT_RECORDING_RETENTION_DAYS",
+      "input": { "api": "DEFAULT_RECORDING_RETENTION_DAYS" },
+      "output": 30,
+      "inputSha256": "b6db96230c81814d7837eaf77fabb3bee9c76fc8cf2f4ad38d3ef18205dc1175"
+    }
+  ]
+}

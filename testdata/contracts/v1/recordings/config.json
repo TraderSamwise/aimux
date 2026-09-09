@@ -1,0 +1,84 @@
+{
+  "version": 1,
+  "source": "src/recording-config.test.ts",
+  "generatedBy": "scripts/capture-recordings-contract.mjs",
+  "description": "Recording cleanup global config normalization captured by running TypeScript.",
+  "constants": {
+    "DEFAULT_RECORDINGS_CONFIG": { "cleanupEnabled": true, "retentionDays": 30 },
+    "MIN_RECORDING_RETENTION_DAYS": 1
+  },
+  "cases": [
+    {
+      "id": "recordings-config-001",
+      "name": "falls back to defaults when absent",
+      "source": "src/recording-config.test.ts",
+      "api": "normalizeRecordingsConfig",
+      "input": {},
+      "output": { "cleanupEnabled": true, "retentionDays": 30 },
+      "inputSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "id": "recordings-config-002",
+      "name": "falls back to defaults when malformed",
+      "source": "src/recording-config.test.ts",
+      "api": "normalizeRecordingsConfig",
+      "input": { "raw": "on" },
+      "output": { "cleanupEnabled": true, "retentionDays": 30 },
+      "inputSha256": "ac18fbf4fbd75071b40486c09d0f277701568ebe33fd46b22afc83006afab574"
+    },
+    {
+      "id": "recordings-config-003",
+      "name": "falls back to defaults when retention is non-numeric",
+      "source": "src/recording-config.test.ts",
+      "api": "normalizeRecordingsConfig",
+      "input": { "raw": { "retentionDays": "soon" } },
+      "output": { "cleanupEnabled": true, "retentionDays": 30 },
+      "inputSha256": "fb2105611ae69f46823ae1e6aa77cbba954c21f7524e1934c11ea946338afc2e"
+    },
+    {
+      "id": "recordings-config-004",
+      "name": "gives the sweep an off switch",
+      "source": "src/recording-config.test.ts",
+      "api": "normalizeRecordingsConfig",
+      "input": { "raw": { "cleanupEnabled": false } },
+      "output": { "cleanupEnabled": false, "retentionDays": 30 },
+      "inputSha256": "9a34110978a7cc67590710504330bb344fd999c1063808de466e9637d3d8a160"
+    },
+    {
+      "id": "recordings-config-005",
+      "name": "refuses a zero-day retention",
+      "source": "src/recording-config.test.ts",
+      "api": "normalizeRecordingsConfig",
+      "input": { "raw": { "retentionDays": 0 } },
+      "output": { "cleanupEnabled": true, "retentionDays": 30 },
+      "inputSha256": "2dea293c1b7d04994bd4f24f62a7eaa977086e205b55ecb42046b6ec650bc091"
+    },
+    {
+      "id": "recordings-config-006",
+      "name": "refuses a negative retention",
+      "source": "src/recording-config.test.ts",
+      "api": "normalizeRecordingsConfig",
+      "input": { "raw": { "retentionDays": -1 } },
+      "output": { "cleanupEnabled": true, "retentionDays": 30 },
+      "inputSha256": "fcd923538a7bdd8e6e3a162f7eaf6d40bc7546470c4338489ae5a7db7e046bdd"
+    },
+    {
+      "id": "recordings-config-007",
+      "name": "allows the configured minimum retention",
+      "source": "src/recording-config.test.ts",
+      "api": "normalizeRecordingsConfig",
+      "input": { "raw": { "retentionDays": 1 } },
+      "output": { "cleanupEnabled": true, "retentionDays": 1 },
+      "inputSha256": "5d87037b330b179861f62e9eb59b03406fb52a326e0ff0f46a87f7261865f263"
+    },
+    {
+      "id": "recordings-config-008",
+      "name": "ignores an out-of-range retention rather than clamping it",
+      "source": "src/recording-config.test.ts",
+      "api": "normalizeRecordingsConfig",
+      "input": { "raw": { "retentionDays": 99999 } },
+      "output": { "cleanupEnabled": true, "retentionDays": 30 },
+      "inputSha256": "a6485d69fd3f97e9fe542ee9194986fb5226fb3b40efe93a880d1e558cb8ae1f"
+    }
+  ]
+}

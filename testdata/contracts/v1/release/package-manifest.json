@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "source": "src/package-manifest.test.ts",
+  "generatedBy": "scripts/capture-package-manifest-contract.mjs",
+  "description": "Package manifest runtime file allowlist and retired Node payload exclusions captured by evaluating the TypeScript package-manifest contract against package.json.",
+  "cases": [
+    {
+      "id": "release-package-manifest-001",
+      "name": "ships runtime scripts required by installed npm binaries",
+      "source": "src/package-manifest.test.ts",
+      "sourceName": "ships runtime scripts required by installed npm binaries",
+      "api": "package.json files contract",
+      "input": {
+        "sourcePath": "package.json",
+        "requiredFiles": [
+          "bin",
+          "dist-ui",
+          "docs",
+          "scripts/tmux-control.sh",
+          "scripts/tmux-open-hyperlink.sh",
+          "scripts/tmux-statusline.sh",
+          "native/darwin-arm64",
+          "native/darwin-x64"
+        ],
+        "forbiddenFiles": ["dist", "scripts/installed-aimux-shim.sh"]
+      },
+      "output": {
+        "files": [
+          "bin",
+          "dist-ui",
+          "docs",
+          "scripts/tmux-control.sh",
+          "scripts/tmux-open-hyperlink.sh",
+          "scripts/tmux-statusline.sh",
+          "native/darwin-arm64",
+          "native/darwin-x64",
+          "LICENSE",
+          "README.md"
+        ],
+        "required": [
+          { "entry": "bin", "present": true },
+          { "entry": "dist-ui", "present": true },
+          { "entry": "docs", "present": true },
+          { "entry": "scripts/tmux-control.sh", "present": true },
+          { "entry": "scripts/tmux-open-hyperlink.sh", "present": true },
+          { "entry": "scripts/tmux-statusline.sh", "present": true },
+          { "entry": "native/darwin-arm64", "present": true },
+          { "entry": "native/darwin-x64", "present": true }
+        ],
+        "forbidden": [
+          { "entry": "dist", "present": false },
+          { "entry": "scripts/installed-aimux-shim.sh", "present": false }
+        ]
+      },
+      "inputSha256": "61a4d866206845115f7ee672478eddf210e8c6e266411afc6b25b6bda1b412c2"
+    }
+  ]
+}

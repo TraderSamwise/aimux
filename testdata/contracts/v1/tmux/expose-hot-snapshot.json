@@ -1,0 +1,1902 @@
+{
+  "version": 1,
+  "generatedAt": "2026-09-06T00:00:00.000Z",
+  "generatedBy": "scripts/capture-expose-hot-snapshot-contract.mjs",
+  "source": "src/tmux/expose-hot-snapshot.test.ts",
+  "subject": "src/tmux/expose-hot-snapshot.ts",
+  "description": "Expose hot snapshot cache behavior captured by running the TypeScript implementation.",
+  "caseCount": 13,
+  "cases": [
+    {
+      "id": "tmux-expose-hot-snapshot-001",
+      "name": "round-trips a valid scoped snapshot",
+      "source": "src/tmux/expose-hot-snapshot.test.ts",
+      "api": "src/tmux/expose-hot-snapshot.ts",
+      "input": {
+        "name": "round-trips a valid scoped snapshot",
+        "operations": [
+          {
+            "type": "write",
+            "key": { "projectRoot": "/repo", "scope": "project" },
+            "view": {
+              "scope": "project",
+              "items": [
+                {
+                  "id": "session-1",
+                  "label": "session-1",
+                  "urgency": 0,
+                  "activity": 0,
+                  "recentRank": 0,
+                  "previewSnapshot": {
+                    "output": "warm preview\n",
+                    "capturedAt": "<iso>",
+                    "source": "capture",
+                    "windowId": "@1",
+                    "startLine": -40,
+                    "lineCount": 40
+                  },
+                  "target": {
+                    "sessionName": "aimux-test",
+                    "windowId": "@1",
+                    "windowIndex": 1,
+                    "windowName": "session-1"
+                  },
+                  "metadata": {
+                    "kind": "agent",
+                    "sessionId": "session-1",
+                    "command": "codex",
+                    "args": [],
+                    "toolConfigKey": "codex",
+                    "worktreePath": "/repo"
+                  }
+                }
+              ],
+              "scopeLabel": "all worktrees",
+              "sublabel": "worktree"
+            }
+          },
+          { "type": "read", "key": { "projectRoot": "/repo", "scope": "project" } }
+        ]
+      },
+      "output": {
+        "results": [
+          {
+            "type": "write",
+            "snapshot": {
+              "exists": true,
+              "lockExists": false,
+              "mode": "600",
+              "json": {
+                "version": 1,
+                "views": {
+                  "project|%2Frepo||": {
+                    "scope": "project",
+                    "items": [
+                      {
+                        "id": "session-1",
+                        "label": "session-1",
+                        "urgency": 0,
+                        "activity": 0,
+                        "recentRank": 0,
+                        "previewSnapshot": {
+                          "output": "warm preview\n",
+                          "capturedAt": "<iso>",
+                          "source": "capture",
+                          "windowId": "@1",
+                          "startLine": -40,
+                          "lineCount": 40
+                        },
+                        "target": {
+                          "sessionName": "aimux-test",
+                          "windowId": "@1",
+                          "windowIndex": 1,
+                          "windowName": "session-1"
+                        },
+                        "metadata": {
+                          "kind": "agent",
+                          "sessionId": "session-1",
+                          "command": "codex",
+                          "args": [],
+                          "toolConfigKey": "codex",
+                          "worktreePath": "/repo"
+                        }
+                      }
+                    ],
+                    "scopeLabel": "all worktrees",
+                    "sublabel": "worktree",
+                    "projectRoot": "/repo",
+                    "updatedAt": "<iso>"
+                  }
+                }
+              },
+              "textContainsSession119": false
+            }
+          },
+          {
+            "type": "read",
+            "value": {
+              "scope": "project",
+              "scopeLabel": "all worktrees",
+              "sublabel": "worktree",
+              "items": [
+                {
+                  "id": "session-1",
+                  "label": "session-1",
+                  "urgency": 0,
+                  "activity": 0,
+                  "recentRank": 0,
+                  "previewSnapshot": {
+                    "output": "warm preview\n",
+                    "capturedAt": "<iso>",
+                    "source": "capture",
+                    "windowId": "@1",
+                    "startLine": -40,
+                    "lineCount": 40
+                  },
+                  "target": {
+                    "sessionName": "aimux-test",
+                    "windowId": "@1",
+                    "windowIndex": 1,
+                    "windowName": "session-1"
+                  },
+                  "metadata": {
+                    "kind": "agent",
+                    "sessionId": "session-1",
+                    "command": "codex",
+                    "args": [],
+                    "toolConfigKey": "codex",
+                    "worktreePath": "/repo"
+                  }
+                }
+              ]
+            },
+            "snapshot": {
+              "exists": true,
+              "lockExists": false,
+              "mode": "600",
+              "json": {
+                "version": 1,
+                "views": {
+                  "project|%2Frepo||": {
+                    "scope": "project",
+                    "items": [
+                      {
+                        "id": "session-1",
+                        "label": "session-1",
+                        "urgency": 0,
+                        "activity": 0,
+                        "recentRank": 0,
+                        "previewSnapshot": {
+                          "output": "warm preview\n",
+                          "capturedAt": "<iso>",
+                          "source": "capture",
+                          "windowId": "@1",
+                          "startLine": -40,
+                          "lineCount": 40
+                        },
+                        "target": {
+                          "sessionName": "aimux-test",
+                          "windowId": "@1",
+                          "windowIndex": 1,
+                          "windowName": "session-1"
+                        },
+                        "metadata": {
+                          "kind": "agent",
+                          "sessionId": "session-1",
+                          "command": "codex",
+                          "args": [],
+                          "toolConfigKey": "codex",
+                          "worktreePath": "/repo"
+                        }
+                      }
+                    ],
+                    "scopeLabel": "all worktrees",
+                    "sublabel": "worktree",
+                    "projectRoot": "/repo",
+                    "updatedAt": "<iso>"
+                  }
+                }
+              },
+              "textContainsSession119": false
+            }
+          }
+        ]
+      },
+      "inputSha256": "4f3be5cec473000db12fbc7b2477f13352e4403cf4f3d8e90b5fd0be3a45c6ae"
+    },
+    {
+      "id": "tmux-expose-hot-snapshot-002",
+      "name": "does not reuse one worktree snapshot for another worktree",
+      "source": "src/tmux/expose-hot-snapshot.test.ts",
+      "api": "src/tmux/expose-hot-snapshot.ts",
+      "input": {
+        "name": "does not reuse one worktree snapshot for another worktree",
+        "operations": [
+          {
+            "type": "write",
+            "key": { "projectRoot": "/repo", "scope": "worktree", "worktreeKey": "/repo/worktrees/a" },
+            "view": {
+              "scope": "worktree",
+              "items": [
+                {
+                  "id": "a",
+                  "label": "a",
+                  "urgency": 0,
+                  "activity": 0,
+                  "recentRank": 0,
+                  "previewSnapshot": {
+                    "output": "warm preview\n",
+                    "capturedAt": "<iso>",
+                    "source": "capture",
+                    "windowId": "@1",
+                    "startLine": -40,
+                    "lineCount": 40
+                  },
+                  "target": { "sessionName": "aimux-test", "windowId": "@1", "windowIndex": 1, "windowName": "a" },
+                  "metadata": {
+                    "kind": "agent",
+                    "sessionId": "a",
+                    "command": "codex",
+                    "args": [],
+                    "toolConfigKey": "codex",
+                    "worktreePath": "/repo"
+                  }
+                }
+              ],
+              "scopeLabel": "this worktree",
+              "sublabel": "none"
+            }
+          },
+          { "type": "read", "key": { "projectRoot": "/repo", "scope": "worktree", "worktreeKey": "/repo/worktrees/b" } }
+        ]
+      },
+      "output": {
+        "results": [
+          {
+            "type": "write",
+            "snapshot": {
+              "exists": true,
+              "lockExists": false,
+              "mode": "600",
+              "json": {
+                "version": 1,
+                "views": {
+                  "worktree|%2Frepo|%2Frepo%2Fworktrees%2Fa|": {
+                    "scope": "worktree",
+                    "items": [
+                      {
+                        "id": "a",
+                        "label": "a",
+                        "urgency": 0,
+                        "activity": 0,
+                        "recentRank": 0,
+                        "previewSnapshot": {
+                          "output": "warm preview\n",
+                          "capturedAt": "<iso>",
+                          "source": "capture",
+                          "windowId": "@1",
+                          "startLine": -40,
+                          "lineCount": 40
+                        },
+                        "target": {
+                          "sessionName": "aimux-test",
+                          "windowId": "@1",
+                          "windowIndex": 1,
+                          "windowName": "a"
+                        },
+                        "metadata": {
+                          "kind": "agent",
+                          "sessionId": "a",
+                          "command": "codex",
+                          "args": [],
+                          "toolConfigKey": "codex",
+                          "worktreePath": "/repo"
+                        }
+                      }
+                    ],
+                    "scopeLabel": "this worktree",
+                    "sublabel": "none",
+                    "projectRoot": "/repo",
+                    "worktreeKey": "/repo/worktrees/a",
+                    "updatedAt": "<iso>"
+                  }
+                }
+              },
+              "textContainsSession119": false
+            }
+          },
+          {
+            "type": "read",
+            "value": null,
+            "snapshot": {
+              "exists": true,
+              "lockExists": false,
+              "mode": "600",
+              "json": {
+                "version": 1,
+                "views": {
+                  "worktree|%2Frepo|%2Frepo%2Fworktrees%2Fa|": {
+                    "scope": "worktree",
+                    "items": [
+                      {
+                        "id": "a",
+                        "label": "a",
+                        "urgency": 0,
+                        "activity": 0,
+                        "recentRank": 0,
+                        "previewSnapshot": {
+                          "output": "warm preview\n",
+                          "capturedAt": "<iso>",
+                          "source": "capture",
+                          "windowId": "@1",
+                          "startLine": -40,
+                          "lineCount": 40
+                        },
+                        "target": {
+                          "sessionName": "aimux-test",
+                          "windowId": "@1",
+                          "windowIndex": 1,
+                          "windowName": "a"
+                        },
+                        "metadata": {
+                          "kind": "agent",
+                          "sessionId": "a",
+                          "command": "codex",
+                          "args": [],
+                          "toolConfigKey": "codex",
+                          "worktreePath": "/repo"
+                        }
+                      }
+                    ],
+                    "scopeLabel": "this worktree",
+                    "sublabel": "none",
+                    "projectRoot": "/repo",
+                    "worktreeKey": "/repo/worktrees/a",
+                    "updatedAt": "<iso>"
+                  }
+                }
+              },
+              "textContainsSession119": false
+            }
+          }
+        ]
+      },
+      "inputSha256": "7ee239eff9a838bc3f322f5cb24be97bf8032a1f7691eaeca319dcc8d33241f4"
+    },
+    {
+      "id": "tmux-expose-hot-snapshot-003",
+      "name": "does not reuse one launch window snapshot for another worktree launcher",
+      "source": "src/tmux/expose-hot-snapshot.test.ts",
+      "api": "src/tmux/expose-hot-snapshot.ts",
+      "input": {
+        "name": "does not reuse one launch window snapshot for another worktree launcher",
+        "operations": [
+          {
+            "type": "write",
+            "key": { "projectRoot": "/repo", "scope": "worktree", "worktreeKey": "/repo", "launchWindowId": "@1" },
+            "view": {
+              "scope": "worktree",
+              "items": [
+                {
+                  "id": "a",
+                  "label": "a",
+                  "urgency": 0,
+                  "activity": 0,
+                  "recentRank": 0,
+                  "previewSnapshot": {
+                    "output": "warm preview\n",
+                    "capturedAt": "<iso>",
+                    "source": "capture",
+                    "windowId": "@1",
+                    "startLine": -40,
+                    "lineCount": 40
+                  },
+                  "target": { "sessionName": "aimux-test", "windowId": "@1", "windowIndex": 1, "windowName": "a" },
+                  "metadata": {
+                    "kind": "agent",
+                    "sessionId": "a",
+                    "command": "codex",
+                    "args": [],
+                    "toolConfigKey": "codex",
+                    "worktreePath": "/repo"
+                  }
+                }
+              ],
+              "scopeLabel": "this worktree",
+              "sublabel": "none"
+            }
+          },
+          {
+            "type": "read",
+            "key": { "projectRoot": "/repo", "scope": "worktree", "worktreeKey": "/repo", "launchWindowId": "@2" }
+          }
+        ]
+      },
+      "output": {
+        "results": [
+          {
+            "type": "write",
+            "snapshot": {
+              "exists": true,
+              "lockExists": false,
+              "mode": "600",
+              "json": {
+                "version": 1,
+                "views": {
+                  "worktree|%2Frepo|%2Frepo|%401": {
+                    "scope": "worktree",
+                    "items": [
+                      {
+                        "id": "a",
+                        "label": "a",
+                        "urgency": 0,
+                        "activity": 0,
+                        "recentRank": 0,
+                        "previewSnapshot": {
+                          "output": "warm preview\n",
+                          "capturedAt": "<iso>",
+                          "source": "capture",
+                          "windowId": "@1",
+                          "startLine": -40,
+                          "lineCount": 40
+                        },
+                        "target": {
+                          "sessionName": "aimux-test",
+                          "windowId": "@1",
+                          "windowIndex": 1,
+                          "windowName": "a"
+                        },
+                        "metadata": {
+                          "kind": "agent",
+                          "sessionId": "a",
+                          "command": "codex",
+                          "args": [],
+                          "toolConfigKey": "codex",
+                          "worktreePath": "/repo"
+                        }
+                      }
+                    ],
+                    "scopeLabel": "this worktree",
+                    "sublabel": "none",
+                    "projectRoot": "/repo",
+                    "worktreeKey": "/repo",
+                    "launchWindowId": "@1",
+                    "updatedAt": "<iso>"
+                  }
+                }
+              },
+              "textContainsSession119": false
+            }
+          },
+          {
+            "type": "read",
+            "value": null,
+            "snapshot": {
+              "exists": true,
+              "lockExists": false,
+              "mode": "600",
+              "json": {
+                "version": 1,
+                "views": {
+                  "worktree|%2Frepo|%2Frepo|%401": {
+                    "scope": "worktree",
+                    "items": [
+                      {
+                        "id": "a",
+                        "label": "a",
+                        "urgency": 0,
+                        "activity": 0,
+                        "recentRank": 0,
+                        "previewSnapshot": {
+                          "output": "warm preview\n",
+                          "capturedAt": "<iso>",
+                          "source": "capture",
+                          "windowId": "@1",
+                          "startLine": -40,
+                          "lineCount": 40
+                        },
+                        "target": {
+                          "sessionName": "aimux-test",
+                          "windowId": "@1",
+                          "windowIndex": 1,
+                          "windowName": "a"
+                        },
+                        "metadata": {
+                          "kind": "agent",
+                          "sessionId": "a",
+                          "command": "codex",
+                          "args": [],
+                          "toolConfigKey": "codex",
+                          "worktreePath": "/repo"
+                        }
+                      }
+                    ],
+                    "scopeLabel": "this worktree",
+                    "sublabel": "none",
+                    "projectRoot": "/repo",
+                    "worktreeKey": "/repo",
+                    "launchWindowId": "@1",
+                    "updatedAt": "<iso>"
+                  }
+                }
+              },
+              "textContainsSession119": false
+            }
+          }
+        ]
+      },
+      "inputSha256": "e43076f6fe2059f1a08e0381de8902a51e9a6afa02913c5e7e9bd4c758f3523e"
+    },
+    {
+      "id": "tmux-expose-hot-snapshot-004",
+      "name": "ignores malformed cache files",
+      "source": "src/tmux/expose-hot-snapshot.test.ts",
+      "api": "src/tmux/expose-hot-snapshot.ts",
+      "input": {
+        "name": "ignores malformed cache files",
+        "operations": [
+          { "type": "raw", "text": "{" },
+          { "type": "read", "key": { "projectRoot": "/repo", "scope": "project" } }
+        ]
+      },
+      "output": {
+        "results": [
+          {
+            "type": "raw",
+            "snapshot": {
+              "exists": true,
+              "lockExists": false,
+              "mode": "644",
+              "json": null,
+              "textContainsSession119": false
+            }
+          },
+          {
+            "type": "read",
+            "value": null,
+            "snapshot": {
+              "exists": true,
+              "lockExists": false,
+              "mode": "644",
+              "json": null,
+              "textContainsSession119": false
+            }
+          }
+        ]
+      },
+      "inputSha256": "70e0b8d174cc831582049777e58e8f886171a82e7c13c7d1158b5919442f436f"
+    },
+    {
+      "id": "tmux-expose-hot-snapshot-005",
+      "name": "removes expired preview bodies when a stale cache is read",
+      "source": "src/tmux/expose-hot-snapshot.test.ts",
+      "api": "src/tmux/expose-hot-snapshot.ts",
+      "input": {
+        "name": "removes expired preview bodies when a stale cache is read",
+        "operations": [
+          {
+            "type": "rawJson",
+            "value": {
+              "version": 1,
+              "views": {
+                "project|%2Frepo||": {
+                  "scope": "project",
+                  "items": [
+                    {
+                      "id": "session-1",
+                      "label": "session-1",
+                      "urgency": 0,
+                      "activity": 0,
+                      "recentRank": 0,
+                      "previewSnapshot": {
+                        "output": "SECRET_TOKEN=should-not-persist\n",
+                        "capturedAt": "<iso>",
+                        "source": "capture",
+                        "windowId": "@1",
+                        "startLine": -40,
+                        "lineCount": 40
+                      },
+                      "target": {
+                        "sessionName": "aimux-test",
+                        "windowId": "@1",
+                        "windowIndex": 1,
+                        "windowName": "session-1"
+                      },
+                      "metadata": {
+                        "kind": "agent",
+                        "sessionId": "session-1",
+                        "command": "codex",
+                        "args": [],
+                        "toolConfigKey": "codex",
+                        "worktreePath": "/repo"
+                      }
+                    }
+                  ],
+                  "scopeLabel": "all worktrees",
+                  "sublabel": "worktree",
+                  "projectRoot": "/repo",
+                  "updatedAt": "<iso>"
+                }
+              }
+            }
+          },
+          { "type": "read", "key": { "projectRoot": "/repo", "scope": "project" } }
+        ]
+      },
+      "output": {
+        "results": [
+          {
+            "type": "rawJson",
+            "snapshot": {
+              "exists": true,
+              "lockExists": false,
+              "mode": "644",
+              "json": {
+                "version": 1,
+                "views": {
+                  "project|%2Frepo||": {
+                    "scope": "project",
+                    "items": [
+                      {
+                        "id": "session-1",
+                        "label": "session-1",
+                        "urgency": 0,
+                        "activity": 0,
+                        "recentRank": 0,
+                        "previewSnapshot": {
+                          "output": "SECRET_TOKEN=should-not-persist\n",
+                          "capturedAt": "<iso>",
+                          "source": "capture",
+                          "windowId": "@1",
+                          "startLine": -40,
+                          "lineCount": 40
+                        },
+                        "target": {
+                          "sessionName": "aimux-test",
+                          "windowId": "@1",
+                          "windowIndex": 1,
+                          "windowName": "session-1"
+                        },
+                        "metadata": {
+                          "kind": "agent",
+                          "sessionId": "session-1",
+                          "command": "codex",
+                          "args": [],
+                          "toolConfigKey": "codex",
+                          "worktreePath": "/repo"
+                        }
+                      }
+                    ],
+                    "scopeLabel": "all worktrees",
+                    "sublabel": "worktree",
+                    "projectRoot": "/repo",
+                    "updatedAt": "<iso>"
+                  }
+                }
+              },
+              "textContainsSession119": false
+            }
+          },
+          {
+            "type": "read",
+            "value": null,
+            "snapshot": {
+              "exists": false,
+              "lockExists": false,
+              "mode": null,
+              "json": null,
+              "textContainsSession119": false
+            }
+          }
+        ]
+      },
+      "inputSha256": "382aa56e5643583f888e63dc350eb40b3b344f77da25b5816c66e46f5a25b841"
+    },
+    {
+      "id": "tmux-expose-hot-snapshot-006",
+      "name": "removes cached previews when a long-lived owner prunes expired entries",
+      "source": "src/tmux/expose-hot-snapshot.test.ts",
+      "api": "src/tmux/expose-hot-snapshot.ts",
+      "input": {
+        "name": "removes cached previews when a long-lived owner prunes expired entries",
+        "operations": [
+          {
+            "type": "rawJson",
+            "value": {
+              "version": 1,
+              "views": {
+                "project|%2Frepo||": {
+                  "scope": "project",
+                  "items": [
+                    {
+                      "id": "session-1",
+                      "label": "session-1",
+                      "urgency": 0,
+                      "activity": 0,
+                      "recentRank": 0,
+                      "previewSnapshot": {
+                        "output": "SECRET_TOKEN=should-expire\n",
+                        "capturedAt": "<iso>",
+                        "source": "capture",
+                        "windowId": "@1",
+                        "startLine": -40,
+                        "lineCount": 40
+                      },
+                      "target": {
+                        "sessionName": "aimux-test",
+                        "windowId": "@1",
+                        "windowIndex": 1,
+                        "windowName": "session-1"
+                      },
+                      "metadata": {
+                        "kind": "agent",
+                        "sessionId": "session-1",
+                        "command": "codex",
+                        "args": [],
+                        "toolConfigKey": "codex",
+                        "worktreePath": "/repo"
+                      }
+                    }
+                  ],
+                  "scopeLabel": "all worktrees",
+                  "sublabel": "worktree",
+                  "projectRoot": "/repo",
+                  "updatedAt": "<iso>"
+                }
+              }
+            }
+          },
+          { "type": "prune" }
+        ]
+      },
+      "output": {
+        "results": [
+          {
+            "type": "rawJson",
+            "snapshot": {
+              "exists": true,
+              "lockExists": false,
+              "mode": "644",
+              "json": {
+                "version": 1,
+                "views": {
+                  "project|%2Frepo||": {
+                    "scope": "project",
+                    "items": [
+                      {
+                        "id": "session-1",
+                        "label": "session-1",
+                        "urgency": 0,
+                        "activity": 0,
+                        "recentRank": 0,
+                        "previewSnapshot": {
+                          "output": "SECRET_TOKEN=should-expire\n",
+                          "capturedAt": "<iso>",
+                          "source": "capture",
+                          "windowId": "@1",
+                          "startLine": -40,
+                          "lineCount": 40
+                        },
+                        "target": {
+                          "sessionName": "aimux-test",
+                          "windowId": "@1",
+                          "windowIndex": 1,
+                          "windowName": "session-1"
+                        },
+                        "metadata": {
+                          "kind": "agent",
+                          "sessionId": "session-1",
+                          "command": "codex",
+                          "args": [],
+                          "toolConfigKey": "codex",
+                          "worktreePath": "/repo"
+                        }
+                      }
+                    ],
+                    "scopeLabel": "all worktrees",
+                    "sublabel": "worktree",
+                    "projectRoot": "/repo",
+                    "updatedAt": "<iso>"
+                  }
+                }
+              },
+              "textContainsSession119": false
+            }
+          },
+          {
+            "type": "prune",
+            "value": true,
+            "snapshot": {
+              "exists": false,
+              "lockExists": false,
+              "mode": null,
+              "json": null,
+              "textContainsSession119": false
+            }
+          }
+        ]
+      },
+      "inputSha256": "d3c9f0ed2615d06b528b9332444778a6c74be829256fd947015c3ca1a811696d"
+    },
+    {
+      "id": "tmux-expose-hot-snapshot-007",
+      "name": "replaces a malformed cache file on the next successful write",
+      "source": "src/tmux/expose-hot-snapshot.test.ts",
+      "api": "src/tmux/expose-hot-snapshot.ts",
+      "input": {
+        "name": "replaces a malformed cache file on the next successful write",
+        "operations": [
+          { "type": "raw", "text": "{" },
+          {
+            "type": "write",
+            "key": { "projectRoot": "/repo", "scope": "project" },
+            "view": {
+              "scope": "project",
+              "items": [
+                {
+                  "id": "session-1",
+                  "label": "session-1",
+                  "urgency": 0,
+                  "activity": 0,
+                  "recentRank": 0,
+                  "previewSnapshot": {
+                    "output": "warm preview\n",
+                    "capturedAt": "<iso>",
+                    "source": "capture",
+                    "windowId": "@1",
+                    "startLine": -40,
+                    "lineCount": 40
+                  },
+                  "target": {
+                    "sessionName": "aimux-test",
+                    "windowId": "@1",
+                    "windowIndex": 1,
+                    "windowName": "session-1"
+                  },
+                  "metadata": {
+                    "kind": "agent",
+                    "sessionId": "session-1",
+                    "command": "codex",
+                    "args": [],
+                    "toolConfigKey": "codex",
+                    "worktreePath": "/repo"
+                  }
+                }
+              ],
+              "scopeLabel": "all worktrees",
+              "sublabel": "worktree"
+            }
+          },
+          { "type": "read", "key": { "projectRoot": "/repo", "scope": "project" } }
+        ]
+      },
+      "output": {
+        "results": [
+          {
+            "type": "raw",
+            "snapshot": {
+              "exists": true,
+              "lockExists": false,
+              "mode": "644",
+              "json": null,
+              "textContainsSession119": false
+            }
+          },
+          {
+            "type": "write",
+            "snapshot": {
+              "exists": true,
+              "lockExists": false,
+              "mode": "600",
+              "json": {
+                "version": 1,
+                "views": {
+                  "project|%2Frepo||": {
+                    "scope": "project",
+                    "items": [
+                      {
+                        "id": "session-1",
+                        "label": "session-1",
+                        "urgency": 0,
+                        "activity": 0,
+                        "recentRank": 0,
+                        "previewSnapshot": {
+                          "output": "warm preview\n",
+                          "capturedAt": "<iso>",
+                          "source": "capture",
+                          "windowId": "@1",
+                          "startLine": -40,
+                          "lineCount": 40
+                        },
+                        "target": {
+                          "sessionName": "aimux-test",
+                          "windowId": "@1",
+                          "windowIndex": 1,
+                          "windowName": "session-1"
+                        },
+                        "metadata": {
+                          "kind": "agent",
+                          "sessionId": "session-1",
+                          "command": "codex",
+                          "args": [],
+                          "toolConfigKey": "codex",
+                          "worktreePath": "/repo"
+                        }
+                      }
+                    ],
+                    "scopeLabel": "all worktrees",
+                    "sublabel": "worktree",
+                    "projectRoot": "/repo",
+                    "updatedAt": "<iso>"
+                  }
+                }
+              },
+              "textContainsSession119": false
+            }
+          },
+          {
+            "type": "read",
+            "value": {
+              "scope": "project",
+              "scopeLabel": "all worktrees",
+              "sublabel": "worktree",
+              "items": [
+                {
+                  "id": "session-1",
+                  "label": "session-1",
+                  "urgency": 0,
+                  "activity": 0,
+                  "recentRank": 0,
+                  "previewSnapshot": {
+                    "output": "warm preview\n",
+                    "capturedAt": "<iso>",
+                    "source": "capture",
+                    "windowId": "@1",
+                    "startLine": -40,
+                    "lineCount": 40
+                  },
+                  "target": {
+                    "sessionName": "aimux-test",
+                    "windowId": "@1",
+                    "windowIndex": 1,
+                    "windowName": "session-1"
+                  },
+                  "metadata": {
+                    "kind": "agent",
+                    "sessionId": "session-1",
+                    "command": "codex",
+                    "args": [],
+                    "toolConfigKey": "codex",
+                    "worktreePath": "/repo"
+                  }
+                }
+              ]
+            },
+            "snapshot": {
+              "exists": true,
+              "lockExists": false,
+              "mode": "600",
+              "json": {
+                "version": 1,
+                "views": {
+                  "project|%2Frepo||": {
+                    "scope": "project",
+                    "items": [
+                      {
+                        "id": "session-1",
+                        "label": "session-1",
+                        "urgency": 0,
+                        "activity": 0,
+                        "recentRank": 0,
+                        "previewSnapshot": {
+                          "output": "warm preview\n",
+                          "capturedAt": "<iso>",
+                          "source": "capture",
+                          "windowId": "@1",
+                          "startLine": -40,
+                          "lineCount": 40
+                        },
+                        "target": {
+                          "sessionName": "aimux-test",
+                          "windowId": "@1",
+                          "windowIndex": 1,
+                          "windowName": "session-1"
+                        },
+                        "metadata": {
+                          "kind": "agent",
+                          "sessionId": "session-1",
+                          "command": "codex",
+                          "args": [],
+                          "toolConfigKey": "codex",
+                          "worktreePath": "/repo"
+                        }
+                      }
+                    ],
+                    "scopeLabel": "all worktrees",
+                    "sublabel": "worktree",
+                    "projectRoot": "/repo",
+                    "updatedAt": "<iso>"
+                  }
+                }
+              },
+              "textContainsSession119": false
+            }
+          }
+        ]
+      },
+      "inputSha256": "e36cdbc2e019370197ac65b46ab7c61c5a63633aefdab9a2a901558a89a8b2c8"
+    },
+    {
+      "id": "tmux-expose-hot-snapshot-008",
+      "name": "writes derived cache files with owner-only permissions",
+      "source": "src/tmux/expose-hot-snapshot.test.ts",
+      "api": "src/tmux/expose-hot-snapshot.ts",
+      "input": {
+        "name": "writes derived cache files with owner-only permissions",
+        "operations": [
+          {
+            "type": "write",
+            "key": { "projectRoot": "/repo", "scope": "project" },
+            "view": {
+              "scope": "project",
+              "items": [
+                {
+                  "id": "session-1",
+                  "label": "session-1",
+                  "urgency": 0,
+                  "activity": 0,
+                  "recentRank": 0,
+                  "previewSnapshot": {
+                    "output": "warm preview\n",
+                    "capturedAt": "<iso>",
+                    "source": "capture",
+                    "windowId": "@1",
+                    "startLine": -40,
+                    "lineCount": 40
+                  },
+                  "target": {
+                    "sessionName": "aimux-test",
+                    "windowId": "@1",
+                    "windowIndex": 1,
+                    "windowName": "session-1"
+                  },
+                  "metadata": {
+                    "kind": "agent",
+                    "sessionId": "session-1",
+                    "command": "codex",
+                    "args": [],
+                    "toolConfigKey": "codex",
+                    "worktreePath": "/repo"
+                  }
+                }
+              ],
+              "scopeLabel": "all worktrees",
+              "sublabel": "worktree"
+            }
+          }
+        ]
+      },
+      "output": {
+        "results": [
+          {
+            "type": "write",
+            "snapshot": {
+              "exists": true,
+              "lockExists": false,
+              "mode": "600",
+              "json": {
+                "version": 1,
+                "views": {
+                  "project|%2Frepo||": {
+                    "scope": "project",
+                    "items": [
+                      {
+                        "id": "session-1",
+                        "label": "session-1",
+                        "urgency": 0,
+                        "activity": 0,
+                        "recentRank": 0,
+                        "previewSnapshot": {
+                          "output": "warm preview\n",
+                          "capturedAt": "<iso>",
+                          "source": "capture",
+                          "windowId": "@1",
+                          "startLine": -40,
+                          "lineCount": 40
+                        },
+                        "target": {
+                          "sessionName": "aimux-test",
+                          "windowId": "@1",
+                          "windowIndex": 1,
+                          "windowName": "session-1"
+                        },
+                        "metadata": {
+                          "kind": "agent",
+                          "sessionId": "session-1",
+                          "command": "codex",
+                          "args": [],
+                          "toolConfigKey": "codex",
+                          "worktreePath": "/repo"
+                        }
+                      }
+                    ],
+                    "scopeLabel": "all worktrees",
+                    "sublabel": "worktree",
+                    "projectRoot": "/repo",
+                    "updatedAt": "<iso>"
+                  }
+                }
+              },
+              "textContainsSession119": false
+            }
+          }
+        ]
+      },
+      "inputSha256": "73e9ca41b24962569a8b16b2a595d88656e12d7145bb09e926b3fb17c5eca4f4"
+    },
+    {
+      "id": "tmux-expose-hot-snapshot-009",
+      "name": "recovers from a stale write lock",
+      "source": "src/tmux/expose-hot-snapshot.test.ts",
+      "api": "src/tmux/expose-hot-snapshot.ts",
+      "input": {
+        "name": "recovers from a stale write lock",
+        "operations": [
+          { "type": "lock", "stale": true },
+          {
+            "type": "write",
+            "key": { "projectRoot": "/repo", "scope": "project" },
+            "view": {
+              "scope": "project",
+              "items": [
+                {
+                  "id": "session-1",
+                  "label": "session-1",
+                  "urgency": 0,
+                  "activity": 0,
+                  "recentRank": 0,
+                  "previewSnapshot": {
+                    "output": "warm preview\n",
+                    "capturedAt": "<iso>",
+                    "source": "capture",
+                    "windowId": "@1",
+                    "startLine": -40,
+                    "lineCount": 40
+                  },
+                  "target": {
+                    "sessionName": "aimux-test",
+                    "windowId": "@1",
+                    "windowIndex": 1,
+                    "windowName": "session-1"
+                  },
+                  "metadata": {
+                    "kind": "agent",
+                    "sessionId": "session-1",
+                    "command": "codex",
+                    "args": [],
+                    "toolConfigKey": "codex",
+                    "worktreePath": "/repo"
+                  }
+                }
+              ],
+              "scopeLabel": "all worktrees",
+              "sublabel": "worktree"
+            }
+          },
+          { "type": "read", "key": { "projectRoot": "/repo", "scope": "project" } }
+        ]
+      },
+      "output": {
+        "results": [
+          {
+            "type": "lock",
+            "snapshot": {
+              "exists": false,
+              "lockExists": true,
+              "mode": null,
+              "json": null,
+              "textContainsSession119": false
+            }
+          },
+          {
+            "type": "write",
+            "snapshot": {
+              "exists": true,
+              "lockExists": false,
+              "mode": "600",
+              "json": {
+                "version": 1,
+                "views": {
+                  "project|%2Frepo||": {
+                    "scope": "project",
+                    "items": [
+                      {
+                        "id": "session-1",
+                        "label": "session-1",
+                        "urgency": 0,
+                        "activity": 0,
+                        "recentRank": 0,
+                        "previewSnapshot": {
+                          "output": "warm preview\n",
+                          "capturedAt": "<iso>",
+                          "source": "capture",
+                          "windowId": "@1",
+                          "startLine": -40,
+                          "lineCount": 40
+                        },
+                        "target": {
+                          "sessionName": "aimux-test",
+                          "windowId": "@1",
+                          "windowIndex": 1,
+                          "windowName": "session-1"
+                        },
+                        "metadata": {
+                          "kind": "agent",
+                          "sessionId": "session-1",
+                          "command": "codex",
+                          "args": [],
+                          "toolConfigKey": "codex",
+                          "worktreePath": "/repo"
+                        }
+                      }
+                    ],
+                    "scopeLabel": "all worktrees",
+                    "sublabel": "worktree",
+                    "projectRoot": "/repo",
+                    "updatedAt": "<iso>"
+                  }
+                }
+              },
+              "textContainsSession119": false
+            }
+          },
+          {
+            "type": "read",
+            "value": {
+              "scope": "project",
+              "scopeLabel": "all worktrees",
+              "sublabel": "worktree",
+              "items": [
+                {
+                  "id": "session-1",
+                  "label": "session-1",
+                  "urgency": 0,
+                  "activity": 0,
+                  "recentRank": 0,
+                  "previewSnapshot": {
+                    "output": "warm preview\n",
+                    "capturedAt": "<iso>",
+                    "source": "capture",
+                    "windowId": "@1",
+                    "startLine": -40,
+                    "lineCount": 40
+                  },
+                  "target": {
+                    "sessionName": "aimux-test",
+                    "windowId": "@1",
+                    "windowIndex": 1,
+                    "windowName": "session-1"
+                  },
+                  "metadata": {
+                    "kind": "agent",
+                    "sessionId": "session-1",
+                    "command": "codex",
+                    "args": [],
+                    "toolConfigKey": "codex",
+                    "worktreePath": "/repo"
+                  }
+                }
+              ]
+            },
+            "snapshot": {
+              "exists": true,
+              "lockExists": false,
+              "mode": "600",
+              "json": {
+                "version": 1,
+                "views": {
+                  "project|%2Frepo||": {
+                    "scope": "project",
+                    "items": [
+                      {
+                        "id": "session-1",
+                        "label": "session-1",
+                        "urgency": 0,
+                        "activity": 0,
+                        "recentRank": 0,
+                        "previewSnapshot": {
+                          "output": "warm preview\n",
+                          "capturedAt": "<iso>",
+                          "source": "capture",
+                          "windowId": "@1",
+                          "startLine": -40,
+                          "lineCount": 40
+                        },
+                        "target": {
+                          "sessionName": "aimux-test",
+                          "windowId": "@1",
+                          "windowIndex": 1,
+                          "windowName": "session-1"
+                        },
+                        "metadata": {
+                          "kind": "agent",
+                          "sessionId": "session-1",
+                          "command": "codex",
+                          "args": [],
+                          "toolConfigKey": "codex",
+                          "worktreePath": "/repo"
+                        }
+                      }
+                    ],
+                    "scopeLabel": "all worktrees",
+                    "sublabel": "worktree",
+                    "projectRoot": "/repo",
+                    "updatedAt": "<iso>"
+                  }
+                }
+              },
+              "textContainsSession119": false
+            }
+          }
+        ]
+      },
+      "inputSha256": "d04de4e2a446455a26e7852ee697f7b8368c56bda6e074f89d732d8233c59454"
+    },
+    {
+      "id": "tmux-expose-hot-snapshot-010",
+      "name": "skips writes behind a live write lock without blocking",
+      "source": "src/tmux/expose-hot-snapshot.test.ts",
+      "api": "src/tmux/expose-hot-snapshot.ts",
+      "input": {
+        "name": "skips writes behind a live write lock without blocking",
+        "operations": [
+          { "type": "lock" },
+          {
+            "type": "write",
+            "key": { "projectRoot": "/repo", "scope": "project" },
+            "view": {
+              "scope": "project",
+              "items": [
+                {
+                  "id": "session-1",
+                  "label": "session-1",
+                  "urgency": 0,
+                  "activity": 0,
+                  "recentRank": 0,
+                  "previewSnapshot": {
+                    "output": "warm preview\n",
+                    "capturedAt": "<iso>",
+                    "source": "capture",
+                    "windowId": "@1",
+                    "startLine": -40,
+                    "lineCount": 40
+                  },
+                  "target": {
+                    "sessionName": "aimux-test",
+                    "windowId": "@1",
+                    "windowIndex": 1,
+                    "windowName": "session-1"
+                  },
+                  "metadata": {
+                    "kind": "agent",
+                    "sessionId": "session-1",
+                    "command": "codex",
+                    "args": [],
+                    "toolConfigKey": "codex",
+                    "worktreePath": "/repo"
+                  }
+                }
+              ],
+              "scopeLabel": "all worktrees",
+              "sublabel": "worktree"
+            }
+          },
+          { "type": "read", "key": { "projectRoot": "/repo", "scope": "project" } }
+        ]
+      },
+      "output": {
+        "results": [
+          {
+            "type": "lock",
+            "snapshot": {
+              "exists": false,
+              "lockExists": true,
+              "mode": null,
+              "json": null,
+              "textContainsSession119": false
+            }
+          },
+          {
+            "type": "write",
+            "snapshot": {
+              "exists": false,
+              "lockExists": true,
+              "mode": null,
+              "json": null,
+              "textContainsSession119": false
+            }
+          },
+          {
+            "type": "read",
+            "value": null,
+            "snapshot": {
+              "exists": false,
+              "lockExists": true,
+              "mode": null,
+              "json": null,
+              "textContainsSession119": false
+            }
+          }
+        ]
+      },
+      "inputSha256": "3b815b715e88cabad8a522bd3927107c3e97819f8fadbb4662c2192a9f513450"
+    },
+    {
+      "id": "tmux-expose-hot-snapshot-011",
+      "name": "bounds cached preview output and item count",
+      "source": "src/tmux/expose-hot-snapshot.test.ts",
+      "api": "src/tmux/expose-hot-snapshot.ts",
+      "input": {
+        "name": "bounds cached preview output and item count",
+        "operations": [
+          {
+            "type": "writeGeneratedBounds",
+            "key": { "projectRoot": "/repo", "scope": "project" },
+            "generator": { "itemCount": 101, "lineCount": 1, "lineWidth": 16373, "seed": "bounds" }
+          },
+          { "type": "readBounds", "key": { "projectRoot": "/repo", "scope": "project" } }
+        ]
+      },
+      "output": {
+        "results": [
+          {
+            "type": "writeGeneratedBounds",
+            "bounds": {
+              "itemCount": 100,
+              "firstPreviewLineCount": 1,
+              "firstPreviewBytes": 16384,
+              "firstPreviewEndsWithGeneratedTail": true,
+              "cacheExists": true,
+              "cacheMode": "600",
+              "cacheContainsPrunedItem": false
+            }
+          },
+          {
+            "type": "readBounds",
+            "bounds": {
+              "itemCount": 100,
+              "firstPreviewLineCount": 1,
+              "firstPreviewBytes": 16384,
+              "firstPreviewEndsWithGeneratedTail": true,
+              "cacheExists": true,
+              "cacheMode": "600",
+              "cacheContainsPrunedItem": false
+            }
+          }
+        ]
+      },
+      "inputSha256": "fc95367720b7a59997b6307469b525bbb907d248f33a5553376e185e1a0ad743"
+    },
+    {
+      "id": "tmux-expose-hot-snapshot-012",
+      "name": "ignores cached items that are missing target or metadata shape",
+      "source": "src/tmux/expose-hot-snapshot.test.ts",
+      "api": "src/tmux/expose-hot-snapshot.ts",
+      "input": {
+        "name": "ignores cached items that are missing target or metadata shape",
+        "operations": [
+          {
+            "type": "rawJson",
+            "value": {
+              "version": 1,
+              "views": {
+                "project|%2Frepo||": {
+                  "scope": "project",
+                  "projectRoot": "/repo",
+                  "scopeLabel": "all worktrees",
+                  "sublabel": "worktree",
+                  "updatedAt": "<fresh>",
+                  "items": [{ "id": "bad", "label": "bad", "urgency": 0, "activity": 0, "recentRank": 0 }]
+                }
+              }
+            }
+          },
+          { "type": "read", "key": { "projectRoot": "/repo", "scope": "project" } }
+        ]
+      },
+      "output": {
+        "results": [
+          {
+            "type": "rawJson",
+            "snapshot": {
+              "exists": true,
+              "lockExists": false,
+              "mode": "644",
+              "json": {
+                "version": 1,
+                "views": {
+                  "project|%2Frepo||": {
+                    "scope": "project",
+                    "projectRoot": "/repo",
+                    "scopeLabel": "all worktrees",
+                    "sublabel": "worktree",
+                    "updatedAt": "<iso>",
+                    "items": [{ "id": "bad", "label": "bad", "urgency": 0, "activity": 0, "recentRank": 0 }]
+                  }
+                }
+              },
+              "textContainsSession119": false
+            }
+          },
+          {
+            "type": "read",
+            "value": null,
+            "snapshot": {
+              "exists": true,
+              "lockExists": false,
+              "mode": "644",
+              "json": {
+                "version": 1,
+                "views": {
+                  "project|%2Frepo||": {
+                    "scope": "project",
+                    "projectRoot": "/repo",
+                    "scopeLabel": "all worktrees",
+                    "sublabel": "worktree",
+                    "updatedAt": "<iso>",
+                    "items": [{ "id": "bad", "label": "bad", "urgency": 0, "activity": 0, "recentRank": 0 }]
+                  }
+                }
+              },
+              "textContainsSession119": false
+            }
+          }
+        ]
+      },
+      "inputSha256": "d1a79d391f0b30612317e52d9b00b0dc1beeea6e18d2ec11107275d5d1af2e65"
+    },
+    {
+      "id": "tmux-expose-hot-snapshot-013",
+      "name": "prunes stale launch window views while preserving kept windows",
+      "source": "src/tmux/expose-hot-snapshot.test.ts",
+      "api": "src/tmux/expose-hot-snapshot.ts",
+      "input": {
+        "name": "prunes stale launch window views while preserving kept windows",
+        "operations": [
+          {
+            "type": "write",
+            "key": { "projectRoot": "/repo", "scope": "worktree", "worktreeKey": "/repo", "launchWindowId": "@1" },
+            "view": {
+              "scope": "worktree",
+              "items": [
+                {
+                  "id": "a",
+                  "label": "a",
+                  "urgency": 0,
+                  "activity": 0,
+                  "recentRank": 0,
+                  "previewSnapshot": {
+                    "output": "warm preview\n",
+                    "capturedAt": "<iso>",
+                    "source": "capture",
+                    "windowId": "@1",
+                    "startLine": -40,
+                    "lineCount": 40
+                  },
+                  "target": { "sessionName": "aimux-test", "windowId": "@1", "windowIndex": 1, "windowName": "a" },
+                  "metadata": {
+                    "kind": "agent",
+                    "sessionId": "a",
+                    "command": "codex",
+                    "args": [],
+                    "toolConfigKey": "codex",
+                    "worktreePath": "/repo"
+                  }
+                }
+              ],
+              "scopeLabel": "this worktree",
+              "sublabel": "none"
+            }
+          },
+          {
+            "type": "write",
+            "key": { "projectRoot": "/repo", "scope": "worktree", "worktreeKey": "/repo", "launchWindowId": "@2" },
+            "view": {
+              "scope": "worktree",
+              "items": [
+                {
+                  "id": "b",
+                  "label": "b",
+                  "urgency": 0,
+                  "activity": 0,
+                  "recentRank": 0,
+                  "previewSnapshot": {
+                    "output": "warm preview\n",
+                    "capturedAt": "<iso>",
+                    "source": "capture",
+                    "windowId": "@2",
+                    "startLine": -40,
+                    "lineCount": 40
+                  },
+                  "target": { "sessionName": "aimux-test", "windowId": "@2", "windowIndex": 1, "windowName": "b" },
+                  "metadata": {
+                    "kind": "agent",
+                    "sessionId": "b",
+                    "command": "codex",
+                    "args": [],
+                    "toolConfigKey": "codex",
+                    "worktreePath": "/repo"
+                  }
+                }
+              ],
+              "scopeLabel": "this worktree",
+              "sublabel": "none"
+            },
+            "options": { "prune": { "projectRoot": "/repo", "scopes": ["worktree"], "keepLaunchWindowIds": ["@2"] } }
+          },
+          {
+            "type": "read",
+            "key": { "projectRoot": "/repo", "scope": "worktree", "worktreeKey": "/repo", "launchWindowId": "@1" }
+          },
+          {
+            "type": "read",
+            "key": { "projectRoot": "/repo", "scope": "worktree", "worktreeKey": "/repo", "launchWindowId": "@2" }
+          }
+        ]
+      },
+      "output": {
+        "results": [
+          {
+            "type": "write",
+            "snapshot": {
+              "exists": true,
+              "lockExists": false,
+              "mode": "600",
+              "json": {
+                "version": 1,
+                "views": {
+                  "worktree|%2Frepo|%2Frepo|%401": {
+                    "scope": "worktree",
+                    "items": [
+                      {
+                        "id": "a",
+                        "label": "a",
+                        "urgency": 0,
+                        "activity": 0,
+                        "recentRank": 0,
+                        "previewSnapshot": {
+                          "output": "warm preview\n",
+                          "capturedAt": "<iso>",
+                          "source": "capture",
+                          "windowId": "@1",
+                          "startLine": -40,
+                          "lineCount": 40
+                        },
+                        "target": {
+                          "sessionName": "aimux-test",
+                          "windowId": "@1",
+                          "windowIndex": 1,
+                          "windowName": "a"
+                        },
+                        "metadata": {
+                          "kind": "agent",
+                          "sessionId": "a",
+                          "command": "codex",
+                          "args": [],
+                          "toolConfigKey": "codex",
+                          "worktreePath": "/repo"
+                        }
+                      }
+                    ],
+                    "scopeLabel": "this worktree",
+                    "sublabel": "none",
+                    "projectRoot": "/repo",
+                    "worktreeKey": "/repo",
+                    "launchWindowId": "@1",
+                    "updatedAt": "<iso>"
+                  }
+                }
+              },
+              "textContainsSession119": false
+            }
+          },
+          {
+            "type": "write",
+            "snapshot": {
+              "exists": true,
+              "lockExists": false,
+              "mode": "600",
+              "json": {
+                "version": 1,
+                "views": {
+                  "worktree|%2Frepo|%2Frepo|%402": {
+                    "scope": "worktree",
+                    "items": [
+                      {
+                        "id": "b",
+                        "label": "b",
+                        "urgency": 0,
+                        "activity": 0,
+                        "recentRank": 0,
+                        "previewSnapshot": {
+                          "output": "warm preview\n",
+                          "capturedAt": "<iso>",
+                          "source": "capture",
+                          "windowId": "@2",
+                          "startLine": -40,
+                          "lineCount": 40
+                        },
+                        "target": {
+                          "sessionName": "aimux-test",
+                          "windowId": "@2",
+                          "windowIndex": 1,
+                          "windowName": "b"
+                        },
+                        "metadata": {
+                          "kind": "agent",
+                          "sessionId": "b",
+                          "command": "codex",
+                          "args": [],
+                          "toolConfigKey": "codex",
+                          "worktreePath": "/repo"
+                        }
+                      }
+                    ],
+                    "scopeLabel": "this worktree",
+                    "sublabel": "none",
+                    "projectRoot": "/repo",
+                    "worktreeKey": "/repo",
+                    "launchWindowId": "@2",
+                    "updatedAt": "<iso>"
+                  }
+                }
+              },
+              "textContainsSession119": false
+            }
+          },
+          {
+            "type": "read",
+            "value": null,
+            "snapshot": {
+              "exists": true,
+              "lockExists": false,
+              "mode": "600",
+              "json": {
+                "version": 1,
+                "views": {
+                  "worktree|%2Frepo|%2Frepo|%402": {
+                    "scope": "worktree",
+                    "items": [
+                      {
+                        "id": "b",
+                        "label": "b",
+                        "urgency": 0,
+                        "activity": 0,
+                        "recentRank": 0,
+                        "previewSnapshot": {
+                          "output": "warm preview\n",
+                          "capturedAt": "<iso>",
+                          "source": "capture",
+                          "windowId": "@2",
+                          "startLine": -40,
+                          "lineCount": 40
+                        },
+                        "target": {
+                          "sessionName": "aimux-test",
+                          "windowId": "@2",
+                          "windowIndex": 1,
+                          "windowName": "b"
+                        },
+                        "metadata": {
+                          "kind": "agent",
+                          "sessionId": "b",
+                          "command": "codex",
+                          "args": [],
+                          "toolConfigKey": "codex",
+                          "worktreePath": "/repo"
+                        }
+                      }
+                    ],
+                    "scopeLabel": "this worktree",
+                    "sublabel": "none",
+                    "projectRoot": "/repo",
+                    "worktreeKey": "/repo",
+                    "launchWindowId": "@2",
+                    "updatedAt": "<iso>"
+                  }
+                }
+              },
+              "textContainsSession119": false
+            }
+          },
+          {
+            "type": "read",
+            "value": {
+              "scope": "worktree",
+              "scopeLabel": "this worktree",
+              "sublabel": "none",
+              "items": [
+                {
+                  "id": "b",
+                  "label": "b",
+                  "urgency": 0,
+                  "activity": 0,
+                  "recentRank": 0,
+                  "previewSnapshot": {
+                    "output": "warm preview\n",
+                    "capturedAt": "<iso>",
+                    "source": "capture",
+                    "windowId": "@2",
+                    "startLine": -40,
+                    "lineCount": 40
+                  },
+                  "target": { "sessionName": "aimux-test", "windowId": "@2", "windowIndex": 1, "windowName": "b" },
+                  "metadata": {
+                    "kind": "agent",
+                    "sessionId": "b",
+                    "command": "codex",
+                    "args": [],
+                    "toolConfigKey": "codex",
+                    "worktreePath": "/repo"
+                  }
+                }
+              ]
+            },
+            "snapshot": {
+              "exists": true,
+              "lockExists": false,
+              "mode": "600",
+              "json": {
+                "version": 1,
+                "views": {
+                  "worktree|%2Frepo|%2Frepo|%402": {
+                    "scope": "worktree",
+                    "items": [
+                      {
+                        "id": "b",
+                        "label": "b",
+                        "urgency": 0,
+                        "activity": 0,
+                        "recentRank": 0,
+                        "previewSnapshot": {
+                          "output": "warm preview\n",
+                          "capturedAt": "<iso>",
+                          "source": "capture",
+                          "windowId": "@2",
+                          "startLine": -40,
+                          "lineCount": 40
+                        },
+                        "target": {
+                          "sessionName": "aimux-test",
+                          "windowId": "@2",
+                          "windowIndex": 1,
+                          "windowName": "b"
+                        },
+                        "metadata": {
+                          "kind": "agent",
+                          "sessionId": "b",
+                          "command": "codex",
+                          "args": [],
+                          "toolConfigKey": "codex",
+                          "worktreePath": "/repo"
+                        }
+                      }
+                    ],
+                    "scopeLabel": "this worktree",
+                    "sublabel": "none",
+                    "projectRoot": "/repo",
+                    "worktreeKey": "/repo",
+                    "launchWindowId": "@2",
+                    "updatedAt": "<iso>"
+                  }
+                }
+              },
+              "textContainsSession119": false
+            }
+          }
+        ]
+      },
+      "inputSha256": "6b88ab7ee8ee95527237905d242270d9d06e17829db86fa65d6b49052bc4f0f2"
+    }
+  ]
+}

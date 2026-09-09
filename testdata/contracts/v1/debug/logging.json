@@ -1,0 +1,213 @@
+{
+  "version": 1,
+  "source": "src/debug.test.ts",
+  "generatedBy": "scripts/capture-debug-contract.mjs",
+  "description": "Debug logging config, gating, and redaction outputs captured by running TypeScript debug helpers, with timestamps and process ids normalized after execution.",
+  "cases": [
+    {
+      "id": "debug-logging-001",
+      "name": "does not create records when disabled",
+      "source": "src/debug.test.ts",
+      "api": "logScenario",
+      "input": {
+        "name": "does not create records when disabled",
+        "api": "logScenario",
+        "config": { "enabled": false, "level": "debug", "processKind": "test" },
+        "operations": [{ "kind": "debug", "message": "hidden", "category": "test" }]
+      },
+      "output": { "exists": false, "records": [] },
+      "inputSha256": "0588a9302623ce4297aa592141dd556ce76bea999c221b20f2ed0b5b0793483a"
+    },
+    {
+      "id": "debug-logging-002",
+      "name": "writes always records when disabled",
+      "source": "src/debug.test.ts",
+      "api": "logScenario",
+      "input": {
+        "name": "writes always records when disabled",
+        "api": "logScenario",
+        "config": { "enabled": false, "level": "debug", "processKind": "test" },
+        "operations": [
+          { "kind": "logAlways.info", "message": "visible", "category": "session", "fields": { "promptChars": 12 } }
+        ]
+      },
+      "output": {
+        "exists": true,
+        "records": [
+          {
+            "ts": "<ts>",
+            "level": "info",
+            "category": "session",
+            "message": "visible",
+            "pid": "<pid>",
+            "processKind": "test",
+            "fields": { "promptChars": 12 }
+          }
+        ]
+      },
+      "inputSha256": "086b03c8f0036d5f8ff5873a8ce21e7fa0af55ffe52a94bbfd9899db91a5d131"
+    },
+    {
+      "id": "debug-logging-003",
+      "name": "writes structured JSON when enabled",
+      "source": "src/debug.test.ts",
+      "api": "logScenario",
+      "input": {
+        "name": "writes structured JSON when enabled",
+        "api": "logScenario",
+        "config": {
+          "enabled": true,
+          "level": "debug",
+          "processKind": "test",
+          "projectId": "project-1",
+          "projectRoot": "/repo"
+        },
+        "operations": [{ "kind": "debug", "message": "hello", "category": "test" }]
+      },
+      "output": {
+        "exists": true,
+        "records": [
+          {
+            "ts": "<ts>",
+            "level": "debug",
+            "category": "test",
+            "message": "hello",
+            "pid": "<pid>",
+            "processKind": "test",
+            "projectId": "project-1",
+            "projectRoot": "/repo"
+          }
+        ]
+      },
+      "inputSha256": "4c4302f9c09a05d55e9824f2b5fc5633531cbe1b9194de4bf15478122c8b22a1"
+    },
+    {
+      "id": "debug-logging-004",
+      "name": "redacts secret-like env assignments and fields",
+      "source": "src/debug.test.ts",
+      "api": "logScenario",
+      "input": {
+        "name": "redacts secret-like env assignments and fields",
+        "api": "logScenario",
+        "config": { "enabled": true, "level": "debug", "processKind": "test" },
+        "operations": [
+          {
+            "kind": "log.debug",
+            "message": "spawn args: [\"AWS_SECRET_ACCESS_KEY=real-secret\",\"PATH=/usr/bin\",\"OPENAI_API_KEY=real-key\",\"SENTRY_AUTH_TOKEN=\\\"quoted-secret\\\"\"]",
+            "category": "session",
+            "fields": {
+              "token": "real-token",
+              "apiKey": "real-api-key",
+              "authToken": "real-auth-token",
+              "authorization": "real-authorization",
+              "nested": {
+                "password": "real-password",
+                "privateKey": "real-private-key",
+                "command": "SENTRY_AUTH_TOKEN=real-auth"
+              }
+            }
+          }
+        ]
+      },
+      "output": {
+        "exists": true,
+        "records": [
+          {
+            "ts": "<ts>",
+            "level": "debug",
+            "category": "session",
+            "message": "spawn args: [\"AWS_SECRET_ACCESS_KEY=<redacted>\",\"PATH=/usr/bin\",\"OPENAI_API_KEY=<redacted>\",\"SENTRY_AUTH_TOKEN=<redacted>\"]",
+            "pid": "<pid>",
+            "processKind": "test",
+            "fields": {
+              "token": "<redacted>",
+              "apiKey": "<redacted>",
+              "authToken": "<redacted>",
+              "authorization": "<redacted>",
+              "nested": {
+                "password": "<redacted>",
+                "privateKey": "<redacted>",
+                "command": "SENTRY_AUTH_TOKEN=<redacted>"
+              }
+            }
+          }
+        ]
+      },
+      "inputSha256": "3af075687295f5fdb04c9c5210146fc6690861a9255366cf99950ba484c977b0"
+    },
+    {
+      "id": "debug-logging-005",
+      "name": "filters by level and category",
+      "source": "src/debug.test.ts",
+      "api": "logScenario",
+      "input": {
+        "name": "filters by level and category",
+        "api": "logScenario",
+        "config": { "enabled": true, "level": "info", "categories": ["daemon"], "processKind": "test" },
+        "operations": [
+          { "kind": "log.debug", "message": "debug hidden", "category": "daemon" },
+          { "kind": "log.info", "message": "wrong category hidden", "category": "session" },
+          { "kind": "log.warn", "message": "visible", "category": "daemon" }
+        ]
+      },
+      "output": {
+        "exists": true,
+        "records": [
+          {
+            "ts": "<ts>",
+            "level": "warn",
+            "category": "daemon",
+            "message": "visible",
+            "pid": "<pid>",
+            "processKind": "test"
+          }
+        ]
+      },
+      "inputSha256": "0d065687bfc02e119c68083569fd75f028cc14ae029769b2f042a852d1ae6ca0"
+    },
+    {
+      "id": "debug-logging-006",
+      "name": "resolves logging config with env and cli precedence",
+      "source": "src/debug.test.ts",
+      "api": "resolveLoggingRuntimeConfig",
+      "input": {
+        "name": "resolves logging config with env and cli precedence",
+        "api": "resolveLoggingRuntimeConfig",
+        "options": {
+          "config": { "enabled": false, "level": "info", "categories": ["session"], "maxBytes": 123, "maxFiles": 2 },
+          "env": { "AIMUX_LOG": "1", "AIMUX_LOG_LEVEL": "debug", "AIMUX_LOG_CATEGORIES": "daemon,tmux" },
+          "cli": { "trace": true, "logCategory": "http" },
+          "path": "/logs/aimux.jsonl",
+          "processKind": "test",
+          "projectId": "project-1",
+          "projectRoot": "/repo"
+        }
+      },
+      "output": {
+        "enabled": true,
+        "level": "trace",
+        "categories": ["http"],
+        "maxBytes": 123,
+        "maxFiles": 2,
+        "path": "/logs/aimux.jsonl",
+        "processKind": "test",
+        "projectId": "project-1",
+        "projectRoot": "/repo"
+      },
+      "inputSha256": "23036e5caabfcddd9e9458fe8b0f8f5c468f08bca925b47c9e9e8f7da91a92fe"
+    },
+    {
+      "id": "debug-logging-007",
+      "name": "sanitizes quoted secret assignment strings",
+      "source": "src/debug.test.ts",
+      "api": "sanitizeLogString",
+      "input": {
+        "name": "sanitizes quoted secret assignment strings",
+        "api": "sanitizeLogString",
+        "text": "spawn args: [\"AWS_SECRET_ACCESS_KEY=real-secret\",\"PATH=/usr/bin\",\"OPENAI_API_KEY=real-key\",\"SENTRY_AUTH_TOKEN=\\\"quoted-secret\\\"\"]"
+      },
+      "output": "spawn args: [\"AWS_SECRET_ACCESS_KEY=<redacted>\",\"PATH=/usr/bin\",\"OPENAI_API_KEY=<redacted>\",\"SENTRY_AUTH_TOKEN=<redacted>\"]",
+      "inputSha256": "00e166b1bcca8bc6dbee11169049a40d7c3ac790cdfd4d6fc027a8656b371bb4"
+    }
+  ]
+}

@@ -1,0 +1,1201 @@
+{
+  "version": 1,
+  "generatedAt": "2026-09-07T00:00:00.000Z",
+  "generatedBy": "scripts/capture-expose-ordering-contract.mjs",
+  "source": "src/tmux/expose-ordering.ts",
+  "sources": [
+    "src/tmux/expose-ordering.test.ts",
+    "src/tmux/expose-ordering.ts"
+  ],
+  "subject": "src/tmux/expose-ordering.ts",
+  "description": "Expose ordering, grouping, worktree labels, tones, and tile context captured by running TypeScript.",
+  "caseCount": 14,
+  "cases": [
+    {
+      "id": "expose-ordering-001",
+      "name": "short worktree maps missing and project root to main",
+      "source": "src/tmux/expose-ordering.ts",
+      "api": "shortWorktree",
+      "input": {
+        "projectRoot": "/repo",
+        "items": [
+          {
+            "id": "missing",
+            "target": { "sessionName": "aimux-repo", "windowId": "missing", "windowIndex": 1, "windowName": "missing" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "missing",
+              "command": "missing",
+              "args": [],
+              "toolConfigKey": "missing",
+              "label": "missing"
+            },
+            "label": "missing",
+            "urgency": 0,
+            "activity": 1,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false,
+            "alive": true
+          },
+          {
+            "id": "root",
+            "target": { "sessionName": "aimux-repo", "windowId": "root", "windowIndex": 1, "windowName": "root" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "root",
+              "command": "root",
+              "args": [],
+              "toolConfigKey": "root",
+              "label": "root",
+              "worktreePath": "/repo"
+            },
+            "label": "root",
+            "urgency": 0,
+            "activity": 1,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false,
+            "alive": true
+          },
+          {
+            "id": "clean-root",
+            "target": {
+              "sessionName": "aimux-repo",
+              "windowId": "clean-root",
+              "windowIndex": 1,
+              "windowName": "clean-root"
+            },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "clean-root",
+              "command": "clean-root",
+              "args": [],
+              "toolConfigKey": "clean-root",
+              "label": "clean-root",
+              "worktreePath": "/repo/wt/.."
+            },
+            "label": "clean-root",
+            "urgency": 0,
+            "activity": 1,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false,
+            "alive": true
+          }
+        ]
+      },
+      "output": { "values": ["main", "main", "main"] },
+      "inputSha256": "1d6b24d4c34b1c55aad7b172bd3f4305b77d600df80f0e7eb2b02a3ab17dc05b"
+    },
+    {
+      "id": "expose-ordering-002",
+      "name": "short worktree uses basename after path resolution",
+      "source": "src/tmux/expose-ordering.ts",
+      "api": "shortWorktree",
+      "input": {
+        "projectRoot": "/repo",
+        "items": [
+          {
+            "id": "nested",
+            "target": { "sessionName": "aimux-repo", "windowId": "nested", "windowIndex": 1, "windowName": "nested" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "nested",
+              "command": "nested",
+              "args": [],
+              "toolConfigKey": "nested",
+              "label": "nested",
+              "worktreePath": "/repo/.aimux/worktrees/custom/"
+            },
+            "label": "nested",
+            "urgency": 0,
+            "activity": 1,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false,
+            "alive": true
+          },
+          {
+            "id": "relative-clean",
+            "target": {
+              "sessionName": "aimux-repo",
+              "windowId": "relative-clean",
+              "windowIndex": 1,
+              "windowName": "relative-clean"
+            },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "relative-clean",
+              "command": "relative-clean",
+              "args": [],
+              "toolConfigKey": "relative-clean",
+              "label": "relative-clean",
+              "worktreePath": "/repo/wt/../feature-a"
+            },
+            "label": "relative-clean",
+            "urgency": 0,
+            "activity": 1,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false,
+            "alive": true
+          }
+        ]
+      },
+      "output": { "values": ["custom", "feature-a"] },
+      "inputSha256": "171eb160b6fb7d32dca1f75e8f91d5a959a19a1cee536fd463f7b9f6cbb0c5e4"
+    },
+    {
+      "id": "expose-ordering-003",
+      "name": "tone key resolves worktree paths with fallback project root",
+      "source": "src/tmux/expose-ordering.ts",
+      "api": "worktreeToneKey",
+      "input": {
+        "projectRoot": "/repo",
+        "items": [
+          {
+            "id": "fallback",
+            "target": {
+              "sessionName": "aimux-repo",
+              "windowId": "fallback",
+              "windowIndex": 1,
+              "windowName": "fallback"
+            },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "fallback",
+              "command": "fallback",
+              "args": [],
+              "toolConfigKey": "fallback",
+              "label": "fallback"
+            },
+            "label": "fallback",
+            "urgency": 0,
+            "activity": 1,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false,
+            "alive": true
+          },
+          {
+            "id": "clean",
+            "target": { "sessionName": "aimux-repo", "windowId": "clean", "windowIndex": 1, "windowName": "clean" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "clean",
+              "command": "clean",
+              "args": [],
+              "toolConfigKey": "clean",
+              "label": "clean",
+              "worktreePath": "/repo/wt/../feature-a"
+            },
+            "label": "clean",
+            "urgency": 0,
+            "activity": 1,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false,
+            "alive": true
+          }
+        ]
+      },
+      "output": { "values": ["/repo", "/repo/feature-a"] },
+      "inputSha256": "9f470d4a5a597150e3f745b5128c703042f85e61c329dfeb2b68d8e685629012"
+    },
+    {
+      "id": "expose-ordering-004",
+      "name": "groups projects by first seen trimmed labels",
+      "source": "src/tmux/expose-ordering.ts",
+      "api": "groupItemsByProject",
+      "input": {
+        "items": [
+          {
+            "id": "b1",
+            "target": { "sessionName": "aimux-repo", "windowId": "b1", "windowIndex": 1, "windowName": "b1" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "b1",
+              "command": "b1",
+              "args": [],
+              "toolConfigKey": "b1",
+              "label": "b1"
+            },
+            "label": "b1",
+            "urgency": 0,
+            "activity": 1,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false,
+            "alive": true,
+            "projectName": " beta "
+          },
+          {
+            "id": "unknown-1",
+            "target": {
+              "sessionName": "aimux-repo",
+              "windowId": "unknown-1",
+              "windowIndex": 1,
+              "windowName": "unknown-1"
+            },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "unknown-1",
+              "command": "unknown-1",
+              "args": [],
+              "toolConfigKey": "unknown-1",
+              "label": "unknown-1"
+            },
+            "label": "unknown-1",
+            "urgency": 0,
+            "activity": 1,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false,
+            "alive": true
+          },
+          {
+            "id": "a1",
+            "target": { "sessionName": "aimux-repo", "windowId": "a1", "windowIndex": 1, "windowName": "a1" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "a1",
+              "command": "a1",
+              "args": [],
+              "toolConfigKey": "a1",
+              "label": "a1"
+            },
+            "label": "a1",
+            "urgency": 0,
+            "activity": 1,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false,
+            "alive": true,
+            "projectName": "alpha"
+          },
+          {
+            "id": "unknown-2",
+            "target": {
+              "sessionName": "aimux-repo",
+              "windowId": "unknown-2",
+              "windowIndex": 1,
+              "windowName": "unknown-2"
+            },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "unknown-2",
+              "command": "unknown-2",
+              "args": [],
+              "toolConfigKey": "unknown-2",
+              "label": "unknown-2"
+            },
+            "label": "unknown-2",
+            "urgency": 0,
+            "activity": 1,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false,
+            "alive": true,
+            "projectName": "  "
+          },
+          {
+            "id": "b2",
+            "target": { "sessionName": "aimux-repo", "windowId": "b2", "windowIndex": 1, "windowName": "b2" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "b2",
+              "command": "b2",
+              "args": [],
+              "toolConfigKey": "b2",
+              "label": "b2"
+            },
+            "label": "b2",
+            "urgency": 0,
+            "activity": 1,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false,
+            "alive": true,
+            "projectName": "beta"
+          }
+        ]
+      },
+      "output": {
+        "groups": [
+          { "label": "beta", "itemIds": ["b1", "b2"] },
+          { "label": "unknown project", "itemIds": ["unknown-1", "unknown-2"] },
+          { "label": "alpha", "itemIds": ["a1"] }
+        ]
+      },
+      "inputSha256": "ffe0c461b65dba6b502f11afa9e0befd5dec1f3cafdb33569354a7d975291808"
+    },
+    {
+      "id": "expose-ordering-005",
+      "name": "groups worktrees by configured dashboard order",
+      "source": "src/tmux/expose-ordering.ts",
+      "api": "groupItemsByWorktree",
+      "input": {
+        "projectRoot": "/repo",
+        "options": {
+          "worktreeOrderByProjectRoot": { "/repo": ["/repo/wt/known", "/repo", "/repo/wt/known", "/repo/wt/later"] }
+        },
+        "items": [
+          {
+            "id": "orphan-1",
+            "target": {
+              "sessionName": "aimux-repo",
+              "windowId": "orphan-1",
+              "windowIndex": 1,
+              "windowName": "orphan-1"
+            },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "orphan-1",
+              "command": "orphan-1",
+              "args": [],
+              "toolConfigKey": "orphan-1",
+              "label": "orphan-1",
+              "worktreePath": "/repo/wt/orphan"
+            },
+            "label": "orphan-1",
+            "urgency": 0,
+            "activity": 1,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false,
+            "alive": true
+          },
+          {
+            "id": "known-1",
+            "target": { "sessionName": "aimux-repo", "windowId": "known-1", "windowIndex": 1, "windowName": "known-1" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "known-1",
+              "command": "known-1",
+              "args": [],
+              "toolConfigKey": "known-1",
+              "label": "known-1",
+              "worktreePath": "/repo/wt/known"
+            },
+            "label": "known-1",
+            "urgency": 0,
+            "activity": 1,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false,
+            "alive": true
+          },
+          {
+            "id": "main-1",
+            "target": { "sessionName": "aimux-repo", "windowId": "main-1", "windowIndex": 1, "windowName": "main-1" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "main-1",
+              "command": "main-1",
+              "args": [],
+              "toolConfigKey": "main-1",
+              "label": "main-1",
+              "worktreePath": "/repo"
+            },
+            "label": "main-1",
+            "urgency": 0,
+            "activity": 1,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false,
+            "alive": true
+          },
+          {
+            "id": "later-1",
+            "target": { "sessionName": "aimux-repo", "windowId": "later-1", "windowIndex": 1, "windowName": "later-1" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "later-1",
+              "command": "later-1",
+              "args": [],
+              "toolConfigKey": "later-1",
+              "label": "later-1",
+              "worktreePath": "/repo/wt/later"
+            },
+            "label": "later-1",
+            "urgency": 0,
+            "activity": 1,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false,
+            "alive": true
+          },
+          {
+            "id": "orphan-2",
+            "target": {
+              "sessionName": "aimux-repo",
+              "windowId": "orphan-2",
+              "windowIndex": 1,
+              "windowName": "orphan-2"
+            },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "orphan-2",
+              "command": "orphan-2",
+              "args": [],
+              "toolConfigKey": "orphan-2",
+              "label": "orphan-2",
+              "worktreePath": "/repo/wt/orphan"
+            },
+            "label": "orphan-2",
+            "urgency": 0,
+            "activity": 1,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false,
+            "alive": true
+          }
+        ]
+      },
+      "output": {
+        "groups": [
+          { "label": "known", "itemIds": ["known-1"] },
+          { "label": "main", "itemIds": ["main-1"] },
+          { "label": "later", "itemIds": ["later-1"] },
+          { "label": "orphan", "itemIds": ["orphan-1", "orphan-2"] }
+        ]
+      },
+      "inputSha256": "31c712730194c00d6462b8aae0babd0c2f6f045ae81e85ad94e62d7d7fb9eb42"
+    },
+    {
+      "id": "expose-ordering-006",
+      "name": "groups worktrees pins missing configured root first",
+      "source": "src/tmux/expose-ordering.ts",
+      "api": "groupItemsByWorktree",
+      "input": {
+        "projectRoot": "/repo",
+        "options": { "worktreeOrderByProjectRoot": { "/repo": ["/repo/wt/known"] } },
+        "items": [
+          {
+            "id": "known-1",
+            "target": { "sessionName": "aimux-repo", "windowId": "known-1", "windowIndex": 1, "windowName": "known-1" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "known-1",
+              "command": "known-1",
+              "args": [],
+              "toolConfigKey": "known-1",
+              "label": "known-1",
+              "worktreePath": "/repo/wt/known"
+            },
+            "label": "known-1",
+            "urgency": 0,
+            "activity": 1,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false,
+            "alive": true
+          },
+          {
+            "id": "main-1",
+            "target": { "sessionName": "aimux-repo", "windowId": "main-1", "windowIndex": 1, "windowName": "main-1" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "main-1",
+              "command": "main-1",
+              "args": [],
+              "toolConfigKey": "main-1",
+              "label": "main-1",
+              "worktreePath": "/repo"
+            },
+            "label": "main-1",
+            "urgency": 0,
+            "activity": 1,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false,
+            "alive": true
+          },
+          {
+            "id": "other-1",
+            "target": { "sessionName": "aimux-repo", "windowId": "other-1", "windowIndex": 1, "windowName": "other-1" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "other-1",
+              "command": "other-1",
+              "args": [],
+              "toolConfigKey": "other-1",
+              "label": "other-1",
+              "worktreePath": "/repo/wt/other"
+            },
+            "label": "other-1",
+            "urgency": 0,
+            "activity": 1,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false,
+            "alive": true
+          }
+        ]
+      },
+      "output": {
+        "groups": [
+          { "label": "main", "itemIds": ["main-1"] },
+          { "label": "known", "itemIds": ["known-1"] },
+          { "label": "other", "itemIds": ["other-1"] }
+        ]
+      },
+      "inputSha256": "012e55ecaf56229eda421d205de146a2a5ca9e1c765a84fad49e8e4f2f25ed55"
+    },
+    {
+      "id": "expose-ordering-007",
+      "name": "orders global items by first seen project then worktree order",
+      "source": "src/tmux/expose-ordering.ts",
+      "api": "orderExposeItems",
+      "input": {
+        "projectRoot": "/fallback",
+        "sublabel": "project-worktree",
+        "options": {
+          "worktreeOrderByProjectRoot": { "/beta": ["/beta", "/beta/.aimux/worktrees/custom"], "/alpha": ["/alpha"] }
+        },
+        "items": [
+          {
+            "id": "beta-custom-1",
+            "target": {
+              "sessionName": "aimux-repo",
+              "windowId": "beta-custom-1",
+              "windowIndex": 1,
+              "windowName": "beta-custom-1"
+            },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "beta-custom-1",
+              "command": "beta-custom-1",
+              "args": [],
+              "toolConfigKey": "beta-custom-1",
+              "label": "beta-custom-1",
+              "worktreePath": "/beta/.aimux/worktrees/custom"
+            },
+            "label": "beta-custom-1",
+            "urgency": 0,
+            "activity": 1,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false,
+            "alive": true,
+            "projectRoot": "/beta",
+            "projectName": "beta"
+          },
+          {
+            "id": "alpha-main-1",
+            "target": {
+              "sessionName": "aimux-repo",
+              "windowId": "alpha-main-1",
+              "windowIndex": 1,
+              "windowName": "alpha-main-1"
+            },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "alpha-main-1",
+              "command": "alpha-main-1",
+              "args": [],
+              "toolConfigKey": "alpha-main-1",
+              "label": "alpha-main-1",
+              "worktreePath": "/alpha"
+            },
+            "label": "alpha-main-1",
+            "urgency": 0,
+            "activity": 1,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false,
+            "alive": true,
+            "projectRoot": "/alpha",
+            "projectName": "alpha"
+          },
+          {
+            "id": "beta-main-1",
+            "target": {
+              "sessionName": "aimux-repo",
+              "windowId": "beta-main-1",
+              "windowIndex": 1,
+              "windowName": "beta-main-1"
+            },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "beta-main-1",
+              "command": "beta-main-1",
+              "args": [],
+              "toolConfigKey": "beta-main-1",
+              "label": "beta-main-1",
+              "worktreePath": "/beta"
+            },
+            "label": "beta-main-1",
+            "urgency": 0,
+            "activity": 1,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false,
+            "alive": true,
+            "projectRoot": "/beta",
+            "projectName": "beta"
+          },
+          {
+            "id": "alpha-main-2",
+            "target": {
+              "sessionName": "aimux-repo",
+              "windowId": "alpha-main-2",
+              "windowIndex": 1,
+              "windowName": "alpha-main-2"
+            },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "alpha-main-2",
+              "command": "alpha-main-2",
+              "args": [],
+              "toolConfigKey": "alpha-main-2",
+              "label": "alpha-main-2",
+              "worktreePath": "/alpha"
+            },
+            "label": "alpha-main-2",
+            "urgency": 0,
+            "activity": 1,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false,
+            "alive": true,
+            "projectRoot": "/alpha",
+            "projectName": "alpha"
+          },
+          {
+            "id": "beta-custom-2",
+            "target": {
+              "sessionName": "aimux-repo",
+              "windowId": "beta-custom-2",
+              "windowIndex": 1,
+              "windowName": "beta-custom-2"
+            },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "beta-custom-2",
+              "command": "beta-custom-2",
+              "args": [],
+              "toolConfigKey": "beta-custom-2",
+              "label": "beta-custom-2",
+              "worktreePath": "/beta/.aimux/worktrees/custom"
+            },
+            "label": "beta-custom-2",
+            "urgency": 0,
+            "activity": 1,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false,
+            "alive": true,
+            "projectRoot": "/beta",
+            "projectName": "beta"
+          }
+        ]
+      },
+      "output": { "itemIds": ["beta-main-1", "beta-custom-1", "beta-custom-2", "alpha-main-1", "alpha-main-2"] },
+      "inputSha256": "89793e116cdca899fab14b67f728f4a13520068c1dbaa65758db20e0a966929b"
+    },
+    {
+      "id": "expose-ordering-008",
+      "name": "orders single project global items by worktree",
+      "source": "src/tmux/expose-ordering.ts",
+      "api": "orderExposeItems",
+      "input": {
+        "projectRoot": "/fallback",
+        "sublabel": "project-worktree",
+        "options": { "worktreeOrderByProjectRoot": { "/repo": ["/repo", "/repo/wt/custom"] } },
+        "items": [
+          {
+            "id": "custom-1",
+            "target": {
+              "sessionName": "aimux-repo",
+              "windowId": "custom-1",
+              "windowIndex": 1,
+              "windowName": "custom-1"
+            },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "custom-1",
+              "command": "custom-1",
+              "args": [],
+              "toolConfigKey": "custom-1",
+              "label": "custom-1",
+              "worktreePath": "/repo/wt/custom"
+            },
+            "label": "custom-1",
+            "urgency": 0,
+            "activity": 1,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false,
+            "alive": true,
+            "projectRoot": "/repo",
+            "projectName": "alpha"
+          },
+          {
+            "id": "main-1",
+            "target": { "sessionName": "aimux-repo", "windowId": "main-1", "windowIndex": 1, "windowName": "main-1" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "main-1",
+              "command": "main-1",
+              "args": [],
+              "toolConfigKey": "main-1",
+              "label": "main-1",
+              "worktreePath": "/repo"
+            },
+            "label": "main-1",
+            "urgency": 0,
+            "activity": 1,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false,
+            "alive": true,
+            "projectRoot": "/repo",
+            "projectName": "alpha"
+          },
+          {
+            "id": "custom-2",
+            "target": {
+              "sessionName": "aimux-repo",
+              "windowId": "custom-2",
+              "windowIndex": 1,
+              "windowName": "custom-2"
+            },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "custom-2",
+              "command": "custom-2",
+              "args": [],
+              "toolConfigKey": "custom-2",
+              "label": "custom-2",
+              "worktreePath": "/repo/wt/custom"
+            },
+            "label": "custom-2",
+            "urgency": 0,
+            "activity": 1,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false,
+            "alive": true,
+            "projectRoot": "/repo",
+            "projectName": "alpha"
+          }
+        ]
+      },
+      "output": { "itemIds": ["main-1", "custom-1", "custom-2"] },
+      "inputSha256": "c011ba97574a365db8442aee676bec80020c153c7f4886717ae6192e392f2a38"
+    },
+    {
+      "id": "expose-ordering-009",
+      "name": "keeps none sublabel order unchanged",
+      "source": "src/tmux/expose-ordering.ts",
+      "api": "orderExposeItems",
+      "input": {
+        "projectRoot": "/repo",
+        "sublabel": "none",
+        "options": { "worktreeOrderByProjectRoot": { "/repo": ["/repo"] } },
+        "items": [
+          {
+            "id": "custom-1",
+            "target": {
+              "sessionName": "aimux-repo",
+              "windowId": "custom-1",
+              "windowIndex": 1,
+              "windowName": "custom-1"
+            },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "custom-1",
+              "command": "custom-1",
+              "args": [],
+              "toolConfigKey": "custom-1",
+              "label": "custom-1",
+              "worktreePath": "/repo/wt/custom"
+            },
+            "label": "custom-1",
+            "urgency": 0,
+            "activity": 1,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false,
+            "alive": true
+          },
+          {
+            "id": "main-1",
+            "target": { "sessionName": "aimux-repo", "windowId": "main-1", "windowIndex": 1, "windowName": "main-1" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "main-1",
+              "command": "main-1",
+              "args": [],
+              "toolConfigKey": "main-1",
+              "label": "main-1",
+              "worktreePath": "/repo"
+            },
+            "label": "main-1",
+            "urgency": 0,
+            "activity": 1,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false,
+            "alive": true
+          }
+        ]
+      },
+      "output": { "itemIds": ["custom-1", "main-1"] },
+      "inputSha256": "d35da9251755b6a0896df727ddfa2b86a0f9d390ae84df64f8e36583ffd6c976"
+    },
+    {
+      "id": "expose-ordering-010",
+      "name": "sorts recent output by timestamp rank then original order",
+      "source": "src/tmux/expose-ordering.ts",
+      "api": "orderExposeItemsByRecentOutput",
+      "input": {
+        "items": [
+          {
+            "id": "older",
+            "target": { "sessionName": "aimux-repo", "windowId": "older", "windowIndex": 1, "windowName": "older" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "older",
+              "command": "older",
+              "args": [],
+              "toolConfigKey": "older",
+              "label": "older",
+              "worktreePath": "/repo",
+              "recencyAt": "2026-08-27T10:00:00.000Z"
+            },
+            "label": "older",
+            "urgency": 0,
+            "activity": 1,
+            "recentRank": 2,
+            "overseer": false,
+            "scribe": false,
+            "alive": true
+          },
+          {
+            "id": "invalid-newer-rank",
+            "target": {
+              "sessionName": "aimux-repo",
+              "windowId": "invalid-newer-rank",
+              "windowIndex": 1,
+              "windowName": "invalid-newer-rank"
+            },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "invalid-newer-rank",
+              "command": "invalid-newer-rank",
+              "args": [],
+              "toolConfigKey": "invalid-newer-rank",
+              "label": "invalid-newer-rank",
+              "worktreePath": "/repo",
+              "recencyAt": "not-a-date"
+            },
+            "label": "invalid-newer-rank",
+            "urgency": 0,
+            "activity": 1,
+            "recentRank": 0,
+            "overseer": false,
+            "scribe": false,
+            "alive": true
+          },
+          {
+            "id": "newer",
+            "target": { "sessionName": "aimux-repo", "windowId": "newer", "windowIndex": 1, "windowName": "newer" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "newer",
+              "command": "newer",
+              "args": [],
+              "toolConfigKey": "newer",
+              "label": "newer",
+              "worktreePath": "/repo/wt/a",
+              "recencyAt": "2026-08-27T10:05:00.000Z"
+            },
+            "label": "newer",
+            "urgency": 0,
+            "activity": 1,
+            "recentRank": 1,
+            "overseer": false,
+            "scribe": false,
+            "alive": true
+          },
+          {
+            "id": "missing-older-rank",
+            "target": {
+              "sessionName": "aimux-repo",
+              "windowId": "missing-older-rank",
+              "windowIndex": 1,
+              "windowName": "missing-older-rank"
+            },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "missing-older-rank",
+              "command": "missing-older-rank",
+              "args": [],
+              "toolConfigKey": "missing-older-rank",
+              "label": "missing-older-rank",
+              "worktreePath": "/repo/wt/b"
+            },
+            "label": "missing-older-rank",
+            "urgency": 0,
+            "activity": 1,
+            "recentRank": 3,
+            "overseer": false,
+            "scribe": false,
+            "alive": true
+          }
+        ]
+      },
+      "output": { "itemIds": ["newer", "older", "invalid-newer-rank", "missing-older-rank"] },
+      "inputSha256": "20b26883b5198df162d721e3e556d45172331fe95004c533a2b8d8141c4c344e"
+    },
+    {
+      "id": "expose-ordering-011",
+      "name": "dashboard worktree order filters bare and sorts by created time",
+      "source": "src/tmux/expose-ordering.ts",
+      "api": "dashboardWorktreeOrderPaths",
+      "input": {
+        "projectRoot": "/repo",
+        "worktrees": [
+          {
+            "name": "repo",
+            "path": "/repo",
+            "branch": "master",
+            "isBare": false,
+            "createdAt": "2026-01-01T00:00:00.000Z"
+          },
+          {
+            "name": "bare",
+            "path": "/repo/bare",
+            "branch": "bare",
+            "isBare": true,
+            "createdAt": "2026-01-04T00:00:00.000Z"
+          },
+          {
+            "name": "missing",
+            "path": "/repo/missing",
+            "branch": "missing",
+            "isBare": false,
+            "status": "removed",
+            "createdAt": "2026-01-05T00:00:00.000Z"
+          },
+          {
+            "name": "old",
+            "path": "/repo/wt/old",
+            "branch": "old",
+            "isBare": false,
+            "createdAt": "2026-01-02T00:00:00.000Z"
+          },
+          {
+            "name": "new",
+            "path": "/repo/wt/new",
+            "branch": "new",
+            "isBare": false,
+            "createdAt": "2026-01-03T00:00:00.000Z"
+          }
+        ]
+      },
+      "output": { "paths": ["/repo", "/repo/missing", "/repo/wt/new", "/repo/wt/old"] },
+      "inputSha256": "c1f4b327501bf24a0ac62292baa014dbbb923581e2057f8e879d9373c8edc947"
+    },
+    {
+      "id": "expose-ordering-012",
+      "name": "dashboard worktree order falls back to tmux index",
+      "source": "src/tmux/expose-ordering.ts",
+      "api": "dashboardWorktreeOrderPaths",
+      "input": {
+        "projectRoot": "/repo",
+        "worktrees": [
+          { "name": "repo", "path": "/repo", "branch": "master", "isBare": false, "createdAt": "" },
+          {
+            "name": "later-index",
+            "path": "/repo/wt/later-index",
+            "branch": "later",
+            "isBare": false,
+            "tmuxWindowIndex": 9
+          },
+          {
+            "name": "earlier-index",
+            "path": "/repo/wt/earlier-index",
+            "branch": "earlier",
+            "isBare": false,
+            "index": 2
+          }
+        ]
+      },
+      "output": { "paths": ["/repo", "/repo/wt/later-index", "/repo/wt/earlier-index"] },
+      "inputSha256": "347f140d1cf37eaf1c899b47696cca154614677829f85ac509b00891dd403ae2"
+    },
+    {
+      "id": "expose-ordering-013",
+      "name": "assigns stable tones by worktree identity",
+      "source": "src/tmux/expose-ordering.ts",
+      "api": "assignWorktreeTones",
+      "input": {
+        "projectRoot": "/p",
+        "items": [
+          {
+            "id": "a",
+            "target": { "sessionName": "aimux-repo", "windowId": "a", "windowIndex": 1, "windowName": "a" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "a",
+              "command": "a",
+              "args": [],
+              "toolConfigKey": "a",
+              "label": "a",
+              "worktreePath": "/p/a"
+            },
+            "label": "a",
+            "urgency": 0,
+            "activity": 1,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false,
+            "alive": true
+          },
+          {
+            "id": "b",
+            "target": { "sessionName": "aimux-repo", "windowId": "b", "windowIndex": 1, "windowName": "b" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "b",
+              "command": "b",
+              "args": [],
+              "toolConfigKey": "b",
+              "label": "b",
+              "worktreePath": "/p/b"
+            },
+            "label": "b",
+            "urgency": 0,
+            "activity": 1,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false,
+            "alive": true
+          },
+          {
+            "id": "a2",
+            "target": { "sessionName": "aimux-repo", "windowId": "a2", "windowIndex": 1, "windowName": "a2" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "a2",
+              "command": "a2",
+              "args": [],
+              "toolConfigKey": "a2",
+              "label": "a2",
+              "worktreePath": "/p/a"
+            },
+            "label": "a2",
+            "urgency": 0,
+            "activity": 1,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false,
+            "alive": true
+          }
+        ]
+      },
+      "output": { "tones": { "/p/a": 9162325, "/p/b": 11886475 } },
+      "inputSha256": "a728e1f83bc3b91d0cb795a5adeeaef40c720ee8d5ee183f47c19ff20c2e284b"
+    },
+    {
+      "id": "expose-ordering-014",
+      "name": "builds tile contexts for no sublabel worktree and project worktree",
+      "source": "src/tmux/expose-ordering.ts",
+      "api": "exposeTileContextForItem",
+      "input": {
+        "projectRoot": "/p",
+        "items": [
+          {
+            "id": "none",
+            "target": { "sessionName": "aimux-repo", "windowId": "none", "windowIndex": 1, "windowName": "none" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "none",
+              "command": "none",
+              "args": [],
+              "toolConfigKey": "none",
+              "label": "none",
+              "worktreePath": "/p/a"
+            },
+            "label": "none",
+            "urgency": 0,
+            "activity": 1,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false,
+            "alive": true,
+            "projectRoot": "/p",
+            "projectName": "alpha"
+          },
+          {
+            "id": "worktree",
+            "target": {
+              "sessionName": "aimux-repo",
+              "windowId": "worktree",
+              "windowIndex": 1,
+              "windowName": "worktree"
+            },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "worktree",
+              "command": "worktree",
+              "args": [],
+              "toolConfigKey": "worktree",
+              "label": "worktree",
+              "worktreePath": "/p/a"
+            },
+            "label": "worktree",
+            "urgency": 0,
+            "activity": 1,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false,
+            "alive": true,
+            "projectRoot": "/p",
+            "projectName": "alpha"
+          },
+          {
+            "id": "project-worktree",
+            "target": {
+              "sessionName": "aimux-repo",
+              "windowId": "project-worktree",
+              "windowIndex": 1,
+              "windowName": "project-worktree"
+            },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "project-worktree",
+              "command": "project-worktree",
+              "args": [],
+              "toolConfigKey": "project-worktree",
+              "label": "project-worktree",
+              "worktreePath": "/p/a"
+            },
+            "label": "project-worktree",
+            "urgency": 0,
+            "activity": 1,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false,
+            "alive": true,
+            "projectRoot": "/p",
+            "projectName": "alpha"
+          }
+        ],
+        "sublabels": ["none", "worktree", "project-worktree"]
+      },
+      "output": {
+        "contexts": [
+          { "worktree": "" },
+          { "worktree": "a", "tone": 9162325 },
+          { "worktree": "a", "project": "alpha", "tone": 9162325 }
+        ]
+      },
+      "inputSha256": "dd08322017fad60b5a1c47c3ad10d36e842bfc8c4270e08cf842b985dc88f8d1"
+    }
+  ]
+}

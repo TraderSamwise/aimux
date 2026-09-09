@@ -1,0 +1,165 @@
+{
+  "version": 1,
+  "source": "src/plugin-runtime.test.ts",
+  "generatedBy": "scripts/capture-plugin-runtime-contract.mjs",
+  "description": "Plugin alert derivation, bundled wrapper seeding/deletion, failed-start cleanup, and invalid module shape reporting captured by running TypeScript.",
+  "cases": [
+    {
+      "id": "plugin-runtime-001",
+      "name": "maps direct-chat needs_input into a semantic alert",
+      "source": "src/plugin-runtime.test.ts",
+      "api": "deriveAlertFromAgentEvent",
+      "input": {
+        "sessionId": "claude-1",
+        "event": { "kind": "needs_input", "message": "Ready for input", "source": "claude", "tone": "warn" }
+      },
+      "output": {
+        "kind": "needs_input",
+        "sessionId": "claude-1",
+        "title": "claude-1 needs input",
+        "message": "Ready for input",
+        "dedupeKey": "needs_input:claude-1",
+        "cooldownMs": 15000
+      },
+      "inputSha256": "2f60c3e6cbce7402a049ed661d4d2c3f920df089852cda6a84cc0311d35848d8"
+    },
+    {
+      "id": "plugin-runtime-002",
+      "name": "does not alert on plain response events",
+      "source": "src/plugin-runtime.test.ts",
+      "api": "deriveAlertFromAgentEvent",
+      "input": { "sessionId": "claude-1", "event": { "kind": "response", "message": "Here is the answer" } },
+      "output": null,
+      "inputSha256": "b73590a864e0ae9b3ef718b8c720501173c77d69caf778760602e53778f4e54e"
+    },
+    {
+      "id": "plugin-runtime-003",
+      "name": "maps error notifications to task_failed alerts",
+      "source": "src/plugin-runtime.test.ts",
+      "api": "deriveAlertFromAgentEvent",
+      "input": { "sessionId": "claude-1", "event": { "kind": "notify", "message": "Tool error", "tone": "error" } },
+      "output": {
+        "kind": "task_failed",
+        "sessionId": "claude-1",
+        "title": "claude-1 failed",
+        "message": "Tool error",
+        "dedupeKey": "task_failed:claude-1",
+        "cooldownMs": 15000
+      },
+      "inputSha256": "07d83b245c1da72add038ed726fb826cc522612df904a49fb5e81cafd44a71d0"
+    },
+    {
+      "id": "plugin-runtime-004",
+      "name": "maps generic notifications to notification alerts",
+      "source": "src/plugin-runtime.test.ts",
+      "api": "deriveAlertFromAgentEvent",
+      "input": { "sessionId": "codex-1", "event": { "kind": "notify", "message": "Build complete", "tone": "info" } },
+      "output": {
+        "kind": "notification",
+        "sessionId": "codex-1",
+        "title": "codex-1",
+        "message": "Build complete",
+        "dedupeKey": "notification:codex-1",
+        "cooldownMs": 15000
+      },
+      "inputSha256": "d3666883386f4de4a3da6a40b4267bb8cf44aa54ce634aa845a7a5f488d01298"
+    },
+    {
+      "id": "plugin-runtime-005",
+      "name": "seeds the bundled wrappers once without overwriting user files",
+      "source": "src/plugin-runtime.test.ts",
+      "api": "ensureBundledDefaultPluginWrappers",
+      "input": {},
+      "output": {
+        "wrapperContainsGithubFactory": false,
+        "transcriptWrapperContainsDefaultExport": true,
+        "manifestContainsGithub": true,
+        "manifestContainsTranscriptLength": true,
+        "customPreservedAfterSecondSeed": true
+      },
+      "inputSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "id": "plugin-runtime-006",
+      "name": "treats deletion after initial seed as intentional",
+      "source": "src/plugin-runtime.test.ts",
+      "api": "ensureBundledDefaultPluginWrappers",
+      "input": {},
+      "output": { "wrapperExistsAfterDelete": false, "transcriptWrapperExistsAfterDelete": false },
+      "inputSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "id": "plugin-runtime-007",
+      "name": "stops and reports a plugin that fails during startup with resource exhaustion",
+      "source": "src/plugin-runtime.test.ts",
+      "api": "PluginRuntime.start",
+      "input": {},
+      "output": {
+        "statuses": [
+          { "source": "builtin", "name": "metadata-poller-1", "status": "loaded" },
+          { "source": "builtin", "name": "metadata-poller-2", "status": "loaded" },
+          { "source": "builtin", "name": "metadata-poller-3", "status": "loaded" },
+          { "source": "builtin", "name": "metadata-poller-4", "status": "loaded" },
+          {
+            "source": "user",
+            "name": "/var/folders/3k/tp7t81tn3572k4dsfxd51c180000gn/T/aimux-plugin-runtime-failed-start-contract-LAFGgJ/home/plugins/emfile-plugin.js",
+            "path": "<root>/home/plugins/emfile-plugin.js",
+            "status": "failed",
+            "error": "EMFILE: too many open files, watch",
+            "resourceFailure": true,
+            "stoppedAfterFailedStart": true
+          },
+          {
+            "source": "user",
+            "name": "/var/folders/3k/tp7t81tn3572k4dsfxd51c180000gn/T/aimux-plugin-runtime-failed-start-contract-LAFGgJ/home/plugins/gh-pr-context.js",
+            "path": "<root>/home/plugins/gh-pr-context.js",
+            "status": "loaded"
+          },
+          {
+            "source": "user",
+            "name": "/var/folders/3k/tp7t81tn3572k4dsfxd51c180000gn/T/aimux-plugin-runtime-failed-start-contract-LAFGgJ/home/plugins/transcript-length.js",
+            "path": "<root>/home/plugins/transcript-length.js",
+            "status": "loaded"
+          }
+        ],
+        "stoppedCount": 1
+      },
+      "inputSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "id": "plugin-runtime-008",
+      "name": "reports invalid user plugin module shapes as failed statuses",
+      "source": "src/plugin-runtime.test.ts",
+      "api": "PluginRuntime.start",
+      "input": {},
+      "output": {
+        "statuses": [
+          { "source": "builtin", "name": "metadata-poller-1", "status": "loaded" },
+          { "source": "builtin", "name": "metadata-poller-2", "status": "loaded" },
+          { "source": "builtin", "name": "metadata-poller-3", "status": "loaded" },
+          { "source": "builtin", "name": "metadata-poller-4", "status": "loaded" },
+          {
+            "source": "user",
+            "name": "/var/folders/3k/tp7t81tn3572k4dsfxd51c180000gn/T/aimux-plugin-runtime-invalid-shape-contract-KuKBuc/home/plugins/gh-pr-context.js",
+            "path": "<root>/home/plugins/gh-pr-context.js",
+            "status": "loaded"
+          },
+          {
+            "source": "user",
+            "name": "/var/folders/3k/tp7t81tn3572k4dsfxd51c180000gn/T/aimux-plugin-runtime-invalid-shape-contract-KuKBuc/home/plugins/no-default.js",
+            "path": "<root>/home/plugins/no-default.js",
+            "status": "failed",
+            "error": "default export must be a function"
+          },
+          {
+            "source": "user",
+            "name": "/var/folders/3k/tp7t81tn3572k4dsfxd51c180000gn/T/aimux-plugin-runtime-invalid-shape-contract-KuKBuc/home/plugins/transcript-length.js",
+            "path": "<root>/home/plugins/transcript-length.js",
+            "status": "loaded"
+          }
+        ]
+      },
+      "inputSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    }
+  ]
+}

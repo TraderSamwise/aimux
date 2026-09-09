@@ -1,0 +1,210 @@
+{
+  "version": 1,
+  "source": "src/notify.test.ts",
+  "generatedBy": "scripts/capture-service-notify-contract.mjs",
+  "description": "notifyAlert category gates, focus suppression, external notification guard, and desktop delivery payloads captured by running TypeScript notify with config/suppression/desktop recorders.",
+  "cases": [
+    {
+      "id": "notify-alert-001",
+      "name": "sends desktop alerts when host notification settings allow them",
+      "source": "src/notify.test.ts",
+      "api": "notifyAlert",
+      "input": {
+        "event": {
+          "type": "alert",
+          "kind": "needs_input",
+          "sessionId": "claude-1",
+          "title": "claude-1 needs input",
+          "message": "waiting for input",
+          "ts": "2026-06-06T00:00:00.000Z"
+        }
+      },
+      "output": {
+        "returnValue": true,
+        "suppressCalls": [{ "eventKind": "needs_input", "projectRoot": null }],
+        "desktopCalls": [{ "title": "claude-1 needs input", "message": "waiting for input", "sound": true }]
+      },
+      "inputSha256": "0086eb7a88eb61615048abe420468f79be470aac12697c95b7577acd974a21af"
+    },
+    {
+      "id": "notify-alert-002",
+      "name": "does not send when notifications are disabled",
+      "source": "src/notify.test.ts",
+      "api": "notifyAlert",
+      "input": {
+        "config": { "enabled": false },
+        "event": {
+          "type": "alert",
+          "kind": "needs_input",
+          "sessionId": "claude-1",
+          "title": "claude-1 needs input",
+          "message": "waiting for input",
+          "ts": "2026-06-06T00:00:00.000Z"
+        }
+      },
+      "output": { "returnValue": false, "suppressCalls": [], "desktopCalls": [] },
+      "inputSha256": "e8c768bc491fc3c98b2b614d4f5b0bddf6b27dcba355ab1dbab20d772658c6a1"
+    },
+    {
+      "id": "notify-alert-003",
+      "name": "does not send externally when the test/runtime guard is enabled",
+      "source": "src/notify.test.ts",
+      "api": "notifyAlert",
+      "input": {
+        "env": { "AIMUX_DISABLE_EXTERNAL_NOTIFICATIONS": "1" },
+        "event": {
+          "type": "alert",
+          "kind": "needs_input",
+          "sessionId": "claude-1",
+          "title": "claude-1 needs input",
+          "message": "waiting for input",
+          "ts": "2026-06-06T00:00:00.000Z"
+        }
+      },
+      "output": {
+        "returnValue": true,
+        "suppressCalls": [{ "eventKind": "needs_input", "projectRoot": null }],
+        "desktopCalls": []
+      },
+      "inputSha256": "d70ca7bf3fe8d9bef4891d33d18032fadb16ddd363d26ade25c295d2c3aaa24f"
+    },
+    {
+      "id": "notify-alert-004",
+      "name": "does not send when the alert is focus-suppressed",
+      "source": "src/notify.test.ts",
+      "api": "notifyAlert",
+      "input": {
+        "suppress": true,
+        "event": {
+          "type": "alert",
+          "kind": "needs_input",
+          "sessionId": "claude-1",
+          "title": "claude-1 needs input",
+          "message": "waiting for input",
+          "ts": "2026-06-06T00:00:00.000Z",
+          "projectRoot": "/tmp/project"
+        }
+      },
+      "output": {
+        "returnValue": false,
+        "suppressCalls": [{ "eventKind": "needs_input", "projectRoot": "/tmp/project" }],
+        "desktopCalls": []
+      },
+      "inputSha256": "e31ea0c491a9590b86ae2dd1042cc16e64da323e4c6c2176cb2a772d0593efa7"
+    },
+    {
+      "id": "notify-alert-005",
+      "name": "does not send when the alert's category gate is off",
+      "source": "src/notify.test.ts",
+      "api": "notifyAlert",
+      "input": {
+        "config": { "onPrompt": false },
+        "event": {
+          "type": "alert",
+          "kind": "needs_input",
+          "sessionId": "claude-1",
+          "title": "claude-1 needs input",
+          "message": "waiting for input",
+          "ts": "2026-06-06T00:00:00.000Z"
+        }
+      },
+      "output": {
+        "returnValue": false,
+        "suppressCalls": [{ "eventKind": "needs_input", "projectRoot": null }],
+        "desktopCalls": []
+      },
+      "inputSha256": "ce6f0376b6053c494a65dda8d409d48e4aafdb5d41ca04098e2bb14beb24e9a3"
+    },
+    {
+      "id": "notify-alert-006",
+      "name": "gates interaction requests as prompt notifications",
+      "source": "src/notify.test.ts",
+      "api": "notifyAlert",
+      "input": {
+        "config": { "onPrompt": false },
+        "event": {
+          "type": "alert",
+          "kind": "interaction_request",
+          "sessionId": "claude-1",
+          "title": "claude-1 needs input",
+          "message": "waiting for input",
+          "ts": "2026-06-06T00:00:00.000Z"
+        }
+      },
+      "output": {
+        "returnValue": false,
+        "suppressCalls": [{ "eventKind": "interaction_request", "projectRoot": null }],
+        "desktopCalls": []
+      },
+      "inputSha256": "f886d794053a081e31df0b100a28aea13f7c710659a74305c3af4c002d8dc34d"
+    },
+    {
+      "id": "notify-alert-007",
+      "name": "gates next-step alerts as prompt notifications",
+      "source": "src/notify.test.ts",
+      "api": "notifyAlert",
+      "input": {
+        "config": { "onPrompt": false },
+        "event": {
+          "type": "alert",
+          "kind": "next_step",
+          "sessionId": "claude-1",
+          "title": "claude-1 needs input",
+          "message": "waiting for input",
+          "ts": "2026-06-06T00:00:00.000Z"
+        }
+      },
+      "output": {
+        "returnValue": false,
+        "suppressCalls": [{ "eventKind": "next_step", "projectRoot": null }],
+        "desktopCalls": []
+      },
+      "inputSha256": "8e4f0f0ab59cba7079f162e4ac918d591dd406e30b6bf9176c2c785879838303"
+    },
+    {
+      "id": "notify-alert-008",
+      "name": "does not forward telemetry-only interaction requests",
+      "source": "src/notify.test.ts",
+      "api": "notifyAlert",
+      "input": {
+        "event": {
+          "type": "alert",
+          "kind": "interaction_request",
+          "sessionId": "claude-1",
+          "title": "claude-1 needs input",
+          "message": "waiting for input",
+          "ts": "2026-06-06T00:00:00.000Z",
+          "interaction": { "id": "interaction-1", "type": "permission", "telemetry": true }
+        }
+      },
+      "output": {
+        "returnValue": false,
+        "suppressCalls": [{ "eventKind": "interaction_request", "projectRoot": null }],
+        "desktopCalls": []
+      },
+      "inputSha256": "d714ebdc85dbc05459a74be4629f3c9cec9c644a8c1e09b9be46452298bb0a91"
+    },
+    {
+      "id": "notify-alert-009",
+      "name": "sends completion alerts gated by onComplete",
+      "source": "src/notify.test.ts",
+      "api": "notifyAlert",
+      "input": {
+        "event": {
+          "type": "alert",
+          "kind": "task_done",
+          "sessionId": "claude-1",
+          "title": "claude-1 needs input",
+          "message": "waiting for input",
+          "ts": "2026-06-06T00:00:00.000Z"
+        }
+      },
+      "output": {
+        "returnValue": true,
+        "suppressCalls": [{ "eventKind": "task_done", "projectRoot": null }],
+        "desktopCalls": [{ "title": "claude-1 needs input", "message": "waiting for input", "sound": true }]
+      },
+      "inputSha256": "9d7c5dd8048b92743f059f23eada93b5264ab9590c8a1a5b812d995127bad7a8"
+    }
+  ]
+}

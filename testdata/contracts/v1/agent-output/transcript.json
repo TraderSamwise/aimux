@@ -1,0 +1,1612 @@
+{
+  "version": 1,
+  "source": "src/agent-transcript.test.ts",
+  "generatedBy": "scripts/capture-agent-transcript-contract.mjs",
+  "description": "Agent transcript contract captured by running the TypeScript transcript projection APIs.",
+  "cases": [
+    {
+      "id": "src-agent-transcript-test-ts-001",
+      "name": "keeps the conversation and drops the furniture",
+      "source": "src/agent-transcript.test.ts",
+      "api": "messagesFromParsedAgentOutput",
+      "input": {
+        "parsed": {
+          "blocks": [
+            { "type": "status", "text": "⚠ `--dangerously-bypass-hook-trust` is enabled." },
+            { "type": "meta", "text": "╭──────────╮\n│ >_ OpenAI Codex │\n╰──────────╯" },
+            { "type": "prompt", "text": "How many published events are there?" },
+            { "type": "response", "text": "Published events: 21" }
+          ]
+        },
+        "options": {}
+      },
+      "output": [
+        {
+          "id": "user:39ad751f2ad2",
+          "role": "user",
+          "parts": [{ "type": "text", "text": "How many published events are there?" }],
+          "text": "How many published events are there?"
+        },
+        {
+          "id": "assistant:86f645bdd669",
+          "role": "assistant",
+          "parts": [{ "type": "text", "text": "Published events: 21" }],
+          "text": "Published events: 21",
+          "latest": true
+        }
+      ],
+      "inputSha256": "d86e8e296f1456eb918117551cebaf075ea3d73dcf5ddb519d005e8e69f9974e"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-002",
+      "name": "drops Codex startup and chooser furniture from structured chat",
+      "source": "src/agent-transcript.test.ts",
+      "api": "messagesFromParsedAgentOutput",
+      "input": {
+        "parsed": {
+          "parser": { "tool": "codex" },
+          "blocks": [
+            { "type": "prompt", "text": "Ask Codex to do anything\n\n  ? for shortcuts" },
+            {
+              "type": "prompt",
+              "text": "Update available! 0.150.1 -> 0.153.4\n\nRelease notes: https://github.com/openai/codex/releases/latest"
+            },
+            {
+              "type": "prompt",
+              "text": "1. Update now (runs `npm install -g @openai/codex`)\n  2. Skip\n  3. Skip until next version\n\n  Press enter to continue"
+            },
+            {
+              "type": "prompt",
+              "text": "You are in /Users/sam/cs/aimux-chat-torture-1788585200\n\n  Do you trust the contents of this directory? Working with untrusted contents comes with higher risk of prompt injection."
+            },
+            { "type": "prompt", "text": "1. Yes, continue\n  2. No, quit\n\n  Press enter to continue" }
+          ]
+        },
+        "options": {}
+      },
+      "output": [],
+      "inputSha256": "6e284b71858a66b5a2b394cb5f949d58b17c85111d27792be03f6b4fff4b5ef6"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-003",
+      "name": "strips Codex rate-limit chooser chrome from assistant responses",
+      "source": "src/agent-transcript.test.ts",
+      "api": "messagesFromParsedAgentOutput",
+      "input": {
+        "parsed": {
+          "parser": { "tool": "codex" },
+          "blocks": [
+            { "type": "prompt", "text": "say ack" },
+            {
+              "type": "response",
+              "text": "ACK_LONG_CODEX_1\n\n\n  Approaching rate limits\n  Switch to gpt-5.6-luna for lower credit usage?"
+            },
+            {
+              "type": "prompt",
+              "text": "1. Switch to gpt-5.6-luna                 Fast and affordable agentic coding model.\n  2. Keep current model\n  3. Keep current model (never show again)  Hide future rate limit reminders about switching models.\n\n  Press enter to confirm or esc to go back"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "output": [
+        {
+          "id": "user:567bd7ddeeab",
+          "role": "user",
+          "parts": [{ "type": "text", "text": "say ack" }],
+          "text": "say ack"
+        },
+        {
+          "id": "assistant:e3e533dcd0d8",
+          "role": "assistant",
+          "parts": [{ "type": "text", "text": "ACK_LONG_CODEX_1" }],
+          "text": "ACK_LONG_CODEX_1",
+          "latest": true
+        }
+      ],
+      "inputSha256": "cbe9cc1681502d67727016fced25ad7c2956ab24b91b7f63e66d0a9c48ff5f72"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-004",
+      "name": "strips terminal completion chrome that leaked into a response block",
+      "source": "src/agent-transcript.test.ts",
+      "api": "messagesFromParsedAgentOutput",
+      "input": {
+        "parsed": {
+          "blocks": [
+            { "type": "prompt", "text": "Review recent commits" },
+            {
+              "type": "response",
+              "text": "Fixed the sidebar default and image attachment preview path.\n\nVerification passed.\n\n— Worked for 14m 24s\n────────────────────────────────────────────\n────────────────────────────────────────────"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "output": [
+        {
+          "id": "user:53bf2e403591",
+          "role": "user",
+          "parts": [{ "type": "text", "text": "Review recent commits" }],
+          "text": "Review recent commits"
+        },
+        {
+          "id": "assistant:40822aaeaa24",
+          "role": "assistant",
+          "parts": [
+            {
+              "type": "text",
+              "text": "Fixed the sidebar default and image attachment preview path.\n\nVerification passed."
+            }
+          ],
+          "text": "Fixed the sidebar default and image attachment preview path.\n\nVerification passed.",
+          "latest": true
+        }
+      ],
+      "inputSha256": "da80abca635691d84b62c92a2c34c7509bb5d262f098616b7ce8744ff11267c1"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-005",
+      "name": "identifies a message by content, so a sliding window does not renumber it",
+      "source": "src/agent-transcript.test.ts",
+      "api": "messagesFromParsedAgentOutput",
+      "input": {
+        "parsed": {
+          "blocks": [
+            { "type": "prompt", "text": "one" },
+            { "type": "response", "text": "two" }
+          ]
+        },
+        "options": {}
+      },
+      "output": [
+        { "id": "user:fe05bcdcdc49", "role": "user", "parts": [{ "type": "text", "text": "one" }], "text": "one" },
+        {
+          "id": "assistant:ad782ecdac77",
+          "role": "assistant",
+          "parts": [{ "type": "text", "text": "two" }],
+          "text": "two",
+          "latest": true
+        }
+      ],
+      "inputSha256": "a4e28aad356552eab943acd91b61e6f0a2bf56e0b8e69fee6298b63838358d53"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-006",
+      "name": "identifies a message by content, so a sliding window does not renumber it",
+      "source": "src/agent-transcript.test.ts",
+      "api": "messagesFromParsedAgentOutput",
+      "input": { "parsed": { "blocks": [{ "type": "response", "text": "two" }] }, "options": {} },
+      "output": [
+        {
+          "id": "assistant:ad782ecdac77",
+          "role": "assistant",
+          "parts": [{ "type": "text", "text": "two" }],
+          "text": "two",
+          "latest": true
+        }
+      ],
+      "inputSha256": "35781c8787e9f7bd747e871175d1d8830f649ee6c0ccdd847b7f7c1365498a18"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-007",
+      "name": "marks only the newest message, which is the one still being written",
+      "source": "src/agent-transcript.test.ts",
+      "api": "messagesFromParsedAgentOutput",
+      "input": {
+        "parsed": {
+          "blocks": [
+            { "type": "prompt", "text": "one" },
+            { "type": "response", "text": "two" }
+          ]
+        },
+        "options": {}
+      },
+      "output": [
+        { "id": "user:fe05bcdcdc49", "role": "user", "parts": [{ "type": "text", "text": "one" }], "text": "one" },
+        {
+          "id": "assistant:ad782ecdac77",
+          "role": "assistant",
+          "parts": [{ "type": "text", "text": "two" }],
+          "text": "two",
+          "latest": true
+        }
+      ],
+      "inputSha256": "a4e28aad356552eab943acd91b61e6f0a2bf56e0b8e69fee6298b63838358d53"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-008",
+      "name": "numbers a repeated message rather than colliding",
+      "source": "src/agent-transcript.test.ts",
+      "api": "messagesFromParsedAgentOutput",
+      "input": {
+        "parsed": {
+          "blocks": [
+            { "type": "prompt", "text": "yes" },
+            { "type": "prompt", "text": "yes" }
+          ]
+        },
+        "options": {}
+      },
+      "output": [
+        { "id": "user:fb360f9c09ac", "role": "user", "parts": [{ "type": "text", "text": "yes" }], "text": "yes" },
+        {
+          "id": "user:fb360f9c09ac#2",
+          "role": "user",
+          "parts": [{ "type": "text", "text": "yes" }],
+          "text": "yes",
+          "latest": true
+        }
+      ],
+      "inputSha256": "dbd847bd249fb67ac01f45f2ea49930642ea5b2ba3b2266567bfec12038e89b5"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-009",
+      "name": "reads an attachment block into an image part",
+      "source": "src/agent-transcript.test.ts",
+      "api": "messagesFromParsedAgentOutput",
+      "input": {
+        "parsed": {
+          "blocks": [
+            {
+              "type": "prompt",
+              "text": "look at this\n\nAttached image files:\n- shot.png (image/png, 1234 bytes): /srv/x/.aimux/attachments/att_abc123.png"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "output": [
+        {
+          "id": "user:aefc5e6e16e4",
+          "role": "user",
+          "parts": [
+            { "type": "text", "text": "look at this" },
+            {
+              "type": "image_reference",
+              "label": "[image #1]",
+              "attachmentId": "att_abc123",
+              "filename": "shot.png",
+              "mimeType": "image/png"
+            }
+          ],
+          "text": "look at this",
+          "latest": true
+        }
+      ],
+      "inputSha256": "f2d16aa4af1cb12b1ce02798bbeed593f6b8155b720e2fa5e66cf31a839b5960"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-010",
+      "name": "can attach a hosted display URL to parsed attachment refs",
+      "source": "src/agent-transcript.test.ts",
+      "api": "messagesFromParsedAgentOutput",
+      "input": {
+        "parsed": {
+          "blocks": [
+            {
+              "type": "prompt",
+              "text": "look at this\n\nAttached image files:\n- shot.png (image/png, 1234 bytes): /srv/x/.aimux/attachments/att_abc123.png"
+            }
+          ]
+        },
+        "options": {
+          "attachmentContentById": {
+            "att_abc123": {
+              "contentUrl": "/attachments/att_abc123/content?sessionId=claude-1",
+              "hostedContentUrl": "https://relay.aimux.app/attachments/hosted/ha_123/content",
+              "hostedExpiresAt": "2099-01-01T00:00:00.000Z"
+            }
+          }
+        }
+      },
+      "output": [
+        {
+          "id": "user:aefc5e6e16e4",
+          "role": "user",
+          "parts": [
+            { "type": "text", "text": "look at this" },
+            {
+              "type": "image_reference",
+              "label": "[image #1]",
+              "attachmentId": "att_abc123",
+              "filename": "shot.png",
+              "mimeType": "image/png",
+              "contentUrl": "/attachments/att_abc123/content?sessionId=claude-1",
+              "hostedContentUrl": "https://relay.aimux.app/attachments/hosted/ha_123/content",
+              "hostedExpiresAt": "2099-01-01T00:00:00.000Z"
+            }
+          ],
+          "text": "look at this",
+          "latest": true
+        }
+      ],
+      "inputSha256": "bda8fce490b64c83642c4ed575e6cd9de634d95b88209811aab3ffb6c60b7c5e"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-011",
+      "name": "reads generic screenshot attachment text into an image part",
+      "source": "src/agent-transcript.test.ts",
+      "api": "messagesFromParsedAgentOutput",
+      "input": {
+        "parsed": {
+          "blocks": [
+            {
+              "type": "prompt",
+              "text": "Review previous work Attached files: - Screenshot 2026-08-15 at 7.17.12 PM.png (image/png, 330511 bytes): /Users/sam/cs/aimux/.aimux/attachments/att_65a4b09dede14f52955c389683f3a3e5.png"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "output": [
+        {
+          "id": "user:e53c5f822a69",
+          "role": "user",
+          "parts": [
+            { "type": "text", "text": "Review previous work" },
+            {
+              "type": "image_reference",
+              "label": "[image #1]",
+              "attachmentId": "att_65a4b09dede14f52955c389683f3a3e5",
+              "filename": "Screenshot 2026-08-15 at 7.17.12 PM.png",
+              "mimeType": "image/png"
+            }
+          ],
+          "text": "Review previous work",
+          "latest": true
+        }
+      ],
+      "inputSha256": "900e48aec3d700f06be7fbbf0cb111793ed2557b367b0168ca447af3732f900b"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-012",
+      "name": "projects Codex queue-up prompt echoes with image attachments for GUI ack",
+      "source": "src/agent-transcript.test.ts",
+      "api": "messagesFromAgentOutput",
+      "input": {
+        "output": "› Queue up: msg echo ack needs to work with images Attached files: - IMG_0407.png (image/png, 314297 bytes): /Users/sam/cs/aimux/.aimux/attachments/att_a081e337abfd430da6b32aadc2e3d793.png",
+        "tool": "codex"
+      },
+      "output": [
+        {
+          "id": "user:f7c63e27c74b",
+          "role": "user",
+          "parts": [
+            { "type": "text", "text": "Queue up: msg echo ack needs to work with images" },
+            {
+              "type": "image_reference",
+              "label": "[image #1]",
+              "attachmentId": "att_a081e337abfd430da6b32aadc2e3d793",
+              "filename": "IMG_0407.png",
+              "mimeType": "image/png"
+            }
+          ],
+          "text": "Queue up: msg echo ack needs to work with images",
+          "latest": true
+        }
+      ],
+      "inputSha256": "b606cc94ce53855aa407223e1702dab559e88b5c3509af3c6ace128e9d89fd50"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-013",
+      "name": "projects Claude queue-up prompt echoes with image attachments for GUI ack",
+      "source": "src/agent-transcript.test.ts",
+      "api": "messagesFromAgentOutput",
+      "input": {
+        "output": "❯ Queue up: msg echo ack needs to work with images Attached files: - IMG_0407.png (image/png, 314297 bytes): /Users/sam/cs/aimux/.aimux/attachments/att_a081e337abfd430da6b32aadc2e3d793.png",
+        "tool": "claude"
+      },
+      "output": [
+        {
+          "id": "user:f7c63e27c74b",
+          "role": "user",
+          "parts": [
+            { "type": "text", "text": "Queue up: msg echo ack needs to work with images" },
+            {
+              "type": "image_reference",
+              "label": "[image #1]",
+              "attachmentId": "att_a081e337abfd430da6b32aadc2e3d793",
+              "filename": "IMG_0407.png",
+              "mimeType": "image/png"
+            }
+          ],
+          "text": "Queue up: msg echo ack needs to work with images",
+          "latest": true
+        }
+      ],
+      "inputSha256": "9a224abd5868c5887cefe8391ecbb1f78e9e45e703a77d22c9ef3563dc4a75af"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-014",
+      "name": "projects Claude and Codex queue-up prompt echoes without attachments for GUI ack",
+      "source": "src/agent-transcript.test.ts",
+      "api": "messagesFromAgentOutput",
+      "input": { "output": "› Queue up: msg echo ack needs to work without images", "tool": "codex" },
+      "output": [
+        {
+          "id": "user:529ec50801f0",
+          "role": "user",
+          "parts": [{ "type": "text", "text": "Queue up: msg echo ack needs to work without images" }],
+          "text": "Queue up: msg echo ack needs to work without images",
+          "latest": true
+        }
+      ],
+      "inputSha256": "29f2d47b53f55ddfbd5f67a705e365289e611ce0131f87e8540f1011189b4b96"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-015",
+      "name": "projects Claude and Codex queue-up prompt echoes without attachments for GUI ack",
+      "source": "src/agent-transcript.test.ts",
+      "api": "messagesFromAgentOutput",
+      "input": { "output": "❯ Queue up: msg echo ack needs to work without images", "tool": "claude" },
+      "output": [
+        {
+          "id": "user:529ec50801f0",
+          "role": "user",
+          "parts": [{ "type": "text", "text": "Queue up: msg echo ack needs to work without images" }],
+          "text": "Queue up: msg echo ack needs to work without images",
+          "latest": true
+        }
+      ],
+      "inputSha256": "8983af17bf1f97260012437ad46a09643680019009e56895b129000b2207f8db"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-016",
+      "name": "reads a generic attachment block into a file part",
+      "source": "src/agent-transcript.test.ts",
+      "api": "messagesFromParsedAgentOutput",
+      "input": {
+        "parsed": {
+          "blocks": [
+            {
+              "type": "prompt",
+              "text": "use this source\n\nAttached files:\n- notes.pdf (application/pdf, 1234 bytes): /srv/x/.aimux/attachments/att_pdf123.pdf"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "output": [
+        {
+          "id": "user:35a1095b2f78",
+          "role": "user",
+          "parts": [
+            { "type": "text", "text": "use this source" },
+            {
+              "type": "attachment_reference",
+              "label": "[file #1]",
+              "attachmentId": "att_pdf123",
+              "filename": "notes.pdf",
+              "mimeType": "application/pdf",
+              "kind": "pdf"
+            }
+          ],
+          "text": "use this source",
+          "latest": true
+        }
+      ],
+      "inputSha256": "c4fafc0cd83920053ce918943ce6b2fcd26eff1f47fe2fbfdcc6ab48e8e09a1a"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-017",
+      "name": "still finds the attachment when tmux has reflowed the block",
+      "source": "src/agent-transcript.test.ts",
+      "api": "messagesFromParsedAgentOutput",
+      "input": {
+        "parsed": {
+          "blocks": [
+            {
+              "type": "prompt",
+              "text": "look   at this Attached image files: - shot.png (image/png, 12 bytes): /srv/x/.aimux/attach\nments/att_wrapped.png"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "output": [
+        {
+          "id": "user:a5c8d872a169",
+          "role": "user",
+          "parts": [
+            { "type": "text", "text": "look at this" },
+            {
+              "type": "image_reference",
+              "label": "[image #1]",
+              "attachmentId": "att_wrapped",
+              "filename": "shot.png",
+              "mimeType": "image/png"
+            }
+          ],
+          "text": "look at this",
+          "latest": true
+        }
+      ],
+      "inputSha256": "2be984c05bf071a040b8f51fc0b3254178c126f9e217786547243d379fd60a0b"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-018",
+      "name": "gives one attachment one label, however often it appears",
+      "source": "src/agent-transcript.test.ts",
+      "api": "messagesFromParsedAgentOutput",
+      "input": {
+        "parsed": {
+          "blocks": [
+            {
+              "type": "prompt",
+              "text": "first\n\nAttached image files:\n- a.png (image/png, 1 bytes): /x/.aimux/attachments/att_one.png"
+            },
+            {
+              "type": "prompt",
+              "text": "again\n\nAttached image files:\n- a.png (image/png, 1 bytes): /x/.aimux/attachments/att_one.png"
+            },
+            {
+              "type": "prompt",
+              "text": "other\n\nAttached image files:\n- a.png (image/png, 1 bytes): /x/.aimux/attachments/att_two.png"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "output": [
+        {
+          "id": "user:1ac36ca68028",
+          "role": "user",
+          "parts": [
+            { "type": "text", "text": "first" },
+            {
+              "type": "image_reference",
+              "label": "[image #1]",
+              "attachmentId": "att_one",
+              "filename": "a.png",
+              "mimeType": "image/png"
+            }
+          ],
+          "text": "first"
+        },
+        {
+          "id": "user:a75eb29fed34",
+          "role": "user",
+          "parts": [
+            { "type": "text", "text": "again" },
+            {
+              "type": "image_reference",
+              "label": "[image #1]",
+              "attachmentId": "att_one",
+              "filename": "a.png",
+              "mimeType": "image/png"
+            }
+          ],
+          "text": "again"
+        },
+        {
+          "id": "user:94b68e5a01ba",
+          "role": "user",
+          "parts": [
+            { "type": "text", "text": "other" },
+            {
+              "type": "image_reference",
+              "label": "[image #2]",
+              "attachmentId": "att_two",
+              "filename": "a.png",
+              "mimeType": "image/png"
+            }
+          ],
+          "text": "other",
+          "latest": true
+        }
+      ],
+      "inputSha256": "de6cdc8650799b72aa41f45202f1af185de5c4ee02610d7ef94a836107525cd8"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-019",
+      "name": "emits no url, because the server does not know the caller's path to it",
+      "source": "src/agent-transcript.test.ts",
+      "api": "messagesFromParsedAgentOutput",
+      "input": {
+        "parsed": {
+          "blocks": [
+            {
+              "type": "prompt",
+              "text": "Attached image files:\n- a.png (image/png, 1 bytes): /x/.aimux/attachments/att_z.png"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "output": [
+        {
+          "id": "user:9d2660151e3a",
+          "role": "user",
+          "parts": [
+            {
+              "type": "image_reference",
+              "label": "[image #1]",
+              "attachmentId": "att_z",
+              "filename": "a.png",
+              "mimeType": "image/png"
+            }
+          ],
+          "text": "",
+          "latest": true
+        }
+      ],
+      "inputSha256": "f1a75cf4215c0449480f582ca5a861f1a6bf2c642199ff01ed57b9252909e50d"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-020",
+      "name": "keeps ids and text stable while adding optional rich spans",
+      "source": "src/agent-transcript.test.ts",
+      "api": "messagesFromAgentOutput",
+      "input": { "output": "❯ ask\n⏺ red answer", "tool": "codex" },
+      "output": [
+        { "id": "user:1c8f09270fc3", "role": "user", "parts": [{ "type": "text", "text": "ask" }], "text": "ask" },
+        {
+          "id": "assistant:fd634303f65b",
+          "role": "assistant",
+          "parts": [{ "type": "text", "text": "red answer" }],
+          "text": "red answer",
+          "latest": true
+        }
+      ],
+      "inputSha256": "0f9fe870343de8f2cef4e9ac8a0030f1765740483aa803c96354225bb51b35f6"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-021",
+      "name": "keeps ids and text stable while adding optional rich spans",
+      "source": "src/agent-transcript.test.ts",
+      "api": "messagesFromAgentOutput",
+      "input": {
+        "output": "❯ ask\n⏺ red answer",
+        "outputAnsi": "❯ ask\n⏺ \u001b[31mred\u001b[0m answer",
+        "tool": "codex"
+      },
+      "output": [
+        {
+          "id": "user:1c8f09270fc3",
+          "role": "user",
+          "parts": [{ "type": "text", "text": "ask", "spans": [{ "text": "ask" }] }],
+          "text": "ask"
+        },
+        {
+          "id": "assistant:fd634303f65b",
+          "role": "assistant",
+          "parts": [
+            {
+              "type": "text",
+              "text": "red answer",
+              "spans": [{ "text": "red", "foreground": { "model": "rgb", "value": "#e06c75" } }, { "text": " answer" }]
+            }
+          ],
+          "text": "red answer",
+          "latest": true
+        }
+      ],
+      "inputSha256": "3b10040cde93b701317bb158ee07627ccea3d1007045ad126377e00e1d6e8fe8"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-022",
+      "name": "projects multiline rich spans for prompt and response blocks",
+      "source": "src/agent-transcript.test.ts",
+      "api": "messagesFromAgentOutput",
+      "input": {
+        "output": "❯ first\n  second\n⏺ ok",
+        "outputAnsi": "❯ \u001b[1mfirst\n  second\u001b[0m\n⏺ \u001b[32mok",
+        "tool": "codex"
+      },
+      "output": [
+        {
+          "id": "user:58221c0b8f0a",
+          "role": "user",
+          "parts": [
+            {
+              "type": "text",
+              "text": "first\n  second",
+              "spans": [
+                { "text": "first", "marks": ["bold"] },
+                { "text": "\n" },
+                { "text": "  second", "marks": ["bold"] }
+              ]
+            }
+          ],
+          "text": "first\n  second"
+        },
+        {
+          "id": "assistant:7a85f4764bbd",
+          "role": "assistant",
+          "parts": [
+            {
+              "type": "text",
+              "text": "ok",
+              "spans": [{ "text": "ok", "foreground": { "model": "rgb", "value": "#98c379" } }]
+            }
+          ],
+          "text": "ok",
+          "latest": true
+        }
+      ],
+      "inputSha256": "abd365a4b05ea77cc2c437b957964e706af98247924f3de3270c0ab2f7508db6"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-023",
+      "name": "keeps rich spans when the source block had trailing blank lines",
+      "source": "src/agent-transcript.test.ts",
+      "api": "messagesFromAgentOutput",
+      "input": { "output": "❯ ask\n⏺ red\n", "outputAnsi": "❯ ask\n⏺ \u001b[31mred\u001b[0m\n", "tool": "codex" },
+      "output": [
+        {
+          "id": "user:1c8f09270fc3",
+          "role": "user",
+          "parts": [{ "type": "text", "text": "ask", "spans": [{ "text": "ask" }] }],
+          "text": "ask"
+        },
+        {
+          "id": "assistant:78988010b890",
+          "role": "assistant",
+          "parts": [
+            {
+              "type": "text",
+              "text": "red",
+              "spans": [{ "text": "red", "foreground": { "model": "rgb", "value": "#e06c75" } }]
+            }
+          ],
+          "text": "red",
+          "latest": true
+        }
+      ],
+      "inputSha256": "2174a371b018396a80fbe493b7b73fe0091a18f8dd8f7cb404eba109c9fcc6e7"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-024",
+      "name": "keeps rich spans across normalized response block separators",
+      "source": "src/agent-transcript.test.ts",
+      "api": "messagesFromParsedAgentOutput",
+      "input": {
+        "parsed": {
+          "blocks": [
+            {
+              "type": "response",
+              "text": "red\n\nblue",
+              "sourceLines": [
+                { "lineIndex": 0, "text": "red" },
+                { "lineIndex": -1, "text": "" },
+                { "lineIndex": 1, "text": "blue" }
+              ]
+            }
+          ]
+        },
+        "options": {
+          "richLines": [
+            [{ "text": "red", "foreground": { "model": "rgb", "value": "#e06c75" } }],
+            [{ "text": "blue", "foreground": { "model": "rgb", "value": "#61afef" } }]
+          ]
+        }
+      },
+      "output": [
+        {
+          "id": "assistant:1b02c96cec24",
+          "role": "assistant",
+          "parts": [
+            {
+              "type": "text",
+              "text": "red\n\nblue",
+              "spans": [
+                { "text": "red", "foreground": { "model": "rgb", "value": "#e06c75" } },
+                { "text": "\n" },
+                { "text": "\n" },
+                { "text": "blue", "foreground": { "model": "rgb", "value": "#61afef" } }
+              ]
+            }
+          ],
+          "text": "red\n\nblue",
+          "latest": true
+        }
+      ],
+      "inputSha256": "ff1718f39137056c4d19e307bdeb75c6bd72b3d38eaa035093b61221c64d6dfe"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-025",
+      "name": "keeps image references while applying matching spans to text parts",
+      "source": "src/agent-transcript.test.ts",
+      "api": "messagesFromAgentOutput",
+      "input": {
+        "output": "❯ see this\nAttached image files:\n- shot.png (image/png, 1234 bytes): /srv/x/.aimux/attachments/att_rich.png",
+        "outputAnsi": "❯ \u001b[36msee this\u001b[0m\nAttached image files:\n- shot.png (image/png, 1234 bytes): /srv/x/.aimux/attachments/att_rich.png",
+        "tool": "codex"
+      },
+      "output": [
+        {
+          "id": "user:6c721cab1373",
+          "role": "user",
+          "parts": [
+            {
+              "type": "text",
+              "text": "see this",
+              "spans": [{ "text": "see this", "foreground": { "model": "rgb", "value": "#56b6c2" } }]
+            },
+            {
+              "type": "image_reference",
+              "label": "[image #1]",
+              "attachmentId": "att_rich",
+              "filename": "shot.png",
+              "mimeType": "image/png"
+            }
+          ],
+          "text": "see this",
+          "latest": true
+        }
+      ],
+      "inputSha256": "e6203bd9aa805f817e685a5bd1c131dc7d348a994ccc5d3f3b30adc0585c5706"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-026",
+      "name": "survives nothing at all",
+      "source": "src/agent-transcript.test.ts",
+      "api": "messagesFromParsedAgentOutput",
+      "input": { "parsed": null, "options": {} },
+      "output": [],
+      "inputSha256": "e5fddc152891553eddaced0ec42d52636028cd811da6c18cfd39531cfbdb908e"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-027",
+      "name": "survives nothing at all",
+      "source": "src/agent-transcript.test.ts",
+      "api": "messagesFromParsedAgentOutput",
+      "input": { "parsed": {}, "options": {} },
+      "output": [],
+      "inputSha256": "3840d1c1877b7c6473813b3c3faae1c4780ea5cfb103153e2cae944b739f6e14"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-028",
+      "name": "survives nothing at all",
+      "source": "src/agent-transcript.test.ts",
+      "api": "messagesFromParsedAgentOutput",
+      "input": { "parsed": { "blocks": [{ "type": "prompt", "text": "   " }] }, "options": {} },
+      "output": [],
+      "inputSha256": "a88eb8ab2c6d1449ad57dcf6097fa10a269424f8e25aa15a2d2d96d651c7a008"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-029",
+      "name": "joins the words and leaves the images out",
+      "source": "src/agent-transcript.test.ts",
+      "api": "transcriptMessageText",
+      "input": {
+        "parts": [
+          { "type": "text", "text": "before" },
+          { "type": "image_reference", "label": "[image #1]", "attachmentId": "att_a" },
+          { "type": "attachment_reference", "label": "[file #1]", "attachmentId": "att_b", "kind": "file" },
+          { "type": "text", "text": "after" }
+        ]
+      },
+      "output": "before\nafter",
+      "inputSha256": "0e169f8646180e4a373bea93397f62f71c2ab2742a237a0b594055cf77b27eb7"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-030",
+      "name": "keeps the words as well as the recovered image",
+      "source": "src/agent-transcript.test.ts",
+      "api": "messagesFromParsedAgentOutput",
+      "input": {
+        "parsed": {
+          "blocks": [
+            {
+              "type": "prompt",
+              "text": "please look at the seat map Attached image files: - shot.png (image/png, 9 bytes): /srv/x/.aimux/attach\nments/att_mangled.png"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "output": [
+        {
+          "id": "user:cd08a8722b6b",
+          "role": "user",
+          "parts": [
+            { "type": "text", "text": "please look at the seat map" },
+            {
+              "type": "image_reference",
+              "label": "[image #1]",
+              "attachmentId": "att_mangled",
+              "filename": "shot.png",
+              "mimeType": "image/png"
+            }
+          ],
+          "text": "please look at the seat map",
+          "latest": true
+        }
+      ],
+      "inputSha256": "8da4eb024ffafe5f4eb4a3688179f0429b2d5aeb36503e8a7bc7fb2378a5b260"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-031",
+      "name": "keeps a wrapped image an image, under the header the server actually writes",
+      "source": "src/agent-transcript.test.ts",
+      "api": "messagesFromParsedAgentOutput",
+      "input": {
+        "parsed": {
+          "blocks": [
+            {
+              "type": "prompt",
+              "text": "Please review the attached file(s). Attached files: - image.png (image/png, 46624 bytes): /srv/grand-console/.aimux/attach\nments/att_wrapped.png"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "output": [
+        {
+          "id": "user:b57f46d2ab34",
+          "role": "user",
+          "parts": [
+            { "type": "text", "text": "Please review the attached file(s)." },
+            {
+              "type": "image_reference",
+              "label": "[image #1]",
+              "attachmentId": "att_wrapped",
+              "filename": "image.png",
+              "mimeType": "image/png"
+            }
+          ],
+          "text": "Please review the attached file(s).",
+          "latest": true
+        }
+      ],
+      "inputSha256": "9a0901fcb48cf2a6ab4fdcc09f4238e6925553647cbdb828a56abcc36e96311d"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-032",
+      "name": "keeps a wrapped document a document",
+      "source": "src/agent-transcript.test.ts",
+      "api": "messagesFromParsedAgentOutput",
+      "input": {
+        "parsed": {
+          "blocks": [
+            {
+              "type": "prompt",
+              "text": "read this Attached files: - notes.pdf (application/pdf, 12 bytes): /srv/grand-console/.aimux/attach\nments/att_doc.pdf"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "output": [
+        {
+          "id": "user:674492139239",
+          "role": "user",
+          "parts": [
+            { "type": "text", "text": "read this" },
+            {
+              "type": "attachment_reference",
+              "label": "[file #1]",
+              "attachmentId": "att_doc",
+              "filename": "notes.pdf",
+              "mimeType": "application/pdf",
+              "kind": "pdf"
+            }
+          ],
+          "text": "read this",
+          "latest": true
+        }
+      ],
+      "inputSha256": "70e010d122f35381472ff391dddfbc69ae6f03c3b498cc4152e7104d71cbd6f7"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-033",
+      "name": "does not invent an image for a block that only mentions the header",
+      "source": "src/agent-transcript.test.ts",
+      "api": "messagesFromParsedAgentOutput",
+      "input": {
+        "parsed": { "blocks": [{ "type": "response", "text": "I looked for Attached image files: and found none." }] },
+        "options": {}
+      },
+      "output": [
+        {
+          "id": "assistant:784d23c2923f",
+          "role": "assistant",
+          "parts": [{ "type": "text", "text": "I looked for Attached image files: and found none." }],
+          "text": "I looked for Attached image files: and found none.",
+          "latest": true
+        }
+      ],
+      "inputSha256": "1d763e20372faed09effdbfb43624ec4ec7764e4f1e93fc2846fc94cbab381b7"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-034",
+      "name": "renders nothing from a codex startup suggestion loop",
+      "source": "src/agent-transcript.test.ts",
+      "api": "messagesFromParsedAgentOutput",
+      "input": {
+        "parsed": {
+          "blocks": [
+            {
+              "type": "meta",
+              "text": "│ >_ OpenAI Codex (v0.136.0)                      │\n│                                                 │\n│ model:       loading   /model to change         │\n│ directory:   ~/workspace/project/.aimux/worktrees/polish │\n│ permissions: YOLO mode                          │\n\n│ >_ OpenAI Codex (v0.136.0)                      │\n│                                                 │\n│ model:       loading   /model to change         │\n│ directory:   ~/workspace/project/.aimux/worktrees/polish │\n│ permissions: YOLO mode                          │\n\n│ >_ OpenAI Codex (v0.136.0)                      │\n│                                                 │\n│ model:       gpt-5.5 high   /model to change    │\n│ directory:   ~/workspace/project/.aimux/worktrees/polish │\n│ permissions: YOLO mode                          │"
+            },
+            {
+              "type": "status",
+              "text": "Explain this codebase\n  gpt-5.5 default · ~/workspace/project/.aimux/worktrees/polish\n\n• Starting MCP servers (0/4): chrome-devtools, codex_apps, node_repl, … (0s • esc to interrupt)\nExplain this codebase\n  gpt-5.5 default · ~/workspace/project/.aimux/worktrees/polish\n\n  Tip: Press Tab to queue a message when a task is running; otherwise it sends immediately (except !).\nExplain this codebase\n  gpt-5.5 high · ~/workspace/project/.aimux/worktrees/polish"
+            }
+          ],
+          "parser": { "tool": "codex", "version": 1, "confidence": "heuristic" }
+        },
+        "options": {}
+      },
+      "output": [],
+      "inputSha256": "e216fc20516badf034d6ca9255cdd7348387138046d30fd556a8b62875f39c11"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-035",
+      "name": "renders nothing from a codex startup banner and warnings",
+      "source": "src/agent-transcript.test.ts",
+      "api": "messagesFromParsedAgentOutput",
+      "input": {
+        "parsed": {
+          "blocks": [
+            {
+              "type": "meta",
+              "text": "╭──────────────────────────────────────────────╮\n│ >_ OpenAI Codex (v0.144.1)                   │\n│                                              │\n│ model:       gpt-5.5 high   /model to change │\n│ directory:   ~/cs/tealstreet-mobile          │\n│ permissions: YOLO mode                       │\n╰──────────────────────────────────────────────╯"
+            },
+            {
+              "type": "status",
+              "text": "⚠ `--dangerously-bypass-hook-trust` is enabled. Enabled hooks may run without review for this\n  invocation.\n\n  Tip: New Use /fast to enable our fastest inference with increased plan usage.\n\n• You have 3 usage limit resets available. Run /usage to use one.\n\nImplement {feature}\n  gpt-5.5 high · ~/cs/tealstreet-mobile"
+            }
+          ],
+          "parser": { "tool": "codex", "version": 1, "confidence": "heuristic" }
+        },
+        "options": {}
+      },
+      "output": [],
+      "inputSha256": "7962c56b8051c028fcf1d5d7f544205e8b62b0265bdfb18c92bc386c8150f677"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-036",
+      "name": "keeps the prompt and its image, and not the suggestion after it",
+      "source": "src/agent-transcript.test.ts",
+      "api": "messagesFromParsedAgentOutput",
+      "input": {
+        "parsed": {
+          "blocks": [
+            {
+              "type": "prompt",
+              "text": "can you see this? Attached image files: - Screenshot.png (image/png, 120484 bytes): /workspace/project/.aimux/attachments/att_example.png"
+            },
+            {
+              "type": "status",
+              "text": "• Working (4s • esc to interrupt)\n\nExplain this codebase\n\n  gpt-5.5 medium · ~/workspace/project"
+            }
+          ],
+          "parser": { "tool": "codex", "version": 1, "confidence": "heuristic" }
+        },
+        "options": {}
+      },
+      "output": [
+        {
+          "id": "user:99414adc6374",
+          "role": "user",
+          "parts": [
+            { "type": "text", "text": "can you see this?" },
+            {
+              "type": "image_reference",
+              "label": "[image #1]",
+              "attachmentId": "att_example",
+              "filename": "Screenshot.png",
+              "mimeType": "image/png"
+            }
+          ],
+          "text": "can you see this?",
+          "latest": true
+        }
+      ],
+      "inputSha256": "924555574fbb1fb5ec6805de7aa6c791ab05bb0ee535de529a20f358fd72695a"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-037",
+      "name": "keeps claude's words and drops its tool action rows",
+      "source": "src/agent-transcript.test.ts",
+      "api": "messagesFromParsedAgentOutput",
+      "input": {
+        "parsed": {
+          "blocks": [
+            { "type": "response", "text": "Good question. Let me check the relay status." },
+            {
+              "type": "status",
+              "text": "⏺ Bash(cd /workspace/project; gh pr checks 5968)\n  ⎿  Running in the background (down arrow to manage)\n\n⏺ Read 2 files (ctrl+o to expand)\n\n⏺ Update(src/relay.ts)"
+            },
+            { "type": "response", "text": "All checks are green. I can merge now." }
+          ],
+          "parser": { "tool": "claude", "version": 1, "confidence": "heuristic" }
+        },
+        "options": {}
+      },
+      "output": [
+        {
+          "id": "assistant:1d06ac270e54",
+          "role": "assistant",
+          "parts": [{ "type": "text", "text": "Good question. Let me check the relay status." }],
+          "text": "Good question. Let me check the relay status."
+        },
+        {
+          "id": "assistant:e08a8fce20bd",
+          "role": "assistant",
+          "parts": [{ "type": "text", "text": "All checks are green. I can merge now." }],
+          "text": "All checks are green. I can merge now.",
+          "latest": true
+        }
+      ],
+      "inputSha256": "6472f735e1118ae5c71bb8bf9baf75ff3bdbcde9bcc13d69720128e7e57dc44a"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-038",
+      "name": "renders nothing from a malformed claude animation capture",
+      "source": "src/agent-transcript.test.ts",
+      "api": "messagesFromParsedAgentOutput",
+      "input": {
+        "parsed": {
+          "blocks": [
+            { "type": "meta", "text": "user@host ~/workspace/project main Opus4.6(1Mcontext)" },
+            {
+              "type": "status",
+              "text": "✢n\ng\n·…\n✻Bew\nri\n✶en\nwin…\n(thinking)\n·Brewing… (thinking)\nBash(terminal-notifier-title\"ClaudeCode\"-message\"Notificationtest-sessionstarted\"-sounddefault)⎿ Running…\n\nBrewing… (thinking)"
+            }
+          ],
+          "parser": { "tool": "claude", "version": 1, "confidence": "heuristic" }
+        },
+        "options": {}
+      },
+      "output": [],
+      "inputSha256": "c0f242ceae516a52dcedc1676f3bbce329e0abe12dc73fd014a5172e156eff33"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-039",
+      "name": "renders nothing from a collapsed claude approval capture",
+      "source": "src/agent-transcript.test.ts",
+      "api": "messagesFromParsedAgentOutput",
+      "input": {
+        "parsed": {
+          "blocks": [
+            {
+              "type": "status",
+              "text": "Brewing…\n⏺────────────────────────────────────────────────────────────────────────────────────────────────Bash command\n   terminal-notifier-title\"ClaudeCode\"-message\"Notificationtest-sessionstarted\"-sounddefault\n   Test notification at session start\nThiscommandrequiresapproval\nDoyouwanttoproceed?\n7;185;249m❯1.Yes\n2.Yes,anddon’taskagainfor:terminal-notifier:*\n3.No\nEsctocancel·Tabtoamend·ctrl+etoexplain"
+            }
+          ],
+          "parser": { "tool": "claude", "version": 1, "confidence": "heuristic" }
+        },
+        "options": {}
+      },
+      "output": [],
+      "inputSha256": "3650540ff153bfe7598af3c4cb8933af908ae04f33706ec17065b3246a0f0549"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-040",
+      "name": "never survives into the message text",
+      "source": "src/agent-transcript.test.ts",
+      "api": "messagesFromParsedAgentOutput",
+      "input": {
+        "parsed": {
+          "blocks": [
+            {
+              "type": "prompt",
+              "text": "please look at the seat map Attached image files: - shot.png (image/png, 9 bytes): /srv/grand-console/.aimux/attach\nments/att_mangled.png"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "output": [
+        {
+          "id": "user:63cce6a735a1",
+          "role": "user",
+          "parts": [
+            { "type": "text", "text": "please look at the seat map" },
+            {
+              "type": "image_reference",
+              "label": "[image #1]",
+              "attachmentId": "att_mangled",
+              "filename": "shot.png",
+              "mimeType": "image/png"
+            }
+          ],
+          "text": "please look at the seat map",
+          "latest": true
+        }
+      ],
+      "inputSha256": "2abca57ddd7144251b3a68f69794ae052cfe2180d0e4d1cb23227894ff80fd0a"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-041",
+      "name": "carries an attachment the pane never showed",
+      "source": "src/agent-transcript.test.ts",
+      "api": "mergePublishedAttachments",
+      "input": {
+        "messages": [
+          {
+            "id": "assistant:1",
+            "role": "assistant",
+            "parts": [{ "type": "text", "text": "Generated Image:" }],
+            "text": "Generated Image:",
+            "latest": true
+          }
+        ],
+        "published": [
+          {
+            "attachmentId": "att_published_image",
+            "filename": "chart.png",
+            "mimeType": "image/png",
+            "contentUrl": "/attachments/att_published_image/content"
+          }
+        ]
+      },
+      "output": {
+        "messages": [
+          {
+            "id": "assistant:1",
+            "role": "assistant",
+            "parts": [
+              { "type": "text", "text": "Generated Image:" },
+              {
+                "type": "image_reference",
+                "label": "[image #1]",
+                "attachmentId": "att_published_image",
+                "filename": "chart.png",
+                "mimeType": "image/png",
+                "contentUrl": "/attachments/att_published_image/content"
+              }
+            ],
+            "text": "Generated Image:",
+            "latest": true
+          }
+        ],
+        "anchors": [{ "attachmentId": "att_published_image", "messageId": "assistant:1" }]
+      },
+      "inputSha256": "174c6e1164df7a291fa2bafd7e98c3c6cd6ebcfca7ceb53ade03fae15cabfaf9"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-042",
+      "name": "leaves an attachment the pane already showed alone",
+      "source": "src/agent-transcript.test.ts",
+      "api": "mergePublishedAttachments",
+      "input": {
+        "messages": [
+          {
+            "id": "assistant:1",
+            "role": "assistant",
+            "parts": [{ "type": "image_reference", "label": "[image #1]", "attachmentId": "att_published_image" }],
+            "text": "[image #1]",
+            "latest": true
+          }
+        ],
+        "published": [
+          {
+            "attachmentId": "att_published_image",
+            "filename": "chart.png",
+            "mimeType": "image/png",
+            "contentUrl": "/attachments/att_published_image/content"
+          }
+        ]
+      },
+      "output": {
+        "messages": [
+          {
+            "id": "assistant:1",
+            "role": "assistant",
+            "parts": [{ "type": "image_reference", "label": "[image #1]", "attachmentId": "att_published_image" }],
+            "text": "[image #1]",
+            "latest": true
+          }
+        ],
+        "anchors": []
+      },
+      "inputSha256": "e10d86e5e9e8eb04cf4154929e0b93fb8acc712fe4f37b01d721082cd5e8d90c"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-043",
+      "name": "starts an assistant message when the transcript ends on the operator",
+      "source": "src/agent-transcript.test.ts",
+      "api": "mergePublishedAttachments",
+      "input": {
+        "messages": [
+          {
+            "id": "user:1",
+            "role": "user",
+            "parts": [{ "type": "text", "text": "show me" }],
+            "text": "show me",
+            "latest": true
+          }
+        ],
+        "published": [
+          {
+            "attachmentId": "att_published_image",
+            "filename": "chart.png",
+            "mimeType": "image/png",
+            "contentUrl": "/attachments/att_published_image/content"
+          }
+        ]
+      },
+      "output": {
+        "messages": [
+          { "id": "user:1", "role": "user", "parts": [{ "type": "text", "text": "show me" }], "text": "show me" },
+          {
+            "id": "assistant:published:att_published_image",
+            "role": "assistant",
+            "parts": [
+              {
+                "type": "image_reference",
+                "label": "[image #1]",
+                "attachmentId": "att_published_image",
+                "filename": "chart.png",
+                "mimeType": "image/png",
+                "contentUrl": "/attachments/att_published_image/content"
+              }
+            ],
+            "text": "",
+            "latest": true
+          }
+        ],
+        "anchors": [{ "attachmentId": "att_published_image", "messageId": "assistant:published:att_published_image" }]
+      },
+      "inputSha256": "e8556693331831292c033353ee021d90a10ac95959d30f52cf9715e0c17d7308"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-044",
+      "name": "does nothing when there is nothing published",
+      "source": "src/agent-transcript.test.ts",
+      "api": "mergePublishedAttachments",
+      "input": { "messages": [{ "id": "assistant:1", "role": "assistant", "parts": [], "text": "" }], "published": [] },
+      "output": { "messages": [{ "id": "assistant:1", "role": "assistant", "parts": [], "text": "" }], "anchors": [] },
+      "inputSha256": "19ec7bd93cd8314df28a1915ade77bb1103fdc2c0717a699d49a227abb952a2b"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-045",
+      "name": "keeps an attachment with the turn it was shown in",
+      "source": "src/agent-transcript.test.ts",
+      "api": "mergePublishedAttachments",
+      "input": {
+        "messages": [
+          {
+            "id": "assistant:published-turn",
+            "role": "assistant",
+            "parts": [{ "type": "text", "text": "here" }],
+            "text": "here"
+          },
+          {
+            "id": "assistant:later",
+            "role": "assistant",
+            "parts": [{ "type": "text", "text": "later" }],
+            "text": "later",
+            "latest": true
+          }
+        ],
+        "published": [
+          {
+            "attachmentId": "att_anchored",
+            "filename": "chart.png",
+            "mimeType": "image/png",
+            "anchorMessageId": "assistant:published-turn"
+          }
+        ]
+      },
+      "output": {
+        "messages": [
+          {
+            "id": "assistant:published-turn",
+            "role": "assistant",
+            "parts": [
+              { "type": "text", "text": "here" },
+              {
+                "type": "image_reference",
+                "label": "[image #1]",
+                "attachmentId": "att_anchored",
+                "filename": "chart.png",
+                "mimeType": "image/png"
+              }
+            ],
+            "text": "here"
+          },
+          {
+            "id": "assistant:later",
+            "role": "assistant",
+            "parts": [{ "type": "text", "text": "later" }],
+            "text": "later",
+            "latest": true
+          }
+        ],
+        "anchors": []
+      },
+      "inputSha256": "ff7177afe83d273aba8ff31b8e2bb5e14faecc84697687da8a6b52d1609593c0"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-046",
+      "name": "drops it once that turn has scrolled out of the window",
+      "source": "src/agent-transcript.test.ts",
+      "api": "mergePublishedAttachments",
+      "input": {
+        "messages": [
+          {
+            "id": "assistant:later",
+            "role": "assistant",
+            "parts": [{ "type": "text", "text": "later" }],
+            "text": "later",
+            "latest": true
+          }
+        ],
+        "published": [
+          {
+            "attachmentId": "att_anchored",
+            "filename": "chart.png",
+            "mimeType": "image/png",
+            "anchorMessageId": "assistant:published-turn"
+          }
+        ]
+      },
+      "output": {
+        "messages": [
+          {
+            "id": "assistant:later",
+            "role": "assistant",
+            "parts": [{ "type": "text", "text": "later" }],
+            "text": "later",
+            "latest": true
+          }
+        ],
+        "anchors": []
+      },
+      "inputSha256": "eb39fa34cd82fffa935d2d6a0565aac3bc76ef1a6e80298bf8726c6414c1ec31"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-047",
+      "name": "follows a reply whose id moved while it was still being written",
+      "source": "src/agent-transcript.test.ts",
+      "api": "mergePublishedAttachments",
+      "input": {
+        "messages": [
+          { "id": "assistant:after-more-text", "role": "assistant", "parts": [], "text": "", "latest": true }
+        ],
+        "published": [
+          {
+            "attachmentId": "att_streaming",
+            "filename": "chart.png",
+            "mimeType": "image/png",
+            "anchorMessageId": "assistant:before-more-text",
+            "canReanchor": true
+          }
+        ]
+      },
+      "output": {
+        "messages": [
+          {
+            "id": "assistant:after-more-text",
+            "role": "assistant",
+            "parts": [
+              {
+                "type": "image_reference",
+                "label": "[image #1]",
+                "attachmentId": "att_streaming",
+                "filename": "chart.png",
+                "mimeType": "image/png"
+              }
+            ],
+            "text": "",
+            "latest": true
+          }
+        ],
+        "anchors": [{ "attachmentId": "att_streaming", "messageId": "assistant:after-more-text" }]
+      },
+      "inputSha256": "3e28b9542e97c536014d078cd2296c5397cbc0bb7fd81c46533cb794fc8e8679"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-048",
+      "name": "stops following once the grace has passed",
+      "source": "src/agent-transcript.test.ts",
+      "api": "mergePublishedAttachments",
+      "input": {
+        "messages": [
+          { "id": "assistant:after-more-text", "role": "assistant", "parts": [], "text": "", "latest": true }
+        ],
+        "published": [
+          {
+            "attachmentId": "att_streaming",
+            "filename": "chart.png",
+            "mimeType": "image/png",
+            "anchorMessageId": "assistant:before-more-text",
+            "canReanchor": false
+          }
+        ]
+      },
+      "output": {
+        "messages": [
+          { "id": "assistant:after-more-text", "role": "assistant", "parts": [], "text": "", "latest": true }
+        ],
+        "anchors": []
+      },
+      "inputSha256": "e9a78e072d49d0c61699a57064615efdf017de809ead83e332014eb383095f72"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-049",
+      "name": "keeps showing it across polls once it has its own message",
+      "source": "src/agent-transcript.test.ts",
+      "api": "mergePublishedAttachments",
+      "input": {
+        "messages": [
+          {
+            "id": "user:1",
+            "role": "user",
+            "parts": [{ "type": "text", "text": "show me" }],
+            "text": "show me",
+            "latest": true
+          }
+        ],
+        "published": [{ "attachmentId": "att_no_reply", "filename": "chart.png", "mimeType": "image/png" }]
+      },
+      "output": {
+        "messages": [
+          { "id": "user:1", "role": "user", "parts": [{ "type": "text", "text": "show me" }], "text": "show me" },
+          {
+            "id": "assistant:published:att_no_reply",
+            "role": "assistant",
+            "parts": [
+              {
+                "type": "image_reference",
+                "label": "[image #1]",
+                "attachmentId": "att_no_reply",
+                "filename": "chart.png",
+                "mimeType": "image/png"
+              }
+            ],
+            "text": "",
+            "latest": true
+          }
+        ],
+        "anchors": [{ "attachmentId": "att_no_reply", "messageId": "assistant:published:att_no_reply" }]
+      },
+      "inputSha256": "2e0fddfe7637a5343b2f5bba6707f05437ad32735cafcd86125bd7b7965d0867"
+    },
+    {
+      "id": "src-agent-transcript-test-ts-050",
+      "name": "keeps showing it across polls once it has its own message",
+      "source": "src/agent-transcript.test.ts",
+      "api": "mergePublishedAttachments",
+      "input": {
+        "messages": [
+          {
+            "id": "user:1",
+            "role": "user",
+            "parts": [{ "type": "text", "text": "show me" }],
+            "text": "show me",
+            "latest": true
+          }
+        ],
+        "published": [
+          {
+            "attachmentId": "att_no_reply",
+            "filename": "chart.png",
+            "mimeType": "image/png",
+            "anchorMessageId": "assistant:published:att_no_reply",
+            "canReanchor": false
+          }
+        ]
+      },
+      "output": {
+        "messages": [
+          { "id": "user:1", "role": "user", "parts": [{ "type": "text", "text": "show me" }], "text": "show me" },
+          {
+            "id": "assistant:published:att_no_reply",
+            "role": "assistant",
+            "parts": [
+              {
+                "type": "image_reference",
+                "label": "[image #1]",
+                "attachmentId": "att_no_reply",
+                "filename": "chart.png",
+                "mimeType": "image/png"
+              }
+            ],
+            "text": "",
+            "latest": true
+          }
+        ],
+        "anchors": [{ "attachmentId": "att_no_reply", "messageId": "assistant:published:att_no_reply" }]
+      },
+      "inputSha256": "e2441d3de98a2b652490e0b4db0d6f743f904571e3da4a382ac208d98e7f85a0"
+    }
+  ]
+}

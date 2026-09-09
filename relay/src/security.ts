@@ -584,9 +584,7 @@ export function markSecurityActionUsed(
  */
 function collapseRepeatConnection(state: SecurityState, event: SecurityEventRecord, now: string): boolean {
   const events = state.events ?? [];
-  const index = events.findIndex(
-    (candidate) => candidate.kind === event.kind && candidate.deviceId === event.deviceId,
-  );
+  const index = events.findIndex((candidate) => candidate.kind === event.kind && candidate.deviceId === event.deviceId);
   if (index < 0) return false;
   // Replaced rather than mutated: normalizeSecurityState copies the array but
   // not the records in it, so editing one in place would reach back into the

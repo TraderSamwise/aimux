@@ -1,0 +1,229 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/dashboard-api-client.test.ts",
+  "generatedBy": "scripts/capture-dashboard-api-client-contract.mjs",
+  "description": "Dashboard API client resource refresh, model refresh, mutation, connection-state, and stale lifecycle contracts captured by running TypeScript.",
+  "normalization": {
+    "timestamps": "Date.now() is fixed at 1770000000000 while executing the TypeScript capture.",
+    "errors": "Error objects are serialized as name/message plus stable code/status/connection fields."
+  },
+  "cases": [
+    {
+      "id": "runtime-state-dashboard-api-client-001",
+      "name": "applies resource snapshots through the TUI API runtime",
+      "source": "src/multiplexer/dashboard-api-client.test.ts",
+      "sourceName": "applies resource snapshots through the TUI API runtime",
+      "api": "dashboard-api-client",
+      "input": { "path": "/demo", "resource": "demo", "response": { "ok": true, "value": 1 } },
+      "output": {
+        "result": true,
+        "calls": { "getFromProjectService": [["/demo"]], "apply": [[{ "ok": true, "value": 1 }]], "ensure": [] },
+        "connection": {
+          "state": "ready",
+          "updatedAt": 1770000000000,
+          "pendingResources": [],
+          "staleResources": [],
+          "failedResources": [],
+          "failedCriticalResources": []
+        }
+      },
+      "inputSha256": "fb9c5ab3150ee962a31b6a882a648469dc328c934c72c8140f0d5e11d470ae02"
+    },
+    {
+      "id": "runtime-state-dashboard-api-client-002",
+      "name": "does not request or apply a resource for a stale lifecycle",
+      "source": "src/multiplexer/dashboard-api-client.test.ts",
+      "sourceName": "does not request or apply a resource for a stale lifecycle",
+      "api": "dashboard-api-client",
+      "input": {
+        "host": { "mode": "dashboard", "dashboardInputEpoch": 2 },
+        "lifecycle": { "mode": "dashboard", "inputEpoch": 1, "requiresInputEpoch": true }
+      },
+      "output": { "result": false, "calls": { "getFromProjectService": [], "apply": [], "ensure": [] } },
+      "inputSha256": "9d7dc79178f63bdaa0b1875ae30112f6d1cdf15b5d7ce40184a5b85c8e07176f"
+    },
+    {
+      "id": "runtime-state-dashboard-api-client-003",
+      "name": "does not apply a resource if the lifecycle goes stale while loading",
+      "source": "src/multiplexer/dashboard-api-client.test.ts",
+      "sourceName": "does not apply a resource if the lifecycle goes stale while loading",
+      "api": "dashboard-api-client",
+      "input": {
+        "hostBefore": { "mode": "dashboard", "dashboardInputEpoch": 1 },
+        "lifecycle": { "mode": "dashboard", "inputEpoch": 1, "requiresInputEpoch": true },
+        "response": { "ok": true, "value": 1 },
+        "mutateBeforeResolve": { "dashboardInputEpoch": 2 }
+      },
+      "output": {
+        "result": false,
+        "calls": { "getFromProjectService": [["/demo"]], "apply": [], "ensure": [] },
+        "hostAfter": { "mode": "dashboard", "dashboardInputEpoch": 2 }
+      },
+      "inputSha256": "fd1679dc5c5ac9bfe8db1769836279e0c8a4d9c2db982f218c39951d7e3bca16"
+    },
+    {
+      "id": "runtime-state-dashboard-api-client-004",
+      "name": "returns a failed dashboard model refresh outcome when no snapshot is usable",
+      "source": "src/multiplexer/dashboard-api-client.test.ts",
+      "sourceName": "returns a failed dashboard model refresh outcome when no snapshot is usable",
+      "api": "dashboard-api-client",
+      "input": { "refreshError": "offline", "options": { "force": true } },
+      "output": {
+        "result": {
+          "ok": false,
+          "status": "failed",
+          "stale": false,
+          "connection": {
+            "state": "ready",
+            "updatedAt": 1770000000000,
+            "pendingResources": [],
+            "staleResources": [],
+            "failedResources": [],
+            "failedCriticalResources": []
+          },
+          "error": { "name": "Error", "message": "offline" }
+        },
+        "calls": { "refreshDashboardModelFromService": [[true, null]] }
+      },
+      "inputSha256": "70d5c48a5e0cc689fd2730a7596ae53d45847968010edd9ed82048469d33ca03"
+    },
+    {
+      "id": "runtime-state-dashboard-api-client-005",
+      "name": "returns a stale dashboard model refresh outcome when a prior desktop snapshot is usable",
+      "source": "src/multiplexer/dashboard-api-client.test.ts",
+      "sourceName": "returns a stale dashboard model refresh outcome when a prior desktop snapshot is usable",
+      "api": "dashboard-api-client",
+      "input": {
+        "firstDesktopState": { "ok": true, "sessions": [] },
+        "refreshError": "offline",
+        "options": { "force": true }
+      },
+      "output": {
+        "result": {
+          "ok": false,
+          "status": "stale",
+          "stale": true,
+          "connection": {
+            "state": "stale",
+            "updatedAt": 1770000000000,
+            "pendingResources": [],
+            "staleResources": ["desktop-state"],
+            "failedResources": ["desktop-state"],
+            "failedCriticalResources": ["desktop-state"],
+            "lastError": { "name": "Error", "message": "offline", "code": "ECONNREFUSED" }
+          },
+          "error": { "name": "Error", "message": "offline" }
+        },
+        "calls": {
+          "getFromProjectService": [["/desktop-state"], ["/desktop-state"]],
+          "refreshDashboardModelFromService": [[true, null]]
+        },
+        "connection": {
+          "state": "stale",
+          "updatedAt": 1770000000000,
+          "pendingResources": [],
+          "staleResources": ["desktop-state"],
+          "failedResources": ["desktop-state"],
+          "failedCriticalResources": ["desktop-state"],
+          "lastError": { "name": "Error", "message": "offline", "code": "ECONNREFUSED" }
+        }
+      },
+      "inputSha256": "84a61bc9e3c6313afcd17f67d91fcd941e421eee2dd4b1a70b9eabef611c0a82"
+    },
+    {
+      "id": "runtime-state-dashboard-api-client-006",
+      "name": "allows model settlement refreshes while inactive even with a stale render lifecycle",
+      "source": "src/multiplexer/dashboard-api-client.test.ts",
+      "sourceName": "allows model settlement refreshes while inactive even with a stale render lifecycle",
+      "api": "dashboard-api-client",
+      "input": {
+        "host": { "mode": "session", "dashboardInputEpoch": 2 },
+        "options": {
+          "force": true,
+          "allowInactive": true,
+          "lifecycle": { "mode": "dashboard", "inputEpoch": 1, "requiresInputEpoch": true }
+        }
+      },
+      "output": {
+        "result": {
+          "ok": true,
+          "status": "applied",
+          "stale": false,
+          "connection": {
+            "state": "ready",
+            "updatedAt": 1770000000000,
+            "pendingResources": [],
+            "staleResources": [],
+            "failedResources": [],
+            "failedCriticalResources": []
+          }
+        },
+        "calls": { "refreshDashboardModelFromService": [[true, { "allowInactive": true }]] }
+      },
+      "inputSha256": "0f5c0cd9a5248a6efaf082d5d35a78fc54b34fdd4f603adf1ac088a21aa8e4b9"
+    },
+    {
+      "id": "runtime-state-dashboard-api-client-007",
+      "name": "mutates through the shared TUI API runtime",
+      "source": "src/multiplexer/dashboard-api-client.test.ts",
+      "sourceName": "mutates through the shared TUI API runtime",
+      "api": "dashboard-api-client",
+      "input": { "path": "/agents/stop", "body": { "sessionId": "a" } },
+      "output": {
+        "result": { "ok": true, "body": { "sessionId": "a" } },
+        "calls": { "postToProjectService": [["/agents/stop", { "sessionId": "a" }]] },
+        "connection": {
+          "state": "ready",
+          "updatedAt": 1770000000000,
+          "pendingResources": [],
+          "staleResources": [],
+          "failedResources": [],
+          "failedCriticalResources": []
+        }
+      },
+      "inputSha256": "e8ce2f121c15b9ede681c3e2cee47af5eb2644ea371645b0b08e3f97767c7e80"
+    },
+    {
+      "id": "runtime-state-dashboard-api-client-008",
+      "name": "blocks mutations while the critical desktop-state resource is reconnecting",
+      "source": "src/multiplexer/dashboard-api-client.test.ts",
+      "sourceName": "blocks mutations while the critical desktop-state resource is reconnecting",
+      "api": "dashboard-api-client",
+      "input": {
+        "firstDesktopState": { "ok": true, "sessions": [] },
+        "failure": { "message": "offline", "code": "ECONNREFUSED" },
+        "mutation": { "path": "/agents/stop", "body": { "sessionId": "a" } }
+      },
+      "output": {
+        "blocked": true,
+        "mutation": {
+          "ok": false,
+          "error": {
+            "name": "TuiApiMutationBlockedError",
+            "message": "Aimux is reconnecting the project service",
+            "connection": {
+              "state": "stale",
+              "updatedAt": 1770000000000,
+              "pendingResources": [],
+              "staleResources": ["desktop-state"],
+              "failedResources": ["desktop-state"],
+              "failedCriticalResources": ["desktop-state"],
+              "lastError": { "name": "Error", "message": "offline", "code": "ECONNREFUSED" }
+            }
+          }
+        },
+        "calls": { "getFromProjectService": [["/desktop-state"], ["/desktop-state"]], "postToProjectService": [] },
+        "connection": {
+          "state": "stale",
+          "updatedAt": 1770000000000,
+          "pendingResources": [],
+          "staleResources": ["desktop-state"],
+          "failedResources": ["desktop-state"],
+          "failedCriticalResources": ["desktop-state"],
+          "lastError": { "name": "Error", "message": "offline", "code": "ECONNREFUSED" }
+        }
+      },
+      "inputSha256": "4eeb60f8a695e78a099c98ba495f913b63a099d85ebe82c293c2f9a18b0410ac"
+    }
+  ]
+}

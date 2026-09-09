@@ -1,0 +1,173 @@
+{
+  "version": 1,
+  "source": "src/cli-launcher.test.ts",
+  "sources": ["src/cli-launcher.test.ts", "src/cli-launcher.ts"],
+  "generatedBy": "scripts/capture-cli-launcher-contract.mjs",
+  "description": "Aimux launcher command selection captured by running the TypeScript cli-launcher helpers with temp paths, Node path, and platform-native subdir normalized.",
+  "normalization": {
+    "<tmp>": "temporary test directory",
+    "<repo>": "repository root",
+    "<node>": "process.execPath",
+    "<platform-arch>": "process.platform-process.arch native subdirectory"
+  },
+  "cases": [
+    {
+      "id": "runtime-cli-launcher-001",
+      "name": "uses the installed native binary for daemon launch when the current entry is a native install",
+      "source": "src/cli-launcher.test.ts",
+      "input": {
+        "name": "uses the installed native binary for daemon launch when the current entry is a native install",
+        "api": "getAimuxDaemonLaunchCommand",
+        "options": {
+          "env": { "AIMUX_CLI_BIN": "<tmp>/bin/aimux", "AIMUX_INSTALL_ROOT": "<tmp>/native" },
+          "currentArgvEntry": "<tmp>/native/old-build/dist/launcher-bin.js"
+        }
+      },
+      "output": {
+        "command": "<tmp>/native/old-build/native/<platform-arch>/aimux",
+        "args": ["daemon", "run"],
+        "source": "native-binary",
+        "currentEntryPath": "<tmp>/native/old-build/native/<platform-arch>/aimux",
+        "stableShimPath": "<tmp>/bin/aimux"
+      },
+      "inputSha256": "ad6c80741687582977c206d16e61a82508f6cb0f075f383569c9fe4b0d91ff5b"
+    },
+    {
+      "id": "runtime-cli-launcher-002",
+      "name": "keeps source runs on the current entry when not inside a native install",
+      "source": "src/cli-launcher.test.ts",
+      "input": {
+        "name": "keeps source runs on the current entry when not inside a native install",
+        "api": "getAimuxDaemonLaunchCommand",
+        "options": {
+          "env": { "AIMUX_CLI_BIN": "<tmp>/bin/aimux", "AIMUX_INSTALL_ROOT": "<tmp>/native" },
+          "currentArgvEntry": "<tmp>/checkout/dist/launcher-bin.js"
+        }
+      },
+      "output": {
+        "command": "<node>",
+        "args": ["<repo>/dist/launcher-bin.js", "daemon", "run"],
+        "source": "current-entry",
+        "currentEntryPath": "<repo>/dist/launcher-bin.js",
+        "stableShimPath": "<tmp>/bin/aimux"
+      },
+      "inputSha256": "11ff1cbd761cb90ab44d458828d7aac5280357ed682b22cd2df13b40a21894b5"
+    },
+    {
+      "id": "runtime-cli-launcher-003",
+      "name": "uses a dedicated dashboard launch contract",
+      "source": "src/cli-launcher.test.ts",
+      "input": {
+        "name": "uses a dedicated dashboard launch contract",
+        "api": "getAimuxDashboardLaunchCommand",
+        "options": {
+          "env": { "AIMUX_CLI_BIN": "<tmp>/bin/aimux", "AIMUX_INSTALL_ROOT": "<tmp>/native" },
+          "currentArgvEntry": "<tmp>/native/old-build/dist/launcher-bin.js"
+        }
+      },
+      "output": {
+        "command": "<tmp>/bin/aimux",
+        "args": ["--tmux-dashboard-internal"],
+        "source": "stable-shim",
+        "currentEntryPath": "<repo>/dist/launcher-bin.js",
+        "stableShimPath": "<tmp>/bin/aimux"
+      },
+      "inputSha256": "c07d033edbb49ec2b9950513536685014c6a5f84bb07502bce728b6f2cd9fa6f"
+    },
+    {
+      "id": "runtime-cli-launcher-004",
+      "name": "uses the installed native binary for native dashboard launch",
+      "source": "src/cli-launcher.test.ts",
+      "input": {
+        "name": "uses the installed native binary for native dashboard launch",
+        "api": "getAimuxDashboardLaunchCommand",
+        "options": {
+          "env": {
+            "AIMUX_CLI_BIN": "<tmp>/bin/aimux",
+            "AIMUX_INSTALL_ROOT": "<tmp>/native",
+            "AIMUX_DASHBOARD_IMPLEMENTATION": "native"
+          },
+          "currentArgvEntry": "<tmp>/native/old-build/dist/launcher-bin.js"
+        }
+      },
+      "output": {
+        "command": "<tmp>/native/old-build/native/<platform-arch>/aimux",
+        "args": ["__dashboard-internal-native"],
+        "source": "native-binary",
+        "currentEntryPath": "<tmp>/native/old-build/native/<platform-arch>/aimux",
+        "stableShimPath": "<tmp>/bin/aimux"
+      },
+      "inputSha256": "f6ac20c7b94092059a14329b6b0a14a67600fef9e9c8db0108b4c2ea1214d589"
+    },
+    {
+      "id": "runtime-cli-launcher-005",
+      "name": "uses the installed native binary for project service launch",
+      "source": "src/cli-launcher.test.ts",
+      "input": {
+        "name": "uses the installed native binary for project service launch",
+        "api": "getAimuxProjectServiceLaunchCommand",
+        "projectId": "project-1",
+        "projectRoot": "/repo/alpha",
+        "options": {
+          "env": { "AIMUX_CLI_BIN": "<tmp>/bin/aimux", "AIMUX_INSTALL_ROOT": "<tmp>/native" },
+          "currentArgvEntry": "<tmp>/native/old-build/dist/launcher-bin.js"
+        }
+      },
+      "output": {
+        "command": "<tmp>/native/old-build/native/<platform-arch>/aimux",
+        "args": ["__project-service-internal", "--project-id", "project-1", "--project-root", "/repo/alpha"],
+        "source": "native-binary",
+        "currentEntryPath": "<tmp>/native/old-build/native/<platform-arch>/aimux",
+        "stableShimPath": "<tmp>/bin/aimux"
+      },
+      "inputSha256": "44d87ec67db58e688449b6689d58e29027d1b632464c096419a5390218984c34"
+    },
+    {
+      "id": "runtime-cli-launcher-006",
+      "name": "uses the installed native binary when native install paths resolve through symlink aliases",
+      "source": "src/cli-launcher.test.ts",
+      "input": {
+        "name": "uses the installed native binary when native install paths resolve through symlink aliases",
+        "api": "getAimuxDashboardLaunchCommand",
+        "setup": "alias-root",
+        "options": {
+          "env": {
+            "AIMUX_CLI_BIN": "<tmp>/bin/aimux",
+            "AIMUX_INSTALL_ROOT": "<tmp>/real/native",
+            "AIMUX_DASHBOARD_IMPLEMENTATION": "native"
+          },
+          "currentArgvEntry": "<tmp>/alias/native/old-build/dist/launcher-bin.js"
+        }
+      },
+      "output": {
+        "command": "<tmp>/real/native/old-build/native/<platform-arch>/aimux",
+        "args": ["__dashboard-internal-native"],
+        "source": "native-binary",
+        "currentEntryPath": "<tmp>/real/native/old-build/native/<platform-arch>/aimux",
+        "stableShimPath": "<tmp>/bin/aimux"
+      },
+      "inputSha256": "8db263d67dadd59f8c51b8a9c1fc28ac26d68108c61d0f391c5708da54b24409"
+    },
+    {
+      "id": "runtime-cli-launcher-007",
+      "name": "exposes current CLI identity without launch arguments for diagnostics",
+      "source": "src/cli-launcher.test.ts",
+      "input": {
+        "name": "exposes current CLI identity without launch arguments for diagnostics",
+        "api": "getAimuxCurrentCliIdentity",
+        "options": {
+          "env": { "AIMUX_CLI_BIN": "<tmp>/bin/aimux", "AIMUX_INSTALL_ROOT": "<tmp>/native" },
+          "currentArgvEntry": "<tmp>/native/old-build/dist/launcher-bin.js"
+        }
+      },
+      "output": {
+        "command": "<tmp>/native/old-build/native/<platform-arch>/aimux",
+        "args": [],
+        "source": "native-binary",
+        "currentEntryPath": "<tmp>/native/old-build/native/<platform-arch>/aimux",
+        "stableShimPath": "<tmp>/bin/aimux"
+      },
+      "inputSha256": "7ffa879397f6e286f007b8f1742e499ef4b8283cd5794b717d397ec51631a9d6"
+    }
+  ]
+}

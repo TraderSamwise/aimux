@@ -1,0 +1,567 @@
+{
+  "version": 1,
+  "generatedAt": "2026-09-06T00:00:00.000Z",
+  "generatedBy": "scripts/capture-expose-hot-snapshot-worker-contract.mjs",
+  "source": "src/expose-hot-snapshot-worker.ts",
+  "subject": "global expose hot snapshot worker helpers",
+  "description": "Global Expose hot snapshot aggregation and mirroring captured by running TypeScript.",
+  "caseCount": 5,
+  "cases": [
+    {
+      "id": "tmux-expose-hot-snapshot-worker-001",
+      "name": "builds global view from project hot snapshots",
+      "source": "src/expose-hot-snapshot-worker.ts",
+      "api": "global hot snapshot worker helpers",
+      "input": {
+        "name": "builds global view from project hot snapshots",
+        "projects": [
+          { "id": "proj-a", "name": "a", "path": "/repo/a", "serviceAlive": true },
+          { "id": "proj-b", "name": "b", "path": "/repo/b", "serviceAlive": true }
+        ]
+      },
+      "output": {
+        "view": {
+          "scope": "global",
+          "scopeLabel": "all projects",
+          "sublabel": "project-worktree",
+          "items": [
+            {
+              "id": "agent-a",
+              "label": "agent-a",
+              "urgency": 0,
+              "activity": 0,
+              "recentRank": 0,
+              "target": { "sessionName": "aimux-test", "windowId": "@1", "windowIndex": 1, "windowName": "agent-a" },
+              "metadata": { "kind": "agent", "sessionId": "agent-a", "command": "codex", "worktreePath": "/repo" },
+              "previewSnapshot": {
+                "output": "agent-a preview\n",
+                "capturedAt": "<iso>",
+                "source": "tap",
+                "windowId": "@1",
+                "startLine": -40,
+                "lineCount": 40
+              },
+              "projectId": "proj-a",
+              "projectRoot": "/repo/a",
+              "projectName": "a"
+            }
+          ]
+        }
+      },
+      "inputSha256": "9680da4ecc8dc8a92e5a773188b4a13d129e10a127c401f40b484c7b390eb3c8"
+    },
+    {
+      "id": "tmux-expose-hot-snapshot-worker-002",
+      "name": "mirrors active project snapshots into every active project global cache",
+      "source": "src/expose-hot-snapshot-worker.ts",
+      "api": "global hot snapshot worker helpers",
+      "input": {
+        "name": "mirrors active project snapshots into every active project global cache",
+        "projects": [
+          { "id": "proj-a", "name": "a", "path": "/repo/a", "serviceAlive": true },
+          { "id": "proj-b", "name": "b", "path": "/repo/b", "serviceAlive": false },
+          { "id": "proj-c", "name": "c", "path": "/repo/c", "serviceAlive": true }
+        ]
+      },
+      "output": {
+        "projA": {
+          "scope": "global",
+          "scopeLabel": "all projects",
+          "sublabel": "project-worktree",
+          "items": [
+            {
+              "id": "agent-a",
+              "label": "agent-a",
+              "urgency": 0,
+              "activity": 0,
+              "recentRank": 0,
+              "target": { "sessionName": "aimux-test", "windowId": "@1", "windowIndex": 1, "windowName": "agent-a" },
+              "metadata": { "kind": "agent", "sessionId": "agent-a", "command": "codex", "worktreePath": "/repo" },
+              "previewSnapshot": {
+                "output": "agent-a preview\n",
+                "capturedAt": "<iso>",
+                "source": "tap",
+                "windowId": "@1",
+                "startLine": -40,
+                "lineCount": 40
+              },
+              "projectId": "proj-a",
+              "projectRoot": "/repo/a",
+              "projectName": "a"
+            }
+          ]
+        },
+        "projB": null,
+        "projC": {
+          "scope": "global",
+          "scopeLabel": "all projects",
+          "sublabel": "project-worktree",
+          "items": [
+            {
+              "id": "agent-a",
+              "label": "agent-a",
+              "urgency": 0,
+              "activity": 0,
+              "recentRank": 0,
+              "target": { "sessionName": "aimux-test", "windowId": "@1", "windowIndex": 1, "windowName": "agent-a" },
+              "metadata": { "kind": "agent", "sessionId": "agent-a", "command": "codex", "worktreePath": "/repo" },
+              "previewSnapshot": {
+                "output": "agent-a preview\n",
+                "capturedAt": "<iso>",
+                "source": "tap",
+                "windowId": "@1",
+                "startLine": -40,
+                "lineCount": 40
+              },
+              "projectId": "proj-a",
+              "projectRoot": "/repo/a",
+              "projectName": "a"
+            }
+          ]
+        }
+      },
+      "inputSha256": "ba01e7a752a350f1ea0d1445a3f5a2533ee6820ce5749cc6cffd3b9b836ae982"
+    },
+    {
+      "id": "tmux-expose-hot-snapshot-worker-003",
+      "name": "clears active global caches when no project snapshots remain",
+      "source": "src/expose-hot-snapshot-worker.ts",
+      "api": "global hot snapshot worker helpers",
+      "input": {
+        "name": "clears active global caches when no project snapshots remain",
+        "projects": [{ "id": "proj-a", "name": "a", "path": "/repo/a", "serviceAlive": true }]
+      },
+      "output": { "beforeExists": true, "afterExists": false, "global": null },
+      "inputSha256": "4d52b92a5840d7728fbcbedc8e37094905d636909d6788b96f2615a02b68d113"
+    },
+    {
+      "id": "tmux-expose-hot-snapshot-worker-004",
+      "name": "refreshes project and launch-context hot snapshots",
+      "source": "src/expose-hot-snapshot-worker.ts",
+      "api": "project hot snapshot worker helper",
+      "input": {
+        "name": "refreshes project and launch-context hot snapshots",
+        "projectRoot": "/repo",
+        "managedWindows": [
+          {
+            "target": {
+              "sessionName": "aimux-test",
+              "windowId": "@11",
+              "windowIndex": 1,
+              "windowName": "agent-1",
+              "paneDead": false
+            },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "agent-1",
+              "command": "codex",
+              "args": [],
+              "toolConfigKey": "codex",
+              "worktreePath": "/repo"
+            }
+          },
+          {
+            "target": {
+              "sessionName": "aimux-test",
+              "windowId": "@12",
+              "windowIndex": 2,
+              "windowName": "agent-2",
+              "paneDead": false
+            },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "agent-2",
+              "command": "codex",
+              "args": [],
+              "toolConfigKey": "codex",
+              "worktreePath": "/repo"
+            }
+          }
+        ]
+      },
+      "output": {
+        "project": {
+          "scope": "project",
+          "scopeLabel": "all worktrees",
+          "sublabel": "worktree",
+          "items": [
+            {
+              "target": {
+                "sessionName": "aimux-test",
+                "windowId": "@11",
+                "windowIndex": 1,
+                "windowName": "agent-1",
+                "paneDead": false
+              },
+              "metadata": {
+                "kind": "agent",
+                "sessionId": "agent-1",
+                "command": "codex",
+                "args": [],
+                "toolConfigKey": "codex",
+                "worktreePath": "/repo"
+              },
+              "id": "agent-1",
+              "label": "codex",
+              "urgency": 0,
+              "activity": 1,
+              "recentRank": 9007199254740991,
+              "overseer": false,
+              "scribe": false,
+              "alive": true,
+              "previewSnapshot": {
+                "output": "@11 captured preview\n",
+                "capturedAt": "<iso>",
+                "source": "capture",
+                "windowId": "@11",
+                "startLine": -40,
+                "lineCount": 40
+              }
+            },
+            {
+              "target": {
+                "sessionName": "aimux-test",
+                "windowId": "@12",
+                "windowIndex": 2,
+                "windowName": "agent-2",
+                "paneDead": false
+              },
+              "metadata": {
+                "kind": "agent",
+                "sessionId": "agent-2",
+                "command": "codex",
+                "args": [],
+                "toolConfigKey": "codex",
+                "worktreePath": "/repo"
+              },
+              "id": "agent-2",
+              "label": "codex",
+              "urgency": 0,
+              "activity": 2,
+              "recentRank": 9007199254740991,
+              "overseer": false,
+              "scribe": false,
+              "alive": true,
+              "previewSnapshot": {
+                "output": "@12 captured preview\n",
+                "capturedAt": "<iso>",
+                "source": "capture",
+                "windowId": "@12",
+                "startLine": -40,
+                "lineCount": 40
+              }
+            }
+          ]
+        },
+        "worktree11": {
+          "scope": "worktree",
+          "scopeLabel": "this worktree",
+          "sublabel": "none",
+          "items": [
+            {
+              "target": {
+                "sessionName": "aimux-test",
+                "windowId": "@11",
+                "windowIndex": 1,
+                "windowName": "agent-1",
+                "paneDead": false
+              },
+              "metadata": {
+                "kind": "agent",
+                "sessionId": "agent-1",
+                "command": "codex",
+                "args": [],
+                "toolConfigKey": "codex",
+                "worktreePath": "/repo"
+              },
+              "id": "agent-1",
+              "label": "codex",
+              "urgency": 0,
+              "activity": 1,
+              "recentRank": 9007199254740991,
+              "overseer": false,
+              "scribe": false,
+              "alive": true,
+              "previewSnapshot": {
+                "output": "@11 captured preview\n",
+                "capturedAt": "<iso>",
+                "source": "capture",
+                "windowId": "@11",
+                "startLine": -40,
+                "lineCount": 40
+              }
+            },
+            {
+              "target": {
+                "sessionName": "aimux-test",
+                "windowId": "@12",
+                "windowIndex": 2,
+                "windowName": "agent-2",
+                "paneDead": false
+              },
+              "metadata": {
+                "kind": "agent",
+                "sessionId": "agent-2",
+                "command": "codex",
+                "args": [],
+                "toolConfigKey": "codex",
+                "worktreePath": "/repo"
+              },
+              "id": "agent-2",
+              "label": "codex",
+              "urgency": 0,
+              "activity": 2,
+              "recentRank": 9007199254740991,
+              "overseer": false,
+              "scribe": false,
+              "alive": true,
+              "previewSnapshot": {
+                "output": "@12 captured preview\n",
+                "capturedAt": "<iso>",
+                "source": "capture",
+                "windowId": "@12",
+                "startLine": -40,
+                "lineCount": 40
+              }
+            }
+          ]
+        },
+        "worktree12": {
+          "scope": "worktree",
+          "scopeLabel": "this worktree",
+          "sublabel": "none",
+          "items": [
+            {
+              "target": {
+                "sessionName": "aimux-test",
+                "windowId": "@11",
+                "windowIndex": 1,
+                "windowName": "agent-1",
+                "paneDead": false
+              },
+              "metadata": {
+                "kind": "agent",
+                "sessionId": "agent-1",
+                "command": "codex",
+                "args": [],
+                "toolConfigKey": "codex",
+                "worktreePath": "/repo"
+              },
+              "id": "agent-1",
+              "label": "codex",
+              "urgency": 0,
+              "activity": 1,
+              "recentRank": 9007199254740991,
+              "overseer": false,
+              "scribe": false,
+              "alive": true,
+              "previewSnapshot": {
+                "output": "@11 captured preview\n",
+                "capturedAt": "<iso>",
+                "source": "capture",
+                "windowId": "@11",
+                "startLine": -40,
+                "lineCount": 40
+              }
+            },
+            {
+              "target": {
+                "sessionName": "aimux-test",
+                "windowId": "@12",
+                "windowIndex": 2,
+                "windowName": "agent-2",
+                "paneDead": false
+              },
+              "metadata": {
+                "kind": "agent",
+                "sessionId": "agent-2",
+                "command": "codex",
+                "args": [],
+                "toolConfigKey": "codex",
+                "worktreePath": "/repo"
+              },
+              "id": "agent-2",
+              "label": "codex",
+              "urgency": 0,
+              "activity": 2,
+              "recentRank": 9007199254740991,
+              "overseer": false,
+              "scribe": false,
+              "alive": true,
+              "previewSnapshot": {
+                "output": "@12 captured preview\n",
+                "capturedAt": "<iso>",
+                "source": "capture",
+                "windowId": "@12",
+                "startLine": -40,
+                "lineCount": 40
+              }
+            }
+          ]
+        },
+        "stale99": null,
+        "captureCalls": ["@11", "@12"]
+      },
+      "inputSha256": "1e14fbf4e8fc70c2af56749e325c19152d74301ad6e32276d0b70f5f46eac1f1"
+    },
+    {
+      "id": "tmux-expose-hot-snapshot-worker-005",
+      "name": "keeps live worktree expose snapshots outside the refresh cap",
+      "source": "src/expose-hot-snapshot-worker.ts",
+      "api": "project hot snapshot worker helper",
+      "input": {
+        "name": "keeps live worktree expose snapshots outside the refresh cap",
+        "projectRoot": "/repo",
+        "managedWindows": [
+          {
+            "target": {
+              "sessionName": "aimux-test",
+              "windowId": "@1",
+              "windowIndex": 1,
+              "windowName": "agent-1",
+              "paneDead": false
+            },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "agent-1",
+              "command": "codex",
+              "args": [],
+              "toolConfigKey": "codex",
+              "worktreePath": "/repo"
+            }
+          },
+          {
+            "target": {
+              "sessionName": "aimux-test",
+              "windowId": "@2",
+              "windowIndex": 2,
+              "windowName": "agent-2",
+              "paneDead": false
+            },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "agent-2",
+              "command": "codex",
+              "args": [],
+              "toolConfigKey": "codex",
+              "worktreePath": "/repo"
+            }
+          },
+          {
+            "target": {
+              "sessionName": "aimux-test",
+              "windowId": "@3",
+              "windowIndex": 3,
+              "windowName": "agent-3",
+              "paneDead": false
+            },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "agent-3",
+              "command": "codex",
+              "args": [],
+              "toolConfigKey": "codex",
+              "worktreePath": "/repo"
+            }
+          },
+          {
+            "target": {
+              "sessionName": "aimux-test",
+              "windowId": "@4",
+              "windowIndex": 4,
+              "windowName": "agent-4",
+              "paneDead": false
+            },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "agent-4",
+              "command": "codex",
+              "args": [],
+              "toolConfigKey": "codex",
+              "worktreePath": "/repo"
+            }
+          },
+          {
+            "target": {
+              "sessionName": "aimux-test",
+              "windowId": "@5",
+              "windowIndex": 5,
+              "windowName": "agent-5",
+              "paneDead": false
+            },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "agent-5",
+              "command": "codex",
+              "args": [],
+              "toolConfigKey": "codex",
+              "worktreePath": "/repo"
+            }
+          },
+          {
+            "target": {
+              "sessionName": "aimux-test",
+              "windowId": "@6",
+              "windowIndex": 6,
+              "windowName": "agent-6",
+              "paneDead": false
+            },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "agent-6",
+              "command": "codex",
+              "args": [],
+              "toolConfigKey": "codex",
+              "worktreePath": "/repo"
+            }
+          },
+          {
+            "target": {
+              "sessionName": "aimux-test",
+              "windowId": "@7",
+              "windowIndex": 7,
+              "windowName": "agent-7",
+              "paneDead": false
+            },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "agent-7",
+              "command": "codex",
+              "args": [],
+              "toolConfigKey": "codex",
+              "worktreePath": "/repo"
+            }
+          }
+        ]
+      },
+      "output": {
+        "worktree7": {
+          "scope": "worktree",
+          "scopeLabel": "this worktree",
+          "sublabel": "none",
+          "items": [
+            {
+              "id": "agent-7",
+              "label": "agent-7",
+              "urgency": 0,
+              "activity": 0,
+              "recentRank": 0,
+              "target": { "sessionName": "aimux-test", "windowId": "@7", "windowIndex": 1, "windowName": "agent-7" },
+              "metadata": { "kind": "agent", "sessionId": "agent-7", "command": "codex", "worktreePath": "/repo" },
+              "previewSnapshot": {
+                "output": "agent-7 preview\n",
+                "capturedAt": "<iso>",
+                "source": "tap",
+                "windowId": "@7",
+                "startLine": -40,
+                "lineCount": 40
+              }
+            }
+          ]
+        },
+        "captureCalls": ["@1", "@2", "@3", "@4", "@5", "@6", "@7"]
+      },
+      "inputSha256": "34a0067596c13fa7b6625b45a1d49d70a9c339f0a29c6952773cd21e5e2cf1a0"
+    }
+  ]
+}

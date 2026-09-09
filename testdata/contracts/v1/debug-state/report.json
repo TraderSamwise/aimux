@@ -1,0 +1,1336 @@
+{
+  "version": 1,
+  "source": "src/debug-state.test.ts",
+  "generatedBy": "scripts/capture-debug-state-contract.mjs",
+  "description": "Debug-state target resolution and source projection contracts captured by running TypeScript buildDebugStateReport.",
+  "cases": [
+    {
+      "id": "debug-state-001",
+      "name": "joins session evidence without mutating source files",
+      "source": "src/debug-state.test.ts",
+      "input": { "scenario": "session-evidence" },
+      "output": {
+        "report": {
+          "version": 1,
+          "target": "backend-a1",
+          "project": {
+            "repoRoot": "<root>/repo",
+            "projectId": "repo-123",
+            "projectStateDir": "<root>/global",
+            "localAimuxDir": "<root>/repo/.aimux"
+          },
+          "targetResolution": {
+            "status": "matched",
+            "entityCount": 1,
+            "matches": [
+              {
+                "canonicalKey": "session:codex-a1",
+                "kind": "backend-session",
+                "source": "runtimeTopology",
+                "id": "codex-a1",
+                "backendSessionId": "backend-a1",
+                "worktreePath": "/repo/worktree-a",
+                "raw": {
+                  "id": "codex-a1",
+                  "nodeId": "agent:codex-a1",
+                  "status": "offline",
+                  "tool": "codex",
+                  "command": "codex",
+                  "args": [],
+                  "backendSessionId": "backend-a1",
+                  "worktreePath": "/repo/worktree-a",
+                  "createdAt": "2026-01-01T00:00:00.000Z",
+                  "updatedAt": "2026-01-01T00:00:00.000Z"
+                }
+              },
+              {
+                "canonicalKey": "session:codex-a1",
+                "kind": "tmux-window",
+                "source": "tmux",
+                "id": "codex-a1",
+                "backendSessionId": "backend-a1",
+                "worktreePath": "/repo/worktree-a",
+                "raw": {
+                  "target": {
+                    "sessionName": "aimux-repo",
+                    "windowId": "@1",
+                    "windowIndex": 1,
+                    "windowName": "codex-a1"
+                  },
+                  "metadata": {
+                    "kind": "agent",
+                    "sessionId": "codex-a1",
+                    "backendSessionId": "backend-a1",
+                    "command": "codex",
+                    "args": [],
+                    "toolConfigKey": "codex",
+                    "worktreePath": "/repo/worktree-a"
+                  }
+                }
+              }
+            ]
+          },
+          "sourceRoles": {
+            "savedState": {
+              "role": "legacy",
+              "authority": "runtime-topology.yaml for services",
+              "note": "legacy service snapshot evidence; it must not create lifecycle truth"
+            },
+            "runtimeTopology": {
+              "role": "authority",
+              "authority": "runtime-topology.yaml",
+              "note": "authoritative agents, services, worktrees, lifecycle, graveyard, and bindings"
+            },
+            "metadata": {
+              "role": "projection",
+              "authority": "runtime-topology.yaml and runtime-exchange.yaml",
+              "note": "decorates known sessions only; hidden lifecycle and backend identity fields are ignored"
+            },
+            "tmux": {
+              "role": "substrate",
+              "authority": "runtime-topology.yaml",
+              "note": "live tmux window evidence and repair input, not durable lifecycle authority"
+            },
+            "gitWorktrees": {
+              "role": "substrate",
+              "authority": "runtime-topology.yaml for aimux worktree lifecycle",
+              "note": "git worktree substrate evidence; aimux lifecycle state lives in topology"
+            },
+            "graveyard": {
+              "role": "authority",
+              "authority": "runtime-topology.yaml",
+              "note": "filtered topology sessions with graveyard status"
+            },
+            "worktreeGraveyard": {
+              "role": "authority",
+              "authority": "runtime-topology.yaml",
+              "note": "topology-owned worktree graveyard entries; git path existence gates resurrection"
+            },
+            "notifications": {
+              "role": "projection",
+              "authority": "runtime-exchange.yaml",
+              "note": "notification rows are exchange threads/messages tagged as notifications"
+            },
+            "operationFailures": {
+              "role": "projection",
+              "authority": "runtime-topology.yaml plus operation execution results",
+              "note": "dashboard-facing failure projection, not lifecycle authority"
+            },
+            "runtimeRows": {
+              "role": "unavailable",
+              "note": "live runtime-only view unavailable to standalone debug-state"
+            },
+            "pendingActions": {
+              "role": "unavailable",
+              "note": "in-memory dashboard optimism unavailable to standalone debug-state"
+            },
+            "dashboardSnapshot": {
+              "role": "unavailable",
+              "note": "project-service/dashboard projection unavailable to standalone debug-state"
+            }
+          },
+          "sources": {
+            "savedState": { "status": "found", "path": "<root>/global/state.json", "value": { "services": [] } },
+            "runtimeTopology": {
+              "status": "found",
+              "path": "<root>/global/runtime-topology.yaml",
+              "value": {
+                "sessions": [
+                  {
+                    "id": "codex-a1",
+                    "nodeId": "agent:codex-a1",
+                    "status": "offline",
+                    "tool": "codex",
+                    "command": "codex",
+                    "args": [],
+                    "backendSessionId": "backend-a1",
+                    "worktreePath": "/repo/worktree-a",
+                    "createdAt": "2026-01-01T00:00:00.000Z",
+                    "updatedAt": "2026-01-01T00:00:00.000Z"
+                  }
+                ],
+                "services": [],
+                "worktrees": []
+              }
+            },
+            "metadata": { "status": "found", "path": "<root>/global/metadata.json", "value": { "sessions": [] } },
+            "tmux": {
+              "status": "found",
+              "value": {
+                "windows": [
+                  {
+                    "target": {
+                      "sessionName": "aimux-repo",
+                      "windowId": "@1",
+                      "windowIndex": 1,
+                      "windowName": "codex-a1"
+                    },
+                    "metadata": {
+                      "kind": "agent",
+                      "sessionId": "codex-a1",
+                      "backendSessionId": "backend-a1",
+                      "command": "codex",
+                      "args": [],
+                      "toolConfigKey": "codex",
+                      "worktreePath": "/repo/worktree-a"
+                    }
+                  }
+                ]
+              }
+            },
+            "gitWorktrees": { "status": "found", "value": { "worktrees": [] } },
+            "graveyard": {
+              "status": "found",
+              "path": "<root>/global/runtime-topology.yaml",
+              "value": { "entries": [] }
+            },
+            "worktreeGraveyard": {
+              "status": "found",
+              "path": "<root>/global/runtime-topology.yaml",
+              "value": { "entries": [] }
+            },
+            "notifications": { "status": "missing", "path": "<root>/global/runtime-exchange.yaml" },
+            "operationFailures": { "status": "missing", "path": "<root>/global/dashboard-operation-failures.json" },
+            "runtimeRows": {
+              "status": "unavailable",
+              "reason": "standalone debug-state does not attach to the live project runtime"
+            },
+            "pendingActions": { "status": "unavailable", "reason": "pending actions are in-memory dashboard state" },
+            "dashboardSnapshot": {
+              "status": "unavailable",
+              "reason": "dashboard snapshot requires project-service/dashboard runtime"
+            }
+          }
+        },
+        "sourceFilesUnchanged": true
+      },
+      "inputSha256": "8ba243e525b7c83fe96da67c1fd66195a6f17c1d5b526103ce143a6f0469ccaf"
+    },
+    {
+      "id": "debug-state-002",
+      "name": "does not resolve topology-owned identity from stale metadata projection fields",
+      "source": "src/debug-state.test.ts",
+      "input": { "scenario": "stale-metadata" },
+      "output": {
+        "backend": {
+          "version": 1,
+          "target": "backend-stale",
+          "project": {
+            "repoRoot": "<root>/repo",
+            "projectId": "repo-123",
+            "projectStateDir": "<root>/global",
+            "localAimuxDir": "<root>/repo/.aimux"
+          },
+          "targetResolution": { "status": "missing", "entityCount": 0, "matches": [] },
+          "sourceRoles": {
+            "savedState": {
+              "role": "legacy",
+              "authority": "runtime-topology.yaml for services",
+              "note": "legacy service snapshot evidence; it must not create lifecycle truth"
+            },
+            "runtimeTopology": {
+              "role": "authority",
+              "authority": "runtime-topology.yaml",
+              "note": "authoritative agents, services, worktrees, lifecycle, graveyard, and bindings"
+            },
+            "metadata": {
+              "role": "projection",
+              "authority": "runtime-topology.yaml and runtime-exchange.yaml",
+              "note": "decorates known sessions only; hidden lifecycle and backend identity fields are ignored"
+            },
+            "tmux": {
+              "role": "substrate",
+              "authority": "runtime-topology.yaml",
+              "note": "live tmux window evidence and repair input, not durable lifecycle authority"
+            },
+            "gitWorktrees": {
+              "role": "substrate",
+              "authority": "runtime-topology.yaml for aimux worktree lifecycle",
+              "note": "git worktree substrate evidence; aimux lifecycle state lives in topology"
+            },
+            "graveyard": {
+              "role": "authority",
+              "authority": "runtime-topology.yaml",
+              "note": "filtered topology sessions with graveyard status"
+            },
+            "worktreeGraveyard": {
+              "role": "authority",
+              "authority": "runtime-topology.yaml",
+              "note": "topology-owned worktree graveyard entries; git path existence gates resurrection"
+            },
+            "notifications": {
+              "role": "projection",
+              "authority": "runtime-exchange.yaml",
+              "note": "notification rows are exchange threads/messages tagged as notifications"
+            },
+            "operationFailures": {
+              "role": "projection",
+              "authority": "runtime-topology.yaml plus operation execution results",
+              "note": "dashboard-facing failure projection, not lifecycle authority"
+            },
+            "runtimeRows": {
+              "role": "unavailable",
+              "note": "live runtime-only view unavailable to standalone debug-state"
+            },
+            "pendingActions": {
+              "role": "unavailable",
+              "note": "in-memory dashboard optimism unavailable to standalone debug-state"
+            },
+            "dashboardSnapshot": {
+              "role": "unavailable",
+              "note": "project-service/dashboard projection unavailable to standalone debug-state"
+            }
+          },
+          "sources": {
+            "savedState": { "status": "missing", "path": "<root>/global/state.json" },
+            "runtimeTopology": { "status": "missing", "path": "<root>/global/runtime-topology.yaml" },
+            "metadata": { "status": "found", "path": "<root>/global/metadata.json", "value": { "sessions": [] } },
+            "tmux": { "status": "found", "value": { "windows": [] } },
+            "gitWorktrees": { "status": "found", "value": { "worktrees": [] } },
+            "graveyard": { "status": "missing", "path": "<root>/global/runtime-topology.yaml" },
+            "worktreeGraveyard": { "status": "missing", "path": "<root>/global/runtime-topology.yaml" },
+            "notifications": { "status": "missing", "path": "<root>/global/runtime-exchange.yaml" },
+            "operationFailures": { "status": "missing", "path": "<root>/global/dashboard-operation-failures.json" },
+            "runtimeRows": {
+              "status": "unavailable",
+              "reason": "standalone debug-state does not attach to the live project runtime"
+            },
+            "pendingActions": { "status": "unavailable", "reason": "pending actions are in-memory dashboard state" },
+            "dashboardSnapshot": {
+              "status": "unavailable",
+              "reason": "dashboard snapshot requires project-service/dashboard runtime"
+            }
+          }
+        },
+        "label": {
+          "version": 1,
+          "target": "stale-label",
+          "project": {
+            "repoRoot": "<root>/repo",
+            "projectId": "repo-123",
+            "projectStateDir": "<root>/global",
+            "localAimuxDir": "<root>/repo/.aimux"
+          },
+          "targetResolution": { "status": "missing", "entityCount": 0, "matches": [] },
+          "sourceRoles": {
+            "savedState": {
+              "role": "legacy",
+              "authority": "runtime-topology.yaml for services",
+              "note": "legacy service snapshot evidence; it must not create lifecycle truth"
+            },
+            "runtimeTopology": {
+              "role": "authority",
+              "authority": "runtime-topology.yaml",
+              "note": "authoritative agents, services, worktrees, lifecycle, graveyard, and bindings"
+            },
+            "metadata": {
+              "role": "projection",
+              "authority": "runtime-topology.yaml and runtime-exchange.yaml",
+              "note": "decorates known sessions only; hidden lifecycle and backend identity fields are ignored"
+            },
+            "tmux": {
+              "role": "substrate",
+              "authority": "runtime-topology.yaml",
+              "note": "live tmux window evidence and repair input, not durable lifecycle authority"
+            },
+            "gitWorktrees": {
+              "role": "substrate",
+              "authority": "runtime-topology.yaml for aimux worktree lifecycle",
+              "note": "git worktree substrate evidence; aimux lifecycle state lives in topology"
+            },
+            "graveyard": {
+              "role": "authority",
+              "authority": "runtime-topology.yaml",
+              "note": "filtered topology sessions with graveyard status"
+            },
+            "worktreeGraveyard": {
+              "role": "authority",
+              "authority": "runtime-topology.yaml",
+              "note": "topology-owned worktree graveyard entries; git path existence gates resurrection"
+            },
+            "notifications": {
+              "role": "projection",
+              "authority": "runtime-exchange.yaml",
+              "note": "notification rows are exchange threads/messages tagged as notifications"
+            },
+            "operationFailures": {
+              "role": "projection",
+              "authority": "runtime-topology.yaml plus operation execution results",
+              "note": "dashboard-facing failure projection, not lifecycle authority"
+            },
+            "runtimeRows": {
+              "role": "unavailable",
+              "note": "live runtime-only view unavailable to standalone debug-state"
+            },
+            "pendingActions": {
+              "role": "unavailable",
+              "note": "in-memory dashboard optimism unavailable to standalone debug-state"
+            },
+            "dashboardSnapshot": {
+              "role": "unavailable",
+              "note": "project-service/dashboard projection unavailable to standalone debug-state"
+            }
+          },
+          "sources": {
+            "savedState": { "status": "missing", "path": "<root>/global/state.json" },
+            "runtimeTopology": { "status": "missing", "path": "<root>/global/runtime-topology.yaml" },
+            "metadata": { "status": "found", "path": "<root>/global/metadata.json", "value": { "sessions": [] } },
+            "tmux": { "status": "found", "value": { "windows": [] } },
+            "gitWorktrees": { "status": "found", "value": { "worktrees": [] } },
+            "graveyard": { "status": "missing", "path": "<root>/global/runtime-topology.yaml" },
+            "worktreeGraveyard": { "status": "missing", "path": "<root>/global/runtime-topology.yaml" },
+            "notifications": { "status": "missing", "path": "<root>/global/runtime-exchange.yaml" },
+            "operationFailures": { "status": "missing", "path": "<root>/global/dashboard-operation-failures.json" },
+            "runtimeRows": {
+              "status": "unavailable",
+              "reason": "standalone debug-state does not attach to the live project runtime"
+            },
+            "pendingActions": { "status": "unavailable", "reason": "pending actions are in-memory dashboard state" },
+            "dashboardSnapshot": {
+              "status": "unavailable",
+              "reason": "dashboard snapshot requires project-service/dashboard runtime"
+            }
+          }
+        }
+      },
+      "inputSha256": "9a0b969497227e0bd7724031058b0c51e1e0877283441d5e14512df4aeedecc2"
+    },
+    {
+      "id": "debug-state-003",
+      "name": "matches service and worktree sources",
+      "source": "src/debug-state.test.ts",
+      "input": { "scenario": "service-worktree" },
+      "output": {
+        "version": 1,
+        "target": "service-1",
+        "project": {
+          "repoRoot": "<root>/repo",
+          "projectId": "repo-123",
+          "projectStateDir": "<root>/global",
+          "localAimuxDir": "<root>/repo/.aimux"
+        },
+        "targetResolution": {
+          "status": "matched",
+          "entityCount": 1,
+          "matches": [
+            {
+              "canonicalKey": "service:service-1",
+              "kind": "service",
+              "source": "savedState",
+              "id": "service-1",
+              "worktreePath": "/repo/app",
+              "label": "web",
+              "raw": { "id": "service-1", "worktreePath": "/repo/app", "cwd": "/repo/app/apps/web", "label": "web" }
+            }
+          ]
+        },
+        "sourceRoles": {
+          "savedState": {
+            "role": "legacy",
+            "authority": "runtime-topology.yaml for services",
+            "note": "legacy service snapshot evidence; it must not create lifecycle truth"
+          },
+          "runtimeTopology": {
+            "role": "authority",
+            "authority": "runtime-topology.yaml",
+            "note": "authoritative agents, services, worktrees, lifecycle, graveyard, and bindings"
+          },
+          "metadata": {
+            "role": "projection",
+            "authority": "runtime-topology.yaml and runtime-exchange.yaml",
+            "note": "decorates known sessions only; hidden lifecycle and backend identity fields are ignored"
+          },
+          "tmux": {
+            "role": "substrate",
+            "authority": "runtime-topology.yaml",
+            "note": "live tmux window evidence and repair input, not durable lifecycle authority"
+          },
+          "gitWorktrees": {
+            "role": "substrate",
+            "authority": "runtime-topology.yaml for aimux worktree lifecycle",
+            "note": "git worktree substrate evidence; aimux lifecycle state lives in topology"
+          },
+          "graveyard": {
+            "role": "authority",
+            "authority": "runtime-topology.yaml",
+            "note": "filtered topology sessions with graveyard status"
+          },
+          "worktreeGraveyard": {
+            "role": "authority",
+            "authority": "runtime-topology.yaml",
+            "note": "topology-owned worktree graveyard entries; git path existence gates resurrection"
+          },
+          "notifications": {
+            "role": "projection",
+            "authority": "runtime-exchange.yaml",
+            "note": "notification rows are exchange threads/messages tagged as notifications"
+          },
+          "operationFailures": {
+            "role": "projection",
+            "authority": "runtime-topology.yaml plus operation execution results",
+            "note": "dashboard-facing failure projection, not lifecycle authority"
+          },
+          "runtimeRows": {
+            "role": "unavailable",
+            "note": "live runtime-only view unavailable to standalone debug-state"
+          },
+          "pendingActions": {
+            "role": "unavailable",
+            "note": "in-memory dashboard optimism unavailable to standalone debug-state"
+          },
+          "dashboardSnapshot": {
+            "role": "unavailable",
+            "note": "project-service/dashboard projection unavailable to standalone debug-state"
+          }
+        },
+        "sources": {
+          "savedState": {
+            "status": "found",
+            "path": "<root>/global/state.json",
+            "value": {
+              "services": [
+                { "id": "service-1", "worktreePath": "/repo/app", "cwd": "/repo/app/apps/web", "label": "web" }
+              ]
+            }
+          },
+          "runtimeTopology": { "status": "missing", "path": "<root>/global/runtime-topology.yaml" },
+          "metadata": { "status": "found", "path": "<root>/global/metadata.json", "value": { "sessions": [] } },
+          "tmux": { "status": "found", "value": { "windows": [] } },
+          "gitWorktrees": { "status": "found", "value": { "worktrees": [] } },
+          "graveyard": { "status": "missing", "path": "<root>/global/runtime-topology.yaml" },
+          "worktreeGraveyard": { "status": "missing", "path": "<root>/global/runtime-topology.yaml" },
+          "notifications": { "status": "missing", "path": "<root>/global/runtime-exchange.yaml" },
+          "operationFailures": { "status": "missing", "path": "<root>/global/dashboard-operation-failures.json" },
+          "runtimeRows": {
+            "status": "unavailable",
+            "reason": "standalone debug-state does not attach to the live project runtime"
+          },
+          "pendingActions": { "status": "unavailable", "reason": "pending actions are in-memory dashboard state" },
+          "dashboardSnapshot": {
+            "status": "unavailable",
+            "reason": "dashboard snapshot requires project-service/dashboard runtime"
+          }
+        }
+      },
+      "inputSha256": "c925c44bac2e8ff7a519a2d0c4d8a6eaf36d8bac533540f44b7c9a29946f3896"
+    },
+    {
+      "id": "debug-state-004",
+      "name": "reports missing with explicit unavailable live-only sources",
+      "source": "src/debug-state.test.ts",
+      "input": { "scenario": "missing" },
+      "output": {
+        "version": 1,
+        "target": "missing",
+        "project": {
+          "repoRoot": "<root>/repo",
+          "projectId": "repo-123",
+          "projectStateDir": "<root>/global",
+          "localAimuxDir": "<root>/repo/.aimux"
+        },
+        "targetResolution": { "status": "missing", "entityCount": 0, "matches": [] },
+        "sourceRoles": {
+          "savedState": {
+            "role": "legacy",
+            "authority": "runtime-topology.yaml for services",
+            "note": "legacy service snapshot evidence; it must not create lifecycle truth"
+          },
+          "runtimeTopology": {
+            "role": "authority",
+            "authority": "runtime-topology.yaml",
+            "note": "authoritative agents, services, worktrees, lifecycle, graveyard, and bindings"
+          },
+          "metadata": {
+            "role": "projection",
+            "authority": "runtime-topology.yaml and runtime-exchange.yaml",
+            "note": "decorates known sessions only; hidden lifecycle and backend identity fields are ignored"
+          },
+          "tmux": {
+            "role": "substrate",
+            "authority": "runtime-topology.yaml",
+            "note": "live tmux window evidence and repair input, not durable lifecycle authority"
+          },
+          "gitWorktrees": {
+            "role": "substrate",
+            "authority": "runtime-topology.yaml for aimux worktree lifecycle",
+            "note": "git worktree substrate evidence; aimux lifecycle state lives in topology"
+          },
+          "graveyard": {
+            "role": "authority",
+            "authority": "runtime-topology.yaml",
+            "note": "filtered topology sessions with graveyard status"
+          },
+          "worktreeGraveyard": {
+            "role": "authority",
+            "authority": "runtime-topology.yaml",
+            "note": "topology-owned worktree graveyard entries; git path existence gates resurrection"
+          },
+          "notifications": {
+            "role": "projection",
+            "authority": "runtime-exchange.yaml",
+            "note": "notification rows are exchange threads/messages tagged as notifications"
+          },
+          "operationFailures": {
+            "role": "projection",
+            "authority": "runtime-topology.yaml plus operation execution results",
+            "note": "dashboard-facing failure projection, not lifecycle authority"
+          },
+          "runtimeRows": {
+            "role": "unavailable",
+            "note": "live runtime-only view unavailable to standalone debug-state"
+          },
+          "pendingActions": {
+            "role": "unavailable",
+            "note": "in-memory dashboard optimism unavailable to standalone debug-state"
+          },
+          "dashboardSnapshot": {
+            "role": "unavailable",
+            "note": "project-service/dashboard projection unavailable to standalone debug-state"
+          }
+        },
+        "sources": {
+          "savedState": { "status": "missing", "path": "<root>/global/state.json" },
+          "runtimeTopology": { "status": "missing", "path": "<root>/global/runtime-topology.yaml" },
+          "metadata": { "status": "missing", "path": "<root>/global/metadata.json" },
+          "tmux": { "status": "found", "value": { "windows": [] } },
+          "gitWorktrees": { "status": "found", "value": { "worktrees": [] } },
+          "graveyard": { "status": "missing", "path": "<root>/global/runtime-topology.yaml" },
+          "worktreeGraveyard": { "status": "missing", "path": "<root>/global/runtime-topology.yaml" },
+          "notifications": { "status": "missing", "path": "<root>/global/runtime-exchange.yaml" },
+          "operationFailures": { "status": "missing", "path": "<root>/global/dashboard-operation-failures.json" },
+          "runtimeRows": {
+            "status": "unavailable",
+            "reason": "standalone debug-state does not attach to the live project runtime"
+          },
+          "pendingActions": { "status": "unavailable", "reason": "pending actions are in-memory dashboard state" },
+          "dashboardSnapshot": {
+            "status": "unavailable",
+            "reason": "dashboard snapshot requires project-service/dashboard runtime"
+          }
+        }
+      },
+      "inputSha256": "2364e0d83d78013d0ba454391ba1b61449fb3f514de72109667a0c64305e006b"
+    },
+    {
+      "id": "debug-state-005",
+      "name": "marks ambiguous exact matches instead of guessing",
+      "source": "src/debug-state.test.ts",
+      "input": { "scenario": "ambiguous" },
+      "output": {
+        "version": 1,
+        "target": "same",
+        "project": {
+          "repoRoot": "<root>/repo",
+          "projectId": "repo-123",
+          "projectStateDir": "<root>/global",
+          "localAimuxDir": "<root>/repo/.aimux"
+        },
+        "targetResolution": {
+          "status": "ambiguous",
+          "entityCount": 2,
+          "matches": [
+            {
+              "canonicalKey": "service:same",
+              "kind": "service",
+              "source": "savedState",
+              "id": "same",
+              "worktreePath": "/repo/app",
+              "raw": { "id": "same", "worktreePath": "/repo/app" }
+            },
+            {
+              "canonicalKey": "session:same",
+              "kind": "session",
+              "source": "runtimeTopology",
+              "id": "same",
+              "raw": {
+                "id": "same",
+                "nodeId": "agent:same",
+                "status": "offline",
+                "tool": "codex",
+                "command": "codex",
+                "args": [],
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z"
+              }
+            }
+          ]
+        },
+        "sourceRoles": {
+          "savedState": {
+            "role": "legacy",
+            "authority": "runtime-topology.yaml for services",
+            "note": "legacy service snapshot evidence; it must not create lifecycle truth"
+          },
+          "runtimeTopology": {
+            "role": "authority",
+            "authority": "runtime-topology.yaml",
+            "note": "authoritative agents, services, worktrees, lifecycle, graveyard, and bindings"
+          },
+          "metadata": {
+            "role": "projection",
+            "authority": "runtime-topology.yaml and runtime-exchange.yaml",
+            "note": "decorates known sessions only; hidden lifecycle and backend identity fields are ignored"
+          },
+          "tmux": {
+            "role": "substrate",
+            "authority": "runtime-topology.yaml",
+            "note": "live tmux window evidence and repair input, not durable lifecycle authority"
+          },
+          "gitWorktrees": {
+            "role": "substrate",
+            "authority": "runtime-topology.yaml for aimux worktree lifecycle",
+            "note": "git worktree substrate evidence; aimux lifecycle state lives in topology"
+          },
+          "graveyard": {
+            "role": "authority",
+            "authority": "runtime-topology.yaml",
+            "note": "filtered topology sessions with graveyard status"
+          },
+          "worktreeGraveyard": {
+            "role": "authority",
+            "authority": "runtime-topology.yaml",
+            "note": "topology-owned worktree graveyard entries; git path existence gates resurrection"
+          },
+          "notifications": {
+            "role": "projection",
+            "authority": "runtime-exchange.yaml",
+            "note": "notification rows are exchange threads/messages tagged as notifications"
+          },
+          "operationFailures": {
+            "role": "projection",
+            "authority": "runtime-topology.yaml plus operation execution results",
+            "note": "dashboard-facing failure projection, not lifecycle authority"
+          },
+          "runtimeRows": {
+            "role": "unavailable",
+            "note": "live runtime-only view unavailable to standalone debug-state"
+          },
+          "pendingActions": {
+            "role": "unavailable",
+            "note": "in-memory dashboard optimism unavailable to standalone debug-state"
+          },
+          "dashboardSnapshot": {
+            "role": "unavailable",
+            "note": "project-service/dashboard projection unavailable to standalone debug-state"
+          }
+        },
+        "sources": {
+          "savedState": {
+            "status": "found",
+            "path": "<root>/global/state.json",
+            "value": { "services": [{ "id": "same", "worktreePath": "/repo/app" }] }
+          },
+          "runtimeTopology": {
+            "status": "found",
+            "path": "<root>/global/runtime-topology.yaml",
+            "value": {
+              "sessions": [
+                {
+                  "id": "same",
+                  "nodeId": "agent:same",
+                  "status": "offline",
+                  "tool": "codex",
+                  "command": "codex",
+                  "args": [],
+                  "createdAt": "2026-01-01T00:00:00.000Z",
+                  "updatedAt": "2026-01-01T00:00:00.000Z"
+                }
+              ],
+              "services": [],
+              "worktrees": []
+            }
+          },
+          "metadata": { "status": "missing", "path": "<root>/global/metadata.json" },
+          "tmux": { "status": "found", "value": { "windows": [] } },
+          "gitWorktrees": { "status": "found", "value": { "worktrees": [] } },
+          "graveyard": { "status": "found", "path": "<root>/global/runtime-topology.yaml", "value": { "entries": [] } },
+          "worktreeGraveyard": {
+            "status": "found",
+            "path": "<root>/global/runtime-topology.yaml",
+            "value": { "entries": [] }
+          },
+          "notifications": { "status": "missing", "path": "<root>/global/runtime-exchange.yaml" },
+          "operationFailures": { "status": "missing", "path": "<root>/global/dashboard-operation-failures.json" },
+          "runtimeRows": {
+            "status": "unavailable",
+            "reason": "standalone debug-state does not attach to the live project runtime"
+          },
+          "pendingActions": { "status": "unavailable", "reason": "pending actions are in-memory dashboard state" },
+          "dashboardSnapshot": {
+            "status": "unavailable",
+            "reason": "dashboard snapshot requires project-service/dashboard runtime"
+          }
+        }
+      },
+      "inputSha256": "d78f1e1eb6bdfb4fbf7038b17924ae79461f2c707542f1274fd999cf3896fcc1"
+    },
+    {
+      "id": "debug-state-006",
+      "name": "resolves targets found only in notifications",
+      "source": "src/debug-state.test.ts",
+      "input": { "scenario": "notifications" },
+      "output": {
+        "version": 1,
+        "target": "codex-a1",
+        "project": {
+          "repoRoot": "<root>/repo",
+          "projectId": "repo-123",
+          "projectStateDir": "<root>/global",
+          "localAimuxDir": "<root>/repo/.aimux"
+        },
+        "targetResolution": {
+          "status": "matched",
+          "entityCount": 1,
+          "matches": [
+            {
+              "canonicalKey": "notification:notice-1",
+              "kind": "notification",
+              "source": "runtimeExchange",
+              "id": "notice-1",
+              "raw": {
+                "id": "notice-thread",
+                "title": "Notice",
+                "kind": "conversation",
+                "status": "open",
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "createdBy": "aimux",
+                "participants": ["aimux", "codex-a1"],
+                "tags": ["notification"]
+              }
+            }
+          ]
+        },
+        "sourceRoles": {
+          "savedState": {
+            "role": "legacy",
+            "authority": "runtime-topology.yaml for services",
+            "note": "legacy service snapshot evidence; it must not create lifecycle truth"
+          },
+          "runtimeTopology": {
+            "role": "authority",
+            "authority": "runtime-topology.yaml",
+            "note": "authoritative agents, services, worktrees, lifecycle, graveyard, and bindings"
+          },
+          "metadata": {
+            "role": "projection",
+            "authority": "runtime-topology.yaml and runtime-exchange.yaml",
+            "note": "decorates known sessions only; hidden lifecycle and backend identity fields are ignored"
+          },
+          "tmux": {
+            "role": "substrate",
+            "authority": "runtime-topology.yaml",
+            "note": "live tmux window evidence and repair input, not durable lifecycle authority"
+          },
+          "gitWorktrees": {
+            "role": "substrate",
+            "authority": "runtime-topology.yaml for aimux worktree lifecycle",
+            "note": "git worktree substrate evidence; aimux lifecycle state lives in topology"
+          },
+          "graveyard": {
+            "role": "authority",
+            "authority": "runtime-topology.yaml",
+            "note": "filtered topology sessions with graveyard status"
+          },
+          "worktreeGraveyard": {
+            "role": "authority",
+            "authority": "runtime-topology.yaml",
+            "note": "topology-owned worktree graveyard entries; git path existence gates resurrection"
+          },
+          "notifications": {
+            "role": "projection",
+            "authority": "runtime-exchange.yaml",
+            "note": "notification rows are exchange threads/messages tagged as notifications"
+          },
+          "operationFailures": {
+            "role": "projection",
+            "authority": "runtime-topology.yaml plus operation execution results",
+            "note": "dashboard-facing failure projection, not lifecycle authority"
+          },
+          "runtimeRows": {
+            "role": "unavailable",
+            "note": "live runtime-only view unavailable to standalone debug-state"
+          },
+          "pendingActions": {
+            "role": "unavailable",
+            "note": "in-memory dashboard optimism unavailable to standalone debug-state"
+          },
+          "dashboardSnapshot": {
+            "role": "unavailable",
+            "note": "project-service/dashboard projection unavailable to standalone debug-state"
+          }
+        },
+        "sources": {
+          "savedState": { "status": "missing", "path": "<root>/global/state.json" },
+          "runtimeTopology": {
+            "status": "found",
+            "path": "<root>/global/runtime-topology.yaml",
+            "value": { "sessions": [], "services": [], "worktrees": [] }
+          },
+          "metadata": { "status": "missing", "path": "<root>/global/metadata.json" },
+          "tmux": { "status": "found", "value": { "windows": [] } },
+          "gitWorktrees": { "status": "found", "value": { "worktrees": [] } },
+          "graveyard": { "status": "found", "path": "<root>/global/runtime-topology.yaml", "value": { "entries": [] } },
+          "worktreeGraveyard": {
+            "status": "found",
+            "path": "<root>/global/runtime-topology.yaml",
+            "value": { "entries": [] }
+          },
+          "notifications": {
+            "status": "found",
+            "path": "<root>/global/runtime-exchange.yaml",
+            "value": {
+              "notifications": [
+                {
+                  "id": "notice-thread",
+                  "title": "Notice",
+                  "kind": "conversation",
+                  "status": "open",
+                  "createdAt": "2026-01-01T00:00:00.000Z",
+                  "updatedAt": "2026-01-01T00:00:00.000Z",
+                  "createdBy": "aimux",
+                  "participants": ["aimux", "codex-a1"],
+                  "tags": ["notification"]
+                }
+              ]
+            }
+          },
+          "operationFailures": { "status": "missing", "path": "<root>/global/dashboard-operation-failures.json" },
+          "runtimeRows": {
+            "status": "unavailable",
+            "reason": "standalone debug-state does not attach to the live project runtime"
+          },
+          "pendingActions": { "status": "unavailable", "reason": "pending actions are in-memory dashboard state" },
+          "dashboardSnapshot": {
+            "status": "unavailable",
+            "reason": "dashboard snapshot requires project-service/dashboard runtime"
+          }
+        }
+      },
+      "inputSha256": "7df452a16051fa39221230a4993a9ada37b6cfb0d9071eb5304a3ed646ff7262"
+    },
+    {
+      "id": "debug-state-007",
+      "name": "reads worktree graveyard entries from runtime topology",
+      "source": "src/debug-state.test.ts",
+      "input": { "scenario": "worktree-graveyard" },
+      "output": {
+        "version": 1,
+        "target": "feature-a",
+        "project": {
+          "repoRoot": "<root>/repo",
+          "projectId": "repo-123",
+          "projectStateDir": "<root>/global",
+          "localAimuxDir": "<root>/repo/.aimux"
+        },
+        "targetResolution": {
+          "status": "matched",
+          "entityCount": 1,
+          "matches": [
+            {
+              "canonicalKey": "worktree:/repo/feature-a",
+              "kind": "worktree",
+              "source": "worktreeGraveyard",
+              "worktreePath": "/repo/feature-a",
+              "worktreeName": "feature-a",
+              "raw": {
+                "id": "graveyard-feature-a",
+                "rigId": "rig:test",
+                "path": "/repo/feature-a",
+                "name": "feature-a",
+                "branch": "feature-a",
+                "graveyardedAt": "2026-01-01T00:00:00.000Z"
+              }
+            }
+          ]
+        },
+        "sourceRoles": {
+          "savedState": {
+            "role": "legacy",
+            "authority": "runtime-topology.yaml for services",
+            "note": "legacy service snapshot evidence; it must not create lifecycle truth"
+          },
+          "runtimeTopology": {
+            "role": "authority",
+            "authority": "runtime-topology.yaml",
+            "note": "authoritative agents, services, worktrees, lifecycle, graveyard, and bindings"
+          },
+          "metadata": {
+            "role": "projection",
+            "authority": "runtime-topology.yaml and runtime-exchange.yaml",
+            "note": "decorates known sessions only; hidden lifecycle and backend identity fields are ignored"
+          },
+          "tmux": {
+            "role": "substrate",
+            "authority": "runtime-topology.yaml",
+            "note": "live tmux window evidence and repair input, not durable lifecycle authority"
+          },
+          "gitWorktrees": {
+            "role": "substrate",
+            "authority": "runtime-topology.yaml for aimux worktree lifecycle",
+            "note": "git worktree substrate evidence; aimux lifecycle state lives in topology"
+          },
+          "graveyard": {
+            "role": "authority",
+            "authority": "runtime-topology.yaml",
+            "note": "filtered topology sessions with graveyard status"
+          },
+          "worktreeGraveyard": {
+            "role": "authority",
+            "authority": "runtime-topology.yaml",
+            "note": "topology-owned worktree graveyard entries; git path existence gates resurrection"
+          },
+          "notifications": {
+            "role": "projection",
+            "authority": "runtime-exchange.yaml",
+            "note": "notification rows are exchange threads/messages tagged as notifications"
+          },
+          "operationFailures": {
+            "role": "projection",
+            "authority": "runtime-topology.yaml plus operation execution results",
+            "note": "dashboard-facing failure projection, not lifecycle authority"
+          },
+          "runtimeRows": {
+            "role": "unavailable",
+            "note": "live runtime-only view unavailable to standalone debug-state"
+          },
+          "pendingActions": {
+            "role": "unavailable",
+            "note": "in-memory dashboard optimism unavailable to standalone debug-state"
+          },
+          "dashboardSnapshot": {
+            "role": "unavailable",
+            "note": "project-service/dashboard projection unavailable to standalone debug-state"
+          }
+        },
+        "sources": {
+          "savedState": { "status": "missing", "path": "<root>/global/state.json" },
+          "runtimeTopology": {
+            "status": "found",
+            "path": "<root>/global/runtime-topology.yaml",
+            "value": { "sessions": [], "services": [], "worktrees": [] }
+          },
+          "metadata": { "status": "missing", "path": "<root>/global/metadata.json" },
+          "tmux": { "status": "found", "value": { "windows": [] } },
+          "gitWorktrees": { "status": "found", "value": { "worktrees": [] } },
+          "graveyard": { "status": "found", "path": "<root>/global/runtime-topology.yaml", "value": { "entries": [] } },
+          "worktreeGraveyard": {
+            "status": "found",
+            "path": "<root>/global/runtime-topology.yaml",
+            "value": {
+              "entries": [
+                {
+                  "id": "graveyard-feature-a",
+                  "rigId": "rig:test",
+                  "path": "/repo/feature-a",
+                  "name": "feature-a",
+                  "branch": "feature-a",
+                  "graveyardedAt": "2026-01-01T00:00:00.000Z"
+                }
+              ]
+            }
+          },
+          "notifications": { "status": "missing", "path": "<root>/global/runtime-exchange.yaml" },
+          "operationFailures": { "status": "missing", "path": "<root>/global/dashboard-operation-failures.json" },
+          "runtimeRows": {
+            "status": "unavailable",
+            "reason": "standalone debug-state does not attach to the live project runtime"
+          },
+          "pendingActions": { "status": "unavailable", "reason": "pending actions are in-memory dashboard state" },
+          "dashboardSnapshot": {
+            "status": "unavailable",
+            "reason": "dashboard snapshot requires project-service/dashboard runtime"
+          }
+        }
+      },
+      "inputSha256": "9121817cbfe8f282c2cfe3e8d69b75d51922c7f761066914d283bb651816a082"
+    },
+    {
+      "id": "debug-state-008",
+      "name": "matches topology-only services and worktrees",
+      "source": "src/debug-state.test.ts",
+      "input": { "scenario": "topology-only" },
+      "output": {
+        "service": {
+          "version": 1,
+          "target": "service-web",
+          "project": {
+            "repoRoot": "<root>/repo",
+            "projectId": "repo-123",
+            "projectStateDir": "<root>/global",
+            "localAimuxDir": "<root>/repo/.aimux"
+          },
+          "targetResolution": {
+            "status": "matched",
+            "entityCount": 1,
+            "matches": [
+              {
+                "canonicalKey": "service:service-web",
+                "kind": "service",
+                "source": "runtimeTopology",
+                "id": "service-web",
+                "label": "web",
+                "raw": {
+                  "id": "service-web",
+                  "rigId": "rig:test",
+                  "nodeId": "service:service-web",
+                  "status": "stopped",
+                  "launchCommandLine": "yarn web",
+                  "label": "web",
+                  "createdAt": "2026-01-01T00:00:00.000Z",
+                  "updatedAt": "2026-01-01T00:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "sourceRoles": {
+            "savedState": {
+              "role": "legacy",
+              "authority": "runtime-topology.yaml for services",
+              "note": "legacy service snapshot evidence; it must not create lifecycle truth"
+            },
+            "runtimeTopology": {
+              "role": "authority",
+              "authority": "runtime-topology.yaml",
+              "note": "authoritative agents, services, worktrees, lifecycle, graveyard, and bindings"
+            },
+            "metadata": {
+              "role": "projection",
+              "authority": "runtime-topology.yaml and runtime-exchange.yaml",
+              "note": "decorates known sessions only; hidden lifecycle and backend identity fields are ignored"
+            },
+            "tmux": {
+              "role": "substrate",
+              "authority": "runtime-topology.yaml",
+              "note": "live tmux window evidence and repair input, not durable lifecycle authority"
+            },
+            "gitWorktrees": {
+              "role": "substrate",
+              "authority": "runtime-topology.yaml for aimux worktree lifecycle",
+              "note": "git worktree substrate evidence; aimux lifecycle state lives in topology"
+            },
+            "graveyard": {
+              "role": "authority",
+              "authority": "runtime-topology.yaml",
+              "note": "filtered topology sessions with graveyard status"
+            },
+            "worktreeGraveyard": {
+              "role": "authority",
+              "authority": "runtime-topology.yaml",
+              "note": "topology-owned worktree graveyard entries; git path existence gates resurrection"
+            },
+            "notifications": {
+              "role": "projection",
+              "authority": "runtime-exchange.yaml",
+              "note": "notification rows are exchange threads/messages tagged as notifications"
+            },
+            "operationFailures": {
+              "role": "projection",
+              "authority": "runtime-topology.yaml plus operation execution results",
+              "note": "dashboard-facing failure projection, not lifecycle authority"
+            },
+            "runtimeRows": {
+              "role": "unavailable",
+              "note": "live runtime-only view unavailable to standalone debug-state"
+            },
+            "pendingActions": {
+              "role": "unavailable",
+              "note": "in-memory dashboard optimism unavailable to standalone debug-state"
+            },
+            "dashboardSnapshot": {
+              "role": "unavailable",
+              "note": "project-service/dashboard projection unavailable to standalone debug-state"
+            }
+          },
+          "sources": {
+            "savedState": { "status": "missing", "path": "<root>/global/state.json" },
+            "runtimeTopology": {
+              "status": "found",
+              "path": "<root>/global/runtime-topology.yaml",
+              "value": {
+                "sessions": [],
+                "services": [
+                  {
+                    "id": "service-web",
+                    "rigId": "rig:test",
+                    "nodeId": "service:service-web",
+                    "status": "stopped",
+                    "launchCommandLine": "yarn web",
+                    "label": "web",
+                    "createdAt": "2026-01-01T00:00:00.000Z",
+                    "updatedAt": "2026-01-01T00:00:00.000Z"
+                  }
+                ],
+                "worktrees": []
+              }
+            },
+            "metadata": { "status": "missing", "path": "<root>/global/metadata.json" },
+            "tmux": { "status": "found", "value": { "windows": [] } },
+            "gitWorktrees": { "status": "found", "value": { "worktrees": [] } },
+            "graveyard": {
+              "status": "found",
+              "path": "<root>/global/runtime-topology.yaml",
+              "value": { "entries": [] }
+            },
+            "worktreeGraveyard": {
+              "status": "found",
+              "path": "<root>/global/runtime-topology.yaml",
+              "value": { "entries": [] }
+            },
+            "notifications": { "status": "missing", "path": "<root>/global/runtime-exchange.yaml" },
+            "operationFailures": { "status": "missing", "path": "<root>/global/dashboard-operation-failures.json" },
+            "runtimeRows": {
+              "status": "unavailable",
+              "reason": "standalone debug-state does not attach to the live project runtime"
+            },
+            "pendingActions": { "status": "unavailable", "reason": "pending actions are in-memory dashboard state" },
+            "dashboardSnapshot": {
+              "status": "unavailable",
+              "reason": "dashboard snapshot requires project-service/dashboard runtime"
+            }
+          }
+        },
+        "worktree": {
+          "version": 1,
+          "target": "feature-b",
+          "project": {
+            "repoRoot": "<root>/repo",
+            "projectId": "repo-123",
+            "projectStateDir": "<root>/global",
+            "localAimuxDir": "<root>/repo/.aimux"
+          },
+          "targetResolution": {
+            "status": "matched",
+            "entityCount": 1,
+            "matches": [
+              {
+                "canonicalKey": "worktree:/repo/feature-b",
+                "kind": "worktree",
+                "source": "runtimeTopology",
+                "worktreePath": "/repo/feature-b",
+                "worktreeName": "feature-b",
+                "raw": {
+                  "id": "worktree-feature-b",
+                  "rigId": "rig:test",
+                  "path": "/repo/feature-b",
+                  "name": "feature-b",
+                  "status": "active",
+                  "branch": "feature-b",
+                  "createdAt": "2026-01-01T00:00:00.000Z",
+                  "updatedAt": "2026-01-01T00:00:00.000Z"
+                }
+              }
+            ]
+          },
+          "sourceRoles": {
+            "savedState": {
+              "role": "legacy",
+              "authority": "runtime-topology.yaml for services",
+              "note": "legacy service snapshot evidence; it must not create lifecycle truth"
+            },
+            "runtimeTopology": {
+              "role": "authority",
+              "authority": "runtime-topology.yaml",
+              "note": "authoritative agents, services, worktrees, lifecycle, graveyard, and bindings"
+            },
+            "metadata": {
+              "role": "projection",
+              "authority": "runtime-topology.yaml and runtime-exchange.yaml",
+              "note": "decorates known sessions only; hidden lifecycle and backend identity fields are ignored"
+            },
+            "tmux": {
+              "role": "substrate",
+              "authority": "runtime-topology.yaml",
+              "note": "live tmux window evidence and repair input, not durable lifecycle authority"
+            },
+            "gitWorktrees": {
+              "role": "substrate",
+              "authority": "runtime-topology.yaml for aimux worktree lifecycle",
+              "note": "git worktree substrate evidence; aimux lifecycle state lives in topology"
+            },
+            "graveyard": {
+              "role": "authority",
+              "authority": "runtime-topology.yaml",
+              "note": "filtered topology sessions with graveyard status"
+            },
+            "worktreeGraveyard": {
+              "role": "authority",
+              "authority": "runtime-topology.yaml",
+              "note": "topology-owned worktree graveyard entries; git path existence gates resurrection"
+            },
+            "notifications": {
+              "role": "projection",
+              "authority": "runtime-exchange.yaml",
+              "note": "notification rows are exchange threads/messages tagged as notifications"
+            },
+            "operationFailures": {
+              "role": "projection",
+              "authority": "runtime-topology.yaml plus operation execution results",
+              "note": "dashboard-facing failure projection, not lifecycle authority"
+            },
+            "runtimeRows": {
+              "role": "unavailable",
+              "note": "live runtime-only view unavailable to standalone debug-state"
+            },
+            "pendingActions": {
+              "role": "unavailable",
+              "note": "in-memory dashboard optimism unavailable to standalone debug-state"
+            },
+            "dashboardSnapshot": {
+              "role": "unavailable",
+              "note": "project-service/dashboard projection unavailable to standalone debug-state"
+            }
+          },
+          "sources": {
+            "savedState": { "status": "missing", "path": "<root>/global/state.json" },
+            "runtimeTopology": {
+              "status": "found",
+              "path": "<root>/global/runtime-topology.yaml",
+              "value": {
+                "sessions": [],
+                "services": [],
+                "worktrees": [
+                  {
+                    "id": "worktree-feature-b",
+                    "rigId": "rig:test",
+                    "path": "/repo/feature-b",
+                    "name": "feature-b",
+                    "status": "active",
+                    "branch": "feature-b",
+                    "createdAt": "2026-01-01T00:00:00.000Z",
+                    "updatedAt": "2026-01-01T00:00:00.000Z"
+                  }
+                ]
+              }
+            },
+            "metadata": { "status": "missing", "path": "<root>/global/metadata.json" },
+            "tmux": { "status": "found", "value": { "windows": [] } },
+            "gitWorktrees": { "status": "found", "value": { "worktrees": [] } },
+            "graveyard": {
+              "status": "found",
+              "path": "<root>/global/runtime-topology.yaml",
+              "value": { "entries": [] }
+            },
+            "worktreeGraveyard": {
+              "status": "found",
+              "path": "<root>/global/runtime-topology.yaml",
+              "value": { "entries": [] }
+            },
+            "notifications": { "status": "missing", "path": "<root>/global/runtime-exchange.yaml" },
+            "operationFailures": { "status": "missing", "path": "<root>/global/dashboard-operation-failures.json" },
+            "runtimeRows": {
+              "status": "unavailable",
+              "reason": "standalone debug-state does not attach to the live project runtime"
+            },
+            "pendingActions": { "status": "unavailable", "reason": "pending actions are in-memory dashboard state" },
+            "dashboardSnapshot": {
+              "status": "unavailable",
+              "reason": "dashboard snapshot requires project-service/dashboard runtime"
+            }
+          }
+        }
+      },
+      "inputSha256": "9a1a573e0988d389e249d77e8da7bfa2ed684b87872f26d5f1a54c08a8ee8340"
+    }
+  ]
+}

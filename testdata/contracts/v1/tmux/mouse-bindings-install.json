@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "generatedAt": "2026-09-07T00:00:00.000Z",
+  "generatedBy": "scripts/capture-tmux-mouse-bindings-install-contract.mjs",
+  "source": "src/tmux/runtime-manager.ts",
+  "sources": [
+    "src/tmux/runtime-manager.test.ts",
+    "src/tmux/runtime-manager.ts"
+  ],
+  "subject": "src/tmux/runtime-manager.ts",
+  "description": "tmux root mouse binding install commands captured through the TypeScript renderer.",
+  "caseCount": 1,
+  "cases": [
+    {
+      "id": "tmux-mouse-bindings-install-001",
+      "name": "uses the installed hyperlink helper path in root mouse bindings",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "buildDefaultRootMouseBindingsConfig",
+      "input": { "projectStateDir": "/state/mobile", "openHyperlinkScript": "<OPEN_HYPERLINK_SCRIPT>" },
+      "output": {
+        "config": "bind-key -T root MouseDown1Pane if-shell \"AIMUX_HYPERLINK=#{q:mouse_hyperlink} AIMUX_MOUSE_WORD=#{q:mouse_word} AIMUX_MOUSE_LINE=#{q:mouse_line} sh '<OPEN_HYPERLINK_SCRIPT>' >/dev/null 2>&1\" \"\" \"select-pane -t = \\; send-keys -M\"\nbind-key -T root MouseDrag1Pane if-shell -F \"#{||:#{pane_in_mode},#{mouse_any_flag}}\" { send-keys -M } { copy-mode -M }\nbind-key -T root WheelUpPane if-shell -F \"#{&&:#{!=:#{alternate_on},1},#{!=:#{mouse_any_flag},1}}\" \"copy-mode -e \\; send-keys -X -N 1 scroll-up\" \"send-keys -M\"\nbind-key -T root WheelDownPane if-shell -F \"#{||:#{alternate_on},#{mouse_any_flag}}\" { send-keys -M } { send-keys -M }\nbind-key -T root DoubleClick1Pane if-shell \"AIMUX_HYPERLINK=#{q:mouse_hyperlink} AIMUX_MOUSE_WORD=#{q:mouse_word} AIMUX_MOUSE_LINE=#{q:mouse_line} sh '<OPEN_HYPERLINK_SCRIPT>' >/dev/null 2>&1\" \"\" \"send-keys -M\"\nbind-key -T root MouseDown1Status if-shell \"AIMUX_STATUS_LINE=#{q:mouse_status_line} AIMUX_PROJECT_STATE_DIR='/state/mobile' AIMUX_CURRENT_WINDOW_ID=#{q:window_id} sh '<OPEN_HYPERLINK_SCRIPT>' >/dev/null 2>&1\" \"\" \"\"\nbind-key -T root DoubleClick1Status if-shell \"AIMUX_STATUS_LINE=#{q:mouse_status_line} AIMUX_PROJECT_STATE_DIR='/state/mobile' AIMUX_CURRENT_WINDOW_ID=#{q:window_id} sh '<OPEN_HYPERLINK_SCRIPT>' >/dev/null 2>&1\" \"\" \"\"\nbind-key -T root MouseDown1StatusDefault if-shell \"AIMUX_STATUS_LINE=#{q:mouse_status_line} AIMUX_PROJECT_STATE_DIR='/state/mobile' AIMUX_CURRENT_WINDOW_ID=#{q:window_id} sh '<OPEN_HYPERLINK_SCRIPT>' >/dev/null 2>&1\" \"\" \"\"\nbind-key -T root DoubleClick1StatusDefault if-shell \"AIMUX_STATUS_LINE=#{q:mouse_status_line} AIMUX_PROJECT_STATE_DIR='/state/mobile' AIMUX_CURRENT_WINDOW_ID=#{q:window_id} sh '<OPEN_HYPERLINK_SCRIPT>' >/dev/null 2>&1\" \"\" \"\"\nbind-key -T copy-mode WheelUpPane send-keys -X -N 1 scroll-up\nbind-key -T copy-mode WheelDownPane send-keys -X -N 1 scroll-down\nbind-key -T copy-mode-vi WheelUpPane send-keys -X -N 1 scroll-up\nbind-key -T copy-mode-vi WheelDownPane send-keys -X -N 1 scroll-down\nbind-key -T copy-mode MouseDragEnd1Pane send-keys -X copy-pipe-and-cancel\nbind-key -T copy-mode-vi MouseDragEnd1Pane send-keys -X copy-pipe-and-cancel\n"
+      },
+      "inputSha256": "d7baa348111b6fb01969e2806d73be76979f895480c16cb68aa9ea66f4cc7b11"
+    }
+  ]
+}

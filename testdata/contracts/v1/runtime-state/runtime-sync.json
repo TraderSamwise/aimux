@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "source": ["src/multiplexer/runtime-sync.test.ts", "src/multiplexer/runtime-sync.ts"],
+  "generatedBy": "scripts/capture-runtime-guard-sync-contract.mjs",
+  "description": "Runtime sync heartbeat and project-service refresh timer behavior captured by running TypeScript MultiplexerRuntimeSync with recorded dependencies.",
+  "cases": [
+    {
+      "id": "runtime-state-runtime-sync-001",
+      "name": "does not run tmux topology sync from the heartbeat in project-service mode",
+      "source": "src/multiplexer/runtime-sync.test.ts",
+      "input": {
+        "name": "does not run tmux topology sync from the heartbeat in project-service mode",
+        "source": "src/multiplexer/runtime-sync.test.ts",
+        "mode": "project-service",
+        "actions": [{ "kind": "startHeartbeat" }, { "kind": "tick" }, { "kind": "stopHeartbeat" }]
+      },
+      "output": {
+        "intervalCount": 1,
+        "intervals": [{ "delayMs": 5000, "cleared": true, "unrefCalled": true }],
+        "calls": {
+          "syncSessionsFromTopology": 0,
+          "loadOfflineTopologySessions": 0,
+          "renderCurrentDashboardView": 0,
+          "renderDashboard": 0,
+          "writeStatuslineFile": 0,
+          "refreshRuntimeGuard": 0
+        }
+      },
+      "inputSha256": "b283bd18986666d72fd238fd0c48ec1b6d0d7ba0a7b2118ae184d94e0ef40f3e"
+    },
+    {
+      "id": "runtime-state-runtime-sync-002",
+      "name": "does not run tmux topology repair from a project-service timer",
+      "source": "src/multiplexer/runtime-sync.test.ts",
+      "input": {
+        "name": "does not run tmux topology repair from a project-service timer",
+        "source": "src/multiplexer/runtime-sync.test.ts",
+        "mode": "project-service",
+        "actions": [
+          { "kind": "startProjectServiceRefresh" },
+          { "kind": "tick" },
+          { "kind": "stopProjectServiceRefresh" }
+        ]
+      },
+      "output": {
+        "intervalCount": 0,
+        "intervals": [],
+        "calls": {
+          "syncSessionsFromTopology": 0,
+          "loadOfflineTopologySessions": 0,
+          "renderCurrentDashboardView": 0,
+          "renderDashboard": 0,
+          "writeStatuslineFile": 0,
+          "refreshRuntimeGuard": 0
+        }
+      },
+      "inputSha256": "249bab1063ce459eb9eee6e62bde7d5a222ce85434a4d9bb0297f8f757972e72"
+    },
+    {
+      "id": "runtime-state-runtime-sync-003",
+      "name": "dashboard heartbeat refreshes guard and renders when offline topology changes",
+      "source": "src/multiplexer/runtime-sync.ts",
+      "input": {
+        "name": "dashboard heartbeat refreshes guard and renders when offline topology changes",
+        "source": "src/multiplexer/runtime-sync.ts",
+        "mode": "dashboard",
+        "offlineChanged": true,
+        "actions": [{ "kind": "startHeartbeat" }, { "kind": "tick" }, { "kind": "stopHeartbeat" }]
+      },
+      "output": {
+        "intervalCount": 1,
+        "intervals": [{ "delayMs": 5000, "cleared": true, "unrefCalled": true }],
+        "calls": {
+          "syncSessionsFromTopology": 0,
+          "loadOfflineTopologySessions": 1,
+          "renderCurrentDashboardView": 1,
+          "renderDashboard": 0,
+          "writeStatuslineFile": 0,
+          "refreshRuntimeGuard": 1
+        }
+      },
+      "inputSha256": "c2dde141a0b96534ff714d3c42fb446004bffcd0f56b8fdd2d68850cac1f6b0c"
+    }
+  ]
+}

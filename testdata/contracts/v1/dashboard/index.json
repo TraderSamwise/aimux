@@ -1,0 +1,80 @@
+{
+  "version": 1,
+  "source": "src/dashboard/index.test.ts",
+  "sources": ["src/dashboard/index.test.ts", "src/dashboard/index.ts", "src/session-semantics.ts"],
+  "generatedBy": "scripts/capture-dashboard-index-contract.mjs",
+  "description": "Dashboard derived status label precedence captured by running TypeScript Dashboard index helpers.",
+  "cases": [
+    {
+      "id": "dashboard-index-001",
+      "name": "uses semantic display labels with pending actions taking precedence",
+      "source": "src/dashboard/index.test.ts",
+      "input": {
+        "name": "uses semantic display labels with pending actions taking precedence",
+        "api": "derivedStatusLabel",
+        "sessions": [
+          {
+            "index": 0,
+            "id": "claude-1",
+            "command": "claude",
+            "status": "running",
+            "active": true,
+            "semantic": {
+              "runtime": {
+                "lifecycle": "running",
+                "isAlive": true,
+                "canEnter": true,
+                "canReceiveInput": true,
+                "canInterrupt": true
+              },
+              "user": { "label": "needs_input", "attention": "needs_input", "source": "tool" },
+              "notifications": { "unreadCount": 0 },
+              "orchestration": { "pressure": "none", "assignedTask": false, "canBeAssignedWork": true },
+              "presentation": { "statusLabel": "needs input", "compactHint": "on you", "attentionScore": 4 },
+              "attention": "needs_input",
+              "activityNewCount": 0,
+              "threadUnreadCount": 0,
+              "pendingDeliveryCount": 0,
+              "waitingOnMeCount": 0,
+              "waitingOnThemCount": 0,
+              "blockedCount": 0,
+              "familyCount": 0
+            }
+          },
+          {
+            "index": 0,
+            "id": "claude-1",
+            "command": "claude",
+            "status": "running",
+            "active": true,
+            "semantic": {
+              "runtime": {
+                "lifecycle": "running",
+                "isAlive": true,
+                "canEnter": true,
+                "canReceiveInput": true,
+                "canInterrupt": true
+              },
+              "user": { "label": "needs_input", "attention": "needs_input", "source": "tool" },
+              "notifications": { "unreadCount": 0 },
+              "orchestration": { "pressure": "none", "assignedTask": false, "canBeAssignedWork": true },
+              "presentation": { "statusLabel": "needs input", "compactHint": "on you", "attentionScore": 4 },
+              "attention": "needs_input",
+              "activityNewCount": 0,
+              "threadUnreadCount": 0,
+              "pendingDeliveryCount": 0,
+              "waitingOnMeCount": 0,
+              "waitingOnThemCount": 0,
+              "blockedCount": 0,
+              "familyCount": 0
+            },
+            "pendingAction": "starting"
+          },
+          { "index": 0, "id": "claude-1", "command": "claude", "status": "waiting", "active": true }
+        ]
+      },
+      "output": ["needs input", "starting", "thinking"],
+      "inputSha256": "ae60a4b69a0bb4f32101aaa2adbffaf717b456af13c68813d404d299938c616a"
+    }
+  ]
+}

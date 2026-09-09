@@ -1,0 +1,305 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/tui-runtime-mutations.test.ts",
+  "generatedBy": "scripts/capture-tui-runtime-mutations-contract.mjs",
+  "description": "TUI runtime mutation queue coalescing, retry, and teardown side effects captured by running TypeScript tui-runtime-mutations with deterministic timers and dashboard API mutation responses.",
+  "cases": [
+    {
+      "id": "tui-runtime-mutations-001",
+      "name": "coalesces notification context updates and marks sessions seen off the hot path",
+      "source": "src/multiplexer/tui-runtime-mutations.test.ts",
+      "sourceName": "coalesces notification context updates and marks sessions seen off the hot path",
+      "api": "queueTuiNotificationContext/queueTuiSessionSeen/clearTuiRuntimeMutationQueue",
+      "input": {
+        "ops": [
+          { "op": "context", "patch": { "screen": "dashboard", "sessionId": "first", "panelOpen": true } },
+          { "op": "context", "patch": { "screen": "agent", "sessionId": "second", "panelOpen": false } },
+          { "op": "seen", "sessionId": "first" },
+          { "op": "seen", "sessionId": "second" },
+          { "op": "runPending" }
+        ],
+        "responses": []
+      },
+      "output": {
+        "calls": {
+          "mutations": [
+            {
+              "path": "/notification-context",
+              "body": {
+                "source": "tui",
+                "focused": true,
+                "screen": "agent",
+                "sessionId": "second",
+                "panelOpen": false
+              },
+              "options": { "timeoutMs": 3000, "recoverOnFailure": false }
+            },
+            { "path": "/mark-seen", "body": { "session": "first" }, "options": null },
+            { "path": "/mark-seen", "body": { "session": "second" }, "options": null }
+          ],
+          "debug": []
+        },
+        "queue": { "context": null, "seen": [], "hasTimer": false, "inFlight": false, "attempt": 0, "disposed": false },
+        "timers": { "now": 0, "pending": [] }
+      },
+      "inputSha256": "015ce44aa63eabc8a6aaa0c1f95df67922fc61690a9b6572e76912980da52fd4"
+    },
+    {
+      "id": "tui-runtime-mutations-002",
+      "name": "drops failed telemetry context without overwriting newer context",
+      "source": "src/multiplexer/tui-runtime-mutations.test.ts",
+      "sourceName": "drops failed telemetry context without overwriting newer context",
+      "api": "queueTuiNotificationContext/queueTuiSessionSeen/clearTuiRuntimeMutationQueue",
+      "input": {
+        "ops": [
+          { "op": "context", "patch": { "screen": "dashboard", "sessionId": "old" } },
+          { "op": "runPending" },
+          { "op": "context", "patch": { "screen": "coordination", "sessionId": "new" } },
+          { "op": "advance", "ms": 250 }
+        ],
+        "responses": [
+          { "type": "reject", "message": "offline" },
+          { "type": "resolve", "value": { "ok": true } }
+        ]
+      },
+      "output": {
+        "calls": {
+          "mutations": [
+            {
+              "path": "/notification-context",
+              "body": { "source": "tui", "focused": true, "screen": "dashboard", "sessionId": "old" },
+              "options": { "timeoutMs": 3000, "recoverOnFailure": false }
+            },
+            {
+              "path": "/notification-context",
+              "body": { "source": "tui", "focused": true, "screen": "coordination", "sessionId": "new" },
+              "options": { "timeoutMs": 3000, "recoverOnFailure": false }
+            }
+          ],
+          "debug": []
+        },
+        "queue": { "context": null, "seen": [], "hasTimer": false, "inFlight": false, "attempt": 0, "disposed": false },
+        "timers": { "now": 250, "pending": [] }
+      },
+      "inputSha256": "36b550aaa622695a37c13f68254c8e086bae7c38be9fb2cdb30c8879e30b9188"
+    },
+    {
+      "id": "tui-runtime-mutations-003",
+      "name": "clears pending retries during teardown",
+      "source": "src/multiplexer/tui-runtime-mutations.test.ts",
+      "sourceName": "clears pending retries during teardown",
+      "api": "queueTuiNotificationContext/queueTuiSessionSeen/clearTuiRuntimeMutationQueue",
+      "input": {
+        "ops": [
+          { "op": "seen", "sessionId": "codex-1" },
+          { "op": "runPending" },
+          { "op": "clear" },
+          { "op": "advance", "ms": 10000 }
+        ],
+        "responses": [{ "type": "reject", "message": "offline" }]
+      },
+      "output": {
+        "calls": {
+          "mutations": [{ "path": "/mark-seen", "body": { "session": "codex-1" }, "options": null }],
+          "debug": [{ "message": "TUI runtime mutation retry scheduled after failed attempt 1", "scope": "dashboard" }]
+        },
+        "queue": null,
+        "timers": { "now": 10000, "pending": [] }
+      },
+      "inputSha256": "37139f2db41eea415a4987f4109160638a64eafff867445f55ec8ca30bc46bb4"
+    },
+    {
+      "id": "tui-runtime-mutations-004",
+      "name": "lets fresh context updates preempt a pending mark-seen retry backoff",
+      "source": "src/multiplexer/tui-runtime-mutations.test.ts",
+      "sourceName": "lets fresh context updates preempt a pending mark-seen retry backoff",
+      "api": "queueTuiNotificationContext/queueTuiSessionSeen/clearTuiRuntimeMutationQueue",
+      "input": {
+        "ops": [
+          { "op": "seen", "sessionId": "codex-1" },
+          { "op": "runPending" },
+          { "op": "context", "patch": { "screen": "agent", "sessionId": "codex-2" } },
+          { "op": "advance", "ms": 0 }
+        ],
+        "responses": [
+          { "type": "reject", "message": "offline" },
+          { "type": "resolve", "value": { "ok": true } }
+        ]
+      },
+      "output": {
+        "calls": {
+          "mutations": [
+            { "path": "/mark-seen", "body": { "session": "codex-1" }, "options": null },
+            {
+              "path": "/notification-context",
+              "body": { "source": "tui", "focused": true, "screen": "agent", "sessionId": "codex-2" },
+              "options": { "timeoutMs": 3000, "recoverOnFailure": false }
+            },
+            { "path": "/mark-seen", "body": { "session": "codex-1" }, "options": null }
+          ],
+          "debug": [{ "message": "TUI runtime mutation retry scheduled after failed attempt 1", "scope": "dashboard" }]
+        },
+        "queue": { "context": null, "seen": [], "hasTimer": false, "inFlight": false, "attempt": 0, "disposed": false },
+        "timers": { "now": 0, "pending": [] }
+      },
+      "inputSha256": "4d423f36fb073c1fec9de5c487fb791a323db4d02f625428c855074c7519d473"
+    },
+    {
+      "id": "tui-runtime-mutations-005",
+      "name": "drops failed notification context when no fresh context arrived",
+      "source": "src/multiplexer/tui-runtime-mutations.test.ts",
+      "sourceName": "drops failed notification context when no fresh context arrived",
+      "api": "queueTuiNotificationContext/queueTuiSessionSeen/clearTuiRuntimeMutationQueue",
+      "input": {
+        "ops": [
+          { "op": "context", "patch": { "screen": "agent", "sessionId": "codex-1" } },
+          { "op": "runPending" },
+          { "op": "advance", "ms": 10000 }
+        ],
+        "responses": [{ "type": "reject", "message": "offline" }]
+      },
+      "output": {
+        "calls": {
+          "mutations": [
+            {
+              "path": "/notification-context",
+              "body": { "source": "tui", "focused": true, "screen": "agent", "sessionId": "codex-1" },
+              "options": { "timeoutMs": 3000, "recoverOnFailure": false }
+            }
+          ],
+          "debug": []
+        },
+        "queue": { "context": null, "seen": [], "hasTimer": false, "inFlight": false, "attempt": 0, "disposed": false },
+        "timers": { "now": 10000, "pending": [] }
+      },
+      "inputSha256": "f4c625da0df89f59be8f3b8c8ebd128de463b6fa84e4b472abccf5cce89d8de5"
+    },
+    {
+      "id": "tui-runtime-mutations-006",
+      "name": "merges partial notification context patches before flushing",
+      "source": "src/multiplexer/tui-runtime-mutations.test.ts",
+      "sourceName": "merges partial notification context patches before flushing",
+      "api": "queueTuiNotificationContext/queueTuiSessionSeen/clearTuiRuntimeMutationQueue",
+      "input": {
+        "ops": [
+          { "op": "context", "patch": { "screen": "agent", "sessionId": "codex-1" } },
+          { "op": "context", "patch": { "panelOpen": false } },
+          { "op": "runPending" }
+        ],
+        "responses": []
+      },
+      "output": {
+        "calls": {
+          "mutations": [
+            {
+              "path": "/notification-context",
+              "body": {
+                "source": "tui",
+                "focused": true,
+                "screen": "agent",
+                "sessionId": "codex-1",
+                "panelOpen": false
+              },
+              "options": { "timeoutMs": 3000, "recoverOnFailure": false }
+            }
+          ],
+          "debug": []
+        },
+        "queue": { "context": null, "seen": [], "hasTimer": false, "inFlight": false, "attempt": 0, "disposed": false },
+        "timers": { "now": 0, "pending": [] }
+      },
+      "inputSha256": "14119733ab227c52e207979222bb8ce8e35613114ae206f74b6eebd00b169484"
+    },
+    {
+      "id": "tui-runtime-mutations-007",
+      "name": "does not reschedule an in-flight failure after teardown",
+      "source": "src/multiplexer/tui-runtime-mutations.test.ts",
+      "sourceName": "does not reschedule an in-flight failure after teardown",
+      "api": "queueTuiNotificationContext/queueTuiSessionSeen/clearTuiRuntimeMutationQueue",
+      "input": {
+        "ops": [
+          { "op": "seen", "sessionId": "codex-1" },
+          { "op": "advance", "ms": 0 },
+          { "op": "clear" },
+          { "op": "reject", "label": "mark-seen", "message": "offline" },
+          { "op": "runAll" }
+        ],
+        "responses": [{ "type": "pending", "label": "mark-seen" }]
+      },
+      "output": {
+        "calls": {
+          "mutations": [{ "path": "/mark-seen", "body": { "session": "codex-1" }, "options": null }],
+          "debug": []
+        },
+        "queue": null,
+        "timers": { "now": 0, "pending": [] }
+      },
+      "inputSha256": "cbbfebee0b781952c2a7275de8387eafde726253fb15cc7ada341198644f89dd"
+    },
+    {
+      "id": "tui-runtime-mutations-008",
+      "name": "does not recreate the queue when in-flight context fails after teardown",
+      "source": "src/multiplexer/tui-runtime-mutations.test.ts",
+      "sourceName": "does not recreate the queue when in-flight context fails after teardown",
+      "api": "queueTuiNotificationContext/queueTuiSessionSeen/clearTuiRuntimeMutationQueue",
+      "input": {
+        "ops": [
+          { "op": "context", "patch": { "screen": "agent", "sessionId": "codex-1" } },
+          { "op": "advance", "ms": 0 },
+          { "op": "clear" },
+          { "op": "reject", "label": "context", "message": "offline" },
+          { "op": "runAll" }
+        ],
+        "responses": [{ "type": "pending", "label": "context" }]
+      },
+      "output": {
+        "calls": {
+          "mutations": [
+            {
+              "path": "/notification-context",
+              "body": { "source": "tui", "focused": true, "screen": "agent", "sessionId": "codex-1" },
+              "options": { "timeoutMs": 3000, "recoverOnFailure": false }
+            }
+          ],
+          "debug": []
+        },
+        "queue": null,
+        "timers": { "now": 0, "pending": [] }
+      },
+      "inputSha256": "edf0e6540683343dae420d2b71dc1a484b4366ce03822f6bb3938e6bf5b5e4a1"
+    },
+    {
+      "id": "tui-runtime-mutations-009",
+      "name": "does not continue a mixed batch after teardown",
+      "source": "src/multiplexer/tui-runtime-mutations.test.ts",
+      "sourceName": "does not continue a mixed batch after teardown",
+      "api": "queueTuiNotificationContext/queueTuiSessionSeen/clearTuiRuntimeMutationQueue",
+      "input": {
+        "ops": [
+          { "op": "context", "patch": { "screen": "agent", "sessionId": "codex-1" } },
+          { "op": "seen", "sessionId": "codex-1" },
+          { "op": "advance", "ms": 0 },
+          { "op": "clear" },
+          { "op": "resolve", "label": "context", "value": { "ok": true } },
+          { "op": "runAll" }
+        ],
+        "responses": [{ "type": "pending", "label": "context" }]
+      },
+      "output": {
+        "calls": {
+          "mutations": [
+            {
+              "path": "/notification-context",
+              "body": { "source": "tui", "focused": true, "screen": "agent", "sessionId": "codex-1" },
+              "options": { "timeoutMs": 3000, "recoverOnFailure": false }
+            }
+          ],
+          "debug": []
+        },
+        "queue": null,
+        "timers": { "now": 0, "pending": [] }
+      },
+      "inputSha256": "c780c5094bf81458a455b99833116330b281c115fc3fefcfad08f70c65a877d8"
+    }
+  ]
+}

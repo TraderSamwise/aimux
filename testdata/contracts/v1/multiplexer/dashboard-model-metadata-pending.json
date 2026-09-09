@@ -1,0 +1,317 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/dashboard-model.ts",
+  "generatedBy": "scripts/capture-dashboard-model-metadata-pending-contract.mjs",
+  "description": "Dashboard metadata pending-action wrapper behavior captured by running TypeScript with fake pending-action storage, work, settle, and reconcile callbacks.",
+  "cases": [
+    {
+      "id": "dashboard-model-metadata-pending-001",
+      "name": "runs work without pending state when session id is absent",
+      "source": "src/multiplexer/dashboard-model.ts",
+      "api": "withMetadataSessionPending",
+      "input": {
+        "name": "runs work without pending state when session id is absent",
+        "kind": "creating",
+        "workResult": { "created": true }
+      },
+      "output": {
+        "result": { "ok": true, "value": { "created": true } },
+        "pending": null,
+        "timers": [],
+        "calls": [{ "method": "work", "args": [] }]
+      },
+      "inputSha256": "95759316ba64e030d51d8ddb125809436dc46300c5273fe8c0aaf17ab7d442c8"
+    },
+    {
+      "id": "dashboard-model-metadata-pending-002",
+      "name": "sets tokenized pending action and clears it after async settlement",
+      "source": "src/multiplexer/dashboard-model.ts",
+      "api": "withMetadataSessionPending",
+      "input": {
+        "name": "sets tokenized pending action and clears it after async settlement",
+        "sessionId": "codex-new",
+        "kind": "creating",
+        "pendingToken": 7,
+        "sessionSeed": {
+          "index": -1,
+          "id": "codex-new",
+          "command": "codex",
+          "status": "waiting",
+          "active": false,
+          "pendingAction": "creating",
+          "optimistic": true
+        },
+        "settle": true,
+        "fireTimers": true,
+        "workResult": { "sessionId": "codex-new" }
+      },
+      "output": {
+        "result": { "ok": true, "value": { "sessionId": "codex-new" } },
+        "pending": null,
+        "timers": [{ "delay": 0 }],
+        "calls": [
+          {
+            "method": "dashboardPendingActions.setSessionAction",
+            "args": [
+              "codex-new",
+              "creating",
+              {
+                "sessionSeed": {
+                  "index": -1,
+                  "id": "codex-new",
+                  "command": "codex",
+                  "status": "waiting",
+                  "active": false,
+                  "pendingAction": "creating",
+                  "optimistic": true
+                }
+              }
+            ]
+          },
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "work", "args": [] },
+          { "method": "settle", "args": [{ "sessionId": "codex-new" }] },
+          { "method": "dashboardPendingActions.clearSessionActionIfToken", "args": ["codex-new", 7] },
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "refreshDashboardModelFromService", "args": [true, { "lifecycle": { "mode": "dashboard" } }] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "renderDashboard", "args": [] }
+        ]
+      },
+      "inputSha256": "a6730df1b062d22cd2089ea8ab2a09bcb6eb5be4bb4f2cdcbf97a41e72bd11bf"
+    },
+    {
+      "id": "dashboard-model-metadata-pending-003",
+      "name": "keeps superseded tokenized pending action after async settlement",
+      "source": "src/multiplexer/dashboard-model.ts",
+      "api": "withMetadataSessionPending",
+      "input": {
+        "name": "keeps superseded tokenized pending action after async settlement",
+        "sessionId": "codex-new",
+        "kind": "creating",
+        "pendingToken": 8,
+        "sessionSeed": {
+          "index": -1,
+          "id": "codex-new",
+          "command": "codex",
+          "status": "waiting",
+          "active": false,
+          "pendingAction": "creating",
+          "optimistic": true
+        },
+        "settle": true,
+        "clearTokenResult": false,
+        "fireTimers": true
+      },
+      "output": {
+        "result": { "ok": true, "value": { "ok": true } },
+        "pending": "creating",
+        "timers": [{ "delay": 0 }],
+        "calls": [
+          {
+            "method": "dashboardPendingActions.setSessionAction",
+            "args": [
+              "codex-new",
+              "creating",
+              {
+                "sessionSeed": {
+                  "index": -1,
+                  "id": "codex-new",
+                  "command": "codex",
+                  "status": "waiting",
+                  "active": false,
+                  "pendingAction": "creating",
+                  "optimistic": true
+                }
+              }
+            ]
+          },
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "work", "args": [] },
+          { "method": "settle", "args": [{ "ok": true }] },
+          { "method": "dashboardPendingActions.clearSessionActionIfToken", "args": ["codex-new", 8] }
+        ]
+      },
+      "inputSha256": "f76ef52124564577df2a5626c4c9388573231ebb6baae13c17d1e24d54d456fa"
+    },
+    {
+      "id": "dashboard-model-metadata-pending-004",
+      "name": "await settle throws after clearing current token",
+      "source": "src/multiplexer/dashboard-model.ts",
+      "api": "withMetadataSessionPending",
+      "input": {
+        "name": "await settle throws after clearing current token",
+        "sessionId": "codex-new",
+        "kind": "forking",
+        "pendingToken": 9,
+        "sessionSeed": {
+          "index": -1,
+          "id": "codex-new",
+          "command": "codex",
+          "status": "waiting",
+          "active": false,
+          "pendingAction": "forking",
+          "optimistic": true
+        },
+        "settle": true,
+        "settleThrows": "not ready",
+        "options": { "awaitSettle": true }
+      },
+      "output": {
+        "result": { "ok": false, "error": { "name": "Error", "message": "not ready" } },
+        "pending": null,
+        "timers": [],
+        "calls": [
+          {
+            "method": "dashboardPendingActions.setSessionAction",
+            "args": [
+              "codex-new",
+              "forking",
+              {
+                "sessionSeed": {
+                  "index": -1,
+                  "id": "codex-new",
+                  "command": "codex",
+                  "status": "waiting",
+                  "active": false,
+                  "pendingAction": "forking",
+                  "optimistic": true
+                }
+              }
+            ]
+          },
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "work", "args": [] },
+          { "method": "settle", "args": [{ "ok": true }] },
+          {
+            "method": "debug",
+            "args": ["metadata pending action settle failed: session forking codex-new: not ready", "dashboard"]
+          },
+          { "method": "dashboardPendingActions.clearSessionActionIfToken", "args": ["codex-new", 9] },
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "refreshDashboardModelFromService", "args": [true, { "lifecycle": { "mode": "dashboard" } }] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "renderDashboard", "args": [] }
+        ]
+      },
+      "inputSha256": "de25576dc9d0029527cd4b7797e0325cc0967d392507627a681f8f2fba754e3b"
+    },
+    {
+      "id": "dashboard-model-metadata-pending-005",
+      "name": "work failure clears current token and schedules reconcile",
+      "source": "src/multiplexer/dashboard-model.ts",
+      "api": "withMetadataSessionPending",
+      "input": {
+        "name": "work failure clears current token and schedules reconcile",
+        "sessionId": "codex-new",
+        "kind": "creating",
+        "pendingToken": 10,
+        "sessionSeed": {
+          "index": -1,
+          "id": "codex-new",
+          "command": "codex",
+          "status": "waiting",
+          "active": false,
+          "pendingAction": "creating",
+          "optimistic": true
+        },
+        "workThrows": "launch failed"
+      },
+      "output": {
+        "result": { "ok": false, "error": { "name": "Error", "message": "launch failed" } },
+        "pending": null,
+        "timers": [],
+        "calls": [
+          {
+            "method": "dashboardPendingActions.setSessionAction",
+            "args": [
+              "codex-new",
+              "creating",
+              {
+                "sessionSeed": {
+                  "index": -1,
+                  "id": "codex-new",
+                  "command": "codex",
+                  "status": "waiting",
+                  "active": false,
+                  "pendingAction": "creating",
+                  "optimistic": true
+                }
+              }
+            ]
+          },
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "work", "args": [] },
+          { "method": "dashboardPendingActions.clearSessionActionIfToken", "args": ["codex-new", 10] },
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "refreshDashboardModelFromService", "args": [true, { "lifecycle": { "mode": "dashboard" } }] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "renderDashboard", "args": [] }
+        ]
+      },
+      "inputSha256": "aa44a395c8535c24c1bc88e3359f96c5c7879722afe8bf2236468c1fd5a354d0"
+    },
+    {
+      "id": "dashboard-model-metadata-pending-006",
+      "name": "non-token pending cleanup falls back to get and clear",
+      "source": "src/multiplexer/dashboard-model.ts",
+      "api": "withMetadataSessionPending",
+      "input": {
+        "name": "non-token pending cleanup falls back to get and clear",
+        "sessionId": "codex-new",
+        "kind": "creating",
+        "sessionSeed": {
+          "index": -1,
+          "id": "codex-new",
+          "command": "codex",
+          "status": "waiting",
+          "active": false,
+          "pendingAction": "creating",
+          "optimistic": true
+        },
+        "settle": false,
+        "initialPendingKind": "creating",
+        "fireTimers": true
+      },
+      "output": {
+        "result": { "ok": true, "value": { "ok": true } },
+        "pending": null,
+        "timers": [{ "delay": 0 }],
+        "calls": [
+          {
+            "method": "dashboardPendingActions.setSessionAction",
+            "args": [
+              "codex-new",
+              "creating",
+              {
+                "sessionSeed": {
+                  "index": -1,
+                  "id": "codex-new",
+                  "command": "codex",
+                  "status": "waiting",
+                  "active": false,
+                  "pendingAction": "creating",
+                  "optimistic": true
+                }
+              }
+            ]
+          },
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "work", "args": [] },
+          { "method": "settle", "args": [{ "ok": true }] },
+          {
+            "method": "debug",
+            "args": ["metadata pending action did not settle: session creating codex-new", "dashboard"]
+          },
+          { "method": "dashboardPendingActions.getSessionAction", "args": ["codex-new"] },
+          { "method": "dashboardPendingActions.clearSessionAction", "args": ["codex-new"] },
+          { "method": "reapplyDashboardPendingActions", "args": [] },
+          { "method": "refreshDashboardModelFromService", "args": [true, { "lifecycle": { "mode": "dashboard" } }] },
+          { "method": "isDashboardScreen", "args": ["dashboard"] },
+          { "method": "renderDashboard", "args": [] }
+        ]
+      },
+      "inputSha256": "bf86a11567342a4f171996398d66bd58c4fa304cd414f96f54bdc47431840df7"
+    }
+  ]
+}

@@ -1,0 +1,487 @@
+{
+  "version": 1,
+  "source": "src/tui/render/theme.test.ts",
+  "generatedBy": "scripts/capture-tui-render-theme-contract.mjs",
+  "description": "TUI theme primitive outputs captured by running TypeScript tui/render/theme helpers.",
+  "cases": [
+    {
+      "id": "tui-render-theme-001",
+      "name": "style wraps danger tone",
+      "source": "src/tui/render/theme.test.ts",
+      "api": "style",
+      "input": { "name": "style wraps danger tone", "api": "style", "text": "hi", "tone": "danger" },
+      "output": "\u001b[31mhi\u001b[0m",
+      "inputSha256": "e973426cf52746f9c396893cd15b175707feb412a982f3218ba6b2c440ed4d16"
+    },
+    {
+      "id": "tui-render-theme-002",
+      "name": "style wraps accent tone",
+      "source": "src/tui/render/theme.test.ts",
+      "api": "style",
+      "input": { "name": "style wraps accent tone", "api": "style", "text": "hi", "tone": "accent" },
+      "output": "\u001b[1;33mhi\u001b[0m",
+      "inputSha256": "c4ec99d5e9d2d5e3ab30572f28dfca2ce9f16f07f2e3fd9f28a13cf661110167"
+    },
+    {
+      "id": "tui-render-theme-003",
+      "name": "style passes text tone through",
+      "source": "src/tui/render/theme.test.ts",
+      "api": "style",
+      "input": { "name": "style passes text tone through", "api": "style", "text": "hi", "tone": "text" },
+      "output": "hi",
+      "inputSha256": "5e5c564b237d20aa9db0d97fd3d77f93700ea9363eaa68ea6e842e830772a475"
+    },
+    {
+      "id": "tui-render-theme-004",
+      "name": "status dot working",
+      "source": "src/tui/render/theme.test.ts",
+      "api": "statusDot",
+      "input": { "name": "status dot working", "api": "statusDot", "kind": "working" },
+      "output": "\u001b[36m●\u001b[0m",
+      "inputSha256": "dd77ded118482f667f51f147f6f9bba34bf5a9c9a48789d99d543bd6eed644b7"
+    },
+    {
+      "id": "tui-render-theme-005",
+      "name": "status dot offline",
+      "source": "src/tui/render/theme.test.ts",
+      "api": "statusDot",
+      "input": { "name": "status dot offline", "api": "statusDot", "kind": "offline" },
+      "output": "\u001b[2m○\u001b[0m",
+      "inputSha256": "a2e4c9dda07ce20d16f64f44240862c2e6a359b3935d372ddec59ad2e5b776cb"
+    },
+    {
+      "id": "tui-render-theme-006",
+      "name": "status tone ready",
+      "source": "src/tui/render/theme.test.ts",
+      "api": "statusTone",
+      "input": { "name": "status tone ready", "api": "statusTone", "kind": "ready" },
+      "output": "ready",
+      "inputSha256": "74aec031b3678f86f3b3d6aca1d26c7cf4adf8aa73cdf58dcea3db2bcce999d4"
+    },
+    {
+      "id": "tui-render-theme-007",
+      "name": "visible width ignores styled work text",
+      "source": "src/tui/render/theme.test.ts",
+      "api": "visibleWidth",
+      "input": {
+        "name": "visible width ignores styled work text",
+        "api": "visibleWidth",
+        "text": "\u001b[36mhello\u001b[0m"
+      },
+      "output": 5,
+      "inputSha256": "2a7dace0c65503eb5a0a1e81edc65f3ecb02200b658308dcdf2ee411f91b1b1a"
+    },
+    {
+      "id": "tui-render-theme-008",
+      "name": "pill renders reverse video",
+      "source": "src/tui/render/theme.test.ts",
+      "api": "pill",
+      "input": { "name": "pill renders reverse video", "api": "pill", "label": "OK", "tone": "done" },
+      "output": "\u001b[32;7m OK \u001b[0m",
+      "inputSha256": "86e31fb3b64e0ed0ad8260b31e50ba371f21da3b721ea0d4eb6b352813a3d76b"
+    },
+    {
+      "id": "tui-render-theme-009",
+      "name": "text pill falls back to bare reverse video",
+      "source": "src/tui/render/theme.test.ts",
+      "api": "pill",
+      "input": { "name": "text pill falls back to bare reverse video", "api": "pill", "label": "X", "tone": "text" },
+      "output": "\u001b[7m X \u001b[0m",
+      "inputSha256": "101d5be9ea7100345108734973b2ae1ee155178288eeb155ef0c598053020141"
+    },
+    {
+      "id": "tui-render-theme-010",
+      "name": "chip renders info count",
+      "source": "src/tui/render/theme.test.ts",
+      "api": "chip",
+      "input": { "name": "chip renders info count", "api": "chip", "label": "22 unseen", "tone": "info" },
+      "output": "\u001b[48;5;236;38;5;117m 22 unseen \u001b[0m",
+      "inputSha256": "838ead3a84a20640b13ef267931b47ca3d95eedb11b3685150695da0e947cf5e"
+    },
+    {
+      "id": "tui-render-theme-011",
+      "name": "keycap renders default key",
+      "source": "src/tui/render/theme.test.ts",
+      "api": "keycap",
+      "input": { "name": "keycap renders default key", "api": "keycap", "key": "q" },
+      "output": "\u001b[48;5;240;38;5;255m q \u001b[0m",
+      "inputSha256": "1da254bef1d30f7a4350cac241f4e0abbdb516af47e7db8f6a77df32946e23e2"
+    },
+    {
+      "id": "tui-render-theme-012",
+      "name": "keycap renders danger key",
+      "source": "src/tui/render/theme.test.ts",
+      "api": "keycap",
+      "input": { "name": "keycap renders danger key", "api": "keycap", "key": "x", "tone": "danger" },
+      "output": "\u001b[48;5;240;38;5;203m x \u001b[0m",
+      "inputSha256": "da3f99b985c178e0393a40c2f0a78da00e8f3f6b9ca61c205c22bb76e69a0752"
+    },
+    {
+      "id": "tui-render-theme-013",
+      "name": "pad visible pads styled content",
+      "source": "src/tui/render/theme.test.ts",
+      "api": "padVisible",
+      "input": {
+        "name": "pad visible pads styled content",
+        "api": "padVisible",
+        "text": "\u001b[36mab\u001b[0m",
+        "width": 6
+      },
+      "output": "\u001b[36mab\u001b[0m    ",
+      "inputSha256": "d256fb4647c33e4d6dddd0bd7235f10d0f7229a1d867b160aad9bc7152681024"
+    },
+    {
+      "id": "tui-render-theme-014",
+      "name": "pad visible truncates styled content",
+      "source": "src/tui/render/theme.test.ts",
+      "api": "padVisible",
+      "input": {
+        "name": "pad visible truncates styled content",
+        "api": "padVisible",
+        "text": "\u001b[36mabcdef\u001b[0m",
+        "width": 4
+      },
+      "output": "\u001b[36mabc…\u001b[0m",
+      "inputSha256": "294563c6486824e198b4b3afa8198664a563c2263f5b3a3599e642f5cb462abe"
+    },
+    {
+      "id": "tui-render-theme-015",
+      "name": "columns align mixed content",
+      "source": "src/tui/render/theme.test.ts",
+      "api": "cols",
+      "input": {
+        "name": "columns align mixed content",
+        "api": "cols",
+        "columns": [
+          { "content": "\u001b[36m●\u001b[0m", "width": 2 },
+          { "content": "\u001b[1mcodex\u001b[0m", "width": 10 },
+          { "content": "\u001b[36;7m WORKING \u001b[0m", "width": 14 }
+        ]
+      },
+      "output": "\u001b[36m●\u001b[0m \u001b[1mcodex\u001b[0m     \u001b[36;7m WORKING \u001b[0m     ",
+      "inputSha256": "d62b66d85bc80ca3804324bfc3bcb7a87cf2826b2886a6b89b24a494a812b030"
+    },
+    {
+      "id": "tui-render-theme-016",
+      "name": "divider renders exact width",
+      "source": "src/tui/render/theme.test.ts",
+      "api": "divider",
+      "input": { "name": "divider renders exact width", "api": "divider", "width": 5 },
+      "output": "\u001b[2m─────\u001b[0m",
+      "inputSha256": "85ab439d0765c2fa380e551cb5358b170755fe98a46120aa7df1a7de6a7ca774"
+    },
+    {
+      "id": "tui-render-theme-017",
+      "name": "keycap hint with label",
+      "source": "src/tui/render/theme.test.ts",
+      "api": "keycapHint",
+      "input": { "name": "keycap hint with label", "api": "keycapHint", "key": "q", "label": "quit" },
+      "output": "\u001b[48;5;240;38;5;255m q \u001b[0m \u001b[2mquit\u001b[0m",
+      "inputSha256": "d888298b002b773c9a681ef0932dc77a9f2b0504773ecd2680dd678aad505c76"
+    },
+    {
+      "id": "tui-render-theme-018",
+      "name": "keycap hint without label",
+      "source": "src/tui/render/theme.test.ts",
+      "api": "keycapHint",
+      "input": { "name": "keycap hint without label", "api": "keycapHint", "key": "Esc" },
+      "output": "\u001b[48;5;240;38;5;255m Esc \u001b[0m",
+      "inputSha256": "dc4d83a1a70052c1dadf36de896a3898b6b3a9a5b30a938a156f2acbebcb90a2"
+    },
+    {
+      "id": "tui-render-theme-019",
+      "name": "keycap hints parse bracket and bare key groups",
+      "source": "src/tui/render/theme.test.ts",
+      "api": "keycapHints",
+      "input": {
+        "name": "keycap hints parse bracket and bare key groups",
+        "api": "keycapHints",
+        "line": "[↑↓] select  q quit"
+      },
+      "output": "\u001b[48;5;240;38;5;255m ↑↓ \u001b[0m \u001b[2mselect\u001b[0m  \u001b[48;5;240;38;5;255m q \u001b[0m \u001b[2mquit\u001b[0m",
+      "inputSha256": "64eeacb62c25107a8726c53bed52f743f2b5ecc47d87351d2d8151b048557892"
+    },
+    {
+      "id": "tui-render-theme-020",
+      "name": "footer hints render box free",
+      "source": "src/tui/render/theme.test.ts",
+      "api": "footerHints",
+      "input": { "name": "footer hints render box free", "api": "footerHints", "line": "[↑↓] select  q quit" },
+      "output": "\u001b[1;38;5;255m↑↓\u001b[0m \u001b[2mselect\u001b[0m  \u001b[1;38;5;255mq\u001b[0m \u001b[2mquit\u001b[0m",
+      "inputSha256": "551ebcae004bb2804a6aae1578406935098969286667616b488b1a0f0dccfcd2"
+    },
+    {
+      "id": "tui-render-theme-021",
+      "name": "keycap hint lines wrap groups",
+      "source": "src/tui/render/theme.test.ts",
+      "api": "keycapHintLines",
+      "input": {
+        "name": "keycap hint lines wrap groups",
+        "api": "keycapHintLines",
+        "line": "[a] alpha  [b] bravo  [c] charlie",
+        "width": 14
+      },
+      "output": [
+        "\u001b[48;5;240;38;5;255m a \u001b[0m \u001b[2malpha\u001b[0m",
+        "\u001b[48;5;240;38;5;255m b \u001b[0m \u001b[2mbravo\u001b[0m",
+        "\u001b[48;5;240;38;5;255m c \u001b[0m \u001b[2mcharlie\u001b[0m"
+      ],
+      "inputSha256": "02d956ec89771eb53e81556ed4f274c8bb927ce7cb16e3c8a897b5b83127bb07"
+    },
+    {
+      "id": "tui-render-theme-022",
+      "name": "recede plain text",
+      "source": "src/tui/render/theme.test.ts",
+      "api": "recede",
+      "input": { "name": "recede plain text", "api": "recede", "text": "plain" },
+      "output": "\u001b[2;38;5;240mplain\u001b[0m",
+      "inputSha256": "a30d0069a1bf0411f026dc01aeac9354efd43005b3f5edf7306a1b99aeef700e"
+    },
+    {
+      "id": "tui-render-theme-023",
+      "name": "recede after embedded reset",
+      "source": "src/tui/render/theme.test.ts",
+      "api": "recede",
+      "input": { "name": "recede after embedded reset", "api": "recede", "text": "\u001b[31mhi\u001b[0mbye" },
+      "output": "\u001b[2;38;5;240m\u001b[31mhi\u001b[0m\u001b[2;38;5;240mbye\u001b[0m",
+      "inputSha256": "226dfd38a2ce627dbb59fa0fc52368c4ecc39aecba8a1a2ddfcc2a7ff67828ff"
+    },
+    {
+      "id": "tui-render-theme-024",
+      "name": "recede shorthand reset",
+      "source": "src/tui/render/theme.test.ts",
+      "api": "recede",
+      "input": { "name": "recede shorthand reset", "api": "recede", "text": "a\u001b[mb" },
+      "output": "\u001b[2;38;5;240ma\u001b[0m\u001b[2;38;5;240mb\u001b[0m",
+      "inputSha256": "223b4e7e3bd4e430fc302d3d6ed9fa196b4ef8afe544ca3b521da8df079067e2"
+    },
+    {
+      "id": "tui-render-theme-025",
+      "name": "recede reset-led bold",
+      "source": "src/tui/render/theme.test.ts",
+      "api": "recede",
+      "input": { "name": "recede reset-led bold", "api": "recede", "text": "x\u001b[0;1my" },
+      "output": "\u001b[2;38;5;240mx\u001b[0m\u001b[2;38;5;240m\u001b[1my\u001b[0m",
+      "inputSha256": "50929ab4e54757919e466d531b5c25b3a032ce20e34200555c377ffb1e7e3fed"
+    },
+    {
+      "id": "tui-render-theme-026",
+      "name": "render footer hints one line",
+      "source": "src/tui/render/theme.test.ts",
+      "api": "renderFooterHints",
+      "input": {
+        "name": "render footer hints one line",
+        "api": "renderFooterHints",
+        "hints": [
+          ["u", "attention"],
+          ["n", "agent"],
+          ["q", "quit"]
+        ],
+        "width": 200
+      },
+      "output": [
+        "\u001b[1;38;5;255mu\u001b[0m \u001b[2mattention\u001b[0m  \u001b[1;38;5;255mn\u001b[0m \u001b[2magent\u001b[0m  \u001b[1;38;5;255mq\u001b[0m \u001b[2mquit\u001b[0m"
+      ],
+      "inputSha256": "97d90527a1e4af484f163b19099284ba450fd97a86da7923d0a6bf3b5fb6c611"
+    },
+    {
+      "id": "tui-render-theme-027",
+      "name": "render footer hints danger tone",
+      "source": "src/tui/render/theme.test.ts",
+      "api": "renderFooterHints",
+      "input": {
+        "name": "render footer hints danger tone",
+        "api": "renderFooterHints",
+        "hints": [["x", "kill", "danger"]],
+        "width": 200
+      },
+      "output": ["\u001b[1;38;5;203mx\u001b[0m \u001b[2mkill\u001b[0m"],
+      "inputSha256": "5337dfad6e74ffb0f8701816f4a4fce646144a086968bd38b870956e6eb3de56"
+    },
+    {
+      "id": "tui-render-theme-028",
+      "name": "render footer hints wraps long list",
+      "source": "src/tui/render/theme.test.ts",
+      "api": "renderFooterHints",
+      "input": {
+        "name": "render footer hints wraps long list",
+        "api": "renderFooterHints",
+        "hints": [
+          ["a", "alpha"],
+          ["b", "bravo"],
+          ["c", "charlie"],
+          ["d", "delta"]
+        ],
+        "width": 16
+      },
+      "output": [
+        "\u001b[1;38;5;255ma\u001b[0m \u001b[2malpha\u001b[0m  \u001b[1;38;5;255mb\u001b[0m \u001b[2mbravo\u001b[0m",
+        "\u001b[1;38;5;255mc\u001b[0m \u001b[2mcharlie\u001b[0m",
+        "\u001b[1;38;5;255md\u001b[0m \u001b[2mdelta\u001b[0m"
+      ],
+      "inputSha256": "b66a2e8c0fdb284a5f0bebc74e963f4cd5e6719842bd213f81b28b07d7f8ea4a"
+    },
+    {
+      "id": "tui-render-theme-029",
+      "name": "card with title summary and row",
+      "source": "src/tui/render/theme.test.ts",
+      "api": "card",
+      "input": {
+        "name": "card with title summary and row",
+        "api": "card",
+        "spec": {
+          "tone": "accent",
+          "title": "\u001b[1m[1] main\u001b[0m",
+          "summary": "\u001b[2m1 offline\u001b[0m",
+          "rows": ["agent row"],
+          "width": 40
+        }
+      },
+      "output": [
+        "\u001b[1;33m╭ \u001b[0m\u001b[1m[1] main\u001b[0m \u001b[1;33m─────────────────\u001b[0m \u001b[2m1 offline\u001b[0m \u001b[1;33m╮\u001b[0m",
+        "\u001b[1;33m│ \u001b[0magent row                           \u001b[1;33m │\u001b[0m",
+        "\u001b[1;33m╰\u001b[0m\u001b[1;33m──────────────────────────────────────\u001b[0m\u001b[1;33m╯\u001b[0m"
+      ],
+      "inputSha256": "833f09d82d7f8ad8378b1b8ee42d06fc8cf33b1a09da6a30ea0699c369d8d479"
+    },
+    {
+      "id": "tui-render-theme-030",
+      "name": "titles only card",
+      "source": "src/tui/render/theme.test.ts",
+      "api": "card",
+      "input": {
+        "name": "titles only card",
+        "api": "card",
+        "spec": {
+          "tone": "muted",
+          "title": "\u001b[1;33m[2] wt\u001b[0m",
+          "summary": "\u001b[2mno agents\u001b[0m",
+          "width": 30
+        }
+      },
+      "output": [
+        "\u001b[2m╭ \u001b[0m\u001b[1;33m[2] wt\u001b[0m \u001b[2m─────────\u001b[0m \u001b[2mno agents\u001b[0m \u001b[2m╮\u001b[0m",
+        "\u001b[2m╰\u001b[0m\u001b[2m────────────────────────────\u001b[0m\u001b[2m╯\u001b[0m"
+      ],
+      "inputSha256": "ea66594de522fb096a42064ae8aa757bc960b3e9e73d39375aed5b2e5f3dc0c3"
+    },
+    {
+      "id": "tui-render-theme-031",
+      "name": "card clamps tiny width",
+      "source": "src/tui/render/theme.test.ts",
+      "api": "card",
+      "input": {
+        "name": "card clamps tiny width",
+        "api": "card",
+        "spec": { "tone": "muted", "title": "x", "width": 3 }
+      },
+      "output": [
+        "\u001b[2m╭ \u001b[0mx \u001b[2m───\u001b[0m\u001b[2m╮\u001b[0m",
+        "\u001b[2m╰\u001b[0m\u001b[2m──────\u001b[0m\u001b[2m╯\u001b[0m"
+      ],
+      "inputSha256": "f225c9c777a6cfc845b7020bcac7996c702eae0aab09d8f135426883ddf087d7"
+    },
+    {
+      "id": "tui-render-theme-032",
+      "name": "all tones preserve visible width",
+      "source": "src/tui/render/theme.test.ts",
+      "api": "visibleWidthsForStyles",
+      "input": {
+        "name": "all tones preserve visible width",
+        "api": "visibleWidthsForStyles",
+        "tones": [
+          "text",
+          "muted",
+          "strong",
+          "accent",
+          "work",
+          "attn",
+          "done",
+          "danger",
+          "blocked",
+          "info",
+          "ready",
+          "idle"
+        ],
+        "text": "abc"
+      },
+      "output": {
+        "text": 3,
+        "muted": 3,
+        "strong": 3,
+        "accent": 3,
+        "work": 3,
+        "attn": 3,
+        "done": 3,
+        "danger": 3,
+        "blocked": 3,
+        "info": 3,
+        "ready": 3,
+        "idle": 3
+      },
+      "inputSha256": "7a853a7fa47499e87445d3bcaea8e93fbb9fda1e37bd20b01c651536e09ccc61"
+    },
+    {
+      "id": "tui-render-theme-033",
+      "name": "all status kinds preserve dot width",
+      "source": "src/tui/render/theme.test.ts",
+      "api": "visibleWidthsForStatusDots",
+      "input": {
+        "name": "all status kinds preserve dot width",
+        "api": "visibleWidthsForStatusDots",
+        "statusKinds": [
+          "working",
+          "ready",
+          "idle",
+          "offline",
+          "needs",
+          "error",
+          "done",
+          "blocked",
+          "service",
+          "serviceOff"
+        ]
+      },
+      "output": {
+        "working": 1,
+        "ready": 1,
+        "idle": 1,
+        "offline": 1,
+        "needs": 1,
+        "error": 1,
+        "done": 1,
+        "blocked": 1,
+        "service": 1,
+        "serviceOff": 1
+      },
+      "inputSha256": "4116e363d4fb03afde1e8679a9a05a764b741182dd8cd253d58f21192d866c15"
+    },
+    {
+      "id": "tui-render-theme-034",
+      "name": "tmux style work",
+      "source": "src/tui/render/theme.test.ts",
+      "api": "tmuxStyle",
+      "input": { "name": "tmux style work", "api": "tmuxStyle", "text": "x", "tone": "work" },
+      "output": "#[fg=cyan]x#[default]",
+      "inputSha256": "34f9ab272be45b6aaf88856d85e236eb899b53a8b26a3f28f5413b03dfaa20a4"
+    },
+    {
+      "id": "tui-render-theme-035",
+      "name": "tmux style text passthrough",
+      "source": "src/tui/render/theme.test.ts",
+      "api": "tmuxStyle",
+      "input": { "name": "tmux style text passthrough", "api": "tmuxStyle", "text": "x", "tone": "text" },
+      "output": "x",
+      "inputSha256": "443d6e785700ce04b8e612c18f63e4829ff8f5bf851aab57cef07d18a5970f4f"
+    },
+    {
+      "id": "tui-render-theme-036",
+      "name": "tmux invert attention",
+      "source": "src/tui/render/theme.test.ts",
+      "api": "tmuxInvert",
+      "input": { "name": "tmux invert attention", "api": "tmuxInvert", "text": " x ", "tone": "attn" },
+      "output": "#[fg=black,bg=yellow] x #[default]",
+      "inputSha256": "7651d8c66e0feed9b6d157314c676486c36cd16b57cee592702791983a231dc5"
+    }
+  ]
+}

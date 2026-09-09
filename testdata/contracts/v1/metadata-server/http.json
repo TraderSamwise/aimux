@@ -1,0 +1,108 @@
+{
+  "version": 1,
+  "source": "src/metadata-server/http.test.ts",
+  "generatedBy": "scripts/capture-metadata-server-runtime-contract.mjs",
+  "description": "Metadata-server HTTP JSON-read, header normalization, CORS, JSON send, and integer parser behavior captured by running TypeScript http helpers.",
+  "cases": [
+    {
+      "id": "metadata-http-001",
+      "name": "reads JSON with a streaming byte limit",
+      "source": "src/metadata-server/http.test.ts",
+      "api": "readJson",
+      "input": { "scenario": "read-json-byte-limit" },
+      "output": {
+        "ok": { "ok": true },
+        "tooLarge": { "name": "BodyTooLarge", "message": "body exceeds 3 bytes", "destroyed": true }
+      },
+      "inputSha256": "942f40e0dfb1be30aac05ea17333a533fe492613bc7f260a46769e200e98db10"
+    },
+    {
+      "id": "metadata-http-002",
+      "name": "normalizes request headers",
+      "source": "src/metadata-server/http.test.ts",
+      "api": "requestHeaderRecord",
+      "input": { "headers": { "one": "1", "many": ["a", "b"], "empty": [] } },
+      "output": { "one": "1", "many": "a, b" },
+      "inputSha256": "1c8736252fe903b516ce3b5fd9eef310debb0ccbbe3d5d4cd991c042a172fe59"
+    },
+    {
+      "id": "metadata-http-003",
+      "name": "sets CORS headers for allowed local origins",
+      "source": "src/metadata-server/http.test.ts",
+      "api": "setCorsHeaders/isAllowedCorsOrigin",
+      "input": { "origin": "http://localhost:4545", "checks": ["https://aimux.app", "https://evil.example"] },
+      "output": {
+        "allowed": true,
+        "response": {
+          "statusCode": 0,
+          "headers": {
+            "access-control-allow-headers": "Content-Type, Authorization",
+            "access-control-allow-methods": "GET, POST, PUT, OPTIONS",
+            "access-control-allow-origin": "http://localhost:4545",
+            "vary": "Origin"
+          }
+        },
+        "checks": [
+          ["https://aimux.app", false],
+          ["https://evil.example", false]
+        ]
+      },
+      "inputSha256": "463afd0baca20594ead9923919530eea3325f8deb46b427d4d3ede9cf85013da"
+    },
+    {
+      "id": "metadata-http-004",
+      "name": "sends JSON responses without clobbering existing CORS headers",
+      "source": "src/metadata-server/http.test.ts",
+      "api": "send",
+      "input": { "status": 201, "body": { "ok": true }, "existingCors": "http://localhost:3000" },
+      "output": {
+        "statusCode": 201,
+        "headers": {
+          "access-control-allow-origin": "http://localhost:3000",
+          "connection": "close",
+          "content-length": 11,
+          "content-type": "application/json"
+        },
+        "body": "{\"ok\":true}"
+      },
+      "inputSha256": "fb8fd235477a4189d0bfcc7458104ae9a2c0cf043fae0e2084e237c822f3e18a"
+    },
+    {
+      "id": "metadata-http-005",
+      "name": "parses integer inputs consistently",
+      "source": "src/metadata-server/http.test.ts",
+      "api": "integer parsers",
+      "input": {
+        "optional": [null, " 5 ", "", "bad", "9007199254740992"],
+        "integer": ["bad", 4, " -2 ", 1.5],
+        "positive": [0, "3"],
+        "bounded": ["999", null, "bad"]
+      },
+      "output": {
+        "optional": [
+          { "ok": true },
+          { "ok": true, "value": 5 },
+          { "ok": true },
+          { "ok": false, "error": "startLine must be an integer" },
+          { "ok": false, "error": "startLine must be a safe integer" }
+        ],
+        "integer": [
+          { "ok": false, "error": "rows must be an integer" },
+          { "ok": true, "value": 4 },
+          { "ok": true, "value": -2 },
+          { "ok": false, "error": "rows must be an integer" }
+        ],
+        "positive": [
+          { "ok": false, "error": "rows must be an integer >= 1" },
+          { "ok": true, "value": 3 }
+        ],
+        "bounded": [
+          { "ok": true, "value": 100 },
+          { "ok": true, "value": 10 },
+          { "ok": false, "error": "limit must be an integer" }
+        ]
+      },
+      "inputSha256": "6dbd8b177a5538701cda8238ffe7710f0e66a75e40d5a594e6392899c3903e85"
+    }
+  ]
+}

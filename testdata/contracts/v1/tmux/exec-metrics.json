@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "generatedAt": "2026-09-06T00:00:00.000Z",
+  "generatedBy": "scripts/capture-tmux-exec-metrics-contract.mjs",
+  "source": "src/tmux/exec-metrics.test.ts",
+  "subject": "src/tmux/exec-metrics.ts",
+  "description": "Stable tmux exec metrics behavior captured by running TypeScript.",
+  "caseCount": 6,
+  "cases": [
+    {
+      "id": "tmux-exec-metrics-001",
+      "name": "takes the subcommand for attribution",
+      "source": "src/tmux/exec-metrics.test.ts",
+      "api": "exec-metrics",
+      "input": { "name": "takes the subcommand for attribution" },
+      "output": { "verbs": ["capture-pane", "(unknown)", "(unknown)"] },
+      "inputSha256": "85df1a2cc4b8c6cb3949ca75e8515d2f5674079db005d7b286510ed2ff555872"
+    },
+    {
+      "id": "tmux-exec-metrics-002",
+      "name": "splits sync from async",
+      "source": "src/tmux/exec-metrics.test.ts",
+      "api": "exec-metrics",
+      "input": { "name": "splits sync from async" },
+      "output": {
+        "sync": { "count": 1, "totalMs": 10, "maxMs": 10 },
+        "async": { "count": 1, "totalMs": 90, "maxMs": 90 },
+        "capturePane": { "count": 1, "totalMs": 10, "maxMs": 10 },
+        "callerKeys": ["(unknown)"]
+      },
+      "inputSha256": "0ce10f31decaf2ce9e4cf5a8018f578627287b037a246b6d79691f8c6bb12df2"
+    },
+    {
+      "id": "tmux-exec-metrics-003",
+      "name": "accumulates count total and max per verb",
+      "source": "src/tmux/exec-metrics.test.ts",
+      "api": "exec-metrics",
+      "input": { "name": "accumulates count total and max per verb" },
+      "output": {
+        "sync": { "count": 3, "totalMs": 33, "maxMs": 25 },
+        "capturePane": { "count": 2, "totalMs": 30, "maxMs": 25 },
+        "listWindows": { "count": 1, "totalMs": 3, "maxMs": 3 }
+      },
+      "inputSha256": "120530e12047b2680c085a9bc24a6b94244b468f1e82ae6e889e2bae47607961"
+    },
+    {
+      "id": "tmux-exec-metrics-004",
+      "name": "orders verbs by total time",
+      "source": "src/tmux/exec-metrics.test.ts",
+      "api": "exec-metrics",
+      "input": { "name": "orders verbs by total time" },
+      "output": { "keys": ["capture-pane", "display-message", "list-windows"] },
+      "inputSha256": "6362f95750ace2f699d12f1103bf37413b7994e9c1c1e3013b8cf20bb781c879"
+    },
+    {
+      "id": "tmux-exec-metrics-005",
+      "name": "hands out copies",
+      "source": "src/tmux/exec-metrics.test.ts",
+      "api": "exec-metrics",
+      "input": { "name": "hands out copies" },
+      "output": {
+        "firstMutated": { "count": 1, "totalMs": 9999, "maxMs": 10 },
+        "secondSync": { "count": 1, "totalMs": 10, "maxMs": 10 },
+        "secondCapturePane": { "count": 1, "totalMs": 10, "maxMs": 10 }
+      },
+      "inputSha256": "4951fcbda44813b79579b205a813444561d4a208fe6f01cbf8a26ae1d897ac44"
+    },
+    {
+      "id": "tmux-exec-metrics-006",
+      "name": "resets to empty",
+      "source": "src/tmux/exec-metrics.test.ts",
+      "api": "exec-metrics",
+      "input": { "name": "resets to empty" },
+      "output": {
+        "sync": { "count": 0, "totalMs": 0, "maxMs": 0 },
+        "async": { "count": 0, "totalMs": 0, "maxMs": 0 },
+        "syncByVerb": {},
+        "syncByCaller": {}
+      },
+      "inputSha256": "19c8648c757cf801119644c4998f81f65f4f3c9e0548807a72253421ef9f66d8"
+    }
+  ]
+}

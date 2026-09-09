@@ -1,0 +1,372 @@
+{
+  "version": 1,
+  "generatedAt": "2026-09-07T00:00:00.000Z",
+  "generatedBy": "scripts/capture-tui-screen-renderer-contracts.mjs",
+  "source": "src/tui/screens/overlay-renderers.test.ts",
+  "sources": ["src/tui/screens/overlay-renderers.test.ts", "src/tui/screens/overlay-renderers.ts"],
+  "subject": "tui screen overlay renderers",
+  "description": "Raw ANSI and visible text output captured by running TypeScript TUI overlay renderer helpers.",
+  "caseCount": 13,
+  "cases": [
+    {
+      "id": "tui-screen-overlay-001",
+      "name": "worktree list uses service-backed cache",
+      "source": "src/tui/screens/overlay-renderers.test.ts",
+      "api": "buildWorktreeListOverlayOutput",
+      "input": {
+        "api": "buildWorktreeListOverlayOutput",
+        "ctx": {
+          "mode": "dashboard",
+          "dashboardWorktreeGroupsCache": [
+            { "name": "Main Checkout", "branch": "main" },
+            { "name": "feature", "branch": "feature", "path": "/repo/.aimux/worktrees/feature" }
+          ]
+        },
+        "cols": 100,
+        "rows": 30
+      },
+      "output": {
+        "rendered": "\u001b7\u001b[11;33H\u001b[34m╭───────────────────────────────╮\u001b[0m\u001b[12;33H\u001b[34m│\u001b[0m\u001b[1;48;5;24;38;5;195m WORKTREE MANAGEMENT           \u001b[0m\u001b[34m│\u001b[0m\u001b[13;33H\u001b[34m├───────────────────────────────┤\u001b[0m\u001b[14;33H\u001b[34m│\u001b[0m   \u001b[1mMain Checkout\u001b[0m \u001b[2m(main)\u001b[0m \u001b[2m(main)\u001b[0m \u001b[34m│\u001b[0m\u001b[15;33H\u001b[34m│\u001b[0m   \u001b[1mfeature\u001b[0m \u001b[2m(feature)\u001b[0m           \u001b[34m│\u001b[0m\u001b[16;33H\u001b[34m│\u001b[0m                               \u001b[34m│\u001b[0m\u001b[17;33H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m Esc \u001b[0m \u001b[2mback\u001b[0m                  \u001b[34m│\u001b[0m\u001b[18;33H\u001b[34m╰───────────────────────────────╯\u001b[0m\u001b8",
+        "visibleText": "╭───────────────────────────────╮│ WORKTREE MANAGEMENT           │├───────────────────────────────┤│   Main Checkout (main) (main) ││   feature (feature)           ││                               ││    Esc  back                  │╰───────────────────────────────╯",
+        "isNull": false,
+        "sideEffects": { "listAllWorktreesCalled": false }
+      },
+      "inputSha256": "3a90d49f1654a8a74c463588647605227f83994d42d4a59abc903984df465cc4"
+    },
+    {
+      "id": "tui-screen-overlay-002",
+      "name": "empty worktree cache cleanup is dismiss-only",
+      "source": "src/tui/screens/overlay-renderers.test.ts",
+      "api": "buildWorktreeCacheCleanupConfirmOverlayOutput",
+      "input": {
+        "api": "buildWorktreeCacheCleanupConfirmOverlayOutput",
+        "ctx": {
+          "worktreeCacheCleanupConfirm": {
+            "dryRun": true,
+            "reclaimedBytes": 0,
+            "plan": { "reclaimableBytes": 0, "targets": [], "skipped": [] },
+            "results": []
+          }
+        },
+        "cols": 100,
+        "rows": 30
+      },
+      "output": {
+        "rendered": "\u001b7\u001b[11;25H\u001b[34m╭────────────────────────────────────────────────╮\u001b[0m\u001b[12;25H\u001b[34m│\u001b[0m\u001b[1;48;5;24;38;5;195m WORKTREE CACHE CLEANUP                         \u001b[0m\u001b[34m│\u001b[0m\u001b[13;25H\u001b[34m├────────────────────────────────────────────────┤\u001b[0m\u001b[14;25H\u001b[34m│\u001b[0m   \u001b[2mNo inactive generated worktree caches found.\u001b[0m \u001b[34m│\u001b[0m\u001b[15;25H\u001b[34m│\u001b[0m                                                \u001b[34m│\u001b[0m\u001b[16;25H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m Enter \u001b[0m \u001b[2mdismiss\u001b[0m  \u001b[48;5;240;38;5;255m Esc \u001b[0m \u001b[2mback\u001b[0m                  \u001b[34m│\u001b[0m\u001b[17;25H\u001b[34m╰────────────────────────────────────────────────╯\u001b[0m\u001b8",
+        "visibleText": "╭────────────────────────────────────────────────╮│ WORKTREE CACHE CLEANUP                         │├────────────────────────────────────────────────┤│   No inactive generated worktree caches found. ││                                                ││    Enter  dismiss   Esc  back                  │╰────────────────────────────────────────────────╯",
+        "isNull": false
+      },
+      "inputSha256": "a7afd6a2b60774442f8de66817afdea9232b4091be35d9600219bccb184b39ab"
+    },
+    {
+      "id": "tui-screen-overlay-003",
+      "name": "worktree cache cleanup removal confirmation",
+      "source": "src/tui/screens/overlay-renderers.test.ts",
+      "api": "buildWorktreeCacheCleanupConfirmOverlayOutput",
+      "input": {
+        "api": "buildWorktreeCacheCleanupConfirmOverlayOutput",
+        "ctx": {
+          "worktreeCacheCleanupConfirm": {
+            "dryRun": true,
+            "reclaimedBytes": 0,
+            "plan": {
+              "reclaimableBytes": 2048,
+              "targets": [
+                {
+                  "worktreePath": "/repo/.aimux/worktrees/old",
+                  "relativePath": "node_modules",
+                  "path": "/repo/.aimux/worktrees/old/node_modules",
+                  "sizeBytes": 2048
+                }
+              ],
+              "skipped": [{ "worktreePath": "/repo/.aimux/worktrees/live", "reason": "active-runtime" }]
+            },
+            "results": [{ "path": "/repo/.aimux/worktrees/old/node_modules", "status": "dry-run", "sizeBytes": 2048 }]
+          }
+        },
+        "cols": 120,
+        "rows": 40
+      },
+      "output": {
+        "rendered": "\u001b7\u001b[13;25H\u001b[31m╭───────────────────────────────────────────────────────────────────╮\u001b[0m\u001b[14;25H\u001b[31m│\u001b[0m\u001b[1;48;5;52;38;5;224m ⚠  WORKTREE CACHE CLEANUP                                         \u001b[0m\u001b[31m│\u001b[0m\u001b[15;25H\u001b[31m├───────────────────────────────────────────────────────────────────┤\u001b[0m\u001b[16;25H\u001b[31m│\u001b[0m   \u001b[2mWorktree cache cleanup would remove 1 item(s), 2.0KB; 0 failed.\u001b[0m \u001b[31m│\u001b[0m\u001b[17;25H\u001b[31m│\u001b[0m   \u001b[2mBy worktree:\u001b[0m                                                    \u001b[31m│\u001b[0m\u001b[18;25H\u001b[31m│\u001b[0m   \u001b[2m  2.0KB     1 item(s)  /repo/.aimux/worktrees/old\u001b[0m               \u001b[31m│\u001b[0m\u001b[19;25H\u001b[31m│\u001b[0m   \u001b[2mTargets:\u001b[0m                                                        \u001b[31m│\u001b[0m\u001b[20;25H\u001b[31m│\u001b[0m   \u001b[2m  2.0KB  /repo/.aimux/worktrees/old/node_modules\u001b[0m                \u001b[31m│\u001b[0m\u001b[21;25H\u001b[31m│\u001b[0m   \u001b[2mSkipped 1 worktree(s) (1 active-runtime).\u001b[0m                       \u001b[31m│\u001b[0m\u001b[22;25H\u001b[31m│\u001b[0m                                                                   \u001b[31m│\u001b[0m\u001b[23;25H\u001b[31m│\u001b[0m   \u001b[2mThis removes 2.0KB from inactive worktrees.\u001b[0m                     \u001b[31m│\u001b[0m\u001b[24;25H\u001b[31m│\u001b[0m                                                                   \u001b[31m│\u001b[0m\u001b[25;25H\u001b[31m│\u001b[0m   \u001b[48;5;240;38;5;255m Enter/y \u001b[0m \u001b[2mremove\u001b[0m  \u001b[48;5;240;38;5;255m n/Esc \u001b[0m \u001b[2mcancel\u001b[0m                                \u001b[31m│\u001b[0m\u001b[26;25H\u001b[31m╰───────────────────────────────────────────────────────────────────╯\u001b[0m\u001b8",
+        "visibleText": "╭───────────────────────────────────────────────────────────────────╮│ ⚠  WORKTREE CACHE CLEANUP                                         │├───────────────────────────────────────────────────────────────────┤│   Worktree cache cleanup would remove 1 item(s), 2.0KB; 0 failed. ││   By worktree:                                                    ││     2.0KB     1 item(s)  /repo/.aimux/worktrees/old               ││   Targets:                                                        ││     2.0KB  /repo/.aimux/worktrees/old/node_modules                ││   Skipped 1 worktree(s) (1 active-runtime).                       ││                                                                   ││   This removes 2.0KB from inactive worktrees.                     ││                                                                   ││    Enter/y  remove   n/Esc  cancel                                │╰───────────────────────────────────────────────────────────────────╯",
+        "isNull": false
+      },
+      "inputSha256": "1e7bdb576a8ed57ef56027d142c8ed76420bfc5a616302db0162088ba96364e5"
+    },
+    {
+      "id": "tui-screen-overlay-004",
+      "name": "empty scribe work outline",
+      "source": "src/tui/screens/overlay-renderers.test.ts",
+      "api": "buildWorkOutlineOverlayOutput",
+      "input": {
+        "api": "buildWorkOutlineOverlayOutput",
+        "ctx": { "workOutlineOverlayEntries": [] },
+        "cols": 100,
+        "rows": 30
+      },
+      "output": {
+        "rendered": "\u001b7\u001b[10;16H\u001b[34m╭──────────────────────────────────────────────────────────────────╮\u001b[0m\u001b[11;16H\u001b[34m│\u001b[0m\u001b[1;48;5;24;38;5;195m SCRIBE                                                           \u001b[0m\u001b[34m│\u001b[0m\u001b[12;16H\u001b[34m├──────────────────────────────────────────────────────────────────┤\u001b[0m\u001b[13;16H\u001b[34m│\u001b[0m   \u001b[2mScribe:\u001b[0m \u001b[2mnone\u001b[0m                                                   \u001b[34m│\u001b[0m\u001b[14;16H\u001b[34m│\u001b[0m                                                                  \u001b[34m│\u001b[0m\u001b[15;16H\u001b[34m│\u001b[0m   \u001b[2mNo scribe notes yet.\u001b[0m                                           \u001b[34m│\u001b[0m\u001b[16;16H\u001b[34m│\u001b[0m                                                                  \u001b[34m│\u001b[0m\u001b[17;16H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m Enter \u001b[0m \u001b[2mstart scribe\u001b[0m  \u001b[48;5;240;38;5;255m ↑↓/jk \u001b[0m \u001b[2mscroll\u001b[0m  \u001b[48;5;240;38;5;255m r \u001b[0m \u001b[2mreload\u001b[0m  \u001b[48;5;240;38;5;255m Esc/q \u001b[0m \u001b[2mback\u001b[0m \u001b[34m│\u001b[0m\u001b[18;16H\u001b[34m╰──────────────────────────────────────────────────────────────────╯\u001b[0m\u001b8",
+        "visibleText": "╭──────────────────────────────────────────────────────────────────╮│ SCRIBE                                                           │├──────────────────────────────────────────────────────────────────┤│   Scribe: none                                                   ││                                                                  ││   No scribe notes yet.                                           ││                                                                  ││    Enter  start scribe   ↑↓/jk  scroll   r  reload   Esc/q  back │╰──────────────────────────────────────────────────────────────────╯",
+        "isNull": false
+      },
+      "inputSha256": "46f4295fc56d943e795f6beff0f13321c51bc6bafb5bac241b7a0a257d46fb2d"
+    },
+    {
+      "id": "tui-screen-overlay-005",
+      "name": "live scribe work outline controls",
+      "source": "src/tui/screens/overlay-renderers.test.ts",
+      "api": "buildWorkOutlineOverlayOutput",
+      "input": {
+        "api": "buildWorkOutlineOverlayOutput",
+        "ctx": {
+          "dashboard": {
+            "viewModel": {
+              "scribeSessions": [{ "id": "claude-scribe", "command": "claude", "status": "ready", "scribe": true }]
+            }
+          },
+          "workOutlineOverlayEntries": []
+        },
+        "cols": 100,
+        "rows": 30
+      },
+      "output": {
+        "rendered": "\u001b7\u001b[10;2H\u001b[34m╭──────────────────────────────────────────────────────────────────────────────────────────────╮\u001b[0m\u001b[11;2H\u001b[34m│\u001b[0m\u001b[1;48;5;24;38;5;195m SCRIBE                                                                                       \u001b[0m\u001b[34m│\u001b[0m\u001b[12;2H\u001b[34m├──────────────────────────────────────────────────────────────────────────────────────────────┤\u001b[0m\u001b[13;2H\u001b[34m│\u001b[0m   \u001b[2mScribe:\u001b[0m \u001b[1mclaude\u001b[0m \u001b[32mready\u001b[0m                                                                       \u001b[34m│\u001b[0m\u001b[14;2H\u001b[34m│\u001b[0m                                                                                              \u001b[34m│\u001b[0m\u001b[15;2H\u001b[34m│\u001b[0m   \u001b[2mNo scribe notes yet.\u001b[0m                                                                       \u001b[34m│\u001b[0m\u001b[16;2H\u001b[34m│\u001b[0m                                                                                              \u001b[34m│\u001b[0m\u001b[17;2H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m Enter \u001b[0m \u001b[2mfocus scribe\u001b[0m  \u001b[48;5;240;38;5;255m ↑↓/jk \u001b[0m \u001b[2mscroll\u001b[0m  \u001b[48;5;240;38;5;255m r \u001b[0m \u001b[2mreload\u001b[0m  \u001b[48;5;240;38;5;255m x \u001b[0m \u001b[2mstop scribe\u001b[0m  \u001b[48;5;240;38;5;255m d \u001b[0m \u001b[2munset scribe\u001b[0m  \u001b[48;5;240;38;5;255m Esc…\u001b[0m \u001b[34m│\u001b[0m\u001b[18;2H\u001b[34m╰──────────────────────────────────────────────────────────────────────────────────────────────╯\u001b[0m\u001b8",
+        "visibleText": "╭──────────────────────────────────────────────────────────────────────────────────────────────╮│ SCRIBE                                                                                       │├──────────────────────────────────────────────────────────────────────────────────────────────┤│   Scribe: claude ready                                                                       ││                                                                                              ││   No scribe notes yet.                                                                       ││                                                                                              ││    Enter  focus scribe   ↑↓/jk  scroll   r  reload   x  stop scribe   d  unset scribe   Esc… │╰──────────────────────────────────────────────────────────────────────────────────────────────╯",
+        "isNull": false
+      },
+      "inputSha256": "527d33812cb3a7c700c216f4babac565e8d7a555796ef551d40d071bec40a886"
+    },
+    {
+      "id": "tui-screen-overlay-006",
+      "name": "scoped work outline with omitted rows",
+      "source": "src/tui/screens/overlay-renderers.test.ts",
+      "api": "buildWorkOutlineOverlayOutput",
+      "input": {
+        "api": "buildWorkOutlineOverlayOutput",
+        "ctx": {
+          "workOutlineOverlaySessionId": "codex-1",
+          "workOutlineOverlayOffset": 0,
+          "workOutlineOverlayEntries": [
+            {
+              "entryId": "outline-1",
+              "topicKey": "runtime-stability",
+              "title": "Harden lifecycle retries",
+              "summary": "Added bounded repair retry telemetry and skipped duplicate restarts.",
+              "status": "active",
+              "source": "scribe",
+              "worktreePath": "/repo/.aimux/worktrees/lifecycle",
+              "sessionIds": ["codex-1", "claude-2", "codex-3"],
+              "updatedAt": "2026-08-30T04:12:30.000Z"
+            },
+            {
+              "entryId": "outline-2",
+              "topicKey": "scrollback",
+              "title": "Audit scrollback gaps",
+              "summary": "Checked transcript window bounds.",
+              "status": "done",
+              "source": "manual",
+              "worktreePath": "/repo",
+              "sessionIds": ["claude-4"],
+              "updatedAt": "2026-08-30T04:10:00.000Z"
+            },
+            {
+              "entryId": "outline-3",
+              "topicKey": "hidden",
+              "title": "Hidden due row budget",
+              "summary": "This should not fit in the small overlay.",
+              "status": "done",
+              "source": "scribe",
+              "worktreePath": "/repo",
+              "sessionIds": ["codex-5"],
+              "updatedAt": "2026-08-30T04:09:00.000Z"
+            }
+          ]
+        },
+        "cols": 120,
+        "rows": 26
+      },
+      "output": {
+        "rendered": "\u001b7\u001b[4;16H\u001b[34m╭──────────────────────────────────────────────────────────────────────────────────────╮\u001b[0m\u001b[5;16H\u001b[34m│\u001b[0m\u001b[1;48;5;24;38;5;195m SCRIBE                                                                               \u001b[0m\u001b[34m│\u001b[0m\u001b[6;16H\u001b[34m├──────────────────────────────────────────────────────────────────────────────────────┤\u001b[0m\u001b[7;16H\u001b[34m│\u001b[0m   \u001b[2mScribe:\u001b[0m \u001b[2mnone\u001b[0m                                                                       \u001b[34m│\u001b[0m\u001b[8;16H\u001b[34m│\u001b[0m                                                                                      \u001b[34m│\u001b[0m\u001b[9;16H\u001b[34m│\u001b[0m   \u001b[2mSession: codex-1\u001b[0m                                                                   \u001b[34m│\u001b[0m\u001b[10;16H\u001b[34m│\u001b[0m                                                                                      \u001b[34m│\u001b[0m\u001b[11;16H\u001b[34m│\u001b[0m   \u001b[1mHarden lifecycle retries\u001b[0m \u001b[1;33mactive\u001b[0m \u001b[2mscribe\u001b[0m \u001b[2mworktree=lifecycle\u001b[0m \u001b[2mupdated=2026-08-30 04:12\u001b[0m \u001b[34m│\u001b[0m\u001b[12;16H\u001b[34m│\u001b[0m     \u001b[2mAdded bounded repair retry telemetry and skipped duplicate restarts.\u001b[0m             \u001b[34m│\u001b[0m\u001b[13;16H\u001b[34m│\u001b[0m     \u001b[2mruntime-stability sessions=codex-1, claude-2, +1\u001b[0m                                 \u001b[34m│\u001b[0m\u001b[14;16H\u001b[34m│\u001b[0m                                                                                      \u001b[34m│\u001b[0m\u001b[15;16H\u001b[34m│\u001b[0m   \u001b[1mAudit scrollback gaps\u001b[0m \u001b[32mdone\u001b[0m \u001b[2mmanual\u001b[0m \u001b[2mworktree=main\u001b[0m \u001b[2mupdated=2026-08-30 04:10\u001b[0m           \u001b[34m│\u001b[0m\u001b[16;16H\u001b[34m│\u001b[0m     \u001b[2mChecked transcript window bounds.\u001b[0m                                                \u001b[34m│\u001b[0m\u001b[17;16H\u001b[34m│\u001b[0m     \u001b[2mscrollback sessions=claude-4\u001b[0m                                                     \u001b[34m│\u001b[0m\u001b[18;16H\u001b[34m│\u001b[0m                                                                                      \u001b[34m│\u001b[0m\u001b[19;16H\u001b[34m│\u001b[0m   \u001b[2m1 more entries\u001b[0m                                                                     \u001b[34m│\u001b[0m\u001b[20;16H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m Enter \u001b[0m \u001b[2mstart scribe\u001b[0m  \u001b[48;5;240;38;5;255m ↑↓/jk \u001b[0m \u001b[2mscroll\u001b[0m  \u001b[48;5;240;38;5;255m r \u001b[0m \u001b[2mreload\u001b[0m  \u001b[48;5;240;38;5;255m Esc/q \u001b[0m \u001b[2mback\u001b[0m                     \u001b[34m│\u001b[0m\u001b[21;16H\u001b[34m╰──────────────────────────────────────────────────────────────────────────────────────╯\u001b[0m\u001b8",
+        "visibleText": "╭──────────────────────────────────────────────────────────────────────────────────────╮│ SCRIBE                                                                               │├──────────────────────────────────────────────────────────────────────────────────────┤│   Scribe: none                                                                       ││                                                                                      ││   Session: codex-1                                                                   ││                                                                                      ││   Harden lifecycle retries active scribe worktree=lifecycle updated=2026-08-30 04:12 ││     Added bounded repair retry telemetry and skipped duplicate restarts.             ││     runtime-stability sessions=codex-1, claude-2, +1                                 ││                                                                                      ││   Audit scrollback gaps done manual worktree=main updated=2026-08-30 04:10           ││     Checked transcript window bounds.                                                ││     scrollback sessions=claude-4                                                     ││                                                                                      ││   1 more entries                                                                     ││    Enter  start scribe   ↑↓/jk  scroll   r  reload   Esc/q  back                     │╰──────────────────────────────────────────────────────────────────────────────────────╯",
+        "isNull": false
+      },
+      "inputSha256": "5c0b6aa169fbcf49e7d008d3b468d07144e4a15279c5b3c32401725c71595f6a"
+    },
+    {
+      "id": "tui-screen-overlay-007",
+      "name": "agent restore modal choices",
+      "source": "src/tui/screens/overlay-renderers.test.ts",
+      "api": "buildAgentRestoreConfirmOverlayOutput",
+      "input": {
+        "api": "buildAgentRestoreConfirmOverlayOutput",
+        "ctx": {
+          "agentRestoreConfirmSelection": "cancel",
+          "dashboardAgentRestoreOfferCache": {
+            "sessionIds": ["claude-1", "codex-2"],
+            "sessions": [
+              { "id": "claude-1", "command": "claude", "worktreePath": "/repo", "overseer": true },
+              {
+                "id": "codex-2",
+                "command": "codex",
+                "worktreePath": "/repo/.aimux/worktrees/feature-a",
+                "team": { "teamId": "scribe", "parentSessionId": "", "role": "scribe" }
+              }
+            ],
+            "worktreeGroups": [
+              { "name": "Main Checkout", "path": "/repo", "count": 1 },
+              { "name": "feature-a", "path": "/repo/.aimux/worktrees/feature-a", "count": 1 }
+            ]
+          }
+        },
+        "cols": 100,
+        "rows": 30
+      },
+      "output": {
+        "rendered": "\u001b7\u001b[10;23H\u001b[34m╭───────────────────────────────────────────────────╮\u001b[0m\u001b[11;23H\u001b[34m│\u001b[0m\u001b[1;48;5;24;38;5;195m RESTORE SESSIONS                                  \u001b[0m\u001b[34m│\u001b[0m\u001b[12;23H\u001b[34m├───────────────────────────────────────────────────┤\u001b[0m\u001b[13;23H\u001b[34m│\u001b[0m   Restore 2 restorable sessions for this project? \u001b[34m│\u001b[0m\u001b[14;23H\u001b[34m│\u001b[0m   \u001b[2mproject control: overseer, scribe\u001b[0m               \u001b[34m│\u001b[0m\u001b[15;23H\u001b[34m│\u001b[0m   \u001b[2moverseer: claude, scribe: codex\u001b[0m                 \u001b[34m│\u001b[0m\u001b[16;23H\u001b[34m│\u001b[0m   \u001b[2m Restore \u001b[0m  \u001b[7m Cancel \u001b[0m                             \u001b[34m│\u001b[0m\u001b[17;23H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m ←/→ \u001b[0m \u001b[2mchoose\u001b[0m  \u001b[48;5;240;38;5;255m Enter \u001b[0m \u001b[2mconfirm\u001b[0m  \u001b[48;5;240;38;5;255m Esc \u001b[0m \u001b[2mcancel\u001b[0m     \u001b[34m│\u001b[0m\u001b[18;23H\u001b[34m╰───────────────────────────────────────────────────╯\u001b[0m\u001b8",
+        "visibleText": "╭───────────────────────────────────────────────────╮│ RESTORE SESSIONS                                  │├───────────────────────────────────────────────────┤│   Restore 2 restorable sessions for this project? ││   project control: overseer, scribe               ││   overseer: claude, scribe: codex                 ││    Restore    Cancel                              ││    ←/→  choose   Enter  confirm   Esc  cancel     │╰───────────────────────────────────────────────────╯",
+        "isNull": false
+      },
+      "inputSha256": "78beb8a4857dab381d1fb2939b0394609b5d98612661d9f4174981b569fbf185"
+    },
+    {
+      "id": "tui-screen-overlay-008",
+      "name": "demoted scribe restore offer is not project control",
+      "source": "src/tui/screens/overlay-renderers.test.ts",
+      "api": "buildAgentRestoreConfirmOverlayOutput",
+      "input": {
+        "api": "buildAgentRestoreConfirmOverlayOutput",
+        "ctx": {
+          "dashboardAgentRestoreOfferCache": {
+            "sessionIds": ["claude-1"],
+            "sessions": [
+              {
+                "id": "claude-1",
+                "command": "claude",
+                "worktreePath": "/repo",
+                "scribe": false,
+                "team": { "teamId": "scribe", "parentSessionId": "", "role": "scribe" }
+              }
+            ]
+          }
+        },
+        "cols": 100,
+        "rows": 30
+      },
+      "output": {
+        "rendered": "\u001b7\u001b[10;24H\u001b[34m╭──────────────────────────────────────────────────╮\u001b[0m\u001b[11;24H\u001b[34m│\u001b[0m\u001b[1;48;5;24;38;5;195m RESTORE SESSIONS                                 \u001b[0m\u001b[34m│\u001b[0m\u001b[12;24H\u001b[34m├──────────────────────────────────────────────────┤\u001b[0m\u001b[13;24H\u001b[34m│\u001b[0m   Restore 1 restorable session for this project? \u001b[34m│\u001b[0m\u001b[14;24H\u001b[34m│\u001b[0m   \u001b[2mMain Checkout 1\u001b[0m                                \u001b[34m│\u001b[0m\u001b[15;24H\u001b[34m│\u001b[0m   \u001b[2mclaude\u001b[0m                                         \u001b[34m│\u001b[0m\u001b[16;24H\u001b[34m│\u001b[0m   \u001b[7m Restore \u001b[0m  \u001b[2m Cancel \u001b[0m                            \u001b[34m│\u001b[0m\u001b[17;24H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m ←/→ \u001b[0m \u001b[2mchoose\u001b[0m  \u001b[48;5;240;38;5;255m Enter \u001b[0m \u001b[2mconfirm\u001b[0m  \u001b[48;5;240;38;5;255m Esc \u001b[0m \u001b[2mcancel\u001b[0m    \u001b[34m│\u001b[0m\u001b[18;24H\u001b[34m╰──────────────────────────────────────────────────╯\u001b[0m\u001b8",
+        "visibleText": "╭──────────────────────────────────────────────────╮│ RESTORE SESSIONS                                 │├──────────────────────────────────────────────────┤│   Restore 1 restorable session for this project? ││   Main Checkout 1                                ││   claude                                         ││    Restore    Cancel                             ││    ←/→  choose   Enter  confirm   Esc  cancel    │╰──────────────────────────────────────────────────╯",
+        "isNull": false
+      },
+      "inputSha256": "448de7713fd6cd14c452309f4edda150b29498eb25e7fadd3bbd8d0bfbf44ff1"
+    },
+    {
+      "id": "tui-screen-overlay-009",
+      "name": "help overlay dashboard-local shortcuts",
+      "source": "src/tui/screens/overlay-renderers.test.ts",
+      "api": "buildHelpOverlayOutput",
+      "input": { "api": "buildHelpOverlayOutput", "ctx": {}, "cols": 120, "rows": 40 },
+      "output": {
+        "rendered": "\u001b7\u001b[1;29H\u001b[34m╭────────────────────────────────────────────────────────────╮\u001b[0m\u001b[2;29H\u001b[34m│\u001b[0m\u001b[1;48;5;24;38;5;195m HELP                                                       \u001b[0m\u001b[34m│\u001b[0m\u001b[3;29H\u001b[34m├────────────────────────────────────────────────────────────┤\u001b[0m\u001b[4;29H\u001b[34m│\u001b[0m \u001b[1mTmux mode\u001b[0m                                                  \u001b[34m│\u001b[0m\u001b[5;29H\u001b[34m│\u001b[0m   \u001b[2mDashboard lives in a managed tmux dashboard window\u001b[0m       \u001b[34m│\u001b[0m\u001b[6;29H\u001b[34m│\u001b[0m   \u001b[2mEach agent runs in its own tmux window\u001b[0m                   \u001b[34m│\u001b[0m\u001b[7;29H\u001b[34m│\u001b[0m   \u001b[2mUse normal tmux window navigation inside agents\u001b[0m          \u001b[34m│\u001b[0m\u001b[8;29H\u001b[34m│\u001b[0m   \u001b[2mRun aimux with no args to return to the dashboard window\u001b[0m \u001b[34m│\u001b[0m\u001b[9;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m Ctrl+A d \u001b[0m \u001b[2mreturn to the dashboard window\u001b[0m                \u001b[34m│\u001b[0m\u001b[10;29H\u001b[34m│\u001b[0m                                                            \u001b[34m│\u001b[0m\u001b[11;29H\u001b[34m│\u001b[0m \u001b[1mDashboard mode\u001b[0m                                             \u001b[34m│\u001b[0m\u001b[12;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m ? \u001b[0m \u001b[2mshow help\u001b[0m                                            \u001b[34m│\u001b[0m\u001b[13;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m 1-9 \u001b[0m \u001b[2mjump to visible item\u001b[0m                               \u001b[34m│\u001b[0m\u001b[14;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m arrows / h j k l \u001b[0m \u001b[2mnavigate\u001b[0m                              \u001b[34m│\u001b[0m\u001b[15;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m Enter / → / l \u001b[0m \u001b[2mstep in, open, resume, or focus\u001b[0m          \u001b[34m│\u001b[0m\u001b[16;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m Tab \u001b[0m \u001b[2mtoggle details\u001b[0m                                     \u001b[34m│\u001b[0m\u001b[17;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m c \u001b[0m \u001b[2mcoordination\u001b[0m                                         \u001b[34m│\u001b[0m\u001b[18;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m p \u001b[0m \u001b[2mproject\u001b[0m                                              \u001b[34m│\u001b[0m\u001b[19;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m L \u001b[0m \u001b[2mlibrary\u001b[0m                                              \u001b[34m│\u001b[0m\u001b[20;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m t \u001b[0m \u001b[2mtopology\u001b[0m                                             \u001b[34m│\u001b[0m\u001b[21;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m g \u001b[0m \u001b[2mgraveyard\u001b[0m                                            \u001b[34m│\u001b[0m\u001b[22;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m n \u001b[0m \u001b[2mnew agent\u001b[0m                                            \u001b[34m│\u001b[0m\u001b[23;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m v \u001b[0m \u001b[2mnew service\u001b[0m                                          \u001b[34m│\u001b[0m\u001b[24;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m f \u001b[0m \u001b[2mfork agent\u001b[0m                                           \u001b[34m│\u001b[0m\u001b[25;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m S \u001b[0m \u001b[2mswitch selected agent tool\u001b[0m                           \u001b[34m│\u001b[0m\u001b[26;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m s \u001b[0m \u001b[2msend message\u001b[0m                                         \u001b[34m│\u001b[0m\u001b[27;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m H \u001b[0m \u001b[2mhandoff\u001b[0m                                              \u001b[34m│\u001b[0m\u001b[28;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m T \u001b[0m \u001b[2mtask\u001b[0m                                                 \u001b[34m│\u001b[0m\u001b[29;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m P \u001b[0m \u001b[2mscribe\u001b[0m                                               \u001b[34m│\u001b[0m\u001b[30;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m o \u001b[0m \u001b[2mopen thread\u001b[0m                                          \u001b[34m│\u001b[0m\u001b[31;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m R \u001b[0m \u001b[2mreply\u001b[0m                                                \u001b[34m│\u001b[0m\u001b[32;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m r \u001b[0m \u001b[2mname agent\u001b[0m                                           \u001b[34m│\u001b[0m\u001b[33;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m m \u001b[0m \u001b[2mmigrate agent\u001b[0m                                        \u001b[34m│\u001b[0m\u001b[34;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m x \u001b[0m \u001b[2mstop or remove selected item\u001b[0m                         \u001b[34m│\u001b[0m\u001b[35;29H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m q \u001b[0m \u001b[2mquit\u001b[0m                                                 \u001b[34m│\u001b[0m\u001b[36;29H\u001b[34m│\u001b[0m                                                            \u001b[34m│\u001b[0m\u001b[37;29H\u001b[34m│\u001b[0m \u001b[1mEsc, Enter, or ? to close\u001b[0m                                  \u001b[34m│\u001b[0m\u001b[38;29H\u001b[34m╰────────────────────────────────────────────────────────────╯\u001b[0m\u001b8",
+        "visibleText": "╭────────────────────────────────────────────────────────────╮│ HELP                                                       │├────────────────────────────────────────────────────────────┤│ Tmux mode                                                  ││   Dashboard lives in a managed tmux dashboard window       ││   Each agent runs in its own tmux window                   ││   Use normal tmux window navigation inside agents          ││   Run aimux with no args to return to the dashboard window ││    Ctrl+A d  return to the dashboard window                ││                                                            ││ Dashboard mode                                             ││    ?  show help                                            ││    1-9  jump to visible item                               ││    arrows / h j k l  navigate                              ││    Enter / → / l  step in, open, resume, or focus          ││    Tab  toggle details                                     ││    c  coordination                                         ││    p  project                                              ││    L  library                                              ││    t  topology                                             ││    g  graveyard                                            ││    n  new agent                                            ││    v  new service                                          ││    f  fork agent                                           ││    S  switch selected agent tool                           ││    s  send message                                         ││    H  handoff                                              ││    T  task                                                 ││    P  scribe                                               ││    o  open thread                                          ││    R  reply                                                ││    r  name agent                                           ││    m  migrate agent                                        ││    x  stop or remove selected item                         ││    q  quit                                                 ││                                                            ││ Esc, Enter, or ? to close                                  │╰────────────────────────────────────────────────────────────╯",
+        "isNull": false
+      },
+      "inputSha256": "d14cb4e2a6f798cb1de37aa52cfcdbce3feb7f64b51404e72c9b840f89623ae6"
+    },
+    {
+      "id": "tui-screen-overlay-010",
+      "name": "overseer off state",
+      "source": "src/tui/screens/overlay-renderers.test.ts",
+      "api": "buildOverseerOverlayOutput",
+      "input": {
+        "api": "buildOverseerOverlayOutput",
+        "ctx": { "dashboardOverseerSessionsCache": [], "dashboardSessionsCache": [] },
+        "cols": 100,
+        "rows": 30
+      },
+      "output": {
+        "rendered": "\u001b7\u001b[9;13H\u001b[34m╭───────────────────────────────────────────────────────────────────────╮\u001b[0m\u001b[10;13H\u001b[34m│\u001b[0m\u001b[1;48;5;24;38;5;195m OVERSEER                                                              \u001b[0m\u001b[34m│\u001b[0m\u001b[11;13H\u001b[34m├───────────────────────────────────────────────────────────────────────┤\u001b[0m\u001b[12;13H\u001b[34m│\u001b[0m   \u001b[2mStatus:\u001b[0m \u001b[2mOff\u001b[0m                                                         \u001b[34m│\u001b[0m\u001b[13;13H\u001b[34m│\u001b[0m   \u001b[2mOverseer:\u001b[0m \u001b[2mnone running\u001b[0m                                              \u001b[34m│\u001b[0m\u001b[14;13H\u001b[34m│\u001b[0m   \u001b[2mWatching:\u001b[0m 0 agents                                                  \u001b[34m│\u001b[0m\u001b[15;13H\u001b[34m│\u001b[0m   \u001b[2mSelected:\u001b[0m \u001b[2mnone\u001b[0m                                                      \u001b[34m│\u001b[0m\u001b[16;13H\u001b[34m│\u001b[0m                                                                       \u001b[34m│\u001b[0m\u001b[17;13H\u001b[34m│\u001b[0m   \u001b[2mNo watched agents yet.\u001b[0m                                              \u001b[34m│\u001b[0m\u001b[18;13H\u001b[34m│\u001b[0m                                                                       \u001b[34m│\u001b[0m\u001b[19;13H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m Enter \u001b[0m \u001b[2mstart\u001b[0m  \u001b[48;5;240;38;5;255m w \u001b[0m \u001b[2mwatch selected\u001b[0m  \u001b[48;5;240;38;5;255m u \u001b[0m \u001b[2munwatch selected\u001b[0m  \u001b[48;5;240;38;5;255m Esc \u001b[0m \u001b[2mback\u001b[0m \u001b[34m│\u001b[0m\u001b[20;13H\u001b[34m╰───────────────────────────────────────────────────────────────────────╯\u001b[0m\u001b8",
+        "visibleText": "╭───────────────────────────────────────────────────────────────────────╮│ OVERSEER                                                              │├───────────────────────────────────────────────────────────────────────┤│   Status: Off                                                         ││   Overseer: none running                                              ││   Watching: 0 agents                                                  ││   Selected: none                                                      ││                                                                       ││   No watched agents yet.                                              ││                                                                       ││    Enter  start   w  watch selected   u  unwatch selected   Esc  back │╰───────────────────────────────────────────────────────────────────────╯",
+        "isNull": false
+      },
+      "inputSha256": "25d4c414631f22eb297fe1e026e1a3f904e4e751f3f7992075896be4bf54ec00"
+    },
+    {
+      "id": "tui-screen-overlay-011",
+      "name": "live overseer and selected loop state",
+      "source": "src/tui/screens/overlay-renderers.test.ts",
+      "api": "buildOverseerOverlayOutput",
+      "input": {
+        "api": "buildOverseerOverlayOutput",
+        "ctx": {
+          "dashboardOverseerSessionsCache": [{ "id": "overseer-1", "command": "claude", "status": "working" }],
+          "dashboardSessionsCache": [
+            {
+              "id": "codex-1",
+              "command": "codex",
+              "status": "working",
+              "loop": { "active": true, "goal": "keep progressing" }
+            }
+          ]
+        },
+        "cols": 100,
+        "rows": 30
+      },
+      "output": {
+        "rendered": "\u001b7\u001b[9;4H\u001b[34m╭──────────────────────────────────────────────────────────────────────────────────────────╮\u001b[0m\u001b[10;4H\u001b[34m│\u001b[0m\u001b[1;48;5;24;38;5;195m OVERSEER                                                                                 \u001b[0m\u001b[34m│\u001b[0m\u001b[11;4H\u001b[34m├──────────────────────────────────────────────────────────────────────────────────────────┤\u001b[0m\u001b[12;4H\u001b[34m│\u001b[0m   \u001b[2mStatus:\u001b[0m \u001b[32mActive\u001b[0m                                                                         \u001b[34m│\u001b[0m\u001b[13;4H\u001b[34m│\u001b[0m   \u001b[2mOverseer:\u001b[0m \u001b[1mclaude\u001b[0m \u001b[32mworking\u001b[0m                                                               \u001b[34m│\u001b[0m\u001b[14;4H\u001b[34m│\u001b[0m   \u001b[2mWatching:\u001b[0m 1 agent                                                                      \u001b[34m│\u001b[0m\u001b[15;4H\u001b[34m│\u001b[0m   \u001b[2mSelected:\u001b[0m \u001b[1mcodex\u001b[0m \u001b[32mwatched\u001b[0m                                                                \u001b[34m│\u001b[0m\u001b[16;4H\u001b[34m│\u001b[0m                                                                                          \u001b[34m│\u001b[0m\u001b[17;4H\u001b[34m│\u001b[0m   \u001b[1;33m•\u001b[0m \u001b[1mcodex\u001b[0m \u001b[2mworking\u001b[0m\u001b[2m - keep progressing\u001b[0m                                                     \u001b[34m│\u001b[0m\u001b[18;4H\u001b[34m│\u001b[0m                                                                                          \u001b[34m│\u001b[0m\u001b[19;4H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m Enter \u001b[0m \u001b[2mfocus\u001b[0m  \u001b[48;5;240;38;5;255m w \u001b[0m \u001b[2mwatch selected\u001b[0m  \u001b[48;5;240;38;5;255m u \u001b[0m \u001b[2munwatch selected\u001b[0m  \u001b[48;5;240;38;5;255m x \u001b[0m \u001b[2mstop overseer\u001b[0m  \u001b[48;5;240;38;5;255m Esc \u001b[0m \u001b[2mback\u001b[0m \u001b[34m│\u001b[0m\u001b[20;4H\u001b[34m╰──────────────────────────────────────────────────────────────────────────────────────────╯\u001b[0m\u001b8",
+        "visibleText": "╭──────────────────────────────────────────────────────────────────────────────────────────╮│ OVERSEER                                                                                 │├──────────────────────────────────────────────────────────────────────────────────────────┤│   Status: Active                                                                         ││   Overseer: claude working                                                               ││   Watching: 1 agent                                                                      ││   Selected: codex watched                                                                ││                                                                                          ││   • codex working - keep progressing                                                     ││                                                                                          ││    Enter  focus   w  watch selected   u  unwatch selected   x  stop overseer   Esc  back │╰──────────────────────────────────────────────────────────────────────────────────────────╯",
+        "isNull": false
+      },
+      "inputSha256": "496cfb6d1d45c28ec02a024b7b4c90f4e49ccf1c8c07b2b2b838e07f9580318f"
+    },
+    {
+      "id": "tui-screen-overlay-012",
+      "name": "overseer from dashboard view model",
+      "source": "src/tui/screens/overlay-renderers.test.ts",
+      "api": "buildOverseerOverlayOutput",
+      "input": {
+        "api": "buildOverseerOverlayOutput",
+        "ctx": {
+          "dashboard": {
+            "viewModel": { "overseerSessions": [{ "id": "overseer-1", "command": "claude", "status": "ready" }] }
+          },
+          "dashboardSessionsCache": []
+        },
+        "cols": 100,
+        "rows": 30
+      },
+      "output": {
+        "rendered": "\u001b7\u001b[9;4H\u001b[34m╭──────────────────────────────────────────────────────────────────────────────────────────╮\u001b[0m\u001b[10;4H\u001b[34m│\u001b[0m\u001b[1;48;5;24;38;5;195m OVERSEER                                                                                 \u001b[0m\u001b[34m│\u001b[0m\u001b[11;4H\u001b[34m├──────────────────────────────────────────────────────────────────────────────────────────┤\u001b[0m\u001b[12;4H\u001b[34m│\u001b[0m   \u001b[2mStatus:\u001b[0m \u001b[32mActive\u001b[0m                                                                         \u001b[34m│\u001b[0m\u001b[13;4H\u001b[34m│\u001b[0m   \u001b[2mOverseer:\u001b[0m \u001b[1mclaude\u001b[0m \u001b[32mready\u001b[0m                                                                 \u001b[34m│\u001b[0m\u001b[14;4H\u001b[34m│\u001b[0m   \u001b[2mWatching:\u001b[0m 0 agents                                                                     \u001b[34m│\u001b[0m\u001b[15;4H\u001b[34m│\u001b[0m   \u001b[2mSelected:\u001b[0m \u001b[2mnone\u001b[0m                                                                         \u001b[34m│\u001b[0m\u001b[16;4H\u001b[34m│\u001b[0m                                                                                          \u001b[34m│\u001b[0m\u001b[17;4H\u001b[34m│\u001b[0m   \u001b[2mNo watched agents yet.\u001b[0m                                                                 \u001b[34m│\u001b[0m\u001b[18;4H\u001b[34m│\u001b[0m                                                                                          \u001b[34m│\u001b[0m\u001b[19;4H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m Enter \u001b[0m \u001b[2mfocus\u001b[0m  \u001b[48;5;240;38;5;255m w \u001b[0m \u001b[2mwatch selected\u001b[0m  \u001b[48;5;240;38;5;255m u \u001b[0m \u001b[2munwatch selected\u001b[0m  \u001b[48;5;240;38;5;255m x \u001b[0m \u001b[2mstop overseer\u001b[0m  \u001b[48;5;240;38;5;255m Esc \u001b[0m \u001b[2mback\u001b[0m \u001b[34m│\u001b[0m\u001b[20;4H\u001b[34m╰──────────────────────────────────────────────────────────────────────────────────────────╯\u001b[0m\u001b8",
+        "visibleText": "╭──────────────────────────────────────────────────────────────────────────────────────────╮│ OVERSEER                                                                                 │├──────────────────────────────────────────────────────────────────────────────────────────┤│   Status: Active                                                                         ││   Overseer: claude ready                                                                 ││   Watching: 0 agents                                                                     ││   Selected: none                                                                         ││                                                                                          ││   No watched agents yet.                                                                 ││                                                                                          ││    Enter  focus   w  watch selected   u  unwatch selected   x  stop overseer   Esc  back │╰──────────────────────────────────────────────────────────────────────────────────────────╯",
+        "isNull": false
+      },
+      "inputSha256": "eeb14f40b8ce17564ba5d31e9029d4b479cd0dd0a3cfc0efa08a4cf27ec847b1"
+    },
+    {
+      "id": "tui-screen-overlay-013",
+      "name": "overseer watch instructions",
+      "source": "src/tui/screens/overlay-renderers.test.ts",
+      "api": "buildOverseerWatchInstructionsOverlayOutput",
+      "input": {
+        "api": "buildOverseerWatchInstructionsOverlayOutput",
+        "ctx": {
+          "overseerWatchInstructionsTarget": {
+            "id": "codex-1",
+            "command": "codex",
+            "status": "working",
+            "headline": "ship it"
+          },
+          "overseerWatchInstructionsBuffer": "watch CI"
+        },
+        "cols": 100,
+        "rows": 30
+      },
+      "output": {
+        "rendered": "\u001b7\u001b[10;33H\u001b[34m╭───────────────────────────────╮\u001b[0m\u001b[11;33H\u001b[34m│\u001b[0m\u001b[1;48;5;24;38;5;195m OVERSEER WATCH                \u001b[0m\u001b[34m│\u001b[0m\u001b[12;33H\u001b[34m├───────────────────────────────┤\u001b[0m\u001b[13;33H\u001b[34m│\u001b[0m   \u001b[2mWatch:\u001b[0m \u001b[1mcodex\u001b[0m \u001b[2mworking\u001b[0m        \u001b[34m│\u001b[0m\u001b[14;33H\u001b[34m│\u001b[0m   \u001b[2mGoal:\u001b[0m ship it               \u001b[34m│\u001b[0m\u001b[15;33H\u001b[34m│\u001b[0m                               \u001b[34m│\u001b[0m\u001b[16;33H\u001b[34m│\u001b[0m   \u001b[2mInstructions:\u001b[0m watch CI_     \u001b[34m│\u001b[0m\u001b[17;33H\u001b[34m│\u001b[0m                               \u001b[34m│\u001b[0m\u001b[18;33H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m Enter \u001b[0m \u001b[2mwatch\u001b[0m  \u001b[48;5;240;38;5;255m Esc \u001b[0m \u001b[2mcancel\u001b[0m \u001b[34m│\u001b[0m\u001b[19;33H\u001b[34m╰───────────────────────────────╯\u001b[0m\u001b8",
+        "visibleText": "╭───────────────────────────────╮│ OVERSEER WATCH                │├───────────────────────────────┤│   Watch: codex working        ││   Goal: ship it               ││                               ││   Instructions: watch CI_     ││                               ││    Enter  watch   Esc  cancel │╰───────────────────────────────╯",
+        "isNull": false
+      },
+      "inputSha256": "ad30514252bd33cea37f3b261aa27aea32dea0d9b4b0238b3bf18104247c7f6a"
+    }
+  ]
+}

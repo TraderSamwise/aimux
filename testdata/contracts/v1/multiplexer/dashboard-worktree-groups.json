@@ -1,0 +1,558 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/dashboard-model.ts",
+  "generatedBy": "scripts/capture-dashboard-worktree-groups-contract.mjs",
+  "description": "Dashboard worktree grouping, project-control filtering, worktree/service/session placement, and created-order sorting captured by running TypeScript dashboard-model helpers.",
+  "cases": [
+    {
+      "id": "dashboard-worktree-groups-001",
+      "name": "main checkout stays first and project-control scribe is excluded",
+      "source": "src/multiplexer/dashboard-model.ts",
+      "api": "buildDashboardWorktreeGroups",
+      "input": {
+        "api": "buildDashboardWorktreeGroups",
+        "mainRepoPath": "/repo",
+        "sessions": [
+          { "index": 0, "id": "main-agent", "command": "codex", "status": "running", "active": false },
+          {
+            "index": 1,
+            "id": "scribe-agent",
+            "command": "claude",
+            "status": "running",
+            "active": false,
+            "scribe": true
+          },
+          {
+            "index": 2,
+            "id": "demoted-scribe",
+            "command": "claude",
+            "status": "running",
+            "active": false,
+            "scribe": false,
+            "team": { "teamId": "scribe", "parentSessionId": "", "role": "scribe" }
+          }
+        ],
+        "services": [],
+        "worktrees": [
+          {
+            "name": "Main Checkout",
+            "path": "/repo",
+            "branch": "master",
+            "isBare": false,
+            "createdAt": "2026-04-01T00:00:00.000Z"
+          },
+          {
+            "name": "feature-a",
+            "path": "/repo/.aimux/worktrees/feature-a",
+            "branch": "feature-a",
+            "isBare": false,
+            "createdAt": "2026-04-03T00:00:00.000Z"
+          }
+        ]
+      },
+      "output": [
+        {
+          "name": "Main Checkout",
+          "branch": "master",
+          "createdAt": "2026-04-01T00:00:00.000Z",
+          "status": "active",
+          "sessions": [
+            {
+              "index": 2,
+              "id": "demoted-scribe",
+              "command": "claude",
+              "status": "running",
+              "active": false,
+              "scribe": false,
+              "team": { "teamId": "scribe", "parentSessionId": "", "role": "scribe" }
+            },
+            { "index": 0, "id": "main-agent", "command": "codex", "status": "running", "active": false }
+          ],
+          "services": []
+        },
+        {
+          "name": "feature-a",
+          "branch": "feature-a",
+          "path": "/repo/.aimux/worktrees/feature-a",
+          "createdAt": "2026-04-03T00:00:00.000Z",
+          "status": "offline",
+          "sessions": [],
+          "services": []
+        }
+      ],
+      "inputSha256": "360a193d373951a0fdcf8da555c5707ece7ee76269109e8cda7c662a2c0ab232"
+    },
+    {
+      "id": "dashboard-worktree-groups-002",
+      "name": "secondary worktrees sort by newest createdAt after main checkout",
+      "source": "src/multiplexer/dashboard-model.ts",
+      "api": "buildDashboardWorktreeGroups",
+      "input": {
+        "api": "buildDashboardWorktreeGroups",
+        "mainRepoPath": "/repo",
+        "sessions": [],
+        "services": [],
+        "worktrees": [
+          {
+            "name": "older",
+            "path": "/repo/.aimux/worktrees/older",
+            "branch": "older",
+            "isBare": false,
+            "createdAt": "2026-01-01T00:00:00.000Z"
+          },
+          {
+            "name": "newer",
+            "path": "/repo/.aimux/worktrees/newer",
+            "branch": "newer",
+            "isBare": false,
+            "createdAt": "2026-02-01T00:00:00.000Z"
+          },
+          {
+            "name": "bare",
+            "path": "/repo/.bare",
+            "branch": "bare",
+            "isBare": true,
+            "createdAt": "2026-03-01T00:00:00.000Z"
+          }
+        ]
+      },
+      "output": [
+        { "name": "Main Checkout", "branch": "", "status": "offline", "sessions": [], "services": [] },
+        {
+          "name": "newer",
+          "branch": "newer",
+          "path": "/repo/.aimux/worktrees/newer",
+          "createdAt": "2026-02-01T00:00:00.000Z",
+          "status": "offline",
+          "sessions": [],
+          "services": []
+        },
+        {
+          "name": "older",
+          "branch": "older",
+          "path": "/repo/.aimux/worktrees/older",
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "status": "offline",
+          "sessions": [],
+          "services": []
+        }
+      ],
+      "inputSha256": "2674106b62af473e84db065079a4c50a497fee2125cbb35e8526ceeb44dd765f"
+    },
+    {
+      "id": "dashboard-worktree-groups-003",
+      "name": "services and sessions are grouped by matching worktree path",
+      "source": "src/multiplexer/dashboard-model.ts",
+      "api": "buildDashboardWorktreeGroups",
+      "input": {
+        "api": "buildDashboardWorktreeGroups",
+        "mainRepoPath": "/repo",
+        "sessions": [
+          {
+            "index": 0,
+            "id": "main",
+            "command": "codex",
+            "status": "running",
+            "active": false,
+            "createdAt": "2026-01-01T00:00:00.000Z"
+          },
+          {
+            "index": 0,
+            "id": "demo",
+            "command": "codex",
+            "status": "running",
+            "active": false,
+            "worktreePath": "/repo/.aimux/worktrees/demo",
+            "createdAt": "2026-01-03T00:00:00.000Z"
+          }
+        ],
+        "services": [
+          {
+            "id": "main-svc",
+            "command": "shell",
+            "args": [],
+            "status": "running",
+            "active": false,
+            "createdAt": "2026-01-02T00:00:00.000Z"
+          },
+          {
+            "id": "demo-svc",
+            "command": "shell",
+            "args": [],
+            "status": "running",
+            "active": false,
+            "worktreePath": "/repo/.aimux/worktrees/demo",
+            "createdAt": "2026-01-04T00:00:00.000Z"
+          }
+        ],
+        "worktrees": [{ "name": "demo", "path": "/repo/.aimux/worktrees/demo", "branch": "demo", "isBare": false }]
+      },
+      "output": [
+        {
+          "name": "Main Checkout",
+          "branch": "",
+          "status": "active",
+          "sessions": [
+            {
+              "index": 0,
+              "id": "main",
+              "command": "codex",
+              "status": "running",
+              "active": false,
+              "createdAt": "2026-01-01T00:00:00.000Z"
+            }
+          ],
+          "services": [
+            {
+              "id": "main-svc",
+              "command": "shell",
+              "args": [],
+              "status": "running",
+              "active": false,
+              "createdAt": "2026-01-02T00:00:00.000Z"
+            }
+          ]
+        },
+        {
+          "name": "demo",
+          "branch": "demo",
+          "path": "/repo/.aimux/worktrees/demo",
+          "status": "active",
+          "sessions": [
+            {
+              "index": 0,
+              "id": "demo",
+              "command": "codex",
+              "status": "running",
+              "active": false,
+              "worktreePath": "/repo/.aimux/worktrees/demo",
+              "createdAt": "2026-01-03T00:00:00.000Z"
+            }
+          ],
+          "services": [
+            {
+              "id": "demo-svc",
+              "command": "shell",
+              "args": [],
+              "status": "running",
+              "active": false,
+              "worktreePath": "/repo/.aimux/worktrees/demo",
+              "createdAt": "2026-01-04T00:00:00.000Z"
+            }
+          ]
+        }
+      ],
+      "inputSha256": "4b5f30f121508cf254f0430bbfbcb5501634b95840c89d8609fb0e8b85a0b72d"
+    },
+    {
+      "id": "dashboard-worktree-groups-004",
+      "name": "worktree operation failure and pending flags pass through",
+      "source": "src/multiplexer/dashboard-model.ts",
+      "api": "buildDashboardWorktreeGroups",
+      "input": {
+        "api": "buildDashboardWorktreeGroups",
+        "mainRepoPath": "/repo",
+        "sessions": [],
+        "services": [],
+        "worktrees": [
+          {
+            "name": "demo",
+            "path": "/repo/.aimux/worktrees/demo",
+            "branch": "(failed)",
+            "isBare": false,
+            "pending": true,
+            "removing": true,
+            "pendingAction": "removing",
+            "operationFailure": {
+              "id": "failure-1",
+              "targetKind": "worktree",
+              "operation": "create",
+              "title": "Failed to create worktree",
+              "message": "branch already exists",
+              "worktreePath": "/repo/.aimux/worktrees/demo",
+              "worktreeName": "demo",
+              "createdAt": "2026-05-01T00:00:00.000Z"
+            }
+          }
+        ]
+      },
+      "output": [
+        { "name": "Main Checkout", "branch": "", "status": "offline", "sessions": [], "services": [] },
+        {
+          "name": "demo",
+          "branch": "(failed)",
+          "path": "/repo/.aimux/worktrees/demo",
+          "pending": true,
+          "removing": true,
+          "pendingAction": "removing",
+          "operationFailure": {
+            "id": "failure-1",
+            "targetKind": "worktree",
+            "operation": "create",
+            "title": "Failed to create worktree",
+            "message": "branch already exists",
+            "worktreePath": "/repo/.aimux/worktrees/demo",
+            "worktreeName": "demo",
+            "createdAt": "2026-05-01T00:00:00.000Z"
+          },
+          "status": "offline",
+          "sessions": [],
+          "services": []
+        }
+      ],
+      "inputSha256": "40ec1a089d3ea27017b8a630f1decede4e7c877aa357384d719db029a346d858"
+    },
+    {
+      "id": "dashboard-worktree-groups-005",
+      "name": "compose places optimistic creating sessions into their worktree group",
+      "source": "src/multiplexer/dashboard-model.ts",
+      "api": "composeDashboardWorktreeGroups",
+      "input": {
+        "api": "composeDashboardWorktreeGroups",
+        "worktreeGroups": [
+          { "name": "Main Checkout", "branch": "master", "status": "offline", "sessions": [], "services": [] },
+          {
+            "name": "demo",
+            "branch": "demo",
+            "path": "/repo/.aimux/worktrees/demo",
+            "status": "offline",
+            "sessions": [],
+            "services": []
+          }
+        ],
+        "sessions": [
+          {
+            "index": -1,
+            "id": "claude-new",
+            "command": "claude",
+            "status": "waiting",
+            "active": false,
+            "label": "claude",
+            "worktreePath": "/repo/.aimux/worktrees/demo",
+            "pendingAction": "creating",
+            "optimistic": true
+          }
+        ],
+        "services": []
+      },
+      "output": [
+        { "name": "Main Checkout", "branch": "master", "status": "offline", "sessions": [], "services": [] },
+        {
+          "name": "demo",
+          "branch": "demo",
+          "path": "/repo/.aimux/worktrees/demo",
+          "status": "active",
+          "sessions": [
+            {
+              "index": -1,
+              "id": "claude-new",
+              "command": "claude",
+              "status": "waiting",
+              "active": false,
+              "label": "claude",
+              "worktreePath": "/repo/.aimux/worktrees/demo",
+              "pendingAction": "creating",
+              "optimistic": true
+            }
+          ],
+          "services": []
+        }
+      ],
+      "inputSha256": "06f59f2f6fb8d5b52d01f1900b926d195bf6f322afaf2b1b256e4814eedb44f1"
+    },
+    {
+      "id": "dashboard-worktree-groups-006",
+      "name": "compose excludes project-control sessions while preserving teammate workers",
+      "source": "src/multiplexer/dashboard-model.ts",
+      "api": "composeDashboardWorktreeGroups",
+      "input": {
+        "api": "composeDashboardWorktreeGroups",
+        "worktreeGroups": [
+          {
+            "name": "demo",
+            "branch": "demo",
+            "path": "/repo/.aimux/worktrees/demo",
+            "status": "offline",
+            "sessions": [],
+            "services": []
+          }
+        ],
+        "sessions": [
+          {
+            "index": 0,
+            "id": "overseer",
+            "command": "codex",
+            "status": "running",
+            "active": false,
+            "worktreePath": "/repo/.aimux/worktrees/demo",
+            "overseer": true
+          },
+          {
+            "index": 0,
+            "id": "scribe",
+            "command": "codex",
+            "status": "running",
+            "active": false,
+            "worktreePath": "/repo/.aimux/worktrees/demo",
+            "team": { "teamId": "scribe", "parentSessionId": "", "role": "scribe" }
+          },
+          {
+            "index": 0,
+            "id": "worker",
+            "command": "codex",
+            "status": "running",
+            "active": false,
+            "worktreePath": "/repo/.aimux/worktrees/demo",
+            "team": { "teamId": "team", "parentSessionId": "parent", "role": "coder" }
+          }
+        ],
+        "services": []
+      },
+      "output": [
+        {
+          "name": "demo",
+          "branch": "demo",
+          "path": "/repo/.aimux/worktrees/demo",
+          "status": "active",
+          "sessions": [
+            {
+              "index": 0,
+              "id": "worker",
+              "command": "codex",
+              "status": "running",
+              "active": false,
+              "worktreePath": "/repo/.aimux/worktrees/demo",
+              "team": { "teamId": "team", "parentSessionId": "parent", "role": "coder" }
+            }
+          ],
+          "services": []
+        }
+      ],
+      "inputSha256": "d7997ac3d78cc12245c770e86c9deef639b6a7b968cd96233ad6527a18818cab"
+    },
+    {
+      "id": "dashboard-worktree-groups-007",
+      "name": "entries inside a group sort by createdAt then tmux index fallback",
+      "source": "src/multiplexer/dashboard-model.ts",
+      "api": "composeDashboardWorktreeGroups",
+      "input": {
+        "api": "composeDashboardWorktreeGroups",
+        "worktreeGroups": [
+          {
+            "name": "demo",
+            "branch": "demo",
+            "path": "/repo/.aimux/worktrees/demo",
+            "status": "offline",
+            "sessions": [],
+            "services": []
+          }
+        ],
+        "sessions": [
+          {
+            "index": 0,
+            "id": "older",
+            "command": "codex",
+            "status": "running",
+            "active": false,
+            "worktreePath": "/repo/.aimux/worktrees/demo",
+            "createdAt": "2026-01-01T00:00:00.000Z"
+          },
+          {
+            "index": 0,
+            "id": "newer",
+            "command": "codex",
+            "status": "running",
+            "active": false,
+            "worktreePath": "/repo/.aimux/worktrees/demo",
+            "createdAt": "2026-01-02T00:00:00.000Z"
+          },
+          {
+            "index": 7,
+            "id": "fallback-index",
+            "command": "codex",
+            "status": "running",
+            "active": false,
+            "worktreePath": "/repo/.aimux/worktrees/demo"
+          }
+        ],
+        "services": [
+          {
+            "id": "svc-low",
+            "command": "shell",
+            "args": [],
+            "status": "running",
+            "active": false,
+            "worktreePath": "/repo/.aimux/worktrees/demo",
+            "tmuxWindowIndex": 2
+          },
+          {
+            "id": "svc-high",
+            "command": "shell",
+            "args": [],
+            "status": "running",
+            "active": false,
+            "worktreePath": "/repo/.aimux/worktrees/demo",
+            "tmuxWindowIndex": 8
+          }
+        ]
+      },
+      "output": [
+        {
+          "name": "demo",
+          "branch": "demo",
+          "path": "/repo/.aimux/worktrees/demo",
+          "status": "active",
+          "sessions": [
+            {
+              "index": 0,
+              "id": "newer",
+              "command": "codex",
+              "status": "running",
+              "active": false,
+              "worktreePath": "/repo/.aimux/worktrees/demo",
+              "createdAt": "2026-01-02T00:00:00.000Z"
+            },
+            {
+              "index": 0,
+              "id": "older",
+              "command": "codex",
+              "status": "running",
+              "active": false,
+              "worktreePath": "/repo/.aimux/worktrees/demo",
+              "createdAt": "2026-01-01T00:00:00.000Z"
+            },
+            {
+              "index": 7,
+              "id": "fallback-index",
+              "command": "codex",
+              "status": "running",
+              "active": false,
+              "worktreePath": "/repo/.aimux/worktrees/demo"
+            }
+          ],
+          "services": [
+            {
+              "id": "svc-high",
+              "command": "shell",
+              "args": [],
+              "status": "running",
+              "active": false,
+              "worktreePath": "/repo/.aimux/worktrees/demo",
+              "tmuxWindowIndex": 8
+            },
+            {
+              "id": "svc-low",
+              "command": "shell",
+              "args": [],
+              "status": "running",
+              "active": false,
+              "worktreePath": "/repo/.aimux/worktrees/demo",
+              "tmuxWindowIndex": 2
+            }
+          ]
+        }
+      ],
+      "inputSha256": "7dd1336338acabc49790005026c2b53a9f36ccbaa9ffbafd8ecbe302071eef5f"
+    }
+  ]
+}

@@ -1,0 +1,898 @@
+{
+  "version": 1,
+  "generatedAt": "2026-09-07T00:00:00.000Z",
+  "generatedBy": "scripts/capture-tmux-statusline-render-contract.mjs",
+  "source": "src/tmux/statusline.ts",
+  "sources": [
+    "src/tmux/statusline.test.ts",
+    "src/tmux/statusline.ts"
+  ],
+  "subject": "src/tmux/statusline.ts",
+  "description": "tmux statusline rendering captured from TypeScript renderTmuxStatuslineFromData.",
+  "caseCount": 7,
+  "cases": [
+    {
+      "id": "tmux-statusline-render-001",
+      "name": "renders full top statusline with active metadata and plugin segment",
+      "source": "src/tmux/statusline.ts",
+      "api": "renderTmuxStatuslineFromData",
+      "input": {
+        "name": "renders full top statusline with active metadata and plugin segment",
+        "data": {
+          "updatedAt": "2099-01-01T00:00:00.000Z",
+          "dashboardScreen": "library",
+          "sessions": [
+            {
+              "id": "coder",
+              "kind": "agent",
+              "tool": "codex",
+              "label": "coder",
+              "windowName": "codex",
+              "tmuxWindowId": "@1",
+              "tmuxWindowIndex": 1,
+              "role": "coder",
+              "status": "running",
+              "active": true,
+              "headline": "Fix auth flow",
+              "worktreePath": "/repo/aimux",
+              "semantic": {
+                "user": { "label": "working", "attention": "needs_input" },
+                "notifications": { "unreadCount": 0 },
+                "presentation": { "statusLabel": "needs input", "compactHint": "on you" }
+              }
+            },
+            {
+              "id": "worker",
+              "kind": "agent",
+              "tool": "claude",
+              "label": "worker",
+              "windowName": "claude",
+              "tmuxWindowId": "@2",
+              "tmuxWindowIndex": 2,
+              "status": "idle",
+              "worktreePath": "/repo/aimux",
+              "semantic": {
+                "user": { "label": "done", "attention": "normal" },
+                "notifications": { "unreadCount": 0 },
+                "presentation": { "statusLabel": "done" }
+              }
+            },
+            {
+              "id": "svc",
+              "kind": "service",
+              "tool": "shell",
+              "label": "web",
+              "launchCommandLine": "yarn dev",
+              "windowName": "web",
+              "tmuxWindowId": "@3",
+              "tmuxWindowIndex": 3,
+              "status": "running",
+              "worktreePath": "/repo/aimux"
+            },
+            {
+              "id": "boss",
+              "kind": "agent",
+              "tool": "claude",
+              "label": "claude-overseer",
+              "windowName": "claude",
+              "tmuxWindowId": "@4",
+              "tmuxWindowIndex": 4,
+              "role": "coder",
+              "status": "idle",
+              "worktreePath": "/repo/aimux",
+              "overseer": true
+            }
+          ],
+          "teammates": [
+            {
+              "id": "teammate-a",
+              "kind": "agent",
+              "tool": "codex",
+              "label": "reviewer",
+              "windowName": "codex",
+              "tmuxWindowId": "@5",
+              "tmuxWindowIndex": 5,
+              "status": "running",
+              "worktreePath": "/repo/aimux",
+              "team": { "parentSessionId": "coder", "role": "reviewer", "order": 1 },
+              "semantic": {
+                "user": { "label": "idle", "attention": "normal" },
+                "notifications": { "unreadCount": 0 },
+                "presentation": { "statusLabel": "idle" }
+              }
+            }
+          ],
+          "metadata": {
+            "coder": {
+              "context": {
+                "worktreeName": "aimux",
+                "branch": "rust-translation-v1",
+                "pr": { "number": 123, "url": "https://github.com/example/aimux/pull/123" }
+              },
+              "derived": {
+                "activity": "running",
+                "attention": "needs_input",
+                "unseenCount": 3,
+                "services": [{ "port": 3000, "url": "http://localhost:3000" }]
+              },
+              "statusline": {
+                "top": [{ "id": "transcript", "text": "80kb", "tone": "info" }],
+                "bottom": [{ "id": "transcript", "text": "80kb", "tone": "success" }]
+              }
+            }
+          },
+          "tasks": { "pending": 2, "assigned": 1 },
+          "controlPlane": { "daemonAlive": true, "projectServiceAlive": true }
+        },
+        "projectRoot": "/repo/aimux",
+        "line": "top",
+        "options": {
+          "currentWindow": "codex",
+          "currentWindowId": "@1",
+          "currentPath": "/repo/aimux",
+          "currentSession": "aimux-repo",
+          "width": 220
+        }
+      },
+      "output": {
+        "text": "aimux aimux  ·  ctl ok  ·  aimux@rust-translation-…  ·  #[range=user|pr]PR #123#[norange]  ·  :3000  ·  tasks 2/1  ·  needs input  ·  #[fg=cyan]80kb#[default]"
+      },
+      "inputSha256": "6108e3ba3fdaca7e0a580e5cd0723a3205d2e1981a2dbb86449ebaa95ed7fd5e"
+    },
+    {
+      "id": "tmux-statusline-render-002",
+      "name": "trims top statusline to available width",
+      "source": "src/tmux/statusline.ts",
+      "api": "renderTmuxStatuslineFromData",
+      "input": {
+        "name": "trims top statusline to available width",
+        "data": {
+          "updatedAt": "2099-01-01T00:00:00.000Z",
+          "dashboardScreen": "library",
+          "sessions": [
+            {
+              "id": "coder",
+              "kind": "agent",
+              "tool": "codex",
+              "label": "coder",
+              "windowName": "codex",
+              "tmuxWindowId": "@1",
+              "tmuxWindowIndex": 1,
+              "role": "coder",
+              "status": "running",
+              "active": true,
+              "headline": "Fix auth flow",
+              "worktreePath": "/repo/aimux",
+              "semantic": {
+                "user": { "label": "working", "attention": "needs_input" },
+                "notifications": { "unreadCount": 0 },
+                "presentation": { "statusLabel": "needs input", "compactHint": "on you" }
+              }
+            },
+            {
+              "id": "worker",
+              "kind": "agent",
+              "tool": "claude",
+              "label": "worker",
+              "windowName": "claude",
+              "tmuxWindowId": "@2",
+              "tmuxWindowIndex": 2,
+              "status": "idle",
+              "worktreePath": "/repo/aimux",
+              "semantic": {
+                "user": { "label": "done", "attention": "normal" },
+                "notifications": { "unreadCount": 0 },
+                "presentation": { "statusLabel": "done" }
+              }
+            },
+            {
+              "id": "svc",
+              "kind": "service",
+              "tool": "shell",
+              "label": "web",
+              "launchCommandLine": "yarn dev",
+              "windowName": "web",
+              "tmuxWindowId": "@3",
+              "tmuxWindowIndex": 3,
+              "status": "running",
+              "worktreePath": "/repo/aimux"
+            },
+            {
+              "id": "boss",
+              "kind": "agent",
+              "tool": "claude",
+              "label": "claude-overseer",
+              "windowName": "claude",
+              "tmuxWindowId": "@4",
+              "tmuxWindowIndex": 4,
+              "role": "coder",
+              "status": "idle",
+              "worktreePath": "/repo/aimux",
+              "overseer": true
+            }
+          ],
+          "teammates": [
+            {
+              "id": "teammate-a",
+              "kind": "agent",
+              "tool": "codex",
+              "label": "reviewer",
+              "windowName": "codex",
+              "tmuxWindowId": "@5",
+              "tmuxWindowIndex": 5,
+              "status": "running",
+              "worktreePath": "/repo/aimux",
+              "team": { "parentSessionId": "coder", "role": "reviewer", "order": 1 },
+              "semantic": {
+                "user": { "label": "idle", "attention": "normal" },
+                "notifications": { "unreadCount": 0 },
+                "presentation": { "statusLabel": "idle" }
+              }
+            }
+          ],
+          "metadata": {
+            "coder": {
+              "context": {
+                "worktreeName": "aimux",
+                "branch": "rust-translation-v1",
+                "pr": { "number": 123, "url": "https://github.com/example/aimux/pull/123" }
+              },
+              "derived": {
+                "activity": "running",
+                "attention": "needs_input",
+                "unseenCount": 3,
+                "services": [{ "port": 3000, "url": "http://localhost:3000" }]
+              },
+              "statusline": {
+                "top": [{ "id": "transcript", "text": "80kb", "tone": "info" }],
+                "bottom": [{ "id": "transcript", "text": "80kb", "tone": "success" }]
+              }
+            }
+          },
+          "tasks": { "pending": 2, "assigned": 1 },
+          "controlPlane": { "daemonAlive": true, "projectServiceAlive": true }
+        },
+        "projectRoot": "/repo/aimux",
+        "line": "top",
+        "options": {
+          "currentWindow": "codex",
+          "currentWindowId": "@1",
+          "currentPath": "/repo/aimux",
+          "currentSession": "aimux-repo",
+          "width": 60
+        }
+      },
+      "output": { "text": "aimux aimux  ·  ctl ok  ·  aimux@rust-translation-…  ·  #…" },
+      "inputSha256": "7dd0154fa564873b606da6c96a46ccbe3247a9f9491b728b50870af2aa35fd6f"
+    },
+    {
+      "id": "tmux-statusline-render-003",
+      "name": "renders dashboard footer tabs with width-aware selection",
+      "source": "src/tmux/statusline.ts",
+      "api": "renderTmuxStatuslineFromData",
+      "input": {
+        "name": "renders dashboard footer tabs with width-aware selection",
+        "data": {
+          "updatedAt": "2099-01-01T00:00:00.000Z",
+          "dashboardScreen": "library",
+          "sessions": [
+            {
+              "id": "coder",
+              "kind": "agent",
+              "tool": "codex",
+              "label": "coder",
+              "windowName": "codex",
+              "tmuxWindowId": "@1",
+              "tmuxWindowIndex": 1,
+              "role": "coder",
+              "status": "running",
+              "active": true,
+              "headline": "Fix auth flow",
+              "worktreePath": "/repo/aimux",
+              "semantic": {
+                "user": { "label": "working", "attention": "needs_input" },
+                "notifications": { "unreadCount": 0 },
+                "presentation": { "statusLabel": "needs input", "compactHint": "on you" }
+              }
+            },
+            {
+              "id": "worker",
+              "kind": "agent",
+              "tool": "claude",
+              "label": "worker",
+              "windowName": "claude",
+              "tmuxWindowId": "@2",
+              "tmuxWindowIndex": 2,
+              "status": "idle",
+              "worktreePath": "/repo/aimux",
+              "semantic": {
+                "user": { "label": "done", "attention": "normal" },
+                "notifications": { "unreadCount": 0 },
+                "presentation": { "statusLabel": "done" }
+              }
+            },
+            {
+              "id": "svc",
+              "kind": "service",
+              "tool": "shell",
+              "label": "web",
+              "launchCommandLine": "yarn dev",
+              "windowName": "web",
+              "tmuxWindowId": "@3",
+              "tmuxWindowIndex": 3,
+              "status": "running",
+              "worktreePath": "/repo/aimux"
+            },
+            {
+              "id": "boss",
+              "kind": "agent",
+              "tool": "claude",
+              "label": "claude-overseer",
+              "windowName": "claude",
+              "tmuxWindowId": "@4",
+              "tmuxWindowIndex": 4,
+              "role": "coder",
+              "status": "idle",
+              "worktreePath": "/repo/aimux",
+              "overseer": true
+            }
+          ],
+          "teammates": [
+            {
+              "id": "teammate-a",
+              "kind": "agent",
+              "tool": "codex",
+              "label": "reviewer",
+              "windowName": "codex",
+              "tmuxWindowId": "@5",
+              "tmuxWindowIndex": 5,
+              "status": "running",
+              "worktreePath": "/repo/aimux",
+              "team": { "parentSessionId": "coder", "role": "reviewer", "order": 1 },
+              "semantic": {
+                "user": { "label": "idle", "attention": "normal" },
+                "notifications": { "unreadCount": 0 },
+                "presentation": { "statusLabel": "idle" }
+              }
+            }
+          ],
+          "metadata": {
+            "coder": {
+              "context": {
+                "worktreeName": "aimux",
+                "branch": "rust-translation-v1",
+                "pr": { "number": 123, "url": "https://github.com/example/aimux/pull/123" }
+              },
+              "derived": {
+                "activity": "running",
+                "attention": "needs_input",
+                "unseenCount": 3,
+                "services": [{ "port": 3000, "url": "http://localhost:3000" }]
+              },
+              "statusline": {
+                "top": [{ "id": "transcript", "text": "80kb", "tone": "info" }],
+                "bottom": [{ "id": "transcript", "text": "80kb", "tone": "success" }]
+              }
+            }
+          },
+          "tasks": { "pending": 2, "assigned": 1 },
+          "controlPlane": { "daemonAlive": true, "projectServiceAlive": true }
+        },
+        "projectRoot": "/repo/aimux",
+        "line": "bottom",
+        "options": {
+          "currentWindow": "dashboard",
+          "currentPath": "/repo/aimux",
+          "currentSession": "aimux-repo-client-live",
+          "width": 62
+        }
+      },
+      "output": {
+        "text": "#[fg=yellow,bold]D#[default]ashboard  ·  #[fg=yellow,bold]C#[default]oordination  ·  #[fg=yellow,bold]P#[default]roject  ·  #[fg=black,bg=yellow] Library #[default]"
+      },
+      "inputSha256": "99e15c99a1435b564e11f98a7a787fadf22cbf5691768b1065baba381356d126"
+    },
+    {
+      "id": "tmux-statusline-render-004",
+      "name": "renders scoped footer chips with headline teammate and plugin detail",
+      "source": "src/tmux/statusline.ts",
+      "api": "renderTmuxStatuslineFromData",
+      "input": {
+        "name": "renders scoped footer chips with headline teammate and plugin detail",
+        "data": {
+          "updatedAt": "2099-01-01T00:00:00.000Z",
+          "dashboardScreen": "library",
+          "sessions": [
+            {
+              "id": "coder",
+              "kind": "agent",
+              "tool": "codex",
+              "label": "coder",
+              "windowName": "codex",
+              "tmuxWindowId": "@1",
+              "tmuxWindowIndex": 1,
+              "role": "coder",
+              "status": "running",
+              "active": true,
+              "headline": "Fix auth flow",
+              "worktreePath": "/repo/aimux",
+              "semantic": {
+                "user": { "label": "working", "attention": "needs_input" },
+                "notifications": { "unreadCount": 0 },
+                "presentation": { "statusLabel": "needs input", "compactHint": "on you" }
+              }
+            },
+            {
+              "id": "worker",
+              "kind": "agent",
+              "tool": "claude",
+              "label": "worker",
+              "windowName": "claude",
+              "tmuxWindowId": "@2",
+              "tmuxWindowIndex": 2,
+              "status": "idle",
+              "worktreePath": "/repo/aimux",
+              "semantic": {
+                "user": { "label": "done", "attention": "normal" },
+                "notifications": { "unreadCount": 0 },
+                "presentation": { "statusLabel": "done" }
+              }
+            },
+            {
+              "id": "svc",
+              "kind": "service",
+              "tool": "shell",
+              "label": "web",
+              "launchCommandLine": "yarn dev",
+              "windowName": "web",
+              "tmuxWindowId": "@3",
+              "tmuxWindowIndex": 3,
+              "status": "running",
+              "worktreePath": "/repo/aimux"
+            },
+            {
+              "id": "boss",
+              "kind": "agent",
+              "tool": "claude",
+              "label": "claude-overseer",
+              "windowName": "claude",
+              "tmuxWindowId": "@4",
+              "tmuxWindowIndex": 4,
+              "role": "coder",
+              "status": "idle",
+              "worktreePath": "/repo/aimux",
+              "overseer": true
+            }
+          ],
+          "teammates": [
+            {
+              "id": "teammate-a",
+              "kind": "agent",
+              "tool": "codex",
+              "label": "reviewer",
+              "windowName": "codex",
+              "tmuxWindowId": "@5",
+              "tmuxWindowIndex": 5,
+              "status": "running",
+              "worktreePath": "/repo/aimux",
+              "team": { "parentSessionId": "coder", "role": "reviewer", "order": 1 },
+              "semantic": {
+                "user": { "label": "idle", "attention": "normal" },
+                "notifications": { "unreadCount": 0 },
+                "presentation": { "statusLabel": "idle" }
+              }
+            }
+          ],
+          "metadata": {
+            "coder": {
+              "context": {
+                "worktreeName": "aimux",
+                "branch": "rust-translation-v1",
+                "pr": { "number": 123, "url": "https://github.com/example/aimux/pull/123" }
+              },
+              "derived": {
+                "activity": "running",
+                "attention": "needs_input",
+                "unseenCount": 3,
+                "services": [{ "port": 3000, "url": "http://localhost:3000" }]
+              },
+              "statusline": {
+                "top": [{ "id": "transcript", "text": "80kb", "tone": "info" }],
+                "bottom": [{ "id": "transcript", "text": "80kb", "tone": "success" }]
+              }
+            }
+          },
+          "tasks": { "pending": 2, "assigned": 1 },
+          "controlPlane": { "daemonAlive": true, "projectServiceAlive": true }
+        },
+        "projectRoot": "/repo/aimux",
+        "line": "bottom",
+        "options": {
+          "currentWindow": "codex",
+          "currentWindowId": "@1",
+          "currentPath": "/repo/aimux",
+          "currentSession": "aimux-repo",
+          "width": 220
+        }
+      },
+      "output": {
+        "text": "#[fg=black,bg=yellow] coder(coder) on you ? #[default]  ·  worker ✓  ·  yarn dev  |  Fix auth flow  ·  team: reviewer idle  ·  #[fg=green]80kb#[default]"
+      },
+      "inputSha256": "1b925903f6f2013376f8cbbe7414993a5ff82e952bf4d066eb638e08f799b87a"
+    },
+    {
+      "id": "tmux-statusline-render-005",
+      "name": "omits detail when scoped footer chips fill narrow width",
+      "source": "src/tmux/statusline.ts",
+      "api": "renderTmuxStatuslineFromData",
+      "input": {
+        "name": "omits detail when scoped footer chips fill narrow width",
+        "data": {
+          "updatedAt": "2099-01-01T00:00:00.000Z",
+          "dashboardScreen": "library",
+          "sessions": [
+            {
+              "id": "coder",
+              "kind": "agent",
+              "tool": "codex",
+              "label": "coder",
+              "windowName": "codex",
+              "tmuxWindowId": "@1",
+              "tmuxWindowIndex": 1,
+              "role": "coder",
+              "status": "running",
+              "active": true,
+              "headline": "Fix auth flow",
+              "worktreePath": "/repo/aimux",
+              "semantic": {
+                "user": { "label": "working", "attention": "needs_input" },
+                "notifications": { "unreadCount": 0 },
+                "presentation": { "statusLabel": "needs input", "compactHint": "on you" }
+              }
+            },
+            {
+              "id": "worker",
+              "kind": "agent",
+              "tool": "claude",
+              "label": "worker",
+              "windowName": "claude",
+              "tmuxWindowId": "@2",
+              "tmuxWindowIndex": 2,
+              "status": "idle",
+              "worktreePath": "/repo/aimux",
+              "semantic": {
+                "user": { "label": "done", "attention": "normal" },
+                "notifications": { "unreadCount": 0 },
+                "presentation": { "statusLabel": "done" }
+              }
+            },
+            {
+              "id": "svc",
+              "kind": "service",
+              "tool": "shell",
+              "label": "web",
+              "launchCommandLine": "yarn dev",
+              "windowName": "web",
+              "tmuxWindowId": "@3",
+              "tmuxWindowIndex": 3,
+              "status": "running",
+              "worktreePath": "/repo/aimux"
+            },
+            {
+              "id": "boss",
+              "kind": "agent",
+              "tool": "claude",
+              "label": "claude-overseer",
+              "windowName": "claude",
+              "tmuxWindowId": "@4",
+              "tmuxWindowIndex": 4,
+              "role": "coder",
+              "status": "idle",
+              "worktreePath": "/repo/aimux",
+              "overseer": true
+            }
+          ],
+          "teammates": [
+            {
+              "id": "teammate-a",
+              "kind": "agent",
+              "tool": "codex",
+              "label": "reviewer",
+              "windowName": "codex",
+              "tmuxWindowId": "@5",
+              "tmuxWindowIndex": 5,
+              "status": "running",
+              "worktreePath": "/repo/aimux",
+              "team": { "parentSessionId": "coder", "role": "reviewer", "order": 1 },
+              "semantic": {
+                "user": { "label": "idle", "attention": "normal" },
+                "notifications": { "unreadCount": 0 },
+                "presentation": { "statusLabel": "idle" }
+              }
+            }
+          ],
+          "metadata": {
+            "coder": {
+              "context": {
+                "worktreeName": "aimux",
+                "branch": "rust-translation-v1",
+                "pr": { "number": 123, "url": "https://github.com/example/aimux/pull/123" }
+              },
+              "derived": {
+                "activity": "running",
+                "attention": "needs_input",
+                "unseenCount": 3,
+                "services": [{ "port": 3000, "url": "http://localhost:3000" }]
+              },
+              "statusline": {
+                "top": [{ "id": "transcript", "text": "80kb", "tone": "info" }],
+                "bottom": [{ "id": "transcript", "text": "80kb", "tone": "success" }]
+              }
+            }
+          },
+          "tasks": { "pending": 2, "assigned": 1 },
+          "controlPlane": { "daemonAlive": true, "projectServiceAlive": true }
+        },
+        "projectRoot": "/repo/aimux",
+        "line": "bottom",
+        "options": {
+          "currentWindow": "codex",
+          "currentWindowId": "@1",
+          "currentPath": "/repo/aimux",
+          "currentSession": "aimux-repo",
+          "width": 58
+        }
+      },
+      "output": { "text": "#[fg=black,bg=yellow] coder(coder) on you ? #[default]  ·  worker ✓  ·  yarn dev" },
+      "inputSha256": "c6252657a3aacb076b7ea755423e9caa430ec8d1c38491a1ec91c3e2a495616d"
+    },
+    {
+      "id": "tmux-statusline-render-006",
+      "name": "renders active overseer footer classification",
+      "source": "src/tmux/statusline.ts",
+      "api": "renderTmuxStatuslineFromData",
+      "input": {
+        "name": "renders active overseer footer classification",
+        "data": {
+          "updatedAt": "2099-01-01T00:00:00.000Z",
+          "dashboardScreen": "library",
+          "sessions": [
+            {
+              "id": "coder",
+              "kind": "agent",
+              "tool": "codex",
+              "label": "coder",
+              "windowName": "codex",
+              "tmuxWindowId": "@1",
+              "tmuxWindowIndex": 1,
+              "role": "coder",
+              "status": "running",
+              "active": true,
+              "headline": "Fix auth flow",
+              "worktreePath": "/repo/aimux",
+              "semantic": {
+                "user": { "label": "working", "attention": "needs_input" },
+                "notifications": { "unreadCount": 0 },
+                "presentation": { "statusLabel": "needs input", "compactHint": "on you" }
+              }
+            },
+            {
+              "id": "worker",
+              "kind": "agent",
+              "tool": "claude",
+              "label": "worker",
+              "windowName": "claude",
+              "tmuxWindowId": "@2",
+              "tmuxWindowIndex": 2,
+              "status": "idle",
+              "worktreePath": "/repo/aimux",
+              "semantic": {
+                "user": { "label": "done", "attention": "normal" },
+                "notifications": { "unreadCount": 0 },
+                "presentation": { "statusLabel": "done" }
+              }
+            },
+            {
+              "id": "svc",
+              "kind": "service",
+              "tool": "shell",
+              "label": "web",
+              "launchCommandLine": "yarn dev",
+              "windowName": "web",
+              "tmuxWindowId": "@3",
+              "tmuxWindowIndex": 3,
+              "status": "running",
+              "worktreePath": "/repo/aimux"
+            },
+            {
+              "id": "boss",
+              "kind": "agent",
+              "tool": "claude",
+              "label": "claude-overseer",
+              "windowName": "claude",
+              "tmuxWindowId": "@4",
+              "tmuxWindowIndex": 4,
+              "role": "coder",
+              "status": "idle",
+              "worktreePath": "/repo/aimux",
+              "overseer": true
+            }
+          ],
+          "teammates": [
+            {
+              "id": "teammate-a",
+              "kind": "agent",
+              "tool": "codex",
+              "label": "reviewer",
+              "windowName": "codex",
+              "tmuxWindowId": "@5",
+              "tmuxWindowIndex": 5,
+              "status": "running",
+              "worktreePath": "/repo/aimux",
+              "team": { "parentSessionId": "coder", "role": "reviewer", "order": 1 },
+              "semantic": {
+                "user": { "label": "idle", "attention": "normal" },
+                "notifications": { "unreadCount": 0 },
+                "presentation": { "statusLabel": "idle" }
+              }
+            }
+          ],
+          "metadata": {
+            "coder": {
+              "context": {
+                "worktreeName": "aimux",
+                "branch": "rust-translation-v1",
+                "pr": { "number": 123, "url": "https://github.com/example/aimux/pull/123" }
+              },
+              "derived": {
+                "activity": "running",
+                "attention": "needs_input",
+                "unseenCount": 3,
+                "services": [{ "port": 3000, "url": "http://localhost:3000" }]
+              },
+              "statusline": {
+                "top": [{ "id": "transcript", "text": "80kb", "tone": "info" }],
+                "bottom": [{ "id": "transcript", "text": "80kb", "tone": "success" }]
+              }
+            }
+          },
+          "tasks": { "pending": 2, "assigned": 1 },
+          "controlPlane": { "daemonAlive": true, "projectServiceAlive": true }
+        },
+        "projectRoot": "/repo/aimux",
+        "line": "bottom",
+        "options": {
+          "currentWindow": "claude",
+          "currentWindowId": "@4",
+          "currentPath": "/repo/aimux",
+          "currentSession": "aimux-repo",
+          "width": 220
+        }
+      },
+      "output": { "text": "#[fg=cyan]overseer#[default]  claude(coder) idle" },
+      "inputSha256": "626dc768968b3fdf9aba9ff4536bd0456c7f37a4e34920bd00641275964222ca"
+    },
+    {
+      "id": "tmux-statusline-render-007",
+      "name": "renders stale control-plane status",
+      "source": "src/tmux/statusline.ts",
+      "api": "renderTmuxStatuslineFromData",
+      "input": {
+        "name": "renders stale control-plane status",
+        "data": {
+          "updatedAt": "2000-01-01T00:00:00.000Z",
+          "dashboardScreen": "library",
+          "sessions": [
+            {
+              "id": "coder",
+              "kind": "agent",
+              "tool": "codex",
+              "label": "coder",
+              "windowName": "codex",
+              "tmuxWindowId": "@1",
+              "tmuxWindowIndex": 1,
+              "role": "coder",
+              "status": "running",
+              "active": true,
+              "headline": "Fix auth flow",
+              "worktreePath": "/repo/aimux",
+              "semantic": {
+                "user": { "label": "working", "attention": "needs_input" },
+                "notifications": { "unreadCount": 0 },
+                "presentation": { "statusLabel": "needs input", "compactHint": "on you" }
+              }
+            },
+            {
+              "id": "worker",
+              "kind": "agent",
+              "tool": "claude",
+              "label": "worker",
+              "windowName": "claude",
+              "tmuxWindowId": "@2",
+              "tmuxWindowIndex": 2,
+              "status": "idle",
+              "worktreePath": "/repo/aimux",
+              "semantic": {
+                "user": { "label": "done", "attention": "normal" },
+                "notifications": { "unreadCount": 0 },
+                "presentation": { "statusLabel": "done" }
+              }
+            },
+            {
+              "id": "svc",
+              "kind": "service",
+              "tool": "shell",
+              "label": "web",
+              "launchCommandLine": "yarn dev",
+              "windowName": "web",
+              "tmuxWindowId": "@3",
+              "tmuxWindowIndex": 3,
+              "status": "running",
+              "worktreePath": "/repo/aimux"
+            },
+            {
+              "id": "boss",
+              "kind": "agent",
+              "tool": "claude",
+              "label": "claude-overseer",
+              "windowName": "claude",
+              "tmuxWindowId": "@4",
+              "tmuxWindowIndex": 4,
+              "role": "coder",
+              "status": "idle",
+              "worktreePath": "/repo/aimux",
+              "overseer": true
+            }
+          ],
+          "teammates": [
+            {
+              "id": "teammate-a",
+              "kind": "agent",
+              "tool": "codex",
+              "label": "reviewer",
+              "windowName": "codex",
+              "tmuxWindowId": "@5",
+              "tmuxWindowIndex": 5,
+              "status": "running",
+              "worktreePath": "/repo/aimux",
+              "team": { "parentSessionId": "coder", "role": "reviewer", "order": 1 },
+              "semantic": {
+                "user": { "label": "idle", "attention": "normal" },
+                "notifications": { "unreadCount": 0 },
+                "presentation": { "statusLabel": "idle" }
+              }
+            }
+          ],
+          "metadata": {
+            "coder": {
+              "context": {
+                "worktreeName": "aimux",
+                "branch": "rust-translation-v1",
+                "pr": { "number": 123, "url": "https://github.com/example/aimux/pull/123" }
+              },
+              "derived": {
+                "activity": "running",
+                "attention": "needs_input",
+                "unseenCount": 3,
+                "services": [{ "port": 3000, "url": "http://localhost:3000" }]
+              },
+              "statusline": {
+                "top": [{ "id": "transcript", "text": "80kb", "tone": "info" }],
+                "bottom": [{ "id": "transcript", "text": "80kb", "tone": "success" }]
+              }
+            }
+          },
+          "tasks": { "pending": 2, "assigned": 1 },
+          "controlPlane": { "daemonAlive": true, "projectServiceAlive": true }
+        },
+        "projectRoot": "/repo/aimux",
+        "line": "top",
+        "options": { "currentWindow": "codex", "currentWindowId": "@1", "currentPath": "/repo/aimux", "width": 220 }
+      },
+      "output": {
+        "text": "aimux aimux  ·  ctl stale  ·  aimux@rust-translation-…  ·  #[range=user|pr]PR #123#[norange]  ·  :3000  ·  tasks 2/1  ·  needs input  ·  #[fg=cyan]80kb#[default]"
+      },
+      "inputSha256": "2030572410faf69f2c6d9a3bab75a827198bbab5056b0e007c0859b73b2519b6"
+    }
+  ]
+}

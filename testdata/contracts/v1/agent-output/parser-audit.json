@@ -1,0 +1,549 @@
+{
+  "version": 1,
+  "source": "src/agent-output-parser-audit.test.ts",
+  "generatedBy": "scripts/capture-agent-output-parser-contract.mjs",
+  "description": "Agent output parser audit contracts captured by running the TypeScript audit harness.",
+  "cases": [
+    {
+      "id": "src-agent-output-parser-audit-test-ts-audit-001",
+      "name": "initializes counts for every supported audit flag",
+      "source": "src/agent-output-parser-audit.test.ts",
+      "api": "auditAgentOutputParserCorpus",
+      "input": {},
+      "output": {
+        "scanned": 0,
+        "findings": [],
+        "countsByFlag": {
+          "prompt-from-response-record": 0,
+          "raw-block": 0,
+          "status-leak-response": 0,
+          "activity-status-leak": 0,
+          "action-status-leak": 0
+        }
+      },
+      "inputSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "id": "src-agent-output-parser-audit-test-ts-audit-002",
+      "name": "reports suspicious status text that still parses as an assistant response",
+      "source": "src/agent-output-parser-audit.test.ts",
+      "api": "auditAgentOutputParserCorpus",
+      "input": { "historyDirs": ["testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-001"] },
+      "output": {
+        "scanned": 1,
+        "findings": [
+          {
+            "source": "testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-001/claude-test.jsonl",
+            "recordIndex": 0,
+            "tool": "claude",
+            "blockIndex": 0,
+            "blockType": "response",
+            "flags": ["status-leak-response"],
+            "sample": "Leaked runtime row: Bash(terminal-notifier -title ClaudeCode) appeared as visible assistant prose"
+          }
+        ],
+        "countsByFlag": {
+          "prompt-from-response-record": 0,
+          "raw-block": 0,
+          "status-leak-response": 1,
+          "activity-status-leak": 0,
+          "action-status-leak": 0
+        }
+      },
+      "inputSha256": "069be5280e229bd339b7f3b749bfdcdd9b6356992e3a44eb6825c382fb4df82d"
+    },
+    {
+      "id": "src-agent-output-parser-audit-test-ts-audit-003",
+      "name": "does not flag prose or code samples that only mention agent chrome terms",
+      "source": "src/agent-output-parser-audit.test.ts",
+      "api": "auditAgentOutputParserCorpus",
+      "input": { "historyDirs": ["testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-002"] },
+      "output": {
+        "scanned": 1,
+        "findings": [],
+        "countsByFlag": {
+          "prompt-from-response-record": 0,
+          "raw-block": 0,
+          "status-leak-response": 0,
+          "activity-status-leak": 0,
+          "action-status-leak": 0
+        }
+      },
+      "inputSha256": "01bd3ad6ccd06a906d0e653c24bb847cd651fa76632552d0b2d9f21e182372d8"
+    },
+    {
+      "id": "src-agent-output-parser-audit-test-ts-audit-004",
+      "name": "does not flag Codex chrome that the parser already classifies as metadata",
+      "source": "src/agent-output-parser-audit.test.ts",
+      "api": "auditAgentOutputParserCorpus",
+      "input": { "historyDirs": ["testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-003"] },
+      "output": {
+        "scanned": 1,
+        "findings": [],
+        "countsByFlag": {
+          "prompt-from-response-record": 0,
+          "raw-block": 0,
+          "status-leak-response": 0,
+          "activity-status-leak": 0,
+          "action-status-leak": 0
+        }
+      },
+      "inputSha256": "c4cc292a3b43b56219ce59aedfaebfa46b5806b89393add971baa4bd67df3084"
+    },
+    {
+      "id": "src-agent-output-parser-audit-test-ts-audit-005",
+      "name": "does not flag prose that mentions tool-row examples",
+      "source": "src/agent-output-parser-audit.test.ts",
+      "api": "auditAgentOutputParserCorpus",
+      "input": { "historyDirs": ["testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-004"] },
+      "output": {
+        "scanned": 1,
+        "findings": [],
+        "countsByFlag": {
+          "prompt-from-response-record": 0,
+          "raw-block": 0,
+          "status-leak-response": 0,
+          "activity-status-leak": 0,
+          "action-status-leak": 0
+        }
+      },
+      "inputSha256": "813b97f042467c7328e1a7eeb50a7f92424a3874933619f9a0f502f5ece8f67a"
+    },
+    {
+      "id": "src-agent-output-parser-audit-test-ts-audit-006",
+      "name": "does not flag standalone ran-command rows that now parse as status text",
+      "source": "src/agent-output-parser-audit.test.ts",
+      "api": "auditAgentOutputParserCorpus",
+      "input": { "historyDirs": ["testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-005"] },
+      "output": {
+        "scanned": 2,
+        "findings": [],
+        "countsByFlag": {
+          "prompt-from-response-record": 0,
+          "raw-block": 0,
+          "status-leak-response": 0,
+          "activity-status-leak": 0,
+          "action-status-leak": 0
+        }
+      },
+      "inputSha256": "8114413e8d7c6078ccc73cb7fa3f527e051f419cf1b693b94403e0cbbbc7711f"
+    },
+    {
+      "id": "src-agent-output-parser-audit-test-ts-audit-007",
+      "name": "flags action rows with the dedicated action status leak flag",
+      "source": "src/agent-output-parser-audit.test.ts",
+      "api": "auditAgentOutputParserCorpus",
+      "input": {
+        "historyDirs": ["testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-006"],
+        "flags": ["action-status-leak"]
+      },
+      "output": {
+        "scanned": 2,
+        "findings": [
+          {
+            "source": "testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-006/codex-test.jsonl",
+            "recordIndex": 0,
+            "tool": "codex",
+            "blockIndex": 0,
+            "blockType": "response",
+            "flags": ["action-status-leak"],
+            "sample": "Leaked action row: Ran yarn test."
+          },
+          {
+            "source": "testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-006/codex-test.jsonl",
+            "recordIndex": 1,
+            "tool": "codex",
+            "blockIndex": 0,
+            "blockType": "response",
+            "flags": ["action-status-leak"],
+            "sample": "Leaked command row: Ran git worktree list --porcelain."
+          }
+        ],
+        "countsByFlag": {
+          "prompt-from-response-record": 0,
+          "raw-block": 0,
+          "status-leak-response": 0,
+          "activity-status-leak": 0,
+          "action-status-leak": 2
+        }
+      },
+      "inputSha256": "c5734726b8d2680feac247127a258d635edabb5ee1290dd8588a0b18c3ac5bef"
+    },
+    {
+      "id": "src-agent-output-parser-audit-test-ts-audit-008",
+      "name": "flags activity rows with the dedicated activity status leak flag",
+      "source": "src/agent-output-parser-audit.test.ts",
+      "api": "auditAgentOutputParserCorpus",
+      "input": {
+        "historyDirs": ["testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-007"],
+        "flags": ["activity-status-leak"]
+      },
+      "output": {
+        "scanned": 2,
+        "findings": [
+          {
+            "source": "testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-007/codex-test.jsonl",
+            "recordIndex": 0,
+            "tool": "codex",
+            "blockIndex": 0,
+            "blockType": "response",
+            "flags": ["activity-status-leak"],
+            "sample": "Simmered for 12s - leaked assistant prose"
+          },
+          {
+            "source": "testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-007/codex-test.jsonl",
+            "recordIndex": 1,
+            "tool": "codex",
+            "blockIndex": 0,
+            "blockType": "response",
+            "flags": ["activity-status-leak"],
+            "sample": "Baked for 3s - leaked assistant prose"
+          }
+        ],
+        "countsByFlag": {
+          "prompt-from-response-record": 0,
+          "raw-block": 0,
+          "status-leak-response": 0,
+          "activity-status-leak": 2,
+          "action-status-leak": 0
+        }
+      },
+      "inputSha256": "75fbb5864e4814275a86e18d54eacce9ed068ab7ac0df7bb8fbe71f41c87657c"
+    },
+    {
+      "id": "src-agent-output-parser-audit-test-ts-audit-009",
+      "name": "does not include activity leaks when filtering for action status leaks",
+      "source": "src/agent-output-parser-audit.test.ts",
+      "api": "auditAgentOutputParserCorpus",
+      "input": {
+        "historyDirs": ["testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-008"],
+        "flags": ["action-status-leak"]
+      },
+      "output": {
+        "scanned": 1,
+        "findings": [],
+        "countsByFlag": {
+          "prompt-from-response-record": 0,
+          "raw-block": 0,
+          "status-leak-response": 0,
+          "activity-status-leak": 0,
+          "action-status-leak": 0
+        }
+      },
+      "inputSha256": "0afde462ba2ba5838a2ab368c5d9955cb83e18e92b6e3380bab29a85b8ff22f0"
+    },
+    {
+      "id": "src-agent-output-parser-audit-test-ts-audit-010",
+      "name": "does not flag normal prose that mentions action or activity wording",
+      "source": "src/agent-output-parser-audit.test.ts",
+      "api": "auditAgentOutputParserCorpus",
+      "input": {
+        "historyDirs": ["testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-009"],
+        "flags": ["action-status-leak"]
+      },
+      "output": {
+        "scanned": 1,
+        "findings": [],
+        "countsByFlag": {
+          "prompt-from-response-record": 0,
+          "raw-block": 0,
+          "status-leak-response": 0,
+          "activity-status-leak": 0,
+          "action-status-leak": 0
+        }
+      },
+      "inputSha256": "21e436abaf5b6afb8214eac75ec3510d1035d4b3f9c0b8ddcc9466069bfefef5"
+    },
+    {
+      "id": "src-agent-output-parser-audit-test-ts-audit-011",
+      "name": "ignores non-response history records",
+      "source": "src/agent-output-parser-audit.test.ts",
+      "api": "auditAgentOutputParserCorpus",
+      "input": { "historyDirs": ["testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-010"] },
+      "output": {
+        "scanned": 0,
+        "findings": [],
+        "countsByFlag": {
+          "prompt-from-response-record": 0,
+          "raw-block": 0,
+          "status-leak-response": 0,
+          "activity-status-leak": 0,
+          "action-status-leak": 0
+        }
+      },
+      "inputSha256": "00eb74daf5142b45daa7faa467e1e3202782d4d65b3a5e04bb2759d16f55cdd2"
+    },
+    {
+      "id": "src-agent-output-parser-audit-test-ts-audit-012",
+      "name": "keeps aggregate counts when finding samples are truncated",
+      "source": "src/agent-output-parser-audit.test.ts",
+      "api": "auditAgentOutputParserCorpus",
+      "input": {
+        "historyDirs": ["testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-011"],
+        "maxFindings": 1
+      },
+      "output": {
+        "scanned": 2,
+        "findings": [
+          {
+            "source": "testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-011/claude-test.jsonl",
+            "recordIndex": 0,
+            "tool": "claude",
+            "blockIndex": 0,
+            "blockType": "response",
+            "flags": ["status-leak-response"],
+            "sample": "Leak one: Bash(terminal-notifier -title ClaudeCode) leak one"
+          }
+        ],
+        "countsByFlag": {
+          "prompt-from-response-record": 0,
+          "raw-block": 0,
+          "status-leak-response": 2,
+          "activity-status-leak": 0,
+          "action-status-leak": 0
+        }
+      },
+      "inputSha256": "3ae582aaae7f51c427be52c683ad9fe40aa5fd268981a84aa7656db05004279f"
+    },
+    {
+      "id": "src-agent-output-parser-audit-test-ts-audit-013",
+      "name": "does not flag structural raw fragments",
+      "source": "src/agent-output-parser-audit.test.ts",
+      "api": "auditAgentOutputParserCorpus",
+      "input": {
+        "historyDirs": ["testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-012"],
+        "flags": ["raw-block"]
+      },
+      "output": {
+        "scanned": 1,
+        "findings": [],
+        "countsByFlag": {
+          "prompt-from-response-record": 0,
+          "raw-block": 0,
+          "status-leak-response": 0,
+          "activity-status-leak": 0,
+          "action-status-leak": 0
+        }
+      },
+      "inputSha256": "6dd647e8affea0eaf0bf5a5cd782e30976b4e2fc26e29f65f98d51b029d640ae"
+    },
+    {
+      "id": "src-agent-output-parser-audit-test-ts-audit-014",
+      "name": "does not flag code-close raw fragments",
+      "source": "src/agent-output-parser-audit.test.ts",
+      "api": "auditAgentOutputParserCorpus",
+      "input": {
+        "historyDirs": ["testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-013"],
+        "flags": ["raw-block"]
+      },
+      "output": {
+        "scanned": 1,
+        "findings": [],
+        "countsByFlag": {
+          "prompt-from-response-record": 0,
+          "raw-block": 0,
+          "status-leak-response": 0,
+          "activity-status-leak": 0,
+          "action-status-leak": 0
+        }
+      },
+      "inputSha256": "114db59ac9b14b4f2c238d9a06868d6daf9b7c9534d21641444fd7fa057dd038"
+    },
+    {
+      "id": "src-agent-output-parser-audit-test-ts-audit-015",
+      "name": "does not flag numbered structural raw snippets",
+      "source": "src/agent-output-parser-audit.test.ts",
+      "api": "auditAgentOutputParserCorpus",
+      "input": {
+        "historyDirs": ["testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-014"],
+        "flags": ["raw-block"]
+      },
+      "output": {
+        "scanned": 1,
+        "findings": [],
+        "countsByFlag": {
+          "prompt-from-response-record": 0,
+          "raw-block": 0,
+          "status-leak-response": 0,
+          "activity-status-leak": 0,
+          "action-status-leak": 0
+        }
+      },
+      "inputSha256": "022f9c9f3b44af2bba1adcba2079d0912ae1aac8099e54c8533912acb3cd13de"
+    },
+    {
+      "id": "src-agent-output-parser-audit-test-ts-audit-016",
+      "name": "does not flag raw file listing rows",
+      "source": "src/agent-output-parser-audit.test.ts",
+      "api": "auditAgentOutputParserCorpus",
+      "input": {
+        "historyDirs": ["testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-015"],
+        "flags": ["raw-block"]
+      },
+      "output": {
+        "scanned": 1,
+        "findings": [],
+        "countsByFlag": {
+          "prompt-from-response-record": 0,
+          "raw-block": 0,
+          "status-leak-response": 0,
+          "activity-status-leak": 0,
+          "action-status-leak": 0
+        }
+      },
+      "inputSha256": "7bf051dfc9b02d90153788a3490ecce3dff44998355b10a2c92f6bc04b29c25f"
+    },
+    {
+      "id": "src-agent-output-parser-audit-test-ts-audit-017",
+      "name": "filters findings and counts to requested flags",
+      "source": "src/agent-output-parser-audit.test.ts",
+      "api": "auditAgentOutputParserCorpus",
+      "input": {
+        "historyDirs": ["testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-016"],
+        "flags": ["status-leak-response"]
+      },
+      "output": {
+        "scanned": 2,
+        "findings": [
+          {
+            "source": "testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-016/codex-test.jsonl",
+            "recordIndex": 1,
+            "tool": "codex",
+            "blockIndex": 0,
+            "blockType": "response",
+            "flags": ["status-leak-response"],
+            "sample": "Leaked runtime row: Bash(terminal-notifier -title ClaudeCode) appeared as visible assistant prose"
+          }
+        ],
+        "countsByFlag": {
+          "prompt-from-response-record": 0,
+          "raw-block": 0,
+          "status-leak-response": 1,
+          "activity-status-leak": 0,
+          "action-status-leak": 0
+        }
+      },
+      "inputSha256": "aa1a6555044cace0a71d1f40a4def9e8c5b853b0f891474cc2eafb13f3f10d2c"
+    },
+    {
+      "id": "src-agent-output-parser-audit-test-ts-audit-018",
+      "name": "does not flag embedded historical prompts without footer context",
+      "source": "src/agent-output-parser-audit.test.ts",
+      "api": "auditAgentOutputParserCorpus",
+      "input": {
+        "historyDirs": ["testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-017"],
+        "flags": ["prompt-from-response-record"]
+      },
+      "output": {
+        "scanned": 1,
+        "findings": [],
+        "countsByFlag": {
+          "prompt-from-response-record": 0,
+          "raw-block": 0,
+          "status-leak-response": 0,
+          "activity-status-leak": 0,
+          "action-status-leak": 0
+        }
+      },
+      "inputSha256": "b0925f343461d76ea433f69163bcfa18ce484c819f813f57b78b2ac60b1e5b6a"
+    },
+    {
+      "id": "src-agent-output-parser-audit-test-ts-audit-019",
+      "name": "flags response-record prompts that are backed by a footer status row",
+      "source": "src/agent-output-parser-audit.test.ts",
+      "api": "auditAgentOutputParserCorpus",
+      "input": {
+        "historyDirs": ["testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-018"],
+        "flags": ["prompt-from-response-record"]
+      },
+      "output": {
+        "scanned": 1,
+        "findings": [
+          {
+            "source": "testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-018/codex-test.jsonl",
+            "recordIndex": 0,
+            "tool": "codex",
+            "blockIndex": 0,
+            "blockType": "prompt",
+            "flags": ["prompt-from-response-record"],
+            "sample": "Please explain this codebase"
+          }
+        ],
+        "countsByFlag": {
+          "prompt-from-response-record": 1,
+          "raw-block": 0,
+          "status-leak-response": 0,
+          "activity-status-leak": 0,
+          "action-status-leak": 0
+        }
+      },
+      "inputSha256": "97481283c1072ce7660b13b972f79ec63f4b84e9b17c05ca24aa0dae2875885a"
+    },
+    {
+      "id": "src-agent-output-parser-audit-test-ts-audit-020",
+      "name": "does not flag prompts followed by active work status",
+      "source": "src/agent-output-parser-audit.test.ts",
+      "api": "auditAgentOutputParserCorpus",
+      "input": {
+        "historyDirs": ["testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-019"],
+        "flags": ["prompt-from-response-record"]
+      },
+      "output": {
+        "scanned": 1,
+        "findings": [],
+        "countsByFlag": {
+          "prompt-from-response-record": 0,
+          "raw-block": 0,
+          "status-leak-response": 0,
+          "activity-status-leak": 0,
+          "action-status-leak": 0
+        }
+      },
+      "inputSha256": "2625ab9e82dfefe27af618aa485aa4b75ea1552e11e00391197c25a1659408a0"
+    },
+    {
+      "id": "src-agent-output-parser-audit-test-ts-audit-021",
+      "name": "does not flag prompts followed by interruption status",
+      "source": "src/agent-output-parser-audit.test.ts",
+      "api": "auditAgentOutputParserCorpus",
+      "input": {
+        "historyDirs": ["testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-020"],
+        "flags": ["prompt-from-response-record"]
+      },
+      "output": {
+        "scanned": 1,
+        "findings": [],
+        "countsByFlag": {
+          "prompt-from-response-record": 0,
+          "raw-block": 0,
+          "status-leak-response": 0,
+          "activity-status-leak": 0,
+          "action-status-leak": 0
+        }
+      },
+      "inputSha256": "4735e30e254f3dd08488c200bd4377e4522a36e203ac53416f5f3ba29009843b"
+    },
+    {
+      "id": "src-agent-output-parser-audit-test-ts-audit-022",
+      "name": "does not flag very short active input text",
+      "source": "src/agent-output-parser-audit.test.ts",
+      "api": "auditAgentOutputParserCorpus",
+      "input": {
+        "historyDirs": ["testdata/contracts/v1/agent-output/parser-audit-corpus/aimux-parser-audit-021"],
+        "flags": ["prompt-from-response-record"]
+      },
+      "output": {
+        "scanned": 1,
+        "findings": [],
+        "countsByFlag": {
+          "prompt-from-response-record": 0,
+          "raw-block": 0,
+          "status-leak-response": 0,
+          "activity-status-leak": 0,
+          "action-status-leak": 0
+        }
+      },
+      "inputSha256": "01ff4c85de15b2ac80ddcdc1e7328fc4260b48f7df9f3b6d18433b2b063e170f"
+    }
+  ]
+}

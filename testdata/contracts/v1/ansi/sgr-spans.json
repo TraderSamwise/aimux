@@ -1,0 +1,244 @@
+{
+  "version": 1,
+  "source": "app/lib/ansi.ts",
+  "description": "Canonical ANSI SGR span cases captured by running the TypeScript app ANSI parser.",
+  "cases": [
+    {
+      "id": "ansi-sgr-spans-001",
+      "name": "bold reset",
+      "source": "app/lib/ansi.ts",
+      "input": "\u001b[1mbold\u001b[22mplain",
+      "output": {
+        "lines": [
+          [
+            { "text": "bold", "style": { "fontWeight": "bold" } },
+            { "text": "plain", "style": {} }
+          ]
+        ],
+        "text": "boldplain"
+      },
+      "inputSha256": "b151c58b68758ea41ebb8b61e464e0526c296afd8d4c50a6c3688bee1417a703"
+    },
+    {
+      "id": "ansi-sgr-spans-002",
+      "name": "rgb semicolon",
+      "source": "app/lib/ansi.ts",
+      "input": "\u001b[38;2;215;119;87mwarm",
+      "output": { "lines": [[{ "text": "warm", "style": { "color": "#d77757" } }]], "text": "warm" },
+      "inputSha256": "15d4a80dbff3d91f8200d5875402400dba16014ca156ab45fb3c650f4797642b"
+    },
+    {
+      "id": "ansi-sgr-spans-003",
+      "name": "rgb colon",
+      "source": "app/lib/ansi.ts",
+      "input": "\u001b[38:2:0:128:255mx",
+      "output": { "lines": [[{ "text": "x", "style": { "color": "#0080ff" } }]], "text": "x" },
+      "inputSha256": "4849e672ca6603e0fcd5b8f344da5e652342f0ea5757a1312353954160adc5ae"
+    },
+    {
+      "id": "ansi-sgr-spans-004",
+      "name": "plain text",
+      "source": "app/lib/ansi.ts",
+      "input": "plain",
+      "output": { "lines": [[{ "text": "plain", "style": {} }]], "text": "plain" },
+      "inputSha256": "e18eac8ad6636e520dfcf361b302e40e4a5b9fe5b9942c020c5382d59b508dc4"
+    },
+    {
+      "id": "ansi-sgr-spans-005",
+      "name": "base foreground and background",
+      "source": "app/lib/ansi.ts",
+      "input": "\u001b[31mred\u001b[44mred on blue\u001b[0mplain",
+      "output": {
+        "lines": [
+          [
+            { "text": "red", "style": { "color": "#e06c75" } },
+            { "text": "red on blue", "style": { "color": "#e06c75", "backgroundColor": "#61afef" } },
+            { "text": "plain", "style": {} }
+          ]
+        ],
+        "text": "redred on blueplain"
+      },
+      "inputSha256": "5ab22bb078f9f6d3df32db0e72d8f8b933dde62f8b35534848856cfbc98869ef"
+    },
+    {
+      "id": "ansi-sgr-spans-006",
+      "name": "bright foreground and background",
+      "source": "app/lib/ansi.ts",
+      "input": "\u001b[91mbright red\u001b[104m on bright blue",
+      "output": {
+        "lines": [
+          [
+            { "text": "bright red", "style": { "color": "#ff7b86" } },
+            { "text": " on bright blue", "style": { "color": "#ff7b86", "backgroundColor": "#7cc5ff" } }
+          ]
+        ],
+        "text": "bright red on bright blue"
+      },
+      "inputSha256": "a85eab3444f4a2aba894f1df7635fa444ff3eb6f05de05b5bf390cac812da719"
+    },
+    {
+      "id": "ansi-sgr-spans-007",
+      "name": "dim italic underline strike",
+      "source": "app/lib/ansi.ts",
+      "input": "\u001b[2;3;4;9mstyled\u001b[23;24mstrike dim",
+      "output": {
+        "lines": [
+          [
+            {
+              "text": "styled",
+              "style": { "fontStyle": "italic", "opacity": 0.6, "textDecorationLine": "underline line-through" }
+            },
+            { "text": "strike dim", "style": { "opacity": 0.6, "textDecorationLine": "line-through" } }
+          ]
+        ],
+        "text": "styledstrike dim"
+      },
+      "inputSha256": "68d33d043ebdfdac320ac9b51455a7e52c2197045e5efd81f4524ac38af6848b"
+    },
+    {
+      "id": "ansi-sgr-spans-008",
+      "name": "inverse truecolor",
+      "source": "app/lib/ansi.ts",
+      "input": "\u001b[38;2;255;0;0m\u001b[48;2;0;0;255m\u001b[7mflip",
+      "output": {
+        "lines": [[{ "text": "flip", "style": { "color": "#0000ff", "backgroundColor": "#ff0000" } }]],
+        "text": "flip"
+      },
+      "inputSha256": "4f96dac429e31e50d9fc00d3e01b401311cd6f2732c5ad6caade140f72d14029"
+    },
+    {
+      "id": "ansi-sgr-spans-009",
+      "name": "reset foreground only",
+      "source": "app/lib/ansi.ts",
+      "input": "\u001b[31mred \u001b[39mdefault fg",
+      "output": {
+        "lines": [
+          [
+            { "text": "red ", "style": { "color": "#e06c75" } },
+            { "text": "default fg", "style": {} }
+          ]
+        ],
+        "text": "red default fg"
+      },
+      "inputSha256": "9b5d28b16ffe05cbebe47bf2f7093cd8892fa526f7af29fad03f841a6f4c7447"
+    },
+    {
+      "id": "ansi-sgr-spans-010",
+      "name": "reset background only",
+      "source": "app/lib/ansi.ts",
+      "input": "\u001b[44mblue bg \u001b[49mdefault bg",
+      "output": {
+        "lines": [
+          [
+            { "text": "blue bg ", "style": { "backgroundColor": "#61afef" } },
+            { "text": "default bg", "style": {} }
+          ]
+        ],
+        "text": "blue bg default bg"
+      },
+      "inputSha256": "34771bac55e646b0471fa016abc1b4fdf0c6d7780096b03fec965a818c99f1bd"
+    },
+    {
+      "id": "ansi-sgr-spans-011",
+      "name": "empty sgr resets",
+      "source": "app/lib/ansi.ts",
+      "input": "\u001b[1mbold\u001b[mplain",
+      "output": {
+        "lines": [
+          [
+            { "text": "bold", "style": { "fontWeight": "bold" } },
+            { "text": "plain", "style": {} }
+          ]
+        ],
+        "text": "boldplain"
+      },
+      "inputSha256": "d40f7641e9d79fd8b391147005999f7557f4556dd78eeb340c7ab35dd14ad448"
+    },
+    {
+      "id": "ansi-sgr-spans-012",
+      "name": "attributes carry across lines",
+      "source": "app/lib/ansi.ts",
+      "input": "\u001b[32mgreen\nstill green\u001b[0m\nplain",
+      "output": {
+        "lines": [
+          [{ "text": "green", "style": { "color": "#98c379" } }],
+          [{ "text": "still green", "style": { "color": "#98c379" } }],
+          [{ "text": "plain", "style": {} }]
+        ],
+        "text": "green\nstill green\nplain"
+      },
+      "inputSha256": "35d0282470c5baa44e4d930551ae63392c66e8bb2e152219c1857b612695f344"
+    },
+    {
+      "id": "ansi-sgr-spans-013",
+      "name": "unsupported code ignored",
+      "source": "app/lib/ansi.ts",
+      "input": "\u001b[999mplain\u001b[1mbold",
+      "output": {
+        "lines": [
+          [
+            { "text": "plain", "style": {} },
+            { "text": "bold", "style": { "fontWeight": "bold" } }
+          ]
+        ],
+        "text": "plainbold"
+      },
+      "inputSha256": "acd24dc657417863e9e60e971dd32cf38d57aa3a03c5014ad91acf08fbd84c1c"
+    },
+    {
+      "id": "ansi-sgr-spans-014",
+      "name": "xterm cube",
+      "source": "app/lib/ansi.ts",
+      "input": "\u001b[38;5;196mred cube \u001b[48;5;22mgreen bg",
+      "output": {
+        "lines": [
+          [
+            { "text": "red cube ", "style": { "color": "#ff0000" } },
+            { "text": "green bg", "style": { "color": "#ff0000", "backgroundColor": "#005f00" } }
+          ]
+        ],
+        "text": "red cube green bg"
+      },
+      "inputSha256": "dac9a49de359eca590c080e8f1441b8d2e75d784b1bf93bed56f6245925fe87c"
+    },
+    {
+      "id": "ansi-sgr-spans-015",
+      "name": "xterm grayscale edges",
+      "source": "app/lib/ansi.ts",
+      "input": "\u001b[38;5;232mblackish \u001b[38;5;255mwhiteish",
+      "output": {
+        "lines": [
+          [
+            { "text": "blackish ", "style": { "color": "#080808" } },
+            { "text": "whiteish", "style": { "color": "#eeeeee" } }
+          ]
+        ],
+        "text": "blackish whiteish"
+      },
+      "inputSha256": "55a02c81546683a291a7f3874f425238caf1731f7d98093054b071e70923514c"
+    },
+    {
+      "id": "ansi-sgr-spans-016",
+      "name": "colon background truecolor",
+      "source": "app/lib/ansi.ts",
+      "input": "\u001b[48:2:12:34:56mbackground",
+      "output": {
+        "lines": [[{ "text": "background", "style": { "backgroundColor": "#0c2238" } }]],
+        "text": "background"
+      },
+      "inputSha256": "2cccf25df04fed3573704aaf2dda5cd3157c4c40f5d0a522f0cf635cacbc6ff8"
+    },
+    {
+      "id": "ansi-sgr-spans-017",
+      "name": "malformed negative truecolor remains text",
+      "source": "app/lib/ansi.ts",
+      "input": "\u001b[38;2;999;-5;127mnot parsed",
+      "output": {
+        "lines": [[{ "text": "\u001b[38;2;999;-5;127mnot parsed", "style": {} }]],
+        "text": "\u001b[38;2;999;-5;127mnot parsed"
+      },
+      "inputSha256": "7412bce6dd683b190c1efa81f8bbeb08a6832ce893091d13473ae269cd107536"
+    }
+  ],
+  "generatedBy": "scripts/capture-ansi-sgr-contract.mjs"
+}

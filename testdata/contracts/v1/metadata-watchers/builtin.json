@@ -1,0 +1,223 @@
+{
+  "version": 1,
+  "source": "src/builtin-metadata-watchers.test.ts",
+  "generatedBy": "scripts/capture-builtin-metadata-watchers-contract.mjs",
+  "description": "Builtin metadata watcher status, plan progress, task, and history metadata side-effect contracts captured by running TypeScript createBuiltinMetadataWatchers against temporary project state.",
+  "cases": [
+    {
+      "id": "metadata-watchers-001",
+      "name": "loads initial status and plan progress",
+      "source": "src/builtin-metadata-watchers.test.ts",
+      "api": "createBuiltinMetadataWatchers",
+      "input": {
+        "sessions": ["s1"],
+        "statusFiles": { "s1": "Working through auth\nmore" },
+        "planFiles": { "s1": "# Plan\n\n- [x] inspect\n- [ ] patch\n- [ ] test" },
+        "exchange": {
+          "version": 1,
+          "generatedAt": "2026-08-25T00:00:00.000Z",
+          "threads": [],
+          "messages": [],
+          "tasks": [],
+          "handoffs": [],
+          "reviews": [],
+          "waits": [],
+          "inbox": [],
+          "planRefs": [],
+          "continuityRefs": [],
+          "attachmentRefs": []
+        }
+      },
+      "output": {
+        "statuses": [["s1", "Working through auth", "info"]],
+        "progresses": [["s1", 1, 3, "plan"]],
+        "logs": [],
+        "contexts": [],
+        "events": [["s1", "status", "Working through auth", "status", "info", null]]
+      },
+      "inputSha256": "23c35293a2dba4ea492eaa2bb15cfd15368a391b59be5609e0cf218c742a633f"
+    },
+    {
+      "id": "metadata-watchers-002",
+      "name": "does not rewrite unchanged status and plan progress on every poll",
+      "source": "src/builtin-metadata-watchers.test.ts",
+      "api": "createBuiltinMetadataWatchers",
+      "input": {
+        "sessions": ["s1"],
+        "statusFiles": { "s1": "Still working\n" },
+        "planFiles": { "s1": "- [x] inspect\n- [ ] patch" },
+        "exchange": {
+          "version": 1,
+          "generatedAt": "2026-08-25T00:00:00.000Z",
+          "threads": [],
+          "messages": [],
+          "tasks": [],
+          "handoffs": [],
+          "reviews": [],
+          "waits": [],
+          "inbox": [],
+          "planRefs": [],
+          "continuityRefs": [],
+          "attachmentRefs": []
+        },
+        "waitAfterStartMs": 2300
+      },
+      "output": {
+        "statuses": [["s1", "Still working", "info"]],
+        "progresses": [["s1", 1, 2, "plan"]],
+        "logs": [],
+        "contexts": [],
+        "events": [["s1", "status", "Still working", "status", "info", null]]
+      },
+      "inputSha256": "ce9e08e870b9aab898d6ed6adb62b82b9ff3b2c9c528047387557c276b783cc6"
+    },
+    {
+      "id": "metadata-watchers-003",
+      "name": "primes initial task and history metadata without replaying logs or events",
+      "source": "src/builtin-metadata-watchers.test.ts",
+      "api": "createBuiltinMetadataWatchers",
+      "input": {
+        "sessions": ["s1"],
+        "exchange": {
+          "version": 1,
+          "generatedAt": "2026-08-25T00:00:00.000Z",
+          "threads": [],
+          "messages": [],
+          "tasks": [
+            {
+              "id": "t1",
+              "status": "assigned",
+              "assignedBy": "leader",
+              "assignedTo": "s1",
+              "description": "Ship auth",
+              "prompt": "do it",
+              "createdAt": "2026-08-25T00:00:00.000Z",
+              "updatedAt": "2026-08-25T00:00:00.000Z"
+            }
+          ],
+          "handoffs": [],
+          "reviews": [],
+          "waits": [],
+          "inbox": [],
+          "planRefs": [],
+          "continuityRefs": [],
+          "attachmentRefs": []
+        },
+        "history": { "s1": [{ "ts": "2026-08-25T00:00:00.000Z", "type": "prompt", "content": "Explain auth flow" }] }
+      },
+      "output": { "statuses": [], "progresses": [], "logs": [], "contexts": [], "events": [] },
+      "inputSha256": "b5b8fb083cacbb86ad06de580ed6c214de770248dffff5e8e0611c5e8a3d7281"
+    },
+    {
+      "id": "metadata-watchers-004",
+      "name": "logs and emits new task and history updates after startup priming",
+      "source": "src/builtin-metadata-watchers.test.ts",
+      "api": "createBuiltinMetadataWatchers",
+      "input": {
+        "sessions": ["s1"],
+        "exchange": {
+          "version": 1,
+          "generatedAt": "2026-08-25T00:00:00.000Z",
+          "threads": [],
+          "messages": [],
+          "tasks": [],
+          "handoffs": [],
+          "reviews": [],
+          "waits": [],
+          "inbox": [],
+          "planRefs": [],
+          "continuityRefs": [],
+          "attachmentRefs": []
+        },
+        "history": { "s1": [{ "ts": "2026-01-01T00:00:00.000Z", "type": "prompt", "content": "Existing prompt" }] },
+        "afterStart": [
+          {
+            "op": "writeExchange",
+            "exchange": {
+              "version": 1,
+              "generatedAt": "2026-08-25T00:00:00.000Z",
+              "threads": [],
+              "messages": [],
+              "tasks": [
+                {
+                  "id": "t2",
+                  "status": "done",
+                  "assignedBy": "leader",
+                  "assignedTo": "s2",
+                  "description": "Finish repair",
+                  "prompt": "do it",
+                  "result": "done",
+                  "createdAt": "2026-08-25T00:00:00.000Z",
+                  "updatedAt": "2026-08-25T00:00:00.000Z"
+                }
+              ],
+              "handoffs": [],
+              "reviews": [],
+              "waits": [],
+              "inbox": [],
+              "planRefs": [],
+              "continuityRefs": [],
+              "attachmentRefs": []
+            }
+          },
+          {
+            "op": "appendTurn",
+            "sessionId": "s1",
+            "turn": { "ts": "2026-01-01T00:00:01.000Z", "type": "response", "content": "Repair finished" }
+          },
+          { "op": "wait", "ms": 2300 }
+        ]
+      },
+      "output": {
+        "statuses": [],
+        "progresses": [],
+        "logs": [
+          ["s2", "Done: Finish repair", "tasks", "success"],
+          ["s1", "Response: Repair finished", "history", null]
+        ],
+        "contexts": [],
+        "events": [
+          ["s2", "task_done", "Done: Finish repair", "tasks", "success", null],
+          ["s1", "response", "Repair finished", "history", null, "2026-01-01T00:00:01.000Z"]
+        ]
+      },
+      "inputSha256": "a1bbcd4da8af70452a07b616ff994c1842b92697c993d6111c4660a7a65c9d69"
+    },
+    {
+      "id": "metadata-watchers-005",
+      "name": "does not scan history for sessions outside live topology",
+      "source": "src/builtin-metadata-watchers.test.ts",
+      "api": "createBuiltinMetadataWatchers",
+      "input": {
+        "sessions": [],
+        "exchange": {
+          "version": 1,
+          "generatedAt": "2026-08-25T00:00:00.000Z",
+          "threads": [],
+          "messages": [],
+          "tasks": [],
+          "handoffs": [],
+          "reviews": [],
+          "waits": [],
+          "inbox": [],
+          "planRefs": [],
+          "continuityRefs": [],
+          "attachmentRefs": []
+        },
+        "history": {
+          "old-agent": [{ "ts": "2026-01-01T00:00:00.000Z", "type": "response", "content": "Old response" }]
+        },
+        "afterStart": [
+          {
+            "op": "appendTurn",
+            "sessionId": "old-agent",
+            "turn": { "ts": "2026-01-01T00:00:01.000Z", "type": "response", "content": "Ignored response" }
+          },
+          { "op": "wait", "ms": 2300 }
+        ]
+      },
+      "output": { "statuses": [], "progresses": [], "logs": [], "contexts": [], "events": [] },
+      "inputSha256": "12a7b9e3c2484d9759191b3046835c3e9195da55490d5cb5c3568154e901dcc4"
+    }
+  ]
+}

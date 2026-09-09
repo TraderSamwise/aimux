@@ -1,0 +1,432 @@
+{
+  "version": 1,
+  "generatedAt": "2026-09-07T00:00:00.000Z",
+  "generatedBy": "scripts/capture-tmux-expose-runner-contract.mjs",
+  "source": "src/tmux/expose.ts",
+  "sources": [
+    "src/tmux/expose.test.ts",
+    "src/tmux/expose.ts"
+  ],
+  "subject": "src/tmux/expose.ts",
+  "description": "runTmuxExpose key, scope, focus/selection, capture, and UI-state side effects captured by running TypeScript with tmux patched at the runtime-manager boundary.",
+  "caseCount": 6,
+  "cases": [
+    {
+      "id": "tmux-expose-runner-001",
+      "name": "quits after initial worktree load",
+      "source": "src/tmux/expose.ts",
+      "api": "runTmuxExpose",
+      "input": {
+        "name": "quits after initial worktree load",
+        "responses": [
+          {
+            "ok": true,
+            "items": [
+              {
+                "id": "one",
+                "label": "one",
+                "target": { "sessionName": "aimux-repo", "windowId": "@1", "windowIndex": 1, "windowName": "one" },
+                "activity": 1,
+                "urgency": 0,
+                "recentRank": 9007199254740991,
+                "metadata": {
+                  "sessionId": "one",
+                  "command": "codex",
+                  "args": [],
+                  "toolConfigKey": "codex",
+                  "worktreePath": "/repo"
+                }
+              },
+              {
+                "id": "two",
+                "label": "two",
+                "target": { "sessionName": "aimux-repo", "windowId": "@2", "windowIndex": 1, "windowName": "two" },
+                "activity": 1,
+                "urgency": 0,
+                "recentRank": 9007199254740991,
+                "metadata": {
+                  "sessionId": "two",
+                  "command": "codex",
+                  "args": [],
+                  "toolConfigKey": "codex",
+                  "worktreePath": "/repo"
+                }
+              }
+            ]
+          }
+        ],
+        "actions": [{ "delayMs": 50, "data": "q" }]
+      },
+      "output": {
+        "exitCode": 0,
+        "requests": [
+          {
+            "method": "GET",
+            "url": "/control/switchable-agents?scope=worktree&labelFormat=raw&includePreview=1&clientKind=expose&clientId=tmux-expose%3A%3Cpid%3E&clientTtlMs=10000&currentClientSession=aimux-repo-client-deadbeef&currentWindow=codex&currentWindowId=%401&currentPath=%2Frepo",
+            "body": null
+          }
+        ],
+        "captureCalls": [
+          { "windowId": "@1", "options": { "startLine": -40, "includeEscapes": true } },
+          { "windowId": "@2", "options": { "startLine": -40, "includeEscapes": true } }
+        ],
+        "selected": null,
+        "uiState": null,
+        "output": { "hasTitle": true, "hasRecentOutput": false, "hasDashboardExit": true }
+      },
+      "inputSha256": "a8ae8d021881ffba11aa1c183cd4d6427ecd2cb97c7b428971fc956a78d2de72"
+    },
+    {
+      "id": "tmux-expose-runner-002",
+      "name": "opens dashboard on leader d",
+      "source": "src/tmux/expose.ts",
+      "api": "runTmuxExpose",
+      "input": {
+        "name": "opens dashboard on leader d",
+        "responses": [
+          {
+            "ok": true,
+            "items": [
+              {
+                "id": "one",
+                "label": "one",
+                "target": { "sessionName": "aimux-repo", "windowId": "@1", "windowIndex": 1, "windowName": "one" },
+                "activity": 1,
+                "urgency": 0,
+                "recentRank": 9007199254740991,
+                "metadata": {
+                  "sessionId": "one",
+                  "command": "codex",
+                  "args": [],
+                  "toolConfigKey": "codex",
+                  "worktreePath": "/repo"
+                }
+              }
+            ]
+          }
+        ],
+        "actions": [{ "delayMs": 50, "data": "\u0001d" }]
+      },
+      "output": {
+        "exitCode": 76,
+        "requests": [
+          {
+            "method": "GET",
+            "url": "/control/switchable-agents?scope=worktree&labelFormat=raw&includePreview=1&clientKind=expose&clientId=tmux-expose%3A%3Cpid%3E&clientTtlMs=10000&currentClientSession=aimux-repo-client-deadbeef&currentWindow=codex&currentWindowId=%401&currentPath=%2Frepo",
+            "body": null
+          }
+        ],
+        "captureCalls": [{ "windowId": "@1", "options": { "startLine": -40, "includeEscapes": true } }],
+        "selected": null,
+        "uiState": null,
+        "output": { "hasTitle": true, "hasRecentOutput": false, "hasDashboardExit": true }
+      },
+      "inputSha256": "5c7c67493d53167f3623951225fb22224e72d89fdaa8fc091d215b46852a2682"
+    },
+    {
+      "id": "tmux-expose-runner-003",
+      "name": "writes same-project selection file for numbered tile",
+      "source": "src/tmux/expose.ts",
+      "api": "runTmuxExpose",
+      "input": {
+        "name": "writes same-project selection file for numbered tile",
+        "selectionFile": true,
+        "responses": [
+          {
+            "ok": true,
+            "items": [
+              {
+                "id": "one",
+                "label": "one",
+                "target": { "sessionName": "aimux-repo", "windowId": "@1", "windowIndex": 1, "windowName": "one" },
+                "activity": 1,
+                "urgency": 0,
+                "recentRank": 9007199254740991,
+                "metadata": {
+                  "sessionId": "one",
+                  "command": "codex",
+                  "args": [],
+                  "toolConfigKey": "codex",
+                  "worktreePath": "/repo"
+                }
+              },
+              {
+                "id": "two",
+                "label": "two",
+                "target": { "sessionName": "aimux-repo", "windowId": "@2", "windowIndex": 1, "windowName": "two" },
+                "activity": 1,
+                "urgency": 0,
+                "recentRank": 9007199254740991,
+                "metadata": {
+                  "sessionId": "two",
+                  "command": "codex",
+                  "args": [],
+                  "toolConfigKey": "codex",
+                  "worktreePath": "/repo"
+                }
+              }
+            ]
+          }
+        ],
+        "actions": [{ "delayMs": 50, "data": "2" }]
+      },
+      "output": {
+        "exitCode": 0,
+        "requests": [
+          {
+            "method": "GET",
+            "url": "/control/switchable-agents?scope=worktree&labelFormat=raw&includePreview=1&clientKind=expose&clientId=tmux-expose%3A%3Cpid%3E&clientTtlMs=10000&currentClientSession=aimux-repo-client-deadbeef&currentWindow=codex&currentWindowId=%401&currentPath=%2Frepo",
+            "body": null
+          }
+        ],
+        "captureCalls": [
+          { "windowId": "@1", "options": { "startLine": -40, "includeEscapes": true } },
+          { "windowId": "@2", "options": { "startLine": -40, "includeEscapes": true } }
+        ],
+        "selected": "@2\n",
+        "uiState": null,
+        "output": { "hasTitle": true, "hasRecentOutput": false, "hasDashboardExit": true }
+      },
+      "inputSha256": "2f27df36f7218b72fd94422a15292eec9a7cf4021c895d90d877d0e05e4b7d8a"
+    },
+    {
+      "id": "tmux-expose-runner-004",
+      "name": "toggles recent-output sort before enter",
+      "source": "src/tmux/expose.ts",
+      "api": "runTmuxExpose",
+      "input": {
+        "name": "toggles recent-output sort before enter",
+        "selectionFile": true,
+        "responses": [
+          {
+            "ok": true,
+            "items": [
+              {
+                "id": "older",
+                "label": "older",
+                "target": { "sessionName": "aimux-repo", "windowId": "@1", "windowIndex": 1, "windowName": "older" },
+                "activity": 1,
+                "urgency": 0,
+                "recentRank": 2,
+                "metadata": {
+                  "sessionId": "older",
+                  "command": "codex",
+                  "args": [],
+                  "toolConfigKey": "codex",
+                  "worktreePath": "/repo",
+                  "recencyAt": "2026-08-27T10:00:00.000Z"
+                }
+              },
+              {
+                "id": "newer",
+                "label": "newer",
+                "target": { "sessionName": "aimux-repo", "windowId": "@2", "windowIndex": 1, "windowName": "newer" },
+                "activity": 1,
+                "urgency": 0,
+                "recentRank": 1,
+                "metadata": {
+                  "sessionId": "newer",
+                  "command": "codex",
+                  "args": [],
+                  "toolConfigKey": "codex",
+                  "worktreePath": "/repo",
+                  "recencyAt": "2026-08-27T10:05:00.000Z"
+                }
+              }
+            ]
+          }
+        ],
+        "actions": [
+          { "delayMs": 50, "data": "r" },
+          { "delayMs": 80, "data": "\r" }
+        ]
+      },
+      "output": {
+        "exitCode": 0,
+        "requests": [
+          {
+            "method": "GET",
+            "url": "/control/switchable-agents?scope=worktree&labelFormat=raw&includePreview=1&clientKind=expose&clientId=tmux-expose%3A%3Cpid%3E&clientTtlMs=10000&currentClientSession=aimux-repo-client-deadbeef&currentWindow=codex&currentWindowId=%401&currentPath=%2Frepo",
+            "body": null
+          }
+        ],
+        "captureCalls": [
+          { "windowId": "@1", "options": { "startLine": -40, "includeEscapes": true } },
+          { "windowId": "@2", "options": { "startLine": -40, "includeEscapes": true } }
+        ],
+        "selected": "@1\n",
+        "uiState": "{\n  \"version\": 1,\n  \"sortMode\": \"recent-output\"\n}\n",
+        "output": { "hasTitle": true, "hasRecentOutput": true, "hasDashboardExit": true }
+      },
+      "inputSha256": "bf57dc707c8becbe0ac2c01cd6949438b870e046c46bd7abf2e0fc95dd1d0629"
+    },
+    {
+      "id": "tmux-expose-runner-005",
+      "name": "zooms to project scope and selects first tile",
+      "source": "src/tmux/expose.ts",
+      "api": "runTmuxExpose",
+      "input": {
+        "name": "zooms to project scope and selects first tile",
+        "selectionFile": true,
+        "responses": [
+          {
+            "ok": true,
+            "items": [
+              {
+                "id": "worktree",
+                "label": "worktree",
+                "target": { "sessionName": "aimux-repo", "windowId": "@1", "windowIndex": 1, "windowName": "worktree" },
+                "activity": 1,
+                "urgency": 0,
+                "recentRank": 9007199254740991,
+                "metadata": {
+                  "sessionId": "worktree",
+                  "command": "codex",
+                  "args": [],
+                  "toolConfigKey": "codex",
+                  "worktreePath": "/repo"
+                }
+              }
+            ]
+          },
+          {
+            "ok": true,
+            "items": [
+              {
+                "id": "project",
+                "label": "project",
+                "target": { "sessionName": "aimux-repo", "windowId": "@3", "windowIndex": 1, "windowName": "project" },
+                "activity": 1,
+                "urgency": 0,
+                "recentRank": 9007199254740991,
+                "metadata": {
+                  "sessionId": "project",
+                  "command": "codex",
+                  "args": [],
+                  "toolConfigKey": "codex",
+                  "worktreePath": "/repo/.aimux/worktrees/feat"
+                }
+              }
+            ]
+          }
+        ],
+        "actions": [
+          { "delayMs": 50, "data": "g" },
+          { "delayMs": 100, "data": "1" }
+        ]
+      },
+      "output": {
+        "exitCode": 0,
+        "requests": [
+          {
+            "method": "GET",
+            "url": "/control/switchable-agents?scope=worktree&labelFormat=raw&includePreview=1&clientKind=expose&clientId=tmux-expose%3A%3Cpid%3E&clientTtlMs=10000&currentClientSession=aimux-repo-client-deadbeef&currentWindow=codex&currentWindowId=%401&currentPath=%2Frepo",
+            "body": null
+          },
+          {
+            "method": "GET",
+            "url": "/control/switchable-agents?scope=all&labelFormat=raw&includePreview=1&clientKind=expose&clientId=tmux-expose%3A%3Cpid%3E&clientTtlMs=10000&currentClientSession=aimux-repo-client-deadbeef&currentWindow=codex&currentWindowId=%401&currentPath=%2Frepo",
+            "body": null
+          }
+        ],
+        "captureCalls": [
+          { "windowId": "@1", "options": { "startLine": -40, "includeEscapes": true } },
+          { "windowId": "@3", "options": { "startLine": -40, "includeEscapes": true } }
+        ],
+        "selected": "@3\n",
+        "uiState": null,
+        "output": { "hasTitle": true, "hasRecentOutput": false, "hasDashboardExit": true }
+      },
+      "inputSha256": "d1086a572ebfcffcd5c6ac29aadd652354d0c5a5352e2432350cbd111b3941f1"
+    },
+    {
+      "id": "tmux-expose-runner-006",
+      "name": "loads overseer on O and selects it",
+      "source": "src/tmux/expose.ts",
+      "api": "runTmuxExpose",
+      "input": {
+        "name": "loads overseer on O and selects it",
+        "selectionFile": true,
+        "responses": [
+          {
+            "ok": true,
+            "items": [
+              {
+                "id": "agent",
+                "label": "agent",
+                "target": { "sessionName": "aimux-repo", "windowId": "@1", "windowIndex": 1, "windowName": "agent" },
+                "activity": 1,
+                "urgency": 0,
+                "recentRank": 9007199254740991,
+                "metadata": {
+                  "sessionId": "agent",
+                  "command": "codex",
+                  "args": [],
+                  "toolConfigKey": "codex",
+                  "worktreePath": "/repo"
+                }
+              }
+            ]
+          },
+          {
+            "ok": true,
+            "items": [
+              {
+                "id": "agent",
+                "label": "agent",
+                "target": { "sessionName": "aimux-repo", "windowId": "@1", "windowIndex": 1, "windowName": "agent" },
+                "activity": 1,
+                "urgency": 0,
+                "recentRank": 9007199254740991,
+                "metadata": {
+                  "sessionId": "agent",
+                  "command": "codex",
+                  "args": [],
+                  "toolConfigKey": "codex",
+                  "worktreePath": "/repo"
+                }
+              },
+              {
+                "id": "overseer",
+                "label": "overseer",
+                "target": { "sessionName": "aimux-repo", "windowId": "@9", "windowIndex": 1, "windowName": "overseer" },
+                "activity": 1,
+                "urgency": 0,
+                "recentRank": 9007199254740991,
+                "metadata": {
+                  "sessionId": "overseer",
+                  "command": "codex",
+                  "args": [],
+                  "toolConfigKey": "codex",
+                  "worktreePath": "/repo"
+                },
+                "overseer": true
+              }
+            ]
+          }
+        ],
+        "actions": [{ "delayMs": 50, "data": "O" }]
+      },
+      "output": {
+        "exitCode": 0,
+        "requests": [
+          {
+            "method": "GET",
+            "url": "/control/switchable-agents?scope=worktree&labelFormat=raw&includePreview=1&clientKind=expose&clientId=tmux-expose%3A%3Cpid%3E&clientTtlMs=10000&currentClientSession=aimux-repo-client-deadbeef&currentWindow=codex&currentWindowId=%401&currentPath=%2Frepo",
+            "body": null
+          },
+          {
+            "method": "GET",
+            "url": "/control/switchable-agents?scope=all&labelFormat=raw&includePreview=1&clientKind=expose&clientId=tmux-expose%3A%3Cpid%3E&clientTtlMs=10000&includeOverseer=1&currentClientSession=aimux-repo-client-deadbeef&currentWindow=codex&currentWindowId=%401&currentPath=%2Frepo",
+            "body": null
+          }
+        ],
+        "captureCalls": [{ "windowId": "@1", "options": { "startLine": -40, "includeEscapes": true } }],
+        "selected": "@9\n",
+        "uiState": null,
+        "output": { "hasTitle": true, "hasRecentOutput": false, "hasDashboardExit": true }
+      },
+      "inputSha256": "5767027eae502c2ad631d6407177659362905ea949030ee37c431e900c05bb02"
+    }
+  ]
+}

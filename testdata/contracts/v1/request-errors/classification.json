@@ -1,0 +1,170 @@
+{
+  "version": 1,
+  "source": "app/lib/request-errors.test.ts",
+  "generatedBy": "scripts/capture-request-errors-contract.mjs",
+  "description": "App request-error message extraction and transient disconnect classification captured by running TypeScript app/lib/request-errors helpers.",
+  "cases": [
+    {
+      "id": "request-errors-001",
+      "name": "returns Error messages",
+      "source": "app/lib/request-errors.test.ts",
+      "api": "getErrorMessage",
+      "input": { "value": { "kind": "error", "message": "nope" } },
+      "output": "nope",
+      "inputSha256": "2fb36e0f03401639cd951864a1484a7611c4f4f9bb0ba8b49bdef9ae554b7870"
+    },
+    {
+      "id": "request-errors-002",
+      "name": "stringifies strings unchanged",
+      "source": "app/lib/request-errors.test.ts",
+      "api": "getErrorMessage",
+      "input": { "value": { "kind": "string", "value": "plain" } },
+      "output": "plain",
+      "inputSha256": "ca5dccc5e098876134e4d4a3f45cb73eec8be08433219128200c6949709351c8"
+    },
+    {
+      "id": "request-errors-003",
+      "name": "stringifies null",
+      "source": "app/lib/request-errors.test.ts",
+      "api": "getErrorMessage",
+      "input": { "value": { "kind": "null" } },
+      "output": "null",
+      "inputSha256": "d92a41e467ee9cd7c4bcda3ad32f1e02ed0573232df756069ade460a6ebe55d7"
+    },
+    {
+      "id": "request-errors-004",
+      "name": "stringifies ordinary objects",
+      "source": "app/lib/request-errors.test.ts",
+      "api": "getErrorMessage",
+      "input": { "value": { "kind": "object", "value": { "ok": true } } },
+      "output": "[object Object]",
+      "inputSha256": "2fd78d08b59341f6226ec4dca5d95ac9181abc3d00852b4cbdcc623f0995fe17"
+    },
+    {
+      "id": "request-errors-005",
+      "name": "treats relay handoff disconnects as transient",
+      "source": "app/lib/request-errors.test.ts",
+      "api": "isTransientRequestError",
+      "input": { "value": { "kind": "error", "message": "Relay not connected" } },
+      "output": true,
+      "inputSha256": "9f53423fac60702a59f0e4b1e5320e8134c1a3fab33c186f05c2036ddce4af74"
+    },
+    {
+      "id": "request-errors-006",
+      "name": "treats EPIPE messages as transient",
+      "source": "app/lib/request-errors.test.ts",
+      "api": "isTransientRequestError",
+      "input": { "value": { "kind": "error", "message": "write EPIPE" } },
+      "output": true,
+      "inputSha256": "a49631506ac08cbed067920613986576a81e3a4ad0efb7c9439b34c3ee764741"
+    },
+    {
+      "id": "request-errors-007",
+      "name": "treats ECONNRESET codes as transient",
+      "source": "app/lib/request-errors.test.ts",
+      "api": "isTransientRequestError",
+      "input": { "value": { "kind": "error", "message": "socket closed", "code": "ECONNRESET" } },
+      "output": true,
+      "inputSha256": "b8f0e11bcd4e611d552e6dc99acb373cdf4fa0a52152138c9c37f4c7e4f41546"
+    },
+    {
+      "id": "request-errors-008",
+      "name": "treats EPIPE codes as transient",
+      "source": "app/lib/request-errors.test.ts",
+      "api": "isTransientRequestError",
+      "input": { "value": { "kind": "error", "message": "socket closed", "code": "EPIPE" } },
+      "output": true,
+      "inputSha256": "4c426fc5d2b7b18d62db005b82888ce6d79e546ae3fb7da06bb55e38240dbc69"
+    },
+    {
+      "id": "request-errors-009",
+      "name": "treats AbortError names as transient",
+      "source": "app/lib/request-errors.test.ts",
+      "api": "isTransientRequestError",
+      "input": { "value": { "kind": "error", "message": "cancelled", "name": "AbortError" } },
+      "output": true,
+      "inputSha256": "d41a14ea55dba56b849e31e37bf359c2e918ab7e20879f5ece6c17e5bf706843"
+    },
+    {
+      "id": "request-errors-010",
+      "name": "treats browser abort messages as transient",
+      "source": "app/lib/request-errors.test.ts",
+      "api": "isTransientRequestError",
+      "input": { "value": { "kind": "error", "message": "The operation was aborted" } },
+      "output": true,
+      "inputSha256": "7d608f496119ce2e8488c7951edef1efebcf144b1f804b31f0b413c7a5f8db12"
+    },
+    {
+      "id": "request-errors-011",
+      "name": "treats failed fetch messages as transient",
+      "source": "app/lib/request-errors.test.ts",
+      "api": "isTransientRequestError",
+      "input": { "value": { "kind": "error", "message": "Failed to fetch" } },
+      "output": true,
+      "inputSha256": "fad16b674b300a7d3225bd46f1cf104ffbcf984124cab8067df7ed75bd88df9b"
+    },
+    {
+      "id": "request-errors-012",
+      "name": "treats network request failures as transient",
+      "source": "app/lib/request-errors.test.ts",
+      "api": "isTransientRequestError",
+      "input": { "value": { "kind": "error", "message": "Network request failed" } },
+      "output": true,
+      "inputSha256": "8a2a7c0981b90fd36765215db47dae52674fbfd6b28f40dabf2920d8fc39e574"
+    },
+    {
+      "id": "request-errors-013",
+      "name": "treats load failures as transient",
+      "source": "app/lib/request-errors.test.ts",
+      "api": "isTransientRequestError",
+      "input": { "value": { "kind": "error", "message": "Load failed" } },
+      "output": true,
+      "inputSha256": "bdc1c9b74113ccf416cecba1bffe898d9ec248cf505a59a71c3d7d0d567abb05"
+    },
+    {
+      "id": "request-errors-014",
+      "name": "treats socket hang ups as transient",
+      "source": "app/lib/request-errors.test.ts",
+      "api": "isTransientRequestError",
+      "input": { "value": { "kind": "error", "message": "socket hang up" } },
+      "output": true,
+      "inputSha256": "ed23ab5c23170cdcbe10ebc06c30a33b59c75801c2f0f96f88361b6ae5173195"
+    },
+    {
+      "id": "request-errors-015",
+      "name": "treats numeric request timeout messages as transient",
+      "source": "app/lib/request-errors.test.ts",
+      "api": "isTransientRequestError",
+      "input": { "value": { "kind": "error", "message": "Request timed out after 2500ms" } },
+      "output": true,
+      "inputSha256": "b9dca4a4b6f97913da9164d4310ed6eef49465b452feadf700f71ca4607bf856"
+    },
+    {
+      "id": "request-errors-016",
+      "name": "does not hide unexpected route errors",
+      "source": "app/lib/request-errors.test.ts",
+      "api": "isTransientRequestError",
+      "input": { "value": { "kind": "error", "message": "Route is not allowed for this shared chat" } },
+      "output": false,
+      "inputSha256": "1fc2d8903a8588cf8632fffef0f1ea4e2124bb0fc77a8483e5f7bc3b47d70a8c"
+    },
+    {
+      "id": "request-errors-017",
+      "name": "does not match malformed timeout messages",
+      "source": "app/lib/request-errors.test.ts",
+      "api": "isTransientRequestError",
+      "input": { "value": { "kind": "error", "message": "Request timed out after soon" } },
+      "output": false,
+      "inputSha256": "516e08963c7dc178df60a21a51a9ea4560cfbb6f74b7fabdc57fec631ae7b353"
+    },
+    {
+      "id": "request-errors-018",
+      "name": "does not treat arbitrary strings as transient",
+      "source": "app/lib/request-errors.test.ts",
+      "api": "isTransientRequestError",
+      "input": { "value": { "kind": "string", "value": "plain" } },
+      "output": false,
+      "inputSha256": "2a30942a235212104e151e4c4f0a45d2e0562599d3f481a3418265b4233a8dcc"
+    }
+  ]
+}

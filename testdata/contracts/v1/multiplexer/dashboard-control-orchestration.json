@@ -1,0 +1,218 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/dashboard-control.ts",
+  "generatedBy": "scripts/capture-dashboard-control-orchestration-contract.mjs",
+  "description": "Dashboard-control orchestration input and route-picker key side effects captured by running TypeScript handlers.",
+  "cases": [
+    {
+      "id": "dashboard-control-orchestration-001",
+      "name": "printable input appends and rerenders",
+      "source": "src/multiplexer/dashboard-control.ts",
+      "api": "handleOrchestrationInputKey",
+      "input": {
+        "orchestrationInputMode": "message",
+        "orchestrationInputTarget": { "label": "Codex One", "sessionId": "codex-1", "worktreePath": "/repo/wt" },
+        "orchestrationInputBuffer": "hel",
+        "key": "lo"
+      },
+      "output": {
+        "overlayKind": "none",
+        "inputMode": "message",
+        "inputTarget": { "label": "Codex One", "sessionId": "codex-1", "worktreePath": "/repo/wt" },
+        "inputBuffer": "hello",
+        "routeMode": null,
+        "routeOptions": [],
+        "calls": [{ "method": "renderOrchestrationInput", "args": [] }]
+      },
+      "inputSha256": "0f6b4cd89acfd305e90a771643fc2d39797535641874f6d1d75e330d0dbb188b"
+    },
+    {
+      "id": "dashboard-control-orchestration-002",
+      "name": "backspace removes one character and rerenders",
+      "source": "src/multiplexer/dashboard-control.ts",
+      "api": "handleOrchestrationInputKey",
+      "input": {
+        "orchestrationInputMode": "handoff",
+        "orchestrationInputTarget": { "label": "Codex One", "sessionId": "codex-1", "worktreePath": "/repo/wt" },
+        "orchestrationInputBuffer": "handoff!",
+        "key": ""
+      },
+      "output": {
+        "overlayKind": "none",
+        "inputMode": "handoff",
+        "inputTarget": { "label": "Codex One", "sessionId": "codex-1", "worktreePath": "/repo/wt" },
+        "inputBuffer": "handoff",
+        "routeMode": null,
+        "routeOptions": [],
+        "calls": [{ "method": "renderOrchestrationInput", "args": [] }]
+      },
+      "inputSha256": "4fb1b55901f1913fc89ef50f0108bec44e9f92775808fc85764eee477955b239"
+    },
+    {
+      "id": "dashboard-control-orchestration-003",
+      "name": "escape clears input overlay state",
+      "source": "src/multiplexer/dashboard-control.ts",
+      "api": "handleOrchestrationInputKey",
+      "input": {
+        "orchestrationInputMode": "task",
+        "orchestrationInputTarget": { "label": "Codex One", "sessionId": "codex-1", "worktreePath": "/repo/wt" },
+        "orchestrationInputBuffer": "drop",
+        "dashboardOverlayState": { "kind": "orchestration-input" },
+        "key": "\u001b"
+      },
+      "output": {
+        "overlayKind": "none",
+        "inputMode": null,
+        "inputTarget": null,
+        "inputBuffer": "",
+        "routeMode": null,
+        "routeOptions": [],
+        "calls": [
+          { "method": "clearDashboardOverlay", "args": [] },
+          { "method": "renderDashboard", "args": [] }
+        ]
+      },
+      "inputSha256": "bd0332a4fdfa4c03feefa849ee62b17c469bd11b18a692eb64147ac9e476e339"
+    },
+    {
+      "id": "dashboard-control-orchestration-004",
+      "name": "enter with blank body clears and renders without submit",
+      "source": "src/multiplexer/dashboard-control.ts",
+      "api": "handleOrchestrationInputKey",
+      "input": {
+        "orchestrationInputMode": "message",
+        "orchestrationInputTarget": { "label": "Codex One", "sessionId": "codex-1", "worktreePath": "/repo/wt" },
+        "orchestrationInputBuffer": "   ",
+        "dashboardOverlayState": { "kind": "orchestration-input" },
+        "key": "\r"
+      },
+      "output": {
+        "overlayKind": "none",
+        "inputMode": null,
+        "inputTarget": null,
+        "inputBuffer": "",
+        "routeMode": null,
+        "routeOptions": [],
+        "calls": [
+          { "method": "clearDashboardOverlay", "args": [] },
+          { "method": "renderDashboard", "args": [] }
+        ]
+      },
+      "inputSha256": "f72c85d93e26f0f953f6c10e6010fbbdd0f4b22a6a487865a46b1e08ddd468a4"
+    },
+    {
+      "id": "dashboard-control-orchestration-005",
+      "name": "enter submits trimmed body with lifecycle token",
+      "source": "src/multiplexer/dashboard-control.ts",
+      "api": "handleOrchestrationInputKey",
+      "input": {
+        "orchestrationInputMode": "handoff",
+        "orchestrationInputTarget": { "label": "Codex One", "sessionId": "codex-1", "worktreePath": "/repo/wt" },
+        "orchestrationInputBuffer": "  take this  ",
+        "dashboardOverlayState": { "kind": "orchestration-input" },
+        "dashboardInputEpoch": 42,
+        "key": "\r"
+      },
+      "output": {
+        "overlayKind": "none",
+        "inputMode": null,
+        "inputTarget": null,
+        "inputBuffer": "",
+        "routeMode": null,
+        "routeOptions": [],
+        "calls": [
+          { "method": "clearDashboardOverlay", "args": [] },
+          {
+            "method": "submitDashboardOrchestrationAction",
+            "args": [
+              "handoff",
+              { "label": "Codex One", "sessionId": "codex-1", "worktreePath": "/repo/wt" },
+              "take this",
+              { "mode": "dashboard", "inputEpoch": 42, "requiresInputEpoch": true }
+            ]
+          }
+        ]
+      },
+      "inputSha256": "2954ff757533ec888d4b68d115676d46aea3370d41cab808dbe2b49ed90f804d"
+    },
+    {
+      "id": "dashboard-control-orchestration-006",
+      "name": "escape clears route picker",
+      "source": "src/multiplexer/dashboard-control.ts",
+      "api": "handleOrchestrationRoutePickerKey",
+      "input": {
+        "orchestrationRouteMode": "message",
+        "orchestrationRouteOptions": [{ "label": "Codex One", "sessionId": "codex-1", "worktreePath": "/repo/wt" }],
+        "dashboardOverlayState": { "kind": "orchestration-route-picker" },
+        "key": "\u001b"
+      },
+      "output": {
+        "overlayKind": "none",
+        "inputMode": null,
+        "inputTarget": null,
+        "inputBuffer": "",
+        "routeMode": null,
+        "routeOptions": [],
+        "calls": [
+          { "method": "clearDashboardOverlay", "args": [] },
+          { "method": "renderDashboard", "args": [] }
+        ]
+      },
+      "inputSha256": "1da9e533586bfd7799bb72c262170367f8ed126a00e5386b0ecaeb500a8a46d5"
+    },
+    {
+      "id": "dashboard-control-orchestration-007",
+      "name": "valid digit opens input for selected target",
+      "source": "src/multiplexer/dashboard-control.ts",
+      "api": "handleOrchestrationRoutePickerKey",
+      "input": {
+        "orchestrationRouteMode": "task",
+        "orchestrationRouteOptions": [
+          { "label": "First", "sessionId": "codex-1" },
+          { "label": "Second", "recipientIds": ["claude-1", "codex-2"] }
+        ],
+        "dashboardOverlayState": { "kind": "orchestration-route-picker" },
+        "key": "2"
+      },
+      "output": {
+        "overlayKind": "orchestration-input",
+        "inputMode": "task",
+        "inputTarget": { "label": "Second", "recipientIds": ["claude-1", "codex-2"] },
+        "inputBuffer": "",
+        "routeMode": null,
+        "routeOptions": [],
+        "calls": [
+          { "method": "clearDashboardOverlay", "args": [] },
+          { "method": "openDashboardOverlay", "args": ["orchestration-input"] },
+          { "method": "renderOrchestrationInput", "args": [] }
+        ]
+      },
+      "inputSha256": "e79e9b39ce070189490ffdd25cb2bbb0c179cc5931a185ded60a762c8e72dd5a"
+    },
+    {
+      "id": "dashboard-control-orchestration-008",
+      "name": "out of range digit clears and returns to dashboard",
+      "source": "src/multiplexer/dashboard-control.ts",
+      "api": "handleOrchestrationRoutePickerKey",
+      "input": {
+        "orchestrationRouteMode": "task",
+        "orchestrationRouteOptions": [{ "label": "Only", "sessionId": "codex-1" }],
+        "dashboardOverlayState": { "kind": "orchestration-route-picker" },
+        "key": "3"
+      },
+      "output": {
+        "overlayKind": "none",
+        "inputMode": null,
+        "inputTarget": null,
+        "inputBuffer": "",
+        "routeMode": null,
+        "routeOptions": [],
+        "calls": [
+          { "method": "clearDashboardOverlay", "args": [] },
+          { "method": "renderDashboard", "args": [] }
+        ]
+      },
+      "inputSha256": "72553b41c0dc3a564f1241c99d38e32c08a87ff54e4e3c5ebb05482fd0eb7fe2"
+    }
+  ]
+}

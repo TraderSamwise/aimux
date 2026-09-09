@@ -1,0 +1,301 @@
+{
+  "version": 1,
+  "source": "src/agent-prompt-delivery.test.ts",
+  "generatedBy": "scripts/capture-priority2-contracts.mjs",
+  "description": "Agent prompt delivery normalization, draft detection, waiting, and submit contracts captured by running TypeScript.",
+  "cases": [
+    {
+      "id": "agent-prompt-delivery-001",
+      "name": "normalizes submitted prompts to the reliable single-line shape",
+      "source": "src/agent-prompt-delivery.test.ts",
+      "api": "normalizeSubmittedPrompt",
+      "input": { "tool": "codex", "prompt": "Aimux task\n\nRun:\n  aimux task show t1\n", "submit": true },
+      "output": "Aimux task Run: aimux task show t1",
+      "inputSha256": "8736039fb239228997791cfb145c9a537338dde7fcf0f541ca1ab016b66d9543"
+    },
+    {
+      "id": "agent-prompt-delivery-002",
+      "name": "normalizes submitted prompts to the reliable single-line shape",
+      "source": "src/agent-prompt-delivery.test.ts",
+      "api": "normalizeSubmittedPrompt",
+      "input": { "tool": "claude", "prompt": "Aimux task\n\nRun:\n  aimux task show t1\n", "submit": true },
+      "output": "Aimux task Run: aimux task show t1",
+      "inputSha256": "791d5df597d7ca99bc019eb7774a7f2ab428f710d1b140af21940ac1b05cd139"
+    },
+    {
+      "id": "agent-prompt-delivery-003",
+      "name": "detects Codex pasted-content markers as visible drafts",
+      "source": "src/agent-prompt-delivery.test.ts",
+      "api": "paneStillContainsPromptDraft",
+      "input": {
+        "pane": "› [Pasted Content 3434 chars]",
+        "draft": "This is a long aimux task prompt that Codex will collapse into a pasted-content marker."
+      },
+      "output": true,
+      "inputSha256": "896aa487eff4ddeacd523504343d7e3c61dafe39a7c2744189cdf6260ea7761e"
+    },
+    {
+      "id": "agent-prompt-delivery-004",
+      "name": "detects or ignores visible prompt input drafts",
+      "source": "src/agent-prompt-delivery.test.ts",
+      "api": "detectVisiblePromptInputDraft",
+      "input": {
+        "pane": "• Ran yarn test\n\n────────────────────────────────\n\n› Write tests for @filename\n\n  gpt-5.5 high · ~/cs/thegrand"
+      },
+      "output": { "marker": "codex", "text": "Write tests for @filename", "line": "› Write tests for @filename" },
+      "inputSha256": "e75fc7b77512254e72117f23a172f6d7b4c9aa4643809e3d3f453a18ad8b8d37"
+    },
+    {
+      "id": "agent-prompt-delivery-005",
+      "name": "detects or ignores visible prompt input drafts",
+      "source": "src/agent-prompt-delivery.test.ts",
+      "api": "detectVisiblePromptInputDraft",
+      "input": { "pane": "Dropped. Moving on.\n\n✶ Embellishing... (26s)\n\n❯ take the next branch" },
+      "output": { "marker": "claude", "text": "take the next branch", "line": "❯ take the next branch" },
+      "inputSha256": "a60d9d974b7e6268203d6dfc104d8c12ac19bcba28a132a1f5309e7e71362216"
+    },
+    {
+      "id": "agent-prompt-delivery-006",
+      "name": "detects or ignores visible prompt input drafts",
+      "source": "src/agent-prompt-delivery.test.ts",
+      "api": "detectVisiblePromptInputDraft",
+      "input": {
+        "pane": "⏺ Ready\n\n❯\n  [Image #71] unrelated. rename Booking\n  to Artists on the sidebar\n  claude · ~/cs/thegrand"
+      },
+      "output": {
+        "marker": "claude",
+        "text": "[Image #71] unrelated. rename Booking to Artists on the sidebar",
+        "line": "❯"
+      },
+      "inputSha256": "1c84d1968edc1be8bf6b2dfeb19f77b45a770a201575f6e1d65c55301b814dda"
+    },
+    {
+      "id": "agent-prompt-delivery-007",
+      "name": "detects or ignores visible prompt input drafts",
+      "source": "src/agent-prompt-delivery.test.ts",
+      "api": "detectVisiblePromptInputDraft",
+      "input": {
+        "pane": "› previous submitted prompt\n• Response from the agent\n  all done\n\n›\n  gpt-5.5 high · ~/cs/repo"
+      },
+      "output": null,
+      "inputSha256": "14abbe9397ec72aaa1c4381cca1b2d4bc5d4c9cf1d33606f6cbf81c01ad89cfc"
+    },
+    {
+      "id": "agent-prompt-delivery-008",
+      "name": "detects or ignores visible prompt input drafts",
+      "source": "src/agent-prompt-delivery.test.ts",
+      "api": "detectVisiblePromptInputDraft",
+      "input": { "pane": "> quoted markdown\n  not a live prompt\n\n  claude · ~/cs/thegrand" },
+      "output": null,
+      "inputSha256": "6b04c89ad1584d14e54ad38889b408b8bef73f78c6f0e76a4f4a0d53dc062884"
+    },
+    {
+      "id": "agent-prompt-delivery-009",
+      "name": "waits until visible prompt input stops changing",
+      "source": "src/agent-prompt-delivery.test.ts",
+      "api": "waitForVisiblePromptInputIdle",
+      "input": {
+        "name": "waits until visible prompt input stops changing",
+        "captures": [
+          "› human draft one\n  gpt-5.5 high",
+          "› human draft two\n  gpt-5.5 high",
+          "› human draft two\n  gpt-5.5 high",
+          "› human draft two\n  gpt-5.5 high"
+        ],
+        "options": { "stablePolls": 2, "pollMs": 1 }
+      },
+      "output": {
+        "result": {
+          "ok": true,
+          "reason": "idle",
+          "waitedMs": 3,
+          "polls": 3,
+          "changes": 1,
+          "draft": { "marker": "codex", "text": "human draft two gpt-5.5 high", "line": "› human draft two" }
+        },
+        "events": [
+          {
+            "kind": "start",
+            "waitedMs": 0,
+            "polls": 0,
+            "changes": 0,
+            "draft": { "marker": "codex", "text": "human draft one gpt-5.5 high", "line": "› human draft one" }
+          },
+          {
+            "kind": "change",
+            "waitedMs": 1,
+            "polls": 1,
+            "changes": 1,
+            "draft": { "marker": "codex", "text": "human draft two gpt-5.5 high", "line": "› human draft two" }
+          },
+          {
+            "kind": "idle",
+            "waitedMs": 3,
+            "polls": 3,
+            "changes": 1,
+            "draft": { "marker": "codex", "text": "human draft two gpt-5.5 high", "line": "› human draft two" }
+          }
+        ],
+        "captureCount": 4,
+        "sentText": [],
+        "carriageReturns": 0
+      },
+      "inputSha256": "3c71be3e20a3aa6bd269bcaa6aaf17814e8a1d60bd8c5935b8231edfa74a851f"
+    },
+    {
+      "id": "agent-prompt-delivery-010",
+      "name": "force-sends after the maximum buffer delay when prompt input keeps changing",
+      "source": "src/agent-prompt-delivery.test.ts",
+      "api": "waitForVisiblePromptInputIdle",
+      "input": {
+        "name": "force-sends after the maximum buffer delay when prompt input keeps changing",
+        "captures": [
+          "› human draft 0\n  gpt-5.5 high",
+          "› human draft 1\n  gpt-5.5 high",
+          "› human draft 2\n  gpt-5.5 high"
+        ],
+        "options": { "stablePolls": 3, "pollMs": 1, "maxWaitMs": 2 }
+      },
+      "output": {
+        "result": {
+          "ok": true,
+          "reason": "force",
+          "waitedMs": 2,
+          "polls": 2,
+          "changes": 2,
+          "draft": { "marker": "codex", "text": "human draft 2 gpt-5.5 high", "line": "› human draft 2" }
+        },
+        "events": [
+          {
+            "kind": "start",
+            "waitedMs": 0,
+            "polls": 0,
+            "changes": 0,
+            "draft": { "marker": "codex", "text": "human draft 0 gpt-5.5 high", "line": "› human draft 0" }
+          },
+          {
+            "kind": "change",
+            "waitedMs": 1,
+            "polls": 1,
+            "changes": 1,
+            "draft": { "marker": "codex", "text": "human draft 1 gpt-5.5 high", "line": "› human draft 1" }
+          },
+          {
+            "kind": "change",
+            "waitedMs": 2,
+            "polls": 2,
+            "changes": 2,
+            "draft": { "marker": "codex", "text": "human draft 2 gpt-5.5 high", "line": "› human draft 2" }
+          },
+          {
+            "kind": "force",
+            "waitedMs": 2,
+            "polls": 2,
+            "changes": 2,
+            "draft": { "marker": "codex", "text": "human draft 2 gpt-5.5 high", "line": "› human draft 2" }
+          }
+        ],
+        "captureCount": 3,
+        "sentText": [],
+        "carriageReturns": 0
+      },
+      "inputSha256": "6ce0f00d025f85530c05b1a01a5c4f25ca84e58534322e227d204b7c42548e9d"
+    },
+    {
+      "id": "agent-prompt-delivery-011",
+      "name": "waits through an initially empty prompt before writing if a Claude draft appears",
+      "source": "src/agent-prompt-delivery.test.ts",
+      "api": "waitForVisiblePromptInputIdle",
+      "input": {
+        "name": "waits through an initially empty prompt before writing if a Claude draft appears",
+        "captures": [
+          "❯\n  claude · ~/cs/thegrand",
+          "❯\n  claude · ~/cs/thegrand",
+          "❯ [Image #71] unrelat\n  claude · ~/cs/thegrand",
+          "❯ [Image #71] unrelat\n  claude · ~/cs/thegrand",
+          "❯ [Image #71] unrelat\n  claude · ~/cs/thegrand"
+        ],
+        "options": { "noDraftStablePolls": 2, "stablePolls": 2, "pollMs": 1, "maxWaitMs": 10 }
+      },
+      "output": {
+        "result": {
+          "ok": true,
+          "reason": "idle",
+          "waitedMs": 3,
+          "polls": 3,
+          "changes": 0,
+          "draft": { "marker": "claude", "text": "[Image #71] unrelat", "line": "❯ [Image #71] unrelat" }
+        },
+        "events": [
+          {
+            "kind": "start",
+            "waitedMs": 1,
+            "polls": 1,
+            "changes": 0,
+            "draft": { "marker": "claude", "text": "[Image #71] unrelat", "line": "❯ [Image #71] unrelat" }
+          },
+          {
+            "kind": "idle",
+            "waitedMs": 3,
+            "polls": 3,
+            "changes": 0,
+            "draft": { "marker": "claude", "text": "[Image #71] unrelat", "line": "❯ [Image #71] unrelat" }
+          }
+        ],
+        "captureCount": 6,
+        "sentText": [],
+        "carriageReturns": 0
+      },
+      "inputSha256": "64d268ee0a9ee10e25460faeaf2e0d5defae8f0365c72768be34b71e4d7bc568"
+    },
+    {
+      "id": "agent-prompt-delivery-012",
+      "name": "reports no draft after the empty prompt stays quiet",
+      "source": "src/agent-prompt-delivery.test.ts",
+      "api": "waitForVisiblePromptInputIdle",
+      "input": {
+        "name": "reports no draft after the empty prompt stays quiet",
+        "captures": ["❯\n  claude · ~/cs/thegrand"],
+        "options": { "noDraftStablePolls": 2, "pollMs": 1 }
+      },
+      "output": {
+        "result": { "ok": true, "reason": "no-draft", "waitedMs": 2, "polls": 2, "changes": 0 },
+        "events": [{ "kind": "no-draft", "waitedMs": 2, "polls": 2, "changes": 0 }],
+        "captureCount": 6,
+        "sentText": [],
+        "carriageReturns": 0
+      },
+      "inputSha256": "1306cc6e7ec4a0f5b0fbc4a623e4c990178c09eea0ac03eaa6b84e9790deca10"
+    },
+    {
+      "id": "agent-prompt-delivery-013",
+      "name": "delivers tmux prompts",
+      "source": "src/agent-prompt-delivery.test.ts",
+      "api": "deliverTmuxPrompt",
+      "input": { "submit": true },
+      "output": {
+        "result": true,
+        "events": [],
+        "captureCount": 23,
+        "sentText": ["Review task details and respond through aimux."],
+        "carriageReturns": 1
+      },
+      "inputSha256": "bf706fc2cde233e3ca6094ad7a8ef84cc2a5ec61875c7ff7363851c6ffb2c1c2"
+    },
+    {
+      "id": "agent-prompt-delivery-014",
+      "name": "delivers tmux prompts",
+      "source": "src/agent-prompt-delivery.test.ts",
+      "api": "deliverTmuxPrompt",
+      "input": { "submit": false },
+      "output": {
+        "result": true,
+        "events": [],
+        "captureCount": 0,
+        "sentText": ["Review task details and respond through aimux."],
+        "carriageReturns": 0
+      },
+      "inputSha256": "98ce0fffd3926d1e23125ed24e151e7971902e64dccd6b74933e90c6cd001712"
+    }
+  ]
+}

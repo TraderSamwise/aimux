@@ -1,0 +1,261 @@
+{
+  "version": 1,
+  "source": "src/dashboard/operation-failures.test.ts",
+  "generatedBy": "scripts/capture-operation-failures-contract.mjs",
+  "description": "Dashboard operation failure add/list/clear persistence, target matching, replacement, active filtering, and side-effect state captured by running TypeScript dashboard operation-failure helpers.",
+  "normalization": {
+    "ids": "Generated UUIDs are replaced with <id:n> in first-appearance order.",
+    "timestamps": "Generated ISO timestamps are replaced with <ts> after structure checks.",
+    "projectRoots": "Temporary project roots are replaced with <root>."
+  },
+  "cases": [
+    {
+      "id": "operation-failures-001",
+      "name": "persists active failures and clears matching failures",
+      "source": "src/dashboard/operation-failures.test.ts",
+      "input": { "scenario": "persist-and-clear-worktree" },
+      "output": {
+        "failure": {
+          "id": "<id:1>",
+          "targetKind": "worktree",
+          "operation": "create",
+          "title": "Failed to create worktree \"demo\"",
+          "message": "branch already exists",
+          "worktreePath": "/repo/.aimux/worktrees/demo",
+          "worktreeName": "demo",
+          "createdAt": "<ts>"
+        },
+        "beforeClear": [
+          {
+            "id": "<id:1>",
+            "targetKind": "worktree",
+            "operation": "create",
+            "title": "Failed to create worktree \"demo\"",
+            "message": "branch already exists",
+            "worktreePath": "/repo/.aimux/worktrees/demo",
+            "worktreeName": "demo",
+            "createdAt": "<ts>"
+          }
+        ],
+        "cleared": 1,
+        "afterClear": [],
+        "state": {
+          "version": 1,
+          "failures": [
+            {
+              "id": "<id:1>",
+              "targetKind": "worktree",
+              "operation": "create",
+              "title": "Failed to create worktree \"demo\"",
+              "message": "branch already exists",
+              "worktreePath": "/repo/.aimux/worktrees/demo",
+              "worktreeName": "demo",
+              "createdAt": "<ts>",
+              "cleared": true
+            }
+          ]
+        }
+      },
+      "inputSha256": "f3c3883d54c5d4b66864ff843c35b0274703cc7588239999830fad73878cf5eb"
+    },
+    {
+      "id": "operation-failures-002",
+      "name": "clears agent-create failures by worktree when retry succeeds with a new agent id",
+      "source": "src/dashboard/operation-failures.test.ts",
+      "input": { "scenario": "clear-agent-create-by-worktree" },
+      "output": {
+        "failure": {
+          "id": "<id:1>",
+          "targetKind": "agent",
+          "operation": "create",
+          "title": "Failed to create codex agent",
+          "message": "tmux refused the window",
+          "targetId": "codex-793soe",
+          "worktreePath": "/repo/.aimux/worktrees/demo",
+          "createdAt": "<ts>"
+        },
+        "cleared": 1,
+        "afterClear": [],
+        "state": {
+          "version": 1,
+          "failures": [
+            {
+              "id": "<id:1>",
+              "targetKind": "agent",
+              "operation": "create",
+              "title": "Failed to create codex agent",
+              "message": "tmux refused the window",
+              "targetId": "codex-793soe",
+              "worktreePath": "/repo/.aimux/worktrees/demo",
+              "createdAt": "<ts>",
+              "cleared": true
+            }
+          ]
+        }
+      },
+      "inputSha256": "0d742ee66985d0d6fd9a904f38c8258efe3aaa8ba39f28b4a7d63761b3dcb0a4"
+    },
+    {
+      "id": "operation-failures-003",
+      "name": "keeps main-checkout and worktree failures apart",
+      "source": "src/dashboard/operation-failures.test.ts",
+      "input": { "scenario": "main-vs-worktree" },
+      "output": {
+        "main": {
+          "id": "<id:1>",
+          "targetKind": "agent",
+          "operation": "create",
+          "title": "Failed to create codex agent",
+          "message": "main checkout",
+          "createdAt": "<ts>"
+        },
+        "worktree": {
+          "id": "<id:2>",
+          "targetKind": "agent",
+          "operation": "create",
+          "title": "Failed to create codex agent",
+          "message": "in a worktree",
+          "worktreePath": "/repo/.aimux/worktrees/demo",
+          "createdAt": "<ts>"
+        },
+        "cleared": 1,
+        "afterClear": [
+          {
+            "id": "<id:2>",
+            "targetKind": "agent",
+            "operation": "create",
+            "title": "Failed to create codex agent",
+            "message": "in a worktree",
+            "worktreePath": "/repo/.aimux/worktrees/demo",
+            "createdAt": "<ts>"
+          }
+        ],
+        "state": {
+          "version": 1,
+          "failures": [
+            {
+              "id": "<id:2>",
+              "targetKind": "agent",
+              "operation": "create",
+              "title": "Failed to create codex agent",
+              "message": "in a worktree",
+              "worktreePath": "/repo/.aimux/worktrees/demo",
+              "createdAt": "<ts>"
+            },
+            {
+              "id": "<id:1>",
+              "targetKind": "agent",
+              "operation": "create",
+              "title": "Failed to create codex agent",
+              "message": "main checkout",
+              "createdAt": "<ts>",
+              "cleared": true
+            }
+          ]
+        }
+      },
+      "inputSha256": "1548220ca4d8df36fe809e2e2c5705fd03705b944f0f57c8431d2deda4f390fb"
+    },
+    {
+      "id": "operation-failures-004",
+      "name": "replaces active duplicate failures for the same operation target",
+      "source": "src/dashboard/operation-failures.test.ts",
+      "input": { "scenario": "replace-active-duplicate" },
+      "output": {
+        "first": {
+          "id": "<id:1>",
+          "targetKind": "service",
+          "operation": "start",
+          "title": "Failed to start service",
+          "message": "port busy",
+          "targetId": "svc-1",
+          "createdAt": "<ts>"
+        },
+        "second": {
+          "id": "<id:2>",
+          "targetKind": "service",
+          "operation": "start",
+          "title": "Failed to start service",
+          "message": "port still busy",
+          "targetId": "svc-1",
+          "createdAt": "<ts>"
+        },
+        "active": [
+          {
+            "id": "<id:2>",
+            "targetKind": "service",
+            "operation": "start",
+            "title": "Failed to start service",
+            "message": "port still busy",
+            "targetId": "svc-1",
+            "createdAt": "<ts>"
+          }
+        ],
+        "state": {
+          "version": 1,
+          "failures": [
+            {
+              "id": "<id:2>",
+              "targetKind": "service",
+              "operation": "start",
+              "title": "Failed to start service",
+              "message": "port still busy",
+              "targetId": "svc-1",
+              "createdAt": "<ts>"
+            }
+          ]
+        }
+      },
+      "inputSha256": "4b1d452dcfad2308e03424e95e18b389ae75c85a4d775005a374cf81efe9d39e"
+    },
+    {
+      "id": "operation-failures-005",
+      "name": "filters stale and cleared failures from active lists",
+      "source": "src/dashboard/operation-failures.test.ts",
+      "input": { "scenario": "active-list-filtering" },
+      "output": {
+        "stale": {
+          "id": "<id:1>",
+          "targetKind": "dashboard",
+          "operation": "load",
+          "title": "Old failure",
+          "message": "too old",
+          "createdAt": "2000-01-01T00:00:00.000Z"
+        },
+        "fresh": {
+          "id": "<id:2>",
+          "targetKind": "dashboard",
+          "operation": "render",
+          "title": "Fresh failure",
+          "message": "visible",
+          "createdAt": "<ts>"
+        },
+        "cleared": 1,
+        "active": [],
+        "state": {
+          "version": 1,
+          "failures": [
+            {
+              "id": "<id:2>",
+              "targetKind": "dashboard",
+              "operation": "render",
+              "title": "Fresh failure",
+              "message": "visible",
+              "createdAt": "<ts>",
+              "cleared": true
+            },
+            {
+              "id": "<id:1>",
+              "targetKind": "dashboard",
+              "operation": "load",
+              "title": "Old failure",
+              "message": "too old",
+              "createdAt": "2000-01-01T00:00:00.000Z"
+            }
+          ]
+        }
+      },
+      "inputSha256": "f83659e382a26351f298b3a3e8c7d700a195c60d79e64991974681afb2e03c2d"
+    }
+  ]
+}

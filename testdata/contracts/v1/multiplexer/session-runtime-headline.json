@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/session-runtime-core.ts",
+  "generatedBy": "scripts/capture-session-runtime-headline-contract.mjs",
+  "description": "Session runtime status/headline derivation captured by running TypeScript against temp status and history files.",
+  "cases": [
+    {
+      "id": "session-runtime-headline-001",
+      "name": "returns null when neither status nor history exists",
+      "source": "src/multiplexer/session-runtime-core.ts",
+      "api": "readStatusHeadline+deriveHeadline",
+      "input": { "name": "returns null when neither status nor history exists", "sessionId": "codex-empty" },
+      "output": { "statusHeadline": null, "derivedHeadline": null },
+      "inputSha256": "6a60689a10ee2c095dd52928ef5d21211accd7156b726378d75ac1de44707153"
+    },
+    {
+      "id": "session-runtime-headline-002",
+      "name": "reads first trimmed status line before history",
+      "source": "src/multiplexer/session-runtime-core.ts",
+      "api": "readStatusHeadline+deriveHeadline",
+      "input": {
+        "name": "reads first trimmed status line before history",
+        "sessionId": "codex-status",
+        "statusFile": "  Building project\nsecond line\n",
+        "historyLines": ["{\"type\":\"prompt\",\"content\":\"history prompt\",\"ts\":\"2026-01-01T00:00:00.000Z\"}"]
+      },
+      "output": { "statusHeadline": "Building project", "derivedHeadline": "Building project" },
+      "inputSha256": "953fd84e745923d8b6462c2a09ae64dc934f84e85cd606a334339d83a5c7ed5c"
+    },
+    {
+      "id": "session-runtime-headline-003",
+      "name": "truncates long status headline to eighty characters",
+      "source": "src/multiplexer/session-runtime-core.ts",
+      "api": "readStatusHeadline+deriveHeadline",
+      "input": {
+        "name": "truncates long status headline to eighty characters",
+        "sessionId": "codex-long-status",
+        "statusFile": "1234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890\n"
+      },
+      "output": {
+        "statusHeadline": "12345678901234567890123456789012345678901234567890123456789012345678901234567890",
+        "derivedHeadline": "12345678901234567890123456789012345678901234567890123456789012345678901234567890"
+      },
+      "inputSha256": "abcc5e23b68179a4b082a07103e5973c0321354c6d35f4f810b02850402bfb1b"
+    },
+    {
+      "id": "session-runtime-headline-004",
+      "name": "falls back to the last prompt in recent history",
+      "source": "src/multiplexer/session-runtime-core.ts",
+      "api": "readStatusHeadline+deriveHeadline",
+      "input": {
+        "name": "falls back to the last prompt in recent history",
+        "sessionId": "codex-history",
+        "historyLines": [
+          "{\"type\":\"prompt\",\"content\":\"first prompt\",\"ts\":\"2026-01-01T00:00:00.000Z\"}",
+          "{\"type\":\"response\",\"content\":\"response\",\"ts\":\"2026-01-01T00:01:00.000Z\"}",
+          "{\"type\":\"prompt\",\"content\":\"second prompt\",\"ts\":\"2026-01-01T00:02:00.000Z\"}"
+        ]
+      },
+      "output": { "statusHeadline": null, "derivedHeadline": "second prompt" },
+      "inputSha256": "c84c80a4a7e90be72e6f477fefc256604837875ff3965c66c63cc3328874525d"
+    },
+    {
+      "id": "session-runtime-headline-005",
+      "name": "skips malformed history lines and truncates prompt headline",
+      "source": "src/multiplexer/session-runtime-core.ts",
+      "api": "readStatusHeadline+deriveHeadline",
+      "input": {
+        "name": "skips malformed history lines and truncates prompt headline",
+        "sessionId": "codex-malformed-history",
+        "historyLines": [
+          "{malformed",
+          "{\"type\":\"prompt\",\"content\":\"1234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890\",\"ts\":\"2026-01-01T00:00:00.000Z\"}"
+        ]
+      },
+      "output": {
+        "statusHeadline": null,
+        "derivedHeadline": "12345678901234567890123456789012345678901234567890123456789012345678901234567890"
+      },
+      "inputSha256": "a77d59ff71eea505001ec847eae743d948c311f14339d58bba5d9f29b0045382"
+    },
+    {
+      "id": "session-runtime-headline-006",
+      "name": "empty status file falls back to null history",
+      "source": "src/multiplexer/session-runtime-core.ts",
+      "api": "readStatusHeadline+deriveHeadline",
+      "input": {
+        "name": "empty status file falls back to null history",
+        "sessionId": "codex-empty-status",
+        "statusFile": "  \n\n"
+      },
+      "output": { "statusHeadline": null, "derivedHeadline": null },
+      "inputSha256": "5176af35e24963225aa675e820d95e5507f9348d126aaaeaa15432e75ad158fa"
+    }
+  ]
+}

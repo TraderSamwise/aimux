@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "source": "src/paths.test.ts",
+  "generatedBy": "scripts/capture-paths-contract.mjs",
+  "description": "Path identity, runtime-private location, and project registry mutation behavior captured by running TypeScript.",
+  "cases": [
+    {
+      "id": "paths-behavior-001",
+      "name": "resolves aimux-managed worktrees to the parent project",
+      "source": "src/paths.test.ts",
+      "api": "getProjectIdFor",
+      "input": { "repoRoot": "<base>/repo", "worktreePath": "<base>/repo/.aimux/worktrees/feature-a" },
+      "output": {
+        "ok": true,
+        "value": { "rootId": "repo-f0cb35bde357", "worktreeId": "repo-f0cb35bde357", "equal": true }
+      },
+      "inputSha256": "17933fadf9beb8222d289a70e39eb77204cbf011fd7049fabaf967b5759c3437"
+    },
+    {
+      "id": "paths-behavior-002",
+      "name": "resolves persistent log paths",
+      "source": "src/paths.test.ts",
+      "api": "logPaths",
+      "input": { "aimuxHome": null, "repoRoot": "<base>/aimux-log-paths-contract" },
+      "output": {
+        "ok": true,
+        "value": {
+          "daemonLogPath": "<home>/.aimux/daemon/logs/daemon.jsonl",
+          "daemonStdioLogPath": "<home>/.aimux/daemon/logs/daemon-stdio.log",
+          "projectLogPath": "<home>/.aimux/projects/aimux-log-paths-contract-78e942f875fd/logs/aimux.jsonl"
+        }
+      },
+      "inputSha256": "79435d59c2892a19819828da833e901ecd822134051dfce865a76af63ec811b2"
+    },
+    {
+      "id": "paths-behavior-003",
+      "name": "uses AIMUX_HOME for runtime-private global state",
+      "source": "src/paths.test.ts",
+      "api": "aimuxHomeOverride",
+      "input": { "aimuxHome": "<base>-home" },
+      "output": {
+        "ok": true,
+        "value": { "globalAimuxDir": "<base>-home", "daemonLogPath": "<base>-home/daemon/logs/daemon.jsonl" }
+      },
+      "inputSha256": "6c0edf617dac7a8eed73d10410d04d19442c62cd8e3eeb1376f8ebdfd58635eb"
+    },
+    {
+      "id": "paths-behavior-004",
+      "name": "does not register ephemeral tmp aimux roots as desktop projects",
+      "source": "src/paths.test.ts",
+      "api": "initPathsRegistry",
+      "input": { "aimuxHome": "<base>-home", "repoRoot": "/tmp/aimux-transient-project-contract", "git": false },
+      "output": { "ok": true, "value": [] },
+      "inputSha256": "c35e99ac1a57f320f9a6f75ad118bc0e438d02256bc86b6d52796e81e6209a4f"
+    },
+    {
+      "id": "paths-behavior-005",
+      "name": "prunes claude temp aimux roots before enforcing the registry cap",
+      "source": "src/paths.test.ts",
+      "api": "initPathsRegistry",
+      "input": { "aimuxHome": "<base>-home", "repoRoot": "<base>/real-project", "existingProjects": 600 },
+      "output": {
+        "ok": true,
+        "value": [
+          {
+            "id": "real-project-d77af6315aa4",
+            "name": "real-project",
+            "repoRoot": "<base>/real-project",
+            "lastSeen": "<ts:1>"
+          }
+        ]
+      },
+      "inputSha256": "40b9438c57a7bcff0c6b3f2e112f3351ffff529e5e973b559726e3f2eb6bee3c"
+    },
+    {
+      "id": "paths-behavior-006",
+      "name": "hard-fails instead of growing an over-cap project registry",
+      "source": "src/paths.test.ts",
+      "api": "initPathsRegistry",
+      "input": { "aimuxHome": "<base>-home", "repoRoot": "<base>/real-project", "existingProjects": 500 },
+      "output": {
+        "ok": false,
+        "error": "aimux project registry has 501 entries; cap is 500. Refusing to continue because the registry is likely polluted. Remove stale entries from <base>-home/projects.json."
+      },
+      "inputSha256": "29d028b555d6db18cc523eda68c29d1db3c9430425aae6e0dd95d7c7231319e1"
+    },
+    {
+      "id": "paths-behavior-007",
+      "name": "does not register non-git roots as desktop projects",
+      "source": "src/paths.test.ts",
+      "api": "initPathsRegistry",
+      "input": { "aimuxHome": "<base>-home", "repoRoot": "<base>/plain-project", "git": false },
+      "output": { "ok": true, "value": [] },
+      "inputSha256": "d9562fab8cdaa989a2dc0225d51694d7617a72003ab3c96ec11bfa2660246136"
+    }
+  ]
+}

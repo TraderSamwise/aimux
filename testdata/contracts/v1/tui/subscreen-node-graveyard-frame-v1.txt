@@ -1,0 +1,36 @@
+[2J[H
+                                                     [1maimux[0m [2mv0.1.34[0m — graveyard  [32m● tmux[0m
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+  [1mWorktrees[0m[0m                                                                         [1mDetails[0m[0m                                                
+                                                                                    Worktree: feature-a                                    
+[2m╭ [0m[1;33m▸[0m [48;5;240;38;5;255m 1 [0m [1;33mfeature-a[0m [2m· feature/a[0m [2m──────────────────────────────[0m [2m1 agent[0m [48;5;236;38;5;245m just now [0m [2m╮[0m[0m   Branch: feature/a                                      
+[2m│ [0m  [2m○[0m [2mclaude:claude-old (backend-…)[0m [48;5;236;38;5;245m just now [0m                                 [2m │[0m[0m   Path: /repo/feature-a                                  
+[2m╰[0m[2m───────────────────────────────────────────────────────────────────────────────[0m[2m╯[0m[0m   Status: graveyard                                      
+                                                                                    Graveyarded: just now                                  
+  [1mOrphaned Agents[0m[0m                                                                   Agents: 1                                              
+                                                                                    Services: 0                                            
+    [48;5;240;38;5;255m 2 [0m [2m○[0m [2mcodex:codex-orphan · stale output[0m [48;5;236;38;5;245m just now [0m[0m                              Last Used: just now                                    
+                                                                                                                                           
+                                                                                    [1mAttached Agents[0m[0m                                        
+                                                                                    - Claude Old · just now                                
+                                                                                                                                           
+                                                                                                                                           
+                                                                                                                                           
+                                                                                                                                           
+                                                                                                                                           
+                                                                                                                                           
+                                                                                                                                           
+                                                                                                                                           
+                                                                                                                                           
+                                                                                                                                           
+                                                                                                                                           
+                                                                                                                                           
+                                                                                                                                           
+                                                                                                                                           
+                                                                                                                                           
+                                                                                                                                           
+                                                                                                                                           
+                                                                                                                                           
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  [1;38;5;255m↑↓[0m [2mselect[0m  [1;38;5;255mTab[0m [2mdetails[0m  [1;38;5;255md/c/p/L/t/g[0m [2mscreens[0m  [1;38;5;255m1-9/Enter[0m [2mresurrect[0m  [1;38;5;255mx[0m [2mdelete worktree[0m  [1;38;5;255mEsc[0m [2mdashboard[0m  [1;38;5;255mq[0m [2mquit[0m[0m

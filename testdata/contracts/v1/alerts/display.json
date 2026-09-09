@@ -1,0 +1,132 @@
+{
+  "version": 1,
+  "source": "src/alert-display.ts",
+  "sources": [
+    "src/alert-display.test.ts",
+    "src/alert-display.ts"
+  ],
+  "generatedBy": "scripts/capture-model-contracts.mjs",
+  "description": "Alert display contracts captured by running the TypeScript alert display helpers.",
+  "cases": [
+    {
+      "id": "alert-display-001",
+      "name": "names needs-input alerts by session label and worktree",
+      "source": "src/alert-display.ts",
+      "api": "sessionAlertTitle",
+      "input": {
+        "kind": "needs_input",
+        "sessionId": "claude-hb01nv",
+        "fallback": "claude-hb01nv needs input",
+        "context": { "label": "bugs", "worktreeName": "cdc-patches" }
+      },
+      "output": "bugs @ cdc-patches needs input",
+      "inputSha256": "227192a2c30cf00e2c930e5666fa886c8d2a6d17d4b6b803bf32d1b8bfe7fbfe"
+    },
+    {
+      "id": "alert-display-002",
+      "name": "keeps needs-input status out of notification titles",
+      "source": "src/alert-display.ts",
+      "api": "contextualizeAlertInput",
+      "input": {
+        "alert": {
+          "kind": "needs_input",
+          "sessionId": "claude-hb01nv",
+          "title": "Claude Code",
+          "message": "Claude is waiting for your input",
+          "projectName": "tealstreet-next",
+          "projectRoot": "/repo"
+        },
+        "context": { "label": "claude", "worktreeName": "Main Checkout", "branch": "master" }
+      },
+      "output": {
+        "kind": "needs_input",
+        "sessionId": "claude-hb01nv",
+        "title": "tealstreet-next / Main Checkout (master)",
+        "message": "Needs input: claude @ Main Checkout - Claude is waiting for your input",
+        "projectName": "tealstreet-next",
+        "projectRoot": "/repo",
+        "worktreeName": "Main Checkout",
+        "branch": "master",
+        "categoryLabel": "Needs input",
+        "reasonLabel": "Agent is waiting for input"
+      },
+      "inputSha256": "127d2bdd1df3293411edf1b4be7b2cfd31e44319ff9cab3797219354d82d3aee"
+    },
+    {
+      "id": "alert-display-003",
+      "name": "replaces generic service completion titles",
+      "source": "src/alert-display.ts",
+      "api": "contextualizeAlertInput",
+      "input": {
+        "alert": {
+          "kind": "task_done",
+          "sessionId": "service-123",
+          "title": "service",
+          "message": "Shell returned to a prompt.",
+          "projectName": "aimux",
+          "projectRoot": "/repo"
+        },
+        "context": { "label": "shell", "worktreeName": "Main Checkout", "worktreePath": "/repo" }
+      },
+      "output": {
+        "kind": "task_done",
+        "sessionId": "service-123",
+        "title": "[Done] aimux / Main Checkout",
+        "message": "Agent or service finished: shell @ Main Checkout finished - Shell returned to a prompt.",
+        "projectName": "aimux",
+        "projectRoot": "/repo",
+        "worktreePath": "/repo",
+        "worktreeName": "Main Checkout",
+        "categoryLabel": "Done",
+        "reasonLabel": "Agent or service finished"
+      },
+      "inputSha256": "a43821c72486697e8aa112eeb43a9b6f163bbe544b1113ca7a15a5581d44867f"
+    },
+    {
+      "id": "alert-display-004",
+      "name": "labels idle turn-end alerts with branch context",
+      "source": "src/alert-display.ts",
+      "api": "contextualizeAlertInput",
+      "input": {
+        "alert": {
+          "kind": "next_step",
+          "sessionId": "codex-rmq9pv",
+          "title": "codex-rmq9pv ready for next step",
+          "message": "Agent stopped after a turn.",
+          "projectName": "aimux",
+          "projectRoot": "/repo",
+          "dedupeKey": "idle-needs-input:codex-rmq9pv"
+        },
+        "context": { "label": "codex", "worktreeName": "notifications", "branch": "notification-taxonomy" }
+      },
+      "output": {
+        "kind": "next_step",
+        "sessionId": "codex-rmq9pv",
+        "title": "[Next step] aimux / notifications (notification-taxonomy)",
+        "message": "Agent stopped after a turn: codex @ notifications ready for next step",
+        "projectName": "aimux",
+        "projectRoot": "/repo",
+        "dedupeKey": "idle-needs-input:codex-rmq9pv",
+        "worktreeName": "notifications",
+        "branch": "notification-taxonomy",
+        "categoryLabel": "Next step",
+        "reasonLabel": "Agent stopped after a turn"
+      },
+      "inputSha256": "121f268a3f2e7ffb98036e59ffa022d8a3032b428f90dc3a5276221d1101ae89"
+    },
+    {
+      "id": "alert-display-005",
+      "name": "normalizes raw failure titles from direct publishers",
+      "source": "src/alert-display.ts",
+      "api": "sessionAlertTitle",
+      "input": {
+        "kind": "task_failed",
+        "sessionId": "codex-xzl7jp",
+        "fallback": "codex-xzl7jp failed",
+        "context": { "label": "codex", "branch": "feat/demo" }
+      },
+      "output": "codex @ feat/demo errored",
+      "inputSha256": "e5e6b87c1a03dbfe7bf024512e414417083b3f7f18e1e6558ac0b6eae659c519"
+    }
+  ]
+}

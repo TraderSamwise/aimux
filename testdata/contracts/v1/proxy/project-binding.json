@@ -1,0 +1,201 @@
+{
+  "version": 1,
+  "source": "src/proxy-project-binding.test.ts",
+  "generatedBy": "scripts/capture-proxy-project-binding-contract.mjs",
+  "description": "Proxy path parsing and live project service target binding/refusal contracts captured by running TypeScript.",
+  "normalization": { "NaN": "NaN ports are represented as <NaN> in fixture input because JSON has no NaN literal." },
+  "cases": [
+    {
+      "id": "proxy-project-binding-001",
+      "name": "reads host and port out of a proxy path",
+      "source": "src/proxy-project-binding.test.ts",
+      "api": "parseProxyTarget",
+      "input": { "pathname": "/proxy/127.0.0.1/43210/agents/output" },
+      "output": { "host": "127.0.0.1", "port": 43210, "subPath": "/agents/output" },
+      "inputSha256": "a47ce2a7204f2e8b56f943eefd7f570dedf3224130842e453974367ab192d8ff"
+    },
+    {
+      "id": "proxy-project-binding-002",
+      "name": "returns null for anything that is not a proxy path",
+      "source": "src/proxy-project-binding.test.ts",
+      "api": "parseProxyTargetBatch",
+      "input": { "pathnames": ["/health", "/agents/output", "/proxy/127.0.0.1/43210", "/proxy/127.0.0.1/abc/agents"] },
+      "output": [null, null, null, null],
+      "inputSha256": "42a42faa756a810fdd3b61b80df395b462626a3c3f1b5d74e6d6f7e336741c83"
+    },
+    {
+      "id": "proxy-project-binding-003",
+      "name": "rejects a zero port in the path",
+      "source": "src/proxy-project-binding.test.ts",
+      "api": "parseProxyTarget",
+      "input": { "pathname": "/proxy/127.0.0.1/0/agents/output" },
+      "output": null,
+      "inputSha256": "5eb2685488a34884012923265d12f8843e043c17ac7cdd462119cec0aabc98f8"
+    },
+    {
+      "id": "proxy-project-binding-004",
+      "name": "binds a port to its live project",
+      "source": "src/proxy-project-binding.test.ts",
+      "api": "resolveProjectRootForServiceTarget",
+      "input": {
+        "candidates": [
+          { "path": "/srv/a", "serviceAlive": true, "serviceEndpoint": { "host": "127.0.0.1", "port": 43210 } },
+          { "path": "/srv/b", "serviceAlive": true, "serviceEndpoint": { "host": "127.0.0.1", "port": 43211 } }
+        ],
+        "target": { "host": "127.0.0.1", "port": 43210 }
+      },
+      "output": "/srv/a",
+      "inputSha256": "aaed54c966366a94210d06d8a2e004184bec55ce85ceb3d5d4af43ea8b4b29ff"
+    },
+    {
+      "id": "proxy-project-binding-005",
+      "name": "ignores a project whose service is not alive",
+      "source": "src/proxy-project-binding.test.ts",
+      "api": "resolveProjectRootForServiceTarget",
+      "input": {
+        "candidates": [
+          { "path": "/srv/dead", "serviceAlive": false, "serviceEndpoint": { "host": "127.0.0.1", "port": 51000 } },
+          { "path": "/srv/live", "serviceAlive": true, "serviceEndpoint": { "host": "127.0.0.1", "port": 51000 } }
+        ],
+        "target": { "host": "127.0.0.1", "port": 51000 }
+      },
+      "output": "/srv/live",
+      "inputSha256": "dadbd6e4afc9ff1fb0b6e90c59e998521f7d11fc4c580ce912a4c152c58d0290"
+    },
+    {
+      "id": "proxy-project-binding-006",
+      "name": "refuses to guess when two live projects claim the same port",
+      "source": "src/proxy-project-binding.test.ts",
+      "api": "resolveProjectRootForServiceTarget",
+      "input": {
+        "candidates": [
+          { "path": "/srv/a", "serviceAlive": true, "serviceEndpoint": { "host": "127.0.0.1", "port": 51000 } },
+          { "path": "/srv/b", "serviceAlive": true, "serviceEndpoint": { "host": "127.0.0.1", "port": 51000 } }
+        ],
+        "target": { "host": "127.0.0.1", "port": 51000 }
+      },
+      "output": null,
+      "inputSha256": "1ec53927a0ede0d13659a40ca68be3838ea06735cdf5cc7d62bbb89ad64afa1b"
+    },
+    {
+      "id": "proxy-project-binding-007",
+      "name": "requires the host to match the recorded endpoint",
+      "source": "src/proxy-project-binding.test.ts",
+      "api": "resolveProjectRootForServiceTarget",
+      "input": {
+        "candidates": [
+          { "path": "/srv/a", "serviceAlive": true, "serviceEndpoint": { "host": "127.0.0.1", "port": 43210 } }
+        ],
+        "targets": [
+          { "host": "localhost", "port": 43210 },
+          { "host": "::1", "port": 43210 }
+        ]
+      },
+      "output": [null, null],
+      "inputSha256": "ae029a657c523f5ae16c7ba67c126cdd33414d7430f7fca82ae2608c62467362"
+    },
+    {
+      "id": "proxy-project-binding-008",
+      "name": "returns null when only a dead project claims the port",
+      "source": "src/proxy-project-binding.test.ts",
+      "api": "resolveProjectRootForServiceTarget",
+      "input": {
+        "candidates": [
+          { "path": "/srv/dead", "serviceAlive": false, "serviceEndpoint": { "host": "127.0.0.1", "port": 51000 } }
+        ],
+        "target": { "host": "127.0.0.1", "port": 51000 }
+      },
+      "output": null,
+      "inputSha256": "d1622c063c68d79167d7e20c601dca5b00090785d322896a90a003e7ab855f92"
+    },
+    {
+      "id": "proxy-project-binding-009",
+      "name": "returns null for an unknown port, a null endpoint, or a pathless project",
+      "source": "src/proxy-project-binding.test.ts",
+      "api": "resolveProjectRootForServiceTargetBatch",
+      "input": {
+        "attempts": [
+          {
+            "candidates": [
+              { "path": "/srv/a", "serviceAlive": true, "serviceEndpoint": { "host": "127.0.0.1", "port": 43210 } }
+            ],
+            "target": { "host": "127.0.0.1", "port": 43999 }
+          },
+          {
+            "candidates": [{ "path": "/srv/a", "serviceAlive": true, "serviceEndpoint": null }],
+            "target": { "host": "127.0.0.1", "port": 43210 }
+          },
+          {
+            "candidates": [
+              { "path": "", "serviceAlive": true, "serviceEndpoint": { "host": "127.0.0.1", "port": 43210 } }
+            ],
+            "target": { "host": "127.0.0.1", "port": 43210 }
+          },
+          { "candidates": [], "target": { "host": "127.0.0.1", "port": 43210 } }
+        ]
+      },
+      "output": [null, null, null, null],
+      "inputSha256": "bcacf0d029d2f3d5f6812b3e4d35f50b0da97c3329b3a9e2209f2d8347eb9531"
+    },
+    {
+      "id": "proxy-project-binding-010",
+      "name": "rejects nonsense ports even when a candidate records one",
+      "source": "src/proxy-project-binding.test.ts",
+      "api": "resolveProjectRootForServiceTargetBatch",
+      "input": {
+        "attempts": [
+          {
+            "candidates": [
+              { "path": "/srv/a", "serviceAlive": true, "serviceEndpoint": { "host": "127.0.0.1", "port": 0 } }
+            ],
+            "target": { "host": "127.0.0.1", "port": 0 }
+          },
+          {
+            "candidates": [
+              { "path": "/srv/a", "serviceAlive": true, "serviceEndpoint": { "host": "127.0.0.1", "port": -1 } }
+            ],
+            "target": { "host": "127.0.0.1", "port": -1 }
+          },
+          {
+            "candidates": [
+              { "path": "/srv/a", "serviceAlive": true, "serviceEndpoint": { "host": "127.0.0.1", "port": "<NaN>" } }
+            ],
+            "target": { "host": "127.0.0.1", "port": null }
+          },
+          {
+            "candidates": [
+              { "path": "/srv/a", "serviceAlive": true, "serviceEndpoint": { "host": "127.0.0.1", "port": 1.5 } }
+            ],
+            "target": { "host": "127.0.0.1", "port": 1.5 }
+          }
+        ]
+      },
+      "output": [null, null, null, null],
+      "inputSha256": "e95568663d1f5f2c5608d101119c9cfb0658389e16e99a4bceceab5f285ef68e"
+    },
+    {
+      "id": "proxy-project-binding-011",
+      "name": "returns null for a missing target or empty host",
+      "source": "src/proxy-project-binding.test.ts",
+      "api": "resolveProjectRootForServiceTargetBatch",
+      "input": {
+        "attempts": [
+          {
+            "candidates": [
+              { "path": "/srv/a", "serviceAlive": true, "serviceEndpoint": { "host": "127.0.0.1", "port": 43210 } }
+            ],
+            "target": null
+          },
+          {
+            "candidates": [
+              { "path": "/srv/a", "serviceAlive": true, "serviceEndpoint": { "host": "127.0.0.1", "port": 43210 } }
+            ],
+            "target": { "host": "", "port": 43210 }
+          }
+        ]
+      },
+      "output": [null, null],
+      "inputSha256": "00f7d3633e83c8172b5e3da37bc63b3d95a52e5159a55d52d64de4170701118d"
+    }
+  ]
+}

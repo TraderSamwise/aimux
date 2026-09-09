@@ -1,0 +1,154 @@
+{
+  "version": 1,
+  "sources": ["src/process-args.test.ts", "src/shell-args.test.ts"],
+  "generatedBy": "scripts/capture-cli-parsing-contract.mjs",
+  "description": "CLI process-argument matching and shell/env assignment parsing captured by running TypeScript.",
+  "cases": [
+    {
+      "id": "cli-parsing-001",
+      "name": "rejects project-id prefix matches",
+      "source": "src/process-args.test.ts",
+      "api": "commandArgValueMatches",
+      "input": {
+        "args": "node /opt/aimux/dist/launcher-bin.js __project-service-internal --project-id repo-old --project-root /repo-old",
+        "flag": "--project-id",
+        "expected": "repo"
+      },
+      "output": { "ok": true, "value": false },
+      "inputSha256": "c104d7aba3627538249c5e6284a47e7b6fd5746cdb522527abb4b71e5c9ec847"
+    },
+    {
+      "id": "cli-parsing-002",
+      "name": "rejects project-root prefix matches",
+      "source": "src/process-args.test.ts",
+      "api": "commandArgValueMatches",
+      "input": {
+        "args": "node /opt/aimux/dist/launcher-bin.js __project-service-internal --project-id repo-old --project-root /repo-old",
+        "flag": "--project-root",
+        "expected": "/repo"
+      },
+      "output": { "ok": true, "value": false },
+      "inputSha256": "a7764d29a3f3dc84cff7ff14397497f3eb1f9a5fa8207f32287be5d28f61f1cd"
+    },
+    {
+      "id": "cli-parsing-003",
+      "name": "accepts exact project-root match",
+      "source": "src/process-args.test.ts",
+      "api": "commandArgValueMatches",
+      "input": {
+        "args": "node /opt/aimux/dist/launcher-bin.js __project-service-internal --project-id repo-old --project-root /repo-old",
+        "flag": "--project-root",
+        "expected": "/repo-old"
+      },
+      "output": { "ok": true, "value": true },
+      "inputSha256": "26a302ad486d06a8758c70dc8055e6e403c04edc6eca35627e2ff840b84522c9"
+    },
+    {
+      "id": "cli-parsing-004",
+      "name": "matches final flag values that contain spaces",
+      "source": "src/process-args.test.ts",
+      "api": "commandArgValueMatches",
+      "input": {
+        "args": "node aimux __project-service-internal --project-id repo --project-root /Users/sam/My Repo",
+        "flag": "--project-root",
+        "expected": "/Users/sam/My Repo"
+      },
+      "output": { "ok": true, "value": true },
+      "inputSha256": "33426118ce156cb6ea4699fea145eede5384d519a86293de47454bc4db7c486f"
+    },
+    {
+      "id": "cli-parsing-005",
+      "name": "rejects partial final flag values that contain spaces",
+      "source": "src/process-args.test.ts",
+      "api": "commandArgValueMatches",
+      "input": {
+        "args": "node aimux __project-service-internal --project-id repo --project-root /Users/sam/My Repo",
+        "flag": "--project-root",
+        "expected": "/Users/sam/My"
+      },
+      "output": { "ok": true, "value": false },
+      "inputSha256": "10fd4464133e1e4d411f3fe2e5bf9273819267fc8bdeb9f10d8319bb15baf501"
+    },
+    {
+      "id": "cli-parsing-006",
+      "name": "splits whitespace separated args",
+      "source": "src/shell-args.test.ts",
+      "api": "parseShellArgs",
+      "input": { "input": "--model gpt-5.5 --danger" },
+      "output": { "ok": true, "value": ["--model", "gpt-5.5", "--danger"] },
+      "inputSha256": "b022e05d55097f8a46069d254c916a41ad4f39f3206f72dcac03462d8b8b54d4"
+    },
+    {
+      "id": "cli-parsing-007",
+      "name": "preserves quoted groups",
+      "source": "src/shell-args.test.ts",
+      "api": "parseShellArgs",
+      "input": { "input": "--message \"hello world\" --name 'sam test'" },
+      "output": { "ok": true, "value": ["--message", "hello world", "--name", "sam test"] },
+      "inputSha256": "2f643a3f97689c4bf7712aa218b3bb807be894eff00df505c76fbc81494d14f4"
+    },
+    {
+      "id": "cli-parsing-008",
+      "name": "supports backslash escapes outside single quotes",
+      "source": "src/shell-args.test.ts",
+      "api": "parseShellArgs",
+      "input": { "input": "--name hello\\ world --literal 'a\\b'" },
+      "output": { "ok": true, "value": ["--name", "hello world", "--literal", "a\\b"] },
+      "inputSha256": "8b5c4ce081da8416e0d12e432ff4e73c227d9719eefee17c2bb3e307b6cec245"
+    },
+    {
+      "id": "cli-parsing-009",
+      "name": "preserves empty quoted args",
+      "source": "src/shell-args.test.ts",
+      "api": "parseShellArgs",
+      "input": { "input": "--empty \"\" --next" },
+      "output": { "ok": true, "value": ["--empty", "", "--next"] },
+      "inputSha256": "ec03a8985dd9597c4776a5af737bba1570f58941060fc474d4f137a6f6390a9e"
+    },
+    {
+      "id": "cli-parsing-010",
+      "name": "rejects unterminated double quotes",
+      "source": "src/shell-args.test.ts",
+      "api": "parseShellArgs",
+      "input": { "input": "--message \"hello" },
+      "output": { "ok": false, "error": "unterminated double quote" },
+      "inputSha256": "69b158c5be01a6f4fc8ac9c2f0249eb15a33275cc7f43715b7b65a0591efe8bd"
+    },
+    {
+      "id": "cli-parsing-011",
+      "name": "parses space-separated NAME=VALUE tokens",
+      "source": "src/shell-args.test.ts",
+      "api": "parseEnvAssignments",
+      "input": { "input": "CLAUDE_YOLO=1 FOO=bar" },
+      "output": { "ok": true, "value": { "CLAUDE_YOLO": "1", "FOO": "bar" } },
+      "inputSha256": "84dddd55e0ee3642a3379d337338dd68886f2a31d6a4ede956c54046d0046657"
+    },
+    {
+      "id": "cli-parsing-012",
+      "name": "returns an empty object for blank input",
+      "source": "src/shell-args.test.ts",
+      "api": "parseEnvAssignments",
+      "input": { "input": "   " },
+      "output": { "ok": true, "value": {} },
+      "inputSha256": "a3c262744150362f26bb9dd9390c076695e99750b46a8ade8e2a09e1655de647"
+    },
+    {
+      "id": "cli-parsing-013",
+      "name": "supports quoted env values with spaces",
+      "source": "src/shell-args.test.ts",
+      "api": "parseEnvAssignments",
+      "input": { "input": "MSG=\"hello world\"" },
+      "output": { "ok": true, "value": { "MSG": "hello world" } },
+      "inputSha256": "f2cbd65770703fb6e9e42efaf25895816e0807a475720016e53234ad13aa5142"
+    },
+    {
+      "id": "cli-parsing-014",
+      "name": "throws on a token that is not an assignment",
+      "source": "src/shell-args.test.ts",
+      "api": "parseEnvAssignments",
+      "input": { "input": "FOO=bar --flag" },
+      "output": { "ok": false, "error": "invalid env var \"--flag\" (expected NAME=VALUE)" },
+      "inputSha256": "5223d8c4e2fec95c3473b0cb76634d2d363ba976aa5c5b22685511b7dde5ff1f"
+    }
+  ]
+}

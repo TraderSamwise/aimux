@@ -1,0 +1,293 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/session-launch.ts",
+  "generatedBy": "scripts/capture-session-launch-actions-contract.mjs",
+  "description": "Session launch focus and dashboard leader action side effects captured by running TypeScript session-launch helpers with deterministic fake hosts.",
+  "cases": [
+    {
+      "id": "session-launch-actions-001",
+      "name": "opens fallback live target without durable backend id",
+      "source": "src/multiplexer/session-launch.ts",
+      "api": "focusSession",
+      "input": {
+        "sessions": [{ "id": "claude-1" }, { "id": "codex-2" }],
+        "activeIndex": 1,
+        "sessionMRU": ["codex-2"],
+        "targets": [],
+        "openResult": "opened",
+        "index": 0
+      },
+      "output": {
+        "activeIndex": 0,
+        "sessionMRU": ["claude-1", "codex-2"],
+        "targets": [],
+        "calls": [
+          { "method": "openLiveTmuxWindowForEntry", "args": [{ "id": "claude-1" }] },
+          { "method": "noteLastUsedItem", "args": ["claude-1"] },
+          { "method": "saveState", "args": [] },
+          {
+            "method": "postToProjectService",
+            "args": [
+              "/notification-context",
+              { "source": "tui", "focused": true, "screen": "agent", "sessionId": "claude-1", "panelOpen": false },
+              { "timeoutMs": 3000 }
+            ]
+          },
+          { "method": "postToProjectService", "args": ["/mark-seen", { "session": "claude-1" }] }
+        ]
+      },
+      "inputSha256": "5881e022e363572b4029fcb8231efb12e5a0b4fe0c14a046877392d56a0156f8"
+    },
+    {
+      "id": "session-launch-actions-002",
+      "name": "uses current cached tmux target before fallback open",
+      "source": "src/multiplexer/session-launch.ts",
+      "api": "focusSession",
+      "input": {
+        "sessions": [{ "id": "claude-1" }, { "id": "codex-2" }],
+        "activeIndex": 1,
+        "sessionMRU": ["codex-2"],
+        "targets": [["claude-1", { "sessionName": "aimux-test", "windowId": "@1", "windowName": "claude" }]],
+        "resolvedTargets": [["@1", { "sessionName": "aimux-test", "windowId": "@1", "windowName": "claude" }]],
+        "metadata": [["@1", { "kind": "agent", "sessionId": "claude-1" }]],
+        "openResult": "missing",
+        "index": 0
+      },
+      "output": {
+        "activeIndex": 0,
+        "sessionMRU": ["claude-1", "codex-2"],
+        "targets": [["claude-1", { "sessionName": "aimux-test", "windowId": "@1", "windowName": "claude" }]],
+        "calls": [
+          { "method": "tmuxRuntimeManager.getTargetByWindowId", "args": ["aimux-test", "@1"] },
+          {
+            "method": "tmuxRuntimeManager.getWindowMetadata",
+            "args": [{ "sessionName": "aimux-test", "windowId": "@1", "windowName": "claude" }]
+          },
+          {
+            "method": "selectLinkedOrOpenTarget",
+            "args": [{ "sessionName": "aimux-test", "windowId": "@1", "windowName": "claude" }]
+          },
+          { "method": "noteLastUsedItem", "args": ["claude-1"] },
+          { "method": "saveState", "args": [] },
+          {
+            "method": "postToProjectService",
+            "args": [
+              "/notification-context",
+              { "source": "tui", "focused": true, "screen": "agent", "sessionId": "claude-1", "panelOpen": false },
+              { "timeoutMs": 3000 }
+            ]
+          },
+          { "method": "postToProjectService", "args": ["/mark-seen", { "session": "claude-1" }] }
+        ]
+      },
+      "inputSha256": "cc8478e577c9517e47948eeb429d9ea3b7f1bb5254872a3e8113bcd8387e300c"
+    },
+    {
+      "id": "session-launch-actions-003",
+      "name": "drops stale target and does not mark focus when fallback is missing",
+      "source": "src/multiplexer/session-launch.ts",
+      "api": "focusSession",
+      "input": {
+        "sessions": [{ "id": "claude-1" }, { "id": "codex-2" }],
+        "activeIndex": 1,
+        "sessionMRU": ["codex-2"],
+        "targets": [["claude-1", { "sessionName": "aimux-test", "windowId": "@2", "windowName": "claude" }]],
+        "resolvedTargets": [["@2", null]],
+        "projectWindows": [],
+        "openResult": "missing",
+        "index": 0
+      },
+      "output": {
+        "activeIndex": 1,
+        "sessionMRU": ["codex-2"],
+        "targets": [],
+        "calls": [
+          { "method": "tmuxRuntimeManager.getTargetByWindowId", "args": ["aimux-test", "@2"] },
+          { "method": "tmuxRuntimeManager.listProjectManagedWindows", "args": ["<REPO>"] },
+          { "method": "openLiveTmuxWindowForEntry", "args": [{ "id": "claude-1" }] }
+        ]
+      },
+      "inputSha256": "c592c2dc27836970eb4a7c9c2308f6f72775d7607180c8dc55b0e2174190b378"
+    },
+    {
+      "id": "session-launch-actions-004",
+      "name": "rejects cached tmux target owned by another agent",
+      "source": "src/multiplexer/session-launch.ts",
+      "api": "focusSession",
+      "input": {
+        "sessions": [{ "id": "claude-1" }, { "id": "codex-2" }],
+        "activeIndex": 1,
+        "sessionMRU": ["codex-2"],
+        "targets": [["claude-1", { "sessionName": "aimux-test", "windowId": "@3", "windowName": "claude" }]],
+        "resolvedTargets": [["@3", { "sessionName": "aimux-test", "windowId": "@3", "windowName": "claude" }]],
+        "metadata": [["@3", { "kind": "agent", "sessionId": "codex-2" }]],
+        "projectWindows": [],
+        "openResult": "missing",
+        "index": 0
+      },
+      "output": {
+        "activeIndex": 1,
+        "sessionMRU": ["codex-2"],
+        "targets": [],
+        "calls": [
+          { "method": "tmuxRuntimeManager.getTargetByWindowId", "args": ["aimux-test", "@3"] },
+          {
+            "method": "tmuxRuntimeManager.getWindowMetadata",
+            "args": [{ "sessionName": "aimux-test", "windowId": "@3", "windowName": "claude" }]
+          },
+          { "method": "tmuxRuntimeManager.listProjectManagedWindows", "args": ["<REPO>"] },
+          { "method": "openLiveTmuxWindowForEntry", "args": [{ "id": "claude-1" }] }
+        ]
+      },
+      "inputSha256": "c8a4b55f9e0dba74a3bb3ba09312b46a42e47dcd57f4d2e5ec3d486d17ae2ffd"
+    },
+    {
+      "id": "session-launch-actions-005",
+      "name": "ignores out of range focus index",
+      "source": "src/multiplexer/session-launch.ts",
+      "api": "focusSession",
+      "input": {
+        "sessions": [{ "id": "claude-1" }],
+        "activeIndex": 0,
+        "sessionMRU": ["claude-1"],
+        "targets": [],
+        "index": 5
+      },
+      "output": { "activeIndex": 0, "sessionMRU": ["claude-1"], "targets": [], "calls": [] },
+      "inputSha256": "0db9f87f740cdd87a8f7089417556130af6c8877bc10185f1721d2116fc20d95"
+    },
+    {
+      "id": "session-launch-actions-006",
+      "name": "basic dashboard commands dispatch host methods",
+      "source": "src/multiplexer/session-launch.ts",
+      "api": "handleAction",
+      "input": {
+        "sessions": [{ "id": "codex-1" }, { "id": "claude-2" }],
+        "activeIndex": 0,
+        "actions": [
+          { "type": "dashboard" },
+          { "type": "help" },
+          { "type": "create" },
+          { "type": "switcher" },
+          { "type": "worktree-create" },
+          { "type": "worktree-list" },
+          { "type": "kill" },
+          { "type": "review" }
+        ]
+      },
+      "output": {
+        "activeIndex": 0,
+        "coordinationLoaded": null,
+        "calls": [
+          { "method": "openTmuxDashboardTarget", "args": [] },
+          { "method": "showHelp", "args": [] },
+          { "method": "showToolPicker", "args": [] },
+          { "method": "showSwitcher", "args": [] },
+          { "method": "showWorktreeCreatePrompt", "args": [] },
+          { "method": "showWorktreeList", "args": [] },
+          { "method": "session.codex-1.kill", "args": [] },
+          { "method": "handleReviewRequest", "args": [] }
+        ]
+      },
+      "inputSha256": "dc1cf649d2a36c4dac0a59d64411158a2feb216a1ea4c46b2dd1e26fb4f09936"
+    },
+    {
+      "id": "session-launch-actions-007",
+      "name": "coordination action opens dashboard and refreshes service view",
+      "source": "src/multiplexer/session-launch.ts",
+      "api": "handleAction",
+      "input": { "sessions": [{ "id": "codex-1" }], "activeIndex": 0, "actions": [{ "type": "coordination" }] },
+      "output": {
+        "activeIndex": 0,
+        "coordinationLoaded": false,
+        "calls": [
+          { "method": "clearDashboardSubscreens", "args": [] },
+          { "method": "setDashboardScreen", "args": ["coordination"] },
+          { "method": "persistDashboardUiState", "args": [] },
+          { "method": "openTmuxDashboardTarget", "args": [] },
+          { "method": "refreshCoordinationFromService", "args": [] }
+        ]
+      },
+      "inputSha256": "edc725934a0aca322aedf8d290d08b23bfc3f68523d0cf24cecd3e3ab684d6ca"
+    },
+    {
+      "id": "session-launch-actions-008",
+      "name": "work outline opens dashboard before selected human session outline",
+      "source": "src/multiplexer/session-launch.ts",
+      "api": "handleAction",
+      "input": { "sessions": [{ "id": "codex-1" }], "activeIndex": 0, "actions": [{ "type": "work-outline" }] },
+      "output": {
+        "activeIndex": 0,
+        "coordinationLoaded": null,
+        "calls": [
+          { "method": "openTmuxDashboardTarget", "args": [] },
+          { "method": "showWorkOutlineOverlay", "args": ["codex-1"] }
+        ]
+      },
+      "inputSha256": "758f3b3e121cbc4a729fcad64e39d21a845f06154554f89466e2c18fde3ebaf1"
+    },
+    {
+      "id": "session-launch-actions-009",
+      "name": "work outline omits project control active session",
+      "source": "src/multiplexer/session-launch.ts",
+      "api": "handleAction",
+      "input": {
+        "sessions": [{ "id": "claude-scribe", "team": { "role": "scribe" } }],
+        "activeIndex": 0,
+        "actions": [{ "type": "work-outline" }]
+      },
+      "output": {
+        "activeIndex": 0,
+        "coordinationLoaded": null,
+        "calls": [
+          { "method": "openTmuxDashboardTarget", "args": [] },
+          { "method": "showWorkOutlineOverlay", "args": [null] }
+        ]
+      },
+      "inputSha256": "360f51d27353e3b3ff5b7d9b754dcb6a9df7cb7de3664deeaf2dd11f6ed2b951"
+    },
+    {
+      "id": "session-launch-actions-010",
+      "name": "leader navigation skips project control sessions",
+      "source": "src/multiplexer/session-launch.ts",
+      "api": "handleAction",
+      "input": {
+        "sessions": [
+          { "id": "codex-1" },
+          { "id": "claude-scribe", "team": { "role": "scribe" } },
+          { "id": "claude-overseer", "team": { "role": "overseer" } },
+          { "id": "claude-2" }
+        ],
+        "activeIndex": 0,
+        "actions": [{ "type": "next" }, { "type": "prev" }, { "type": "focus", "index": 1 }]
+      },
+      "output": {
+        "activeIndex": 0,
+        "coordinationLoaded": null,
+        "calls": [
+          { "method": "focusSession", "args": [3] },
+          { "method": "focusSession", "args": [3] },
+          { "method": "focusSession", "args": [3] }
+        ]
+      },
+      "inputSha256": "99c98af34e72b6885c25d125d2c711513abefbaee4bbce34e2feb9fce111f4c5"
+    },
+    {
+      "id": "session-launch-actions-011",
+      "name": "leader navigation does not move from focused project control session",
+      "source": "src/multiplexer/session-launch.ts",
+      "api": "handleAction",
+      "input": {
+        "sessions": [
+          { "id": "codex-1" },
+          { "id": "claude-scribe", "team": { "role": "scribe" } },
+          { "id": "claude-2" }
+        ],
+        "activeIndex": 1,
+        "actions": [{ "type": "next" }, { "type": "prev" }]
+      },
+      "output": { "activeIndex": 1, "coordinationLoaded": null, "calls": [] },
+      "inputSha256": "a3d40744d6f0612d163743652188ae22b823ed6ffee7c7b116ca629edb716b79"
+    }
+  ]
+}

@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "source": "src/atomic-write.test.ts",
+  "generatedBy": "scripts/capture-atomic-write-contract.mjs",
+  "description": "Atomic state write and corrupt-file quarantine contracts captured by running TypeScript.",
+  "cases": [
+    {
+      "id": "runtime-state-atomic-write-001",
+      "name": "writes content and leaves no temp files behind",
+      "source": "src/atomic-write.test.ts",
+      "api": "atomicWrite",
+      "input": { "path": "nested/file.txt", "data": "hello" },
+      "output": { "content": "hello", "tempFiles": [] },
+      "inputSha256": "db8cdc9d9faa7fb4aa9016b191f18a5a108072b49bedfdad0e58d44ee7d247c4"
+    },
+    {
+      "id": "runtime-state-atomic-write-002",
+      "name": "writeJsonAtomic round-trips with a trailing newline",
+      "source": "src/atomic-write.test.ts",
+      "api": "writeJsonAtomic",
+      "input": { "path": "state.json", "value": { "a": 1, "b": ["x"] } },
+      "output": { "endsWithNewline": true, "parsed": { "a": 1, "b": ["x"] } },
+      "inputSha256": "2420c768b1c4640f2b4ef3e44c21e927db6db2b32bb554e2a962676e2319834a"
+    },
+    {
+      "id": "runtime-state-atomic-write-003",
+      "name": "writeTextAtomic writes bytes verbatim without appending a newline",
+      "source": "src/atomic-write.test.ts",
+      "api": "writeTextAtomic",
+      "input": { "path": "endpoint.txt", "text": "http://127.0.0.1:43190\n" },
+      "output": "http://127.0.0.1:43190\n",
+      "inputSha256": "12e37fd75895f35afd27c35c1f81d432c692c2de23a3113058fa2e0f7aa146f3"
+    },
+    {
+      "id": "runtime-state-atomic-write-004",
+      "name": "honors an explicit file mode",
+      "source": "src/atomic-write.test.ts",
+      "api": "atomicWriteMode",
+      "input": { "path": "auth.json", "data": "{}", "mode": 384 },
+      "output": { "mode": 384 },
+      "inputSha256": "fed77ab0eb400daf49bb22fe5c3356e088048437d7766e9a6b39c17db220a655"
+    },
+    {
+      "id": "runtime-state-atomic-write-005",
+      "name": "overwrites an existing file atomically",
+      "source": "src/atomic-write.test.ts",
+      "api": "overwriteJsonAtomic",
+      "input": { "path": "f.json", "values": [{ "v": 1 }, { "v": 2 }] },
+      "output": { "exists": true, "parsed": { "v": 2 } },
+      "inputSha256": "18c2d6556d1f7ed6849be9331891d1c1ce606b24a5d6f1f0c555211f4dcf48c6"
+    },
+    {
+      "id": "runtime-state-atomic-write-006",
+      "name": "uses a unique temp path, not a shared <file>.tmp (race-safe)",
+      "source": "src/atomic-write.test.ts",
+      "api": "uniqueTempPath",
+      "input": { "path": "statusline/bottom-dashboard.txt", "occupiedTmp": true, "text": "ok\n" },
+      "output": { "content": "ok\n", "tempFileNames": [] },
+      "inputSha256": "5b85d38ac6b55189ad637b3b7bb65ba150d69c87d9e6d71043b678140daccd30"
+    },
+    {
+      "id": "runtime-state-atomic-write-007",
+      "name": "quarantines a corrupt file aside instead of dropping it",
+      "source": "src/atomic-write.test.ts",
+      "api": "quarantineCorruptFile",
+      "input": { "path": "state.json", "text": "{ not valid json" },
+      "output": {
+        "destName": "state.json.corrupt-<ts:1>",
+        "targetExists": false,
+        "quarantinedContent": "{ not valid json",
+        "hasCorruptFile": true
+      },
+      "inputSha256": "ecd60ec4e3763ec84e2d177bf83ea3728581c487263d4d9301b0ee59d12124dc"
+    },
+    {
+      "id": "runtime-state-atomic-write-008",
+      "name": "quarantine is a no-op for a missing file",
+      "source": "src/atomic-write.test.ts",
+      "api": "quarantineMissing",
+      "input": { "path": "nope.json" },
+      "output": null,
+      "inputSha256": "a7d5545a68b09ac3fe48537893e6889128d43047891a9a45e38495840402e6ce"
+    }
+  ]
+}

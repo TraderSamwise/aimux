@@ -1,0 +1,218 @@
+{
+  "version": 1,
+  "source": "src/line-editor.test.ts",
+  "generatedBy": "scripts/capture-line-editor-contract.mjs",
+  "description": "Single-line editor cursor movement, editing, paste normalization, key-consumption, and render-window behavior captured by running TypeScript line-editor helpers.",
+  "cases": [
+    {
+      "id": "terminal-line-editor-001",
+      "name": "starts with the cursor at the end of the initial text",
+      "source": "src/line-editor.test.ts",
+      "sourceName": "starts with the cursor at the end of the initial text",
+      "api": "createLineState/applyLineEdit",
+      "input": { "kind": "edit", "initial": "hello", "events": [] },
+      "output": { "state": { "text": "hello", "cursor": 5 }, "consumed": [] },
+      "inputSha256": "e58f55526ccbcf1fe9542f8e67540242ecd7541fe012444c85f6660be7af6788"
+    },
+    {
+      "id": "terminal-line-editor-002",
+      "name": "inserts characters at the cursor",
+      "source": "src/line-editor.test.ts",
+      "sourceName": "inserts characters at the cursor",
+      "api": "createLineState/applyLineEdit",
+      "input": {
+        "kind": "edit",
+        "initial": "hi",
+        "cursor": 1,
+        "events": [{ "char": "X", "name": "", "shift": false, "ctrl": false, "alt": false, "raw": "" }]
+      },
+      "output": { "state": { "text": "hXi", "cursor": 2 }, "consumed": [true] },
+      "inputSha256": "b7aa0943fbe1674dbfa5f84734d768a195faee504757136b7ea821d253679739"
+    },
+    {
+      "id": "terminal-line-editor-003",
+      "name": "moves left/right within bounds",
+      "source": "src/line-editor.test.ts",
+      "sourceName": "moves left/right within bounds",
+      "api": "createLineState/applyLineEdit",
+      "input": {
+        "kind": "edit",
+        "initial": "ab",
+        "events": [
+          { "char": "", "name": "left", "shift": false, "ctrl": false, "alt": false, "raw": "" },
+          { "char": "", "name": "left", "shift": false, "ctrl": false, "alt": false, "raw": "" },
+          { "char": "", "name": "left", "shift": false, "ctrl": false, "alt": false, "raw": "" },
+          { "char": "", "name": "right", "shift": false, "ctrl": false, "alt": false, "raw": "" },
+          { "char": "", "name": "right", "shift": false, "ctrl": false, "alt": false, "raw": "" },
+          { "char": "", "name": "right", "shift": false, "ctrl": false, "alt": false, "raw": "" }
+        ]
+      },
+      "output": { "state": { "text": "ab", "cursor": 2 }, "consumed": [true, true, true, true, true, true] },
+      "inputSha256": "a90c95714c4396e57e7f34346043ddcf655e05080d1fd0fd22b0371ef615b617"
+    },
+    {
+      "id": "terminal-line-editor-004",
+      "name": "supports home/end and ctrl+a/ctrl+e",
+      "source": "src/line-editor.test.ts",
+      "sourceName": "supports home/end and ctrl+a/ctrl+e",
+      "api": "createLineState/applyLineEdit",
+      "input": {
+        "kind": "edit",
+        "initial": "hello",
+        "events": [
+          { "char": "", "name": "home", "shift": false, "ctrl": false, "alt": false, "raw": "" },
+          { "char": "", "name": "end", "shift": false, "ctrl": false, "alt": false, "raw": "" },
+          { "char": "", "name": "a", "shift": false, "ctrl": true, "alt": false, "raw": "" },
+          { "char": "", "name": "e", "shift": false, "ctrl": true, "alt": false, "raw": "" }
+        ]
+      },
+      "output": { "state": { "text": "hello", "cursor": 5 }, "consumed": [true, true, true, true] },
+      "inputSha256": "5df3ceb6bb1e574d7d8d936ffa9d7010b2bc5db407a3107644bed88660c6405c"
+    },
+    {
+      "id": "terminal-line-editor-005",
+      "name": "backspaces before the cursor and is a no-op at start",
+      "source": "src/line-editor.test.ts",
+      "sourceName": "backspaces before the cursor and is a no-op at start",
+      "api": "createLineState/applyLineEdit",
+      "input": {
+        "kind": "edit",
+        "initial": "abc",
+        "cursor": 2,
+        "events": [
+          { "char": "", "name": "backspace", "shift": false, "ctrl": false, "alt": false, "raw": "" },
+          { "setCursor": 0 },
+          { "char": "", "name": "backspace", "shift": false, "ctrl": false, "alt": false, "raw": "" }
+        ]
+      },
+      "output": { "state": { "text": "ac", "cursor": 0 }, "consumed": [true, null, true] },
+      "inputSha256": "472b964d72b6dbffaef73137ab0f3d26e14a164b5acfd882b0b5db37b10c3ddc"
+    },
+    {
+      "id": "terminal-line-editor-006",
+      "name": "deletes at the cursor and is a no-op at end",
+      "source": "src/line-editor.test.ts",
+      "sourceName": "deletes at the cursor and is a no-op at end",
+      "api": "createLineState/applyLineEdit",
+      "input": {
+        "kind": "edit",
+        "initial": "abc",
+        "cursor": 1,
+        "events": [
+          { "char": "", "name": "delete", "shift": false, "ctrl": false, "alt": false, "raw": "" },
+          { "setCursor": 2 },
+          { "char": "", "name": "delete", "shift": false, "ctrl": false, "alt": false, "raw": "" }
+        ]
+      },
+      "output": { "state": { "text": "ac", "cursor": 2 }, "consumed": [true, null, true] },
+      "inputSha256": "17a110d2ec73b6db758e43e625ecca665c0f294c2b2ddc32bab5801c08aec4b2"
+    },
+    {
+      "id": "terminal-line-editor-007",
+      "name": "ctrl+u kills to start",
+      "source": "src/line-editor.test.ts",
+      "sourceName": "ctrl+u kills to start",
+      "api": "createLineState/applyLineEdit",
+      "input": {
+        "kind": "edit",
+        "initial": "hello world",
+        "cursor": 6,
+        "events": [{ "char": "", "name": "u", "shift": false, "ctrl": true, "alt": false, "raw": "" }]
+      },
+      "output": { "state": { "text": "world", "cursor": 0 }, "consumed": [true] },
+      "inputSha256": "ecc8e774fa2ff6bc5fa08c97b030cc0e4539edb04e6ba9e54e4fd0df86a47655"
+    },
+    {
+      "id": "terminal-line-editor-008",
+      "name": "ctrl+k kills to end",
+      "source": "src/line-editor.test.ts",
+      "sourceName": "ctrl+k kills to end",
+      "api": "createLineState/applyLineEdit",
+      "input": {
+        "kind": "edit",
+        "initial": "hello world",
+        "cursor": 5,
+        "events": [{ "char": "", "name": "k", "shift": false, "ctrl": true, "alt": false, "raw": "" }]
+      },
+      "output": { "state": { "text": "hello", "cursor": 5 }, "consumed": [true] },
+      "inputSha256": "2a327518e5e8f85be5ddeeb866532c0b72b705d2a68ce3534f6b97e1b1ab8d5e"
+    },
+    {
+      "id": "terminal-line-editor-009",
+      "name": "ctrl+w deletes a word",
+      "source": "src/line-editor.test.ts",
+      "sourceName": "ctrl+w deletes a word",
+      "api": "createLineState/applyLineEdit",
+      "input": {
+        "kind": "edit",
+        "initial": "foo bar baz",
+        "cursor": 11,
+        "events": [{ "char": "", "name": "w", "shift": false, "ctrl": true, "alt": false, "raw": "" }]
+      },
+      "output": { "state": { "text": "foo bar ", "cursor": 8 }, "consumed": [true] },
+      "inputSha256": "14349d7a5386d9a51dfa8be9bdd9bc0f82683bd0a820449d1d669bb3a6bd2787"
+    },
+    {
+      "id": "terminal-line-editor-010",
+      "name": "inserts pasted text and collapses newlines to spaces",
+      "source": "src/line-editor.test.ts",
+      "sourceName": "inserts pasted text and collapses newlines to spaces",
+      "api": "createLineState/applyLineEdit",
+      "input": {
+        "kind": "edit",
+        "initial": "",
+        "events": [{ "char": "a\nb", "name": "paste", "shift": false, "ctrl": false, "alt": false, "raw": "" }]
+      },
+      "output": { "state": { "text": "a b", "cursor": 3 }, "consumed": [true] },
+      "inputSha256": "7d41079f49f7ead9a557761cb6e90be6ad0235c662a6ca061f651dee6cd310fc"
+    },
+    {
+      "id": "terminal-line-editor-011",
+      "name": "does not consume enter/escape/tab",
+      "source": "src/line-editor.test.ts",
+      "sourceName": "does not consume enter/escape/tab",
+      "api": "createLineState/applyLineEdit",
+      "input": {
+        "kind": "edit",
+        "initial": "x",
+        "events": [
+          { "char": "", "name": "enter", "shift": false, "ctrl": false, "alt": false, "raw": "" },
+          { "char": "", "name": "escape", "shift": false, "ctrl": false, "alt": false, "raw": "" },
+          { "char": "", "name": "tab", "shift": false, "ctrl": false, "alt": false, "raw": "" }
+        ]
+      },
+      "output": { "state": { "text": "x", "cursor": 1 }, "consumed": [false, false, false] },
+      "inputSha256": "6961e6cb92841aa8fe672efa963776954617a7c741331b9d49c547de9ddf2f5e"
+    },
+    {
+      "id": "terminal-line-editor-012",
+      "name": "renders a reverse-video cursor over the character at the cursor",
+      "source": "src/line-editor.test.ts",
+      "sourceName": "renders a reverse-video cursor over the character at the cursor",
+      "api": "renderLineWindow",
+      "input": { "kind": "render", "initial": "abc", "cursor": 1, "maxWidth": 80 },
+      "output": { "rendered": "a\u001b[7mb\u001b[27mc", "visibleLength": 3 },
+      "inputSha256": "71e74aed7cdd5270ed29eca76b8a9f517b9e578ea4d41eea00b1aec8983523bc"
+    },
+    {
+      "id": "terminal-line-editor-013",
+      "name": "renders a trailing highlighted cell when the cursor is past the end",
+      "source": "src/line-editor.test.ts",
+      "sourceName": "renders a trailing highlighted cell when the cursor is past the end",
+      "api": "renderLineWindow",
+      "input": { "kind": "render", "initial": "ab", "maxWidth": 80 },
+      "output": { "rendered": "ab\u001b[7m \u001b[27m", "visibleLength": 3 },
+      "inputSha256": "c16dc932a5da04776862d1bff76bb5eba3b4308e51d8321f554c136262b9090e"
+    },
+    {
+      "id": "terminal-line-editor-014",
+      "name": "horizontally scrolls so the cursor stays visible within maxWidth",
+      "source": "src/line-editor.test.ts",
+      "sourceName": "horizontally scrolls so the cursor stays visible within maxWidth",
+      "api": "renderLineWindow",
+      "input": { "kind": "render", "initial": "0123456789", "cursor": 9, "maxWidth": 5 },
+      "output": { "rendered": "5678\u001b[7m9\u001b[27m", "visibleLength": 5 },
+      "inputSha256": "6138e4a31a6d023cbbd9777c26629b096025a31d43f7c89748bab2fb5cb9e94f"
+    }
+  ]
+}

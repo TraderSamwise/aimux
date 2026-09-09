@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "source": "src/core-command-transport.test.ts",
+  "generatedBy": "scripts/capture-core-command-transport-contract.mjs",
+  "description": "Core command transport envelope posting, timeout forwarding, daemon error propagation, and mismatched response validation captured by running TypeScript sendCoreCommand with a mocked daemon client.",
+  "constants": { "route": "/core/commands" },
+  "cases": [
+    {
+      "id": "core-command-transport-001",
+      "name": "posts command envelopes to the daemon command route",
+      "source": "src/core-command-transport.test.ts",
+      "api": "sendCoreCommand",
+      "input": {
+        "api": "sendCoreCommand",
+        "command": "core.ping",
+        "options": { "timeoutMs": 1234 },
+        "mockResponse": "echo-command-success"
+      },
+      "output": {
+        "ok": true,
+        "value": {
+          "ok": true,
+          "id": "test",
+          "command": "core.ping",
+          "issuedAt": "1970-01-01T00:00:00.000Z",
+          "result": { "pong": true }
+        },
+        "calls": [
+          {
+            "path": "/core/commands",
+            "init": {
+              "method": "POST",
+              "headers": { "content-type": "application/json" },
+              "body": "{\"command\":\"core.ping\"}",
+              "timeoutMs": 1234
+            }
+          }
+        ]
+      },
+      "inputSha256": "e5f7a649534c9423676cbc86157de8a84dad4de5051fcb4814d5d841e7e74532"
+    },
+    {
+      "id": "core-command-transport-002",
+      "name": "throws daemon command errors",
+      "source": "src/core-command-transport.test.ts",
+      "api": "sendCoreCommand",
+      "input": { "api": "sendCoreCommand", "command": "core.ping", "mockResponse": "daemon-error" },
+      "output": {
+        "ok": false,
+        "error": "bad command",
+        "calls": [
+          {
+            "path": "/core/commands",
+            "init": {
+              "method": "POST",
+              "headers": { "content-type": "application/json" },
+              "body": "{\"command\":\"core.ping\"}"
+            }
+          }
+        ]
+      },
+      "inputSha256": "b265e636f85dd380e218702e3102ad069a69a2663ec9aa5a414fdc159d2cfb11"
+    },
+    {
+      "id": "core-command-transport-003",
+      "name": "throws mismatched command responses",
+      "source": "src/core-command-transport.test.ts",
+      "api": "sendCoreCommand",
+      "input": { "api": "sendCoreCommand", "command": "core.ping", "mockResponse": "mismatched-command" },
+      "output": {
+        "ok": false,
+        "error": "core command response mismatch: expected core.ping, got core.status",
+        "calls": [
+          {
+            "path": "/core/commands",
+            "init": {
+              "method": "POST",
+              "headers": { "content-type": "application/json" },
+              "body": "{\"command\":\"core.ping\"}"
+            }
+          }
+        ]
+      },
+      "inputSha256": "f16b2a1f8c06ab05e981c77e6722c455b2c3d85a5e85a2c47f7e1a64fe2eb86f"
+    }
+  ]
+}

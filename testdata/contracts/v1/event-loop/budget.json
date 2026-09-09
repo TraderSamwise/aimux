@@ -1,0 +1,173 @@
+{
+  "version": 1,
+  "source": "src/event-loop-budget.test.ts",
+  "generatedBy": "scripts/capture-event-loop-contract.mjs",
+  "description": "Event-loop budget assessment thresholds, rounding, insufficient-sample, unstarted-monitor, and multi-reason contracts captured by running TypeScript.",
+  "constants": { "MAX_SYNC_SHARE_PCT": 2, "MAX_LOOP_DELAY_P99_MS": 250, "MIN_WINDOW_MS": 10000, "MIN_SYNC_CALLS": 20 },
+  "cases": [
+    {
+      "id": "event-loop-budget-001",
+      "name": "passes a daemon that stays answerable",
+      "source": "src/event-loop-budget.test.ts",
+      "api": "assessLoopBudget",
+      "input": {
+        "windowMs": 60000,
+        "eventLoop": { "p50": 5, "p90": 20, "p99": 40, "max": 120, "mean": 8, "monitoring": true },
+        "tmuxExec": {
+          "sync": { "count": 200, "totalMs": 300, "maxMs": 12 },
+          "async": { "count": 500, "totalMs": 4000, "maxMs": 60 },
+          "syncByVerb": { "list-windows": { "count": 200, "totalMs": 300, "maxMs": 12 } },
+          "syncByCaller": {}
+        }
+      },
+      "output": { "withinBudget": true, "syncSharePct": 0.5, "loopDelayP99Ms": 40, "reasons": [] },
+      "inputSha256": "5a69d9f4f7710a26ae13ace140cf9ca26e21eb0028e5643e8a1cbe809f3afd44"
+    },
+    {
+      "id": "event-loop-budget-002",
+      "name": "fails the real 66.8s sample this gate was written against",
+      "source": "src/event-loop-budget.test.ts",
+      "api": "assessLoopBudget",
+      "input": {
+        "windowMs": 66800,
+        "eventLoop": { "p50": 41.22, "p90": 81.92, "p99": 856.16, "max": 3527.41, "mean": 0, "monitoring": true },
+        "tmuxExec": {
+          "sync": { "count": 759, "totalMs": 6582, "maxMs": 21 },
+          "async": { "count": 0, "totalMs": 0, "maxMs": 0 },
+          "syncByVerb": { "list-windows": { "count": 315, "totalMs": 2837, "maxMs": 12 } },
+          "syncByCaller": {}
+        }
+      },
+      "output": {
+        "withinBudget": false,
+        "syncSharePct": 9.85,
+        "loopDelayP99Ms": 856.16,
+        "reasons": ["sync-share-over-budget", "loop-delay-over-budget"]
+      },
+      "inputSha256": "1c81e6ce032df79ae022abd65d73e6febc011bd03c3b853d79fc052fb6004da2"
+    },
+    {
+      "id": "event-loop-budget-003",
+      "name": "reports a too-small sample as its own outcome, never as a pass",
+      "source": "src/event-loop-budget.test.ts",
+      "api": "assessLoopBudget",
+      "input": {
+        "windowMs": 200,
+        "eventLoop": { "p50": 5, "p90": 20, "p99": 40, "max": 120, "mean": 8, "monitoring": true },
+        "tmuxExec": {
+          "sync": { "count": 1, "totalMs": 1, "maxMs": 1 },
+          "async": { "count": 0, "totalMs": 0, "maxMs": 0 },
+          "syncByVerb": {},
+          "syncByCaller": {}
+        }
+      },
+      "output": {
+        "withinBudget": false,
+        "syncSharePct": 0.5,
+        "loopDelayP99Ms": 40,
+        "reasons": ["insufficient-sample"]
+      },
+      "inputSha256": "9326a0544268f5170feea49ea61543d7ad0361a67d7eadc40670ee82ef3d4df6"
+    },
+    {
+      "id": "event-loop-budget-004",
+      "name": "treats an unstarted monitor as unknown rather than healthy",
+      "source": "src/event-loop-budget.test.ts",
+      "api": "assessLoopBudget",
+      "input": {
+        "windowMs": 60000,
+        "eventLoop": { "p50": 0, "p90": 0, "p99": 0, "max": 0, "mean": 0, "monitoring": false },
+        "tmuxExec": {
+          "sync": { "count": 200, "totalMs": 300, "maxMs": 12 },
+          "async": { "count": 500, "totalMs": 4000, "maxMs": 60 },
+          "syncByVerb": { "list-windows": { "count": 200, "totalMs": 300, "maxMs": 12 } },
+          "syncByCaller": {}
+        }
+      },
+      "output": { "withinBudget": false, "syncSharePct": 0.5, "loopDelayP99Ms": 0, "reasons": ["not-monitoring"] },
+      "inputSha256": "bf1c7b244b061fa7b3ddfedf80381687f10e9b5ab001a30bffd63f46d63ec236"
+    },
+    {
+      "id": "event-loop-budget-005",
+      "name": "puts the sync-share boundary on the stated side of the threshold",
+      "source": "src/event-loop-budget.test.ts",
+      "api": "assessLoopBudget",
+      "input": {
+        "windowMs": 100000,
+        "eventLoop": { "p50": 5, "p90": 20, "p99": 40, "max": 120, "mean": 8, "monitoring": true },
+        "tmuxExec": {
+          "sync": { "count": 100, "totalMs": 2000, "maxMs": 5 },
+          "async": { "count": 0, "totalMs": 0, "maxMs": 0 },
+          "syncByVerb": {},
+          "syncByCaller": {}
+        }
+      },
+      "output": { "withinBudget": true, "syncSharePct": 2, "loopDelayP99Ms": 40, "reasons": [] },
+      "inputSha256": "f4c4889cdc395131694f6865354ec9d4ffe8e40c1b2828aa8fb98c2939bfdba7"
+    },
+    {
+      "id": "event-loop-budget-006",
+      "name": "puts the loop-delay boundary on the stated side of the threshold",
+      "source": "src/event-loop-budget.test.ts",
+      "api": "assessLoopBudget",
+      "input": {
+        "windowMs": 60000,
+        "eventLoop": { "p50": 5, "p90": 20, "p99": 250, "max": 300, "mean": 8, "monitoring": true },
+        "tmuxExec": {
+          "sync": { "count": 200, "totalMs": 300, "maxMs": 12 },
+          "async": { "count": 500, "totalMs": 4000, "maxMs": 60 },
+          "syncByVerb": { "list-windows": { "count": 200, "totalMs": 300, "maxMs": 12 } },
+          "syncByCaller": {}
+        }
+      },
+      "output": { "withinBudget": true, "syncSharePct": 0.5, "loopDelayP99Ms": 250, "reasons": [] },
+      "inputSha256": "13b6e36f6e7067536a65a8a1226601aa7d3cc8555bc211a441b1c86152ae0735"
+    },
+    {
+      "id": "event-loop-budget-007",
+      "name": "compares the raw share, not the rounded one",
+      "source": "src/event-loop-budget.test.ts",
+      "api": "assessLoopBudget",
+      "input": {
+        "windowMs": 100000,
+        "eventLoop": { "p50": 1, "p90": 2, "p99": 3, "max": 4, "mean": 1, "monitoring": true },
+        "tmuxExec": {
+          "sync": { "count": 100, "totalMs": 2004, "maxMs": 5 },
+          "async": { "count": 0, "totalMs": 0, "maxMs": 0 },
+          "syncByVerb": {},
+          "syncByCaller": {}
+        }
+      },
+      "output": {
+        "withinBudget": false,
+        "syncSharePct": 2,
+        "loopDelayP99Ms": 3,
+        "reasons": ["sync-share-over-budget"]
+      },
+      "inputSha256": "0aba59c205ebf8da4957f8ead60ada4bdc2e6cbfcf80dfa467da49a39127e30a"
+    },
+    {
+      "id": "event-loop-budget-008",
+      "name": "names every reason it failed, not just the first",
+      "source": "src/event-loop-budget.test.ts",
+      "api": "assessLoopBudget",
+      "input": {
+        "windowMs": 9999,
+        "eventLoop": { "p50": 0, "p90": 0, "p99": 9999, "max": 9999, "mean": 0, "monitoring": false },
+        "tmuxExec": {
+          "sync": { "count": 19, "totalMs": 9000, "maxMs": 900 },
+          "async": { "count": 0, "totalMs": 0, "maxMs": 0 },
+          "syncByVerb": {},
+          "syncByCaller": {}
+        }
+      },
+      "output": {
+        "withinBudget": false,
+        "syncSharePct": 90.01,
+        "loopDelayP99Ms": 9999,
+        "reasons": ["insufficient-sample", "not-monitoring", "sync-share-over-budget", "loop-delay-over-budget"]
+      },
+      "inputSha256": "ca960653a28b04ba03eb4f0f8314375abf66697ee6edb586554c6009aca3d29e"
+    }
+  ]
+}

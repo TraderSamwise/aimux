@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "source": "src/hotkeys.test.ts",
+  "generatedBy": "scripts/capture-hotkeys-contract.mjs",
+  "description": "Leader-key action mapping and indicator writes captured by running TypeScript HotkeyHandler with stdout write recording.",
+  "cases": [
+    {
+      "id": "terminal-hotkeys-001",
+      "name": "maps leader shift-p to the work outline action",
+      "source": "src/hotkeys.test.ts",
+      "sourceName": "maps leader shift-p to the work outline action",
+      "api": "HotkeyHandler.feed",
+      "input": { "chunks": ["\u0001", "P"], "columns": 80 },
+      "output": {
+        "returns": [null, null],
+        "actions": [{ "type": "work-outline" }],
+        "writes": ["\u001b7\u001b[1;72H\u001b[7;33m ^A → ? \u001b[0m\u001b8", "\u001b7\u001b[1;72H        \u001b8"]
+      },
+      "inputSha256": "59f45e9d2786d1c6c9af8fadd602da5d4c2a6d8ced1bc681dd8c768f9664b7a4"
+    },
+    {
+      "id": "terminal-hotkeys-002",
+      "name": "keeps leader lowercase-p mapped to previous session",
+      "source": "src/hotkeys.test.ts",
+      "sourceName": "keeps leader lowercase-p mapped to previous session",
+      "api": "HotkeyHandler.feed",
+      "input": { "chunks": ["\u0001", "p"], "columns": 80 },
+      "output": {
+        "returns": [null, null],
+        "actions": [{ "type": "prev" }],
+        "writes": ["\u001b7\u001b[1;72H\u001b[7;33m ^A → ? \u001b[0m\u001b8", "\u001b7\u001b[1;72H        \u001b8"]
+      },
+      "inputSha256": "091dd01331f357bf6e866cb0c3a63dcf626ae4b42340676cf32ca9ba1f5abc25"
+    }
+  ]
+}

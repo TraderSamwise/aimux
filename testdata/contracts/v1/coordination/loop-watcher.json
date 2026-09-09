@@ -1,0 +1,586 @@
+{
+  "version": 1,
+  "source": ["src/loop-watcher.test.ts"],
+  "generatedBy": "scripts/capture-loop-watcher-contract.mjs",
+  "description": "Loop watcher candidate selection, overseer briefing rendering, scan cooldown, auto-nudge, and failed-send retry behavior captured by running TypeScript loop-watcher helpers.",
+  "cases": [
+    {
+      "id": "loop-watcher-001",
+      "name": "flags in-loop idle agents with normal attention",
+      "source": "src/loop-watcher.test.ts",
+      "api": "findLoopCandidates",
+      "input": {
+        "name": "flags in-loop idle agents with normal attention",
+        "source": "src/loop-watcher.test.ts",
+        "api": "findLoopCandidates",
+        "sessions": [{ "id": "a", "status": "running", "tool": "claude", "worktreePath": "/wt/a" }],
+        "metadata": {
+          "version": 1,
+          "sessions": {
+            "a": {
+              "updatedAt": "2026-06-13T00:00:00.000Z",
+              "loop": {
+                "active": true,
+                "goal": "ship it",
+                "since": "2026-06-13T00:00:00.000Z",
+                "source": "dashboard",
+                "updatedBy": "dashboard"
+              },
+              "derived": { "activity": "idle", "attention": "normal" }
+            }
+          }
+        }
+      },
+      "output": [
+        {
+          "id": "a",
+          "goal": "ship it",
+          "worktreePath": "/wt/a",
+          "tool": "claude",
+          "loopSince": "2026-06-13T00:00:00.000Z",
+          "loopSource": "dashboard",
+          "loopUpdatedBy": "dashboard"
+        }
+      ],
+      "inputSha256": "ce55806c0f3a535e6cef13b856462aa04c15e3a9c78fc4c759908f34be154edd"
+    },
+    {
+      "id": "loop-watcher-002",
+      "name": "flags in-loop done agents",
+      "source": "src/loop-watcher.test.ts",
+      "api": "findLoopCandidates",
+      "input": {
+        "name": "flags in-loop done agents",
+        "source": "src/loop-watcher.test.ts",
+        "api": "findLoopCandidates",
+        "sessions": [{ "id": "a", "status": "running", "tool": "claude", "worktreePath": "/wt/a" }],
+        "metadata": {
+          "version": 1,
+          "sessions": {
+            "a": {
+              "updatedAt": "2026-06-13T00:00:00.000Z",
+              "loop": {
+                "active": true,
+                "goal": "ship it",
+                "since": "2026-06-13T00:00:00.000Z",
+                "source": "dashboard",
+                "updatedBy": "dashboard"
+              },
+              "derived": { "activity": "done", "attention": "normal" }
+            }
+          }
+        }
+      },
+      "output": [
+        {
+          "id": "a",
+          "goal": "ship it",
+          "worktreePath": "/wt/a",
+          "tool": "claude",
+          "loopSince": "2026-06-13T00:00:00.000Z",
+          "loopSource": "dashboard",
+          "loopUpdatedBy": "dashboard"
+        }
+      ],
+      "inputSha256": "d17372cd6f0da4250109fb9fc0a8ea381ba5399545add2f85d96b5c3387b89a4"
+    },
+    {
+      "id": "loop-watcher-003",
+      "name": "ignores agents that are still working",
+      "source": "src/loop-watcher.test.ts",
+      "api": "findLoopCandidates",
+      "input": {
+        "name": "ignores agents that are still working",
+        "source": "src/loop-watcher.test.ts",
+        "api": "findLoopCandidates",
+        "sessions": [{ "id": "a", "status": "running", "tool": "claude", "worktreePath": "/wt/a" }],
+        "metadata": {
+          "version": 1,
+          "sessions": {
+            "a": {
+              "updatedAt": "2026-06-13T00:00:00.000Z",
+              "loop": {
+                "active": true,
+                "goal": "ship it",
+                "since": "2026-06-13T00:00:00.000Z",
+                "source": "dashboard",
+                "updatedBy": "dashboard"
+              },
+              "derived": { "activity": "running", "attention": "normal" }
+            }
+          }
+        }
+      },
+      "output": [],
+      "inputSha256": "b323bd74e5de5634a18dda47b3de3a5785365dc6b13affa132e89540db665c0c"
+    },
+    {
+      "id": "loop-watcher-004",
+      "name": "ignores agents waiting on a human",
+      "source": "src/loop-watcher.test.ts",
+      "api": "findLoopCandidates",
+      "input": {
+        "name": "ignores agents waiting on a human",
+        "source": "src/loop-watcher.test.ts",
+        "api": "findLoopCandidates",
+        "sessions": [{ "id": "a", "status": "running", "tool": "claude", "worktreePath": "/wt/a" }],
+        "metadata": {
+          "version": 1,
+          "sessions": {
+            "a": {
+              "updatedAt": "2026-06-13T00:00:00.000Z",
+              "loop": {
+                "active": true,
+                "goal": "ship it",
+                "since": "2026-06-13T00:00:00.000Z",
+                "source": "dashboard",
+                "updatedBy": "dashboard"
+              },
+              "derived": { "activity": "idle", "attention": "needs_response" }
+            }
+          }
+        }
+      },
+      "output": [],
+      "inputSha256": "b0cf0308990dc74a00ce17f3e0ddf59e9dbc0e93757d11d1019fa9aeac569254"
+    },
+    {
+      "id": "loop-watcher-005",
+      "name": "ignores agents not marked in a loop",
+      "source": "src/loop-watcher.test.ts",
+      "api": "findLoopCandidates",
+      "input": {
+        "name": "ignores agents not marked in a loop",
+        "source": "src/loop-watcher.test.ts",
+        "api": "findLoopCandidates",
+        "sessions": [{ "id": "a", "status": "running", "tool": "claude", "worktreePath": "/wt/a" }],
+        "metadata": {
+          "version": 1,
+          "sessions": { "a": { "updatedAt": "2026-06-13T00:00:00.000Z", "derived": { "activity": "idle" } } }
+        }
+      },
+      "output": [],
+      "inputSha256": "a0d4f506700cf8232d0094c08052e94a4bc4de5b6be622cbd6c7d205d7799eaa"
+    },
+    {
+      "id": "loop-watcher-006",
+      "name": "ignores the overseer itself",
+      "source": "src/loop-watcher.test.ts",
+      "api": "findLoopCandidates",
+      "input": {
+        "name": "ignores the overseer itself",
+        "source": "src/loop-watcher.test.ts",
+        "api": "findLoopCandidates",
+        "sessions": [{ "id": "a", "status": "running", "tool": "claude", "worktreePath": "/wt/a" }],
+        "metadata": {
+          "version": 1,
+          "sessions": {
+            "a": {
+              "updatedAt": "2026-06-13T00:00:00.000Z",
+              "loop": {
+                "active": true,
+                "goal": "ship it",
+                "since": "2026-06-13T00:00:00.000Z",
+                "source": "dashboard",
+                "updatedBy": "dashboard"
+              },
+              "derived": { "activity": "idle", "attention": "normal" }
+            }
+          }
+        },
+        "overseerId": "a"
+      },
+      "output": [],
+      "inputSha256": "f6a3f21b6adab56bd7c96964cf4824363b877ad89d8cf49975b7ea8a4ddc171f"
+    },
+    {
+      "id": "loop-watcher-007",
+      "name": "ignores agents with pending interactions",
+      "source": "src/loop-watcher.test.ts",
+      "api": "findLoopCandidates",
+      "input": {
+        "name": "ignores agents with pending interactions",
+        "source": "src/loop-watcher.test.ts",
+        "api": "findLoopCandidates",
+        "sessions": [{ "id": "a", "status": "running", "tool": "claude", "worktreePath": "/wt/a" }],
+        "metadata": {
+          "version": 1,
+          "sessions": {
+            "a": {
+              "updatedAt": "2026-06-13T00:00:00.000Z",
+              "loop": {
+                "active": true,
+                "goal": "ship it",
+                "since": "2026-06-13T00:00:00.000Z",
+                "source": "dashboard",
+                "updatedBy": "dashboard"
+              },
+              "derived": { "activity": "idle", "attention": "normal" }
+            }
+          }
+        },
+        "pendingInteractions": ["a"]
+      },
+      "output": [],
+      "inputSha256": "d3891f7f2f8f4fcad34f0a055f911f031ee6dcf8c952ab37c5d71468596270fa"
+    },
+    {
+      "id": "loop-watcher-008",
+      "name": "builds default overseer briefing",
+      "source": "src/loop-watcher.test.ts",
+      "api": "buildOverseerBriefing",
+      "input": {
+        "name": "builds default overseer briefing",
+        "source": "src/loop-watcher.test.ts",
+        "api": "buildOverseerBriefing",
+        "candidates": [
+          {
+            "id": "a",
+            "tool": "claude",
+            "worktreePath": "/wt/a",
+            "loopSince": "2026-06-13T00:00:00.000Z",
+            "loopSource": "dashboard",
+            "loopUpdatedBy": "dashboard"
+          }
+        ]
+      },
+      "output": "[aimux loop check] These agents are in a managed loop but appear to have stopped:\n- a (claude) @ /wt/a — loop since 2026-06-13T00:00:00.000Z by dashboard/dashboard\n\nCurrent loop membership is authoritative. If a listed agent was previously removed, the shown loop-since/source is newer state; do not remove it merely because you remember an older removal.\nFor each: read its recent output with `aimux host agent-read <id>`, then decide whether it stopped prematurely.\nIf it should keep going, send a specific next instruction with `aimux input <id> \"…\"`.\nIf it genuinely finished its goal or is blocked beyond repair, run `aimux loop remove <id>` and report back.",
+      "inputSha256": "cfa0b9a9a4c7f8df56235076833d5173389d2bcb22ec79cbf6d2a349a3cfc366"
+    },
+    {
+      "id": "loop-watcher-009",
+      "name": "renders custom overseer briefing template",
+      "source": "src/loop-watcher.test.ts",
+      "api": "buildOverseerBriefing",
+      "input": {
+        "name": "renders custom overseer briefing template",
+        "source": "src/loop-watcher.test.ts",
+        "api": "buildOverseerBriefing",
+        "candidates": [
+          {
+            "id": "a",
+            "tool": "claude",
+            "worktreePath": "/wt/a",
+            "loopSince": "2026-06-13T00:00:00.000Z",
+            "loopSource": "dashboard",
+            "loopUpdatedBy": "dashboard"
+          }
+        ],
+        "template": "Loop check: {{count}}\n{{candidates}}\nUse my project-specific policy."
+      },
+      "output": "Loop check: 1\n- a (claude) @ /wt/a — loop since 2026-06-13T00:00:00.000Z by dashboard/dashboard\nUse my project-specific policy.",
+      "inputSha256": "c79f7621e2fc307382bf2bfc9ebc75366e60b4c291e3c08da2e047a095925093"
+    },
+    {
+      "id": "loop-watcher-010",
+      "name": "wakes running overseer respecting cooldown",
+      "source": "src/loop-watcher.test.ts",
+      "api": "LoopWatcher.scan",
+      "input": {
+        "name": "wakes running overseer respecting cooldown",
+        "source": "src/loop-watcher.test.ts",
+        "api": "LoopWatcher.scan",
+        "sessions": [
+          { "id": "a", "status": "running", "tool": "claude", "worktreePath": "/wt/a" },
+          { "id": "boss", "status": "running" }
+        ],
+        "metadata": {
+          "version": 1,
+          "sessions": {
+            "a": {
+              "updatedAt": "2026-06-13T00:00:00.000Z",
+              "loop": {
+                "active": true,
+                "goal": "ship it",
+                "since": "2026-06-13T00:00:00.000Z",
+                "source": "dashboard",
+                "updatedBy": "dashboard"
+              },
+              "derived": { "activity": "idle", "attention": "normal" }
+            },
+            "boss": { "updatedAt": "2026-06-13T00:00:00.000Z", "overseer": true }
+          }
+        },
+        "ops": [{ "kind": "scan" }, { "kind": "scan" }, { "kind": "advance", "ms": 60001 }, { "kind": "scan" }]
+      },
+      "output": [
+        {
+          "kind": "scan",
+          "sends": [
+            {
+              "sessionId": "boss",
+              "text": "[aimux loop check] These agents are in a managed loop but appear to have stopped:\n- a (claude) @ /wt/a — loop since 2026-06-13T00:00:00.000Z by dashboard/dashboard — goal: ship it\n\nCurrent loop membership is authoritative. If a listed agent was previously removed, the shown loop-since/source is newer state; do not remove it merely because you remember an older removal.\nFor each: read its recent output with `aimux host agent-read <id>`, then decide whether it stopped prematurely.\nIf it should keep going, send a specific next instruction with `aimux input <id> \"…\"`.\nIf it genuinely finished its goal or is blocked beyond repair, run `aimux loop remove <id>` and report back."
+            }
+          ]
+        },
+        {
+          "kind": "scan",
+          "sends": [
+            {
+              "sessionId": "boss",
+              "text": "[aimux loop check] These agents are in a managed loop but appear to have stopped:\n- a (claude) @ /wt/a — loop since 2026-06-13T00:00:00.000Z by dashboard/dashboard — goal: ship it\n\nCurrent loop membership is authoritative. If a listed agent was previously removed, the shown loop-since/source is newer state; do not remove it merely because you remember an older removal.\nFor each: read its recent output with `aimux host agent-read <id>`, then decide whether it stopped prematurely.\nIf it should keep going, send a specific next instruction with `aimux input <id> \"…\"`.\nIf it genuinely finished its goal or is blocked beyond repair, run `aimux loop remove <id>` and report back."
+            }
+          ]
+        },
+        { "kind": "advance", "now": 1060001 },
+        {
+          "kind": "scan",
+          "sends": [
+            {
+              "sessionId": "boss",
+              "text": "[aimux loop check] These agents are in a managed loop but appear to have stopped:\n- a (claude) @ /wt/a — loop since 2026-06-13T00:00:00.000Z by dashboard/dashboard — goal: ship it\n\nCurrent loop membership is authoritative. If a listed agent was previously removed, the shown loop-since/source is newer state; do not remove it merely because you remember an older removal.\nFor each: read its recent output with `aimux host agent-read <id>`, then decide whether it stopped prematurely.\nIf it should keep going, send a specific next instruction with `aimux input <id> \"…\"`.\nIf it genuinely finished its goal or is blocked beyond repair, run `aimux loop remove <id>` and report back."
+            },
+            {
+              "sessionId": "boss",
+              "text": "[aimux loop check] These agents are in a managed loop but appear to have stopped:\n- a (claude) @ /wt/a — loop since 2026-06-13T00:00:00.000Z by dashboard/dashboard — goal: ship it\n\nCurrent loop membership is authoritative. If a listed agent was previously removed, the shown loop-since/source is newer state; do not remove it merely because you remember an older removal.\nFor each: read its recent output with `aimux host agent-read <id>`, then decide whether it stopped prematurely.\nIf it should keep going, send a specific next instruction with `aimux input <id> \"…\"`.\nIf it genuinely finished its goal or is blocked beyond repair, run `aimux loop remove <id>` and report back."
+            }
+          ]
+        }
+      ],
+      "inputSha256": "da68557c255dd66142d7ffcf656ba5b74e34006ab216a59fa81263e0331b5a65"
+    },
+    {
+      "id": "loop-watcher-011",
+      "name": "uses configured overseer briefing template",
+      "source": "src/loop-watcher.test.ts",
+      "api": "LoopWatcher.scan",
+      "input": {
+        "name": "uses configured overseer briefing template",
+        "source": "src/loop-watcher.test.ts",
+        "api": "LoopWatcher.scan",
+        "sessions": [
+          { "id": "a", "status": "running", "tool": "claude", "worktreePath": "/wt/a" },
+          { "id": "boss", "status": "running" }
+        ],
+        "metadata": {
+          "version": 1,
+          "sessions": {
+            "a": {
+              "updatedAt": "2026-06-13T00:00:00.000Z",
+              "loop": {
+                "active": true,
+                "goal": "ship it",
+                "since": "2026-06-13T00:00:00.000Z",
+                "source": "dashboard",
+                "updatedBy": "dashboard"
+              },
+              "derived": { "activity": "idle", "attention": "normal" }
+            },
+            "boss": { "updatedAt": "2026-06-13T00:00:00.000Z", "overseer": true }
+          }
+        },
+        "config": {
+          "scanIntervalMs": 15000,
+          "nudgeCooldownMs": 60000,
+          "autoNudgeWithoutOverseer": false,
+          "overseerBriefingTemplate": "Custom loop copy for {{count}}:\n{{candidates}}"
+        }
+      },
+      "output": [
+        {
+          "kind": "scan",
+          "sends": [
+            {
+              "sessionId": "boss",
+              "text": "Custom loop copy for 1:\n- a (claude) @ /wt/a — loop since 2026-06-13T00:00:00.000Z by dashboard/dashboard — goal: ship it"
+            }
+          ]
+        }
+      ],
+      "inputSha256": "fc6debe5489e44158db770080a06d5723e02a95864add30aa17e5ee740e551fb"
+    },
+    {
+      "id": "loop-watcher-012",
+      "name": "does nothing without overseer when auto-nudge is off",
+      "source": "src/loop-watcher.test.ts",
+      "api": "LoopWatcher.scan",
+      "input": {
+        "name": "does nothing without overseer when auto-nudge is off",
+        "source": "src/loop-watcher.test.ts",
+        "api": "LoopWatcher.scan",
+        "sessions": [{ "id": "a", "status": "running", "tool": "claude", "worktreePath": "/wt/a" }],
+        "metadata": {
+          "version": 1,
+          "sessions": {
+            "a": {
+              "updatedAt": "2026-06-13T00:00:00.000Z",
+              "loop": {
+                "active": true,
+                "goal": "ship it",
+                "since": "2026-06-13T00:00:00.000Z",
+                "source": "dashboard",
+                "updatedBy": "dashboard"
+              },
+              "derived": { "activity": "idle", "attention": "normal" }
+            }
+          }
+        }
+      },
+      "output": [{ "kind": "scan", "sends": [] }],
+      "inputSha256": "12fd3dad21fc17297acd6559ecaf0ae7de48d6d43de677369be3024fa376c268"
+    },
+    {
+      "id": "loop-watcher-013",
+      "name": "auto-nudges when overseer metadata is offline and auto-nudge is on",
+      "source": "src/loop-watcher.test.ts",
+      "api": "LoopWatcher.scan",
+      "input": {
+        "name": "auto-nudges when overseer metadata is offline and auto-nudge is on",
+        "source": "src/loop-watcher.test.ts",
+        "api": "LoopWatcher.scan",
+        "sessions": [{ "id": "a", "status": "running", "tool": "claude", "worktreePath": "/wt/a" }],
+        "metadata": {
+          "version": 1,
+          "sessions": {
+            "a": {
+              "updatedAt": "2026-06-13T00:00:00.000Z",
+              "loop": {
+                "active": true,
+                "goal": "ship it",
+                "since": "2026-06-13T00:00:00.000Z",
+                "source": "dashboard",
+                "updatedBy": "dashboard"
+              },
+              "derived": { "activity": "idle", "attention": "normal" }
+            },
+            "boss": { "updatedAt": "2026-06-13T00:00:00.000Z", "overseer": true }
+          }
+        },
+        "config": { "scanIntervalMs": 15000, "nudgeCooldownMs": 60000, "autoNudgeWithoutOverseer": true }
+      },
+      "output": [
+        {
+          "kind": "scan",
+          "sends": [
+            {
+              "sessionId": "a",
+              "text": "[aimux loop] You stopped, but you're in a managed loop with this goal: ship it.\nKeep working toward it now. Only stop when you have genuinely finished or are blocked beyond repair:\n- finished  → run `aimux loop done --reason \"…\"`\n- hard-blocked → run `aimux loop block --reason \"…\"`\nOtherwise, continue."
+            }
+          ]
+        }
+      ],
+      "inputSha256": "c62b704ea3a2ca25447ef430b3e557004e103c70564ec5448fe84629d47d1cb8"
+    },
+    {
+      "id": "loop-watcher-014",
+      "name": "sends canned nudge respecting cooldown",
+      "source": "src/loop-watcher.test.ts",
+      "api": "LoopWatcher.scan",
+      "input": {
+        "name": "sends canned nudge respecting cooldown",
+        "source": "src/loop-watcher.test.ts",
+        "api": "LoopWatcher.scan",
+        "sessions": [{ "id": "a", "status": "running", "tool": "claude", "worktreePath": "/wt/a" }],
+        "metadata": {
+          "version": 1,
+          "sessions": {
+            "a": {
+              "updatedAt": "2026-06-13T00:00:00.000Z",
+              "loop": {
+                "active": true,
+                "goal": "ship it",
+                "since": "2026-06-13T00:00:00.000Z",
+                "source": "dashboard",
+                "updatedBy": "dashboard"
+              },
+              "derived": { "activity": "idle", "attention": "normal" }
+            }
+          }
+        },
+        "config": { "scanIntervalMs": 15000, "nudgeCooldownMs": 60000, "autoNudgeWithoutOverseer": true },
+        "ops": [{ "kind": "scan" }, { "kind": "scan" }, { "kind": "advance", "ms": 60001 }, { "kind": "scan" }]
+      },
+      "output": [
+        {
+          "kind": "scan",
+          "sends": [
+            {
+              "sessionId": "a",
+              "text": "[aimux loop] You stopped, but you're in a managed loop with this goal: ship it.\nKeep working toward it now. Only stop when you have genuinely finished or are blocked beyond repair:\n- finished  → run `aimux loop done --reason \"…\"`\n- hard-blocked → run `aimux loop block --reason \"…\"`\nOtherwise, continue."
+            }
+          ]
+        },
+        {
+          "kind": "scan",
+          "sends": [
+            {
+              "sessionId": "a",
+              "text": "[aimux loop] You stopped, but you're in a managed loop with this goal: ship it.\nKeep working toward it now. Only stop when you have genuinely finished or are blocked beyond repair:\n- finished  → run `aimux loop done --reason \"…\"`\n- hard-blocked → run `aimux loop block --reason \"…\"`\nOtherwise, continue."
+            }
+          ]
+        },
+        { "kind": "advance", "now": 1060001 },
+        {
+          "kind": "scan",
+          "sends": [
+            {
+              "sessionId": "a",
+              "text": "[aimux loop] You stopped, but you're in a managed loop with this goal: ship it.\nKeep working toward it now. Only stop when you have genuinely finished or are blocked beyond repair:\n- finished  → run `aimux loop done --reason \"…\"`\n- hard-blocked → run `aimux loop block --reason \"…\"`\nOtherwise, continue."
+            },
+            {
+              "sessionId": "a",
+              "text": "[aimux loop] You stopped, but you're in a managed loop with this goal: ship it.\nKeep working toward it now. Only stop when you have genuinely finished or are blocked beyond repair:\n- finished  → run `aimux loop done --reason \"…\"`\n- hard-blocked → run `aimux loop block --reason \"…\"`\nOtherwise, continue."
+            }
+          ]
+        }
+      ],
+      "inputSha256": "6061b1d5d733c812e00f94847c8c390b9e8289cb0882ec8c4a7fefc56e11982a"
+    },
+    {
+      "id": "loop-watcher-015",
+      "name": "does not consume cooldown when nudge send fails",
+      "source": "src/loop-watcher.test.ts",
+      "api": "LoopWatcher.scan",
+      "input": {
+        "name": "does not consume cooldown when nudge send fails",
+        "source": "src/loop-watcher.test.ts",
+        "api": "LoopWatcher.scan",
+        "sessions": [{ "id": "a", "status": "running", "tool": "claude", "worktreePath": "/wt/a" }],
+        "metadata": {
+          "version": 1,
+          "sessions": {
+            "a": {
+              "updatedAt": "2026-06-13T00:00:00.000Z",
+              "loop": {
+                "active": true,
+                "goal": "ship it",
+                "since": "2026-06-13T00:00:00.000Z",
+                "source": "dashboard",
+                "updatedBy": "dashboard"
+              },
+              "derived": { "activity": "idle", "attention": "normal" }
+            }
+          }
+        },
+        "config": { "scanIntervalMs": 15000, "nudgeCooldownMs": 60000, "autoNudgeWithoutOverseer": true },
+        "sendFailures": ["a"],
+        "ops": [{ "kind": "scan" }, { "kind": "scan" }]
+      },
+      "output": [
+        {
+          "kind": "scan",
+          "sends": [
+            {
+              "sessionId": "a",
+              "text": "[aimux loop] You stopped, but you're in a managed loop with this goal: ship it.\nKeep working toward it now. Only stop when you have genuinely finished or are blocked beyond repair:\n- finished  → run `aimux loop done --reason \"…\"`\n- hard-blocked → run `aimux loop block --reason \"…\"`\nOtherwise, continue."
+            }
+          ]
+        },
+        {
+          "kind": "scan",
+          "sends": [
+            {
+              "sessionId": "a",
+              "text": "[aimux loop] You stopped, but you're in a managed loop with this goal: ship it.\nKeep working toward it now. Only stop when you have genuinely finished or are blocked beyond repair:\n- finished  → run `aimux loop done --reason \"…\"`\n- hard-blocked → run `aimux loop block --reason \"…\"`\nOtherwise, continue."
+            },
+            {
+              "sessionId": "a",
+              "text": "[aimux loop] You stopped, but you're in a managed loop with this goal: ship it.\nKeep working toward it now. Only stop when you have genuinely finished or are blocked beyond repair:\n- finished  → run `aimux loop done --reason \"…\"`\n- hard-blocked → run `aimux loop block --reason \"…\"`\nOtherwise, continue."
+            }
+          ]
+        }
+      ],
+      "inputSha256": "33869993e4614149788efb727683ceba816746acd724eb43ead284a8aac2978d"
+    }
+  ]
+}

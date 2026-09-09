@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "source": "src/core-command-contract.ts",
+  "sources": [
+    "src/core-command-contract.test.ts",
+    "src/core-command-contract.ts"
+  ],
+  "description": "Canonical daemon core-command name list for Rust parity.",
+  "commands": [
+    ["ping", "core.ping"],
+    ["status", "core.status"],
+    ["projectsList", "core.projects.list"],
+    ["projectEnsure", "core.project.ensure"],
+    ["projectStop", "core.project.stop"],
+    ["projectKill", "core.project.kill"],
+    ["projectRestart", "core.project.restart"],
+    ["overseerWatch", "core.overseer.watch"],
+    ["restart", "core.restart"],
+    ["relayStatus", "core.relay.status"],
+    ["relayEnable", "core.relay.enable"],
+    ["relayDisable", "core.relay.disable"]
+  ]
+}

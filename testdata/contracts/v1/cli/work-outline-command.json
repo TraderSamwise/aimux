@@ -1,0 +1,146 @@
+{
+  "version": 1,
+  "source": "src/cli/work-outline.test.ts",
+  "generatedBy": "scripts/capture-cli-wrapper-contracts.mjs",
+  "description": "Work outline CLI rendering, list/show query construction, and update posting captured by running TypeScript registerWorkOutlineCommand with recorded dependencies.",
+  "cases": [
+    {
+      "id": "cli-work-outline-command-001",
+      "name": "renders compact human-readable entries",
+      "source": "src/cli/work-outline.test.ts",
+      "api": "renderWorkOutlineEntries",
+      "input": {
+        "entries": [
+          {
+            "entryId": "outline-1",
+            "topicKey": "release",
+            "title": "Release",
+            "summary": "Cut the release.",
+            "status": "active",
+            "source": "scribe",
+            "sessionIds": ["codex-a"],
+            "worktreePath": "/repo/main",
+            "createdAt": "2026-08-30T00:00:00.000Z",
+            "updatedAt": "2026-08-30T00:00:00.000Z",
+            "lastSeenAt": "2026-08-30T00:00:00.000Z"
+          }
+        ],
+        "empty": []
+      },
+      "output": {
+        "entries": ["outline-1 [active] Release · codex-a · /repo/main", "  Cut the release."],
+        "empty": ["No scribe notes."]
+      },
+      "inputSha256": "fbb5a59cfb326c10491871689eeee916a048a5d7a9787b4d08100c5c227168da"
+    },
+    {
+      "id": "cli-work-outline-command-002",
+      "name": "lists through the project service with filters",
+      "source": "src/cli/work-outline.test.ts",
+      "api": "registerWorkOutlineCommand",
+      "input": {
+        "args": [
+          "outline",
+          "list",
+          "--project",
+          "/repo",
+          "--session",
+          "codex-a",
+          "--worktree",
+          "/repo/main",
+          "--status",
+          "active",
+          "--search",
+          "release",
+          "--limit",
+          "25"
+        ]
+      },
+      "output": {
+        "result": null,
+        "logs": [["outline-1 [active] Release · codex-a · /repo/main"], ["  Cut the release."]],
+        "errors": [],
+        "exitCode": null,
+        "calls": {
+          "prepareProjectContext": [["/repo"]],
+          "getProjectServiceJson": [
+            [
+              "/work-outline?q=release&sessionId=codex-a&worktreePath=%2Frepo%2Fmain&status=active&limit=25",
+              { "projectRoot": "/repo" }
+            ]
+          ],
+          "postProjectServiceJson": []
+        }
+      },
+      "inputSha256": "b2e1c8364b01fe1dc9e11946fbcef5c097bb86707c2e84437d44f98a44f30795"
+    },
+    {
+      "id": "cli-work-outline-command-003",
+      "name": "shows one entry by id",
+      "source": "src/cli/work-outline.test.ts",
+      "api": "registerWorkOutlineCommand",
+      "input": { "args": ["outline", "show", "outline-1"] },
+      "output": {
+        "result": null,
+        "logs": [["outline-1 [active] Release · codex-a · /repo/main"], ["  Cut the release."]],
+        "errors": [],
+        "exitCode": null,
+        "calls": {
+          "prepareProjectContext": [[null]],
+          "getProjectServiceJson": [["/work-outline?entryId=outline-1", { "projectRoot": "/repo" }]],
+          "postProjectServiceJson": []
+        }
+      },
+      "inputSha256": "6a7137bc8735f16347d3bca7715903ea4358125457220103602d4b5a7e66b227"
+    },
+    {
+      "id": "cli-work-outline-command-004",
+      "name": "updates through the project service",
+      "source": "src/cli/work-outline.test.ts",
+      "api": "registerWorkOutlineCommand",
+      "input": {
+        "args": [
+          "outline",
+          "update",
+          "--title",
+          "Release",
+          "--summary",
+          "Cut the release.",
+          "--topic-key",
+          "release",
+          "--session",
+          "codex-a",
+          "--worktree",
+          "/repo/main",
+          "--source",
+          "scribe"
+        ]
+      },
+      "output": {
+        "result": null,
+        "logs": [["outline-1 [active] Release · codex-a · /repo/main"], ["  Cut the release."]],
+        "errors": [],
+        "exitCode": null,
+        "calls": {
+          "prepareProjectContext": [[null]],
+          "getProjectServiceJson": [],
+          "postProjectServiceJson": [
+            [
+              "/work-outline/update",
+              {
+                "title": "Release",
+                "summary": "Cut the release.",
+                "topicKey": "release",
+                "sessionId": "codex-a",
+                "worktreePath": "/repo/main",
+                "source": "scribe"
+              },
+              { "projectRoot": "/repo" }
+            ]
+          ]
+        }
+      },
+      "inputSha256": "688286cc4d7de922b76fccfa78942c71301956bcdd4bbee6e4d3db1f95f66cde"
+    }
+  ]
+}

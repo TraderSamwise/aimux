@@ -1,0 +1,230 @@
+{
+  "version": 1,
+  "source": "src/core-command-contract.test.ts",
+  "generatedBy": "scripts/capture-core-command-behavior-contract.mjs",
+  "description": "Core command daemon route behavior captured by running TypeScript AimuxDaemon.routeRequest. Volatile pid/timestamps are normalized.",
+  "normalization": { "pid": "<pid>", "timestamps": "<ts:n> in first-appearance order" },
+  "cases": [
+    {
+      "id": "core-command-behavior-001",
+      "name": "answers daemon-local ping commands",
+      "source": "src/core-command-contract.test.ts",
+      "api": "AimuxDaemon.routeRequest",
+      "input": { "id": "test-ping", "command": "core.ping" },
+      "output": {
+        "status": 200,
+        "body": {
+          "ok": true,
+          "id": "test-ping",
+          "command": "core.ping",
+          "issuedAt": "<ts:1>",
+          "result": { "pong": true }
+        }
+      },
+      "inputSha256": "bc1f612863e009ac0b25b8b8f1479563628aa7cd0b43a3df93c6cd6bcd70e2a2"
+    },
+    {
+      "id": "core-command-behavior-002",
+      "name": "returns the daemon status snapshot",
+      "source": "src/core-command-contract.test.ts",
+      "api": "AimuxDaemon.routeRequest",
+      "input": { "id": "test-status", "command": "core.status" },
+      "output": {
+        "status": 200,
+        "body": {
+          "ok": true,
+          "id": "test-status",
+          "command": "core.status",
+          "issuedAt": "<ts:1>",
+          "result": {
+            "daemon": {
+              "pid": "<pid>",
+              "port": 43190,
+              "startedAt": "<ts:2>",
+              "updatedAt": "<ts:3>",
+              "serviceInfo": {
+                "apiVersion": 5,
+                "capabilities": {
+                  "parsedAgentOutput": true,
+                  "attachmentRead": true,
+                  "chatEventStream": true,
+                  "agentTranscriptMessages": true,
+                  "agentActivityState": true
+                },
+                "buildStamp": "1788708267000.1788708267000-0514b241a81e"
+              }
+            },
+            "projects": [
+              {
+                "id": "aimux-4bf69b728633",
+                "name": "aimux",
+                "path": "/Users/sam/cs/aimux",
+                "lastSeen": "<ts:4>",
+                "dashboardSessionName": "aimux-aimux-4bf69b728633",
+                "service": null,
+                "serviceAlive": false,
+                "serviceEndpoint": { "host": "127.0.0.1", "port": 51513, "pid": 13526, "updatedAt": "<ts:5>" }
+              },
+              {
+                "id": "aimux-chat-torture-1788585200-1bf4e1922cf2",
+                "name": "aimux-chat-torture-1788585200",
+                "path": "/Users/sam/cs/aimux-chat-torture-1788585200",
+                "lastSeen": "<ts:6>",
+                "dashboardSessionName": "aimux-aimux-chat-torture-1788585200-1bf4e1922cf2",
+                "service": null,
+                "serviceAlive": false,
+                "serviceEndpoint": null
+              },
+              {
+                "id": "glyde-f686ab1ad367",
+                "name": "glyde",
+                "path": "/Users/sam/cs/glyde",
+                "lastSeen": "<ts:7>",
+                "dashboardSessionName": "aimux-glyde-f686ab1ad367",
+                "service": null,
+                "serviceAlive": false,
+                "serviceEndpoint": { "host": "127.0.0.1", "port": 45161, "pid": 9037, "updatedAt": "<ts:8>" }
+              },
+              {
+                "id": "glyde-backend-d1d6e5966c8b",
+                "name": "glyde-backend",
+                "path": "/Users/sam/cs/glyde-backend",
+                "lastSeen": "<ts:9>",
+                "dashboardSessionName": "aimux-glyde-backend-d1d6e5966c8b",
+                "service": null,
+                "serviceAlive": false,
+                "serviceEndpoint": null
+              },
+              {
+                "id": "glyde-frontend-c603196c84bf",
+                "name": "glyde-frontend",
+                "path": "/Users/sam/cs/glyde-frontend",
+                "lastSeen": "<ts:10>",
+                "dashboardSessionName": "aimux-glyde-frontend-c603196c84bf",
+                "service": null,
+                "serviceAlive": false,
+                "serviceEndpoint": null
+              },
+              {
+                "id": "hyperprop-396e3ee4a94a",
+                "name": "hyperprop",
+                "path": "/Users/sam/cs/hyperprop",
+                "lastSeen": "<ts:11>",
+                "dashboardSessionName": "aimux-hyperprop-396e3ee4a94a",
+                "service": null,
+                "serviceAlive": false,
+                "serviceEndpoint": null
+              },
+              {
+                "id": "jiten-977da5ea8c0e",
+                "name": "jiten",
+                "path": "/Users/sam/cs/jiten",
+                "lastSeen": "<ts:12>",
+                "dashboardSessionName": "aimux-jiten-977da5ea8c0e",
+                "service": null,
+                "serviceAlive": false,
+                "serviceEndpoint": { "host": "127.0.0.1", "port": 47958, "pid": 50150, "updatedAt": "<ts:13>" }
+              },
+              {
+                "id": "premys-6319ea0305a9",
+                "name": "premys",
+                "path": "/Users/sam/cs/premys",
+                "lastSeen": "<ts:14>",
+                "dashboardSessionName": "aimux-premys-6319ea0305a9",
+                "service": null,
+                "serviceAlive": false,
+                "serviceEndpoint": null
+              },
+              {
+                "id": "tealstreet-mobile-418c9903bd29",
+                "name": "tealstreet-mobile",
+                "path": "/Users/sam/cs/tealstreet-mobile",
+                "lastSeen": "<ts:15>",
+                "dashboardSessionName": "aimux-tealstreet-mobile-418c9903bd29",
+                "service": null,
+                "serviceAlive": false,
+                "serviceEndpoint": { "host": "127.0.0.1", "port": 49050, "pid": 9065, "updatedAt": "<ts:16>" }
+              },
+              {
+                "id": "tealstreet-next-208154504245",
+                "name": "tealstreet-next",
+                "path": "/Users/sam/cs/tealstreet-next",
+                "lastSeen": "<ts:17>",
+                "dashboardSessionName": "aimux-tealstreet-next-208154504245",
+                "service": null,
+                "serviceAlive": false,
+                "serviceEndpoint": { "host": "127.0.0.1", "port": 43444, "pid": 6052, "updatedAt": "<ts:18>" }
+              },
+              {
+                "id": "thegrand-6791e23675ca",
+                "name": "thegrand",
+                "path": "/Users/sam/cs/thegrand",
+                "lastSeen": "<ts:19>",
+                "dashboardSessionName": "aimux-thegrand-6791e23675ca",
+                "service": null,
+                "serviceAlive": false,
+                "serviceEndpoint": { "host": "127.0.0.1", "port": 43499, "pid": 73882, "updatedAt": "<ts:20>" }
+              }
+            ],
+            "relay": { "status": "off" },
+            "updatedAt": "<ts:21>"
+          }
+        }
+      },
+      "inputSha256": "eca2ba4d9cc975e04054b3c81e46a986a6781e2a0235e063e24c8f6c2e68ea1e"
+    },
+    {
+      "id": "core-command-behavior-003",
+      "name": "rejects unknown commands",
+      "source": "src/core-command-contract.test.ts",
+      "api": "AimuxDaemon.routeRequest",
+      "input": { "id": "bad", "command": "core.missing" },
+      "output": {
+        "status": 400,
+        "body": { "ok": false, "id": "bad", "command": "core.missing", "error": "unknown core command" }
+      },
+      "inputSha256": "30a82afa72882ddbf3a632161d79b8e7255a2921b2ffd0c402b8527f3481b840"
+    },
+    {
+      "id": "core-command-behavior-004",
+      "name": "rejects core.project.ensure without a projectRoot",
+      "source": "src/core-command-contract.test.ts",
+      "api": "AimuxDaemon.routeRequest",
+      "input": { "id": "bad-project", "command": "core.project.ensure", "payload": {} },
+      "output": {
+        "status": 400,
+        "body": {
+          "ok": false,
+          "id": "bad-project",
+          "command": "core.project.ensure",
+          "error": "projectRoot is required"
+        }
+      },
+      "inputSha256": "0abf6a5e79f65287d9947fa9cbb1dfd04263400334b196b31c8c833e14cade15"
+    },
+    {
+      "id": "core-command-behavior-005",
+      "name": "rejects core.project.stop without a projectRoot",
+      "source": "src/core-command-contract.test.ts",
+      "api": "AimuxDaemon.routeRequest",
+      "input": { "id": "bad-project", "command": "core.project.stop", "payload": {} },
+      "output": {
+        "status": 400,
+        "body": { "ok": false, "id": "bad-project", "command": "core.project.stop", "error": "projectRoot is required" }
+      },
+      "inputSha256": "f6fac4a1923a40158d02242ca69ec71fbdcf4d4e82d50633bee61babef3584f1"
+    },
+    {
+      "id": "core-command-behavior-006",
+      "name": "rejects core.project.kill without a projectRoot",
+      "source": "src/core-command-contract.test.ts",
+      "api": "AimuxDaemon.routeRequest",
+      "input": { "id": "bad-project", "command": "core.project.kill", "payload": {} },
+      "output": {
+        "status": 400,
+        "body": { "ok": false, "id": "bad-project", "command": "core.project.kill", "error": "projectRoot is required" }
+      },
+      "inputSha256": "2afdae7c58e7ed2f37fdd7ad2bbe23e7fd353cba77239ed12d946a0fbd52a4c1"
+    }
+  ]
+}

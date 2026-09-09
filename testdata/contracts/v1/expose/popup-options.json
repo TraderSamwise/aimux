@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "source": "src/popup-expose.test.ts",
+  "generatedBy": "scripts/capture-popup-expose-contract.mjs",
+  "description": "Popup expose CLI option-to-runtime option mapping captured by running TypeScript toExposeOptions, with cwd-dependent paths normalized.",
+  "normalization": { "cwd": "<cwd>" },
+  "cases": [
+    {
+      "id": "popup-expose-001",
+      "name": "resolves absolute paths and passes optional fields through",
+      "source": "src/popup-expose.test.ts",
+      "input": {
+        "name": "resolves absolute paths and passes optional fields through",
+        "options": {
+          "projectRoot": "/proj",
+          "projectStateDir": "/proj/.aimux/state",
+          "currentClientSession": "sess-1",
+          "clientTty": "/dev/ttys009",
+          "currentWindow": "dashboard",
+          "currentWindowId": "@7",
+          "currentPath": "/proj/sub",
+          "paneId": "%3",
+          "aimuxHome": "/home/u/.aimux"
+        }
+      },
+      "output": {
+        "projectRoot": "/proj",
+        "projectStateDir": "/proj/.aimux/state",
+        "currentClientSession": "sess-1",
+        "clientTty": "/dev/ttys009",
+        "currentWindow": "dashboard",
+        "currentWindowId": "@7",
+        "currentPath": "/proj/sub",
+        "paneId": "%3",
+        "aimuxHome": "/home/u/.aimux"
+      },
+      "inputSha256": "1eaf15c9c959fec2d3673a84ee9c49dcee0bdce7a9310feba2280933467e7fac"
+    },
+    {
+      "id": "popup-expose-002",
+      "name": "resolves relative paths against cwd and leaves omitted options absent",
+      "source": "src/popup-expose.test.ts",
+      "input": {
+        "name": "resolves relative paths against cwd and leaves omitted options absent",
+        "options": { "projectRoot": "rel/proj", "projectStateDir": "rel/state" }
+      },
+      "output": { "projectRoot": "<cwd>/rel/proj", "projectStateDir": "<cwd>/rel/state" },
+      "inputSha256": "c2652d591890b7af18bd36fb9fb84aa93a0d005a98a2da07d6a03c93ba8bfdd8"
+    },
+    {
+      "id": "popup-expose-003",
+      "name": "preserves empty optional strings while resolving dot segments",
+      "source": "src/popup-expose.test.ts",
+      "input": {
+        "name": "preserves empty optional strings while resolving dot segments",
+        "options": {
+          "projectRoot": "./project/../project",
+          "projectStateDir": "./project/.aimux/../.aimux/state",
+          "currentClientSession": "",
+          "clientTty": "",
+          "currentWindow": "",
+          "currentWindowId": "",
+          "currentPath": "",
+          "paneId": "",
+          "aimuxHome": ""
+        }
+      },
+      "output": {
+        "projectRoot": "<cwd>/project",
+        "projectStateDir": "<cwd>/project/.aimux/state",
+        "currentClientSession": "",
+        "clientTty": "",
+        "currentWindow": "",
+        "currentWindowId": "",
+        "currentPath": "",
+        "paneId": "",
+        "aimuxHome": ""
+      },
+      "inputSha256": "39fd4ff4b6622faecff2715e300ab7a331f391c851548850d9cbacb7e17659c7"
+    }
+  ]
+}

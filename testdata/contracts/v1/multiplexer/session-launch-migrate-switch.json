@@ -1,0 +1,864 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/session-launch.ts",
+  "generatedBy": "scripts/capture-session-launch-migrate-switch-contract.mjs",
+  "description": "Session migration and tool-switch orchestration captured by running TypeScript migrateAgent/switchAgentTool with deterministic fake hosts.",
+  "cases": [
+    {
+      "id": "session-launch-migrate-switch-001",
+      "name": "migrateAgent reports missing source sessions before side effects",
+      "source": "src/multiplexer/session-launch.ts",
+      "api": "migrateAgent",
+      "input": {
+        "config": {
+          "runtime": { "agentPreambleEnabled": true },
+          "tools": {
+            "codex": {
+              "command": "codex",
+              "args": ["--dangerously-bypass-approvals-and-sandbox"],
+              "enabled": true,
+              "resumeArgs": ["resume", "{sessionId}"],
+              "resumeByBackendSessionId": true,
+              "developerInstructionsConfigKey": "developer_instructions"
+            },
+            "claude": {
+              "command": "claude",
+              "args": ["--dangerously-skip-permissions"],
+              "enabled": true,
+              "resumeArgs": ["--resume", "{sessionId}"],
+              "resumeByBackendSessionId": true,
+              "preambleFlag": ["--append-system-prompt"],
+              "sessionIdFlag": ["--session-id", "{sessionId}"]
+            },
+            "disabled": { "command": "disabled", "args": [], "enabled": false }
+          },
+          "scribe": { "defaultAgent": null }
+        },
+        "sessionId": "missing",
+        "targetWorktreePath": "<TARGET>"
+      },
+      "output": {
+        "error": "Session \"missing\" not found",
+        "host": {
+          "activeIndex": 0,
+          "sessions": [],
+          "toolKeys": [],
+          "originalArgs": [],
+          "worktreePaths": [],
+          "targets": []
+        },
+        "calls": []
+      },
+      "inputSha256": "c86bdeac530291c0f836e586e9414aa7f673b45e5f48c13d9f2a453a3ec40d06"
+    },
+    {
+      "id": "session-launch-migrate-switch-002",
+      "name": "migrateAgent rebuilds continuity when backend resume is unavailable",
+      "source": "src/multiplexer/session-launch.ts",
+      "api": "migrateAgent",
+      "input": {
+        "config": {
+          "runtime": { "agentPreambleEnabled": true },
+          "tools": {
+            "codex": {
+              "command": "codex",
+              "args": ["--dangerously-bypass-approvals-and-sandbox"],
+              "enabled": true,
+              "resumeArgs": ["resume", "{sessionId}"],
+              "resumeByBackendSessionId": true,
+              "developerInstructionsConfigKey": "developer_instructions"
+            },
+            "claude": {
+              "command": "claude",
+              "args": ["--dangerously-skip-permissions"],
+              "enabled": true,
+              "resumeArgs": ["--resume", "{sessionId}"],
+              "resumeByBackendSessionId": true,
+              "preambleFlag": ["--append-system-prompt"],
+              "sessionIdFlag": ["--session-id", "{sessionId}"]
+            },
+            "disabled": { "command": "disabled", "args": [], "enabled": false }
+          },
+          "scribe": { "defaultAgent": null }
+        },
+        "sessionId": "codex-1",
+        "targetWorktreePath": "<TARGET>",
+        "canResumeWithBackendSessionId": false,
+        "sourceSnapshot": { "historyText": "", "liveText": "" },
+        "migrationPreamble": "continuity preamble",
+        "host": {
+          "sessions": [
+            {
+              "id": "codex-1",
+              "command": "codex",
+              "exited": false,
+              "team": { "teamId": "team-1", "parentSessionId": "parent-1", "role": "reviewer" }
+            }
+          ],
+          "sessionToolKeys": [["codex-1", "codex"]],
+          "sessionOriginalArgs": [["codex-1", ["--dangerously-bypass-approvals-and-sandbox"]]],
+          "sessionWorktreePaths": [["codex-1", "<REPO>"]]
+        }
+      },
+      "output": {
+        "error": null,
+        "host": {
+          "activeIndex": 0,
+          "sessions": [
+            {
+              "id": "codex-1",
+              "command": "codex",
+              "backendSessionId": null,
+              "exited": false,
+              "team": { "teamId": "team-1", "parentSessionId": "parent-1", "role": "reviewer" }
+            }
+          ],
+          "toolKeys": [["codex-1", "codex"]],
+          "originalArgs": [["codex-1", ["--dangerously-bypass-approvals-and-sandbox"]]],
+          "worktreePaths": [["codex-1", "<TARGET>"]],
+          "targets": [["codex-1", { "sessionName": "aimux-test", "windowId": "@1", "windowName": "agent" }]]
+        },
+        "calls": [
+          {
+            "method": "sessionBootstrap.stripToolActionArgs",
+            "args": [
+              {
+                "command": "codex",
+                "args": ["--dangerously-bypass-approvals-and-sandbox"],
+                "enabled": true,
+                "resumeArgs": ["resume", "{sessionId}"],
+                "forkArgs": ["fork", "{sessionId}"],
+                "resumeByBackendSessionId": true,
+                "resumeFallback": ["resume", "--last"],
+                "developerInstructionsConfigKey": "developer_instructions",
+                "promptPatterns": ["^> $"],
+                "turnPatterns": ["^[>❯]\\s*(.+)"],
+                "startupInterstitials": [
+                  {
+                    "id": "codex-update-available",
+                    "when": ["Update available!", "Press enter to continue"],
+                    "choose": "^[\\s›>❯]*(\\d+)\\.\\s+Skip\\s*$"
+                  }
+                ]
+              },
+              ["--dangerously-bypass-approvals-and-sandbox"]
+            ]
+          },
+          {
+            "method": "sessionBootstrap.canResumeWithBackendSessionId",
+            "args": [
+              {
+                "command": "codex",
+                "args": ["--dangerously-bypass-approvals-and-sandbox"],
+                "enabled": true,
+                "resumeArgs": ["resume", "{sessionId}"],
+                "forkArgs": ["fork", "{sessionId}"],
+                "resumeByBackendSessionId": true,
+                "resumeFallback": ["resume", "--last"],
+                "developerInstructionsConfigKey": "developer_instructions",
+                "promptPatterns": ["^> $"],
+                "turnPatterns": ["^[>❯]\\s*(.+)"],
+                "startupInterstitials": [
+                  {
+                    "id": "codex-update-available",
+                    "when": ["Update available!", "Press enter to continue"],
+                    "choose": "^[\\s›>❯]*(\\d+)\\.\\s+Skip\\s*$"
+                  }
+                ]
+              },
+              null
+            ]
+          },
+          { "method": "contextWatcher.syncNow", "args": ["codex-1"] },
+          { "method": "sessionBootstrap.readForkSourceSnapshot", "args": ["codex-1"] },
+          { "method": "session.codex-1.kill", "args": [] },
+          {
+            "method": "sessionBootstrap.buildCodexMigrationContinuityPreamble",
+            "args": ["codex-1", "<REPO>", "<TARGET>", { "historyText": "", "liveText": "" }]
+          },
+          {
+            "method": "sessionBootstrap.buildSessionPreamble",
+            "args": [
+              {
+                "sessionId": "codex-1",
+                "command": "codex",
+                "worktreePath": "<TARGET>",
+                "extraPreamble": "continuity preamble",
+                "includeAimuxPreamble": true,
+                "team": { "teamId": "team-1", "parentSessionId": "parent-1", "role": "reviewer" }
+              }
+            ]
+          },
+          { "method": "sessionBootstrap.ensurePlanFile", "args": ["codex-1", "codex", "<TARGET>"] },
+          { "method": "tmuxRuntimeManager.ensureProjectSession", "args": ["/private<TARGET>"] },
+          { "method": "getSessionLabel", "args": ["codex-1"] },
+          {
+            "method": "tmuxRuntimeManager.createWindow",
+            "args": [
+              "aimux-test",
+              "agent",
+              "<TARGET>",
+              "env",
+              [
+                "-i",
+                "AIMUX_DAEMON_PORT=43190",
+                "AIMUX_ENV=production",
+                "AIMUX_HOME=<REPO>/home",
+                "TERM=tmux-256color",
+                "AIMUX_METADATA_ENDPOINT_FILE=<REPO>/home/projects/aimux-session-migrate-switch/metadata-api.txt",
+                "AIMUX_SESSION_ID=codex-1",
+                "AIMUX_PROJECT_ROOT=/private<TARGET>",
+                "AIMUX_TOOL=codex",
+                "codex",
+                "-c",
+                "features.hooks=true",
+                "--dangerously-bypass-hook-trust",
+                "--dangerously-bypass-approvals-and-sandbox"
+              ],
+              { "detached": true }
+            ]
+          },
+          {
+            "method": "tmuxRuntimeManager.clearTargetHistory",
+            "args": [{ "sessionName": "aimux-test", "windowId": "@1", "windowName": "agent" }]
+          },
+          {
+            "method": "registerManagedSession",
+            "args": [
+              { "id": "codex-1", "command": "codex", "backendSessionId": null, "exited": false, "team": null },
+              ["--dangerously-bypass-approvals-and-sandbox"],
+              "codex",
+              "<TARGET>",
+              null,
+              "<TIMESTAMP>",
+              { "teamId": "team-1", "parentSessionId": "parent-1", "role": "reviewer" }
+            ]
+          },
+          { "method": "syncTmuxWindowMetadata", "args": ["codex-1"] },
+          { "method": "saveState", "args": [] }
+        ]
+      },
+      "inputSha256": "7d1e574d063cfc9f5ff7d4e2f7cdf8b259a0874294bcb67dc1926d047217eeed"
+    },
+    {
+      "id": "session-launch-migrate-switch-003",
+      "name": "migrateAgent composes backend resume args when available",
+      "source": "src/multiplexer/session-launch.ts",
+      "api": "migrateAgent",
+      "input": {
+        "config": {
+          "runtime": { "agentPreambleEnabled": true },
+          "tools": {
+            "codex": {
+              "command": "codex",
+              "args": ["--dangerously-bypass-approvals-and-sandbox"],
+              "enabled": true,
+              "resumeArgs": ["resume", "{sessionId}"],
+              "resumeByBackendSessionId": true,
+              "developerInstructionsConfigKey": "developer_instructions"
+            },
+            "claude": {
+              "command": "claude",
+              "args": ["--dangerously-skip-permissions"],
+              "enabled": true,
+              "resumeArgs": ["--resume", "{sessionId}"],
+              "resumeByBackendSessionId": true,
+              "preambleFlag": ["--append-system-prompt"],
+              "sessionIdFlag": ["--session-id", "{sessionId}"]
+            },
+            "disabled": { "command": "disabled", "args": [], "enabled": false }
+          },
+          "scribe": { "defaultAgent": null }
+        },
+        "sessionId": "claude-1",
+        "targetWorktreePath": "<TARGET>",
+        "canResumeWithBackendSessionId": true,
+        "host": {
+          "sessions": [
+            { "id": "claude-1", "command": "claude", "backendSessionId": "claude-backend", "exited": false }
+          ],
+          "sessionToolKeys": [["claude-1", "claude"]],
+          "sessionOriginalArgs": [["claude-1", ["--dangerously-skip-permissions"]]],
+          "sessionWorktreePaths": [["claude-1", "<REPO>"]]
+        }
+      },
+      "output": {
+        "error": null,
+        "host": {
+          "activeIndex": 0,
+          "sessions": [
+            {
+              "id": "claude-1",
+              "command": "claude",
+              "backendSessionId": "claude-backend",
+              "exited": false,
+              "team": null
+            }
+          ],
+          "toolKeys": [["claude-1", "claude"]],
+          "originalArgs": [["claude-1", ["--dangerously-skip-permissions"]]],
+          "worktreePaths": [["claude-1", "<TARGET>"]],
+          "targets": [["claude-1", { "sessionName": "aimux-test", "windowId": "@1", "windowName": "agent" }]]
+        },
+        "calls": [
+          {
+            "method": "sessionBootstrap.stripToolActionArgs",
+            "args": [
+              {
+                "command": "claude",
+                "args": ["--dangerously-skip-permissions"],
+                "enabled": true,
+                "wrapperEnabled": true,
+                "preambleFlag": ["--append-system-prompt"],
+                "sessionIdFlag": ["--session-id", "{sessionId}"],
+                "resumeArgs": ["--resume", "{sessionId}"],
+                "forkArgs": ["--resume", "{sessionId}", "--fork-session"],
+                "resumeByBackendSessionId": true,
+                "resumeFallback": ["--continue"],
+                "promptPatterns": ["^> $", "\\$ $"],
+                "turnPatterns": ["^[❯>]\\s*(.+)", "^❯\\s+(.+)", "^>\\s+(.+)"],
+                "compactCommand": "claude --print --output-format text"
+              },
+              ["--dangerously-skip-permissions"]
+            ]
+          },
+          {
+            "method": "sessionBootstrap.canResumeWithBackendSessionId",
+            "args": [
+              {
+                "command": "claude",
+                "args": ["--dangerously-skip-permissions"],
+                "enabled": true,
+                "wrapperEnabled": true,
+                "preambleFlag": ["--append-system-prompt"],
+                "sessionIdFlag": ["--session-id", "{sessionId}"],
+                "resumeArgs": ["--resume", "{sessionId}"],
+                "forkArgs": ["--resume", "{sessionId}", "--fork-session"],
+                "resumeByBackendSessionId": true,
+                "resumeFallback": ["--continue"],
+                "promptPatterns": ["^> $", "\\$ $"],
+                "turnPatterns": ["^[❯>]\\s*(.+)", "^❯\\s+(.+)", "^>\\s+(.+)"],
+                "compactCommand": "claude --print --output-format text"
+              },
+              "claude-backend"
+            ]
+          },
+          { "method": "contextWatcher.syncNow", "args": ["claude-1"] },
+          { "method": "sessionBootstrap.readForkSourceSnapshot", "args": ["claude-1"] },
+          {
+            "method": "sessionBootstrap.composeToolArgs",
+            "args": [
+              {
+                "command": "claude",
+                "args": ["--dangerously-skip-permissions"],
+                "enabled": true,
+                "wrapperEnabled": true,
+                "preambleFlag": ["--append-system-prompt"],
+                "sessionIdFlag": ["--session-id", "{sessionId}"],
+                "resumeArgs": ["--resume", "{sessionId}"],
+                "forkArgs": ["--resume", "{sessionId}", "--fork-session"],
+                "resumeByBackendSessionId": true,
+                "resumeFallback": ["--continue"],
+                "promptPatterns": ["^> $", "\\$ $"],
+                "turnPatterns": ["^[❯>]\\s*(.+)", "^❯\\s+(.+)", "^>\\s+(.+)"],
+                "compactCommand": "claude --print --output-format text"
+              },
+              ["--resume", "claude-backend"],
+              ["--dangerously-skip-permissions"]
+            ]
+          },
+          { "method": "session.claude-1.kill", "args": [] },
+          {
+            "method": "sessionBootstrap.buildSessionPreamble",
+            "args": [
+              {
+                "sessionId": "claude-1",
+                "command": "claude",
+                "worktreePath": "<TARGET>",
+                "extraPreamble": "You have been moved from <REPO> to <TARGET>. Work in the new path from now on; paths in your earlier messages point at the old one.",
+                "includeAimuxPreamble": true
+              }
+            ]
+          },
+          { "method": "sessionBootstrap.ensurePlanFile", "args": ["claude-1", "claude", "<TARGET>"] },
+          { "method": "tmuxRuntimeManager.ensureProjectSession", "args": ["/private<TARGET>"] },
+          { "method": "getSessionLabel", "args": ["claude-1"] },
+          {
+            "method": "tmuxRuntimeManager.createWindow",
+            "args": [
+              "aimux-test",
+              "agent",
+              "<TARGET>",
+              "env",
+              [
+                "-i",
+                "AIMUX_DAEMON_PORT=43190",
+                "AIMUX_ENV=production",
+                "AIMUX_HOME=<REPO>/home",
+                "TERM=xterm-256color",
+                "AIMUX_METADATA_ENDPOINT_FILE=<REPO>/home/projects/aimux-session-migrate-switch/metadata-api.txt",
+                "AIMUX_SESSION_ID=claude-1",
+                "AIMUX_TOOL=claude",
+                "claude",
+                "--settings",
+                "<REPO>/home/projects/aimux-session-migrate-switch/claude-settings/<SESSION>.json",
+                "--dangerously-skip-permissions",
+                "--resume",
+                "claude-backend"
+              ],
+              { "detached": false }
+            ]
+          },
+          {
+            "method": "tmuxRuntimeManager.clearTargetHistory",
+            "args": [{ "sessionName": "aimux-test", "windowId": "@1", "windowName": "agent" }]
+          },
+          {
+            "method": "registerManagedSession",
+            "args": [
+              { "id": "claude-1", "command": "claude", "backendSessionId": null, "exited": false, "team": null },
+              ["--dangerously-skip-permissions"],
+              "claude",
+              "<TARGET>",
+              null,
+              "<TIMESTAMP>",
+              null
+            ]
+          },
+          { "method": "syncTmuxWindowMetadata", "args": ["claude-1"] },
+          { "method": "saveState", "args": [] }
+        ]
+      },
+      "inputSha256": "50b11e8d1bd771f459daa1f83a7f423ece08a32bae8327617516279955953915"
+    },
+    {
+      "id": "session-launch-migrate-switch-004",
+      "name": "switchAgentTool returns without relaunch for same tool and no override",
+      "source": "src/multiplexer/session-launch.ts",
+      "api": "switchAgentTool",
+      "input": {
+        "config": {
+          "runtime": { "agentPreambleEnabled": true },
+          "tools": {
+            "codex": {
+              "command": "codex",
+              "args": ["--dangerously-bypass-approvals-and-sandbox"],
+              "enabled": true,
+              "resumeArgs": ["resume", "{sessionId}"],
+              "resumeByBackendSessionId": true,
+              "developerInstructionsConfigKey": "developer_instructions"
+            },
+            "claude": {
+              "command": "claude",
+              "args": ["--dangerously-skip-permissions"],
+              "enabled": true,
+              "resumeArgs": ["--resume", "{sessionId}"],
+              "resumeByBackendSessionId": true,
+              "preambleFlag": ["--append-system-prompt"],
+              "sessionIdFlag": ["--session-id", "{sessionId}"]
+            },
+            "disabled": { "command": "disabled", "args": [], "enabled": false }
+          },
+          "scribe": { "defaultAgent": null }
+        },
+        "sessionId": "codex-1",
+        "targetToolConfigKey": "codex",
+        "host": {
+          "sessions": [{ "id": "codex-1", "command": "codex", "exited": false }],
+          "sessionToolKeys": [["codex-1", "codex"]],
+          "sessionOriginalArgs": [["codex-1", ["--dangerously-bypass-approvals-and-sandbox"]]]
+        }
+      },
+      "output": {
+        "error": null,
+        "host": {
+          "activeIndex": 0,
+          "sessions": [
+            { "id": "codex-1", "command": "codex", "backendSessionId": null, "exited": false, "team": null }
+          ],
+          "toolKeys": [["codex-1", "codex"]],
+          "originalArgs": [["codex-1", ["--dangerously-bypass-approvals-and-sandbox"]]],
+          "worktreePaths": [],
+          "targets": []
+        },
+        "calls": []
+      },
+      "inputSha256": "c796dff8ece698256bf959e643d8f0ce62166b8e4ce4a4ad8cd713f3cafddb71"
+    },
+    {
+      "id": "session-launch-migrate-switch-005",
+      "name": "switchAgentTool rejects disabled target configs before killing",
+      "source": "src/multiplexer/session-launch.ts",
+      "api": "switchAgentTool",
+      "input": {
+        "config": {
+          "runtime": { "agentPreambleEnabled": true },
+          "tools": {
+            "codex": {
+              "command": "codex",
+              "args": ["--dangerously-bypass-approvals-and-sandbox"],
+              "enabled": true,
+              "resumeArgs": ["resume", "{sessionId}"],
+              "resumeByBackendSessionId": true,
+              "developerInstructionsConfigKey": "developer_instructions"
+            },
+            "claude": {
+              "command": "claude",
+              "args": ["--dangerously-skip-permissions"],
+              "enabled": true,
+              "resumeArgs": ["--resume", "{sessionId}"],
+              "resumeByBackendSessionId": true,
+              "preambleFlag": ["--append-system-prompt"],
+              "sessionIdFlag": ["--session-id", "{sessionId}"]
+            },
+            "disabled": { "command": "disabled", "args": [], "enabled": false }
+          },
+          "scribe": { "defaultAgent": null }
+        },
+        "sessionId": "codex-1",
+        "targetToolConfigKey": "disabled",
+        "host": {
+          "sessions": [{ "id": "codex-1", "command": "codex", "exited": false }],
+          "sessionToolKeys": [["codex-1", "codex"]]
+        }
+      },
+      "output": {
+        "error": "Tool config \"disabled\" is disabled",
+        "host": {
+          "activeIndex": 0,
+          "sessions": [
+            { "id": "codex-1", "command": "codex", "backendSessionId": null, "exited": false, "team": null }
+          ],
+          "toolKeys": [["codex-1", "codex"]],
+          "originalArgs": [],
+          "worktreePaths": [],
+          "targets": []
+        },
+        "calls": []
+      },
+      "inputSha256": "e3b020fd75fa221bc9f67ff15144d6eaf921fa81e4772beecd77c39305418925"
+    },
+    {
+      "id": "session-launch-migrate-switch-006",
+      "name": "switchAgentTool relaunches a live agent under the same Aimux session id",
+      "source": "src/multiplexer/session-launch.ts",
+      "api": "switchAgentTool",
+      "input": {
+        "config": {
+          "runtime": { "agentPreambleEnabled": true },
+          "tools": {
+            "codex": {
+              "command": "codex",
+              "args": ["--dangerously-bypass-approvals-and-sandbox"],
+              "enabled": true,
+              "resumeArgs": ["resume", "{sessionId}"],
+              "resumeByBackendSessionId": true,
+              "developerInstructionsConfigKey": "developer_instructions"
+            },
+            "claude": {
+              "command": "claude",
+              "args": ["--dangerously-skip-permissions"],
+              "enabled": true,
+              "resumeArgs": ["--resume", "{sessionId}"],
+              "resumeByBackendSessionId": true,
+              "preambleFlag": ["--append-system-prompt"],
+              "sessionIdFlag": ["--session-id", "{sessionId}"]
+            },
+            "disabled": { "command": "disabled", "args": [], "enabled": false }
+          },
+          "scribe": { "defaultAgent": null }
+        },
+        "sessionId": "claude-1",
+        "targetToolConfigKey": "codex",
+        "switchPreamble": "switch continuity",
+        "host": {
+          "sessions": [
+            {
+              "id": "claude-1",
+              "command": "claude",
+              "backendSessionId": "claude-backend",
+              "exited": false,
+              "team": { "teamId": "team-1", "parentSessionId": "parent-1", "role": "coder" }
+            }
+          ],
+          "sessionToolKeys": [["claude-1", "claude"]],
+          "sessionOriginalArgs": [["claude-1", ["--dangerously-skip-permissions"]]],
+          "sessionWorktreePaths": [["claude-1", "<REPO>"]]
+        },
+        "sourceSnapshot": { "historyText": "previous work", "liveText": "live pane" }
+      },
+      "output": {
+        "error": null,
+        "host": {
+          "activeIndex": 0,
+          "sessions": [
+            {
+              "id": "claude-1",
+              "command": "codex",
+              "backendSessionId": null,
+              "exited": false,
+              "team": { "teamId": "team-1", "parentSessionId": "parent-1", "role": "coder" }
+            }
+          ],
+          "toolKeys": [["claude-1", "codex"]],
+          "originalArgs": [["claude-1", ["--dangerously-bypass-approvals-and-sandbox"]]],
+          "worktreePaths": [["claude-1", "<REPO>"]],
+          "targets": [["claude-1", { "sessionName": "aimux-test", "windowId": "@1", "windowName": "agent" }]]
+        },
+        "calls": [
+          {
+            "method": "sessionBootstrap.stripToolActionArgs",
+            "args": [
+              {
+                "command": "codex",
+                "args": ["--dangerously-bypass-approvals-and-sandbox"],
+                "enabled": true,
+                "resumeArgs": ["resume", "{sessionId}"],
+                "forkArgs": ["fork", "{sessionId}"],
+                "resumeByBackendSessionId": true,
+                "resumeFallback": ["resume", "--last"],
+                "developerInstructionsConfigKey": "developer_instructions",
+                "promptPatterns": ["^> $"],
+                "turnPatterns": ["^[>❯]\\s*(.+)"],
+                "startupInterstitials": [
+                  {
+                    "id": "codex-update-available",
+                    "when": ["Update available!", "Press enter to continue"],
+                    "choose": "^[\\s›>❯]*(\\d+)\\.\\s+Skip\\s*$"
+                  }
+                ]
+              },
+              ["--dangerously-bypass-approvals-and-sandbox"]
+            ]
+          },
+          { "method": "contextWatcher.syncNow", "args": ["claude-1"] },
+          { "method": "sessionBootstrap.readForkSourceSnapshot", "args": ["claude-1"] },
+          {
+            "method": "sessionBootstrap.buildToolSwitchContinuityPreamble",
+            "args": [
+              {
+                "sessionId": "claude-1",
+                "sourceTool": "claude",
+                "targetTool": "codex",
+                "snapshot": { "historyText": "previous work", "liveText": "live pane" }
+              }
+            ]
+          },
+          { "method": "session.claude-1.kill", "args": [] },
+          {
+            "method": "sessionBootstrap.buildSessionPreamble",
+            "args": [
+              {
+                "sessionId": "claude-1",
+                "command": "codex",
+                "worktreePath": "<REPO>",
+                "extraPreamble": "switch continuity",
+                "includeAimuxPreamble": true,
+                "team": { "teamId": "team-1", "parentSessionId": "parent-1", "role": "coder" }
+              }
+            ]
+          },
+          { "method": "sessionBootstrap.ensurePlanFile", "args": ["claude-1", "codex", "<REPO>"] },
+          { "method": "tmuxRuntimeManager.ensureProjectSession", "args": ["/private<REPO>"] },
+          { "method": "getSessionLabel", "args": ["claude-1"] },
+          {
+            "method": "tmuxRuntimeManager.createWindow",
+            "args": [
+              "aimux-test",
+              "agent",
+              "<REPO>",
+              "env",
+              [
+                "-i",
+                "AIMUX_DAEMON_PORT=43190",
+                "AIMUX_ENV=production",
+                "AIMUX_HOME=<REPO>/home",
+                "TERM=tmux-256color",
+                "AIMUX_METADATA_ENDPOINT_FILE=<REPO>/home/projects/aimux-session-migrate-switch/metadata-api.txt",
+                "AIMUX_SESSION_ID=claude-1",
+                "AIMUX_PROJECT_ROOT=/private<REPO>",
+                "AIMUX_TOOL=codex",
+                "codex",
+                "-c",
+                "features.hooks=true",
+                "--dangerously-bypass-hook-trust",
+                "--dangerously-bypass-approvals-and-sandbox"
+              ],
+              { "detached": true }
+            ]
+          },
+          {
+            "method": "tmuxRuntimeManager.clearTargetHistory",
+            "args": [{ "sessionName": "aimux-test", "windowId": "@1", "windowName": "agent" }]
+          },
+          {
+            "method": "registerManagedSession",
+            "args": [
+              { "id": "claude-1", "command": "codex", "backendSessionId": null, "exited": false, "team": null },
+              ["--dangerously-bypass-approvals-and-sandbox"],
+              "codex",
+              "<REPO>",
+              null,
+              "<TIMESTAMP>",
+              { "teamId": "team-1", "parentSessionId": "parent-1", "role": "coder" }
+            ]
+          },
+          { "method": "syncTmuxWindowMetadata", "args": ["claude-1"] },
+          { "method": "saveState", "args": [] }
+        ]
+      },
+      "inputSha256": "da958f54f897df6f4ba8ef44421cda59c61ec8c4bc4480afabb6c86a3c298e52"
+    },
+    {
+      "id": "session-launch-migrate-switch-007",
+      "name": "switchAgentTool honors launch overrides while keeping the Aimux session id",
+      "source": "src/multiplexer/session-launch.ts",
+      "api": "switchAgentTool",
+      "input": {
+        "config": {
+          "runtime": { "agentPreambleEnabled": true },
+          "tools": {
+            "codex": {
+              "command": "codex",
+              "args": ["--dangerously-bypass-approvals-and-sandbox"],
+              "enabled": true,
+              "resumeArgs": ["resume", "{sessionId}"],
+              "resumeByBackendSessionId": true,
+              "developerInstructionsConfigKey": "developer_instructions"
+            },
+            "claude": {
+              "command": "claude",
+              "args": ["--dangerously-skip-permissions"],
+              "enabled": true,
+              "resumeArgs": ["--resume", "{sessionId}"],
+              "resumeByBackendSessionId": true,
+              "preambleFlag": ["--append-system-prompt"],
+              "sessionIdFlag": ["--session-id", "{sessionId}"]
+            },
+            "disabled": { "command": "disabled", "args": [], "enabled": false }
+          },
+          "scribe": { "defaultAgent": null }
+        },
+        "sessionId": "codex-1",
+        "targetToolConfigKey": "codex",
+        "launchOverride": { "command": "bash", "args": ["--login"], "env": { "CLAUDE_YOLO": "1" } },
+        "instruction": "switch now",
+        "switchPreamble": "override continuity",
+        "host": {
+          "sessions": [{ "id": "codex-1", "command": "codex", "exited": false }],
+          "sessionToolKeys": [["codex-1", "codex"]],
+          "sessionOriginalArgs": [["codex-1", ["--old-action"]]],
+          "sessionWorktreePaths": [["codex-1", "<REPO>"]]
+        },
+        "sourceSnapshot": { "historyText": "old", "liveText": "" }
+      },
+      "output": {
+        "error": null,
+        "host": {
+          "activeIndex": 0,
+          "sessions": [{ "id": "codex-1", "command": "bash", "backendSessionId": null, "exited": false, "team": null }],
+          "toolKeys": [["codex-1", "codex"]],
+          "originalArgs": [["codex-1", ["--login"]]],
+          "worktreePaths": [["codex-1", "<REPO>"]],
+          "targets": [["codex-1", { "sessionName": "aimux-test", "windowId": "@1", "windowName": "agent" }]]
+        },
+        "calls": [
+          {
+            "method": "sessionBootstrap.stripToolActionArgs",
+            "args": [
+              {
+                "command": "codex",
+                "args": ["--dangerously-bypass-approvals-and-sandbox"],
+                "enabled": true,
+                "resumeArgs": ["resume", "{sessionId}"],
+                "forkArgs": ["fork", "{sessionId}"],
+                "resumeByBackendSessionId": true,
+                "resumeFallback": ["resume", "--last"],
+                "developerInstructionsConfigKey": "developer_instructions",
+                "promptPatterns": ["^> $"],
+                "turnPatterns": ["^[>❯]\\s*(.+)"],
+                "startupInterstitials": [
+                  {
+                    "id": "codex-update-available",
+                    "when": ["Update available!", "Press enter to continue"],
+                    "choose": "^[\\s›>❯]*(\\d+)\\.\\s+Skip\\s*$"
+                  }
+                ]
+              },
+              ["--login"]
+            ]
+          },
+          { "method": "contextWatcher.syncNow", "args": ["codex-1"] },
+          { "method": "sessionBootstrap.readForkSourceSnapshot", "args": ["codex-1"] },
+          {
+            "method": "sessionBootstrap.buildToolSwitchContinuityPreamble",
+            "args": [
+              {
+                "sessionId": "codex-1",
+                "sourceTool": "codex",
+                "targetTool": "codex",
+                "snapshot": { "historyText": "old", "liveText": "" },
+                "instruction": "switch now"
+              }
+            ]
+          },
+          { "method": "session.codex-1.kill", "args": [] },
+          {
+            "method": "sessionBootstrap.buildSessionPreamble",
+            "args": [
+              {
+                "sessionId": "codex-1",
+                "command": "bash",
+                "worktreePath": "<REPO>",
+                "extraPreamble": "override continuity",
+                "includeAimuxPreamble": true
+              }
+            ]
+          },
+          { "method": "sessionBootstrap.ensurePlanFile", "args": ["codex-1", "bash", "<REPO>"] },
+          { "method": "tmuxRuntimeManager.ensureProjectSession", "args": ["/private<REPO>"] },
+          { "method": "getSessionLabel", "args": ["codex-1"] },
+          {
+            "method": "tmuxRuntimeManager.createWindow",
+            "args": [
+              "aimux-test",
+              "agent",
+              "<REPO>",
+              "env",
+              [
+                "-i",
+                "AIMUX_DAEMON_PORT=43190",
+                "AIMUX_ENV=production",
+                "AIMUX_HOME=<REPO>/home",
+                "TERM=xterm-256color",
+                "CLAUDE_YOLO=1",
+                "bash",
+                "--login"
+              ],
+              { "detached": true }
+            ]
+          },
+          {
+            "method": "tmuxRuntimeManager.clearTargetHistory",
+            "args": [{ "sessionName": "aimux-test", "windowId": "@1", "windowName": "agent" }]
+          },
+          {
+            "method": "registerManagedSession",
+            "args": [
+              { "id": "codex-1", "command": "bash", "backendSessionId": null, "exited": false, "team": null },
+              ["--login"],
+              "codex",
+              "<REPO>",
+              null,
+              "<TIMESTAMP>",
+              null
+            ]
+          },
+          { "method": "syncTmuxWindowMetadata", "args": ["codex-1"] },
+          { "method": "saveState", "args": [] }
+        ]
+      },
+      "inputSha256": "80a7c892263a563ee4cd4e77413d2f15f86c728a223f81307316f2a58c6e9383"
+    }
+  ]
+}

@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "source": "src/dashboard/pending-actions.test.ts",
+  "sources": ["src/dashboard/pending-actions.test.ts", "src/pending-actions.ts"],
+  "generatedBy": "scripts/capture-dashboard-pending-actions-contract.mjs",
+  "description": "Dashboard pending-action blocking-kind policy captured by running the TypeScript isBlockingPendingDashboardActionKind helper.",
+  "cases": [
+    {
+      "id": "dashboard-pending-actions-001",
+      "name": "recognizes every pending dashboard action as blocking",
+      "source": "src/dashboard/pending-actions.test.ts",
+      "input": {
+        "name": "recognizes every pending dashboard action as blocking",
+        "values": [
+          "creating",
+          "forking",
+          "migrating",
+          "switching",
+          "starting",
+          "stopping",
+          "graveyarding",
+          "renaming",
+          "removing"
+        ]
+      },
+      "output": [
+        { "value": "creating", "blocking": true },
+        { "value": "forking", "blocking": true },
+        { "value": "migrating", "blocking": true },
+        { "value": "switching", "blocking": true },
+        { "value": "starting", "blocking": true },
+        { "value": "stopping", "blocking": true },
+        { "value": "graveyarding", "blocking": true },
+        { "value": "renaming", "blocking": true },
+        { "value": "removing", "blocking": true }
+      ],
+      "inputSha256": "3c5da07c54b412065c10f8caf8bccb94119d2327920cda84284443d9aff71db3"
+    },
+    {
+      "id": "dashboard-pending-actions-002",
+      "name": "does not treat missing or unknown pending actions as blocking",
+      "source": "src/dashboard/pending-actions.test.ts",
+      "input": {
+        "name": "does not treat missing or unknown pending actions as blocking",
+        "values": [null, null, "done", "", "paused"]
+      },
+      "output": [
+        { "blocking": false },
+        { "value": null, "blocking": false },
+        { "value": "done", "blocking": false },
+        { "value": "", "blocking": false },
+        { "value": "paused", "blocking": false }
+      ],
+      "inputSha256": "81e4325c50362af6fbf899d511b034355ae1fc1f3f35606fd1a0e861a43f0e61"
+    }
+  ]
+}

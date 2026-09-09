@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "source": "src/tui/render/text.test.ts",
+  "generatedBy": "scripts/capture-tui-render-text-contract.mjs",
+  "description": "TUI text helper outputs captured by running TypeScript tui/render/text helpers.",
+  "cases": [
+    {
+      "id": "tui-render-text-001",
+      "name": "joins panes with default pipe separator",
+      "source": "src/tui/render/text.test.ts",
+      "api": "composeTwoPane",
+      "input": {
+        "name": "joins panes with default pipe separator",
+        "api": "composeTwoPane",
+        "left": ["left"],
+        "right": ["right"],
+        "cols": 80
+      },
+      "output": ["left                                           │ right                         "],
+      "inputSha256": "ce429880a2c63eb88af11db969a18b4e88e39606d78ee881b8bae0b7ff064230"
+    },
+    {
+      "id": "tui-render-text-002",
+      "name": "honors custom separator with same visible width",
+      "source": "src/tui/render/text.test.ts",
+      "api": "composeTwoPane",
+      "input": {
+        "name": "honors custom separator with same visible width",
+        "api": "composeTwoPane",
+        "left": ["left"],
+        "right": ["right"],
+        "cols": 80,
+        "separator": "   "
+      },
+      "output": ["left                                             right                         "],
+      "inputSha256": "f11b4e6b661b60dd2ab656789337587fd4fc0beb46ebe8b874b88ac484d5d656"
+    },
+    {
+      "id": "tui-render-text-003",
+      "name": "keeps output within columns for wider separator",
+      "source": "src/tui/render/text.test.ts",
+      "api": "composeTwoPane",
+      "input": {
+        "name": "keeps output within columns for wider separator",
+        "api": "composeTwoPane",
+        "left": ["left"],
+        "right": ["right"],
+        "cols": 80,
+        "separator": "  ||  "
+      },
+      "output": ["left                                            ||  right                      "],
+      "inputSha256": "a28934fc8a564c174c83a54beb040fa5a9e9c59695a9c40d46f12869be13d948"
+    },
+    {
+      "id": "tui-render-text-004",
+      "name": "strips SGR sequences from composed text",
+      "source": "src/tui/render/text.test.ts",
+      "api": "stripAnsi",
+      "input": {
+        "name": "strips SGR sequences from composed text",
+        "api": "stripAnsi",
+        "text": "\u001b[1;38;5;75mready\u001b[0m"
+      },
+      "output": "ready",
+      "inputSha256": "1552c18fa0f29736fc233815ba8581d8af97585962dfd0d57c1e121f70cd24cb"
+    }
+  ]
+}

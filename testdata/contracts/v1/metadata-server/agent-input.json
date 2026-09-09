@@ -1,0 +1,129 @@
+{
+  "version": 1,
+  "source": "src/metadata-server/agent-input.test.ts",
+  "generatedBy": "scripts/capture-metadata-server-runtime-contract.mjs",
+  "description": "Metadata-server agent input shared-chat actor, hosted attachment, actor-prefix, and attachment-reference formatting behavior captured by running TypeScript agent-input helpers.",
+  "cases": [
+    {
+      "id": "metadata-agent-input-001",
+      "name": "parses shared chat actors from request bodies",
+      "source": "src/metadata-server/agent-input.test.ts",
+      "api": "bodySharedChatActor",
+      "input": {
+        "name": "parses shared chat actors from request bodies",
+        "api": "bodySharedChatActor",
+        "values": [
+          { "sharedChatActor": { "role": "guest", "displayName": "  Sam   Wise  ", "email": "sam@example.com" } },
+          { "sharedChatActor": { "role": "admin", "displayName": "Sam" } },
+          { "sharedChatActor": { "role": "owner" } }
+        ]
+      },
+      "output": [{ "role": "guest", "displayName": "Sam   Wise", "email": "sam@example.com" }, null, null],
+      "inputSha256": "14257a4cbcbfaf8073b1466482103370cadabcc19fb7eee0302a197c65c9ea7f"
+    },
+    {
+      "id": "metadata-agent-input-002",
+      "name": "formats shared chat input with a bounded actor prefix",
+      "source": "src/metadata-server/agent-input.test.ts",
+      "api": "sharedChatFormatting",
+      "input": {
+        "name": "formats shared chat input with a bounded actor prefix",
+        "api": "sharedChatFormatting",
+        "values": [
+          { "text": "  hello  ", "actor": { "role": "owner", "displayName": " Sam\nWise " } },
+          {
+            "actor": {
+              "role": "guest",
+              "displayName": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+            }
+          },
+          { "text": "hello", "actor": { "role": "guest" } }
+        ]
+      },
+      "output": ["[Sam Wise] hello", 80, "[shared guest] hello"],
+      "inputSha256": "376375cb5e664b71b5b83e4cd2b14751186be9f82088764b234b8527020ea329"
+    },
+    {
+      "id": "metadata-agent-input-003",
+      "name": "formats attachment references without changing input when none exist",
+      "source": "src/metadata-server/agent-input.test.ts",
+      "api": "formatAgentInputWithAttachments",
+      "input": {
+        "name": "formats attachment references without changing input when none exist",
+        "api": "formatAgentInputWithAttachments",
+        "values": [
+          { "text": "  keep spacing  ", "attachments": [] },
+          {
+            "text": "",
+            "attachments": [
+              {
+                "id": "att-1",
+                "kind": "image",
+                "filename": "photo.png",
+                "mimeType": "image/png",
+                "sizeBytes": 123,
+                "sha256": "abc",
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "source": "upload",
+                "contentPath": "/tmp/photo.png",
+                "sessionId": "codex-1"
+              }
+            ]
+          },
+          {
+            "text": "Review this",
+            "attachments": [
+              {
+                "id": "att-1",
+                "kind": "image",
+                "filename": "notes.md",
+                "mimeType": "text/markdown",
+                "sizeBytes": 123,
+                "sha256": "abc",
+                "createdAt": "2026-01-01T00:00:00.000Z",
+                "source": "upload",
+                "contentPath": "/tmp/photo.png",
+                "sessionId": "codex-1"
+              }
+            ]
+          }
+        ]
+      },
+      "output": [
+        "  keep spacing  ",
+        "Please review the attached file(s).\n\nAttached files:\n- photo.png (image/png, 123 bytes): /tmp/photo.png",
+        "Review this\n\nAttached files:\n- notes.md (text/markdown, 123 bytes): /tmp/photo.png"
+      ],
+      "inputSha256": "96421548dd4a6b8d7173997fe4ac374331cedf1fd32be856fe1bad98465b186b"
+    },
+    {
+      "id": "metadata-agent-input-004",
+      "name": "parses hosted attachment references from request bodies",
+      "source": "src/metadata-server/agent-input.test.ts",
+      "api": "hostedAttachmentFromBody",
+      "input": {
+        "name": "parses hosted attachment references from request bodies",
+        "api": "hostedAttachmentFromBody",
+        "values": [
+          {
+            "contentUrl": "https://example.com/a.png",
+            "expiresAt": "2026-01-01T01:00:00.000Z",
+            "sha256": "abc",
+            "sizeBytes": 123
+          },
+          { "contentUrl": "https://example.com/a.png" }
+        ]
+      },
+      "output": [
+        {
+          "contentUrl": "https://example.com/a.png",
+          "expiresAt": "2026-01-01T01:00:00.000Z",
+          "sha256": "abc",
+          "sizeBytes": 123
+        },
+        null
+      ],
+      "inputSha256": "e628850a34281acfa8296022632d50b44cdbd59025acf13af39bfb824486b0e8"
+    }
+  ]
+}

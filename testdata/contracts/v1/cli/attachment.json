@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "source": "src/cli/attachment.test.ts",
+  "generatedBy": "scripts/capture-cli-attachment-contract.mjs",
+  "description": "CLI attachment MIME and relay URL helper outputs captured by running TypeScript cli/attachment helpers. Commander publish wiring is not captured here because it belongs to the fenced core_cli/project-service route path.",
+  "cases": [
+    {
+      "id": "cli-attachment-001",
+      "name": "maps uppercase image extension to png mime",
+      "source": "src/cli/attachment.test.ts",
+      "api": "mimeTypeForPublishedAttachment",
+      "input": {
+        "name": "maps uppercase image extension to png mime",
+        "api": "mimeTypeForPublishedAttachment",
+        "filePath": "screenshot.PNG"
+      },
+      "output": "image/png",
+      "inputSha256": "4ea8ce127552bb658ddeae7da9508b62ddae963f734ef5ab91c987e2d9d232ee"
+    },
+    {
+      "id": "cli-attachment-002",
+      "name": "maps webm video extension",
+      "source": "src/cli/attachment.test.ts",
+      "api": "mimeTypeForPublishedAttachment",
+      "input": {
+        "name": "maps webm video extension",
+        "api": "mimeTypeForPublishedAttachment",
+        "filePath": "clip.webm"
+      },
+      "output": "video/webm",
+      "inputSha256": "b1944ec93f8283e5cf75de62043c646ca7111f366f6ec1af82434a6d1ba952e3"
+    },
+    {
+      "id": "cli-attachment-003",
+      "name": "falls back unknown extension to octet stream",
+      "source": "src/cli/attachment.test.ts",
+      "api": "mimeTypeForPublishedAttachment",
+      "input": {
+        "name": "falls back unknown extension to octet stream",
+        "api": "mimeTypeForPublishedAttachment",
+        "filePath": "archive.bin"
+      },
+      "output": "application/octet-stream",
+      "inputSha256": "fac7b2062eba548aa468d8d119781682cf37afa168205e231535cd54ba2141bb"
+    },
+    {
+      "id": "cli-attachment-004",
+      "name": "normalizes secure websocket relay URLs to https",
+      "source": "src/cli/attachment.test.ts",
+      "api": "relayHttpUrl",
+      "input": {
+        "name": "normalizes secure websocket relay URLs to https",
+        "api": "relayHttpUrl",
+        "relayUrl": "wss://relay.aimux.app/socket"
+      },
+      "output": "https://relay.aimux.app/socket",
+      "inputSha256": "7831c83823536e20cc89dd92bff5e6d66855d1715b845859d6547e925eb9ad50"
+    },
+    {
+      "id": "cli-attachment-005",
+      "name": "normalizes websocket localhost URL and strips trailing slash",
+      "source": "src/cli/attachment.test.ts",
+      "api": "relayHttpUrl",
+      "input": {
+        "name": "normalizes websocket localhost URL and strips trailing slash",
+        "api": "relayHttpUrl",
+        "relayUrl": "ws://localhost:8787/"
+      },
+      "output": "http://localhost:8787",
+      "inputSha256": "875ec6e1fd3f20ef9f84e23ae25cc7525cab84cf1a1cdec634105b76dc4c5218"
+    }
+  ]
+}

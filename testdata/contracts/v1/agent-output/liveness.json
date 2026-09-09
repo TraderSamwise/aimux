@@ -1,0 +1,195 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/agent-output-liveness.test.ts",
+  "generatedBy": "scripts/capture-agent-state-contracts.mjs",
+  "description": "readAgentOutput liveness contracts captured by running the TypeScript multiplexer helper.",
+  "cases": [
+    {
+      "id": "agent-output-liveness-001",
+      "name": "reports fresh activity even when the pane is byte-for-byte identical",
+      "source": "src/multiplexer/agent-output-liveness.test.ts",
+      "api": "readAgentOutput",
+      "input": {
+        "pane": "nothing about this pane changes",
+        "reads": [{ "derived": { "activity": "running" } }, { "derived": { "activity": "done" } }]
+      },
+      "output": {
+        "first": {
+          "sessionId": "codex-1",
+          "output": "nothing about this pane changes",
+          "outputAnsi": "nothing about this pane changes",
+          "startLine": -120,
+          "requestedStartLine": -120,
+          "captureLineLimit": 2000,
+          "outputTailOnly": true,
+          "outputStartLineClamped": false,
+          "parsed": {
+            "blocks": [{ "type": "response", "text": "nothing about this pane changes" }],
+            "parser": { "tool": "codex", "version": 1, "confidence": "heuristic" }
+          },
+          "messages": [
+            {
+              "id": "assistant:4ff7842116f2",
+              "role": "assistant",
+              "parts": [{ "type": "text", "text": "nothing about this pane changes" }],
+              "text": "nothing about this pane changes",
+              "latest": true
+            }
+          ],
+          "activityText": "",
+          "activity": "running"
+        },
+        "second": {
+          "sessionId": "codex-1",
+          "output": "nothing about this pane changes",
+          "outputAnsi": "nothing about this pane changes",
+          "startLine": -120,
+          "requestedStartLine": -120,
+          "captureLineLimit": 2000,
+          "outputTailOnly": true,
+          "outputStartLineClamped": false,
+          "parsed": {
+            "blocks": [{ "type": "response", "text": "nothing about this pane changes" }],
+            "parser": { "tool": "codex", "version": 1, "confidence": "heuristic" }
+          },
+          "messages": [
+            {
+              "id": "assistant:4ff7842116f2",
+              "role": "assistant",
+              "parts": [{ "type": "text", "text": "nothing about this pane changes" }],
+              "text": "nothing about this pane changes",
+              "latest": true
+            }
+          ],
+          "activityText": "",
+          "activity": "done"
+        },
+        "sameMessagesReference": true
+      },
+      "inputSha256": "af75e55af3c4d1a40ba14abcf8d4a43b66c12cb6f9cd05a905aa56402f7b6fe4"
+    },
+    {
+      "id": "agent-output-liveness-002",
+      "name": "leaves activity undefined when the session has no derived state",
+      "source": "src/multiplexer/agent-output-liveness.test.ts",
+      "api": "readAgentOutput",
+      "input": { "pane": "some output" },
+      "output": {
+        "sessionId": "codex-1",
+        "output": "some output",
+        "outputAnsi": "some output",
+        "startLine": -120,
+        "requestedStartLine": -120,
+        "captureLineLimit": 2000,
+        "outputTailOnly": true,
+        "outputStartLineClamped": false,
+        "parsed": {
+          "blocks": [{ "type": "response", "text": "some output" }],
+          "parser": { "tool": "codex", "version": 1, "confidence": "heuristic" }
+        },
+        "messages": [
+          {
+            "id": "assistant:96b8c0a4c691",
+            "role": "assistant",
+            "parts": [{ "type": "text", "text": "some output" }],
+            "text": "some output",
+            "latest": true
+          }
+        ],
+        "activityText": ""
+      },
+      "inputSha256": "1c0e6840a8dcf881eb23ee65592357f8b87f1b444aaea22029290cc09217f488"
+    },
+    {
+      "id": "agent-output-liveness-003",
+      "name": "still projects the pane into messages",
+      "source": "src/multiplexer/agent-output-liveness.test.ts",
+      "api": "readAgentOutput",
+      "input": { "pane": "> hello\n\nHi there" },
+      "output": {
+        "sessionId": "codex-1",
+        "output": "> hello\n\nHi there",
+        "outputAnsi": "> hello\n\nHi there",
+        "startLine": -120,
+        "requestedStartLine": -120,
+        "captureLineLimit": 2000,
+        "outputTailOnly": true,
+        "outputStartLineClamped": false,
+        "parsed": {
+          "blocks": [
+            { "type": "prompt", "text": "hello" },
+            { "type": "response", "text": "Hi there" }
+          ],
+          "parser": { "tool": "codex", "version": 1, "confidence": "heuristic" }
+        },
+        "messages": [
+          {
+            "id": "user:aaf4c61ddcc5",
+            "role": "user",
+            "parts": [{ "type": "text", "text": "hello" }],
+            "text": "hello"
+          },
+          {
+            "id": "assistant:9e472f09082b",
+            "role": "assistant",
+            "parts": [{ "type": "text", "text": "Hi there" }],
+            "text": "Hi there",
+            "latest": true
+          }
+        ],
+        "activityText": ""
+      },
+      "inputSha256": "0c4c79bad42566212447a94536b43da93aaa1a8511886c96cb8e51feef26666f"
+    },
+    {
+      "id": "agent-output-liveness-004",
+      "name": "projects ANSI styling into cached messages",
+      "source": "src/multiplexer/agent-output-liveness.test.ts",
+      "api": "readAgentOutput",
+      "input": { "pane": "❯ ask\n⏺ red answer", "ansiPane": "❯ ask\n⏺ \u001b[31mred\u001b[0m answer" },
+      "output": {
+        "sessionId": "codex-1",
+        "output": "❯ ask\n⏺ red answer",
+        "outputAnsi": "❯ ask\n⏺ \u001b[31mred\u001b[0m answer",
+        "startLine": -120,
+        "requestedStartLine": -120,
+        "captureLineLimit": 2000,
+        "outputTailOnly": true,
+        "outputStartLineClamped": false,
+        "parsed": {
+          "blocks": [
+            { "type": "prompt", "text": "ask" },
+            { "type": "response", "text": "red answer" }
+          ],
+          "parser": { "tool": "codex", "version": 1, "confidence": "heuristic" }
+        },
+        "messages": [
+          {
+            "id": "user:1c8f09270fc3",
+            "role": "user",
+            "parts": [{ "type": "text", "text": "ask", "spans": [{ "text": "ask" }] }],
+            "text": "ask"
+          },
+          {
+            "id": "assistant:fd634303f65b",
+            "role": "assistant",
+            "parts": [
+              {
+                "type": "text",
+                "text": "red answer",
+                "spans": [
+                  { "text": "red", "foreground": { "model": "rgb", "value": "#e06c75" } },
+                  { "text": " answer" }
+                ]
+              }
+            ],
+            "text": "red answer",
+            "latest": true
+          }
+        ],
+        "activityText": ""
+      },
+      "inputSha256": "eee04b4257352c38542561102461e82cb8b7c4ef93025e6e03b5aed279030986"
+    }
+  ]
+}

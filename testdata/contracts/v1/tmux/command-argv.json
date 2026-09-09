@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "source": "src/tmux/runtime-manager.ts",
+  "sources": [
+    "src/tmux/runtime-manager.test.ts",
+    "src/tmux/runtime-manager.ts"
+  ],
+  "description": "Canonical tmux argv cases for Rust parity.",
+  "cases": [
+    {
+      "name": "captureTarget negative start",
+      "input": { "windowId": "@3", "startLine": -200 },
+      "expected": ["capture-pane", "-p", "-J", "-t", "@3", "-S", "-200"]
+    },
+    {
+      "name": "captureTarget includes escapes",
+      "input": { "windowId": "@3", "includeEscapes": true },
+      "expected": ["capture-pane", "-p", "-J", "-e", "-t", "@3", "-S", "-"]
+    },
+    {
+      "name": "new project session default dashboard",
+      "operation": "newSessionDefault",
+      "input": { "sessionName": "aimux-mobile-abc", "projectRoot": "/repo/mobile" },
+      "expected": ["new-session", "-d", "-s", "aimux-mobile-abc", "-c", "/repo/mobile", "-n", "dashboard", "sh", "-lc", "tail -f /dev/null"]
+    },
+    {
+      "name": "new project session dashboard command",
+      "operation": "newSessionCommand",
+      "input": { "sessionName": "aimux-mobile-abc", "projectRoot": "/repo/mobile", "cwd": "/repo/mobile/app", "command": "node", "args": ["dashboard.mjs", "--watch"] },
+      "expected": ["new-session", "-d", "-s", "aimux-mobile-abc", "-c", "/repo/mobile/app", "-n", "dashboard", "node", "dashboard.mjs", "--watch"]
+    },
+    {
+      "name": "new dashboard window command",
+      "operation": "newDashboardWindowCommand",
+      "input": { "sessionName": "aimux-mobile-abc", "projectRoot": "/repo/mobile", "dashboardName": "dashboard-268eff9c", "cwd": "/repo/mobile/app", "command": "node", "args": ["dashboard.mjs"] },
+      "expected": ["new-window", "-d", "-t", "aimux-mobile-abc", "-c", "/repo/mobile/app", "-n", "dashboard-268eff9c", "node", "dashboard.mjs"]
+    },
+    {
+      "name": "new detached agent window",
+      "operation": "newWindow",
+      "input": { "sessionName": "aimux-mobile-abc", "name": "codex", "cwd": "/repo/mobile", "command": "codex", "args": ["--full-auto"], "detached": true },
+      "expected": ["new-window", "-d", "-P", "-t", "aimux-mobile-abc", "-c", "/repo/mobile", "-n", "codex", "-F", "#{window_id}\t#{window_index}\t#{window_name}", "codex", "--full-auto"]
+    },
+    {
+      "name": "captureTarget end line",
+      "operation": "captureTarget",
+      "input": { "windowId": "@3", "startLine": -200, "endLine": 50 },
+      "expected": ["capture-pane", "-p", "-J", "-t", "@3", "-S", "-200", "-E", "50"]
+    },
+    {
+      "name": "pipe pane only if not already piped",
+      "operation": "startPanePipe",
+      "input": { "windowId": "@3", "command": "cat >> /tmp/pane.log", "onlyIfNotPiped": true },
+      "expected": ["pipe-pane", "-t", "@3", "-o", "cat >> /tmp/pane.log"]
+    },
+    {
+      "name": "resize target",
+      "operation": "resizeWindow",
+      "input": { "windowId": "@3", "cols": 100, "rows": 32 },
+      "expected": ["resize-window", "-t", "@3", "-x", "100", "-y", "32"]
+    },
+    {
+      "name": "send modified enter",
+      "operation": "sendModifiedEnter",
+      "input": { "windowId": "@3" },
+      "expected": ["send-keys", "-t", "@3", "-H", "1b", "5b", "31", "33", "3b", "32", "75"]
+    },
+    {
+      "name": "respawn window",
+      "operation": "respawnWindow",
+      "input": { "windowId": "@3", "cwd": "/repo/mobile", "command": "codex", "args": ["resume"] },
+      "expected": ["respawn-window", "-k", "-t", "@3", "-c", "/repo/mobile", "codex", "resume"]
+    },
+    {
+      "name": "switch named client session",
+      "operation": "switchClient",
+      "input": { "sessionName": "aimux-mobile-abc-client-deadbeef", "windowIndex": 3, "clientTty": "/dev/ttys001" },
+      "expected": ["switch-client", "-c", "/dev/ttys001", "-t", "aimux-mobile-abc-client-deadbeef:3"]
+    },
+    {
+      "name": "unlink linked window",
+      "operation": "unlinkWindow",
+      "input": { "sessionName": "aimux-mobile-abc-client-deadbeef", "windowId": "@3" },
+      "expected": ["unlink-window", "-t", "aimux-mobile-abc-client-deadbeef:@3"]
+    }
+  ]
+}

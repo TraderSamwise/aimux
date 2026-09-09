@@ -1,0 +1,145 @@
+{
+  "version": 1,
+  "source": "src/worktree-colors.test.ts",
+  "generatedBy": "scripts/capture-worktree-colors-contract.mjs",
+  "description": "Worktree color key, hash, RGB, hex, ANSI, palette spread, and known project color contracts captured by running TypeScript worktree-colors helpers.",
+  "cases": [
+    {
+      "id": "worktree-colors-001",
+      "name": "uses one deterministic truecolor value for terminal and GUI tones",
+      "source": "src/worktree-colors.test.ts",
+      "api": "colorSummary",
+      "input": { "path": "/repo/.aimux/worktrees/e2e-audit", "projectRoot": "/repo", "name": "e2e-audit" },
+      "output": {
+        "key": "path:/repo/.aimux/worktrees/e2e-audit",
+        "code": 12451695,
+        "rgb": { "r": 189, "g": 255, "b": 111 },
+        "hex": "#bdff6f",
+        "hexForCode": "#bdff6f",
+        "ansi": "38;2;189;255;111",
+        "ansiForCode": "38;2;189;255;111"
+      },
+      "inputSha256": "404622b25b9d29d63941bd5e6a4ccbdc444403bb409e9cdcf377ca9063be4972"
+    },
+    {
+      "id": "worktree-colors-002",
+      "name": "is stable for the same identity regardless of surrounding order",
+      "source": "src/worktree-colors.test.ts",
+      "api": "codeList",
+      "input": {
+        "before": [
+          { "path": "/repo" },
+          { "path": "/repo/.aimux/worktrees/custom-modules-mcp" },
+          { "path": "/repo/.aimux/worktrees/e2e-audit" }
+        ],
+        "after": [{ "path": "/repo/.aimux/worktrees/custom-modules-mcp" }, { "path": "/repo" }]
+      },
+      "output": { "before": [5563522, 16740519, 12451695], "after": [16740519, 5563522] },
+      "inputSha256": "3da96b96c6f20b750134d07f0b7d5859eecc7d8f9d1f3c79926131a10c7eb136"
+    },
+    {
+      "id": "worktree-colors-003",
+      "name": "does not quantize generated identities into a tiny palette",
+      "source": "src/worktree-colors.test.ts",
+      "api": "paletteSize",
+      "input": { "count": 300, "prefix": "/repo/.aimux/worktrees/worktree-" },
+      "output": { "uniqueHexCount": 299 },
+      "inputSha256": "d75dfb1b3015b928dea307f6f00b71cef616f052f8bddb257e74b924e8d31eaa"
+    },
+    {
+      "id": "worktree-colors-004",
+      "name": "keeps common project worktree names visually separated",
+      "source": "src/worktree-colors.test.ts",
+      "api": "distanceSummary",
+      "input": {
+        "root": "/Users/sam/cs/aimux",
+        "names": [
+          "main",
+          "context-mcp",
+          "affiliates",
+          "auto-api-sync",
+          "data-analytics",
+          "custom-modules-mcp",
+          "e2e-audit",
+          "okx-open-stops",
+          "v2-key-sync"
+        ]
+      },
+      "output": {
+        "hexByName": {
+          "main": "#ff4582",
+          "context-mcp": "#6edd5c",
+          "affiliates": "#52c8e6",
+          "auto-api-sync": "#ff8453",
+          "data-analytics": "#96a854",
+          "custom-modules-mcp": "#507bc9",
+          "e2e-audit": "#ffe585",
+          "okx-open-stops": "#eaa692",
+          "v2-key-sync": "#a9415f"
+        },
+        "minimumDistance": 66.88049042882386
+      },
+      "inputSha256": "ff89de849b4591d1be91e21f81941369d2c69a95b2119ada30e8c264d1ee747d"
+    },
+    {
+      "id": "worktree-colors-005",
+      "name": "keeps common project worktree names visually separated",
+      "source": "src/worktree-colors.test.ts",
+      "api": "distanceSummary",
+      "input": {
+        "root": "/Users/sam/cs/tealstreet-next",
+        "names": [
+          "main",
+          "context-mcp",
+          "affiliates",
+          "auto-api-sync",
+          "data-analytics",
+          "custom-modules-mcp",
+          "e2e-audit",
+          "okx-open-stops",
+          "v2-key-sync"
+        ]
+      },
+      "output": {
+        "hexByName": {
+          "main": "#f477ae",
+          "context-mcp": "#854ee6",
+          "affiliates": "#70f09e",
+          "auto-api-sync": "#d7a558",
+          "data-analytics": "#50b191",
+          "custom-modules-mcp": "#d2418b",
+          "e2e-audit": "#83e5e0",
+          "okx-open-stops": "#4b85f3",
+          "v2-key-sync": "#66b141"
+        },
+        "minimumDistance": 69.55573304911681
+      },
+      "inputSha256": "aabb809fecf55966843cb7bc7475d0a6dcaf44d0bfe1da53266c13d603ad8db6"
+    },
+    {
+      "id": "worktree-colors-006",
+      "name": "prefers path and falls back through project/name identities",
+      "source": "src/worktree-colors.test.ts",
+      "api": "keyList",
+      "input": {
+        "inputs": [
+          { "path": "/repo", "projectRoot": "/other", "name": "main" },
+          { "projectRoot": "/repo", "name": "main" },
+          { "name": "scratch" },
+          { "projectRoot": "/repo" },
+          { "projectName": "aimux" },
+          {}
+        ]
+      },
+      "output": [
+        "path:/repo",
+        "project-root:/repo\u0000name:main",
+        "name:scratch",
+        "project-root:/repo",
+        "project:aimux",
+        null
+      ],
+      "inputSha256": "36b9cb7e267a6f2a41080f2845ecdab47e667e6e89e07be33001871fd8760e74"
+    }
+  ]
+}

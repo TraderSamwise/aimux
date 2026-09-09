@@ -1,0 +1,841 @@
+{
+  "version": 1,
+  "source": "src/project-observability.test.ts",
+  "generatedBy": "scripts/capture-project-observability-contract.mjs",
+  "description": "Project observability summary, task progress, story ordering, review tagging, story-limit, and empty-input behavior captured by running TypeScript buildProjectObservability.",
+  "cases": [
+    {
+      "id": "project-observability-001",
+      "name": "rolls up agent/service/worktree/task/notification summary",
+      "source": "src/project-observability.test.ts",
+      "input": {
+        "scenario": "summary-rollup",
+        "sessions": [
+          { "status": "running" },
+          { "status": "idle" },
+          { "status": "ready" },
+          { "status": "waiting" },
+          { "status": "offline" },
+          { "status": "exited" }
+        ],
+        "services": [{}, {}],
+        "worktrees": [{}],
+        "tasks": [
+          {
+            "id": "a",
+            "status": "in_progress",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:00.000Z"
+          },
+          {
+            "id": "b",
+            "status": "done",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:00.000Z"
+          },
+          {
+            "id": "c",
+            "status": "failed",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:00.000Z"
+          }
+        ],
+        "notifications": [
+          {
+            "id": "n1",
+            "title": "Needs input",
+            "body": "please respond",
+            "unread": true,
+            "cleared": false,
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:00.000Z"
+          },
+          {
+            "id": "n2",
+            "title": "Needs input",
+            "body": "please respond",
+            "unread": false,
+            "cleared": false,
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:00.000Z"
+          }
+        ]
+      },
+      "output": {
+        "summary": {
+          "agentsRunning": 3,
+          "agentsWaiting": 1,
+          "agentsOffline": 2,
+          "services": 2,
+          "worktrees": 1,
+          "openTasks": 1,
+          "doneTasks": 1,
+          "unreadNotifications": 1
+        },
+        "progress": { "pending": 0, "assigned": 0, "in_progress": 1, "blocked": 0, "done": 1, "failed": 1, "total": 3 },
+        "story": [
+          {
+            "id": "task:a",
+            "kind": "task",
+            "title": "do a thing",
+            "meta": "in_progress",
+            "body": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "status": "in_progress"
+          },
+          {
+            "id": "task:b",
+            "kind": "task",
+            "title": "do a thing",
+            "meta": "done",
+            "body": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "status": "done"
+          },
+          {
+            "id": "task:c",
+            "kind": "task",
+            "title": "do a thing",
+            "meta": "failed",
+            "body": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "status": "failed"
+          },
+          {
+            "id": "notif:n1",
+            "kind": "notification",
+            "title": "Needs input",
+            "meta": "note",
+            "body": "please respond",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "status": "unread"
+          },
+          {
+            "id": "notif:n2",
+            "kind": "notification",
+            "title": "Needs input",
+            "meta": "note",
+            "body": "please respond",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "status": "read"
+          }
+        ]
+      },
+      "inputSha256": "54e1d520d66eff80c42a7be9929f269c1bb33b09ee3b4f5723a7e4058a8f1e25"
+    },
+    {
+      "id": "project-observability-002",
+      "name": "counts task progress by status",
+      "source": "src/project-observability.test.ts",
+      "input": {
+        "scenario": "task-progress",
+        "sessions": [],
+        "services": [],
+        "worktrees": [],
+        "tasks": [
+          {
+            "id": "a",
+            "status": "pending",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:00.000Z"
+          },
+          {
+            "id": "b",
+            "status": "assigned",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:00.000Z"
+          },
+          {
+            "id": "c",
+            "status": "in_progress",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:00.000Z"
+          },
+          {
+            "id": "d",
+            "status": "blocked",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:00.000Z"
+          },
+          {
+            "id": "e",
+            "status": "done",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:00.000Z"
+          },
+          {
+            "id": "f",
+            "status": "failed",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:00.000Z"
+          },
+          {
+            "id": "g",
+            "status": "pending",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:00.000Z"
+          }
+        ],
+        "notifications": []
+      },
+      "output": {
+        "summary": {
+          "agentsRunning": 0,
+          "agentsWaiting": 0,
+          "agentsOffline": 0,
+          "services": 0,
+          "worktrees": 0,
+          "openTasks": 5,
+          "doneTasks": 1,
+          "unreadNotifications": 0
+        },
+        "progress": { "pending": 2, "assigned": 1, "in_progress": 1, "blocked": 1, "done": 1, "failed": 1, "total": 7 },
+        "story": [
+          {
+            "id": "task:a",
+            "kind": "task",
+            "title": "do a thing",
+            "meta": "pending",
+            "body": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "status": "pending"
+          },
+          {
+            "id": "task:b",
+            "kind": "task",
+            "title": "do a thing",
+            "meta": "assigned",
+            "body": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "status": "assigned"
+          },
+          {
+            "id": "task:c",
+            "kind": "task",
+            "title": "do a thing",
+            "meta": "in_progress",
+            "body": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "status": "in_progress"
+          },
+          {
+            "id": "task:d",
+            "kind": "task",
+            "title": "do a thing",
+            "meta": "blocked",
+            "body": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "status": "blocked"
+          },
+          {
+            "id": "task:e",
+            "kind": "task",
+            "title": "do a thing",
+            "meta": "done",
+            "body": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "status": "done"
+          },
+          {
+            "id": "task:f",
+            "kind": "task",
+            "title": "do a thing",
+            "meta": "failed",
+            "body": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "status": "failed"
+          },
+          {
+            "id": "task:g",
+            "kind": "task",
+            "title": "do a thing",
+            "meta": "pending",
+            "body": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "status": "pending"
+          }
+        ]
+      },
+      "inputSha256": "2a1d26f9ecd0d30c195fe65d1e5c5a9f0d63f535a60ff36e7c7dc6408fc18601"
+    },
+    {
+      "id": "project-observability-003",
+      "name": "merges tasks and notifications into a story sorted newest-first",
+      "source": "src/project-observability.test.ts",
+      "input": {
+        "scenario": "story-order",
+        "sessions": [],
+        "services": [],
+        "worktrees": [],
+        "tasks": [
+          {
+            "id": "old",
+            "status": "pending",
+            "assignedBy": "user",
+            "description": "old task",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T01:00:00.000Z"
+          }
+        ],
+        "notifications": [
+          {
+            "id": "new",
+            "title": "new notif",
+            "body": "please respond",
+            "unread": true,
+            "cleared": false,
+            "createdAt": "2026-06-17T02:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:00.000Z"
+          }
+        ]
+      },
+      "output": {
+        "summary": {
+          "agentsRunning": 0,
+          "agentsWaiting": 0,
+          "agentsOffline": 0,
+          "services": 0,
+          "worktrees": 0,
+          "openTasks": 1,
+          "doneTasks": 0,
+          "unreadNotifications": 1
+        },
+        "progress": { "pending": 1, "assigned": 0, "in_progress": 0, "blocked": 0, "done": 0, "failed": 0, "total": 1 },
+        "story": [
+          {
+            "id": "notif:new",
+            "kind": "notification",
+            "title": "new notif",
+            "meta": "note",
+            "body": "please respond",
+            "createdAt": "2026-06-17T02:00:00.000Z",
+            "status": "unread"
+          },
+          {
+            "id": "task:old",
+            "kind": "task",
+            "title": "old task",
+            "meta": "pending",
+            "body": "do a thing",
+            "createdAt": "2026-06-17T01:00:00.000Z",
+            "status": "pending"
+          }
+        ]
+      },
+      "inputSha256": "be67400f5bbbb99c7eef7b9571912a789092004727ad62a78d836bf783d4ed41"
+    },
+    {
+      "id": "project-observability-004",
+      "name": "tags review tasks distinctly and caps the story to storyLimit",
+      "source": "src/project-observability.test.ts",
+      "input": {
+        "scenario": "review-story-limit",
+        "sessions": [],
+        "services": [],
+        "worktrees": [],
+        "tasks": [
+          {
+            "id": "t0",
+            "status": "pending",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:00.000Z"
+          },
+          {
+            "id": "t1",
+            "status": "pending",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:01.000Z"
+          },
+          {
+            "id": "t2",
+            "status": "pending",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:02.000Z"
+          },
+          {
+            "id": "t3",
+            "status": "pending",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:03.000Z"
+          },
+          {
+            "id": "t4",
+            "status": "pending",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:04.000Z"
+          },
+          {
+            "id": "t5",
+            "status": "pending",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:05.000Z"
+          },
+          {
+            "id": "t6",
+            "status": "pending",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:06.000Z"
+          },
+          {
+            "id": "t7",
+            "status": "pending",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:07.000Z"
+          },
+          {
+            "id": "t8",
+            "status": "pending",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:08.000Z"
+          },
+          {
+            "id": "t9",
+            "status": "pending",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:09.000Z"
+          },
+          {
+            "id": "t10",
+            "status": "pending",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:10.000Z"
+          },
+          {
+            "id": "t11",
+            "status": "pending",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:11.000Z"
+          },
+          {
+            "id": "t12",
+            "status": "pending",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:12.000Z"
+          },
+          {
+            "id": "t13",
+            "status": "pending",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:13.000Z"
+          },
+          {
+            "id": "t14",
+            "status": "pending",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:14.000Z"
+          },
+          {
+            "id": "t15",
+            "status": "pending",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:15.000Z"
+          },
+          {
+            "id": "t16",
+            "status": "pending",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:16.000Z"
+          },
+          {
+            "id": "t17",
+            "status": "pending",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:17.000Z"
+          },
+          {
+            "id": "t18",
+            "status": "pending",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:18.000Z"
+          },
+          {
+            "id": "t19",
+            "status": "pending",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:19.000Z"
+          },
+          {
+            "id": "t20",
+            "status": "pending",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:20.000Z"
+          },
+          {
+            "id": "t21",
+            "status": "pending",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:21.000Z"
+          },
+          {
+            "id": "t22",
+            "status": "pending",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:22.000Z"
+          },
+          {
+            "id": "t23",
+            "status": "pending",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:23.000Z"
+          },
+          {
+            "id": "t24",
+            "status": "pending",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:24.000Z"
+          },
+          {
+            "id": "t25",
+            "status": "pending",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:25.000Z"
+          },
+          {
+            "id": "t26",
+            "status": "pending",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:26.000Z"
+          },
+          {
+            "id": "t27",
+            "status": "pending",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:27.000Z"
+          },
+          {
+            "id": "t28",
+            "status": "pending",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:28.000Z"
+          },
+          {
+            "id": "t29",
+            "status": "pending",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:29.000Z"
+          },
+          {
+            "id": "t30",
+            "status": "pending",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:30.000Z"
+          },
+          {
+            "id": "t31",
+            "status": "pending",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:31.000Z"
+          },
+          {
+            "id": "t32",
+            "status": "pending",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:32.000Z"
+          },
+          {
+            "id": "t33",
+            "status": "pending",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:33.000Z"
+          },
+          {
+            "id": "t34",
+            "status": "pending",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:34.000Z"
+          },
+          {
+            "id": "t35",
+            "status": "pending",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:35.000Z"
+          },
+          {
+            "id": "t36",
+            "status": "pending",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:36.000Z"
+          },
+          {
+            "id": "t37",
+            "status": "pending",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:37.000Z"
+          },
+          {
+            "id": "t38",
+            "status": "pending",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:38.000Z"
+          },
+          {
+            "id": "t39",
+            "status": "pending",
+            "assignedBy": "user",
+            "description": "do a thing",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T00:00:39.000Z"
+          },
+          {
+            "id": "rev",
+            "status": "pending",
+            "assignedBy": "user",
+            "description": "review it",
+            "prompt": "do a thing",
+            "createdAt": "2026-06-17T00:00:00.000Z",
+            "updatedAt": "2026-06-17T03:00:00.000Z",
+            "type": "review"
+          }
+        ],
+        "notifications": [],
+        "storyLimit": 5
+      },
+      "output": {
+        "summary": {
+          "agentsRunning": 0,
+          "agentsWaiting": 0,
+          "agentsOffline": 0,
+          "services": 0,
+          "worktrees": 0,
+          "openTasks": 41,
+          "doneTasks": 0,
+          "unreadNotifications": 0
+        },
+        "progress": {
+          "pending": 41,
+          "assigned": 0,
+          "in_progress": 0,
+          "blocked": 0,
+          "done": 0,
+          "failed": 0,
+          "total": 41
+        },
+        "story": [
+          {
+            "id": "task:rev",
+            "kind": "review",
+            "title": "review it",
+            "meta": "pending",
+            "body": "do a thing",
+            "createdAt": "2026-06-17T03:00:00.000Z",
+            "status": "pending"
+          },
+          {
+            "id": "task:t39",
+            "kind": "task",
+            "title": "do a thing",
+            "meta": "pending",
+            "body": "do a thing",
+            "createdAt": "2026-06-17T00:00:39.000Z",
+            "status": "pending"
+          },
+          {
+            "id": "task:t38",
+            "kind": "task",
+            "title": "do a thing",
+            "meta": "pending",
+            "body": "do a thing",
+            "createdAt": "2026-06-17T00:00:38.000Z",
+            "status": "pending"
+          },
+          {
+            "id": "task:t37",
+            "kind": "task",
+            "title": "do a thing",
+            "meta": "pending",
+            "body": "do a thing",
+            "createdAt": "2026-06-17T00:00:37.000Z",
+            "status": "pending"
+          },
+          {
+            "id": "task:t36",
+            "kind": "task",
+            "title": "do a thing",
+            "meta": "pending",
+            "body": "do a thing",
+            "createdAt": "2026-06-17T00:00:36.000Z",
+            "status": "pending"
+          }
+        ]
+      },
+      "inputSha256": "24e43e2490b3aeb4ff30fefccb231ac0c32496e457b4078012577bc84a7e7f6d"
+    },
+    {
+      "id": "project-observability-005",
+      "name": "handles empty inputs without throwing",
+      "source": "src/project-observability.test.ts",
+      "input": {
+        "scenario": "empty",
+        "sessions": [],
+        "services": [],
+        "worktrees": [],
+        "tasks": [],
+        "notifications": []
+      },
+      "output": {
+        "summary": {
+          "agentsRunning": 0,
+          "agentsWaiting": 0,
+          "agentsOffline": 0,
+          "services": 0,
+          "worktrees": 0,
+          "openTasks": 0,
+          "doneTasks": 0,
+          "unreadNotifications": 0
+        },
+        "progress": { "pending": 0, "assigned": 0, "in_progress": 0, "blocked": 0, "done": 0, "failed": 0, "total": 0 },
+        "story": []
+      },
+      "inputSha256": "0a7f4ca103059cb6b726ad878fffb99b1bd05ef94f1b9c6a2dd65cbf398100d1"
+    }
+  ]
+}

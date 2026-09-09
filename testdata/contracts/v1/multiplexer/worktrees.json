@@ -1,0 +1,1530 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/worktrees.test.ts",
+  "generatedBy": "scripts/capture-multiplexer-worktrees-contract.mjs",
+  "description": "Multiplexer worktree settle-poll delay and synchronous dashboard worktree input/removal contracts captured by running TypeScript worktrees helpers.",
+  "cases": [
+    {
+      "id": "multiplexer-worktrees-001",
+      "name": "holds tight cadence for the first attempts",
+      "source": "src/multiplexer/worktrees.test.ts",
+      "api": "worktreeSettlePollDelay",
+      "input": {
+        "name": "holds tight cadence for the first attempts",
+        "api": "worktreeSettlePollDelay",
+        "calls": [
+          { "attempt": 1, "baseMs": 250 },
+          { "attempt": 2, "baseMs": 250 },
+          { "attempt": 1, "baseMs": 100 },
+          { "attempt": 2, "baseMs": 100 }
+        ]
+      },
+      "output": [
+        { "attempt": 1, "baseMs": 250, "delayMs": 250 },
+        { "attempt": 2, "baseMs": 250, "delayMs": 250 },
+        { "attempt": 1, "baseMs": 100, "delayMs": 100 },
+        { "attempt": 2, "baseMs": 100, "delayMs": 100 }
+      ],
+      "inputSha256": "b56da73af1254792a7f8d959a7cfe7d7e331c1ceedd1a315d0bb01bb3929c59d"
+    },
+    {
+      "id": "multiplexer-worktrees-002",
+      "name": "decays and caps once settlement drags on",
+      "source": "src/multiplexer/worktrees.test.ts",
+      "api": "worktreeSettlePollDelay",
+      "input": {
+        "name": "decays and caps once settlement drags on",
+        "api": "worktreeSettlePollDelay",
+        "calls": [
+          { "attempt": 3, "baseMs": 250 },
+          { "attempt": 4, "baseMs": 250 },
+          { "attempt": 50, "baseMs": 250 },
+          { "attempt": 50, "baseMs": 100 }
+        ]
+      },
+      "output": [
+        { "attempt": 3, "baseMs": 250, "delayMs": 375 },
+        { "attempt": 4, "baseMs": 250, "delayMs": 563 },
+        { "attempt": 50, "baseMs": 250, "delayMs": 2000 },
+        { "attempt": 50, "baseMs": 100, "delayMs": 2000 }
+      ],
+      "inputSha256": "0cf812e8a997ec090240dc030885835d6b55f639d7468d7bfe545d850e35ddeb"
+    },
+    {
+      "id": "multiplexer-worktrees-003",
+      "name": "never returns a busy-spin delay",
+      "source": "src/multiplexer/worktrees.test.ts",
+      "api": "worktreeSettlePollDelay",
+      "input": {
+        "name": "never returns a busy-spin delay",
+        "api": "worktreeSettlePollDelay",
+        "calls": [
+          { "attempt": 1, "baseMs": 100 },
+          { "attempt": 2, "baseMs": 100 },
+          { "attempt": 3, "baseMs": 100 },
+          { "attempt": 4, "baseMs": 100 },
+          { "attempt": 5, "baseMs": 100 },
+          { "attempt": 6, "baseMs": 100 },
+          { "attempt": 7, "baseMs": 100 },
+          { "attempt": 8, "baseMs": 100 },
+          { "attempt": 9, "baseMs": 100 },
+          { "attempt": 10, "baseMs": 100 },
+          { "attempt": 11, "baseMs": 100 },
+          { "attempt": 12, "baseMs": 100 },
+          { "attempt": 13, "baseMs": 100 },
+          { "attempt": 14, "baseMs": 100 },
+          { "attempt": 15, "baseMs": 100 },
+          { "attempt": 16, "baseMs": 100 },
+          { "attempt": 17, "baseMs": 100 },
+          { "attempt": 18, "baseMs": 100 },
+          { "attempt": 19, "baseMs": 100 },
+          { "attempt": 20, "baseMs": 100 },
+          { "attempt": 21, "baseMs": 100 },
+          { "attempt": 22, "baseMs": 100 },
+          { "attempt": 23, "baseMs": 100 },
+          { "attempt": 24, "baseMs": 100 },
+          { "attempt": 25, "baseMs": 100 },
+          { "attempt": 26, "baseMs": 100 },
+          { "attempt": 27, "baseMs": 100 },
+          { "attempt": 28, "baseMs": 100 },
+          { "attempt": 29, "baseMs": 100 },
+          { "attempt": 30, "baseMs": 100 },
+          { "attempt": 31, "baseMs": 100 },
+          { "attempt": 32, "baseMs": 100 },
+          { "attempt": 33, "baseMs": 100 },
+          { "attempt": 34, "baseMs": 100 },
+          { "attempt": 35, "baseMs": 100 },
+          { "attempt": 36, "baseMs": 100 },
+          { "attempt": 37, "baseMs": 100 },
+          { "attempt": 38, "baseMs": 100 },
+          { "attempt": 39, "baseMs": 100 },
+          { "attempt": 40, "baseMs": 100 }
+        ]
+      },
+      "output": [
+        { "attempt": 1, "baseMs": 100, "delayMs": 100 },
+        { "attempt": 2, "baseMs": 100, "delayMs": 100 },
+        { "attempt": 3, "baseMs": 100, "delayMs": 150 },
+        { "attempt": 4, "baseMs": 100, "delayMs": 225 },
+        { "attempt": 5, "baseMs": 100, "delayMs": 338 },
+        { "attempt": 6, "baseMs": 100, "delayMs": 506 },
+        { "attempt": 7, "baseMs": 100, "delayMs": 759 },
+        { "attempt": 8, "baseMs": 100, "delayMs": 1139 },
+        { "attempt": 9, "baseMs": 100, "delayMs": 1709 },
+        { "attempt": 10, "baseMs": 100, "delayMs": 2000 },
+        { "attempt": 11, "baseMs": 100, "delayMs": 2000 },
+        { "attempt": 12, "baseMs": 100, "delayMs": 2000 },
+        { "attempt": 13, "baseMs": 100, "delayMs": 2000 },
+        { "attempt": 14, "baseMs": 100, "delayMs": 2000 },
+        { "attempt": 15, "baseMs": 100, "delayMs": 2000 },
+        { "attempt": 16, "baseMs": 100, "delayMs": 2000 },
+        { "attempt": 17, "baseMs": 100, "delayMs": 2000 },
+        { "attempt": 18, "baseMs": 100, "delayMs": 2000 },
+        { "attempt": 19, "baseMs": 100, "delayMs": 2000 },
+        { "attempt": 20, "baseMs": 100, "delayMs": 2000 },
+        { "attempt": 21, "baseMs": 100, "delayMs": 2000 },
+        { "attempt": 22, "baseMs": 100, "delayMs": 2000 },
+        { "attempt": 23, "baseMs": 100, "delayMs": 2000 },
+        { "attempt": 24, "baseMs": 100, "delayMs": 2000 },
+        { "attempt": 25, "baseMs": 100, "delayMs": 2000 },
+        { "attempt": 26, "baseMs": 100, "delayMs": 2000 },
+        { "attempt": 27, "baseMs": 100, "delayMs": 2000 },
+        { "attempt": 28, "baseMs": 100, "delayMs": 2000 },
+        { "attempt": 29, "baseMs": 100, "delayMs": 2000 },
+        { "attempt": 30, "baseMs": 100, "delayMs": 2000 },
+        { "attempt": 31, "baseMs": 100, "delayMs": 2000 },
+        { "attempt": 32, "baseMs": 100, "delayMs": 2000 },
+        { "attempt": 33, "baseMs": 100, "delayMs": 2000 },
+        { "attempt": 34, "baseMs": 100, "delayMs": 2000 },
+        { "attempt": 35, "baseMs": 100, "delayMs": 2000 },
+        { "attempt": 36, "baseMs": 100, "delayMs": 2000 },
+        { "attempt": 37, "baseMs": 100, "delayMs": 2000 },
+        { "attempt": 38, "baseMs": 100, "delayMs": 2000 },
+        { "attempt": 39, "baseMs": 100, "delayMs": 2000 },
+        { "attempt": 40, "baseMs": 100, "delayMs": 2000 }
+      ],
+      "inputSha256": "f25bab6e80c70818a2a5e57cf8de4c2b00a3ec0cdb018d15530b7e7f50cfea9f"
+    },
+    {
+      "id": "multiplexer-worktrees-004",
+      "name": "honors caller cap below the shared maximum",
+      "source": "src/multiplexer/worktrees.test.ts",
+      "api": "worktreeSettlePollDelay",
+      "input": {
+        "name": "honors caller cap below the shared maximum",
+        "api": "worktreeSettlePollDelay",
+        "calls": [
+          { "attempt": 1, "baseMs": 100, "maxMs": 350 },
+          { "attempt": 2, "baseMs": 100, "maxMs": 350 },
+          { "attempt": 3, "baseMs": 100, "maxMs": 350 },
+          { "attempt": 4, "baseMs": 100, "maxMs": 350 },
+          { "attempt": 5, "baseMs": 100, "maxMs": 350 },
+          { "attempt": 6, "baseMs": 100, "maxMs": 350 },
+          { "attempt": 7, "baseMs": 100, "maxMs": 350 },
+          { "attempt": 8, "baseMs": 100, "maxMs": 350 },
+          { "attempt": 9, "baseMs": 100, "maxMs": 350 },
+          { "attempt": 10, "baseMs": 100, "maxMs": 350 },
+          { "attempt": 11, "baseMs": 100, "maxMs": 350 },
+          { "attempt": 12, "baseMs": 100, "maxMs": 350 },
+          { "attempt": 13, "baseMs": 100, "maxMs": 350 },
+          { "attempt": 14, "baseMs": 100, "maxMs": 350 },
+          { "attempt": 15, "baseMs": 100, "maxMs": 350 },
+          { "attempt": 16, "baseMs": 100, "maxMs": 350 },
+          { "attempt": 17, "baseMs": 100, "maxMs": 350 },
+          { "attempt": 18, "baseMs": 100, "maxMs": 350 },
+          { "attempt": 19, "baseMs": 100, "maxMs": 350 },
+          { "attempt": 20, "baseMs": 100, "maxMs": 350 },
+          { "attempt": 21, "baseMs": 100, "maxMs": 350 },
+          { "attempt": 22, "baseMs": 100, "maxMs": 350 },
+          { "attempt": 23, "baseMs": 100, "maxMs": 350 },
+          { "attempt": 24, "baseMs": 100, "maxMs": 350 },
+          { "attempt": 25, "baseMs": 100, "maxMs": 350 },
+          { "attempt": 26, "baseMs": 100, "maxMs": 350 },
+          { "attempt": 27, "baseMs": 100, "maxMs": 350 },
+          { "attempt": 28, "baseMs": 100, "maxMs": 350 },
+          { "attempt": 29, "baseMs": 100, "maxMs": 350 },
+          { "attempt": 30, "baseMs": 100, "maxMs": 350 },
+          { "attempt": 31, "baseMs": 100, "maxMs": 350 },
+          { "attempt": 32, "baseMs": 100, "maxMs": 350 },
+          { "attempt": 33, "baseMs": 100, "maxMs": 350 },
+          { "attempt": 34, "baseMs": 100, "maxMs": 350 },
+          { "attempt": 35, "baseMs": 100, "maxMs": 350 },
+          { "attempt": 36, "baseMs": 100, "maxMs": 350 },
+          { "attempt": 37, "baseMs": 100, "maxMs": 350 },
+          { "attempt": 38, "baseMs": 100, "maxMs": 350 },
+          { "attempt": 39, "baseMs": 100, "maxMs": 350 },
+          { "attempt": 40, "baseMs": 100, "maxMs": 350 }
+        ]
+      },
+      "output": [
+        { "attempt": 1, "baseMs": 100, "maxMs": 350, "delayMs": 100 },
+        { "attempt": 2, "baseMs": 100, "maxMs": 350, "delayMs": 100 },
+        { "attempt": 3, "baseMs": 100, "maxMs": 350, "delayMs": 150 },
+        { "attempt": 4, "baseMs": 100, "maxMs": 350, "delayMs": 225 },
+        { "attempt": 5, "baseMs": 100, "maxMs": 350, "delayMs": 338 },
+        { "attempt": 6, "baseMs": 100, "maxMs": 350, "delayMs": 350 },
+        { "attempt": 7, "baseMs": 100, "maxMs": 350, "delayMs": 350 },
+        { "attempt": 8, "baseMs": 100, "maxMs": 350, "delayMs": 350 },
+        { "attempt": 9, "baseMs": 100, "maxMs": 350, "delayMs": 350 },
+        { "attempt": 10, "baseMs": 100, "maxMs": 350, "delayMs": 350 },
+        { "attempt": 11, "baseMs": 100, "maxMs": 350, "delayMs": 350 },
+        { "attempt": 12, "baseMs": 100, "maxMs": 350, "delayMs": 350 },
+        { "attempt": 13, "baseMs": 100, "maxMs": 350, "delayMs": 350 },
+        { "attempt": 14, "baseMs": 100, "maxMs": 350, "delayMs": 350 },
+        { "attempt": 15, "baseMs": 100, "maxMs": 350, "delayMs": 350 },
+        { "attempt": 16, "baseMs": 100, "maxMs": 350, "delayMs": 350 },
+        { "attempt": 17, "baseMs": 100, "maxMs": 350, "delayMs": 350 },
+        { "attempt": 18, "baseMs": 100, "maxMs": 350, "delayMs": 350 },
+        { "attempt": 19, "baseMs": 100, "maxMs": 350, "delayMs": 350 },
+        { "attempt": 20, "baseMs": 100, "maxMs": 350, "delayMs": 350 },
+        { "attempt": 21, "baseMs": 100, "maxMs": 350, "delayMs": 350 },
+        { "attempt": 22, "baseMs": 100, "maxMs": 350, "delayMs": 350 },
+        { "attempt": 23, "baseMs": 100, "maxMs": 350, "delayMs": 350 },
+        { "attempt": 24, "baseMs": 100, "maxMs": 350, "delayMs": 350 },
+        { "attempt": 25, "baseMs": 100, "maxMs": 350, "delayMs": 350 },
+        { "attempt": 26, "baseMs": 100, "maxMs": 350, "delayMs": 350 },
+        { "attempt": 27, "baseMs": 100, "maxMs": 350, "delayMs": 350 },
+        { "attempt": 28, "baseMs": 100, "maxMs": 350, "delayMs": 350 },
+        { "attempt": 29, "baseMs": 100, "maxMs": 350, "delayMs": 350 },
+        { "attempt": 30, "baseMs": 100, "maxMs": 350, "delayMs": 350 },
+        { "attempt": 31, "baseMs": 100, "maxMs": 350, "delayMs": 350 },
+        { "attempt": 32, "baseMs": 100, "maxMs": 350, "delayMs": 350 },
+        { "attempt": 33, "baseMs": 100, "maxMs": 350, "delayMs": 350 },
+        { "attempt": 34, "baseMs": 100, "maxMs": 350, "delayMs": 350 },
+        { "attempt": 35, "baseMs": 100, "maxMs": 350, "delayMs": 350 },
+        { "attempt": 36, "baseMs": 100, "maxMs": 350, "delayMs": 350 },
+        { "attempt": 37, "baseMs": 100, "maxMs": 350, "delayMs": 350 },
+        { "attempt": 38, "baseMs": 100, "maxMs": 350, "delayMs": 350 },
+        { "attempt": 39, "baseMs": 100, "maxMs": 350, "delayMs": 350 },
+        { "attempt": 40, "baseMs": 100, "maxMs": 350, "delayMs": 350 }
+      ],
+      "inputSha256": "6d4dfac21f0e1e9c2a61f9157427869f56bc8bd2d782d20264372d25be5a7424"
+    },
+    {
+      "id": "multiplexer-worktrees-005",
+      "name": "never caps below the base delay",
+      "source": "src/multiplexer/worktrees.test.ts",
+      "api": "worktreeSettlePollDelay",
+      "input": {
+        "name": "never caps below the base delay",
+        "api": "worktreeSettlePollDelay",
+        "calls": [{ "attempt": 40, "baseMs": 250, "maxMs": 100 }]
+      },
+      "output": [{ "attempt": 40, "baseMs": 250, "maxMs": 100, "delayMs": 250 }],
+      "inputSha256": "71fc124e8481102ddaff43822d02e56ad8936353745195dd9820c83d516ef5b1"
+    },
+    {
+      "id": "multiplexer-worktrees-006",
+      "name": "show worktree create prompt opens overlay and clears input",
+      "source": "src/multiplexer/worktrees.test.ts",
+      "api": "showWorktreeCreatePrompt",
+      "input": {
+        "name": "show worktree create prompt opens overlay and clears input",
+        "api": "showWorktreeCreatePrompt",
+        "host": { "mode": "dashboard", "worktreeInputBuffer": "stale" }
+      },
+      "output": {
+        "mode": "dashboard",
+        "worktreeInputBuffer": "",
+        "worktreeRemoveConfirm": null,
+        "worktreeRemovalJob": null,
+        "worktreeRemovalJobs": [],
+        "worktreeCacheCleanupConfirm": null,
+        "dashboardInputEpoch": 0,
+        "dashboardState": { "worktreeNavOrder": [] },
+        "dashboardWorktreeGroupsCache": [],
+        "calls": {
+          "openDashboardOverlay": [["worktree-input"]],
+          "redrawDashboardWithOverlay": [[]],
+          "clearDashboardOverlay": [],
+          "restoreDashboardAfterOverlayDismiss": [],
+          "showDashboardError": [],
+          "renderDashboard": [],
+          "startDashboardBusy": [],
+          "clearDashboardBusy": [],
+          "postToProjectService": [],
+          "dashboardUiStateStore.markSelectionDirty": []
+        }
+      },
+      "inputSha256": "10fae27cd8d5503ac5fb9e32c7462253cab46e8c75108705108d9a2560637c33"
+    },
+    {
+      "id": "multiplexer-worktrees-007",
+      "name": "builds worktree input overlay from the current buffer",
+      "source": "src/multiplexer/worktrees.test.ts",
+      "api": "buildWorktreeInputOverlayOutput",
+      "input": {
+        "name": "builds worktree input overlay from the current buffer",
+        "api": "buildWorktreeInputOverlayOutput",
+        "cols": 80,
+        "rows": 24,
+        "host": { "mode": "dashboard", "worktreeInputBuffer": "feature/demo" }
+      },
+      "output": "\u001b7\u001b[8;23H\u001b[34m╭────────────────────────────────╮\u001b[0m\u001b[9;23H\u001b[34m│\u001b[0m\u001b[1;48;5;24;38;5;195m CREATE WORKTREE                \u001b[0m\u001b[34m│\u001b[0m\u001b[10;23H\u001b[34m├────────────────────────────────┤\u001b[0m\u001b[11;23H\u001b[34m│\u001b[0m   \u001b[2mName:\u001b[0m feature/demo_          \u001b[34m│\u001b[0m\u001b[12;23H\u001b[34m│\u001b[0m                                \u001b[34m│\u001b[0m\u001b[13;23H\u001b[34m│\u001b[0m   \u001b[48;5;240;38;5;255m Enter \u001b[0m \u001b[2mcreate\u001b[0m  \u001b[48;5;240;38;5;255m Esc \u001b[0m \u001b[2mcancel\u001b[0m \u001b[34m│\u001b[0m\u001b[14;23H\u001b[34m╰────────────────────────────────╯\u001b[0m\u001b8",
+      "inputSha256": "e438d39735f82701ff68e7121f0ab9b6bbc05268e7a52d5a089cffebcb285a87"
+    },
+    {
+      "id": "multiplexer-worktrees-008",
+      "name": "render worktree input redraws dashboard overlays",
+      "source": "src/multiplexer/worktrees.test.ts",
+      "api": "renderWorktreeInput",
+      "input": {
+        "name": "render worktree input redraws dashboard overlays",
+        "api": "renderWorktreeInput",
+        "host": { "mode": "dashboard", "worktreeInputBuffer": "demo" }
+      },
+      "output": {
+        "mode": "dashboard",
+        "worktreeInputBuffer": "demo",
+        "worktreeRemoveConfirm": null,
+        "worktreeRemovalJob": null,
+        "worktreeRemovalJobs": [],
+        "worktreeCacheCleanupConfirm": null,
+        "dashboardInputEpoch": 0,
+        "dashboardState": { "worktreeNavOrder": [] },
+        "dashboardWorktreeGroupsCache": [],
+        "calls": {
+          "openDashboardOverlay": [],
+          "redrawDashboardWithOverlay": [[]],
+          "clearDashboardOverlay": [],
+          "restoreDashboardAfterOverlayDismiss": [],
+          "showDashboardError": [],
+          "renderDashboard": [],
+          "startDashboardBusy": [],
+          "clearDashboardBusy": [],
+          "postToProjectService": [],
+          "dashboardUiStateStore.markSelectionDirty": []
+        }
+      },
+      "inputSha256": "6304f161832730b4057a612d2491c20b6b90b527ee0e874178d83c0a520a2a6f"
+    },
+    {
+      "id": "multiplexer-worktrees-009",
+      "name": "worktree input accepts printable text and backspace",
+      "source": "src/multiplexer/worktrees.test.ts",
+      "api": "handleWorktreeInputKey",
+      "input": {
+        "name": "worktree input accepts printable text and backspace",
+        "api": "handleWorktreeInputKey",
+        "data": "demo\b",
+        "host": { "mode": "dashboard", "worktreeInputBuffer": "" }
+      },
+      "output": {
+        "mode": "dashboard",
+        "worktreeInputBuffer": "dem",
+        "worktreeRemoveConfirm": null,
+        "worktreeRemovalJob": null,
+        "worktreeRemovalJobs": [],
+        "worktreeCacheCleanupConfirm": null,
+        "dashboardInputEpoch": 0,
+        "dashboardState": { "worktreeNavOrder": [] },
+        "dashboardWorktreeGroupsCache": [],
+        "calls": {
+          "openDashboardOverlay": [],
+          "redrawDashboardWithOverlay": [[], []],
+          "clearDashboardOverlay": [],
+          "restoreDashboardAfterOverlayDismiss": [],
+          "showDashboardError": [],
+          "renderDashboard": [],
+          "startDashboardBusy": [],
+          "clearDashboardBusy": [],
+          "postToProjectService": [],
+          "dashboardUiStateStore.markSelectionDirty": []
+        }
+      },
+      "inputSha256": "70d7980c1e37a9f3f1a54e270c53d6449095abb2ce43054e649260e741da27ce"
+    },
+    {
+      "id": "multiplexer-worktrees-010",
+      "name": "empty worktree submit restores the dashboard",
+      "source": "src/multiplexer/worktrees.test.ts",
+      "api": "handleWorktreeInputKey",
+      "input": {
+        "name": "empty worktree submit restores the dashboard",
+        "api": "handleWorktreeInputKey",
+        "data": "\r",
+        "host": { "mode": "dashboard", "worktreeInputBuffer": "   " }
+      },
+      "output": {
+        "mode": "dashboard",
+        "worktreeInputBuffer": "   ",
+        "worktreeRemoveConfirm": null,
+        "worktreeRemovalJob": null,
+        "worktreeRemovalJobs": [],
+        "worktreeCacheCleanupConfirm": null,
+        "dashboardInputEpoch": 0,
+        "dashboardState": { "worktreeNavOrder": [] },
+        "dashboardWorktreeGroupsCache": [],
+        "calls": {
+          "openDashboardOverlay": [],
+          "redrawDashboardWithOverlay": [],
+          "clearDashboardOverlay": [[]],
+          "restoreDashboardAfterOverlayDismiss": [[]],
+          "showDashboardError": [],
+          "renderDashboard": [],
+          "startDashboardBusy": [],
+          "clearDashboardBusy": [],
+          "postToProjectService": [],
+          "dashboardUiStateStore.markSelectionDirty": []
+        }
+      },
+      "inputSha256": "e8de6c91ed4ef8b6dfd892f6df1accda627760215b1a3c22cbeaada305a18638"
+    },
+    {
+      "id": "multiplexer-worktrees-011",
+      "name": "non-dashboard worktree submit reports project-service requirement",
+      "source": "src/multiplexer/worktrees.test.ts",
+      "api": "handleWorktreeInputKey",
+      "input": {
+        "name": "non-dashboard worktree submit reports project-service requirement",
+        "api": "handleWorktreeInputKey",
+        "data": "\r",
+        "host": { "mode": "session", "worktreeInputBuffer": "demo" }
+      },
+      "output": {
+        "mode": "session",
+        "worktreeInputBuffer": "demo",
+        "worktreeRemoveConfirm": null,
+        "worktreeRemovalJob": null,
+        "worktreeRemovalJobs": [],
+        "worktreeCacheCleanupConfirm": null,
+        "dashboardInputEpoch": 0,
+        "dashboardState": { "worktreeNavOrder": [] },
+        "dashboardWorktreeGroupsCache": [],
+        "calls": {
+          "openDashboardOverlay": [],
+          "redrawDashboardWithOverlay": [],
+          "clearDashboardOverlay": [[]],
+          "restoreDashboardAfterOverlayDismiss": [],
+          "showDashboardError": [["Failed to create worktree", ["Worktree creation requires the project service."]]],
+          "renderDashboard": [],
+          "startDashboardBusy": [],
+          "clearDashboardBusy": [],
+          "postToProjectService": [],
+          "dashboardUiStateStore.markSelectionDirty": []
+        }
+      },
+      "inputSha256": "ed33583137e721a953c5e55fd21200bed83bdcd1696fa66767495e0d7a14f841"
+    },
+    {
+      "id": "multiplexer-worktrees-012",
+      "name": "remove confirm enter starts and fails immediately outside dashboard mode",
+      "source": "src/multiplexer/worktrees.test.ts",
+      "api": "handleWorktreeRemoveConfirmKey",
+      "input": {
+        "name": "remove confirm enter starts and fails immediately outside dashboard mode",
+        "api": "handleWorktreeRemoveConfirmKey",
+        "data": "\r",
+        "host": {
+          "mode": "session",
+          "worktreeRemoveConfirm": { "path": "/repo/.aimux/worktrees/demo", "name": "demo" },
+          "dashboardState": {
+            "worktreeNavOrder": ["/repo/.aimux/worktrees/demo"],
+            "focusedWorktreePath": "/repo/.aimux/worktrees/demo"
+          },
+          "dashboardWorktreeGroupsCache": [{ "path": "/repo/.aimux/worktrees/demo", "name": "demo" }]
+        }
+      },
+      "output": {
+        "mode": "session",
+        "worktreeRemoveConfirm": null,
+        "worktreeRemovalJob": null,
+        "worktreeRemovalJobs": [],
+        "worktreeCacheCleanupConfirm": null,
+        "dashboardInputEpoch": 0,
+        "dashboardState": {
+          "worktreeNavOrder": ["/repo/.aimux/worktrees/demo"],
+          "focusedWorktreePath": "/repo/.aimux/worktrees/demo"
+        },
+        "dashboardWorktreeGroupsCache": [{ "path": "/repo/.aimux/worktrees/demo", "name": "demo" }],
+        "footerFlash": "Failed: Worktree graveyard requires the project service.",
+        "footerFlashTicks": 5,
+        "calls": {
+          "openDashboardOverlay": [],
+          "redrawDashboardWithOverlay": [],
+          "clearDashboardOverlay": [[]],
+          "restoreDashboardAfterOverlayDismiss": [],
+          "showDashboardError": [
+            [
+              "Failed to graveyard \"demo\"",
+              [
+                "Path: /repo/.aimux/worktrees/demo",
+                "Error: Worktree graveyard requires the project service.",
+                "Worktree graveyard requires the project service."
+              ]
+            ]
+          ],
+          "renderDashboard": [[]],
+          "startDashboardBusy": [],
+          "clearDashboardBusy": [],
+          "postToProjectService": [],
+          "dashboardUiStateStore.markSelectionDirty": []
+        }
+      },
+      "inputSha256": "0de40a23b8d4449d4e4d4b16e6bed66c0f3a225fa7533f6e66557e9f8890c390"
+    },
+    {
+      "id": "multiplexer-worktrees-013",
+      "name": "remove confirm n dismisses and restores dashboard",
+      "source": "src/multiplexer/worktrees.test.ts",
+      "api": "handleWorktreeRemoveConfirmKey",
+      "input": {
+        "name": "remove confirm n dismisses and restores dashboard",
+        "api": "handleWorktreeRemoveConfirmKey",
+        "data": "n",
+        "host": {
+          "mode": "dashboard",
+          "worktreeRemoveConfirm": { "path": "/repo/.aimux/worktrees/demo", "name": "demo" }
+        }
+      },
+      "output": {
+        "mode": "dashboard",
+        "worktreeRemoveConfirm": null,
+        "worktreeRemovalJob": null,
+        "worktreeRemovalJobs": [],
+        "worktreeCacheCleanupConfirm": null,
+        "dashboardInputEpoch": 0,
+        "dashboardState": { "worktreeNavOrder": [] },
+        "dashboardWorktreeGroupsCache": [],
+        "calls": {
+          "openDashboardOverlay": [],
+          "redrawDashboardWithOverlay": [],
+          "clearDashboardOverlay": [[]],
+          "restoreDashboardAfterOverlayDismiss": [[]],
+          "showDashboardError": [],
+          "renderDashboard": [],
+          "startDashboardBusy": [],
+          "clearDashboardBusy": [],
+          "postToProjectService": [],
+          "dashboardUiStateStore.markSelectionDirty": []
+        }
+      },
+      "inputSha256": "f1c994ea3f14afdcd6d438087b39dd7bb8fa5ad8da38478a8b6515873016110f"
+    },
+    {
+      "id": "multiplexer-worktrees-014",
+      "name": "remove confirm escape dismisses and restores dashboard",
+      "source": "src/multiplexer/worktrees.test.ts",
+      "api": "handleWorktreeRemoveConfirmKey",
+      "input": {
+        "name": "remove confirm escape dismisses and restores dashboard",
+        "api": "handleWorktreeRemoveConfirmKey",
+        "data": "\u001b",
+        "host": {
+          "mode": "dashboard",
+          "worktreeRemoveConfirm": { "path": "/repo/.aimux/worktrees/demo", "name": "demo" }
+        }
+      },
+      "output": {
+        "mode": "dashboard",
+        "worktreeRemoveConfirm": null,
+        "worktreeRemovalJob": null,
+        "worktreeRemovalJobs": [],
+        "worktreeCacheCleanupConfirm": null,
+        "dashboardInputEpoch": 0,
+        "dashboardState": { "worktreeNavOrder": [] },
+        "dashboardWorktreeGroupsCache": [],
+        "calls": {
+          "openDashboardOverlay": [],
+          "redrawDashboardWithOverlay": [],
+          "clearDashboardOverlay": [[]],
+          "restoreDashboardAfterOverlayDismiss": [[]],
+          "showDashboardError": [],
+          "renderDashboard": [],
+          "startDashboardBusy": [],
+          "clearDashboardBusy": [],
+          "postToProjectService": [],
+          "dashboardUiStateStore.markSelectionDirty": []
+        }
+      },
+      "inputSha256": "2fd0fbf1df7aa39f91432b7660ac6707f6bc272fd8e2c83d425838b7266bfa92"
+    },
+    {
+      "id": "multiplexer-worktrees-015",
+      "name": "demo",
+      "source": "src/multiplexer/worktrees.test.ts",
+      "api": "beginWorktreeRemoval",
+      "input": {
+        "name": "demo",
+        "api": "beginWorktreeRemoval",
+        "path": "/repo/.aimux/worktrees/demo",
+        "oldIdx": 0,
+        "host": {
+          "mode": "dashboard",
+          "worktreeRemovalJobs": [{ "path": "/repo/.aimux/worktrees/demo", "name": "demo", "oldIdx": 0, "stderr": "" }],
+          "dashboardState": {
+            "worktreeNavOrder": ["/repo/.aimux/worktrees/demo"],
+            "focusedWorktreePath": "/repo/.aimux/worktrees/demo"
+          },
+          "dashboardWorktreeGroupsCache": [{ "path": "/repo/.aimux/worktrees/demo", "name": "demo" }]
+        }
+      },
+      "output": {
+        "mode": "dashboard",
+        "worktreeRemoveConfirm": null,
+        "worktreeRemovalJob": {
+          "startedAt": 0,
+          "path": "/repo/.aimux/worktrees/demo",
+          "name": "demo",
+          "oldIdx": 0,
+          "stderr": ""
+        },
+        "worktreeRemovalJobs": [
+          { "startedAt": 0, "path": "/repo/.aimux/worktrees/demo", "name": "demo", "oldIdx": 0, "stderr": "" }
+        ],
+        "worktreeCacheCleanupConfirm": null,
+        "dashboardInputEpoch": 0,
+        "dashboardState": {
+          "worktreeNavOrder": ["/repo/.aimux/worktrees/demo"],
+          "focusedWorktreePath": "/repo/.aimux/worktrees/demo"
+        },
+        "dashboardWorktreeGroupsCache": [{ "path": "/repo/.aimux/worktrees/demo", "name": "demo" }],
+        "footerFlash": "Already graveyarding demo",
+        "footerFlashTicks": 4,
+        "calls": {
+          "openDashboardOverlay": [],
+          "redrawDashboardWithOverlay": [],
+          "clearDashboardOverlay": [],
+          "restoreDashboardAfterOverlayDismiss": [],
+          "showDashboardError": [
+            ["Worktree graveyard already in progress", ["Finish graveyarding \"demo\" before starting it again."]]
+          ],
+          "renderDashboard": [[]],
+          "startDashboardBusy": [],
+          "clearDashboardBusy": [],
+          "postToProjectService": [],
+          "dashboardUiStateStore.markSelectionDirty": []
+        }
+      },
+      "inputSha256": "b53f3ca868efb1f50e7b0cbf86299f8025c11247de55493c0d4616c507548f0b"
+    },
+    {
+      "id": "multiplexer-worktrees-016",
+      "name": "finish successful removal selects the next available worktree",
+      "source": "src/multiplexer/worktrees.test.ts",
+      "api": "finishWorktreeRemoval",
+      "input": {
+        "name": "finish successful removal selects the next available worktree",
+        "api": "finishWorktreeRemoval",
+        "path": "/repo/.aimux/worktrees/deleted",
+        "code": 0,
+        "host": {
+          "worktreeRemovalJobs": [
+            { "path": "/repo/.aimux/worktrees/deleted", "name": "deleted", "oldIdx": 1, "stderr": "" }
+          ],
+          "dashboardState": {
+            "worktreeNavOrder": ["/repo", "/repo/.aimux/worktrees/demo"],
+            "focusedWorktreePath": "/repo/.aimux/worktrees/deleted"
+          },
+          "dashboardWorktreeGroupsCache": [
+            { "path": "/repo", "name": "main" },
+            { "path": "/repo/.aimux/worktrees/demo", "name": "demo" }
+          ]
+        }
+      },
+      "output": {
+        "mode": "dashboard",
+        "worktreeRemoveConfirm": null,
+        "worktreeRemovalJob": null,
+        "worktreeRemovalJobs": [],
+        "worktreeCacheCleanupConfirm": null,
+        "dashboardInputEpoch": 0,
+        "dashboardState": {
+          "worktreeNavOrder": ["/repo", "/repo/.aimux/worktrees/demo"],
+          "focusedWorktreePath": "/repo/.aimux/worktrees/demo"
+        },
+        "dashboardWorktreeGroupsCache": [
+          { "path": "/repo", "name": "main" },
+          { "path": "/repo/.aimux/worktrees/demo", "name": "demo" }
+        ],
+        "footerFlash": "Graveyarded: deleted",
+        "footerFlashTicks": 3,
+        "calls": {
+          "openDashboardOverlay": [],
+          "redrawDashboardWithOverlay": [],
+          "clearDashboardOverlay": [],
+          "restoreDashboardAfterOverlayDismiss": [],
+          "showDashboardError": [],
+          "renderDashboard": [[]],
+          "startDashboardBusy": [],
+          "clearDashboardBusy": [],
+          "postToProjectService": [],
+          "dashboardUiStateStore.markSelectionDirty": []
+        }
+      },
+      "inputSha256": "9253cef4232d719c3cc643276125b0006d5c337e93401234757868850c1a5357"
+    },
+    {
+      "id": "multiplexer-worktrees-017",
+      "name": "finish failed removal reports first stderr line with details",
+      "source": "src/multiplexer/worktrees.test.ts",
+      "api": "finishWorktreeRemoval",
+      "input": {
+        "name": "finish failed removal reports first stderr line with details",
+        "api": "finishWorktreeRemoval",
+        "path": "/repo/.aimux/worktrees/demo",
+        "code": 1,
+        "host": {
+          "worktreeRemovalJobs": [
+            {
+              "path": "/repo/.aimux/worktrees/demo",
+              "name": "demo",
+              "oldIdx": 0,
+              "stderr": "\nfirst failure\nsecond detail\n"
+            }
+          ],
+          "dashboardState": {
+            "worktreeNavOrder": ["/repo/.aimux/worktrees/demo"],
+            "focusedWorktreePath": "/repo/.aimux/worktrees/demo"
+          },
+          "dashboardWorktreeGroupsCache": [{ "path": "/repo/.aimux/worktrees/demo", "name": "demo" }]
+        }
+      },
+      "output": {
+        "mode": "dashboard",
+        "worktreeRemoveConfirm": null,
+        "worktreeRemovalJob": null,
+        "worktreeRemovalJobs": [],
+        "worktreeCacheCleanupConfirm": null,
+        "dashboardInputEpoch": 0,
+        "dashboardState": {
+          "worktreeNavOrder": ["/repo/.aimux/worktrees/demo"],
+          "focusedWorktreePath": "/repo/.aimux/worktrees/demo"
+        },
+        "dashboardWorktreeGroupsCache": [{ "path": "/repo/.aimux/worktrees/demo", "name": "demo" }],
+        "footerFlash": "Failed: first failure",
+        "footerFlashTicks": 5,
+        "calls": {
+          "openDashboardOverlay": [],
+          "redrawDashboardWithOverlay": [],
+          "clearDashboardOverlay": [],
+          "restoreDashboardAfterOverlayDismiss": [],
+          "showDashboardError": [
+            [
+              "Failed to graveyard \"demo\"",
+              ["Path: /repo/.aimux/worktrees/demo", "Error: first failure", "first failure", "second detail"]
+            ]
+          ],
+          "renderDashboard": [[]],
+          "startDashboardBusy": [],
+          "clearDashboardBusy": [],
+          "postToProjectService": [],
+          "dashboardUiStateStore.markSelectionDirty": []
+        }
+      },
+      "inputSha256": "ea6a190a8d1835e2cba8b172eeb168dad0daa8f4127eddd058f2af3742b59e75"
+    },
+    {
+      "id": "multiplexer-worktrees-018",
+      "name": "finish removal ignores unknown stale completion",
+      "source": "src/multiplexer/worktrees.test.ts",
+      "api": "finishWorktreeRemoval",
+      "input": {
+        "name": "finish removal ignores unknown stale completion",
+        "api": "finishWorktreeRemoval",
+        "path": "/repo/.aimux/worktrees/missing",
+        "code": 0,
+        "host": {
+          "worktreeRemovalJobs": [{ "path": "/repo/.aimux/worktrees/demo", "name": "demo", "oldIdx": 0, "stderr": "" }],
+          "dashboardState": {
+            "worktreeNavOrder": ["/repo/.aimux/worktrees/demo"],
+            "focusedWorktreePath": "/repo/.aimux/worktrees/demo"
+          },
+          "dashboardWorktreeGroupsCache": [{ "path": "/repo/.aimux/worktrees/demo", "name": "demo" }]
+        }
+      },
+      "output": {
+        "mode": "dashboard",
+        "worktreeRemoveConfirm": null,
+        "worktreeRemovalJob": {
+          "startedAt": 0,
+          "path": "/repo/.aimux/worktrees/demo",
+          "name": "demo",
+          "oldIdx": 0,
+          "stderr": ""
+        },
+        "worktreeRemovalJobs": [
+          { "startedAt": 0, "path": "/repo/.aimux/worktrees/demo", "name": "demo", "oldIdx": 0, "stderr": "" }
+        ],
+        "worktreeCacheCleanupConfirm": null,
+        "dashboardInputEpoch": 0,
+        "dashboardState": {
+          "worktreeNavOrder": ["/repo/.aimux/worktrees/demo"],
+          "focusedWorktreePath": "/repo/.aimux/worktrees/demo"
+        },
+        "dashboardWorktreeGroupsCache": [{ "path": "/repo/.aimux/worktrees/demo", "name": "demo" }],
+        "calls": {
+          "openDashboardOverlay": [],
+          "redrawDashboardWithOverlay": [],
+          "clearDashboardOverlay": [],
+          "restoreDashboardAfterOverlayDismiss": [],
+          "showDashboardError": [],
+          "renderDashboard": [],
+          "startDashboardBusy": [],
+          "clearDashboardBusy": [],
+          "postToProjectService": [],
+          "dashboardUiStateStore.markSelectionDirty": []
+        }
+      },
+      "inputSha256": "978c1190db2024c87ebb730c67ceb7985287e09d3171dc818e42f024bb69dd02"
+    },
+    {
+      "id": "multiplexer-worktrees-019",
+      "name": "list escape clears overlay and restores dashboard",
+      "source": "src/multiplexer/worktrees.test.ts",
+      "api": "handleWorktreeListKey",
+      "input": {
+        "name": "list escape clears overlay and restores dashboard",
+        "api": "handleWorktreeListKey",
+        "data": "\u001b",
+        "host": { "mode": "dashboard" }
+      },
+      "output": {
+        "mode": "dashboard",
+        "worktreeRemoveConfirm": null,
+        "worktreeRemovalJob": null,
+        "worktreeRemovalJobs": [],
+        "worktreeCacheCleanupConfirm": null,
+        "dashboardInputEpoch": 0,
+        "dashboardState": { "worktreeNavOrder": [] },
+        "dashboardWorktreeGroupsCache": [],
+        "calls": {
+          "openDashboardOverlay": [],
+          "redrawDashboardWithOverlay": [],
+          "clearDashboardOverlay": [[]],
+          "restoreDashboardAfterOverlayDismiss": [[]],
+          "showDashboardError": [],
+          "renderDashboard": [],
+          "startDashboardBusy": [],
+          "clearDashboardBusy": [],
+          "postToProjectService": [],
+          "dashboardUiStateStore.markSelectionDirty": []
+        }
+      },
+      "inputSha256": "a4ddd622636be8b37b896e97b061e0912e98ec83618b2245498482b174f1b37d"
+    },
+    {
+      "id": "multiplexer-worktrees-020",
+      "name": "show worktree list opens overlay and redraws",
+      "source": "src/multiplexer/worktrees.test.ts",
+      "api": "showWorktreeList",
+      "input": {
+        "name": "show worktree list opens overlay and redraws",
+        "api": "showWorktreeList",
+        "host": { "mode": "dashboard" }
+      },
+      "output": {
+        "mode": "dashboard",
+        "worktreeRemoveConfirm": null,
+        "worktreeRemovalJob": null,
+        "worktreeRemovalJobs": [],
+        "worktreeCacheCleanupConfirm": null,
+        "dashboardInputEpoch": 0,
+        "dashboardState": { "worktreeNavOrder": [] },
+        "dashboardWorktreeGroupsCache": [],
+        "calls": {
+          "openDashboardOverlay": [["worktree-list"]],
+          "redrawDashboardWithOverlay": [[]],
+          "clearDashboardOverlay": [],
+          "restoreDashboardAfterOverlayDismiss": [],
+          "showDashboardError": [],
+          "renderDashboard": [],
+          "startDashboardBusy": [],
+          "clearDashboardBusy": [],
+          "postToProjectService": [],
+          "dashboardUiStateStore.markSelectionDirty": []
+        }
+      },
+      "inputSha256": "7deaaa919f6d2f898299904e96a0a0be6b42e929f50bc0bf6daf9f1c57f3f6e4"
+    },
+    {
+      "id": "multiplexer-worktrees-021",
+      "name": "render worktree list redraws dashboard overlays",
+      "source": "src/multiplexer/worktrees.test.ts",
+      "api": "renderWorktreeList",
+      "input": {
+        "name": "render worktree list redraws dashboard overlays",
+        "api": "renderWorktreeList",
+        "host": { "mode": "dashboard" }
+      },
+      "output": {
+        "mode": "dashboard",
+        "worktreeRemoveConfirm": null,
+        "worktreeRemovalJob": null,
+        "worktreeRemovalJobs": [],
+        "worktreeCacheCleanupConfirm": null,
+        "dashboardInputEpoch": 0,
+        "dashboardState": { "worktreeNavOrder": [] },
+        "dashboardWorktreeGroupsCache": [],
+        "calls": {
+          "openDashboardOverlay": [],
+          "redrawDashboardWithOverlay": [[]],
+          "clearDashboardOverlay": [],
+          "restoreDashboardAfterOverlayDismiss": [],
+          "showDashboardError": [],
+          "renderDashboard": [],
+          "startDashboardBusy": [],
+          "clearDashboardBusy": [],
+          "postToProjectService": [],
+          "dashboardUiStateStore.markSelectionDirty": []
+        }
+      },
+      "inputSha256": "7914b56f3888d215f781eb3113693e5c55899371f6393f4b761a359504d2cdff"
+    },
+    {
+      "id": "multiplexer-worktrees-022",
+      "name": "render worktree remove confirm redraws dashboard overlays",
+      "source": "src/multiplexer/worktrees.test.ts",
+      "api": "renderWorktreeRemoveConfirm",
+      "input": {
+        "name": "render worktree remove confirm redraws dashboard overlays",
+        "api": "renderWorktreeRemoveConfirm",
+        "host": {
+          "mode": "dashboard",
+          "worktreeRemoveConfirm": { "path": "/repo/.aimux/worktrees/demo", "name": "demo" }
+        }
+      },
+      "output": {
+        "mode": "dashboard",
+        "worktreeRemoveConfirm": { "path": "/repo/.aimux/worktrees/demo", "name": "demo" },
+        "worktreeRemovalJob": null,
+        "worktreeRemovalJobs": [],
+        "worktreeCacheCleanupConfirm": null,
+        "dashboardInputEpoch": 0,
+        "dashboardState": { "worktreeNavOrder": [] },
+        "dashboardWorktreeGroupsCache": [],
+        "calls": {
+          "openDashboardOverlay": [],
+          "redrawDashboardWithOverlay": [[]],
+          "clearDashboardOverlay": [],
+          "restoreDashboardAfterOverlayDismiss": [],
+          "showDashboardError": [],
+          "renderDashboard": [],
+          "startDashboardBusy": [],
+          "clearDashboardBusy": [],
+          "postToProjectService": [],
+          "dashboardUiStateStore.markSelectionDirty": []
+        }
+      },
+      "inputSha256": "c62dda5aa2746350475ee66af0007ffca473b8d4143824df40a9a4e520a876a9"
+    },
+    {
+      "id": "multiplexer-worktrees-023",
+      "name": "remove confirm y starts the selected graveyard job",
+      "source": "src/multiplexer/worktrees.test.ts",
+      "api": "handleWorktreeRemoveConfirmKey",
+      "input": {
+        "name": "remove confirm y starts the selected graveyard job",
+        "api": "handleWorktreeRemoveConfirmKey",
+        "data": "y",
+        "host": {
+          "mode": "session",
+          "worktreeRemoveConfirm": { "path": "/repo/.aimux/worktrees/demo", "name": "demo" },
+          "dashboardState": {
+            "worktreeNavOrder": ["/repo/.aimux/worktrees/demo"],
+            "focusedWorktreePath": "/repo/.aimux/worktrees/demo"
+          },
+          "dashboardWorktreeGroupsCache": [{ "path": "/repo/.aimux/worktrees/demo", "name": "demo" }]
+        }
+      },
+      "output": {
+        "mode": "session",
+        "worktreeRemoveConfirm": null,
+        "worktreeRemovalJob": null,
+        "worktreeRemovalJobs": [],
+        "worktreeCacheCleanupConfirm": null,
+        "dashboardInputEpoch": 0,
+        "dashboardState": {
+          "worktreeNavOrder": ["/repo/.aimux/worktrees/demo"],
+          "focusedWorktreePath": "/repo/.aimux/worktrees/demo"
+        },
+        "dashboardWorktreeGroupsCache": [{ "path": "/repo/.aimux/worktrees/demo", "name": "demo" }],
+        "footerFlash": "Failed: Worktree graveyard requires the project service.",
+        "footerFlashTicks": 5,
+        "calls": {
+          "openDashboardOverlay": [],
+          "redrawDashboardWithOverlay": [],
+          "clearDashboardOverlay": [[]],
+          "restoreDashboardAfterOverlayDismiss": [],
+          "showDashboardError": [
+            [
+              "Failed to graveyard \"demo\"",
+              [
+                "Path: /repo/.aimux/worktrees/demo",
+                "Error: Worktree graveyard requires the project service.",
+                "Worktree graveyard requires the project service."
+              ]
+            ]
+          ],
+          "renderDashboard": [[]],
+          "startDashboardBusy": [],
+          "clearDashboardBusy": [],
+          "postToProjectService": [],
+          "dashboardUiStateStore.markSelectionDirty": []
+        }
+      },
+      "inputSha256": "de3b5f5e4f408259ce767bfed1e1096523798f80677cab8bd8e297b9c2abee4e"
+    },
+    {
+      "id": "multiplexer-worktrees-024",
+      "name": "cache cleanup preview reports project-service requirement outside dashboard mode",
+      "source": "src/multiplexer/worktrees.test.ts",
+      "api": "showWorktreeCacheCleanupPreview",
+      "input": {
+        "name": "cache cleanup preview reports project-service requirement outside dashboard mode",
+        "api": "showWorktreeCacheCleanupPreview",
+        "host": { "mode": "session", "dashboardBusyState": null, "worktreeCacheCleanupConfirm": null }
+      },
+      "output": {
+        "mode": "session",
+        "worktreeRemoveConfirm": null,
+        "worktreeRemovalJob": null,
+        "worktreeRemovalJobs": [],
+        "worktreeCacheCleanupConfirm": null,
+        "dashboardBusyState": null,
+        "dashboardInputEpoch": 0,
+        "dashboardState": { "worktreeNavOrder": [] },
+        "dashboardWorktreeGroupsCache": [],
+        "calls": {
+          "openDashboardOverlay": [],
+          "redrawDashboardWithOverlay": [],
+          "clearDashboardOverlay": [],
+          "restoreDashboardAfterOverlayDismiss": [],
+          "showDashboardError": [
+            ["Failed to inspect worktree caches", ["Worktree cache cleanup requires the project service."]]
+          ],
+          "renderDashboard": [],
+          "startDashboardBusy": [],
+          "clearDashboardBusy": [],
+          "postToProjectService": [],
+          "dashboardUiStateStore.markSelectionDirty": []
+        }
+      },
+      "inputSha256": "f511a8e2cfe9d29bb2f9691091c4291059083067369ecf08343515f6314a97ca"
+    },
+    {
+      "id": "multiplexer-worktrees-025",
+      "name": "cache cleanup preview does nothing while dashboard is busy",
+      "source": "src/multiplexer/worktrees.test.ts",
+      "api": "showWorktreeCacheCleanupPreview",
+      "input": {
+        "name": "cache cleanup preview does nothing while dashboard is busy",
+        "api": "showWorktreeCacheCleanupPreview",
+        "host": {
+          "mode": "dashboard",
+          "dashboardBusyState": { "title": "Busy", "lines": ["  Still working"] },
+          "worktreeCacheCleanupConfirm": { "existing": true }
+        }
+      },
+      "output": {
+        "mode": "dashboard",
+        "worktreeRemoveConfirm": null,
+        "worktreeRemovalJob": null,
+        "worktreeRemovalJobs": [],
+        "worktreeCacheCleanupConfirm": { "existing": true },
+        "dashboardBusyState": { "title": "Busy", "lines": ["  Still working"] },
+        "dashboardInputEpoch": 0,
+        "dashboardState": { "worktreeNavOrder": [] },
+        "dashboardWorktreeGroupsCache": [],
+        "calls": {
+          "openDashboardOverlay": [],
+          "redrawDashboardWithOverlay": [],
+          "clearDashboardOverlay": [],
+          "restoreDashboardAfterOverlayDismiss": [],
+          "showDashboardError": [],
+          "renderDashboard": [],
+          "startDashboardBusy": [],
+          "clearDashboardBusy": [],
+          "postToProjectService": [],
+          "dashboardUiStateStore.markSelectionDirty": []
+        }
+      },
+      "inputSha256": "2160cbc831e397f6712a06e6e774a2406cab18c7fcd260a664fa64184749e6d5"
+    },
+    {
+      "id": "multiplexer-worktrees-026",
+      "name": "render worktree cache cleanup confirm redraws dashboard overlays",
+      "source": "src/multiplexer/worktrees.test.ts",
+      "api": "renderWorktreeCacheCleanupConfirm",
+      "input": {
+        "name": "render worktree cache cleanup confirm redraws dashboard overlays",
+        "api": "renderWorktreeCacheCleanupConfirm",
+        "host": {
+          "mode": "dashboard",
+          "worktreeCacheCleanupConfirm": {
+            "dryRun": true,
+            "reclaimedBytes": 0,
+            "plan": {
+              "reclaimableBytes": 1024,
+              "targets": [{ "path": "/repo/.aimux/worktrees/old/node_modules", "sizeBytes": 1024 }],
+              "skipped": []
+            },
+            "results": [{ "path": "/repo/.aimux/worktrees/old/node_modules", "status": "dry-run", "sizeBytes": 1024 }]
+          }
+        }
+      },
+      "output": {
+        "mode": "dashboard",
+        "worktreeRemoveConfirm": null,
+        "worktreeRemovalJob": null,
+        "worktreeRemovalJobs": [],
+        "worktreeCacheCleanupConfirm": {
+          "dryRun": true,
+          "reclaimedBytes": 0,
+          "plan": {
+            "reclaimableBytes": 1024,
+            "targets": [{ "path": "/repo/.aimux/worktrees/old/node_modules", "sizeBytes": 1024 }],
+            "skipped": []
+          },
+          "results": [{ "path": "/repo/.aimux/worktrees/old/node_modules", "status": "dry-run", "sizeBytes": 1024 }]
+        },
+        "dashboardInputEpoch": 0,
+        "dashboardState": { "worktreeNavOrder": [] },
+        "dashboardWorktreeGroupsCache": [],
+        "calls": {
+          "openDashboardOverlay": [],
+          "redrawDashboardWithOverlay": [[]],
+          "clearDashboardOverlay": [],
+          "restoreDashboardAfterOverlayDismiss": [],
+          "showDashboardError": [],
+          "renderDashboard": [],
+          "startDashboardBusy": [],
+          "clearDashboardBusy": [],
+          "postToProjectService": [],
+          "dashboardUiStateStore.markSelectionDirty": []
+        }
+      },
+      "inputSha256": "03631185976c483561276b93ba6768c6dcb93606ec7e40b4878cb6af2219cdf1"
+    },
+    {
+      "id": "multiplexer-worktrees-027",
+      "name": "previews worktree cache cleanup through a safe dry-run",
+      "source": "src/multiplexer/worktrees.test.ts",
+      "api": "showWorktreeCacheCleanupPreview",
+      "input": {
+        "name": "previews worktree cache cleanup through a safe dry-run",
+        "api": "showWorktreeCacheCleanupPreview",
+        "postResponse": {
+          "ok": true,
+          "result": {
+            "dryRun": true,
+            "reclaimedBytes": 0,
+            "plan": {
+              "reclaimableBytes": 1024,
+              "targets": [{ "path": "/repo/.aimux/worktrees/old/node_modules", "sizeBytes": 1024 }],
+              "skipped": []
+            },
+            "results": [{ "path": "/repo/.aimux/worktrees/old/node_modules", "status": "dry-run", "sizeBytes": 1024 }]
+          }
+        },
+        "host": {
+          "mode": "dashboard",
+          "dashboardInputEpoch": 0,
+          "dashboardBusyState": null,
+          "worktreeCacheCleanupConfirm": null
+        }
+      },
+      "output": {
+        "mode": "dashboard",
+        "worktreeRemoveConfirm": null,
+        "worktreeRemovalJob": null,
+        "worktreeRemovalJobs": [],
+        "worktreeCacheCleanupConfirm": {
+          "dryRun": true,
+          "reclaimedBytes": 0,
+          "plan": {
+            "reclaimableBytes": 1024,
+            "targets": [{ "path": "/repo/.aimux/worktrees/old/node_modules", "sizeBytes": 1024 }],
+            "skipped": []
+          },
+          "results": [{ "path": "/repo/.aimux/worktrees/old/node_modules", "status": "dry-run", "sizeBytes": 1024 }]
+        },
+        "dashboardBusyState": null,
+        "dashboardInputEpoch": 0,
+        "dashboardState": { "worktreeNavOrder": [] },
+        "dashboardWorktreeGroupsCache": [],
+        "calls": {
+          "openDashboardOverlay": [["worktree-cache-cleanup-confirm"]],
+          "redrawDashboardWithOverlay": [[]],
+          "clearDashboardOverlay": [[]],
+          "restoreDashboardAfterOverlayDismiss": [],
+          "showDashboardError": [],
+          "renderDashboard": [],
+          "startDashboardBusy": [["Worktree Cache Cleanup", ["  Scanning inactive generated worktree caches"]]],
+          "clearDashboardBusy": [[]],
+          "postToProjectService": [
+            ["/worktrees/cache-cleanup", { "dryRun": true, "includeActive": false }, { "timeoutMs": 180000 }]
+          ],
+          "dashboardUiStateStore.markSelectionDirty": []
+        }
+      },
+      "inputSha256": "4abd24db0762b69a383a90ac376d93740ab5c7d13ec415bfc0bbd73abdb70d69"
+    },
+    {
+      "id": "multiplexer-worktrees-028",
+      "name": "clears cache cleanup busy state when preview completion is stale",
+      "source": "src/multiplexer/worktrees.test.ts",
+      "api": "showWorktreeCacheCleanupPreview",
+      "input": {
+        "name": "clears cache cleanup busy state when preview completion is stale",
+        "api": "showWorktreeCacheCleanupPreview",
+        "afterStartInputEpochDelta": 1,
+        "postResponse": {
+          "ok": true,
+          "result": {
+            "dryRun": true,
+            "reclaimedBytes": 0,
+            "plan": { "reclaimableBytes": 0, "targets": [], "skipped": [] },
+            "results": []
+          }
+        },
+        "host": {
+          "mode": "dashboard",
+          "dashboardInputEpoch": 0,
+          "dashboardBusyState": null,
+          "worktreeCacheCleanupConfirm": null
+        }
+      },
+      "output": {
+        "mode": "dashboard",
+        "worktreeRemoveConfirm": null,
+        "worktreeRemovalJob": null,
+        "worktreeRemovalJobs": [],
+        "worktreeCacheCleanupConfirm": null,
+        "dashboardBusyState": null,
+        "dashboardInputEpoch": 1,
+        "dashboardState": { "worktreeNavOrder": [] },
+        "dashboardWorktreeGroupsCache": [],
+        "calls": {
+          "openDashboardOverlay": [],
+          "redrawDashboardWithOverlay": [],
+          "clearDashboardOverlay": [[]],
+          "restoreDashboardAfterOverlayDismiss": [],
+          "showDashboardError": [],
+          "renderDashboard": [],
+          "startDashboardBusy": [["Worktree Cache Cleanup", ["  Scanning inactive generated worktree caches"]]],
+          "clearDashboardBusy": [[]],
+          "postToProjectService": [
+            ["/worktrees/cache-cleanup", { "dryRun": true, "includeActive": false }, { "timeoutMs": 180000 }]
+          ],
+          "dashboardUiStateStore.markSelectionDirty": []
+        }
+      },
+      "inputSha256": "35f2f840c52a66768e8428db361cceeeee629994c631585013294ec128127537"
+    },
+    {
+      "id": "multiplexer-worktrees-029",
+      "name": "applies confirmed worktree cache cleanup without active worktrees",
+      "source": "src/multiplexer/worktrees.test.ts",
+      "api": "handleWorktreeCacheCleanupConfirmKey",
+      "input": {
+        "name": "applies confirmed worktree cache cleanup without active worktrees",
+        "api": "handleWorktreeCacheCleanupConfirmKey",
+        "data": "\r",
+        "postResponse": {
+          "ok": true,
+          "result": {
+            "dryRun": false,
+            "reclaimedBytes": 2048,
+            "plan": {
+              "reclaimableBytes": 2048,
+              "targets": [{ "path": "/repo/.aimux/worktrees/old/node_modules", "sizeBytes": 2048 }],
+              "skipped": []
+            },
+            "results": [{ "path": "/repo/.aimux/worktrees/old/node_modules", "status": "removed", "sizeBytes": 2048 }]
+          }
+        },
+        "host": {
+          "mode": "dashboard",
+          "dashboardInputEpoch": 0,
+          "worktreeCacheCleanupConfirm": {
+            "dryRun": true,
+            "reclaimedBytes": 0,
+            "plan": {
+              "reclaimableBytes": 2048,
+              "targets": [{ "path": "/repo/.aimux/worktrees/old/node_modules", "sizeBytes": 2048 }],
+              "skipped": []
+            },
+            "results": [{ "path": "/repo/.aimux/worktrees/old/node_modules", "status": "dry-run", "sizeBytes": 2048 }]
+          }
+        }
+      },
+      "output": {
+        "mode": "dashboard",
+        "worktreeRemoveConfirm": null,
+        "worktreeRemovalJob": null,
+        "worktreeRemovalJobs": [],
+        "worktreeCacheCleanupConfirm": null,
+        "dashboardBusyState": null,
+        "dashboardInputEpoch": 0,
+        "dashboardState": { "worktreeNavOrder": [] },
+        "dashboardWorktreeGroupsCache": [],
+        "footerFlash": "Removed 2.0KB from 1 cache item(s)",
+        "footerFlashTicks": 4,
+        "calls": {
+          "openDashboardOverlay": [],
+          "redrawDashboardWithOverlay": [],
+          "clearDashboardOverlay": [[]],
+          "restoreDashboardAfterOverlayDismiss": [],
+          "showDashboardError": [],
+          "renderDashboard": [[]],
+          "startDashboardBusy": [["Worktree Cache Cleanup", ["  Removing inactive generated worktree caches"]]],
+          "clearDashboardBusy": [[]],
+          "postToProjectService": [
+            ["/worktrees/cache-cleanup", { "dryRun": false, "includeActive": false }, { "timeoutMs": 180000 }]
+          ],
+          "dashboardUiStateStore.markSelectionDirty": []
+        }
+      },
+      "inputSha256": "c64ff050c16be07ff4860130f990ddbd58652648b2929a6597bb7f3816c8c681"
+    },
+    {
+      "id": "multiplexer-worktrees-030",
+      "name": "cache cleanup confirm without preview dismisses overlay",
+      "source": "src/multiplexer/worktrees.test.ts",
+      "api": "handleWorktreeCacheCleanupConfirmKey",
+      "input": {
+        "name": "cache cleanup confirm without preview dismisses overlay",
+        "api": "handleWorktreeCacheCleanupConfirmKey",
+        "data": "\r",
+        "host": { "mode": "dashboard", "worktreeCacheCleanupConfirm": null }
+      },
+      "output": {
+        "mode": "dashboard",
+        "worktreeRemoveConfirm": null,
+        "worktreeRemovalJob": null,
+        "worktreeRemovalJobs": [],
+        "worktreeCacheCleanupConfirm": null,
+        "dashboardInputEpoch": 0,
+        "dashboardState": { "worktreeNavOrder": [] },
+        "dashboardWorktreeGroupsCache": [],
+        "calls": {
+          "openDashboardOverlay": [],
+          "redrawDashboardWithOverlay": [],
+          "clearDashboardOverlay": [[]],
+          "restoreDashboardAfterOverlayDismiss": [[]],
+          "showDashboardError": [],
+          "renderDashboard": [],
+          "startDashboardBusy": [],
+          "clearDashboardBusy": [],
+          "postToProjectService": [],
+          "dashboardUiStateStore.markSelectionDirty": []
+        }
+      },
+      "inputSha256": "850ce55f099d6b8cba704b3f85c543f51f995b62a7fe57cf7c901456eb7e999e"
+    },
+    {
+      "id": "multiplexer-worktrees-031",
+      "name": "cache cleanup confirm with no targets dismisses on enter",
+      "source": "src/multiplexer/worktrees.test.ts",
+      "api": "handleWorktreeCacheCleanupConfirmKey",
+      "input": {
+        "name": "cache cleanup confirm with no targets dismisses on enter",
+        "api": "handleWorktreeCacheCleanupConfirmKey",
+        "data": "\r",
+        "host": {
+          "mode": "dashboard",
+          "worktreeCacheCleanupConfirm": {
+            "dryRun": true,
+            "reclaimedBytes": 0,
+            "plan": { "reclaimableBytes": 0, "targets": [], "skipped": [] },
+            "results": []
+          }
+        }
+      },
+      "output": {
+        "mode": "dashboard",
+        "worktreeRemoveConfirm": null,
+        "worktreeRemovalJob": null,
+        "worktreeRemovalJobs": [],
+        "worktreeCacheCleanupConfirm": null,
+        "dashboardInputEpoch": 0,
+        "dashboardState": { "worktreeNavOrder": [] },
+        "dashboardWorktreeGroupsCache": [],
+        "calls": {
+          "openDashboardOverlay": [],
+          "redrawDashboardWithOverlay": [],
+          "clearDashboardOverlay": [[]],
+          "restoreDashboardAfterOverlayDismiss": [[]],
+          "showDashboardError": [],
+          "renderDashboard": [],
+          "startDashboardBusy": [],
+          "clearDashboardBusy": [],
+          "postToProjectService": [],
+          "dashboardUiStateStore.markSelectionDirty": []
+        }
+      },
+      "inputSha256": "40624d61c4620fa4eb3e559a51d0692622ad070443e82ebad0a0a72a2c031049"
+    },
+    {
+      "id": "multiplexer-worktrees-032",
+      "name": "cache cleanup confirm cancels target removal on n",
+      "source": "src/multiplexer/worktrees.test.ts",
+      "api": "handleWorktreeCacheCleanupConfirmKey",
+      "input": {
+        "name": "cache cleanup confirm cancels target removal on n",
+        "api": "handleWorktreeCacheCleanupConfirmKey",
+        "data": "n",
+        "host": {
+          "mode": "dashboard",
+          "worktreeCacheCleanupConfirm": {
+            "dryRun": true,
+            "reclaimedBytes": 0,
+            "plan": {
+              "reclaimableBytes": 2048,
+              "targets": [{ "path": "/repo/.aimux/worktrees/old/node_modules", "sizeBytes": 2048 }],
+              "skipped": []
+            },
+            "results": [{ "path": "/repo/.aimux/worktrees/old/node_modules", "status": "dry-run", "sizeBytes": 2048 }]
+          }
+        }
+      },
+      "output": {
+        "mode": "dashboard",
+        "worktreeRemoveConfirm": null,
+        "worktreeRemovalJob": null,
+        "worktreeRemovalJobs": [],
+        "worktreeCacheCleanupConfirm": null,
+        "dashboardInputEpoch": 0,
+        "dashboardState": { "worktreeNavOrder": [] },
+        "dashboardWorktreeGroupsCache": [],
+        "calls": {
+          "openDashboardOverlay": [],
+          "redrawDashboardWithOverlay": [],
+          "clearDashboardOverlay": [[]],
+          "restoreDashboardAfterOverlayDismiss": [[]],
+          "showDashboardError": [],
+          "renderDashboard": [],
+          "startDashboardBusy": [],
+          "clearDashboardBusy": [],
+          "postToProjectService": [],
+          "dashboardUiStateStore.markSelectionDirty": []
+        }
+      },
+      "inputSha256": "a34e9ad02d974458ca2d0d2b0936fc784dbda4ddc32539822bcc4659854fa6c5"
+    },
+    {
+      "id": "multiplexer-worktrees-033",
+      "name": "cache cleanup apply reports failed removals",
+      "source": "src/multiplexer/worktrees.test.ts",
+      "api": "handleWorktreeCacheCleanupConfirmKey",
+      "input": {
+        "name": "cache cleanup apply reports failed removals",
+        "api": "handleWorktreeCacheCleanupConfirmKey",
+        "data": "\r",
+        "postResponse": {
+          "ok": true,
+          "result": {
+            "dryRun": false,
+            "reclaimedBytes": 1024,
+            "plan": {
+              "reclaimableBytes": 4096,
+              "targets": [
+                { "path": "/repo/.aimux/worktrees/old/node_modules", "sizeBytes": 1024 },
+                { "path": "/repo/.aimux/worktrees/fail/node_modules", "sizeBytes": 3072 }
+              ],
+              "skipped": []
+            },
+            "results": [
+              { "path": "/repo/.aimux/worktrees/old/node_modules", "status": "removed", "sizeBytes": 1024 },
+              {
+                "path": "/repo/.aimux/worktrees/fail/node_modules",
+                "status": "failed",
+                "sizeBytes": 3072,
+                "error": "permission denied"
+              }
+            ]
+          }
+        },
+        "host": {
+          "mode": "dashboard",
+          "dashboardInputEpoch": 0,
+          "worktreeCacheCleanupConfirm": {
+            "dryRun": true,
+            "reclaimedBytes": 0,
+            "plan": {
+              "reclaimableBytes": 4096,
+              "targets": [
+                { "path": "/repo/.aimux/worktrees/old/node_modules", "sizeBytes": 1024 },
+                { "path": "/repo/.aimux/worktrees/fail/node_modules", "sizeBytes": 3072 }
+              ],
+              "skipped": []
+            },
+            "results": [
+              { "path": "/repo/.aimux/worktrees/old/node_modules", "status": "dry-run", "sizeBytes": 1024 },
+              { "path": "/repo/.aimux/worktrees/fail/node_modules", "status": "dry-run", "sizeBytes": 3072 }
+            ]
+          }
+        }
+      },
+      "output": {
+        "mode": "dashboard",
+        "worktreeRemoveConfirm": null,
+        "worktreeRemovalJob": null,
+        "worktreeRemovalJobs": [],
+        "worktreeCacheCleanupConfirm": null,
+        "dashboardBusyState": null,
+        "dashboardInputEpoch": 0,
+        "dashboardState": { "worktreeNavOrder": [] },
+        "dashboardWorktreeGroupsCache": [],
+        "footerFlash": "Removed 1.0KB from 2 cache item(s)",
+        "footerFlashTicks": 6,
+        "calls": {
+          "openDashboardOverlay": [],
+          "redrawDashboardWithOverlay": [],
+          "clearDashboardOverlay": [[]],
+          "restoreDashboardAfterOverlayDismiss": [],
+          "showDashboardError": [["Worktree cache cleanup finished with failures", ["Removed: 1.0KB", "Failed: 1"]]],
+          "renderDashboard": [],
+          "startDashboardBusy": [["Worktree Cache Cleanup", ["  Removing inactive generated worktree caches"]]],
+          "clearDashboardBusy": [[]],
+          "postToProjectService": [
+            ["/worktrees/cache-cleanup", { "dryRun": false, "includeActive": false }, { "timeoutMs": 180000 }]
+          ],
+          "dashboardUiStateStore.markSelectionDirty": []
+        }
+      },
+      "inputSha256": "f5199080af62c5c5985ca7631fc0da4626c7af4f88696f20e2bbb752611fe2e9"
+    }
+  ]
+}

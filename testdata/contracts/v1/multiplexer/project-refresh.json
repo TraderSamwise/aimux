@@ -1,0 +1,450 @@
+{
+  "version": 1,
+  "generatedAt": "2026-09-07T00:00:00.000Z",
+  "generatedBy": "scripts/capture-multiplexer-resource-refresh-contracts.mjs",
+  "source": "src/multiplexer/project.test.ts",
+  "sources": ["src/multiplexer/project.test.ts", "src/multiplexer/project.ts"],
+  "subject": "refreshProjectObservability",
+  "description": "Project observability refresh state transitions captured by running TypeScript refreshProjectObservability with mocked project-service responses.",
+  "caseCount": 6,
+  "cases": [
+    {
+      "id": "refresh-project-observability-001",
+      "name": "loads model from project service",
+      "source": "src/multiplexer/project.test.ts",
+      "api": "refreshProjectObservability",
+      "input": {
+        "initial": { "projectIndex": -1 },
+        "serviceSteps": [
+          {
+            "resolve": {
+              "ok": true,
+              "project": {
+                "summary": {
+                  "agentsRunning": 1,
+                  "agentsWaiting": 0,
+                  "agentsOffline": 0,
+                  "services": 0,
+                  "worktrees": 1,
+                  "openTasks": 0,
+                  "doneTasks": 0,
+                  "unreadNotifications": 0
+                },
+                "progress": {
+                  "pending": 0,
+                  "assigned": 0,
+                  "in_progress": 0,
+                  "blocked": 0,
+                  "done": 0,
+                  "failed": 0,
+                  "total": 0
+                },
+                "story": [
+                  {
+                    "id": "notif:1",
+                    "kind": "notification",
+                    "title": "Needs input",
+                    "meta": "needs_input",
+                    "createdAt": "now"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "output": {
+        "returned": true,
+        "host": {
+          "projectObservability": {
+            "summary": {
+              "agentsRunning": 1,
+              "agentsWaiting": 0,
+              "agentsOffline": 0,
+              "services": 0,
+              "worktrees": 1,
+              "openTasks": 0,
+              "doneTasks": 0,
+              "unreadNotifications": 0
+            },
+            "progress": {
+              "pending": 0,
+              "assigned": 0,
+              "in_progress": 0,
+              "blocked": 0,
+              "done": 0,
+              "failed": 0,
+              "total": 0
+            },
+            "story": [
+              {
+                "id": "notif:1",
+                "kind": "notification",
+                "title": "Needs input",
+                "meta": "needs_input",
+                "createdAt": "now"
+              }
+            ]
+          },
+          "projectObservabilityLoaded": true,
+          "projectIndex": 0
+        },
+        "calls": [{ "method": "getFromProjectService", "args": ["/project-observability"] }]
+      },
+      "inputSha256": "6c76232deea336f8480bd5dc001f725890eb7f9512f8e6a19ab6545523d3137c"
+    },
+    {
+      "id": "refresh-project-observability-002",
+      "name": "coalesces concurrent refreshes",
+      "source": "src/multiplexer/project.test.ts",
+      "api": "refreshProjectObservability",
+      "input": {
+        "initial": { "projectIndex": -1 },
+        "serviceSteps": [
+          {
+            "resolve": {
+              "ok": true,
+              "project": {
+                "summary": {
+                  "agentsRunning": 1,
+                  "agentsWaiting": 0,
+                  "agentsOffline": 0,
+                  "services": 0,
+                  "worktrees": 1,
+                  "openTasks": 0,
+                  "doneTasks": 0,
+                  "unreadNotifications": 0
+                },
+                "progress": {
+                  "pending": 0,
+                  "assigned": 0,
+                  "in_progress": 0,
+                  "blocked": 0,
+                  "done": 0,
+                  "failed": 0,
+                  "total": 0
+                },
+                "story": [
+                  {
+                    "id": "notif:1",
+                    "kind": "notification",
+                    "title": "Needs input",
+                    "meta": "needs_input",
+                    "createdAt": "now"
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "concurrentCalls": 2
+      },
+      "output": {
+        "returned": [true, true],
+        "host": {
+          "projectObservability": {
+            "summary": {
+              "agentsRunning": 1,
+              "agentsWaiting": 0,
+              "agentsOffline": 0,
+              "services": 0,
+              "worktrees": 1,
+              "openTasks": 0,
+              "doneTasks": 0,
+              "unreadNotifications": 0
+            },
+            "progress": {
+              "pending": 0,
+              "assigned": 0,
+              "in_progress": 0,
+              "blocked": 0,
+              "done": 0,
+              "failed": 0,
+              "total": 0
+            },
+            "story": [
+              {
+                "id": "notif:1",
+                "kind": "notification",
+                "title": "Needs input",
+                "meta": "needs_input",
+                "createdAt": "now"
+              }
+            ]
+          },
+          "projectObservabilityLoaded": true,
+          "projectIndex": 0
+        },
+        "calls": [{ "method": "getFromProjectService", "args": ["/project-observability"] }]
+      },
+      "inputSha256": "9725d3394bef533909441aca04e8a1c204a51d82f89e3c303653f60ed24bd625"
+    },
+    {
+      "id": "refresh-project-observability-003",
+      "name": "initializes empty state on invalid first payload",
+      "source": "src/multiplexer/project.test.ts",
+      "api": "refreshProjectObservability",
+      "input": {
+        "initial": {},
+        "serviceSteps": [{ "resolve": { "ok": true, "project": { "summary": {}, "progress": {}, "story": [] } } }]
+      },
+      "output": {
+        "returned": false,
+        "host": {
+          "projectObservability": {
+            "summary": {
+              "agentsRunning": 0,
+              "agentsWaiting": 0,
+              "agentsOffline": 0,
+              "services": 0,
+              "worktrees": 0,
+              "openTasks": 0,
+              "doneTasks": 0,
+              "unreadNotifications": 0
+            },
+            "progress": {
+              "pending": 0,
+              "assigned": 0,
+              "in_progress": 0,
+              "blocked": 0,
+              "done": 0,
+              "failed": 0,
+              "total": 0
+            },
+            "story": []
+          },
+          "projectObservabilityLoaded": true,
+          "projectIndex": 0
+        },
+        "calls": [{ "method": "getFromProjectService", "args": ["/project-observability"] }]
+      },
+      "inputSha256": "e828a78ba074544483a15e251b275e77fadc18efa97d1a680eced1475dc2655e"
+    },
+    {
+      "id": "refresh-project-observability-004",
+      "name": "preserves loaded state on invalid payload",
+      "source": "src/multiplexer/project.test.ts",
+      "api": "refreshProjectObservability",
+      "input": {
+        "initial": {
+          "projectObservability": {
+            "summary": {
+              "agentsRunning": 1,
+              "agentsWaiting": 0,
+              "agentsOffline": 0,
+              "services": 0,
+              "worktrees": 1,
+              "openTasks": 0,
+              "doneTasks": 0,
+              "unreadNotifications": 0
+            },
+            "progress": {
+              "pending": 0,
+              "assigned": 0,
+              "in_progress": 0,
+              "blocked": 0,
+              "done": 0,
+              "failed": 0,
+              "total": 0
+            },
+            "story": [{ "id": "task:keep", "kind": "task", "title": "Keep me", "meta": "open", "createdAt": "now" }]
+          },
+          "projectObservabilityLoaded": true,
+          "projectIndex": 0
+        },
+        "serviceSteps": [{ "resolve": { "ok": true, "project": { "summary": {}, "progress": {}, "story": [] } } }]
+      },
+      "output": {
+        "returned": false,
+        "host": {
+          "projectObservability": {
+            "summary": {
+              "agentsRunning": 1,
+              "agentsWaiting": 0,
+              "agentsOffline": 0,
+              "services": 0,
+              "worktrees": 1,
+              "openTasks": 0,
+              "doneTasks": 0,
+              "unreadNotifications": 0
+            },
+            "progress": {
+              "pending": 0,
+              "assigned": 0,
+              "in_progress": 0,
+              "blocked": 0,
+              "done": 0,
+              "failed": 0,
+              "total": 0
+            },
+            "story": [{ "id": "task:keep", "kind": "task", "title": "Keep me", "meta": "open", "createdAt": "now" }]
+          },
+          "projectObservabilityLoaded": true,
+          "projectIndex": 0
+        },
+        "calls": [{ "method": "getFromProjectService", "args": ["/project-observability"] }]
+      },
+      "inputSha256": "7d96b75b9a2bc4a1bc1e623b2ea1ee43843ec484dfd352a6bf73322eb9cabb25"
+    },
+    {
+      "id": "refresh-project-observability-005",
+      "name": "preserves loaded state when service rejects",
+      "source": "src/multiplexer/project.test.ts",
+      "api": "refreshProjectObservability",
+      "input": {
+        "initial": {
+          "projectObservability": {
+            "summary": {
+              "agentsRunning": 1,
+              "agentsWaiting": 0,
+              "agentsOffline": 0,
+              "services": 0,
+              "worktrees": 1,
+              "openTasks": 0,
+              "doneTasks": 0,
+              "unreadNotifications": 0
+            },
+            "progress": {
+              "pending": 0,
+              "assigned": 0,
+              "in_progress": 0,
+              "blocked": 0,
+              "done": 0,
+              "failed": 0,
+              "total": 0
+            },
+            "story": [{ "id": "task:keep", "kind": "task", "title": "Keep me", "meta": "open", "createdAt": "now" }]
+          },
+          "projectObservabilityLoaded": true,
+          "projectIndex": 0
+        },
+        "serviceSteps": [{ "reject": "offline" }]
+      },
+      "output": {
+        "returned": false,
+        "host": {
+          "projectObservability": {
+            "summary": {
+              "agentsRunning": 1,
+              "agentsWaiting": 0,
+              "agentsOffline": 0,
+              "services": 0,
+              "worktrees": 1,
+              "openTasks": 0,
+              "doneTasks": 0,
+              "unreadNotifications": 0
+            },
+            "progress": {
+              "pending": 0,
+              "assigned": 0,
+              "in_progress": 0,
+              "blocked": 0,
+              "done": 0,
+              "failed": 0,
+              "total": 0
+            },
+            "story": [{ "id": "task:keep", "kind": "task", "title": "Keep me", "meta": "open", "createdAt": "now" }]
+          },
+          "projectObservabilityLoaded": true,
+          "projectIndex": 0
+        },
+        "calls": [{ "method": "getFromProjectService", "args": ["/project-observability"] }]
+      },
+      "inputSha256": "7d22bb51ddc0b8bc2e8004be7073dc988790b3c525ab48c2abf890b5ea6b3cf0"
+    },
+    {
+      "id": "refresh-project-observability-006",
+      "name": "applies valid empty payload over previous state",
+      "source": "src/multiplexer/project.test.ts",
+      "api": "refreshProjectObservability",
+      "input": {
+        "initial": {
+          "projectObservability": {
+            "summary": {
+              "agentsRunning": 1,
+              "agentsWaiting": 0,
+              "agentsOffline": 0,
+              "services": 0,
+              "worktrees": 1,
+              "openTasks": 0,
+              "doneTasks": 0,
+              "unreadNotifications": 0
+            },
+            "progress": {
+              "pending": 0,
+              "assigned": 0,
+              "in_progress": 0,
+              "blocked": 0,
+              "done": 0,
+              "failed": 0,
+              "total": 0
+            },
+            "story": [{ "id": "task:keep", "kind": "task", "title": "Keep me", "meta": "open", "createdAt": "now" }]
+          },
+          "projectObservabilityLoaded": true,
+          "projectIndex": 0
+        },
+        "serviceSteps": [
+          {
+            "resolve": {
+              "ok": true,
+              "project": {
+                "summary": {
+                  "agentsRunning": 1,
+                  "agentsWaiting": 0,
+                  "agentsOffline": 0,
+                  "services": 0,
+                  "worktrees": 1,
+                  "openTasks": 0,
+                  "doneTasks": 0,
+                  "unreadNotifications": 0
+                },
+                "progress": {
+                  "pending": 0,
+                  "assigned": 0,
+                  "in_progress": 0,
+                  "blocked": 0,
+                  "done": 0,
+                  "failed": 0,
+                  "total": 0
+                },
+                "story": []
+              }
+            }
+          }
+        ]
+      },
+      "output": {
+        "returned": true,
+        "host": {
+          "projectObservability": {
+            "summary": {
+              "agentsRunning": 1,
+              "agentsWaiting": 0,
+              "agentsOffline": 0,
+              "services": 0,
+              "worktrees": 1,
+              "openTasks": 0,
+              "doneTasks": 0,
+              "unreadNotifications": 0
+            },
+            "progress": {
+              "pending": 0,
+              "assigned": 0,
+              "in_progress": 0,
+              "blocked": 0,
+              "done": 0,
+              "failed": 0,
+              "total": 0
+            },
+            "story": []
+          },
+          "projectObservabilityLoaded": true,
+          "projectIndex": 0
+        },
+        "calls": [{ "method": "getFromProjectService", "args": ["/project-observability"] }]
+      },
+      "inputSha256": "4833825ff8425ea496dd89deb82f69fc9b427a9df21f95b324c113b02c09afa0"
+    }
+  ]
+}

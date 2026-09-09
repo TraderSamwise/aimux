@@ -1,0 +1,74 @@
+{
+  "version": 1,
+  "generatedAt": "2026-09-06T00:00:00.000Z",
+  "generatedBy": "scripts/capture-tmux-expose-preview-sanitize-contract.mjs",
+  "source": "src/tmux/expose-preview-sanitize.ts",
+  "subject": "src/tmux/expose-preview-sanitize.ts",
+  "description": "Expose preview escape sanitization captured by running TypeScript.",
+  "caseCount": 7,
+  "cases": [
+    {
+      "id": "tmux-expose-preview-sanitize-001",
+      "name": "preserves SGR color and style escapes",
+      "source": "src/tmux/expose-preview-sanitize.ts",
+      "api": "sanitizeExposePreviewLine",
+      "input": { "name": "preserves SGR color and style escapes", "line": "\u001b[31;1mred\u001b[0m" },
+      "output": { "line": "\u001b[31;1mred\u001b[0m" },
+      "inputSha256": "ccaa2e4fcbb4814701d885ce2b440e3d0d5ec1e7bc8c4730c73137d781d861ce"
+    },
+    {
+      "id": "tmux-expose-preview-sanitize-002",
+      "name": "strips non-SGR CSI cursor controls",
+      "source": "src/tmux/expose-preview-sanitize.ts",
+      "api": "sanitizeExposePreviewLine",
+      "input": { "name": "strips non-SGR CSI cursor controls", "line": "a\u001b[2Kb\u001b[?25lc" },
+      "output": { "line": "abc" },
+      "inputSha256": "9fa96115388f87a60a9956ed31ec229ea3d3e425d8962220156754a7c41536aa"
+    },
+    {
+      "id": "tmux-expose-preview-sanitize-003",
+      "name": "strips OSC sequences",
+      "source": "src/tmux/expose-preview-sanitize.ts",
+      "api": "sanitizeExposePreviewLine",
+      "input": { "name": "strips OSC sequences", "line": "a\u001b]8;;https://example.com\u0007link\u001b]8;;\u0007b" },
+      "output": { "line": "alinkb" },
+      "inputSha256": "09f0fe91bb552d3eb1c4351a6cfdca3f1af43a36160ce203d65d25fd7ce0e7e2"
+    },
+    {
+      "id": "tmux-expose-preview-sanitize-004",
+      "name": "strips incomplete escapes at the end",
+      "source": "src/tmux/expose-preview-sanitize.ts",
+      "api": "sanitizeExposePreviewLine",
+      "input": { "name": "strips incomplete escapes at the end", "line": "a\u001b[31;b\u001b[?25" },
+      "output": { "line": "a" },
+      "inputSha256": "42aeca82fde019ea0fc029c8a974da9f24e665f018cb41fa04c7b0b99b7aa531"
+    },
+    {
+      "id": "tmux-expose-preview-sanitize-005",
+      "name": "turns control bytes into spaces",
+      "source": "src/tmux/expose-preview-sanitize.ts",
+      "api": "sanitizeExposePreviewLine",
+      "input": { "name": "turns control bytes into spaces", "line": "a\u0000b\tcd" },
+      "output": { "line": "a b c d" },
+      "inputSha256": "1dd83202f95c069704e4f14951e7fa1d5bcdfe9a03aa697433f7d84b28497ffc"
+    },
+    {
+      "id": "tmux-expose-preview-sanitize-006",
+      "name": "normalizes carriage returns and drops trailing blank lines",
+      "source": "src/tmux/expose-preview-sanitize.ts",
+      "api": "sanitizeExposePreviewOutput",
+      "input": { "name": "normalizes carriage returns and drops trailing blank lines", "raw": "a\r\nb\n \n\t\n" },
+      "output": { "lines": ["a", "b"] },
+      "inputSha256": "e5ca0a730f44af48206e36aaae347b2a96e074a9e86d0c2fcad5e02ab5dfd553"
+    },
+    {
+      "id": "tmux-expose-preview-sanitize-007",
+      "name": "keeps interior blank lines",
+      "source": "src/tmux/expose-preview-sanitize.ts",
+      "api": "sanitizeExposePreviewOutput",
+      "input": { "name": "keeps interior blank lines", "raw": "a\n\nb\n" },
+      "output": { "lines": ["a", "", "b"] },
+      "inputSha256": "2171aabd112609b1bee8a97222387b0c5e40876509bcfa61d49ad878dc3fcf5f"
+    }
+  ]
+}

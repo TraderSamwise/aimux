@@ -1,0 +1,1285 @@
+{
+  "version": 1,
+  "source": "src/fast-control.test.ts",
+  "generatedBy": "scripts/capture-fast-control-contract.mjs",
+  "description": "Fast-control switchable-agent filtering, project-control guards, worktree scoping, teammate navigation, liveness, and serialization contracts captured by running TypeScript fast-control helpers.",
+  "cases": [
+    {
+      "id": "fast-control-001",
+      "name": "omits the overseer from switchable agents unless explicitly requested",
+      "source": "src/fast-control.test.ts",
+      "input": {
+        "scenario": "overseer-filter",
+        "context": {
+          "projectRoot": "<root>/repo",
+          "currentClientSession": "aimux-repo-abc-client-123",
+          "currentWindow": "codex",
+          "currentWindowId": "@1",
+          "currentPath": "<root>/repo"
+        },
+        "metadataSessions": { "boss": { "overseer": true } },
+        "entries": [
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@1", "windowIndex": 1, "windowName": "codex" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "coder",
+              "label": "Coder",
+              "command": "codex",
+              "worktreePath": "<root>/repo"
+            },
+            "alive": true,
+            "activity": 1
+          },
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@2", "windowIndex": 2, "windowName": "claude" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "boss",
+              "label": "Overseer",
+              "command": "claude",
+              "worktreePath": "<root>/repo",
+              "team": { "teamId": "overseer", "parentSessionId": "", "role": "overseer" }
+            },
+            "alive": true,
+            "activity": 2
+          }
+        ],
+        "calls": [
+          { "name": "default", "fn": "list" },
+          { "name": "includeOverseer", "fn": "list", "options": { "includeOverseer": true } }
+        ]
+      },
+      "output": {
+        "default": [
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@1", "windowIndex": 1, "windowName": "codex" },
+            "id": "coder",
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "coder",
+              "label": "Coder",
+              "command": "codex",
+              "worktreePath": "<root>/repo"
+            },
+            "label": "Coder",
+            "urgency": 0,
+            "activity": 1,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false
+          }
+        ],
+        "includeOverseer": [
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@1", "windowIndex": 1, "windowName": "codex" },
+            "id": "coder",
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "coder",
+              "label": "Coder",
+              "command": "codex",
+              "worktreePath": "<root>/repo"
+            },
+            "label": "Coder",
+            "urgency": 0,
+            "activity": 1,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false
+          },
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@2", "windowIndex": 2, "windowName": "claude" },
+            "id": "boss",
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "boss",
+              "label": "Overseer",
+              "command": "claude",
+              "worktreePath": "<root>/repo",
+              "team": { "teamId": "overseer", "parentSessionId": "", "role": "overseer" }
+            },
+            "label": "Overseer",
+            "urgency": 0,
+            "activity": 2,
+            "recentRank": 9007199254740991,
+            "overseer": true,
+            "scribe": false
+          }
+        ]
+      },
+      "inputSha256": "f93568cdbc23cff4462da17f17baeffdf98b253cde5a4c6874799bec1864f118"
+    },
+    {
+      "id": "fast-control-002",
+      "name": "does not switch from an active overseer into normal agents",
+      "source": "src/fast-control.test.ts",
+      "input": {
+        "scenario": "current-overseer",
+        "context": {
+          "projectRoot": "<root>/repo",
+          "currentClientSession": "aimux-repo-abc-client-123",
+          "currentWindow": "claude",
+          "currentWindowId": "@2",
+          "currentPath": "<root>/repo"
+        },
+        "metadataSessions": { "boss": { "overseer": true } },
+        "entries": [
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@1", "windowIndex": 1, "windowName": "codex" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "coder",
+              "label": "Coder",
+              "command": "codex",
+              "worktreePath": "<root>/repo"
+            },
+            "alive": true,
+            "activity": 1
+          },
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@2", "windowIndex": 2, "windowName": "claude" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "boss",
+              "label": "Overseer",
+              "command": "claude",
+              "worktreePath": "<root>/repo",
+              "overseer": true,
+              "team": { "teamId": "overseer", "parentSessionId": "", "role": "overseer" }
+            },
+            "alive": true,
+            "activity": 2
+          }
+        ],
+        "calls": [
+          { "name": "items", "fn": "list" },
+          { "name": "next", "fn": "next" },
+          { "name": "prev", "fn": "prev" }
+        ]
+      },
+      "output": {
+        "items": [
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@1", "windowIndex": 1, "windowName": "codex" },
+            "id": "coder",
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "coder",
+              "label": "Coder",
+              "command": "codex",
+              "worktreePath": "<root>/repo"
+            },
+            "label": "Coder",
+            "urgency": 0,
+            "activity": 1,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false
+          }
+        ],
+        "next": null,
+        "prev": null
+      },
+      "inputSha256": "90971f8611558f4cd7b1faeb23a93de3a692df451bef12f7d86271e2e025a6e8"
+    },
+    {
+      "id": "fast-control-003",
+      "name": "omits the scribe from switchable agents",
+      "source": "src/fast-control.test.ts",
+      "input": {
+        "scenario": "scribe-filter",
+        "context": {
+          "projectRoot": "<root>/repo",
+          "currentClientSession": "aimux-repo-abc-client-123",
+          "currentWindow": "codex",
+          "currentWindowId": "@1",
+          "currentPath": "<root>/repo"
+        },
+        "metadataSessions": { "scribe": { "scribe": true } },
+        "entries": [
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@1", "windowIndex": 1, "windowName": "codex" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "coder",
+              "label": "Coder",
+              "command": "codex",
+              "worktreePath": "<root>/repo"
+            },
+            "alive": true,
+            "activity": 1
+          },
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@2", "windowIndex": 2, "windowName": "claude" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "scribe",
+              "label": "Scribe",
+              "command": "claude",
+              "worktreePath": "<root>/repo",
+              "projectControl": false,
+              "team": { "teamId": "scribe", "parentSessionId": "", "role": "scribe" }
+            },
+            "alive": true,
+            "activity": 2
+          }
+        ],
+        "calls": [{ "name": "items", "fn": "list" }]
+      },
+      "output": {
+        "items": [
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@1", "windowIndex": 1, "windowName": "codex" },
+            "id": "coder",
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "coder",
+              "label": "Coder",
+              "command": "codex",
+              "worktreePath": "<root>/repo"
+            },
+            "label": "Coder",
+            "urgency": 0,
+            "activity": 1,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false
+          }
+        ]
+      },
+      "inputSha256": "d87e851ad3a6dde30ddb0b95b01ba31b92d60899caa9f01e5e97e450a2db9b8c"
+    },
+    {
+      "id": "fast-control-004",
+      "name": "does not switch from an active scribe into normal agents",
+      "source": "src/fast-control.test.ts",
+      "input": {
+        "scenario": "current-scribe",
+        "context": {
+          "projectRoot": "<root>/repo",
+          "currentClientSession": "aimux-repo-abc-client-123",
+          "currentWindow": "claude",
+          "currentWindowId": "@2",
+          "currentPath": "<root>/repo"
+        },
+        "metadataSessions": { "scribe": { "scribe": true } },
+        "entries": [
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@1", "windowIndex": 1, "windowName": "codex" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "coder",
+              "label": "Coder",
+              "command": "codex",
+              "worktreePath": "<root>/repo"
+            },
+            "alive": true,
+            "activity": 1
+          },
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@2", "windowIndex": 2, "windowName": "claude" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "scribe",
+              "label": "Scribe",
+              "command": "claude",
+              "worktreePath": "<root>/repo",
+              "projectControl": false,
+              "team": { "teamId": "scribe", "parentSessionId": "", "role": "scribe" }
+            },
+            "alive": true,
+            "activity": 2
+          }
+        ],
+        "calls": [
+          { "name": "next", "fn": "next" },
+          { "name": "prev", "fn": "prev" }
+        ]
+      },
+      "output": { "next": null, "prev": null },
+      "inputSha256": "c3793c040441a803cb3de92bdbb96203bccd8d2b6c59e029813828d1df7c1bfa"
+    },
+    {
+      "id": "fast-control-005",
+      "name": "uses current window metadata worktree when cwd is outside the worktree",
+      "source": "src/fast-control.test.ts",
+      "input": {
+        "scenario": "metadata-worktree-scope",
+        "context": {
+          "projectRoot": "<root>/repo",
+          "currentClientSession": "aimux-repo-abc-client-123",
+          "currentWindow": "claude",
+          "currentWindowId": "@593",
+          "currentPath": "/private/tmp/tealstreet-pr5180"
+        },
+        "entries": [
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@593", "windowIndex": 4, "windowName": "claude" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "claude-a",
+              "label": "Claude",
+              "command": "claude",
+              "worktreePath": "<root>/repo/.aimux/worktrees/tealchart-cleanup-11"
+            },
+            "alive": true,
+            "activity": 4
+          },
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@594", "windowIndex": 5, "windowName": "codex" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "codex-b",
+              "label": "Codex",
+              "command": "codex",
+              "worktreePath": "<root>/repo/.aimux/worktrees/tealchart-cleanup-11"
+            },
+            "alive": true,
+            "activity": 5
+          }
+        ],
+        "calls": [{ "name": "items", "fn": "list" }]
+      },
+      "output": {
+        "items": [
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@593", "windowIndex": 4, "windowName": "claude" },
+            "id": "claude-a",
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "claude-a",
+              "label": "Claude",
+              "command": "claude",
+              "worktreePath": "<root>/repo/.aimux/worktrees/tealchart-cleanup-11"
+            },
+            "label": "claude",
+            "urgency": 0,
+            "activity": 4,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false
+          },
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@594", "windowIndex": 5, "windowName": "codex" },
+            "id": "codex-b",
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "codex-b",
+              "label": "Codex",
+              "command": "codex",
+              "worktreePath": "<root>/repo/.aimux/worktrees/tealchart-cleanup-11"
+            },
+            "label": "codex",
+            "urgency": 0,
+            "activity": 5,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false
+          }
+        ]
+      },
+      "inputSha256": "740ffb3efd9f59670936da1144f207260cad7e8fde7e0aeffa59bab7c240ae4c"
+    },
+    {
+      "id": "fast-control-006",
+      "name": "keeps unlinked worktree candidates after client-session ordering",
+      "source": "src/fast-control.test.ts",
+      "input": {
+        "scenario": "unlinked-worktree-candidates",
+        "context": {
+          "projectRoot": "/repo",
+          "currentClientSession": "aimux-repo-abc-client-123",
+          "currentWindow": "claude",
+          "currentWindowId": "@596",
+          "currentPath": "/private/tmp/tealstreet-pr5180"
+        },
+        "entries": [
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@596", "windowIndex": 1, "windowName": "claude" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "claude-a",
+              "label": "Claude",
+              "command": "claude",
+              "worktreePath": "/private/tmp/tealstreet-pr5180",
+              "activity": 100
+            },
+            "alive": true,
+            "activity": 100
+          },
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@597", "windowIndex": 4, "windowName": "codex" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "codex-b",
+              "label": "Codex",
+              "command": "codex",
+              "worktreePath": "/private/tmp/tealstreet-pr5180",
+              "activity": 90
+            },
+            "alive": true,
+            "activity": 90
+          }
+        ],
+        "calls": [{ "name": "items", "fn": "list" }]
+      },
+      "output": {
+        "items": [
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@596", "windowIndex": 1, "windowName": "claude" },
+            "id": "claude-a",
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "claude-a",
+              "label": "Claude",
+              "command": "claude",
+              "worktreePath": "/private/tmp/tealstreet-pr5180",
+              "activity": 100
+            },
+            "label": "claude",
+            "urgency": 0,
+            "activity": 100,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false
+          },
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@597", "windowIndex": 4, "windowName": "codex" },
+            "id": "codex-b",
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "codex-b",
+              "label": "Codex",
+              "command": "codex",
+              "worktreePath": "/private/tmp/tealstreet-pr5180",
+              "activity": 90
+            },
+            "label": "codex",
+            "urgency": 0,
+            "activity": 90,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false
+          }
+        ]
+      },
+      "inputSha256": "fe9b48ab4a31694e51b40f46796ebbff83ae3a1637f912025b943bd20af0c769"
+    },
+    {
+      "id": "fast-control-007",
+      "name": "renders compact switch labels for autogenerated agent names and services",
+      "source": "src/fast-control.test.ts",
+      "input": {
+        "scenario": "compact-labels",
+        "context": {
+          "projectRoot": "<root>/repo",
+          "currentClientSession": "aimux-repo-abc-client-123",
+          "currentWindow": "claude",
+          "currentWindowId": "@1",
+          "currentPath": "<root>/repo/wt"
+        },
+        "entries": [
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@1", "windowIndex": 1, "windowName": "claude" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "claude-zjlduv",
+              "label": "claude-zjlduv",
+              "command": "claude",
+              "worktreePath": "<root>/repo/wt",
+              "role": "coder",
+              "activity": 100
+            },
+            "alive": true,
+            "activity": 100
+          },
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@2", "windowIndex": 2, "windowName": "shell" },
+            "metadata": {
+              "kind": "service",
+              "sessionId": "shell-1",
+              "label": "shell",
+              "command": "shell",
+              "worktreePath": "<root>/repo/wt",
+              "activity": 90
+            },
+            "alive": true,
+            "activity": 90
+          }
+        ],
+        "calls": [{ "name": "items", "fn": "list" }]
+      },
+      "output": {
+        "items": [
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@1", "windowIndex": 1, "windowName": "claude" },
+            "id": "claude-zjlduv",
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "claude-zjlduv",
+              "label": "claude-zjlduv",
+              "command": "claude",
+              "worktreePath": "<root>/repo/wt",
+              "role": "coder",
+              "activity": 100
+            },
+            "label": "claude(coder)",
+            "urgency": 0,
+            "activity": 100,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false
+          },
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@2", "windowIndex": 2, "windowName": "shell" },
+            "id": "shell-1",
+            "metadata": {
+              "kind": "service",
+              "sessionId": "shell-1",
+              "label": "shell",
+              "command": "shell",
+              "worktreePath": "<root>/repo/wt",
+              "activity": 90
+            },
+            "label": "shell[svc]",
+            "urgency": 0,
+            "activity": 90,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false
+          }
+        ]
+      },
+      "inputSha256": "e49964f3ca09750cb6ecaee1be72865ff1429210879befdf1d063b8e74e70b4e"
+    },
+    {
+      "id": "fast-control-008",
+      "name": "keeps root navigation out of teammate windows in the same worktree",
+      "source": "src/fast-control.test.ts",
+      "input": {
+        "scenario": "root-navigation-excludes-teammates",
+        "context": {
+          "projectRoot": "<root>/repo",
+          "currentClientSession": "aimux-repo-abc-client-123",
+          "currentWindow": "parent",
+          "currentWindowId": "@1",
+          "currentPath": "<root>/repo/wt"
+        },
+        "entries": [
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@1", "windowIndex": 1, "windowName": "claude" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "parent",
+              "label": "parent",
+              "command": "claude",
+              "worktreePath": "<root>/repo/wt",
+              "activity": 100
+            },
+            "alive": true,
+            "activity": 100
+          },
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@2", "windowIndex": 2, "windowName": "codex" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "reviewer",
+              "label": "reviewer",
+              "command": "codex",
+              "worktreePath": "<root>/repo/wt",
+              "team": { "teamId": "team-parent", "parentSessionId": "parent", "role": "reviewer", "order": 1 },
+              "activity": 90
+            },
+            "alive": true,
+            "activity": 90
+          },
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@3", "windowIndex": 3, "windowName": "shell" },
+            "metadata": {
+              "kind": "service",
+              "sessionId": "shell-1",
+              "label": "shell",
+              "command": "shell",
+              "worktreePath": "<root>/repo/wt",
+              "activity": 80
+            },
+            "alive": true,
+            "activity": 80
+          }
+        ],
+        "calls": [
+          { "name": "items", "fn": "list" },
+          { "name": "next", "fn": "next" },
+          { "name": "prev", "fn": "prev" }
+        ]
+      },
+      "output": {
+        "items": [
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@1", "windowIndex": 1, "windowName": "claude" },
+            "id": "parent",
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "parent",
+              "label": "parent",
+              "command": "claude",
+              "worktreePath": "<root>/repo/wt",
+              "activity": 100
+            },
+            "label": "parent",
+            "urgency": 0,
+            "activity": 100,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false
+          },
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@3", "windowIndex": 3, "windowName": "shell" },
+            "id": "shell-1",
+            "metadata": {
+              "kind": "service",
+              "sessionId": "shell-1",
+              "label": "shell",
+              "command": "shell",
+              "worktreePath": "<root>/repo/wt",
+              "activity": 80
+            },
+            "label": "shell[svc]",
+            "urgency": 0,
+            "activity": 80,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false
+          }
+        ],
+        "next": {
+          "target": { "sessionName": "aimux-repo-abc", "windowId": "@3", "windowIndex": 3, "windowName": "shell" },
+          "id": "shell-1",
+          "metadata": {
+            "kind": "service",
+            "sessionId": "shell-1",
+            "label": "shell",
+            "command": "shell",
+            "worktreePath": "<root>/repo/wt",
+            "activity": 80
+          },
+          "label": "shell[svc]",
+          "urgency": 0,
+          "activity": 80,
+          "recentRank": 9007199254740991,
+          "overseer": false,
+          "scribe": false
+        },
+        "prev": {
+          "target": { "sessionName": "aimux-repo-abc", "windowId": "@3", "windowIndex": 3, "windowName": "shell" },
+          "id": "shell-1",
+          "metadata": {
+            "kind": "service",
+            "sessionId": "shell-1",
+            "label": "shell",
+            "command": "shell",
+            "worktreePath": "<root>/repo/wt",
+            "activity": 80
+          },
+          "label": "shell[svc]",
+          "urgency": 0,
+          "activity": 80,
+          "recentRank": 9007199254740991,
+          "overseer": false,
+          "scribe": false
+        }
+      },
+      "inputSha256": "9973a0958bfb18069bd876eab2e56b80a60c7c83d1f49c251d3dddb49971293f"
+    },
+    {
+      "id": "fast-control-009",
+      "name": "cycles only direct teammates after entering teammate land",
+      "source": "src/fast-control.test.ts",
+      "input": {
+        "scenario": "direct-teammates",
+        "context": {
+          "projectRoot": "<root>/repo",
+          "currentClientSession": "aimux-repo-abc-client-123",
+          "currentWindow": "implementer",
+          "currentWindowId": "@2",
+          "currentPath": "<root>/repo/other"
+        },
+        "entries": [
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@1", "windowIndex": 1, "windowName": "claude" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "parent",
+              "label": "parent",
+              "command": "claude",
+              "worktreePath": "<root>/repo/wt",
+              "activity": 100
+            },
+            "alive": true,
+            "activity": 100
+          },
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@2", "windowIndex": 4, "windowName": "codex" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "implementer",
+              "label": "implementer",
+              "command": "codex",
+              "worktreePath": "<root>/repo/other",
+              "team": { "teamId": "team-parent", "parentSessionId": "parent", "role": "coder", "order": 2 },
+              "activity": 90
+            },
+            "alive": true,
+            "activity": 90
+          },
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@3", "windowIndex": 3, "windowName": "codex" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "reviewer",
+              "label": "reviewer",
+              "command": "codex",
+              "worktreePath": "<root>/repo/wt",
+              "team": { "teamId": "team-parent", "parentSessionId": "parent", "role": "reviewer", "order": 1 },
+              "activity": 80
+            },
+            "alive": true,
+            "activity": 80
+          },
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@4", "windowIndex": 2, "windowName": "codex" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "other-team",
+              "label": "other-team",
+              "command": "codex",
+              "worktreePath": "<root>/repo/wt",
+              "team": { "teamId": "team-other", "parentSessionId": "other-parent", "role": "coder", "order": 0 },
+              "activity": 70
+            },
+            "alive": true,
+            "activity": 70
+          },
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@5", "windowIndex": 5, "windowName": "shell" },
+            "metadata": {
+              "kind": "service",
+              "sessionId": "shell-1",
+              "label": "shell",
+              "command": "shell",
+              "worktreePath": "<root>/repo/wt",
+              "activity": 60
+            },
+            "alive": true,
+            "activity": 60
+          }
+        ],
+        "calls": [
+          { "name": "items", "fn": "list" },
+          { "name": "next", "fn": "next" },
+          { "name": "prev", "fn": "prev" }
+        ]
+      },
+      "output": {
+        "items": [
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@3", "windowIndex": 3, "windowName": "codex" },
+            "id": "reviewer",
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "reviewer",
+              "label": "reviewer",
+              "command": "codex",
+              "worktreePath": "<root>/repo/wt",
+              "team": { "teamId": "team-parent", "parentSessionId": "parent", "role": "reviewer", "order": 1 },
+              "activity": 80
+            },
+            "label": "reviewer",
+            "urgency": 0,
+            "activity": 80,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false
+          },
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@2", "windowIndex": 4, "windowName": "codex" },
+            "id": "implementer",
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "implementer",
+              "label": "implementer",
+              "command": "codex",
+              "worktreePath": "<root>/repo/other",
+              "team": { "teamId": "team-parent", "parentSessionId": "parent", "role": "coder", "order": 2 },
+              "activity": 90
+            },
+            "label": "implementer",
+            "urgency": 0,
+            "activity": 90,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false
+          }
+        ],
+        "next": {
+          "target": { "sessionName": "aimux-repo-abc", "windowId": "@3", "windowIndex": 3, "windowName": "codex" },
+          "id": "reviewer",
+          "metadata": {
+            "kind": "agent",
+            "sessionId": "reviewer",
+            "label": "reviewer",
+            "command": "codex",
+            "worktreePath": "<root>/repo/wt",
+            "team": { "teamId": "team-parent", "parentSessionId": "parent", "role": "reviewer", "order": 1 },
+            "activity": 80
+          },
+          "label": "reviewer",
+          "urgency": 0,
+          "activity": 80,
+          "recentRank": 9007199254740991,
+          "overseer": false,
+          "scribe": false
+        },
+        "prev": {
+          "target": { "sessionName": "aimux-repo-abc", "windowId": "@3", "windowIndex": 3, "windowName": "codex" },
+          "id": "reviewer",
+          "metadata": {
+            "kind": "agent",
+            "sessionId": "reviewer",
+            "label": "reviewer",
+            "command": "codex",
+            "worktreePath": "<root>/repo/wt",
+            "team": { "teamId": "team-parent", "parentSessionId": "parent", "role": "reviewer", "order": 1 },
+            "activity": 80
+          },
+          "label": "reviewer",
+          "urgency": 0,
+          "activity": 80,
+          "recentRank": 9007199254740991,
+          "overseer": false,
+          "scribe": false
+        }
+      },
+      "inputSha256": "9266a3247497da2e9877df97a70903b6f3251d5663f07ad329d718b096cb398b"
+    },
+    {
+      "id": "fast-control-010",
+      "name": "uses a dead current teammate window only for teammate scoping",
+      "source": "src/fast-control.test.ts",
+      "input": {
+        "scenario": "dead-current-teammate",
+        "context": {
+          "projectRoot": "<root>/repo",
+          "currentClientSession": "aimux-repo-abc-client-123",
+          "currentWindow": "dead-coder",
+          "currentWindowId": "@2",
+          "currentPath": "<root>/repo/wt"
+        },
+        "entries": [
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@1", "windowIndex": 1, "windowName": "claude" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "parent",
+              "label": "parent",
+              "command": "claude",
+              "worktreePath": "<root>/repo/wt",
+              "activity": 100
+            },
+            "alive": true,
+            "activity": 100
+          },
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@2", "windowIndex": 2, "windowName": "codex" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "dead-coder",
+              "label": "dead-coder",
+              "command": "codex",
+              "worktreePath": "<root>/repo/wt",
+              "team": { "teamId": "team-parent", "parentSessionId": "parent", "role": "coder", "order": 1 },
+              "alive": false,
+              "activity": 90
+            },
+            "alive": false,
+            "activity": 90
+          },
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@3", "windowIndex": 3, "windowName": "codex" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "reviewer",
+              "label": "reviewer",
+              "command": "codex",
+              "worktreePath": "<root>/repo/other",
+              "team": { "teamId": "team-parent", "parentSessionId": "parent", "role": "reviewer", "order": 2 },
+              "activity": 80
+            },
+            "alive": true,
+            "activity": 80
+          },
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@4", "windowIndex": 4, "windowName": "codex" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "other-team",
+              "label": "other-team",
+              "command": "codex",
+              "worktreePath": "<root>/repo/wt",
+              "team": { "teamId": "team-other", "parentSessionId": "other-parent", "role": "coder", "order": 1 },
+              "activity": 70
+            },
+            "alive": true,
+            "activity": 70
+          }
+        ],
+        "calls": [
+          { "name": "items", "fn": "list" },
+          { "name": "next", "fn": "next" },
+          { "name": "prev", "fn": "prev" }
+        ]
+      },
+      "output": {
+        "items": [
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@3", "windowIndex": 3, "windowName": "codex" },
+            "id": "reviewer",
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "reviewer",
+              "label": "reviewer",
+              "command": "codex",
+              "worktreePath": "<root>/repo/other",
+              "team": { "teamId": "team-parent", "parentSessionId": "parent", "role": "reviewer", "order": 2 },
+              "activity": 80
+            },
+            "label": "reviewer",
+            "urgency": 0,
+            "activity": 80,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false
+          }
+        ],
+        "next": {
+          "target": { "sessionName": "aimux-repo-abc", "windowId": "@3", "windowIndex": 3, "windowName": "codex" },
+          "id": "reviewer",
+          "metadata": {
+            "kind": "agent",
+            "sessionId": "reviewer",
+            "label": "reviewer",
+            "command": "codex",
+            "worktreePath": "<root>/repo/other",
+            "team": { "teamId": "team-parent", "parentSessionId": "parent", "role": "reviewer", "order": 2 },
+            "activity": 80
+          },
+          "label": "reviewer",
+          "urgency": 0,
+          "activity": 80,
+          "recentRank": 9007199254740991,
+          "overseer": false,
+          "scribe": false
+        },
+        "prev": {
+          "target": { "sessionName": "aimux-repo-abc", "windowId": "@3", "windowIndex": 3, "windowName": "codex" },
+          "id": "reviewer",
+          "metadata": {
+            "kind": "agent",
+            "sessionId": "reviewer",
+            "label": "reviewer",
+            "command": "codex",
+            "worktreePath": "<root>/repo/other",
+            "team": { "teamId": "team-parent", "parentSessionId": "parent", "role": "reviewer", "order": 2 },
+            "activity": 80
+          },
+          "label": "reviewer",
+          "urgency": 0,
+          "activity": 80,
+          "recentRank": 9007199254740991,
+          "overseer": false,
+          "scribe": false
+        }
+      },
+      "inputSha256": "ebd2233064fb16375f345aa89618ee4ad63f8a3bc69411b665c54d58dea1d37c"
+    },
+    {
+      "id": "fast-control-011",
+      "name": "excludes dead managed windows from switch controls",
+      "source": "src/fast-control.test.ts",
+      "input": {
+        "scenario": "dead-windows",
+        "context": {
+          "projectRoot": "<root>/repo",
+          "currentClientSession": "aimux-repo-abc-client-123",
+          "currentWindow": "claude",
+          "currentWindowId": "@1",
+          "currentPath": "<root>/repo/wt"
+        },
+        "entries": [
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@1", "windowIndex": 1, "windowName": "claude" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "claude-a",
+              "label": "Claude A",
+              "command": "claude",
+              "worktreePath": "<root>/repo/wt",
+              "activity": 100
+            },
+            "alive": true,
+            "activity": 100
+          },
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@2", "windowIndex": 2, "windowName": "codex" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "codex-b",
+              "label": "Codex B",
+              "command": "codex",
+              "worktreePath": "<root>/repo/wt",
+              "alive": false,
+              "activity": 90
+            },
+            "alive": false,
+            "activity": 90
+          },
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@3", "windowIndex": 3, "windowName": "claude" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "claude-c",
+              "label": "Claude C",
+              "command": "claude",
+              "worktreePath": "<root>/repo/wt",
+              "activity": 80
+            },
+            "alive": true,
+            "activity": 80
+          }
+        ],
+        "calls": [
+          { "name": "items", "fn": "list" },
+          { "name": "next", "fn": "next" },
+          { "name": "prev", "fn": "prev" }
+        ]
+      },
+      "output": {
+        "items": [
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@1", "windowIndex": 1, "windowName": "claude" },
+            "id": "claude-a",
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "claude-a",
+              "label": "Claude A",
+              "command": "claude",
+              "worktreePath": "<root>/repo/wt",
+              "activity": 100
+            },
+            "label": "Claude A",
+            "urgency": 0,
+            "activity": 100,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false
+          },
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@3", "windowIndex": 3, "windowName": "claude" },
+            "id": "claude-c",
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "claude-c",
+              "label": "Claude C",
+              "command": "claude",
+              "worktreePath": "<root>/repo/wt",
+              "activity": 80
+            },
+            "label": "Claude C",
+            "urgency": 0,
+            "activity": 80,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false
+          }
+        ],
+        "next": {
+          "target": { "sessionName": "aimux-repo-abc", "windowId": "@3", "windowIndex": 3, "windowName": "claude" },
+          "id": "claude-c",
+          "metadata": {
+            "kind": "agent",
+            "sessionId": "claude-c",
+            "label": "Claude C",
+            "command": "claude",
+            "worktreePath": "<root>/repo/wt",
+            "activity": 80
+          },
+          "label": "Claude C",
+          "urgency": 0,
+          "activity": 80,
+          "recentRank": 9007199254740991,
+          "overseer": false,
+          "scribe": false
+        },
+        "prev": {
+          "target": { "sessionName": "aimux-repo-abc", "windowId": "@3", "windowIndex": 3, "windowName": "claude" },
+          "id": "claude-c",
+          "metadata": {
+            "kind": "agent",
+            "sessionId": "claude-c",
+            "label": "Claude C",
+            "command": "claude",
+            "worktreePath": "<root>/repo/wt",
+            "activity": 80
+          },
+          "label": "Claude C",
+          "urgency": 0,
+          "activity": 80,
+          "recentRank": 9007199254740991,
+          "overseer": false,
+          "scribe": false
+        }
+      },
+      "inputSha256": "957d45be7af13d3254b1a45f1c2da104023dd6f8017879adc9750cffbcc75519"
+    },
+    {
+      "id": "fast-control-012",
+      "name": "uses a dead current root window only for next/prev ordering",
+      "source": "src/fast-control.test.ts",
+      "input": {
+        "scenario": "dead-current-root",
+        "context": {
+          "projectRoot": "<root>/repo",
+          "currentClientSession": "aimux-repo-abc-client-123",
+          "currentWindow": "codex",
+          "currentWindowId": "@2",
+          "currentPath": "<root>/repo/wt"
+        },
+        "entries": [
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@1", "windowIndex": 1, "windowName": "claude" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "claude-a",
+              "label": "Claude A",
+              "command": "claude",
+              "worktreePath": "<root>/repo/wt",
+              "activity": 100
+            },
+            "alive": true,
+            "activity": 100
+          },
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@2", "windowIndex": 2, "windowName": "codex" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "codex-b",
+              "label": "Codex B",
+              "command": "codex",
+              "worktreePath": "<root>/repo/wt",
+              "alive": false,
+              "activity": 90
+            },
+            "alive": false,
+            "activity": 90
+          },
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@3", "windowIndex": 3, "windowName": "claude" },
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "claude-c",
+              "label": "Claude C",
+              "command": "claude",
+              "worktreePath": "<root>/repo/wt",
+              "activity": 80
+            },
+            "alive": true,
+            "activity": 80
+          }
+        ],
+        "calls": [
+          { "name": "items", "fn": "list" },
+          { "name": "next", "fn": "next" },
+          { "name": "prev", "fn": "prev" }
+        ]
+      },
+      "output": {
+        "items": [
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@1", "windowIndex": 1, "windowName": "claude" },
+            "id": "claude-a",
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "claude-a",
+              "label": "Claude A",
+              "command": "claude",
+              "worktreePath": "<root>/repo/wt",
+              "activity": 100
+            },
+            "label": "Claude A",
+            "urgency": 0,
+            "activity": 100,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false
+          },
+          {
+            "target": { "sessionName": "aimux-repo-abc", "windowId": "@3", "windowIndex": 3, "windowName": "claude" },
+            "id": "claude-c",
+            "metadata": {
+              "kind": "agent",
+              "sessionId": "claude-c",
+              "label": "Claude C",
+              "command": "claude",
+              "worktreePath": "<root>/repo/wt",
+              "activity": 80
+            },
+            "label": "Claude C",
+            "urgency": 0,
+            "activity": 80,
+            "recentRank": 9007199254740991,
+            "overseer": false,
+            "scribe": false
+          }
+        ],
+        "next": {
+          "target": { "sessionName": "aimux-repo-abc", "windowId": "@3", "windowIndex": 3, "windowName": "claude" },
+          "id": "claude-c",
+          "metadata": {
+            "kind": "agent",
+            "sessionId": "claude-c",
+            "label": "Claude C",
+            "command": "claude",
+            "worktreePath": "<root>/repo/wt",
+            "activity": 80
+          },
+          "label": "Claude C",
+          "urgency": 0,
+          "activity": 80,
+          "recentRank": 9007199254740991,
+          "overseer": false,
+          "scribe": false
+        },
+        "prev": {
+          "target": { "sessionName": "aimux-repo-abc", "windowId": "@1", "windowIndex": 1, "windowName": "claude" },
+          "id": "claude-a",
+          "metadata": {
+            "kind": "agent",
+            "sessionId": "claude-a",
+            "label": "Claude A",
+            "command": "claude",
+            "worktreePath": "<root>/repo/wt",
+            "activity": 100
+          },
+          "label": "Claude A",
+          "urgency": 0,
+          "activity": 100,
+          "recentRank": 9007199254740991,
+          "overseer": false,
+          "scribe": false
+        }
+      },
+      "inputSha256": "bfb4ba77482b981f28ca9df8d562c8c6e2876d49dfe02cc65b9fd337dd3cb6dd"
+    }
+  ]
+}

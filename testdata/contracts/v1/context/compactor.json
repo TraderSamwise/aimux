@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "source": "src/context/compactor.test.ts",
+  "generatedBy": "scripts/capture-priority2-contracts.mjs",
+  "description": "Algorithmic compactor provenance and append-only checkpoint contracts captured by running TypeScript.",
+  "cases": [
+    {
+      "id": "context-compactor-001",
+      "name": "writes summary provenance and append-only checkpoints",
+      "source": "src/context/compactor.test.ts",
+      "api": "algorithmicCompact",
+      "input": {
+        "sessionId": "claude-test",
+        "compactions": 1,
+        "turns": [
+          { "ts": "2026-03-31T00:00:00.000Z", "type": "prompt", "content": "write a poem" },
+          { "ts": "2026-03-31T00:00:05.000Z", "type": "response", "content": "here is a poem" }
+        ]
+      },
+      "output": {
+        "summary": "# claude-test — Session Summary\nGenerated: <generatedAt>\nSource: algorithmic\nTurns covered: 2\nHistory range: 2026-03-31T00:00:00.000Z -> 2026-03-31T00:00:05.000Z\nHistory digest: 7f7366ed42256974e3a7e9974c648cc1a85fd008\n\n2 turns\n\n### Key tasks\n- write a poem\n",
+        "meta": {
+          "sessionId": "claude-test",
+          "mode": "algorithmic",
+          "generatedAt": "<generatedAt>",
+          "turns": 2,
+          "firstTurnTs": "2026-03-31T00:00:00.000Z",
+          "lastTurnTs": "2026-03-31T00:00:05.000Z",
+          "historyDigest": "7f7366ed42256974e3a7e9974c648cc1a85fd008",
+          "summaryBytes": 271
+        },
+        "checkpoints": [
+          {
+            "sessionId": "claude-test",
+            "mode": "algorithmic",
+            "generatedAt": "<generatedAt>",
+            "turns": 2,
+            "firstTurnTs": "2026-03-31T00:00:00.000Z",
+            "lastTurnTs": "2026-03-31T00:00:05.000Z",
+            "historyDigest": "7f7366ed42256974e3a7e9974c648cc1a85fd008",
+            "summaryBytes": 271
+          }
+        ],
+        "history": [
+          { "ts": "2026-03-31T00:00:00.000Z", "type": "prompt", "content": "write a poem" },
+          { "ts": "2026-03-31T00:00:05.000Z", "type": "response", "content": "here is a poem" }
+        ]
+      },
+      "inputSha256": "736e5b3ba8fb16b63ec43920c28290f99dce34da6558e26f8ffb6189091b2f94"
+    },
+    {
+      "id": "context-compactor-002",
+      "name": "does not mutate raw history when compacting repeatedly",
+      "source": "src/context/compactor.test.ts",
+      "api": "algorithmicCompact",
+      "input": {
+        "sessionId": "codex-test",
+        "compactions": 2,
+        "turns": [
+          { "ts": "2026-03-31T00:10:00.000Z", "type": "prompt", "content": "investigate login bug" },
+          { "ts": "2026-03-31T00:10:05.000Z", "type": "response", "content": "found the root cause" }
+        ]
+      },
+      "output": {
+        "summary": "# codex-test — Session Summary\nGenerated: <generatedAt>\nSource: algorithmic\nTurns covered: 2\nHistory range: 2026-03-31T00:10:00.000Z -> 2026-03-31T00:10:05.000Z\nHistory digest: 8d8ad3f4d5d908bc0e5a486005af783e2019af30\n\n2 turns\n\n### Key tasks\n- investigate login bug\n",
+        "meta": {
+          "sessionId": "codex-test",
+          "mode": "algorithmic",
+          "generatedAt": "<generatedAt>",
+          "turns": 2,
+          "firstTurnTs": "2026-03-31T00:10:00.000Z",
+          "lastTurnTs": "2026-03-31T00:10:05.000Z",
+          "historyDigest": "8d8ad3f4d5d908bc0e5a486005af783e2019af30",
+          "summaryBytes": 279
+        },
+        "checkpoints": [
+          {
+            "sessionId": "codex-test",
+            "mode": "algorithmic",
+            "generatedAt": "<generatedAt>",
+            "turns": 2,
+            "firstTurnTs": "2026-03-31T00:10:00.000Z",
+            "lastTurnTs": "2026-03-31T00:10:05.000Z",
+            "historyDigest": "8d8ad3f4d5d908bc0e5a486005af783e2019af30",
+            "summaryBytes": 279
+          },
+          {
+            "sessionId": "codex-test",
+            "mode": "algorithmic",
+            "generatedAt": "<generatedAt>",
+            "turns": 2,
+            "firstTurnTs": "2026-03-31T00:10:00.000Z",
+            "lastTurnTs": "2026-03-31T00:10:05.000Z",
+            "historyDigest": "8d8ad3f4d5d908bc0e5a486005af783e2019af30",
+            "summaryBytes": 279
+          }
+        ],
+        "history": [
+          { "ts": "2026-03-31T00:10:00.000Z", "type": "prompt", "content": "investigate login bug" },
+          { "ts": "2026-03-31T00:10:05.000Z", "type": "response", "content": "found the root cause" }
+        ]
+      },
+      "inputSha256": "97a93d69f9f1ec1d8809914559cef9ebfbd7c631f6847ea1e20276ba74d604e4"
+    }
+  ]
+}

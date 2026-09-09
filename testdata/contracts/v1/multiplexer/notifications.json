@@ -1,0 +1,439 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/notifications.test.ts",
+  "subject": "multiplexer notification host helpers",
+  "generatedBy": "scripts/capture-multiplexer-notifications-contract.mjs",
+  "caseCount": 5,
+  "cases": [
+    {
+      "id": "multiplexer-notifications-001",
+      "name": "applies service coordination payload to legacy notification host fields",
+      "source": "src/multiplexer/notifications.test.ts",
+      "api": "applyCoordinationModel",
+      "input": {
+        "initialHost": { "coordinationFilter": "all", "coordinationIndex": 9, "notificationIndex": 9 },
+        "payload": {
+          "model": {
+            "items": [
+              {
+                "key": "session:live-1",
+                "sessionId": "live-1",
+                "reachability": "live",
+                "stale": false,
+                "actionable": true,
+                "notifications": [
+                  {
+                    "id": "note-live",
+                    "title": "Live",
+                    "body": "live agent needs input",
+                    "sessionId": "live-1",
+                    "kind": "needs_input",
+                    "unread": true,
+                    "cleared": false,
+                    "createdAt": "2026-01-01T00:00:00.000Z",
+                    "updatedAt": "2026-01-01T00:00:01.000Z"
+                  }
+                ]
+              },
+              {
+                "key": "session:ghost-1",
+                "sessionId": "ghost-1",
+                "reachability": "missing",
+                "stale": true,
+                "actionable": false,
+                "notifications": [
+                  {
+                    "id": "note-ghost",
+                    "title": "Ghost",
+                    "body": "missing agent needs input",
+                    "sessionId": "ghost-1",
+                    "kind": "thread",
+                    "unread": true,
+                    "cleared": false,
+                    "createdAt": "2026-01-01T00:00:02.000Z",
+                    "updatedAt": "2026-01-01T00:00:03.000Z"
+                  }
+                ]
+              }
+            ]
+          },
+          "worklist": {
+            "items": [
+              {
+                "key": "n:live-1",
+                "kind": "notification",
+                "sessionId": "live-1",
+                "notification": {
+                  "unreadCount": 1,
+                  "notifications": [
+                    {
+                      "id": "note-live",
+                      "title": "Live",
+                      "body": "live agent needs input",
+                      "sessionId": "live-1",
+                      "kind": "needs_input",
+                      "unread": true,
+                      "cleared": false,
+                      "createdAt": "2026-01-01T00:00:00.000Z",
+                      "updatedAt": "2026-01-01T00:00:01.000Z"
+                    }
+                  ]
+                }
+              },
+              { "key": "t:thread-1", "kind": "thread", "thread": { "thread": { "id": "thread-1" } } },
+              {
+                "key": "n:ghost-1",
+                "kind": "notification",
+                "sessionId": "ghost-1",
+                "notification": {
+                  "unreadCount": 1,
+                  "notifications": [
+                    {
+                      "id": "note-ghost",
+                      "title": "Ghost",
+                      "body": "missing agent needs input",
+                      "sessionId": "ghost-1",
+                      "kind": "thread",
+                      "unread": true,
+                      "cleared": false,
+                      "createdAt": "2026-01-01T00:00:02.000Z",
+                      "updatedAt": "2026-01-01T00:00:03.000Z"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "threads": [{ "thread": { "id": "thread-1" }, "displayTitle": "Thread" }]
+        }
+      },
+      "output": {
+        "threadEntries": [{ "thread": { "id": "thread-1" }, "displayTitle": "Thread" }],
+        "coordinationModel": {
+          "items": [
+            {
+              "key": "session:live-1",
+              "sessionId": "live-1",
+              "reachability": "live",
+              "stale": false,
+              "actionable": true,
+              "notifications": [
+                {
+                  "id": "note-live",
+                  "title": "Live",
+                  "body": "live agent needs input",
+                  "sessionId": "live-1",
+                  "kind": "needs_input",
+                  "unread": true,
+                  "cleared": false,
+                  "createdAt": "2026-01-01T00:00:00.000Z",
+                  "updatedAt": "2026-01-01T00:00:01.000Z"
+                }
+              ]
+            },
+            {
+              "key": "session:ghost-1",
+              "sessionId": "ghost-1",
+              "reachability": "missing",
+              "stale": true,
+              "actionable": false,
+              "notifications": [
+                {
+                  "id": "note-ghost",
+                  "title": "Ghost",
+                  "body": "missing agent needs input",
+                  "sessionId": "ghost-1",
+                  "kind": "thread",
+                  "unread": true,
+                  "cleared": false,
+                  "createdAt": "2026-01-01T00:00:02.000Z",
+                  "updatedAt": "2026-01-01T00:00:03.000Z"
+                }
+              ]
+            }
+          ]
+        },
+        "notificationEntries": [
+          {
+            "id": "note-live",
+            "title": "Live",
+            "body": "live agent needs input",
+            "sessionId": "live-1",
+            "kind": "needs_input",
+            "unread": true,
+            "cleared": false,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:01.000Z"
+          },
+          {
+            "id": "note-ghost",
+            "title": "Ghost",
+            "body": "missing agent needs input",
+            "sessionId": "ghost-1",
+            "kind": "thread",
+            "unread": true,
+            "cleared": false,
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "updatedAt": "2026-01-01T00:00:03.000Z"
+          }
+        ],
+        "notificationRowMeta": [
+          { "reachability": "live", "stale": false, "actionable": true },
+          { "reachability": "missing", "stale": true, "actionable": false }
+        ],
+        "coordinationWorklistAll": [
+          {
+            "key": "n:live-1",
+            "kind": "notification",
+            "sessionId": "live-1",
+            "notification": {
+              "unreadCount": 1,
+              "notifications": [
+                {
+                  "id": "note-live",
+                  "title": "Live",
+                  "body": "live agent needs input",
+                  "sessionId": "live-1",
+                  "kind": "needs_input",
+                  "unread": true,
+                  "cleared": false,
+                  "createdAt": "2026-01-01T00:00:00.000Z",
+                  "updatedAt": "2026-01-01T00:00:01.000Z"
+                }
+              ]
+            }
+          },
+          { "key": "t:thread-1", "kind": "thread", "thread": { "thread": { "id": "thread-1" } } },
+          {
+            "key": "n:ghost-1",
+            "kind": "notification",
+            "sessionId": "ghost-1",
+            "notification": {
+              "unreadCount": 1,
+              "notifications": [
+                {
+                  "id": "note-ghost",
+                  "title": "Ghost",
+                  "body": "missing agent needs input",
+                  "sessionId": "ghost-1",
+                  "kind": "thread",
+                  "unread": true,
+                  "cleared": false,
+                  "createdAt": "2026-01-01T00:00:02.000Z",
+                  "updatedAt": "2026-01-01T00:00:03.000Z"
+                }
+              ]
+            }
+          }
+        ],
+        "coordinationWorklist": [
+          {
+            "key": "n:live-1",
+            "kind": "notification",
+            "sessionId": "live-1",
+            "notification": {
+              "unreadCount": 1,
+              "notifications": [
+                {
+                  "id": "note-live",
+                  "title": "Live",
+                  "body": "live agent needs input",
+                  "sessionId": "live-1",
+                  "kind": "needs_input",
+                  "unread": true,
+                  "cleared": false,
+                  "createdAt": "2026-01-01T00:00:00.000Z",
+                  "updatedAt": "2026-01-01T00:00:01.000Z"
+                }
+              ]
+            }
+          },
+          { "key": "t:thread-1", "kind": "thread", "thread": { "thread": { "id": "thread-1" } } },
+          {
+            "key": "n:ghost-1",
+            "kind": "notification",
+            "sessionId": "ghost-1",
+            "notification": {
+              "unreadCount": 1,
+              "notifications": [
+                {
+                  "id": "note-ghost",
+                  "title": "Ghost",
+                  "body": "missing agent needs input",
+                  "sessionId": "ghost-1",
+                  "kind": "thread",
+                  "unread": true,
+                  "cleared": false,
+                  "createdAt": "2026-01-01T00:00:02.000Z",
+                  "updatedAt": "2026-01-01T00:00:03.000Z"
+                }
+              ]
+            }
+          }
+        ],
+        "coordinationLoaded": true,
+        "coordinationIndex": 2,
+        "notificationIndex": 1
+      },
+      "inputSha256": "0983982369853ee7b36f95e91b6db18ed7c3b7da21cfe3463aee0c89b920b319"
+    },
+    {
+      "id": "multiplexer-notifications-002",
+      "name": "filters worklist to threads and clamps selection indexes",
+      "source": "src/multiplexer/notifications.test.ts",
+      "api": "applyCoordinationFilter",
+      "input": {
+        "initialHost": {
+          "coordinationFilter": "threads",
+          "coordinationIndex": 5,
+          "notificationIndex": 4,
+          "notificationEntries": [
+            {
+              "id": "note-live",
+              "title": "Live",
+              "body": "live agent needs input",
+              "sessionId": "live-1",
+              "kind": "needs_input",
+              "unread": true,
+              "cleared": false,
+              "createdAt": "2026-01-01T00:00:00.000Z",
+              "updatedAt": "2026-01-01T00:00:01.000Z"
+            },
+            {
+              "id": "note-ghost",
+              "title": "Ghost",
+              "body": "missing agent needs input",
+              "sessionId": "ghost-1",
+              "kind": "thread",
+              "unread": true,
+              "cleared": false,
+              "createdAt": "2026-01-01T00:00:02.000Z",
+              "updatedAt": "2026-01-01T00:00:03.000Z"
+            }
+          ],
+          "coordinationWorklistAll": [
+            { "key": "n:live-1", "kind": "notification", "sessionId": "live-1" },
+            { "key": "t:thread-1", "kind": "thread", "thread": { "thread": { "id": "thread-1" } } }
+          ]
+        }
+      },
+      "output": {
+        "coordinationFilter": "threads",
+        "coordinationWorklist": [
+          { "key": "t:thread-1", "kind": "thread", "thread": { "thread": { "id": "thread-1" } } }
+        ],
+        "coordinationIndex": 0,
+        "notificationIndex": 1
+      },
+      "inputSha256": "2b540f647af5a391cc49f0d9b2a024e89c349be0177a7b7b0036c6bbb2444934"
+    },
+    {
+      "id": "multiplexer-notifications-003",
+      "name": "all filter keeps notification and thread rows and initializes empty index",
+      "source": "src/multiplexer/notifications.test.ts",
+      "api": "applyCoordinationFilter",
+      "input": {
+        "initialHost": {
+          "coordinationFilter": "all",
+          "coordinationIndex": null,
+          "notificationIndex": 0,
+          "notificationEntries": [],
+          "coordinationWorklistAll": [
+            { "key": "n:live-1", "kind": "notification", "sessionId": "live-1" },
+            { "key": "t:thread-1", "kind": "thread", "thread": { "thread": { "id": "thread-1" } } }
+          ]
+        }
+      },
+      "output": {
+        "coordinationFilter": "all",
+        "coordinationWorklist": [
+          { "key": "n:live-1", "kind": "notification", "sessionId": "live-1" },
+          { "key": "t:thread-1", "kind": "thread", "thread": { "thread": { "id": "thread-1" } } }
+        ],
+        "coordinationIndex": 1,
+        "notificationIndex": 0
+      },
+      "inputSha256": "ddb9be282bfd83015ca86179fa7f5595465b65b5cff7656ff3182efd43e0e27a"
+    },
+    {
+      "id": "multiplexer-notifications-004",
+      "name": "labels and states dashboard sessions, teammates, services, missing, and sessionless targets",
+      "source": "src/multiplexer/notifications.test.ts",
+      "api": "notificationTargetLabel+notificationTargetState",
+      "input": {
+        "targets": [null, "live-1", "team-1", "team-exited", "service-running", "service-offline", "missing-1"],
+        "host": {
+          "sessions": [
+            { "id": "live-1", "status": "running", "command": "claude", "label": "Claude", "worktreeName": "main" }
+          ],
+          "teammates": [
+            { "id": "team-1", "status": "offline", "command": "codex", "label": "Reviewer", "worktreeName": "feature" },
+            { "id": "team-exited", "status": "exited", "command": "aider", "label": "Aider" }
+          ],
+          "services": [
+            {
+              "id": "service-running",
+              "status": "running",
+              "command": "shell",
+              "label": "Shell",
+              "worktreeName": "ops"
+            },
+            { "id": "service-offline", "status": "offline", "command": "server" }
+          ]
+        }
+      },
+      "output": [
+        { "target": null, "label": null, "state": "none" },
+        { "target": "live-1", "label": "Claude · main", "state": "live" },
+        { "target": "team-1", "label": "Reviewer · feature", "state": "offline" },
+        { "target": "team-exited", "label": "Aider", "state": "offline" },
+        { "target": "service-running", "label": "Shell [service] · ops", "state": "live" },
+        { "target": "service-offline", "label": "server [service]", "state": "offline" },
+        { "target": "missing-1", "label": null, "state": "missing" }
+      ],
+      "inputSha256": "4de96870f472cafd880581ba1d54bb1d93a90b835e54c5f33e79b7c2bef2958e"
+    },
+    {
+      "id": "multiplexer-notifications-005",
+      "name": "derives notification mutation inputs for session and sessionless rollups",
+      "source": "src/multiplexer/notifications.test.ts",
+      "api": "notificationMutationInputForItem",
+      "input": {
+        "items": [
+          {
+            "key": "n:live-1",
+            "kind": "notification",
+            "sessionId": "live-1",
+            "notification": {
+              "unreadCount": 1,
+              "notifications": [
+                {
+                  "id": "note-live",
+                  "title": "Live",
+                  "body": "live agent needs input",
+                  "sessionId": "live-1",
+                  "kind": "needs_input",
+                  "unread": true,
+                  "cleared": false,
+                  "createdAt": "2026-01-01T00:00:00.000Z",
+                  "updatedAt": "2026-01-01T00:00:01.000Z"
+                }
+              ]
+            }
+          },
+          {
+            "key": "n:sessionless",
+            "kind": "notification",
+            "notification": {
+              "unreadCount": 3,
+              "notifications": [{ "id": "note-a" }, { "id": "" }, { "id": "note-b" }, {}]
+            }
+          },
+          { "key": "t:thread-1", "kind": "thread", "thread": { "thread": { "id": "thread-1" } } }
+        ]
+      },
+      "output": [{ "sessionId": "live-1" }, { "ids": ["note-a", "note-b"] }, null],
+      "inputSha256": "d3300f141289e7ff99c9af409434854145ecf049e3d2dbcb06c1a88ee004427b"
+    }
+  ]
+}

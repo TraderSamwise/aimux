@@ -1,0 +1,385 @@
+{
+  "id": "cli.top-level-dispatch",
+  "source": "post-phase8/native-cli-top-level-dispatch",
+  "generatedBy": "manual-regression-from-sam-mbp2-install",
+  "description": "Native root CLI positional tool dispatch and command alias contract after the TypeScript entrypoints were retired.",
+  "cases": [
+    {
+      "id": "codex_tool",
+      "name": "aimux codex dispatches through lifecycle spawn execution",
+      "input": {
+        "args": ["codex"]
+      },
+      "output": {
+        "normalizedArgs": ["codex"],
+        "rootSession": null,
+        "launchArgs": ["spawn", "--tool", "codex", "--no-open", "--json"],
+        "execution": {
+          "code": 0,
+          "stdout": [
+            {
+              "ok": true,
+              "projectRoot": "/repo",
+              "sessionId": "codex-1",
+              "tool": "codex",
+              "worktreePath": "/repo",
+              "opened": false,
+              "tmuxTarget": {
+                "sessionName": "aimux-repo",
+                "windowId": "@9",
+                "windowIndex": 9,
+                "windowName": "codex",
+                "paneDead": false
+              }
+            }
+          ],
+          "stderr": [],
+          "textRoutes": [
+            {
+              "path": "/core/lifecycle/spawn-text?project=%2Frepo&tool=codex&open=0&json=1",
+              "body": {
+                "project": "/repo",
+                "tool": "codex",
+                "worktreePath": null,
+                "open": false
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "claude_tool_with_args",
+      "name": "aimux claude preserves extra tool arguments after spawn delimiter",
+      "input": {
+        "args": ["claude", "--model", "opus"]
+      },
+      "output": {
+        "normalizedArgs": ["claude", "--model", "opus"],
+        "rootSession": null,
+        "launchArgs": ["spawn", "--tool", "claude", "--no-open", "--json", "--", "--model", "opus"],
+        "execution": {
+          "code": 0,
+          "stdout": [
+            {
+              "ok": true,
+              "projectRoot": "/repo",
+              "sessionId": "claude-1",
+              "tool": "claude",
+              "worktreePath": "/repo",
+              "opened": false,
+              "tmuxTarget": {
+                "sessionName": "aimux-repo",
+                "windowId": "@9",
+                "windowIndex": 9,
+                "windowName": "claude",
+                "paneDead": false
+              }
+            }
+          ],
+          "stderr": [],
+          "textRoutes": [
+            {
+              "path": "/core/lifecycle/spawn-text?project=%2Frepo&tool=claude&open=0&json=1",
+              "body": {
+                "project": "/repo",
+                "tool": "claude",
+                "worktreePath": null,
+                "open": false,
+                "extraArgs": ["--model", "opus"]
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "aider_tool",
+      "name": "aimux aider dispatches through lifecycle spawn execution",
+      "input": {
+        "args": ["aider"]
+      },
+      "output": {
+        "normalizedArgs": ["aider"],
+        "rootSession": null,
+        "launchArgs": ["spawn", "--tool", "aider", "--no-open", "--json"],
+        "execution": {
+          "code": 0,
+          "stdout": [
+            {
+              "ok": true,
+              "projectRoot": "/repo",
+              "sessionId": "aider-1",
+              "tool": "aider",
+              "worktreePath": "/repo",
+              "opened": false,
+              "tmuxTarget": {
+                "sessionName": "aimux-repo",
+                "windowId": "@9",
+                "windowIndex": 9,
+                "windowName": "aider",
+                "paneDead": false
+              }
+            }
+          ],
+          "stderr": [],
+          "textRoutes": [
+            {
+              "path": "/core/lifecycle/spawn-text?project=%2Frepo&tool=aider&open=0&json=1",
+              "body": {
+                "project": "/repo",
+                "tool": "aider",
+                "worktreePath": null,
+                "open": false
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "root_delimiter_tool",
+      "name": "aimux -- codex strips the root delimiter before tool dispatch",
+      "input": {
+        "args": ["--", "codex"]
+      },
+      "output": {
+        "normalizedArgs": ["codex"],
+        "rootSession": null,
+        "launchArgs": ["spawn", "--tool", "codex", "--no-open", "--json"],
+        "execution": {
+          "code": 0,
+          "stdout": [
+            {
+              "ok": true,
+              "projectRoot": "/repo",
+              "sessionId": "codex-1",
+              "tool": "codex",
+              "worktreePath": "/repo",
+              "opened": false,
+              "tmuxTarget": {
+                "sessionName": "aimux-repo",
+                "windowId": "@9",
+                "windowIndex": 9,
+                "windowName": "codex",
+                "paneDead": false
+              }
+            }
+          ],
+          "stderr": [],
+          "textRoutes": [
+            {
+              "path": "/core/lifecycle/spawn-text?project=%2Frepo&tool=codex&open=0&json=1",
+              "body": {
+                "project": "/repo",
+                "tool": "codex",
+                "worktreePath": null,
+                "open": false
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "tool_delimiter_args",
+      "name": "aimux codex -- --search preserves only one tool argument delimiter",
+      "input": {
+        "args": ["codex", "--", "--search"]
+      },
+      "output": {
+        "normalizedArgs": ["codex", "--", "--search"],
+        "rootSession": null,
+        "launchArgs": ["spawn", "--tool", "codex", "--no-open", "--json", "--", "--search"],
+        "execution": {
+          "code": 0,
+          "stdout": [
+            {
+              "ok": true,
+              "projectRoot": "/repo",
+              "sessionId": "codex-1",
+              "tool": "codex",
+              "worktreePath": "/repo",
+              "opened": false,
+              "tmuxTarget": {
+                "sessionName": "aimux-repo",
+                "windowId": "@9",
+                "windowIndex": 9,
+                "windowName": "codex",
+                "paneDead": false
+              }
+            }
+          ],
+          "stderr": [],
+          "textRoutes": [
+            {
+              "path": "/core/lifecycle/spawn-text?project=%2Frepo&tool=codex&open=0&json=1",
+              "body": {
+                "project": "/repo",
+                "tool": "codex",
+                "worktreePath": null,
+                "open": false,
+                "extraArgs": ["--search"]
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "tool_help_arg",
+      "name": "aimux codex --help passes help to the tool spawn executor",
+      "input": {
+        "args": ["codex", "--help"]
+      },
+      "output": {
+        "normalizedArgs": ["codex", "--help"],
+        "rootSession": null,
+        "launchArgs": ["spawn", "--tool", "codex", "--no-open", "--json", "--", "--help"],
+        "execution": {
+          "code": 0,
+          "stdout": [
+            {
+              "ok": true,
+              "projectRoot": "/repo",
+              "sessionId": "codex-1",
+              "tool": "codex",
+              "worktreePath": "/repo",
+              "opened": false,
+              "tmuxTarget": {
+                "sessionName": "aimux-repo",
+                "windowId": "@9",
+                "windowIndex": 9,
+                "windowName": "codex",
+                "paneDead": false
+              }
+            }
+          ],
+          "stderr": [],
+          "textRoutes": [
+            {
+              "path": "/core/lifecycle/spawn-text?project=%2Frepo&tool=codex&open=0&json=1",
+              "body": {
+                "project": "/repo",
+                "tool": "codex",
+                "worktreePath": null,
+                "open": false,
+                "extraArgs": ["--help"]
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "shell_alias",
+      "name": "aimux shell dispatches to interactive service create",
+      "input": {
+        "args": ["shell"]
+      },
+      "output": {
+        "normalizedArgs": ["shell"],
+        "rootSession": null,
+        "launchArgs": ["service", "create"],
+        "execution": {
+          "code": 0,
+          "stdout": ["service service-1 running"],
+          "stderr": [],
+          "textRoutes": [
+            {
+              "path": "/core/services/create-text",
+              "body": {
+                "project": "/repo",
+                "command": "",
+                "worktreePath": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "projects_alias",
+      "name": "aimux projects is the projects list alias advertised by help",
+      "input": {
+        "args": ["projects"]
+      },
+      "output": {
+        "normalizedArgs": ["projects"],
+        "rootSession": null,
+        "launchArgs": null,
+        "execution": {
+          "code": 0,
+          "stdout": ["No aimux projects found."],
+          "stderr": [],
+          "textRoutes": []
+        }
+      }
+    },
+    {
+      "id": "disabled_tool",
+      "name": "configured disabled tools do not dispatch as lifecycle spawn",
+      "input": {
+        "args": ["codex"],
+        "disabledTool": "codex"
+      },
+      "output": {
+        "normalizedArgs": ["codex"],
+        "rootSession": null,
+        "launchArgs": null,
+        "execution": null
+      }
+    },
+    {
+      "id": "resume_tool",
+      "name": "aimux --resume codex keeps codex as the root resume tool filter",
+      "input": {
+        "args": ["--resume", "codex"]
+      },
+      "output": {
+        "normalizedArgs": ["--resume", "codex"],
+        "rootSession": {
+          "mode": "resume",
+          "toolFilter": "codex",
+          "ignoredArgs": []
+        },
+        "launchArgs": null,
+        "execution": null
+      }
+    },
+    {
+      "id": "restore_tool",
+      "name": "aimux --restore claude keeps claude as the root restore tool filter",
+      "input": {
+        "args": ["--restore", "claude"]
+      },
+      "output": {
+        "normalizedArgs": ["--restore", "claude"],
+        "rootSession": {
+          "mode": "restore",
+          "toolFilter": "claude",
+          "ignoredArgs": []
+        },
+        "launchArgs": null,
+        "execution": null
+      }
+    },
+    {
+      "id": "resume_restore_args",
+      "name": "aimux --resume --restore aider preserves the first mode and ignored args",
+      "input": {
+        "args": ["--resume", "--restore", "aider", "--message", "hello"]
+      },
+      "output": {
+        "normalizedArgs": ["--resume", "--restore", "aider", "--message", "hello"],
+        "rootSession": {
+          "mode": "resume",
+          "toolFilter": "aider",
+          "ignoredArgs": ["--message", "hello"]
+        },
+        "launchArgs": null,
+        "execution": null
+      }
+    }
+  ]
+}

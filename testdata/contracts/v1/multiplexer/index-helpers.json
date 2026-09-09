@@ -1,0 +1,868 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/index.ts",
+  "generatedBy": "scripts/capture-multiplexer-index-helpers-contract.mjs",
+  "description": "Multiplexer class-local helper behavior for native fork launch selection, alert context publication, and fork-session orchestration captured by running TypeScript index.ts with inert fake hosts.",
+  "cases": [
+    {
+      "id": "multiplexer-index-helpers-001",
+      "name": "constructor initializes inert dashboard state for an explicit project root",
+      "source": "src/multiplexer/index.ts",
+      "api": "Multiplexer",
+      "input": { "api": "Multiplexer" },
+      "output": {
+        "result": {
+          "projectRoot": "<REPO>",
+          "mode": "dashboard",
+          "sessionCount": 0,
+          "activeIndex": 0,
+          "activeSession": null,
+          "startedInDashboard": false,
+          "overlayKind": "none",
+          "pickerMode": "create",
+          "toolPickerIndex": 0,
+          "worktreeInputBuffer": "",
+          "serviceInputBuffer": "",
+          "labelInputBuffer": "",
+          "orchestrationInputBuffer": "",
+          "dashboardMainCheckoutInfoCache": { "name": "Main Checkout", "branch": "" },
+          "runtimeGuardState": { "kind": "ok" },
+          "runtimeGuardActiveMs": 0,
+          "footerFlash": null,
+          "footerFlashTicks": 0,
+          "methodTypes": {
+            "run": "function",
+            "runDashboard": "function",
+            "startProjectServiceHost": "function",
+            "runProjectService": "function",
+            "createSession": "function",
+            "resumeSessions": "function",
+            "restoreSessions": "function"
+          }
+        },
+        "calls": []
+      },
+      "inputSha256": "8aef167e2ac589145f7b6ad207fc9ea1d557118316df3999779485d1ff58f5b3"
+    },
+    {
+      "id": "multiplexer-index-helpers-002",
+      "name": "session getters reflect post construction session state",
+      "source": "src/multiplexer/index.ts",
+      "api": "Multiplexer",
+      "input": {
+        "api": "Multiplexer",
+        "postConstructSessions": [
+          { "id": "claude-1", "command": "claude" },
+          { "id": "codex-2", "command": "codex" }
+        ],
+        "postConstructActiveIndex": 1
+      },
+      "output": {
+        "result": {
+          "projectRoot": "<REPO>",
+          "mode": "dashboard",
+          "sessionCount": 2,
+          "activeIndex": 1,
+          "activeSession": { "id": "codex-2", "command": "codex" },
+          "startedInDashboard": false,
+          "overlayKind": "none",
+          "pickerMode": "create",
+          "toolPickerIndex": 0,
+          "worktreeInputBuffer": "",
+          "serviceInputBuffer": "",
+          "labelInputBuffer": "",
+          "orchestrationInputBuffer": "",
+          "dashboardMainCheckoutInfoCache": { "name": "Main Checkout", "branch": "" },
+          "runtimeGuardState": { "kind": "ok" },
+          "runtimeGuardActiveMs": 0,
+          "footerFlash": null,
+          "footerFlashTicks": 0,
+          "methodTypes": {
+            "run": "function",
+            "runDashboard": "function",
+            "startProjectServiceHost": "function",
+            "runProjectService": "function",
+            "createSession": "function",
+            "resumeSessions": "function",
+            "restoreSessions": "function"
+          }
+        },
+        "calls": []
+      },
+      "inputSha256": "ca6040e92e61e6eb712c22e57c3d1951fcf6863232551b491089cab8a236c0d6"
+    },
+    {
+      "id": "multiplexer-index-helpers-003",
+      "name": "prototype exposes all delegated multiplexer method groups",
+      "source": "src/multiplexer/index.ts",
+      "api": "MultiplexerMethodSurface",
+      "input": { "api": "MultiplexerMethodSurface" },
+      "output": {
+        "result": {
+          "delegatedGroups": {
+            "dashboardInteractionMethods": [
+              "activateDashboardEntry",
+              "activateDashboardEntryByNumber",
+              "activateDashboardService",
+              "activateSelectedDashboardWorktreeEntry",
+              "clearDashboardQuickJump",
+              "focusDashboardQuickJumpEntry",
+              "focusDashboardQuickJumpWorktree",
+              "formatRoutePreview",
+              "getTeammatePickerEntries",
+              "handleDashboardKey",
+              "handleDashboardQuickJumpDigit",
+              "handleLabelInputKey",
+              "handleOverseerOverlayKey",
+              "handleOverseerWatchInstructionsKey",
+              "handleReviewRequest",
+              "handleServiceInputKey",
+              "handleTeammatePickerKey",
+              "handleWorkOutlineOverlayKey",
+              "loadWorkOutlineOverlayEntries",
+              "refreshDashboardScribePreviewEntries",
+              "renderOverseerOverlay",
+              "renderOverseerWatchInstructions",
+              "renderTeammatePicker",
+              "renderWorkOutlineOverlay",
+              "showOverseerOverlay",
+              "showOverseerWatchInstructions",
+              "showTeammatePicker",
+              "showWorkOutlineOverlay",
+              "submitDashboardOrchestrationAction"
+            ],
+            "dashboardViewMethods": [
+              "beginWorktreeRemoval",
+              "clearDashboardBusy",
+              "createService",
+              "dismissDashboardError",
+              "finishWorktreeRemoval",
+              "generateDashboardSessionId",
+              "handleWorktreeCacheCleanupConfirmKey",
+              "handleWorktreeInputKey",
+              "handleWorktreeListKey",
+              "handleWorktreeRemoveConfirmKey",
+              "preferDashboardEntrySelection",
+              "removeOfflineService",
+              "renderDashboard",
+              "renderDashboardBusyOverlay",
+              "renderDashboardErrorOverlay",
+              "renderLabelInput",
+              "renderServiceInput",
+              "renderWorktreeInput",
+              "renderWorktreeList",
+              "renderWorktreeRemoveConfirm",
+              "resumeOfflineService",
+              "resumeOfflineServiceById",
+              "serviceLabelForCommand",
+              "settleDashboardCreatePending",
+              "showDashboardError",
+              "showServiceCreatePrompt",
+              "showWorktreeCacheCleanupPreview",
+              "showWorktreeCreatePrompt",
+              "showWorktreeList",
+              "startDashboardBusy",
+              "stopService",
+              "updateDashboardBusy"
+            ],
+            "dashboardActionMethods": [
+              "activateNextAttentionEntry",
+              "attentionScore",
+              "buildActiveDashboardOverlayOutput",
+              "describeHandoffState",
+              "ensureDashboardControlPlane",
+              "getFromProjectService",
+              "getPreferredThreadIndexForParticipant",
+              "getSelectedDashboardServiceForActions",
+              "getSelectedDashboardSessionForActions",
+              "getSelectedDashboardWorktreeEntry",
+              "handleActiveDashboardOverlayKey",
+              "handleCoordinationKey",
+              "handleDashboardSubscreenNavigationKey",
+              "handleOrchestrationInputKey",
+              "handleOrchestrationRoutePickerKey",
+              "handleProjectKey",
+              "handleRuntimeGuardKey",
+              "handleThreadReplyKey",
+              "handleToolOptionsKey",
+              "handleToolPickerKey",
+              "handleTopologyKey",
+              "isDashboardScreen",
+              "noteLastUsedItem",
+              "notificationTargetLabel",
+              "notificationTargetState",
+              "openLiveTmuxWindowForEntry",
+              "openLiveTmuxWindowForService",
+              "openRelevantThreadForSession",
+              "postToProjectService",
+              "refreshCoordinationFromService",
+              "refreshRuntimeGuard",
+              "renderActiveDashboardOverlay",
+              "renderCoordination",
+              "renderOrchestrationInput",
+              "renderOrchestrationRoutePicker",
+              "renderProject",
+              "renderThreadReply",
+              "renderToolPicker",
+              "renderTopology",
+              "runReviewLifecycleAction",
+              "runSelectedTool",
+              "runTaskLifecycleAction",
+              "runThreadHandoffAction",
+              "runThreadStatusAction",
+              "setDashboardScreen",
+              "showCoordination",
+              "showOrchestrationInput",
+              "showOrchestrationRoutePicker",
+              "showProject",
+              "showToolPicker",
+              "showTopology",
+              "syncTuiNotificationContext",
+              "updateWorktreeSessions",
+              "waitAndOpenLiveTmuxWindowForEntry",
+              "waitAndOpenLiveTmuxWindowForService"
+            ],
+            "dashboardTailMethods": [
+              "basename",
+              "clearDashboardSubscreens",
+              "confirmSwitcher",
+              "createDashboardServiceWithFeedback",
+              "createTeammateAgent",
+              "dashboardSessionActionDeps",
+              "dismissHelp",
+              "dismissSwitcher",
+              "forkAgent",
+              "getDashboardServices",
+              "getDashboardSessions",
+              "getDashboardSessionsInVisualOrder",
+              "getSwitcherList",
+              "graveyardSessionWithFeedback",
+              "handleGraveyardKey",
+              "handleHelpKey",
+              "handleLibraryKey",
+              "handleMigratePickerKey",
+              "handleSwitcherKey",
+              "listAllWorktrees",
+              "migrateAgentSession",
+              "migrateSessionWithFeedback",
+              "redrawCurrentView",
+              "removeDashboardServiceWithFeedback",
+              "renameAgent",
+              "renderGraveyard",
+              "renderGraveyardDetails",
+              "renderHelp",
+              "renderLibrary",
+              "renderMigratePicker",
+              "renderSessionDetails",
+              "renderSwitcher",
+              "resetSwitcherTimeout",
+              "resumeOfflineServiceWithFeedback",
+              "resumeOfflineSessionWithFeedback",
+              "resurrectGraveyardEntry",
+              "runDashboardOperation",
+              "sendAgentToGraveyard",
+              "setPendingDashboardServiceAction",
+              "setPendingDashboardSessionAction",
+              "showGraveyard",
+              "showHelp",
+              "showLibrary",
+              "showMigratePicker",
+              "showSwitcher",
+              "spawnAgent",
+              "stopAgent",
+              "stopDashboardServiceWithFeedback",
+              "stopSessionToOfflineWithFeedback",
+              "switchDashboardAgentToolWithFeedback",
+              "truncateAnsi",
+              "truncatePlain",
+              "waitForSessionStart",
+              "wrapKeyValue",
+              "wrapText"
+            ],
+            "persistenceMethods": [
+              "buildDesktopState",
+              "buildStatuslineSnapshot",
+              "centerInWidth",
+              "cleanupGraveyard",
+              "cleanupInbox",
+              "cleanupWorktreeCaches",
+              "createDesktopWorktree",
+              "deleteGraveyardWorktree",
+              "getTmuxStatuslineDir",
+              "graveyardDesktopWorktree",
+              "listDesktopWorktrees",
+              "listGraveyardEntries",
+              "listProjectedDesktopWorktrees",
+              "listWorktreeGraveyardEntries",
+              "reapplyDashboardPendingActions",
+              "refreshProjectStatusline",
+              "removeDesktopWorktree",
+              "renderCurrentDashboardView",
+              "repairManagedTmuxTargets",
+              "resurrectGraveyardSession",
+              "resurrectGraveyardWorktree",
+              "startGraveyardCleanup",
+              "startInboxCleanup",
+              "stopGraveyardCleanup",
+              "stopInboxCleanup",
+              "stripAnsi",
+              "writeDashboardClientStatuslineFile",
+              "writePrecomputedTmuxStatuslineFiles",
+              "writeStatuslineFile",
+              "writeStatuslineTextFile"
+            ],
+            "dashboardStateMethods": [
+              "applyDashboardModel",
+              "buildDashboardWorktreeGroups",
+              "buildDesktopStateSnapshot",
+              "clearDashboardOverlay",
+              "computeDashboardServices",
+              "computeDashboardSessions",
+              "getDashboardUiClientKey",
+              "getDashboardViewportTarget",
+              "getViewportKey",
+              "getViewportSize",
+              "handleDashboardFocusIn",
+              "hydrateDashboardScreenState",
+              "invalidateDashboardFrame",
+              "invalidateDesktopStateSnapshot",
+              "isDashboardOverlay",
+              "isFocusInReport",
+              "isTmuxBackend",
+              "loadDashboardUiState",
+              "openDashboardOverlay",
+              "openTmuxDashboardTarget",
+              "persistDashboardUiState",
+              "readTmuxProcessInfo",
+              "reconcileDashboardRenderState",
+              "redrawDashboardWithOverlay",
+              "refreshDashboardModelFromService",
+              "refreshDesktopStateSnapshot",
+              "refreshLocalDashboardModel",
+              "restoreDashboardAfterOverlayDismiss",
+              "restoreDashboardSelectionFromPreference",
+              "startProjectServices",
+              "writeFrame"
+            ],
+            "agentIoMethods": [
+              "applyDashboardSessionLabel",
+              "applySessionLabel",
+              "deliverOrchestrationMessage",
+              "deriveHeadline",
+              "getSessionLabel",
+              "interruptAgent",
+              "orchestrationWorkflowPressure",
+              "readAgentOutput",
+              "readStatusHeadline",
+              "resizeAgentPane",
+              "resolveRunningSession",
+              "sendAgentInput",
+              "sendHandoffMessage",
+              "sendOrchestrationMessage",
+              "stopProjectServices",
+              "updateSessionLabel"
+            ],
+            "runtimeLifecycleMethods": [
+              "adjustAfterRemove",
+              "buildLiveServiceStates",
+              "cleanup",
+              "cleanupTerminalOnly",
+              "evictZombieSession",
+              "exitDashboardClientOrProcess",
+              "graveyardSession",
+              "isSessionRuntimeLive",
+              "loadOfflineServices",
+              "loadOfflineTopologySessions",
+              "recordSessionBackendSessionId",
+              "removeInstructionFiles",
+              "restoreTmuxSessionsFromTopology",
+              "resumeOfflineSession",
+              "saveState",
+              "startHeartbeat",
+              "startProjectServiceRefresh",
+              "startStatusRefresh",
+              "stopHeartbeat",
+              "stopProjectServiceRefresh",
+              "stopSessionToOffline",
+              "stopStatusRefresh",
+              "syncSessionsFromTopology",
+              "teardown",
+              "writeInstructionFiles"
+            ]
+          },
+          "delegatedMethodCount": 273,
+          "missingDelegatedMethods": [],
+          "nonFunctionDelegatedMethods": [],
+          "corePrototypeMethods": [
+            "activeSession",
+            "buildTmuxWindowMetadata",
+            "constructor",
+            "createSession",
+            "dashboardBusyState",
+            "dashboardErrorState",
+            "deriveSessionSemanticState",
+            "ensureProjectServiceEndpoint",
+            "focusSession",
+            "footerFlash",
+            "footerFlashTicks",
+            "forkSessionFromSource",
+            "getScopedSessionEntries",
+            "getSessionWorktreePath",
+            "getSessionsByWorktree",
+            "handleAction",
+            "handleSessionRuntimeEvent",
+            "migrateAgent",
+            "publishAlert",
+            "registerManagedSession",
+            "resolveNativeForkLaunch",
+            "resolveSessionAlertDisplayContext",
+            "restoreSessions",
+            "resumeSessions",
+            "run",
+            "runDashboard",
+            "runProjectService",
+            "runtimeGuardActiveMs",
+            "runtimeGuardState",
+            "selectLinkedOrOpenTarget",
+            "sessionCount",
+            "startProjectServiceHost",
+            "switchAgentTool",
+            "syncTmuxWindowMetadata",
+            "updateContextWatcherSessions"
+          ]
+        },
+        "calls": []
+      },
+      "inputSha256": "17ab79f9ed7cc4417ffd127e0b44d7e5e2337ac84e0b9f84fe4d9de7d349484e"
+    },
+    {
+      "id": "multiplexer-index-helpers-004",
+      "name": "native fork launch composes backend fork args when source tool and command match",
+      "source": "src/multiplexer/index.ts",
+      "api": "resolveNativeForkLaunch",
+      "input": {
+        "api": "resolveNativeForkLaunch",
+        "sourceSessionId": "codex-1",
+        "targetToolConfigKey": "codex",
+        "sessionToolKeys": [["codex-1", "codex"]],
+        "topologySessions": [{ "id": "codex-1", "toolConfigKey": "codex", "backendSessionId": "backend-abc" }],
+        "toolCfg": {
+          "command": "codex",
+          "args": ["--dangerously-bypass-approvals-and-sandbox"],
+          "forkArgs": ["fork", "{sessionId}"]
+        },
+        "launchOverride": { "args": ["--model", "gpt-5"] }
+      },
+      "output": {
+        "result": ["--model", "gpt-5", "fork", "backend-abc"],
+        "calls": [
+          {
+            "method": "sessionBootstrap.composeToolArgs",
+            "args": [
+              {
+                "command": "codex",
+                "args": ["--dangerously-bypass-approvals-and-sandbox"],
+                "forkArgs": ["fork", "{sessionId}"]
+              },
+              ["fork", "backend-abc"],
+              ["--model", "gpt-5"]
+            ]
+          }
+        ]
+      },
+      "inputSha256": "5f752ea3e34f424fc0994255dfa3a71794710bf4041fffcd2f833ac429f8c6ee"
+    },
+    {
+      "id": "multiplexer-index-helpers-005",
+      "name": "native fork launch refuses missing backend session id",
+      "source": "src/multiplexer/index.ts",
+      "api": "resolveNativeForkLaunch",
+      "input": {
+        "api": "resolveNativeForkLaunch",
+        "sourceSessionId": "codex-1",
+        "targetToolConfigKey": "codex",
+        "sessionToolKeys": [["codex-1", "codex"]],
+        "topologySessions": [{ "id": "codex-1", "toolConfigKey": "codex" }],
+        "toolCfg": { "command": "codex", "args": [], "forkArgs": ["fork", "{sessionId}"] }
+      },
+      "output": { "result": null, "calls": [] },
+      "inputSha256": "3ff749cb2cfda9a5e80c2eca38ef66bfd1ea5334b11f79545ceef5e266122b0f"
+    },
+    {
+      "id": "multiplexer-index-helpers-006",
+      "name": "native fork launch refuses cross-tool and command override forks",
+      "source": "src/multiplexer/index.ts",
+      "api": "resolveNativeForkLaunch",
+      "input": {
+        "api": "resolveNativeForkLaunch",
+        "sourceSessionId": "claude-1",
+        "targetToolConfigKey": "codex",
+        "sessionToolKeys": [["claude-1", "claude"]],
+        "topologySessions": [{ "id": "claude-1", "toolConfigKey": "claude", "backendSessionId": "backend-abc" }],
+        "toolCfg": { "command": "codex", "args": [], "forkArgs": ["fork", "{sessionId}"] },
+        "launchOverride": { "command": "other-codex" }
+      },
+      "output": { "result": null, "calls": [] },
+      "inputSha256": "e16568b41b26a773ae4091419f0d3f3a4ad75d0d91f9b5dc69359720ed878877"
+    },
+    {
+      "id": "multiplexer-index-helpers-007",
+      "name": "alert display context merges metadata, live session, worktree, and label cache",
+      "source": "src/multiplexer/index.ts",
+      "api": "resolveSessionAlertDisplayContext",
+      "input": {
+        "api": "resolveSessionAlertDisplayContext",
+        "sessionId": "codex-1",
+        "metadata": {
+          "version": 1,
+          "sessions": {
+            "codex-1": {
+              "updatedAt": "2026-06-01T00:00:00.000Z",
+              "context": {
+                "worktreePath": "<REPO>/.aimux/worktrees/old",
+                "worktreeName": "old",
+                "branch": "old-branch"
+              }
+            }
+          }
+        },
+        "sessionLabels": { "codex-1": "Review Agent" },
+        "dashboardSessionsCache": [
+          { "id": "codex-1", "command": "codex", "worktreePath": "<REPO>/.aimux/worktrees/review" }
+        ],
+        "dashboardWorktreeGroupsCache": [
+          { "path": "<REPO>/.aimux/worktrees/review", "name": "review", "branch": "feature/review" }
+        ]
+      },
+      "output": {
+        "result": {
+          "label": "Review Agent",
+          "command": "codex",
+          "worktreePath": "<REPO>/.aimux/worktrees/review",
+          "worktreeName": "review",
+          "branch": "feature/review"
+        },
+        "calls": [{ "method": "getSessionLabel", "args": ["codex-1"] }]
+      },
+      "inputSha256": "98313b87dfc270e7da81ca8e2d49747a162e452ad13b62de4ad3b3402d31766f"
+    },
+    {
+      "id": "multiplexer-index-helpers-008",
+      "name": "publish alert contextualizes service rows with live worktree context",
+      "source": "src/multiplexer/index.ts",
+      "api": "publishAlert",
+      "input": {
+        "api": "publishAlert",
+        "alert": {
+          "kind": "task_failed",
+          "sessionId": "svc-1",
+          "title": "Service failed",
+          "message": "exit 1",
+          "dedupeKey": "svc-1:error"
+        },
+        "dashboardServicesCache": [
+          { "id": "svc-1", "label": "web", "launchCommandLine": "pnpm dev", "worktreePath": "<REPO>/app" }
+        ],
+        "dashboardWorktreeGroupsCache": [{ "path": "<REPO>/app", "name": "app", "branch": "app-branch" }]
+      },
+      "output": {
+        "result": null,
+        "calls": [
+          { "method": "getSessionLabel", "args": ["svc-1"] },
+          {
+            "method": "eventBus.publishAlert",
+            "args": [
+              {
+                "kind": "task_failed",
+                "sessionId": "svc-1",
+                "title": "[Error] <REPO_NAME> / app (app-branch)",
+                "message": "Agent or service errored: Service failed - exit 1",
+                "dedupeKey": "svc-1:error",
+                "projectName": "<REPO_NAME>",
+                "projectRoot": "<REPO>",
+                "worktreePath": "<REPO>/app",
+                "worktreeName": "app",
+                "branch": "app-branch",
+                "categoryLabel": "Error",
+                "reasonLabel": "Agent or service errored"
+              }
+            ]
+          }
+        ]
+      },
+      "inputSha256": "9cab48ec60188a825f79c3dcee8b7dc471ea67cbbffcfacd678bf65a35094226"
+    },
+    {
+      "id": "multiplexer-index-helpers-009",
+      "name": "fork session reports missing source before creating thread",
+      "source": "src/multiplexer/index.ts",
+      "api": "forkSessionFromSource",
+      "input": {
+        "api": "forkSessionFromSource",
+        "sourceSessionId": "missing",
+        "targetToolConfigKey": "codex",
+        "requestedTargetSessionId": "codex-child"
+      },
+      "output": {
+        "calls": [
+          {
+            "method": "showDashboardError",
+            "args": ["Cannot fork missing session", ["Source session missing not found."]]
+          }
+        ],
+        "exchange": { "threads": [], "messages": [] }
+      },
+      "inputSha256": "4946f4aabd81ad6b7df32cdfbc7cff781b6aa92169ec7ae99b042f07a21fe324"
+    },
+    {
+      "id": "multiplexer-index-helpers-010",
+      "name": "fork session uses handoff preamble when target tool differs",
+      "source": "src/multiplexer/index.ts",
+      "api": "forkSessionFromSource",
+      "input": {
+        "api": "forkSessionFromSource",
+        "sourceSessionId": "claude-1",
+        "targetToolConfigKey": "codex",
+        "requestedTargetSessionId": "codex-child",
+        "instruction": "Take over this task.",
+        "sessionLabels": { "claude-1": "Claude Lead" },
+        "sessions": [{ "id": "claude-1", "command": "claude" }],
+        "sessionToolKeys": [["claude-1", "claude"]],
+        "sessionWorktreePaths": [["claude-1", "<REPO>/.aimux/worktrees/ui"]],
+        "targetWorktreePath": "<REPO>/.aimux/worktrees/ui"
+      },
+      "output": {
+        "result": {
+          "sessionId": "codex-child",
+          "threadId": "<THREAD_ID>",
+          "target": { "sessionName": "aimux-test", "windowId": "@1", "windowName": "agent" }
+        },
+        "calls": [
+          { "method": "getSessionLabel", "args": ["claude-1"] },
+          { "method": "contextWatcher.syncNow", "args": ["claude-1"] },
+          { "method": "sessionBootstrap.readForkSourceSnapshot", "args": ["claude-1"] },
+          { "method": "sessionBootstrap.seedForkArtifacts", "args": ["claude-1", "codex-child", "codex"] },
+          {
+            "method": "sessionBootstrap.buildForkPreamble",
+            "args": ["claude-1", "codex-child", { "historyText": "history", "liveText": "live" }]
+          },
+          {
+            "method": "createSession",
+            "args": [
+              "codex",
+              ["--dangerously-bypass-approvals-and-sandbox"],
+              null,
+              "codex",
+              "fork preamble\n\nTake over this task.",
+              null,
+              "<REPO>/.aimux/worktrees/ui",
+              null,
+              "codex-child",
+              true,
+              false,
+              null,
+              null,
+              null
+            ]
+          },
+          {
+            "method": "agentTracker.emit",
+            "args": [
+              "claude-1",
+              {
+                "kind": "status",
+                "message": "Forked codex-child from this session",
+                "threadId": "<THREAD_ID>",
+                "threadName": "Handoff: Claude Lead → codex",
+                "source": "fork",
+                "tone": "info"
+              }
+            ]
+          },
+          {
+            "method": "agentTracker.emit",
+            "args": [
+              "codex-child",
+              {
+                "kind": "task_assigned",
+                "message": "Forked from claude-1",
+                "threadId": "<THREAD_ID>",
+                "threadName": "Handoff: Claude Lead → codex",
+                "source": "fork",
+                "tone": "info"
+              }
+            ]
+          }
+        ],
+        "exchange": {
+          "threads": [
+            {
+              "id": "<THREAD_ID>",
+              "title": "Handoff: Claude Lead → codex",
+              "kind": "handoff",
+              "status": "waiting",
+              "createdAt": "<ISO_DATE>",
+              "updatedAt": "<ISO_DATE>",
+              "createdBy": "claude-1",
+              "participants": ["claude-1", "codex-child"],
+              "owner": "codex-child",
+              "waitingOn": ["codex-child"],
+              "worktreePath": "<REPO>/.aimux/worktrees/ui",
+              "lastMessageId": "<MESSAGE_ID>",
+              "unreadBy": ["codex-child"]
+            }
+          ],
+          "messages": [
+            {
+              "id": "<MESSAGE_ID>",
+              "threadId": "<THREAD_ID>",
+              "ts": "<ISO_DATE>",
+              "from": "claude-1",
+              "to": ["codex-child"],
+              "kind": "handoff",
+              "body": "Take over this task.",
+              "metadata": { "sourceSessionId": "claude-1" }
+            }
+          ]
+        }
+      },
+      "inputSha256": "54084736e067dd3ac23f1846031c66734f274db24ca5164aa596317144a6d17d"
+    },
+    {
+      "id": "multiplexer-index-helpers-011",
+      "name": "fork session uses native fork args when same tool backend id exists",
+      "source": "src/multiplexer/index.ts",
+      "api": "forkSessionFromSource",
+      "input": {
+        "api": "forkSessionFromSource",
+        "sourceSessionId": "codex-1",
+        "targetToolConfigKey": "codex",
+        "requestedTargetSessionId": "codex-child",
+        "instruction": "Keep going.",
+        "launchOverride": { "args": ["--model", "gpt-5"], "env": { "CODEX_ENV": "1" } },
+        "sessionLabels": { "codex-1": "Codex Lead" },
+        "sessions": [{ "id": "codex-1", "command": "codex" }],
+        "sessionToolKeys": [["codex-1", "codex"]],
+        "sessionWorktreePaths": [["codex-1", "<REPO>/.aimux/worktrees/review"]],
+        "topologySessions": [{ "id": "codex-1", "toolConfigKey": "codex", "backendSessionId": "backend-xyz" }],
+        "targetWorktreePath": "<REPO>/.aimux/worktrees/review"
+      },
+      "output": {
+        "result": {
+          "sessionId": "codex-child",
+          "threadId": "<THREAD_ID>",
+          "target": { "sessionName": "aimux-test", "windowId": "@1", "windowName": "agent" }
+        },
+        "calls": [
+          { "method": "getSessionLabel", "args": ["codex-1"] },
+          { "method": "contextWatcher.syncNow", "args": ["codex-1"] },
+          {
+            "method": "sessionBootstrap.composeToolArgs",
+            "args": [
+              {
+                "command": "codex",
+                "args": ["--dangerously-bypass-approvals-and-sandbox"],
+                "enabled": true,
+                "resumeArgs": ["resume", "{sessionId}"],
+                "forkArgs": ["fork", "{sessionId}"],
+                "resumeByBackendSessionId": true,
+                "resumeFallback": ["resume", "--last"],
+                "developerInstructionsConfigKey": "developer_instructions",
+                "promptPatterns": ["^> $"],
+                "turnPatterns": ["^[>❯]\\s*(.+)"],
+                "startupInterstitials": [
+                  {
+                    "id": "codex-update-available",
+                    "when": ["Update available!", "Press enter to continue"],
+                    "choose": "^[\\s›>❯]*(\\d+)\\.\\s+Skip\\s*$"
+                  }
+                ]
+              },
+              ["fork", "backend-xyz"],
+              ["--model", "gpt-5"]
+            ]
+          },
+          {
+            "method": "createSession",
+            "args": [
+              "codex",
+              ["--model", "gpt-5", "fork", "backend-xyz"],
+              null,
+              "codex",
+              "Keep going.",
+              null,
+              "<REPO>/.aimux/worktrees/review",
+              null,
+              "codex-child",
+              true,
+              false,
+              null,
+              { "CODEX_ENV": "1" },
+              ["--model", "gpt-5"]
+            ]
+          },
+          {
+            "method": "agentTracker.emit",
+            "args": [
+              "codex-1",
+              {
+                "kind": "status",
+                "message": "Forked codex-child from this session",
+                "threadId": "<THREAD_ID>",
+                "threadName": "Handoff: Codex Lead → codex",
+                "source": "fork",
+                "tone": "info"
+              }
+            ]
+          },
+          {
+            "method": "agentTracker.emit",
+            "args": [
+              "codex-child",
+              {
+                "kind": "task_assigned",
+                "message": "Forked from codex-1",
+                "threadId": "<THREAD_ID>",
+                "threadName": "Handoff: Codex Lead → codex",
+                "source": "fork",
+                "tone": "info"
+              }
+            ]
+          }
+        ],
+        "exchange": {
+          "threads": [
+            {
+              "id": "<THREAD_ID>",
+              "title": "Handoff: Codex Lead → codex",
+              "kind": "handoff",
+              "status": "waiting",
+              "createdAt": "<ISO_DATE>",
+              "updatedAt": "<ISO_DATE>",
+              "createdBy": "codex-1",
+              "participants": ["codex-1", "codex-child"],
+              "owner": "codex-child",
+              "waitingOn": ["codex-child"],
+              "worktreePath": "<REPO>/.aimux/worktrees/review",
+              "lastMessageId": "<MESSAGE_ID>",
+              "unreadBy": ["codex-child"]
+            }
+          ],
+          "messages": [
+            {
+              "id": "<MESSAGE_ID>",
+              "threadId": "<THREAD_ID>",
+              "ts": "<ISO_DATE>",
+              "from": "codex-1",
+              "to": ["codex-child"],
+              "kind": "handoff",
+              "body": "Keep going.",
+              "metadata": { "sourceSessionId": "codex-1" }
+            }
+          ]
+        }
+      },
+      "inputSha256": "de805fef592266481f640023acfd45dd7966b0d1423157bafc9670b4c27cc55f"
+    }
+  ]
+}

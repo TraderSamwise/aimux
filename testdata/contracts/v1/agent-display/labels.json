@@ -1,0 +1,171 @@
+{
+  "version": 1,
+  "source": "app/lib/agent-display.test.ts",
+  "generatedBy": "scripts/capture-agent-display-contract.mjs",
+  "description": "App agent generated-label detection, tool-name fallback, role-label trimming, short-name, and compact-identity behavior captured by running TypeScript agent-display helpers.",
+  "cases": [
+    {
+      "id": "agent-display-001",
+      "name": "uses command token as generated-label tool name",
+      "source": "app/lib/agent-display.test.ts",
+      "api": "agentToolName",
+      "input": {
+        "name": "uses command token as generated-label tool name",
+        "api": "agentToolName",
+        "agent": { "id": "codex-o6o4kf", "label": "codex-o6o4kf", "command": "codex --model gpt-5.5", "role": "coder" }
+      },
+      "output": "codex",
+      "inputSha256": "7d78ca4be86b4ed8fa68388b5449bb8cd9e3999f9aba139e97c7e7cc1542eac9"
+    },
+    {
+      "id": "agent-display-002",
+      "name": "detects labels matching the generated id",
+      "source": "app/lib/agent-display.test.ts",
+      "api": "isGeneratedAgentLabel",
+      "input": {
+        "name": "detects labels matching the generated id",
+        "api": "isGeneratedAgentLabel",
+        "label": "codex-o6o4kf",
+        "agent": { "id": "codex-o6o4kf", "label": "codex-o6o4kf", "command": "codex --model gpt-5.5", "role": "coder" }
+      },
+      "output": true,
+      "inputSha256": "65f25fff4f26c1785501b94e9b11aa58eb8ef06e7c2c8ed44b129d6e0340307e"
+    },
+    {
+      "id": "agent-display-003",
+      "name": "collapses generated session labels to the tool name",
+      "source": "app/lib/agent-display.test.ts",
+      "api": "agentShortName",
+      "input": {
+        "name": "collapses generated session labels to the tool name",
+        "api": "agentShortName",
+        "agent": { "id": "codex-o6o4kf", "label": "codex-o6o4kf", "command": "codex --model gpt-5.5", "role": "coder" }
+      },
+      "output": "codex",
+      "inputSha256": "f2a485ea87e6528eb9d0915c671d58bb31b36fb496d8f8f6fee05b0eaee9b0df"
+    },
+    {
+      "id": "agent-display-004",
+      "name": "adds role to compact generated identity",
+      "source": "app/lib/agent-display.test.ts",
+      "api": "agentCompactIdentity",
+      "input": {
+        "name": "adds role to compact generated identity",
+        "api": "agentCompactIdentity",
+        "agent": { "id": "codex-o6o4kf", "label": "codex-o6o4kf", "command": "codex --model gpt-5.5", "role": "coder" }
+      },
+      "output": "codex (coder)",
+      "inputSha256": "d5271a74b0f818d8c88fbd8a9fce24b6792333b8207ebc98b5d5ab382827b5fa"
+    },
+    {
+      "id": "agent-display-005",
+      "name": "keeps custom labels",
+      "source": "app/lib/agent-display.test.ts",
+      "api": "agentShortName",
+      "input": {
+        "name": "keeps custom labels",
+        "api": "agentShortName",
+        "agent": { "id": "claude-k9czzb", "label": "overseer", "command": "claude", "role": "reviewer" }
+      },
+      "output": "overseer",
+      "inputSha256": "3ae3ad250c178a4e1af5fdc815a5bf2da86a8ba42c15bd13ef6a8c7d04d3fa4e"
+    },
+    {
+      "id": "agent-display-006",
+      "name": "keeps custom compact identity roles",
+      "source": "app/lib/agent-display.test.ts",
+      "api": "agentCompactIdentity",
+      "input": {
+        "name": "keeps custom compact identity roles",
+        "api": "agentCompactIdentity",
+        "agent": { "id": "claude-k9czzb", "label": "overseer", "command": "claude", "role": "reviewer" }
+      },
+      "output": "overseer (reviewer)",
+      "inputSha256": "a0d3e5f934c1e9d1a7569c4cd8a3016d6571f862acb38b21cefa9fe47b46f123"
+    },
+    {
+      "id": "agent-display-007",
+      "name": "does not collapse custom labels with tool prefixes",
+      "source": "app/lib/agent-display.test.ts",
+      "api": "agentShortName",
+      "input": {
+        "name": "does not collapse custom labels with tool prefixes",
+        "api": "agentShortName",
+        "agent": { "id": "codex-o6o4kf", "label": "codex-reviewer", "command": "codex --model gpt-5.5" }
+      },
+      "output": "codex-reviewer",
+      "inputSha256": "05b95acccfa509b43d3c384fd32fd519a68a1227620c27457b42fb4614f3fd15"
+    },
+    {
+      "id": "agent-display-008",
+      "name": "falls back to command when label is missing",
+      "source": "app/lib/agent-display.test.ts",
+      "api": "agentShortName",
+      "input": {
+        "name": "falls back to command when label is missing",
+        "api": "agentShortName",
+        "agent": { "id": "claude-k9czzb", "command": "claude" }
+      },
+      "output": "claude",
+      "inputSha256": "9ce7a45f6c24044b0c4bb542e658af5c4f56088410c58bb94951200eee13669d"
+    },
+    {
+      "id": "agent-display-009",
+      "name": "falls back to generated id when command is missing",
+      "source": "app/lib/agent-display.test.ts",
+      "api": "agentShortName",
+      "input": {
+        "name": "falls back to generated id when command is missing",
+        "api": "agentShortName",
+        "agent": { "id": "aider-abc123" }
+      },
+      "output": "aider",
+      "inputSha256": "df937d72e3cf6f4c191232d8711d531af99afd4a3afddc91256735edc272d3aa"
+    },
+    {
+      "id": "agent-display-010",
+      "name": "trims role labels",
+      "source": "app/lib/agent-display.test.ts",
+      "api": "agentRoleLabel",
+      "input": { "name": "trims role labels", "api": "agentRoleLabel", "agent": { "role": " coder " } },
+      "output": "coder",
+      "inputSha256": "fa2ae41e8173fa4e09c8ce91c014eda275aa77d3bf6da8cdc03c474998609af1"
+    },
+    {
+      "id": "agent-display-011",
+      "name": "uses tool config before command",
+      "source": "app/lib/agent-display.test.ts",
+      "api": "agentToolName",
+      "input": {
+        "name": "uses tool config before command",
+        "api": "agentToolName",
+        "agent": { "toolConfigKey": "codex", "command": "claude", "label": "claude-k9czzb" }
+      },
+      "output": "codex",
+      "inputSha256": "c70de75986d8c7e0a2f931491b7487ecbb19fcd1f821c922d3582aff0ad7243c"
+    },
+    {
+      "id": "agent-display-012",
+      "name": "falls back to generic agent name",
+      "source": "app/lib/agent-display.test.ts",
+      "api": "agentToolName",
+      "input": { "name": "falls back to generic agent name", "api": "agentToolName", "agent": { "label": "" } },
+      "output": "agent",
+      "inputSha256": "bb52827952d4bf1c4decbb74abcd7184db7989ab49c76cafc80012ce39e34e11"
+    },
+    {
+      "id": "agent-display-013",
+      "name": "requires generated label digits",
+      "source": "app/lib/agent-display.test.ts",
+      "api": "isGeneratedAgentLabel",
+      "input": {
+        "name": "requires generated label digits",
+        "api": "isGeneratedAgentLabel",
+        "label": "codex-reviewer",
+        "agent": { "id": "codex-o6o4kf", "command": "codex" }
+      },
+      "output": false,
+      "inputSha256": "b04c4d918a0ab418be06e149351e17f1ce24979834aea47a80fe3ae71a609a3a"
+    }
+  ]
+}

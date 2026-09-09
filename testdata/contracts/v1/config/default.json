@@ -1,0 +1,111 @@
+{
+  "defaultTool": "claude",
+  "contextMaxEntries": 20,
+  "liveWindowSize": 20,
+  "compactEveryNTurns": 50,
+  "logging": {
+    "enabled": false,
+    "level": "info",
+    "categories": ["*"],
+    "maxBytes": 10000000,
+    "maxFiles": 5
+  },
+  "graveyard": {
+    "cleanupEnabled": true,
+    "retentionDays": 14,
+    "cleanupIntervalMs": 86400000
+  },
+  "inbox": {
+    "cleanupEnabled": true,
+    "retentionDays": 14,
+    "cleanupIntervalMs": 86400000,
+    "maxSize": 10
+  },
+  "notifications": {
+    "enabled": true,
+    "onPrompt": true,
+    "onError": true,
+    "onComplete": true,
+    "markReadOnView": true,
+    "clearNeedsInputOnView": true,
+    "clearFormalInteractionsOnView": false
+  },
+  "statusline": {
+    "defaultPlugins": {
+      "transcriptLength": {
+        "enabled": true,
+        "line": "top"
+      }
+    }
+  },
+  "expose": {
+    "initialScope": "worktree",
+    "hotSnapshotsEnabled": true
+  },
+  "runtime": {
+    "agentPreambleEnabled": true,
+    "tmux": {
+      "sessionPrefix": "aimux"
+    }
+  },
+  "worktrees": {
+    "baseDir": ".aimux/worktrees",
+    "cacheCleanupDirs": ["node_modules", ".next"],
+    "cacheCleanupEnabled": true,
+    "cacheCleanupApply": false,
+    "cacheCleanupIntervalMs": 86400000,
+    "cacheCleanupInitialDelayMs": 300000
+  },
+  "loop": {
+    "scanIntervalMs": 15000,
+    "nudgeCooldownMs": 60000,
+    "autoNudgeWithoutOverseer": false
+  },
+  "scribe": {
+    "defaultAgent": null
+  },
+  "tools": {
+    "claude": {
+      "command": "claude",
+      "args": ["--dangerously-skip-permissions"],
+      "enabled": true,
+      "wrapperEnabled": true,
+      "preambleFlag": ["--append-system-prompt"],
+      "sessionIdFlag": ["--session-id", "{sessionId}"],
+      "resumeArgs": ["--resume", "{sessionId}"],
+      "forkArgs": ["--resume", "{sessionId}", "--fork-session"],
+      "resumeByBackendSessionId": true,
+      "resumeFallback": ["--continue"],
+      "promptPatterns": ["^> $", "\\$ $"],
+      "turnPatterns": ["^[❯>]\\s*(.+)", "^❯\\s+(.+)", "^>\\s+(.+)"],
+      "compactCommand": "claude --print --output-format text"
+    },
+    "codex": {
+      "command": "codex",
+      "args": ["--dangerously-bypass-approvals-and-sandbox"],
+      "enabled": true,
+      "resumeArgs": ["resume", "{sessionId}"],
+      "forkArgs": ["fork", "{sessionId}"],
+      "resumeByBackendSessionId": true,
+      "resumeFallback": ["resume", "--last"],
+      "developerInstructionsConfigKey": "developer_instructions",
+      "promptPatterns": ["^> $"],
+      "turnPatterns": ["^[>❯]\\s*(.+)"],
+      "startupInterstitials": [
+        {
+          "id": "codex-update-available",
+          "when": ["Update available!", "Press enter to continue"],
+          "choose": "^[\\s›>❯]*(\\d+)\\.\\s+Skip\\s*$"
+        }
+      ]
+    },
+    "aider": {
+      "command": "aider",
+      "args": [],
+      "enabled": true,
+      "resumeFallback": ["--restore-chat-history"],
+      "promptPatterns": ["^aider> $", "^> $"],
+      "turnPatterns": ["^aider>\\s*(.+)", "^>\\s*(.+)"]
+    }
+  }
+}

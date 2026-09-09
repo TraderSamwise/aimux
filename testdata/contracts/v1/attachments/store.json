@@ -1,0 +1,537 @@
+{
+  "version": 1,
+  "source": "src/attachment-store.test.ts",
+  "generatedBy": "scripts/capture-attachment-store-contract.mjs",
+  "description": "Attachment store create, validation, sensitive path, hosted metadata, content, recent publish, and hydration contracts captured by running TypeScript.",
+  "cases": [
+    {
+      "id": "attachment-store-001",
+      "name": "copies a regular project file into a session-bound attachment",
+      "source": "src/attachment-store.test.ts",
+      "api": "createPathAttachment",
+      "input": { "file": "notes.txt" },
+      "output": {
+        "attachment": {
+          "id": "<att:1>",
+          "kind": "text",
+          "filename": "notes.txt",
+          "mimeType": "text/plain",
+          "sizeBytes": 16,
+          "sha256": "7fa36b95d5c98859ed72b4787f3c28b29eaa103970786755c9711cbb19be631c",
+          "createdAt": "<createdAt>",
+          "source": "path",
+          "contentUrl": "/attachments/<att:1>/content?sessionId=codex-1",
+          "sessionId": "codex-1"
+        },
+        "stored": {
+          "record": {
+            "id": "<att:1>",
+            "kind": "text",
+            "filename": "notes.txt",
+            "mimeType": "text/plain",
+            "sizeBytes": 16,
+            "sha256": "7fa36b95d5c98859ed72b4787f3c28b29eaa103970786755c9711cbb19be631c",
+            "createdAt": "<createdAt>",
+            "source": "path",
+            "contentPath": "<project>/.aimux/attachments/<att:1>.txt",
+            "sessionId": "codex-1"
+          },
+          "contentUtf8": "hello attachment",
+          "contentMimeType": null
+        }
+      },
+      "inputSha256": "ce0438804f1ad6804d8de4f834939585acbb933241005294944003a938169aa9"
+    },
+    {
+      "id": "attachment-store-002",
+      "name": "rejects files outside the project, its worktrees, and temp",
+      "source": "src/attachment-store.test.ts",
+      "api": "createPathAttachment",
+      "input": { "sourcePath": "/etc/hosts" },
+      "output": {
+        "ok": false,
+        "error": "attachment source must be inside the project, one of its worktrees, or a temporary directory: /private/etc/hosts"
+      },
+      "inputSha256": "5e722805de6bf7776fbebdae6a3d026e2eae0a46eb50eb63a275c7f67d10bdf9"
+    },
+    {
+      "id": "attachment-store-003",
+      "name": "publishes what an agent wrote to its scratch directory",
+      "source": "src/attachment-store.test.ts",
+      "api": "createPathAttachment",
+      "input": { "sourcePath": "<temp>/aimux-agent-scratch/generated.txt" },
+      "output": {
+        "ok": true,
+        "value": {
+          "id": "<att:1>",
+          "kind": "text",
+          "filename": "generated.txt",
+          "mimeType": "text/plain",
+          "sizeBytes": 22,
+          "sha256": "0cf97f55692cad0686d5bb843eb23d8b45c143d40ce869a56ff269d40bd7ec0c",
+          "createdAt": "<createdAt>",
+          "source": "path",
+          "contentUrl": "/attachments/<att:1>/content?sessionId=codex-1",
+          "sessionId": "codex-1"
+        }
+      },
+      "inputSha256": "b7b7320a8ef2e221197d5e21947ea0e49532b71ca669f01aee35950371d1e001"
+    },
+    {
+      "id": "attachment-store-004",
+      "name": "refuses credential file .env from inside the project",
+      "source": "src/attachment-store.test.ts",
+      "api": "createPathAttachment",
+      "input": { "file": ".env" },
+      "output": {
+        "ok": false,
+        "error": "attachment source looks like a credential or secret file and cannot be published: .env"
+      },
+      "inputSha256": "f7f2249777bf87c62bb0a5caf2627450dd3c45e3935cacc72b1ac017d389167b"
+    },
+    {
+      "id": "attachment-store-005",
+      "name": "refuses credential file id_rsa from inside the project",
+      "source": "src/attachment-store.test.ts",
+      "api": "createPathAttachment",
+      "input": { "file": "id_rsa" },
+      "output": {
+        "ok": false,
+        "error": "attachment source looks like a credential or secret file and cannot be published: id_rsa"
+      },
+      "inputSha256": "7ccf29223d7f754913240a8da5ad67a30be450dea31b9103667dfc13b1e60a97"
+    },
+    {
+      "id": "attachment-store-006",
+      "name": "refuses credential file server.pem from inside the project",
+      "source": "src/attachment-store.test.ts",
+      "api": "createPathAttachment",
+      "input": { "file": "server.pem" },
+      "output": {
+        "ok": false,
+        "error": "attachment source looks like a credential or secret file and cannot be published: server.pem"
+      },
+      "inputSha256": "2202c05858aed4335047df75e84dc0ae04001a8817fea27981e46f0640643918"
+    },
+    {
+      "id": "attachment-store-007",
+      "name": "refuses credential file credentials.json from inside the project",
+      "source": "src/attachment-store.test.ts",
+      "api": "createPathAttachment",
+      "input": { "file": "credentials.json" },
+      "output": {
+        "ok": false,
+        "error": "attachment source looks like a credential or secret file and cannot be published: credentials.json"
+      },
+      "inputSha256": "7ee83fb04c1c9cc4e572f58713bc1a6e8c2c1e88477a9a04e8b98af017ee3047"
+    },
+    {
+      "id": "attachment-store-008",
+      "name": "refuses a credential file reached through an allowed directory",
+      "source": "src/attachment-store.test.ts",
+      "api": "createPathAttachment",
+      "input": { "file": ".ssh/known_hosts" },
+      "output": {
+        "ok": false,
+        "error": "attachment source looks like a credential or secret file and cannot be published: known_hosts"
+      },
+      "inputSha256": "ace1b6876f3a9f2f50cd0d140d137241f2b0e54f838d3c95478e4ec68f76d0fe"
+    },
+    {
+      "id": "attachment-store-009",
+      "name": "rejects symlinks that point outside the project",
+      "source": "src/attachment-store.test.ts",
+      "api": "createPathAttachment",
+      "input": { "file": "secret-link.txt" },
+      "output": { "ok": false, "error": "attachment source must be a regular file" },
+      "inputSha256": "c50e4086cd921a4e646c0686bbfaa78bfc9463dab2cae3a0b3a9adeb234d695d"
+    },
+    {
+      "id": "attachment-store-010",
+      "name": "stores hosted attachment display metadata on uploaded attachments",
+      "source": "src/attachment-store.test.ts",
+      "api": "createUploadedAttachment",
+      "input": { "filename": "screen.png" },
+      "output": {
+        "attachment": {
+          "id": "<att:1>",
+          "kind": "image",
+          "filename": "screen.png",
+          "mimeType": "image/png",
+          "sizeBytes": 9,
+          "sha256": "ea80334363eed145dfeee51ebae7dc3f1cd7d0c7879f8bfd2070c061d3c33f56",
+          "createdAt": "<createdAt>",
+          "source": "upload",
+          "contentUrl": "/attachments/<att:1>/content?sessionId=codex-1",
+          "hostedContentUrl": "https://relay.aimux.app/attachments/hosted/ha_1234567890123456789012345678901234567890123/content",
+          "hostedExpiresAt": "2099-01-01T00:00:00.000Z",
+          "sessionId": "codex-1"
+        },
+        "stored": {
+          "record": {
+            "id": "<att:1>",
+            "kind": "image",
+            "filename": "screen.png",
+            "mimeType": "image/png",
+            "sizeBytes": 9,
+            "sha256": "ea80334363eed145dfeee51ebae7dc3f1cd7d0c7879f8bfd2070c061d3c33f56",
+            "createdAt": "<createdAt>",
+            "source": "upload",
+            "contentPath": "<project>/.aimux/attachments/<att:1>.png",
+            "sessionId": "codex-1",
+            "hostedAttachment": {
+              "contentUrl": "https://relay.aimux.app/attachments/hosted/ha_1234567890123456789012345678901234567890123/content",
+              "expiresAt": "2099-01-01T00:00:00.000Z",
+              "sha256": "ea80334363eed145dfeee51ebae7dc3f1cd7d0c7879f8bfd2070c061d3c33f56",
+              "sizeBytes": 9
+            }
+          },
+          "contentUtf8": "png-bytes",
+          "contentMimeType": null
+        }
+      },
+      "inputSha256": "9745be356a49cbba575dbd477deaa3487258664bb0f943702018028bbd97bb27"
+    },
+    {
+      "id": "attachment-store-011",
+      "name": "stores hosted attachment display metadata on path attachments",
+      "source": "src/attachment-store.test.ts",
+      "api": "createPathAttachment",
+      "input": {
+        "file": "screen.png",
+        "hostedAttachment": {
+          "contentUrl": "https://relay.aimux.app/attachments/hosted/ha_1234567890123456789012345678901234567890123/content",
+          "expiresAt": "2099-01-01T00:00:00.000Z",
+          "sha256": "ea80334363eed145dfeee51ebae7dc3f1cd7d0c7879f8bfd2070c061d3c33f56",
+          "sizeBytes": 9
+        }
+      },
+      "output": {
+        "attachment": {
+          "id": "<att:1>",
+          "kind": "image",
+          "filename": "screen.png",
+          "mimeType": "image/png",
+          "sizeBytes": 9,
+          "sha256": "ea80334363eed145dfeee51ebae7dc3f1cd7d0c7879f8bfd2070c061d3c33f56",
+          "createdAt": "<createdAt>",
+          "source": "path",
+          "contentUrl": "/attachments/<att:1>/content?sessionId=codex-1",
+          "hostedContentUrl": "https://relay.aimux.app/attachments/hosted/ha_1234567890123456789012345678901234567890123/content",
+          "hostedExpiresAt": "2099-01-01T00:00:00.000Z",
+          "sessionId": "codex-1"
+        },
+        "stored": {
+          "record": {
+            "id": "<att:1>",
+            "kind": "image",
+            "filename": "screen.png",
+            "mimeType": "image/png",
+            "sizeBytes": 9,
+            "sha256": "ea80334363eed145dfeee51ebae7dc3f1cd7d0c7879f8bfd2070c061d3c33f56",
+            "createdAt": "<createdAt>",
+            "source": "path",
+            "contentPath": "<project>/.aimux/attachments/<att:1>.png",
+            "sessionId": "codex-1",
+            "hostedAttachment": {
+              "contentUrl": "https://relay.aimux.app/attachments/hosted/ha_1234567890123456789012345678901234567890123/content",
+              "expiresAt": "2099-01-01T00:00:00.000Z",
+              "sha256": "ea80334363eed145dfeee51ebae7dc3f1cd7d0c7879f8bfd2070c061d3c33f56",
+              "sizeBytes": 9
+            }
+          },
+          "contentUtf8": "png-bytes",
+          "contentMimeType": null
+        }
+      },
+      "inputSha256": "10206a728af7a76ed16f278b385ebaf7d77f12567fa2320118b2f79262736149"
+    },
+    {
+      "id": "attachment-store-012",
+      "name": "rejects uploaded hosted metadata that does not match the bytes",
+      "source": "src/attachment-store.test.ts",
+      "api": "createUploadedAttachment",
+      "input": {
+        "filename": "screen.png",
+        "hostedAttachment": {
+          "contentUrl": "https://relay.aimux.app/attachments/hosted/ha_1234567890123456789012345678901234567890123/content",
+          "expiresAt": "2099-01-01T00:00:00.000Z",
+          "sha256": "ea80334363eed145dfeee51ebae7dc3f1cd7d0c7879f8bfd2070c061d3c33f56",
+          "sizeBytes": 9
+        }
+      },
+      "output": { "ok": false, "error": "hosted attachment checksum mismatch" },
+      "inputSha256": "43067c1fc49583c3e12fa19db3719e118a099a474e6712db30f143a752045b3a"
+    },
+    {
+      "id": "attachment-store-013",
+      "name": "returns the resolved path so callers cannot read something else",
+      "source": "src/attachment-store.test.ts",
+      "api": "assertPublishableSource",
+      "input": { "sourcePath": "<scratch>/chart.png", "projectRoot": "/nonexistent-project" },
+      "output": { "ok": true, "value": "/private<scratch>/chart.png" },
+      "inputSha256": "627f5ebe07f828c93f283139d29f96c42e0e2b3b7939cc55be0f4bff2c0d43e4"
+    },
+    {
+      "id": "attachment-store-014",
+      "name": "says so plainly when the source is not there",
+      "source": "src/attachment-store.test.ts",
+      "api": "assertPublishableSource",
+      "input": { "sourcePath": "/does/not/exist.png", "projectRoot": "/nonexistent-project" },
+      "output": { "ok": false, "error": "attachment source does not exist: /does/not/exist.png" },
+      "inputSha256": "2cc4557335ead7662ed00268393e288ab8ccc375c20f9b1a1fc403552a995915"
+    },
+    {
+      "id": "attachment-store-015",
+      "name": "refuses a readable file outside every root before any caller reads it",
+      "source": "src/attachment-store.test.ts",
+      "api": "assertPublishableSource",
+      "input": { "sourcePath": "/etc/hosts", "projectRoot": "/nonexistent-project" },
+      "output": {
+        "ok": false,
+        "error": "attachment source must be inside the project, one of its worktrees, or a temporary directory: /private/etc/hosts"
+      },
+      "inputSha256": "606fd17817988c1fa1d7b373da74a01bf1cc050b4b4526e502d48c78df7580cf"
+    },
+    {
+      "id": "attachment-store-016",
+      "name": "refuses a credential file that happens to sit in temp",
+      "source": "src/attachment-store.test.ts",
+      "api": "assertPublishableSource",
+      "input": { "sourcePath": "<scratch>/deploy.pem", "projectRoot": "/nonexistent-project" },
+      "output": {
+        "ok": false,
+        "error": "attachment source looks like a credential or secret file and cannot be published: deploy.pem"
+      },
+      "inputSha256": "6ad3b41f51c78922d16fb757faa2c30b0bca150d38c54b4c962012f3b84aa2d8"
+    },
+    {
+      "id": "attachment-store-017",
+      "name": "classifies sensitive attachment source paths",
+      "source": "src/attachment-store.test.ts",
+      "api": "isSensitiveAttachmentSource",
+      "input": { "sourcePath": "/Users/sam/.ssh/id_rsa" },
+      "output": true,
+      "inputSha256": "58aad0757c8db7401818d7533c9a8cf7027d010d09c51168a92e66e481107a9c"
+    },
+    {
+      "id": "attachment-store-018",
+      "name": "classifies sensitive attachment source paths",
+      "source": "src/attachment-store.test.ts",
+      "api": "isSensitiveAttachmentSource",
+      "input": { "sourcePath": "/tmp/scratch/server.PEM" },
+      "output": true,
+      "inputSha256": "a1da4fa8e621905178c6bcaaf896b2d24fb20f253ea3f3c3444d5f66584ee6eb"
+    },
+    {
+      "id": "attachment-store-019",
+      "name": "classifies sensitive attachment source paths",
+      "source": "src/attachment-store.test.ts",
+      "api": "isSensitiveAttachmentSource",
+      "input": { "sourcePath": "/repo/.env.local" },
+      "output": true,
+      "inputSha256": "de7730a1451f3fa9de8e1d8c602e028788c4976dfc1bc941cc63cef7b324a5e5"
+    },
+    {
+      "id": "attachment-store-020",
+      "name": "classifies sensitive attachment source paths",
+      "source": "src/attachment-store.test.ts",
+      "api": "isSensitiveAttachmentSource",
+      "input": { "sourcePath": "/repo/app/.envoy.ts" },
+      "output": false,
+      "inputSha256": "1dadb97c7b30b6e6aade173e67cf2697db84011655b3ebc5599a0e3cfc36577e"
+    },
+    {
+      "id": "attachment-store-021",
+      "name": "classifies sensitive attachment source paths",
+      "source": "src/attachment-store.test.ts",
+      "api": "isSensitiveAttachmentSource",
+      "input": { "sourcePath": "/repo/notes.sshx" },
+      "output": false,
+      "inputSha256": "142341f52a09cfdc6e358efd51005d08dacb3f0bdc1a2a129f206dd4f592d5a8"
+    },
+    {
+      "id": "attachment-store-022",
+      "name": "classifies sensitive attachment source paths",
+      "source": "src/attachment-store.test.ts",
+      "api": "isSensitiveAttachmentSource",
+      "input": { "sourcePath": "/repo/chart.png" },
+      "output": false,
+      "inputSha256": "7a0c730650172e2dad43cbe01de90fedd1daea99a6a6480abe759192cc808fab"
+    },
+    {
+      "id": "attachment-store-023",
+      "name": "classifies sensitive attachment source paths",
+      "source": "src/attachment-store.test.ts",
+      "api": "isSensitiveAttachmentSource",
+      "input": { "sourcePath": "/repo/.envrc" },
+      "output": true,
+      "inputSha256": "9881ea120f07511a2a47b016a3d85f98d40545499e70dae3f2794aa40c1c97af"
+    },
+    {
+      "id": "attachment-store-024",
+      "name": "classifies sensitive attachment source paths",
+      "source": "src/attachment-store.test.ts",
+      "api": "isSensitiveAttachmentSource",
+      "input": { "sourcePath": "/repo/.git-credentials" },
+      "output": true,
+      "inputSha256": "fba896c1dc6fe5e43c238f357dde099b8009526de2a4a0eb99869aa374f04f19"
+    },
+    {
+      "id": "attachment-store-025",
+      "name": "classifies sensitive attachment source paths",
+      "source": "src/attachment-store.test.ts",
+      "api": "isSensitiveAttachmentSource",
+      "input": { "sourcePath": "/repo/store.keystore" },
+      "output": true,
+      "inputSha256": "9523b7cf5fcaa3b7f356722d9f064b955ff4266c94336e8902a155576c4c38c8"
+    },
+    {
+      "id": "attachment-store-026",
+      "name": "classifies sensitive attachment source paths",
+      "source": "src/attachment-store.test.ts",
+      "api": "isSensitiveAttachmentSource",
+      "input": { "sourcePath": "/repo/.env.example" },
+      "output": false,
+      "inputSha256": "4bfd4dab9189c4c84488006fa0e338be1f54cfb53478de4ea4e96a829a81b3e0"
+    },
+    {
+      "id": "attachment-store-027",
+      "name": "classifies sensitive attachment source paths",
+      "source": "src/attachment-store.test.ts",
+      "api": "isSensitiveAttachmentSource",
+      "input": { "sourcePath": "/repo/app/.env.sample" },
+      "output": false,
+      "inputSha256": "0db7f04968f3341232c811dd37e5e5e89a04baa10e4484cfd739235ba89564d5"
+    },
+    {
+      "id": "attachment-store-028",
+      "name": "remembers what a session published, newest first",
+      "source": "src/attachment-store.test.ts",
+      "api": "listSessionAttachments",
+      "input": { "sessionId": "codex-1" },
+      "output": [
+        {
+          "record": {
+            "id": "<att:1>",
+            "kind": "text",
+            "filename": "two.txt",
+            "mimeType": "text/plain",
+            "sizeBytes": 7,
+            "sha256": "a58e13b64bb2a273ecd645491d985045a7973416fb87de0c050b3df20ae796fc",
+            "createdAt": "<createdAt>",
+            "source": "path",
+            "contentUrl": "/attachments/<att:1>/content?sessionId=codex-1",
+            "sessionId": "codex-1"
+          }
+        },
+        {
+          "record": {
+            "id": "<att:2>",
+            "kind": "text",
+            "filename": "one.txt",
+            "mimeType": "text/plain",
+            "sizeBytes": 7,
+            "sha256": "4bc812ba0c30fc415977fb34715b63843b3e1f324aa869e40eb26d08fa2ca900",
+            "createdAt": "<createdAt>",
+            "source": "path",
+            "contentUrl": "/attachments/<att:2>/content?sessionId=codex-1",
+            "sessionId": "codex-1"
+          }
+        }
+      ],
+      "inputSha256": "211671f083f814f977684aa23a4308012626406179727f5155135fef49308827"
+    },
+    {
+      "id": "attachment-store-029",
+      "name": "keeps one session's publishes out of another's",
+      "source": "src/attachment-store.test.ts",
+      "api": "listSessionAttachments",
+      "input": { "sessionId": "claude-2" },
+      "output": [],
+      "inputSha256": "0554af141504a4afd7918c9acc8605ce38498196cc841ce93ef889d443c591c8"
+    },
+    {
+      "id": "attachment-store-030",
+      "name": "ignores what the operator uploaded from the composer",
+      "source": "src/attachment-store.test.ts",
+      "api": "listSessionAttachments",
+      "input": { "sessionId": "codex-1" },
+      "output": [],
+      "inputSha256": "211671f083f814f977684aa23a4308012626406179727f5155135fef49308827"
+    },
+    {
+      "id": "attachment-store-031",
+      "name": "finds publishes written before this process started",
+      "source": "src/attachment-store.test.ts",
+      "api": "listSessionAttachments",
+      "input": { "sessionId": "codex-1", "afterForget": true },
+      "output": [
+        {
+          "record": {
+            "id": "<att:1>",
+            "kind": "text",
+            "filename": "earlier.txt",
+            "mimeType": "text/plain",
+            "sizeBytes": 7,
+            "sha256": "2a51d3547c23a8de50f3e23285a0df356627ef64c300087d3b27173f08ded2a0",
+            "createdAt": "<createdAt>",
+            "source": "path",
+            "contentUrl": "/attachments/<att:1>/content?sessionId=codex-1",
+            "sessionId": "codex-1"
+          }
+        }
+      ],
+      "inputSha256": "9708e663c6020c5bc9201d34659e94fdc8b85736114dcc720e821d82f2ded070"
+    },
+    {
+      "id": "attachment-store-032",
+      "name": "hydrates persisted anchors after a service restart",
+      "source": "src/attachment-store.test.ts",
+      "api": "anchorSessionAttachment/listSessionAttachments",
+      "input": { "sessionId": "codex-1" },
+      "output": {
+        "anchored": {
+          "id": "<att:1>",
+          "kind": "image",
+          "filename": "chart.png",
+          "mimeType": "image/png",
+          "sizeBytes": 3,
+          "sha256": "8f8cbb7dcf46e0bc7d53265749a6c17d116093a6ba95e442764060c76fd4a86c",
+          "createdAt": "<createdAt>",
+          "source": "path",
+          "contentPath": "<project>/.aimux/attachments/<att:1>.png",
+          "sessionId": "codex-1",
+          "anchorMessageId": "assistant:published-turn"
+        },
+        "listed": [
+          {
+            "record": {
+              "id": "<att:1>",
+              "kind": "image",
+              "filename": "chart.png",
+              "mimeType": "image/png",
+              "sizeBytes": 3,
+              "sha256": "8f8cbb7dcf46e0bc7d53265749a6c17d116093a6ba95e442764060c76fd4a86c",
+              "createdAt": "<createdAt>",
+              "source": "path",
+              "contentUrl": "/attachments/<att:1>/content?sessionId=codex-1",
+              "sessionId": "codex-1"
+            },
+            "anchorMessageId": "assistant:published-turn"
+          }
+        ]
+      },
+      "inputSha256": "211671f083f814f977684aa23a4308012626406179727f5155135fef49308827"
+    },
+    {
+      "id": "attachment-store-033",
+      "name": "does not revive old unanchored path publishes after a service restart",
+      "source": "src/attachment-store.test.ts",
+      "api": "listSessionAttachments",
+      "input": { "sessionId": "codex-1", "oldUnanchored": true },
+      "output": [],
+      "inputSha256": "ae47695f111d297a1a7ee8fc2e91e2cc59c45738fd9e0631ba7f01048b1f8e09"
+    }
+  ]
+}

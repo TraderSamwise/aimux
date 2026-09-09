@@ -1,0 +1,155 @@
+{
+  "version": 1,
+  "source": "src/agent-output-activity-text.test.ts",
+  "generatedBy": "scripts/capture-agent-output-parser-contract.mjs",
+  "description": "Agent output activity text contracts captured by running TypeScript activityTextFromParsedAgentOutput.",
+  "cases": [
+    {
+      "id": "src-agent-output-activity-text-test-ts-activity-001",
+      "name": "reads Claude's verb with its elapsed time and tokens",
+      "source": "src/agent-output-activity-text.test.ts",
+      "api": "activityTextFromParsedAgentOutput",
+      "input": { "raw": "✻ Jitterbugging… (2m 23s · ↓ 8.1k tokens)", "options": { "tool": "claude" } },
+      "output": "Jitterbugging… (2m 23s · ↓ 8.1k tokens)",
+      "inputSha256": "0f9754ae8dffe375b9fc84df9f9bccd2e0a746dca50cb5adb08cf11d06aae4fb"
+    },
+    {
+      "id": "src-agent-output-activity-text-test-ts-activity-002",
+      "name": "reads every spinner frame, not just the three it used to",
+      "source": "src/agent-output-activity-text.test.ts",
+      "api": "activityTextFromParsedAgentOutput",
+      "input": { "raw": "✢ Transfiguring… (14s)", "options": { "tool": "claude" } },
+      "output": "Transfiguring… (14s)",
+      "inputSha256": "ae90ec5d06e0270756edec66db96df36321cfc688998af14aaba526cea1d5497"
+    },
+    {
+      "id": "src-agent-output-activity-text-test-ts-activity-003",
+      "name": "reads every spinner frame, not just the three it used to",
+      "source": "src/agent-output-activity-text.test.ts",
+      "api": "activityTextFromParsedAgentOutput",
+      "input": { "raw": "✳ Transfiguring… (14s)", "options": { "tool": "claude" } },
+      "output": "Transfiguring… (14s)",
+      "inputSha256": "c1ca0e6f6a65b4e11edc30f9e6e81517dc8c8308fff745eed0275ca0877c6a86"
+    },
+    {
+      "id": "src-agent-output-activity-text-test-ts-activity-004",
+      "name": "reads every spinner frame, not just the three it used to",
+      "source": "src/agent-output-activity-text.test.ts",
+      "api": "activityTextFromParsedAgentOutput",
+      "input": { "raw": "✶ Transfiguring… (14s)", "options": { "tool": "claude" } },
+      "output": "Transfiguring… (14s)",
+      "inputSha256": "3794391b712e4275b4f86306f7f52d1a0ac6b1e18dbfd841c775e570771ba5dc"
+    },
+    {
+      "id": "src-agent-output-activity-text-test-ts-activity-005",
+      "name": "reads every spinner frame, not just the three it used to",
+      "source": "src/agent-output-activity-text.test.ts",
+      "api": "activityTextFromParsedAgentOutput",
+      "input": { "raw": "✻ Transfiguring… (14s)", "options": { "tool": "claude" } },
+      "output": "Transfiguring… (14s)",
+      "inputSha256": "ea0bcfc4cf00a390a804d84a599845e58accff79bef238c82ffcea1ab13a5b33"
+    },
+    {
+      "id": "src-agent-output-activity-text-test-ts-activity-006",
+      "name": "reads every spinner frame, not just the three it used to",
+      "source": "src/agent-output-activity-text.test.ts",
+      "api": "activityTextFromParsedAgentOutput",
+      "input": { "raw": "✽ Transfiguring… (14s)", "options": { "tool": "claude" } },
+      "output": "Transfiguring… (14s)",
+      "inputSha256": "3637926e77f4323980b68bd5664ab68963663fcde7d5499ea753a5584ec06c02"
+    },
+    {
+      "id": "src-agent-output-activity-text-test-ts-activity-007",
+      "name": "reads every spinner frame, not just the three it used to",
+      "source": "src/agent-output-activity-text.test.ts",
+      "api": "activityTextFromParsedAgentOutput",
+      "input": { "raw": "· Transfiguring… (14s)", "options": { "tool": "claude" } },
+      "output": "Transfiguring… (14s)",
+      "inputSha256": "5a04a94775b64e04364a01cbf5e52ad8838a42bb9c7257d406eca13c1f832002"
+    },
+    {
+      "id": "src-agent-output-activity-text-test-ts-activity-008",
+      "name": "reads codex's line through the same path",
+      "source": "src/agent-output-activity-text.test.ts",
+      "api": "activityTextFromParsedAgentOutput",
+      "input": { "raw": "* Indexing… (running stop hook · 11s · ↓ 16 tokens)", "options": { "tool": "codex" } },
+      "output": "Indexing… (running stop hook · 11s · ↓ 16 tokens)",
+      "inputSha256": "daaef92e17d3e351d6acbf4786cd4fcc5cfa3ef52c6784f4c0a912ee0be6484c"
+    },
+    {
+      "id": "src-agent-output-activity-text-test-ts-activity-009",
+      "name": "drops codex's keybinding, which is the only thing it adds beyond the timer",
+      "source": "src/agent-output-activity-text.test.ts",
+      "api": "activityTextFromParsedAgentOutput",
+      "input": { "raw": "• Working (4s • esc to interrupt)", "options": { "tool": "codex" } },
+      "output": "Working (4s)",
+      "inputSha256": "580608482afc7f215ca4511c28fbce236e0fc73f32a6cf4bbc4083b4f3b649c3"
+    },
+    {
+      "id": "src-agent-output-activity-text-test-ts-activity-010",
+      "name": "drops codex's keybinding, which is the only thing it adds beyond the timer",
+      "source": "src/agent-output-activity-text.test.ts",
+      "api": "activityTextFromParsedAgentOutput",
+      "input": { "raw": "• Working (12s • esc to interrupt)", "options": { "tool": "codex" } },
+      "output": "Working (12s)",
+      "inputSha256": "e9f896887f2d08c3a5f11bdda83b3d2e571b4390e623f0b6d03d14db5cd2676b"
+    },
+    {
+      "id": "src-agent-output-activity-text-test-ts-activity-011",
+      "name": "refuses a finished turn",
+      "source": "src/agent-output-activity-text.test.ts",
+      "api": "activityTextFromParsedAgentOutput",
+      "input": { "raw": "- Worked for 20m 16s", "options": { "tool": "codex" } },
+      "output": "",
+      "inputSha256": "e3e97e496e7fdf968d65576d985d30b0ad77282336c9580d38a423c00256416f"
+    },
+    {
+      "id": "src-agent-output-activity-text-test-ts-activity-012",
+      "name": "refuses a finished turn",
+      "source": "src/agent-output-activity-text.test.ts",
+      "api": "activityTextFromParsedAgentOutput",
+      "input": { "raw": "✻ Cogitated for 35s · 3 shells still running", "options": { "tool": "claude" } },
+      "output": "",
+      "inputSha256": "7d896057a3153d62aa7e0d9bf033ffa1f842369d58d775b20cf9f55a8dce8eca"
+    },
+    {
+      "id": "src-agent-output-activity-text-test-ts-activity-013",
+      "name": "takes the newest line when the pane holds several",
+      "source": "src/agent-output-activity-text.test.ts",
+      "api": "activityTextFromParsedAgentOutput",
+      "input": { "raw": "✻ Booting… (1s)\n⏺ Did a thing.\n✻ Jitterbugging… (2m 23s)", "options": { "tool": "claude" } },
+      "output": "Jitterbugging… (2m 23s)",
+      "inputSha256": "11edbb7620ca632da50bf04abed80507250734a41a492d5e043a0113039e2cae"
+    },
+    {
+      "id": "src-agent-output-activity-text-test-ts-activity-014",
+      "name": "does not hand back the footer that shares its status block",
+      "source": "src/agent-output-activity-text.test.ts",
+      "api": "activityTextFromParsedAgentOutput",
+      "input": {
+        "raw": "✻ Jitterbugging… (2m 23s)\nsam@MacBook-Pro-4 ~/cs/aimux  42% (1M context)",
+        "options": { "tool": "claude" }
+      },
+      "output": "Jitterbugging… (2m 23s)",
+      "inputSha256": "47fef032eef242af724846468e1d88bd6766e6eaf6fb90df103d1d15f988619a"
+    },
+    {
+      "id": "src-agent-output-activity-text-test-ts-activity-015",
+      "name": "is empty for a pane that is not reporting progress",
+      "source": "src/agent-output-activity-text.test.ts",
+      "api": "activityTextFromParsedAgentOutput",
+      "input": { "raw": "⏺ Here is the answer.", "options": { "tool": "claude" } },
+      "output": "",
+      "inputSha256": "1590e5b2267b6eb6f08666d08dc1c1d76e9752cdb7aac13347beae6f0fab6e6f"
+    },
+    {
+      "id": "src-agent-output-activity-text-test-ts-activity-016",
+      "name": "is empty for a pane that is not reporting progress",
+      "source": "src/agent-output-activity-text.test.ts",
+      "api": "activityTextFromParsedAgentOutput",
+      "input": { "raw": "", "options": { "tool": "claude" } },
+      "output": "",
+      "inputSha256": "7e4a41ca3e9e2c8a61271491983f2d1c483ec2ee123094b3c191ab519df18a34"
+    }
+  ]
+}

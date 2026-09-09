@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "source": "src/runtime-drift.test.ts",
+  "generatedBy": "scripts/capture-runtime-guard-repair-contract.mjs",
+  "description": "Aimux local-build drift error classification captured by running TypeScript.",
+  "cases": [
+    {
+      "id": "runtime-state-drift-001",
+      "name": "matches daemon local build drift errors",
+      "source": "src/runtime-drift.test.ts",
+      "api": "isAimuxBuildDriftError",
+      "input": { "errorMessage": "aimux daemon on default port is from a different local build" },
+      "output": true,
+      "inputSha256": "fca75f635391ba82c11d714807b787db3634584189059c264364a67d871e6018"
+    },
+    {
+      "id": "runtime-state-drift-002",
+      "name": "matches project service local build drift errors",
+      "source": "src/runtime-drift.test.ts",
+      "api": "isAimuxBuildDriftError",
+      "input": { "errorMessage": "the running project service is from a different local build" },
+      "output": true,
+      "inputSha256": "6bdde6248c54b5ea40a2edc7f743a1510af7c7688d18cf18b7a2f7f63499ef61"
+    },
+    {
+      "id": "runtime-state-drift-003",
+      "name": "ignores unrelated daemon readiness failures",
+      "source": "src/runtime-drift.test.ts",
+      "api": "isAimuxBuildDriftError",
+      "input": { "errorMessage": "aimux daemon is not running" },
+      "output": false,
+      "inputSha256": "30aa932eae8795bd78149b8e6b31284baa1504ff564e2ec8bdecf6b324d2efaa"
+    },
+    {
+      "id": "runtime-state-drift-004",
+      "name": "ignores non-error drift text",
+      "source": "src/runtime-drift.test.ts",
+      "api": "isAimuxBuildDriftError",
+      "input": { "value": "different local build" },
+      "output": false,
+      "inputSha256": "a5dbbc033ab8869a3a2988b31587cd751ae660ee4589f2d0cbab633c611b8578"
+    }
+  ]
+}

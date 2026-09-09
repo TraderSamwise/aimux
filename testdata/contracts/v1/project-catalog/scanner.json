@@ -1,0 +1,215 @@
+{
+  "version": 1,
+  "source": "src/project-scanner.test.ts",
+  "generatedBy": "scripts/capture-project-scanner-contract.mjs",
+  "description": "Project scanner status headline, statusline enrichment, desktop project filtering, session-name, and discovery contracts captured by running TypeScript project-scanner helpers with a temporary AIMUX_HOME.",
+  "normalization": {
+    "paths": "Temporary home and project roots are replaced with <home>, <aimuxHome>, <projectA>, and <projectB> tokens."
+  },
+  "cases": [
+    {
+      "id": "project-scanner-001",
+      "name": "reads status headlines from each registered project state directory",
+      "source": "src/project-scanner.test.ts",
+      "api": "scanProject",
+      "input": { "projects": ["<home>/work/project-a", "<home>/work/project-b"] },
+      "output": {
+        "projectA": {
+          "name": "project-a",
+          "path": "<home>/work/project-a",
+          "sessions": [
+            {
+              "id": "session-a",
+              "tool": "codex",
+              "status": "running",
+              "headline": "Alpha headline",
+              "worktreePath": "<home>/work/project-a"
+            }
+          ]
+        },
+        "projectB": {
+          "name": "project-b",
+          "path": "<home>/work/project-b",
+          "sessions": [
+            {
+              "id": "session-b",
+              "tool": "claude",
+              "status": "running",
+              "headline": "Beta headline",
+              "worktreePath": "<home>/work/project-b"
+            }
+          ]
+        }
+      },
+      "inputSha256": "4fe0a835bd0a3a18e451b4335a4743839a89c4200d64010bd0e3c32a9619d875"
+    },
+    {
+      "id": "project-scanner-002",
+      "name": "enriches topology sessions from fresh global statusline data without overriding topology status",
+      "source": "src/project-scanner.test.ts",
+      "api": "scanProject",
+      "input": {
+        "project": "<home>/work/project-a",
+        "statuslinePath": "<home>/.aimux/projects/<projectAId>/statusline.json"
+      },
+      "output": {
+        "name": "project-a",
+        "path": "<home>/work/project-a",
+        "sessions": [
+          {
+            "id": "session-a",
+            "tool": "codex",
+            "status": "running",
+            "label": "chart-fix",
+            "headline": "auditing session routing",
+            "worktreePath": "<home>/work/project-a",
+            "role": "coder"
+          }
+        ]
+      },
+      "inputSha256": "e031e14b33339df1d054edfbabce3f4c0a4ed4e288b5d5cd8dfdc5749232b405"
+    },
+    {
+      "id": "project-scanner-003",
+      "name": "ignores legacy local statusline projection files",
+      "source": "src/project-scanner.test.ts",
+      "api": "scanProject",
+      "input": {
+        "project": "<home>/work/project-a",
+        "localStatuslinePath": "<home>/work/project-a/.aimux/statusline.json"
+      },
+      "output": {
+        "name": "project-a",
+        "path": "<home>/work/project-a",
+        "sessions": [
+          {
+            "id": "session-a",
+            "tool": "codex",
+            "status": "running",
+            "headline": "Alpha headline",
+            "worktreePath": "<home>/work/project-a"
+          }
+        ]
+      },
+      "inputSha256": "0bfc6c213c72c7c008a4748c47a115067b0dd7643620c1e8a74329861a462f89"
+    },
+    {
+      "id": "project-scanner-004",
+      "name": "does not mint project sessions from instances-only data",
+      "source": "src/project-scanner.test.ts",
+      "api": "scanProject",
+      "input": {
+        "project": "<home>/work/project-c",
+        "instancesPath": "<home>/.aimux/projects/<projectCId>/instances.json"
+      },
+      "output": { "name": "project-c", "path": "<home>/work/project-c", "sessions": [] },
+      "inputSha256": "cba5e4f2787bfce3a0b36fa31d521630d65c99c5a8e3268bc0298f10ae5c89df"
+    },
+    {
+      "id": "project-scanner-005",
+      "name": "builds desktop project summaries with supplied tmux session names",
+      "source": "src/project-scanner.test.ts",
+      "api": "listDesktopProjects",
+      "input": { "projects": ["<home>/work/project-a", "<home>/work/project-b"], "tmux": "fake getProjectSession" },
+      "output": [
+        {
+          "id": "<projectAId>",
+          "name": "project-a",
+          "path": "<home>/work/project-a",
+          "lastSeen": "<ts>",
+          "dashboardSessionName": "tmux-<projectAId>"
+        },
+        {
+          "id": "<projectBId>",
+          "name": "project-b",
+          "path": "<home>/work/project-b",
+          "lastSeen": "<ts>",
+          "dashboardSessionName": "tmux-<projectBId>"
+        },
+        {
+          "id": "<projectCId>",
+          "name": "project-c",
+          "path": "<home>/work/project-c",
+          "lastSeen": "<ts>",
+          "dashboardSessionName": "tmux-<projectCId>"
+        }
+      ],
+      "inputSha256": "4f74fac7a45f6cf32f8962960c156fc830849cad51187b5b2398b84409a12924"
+    },
+    {
+      "id": "project-scanner-006",
+      "name": "hides missing tmp and non-git registry entries from desktop lists",
+      "source": "src/project-scanner.test.ts",
+      "api": "listRegisteredDesktopProjects",
+      "input": {
+        "missingProject": "<home>/missing-project",
+        "tmpProject": "<tmp>/aimux-project-scanner-hidden",
+        "nonGitProject": "<home>/work/logs"
+      },
+      "output": [
+        {
+          "id": "<projectAId>",
+          "name": "project-a",
+          "path": "<home>/work/project-a",
+          "lastSeen": "<ts>",
+          "dashboardSessionName": "aimux-<projectAId>"
+        },
+        {
+          "id": "<projectBId>",
+          "name": "project-b",
+          "path": "<home>/work/project-b",
+          "lastSeen": "<ts>",
+          "dashboardSessionName": "aimux-<projectBId>"
+        },
+        {
+          "id": "<projectCId>",
+          "name": "project-c",
+          "path": "<home>/work/project-c",
+          "lastSeen": "<ts>",
+          "dashboardSessionName": "aimux-<projectCId>"
+        }
+      ],
+      "inputSha256": "d1545c7bd5a40cf8f893e1465ceeef452efa8b1ffceddd134c8a2cfe72490aa2"
+    },
+    {
+      "id": "project-scanner-007",
+      "name": "builds registered dashboard session names from each project config",
+      "source": "src/project-scanner.test.ts",
+      "api": "listRegisteredDesktopProjects",
+      "input": { "configs": { "projectA": { "sessionPrefix": "alpha" }, "projectB": { "sessionPrefix": "beta" } } },
+      "output": [
+        {
+          "id": "<projectAId>",
+          "name": "project-a",
+          "path": "<home>/work/project-a",
+          "lastSeen": "<ts>",
+          "dashboardSessionName": "alpha-<projectAId>"
+        },
+        {
+          "id": "<projectBId>",
+          "name": "project-b",
+          "path": "<home>/work/project-b",
+          "lastSeen": "<ts>",
+          "dashboardSessionName": "beta-<projectBId>"
+        },
+        {
+          "id": "<projectCId>",
+          "name": "project-c",
+          "path": "<home>/work/project-c",
+          "lastSeen": "<ts>",
+          "dashboardSessionName": "aimux-<projectCId>"
+        }
+      ],
+      "inputSha256": "214b35cfc44f6f42df6c5f70906e13c152dd11223d9f04e50ce5dad8d9a81219"
+    },
+    {
+      "id": "project-scanner-008",
+      "name": "discovers only registered projects that still exist",
+      "source": "src/project-scanner.test.ts",
+      "api": "discoverProjects",
+      "input": { "registryPath": "<home>/.aimux/projects.json" },
+      "output": ["<home>/work/project-a", "<home>/work/project-b", "<home>/work/project-c"],
+      "inputSha256": "702fd958b9f7729610c2e763a7262b4ff3b0c497c08bea86b5f7efc2dbe4cc1a"
+    }
+  ]
+}

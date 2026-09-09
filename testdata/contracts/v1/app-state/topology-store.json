@@ -1,0 +1,508 @@
+{
+  "version": 1,
+  "source": ["app/stores/topology.test.ts", "app/stores/topology.ts"],
+  "generatedBy": "scripts/capture-app-resource-store-contract.mjs",
+  "description": "App topology resource lifecycle, transient settle behavior, and request-scope matching captured by running TypeScript Jotai atoms.",
+  "cases": [
+    {
+      "id": "app-state-topology-store-001",
+      "name": "marks an in-flight refresh stale when a previous value exists",
+      "source": "app/stores/topology.test.ts",
+      "api": "app-state-topology-store",
+      "input": {
+        "name": "marks an in-flight refresh stale when a previous value exists",
+        "source": "app/stores/topology.test.ts",
+        "actions": [
+          {
+            "kind": "success",
+            "value": {
+              "projectName": "repo",
+              "health": "idle",
+              "counts": { "worktrees": 1, "agents": 1, "services": 0 },
+              "worktrees": [
+                {
+                  "name": "Main Checkout",
+                  "path": "/repo",
+                  "branch": "main",
+                  "health": "idle",
+                  "agents": 1,
+                  "services": 0
+                }
+              ],
+              "rows": [
+                {
+                  "kind": "agent",
+                  "depth": 1,
+                  "label": "claude",
+                  "health": "idle",
+                  "status": "ready",
+                  "sessionId": "agent-1"
+                }
+              ],
+              "fetchedAt": "2026-01-01T00:00:00.000Z"
+            },
+            "updatedAt": 10
+          },
+          { "kind": "begin" }
+        ]
+      },
+      "output": {
+        "resource": {
+          "value": {
+            "projectName": "repo",
+            "health": "idle",
+            "counts": { "worktrees": 1, "agents": 1, "services": 0 },
+            "worktrees": [
+              {
+                "name": "Main Checkout",
+                "path": "/repo",
+                "branch": "main",
+                "health": "idle",
+                "agents": 1,
+                "services": 0
+              }
+            ],
+            "rows": [
+              {
+                "kind": "agent",
+                "depth": 1,
+                "label": "claude",
+                "health": "idle",
+                "status": "ready",
+                "sessionId": "agent-1"
+              }
+            ],
+            "fetchedAt": "2026-01-01T00:00:00.000Z"
+          },
+          "error": null,
+          "pending": true,
+          "stale": true,
+          "updatedAt": 10
+        },
+        "value": {
+          "projectName": "repo",
+          "health": "idle",
+          "counts": { "worktrees": 1, "agents": 1, "services": 0 },
+          "worktrees": [
+            { "name": "Main Checkout", "path": "/repo", "branch": "main", "health": "idle", "agents": 1, "services": 0 }
+          ],
+          "rows": [
+            {
+              "kind": "agent",
+              "depth": 1,
+              "label": "claude",
+              "health": "idle",
+              "status": "ready",
+              "sessionId": "agent-1"
+            }
+          ],
+          "fetchedAt": "2026-01-01T00:00:00.000Z"
+        },
+        "error": null
+      },
+      "inputSha256": "daf6df7b70cbcb627733a8c1c145390bdc0bbe9a3607bef80bbd5ae808bc53e4"
+    },
+    {
+      "id": "app-state-topology-store-002",
+      "name": "keeps the last good value after a refresh failure",
+      "source": "app/stores/topology.test.ts",
+      "api": "app-state-topology-store",
+      "input": {
+        "name": "keeps the last good value after a refresh failure",
+        "source": "app/stores/topology.test.ts",
+        "actions": [
+          {
+            "kind": "success",
+            "value": {
+              "projectName": "repo",
+              "health": "idle",
+              "counts": { "worktrees": 1, "agents": 1, "services": 0 },
+              "worktrees": [
+                {
+                  "name": "Main Checkout",
+                  "path": "/repo",
+                  "branch": "main",
+                  "health": "idle",
+                  "agents": 1,
+                  "services": 0
+                }
+              ],
+              "rows": [
+                {
+                  "kind": "agent",
+                  "depth": 1,
+                  "label": "claude",
+                  "health": "idle",
+                  "status": "ready",
+                  "sessionId": "agent-1"
+                }
+              ],
+              "fetchedAt": "2026-01-01T00:00:00.000Z"
+            },
+            "updatedAt": 10
+          },
+          { "kind": "failure", "error": "service unavailable" }
+        ]
+      },
+      "output": {
+        "resource": {
+          "value": {
+            "projectName": "repo",
+            "health": "idle",
+            "counts": { "worktrees": 1, "agents": 1, "services": 0 },
+            "worktrees": [
+              {
+                "name": "Main Checkout",
+                "path": "/repo",
+                "branch": "main",
+                "health": "idle",
+                "agents": 1,
+                "services": 0
+              }
+            ],
+            "rows": [
+              {
+                "kind": "agent",
+                "depth": 1,
+                "label": "claude",
+                "health": "idle",
+                "status": "ready",
+                "sessionId": "agent-1"
+              }
+            ],
+            "fetchedAt": "2026-01-01T00:00:00.000Z"
+          },
+          "error": "service unavailable",
+          "pending": false,
+          "stale": true,
+          "updatedAt": 10
+        },
+        "value": {
+          "projectName": "repo",
+          "health": "idle",
+          "counts": { "worktrees": 1, "agents": 1, "services": 0 },
+          "worktrees": [
+            { "name": "Main Checkout", "path": "/repo", "branch": "main", "health": "idle", "agents": 1, "services": 0 }
+          ],
+          "rows": [
+            {
+              "kind": "agent",
+              "depth": 1,
+              "label": "claude",
+              "health": "idle",
+              "status": "ready",
+              "sessionId": "agent-1"
+            }
+          ],
+          "fetchedAt": "2026-01-01T00:00:00.000Z"
+        },
+        "error": "service unavailable"
+      },
+      "inputSha256": "d261ae4fe39647b20ffa46dc6ca706bdace0a2402bd74bdd4ca326fff37bc300"
+    },
+    {
+      "id": "app-state-topology-store-003",
+      "name": "clears stale/error metadata after the resource recovers",
+      "source": "app/stores/topology.test.ts",
+      "api": "app-state-topology-store",
+      "input": {
+        "name": "clears stale/error metadata after the resource recovers",
+        "source": "app/stores/topology.test.ts",
+        "actions": [
+          {
+            "kind": "success",
+            "value": {
+              "projectName": "repo",
+              "health": "idle",
+              "counts": { "worktrees": 1, "agents": 1, "services": 0 },
+              "worktrees": [
+                {
+                  "name": "Main Checkout",
+                  "path": "/repo",
+                  "branch": "main",
+                  "health": "idle",
+                  "agents": 1,
+                  "services": 0
+                }
+              ],
+              "rows": [
+                {
+                  "kind": "agent",
+                  "depth": 1,
+                  "label": "claude",
+                  "health": "idle",
+                  "status": "ready",
+                  "sessionId": "agent-1"
+                }
+              ],
+              "fetchedAt": "2026-01-01T00:00:00.000Z"
+            },
+            "updatedAt": 10
+          },
+          { "kind": "failure", "error": "service unavailable" },
+          {
+            "kind": "success",
+            "value": {
+              "projectName": "repo",
+              "health": "idle",
+              "counts": { "worktrees": 1, "agents": 2, "services": 0 },
+              "worktrees": [
+                {
+                  "name": "Main Checkout",
+                  "path": "/repo",
+                  "branch": "main",
+                  "health": "idle",
+                  "agents": 1,
+                  "services": 0
+                }
+              ],
+              "rows": [
+                {
+                  "kind": "agent",
+                  "depth": 1,
+                  "label": "claude",
+                  "health": "idle",
+                  "status": "ready",
+                  "sessionId": "agent-1"
+                }
+              ],
+              "fetchedAt": "2026-01-01T00:00:00.000Z"
+            },
+            "updatedAt": 20
+          }
+        ]
+      },
+      "output": {
+        "resource": {
+          "value": {
+            "projectName": "repo",
+            "health": "idle",
+            "counts": { "worktrees": 1, "agents": 2, "services": 0 },
+            "worktrees": [
+              {
+                "name": "Main Checkout",
+                "path": "/repo",
+                "branch": "main",
+                "health": "idle",
+                "agents": 1,
+                "services": 0
+              }
+            ],
+            "rows": [
+              {
+                "kind": "agent",
+                "depth": 1,
+                "label": "claude",
+                "health": "idle",
+                "status": "ready",
+                "sessionId": "agent-1"
+              }
+            ],
+            "fetchedAt": "2026-01-01T00:00:00.000Z"
+          },
+          "error": null,
+          "pending": false,
+          "stale": false,
+          "updatedAt": 20
+        },
+        "value": {
+          "projectName": "repo",
+          "health": "idle",
+          "counts": { "worktrees": 1, "agents": 2, "services": 0 },
+          "worktrees": [
+            { "name": "Main Checkout", "path": "/repo", "branch": "main", "health": "idle", "agents": 1, "services": 0 }
+          ],
+          "rows": [
+            {
+              "kind": "agent",
+              "depth": 1,
+              "label": "claude",
+              "health": "idle",
+              "status": "ready",
+              "sessionId": "agent-1"
+            }
+          ],
+          "fetchedAt": "2026-01-01T00:00:00.000Z"
+        },
+        "error": null
+      },
+      "inputSha256": "0e161a5d72958ed98943cdb56ec131fc987ce2c67269c1984e3000c9cf7c11f5"
+    },
+    {
+      "id": "app-state-topology-store-004",
+      "name": "clears the resource when the project service endpoint disappears",
+      "source": "app/stores/topology.test.ts",
+      "api": "app-state-topology-store",
+      "input": {
+        "name": "clears the resource when the project service endpoint disappears",
+        "source": "app/stores/topology.test.ts",
+        "actions": [
+          {
+            "kind": "success",
+            "value": {
+              "projectName": "repo",
+              "health": "idle",
+              "counts": { "worktrees": 1, "agents": 1, "services": 0 },
+              "worktrees": [
+                {
+                  "name": "Main Checkout",
+                  "path": "/repo",
+                  "branch": "main",
+                  "health": "idle",
+                  "agents": 1,
+                  "services": 0
+                }
+              ],
+              "rows": [
+                {
+                  "kind": "agent",
+                  "depth": 1,
+                  "label": "claude",
+                  "health": "idle",
+                  "status": "ready",
+                  "sessionId": "agent-1"
+                }
+              ],
+              "fetchedAt": "2026-01-01T00:00:00.000Z"
+            },
+            "updatedAt": 10
+          },
+          { "kind": "clear" }
+        ]
+      },
+      "output": {
+        "resource": { "value": null, "error": null, "pending": false, "stale": false, "updatedAt": null },
+        "value": null,
+        "error": null
+      },
+      "inputSha256": "87006c51e9490b94d97af62f1c3eaa0c867bc00a667e5936aa43d1685fcdef2e"
+    },
+    {
+      "id": "app-state-topology-store-005",
+      "name": "rejects in-flight results from an old endpoint generation",
+      "source": "app/stores/topology.test.ts",
+      "api": "app-state-topology-store",
+      "input": {
+        "name": "rejects in-flight results from an old endpoint generation",
+        "source": "app/stores/topology.test.ts",
+        "actions": [],
+        "requestChecks": [
+          {
+            "request": { "projectPath": "/repo", "endpointKey": "127.0.0.1:43190", "generation": 1 },
+            "current": { "projectPath": "/repo", "endpointKey": "127.0.0.1:43191", "generation": 2 }
+          },
+          {
+            "request": { "projectPath": "/repo", "endpointKey": "127.0.0.1:43191", "generation": 2 },
+            "current": { "projectPath": "/repo", "endpointKey": "127.0.0.1:43191", "generation": 2 }
+          }
+        ]
+      },
+      "output": {
+        "resource": { "value": null, "error": null, "pending": false, "stale": false, "updatedAt": null },
+        "value": null,
+        "error": null,
+        "requestChecks": [false, true]
+      },
+      "inputSha256": "e082848c8dfd1b0583cf110a8d543f9454768ef62e18f5ac5c8c6b2e835746ee"
+    },
+    {
+      "id": "app-state-topology-store-006",
+      "name": "settles transient refreshes without surfacing a stale failure",
+      "source": "app/stores/topology.test.ts",
+      "api": "app-state-topology-store",
+      "input": {
+        "name": "settles transient refreshes without surfacing a stale failure",
+        "source": "app/stores/topology.test.ts",
+        "actions": [
+          {
+            "kind": "success",
+            "value": {
+              "projectName": "repo",
+              "health": "idle",
+              "counts": { "worktrees": 1, "agents": 1, "services": 0 },
+              "worktrees": [
+                {
+                  "name": "Main Checkout",
+                  "path": "/repo",
+                  "branch": "main",
+                  "health": "idle",
+                  "agents": 1,
+                  "services": 0
+                }
+              ],
+              "rows": [
+                {
+                  "kind": "agent",
+                  "depth": 1,
+                  "label": "claude",
+                  "health": "idle",
+                  "status": "ready",
+                  "sessionId": "agent-1"
+                }
+              ],
+              "fetchedAt": "2026-01-01T00:00:00.000Z"
+            },
+            "updatedAt": 10
+          },
+          { "kind": "begin" },
+          { "kind": "settle" }
+        ]
+      },
+      "output": {
+        "resource": {
+          "value": {
+            "projectName": "repo",
+            "health": "idle",
+            "counts": { "worktrees": 1, "agents": 1, "services": 0 },
+            "worktrees": [
+              {
+                "name": "Main Checkout",
+                "path": "/repo",
+                "branch": "main",
+                "health": "idle",
+                "agents": 1,
+                "services": 0
+              }
+            ],
+            "rows": [
+              {
+                "kind": "agent",
+                "depth": 1,
+                "label": "claude",
+                "health": "idle",
+                "status": "ready",
+                "sessionId": "agent-1"
+              }
+            ],
+            "fetchedAt": "2026-01-01T00:00:00.000Z"
+          },
+          "error": null,
+          "pending": false,
+          "stale": true,
+          "updatedAt": 10
+        },
+        "value": {
+          "projectName": "repo",
+          "health": "idle",
+          "counts": { "worktrees": 1, "agents": 1, "services": 0 },
+          "worktrees": [
+            { "name": "Main Checkout", "path": "/repo", "branch": "main", "health": "idle", "agents": 1, "services": 0 }
+          ],
+          "rows": [
+            {
+              "kind": "agent",
+              "depth": 1,
+              "label": "claude",
+              "health": "idle",
+              "status": "ready",
+              "sessionId": "agent-1"
+            }
+          ],
+          "fetchedAt": "2026-01-01T00:00:00.000Z"
+        },
+        "error": null
+      },
+      "inputSha256": "14899ada93336dac92b22e45bd57b87c7b737b6506f576bcd5275f1c74e945b2"
+    }
+  ]
+}

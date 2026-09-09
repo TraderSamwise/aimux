@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "source": "src/session-runtime.test.ts",
+  "generatedBy": "scripts/capture-session-runtime-contract.mjs",
+  "description": "SessionRuntime transport data/exit event forwarding captured by running TypeScript.",
+  "cases": [
+    {
+      "id": "session-runtime-001",
+      "name": "emits output events from the transport",
+      "source": "src/session-runtime.test.ts",
+      "api": "SessionRuntime",
+      "input": { "event": { "kind": "data", "data": "hello" } },
+      "output": [{ "type": "output", "data": "hello" }],
+      "inputSha256": "1ccec92dab7e7b3a66a3ad60b9f3e0a00b9a5bab40f4a9cd1032a1caee258360"
+    },
+    {
+      "id": "session-runtime-002",
+      "name": "emits exit events from the transport",
+      "source": "src/session-runtime.test.ts",
+      "api": "SessionRuntime",
+      "input": { "event": { "kind": "exit", "code": 7 } },
+      "output": [{ "type": "exit", "code": 7 }],
+      "inputSha256": "bcdb9183600ef44162f2ad7ae5587e4887aff4a2ae72dd660855a77741501f34"
+    }
+  ]
+}

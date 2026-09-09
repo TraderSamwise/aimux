@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "source": "src/tui/render/box.test.ts",
+  "generatedBy": "scripts/capture-tui-render-box-contract.mjs",
+  "description": "TUI overlay box renderer outputs captured by running TypeScript tui/render/box helpers.",
+  "cases": [
+    {
+      "id": "tui-render-box-001",
+      "name": "draws rounded blue box with title band and body separator",
+      "source": "src/tui/render/box.test.ts",
+      "api": "renderOverlayBox",
+      "input": {
+        "name": "draws rounded blue box with title band and body separator",
+        "spec": { "title": "Title", "body": ["  body line"], "cols": 80, "rows": 24 }
+      },
+      "output": "\u001b7\u001b[9;28H\u001b[34m╭──────────────────────╮\u001b[0m\u001b[10;28H\u001b[34m│\u001b[0m\u001b[1;48;5;24;38;5;195m TITLE                \u001b[0m\u001b[34m│\u001b[0m\u001b[11;28H\u001b[34m├──────────────────────┤\u001b[0m\u001b[12;28H\u001b[34m│\u001b[0m   body line          \u001b[34m│\u001b[0m\u001b[13;28H\u001b[34m╰──────────────────────╯\u001b[0m\u001b8",
+      "inputSha256": "94ebb3f589d861256af0c151c424c5065620ffb0265dab78f32ba997d8dab601"
+    },
+    {
+      "id": "tui-render-box-002",
+      "name": "uses danger tone and warning glyph for red variant",
+      "source": "src/tui/render/box.test.ts",
+      "api": "renderOverlayBox",
+      "input": {
+        "name": "uses danger tone and warning glyph for red variant",
+        "spec": { "title": "Danger", "body": [], "cols": 80, "rows": 24, "variant": "red" }
+      },
+      "output": "\u001b7\u001b[10;28H\u001b[31m╭──────────────────────╮\u001b[0m\u001b[11;28H\u001b[31m│\u001b[0m\u001b[1;48;5;52;38;5;224m ⚠  DANGER            \u001b[0m\u001b[31m│\u001b[0m\u001b[12;28H\u001b[31m├──────────────────────┤\u001b[0m\u001b[13;28H\u001b[31m╰──────────────────────╯\u001b[0m\u001b8",
+      "inputSha256": "6a80691314b3fbed1fca5c6440fc56f7420017beb0178dfda75dab9e21a477b0"
+    },
+    {
+      "id": "tui-render-box-003",
+      "name": "preserves ANSI styling in body content",
+      "source": "src/tui/render/box.test.ts",
+      "api": "renderOverlayBox",
+      "input": {
+        "name": "preserves ANSI styling in body content",
+        "spec": { "title": "T", "body": ["\u001b[1mbold\u001b[0m plain"], "cols": 80, "rows": 24 }
+      },
+      "output": "\u001b7\u001b[9;28H\u001b[34m╭──────────────────────╮\u001b[0m\u001b[10;28H\u001b[34m│\u001b[0m\u001b[1;48;5;24;38;5;195m T                    \u001b[0m\u001b[34m│\u001b[0m\u001b[11;28H\u001b[34m├──────────────────────┤\u001b[0m\u001b[12;28H\u001b[34m│\u001b[0m \u001b[1mbold\u001b[0m plain           \u001b[34m│\u001b[0m\u001b[13;28H\u001b[34m╰──────────────────────╯\u001b[0m\u001b8",
+      "inputSha256": "311cd977a8904b9521bcac16632f6b8609ab6904c04cc3bb178979b6f0a2a2b6"
+    },
+    {
+      "id": "tui-render-box-004",
+      "name": "centers box on wide viewport",
+      "source": "src/tui/render/box.test.ts",
+      "api": "renderOverlayBox",
+      "input": {
+        "name": "centers box on wide viewport",
+        "spec": { "title": "Pick", "body": ["  one", "  two"], "cols": 200, "rows": 50 }
+      },
+      "output": "\u001b7\u001b[22;88H\u001b[34m╭──────────────────────╮\u001b[0m\u001b[23;88H\u001b[34m│\u001b[0m\u001b[1;48;5;24;38;5;195m PICK                 \u001b[0m\u001b[34m│\u001b[0m\u001b[24;88H\u001b[34m├──────────────────────┤\u001b[0m\u001b[25;88H\u001b[34m│\u001b[0m   one                \u001b[34m│\u001b[0m\u001b[26;88H\u001b[34m│\u001b[0m   two                \u001b[34m│\u001b[0m\u001b[27;88H\u001b[34m╰──────────────────────╯\u001b[0m\u001b8",
+      "inputSha256": "b67300f6f25b6334f4c730ed5ff8c377e1227a535e6fd83e72c2924d45e4b608"
+    },
+    {
+      "id": "tui-render-box-005",
+      "name": "pads and truncates every row to a uniform box width",
+      "source": "src/tui/render/box.test.ts",
+      "api": "renderOverlayBox",
+      "input": {
+        "name": "pads and truncates every row to a uniform box width",
+        "spec": {
+          "title": "short",
+          "body": [
+            "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          ],
+          "cols": 80,
+          "rows": 24
+        }
+      },
+      "output": "\u001b7\u001b[9;2H\u001b[34m╭──────────────────────────────────────────────────────────────────────────╮\u001b[0m\u001b[10;2H\u001b[34m│\u001b[0m\u001b[1;48;5;24;38;5;195m SHORT                                                                    \u001b[0m\u001b[34m│\u001b[0m\u001b[11;2H\u001b[34m├──────────────────────────────────────────────────────────────────────────┤\u001b[0m\u001b[12;2H\u001b[34m│\u001b[0m xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx… \u001b[34m│\u001b[0m\u001b[13;2H\u001b[34m╰──────────────────────────────────────────────────────────────────────────╯\u001b[0m\u001b8",
+      "inputSha256": "5d0b9c8dc826cd75bd0274e549614bf7f415cf4dabcd6cb82cf9ad1176074549"
+    },
+    {
+      "id": "tui-render-box-006",
+      "name": "supports custom band icon override",
+      "source": "src/tui/render/box.test.ts",
+      "api": "renderOverlayBox",
+      "input": {
+        "name": "supports custom band icon override",
+        "spec": {
+          "title": "Notice",
+          "body": ["\u001b[32mok\u001b[0m"],
+          "cols": 90,
+          "rows": 30,
+          "variant": "red",
+          "icon": "!"
+        }
+      },
+      "output": "\u001b7\u001b[12;33H\u001b[31m╭──────────────────────╮\u001b[0m\u001b[13;33H\u001b[31m│\u001b[0m\u001b[1;48;5;52;38;5;224m !  NOTICE            \u001b[0m\u001b[31m│\u001b[0m\u001b[14;33H\u001b[31m├──────────────────────┤\u001b[0m\u001b[15;33H\u001b[31m│\u001b[0m \u001b[32mok\u001b[0m                   \u001b[31m│\u001b[0m\u001b[16;33H\u001b[31m╰──────────────────────╯\u001b[0m\u001b8",
+      "inputSha256": "4a72651c2d595bc227da587d5df4369125e092724b940dba5910e70ed69098e1"
+    }
+  ]
+}

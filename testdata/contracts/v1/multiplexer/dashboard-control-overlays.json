@@ -1,0 +1,275 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/dashboard-control.ts",
+  "generatedBy": "scripts/capture-dashboard-control-overlays-contract.mjs",
+  "description": "Dashboard-control active overlay key dispatch, busy/error swallowing, and agent-restore confirm side effects captured by running TypeScript handleActiveDashboardOverlayKey.",
+  "cases": [
+    {
+      "id": "dashboard-control-overlays-001",
+      "name": "busy overlay queues dashboard enter for later local focus",
+      "source": "src/multiplexer/dashboard-control.ts",
+      "api": "handleActiveDashboardOverlayKey",
+      "input": {
+        "dashboardBusyState": { "title": "Repairing Aimux", "lines": [], "spinnerFrame": 0, "startedAt": 1 },
+        "level": "worktrees",
+        "key": "\r"
+      },
+      "output": {
+        "handled": false,
+        "overlayKind": "none",
+        "errorState": null,
+        "busyState": { "title": "Repairing Aimux", "lines": [], "spinnerFrame": 0, "startedAt": 1 },
+        "selection": "restore",
+        "footerFlash": null,
+        "footerFlashTicks": 0,
+        "pendingLocalNavigation": null,
+        "coordinationLoaded": null,
+        "calls": []
+      },
+      "inputSha256": "4a3abe2542d86dc52283c8943ce072791d75d0c678566fad8645665191f34de3"
+    },
+    {
+      "id": "dashboard-control-overlays-002",
+      "name": "busy overlay swallows mutating create key without queueing navigation",
+      "source": "src/multiplexer/dashboard-control.ts",
+      "api": "handleActiveDashboardOverlayKey",
+      "input": {
+        "dashboardBusyState": { "title": "Repairing Aimux", "lines": [], "spinnerFrame": 0, "startedAt": 1 },
+        "level": "sessions",
+        "worktreeEntries": [{ "kind": "session", "id": "codex-1" }],
+        "worktreeSessions": [{ "id": "codex-1", "status": "ready" }],
+        "key": "n"
+      },
+      "output": {
+        "handled": true,
+        "overlayKind": "none",
+        "errorState": null,
+        "busyState": { "title": "Repairing Aimux", "lines": [], "spinnerFrame": 0, "startedAt": 1 },
+        "selection": "restore",
+        "footerFlash": null,
+        "footerFlashTicks": 0,
+        "pendingLocalNavigation": null,
+        "coordinationLoaded": null,
+        "calls": []
+      },
+      "inputSha256": "295bf4767ad0c0ba2da11316517af8f9e83e5ff6de6ec67e432675ba6a8f1d03"
+    },
+    {
+      "id": "dashboard-control-overlays-003",
+      "name": "error overlay dismisses on enter",
+      "source": "src/multiplexer/dashboard-control.ts",
+      "api": "handleActiveDashboardOverlayKey",
+      "input": {
+        "dashboardErrorState": { "title": "Aimux repair failed", "lines": ["previous failure"] },
+        "key": "\r"
+      },
+      "output": {
+        "handled": true,
+        "overlayKind": "none",
+        "errorState": null,
+        "busyState": null,
+        "selection": "restore",
+        "footerFlash": null,
+        "footerFlashTicks": 0,
+        "pendingLocalNavigation": null,
+        "coordinationLoaded": null,
+        "calls": [{ "method": "dismissDashboardError", "args": [] }]
+      },
+      "inputSha256": "c2834bab0d0ac6dad37cc600ba674d8452f355a41c59a76ec5a543c5961e1de2"
+    },
+    {
+      "id": "dashboard-control-overlays-004",
+      "name": "error overlay ignores ordinary key without dismiss",
+      "source": "src/multiplexer/dashboard-control.ts",
+      "api": "handleActiveDashboardOverlayKey",
+      "input": { "dashboardErrorState": { "title": "Aimux repair failed", "lines": ["previous failure"] }, "key": "x" },
+      "output": {
+        "handled": true,
+        "overlayKind": "none",
+        "errorState": { "title": "Aimux repair failed", "lines": ["previous failure"] },
+        "busyState": null,
+        "selection": "restore",
+        "footerFlash": null,
+        "footerFlashTicks": 0,
+        "pendingLocalNavigation": null,
+        "coordinationLoaded": null,
+        "calls": []
+      },
+      "inputSha256": "ec9c18602753ce10d18fb2294637ed9ac047753c9e1348e12e4006339c24f071"
+    },
+    {
+      "id": "dashboard-control-overlays-005",
+      "name": "active overlay dispatches key to matching handler",
+      "source": "src/multiplexer/dashboard-control.ts",
+      "api": "handleActiveDashboardOverlayKey",
+      "input": { "dashboardOverlayState": { "kind": "thread-reply" }, "key": "j" },
+      "output": {
+        "handled": true,
+        "overlayKind": "thread-reply",
+        "errorState": null,
+        "busyState": null,
+        "selection": "restore",
+        "footerFlash": null,
+        "footerFlashTicks": 0,
+        "pendingLocalNavigation": null,
+        "coordinationLoaded": null,
+        "calls": [{ "method": "handleThreadReplyKey", "args": [{ "type": "Buffer", "data": [106] }] }]
+      },
+      "inputSha256": "612570cd6ff9404e1852a81829cc47c78a0c2920ab707a508348e00a6e3a3822"
+    },
+    {
+      "id": "dashboard-control-overlays-006",
+      "name": "unknown overlay kind falls through",
+      "source": "src/multiplexer/dashboard-control.ts",
+      "api": "handleActiveDashboardOverlayKey",
+      "input": { "dashboardOverlayState": { "kind": "none" }, "key": "j" },
+      "output": {
+        "handled": false,
+        "overlayKind": "none",
+        "errorState": null,
+        "busyState": null,
+        "selection": "restore",
+        "footerFlash": null,
+        "footerFlashTicks": 0,
+        "pendingLocalNavigation": null,
+        "coordinationLoaded": null,
+        "calls": []
+      },
+      "inputSha256": "e902dc9c202406a91a65c41d9e27546b3fb0760aecf033ba4e29fe526c134414"
+    },
+    {
+      "id": "dashboard-control-overlays-007",
+      "name": "restore overlay arrow toggles selection and redraws",
+      "source": "src/multiplexer/dashboard-control.ts",
+      "api": "handleActiveDashboardOverlayKey",
+      "input": {
+        "dashboardOverlayState": { "kind": "agent-restore-confirm" },
+        "agentRestoreConfirmSelection": "restore",
+        "dashboardAgentRestoreOfferCache": { "sessionIds": ["claude-1", "codex-1"] },
+        "key": "\u001b[C"
+      },
+      "output": {
+        "handled": true,
+        "overlayKind": "agent-restore-confirm",
+        "errorState": null,
+        "busyState": null,
+        "selection": "cancel",
+        "footerFlash": null,
+        "footerFlashTicks": 0,
+        "pendingLocalNavigation": null,
+        "coordinationLoaded": null,
+        "calls": [{ "method": "redrawDashboardWithOverlay", "args": [] }]
+      },
+      "inputSha256": "706d0d928c505f982a603a7fb0694c72d6fbfecb9fd5cf13902f650a3820d300"
+    },
+    {
+      "id": "dashboard-control-overlays-008",
+      "name": "restore overlay enter starts restore through project API",
+      "source": "src/multiplexer/dashboard-control.ts",
+      "api": "handleActiveDashboardOverlayKey",
+      "input": {
+        "dashboardOverlayState": { "kind": "agent-restore-confirm" },
+        "agentRestoreConfirmSelection": "restore",
+        "dashboardAgentRestoreOfferCache": { "sessionIds": ["claude-1", "codex-1"] },
+        "dashboardSessions": [
+          { "id": "claude-1", "status": "offline" },
+          { "id": "codex-1", "status": "offline" }
+        ],
+        "key": "\r"
+      },
+      "output": {
+        "handled": true,
+        "overlayKind": "none",
+        "errorState": null,
+        "busyState": null,
+        "selection": "restore",
+        "footerFlash": "Restoring agents 0/2",
+        "footerFlashTicks": 9007199254740991,
+        "pendingLocalNavigation": null,
+        "coordinationLoaded": null,
+        "calls": [
+          { "method": "clearDashboardOverlay", "args": [] },
+          { "method": "setPendingDashboardSessionAction", "args": ["claude-1", "starting"] },
+          { "method": "setPendingDashboardSessionAction", "args": ["codex-1", "starting"] },
+          { "method": "renderDashboard", "args": [] },
+          { "method": "postToProjectService", "args": ["/agents/restore-previous", {}, { "timeoutMs": 10000 }] },
+          {
+            "method": "refreshDashboardModelFromService",
+            "args": [true, { "lifecycle": { "mode": "dashboard", "inputEpoch": 0, "requiresInputEpoch": true } }]
+          },
+          { "method": "getDashboardSessions", "args": [] },
+          { "method": "renderDashboard", "args": [] }
+        ]
+      },
+      "inputSha256": "fc2cd94d19ff64a143c30b3e6b014f5302baee07d5e5a22d1f9562d0f170100d"
+    },
+    {
+      "id": "dashboard-control-overlays-009",
+      "name": "restore overlay escape dismisses through project API",
+      "source": "src/multiplexer/dashboard-control.ts",
+      "api": "handleActiveDashboardOverlayKey",
+      "input": {
+        "dashboardOverlayState": { "kind": "agent-restore-confirm" },
+        "agentRestoreConfirmSelection": "restore",
+        "dashboardAgentRestoreOfferCache": { "sessionIds": ["claude-1", "codex-1"] },
+        "key": "\u001b"
+      },
+      "output": {
+        "handled": true,
+        "overlayKind": "none",
+        "errorState": null,
+        "busyState": null,
+        "selection": "restore",
+        "footerFlash": "Dismissed agent restore",
+        "footerFlashTicks": 3,
+        "pendingLocalNavigation": null,
+        "coordinationLoaded": null,
+        "calls": [
+          { "method": "clearDashboardOverlay", "args": [] },
+          { "method": "renderDashboard", "args": [] },
+          { "method": "postToProjectService", "args": ["/agents/restore-previous/dismiss", {}] },
+          {
+            "method": "refreshDashboardModelFromService",
+            "args": [true, { "lifecycle": { "mode": "dashboard", "inputEpoch": 0, "requiresInputEpoch": true } }]
+          },
+          { "method": "renderDashboard", "args": [] }
+        ]
+      },
+      "inputSha256": "0b8b0c59ef8926113141bf5065f2505a106dd42447a7534877d2863ab80c9b82"
+    },
+    {
+      "id": "dashboard-control-overlays-010",
+      "name": "restore overlay enter on cancel dismisses",
+      "source": "src/multiplexer/dashboard-control.ts",
+      "api": "handleActiveDashboardOverlayKey",
+      "input": {
+        "dashboardOverlayState": { "kind": "agent-restore-confirm" },
+        "agentRestoreConfirmSelection": "cancel",
+        "dashboardAgentRestoreOfferCache": { "sessionIds": ["claude-1"] },
+        "key": "\r"
+      },
+      "output": {
+        "handled": true,
+        "overlayKind": "none",
+        "errorState": null,
+        "busyState": null,
+        "selection": "restore",
+        "footerFlash": "Dismissed agent restore",
+        "footerFlashTicks": 3,
+        "pendingLocalNavigation": null,
+        "coordinationLoaded": null,
+        "calls": [
+          { "method": "clearDashboardOverlay", "args": [] },
+          { "method": "renderDashboard", "args": [] },
+          { "method": "postToProjectService", "args": ["/agents/restore-previous/dismiss", {}] },
+          {
+            "method": "refreshDashboardModelFromService",
+            "args": [true, { "lifecycle": { "mode": "dashboard", "inputEpoch": 0, "requiresInputEpoch": true } }]
+          },
+          { "method": "renderDashboard", "args": [] }
+        ]
+      },
+      "inputSha256": "15d2bc813dffd72e69d18d27284e7a6a06848b8e613e80e8449b8d74d7ca8749"
+    }
+  ]
+}

@@ -1,0 +1,372 @@
+{
+  "version": 1,
+  "source": ["app/stores/settings.test.ts", "app/stores/settings.ts"],
+  "generatedBy": "scripts/capture-app-settings-contract.mjs",
+  "description": "Durable app settings defaults, migration normalization, monitor viewport clamping, share normalization, and desktop zoom helpers captured by running TypeScript settings helpers.",
+  "cases": [
+    {
+      "id": "app-state-settings-001",
+      "name": "keeps durable UI settings in one persisted settings object",
+      "source": "app/stores/settings.test.ts",
+      "api": "defaultSettings",
+      "input": {
+        "name": "keeps durable UI settings in one persisted settings object",
+        "source": "app/stores/settings.test.ts",
+        "api": "defaultSettings"
+      },
+      "output": {
+        "theme": "dark",
+        "agentOutputViewMode": "split",
+        "exposePreviewMode": "terminal",
+        "desktopAppZoom": 110,
+        "chatRichTerminalColors": true,
+        "notifications": {
+          "enabled": false,
+          "channels": { "browser": true, "push": false },
+          "categories": {
+            "agent": {
+              "enabled": true,
+              "needsInput": true,
+              "blocked": true,
+              "errors": true,
+              "completed": false,
+              "activity": false
+            },
+            "system": { "enabled": false, "relayStatus": false, "projectHealth": false }
+          }
+        },
+        "acceptedShares": [],
+        "activeShare": null,
+        "monitor": {
+          "intervalSeconds": 10,
+          "targetKind": "project-agent",
+          "captureMode": "camera",
+          "cameraViewport": { "centerX": 0.5, "centerY": 0.5, "zoom": 1 },
+          "speechToText": true,
+          "speechOnDeviceOnly": true,
+          "speechInterimResults": true,
+          "speechLanguage": "en-US",
+          "audioSampleRate": 16000,
+          "projectPath": null,
+          "sessionId": null,
+          "shareOwnerUserId": null,
+          "shareId": null
+        }
+      },
+      "inputSha256": "e7711b6917baaafd3a98a4c770b2e730dc0c46e515ec2242cdc7c68671d06ef4"
+    },
+    {
+      "id": "app-state-settings-002",
+      "name": "normalizes older persisted settings without notification keys",
+      "source": "app/stores/settings.test.ts",
+      "api": "normalizeAppSettings",
+      "input": {
+        "name": "normalizes older persisted settings without notification keys",
+        "source": "app/stores/settings.test.ts",
+        "api": "normalizeAppSettings",
+        "value": { "theme": "light" }
+      },
+      "output": {
+        "theme": "light",
+        "agentOutputViewMode": "split",
+        "exposePreviewMode": "terminal",
+        "desktopAppZoom": 110,
+        "chatRichTerminalColors": true,
+        "notifications": {
+          "enabled": false,
+          "channels": { "browser": true, "push": false },
+          "categories": {
+            "agent": {
+              "enabled": true,
+              "needsInput": true,
+              "blocked": true,
+              "errors": true,
+              "completed": false,
+              "activity": false
+            },
+            "system": { "enabled": false, "relayStatus": false, "projectHealth": false }
+          }
+        },
+        "acceptedShares": [],
+        "activeShare": null,
+        "monitor": {
+          "intervalSeconds": 10,
+          "targetKind": "project-agent",
+          "captureMode": "camera",
+          "cameraViewport": { "centerX": 0.5, "centerY": 0.5, "zoom": 1 },
+          "speechToText": true,
+          "speechOnDeviceOnly": true,
+          "speechInterimResults": true,
+          "speechLanguage": "en-US",
+          "audioSampleRate": 16000,
+          "projectPath": null,
+          "sessionId": null,
+          "shareOwnerUserId": null,
+          "shareId": null
+        }
+      },
+      "inputSha256": "34840013ea7e610439cd04438949363fc5f038a8789260ba38e4fd254c1e6b99"
+    },
+    {
+      "id": "app-state-settings-003",
+      "name": "normalizes monitor camera viewport values",
+      "source": "app/stores/settings.test.ts",
+      "api": "normalizeAppSettings",
+      "input": {
+        "name": "normalizes monitor camera viewport values",
+        "source": "app/stores/settings.test.ts",
+        "api": "normalizeAppSettings",
+        "value": {
+          "theme": "dark",
+          "agentOutputViewMode": "split",
+          "exposePreviewMode": "terminal",
+          "desktopAppZoom": 110,
+          "chatRichTerminalColors": true,
+          "notifications": {
+            "enabled": false,
+            "channels": { "browser": true, "push": false },
+            "categories": {
+              "agent": {
+                "enabled": true,
+                "needsInput": true,
+                "blocked": true,
+                "errors": true,
+                "completed": false,
+                "activity": false
+              },
+              "system": { "enabled": false, "relayStatus": false, "projectHealth": false }
+            }
+          },
+          "acceptedShares": [],
+          "activeShare": null,
+          "monitor": {
+            "intervalSeconds": 10,
+            "targetKind": "project-agent",
+            "captureMode": "camera",
+            "cameraViewport": { "centerX": 4, "centerY": -2, "zoom": 9 },
+            "speechToText": true,
+            "speechOnDeviceOnly": true,
+            "speechInterimResults": true,
+            "speechLanguage": "en-US",
+            "audioSampleRate": 16000,
+            "projectPath": null,
+            "sessionId": null,
+            "shareOwnerUserId": null,
+            "shareId": null
+          }
+        }
+      },
+      "output": {
+        "theme": "dark",
+        "agentOutputViewMode": "split",
+        "exposePreviewMode": "terminal",
+        "desktopAppZoom": 110,
+        "chatRichTerminalColors": true,
+        "notifications": {
+          "enabled": false,
+          "channels": { "browser": true, "push": false },
+          "categories": {
+            "agent": {
+              "enabled": true,
+              "needsInput": true,
+              "blocked": true,
+              "errors": true,
+              "completed": false,
+              "activity": false
+            },
+            "system": { "enabled": false, "relayStatus": false, "projectHealth": false }
+          }
+        },
+        "acceptedShares": [],
+        "activeShare": null,
+        "monitor": {
+          "intervalSeconds": 10,
+          "targetKind": "project-agent",
+          "captureMode": "camera",
+          "cameraViewport": { "centerX": 0.875, "centerY": 0.125, "zoom": 4 },
+          "speechToText": true,
+          "speechOnDeviceOnly": true,
+          "speechInterimResults": true,
+          "speechLanguage": "en-US",
+          "audioSampleRate": 16000,
+          "projectPath": null,
+          "sessionId": null,
+          "shareOwnerUserId": null,
+          "shareId": null
+        }
+      },
+      "inputSha256": "94e4e1b63fdf5c204c0141d39fbec710cc75e46291419e4e141e90c8239d05c1"
+    },
+    {
+      "id": "app-state-settings-004",
+      "name": "normalizes shares and monitor scalar fallbacks",
+      "source": "app/stores/settings.ts",
+      "api": "normalizeAppSettings",
+      "input": {
+        "name": "normalizes shares and monitor scalar fallbacks",
+        "source": "app/stores/settings.ts",
+        "api": "normalizeAppSettings",
+        "value": {
+          "theme": "dark",
+          "agentOutputViewMode": "split",
+          "exposePreviewMode": "terminal",
+          "desktopAppZoom": 133,
+          "chatRichTerminalColors": true,
+          "notifications": {
+            "enabled": false,
+            "channels": { "browser": true, "push": false },
+            "categories": {
+              "agent": {
+                "enabled": true,
+                "needsInput": true,
+                "blocked": true,
+                "errors": true,
+                "completed": false,
+                "activity": false
+              },
+              "system": { "enabled": false, "relayStatus": false, "projectHealth": false }
+            }
+          },
+          "acceptedShares": [
+            {
+              "shareId": "share_1",
+              "ownerUserId": "user_owner",
+              "projectRoot": "/repo",
+              "sessionId": "claude-1",
+              "serviceEndpoint": { "host": " 127.0.0.1 ", "port": 43192 },
+              "acceptedAt": "2026-05-20T00:00:00.000Z"
+            },
+            {
+              "shareId": "share_1",
+              "ownerUserId": "user_owner",
+              "projectRoot": "/repo",
+              "sessionId": "claude-1",
+              "serviceEndpoint": { "host": " 127.0.0.1 ", "port": 43192 },
+              "acceptedAt": "2026-05-24T00:00:00.000Z"
+            },
+            {
+              "shareId": "",
+              "ownerUserId": "missing",
+              "projectRoot": "/repo",
+              "sessionId": "claude-1",
+              "serviceEndpoint": { "host": " 127.0.0.1 ", "port": 43192 },
+              "acceptedAt": "2026-05-24T00:00:00.000Z"
+            }
+          ],
+          "activeShare": {
+            "shareId": "share_1",
+            "ownerUserId": "user_owner",
+            "projectRoot": "/repo",
+            "sessionId": "claude-1",
+            "serviceEndpoint": { "host": " 127.0.0.1 ", "port": 43192 },
+            "acceptedAt": ""
+          },
+          "monitor": {
+            "intervalSeconds": 17,
+            "targetKind": "bad",
+            "captureMode": "bad",
+            "cameraViewport": null,
+            "speechToText": false,
+            "speechOnDeviceOnly": false,
+            "speechInterimResults": false,
+            "speechLanguage": "not a locale!",
+            "audioSampleRate": 12345,
+            "projectPath": " /repo ",
+            "sessionId": " ",
+            "shareOwnerUserId": " owner ",
+            "shareId": ""
+          }
+        }
+      },
+      "output": {
+        "theme": "dark",
+        "agentOutputViewMode": "split",
+        "exposePreviewMode": "terminal",
+        "desktopAppZoom": 110,
+        "chatRichTerminalColors": true,
+        "notifications": {
+          "enabled": false,
+          "channels": { "browser": true, "push": false },
+          "categories": {
+            "agent": {
+              "enabled": true,
+              "needsInput": true,
+              "blocked": true,
+              "errors": true,
+              "completed": false,
+              "activity": false
+            },
+            "system": { "enabled": false, "relayStatus": false, "projectHealth": false }
+          }
+        },
+        "acceptedShares": [
+          {
+            "shareId": "share_1",
+            "ownerUserId": "user_owner",
+            "projectRoot": "/repo",
+            "sessionId": "claude-1",
+            "serviceEndpoint": { "host": "127.0.0.1", "port": 43192 },
+            "acceptedAt": "1970-01-01T00:00:00.000Z"
+          }
+        ],
+        "activeShare": {
+          "shareId": "share_1",
+          "ownerUserId": "user_owner",
+          "projectRoot": "/repo",
+          "sessionId": "claude-1",
+          "serviceEndpoint": { "host": "127.0.0.1", "port": 43192 },
+          "acceptedAt": "1970-01-01T00:00:00.000Z"
+        },
+        "monitor": {
+          "intervalSeconds": 10,
+          "targetKind": "project-agent",
+          "captureMode": "camera",
+          "cameraViewport": { "centerX": 0.5, "centerY": 0.5, "zoom": 1 },
+          "speechToText": false,
+          "speechOnDeviceOnly": false,
+          "speechInterimResults": false,
+          "speechLanguage": "en-US",
+          "audioSampleRate": 16000,
+          "projectPath": "/repo",
+          "sessionId": null,
+          "shareOwnerUserId": "owner",
+          "shareId": null
+        }
+      },
+      "inputSha256": "7478f2cceef5e887a03535ab0c680b31be4ceea6d9268dec917beb12dafad118"
+    },
+    {
+      "id": "app-state-settings-005",
+      "name": "steps desktop zoom inside bounds",
+      "source": "app/stores/settings.ts",
+      "api": "stepDesktopAppZoom",
+      "input": {
+        "name": "steps desktop zoom inside bounds",
+        "source": "app/stores/settings.ts",
+        "api": "stepDesktopAppZoom",
+        "values": [
+          { "value": 80, "direction": -1 },
+          { "value": 110, "direction": 1 },
+          { "value": 150, "direction": 1 },
+          { "value": 133, "direction": 1 }
+        ]
+      },
+      "output": [80, 120, 150, 80],
+      "inputSha256": "9fe8517a0548536348b60ae09fbb8dc9020bbd0a0db7ac1f904e3ce2b735df70"
+    },
+    {
+      "id": "app-state-settings-006",
+      "name": "converts desktop zoom to scale",
+      "source": "app/stores/settings.ts",
+      "api": "desktopAppZoomScale",
+      "input": {
+        "name": "converts desktop zoom to scale",
+        "source": "app/stores/settings.ts",
+        "api": "desktopAppZoomScale",
+        "values": [80, 110, 150]
+      },
+      "output": [0.8, 1.1, 1.5],
+      "inputSha256": "f5f5de8efb94696a0b1dad30d71218ccb839ecc1b4c39fc5cca85a1ffd03126e"
+    }
+  ]
+}

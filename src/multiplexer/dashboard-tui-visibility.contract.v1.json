@@ -1,0 +1,223 @@
+{
+  "version": 1,
+  "generatedAt": "2026-09-07T00:00:00.000Z",
+  "generatedBy": "scripts/capture-dashboard-tui-visibility-contract.mjs",
+  "source": "src/multiplexer/tui-visibility.ts",
+  "subject": "dashboard TUI visibility",
+  "description": "Dashboard TUI visibility parsing, process fallback, cache, and wake behavior captured by running TypeScript.",
+  "caseCount": 14,
+  "cases": [
+    {
+      "id": "dashboard-tui-visibility-001",
+      "name": "attached active pane is visible",
+      "source": "src/multiplexer/tui-visibility.ts",
+      "api": "parseTmuxVisibility",
+      "input": { "name": "attached active pane is visible", "raw": "1\t1\n", "paneId": "%1" },
+      "output": { "paneId": "%1", "attached": true, "activeWindow": true, "visible": true, "reason": "visible" },
+      "inputSha256": "1080bcede94d5cde420d645e15215ec7f357b640670e2d488acfc52517994160"
+    },
+    {
+      "id": "dashboard-tui-visibility-002",
+      "name": "attached inactive pane is hidden",
+      "source": "src/multiplexer/tui-visibility.ts",
+      "api": "parseTmuxVisibility",
+      "input": { "name": "attached inactive pane is hidden", "raw": "1\t0\n", "paneId": "%1" },
+      "output": { "paneId": "%1", "attached": true, "activeWindow": false, "visible": false, "reason": "hidden" },
+      "inputSha256": "b04de983098b7cb548aca2e9db286a026da1a4036fa403159932e4e081260af7"
+    },
+    {
+      "id": "dashboard-tui-visibility-003",
+      "name": "detached active pane is detached",
+      "source": "src/multiplexer/tui-visibility.ts",
+      "api": "parseTmuxVisibility",
+      "input": { "name": "detached active pane is detached", "raw": "0\t1\n", "paneId": "%1" },
+      "output": { "paneId": "%1", "attached": false, "activeWindow": true, "visible": false, "reason": "detached" },
+      "inputSha256": "e971f5b1e2f1371361c3f17211e633e8e6871f560085ad00b49012f756f43f41"
+    },
+    {
+      "id": "dashboard-tui-visibility-004",
+      "name": "malformed tmux output fails open",
+      "source": "src/multiplexer/tui-visibility.ts",
+      "api": "parseTmuxVisibility",
+      "input": { "name": "malformed tmux output fails open", "raw": "bad", "paneId": "%1" },
+      "output": { "paneId": "%1", "attached": true, "activeWindow": true, "visible": true, "reason": "query-failed" },
+      "inputSha256": "86282064edf93c0d864efcd3c46edb151eab8ed612a0722c25c4e791d600f143"
+    },
+    {
+      "id": "dashboard-tui-visibility-005",
+      "name": "parses valid pane rows and skips bad rows",
+      "source": "src/multiplexer/tui-visibility.ts",
+      "api": "parseTmuxPaneRows",
+      "input": { "name": "parses valid pane rows and skips bad rows", "raw": "%1\t123\t1\t0\nbad\n%2\t456\t0\t1\n" },
+      "output": [
+        { "paneId": "%1", "panePid": 123, "attachedRaw": "1", "activeWindowRaw": "0" },
+        { "paneId": "%2", "panePid": 456, "attachedRaw": "0", "activeWindowRaw": "1" }
+      ],
+      "inputSha256": "beb818fceddb53a5f1d7d9063e8f7e4c3c841d63cce5137a2dc943478795eb12"
+    },
+    {
+      "id": "dashboard-tui-visibility-006",
+      "name": "parses process parent rows",
+      "source": "src/multiplexer/tui-visibility.ts",
+      "api": "parseProcessParents",
+      "input": { "name": "parses process parent rows", "raw": "250 200\n200 100\nbad\n100 1\n" },
+      "output": [
+        [250, 200],
+        [200, 100],
+        [100, 1]
+      ],
+      "inputSha256": "792afd121a94c6caab5491b7c4dad98040518e584892cd746aa9f006d3f48996"
+    },
+    {
+      "id": "dashboard-tui-visibility-007",
+      "name": "finds owning pane through parent chain",
+      "source": "src/multiplexer/tui-visibility.ts",
+      "api": "findTmuxPaneForProcess",
+      "input": {
+        "name": "finds owning pane through parent chain",
+        "panes": "%1\t100\t1\t0\n%2\t500\t1\t1\n",
+        "parents": "250 200\n200 100\n100 1\n500 1\n",
+        "pid": 250
+      },
+      "output": { "paneId": "%1", "panePid": 100, "attachedRaw": "1", "activeWindowRaw": "0" },
+      "inputSha256": "142afd4bedcf0514c8f4d92466a58417ac86ae117fb97399cc9a9026e09de23e"
+    },
+    {
+      "id": "dashboard-tui-visibility-008",
+      "name": "assumes visible outside tmux",
+      "source": "src/multiplexer/tui-visibility.ts",
+      "api": "readTmuxTuiVisibility",
+      "input": { "name": "assumes visible outside tmux", "env": {} },
+      "output": { "attached": true, "activeWindow": true, "visible": true, "reason": "not-tmux" },
+      "inputSha256": "5693e4822e66152c2c7faee0359c46b34896c11047993b8e264fa966267ae445"
+    },
+    {
+      "id": "dashboard-tui-visibility-009",
+      "name": "uses direct query when process tree cannot improve it",
+      "source": "src/multiplexer/tui-visibility.ts",
+      "api": "readTmuxTuiVisibility",
+      "input": {
+        "name": "uses direct query when process tree cannot improve it",
+        "env": { "TMUX_PANE": "%current" },
+        "directRaw": "1\t1\n",
+        "panes": "%current\t100\t1\t1\n",
+        "parents": "300 250\n250 1\n100 1\n",
+        "pid": 300
+      },
+      "output": { "paneId": "%current", "attached": true, "activeWindow": true, "visible": true, "reason": "visible" },
+      "inputSha256": "1a7e340b7ba33272924e78f6545006bf11a1fff12973125c4e3187f1dc58bcc6"
+    },
+    {
+      "id": "dashboard-tui-visibility-010",
+      "name": "prefers process-tree pane over stale direct pane",
+      "source": "src/multiplexer/tui-visibility.ts",
+      "api": "readTmuxTuiVisibility",
+      "input": {
+        "name": "prefers process-tree pane over stale direct pane",
+        "env": { "TMUX_PANE": "%stale" },
+        "directRaw": "1\t1\n",
+        "panes": "%stale\t100\t1\t1\n%live\t200\t1\t0\n",
+        "parents": "300 250\n250 200\n200 1\n100 1\n",
+        "pid": 300
+      },
+      "output": { "paneId": "%live", "attached": true, "activeWindow": false, "visible": false, "reason": "hidden" },
+      "inputSha256": "b63ba8a8e0379b02228ac26a29fd4f982954153b5377e337b86b772e9ccbe026"
+    },
+    {
+      "id": "dashboard-tui-visibility-011",
+      "name": "stale dashboard outside live tmux panes is detached",
+      "source": "src/multiplexer/tui-visibility.ts",
+      "api": "readTmuxTuiVisibility",
+      "input": {
+        "name": "stale dashboard outside live tmux panes is detached",
+        "env": { "TMUX_PANE": "%stale" },
+        "directThrows": true,
+        "panes": "%live\t200\t1\t1\n",
+        "parents": "300 250\n250 1\n200 1\n",
+        "pid": 300
+      },
+      "output": {
+        "paneId": "%stale",
+        "attached": false,
+        "activeWindow": false,
+        "visible": false,
+        "reason": "detached"
+      },
+      "inputSha256": "b26a89decbacb04e7576f4c152db745c67a0b30e869a2b71a9f64f13c7b39df6"
+    },
+    {
+      "id": "dashboard-tui-visibility-012",
+      "name": "host cache is reused within cache window",
+      "source": "src/multiplexer/tui-visibility.ts",
+      "api": "readDashboardTuiVisibilityForHost",
+      "input": { "name": "host cache is reused within cache window" },
+      "output": {
+        "first": { "paneId": "%1", "attached": true, "activeWindow": false, "visible": false, "reason": "hidden" },
+        "second": { "paneId": "%1", "attached": true, "activeWindow": false, "visible": false, "reason": "hidden" },
+        "calls": 1,
+        "host": {
+          "startedInDashboard": true,
+          "dashboardTuiVisibility": {
+            "paneId": "%1",
+            "attached": true,
+            "activeWindow": false,
+            "visible": false,
+            "reason": "hidden"
+          },
+          "dashboardTuiVisibilityCheckedAt": 1000
+        }
+      },
+      "inputSha256": "6d12708b4dcc052d6155432d408509d6af4a6098fd0d1b523835a7d725c1986f"
+    },
+    {
+      "id": "dashboard-tui-visibility-013",
+      "name": "hidden to visible transition records wake",
+      "source": "src/multiplexer/tui-visibility.ts",
+      "api": "readDashboardTuiVisibilityForHost",
+      "input": { "name": "hidden to visible transition records wake" },
+      "output": {
+        "snapshot": { "paneId": "%1", "attached": true, "activeWindow": true, "visible": true, "reason": "visible" },
+        "firstWake": true,
+        "secondWake": false,
+        "host": {
+          "startedInDashboard": true,
+          "dashboardTuiVisibility": {
+            "paneId": "%1",
+            "attached": true,
+            "activeWindow": true,
+            "visible": true,
+            "reason": "visible"
+          },
+          "dashboardTuiVisibilityCheckedAt": 2000,
+          "dashboardTuiVisibilityWakePending": false
+        }
+      },
+      "inputSha256": "a52e8315a0772b8084d7e28137ec300ad15ee39b87c28be8670838af5f19f559"
+    },
+    {
+      "id": "dashboard-tui-visibility-014",
+      "name": "focus-in marks visible and records wake",
+      "source": "src/multiplexer/tui-visibility.ts",
+      "api": "markDashboardTuiVisible",
+      "input": { "name": "focus-in marks visible and records wake" },
+      "output": {
+        "host": {
+          "dashboardTuiVisibility": {
+            "paneId": "%1",
+            "attached": true,
+            "activeWindow": true,
+            "visible": true,
+            "reason": "visible"
+          },
+          "dashboardTuiVisibilityCheckedAt": 2000,
+          "dashboardHiddenVisibilityRecheckAt": 0,
+          "dashboardHiddenVisibilitySkipTicks": 0,
+          "dashboardTuiVisibilityWakePending": false
+        },
+        "firstWake": true,
+        "secondWake": false
+      },
+      "inputSha256": "30bf8f330b9f7332ceab566310815e949e02f6245bba8101300c8bd49e5cc444"
+    }
+  ]
+}

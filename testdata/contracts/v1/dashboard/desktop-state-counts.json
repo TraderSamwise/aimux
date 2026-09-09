@@ -1,0 +1,496 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/dashboard-view-methods.ts",
+  "sources": [
+    "src/dashboard/visibility.ts",
+    "src/dashboard/visibility.test.ts",
+    "src/multiplexer/dashboard-model.test.ts",
+    "src/multiplexer/dashboard-view-methods.ts"
+  ],
+  "generatedBy": "scripts/capture-dashboard-desktop-state-counts-contract.mjs",
+  "description": "Dashboard hidden-offline count and visible row projection captured by running TypeScript dashboard visibility helpers used by renderDashboard.",
+  "cases": [
+    {
+      "id": "dashboard-desktop-state-counts-001",
+      "name": "returns zero hidden count and original rows when offline hiding is off",
+      "source": "src/multiplexer/dashboard-view-methods.ts",
+      "api": "renderDashboardHiddenOfflineAgentCount",
+      "input": {
+        "name": "returns zero hidden count and original rows when offline hiding is off",
+        "model": {
+          "hideOfflineAgents": false,
+          "sessions": [
+            {
+              "index": 0,
+              "id": "raw-offline",
+              "command": "codex",
+              "status": "offline",
+              "active": true,
+              "worktreePath": "/repo/.aimux/worktrees/dead"
+            },
+            {
+              "index": 0,
+              "id": "semantic-offline",
+              "command": "codex",
+              "status": "running",
+              "active": true,
+              "worktreePath": "/repo/.aimux/worktrees/dead",
+              "semantic": { "user": { "label": "offline" }, "presentation": { "statusLabel": "offline" } }
+            }
+          ],
+          "services": [
+            {
+              "id": "dead-svc",
+              "command": "yarn dev",
+              "args": [],
+              "status": "running",
+              "active": true,
+              "worktreePath": "/repo/.aimux/worktrees/dead"
+            }
+          ],
+          "worktreeGroups": [
+            {
+              "name": "dead",
+              "branch": "master",
+              "status": "active",
+              "sessions": [
+                {
+                  "index": 0,
+                  "id": "raw-offline",
+                  "command": "codex",
+                  "status": "offline",
+                  "active": true,
+                  "worktreePath": "/repo/.aimux/worktrees/dead"
+                }
+              ],
+              "services": [
+                {
+                  "id": "dead-svc",
+                  "command": "yarn dev",
+                  "args": [],
+                  "status": "running",
+                  "active": true,
+                  "worktreePath": "/repo/.aimux/worktrees/dead"
+                }
+              ],
+              "path": "/repo/.aimux/worktrees/dead"
+            }
+          ]
+        }
+      },
+      "output": {
+        "hiddenOfflineAgentCount": 0,
+        "sessions": [
+          {
+            "index": 0,
+            "id": "raw-offline",
+            "command": "codex",
+            "status": "offline",
+            "active": true,
+            "worktreePath": "/repo/.aimux/worktrees/dead"
+          },
+          {
+            "index": 0,
+            "id": "semantic-offline",
+            "command": "codex",
+            "status": "running",
+            "active": true,
+            "worktreePath": "/repo/.aimux/worktrees/dead",
+            "semantic": { "user": { "label": "offline" }, "presentation": { "statusLabel": "offline" } }
+          }
+        ],
+        "services": [
+          {
+            "id": "dead-svc",
+            "command": "yarn dev",
+            "args": [],
+            "status": "running",
+            "active": true,
+            "worktreePath": "/repo/.aimux/worktrees/dead"
+          }
+        ],
+        "worktreeGroups": [
+          {
+            "name": "dead",
+            "branch": "master",
+            "status": "active",
+            "sessions": [
+              {
+                "index": 0,
+                "id": "raw-offline",
+                "command": "codex",
+                "status": "offline",
+                "active": true,
+                "worktreePath": "/repo/.aimux/worktrees/dead"
+              }
+            ],
+            "services": [
+              {
+                "id": "dead-svc",
+                "command": "yarn dev",
+                "args": [],
+                "status": "running",
+                "active": true,
+                "worktreePath": "/repo/.aimux/worktrees/dead"
+              }
+            ],
+            "path": "/repo/.aimux/worktrees/dead"
+          }
+        ]
+      },
+      "inputSha256": "857cbeca897782b2b663f837b20b2a76453695734fd307a015f7a4dfa64e5cfd"
+    },
+    {
+      "id": "dashboard-desktop-state-counts-002",
+      "name": "counts raw and semantic offline agents while keeping live rows",
+      "source": "src/multiplexer/dashboard-view-methods.ts",
+      "api": "renderDashboardHiddenOfflineAgentCount",
+      "input": {
+        "name": "counts raw and semantic offline agents while keeping live rows",
+        "model": {
+          "hideOfflineAgents": true,
+          "sessions": [
+            {
+              "index": 0,
+              "id": "live",
+              "command": "codex",
+              "status": "running",
+              "active": true,
+              "worktreePath": "/repo/.aimux/worktrees/live"
+            },
+            {
+              "index": 0,
+              "id": "raw-offline",
+              "command": "codex",
+              "status": "offline",
+              "active": true,
+              "worktreePath": "/repo/.aimux/worktrees/dead"
+            },
+            {
+              "index": 0,
+              "id": "semantic-offline",
+              "command": "codex",
+              "status": "running",
+              "active": true,
+              "worktreePath": "/repo/.aimux/worktrees/dead",
+              "semantic": { "user": { "label": "offline" }, "presentation": { "statusLabel": "offline" } }
+            }
+          ],
+          "services": [
+            {
+              "id": "live-svc",
+              "command": "yarn dev",
+              "args": [],
+              "status": "running",
+              "active": true,
+              "worktreePath": "/repo/.aimux/worktrees/live"
+            },
+            {
+              "id": "dead-svc",
+              "command": "yarn dev",
+              "args": [],
+              "status": "running",
+              "active": true,
+              "worktreePath": "/repo/.aimux/worktrees/dead"
+            }
+          ],
+          "worktreeGroups": [
+            {
+              "name": "live",
+              "branch": "master",
+              "status": "active",
+              "sessions": [
+                {
+                  "index": 0,
+                  "id": "live",
+                  "command": "codex",
+                  "status": "running",
+                  "active": true,
+                  "worktreePath": "/repo/.aimux/worktrees/live"
+                }
+              ],
+              "services": [
+                {
+                  "id": "live-svc",
+                  "command": "yarn dev",
+                  "args": [],
+                  "status": "running",
+                  "active": true,
+                  "worktreePath": "/repo/.aimux/worktrees/live"
+                }
+              ],
+              "path": "/repo/.aimux/worktrees/live"
+            },
+            {
+              "name": "dead",
+              "branch": "master",
+              "status": "active",
+              "sessions": [
+                {
+                  "index": 0,
+                  "id": "raw-offline",
+                  "command": "codex",
+                  "status": "offline",
+                  "active": true,
+                  "worktreePath": "/repo/.aimux/worktrees/dead"
+                },
+                {
+                  "index": 0,
+                  "id": "semantic-offline",
+                  "command": "codex",
+                  "status": "running",
+                  "active": true,
+                  "worktreePath": "/repo/.aimux/worktrees/dead",
+                  "semantic": { "user": { "label": "offline" }, "presentation": { "statusLabel": "offline" } }
+                }
+              ],
+              "services": [
+                {
+                  "id": "dead-svc",
+                  "command": "yarn dev",
+                  "args": [],
+                  "status": "running",
+                  "active": true,
+                  "worktreePath": "/repo/.aimux/worktrees/dead"
+                }
+              ],
+              "path": "/repo/.aimux/worktrees/dead"
+            }
+          ]
+        }
+      },
+      "output": {
+        "hiddenOfflineAgentCount": 2,
+        "sessions": [
+          {
+            "index": 0,
+            "id": "live",
+            "command": "codex",
+            "status": "running",
+            "active": true,
+            "worktreePath": "/repo/.aimux/worktrees/live"
+          }
+        ],
+        "services": [
+          {
+            "id": "live-svc",
+            "command": "yarn dev",
+            "args": [],
+            "status": "running",
+            "active": true,
+            "worktreePath": "/repo/.aimux/worktrees/live"
+          }
+        ],
+        "worktreeGroups": [
+          {
+            "name": "live",
+            "branch": "master",
+            "status": "active",
+            "sessions": [
+              {
+                "index": 0,
+                "id": "live",
+                "command": "codex",
+                "status": "running",
+                "active": true,
+                "worktreePath": "/repo/.aimux/worktrees/live"
+              }
+            ],
+            "services": [
+              {
+                "id": "live-svc",
+                "command": "yarn dev",
+                "args": [],
+                "status": "running",
+                "active": true,
+                "worktreePath": "/repo/.aimux/worktrees/live"
+              }
+            ],
+            "path": "/repo/.aimux/worktrees/live"
+          }
+        ]
+      },
+      "inputSha256": "d154631f1b91c0a7b078613b52471a4e39fcc2f7175c942daa9c6cb751d4d0b4"
+    },
+    {
+      "id": "dashboard-desktop-state-counts-003",
+      "name": "does not count pending offline agents as hidden",
+      "source": "src/multiplexer/dashboard-view-methods.ts",
+      "api": "renderDashboardHiddenOfflineAgentCount",
+      "input": {
+        "name": "does not count pending offline agents as hidden",
+        "model": {
+          "hideOfflineAgents": true,
+          "sessions": [
+            {
+              "index": 0,
+              "id": "pending-offline",
+              "command": "codex",
+              "status": "offline",
+              "active": true,
+              "pendingAction": "starting",
+              "worktreePath": "/repo/.aimux/worktrees/pending"
+            }
+          ],
+          "services": [
+            {
+              "id": "pending-svc",
+              "command": "yarn dev",
+              "args": [],
+              "status": "running",
+              "active": true,
+              "worktreePath": "/repo/.aimux/worktrees/pending"
+            }
+          ],
+          "worktreeGroups": [
+            {
+              "name": "pending",
+              "branch": "(creating)",
+              "status": "active",
+              "sessions": [
+                {
+                  "index": 0,
+                  "id": "pending-offline",
+                  "command": "codex",
+                  "status": "offline",
+                  "active": true,
+                  "pendingAction": "starting",
+                  "worktreePath": "/repo/.aimux/worktrees/pending"
+                }
+              ],
+              "services": [
+                {
+                  "id": "pending-svc",
+                  "command": "yarn dev",
+                  "args": [],
+                  "status": "running",
+                  "active": true,
+                  "worktreePath": "/repo/.aimux/worktrees/pending"
+                }
+              ],
+              "path": "/repo/.aimux/worktrees/pending",
+              "pending": true,
+              "pendingAction": "creating"
+            }
+          ]
+        }
+      },
+      "output": {
+        "hiddenOfflineAgentCount": 0,
+        "sessions": [
+          {
+            "index": 0,
+            "id": "pending-offline",
+            "command": "codex",
+            "status": "offline",
+            "active": true,
+            "pendingAction": "starting",
+            "worktreePath": "/repo/.aimux/worktrees/pending"
+          }
+        ],
+        "services": [
+          {
+            "id": "pending-svc",
+            "command": "yarn dev",
+            "args": [],
+            "status": "running",
+            "active": true,
+            "worktreePath": "/repo/.aimux/worktrees/pending"
+          }
+        ],
+        "worktreeGroups": [
+          {
+            "name": "pending",
+            "branch": "(creating)",
+            "status": "active",
+            "sessions": [
+              {
+                "index": 0,
+                "id": "pending-offline",
+                "command": "codex",
+                "status": "offline",
+                "active": true,
+                "pendingAction": "starting",
+                "worktreePath": "/repo/.aimux/worktrees/pending"
+              }
+            ],
+            "services": [
+              {
+                "id": "pending-svc",
+                "command": "yarn dev",
+                "args": [],
+                "status": "running",
+                "active": true,
+                "worktreePath": "/repo/.aimux/worktrees/pending"
+              }
+            ],
+            "path": "/repo/.aimux/worktrees/pending",
+            "pending": true,
+            "pendingAction": "creating"
+          }
+        ]
+      },
+      "inputSha256": "d4e16291214beebe63a8c069a48be9efcb37c9da74d74c2cdec6b40c8326465b"
+    },
+    {
+      "id": "dashboard-desktop-state-counts-004",
+      "name": "keeps operational empty worktrees visible and counts removed sessions",
+      "source": "src/multiplexer/dashboard-view-methods.ts",
+      "api": "renderDashboardHiddenOfflineAgentCount",
+      "input": {
+        "name": "keeps operational empty worktrees visible and counts removed sessions",
+        "model": {
+          "hideOfflineAgents": true,
+          "sessions": [
+            {
+              "index": 0,
+              "id": "raw-offline",
+              "command": "codex",
+              "status": "offline",
+              "active": true,
+              "worktreePath": "/repo/.aimux/worktrees/dead"
+            }
+          ],
+          "services": [],
+          "worktreeGroups": [
+            {
+              "name": "removing",
+              "branch": "feature/remove",
+              "status": "active",
+              "sessions": [
+                {
+                  "index": 0,
+                  "id": "raw-offline",
+                  "command": "codex",
+                  "status": "offline",
+                  "active": true,
+                  "worktreePath": "/repo/.aimux/worktrees/dead"
+                }
+              ],
+              "services": [],
+              "path": "/repo/.aimux/worktrees/remove",
+              "removing": true
+            }
+          ]
+        }
+      },
+      "output": {
+        "hiddenOfflineAgentCount": 1,
+        "sessions": [],
+        "services": [],
+        "worktreeGroups": [
+          {
+            "name": "removing",
+            "branch": "feature/remove",
+            "status": "active",
+            "sessions": [],
+            "services": [],
+            "path": "/repo/.aimux/worktrees/remove",
+            "removing": true
+          }
+        ]
+      },
+      "inputSha256": "c95af9fe72e4769db7531a7471f56af41415007e0314b4d9b7260ec4b348824a"
+    }
+  ]
+}

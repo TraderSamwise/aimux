@@ -1,0 +1,180 @@
+{
+  "version": 1,
+  "source": "src/worktree-cache-cleanup.test.ts",
+  "generatedBy": "scripts/capture-worktree-cache-cleanup-contract.mjs",
+  "description": "Worktree cache cleanup plan, apply, safety allowlist, active-runtime skip, and report rendering contracts captured by running TypeScript cleanup helpers.",
+  "cases": [
+    {
+      "id": "worktree-cache-cleanup-001",
+      "name": "plans nested cache directories in Aimux-managed worktrees",
+      "source": "src/worktree-cache-cleanup.test.ts",
+      "api": "runWorktreeCacheCleanup",
+      "input": { "scenario": "nested-plan" },
+      "output": {
+        "dryRun": true,
+        "plan": {
+          "projectRoot": "<repo>",
+          "dryRun": true,
+          "includeActive": false,
+          "cacheDirNames": ["node_modules", ".next"],
+          "targets": [
+            {
+              "worktreePath": "<repo>/.aimux/worktrees/perf",
+              "relativePath": "node_modules",
+              "path": "<repo>/.aimux/worktrees/perf/node_modules",
+              "sizeBytes": 6
+            },
+            {
+              "worktreePath": "<repo>/.aimux/worktrees/perf",
+              "relativePath": "apps/web/.next",
+              "path": "<repo>/.aimux/worktrees/perf/apps/web/.next",
+              "sizeBytes": 6
+            }
+          ],
+          "skipped": [{ "worktreePath": "<repo>", "reason": "main-worktree" }],
+          "reclaimableBytes": 12
+        },
+        "results": [
+          { "path": "<repo>/.aimux/worktrees/perf/node_modules", "status": "dry-run", "sizeBytes": 6 },
+          { "path": "<repo>/.aimux/worktrees/perf/apps/web/.next", "status": "dry-run", "sizeBytes": 6 }
+        ],
+        "reclaimedBytes": 0
+      },
+      "inputSha256": "06f53f42eb97e9fbc1ce81f318763656818aa5007829208ac03cf59341cf65fa"
+    },
+    {
+      "id": "worktree-cache-cleanup-002",
+      "name": "skips worktrees with active agents or services by default",
+      "source": "src/worktree-cache-cleanup.test.ts",
+      "api": "runWorktreeCacheCleanup",
+      "input": { "scenario": "active-runtime-skip" },
+      "output": {
+        "dryRun": true,
+        "plan": {
+          "projectRoot": "<repo>",
+          "dryRun": true,
+          "includeActive": false,
+          "cacheDirNames": ["node_modules", ".next"],
+          "targets": [],
+          "skipped": [
+            {
+              "worktreePath": "<repo>/.aimux/worktrees/live",
+              "reason": "active-runtime",
+              "sessions": ["codex-live"],
+              "services": ["web"]
+            }
+          ],
+          "reclaimableBytes": 0
+        },
+        "results": [],
+        "reclaimedBytes": 0
+      },
+      "inputSha256": "165b1d80c72e36ebc9a40111ce5a6f32452f044671f6622dfbd1c8d02e12d92d"
+    },
+    {
+      "id": "worktree-cache-cleanup-003",
+      "name": "removes planned cache directories only when dry run is disabled",
+      "source": "src/worktree-cache-cleanup.test.ts",
+      "api": "runWorktreeCacheCleanup",
+      "input": { "scenario": "dry-run-then-delete" },
+      "output": {
+        "dryRun": {
+          "dryRun": true,
+          "plan": {
+            "projectRoot": "<repo>",
+            "dryRun": true,
+            "includeActive": false,
+            "cacheDirNames": ["node_modules", ".next"],
+            "targets": [
+              {
+                "worktreePath": "<repo>/.aimux/worktrees/old",
+                "relativePath": "apps/web/.next",
+                "path": "<repo>/.aimux/worktrees/old/apps/web/.next",
+                "sizeBytes": 6
+              }
+            ],
+            "skipped": [],
+            "reclaimableBytes": 6
+          },
+          "results": [{ "path": "<repo>/.aimux/worktrees/old/apps/web/.next", "status": "dry-run", "sizeBytes": 6 }],
+          "reclaimedBytes": 0
+        },
+        "dryRunCacheExists": true,
+        "deleted": {
+          "dryRun": false,
+          "plan": {
+            "projectRoot": "<repo>",
+            "dryRun": false,
+            "includeActive": false,
+            "cacheDirNames": ["node_modules", ".next"],
+            "targets": [
+              {
+                "worktreePath": "<repo>/.aimux/worktrees/old",
+                "relativePath": "apps/web/.next",
+                "path": "<repo>/.aimux/worktrees/old/apps/web/.next",
+                "sizeBytes": 6
+              }
+            ],
+            "skipped": [],
+            "reclaimableBytes": 6
+          },
+          "results": [{ "path": "<repo>/.aimux/worktrees/old/apps/web/.next", "status": "removed", "sizeBytes": 6 }],
+          "reclaimedBytes": 6
+        },
+        "deletedCacheExists": false
+      },
+      "inputSha256": "7bbf12d624a21cb5e94a9deae2296cd78f821fd0cfcce8644868892c7768bd37"
+    },
+    {
+      "id": "worktree-cache-cleanup-004",
+      "name": "ignores configured cleanup names outside the generated-cache allowlist",
+      "source": "src/worktree-cache-cleanup.test.ts",
+      "api": "runWorktreeCacheCleanup",
+      "input": { "scenario": "unsafe-config" },
+      "output": {
+        "deleted": {
+          "dryRun": false,
+          "plan": {
+            "projectRoot": "<repo>",
+            "dryRun": false,
+            "includeActive": false,
+            "cacheDirNames": ["node_modules"],
+            "targets": [
+              {
+                "worktreePath": "<repo>/.aimux/worktrees/unsafe-config",
+                "relativePath": "node_modules",
+                "path": "<repo>/.aimux/worktrees/unsafe-config/node_modules",
+                "sizeBytes": 6
+              }
+            ],
+            "skipped": [],
+            "reclaimableBytes": 6
+          },
+          "results": [
+            { "path": "<repo>/.aimux/worktrees/unsafe-config/node_modules", "status": "removed", "sizeBytes": 6 }
+          ],
+          "reclaimedBytes": 6
+        },
+        "cacheExists": false,
+        "sourceExists": true
+      },
+      "inputSha256": "c163b1af2c6550b5d9e05829bf612936843f8286aac337b2ef94d2c6c26bd01d"
+    },
+    {
+      "id": "worktree-cache-cleanup-005",
+      "name": "renders large cleanup results as a summarized report",
+      "source": "src/worktree-cache-cleanup.test.ts",
+      "api": "renderWorktreeCacheCleanupRunResult",
+      "input": { "scenario": "render-large-report" },
+      "output": [
+        "Worktree cache cleanup would remove 25 item(s), 4.0KB; 0 failed.",
+        "By worktree:",
+        "  3.3KB    13 item(s)  <repo>/.aimux/worktrees/alpha",
+        "  1.5KB    12 item(s)  <repo>/.aimux/worktrees/beta",
+        "Targets hidden (25); use --json for full detail.",
+        "Skipped 1 worktree(s) (1 active-runtime)."
+      ],
+      "inputSha256": "b4ef74f010d8aca4b8f1b1e7955c982e311e57d5a26231523c38db770f93e1aa"
+    }
+  ]
+}

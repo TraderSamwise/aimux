@@ -1,0 +1,265 @@
+{
+  "version": 1,
+  "source": "src/backend-session-discovery.ts",
+  "sources": [
+    "src/backend-session-discovery.test.ts",
+    "src/backend-session-discovery.ts"
+  ],
+  "generatedBy": "scripts/capture-backend-session-discovery-contract.mjs",
+  "description": "Backend session discovery, transcript relocation, and moved-session argv contracts captured by running TypeScript filesystem helpers.",
+  "cases": [
+    {
+      "id": "backend-session-discovery-001",
+      "name": "derives claude transcript path from cwd and backend id",
+      "source": "src/backend-session-discovery.ts",
+      "api": "claudeTranscriptPath",
+      "input": {
+        "cwd": "/Users/x/cs/proj/.aimux/worktrees/chat-sync",
+        "backendSessionId": "0710a963-a473-430f-9f9a-e27dd4546328",
+        "projectsDir": "/fixtures/claude/projects"
+      },
+      "output": "/fixtures/claude/projects/-Users-x-cs-proj--aimux-worktrees-chat-sync/0710a963-a473-430f-9f9a-e27dd4546328.jsonl",
+      "inputSha256": "4a09b71e85439af454425cd2e4f1276bad38b99e97bb94e33c3502601f0bdcb3"
+    },
+    {
+      "id": "backend-session-discovery-002",
+      "name": "returns single claude transcript uuid for worktree",
+      "source": "src/backend-session-discovery.ts",
+      "api": "discoverClaudeBackendSessionId",
+      "input": {
+        "cwd": "/Users/x/cs/proj/.aimux/worktrees/chat-sync",
+        "projectsDirShape": ["-Users-x-cs-proj--aimux-worktrees-chat-sync/0710a963-a473-430f-9f9a-e27dd4546328.jsonl"]
+      },
+      "output": "0710a963-a473-430f-9f9a-e27dd4546328",
+      "inputSha256": "fa5c54be83c569f9a62c5feeca723cb4958c9bc507417c624dad39a64a7a9a94"
+    },
+    {
+      "id": "backend-session-discovery-003",
+      "name": "refuses ambiguous claude transcript matches",
+      "source": "src/backend-session-discovery.ts",
+      "api": "discoverClaudeBackendSessionId",
+      "input": {
+        "cwd": "/Users/x/cs/proj/.aimux/worktrees/chat-sync",
+        "projectsDirShape": [
+          "-Users-x-cs-proj--aimux-worktrees-chat-sync/0710a963-a473-430f-9f9a-e27dd4546328.jsonl",
+          "-Users-x-cs-proj--aimux-worktrees-chat-sync/11111111-2222-3333-4444-555555555555.jsonl"
+        ]
+      },
+      "output": null,
+      "inputSha256": "f79e9a6ede8a355d4cdae5588a4928207a937a3ca2af97d4fb0e7043258e6eb0"
+    },
+    {
+      "id": "backend-session-discovery-004",
+      "name": "ignores non-uuid and non-jsonl claude files",
+      "source": "src/backend-session-discovery.ts",
+      "api": "discoverClaudeBackendSessionId",
+      "input": {
+        "cwd": "/Users/x/cs/proj/.aimux/worktrees/chat-sync",
+        "projectsDirShape": [
+          "-Users-x-cs-proj--aimux-worktrees-chat-sync/not-a-uuid.jsonl",
+          "-Users-x-cs-proj--aimux-worktrees-chat-sync/0710a963-a473-430f-9f9a-e27dd4546328.txt",
+          "-Users-x-cs-proj--aimux-worktrees-chat-sync/0710a963-a473-430f-9f9a-e27dd4546328.jsonl"
+        ]
+      },
+      "output": "0710a963-a473-430f-9f9a-e27dd4546328",
+      "inputSha256": "99fd1f1f0f037045be7165d5e2f5e39a6eca76d30e43d2284c8fe29972034601"
+    },
+    {
+      "id": "backend-session-discovery-005",
+      "name": "returns null when claude worktree directory is absent",
+      "source": "src/backend-session-discovery.ts",
+      "api": "discoverClaudeBackendSessionId",
+      "input": { "cwd": "/Users/x/other", "projectsDirShape": [] },
+      "output": null,
+      "inputSha256": "b7602f6e71421939757a61770705a9f57239771dc75f8f9f7dbd29300edc60db"
+    },
+    {
+      "id": "backend-session-discovery-006",
+      "name": "dispatcher requires cwd and rejects unknown tools",
+      "source": "src/backend-session-discovery.ts",
+      "api": "discoverBackendSessionId",
+      "input": {
+        "env": { "CLAUDE_CONFIG_DIR": "<temp>" },
+        "calls": [
+          { "toolConfigKey": "claude" },
+          { "toolConfigKey": "unknown", "cwd": "/Users/x/cs/proj/.aimux/worktrees/chat-sync" }
+        ]
+      },
+      "output": { "missingCwd": null, "unknownTool": null },
+      "inputSha256": "8a5492edf1ab45c20e2dac6dc599fefc0ac3442a24adeffd534e7a0de857b25a"
+    },
+    {
+      "id": "backend-session-discovery-007",
+      "name": "returns single codex transcript id for cwd",
+      "source": "src/backend-session-discovery.ts",
+      "api": "discoverCodexBackendSessionId",
+      "input": {
+        "cwd": "/Users/x/cs/proj/.aimux/worktrees/chat-sync",
+        "sessionsDirShape": ["2026/06/14/rollout-2026-06-14T00-00-00-0710a963-a473-430f-9f9a-e27dd4546328.jsonl"],
+        "options": {}
+      },
+      "output": "0710a963-a473-430f-9f9a-e27dd4546328",
+      "inputSha256": "ee21976a740e66e755e0423eaa0e523d54987f65563648c89bb605b9ccc70b83"
+    },
+    {
+      "id": "backend-session-discovery-008",
+      "name": "handles large codex session_meta records",
+      "source": "src/backend-session-discovery.ts",
+      "api": "discoverCodexBackendSessionId",
+      "input": {
+        "cwd": "/Users/x/cs/proj/.aimux/worktrees/chat-sync",
+        "sessionsDirShape": ["2026/06/14/rollout-2026-06-14T00-00-00-0710a963-a473-430f-9f9a-e27dd4546328.jsonl"],
+        "options": {}
+      },
+      "output": "0710a963-a473-430f-9f9a-e27dd4546328",
+      "inputSha256": "ee21976a740e66e755e0423eaa0e523d54987f65563648c89bb605b9ccc70b83"
+    },
+    {
+      "id": "backend-session-discovery-009",
+      "name": "refuses ambiguous codex cwd matches",
+      "source": "src/backend-session-discovery.ts",
+      "api": "discoverCodexBackendSessionId",
+      "input": {
+        "cwd": "/Users/x/cs/proj/.aimux/worktrees/chat-sync",
+        "sessionsDirShape": [
+          "2026/06/14/rollout-2026-06-14T00-00-00-0710a963-a473-430f-9f9a-e27dd4546328.jsonl",
+          "2026/06/15/rollout-2026-06-15T00-00-00-11111111-2222-3333-4444-555555555555.jsonl"
+        ],
+        "options": {}
+      },
+      "output": null,
+      "inputSha256": "8ba28450c2f7ec38228f3b996107a16d1fb4214d075664297e53403e1ca3985a"
+    },
+    {
+      "id": "backend-session-discovery-010",
+      "name": "ignores old codex transcripts below launch lower bound",
+      "source": "src/backend-session-discovery.ts",
+      "api": "discoverCodexBackendSessionId",
+      "input": {
+        "cwd": "/Users/x/cs/proj/.aimux/worktrees/chat-sync",
+        "sessionsDirShape": [
+          "2026/06/14/rollout-2026-06-14T00-00-00-0710a963-a473-430f-9f9a-e27dd4546328.jsonl",
+          "2026/06/15/rollout-2026-06-15T00-00-00-11111111-2222-3333-4444-555555555555.jsonl"
+        ],
+        "options": { "sinceMs": 1500000 }
+      },
+      "output": "11111111-2222-3333-4444-555555555555",
+      "inputSha256": "dd28b8c42372d92d32ca5642e1e0956800c2a95aaaa7d25cd43b749724c083ae"
+    },
+    {
+      "id": "backend-session-discovery-011",
+      "name": "ignores codex transcripts for other cwd values",
+      "source": "src/backend-session-discovery.ts",
+      "api": "discoverCodexBackendSessionId",
+      "input": {
+        "cwd": "/Users/x/cs/proj/.aimux/worktrees/chat-sync",
+        "sessionsDirShape": ["2026/06/14/rollout-2026-06-14T00-00-00-0710a963-a473-430f-9f9a-e27dd4546328.jsonl"],
+        "options": {}
+      },
+      "output": null,
+      "inputSha256": "ee21976a740e66e755e0423eaa0e523d54987f65563648c89bb605b9ccc70b83"
+    },
+    {
+      "id": "backend-session-discovery-012",
+      "name": "dispatcher handles codex when cwd has one transcript",
+      "source": "src/backend-session-discovery.ts",
+      "api": "discoverBackendSessionId",
+      "input": {
+        "env": { "CODEX_HOME": "<temp>" },
+        "toolConfigKey": "codex",
+        "cwd": "/Users/x/cs/proj/.aimux/worktrees/chat-sync"
+      },
+      "output": "0710a963-a473-430f-9f9a-e27dd4546328",
+      "inputSha256": "3ea2314687972ceabc8ad111d34c8027814c977acb7f7189789c11eafa8679f9"
+    },
+    {
+      "id": "backend-session-discovery-013",
+      "name": "ignores id already held by live sibling",
+      "source": "src/backend-session-discovery.ts",
+      "api": "discoverCodexBackendSessionId",
+      "input": {
+        "cwd": "<temp>/worktree",
+        "sessionsDirShape": [
+          "2026/06/08/rollout-2026-06-08T00-00-00-019fd6cb-68fc-7cd3-a3bf-7137b47ea6af.jsonl",
+          "2026/06/08/rollout-2026-06-08T00-00-00-019fd6cb-68fc-7cd3-a3bf-7137b47ea6b0.jsonl"
+        ],
+        "source": "019fd6cb-68fc-7cd3-a3bf-7137b47ea6af",
+        "forked": "019fd6cb-68fc-7cd3-a3bf-7137b47ea6b0"
+      },
+      "output": {
+        "withoutExclude": null,
+        "excludingSource": "019fd6cb-68fc-7cd3-a3bf-7137b47ea6b0",
+        "excludingBoth": null
+      },
+      "inputSha256": "597a52e5f12e77d61246cc6581b864dc931adcaa06b4208d83c763caf98dc043"
+    },
+    {
+      "id": "backend-session-discovery-014",
+      "name": "relocates claude transcript to target worktree",
+      "source": "src/backend-session-discovery.ts",
+      "api": "relocateClaudeTranscript",
+      "input": {
+        "sourceCwd": "/Users/someone/cs/proj",
+        "targetCwd": "/Users/someone/cs/proj/.aimux/worktrees/feature",
+        "backendSessionId": "4849a2ce-ea35-44f3-9206-d8054a5704bc",
+        "sourceExistsBefore": true,
+        "targetExistsBefore": false
+      },
+      "output": {
+        "relocated": true,
+        "sourceExistsAfter": true,
+        "targetExistsAfter": true,
+        "targetContentIncludesPoem": true
+      },
+      "inputSha256": "1ee717ada310730397dcc2533a62818204fe79d9e359502aed710ed3d82c465a"
+    },
+    {
+      "id": "backend-session-discovery-015",
+      "name": "reports missing source and no-ops same-place move",
+      "source": "src/backend-session-discovery.ts",
+      "api": "relocateClaudeTranscript",
+      "input": {
+        "missingSource": {
+          "sourceCwd": "/a",
+          "targetCwd": "/b",
+          "backendSessionId": "4849a2ce-ea35-44f3-9206-d8054a5704bc"
+        },
+        "samePlace": {
+          "sourceCwd": "/a",
+          "targetCwd": "/a",
+          "backendSessionId": "4849a2ce-ea35-44f3-9206-d8054a5704bc"
+        }
+      },
+      "output": { "missingSource": false, "samePlace": true },
+      "inputSha256": "b39a7be5df40cff76cd79270e63c4d2c0c84fc81e602ca13caf81273a7d9c96f"
+    },
+    {
+      "id": "backend-session-discovery-016",
+      "name": "moved session args do not accumulate resume flags",
+      "source": "src/backend-session-discovery.ts",
+      "api": "SessionBootstrapService.composeToolArgs",
+      "input": {
+        "base": ["--dangerously-skip-permissions"],
+        "action": ["--resume", "0f0e2b1a-1111-2222-3333-444455556666"],
+        "saved": {
+          "original": ["--dangerously-skip-permissions"],
+          "rememberedLaunch": ["--dangerously-skip-permissions", "--resume", "0f0e2b1a-1111-2222-3333-444455556666"]
+        }
+      },
+      "output": {
+        "firstMove": ["--dangerously-skip-permissions", "--resume", "0f0e2b1a-1111-2222-3333-444455556666"],
+        "secondMove": ["--dangerously-skip-permissions", "--resume", "0f0e2b1a-1111-2222-3333-444455556666"],
+        "secondMoveResumeCount": 1,
+        "ifRememberedLaunch": [
+          "--dangerously-skip-permissions",
+          "--resume",
+          "0f0e2b1a-1111-2222-3333-444455556666",
+          "--resume",
+          "0f0e2b1a-1111-2222-3333-444455556666"
+        ],
+        "ifRememberedLaunchResumeCount": 2
+      },
+      "inputSha256": "3f02ea2cdd7f8782c479830c7de1a6f2917f2a7b109a67864804cd66ebd6fd07"
+    }
+  ]
+}

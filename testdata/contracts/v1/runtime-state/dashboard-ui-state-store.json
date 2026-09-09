@@ -1,0 +1,269 @@
+{
+  "version": 1,
+  "source": "src/dashboard/ui-state-store.test.ts",
+  "generatedBy": "scripts/capture-dashboard-ui-state-store-contract.mjs",
+  "description": "Dashboard UI state shared/client persistence, screen normalization, selection restore, and item ordering behavior captured by running TypeScript DashboardUiStateStore.",
+  "cases": [
+    {
+      "id": "runtime-state-dashboard-ui-state-store-001",
+      "name": "persists shared prefs separately from client-scoped transient state",
+      "source": "src/dashboard/ui-state-store.test.ts",
+      "sourceName": "persists shared prefs separately from client-scoped transient state",
+      "api": "DashboardUiStateStore",
+      "input": { "clientId": "client-a" },
+      "output": {
+        "shared": { "detailsSidebarVisible": false, "previewSource": "output" },
+        "client": {
+          "screen": "activity",
+          "focusedWorktreePath": "/repo/wt",
+          "level": "sessions",
+          "selectedEntryKind": "session",
+          "selectedEntryId": "claude-1",
+          "flatSessionId": "claude-1"
+        }
+      },
+      "inputSha256": "cdbf9acbbf6bef84df940d36cbdb145f5d78a9c469b7576c09a18433e762b67d"
+    },
+    {
+      "id": "runtime-state-dashboard-ui-state-store-002",
+      "name": "loads shared prefs and client transient state independently",
+      "source": "src/dashboard/ui-state-store.test.ts",
+      "sourceName": "loads shared prefs and client transient state independently",
+      "api": "DashboardUiStateStore",
+      "input": { "clients": ["client-a", "client-b"], "loadClient": "client-b" },
+      "output": {
+        "state": {
+          "screen": "coordination",
+          "detailsSidebarVisible": false,
+          "focusedWorktreePath": "/repo/wt-b",
+          "level": "sessions",
+          "sessionIndex": 0,
+          "previewSource": "output",
+          "worktreeEntries": []
+        }
+      },
+      "inputSha256": "c0df386ba8bab5be7023f5aebb6557a41471a53cd0eaa177291fb3137165633c"
+    },
+    {
+      "id": "runtime-state-dashboard-ui-state-store-003",
+      "name": "persists and loads the shared dashboard preview source",
+      "source": "src/dashboard/ui-state-store.test.ts",
+      "sourceName": "persists and loads the shared dashboard preview source",
+      "api": "DashboardUiStateStore",
+      "input": { "previewSource": "scribe" },
+      "output": {
+        "state": {
+          "screen": "dashboard",
+          "detailsSidebarVisible": true,
+          "level": "worktrees",
+          "sessionIndex": 0,
+          "previewSource": "scribe",
+          "worktreeEntries": []
+        },
+        "shared": { "detailsSidebarVisible": true, "previewSource": "scribe" }
+      },
+      "inputSha256": "20ab29a941006b3add3aa78a59cdbf3d0eef2644f481652aac0861cd1af5349a"
+    },
+    {
+      "id": "runtime-state-dashboard-ui-state-store-004",
+      "name": "normalizes an invalid persisted preview source to output",
+      "source": "src/dashboard/ui-state-store.test.ts",
+      "sourceName": "normalizes an invalid persisted preview source to output",
+      "api": "DashboardUiStateStore",
+      "input": { "previewSource": "bogus", "initialPreviewSource": "scribe" },
+      "output": {
+        "state": {
+          "screen": "dashboard",
+          "detailsSidebarVisible": true,
+          "level": "worktrees",
+          "sessionIndex": 0,
+          "previewSource": "output",
+          "worktreeEntries": []
+        },
+        "shared": { "detailsSidebarVisible": true, "previewSource": "output" }
+      },
+      "inputSha256": "22d1cc2e526c62cf1d91752ef89bd1a4d0818ad9b56be2183aa63c6ccbe6d4cb"
+    },
+    {
+      "id": "runtime-state-dashboard-ui-state-store-005",
+      "name": "migrates a pre-merge persisted screen (workflow/threads/notifications) onto coordination",
+      "source": "src/dashboard/ui-state-store.test.ts",
+      "sourceName": "migrates a pre-merge persisted screen (workflow/threads/notifications) onto coordination",
+      "api": "DashboardUiStateStore",
+      "input": { "persistedScreen": "workflow" },
+      "output": {
+        "state": {
+          "screen": "coordination",
+          "detailsSidebarVisible": true,
+          "level": "worktrees",
+          "sessionIndex": 0,
+          "previewSource": "output",
+          "worktreeEntries": []
+        }
+      },
+      "inputSha256": "b74423f507933218c799f621840b3c290a0ef22e626e761f4792a5e85f071007"
+    },
+    {
+      "id": "runtime-state-dashboard-ui-state-store-006",
+      "name": "falls back to the dashboard for an unrecognized persisted screen",
+      "source": "src/dashboard/ui-state-store.test.ts",
+      "sourceName": "falls back to the dashboard for an unrecognized persisted screen",
+      "api": "DashboardUiStateStore",
+      "input": { "persistedScreen": "bogus", "initialScreen": "activity" },
+      "output": {
+        "state": {
+          "screen": "dashboard",
+          "detailsSidebarVisible": true,
+          "level": "worktrees",
+          "sessionIndex": 0,
+          "previewSource": "output",
+          "worktreeEntries": []
+        }
+      },
+      "inputSha256": "d73fca8b1df2be9bcc93f447c4ec169c69ee6473d5c0e13fad464f7f75fd9eb3"
+    },
+    {
+      "id": "runtime-state-dashboard-ui-state-store-007",
+      "name": "re-arms selection restore when a preferred entry is loaded from client state",
+      "source": "src/dashboard/ui-state-store.test.ts",
+      "sourceName": "re-arms selection restore when a preferred entry is loaded from client state",
+      "api": "DashboardUiStateStore",
+      "input": { "persistedSelectedEntryId": "claude-1" },
+      "output": {
+        "beforeLoadIndex": 0,
+        "afterLoadIndex": 1,
+        "state": {
+          "screen": "dashboard",
+          "detailsSidebarVisible": true,
+          "focusedWorktreePath": "/repo/wt",
+          "level": "sessions",
+          "sessionIndex": 1,
+          "previewSource": "output",
+          "worktreeEntries": [
+            { "kind": "session", "id": "other-0" },
+            { "kind": "session", "id": "claude-1" }
+          ]
+        }
+      },
+      "inputSha256": "5e30a004e4c6b385e338ef479db1accebce69dc56c659b5c2b628ce579c7e872"
+    },
+    {
+      "id": "runtime-state-dashboard-ui-state-store-008",
+      "name": "keeps command-requested selection pending until the optimistic entry appears",
+      "source": "src/dashboard/ui-state-store.test.ts",
+      "sourceName": "keeps command-requested selection pending until the optimistic entry appears",
+      "api": "DashboardUiStateStore",
+      "input": { "preferredEntryId": "new-agent" },
+      "output": {
+        "beforeEntryAppears": 0,
+        "afterEntryAppears": 0,
+        "state": {
+          "screen": "dashboard",
+          "detailsSidebarVisible": true,
+          "focusedWorktreePath": "/repo/wt",
+          "level": "sessions",
+          "sessionIndex": 0,
+          "previewSource": "output",
+          "worktreeEntries": [
+            { "kind": "session", "id": "new-agent" },
+            { "kind": "session", "id": "old-agent" }
+          ]
+        }
+      },
+      "inputSha256": "eb0634670baa2f521b07be01604c15fe65d57add83b231981b371f586140ac74"
+    },
+    {
+      "id": "runtime-state-dashboard-ui-state-store-009",
+      "name": "keeps command-requested selection pending across temporary non-session views",
+      "source": "src/dashboard/ui-state-store.test.ts",
+      "sourceName": "keeps command-requested selection pending across temporary non-session views",
+      "api": "DashboardUiStateStore",
+      "input": { "preferredEntryId": "new-agent" },
+      "output": {
+        "duringWorktreeView": 0,
+        "afterSessionView": 1,
+        "state": {
+          "screen": "dashboard",
+          "detailsSidebarVisible": true,
+          "focusedWorktreePath": "/repo/wt",
+          "level": "sessions",
+          "sessionIndex": 1,
+          "previewSource": "output",
+          "worktreeEntries": [
+            { "kind": "session", "id": "old-agent" },
+            { "kind": "session", "id": "new-agent" }
+          ]
+        }
+      },
+      "inputSha256": "eb0634670baa2f521b07be01604c15fe65d57add83b231981b371f586140ac74"
+    },
+    {
+      "id": "runtime-state-dashboard-ui-state-store-010",
+      "name": "does not keep stale persisted selection pending when the entry is gone",
+      "source": "src/dashboard/ui-state-store.test.ts",
+      "sourceName": "does not keep stale persisted selection pending when the entry is gone",
+      "api": "DashboardUiStateStore",
+      "input": { "persistedSelectedEntryId": "gone-agent" },
+      "output": {
+        "afterMissingEntry": 0,
+        "afterLaterRefresh": 0,
+        "state": {
+          "screen": "dashboard",
+          "detailsSidebarVisible": true,
+          "focusedWorktreePath": "/repo/wt",
+          "level": "sessions",
+          "sessionIndex": 0,
+          "previewSource": "output",
+          "worktreeEntries": [
+            { "kind": "session", "id": "later-agent" },
+            { "kind": "session", "id": "remaining-agent" }
+          ]
+        }
+      },
+      "inputSha256": "190da8f771b58d0b0c7449bdf5a746b4e91c10d3efa44a8f9468f113fa321d10"
+    },
+    {
+      "id": "runtime-state-dashboard-ui-state-store-011",
+      "name": "keeps a manually remembered entry stable across refresh restore",
+      "source": "src/dashboard/ui-state-store.test.ts",
+      "sourceName": "keeps a manually remembered entry stable across refresh restore",
+      "api": "DashboardUiStateStore",
+      "input": { "manualEntryId": "manual-agent" },
+      "output": {
+        "finalIndex": 2,
+        "state": {
+          "screen": "dashboard",
+          "detailsSidebarVisible": true,
+          "focusedWorktreePath": "/repo/wt",
+          "level": "sessions",
+          "sessionIndex": 2,
+          "previewSource": "output",
+          "worktreeEntries": [
+            { "kind": "session", "id": "inserted-agent" },
+            { "kind": "session", "id": "old-agent" },
+            { "kind": "session", "id": "manual-agent" }
+          ]
+        }
+      },
+      "inputSha256": "37a18c438af20b8054ad076520a92002f2957a25f3f49ea761db46c0f5d63e26"
+    },
+    {
+      "id": "runtime-state-dashboard-ui-state-store-012",
+      "name": "persists and reloads shared dashboard item order",
+      "source": "src/dashboard/ui-state-store.test.ts",
+      "sourceName": "persists and reloads shared dashboard item order",
+      "api": "DashboardUiStateStore",
+      "input": { "move": { "kind": "session", "selectedId": "agent-a", "direction": "down" } },
+      "output": {
+        "moved": true,
+        "ordered": [{ "id": "agent-b" }, { "id": "agent-a" }],
+        "shared": {
+          "detailsSidebarVisible": true,
+          "previewSource": "output",
+          "agentOrderByWorktreeKey": { "/repo/wt": ["agent-b", "agent-a"] }
+        }
+      },
+      "inputSha256": "063953c147750d1baa7c241813d552111ca8bef3d1306b285b46a97c80c000bf"
+    }
+  ]
+}

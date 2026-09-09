@@ -1,0 +1,132 @@
+{
+  "version": 1,
+  "source": "src/process-inspector.test.ts",
+  "generatedBy": "scripts/capture-process-inspector-contract.mjs",
+  "description": "Process args, process list, cwd, exited-state, and project-service identity contracts captured by running TypeScript process-inspector helpers against fake ps/lsof commands.",
+  "cases": [
+    {
+      "id": "process-inspector-001",
+      "name": "reads process args from ps stdout",
+      "source": "src/process-inspector.test.ts",
+      "api": "readProcessArgs",
+      "input": { "pid": 123, "psStdout": "node dist/launcher-bin.js --flag\n", "psStatus": 0 },
+      "output": "node dist/launcher-bin.js --flag",
+      "inputSha256": "cb67b5f7d1e06f0073c605f241eaa5b5823878216e8790467494950e224270d9"
+    },
+    {
+      "id": "process-inspector-002",
+      "name": "returns null when process args cannot be read",
+      "source": "src/process-inspector.test.ts",
+      "api": "readProcessArgs",
+      "input": { "pid": 123, "psStdout": "", "psStatus": 1 },
+      "output": null,
+      "inputSha256": "3aa78c2bf3850905b6d4c1c502e48c873e973a1e2fcd08cd7dd010eddce56336"
+    },
+    {
+      "id": "process-inspector-003",
+      "name": "lists process args from ps output",
+      "source": "src/process-inspector.test.ts",
+      "api": "listProcessArgs",
+      "input": { "psStdout": "  12 node a\nbad\n  34 /bin/sh -c echo ok\n" },
+      "output": [
+        { "pid": 12, "args": "node a" },
+        { "pid": 34, "args": "/bin/sh -c echo ok" }
+      ],
+      "inputSha256": "f04ee64d760f3dc5c980f936c4137ca49fe2e284dabf2c1de84fe30fd9fdc828"
+    },
+    {
+      "id": "process-inspector-004",
+      "name": "reads process cwd from lsof output",
+      "source": "src/process-inspector.test.ts",
+      "api": "readProcessCwd",
+      "input": { "pid": 123, "lsofStdout": "p123\nn/Users/sam/cs/aimux\n" },
+      "output": "/Users/sam/cs/aimux",
+      "inputSha256": "fb708f294189f6340b9eebf67937a02da1f2dd2ac21a80be75e0761356e35d22"
+    },
+    {
+      "id": "process-inspector-005",
+      "name": "maps process state to exited boolean",
+      "source": "src/process-inspector.test.ts",
+      "api": "isExitedProcessState",
+      "input": { "state": "Z+" },
+      "output": true,
+      "inputSha256": "83a407abd2a01782eba28a25a2787ba7c475d90cb1a3e75bc0044a9ff592627c"
+    },
+    {
+      "id": "process-inspector-006",
+      "name": "maps process state to exited boolean",
+      "source": "src/process-inspector.test.ts",
+      "api": "isExitedProcessState",
+      "input": { "state": "S+" },
+      "output": false,
+      "inputSha256": "9db80f048e05e4a845effce3d6e63ce8f25b0c5d6fe5972390c7aab1e2340a07"
+    },
+    {
+      "id": "process-inspector-007",
+      "name": "maps process state to exited boolean",
+      "source": "src/process-inspector.test.ts",
+      "api": "isExitedProcessState",
+      "input": { "state": "  Z" },
+      "output": true,
+      "inputSha256": "0b0ef3061c8d78ec6cbc40360ce08d74699fa4e4041a3af9e084dd694961f2d7"
+    },
+    {
+      "id": "process-inspector-008",
+      "name": "maps process state to exited boolean",
+      "source": "src/process-inspector.test.ts",
+      "api": "isExitedProcessState",
+      "input": { "state": "" },
+      "output": false,
+      "inputSha256": "24305f337320206f6c9f32335d9d4f47f89d23bfbda617eed4aa637eb8ab8b68"
+    },
+    {
+      "id": "process-inspector-009",
+      "name": "verifies project service identity by exact project id and root args",
+      "source": "src/process-inspector.test.ts",
+      "api": "isAimuxProjectServiceProcess",
+      "input": {
+        "pid": 123,
+        "psStdout": "node dist/launcher-bin.js __project-service-internal --project-id aimux-1 --project-root /tmp/aimux\n",
+        "expected": { "projectId": "aimux-1", "projectRoot": "/tmp/aimux" }
+      },
+      "output": true,
+      "inputSha256": "9db57732e6e4634af3cbea193659bc7a7db09134851561e8546682b66856b950"
+    },
+    {
+      "id": "process-inspector-010",
+      "name": "rejects prefix-only project service identities",
+      "source": "src/process-inspector.test.ts",
+      "api": "isAimuxProjectServiceProcess",
+      "input": {
+        "pid": 123,
+        "psStdout": "node dist/launcher-bin.js __project-service-internal --project-id aimux-1 --project-root /tmp/aimux\n",
+        "expected": { "projectId": "aimux", "projectRoot": "/tmp/aim" }
+      },
+      "output": false,
+      "inputSha256": "362063bc91d11f3216b5a9c46b368c808495a14aaf242bc0fb366380a905db34"
+    },
+    {
+      "id": "process-inspector-011",
+      "name": "falls back to cwd for legacy project services without identity args",
+      "source": "src/process-inspector.test.ts",
+      "api": "isAimuxProjectServiceProcess",
+      "input": {
+        "pid": 123,
+        "psStdout": "node /opt/aimux/dist/main.js __project-service-internal\n",
+        "lsofStdout": "p123\nn/Users/sam/cs/aimux\n",
+        "expected": { "projectRoot": "/Users/sam/cs/aimux" }
+      },
+      "output": true,
+      "inputSha256": "26893e5c85a0da684db173c04ff5f4fbdcf59aff70994426a2fcc3000dd268b2"
+    },
+    {
+      "id": "process-inspector-012",
+      "name": "rejects non project-service processes",
+      "source": "src/process-inspector.test.ts",
+      "api": "isAimuxProjectServiceProcess",
+      "input": { "pid": 123, "psStdout": "node dist/launcher-bin.js daemon\n", "expected": { "projectId": "aimux-1" } },
+      "output": false,
+      "inputSha256": "7baf003a294e8728296e50395d47d5f1e14adec117c2a9d1239dca2de9967b10"
+    }
+  ]
+}

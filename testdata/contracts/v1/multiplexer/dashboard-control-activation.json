@@ -1,0 +1,277 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/dashboard-control.ts",
+  "generatedBy": "scripts/capture-dashboard-control-activation-contract.mjs",
+  "description": "Dashboard control local focus and project-service activation behavior captured by running TypeScript.",
+  "cases": [
+    {
+      "id": "dashboard-control-activation-001",
+      "name": "focuses a live dashboard agent locally and marks usage",
+      "source": "src/multiplexer/dashboard-control.ts",
+      "api": "dashboardControlActivation",
+      "input": {
+        "api": "entry",
+        "timeoutMs": 1200,
+        "tmuxPane": "%dashboard",
+        "entry": { "id": "codex-1", "status": "running" },
+        "tmux": {
+          "currentClientSession": "stale-client",
+          "display": { "#{window_id}|%dashboard": "@dashboard", "#{client_tty}": "/dev/stale" },
+          "clients": [{ "tty": "/dev/live", "sessionName": "aimux-repo-client-live", "windowId": "@dashboard" }],
+          "windows": [
+            {
+              "metadata": { "kind": "agent", "sessionId": "codex-1" },
+              "target": {
+                "sessionName": "aimux-repo",
+                "windowId": "@agent",
+                "windowIndex": 2,
+                "windowName": "codex(coder)"
+              }
+            }
+          ]
+        }
+      },
+      "output": {
+        "result": "opened",
+        "calls": [
+          { "method": "tmuxRuntimeManager.displayMessage", "args": ["#{window_id}", "%dashboard"] },
+          { "method": "tmuxRuntimeManager.displayMessage", "args": ["#{client_tty}"] },
+          { "method": "tmuxRuntimeManager.currentClientSession", "args": [] },
+          { "method": "tmuxRuntimeManager.listClients", "args": [] },
+          { "method": "tmuxRuntimeManager.listProjectManagedWindows", "args": ["<REPO>"] },
+          {
+            "method": "tmuxRuntimeManager.isWindowAlive",
+            "args": [
+              { "sessionName": "aimux-repo", "windowId": "@agent", "windowIndex": 2, "windowName": "codex(coder)" }
+            ]
+          },
+          { "method": "tmuxRuntimeManager.findClientByTty", "args": ["/dev/live"] },
+          {
+            "method": "tmuxRuntimeManager.switchClientToTarget",
+            "args": [
+              "/dev/live",
+              { "sessionName": "aimux-repo", "windowId": "@agent", "windowIndex": 2, "windowName": "codex(coder)" }
+            ]
+          },
+          { "method": "tmuxRuntimeManager.refreshStatus", "args": [] },
+          { "method": "postToProjectService", "args": ["/statusline/refresh", { "sessionId": "codex-1" }] },
+          {
+            "method": "postToProjectService",
+            "args": [
+              "/usage/mark",
+              { "itemId": "codex-1", "clientSession": "aimux-repo-client-live", "usedAt": "<NOW>" }
+            ]
+          },
+          { "method": "invalidateDesktopStateSnapshot", "args": [] },
+          {
+            "method": "postToProjectService",
+            "args": [
+              "/notification-context",
+              { "source": "tui", "focused": true, "screen": "agent", "sessionId": "codex-1", "panelOpen": false },
+              { "timeoutMs": 3000 }
+            ]
+          },
+          { "method": "postToProjectService", "args": ["/mark-seen", { "session": "codex-1" }] }
+        ],
+        "timers": [{ "ms": 0 }],
+        "dashboardInputEpoch": 0
+      },
+      "inputSha256": "b47d8e56d0cab5d2bc5bbe3c3e601dcb60605ec83b089aa8f42c689f666b799c"
+    },
+    {
+      "id": "dashboard-control-activation-002",
+      "name": "opens agents through project-service control API when local tmux cannot focus",
+      "source": "src/multiplexer/dashboard-control.ts",
+      "api": "dashboardControlActivation",
+      "input": {
+        "api": "entry",
+        "timeoutMs": 1200,
+        "tmuxPane": null,
+        "entry": { "id": "codex-1" },
+        "tmux": {
+          "currentClientSession": "aimux-repo-client-live",
+          "display": { "#{client_tty}": "/dev/live", "#{window_id}": "@9" }
+        }
+      },
+      "output": {
+        "result": "opened",
+        "calls": [
+          { "method": "tmuxRuntimeManager.displayMessage", "args": ["#{window_id}"] },
+          { "method": "tmuxRuntimeManager.displayMessage", "args": ["#{client_tty}"] },
+          { "method": "tmuxRuntimeManager.currentClientSession", "args": [] },
+          { "method": "tmuxRuntimeManager.listClients", "args": [] },
+          { "method": "tmuxRuntimeManager.listProjectManagedWindows", "args": ["<REPO>"] },
+          { "method": "tmuxRuntimeManager.displayMessage", "args": ["#{window_id}"] },
+          { "method": "tmuxRuntimeManager.displayMessage", "args": ["#{client_tty}"] },
+          { "method": "tmuxRuntimeManager.currentClientSession", "args": [] },
+          { "method": "tmuxRuntimeManager.listClients", "args": [] },
+          {
+            "method": "postToProjectService",
+            "args": [
+              "/control/open-notification-target",
+              { "sessionId": "codex-1", "focus": false },
+              { "timeoutMs": 1200 }
+            ]
+          },
+          {
+            "method": "postToProjectService",
+            "args": [
+              "/control/open-notification-target",
+              {
+                "sessionId": "codex-1",
+                "focus": true,
+                "currentClientSession": "aimux-repo-client-live",
+                "clientTty": "/dev/live",
+                "currentWindowId": "@9"
+              },
+              { "timeoutMs": 1200 }
+            ]
+          }
+        ],
+        "timers": [],
+        "dashboardInputEpoch": 0
+      },
+      "inputSha256": "2844157259368aa26f325f55988ba82572330925ba162f2edc0a8258c716b6d0"
+    },
+    {
+      "id": "dashboard-control-activation-003",
+      "name": "returns missing without surfacing an error when no dashboard client tty exists",
+      "source": "src/multiplexer/dashboard-control.ts",
+      "api": "dashboardControlActivation",
+      "input": {
+        "api": "entry",
+        "timeoutMs": 120,
+        "tmuxPane": null,
+        "entry": { "id": "codex-1", "status": "running" },
+        "tmux": { "currentClientSession": "aimux-repo-client-live", "display": {}, "clients": [] }
+      },
+      "output": {
+        "result": "missing",
+        "calls": [
+          { "method": "tmuxRuntimeManager.displayMessage", "args": ["#{window_id}"] },
+          { "method": "tmuxRuntimeManager.displayMessage", "args": ["#{client_tty}"] },
+          { "method": "tmuxRuntimeManager.currentClientSession", "args": [] },
+          { "method": "tmuxRuntimeManager.listClients", "args": [] },
+          { "method": "tmuxRuntimeManager.listProjectManagedWindows", "args": ["<REPO>"] },
+          { "method": "tmuxRuntimeManager.displayMessage", "args": ["#{window_id}"] },
+          { "method": "tmuxRuntimeManager.displayMessage", "args": ["#{client_tty}"] },
+          { "method": "tmuxRuntimeManager.currentClientSession", "args": [] },
+          { "method": "tmuxRuntimeManager.listClients", "args": [] },
+          { "method": "tmuxRuntimeManager.displayMessage", "args": ["#{window_id}"] },
+          { "method": "tmuxRuntimeManager.displayMessage", "args": ["#{client_tty}"] },
+          { "method": "tmuxRuntimeManager.currentClientSession", "args": [] },
+          { "method": "tmuxRuntimeManager.listClients", "args": [] }
+        ],
+        "timers": [{ "ms": 100 }, { "ms": 100 }],
+        "dashboardInputEpoch": 0
+      },
+      "inputSha256": "bc024bb40418421b4693e49c28f2961a2a0687e26204d80698ee7fd767ffd76e"
+    },
+    {
+      "id": "dashboard-control-activation-004",
+      "name": "does not focus after activation is invalidated by dashboard input",
+      "source": "src/multiplexer/dashboard-control.ts",
+      "api": "dashboardControlActivation",
+      "input": {
+        "api": "entry",
+        "timeoutMs": 1000,
+        "tmuxPane": null,
+        "dashboardInputEpoch": 0,
+        "dashboardActivationToken": { "targetKind": "session", "targetId": "codex-1", "inputEpoch": 0 },
+        "invalidateAfterResolve": true,
+        "entry": { "id": "codex-1" },
+        "tmux": { "currentClientSession": "aimux-repo-client-live", "display": { "#{client_tty}": "/dev/live" } }
+      },
+      "output": {
+        "result": "missing",
+        "calls": [
+          { "method": "tmuxRuntimeManager.displayMessage", "args": ["#{window_id}"] },
+          { "method": "tmuxRuntimeManager.displayMessage", "args": ["#{client_tty}"] },
+          { "method": "tmuxRuntimeManager.currentClientSession", "args": [] },
+          { "method": "tmuxRuntimeManager.listClients", "args": [] },
+          { "method": "tmuxRuntimeManager.listProjectManagedWindows", "args": ["<REPO>"] },
+          { "method": "tmuxRuntimeManager.displayMessage", "args": ["#{window_id}"] },
+          { "method": "tmuxRuntimeManager.displayMessage", "args": ["#{client_tty}"] },
+          { "method": "tmuxRuntimeManager.currentClientSession", "args": [] },
+          { "method": "tmuxRuntimeManager.listClients", "args": [] },
+          {
+            "method": "postToProjectService",
+            "args": [
+              "/control/open-notification-target",
+              { "sessionId": "codex-1", "focus": false },
+              { "timeoutMs": 1000 }
+            ]
+          }
+        ],
+        "timers": [{ "ms": 100 }],
+        "dashboardInputEpoch": 1
+      },
+      "inputSha256": "243dd145bd20d3ba24e38574f7d1117061781006f7eb61a8196eec6a2ee6d366"
+    },
+    {
+      "id": "dashboard-control-activation-005",
+      "name": "focuses a live service locally by service target id",
+      "source": "src/multiplexer/dashboard-control.ts",
+      "api": "dashboardControlActivation",
+      "input": {
+        "api": "service",
+        "timeoutMs": 1200,
+        "tmuxPane": "%dashboard",
+        "service": { "id": "service-1", "tmuxWindowId": "@service" },
+        "tmux": {
+          "currentClientSession": "aimux-repo-client-live",
+          "display": { "#{window_id}|%dashboard": "@dashboard", "#{client_tty}": "/dev/live" },
+          "clients": [{ "tty": "/dev/live", "sessionName": "aimux-repo-client-live", "windowId": "@dashboard" }],
+          "windows": [
+            {
+              "metadata": { "kind": "service", "sessionId": "service-1" },
+              "target": {
+                "sessionName": "aimux-repo",
+                "windowId": "@service",
+                "windowIndex": 4,
+                "windowName": "svc(dev)"
+              }
+            }
+          ]
+        }
+      },
+      "output": {
+        "result": "opened",
+        "calls": [
+          { "method": "tmuxRuntimeManager.displayMessage", "args": ["#{window_id}", "%dashboard"] },
+          { "method": "tmuxRuntimeManager.displayMessage", "args": ["#{client_tty}"] },
+          { "method": "tmuxRuntimeManager.currentClientSession", "args": [] },
+          { "method": "tmuxRuntimeManager.listClients", "args": [] },
+          { "method": "tmuxRuntimeManager.listProjectManagedWindows", "args": ["<REPO>"] },
+          {
+            "method": "tmuxRuntimeManager.isWindowAlive",
+            "args": [
+              { "sessionName": "aimux-repo", "windowId": "@service", "windowIndex": 4, "windowName": "svc(dev)" }
+            ]
+          },
+          { "method": "tmuxRuntimeManager.findClientByTty", "args": ["/dev/live"] },
+          {
+            "method": "tmuxRuntimeManager.switchClientToTarget",
+            "args": [
+              "/dev/live",
+              { "sessionName": "aimux-repo", "windowId": "@service", "windowIndex": 4, "windowName": "svc(dev)" }
+            ]
+          },
+          { "method": "tmuxRuntimeManager.refreshStatus", "args": [] },
+          { "method": "postToProjectService", "args": ["/statusline/refresh", { "sessionId": "service-1" }] },
+          {
+            "method": "postToProjectService",
+            "args": [
+              "/usage/mark",
+              { "itemId": "service-1", "clientSession": "aimux-repo-client-live", "usedAt": "<NOW>" }
+            ]
+          },
+          { "method": "invalidateDesktopStateSnapshot", "args": [] }
+        ],
+        "timers": [],
+        "dashboardInputEpoch": 0
+      },
+      "inputSha256": "87b8c801b1b0c8ed05b05b9676dba7a20e1f983ab628d307b129b8d51ac663ec"
+    }
+  ]
+}

@@ -1,0 +1,112 @@
+{
+  "version": 1,
+  "source": "src/rich-text.test.ts",
+  "generatedBy": "scripts/capture-rich-text-contract.mjs",
+  "description": "SGR rich-text spans, RGB color projection, multiline attribute carryover, inverse colors, and plain-text recovery captured by running TypeScript rich-text helpers.",
+  "cases": [
+    {
+      "id": "terminal-rich-text-001",
+      "name": "splits text into structured runs without raw escapes",
+      "source": "src/rich-text.test.ts",
+      "sourceName": "splits text into structured runs without raw escapes",
+      "api": "parseSgrRichTextLines/richTextLineText/richTextText",
+      "input": { "text": "plain \u001b[1mbold\u001b[0m tail" },
+      "output": {
+        "lines": [[{ "text": "plain " }, { "text": "bold", "marks": ["bold"] }, { "text": " tail" }]],
+        "lineTexts": ["plain bold tail"],
+        "text": "plain bold tail"
+      },
+      "inputSha256": "0a74e6fec7dd775a87e2c5fe1a2b1b0f366e35d5ad186754dd4b8b3059d1a887"
+    },
+    {
+      "id": "terminal-rich-text-002",
+      "name": "projects truecolor escapes into rgb colors",
+      "source": "src/rich-text.test.ts",
+      "sourceName": "projects truecolor escapes into rgb colors",
+      "api": "parseSgrRichTextLines/richTextLineText/richTextText",
+      "input": { "text": "\u001b[38;2;215;119;87mwarm" },
+      "output": {
+        "lines": [[{ "text": "warm", "foreground": { "model": "rgb", "value": "#d77757" } }]],
+        "lineTexts": ["warm"],
+        "text": "warm"
+      },
+      "inputSha256": "15d4a80dbff3d91f8200d5875402400dba16014ca156ab45fb3c650f4797642b"
+    },
+    {
+      "id": "terminal-rich-text-003",
+      "name": "projects 256-color escapes into rgb colors",
+      "source": "src/rich-text.test.ts",
+      "sourceName": "projects 256-color escapes into rgb colors",
+      "api": "parseSgrRichTextLines/richTextLineText/richTextText",
+      "input": { "text": "\u001b[38;5;244mgray" },
+      "output": {
+        "lines": [[{ "text": "gray", "foreground": { "model": "rgb", "value": "#808080" } }]],
+        "lineTexts": ["gray"],
+        "text": "gray"
+      },
+      "inputSha256": "acf286621d9b5c7c05c1f84bbedd13348f926b39c274fdcdaf5f8006007a85b8"
+    },
+    {
+      "id": "terminal-rich-text-004",
+      "name": "carries attributes across lines until reset",
+      "source": "src/rich-text.test.ts",
+      "sourceName": "carries attributes across lines until reset",
+      "api": "parseSgrRichTextLines/richTextLineText/richTextText",
+      "input": { "text": "\u001b[31mred\nstill red\u001b[0m\nplain" },
+      "output": {
+        "lines": [
+          [{ "text": "red", "foreground": { "model": "rgb", "value": "#e06c75" } }],
+          [{ "text": "still red", "foreground": { "model": "rgb", "value": "#e06c75" } }],
+          [{ "text": "plain" }]
+        ],
+        "lineTexts": ["red", "still red", "plain"],
+        "text": "red\nstill red\nplain"
+      },
+      "inputSha256": "44d8fed53ce34e2c066f7757b6e541f6235092cd8df1a41b5f876fb754fec73d"
+    },
+    {
+      "id": "terminal-rich-text-005",
+      "name": "keeps marks and inverse colors structured",
+      "source": "src/rich-text.test.ts",
+      "sourceName": "keeps marks and inverse colors structured",
+      "api": "parseSgrRichTextLines/richTextLineText/richTextText",
+      "input": { "text": "\u001b[1;3;4;38;2;255;0;0m\u001b[48;2;0;0;255m\u001b[7mflip" },
+      "output": {
+        "lines": [
+          [
+            {
+              "text": "flip",
+              "marks": ["bold", "italic", "underline"],
+              "foreground": { "model": "rgb", "value": "#0000ff" },
+              "background": { "model": "rgb", "value": "#ff0000" }
+            }
+          ]
+        ],
+        "lineTexts": ["flip"],
+        "text": "flip"
+      },
+      "inputSha256": "4b421e03a559601fa2d95ee6ad9fbe10aace7ce0a6e6266aec4e3bdcb0842e84"
+    },
+    {
+      "id": "terminal-rich-text-006",
+      "name": "recovers plain text from parsed lines",
+      "source": "src/rich-text.test.ts",
+      "sourceName": "recovers plain text from parsed lines",
+      "api": "parseSgrRichTextLines/richTextLineText/richTextText",
+      "input": { "text": "\u001b[1m● \u001b[0mBash(\u001b[38;5;244mls\u001b[0m)" },
+      "output": {
+        "lines": [
+          [
+            { "text": "● ", "marks": ["bold"] },
+            { "text": "Bash(" },
+            { "text": "ls", "foreground": { "model": "rgb", "value": "#808080" } },
+            { "text": ")" }
+          ]
+        ],
+        "lineTexts": ["● Bash(ls)"],
+        "text": "● Bash(ls)"
+      },
+      "inputSha256": "01c8334e7aa8b47418e814fe6842609bb72f836b2b5806e641e110c1763ae962"
+    }
+  ]
+}

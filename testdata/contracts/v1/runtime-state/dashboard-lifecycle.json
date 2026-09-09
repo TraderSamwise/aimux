@@ -1,0 +1,154 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/dashboard-lifecycle.test.ts",
+  "generatedBy": "scripts/capture-dashboard-lifecycle-guard-contract.mjs",
+  "description": "Dashboard lifecycle token capture, currentness checks, render gating, and async handler guards captured by running TypeScript.",
+  "cases": [
+    {
+      "id": "runtime-state-dashboard-lifecycle-001",
+      "name": "keeps unscoped dashboard lifecycle tokens current while the host stays in dashboard mode",
+      "source": "src/multiplexer/dashboard-lifecycle.test.ts",
+      "sourceName": "keeps unscoped dashboard lifecycle tokens current while the host stays in dashboard mode",
+      "api": "dashboard-lifecycle",
+      "input": { "host": { "mode": "dashboard" }, "opts": {} },
+      "output": { "token": { "mode": "dashboard" }, "current": true },
+      "inputSha256": "b19673a285c976e3abbbf403699e20d76e4fa82061fc7b9d227977045912bbbf"
+    },
+    {
+      "id": "runtime-state-dashboard-lifecycle-002",
+      "name": "fails closed when an input epoch was requested but the host cannot verify it",
+      "source": "src/multiplexer/dashboard-lifecycle.test.ts",
+      "sourceName": "fails closed when an input epoch was requested but the host cannot verify it",
+      "api": "dashboard-lifecycle",
+      "input": { "host": { "mode": "dashboard" }, "opts": { "inputEpoch": true } },
+      "output": { "token": { "mode": "dashboard", "requiresInputEpoch": true }, "current": false },
+      "inputSha256": "131e3bb53e10e4b19e7a498066fb8edd45fb0d2ae9d4cb5c281b298f29f4877c"
+    },
+    {
+      "id": "runtime-state-dashboard-lifecycle-003",
+      "name": "rejects stale input epoch tokens",
+      "source": "src/multiplexer/dashboard-lifecycle.test.ts",
+      "sourceName": "rejects stale input epoch tokens",
+      "api": "dashboard-lifecycle",
+      "input": {
+        "hostBefore": { "mode": "dashboard", "dashboardInputEpoch": 3 },
+        "opts": { "inputEpoch": true },
+        "mutate": { "dashboardInputEpoch": 4 }
+      },
+      "output": {
+        "token": { "mode": "dashboard", "inputEpoch": 3, "requiresInputEpoch": true },
+        "currentAfterMutation": false,
+        "hostAfter": { "mode": "dashboard", "dashboardInputEpoch": 4 }
+      },
+      "inputSha256": "0d852f51bc2d3d91df0acd0a9a262a11131d312a725df9b583ea805c9b731242"
+    },
+    {
+      "id": "runtime-state-dashboard-lifecycle-004",
+      "name": "fails closed when a screen token cannot be verified",
+      "source": "src/multiplexer/dashboard-lifecycle.test.ts",
+      "sourceName": "fails closed when a screen token cannot be verified",
+      "api": "dashboard-lifecycle",
+      "input": { "host": { "mode": "dashboard" }, "opts": { "screen": "coordination" } },
+      "output": { "token": { "mode": "dashboard", "screen": "coordination" }, "current": false },
+      "inputSha256": "e3504d715fee230d2a7673c483e9176e813db86d1c7e076a5c85d81b5393985a"
+    },
+    {
+      "id": "runtime-state-dashboard-lifecycle-005",
+      "name": "renders only when the requested screen still matches",
+      "source": "src/multiplexer/dashboard-lifecycle.test.ts",
+      "sourceName": "renders only when the requested screen still matches",
+      "api": "dashboard-lifecycle",
+      "input": {
+        "hostBefore": { "mode": "dashboard", "dashboardState": { "screen": "coordination" } },
+        "opts": { "screen": "coordination" },
+        "mutate": { "dashboardState": { "screen": "project" } }
+      },
+      "output": {
+        "token": { "mode": "dashboard", "screen": "coordination" },
+        "calls": [{ "screen": "coordination" }],
+        "hostAfter": { "mode": "dashboard", "dashboardState": { "screen": "project" } }
+      },
+      "inputSha256": "920ed084de28aa9f21b76d12031c9dc4e62c7705897690f240310d1b5fa5f91a"
+    },
+    {
+      "id": "runtime-state-dashboard-lifecycle-006",
+      "name": "runs lifecycle task success handlers only while the token is current",
+      "source": "src/multiplexer/dashboard-lifecycle.test.ts",
+      "sourceName": "runs lifecycle task success handlers only while the token is current",
+      "api": "dashboard-lifecycle",
+      "input": {
+        "hostBefore": { "mode": "dashboard", "dashboardInputEpoch": 1, "dashboardState": { "screen": "project" } },
+        "opts": { "inputEpoch": true, "screen": "project" },
+        "mutateBeforeResolve": { "dashboardInputEpoch": 2 },
+        "resolution": "done"
+      },
+      "output": {
+        "calls": [],
+        "hostAfter": { "mode": "dashboard", "dashboardInputEpoch": 2, "dashboardState": { "screen": "project" } }
+      },
+      "inputSha256": "df80a0ea55454a301ad1a18e635f016a1e5998f6c4f044d35d71f388adc3ffaf"
+    },
+    {
+      "id": "runtime-state-dashboard-lifecycle-007",
+      "name": "runs lifecycle task error handlers only while the token is current",
+      "source": "src/multiplexer/dashboard-lifecycle.test.ts",
+      "sourceName": "runs lifecycle task error handlers only while the token is current",
+      "api": "dashboard-lifecycle",
+      "input": {
+        "hostBefore": { "mode": "dashboard", "dashboardInputEpoch": 1, "dashboardState": { "screen": "coordination" } },
+        "opts": { "inputEpoch": true, "screen": "coordination" },
+        "mutateBeforeReject": { "mode": "session" },
+        "rejection": "late failure"
+      },
+      "output": {
+        "calls": [],
+        "hostAfter": { "mode": "session", "dashboardInputEpoch": 1, "dashboardState": { "screen": "coordination" } }
+      },
+      "inputSha256": "71a503a3bf0acdd729a09cdcdeaabc64192e76ebce96bc08f0b2e12cf4a1a48a"
+    },
+    {
+      "id": "runtime-state-dashboard-lifecycle-008",
+      "name": "runs lifecycle task handlers when the token remains current",
+      "source": "src/multiplexer/dashboard-lifecycle.test.ts",
+      "sourceName": "runs lifecycle task handlers when the token remains current",
+      "api": "dashboard-lifecycle",
+      "input": {
+        "host": { "mode": "dashboard", "dashboardInputEpoch": 1, "dashboardState": { "screen": "library" } },
+        "opts": { "inputEpoch": true, "screen": "library" },
+        "resolution": "ok"
+      },
+      "output": {
+        "calls": [
+          {
+            "kind": "success",
+            "value": "ok",
+            "token": { "mode": "dashboard", "inputEpoch": 1, "requiresInputEpoch": true, "screen": "library" }
+          },
+          {
+            "kind": "finally",
+            "token": { "mode": "dashboard", "inputEpoch": 1, "requiresInputEpoch": true, "screen": "library" }
+          }
+        ],
+        "hostAfter": { "mode": "dashboard", "dashboardInputEpoch": 1, "dashboardState": { "screen": "library" } }
+      },
+      "inputSha256": "09646af849115ab3680701894353737769a2d9b32b4d928f99c85f8363f1f568"
+    },
+    {
+      "id": "runtime-state-dashboard-lifecycle-009",
+      "name": "does not route success handler exceptions to the error handler",
+      "source": "src/multiplexer/dashboard-lifecycle.test.ts",
+      "sourceName": "does not route success handler exceptions to the error handler",
+      "api": "dashboard-lifecycle",
+      "input": {
+        "host": { "mode": "dashboard", "dashboardState": { "screen": "library" } },
+        "opts": { "screen": "library" },
+        "successThrows": "render failed"
+      },
+      "output": {
+        "calls": [{ "kind": "success" }],
+        "hostAfter": { "mode": "dashboard", "dashboardState": { "screen": "library" } }
+      },
+      "inputSha256": "8794568170545fe64d9890fd5a4093315aafa8b1d139fdccfd0d12c553856999"
+    }
+  ]
+}

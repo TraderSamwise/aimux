@@ -1,0 +1,464 @@
+{
+  "version": 1,
+  "source": "src/install-cleanup.test.ts",
+  "generatedBy": "scripts/capture-install-cleanup-contract.mjs",
+  "description": "Install cleanup planning, reference detection, deletion, dry-run, debris, and default contracts captured by running TypeScript install-cleanup helpers.",
+  "cases": [
+    {
+      "id": "install-cleanup-001",
+      "name": "removes only installs that are old, unreferenced, and not recent",
+      "source": "src/install-cleanup.test.ts",
+      "input": { "scenario": "old-unreferenced" },
+      "output": {
+        "root": "<root>/native",
+        "currentInstall": null,
+        "retentionDays": 30,
+        "keepRecent": 0,
+        "referencesComplete": true,
+        "remove": [
+          { "name": "old-a", "path": "<root>/native/old-a", "ageDays": 90, "sizeBytes": 1034 },
+          { "name": "old-b", "path": "<root>/native/old-b", "ageDays": 45, "sizeBytes": 1034 }
+        ],
+        "keep": [{ "name": "fresh", "reason": "within-retention" }],
+        "reclaimableBytes": 2068
+      },
+      "inputSha256": "8c2997bfd5d1a68947e1a540e075c638dc138f4e1507fc7e04b7fedfccb42e3f"
+    },
+    {
+      "id": "install-cleanup-002",
+      "name": "never removes the install the stable shim points at, however old",
+      "source": "src/install-cleanup.test.ts",
+      "input": { "scenario": "current-install" },
+      "output": {
+        "root": "<root>/native",
+        "currentInstall": "current",
+        "retentionDays": 30,
+        "keepRecent": 0,
+        "referencesComplete": true,
+        "remove": [],
+        "keep": [{ "name": "current", "reason": "current-install" }],
+        "reclaimableBytes": 0
+      },
+      "inputSha256": "86360fbb1fe3eceab24da0d2cf442f0bc9c6d08a4c4a8f38c96ce9cd1c32885c"
+    },
+    {
+      "id": "install-cleanup-003",
+      "name": "never removes an install referenced by a live process or pane",
+      "source": "src/install-cleanup.test.ts",
+      "input": { "scenario": "live-reference" },
+      "output": {
+        "root": "<root>/native",
+        "currentInstall": null,
+        "retentionDays": 30,
+        "keepRecent": 0,
+        "referencesComplete": true,
+        "remove": [],
+        "keep": [{ "name": "busy", "reason": "in-use" }],
+        "reclaimableBytes": 0
+      },
+      "inputSha256": "22908b0806ce62c584ee2c7665837b177ebf1b73d1842b51eed1c9b8ccd91d16"
+    },
+    {
+      "id": "install-cleanup-004",
+      "name": "never removes an install pinned only by a tmux key binding",
+      "source": "src/install-cleanup.test.ts",
+      "input": { "scenario": "tmux-binding-reference" },
+      "output": {
+        "root": "<root>/native",
+        "currentInstall": null,
+        "retentionDays": 30,
+        "keepRecent": 0,
+        "referencesComplete": true,
+        "remove": [{ "name": "unbound", "path": "<root>/native/unbound", "ageDays": 300, "sizeBytes": 1034 }],
+        "keep": [{ "name": "bound", "reason": "in-use" }],
+        "reclaimableBytes": 1034
+      },
+      "inputSha256": "2068fd0877d1cac39362667cbe0e49d3acd553d2682c923c715e350e59e1598d"
+    },
+    {
+      "id": "install-cleanup-005",
+      "name": "keeps the newest installs by mtime even when they are past retention",
+      "source": "src/install-cleanup.test.ts",
+      "input": { "scenario": "keep-newest" },
+      "output": {
+        "root": "<root>/native",
+        "currentInstall": null,
+        "retentionDays": 30,
+        "keepRecent": 1,
+        "referencesComplete": true,
+        "remove": [{ "name": "older", "path": "<root>/native/older", "ageDays": 300, "sizeBytes": 1034 }],
+        "keep": [{ "name": "newer", "reason": "recent" }],
+        "reclaimableBytes": 1034
+      },
+      "inputSha256": "52cb401801378d63e880357754e916148c52a4e66dac3231a566b86d055a09dd"
+    },
+    {
+      "id": "install-cleanup-006",
+      "name": "returns an empty plan when the install root is missing",
+      "source": "src/install-cleanup.test.ts",
+      "input": { "scenario": "missing-root" },
+      "output": {
+        "root": "<root>/native/does-not-exist",
+        "currentInstall": null,
+        "retentionDays": 30,
+        "keepRecent": 0,
+        "referencesComplete": true,
+        "remove": [],
+        "keep": [],
+        "reclaimableBytes": 0
+      },
+      "inputSha256": "9133c656ede865ed3947d93f1590ba5d60ecba438bc4b487efb5bd3ad9bd478a"
+    },
+    {
+      "id": "install-cleanup-007",
+      "name": "removes nothing on a dry run",
+      "source": "src/install-cleanup.test.ts",
+      "input": { "scenario": "dry-run" },
+      "output": {
+        "result": {
+          "dryRun": true,
+          "plan": {
+            "root": "<root>/native",
+            "currentInstall": null,
+            "retentionDays": 30,
+            "keepRecent": 0,
+            "referencesComplete": true,
+            "remove": [{ "name": "old", "path": "<root>/native/old", "ageDays": 90, "sizeBytes": 1034 }],
+            "keep": [],
+            "reclaimableBytes": 1034
+          },
+          "results": [{ "name": "old", "status": "dry-run", "sizeBytes": 1034 }],
+          "reclaimedBytes": 0
+        },
+        "removed": []
+      },
+      "inputSha256": "08ba78ba8d9c177a59e081822f936ab09a5f67150f0cb88c23fbdb4d8ba02c30"
+    },
+    {
+      "id": "install-cleanup-008",
+      "name": "removes the planned installs and reports what it reclaimed",
+      "source": "src/install-cleanup.test.ts",
+      "input": { "scenario": "remove-planned" },
+      "output": {
+        "result": {
+          "dryRun": false,
+          "plan": {
+            "root": "<root>/native",
+            "currentInstall": null,
+            "retentionDays": 30,
+            "keepRecent": 0,
+            "referencesComplete": true,
+            "remove": [{ "name": "old", "path": "<root>/native/old", "ageDays": 90, "sizeBytes": 1034 }],
+            "keep": [],
+            "reclaimableBytes": 1034
+          },
+          "results": [{ "name": "old", "status": "removed", "sizeBytes": 1034 }],
+          "reclaimedBytes": 1034
+        },
+        "removed": ["<root>/native/old"]
+      },
+      "inputSha256": "c3bad579aee9b5bdbd33e5eb876c5971d62bd6e51f42ee68597c61c3dac0aa2b"
+    },
+    {
+      "id": "install-cleanup-009",
+      "name": "refuses to remove a candidate whose path escapes the install root",
+      "source": "src/install-cleanup.test.ts",
+      "input": { "scenario": "escape-candidate" },
+      "output": {
+        "result": {
+          "dryRun": false,
+          "plan": {
+            "root": "<root>/native",
+            "currentInstall": null,
+            "retentionDays": 30,
+            "keepRecent": 0,
+            "referencesComplete": true,
+            "remove": [{ "name": "escape", "path": "/etc/passwd", "ageDays": 999, "sizeBytes": 0 }],
+            "keep": [],
+            "reclaimableBytes": 0
+          },
+          "results": [
+            {
+              "name": "escape",
+              "status": "failed",
+              "sizeBytes": 0,
+              "error": "refusing to remove a path outside the install root"
+            }
+          ],
+          "reclaimedBytes": 0
+        },
+        "removed": []
+      },
+      "inputSha256": "cbe5a9d980e4d200fb3e55515afdb1ef53e677cd1baa406c906c4b8dac1545e3"
+    },
+    {
+      "id": "install-cleanup-010",
+      "name": "reports a failed removal without aborting the sweep",
+      "source": "src/install-cleanup.test.ts",
+      "input": { "scenario": "failed-removal" },
+      "output": {
+        "dryRun": false,
+        "plan": {
+          "root": "<root>/native",
+          "currentInstall": null,
+          "retentionDays": 30,
+          "keepRecent": 0,
+          "referencesComplete": true,
+          "remove": [
+            { "name": "good", "path": "<root>/native/good", "ageDays": 91, "sizeBytes": 1034 },
+            { "name": "bad", "path": "<root>/native/bad", "ageDays": 90, "sizeBytes": 1034 }
+          ],
+          "keep": [],
+          "reclaimableBytes": 2068
+        },
+        "results": [
+          { "name": "good", "status": "removed", "sizeBytes": 1034 },
+          { "name": "bad", "status": "failed", "sizeBytes": 1034, "error": "permission denied" }
+        ],
+        "reclaimedBytes": 1034
+      },
+      "inputSha256": "24812240759eb7efd44c41ee89ba080889d574df12a04ac23ad705b16419a173"
+    },
+    {
+      "id": "install-cleanup-011",
+      "name": "ages an install by its newest content, not a stale directory timestamp",
+      "source": "src/install-cleanup.test.ts",
+      "input": { "scenario": "newest-content-age" },
+      "output": {
+        "root": "<root>/native",
+        "currentInstall": null,
+        "retentionDays": 30,
+        "keepRecent": 0,
+        "referencesComplete": true,
+        "remove": [],
+        "keep": [{ "name": "freshly-installed", "reason": "within-retention" }],
+        "reclaimableBytes": 0
+      },
+      "inputSha256": "c67352706f0cc44d40c733c3411c4ae69540207ec25d89993e0b7c117c0611ac"
+    },
+    {
+      "id": "install-cleanup-012",
+      "name": "removes nothing when a reference source could not be read",
+      "source": "src/install-cleanup.test.ts",
+      "input": { "scenario": "incomplete-references" },
+      "output": {
+        "root": "<root>/native",
+        "currentInstall": null,
+        "retentionDays": 30,
+        "keepRecent": 0,
+        "referencesComplete": false,
+        "remove": [],
+        "keep": [
+          { "name": "old-a", "reason": "references-unverified" },
+          { "name": "old-b", "reason": "references-unverified" }
+        ],
+        "reclaimableBytes": 0
+      },
+      "inputSha256": "cb9bc04d771964c809f9a3b0336602180f6ae3dc8ac379f1cacee1e8ae57055c"
+    },
+    {
+      "id": "install-cleanup-013",
+      "name": "matches references written against the canonical form of the root",
+      "source": "src/install-cleanup.test.ts",
+      "input": { "scenario": "canonical-reference" },
+      "output": {
+        "root": "<root>/native",
+        "currentInstall": null,
+        "retentionDays": 30,
+        "keepRecent": 0,
+        "referencesComplete": true,
+        "remove": [],
+        "keep": [{ "name": "busy", "reason": "in-use" }],
+        "reclaimableBytes": 0
+      },
+      "inputSha256": "db2f39580ed264224c368b6f1b94de4950eda02a976c1ebbff290b256be33650"
+    },
+    {
+      "id": "install-cleanup-014",
+      "name": "tolerates a trailing slash on the configured install root",
+      "source": "src/install-cleanup.test.ts",
+      "input": { "scenario": "trailing-slash-root" },
+      "output": {
+        "root": "<root>/native",
+        "currentInstall": null,
+        "retentionDays": 30,
+        "keepRecent": 0,
+        "referencesComplete": true,
+        "remove": [],
+        "keep": [{ "name": "busy", "reason": "in-use" }],
+        "reclaimableBytes": 0
+      },
+      "inputSha256": "506766f0f4e6320ffcd04a9834efbe416eadba206df26d849dae03d5624128ac"
+    },
+    {
+      "id": "install-cleanup-015",
+      "name": "reads the install root from AIMUX_INSTALL_ROOT when none is given",
+      "source": "src/install-cleanup.test.ts",
+      "input": { "scenario": "env-root" },
+      "output": {
+        "root": "<root>/native",
+        "currentInstall": null,
+        "retentionDays": 30,
+        "keepRecent": 0,
+        "referencesComplete": true,
+        "remove": [{ "name": "old", "path": "<root>/native/old", "ageDays": 400, "sizeBytes": 1034 }],
+        "keep": [],
+        "reclaimableBytes": 1034
+      },
+      "inputSha256": "2549c118a91e9896a87b843bb2a806e67722b06e766cf65b25c36e67e8105781"
+    },
+    {
+      "id": "install-cleanup-016",
+      "name": "does not remove anything when the caller says nothing about dry run",
+      "source": "src/install-cleanup.test.ts",
+      "input": { "scenario": "default-dry-run" },
+      "output": {
+        "result": {
+          "dryRun": true,
+          "plan": {
+            "root": "<root>/native",
+            "currentInstall": null,
+            "retentionDays": 30,
+            "keepRecent": 0,
+            "referencesComplete": true,
+            "remove": [{ "name": "old", "path": "<root>/native/old", "ageDays": 90, "sizeBytes": 1034 }],
+            "keep": [],
+            "reclaimableBytes": 1034
+          },
+          "results": [{ "name": "old", "status": "dry-run", "sizeBytes": 1034 }],
+          "reclaimedBytes": 0
+        },
+        "removed": []
+      },
+      "inputSha256": "4d104581245a4baa25d81691d62797489e2552b69e2431cb1614509529f415e5"
+    },
+    {
+      "id": "install-cleanup-017",
+      "name": "never removes a half-written install, however old it looks",
+      "source": "src/install-cleanup.test.ts",
+      "input": { "scenario": "half-written-install" },
+      "output": {
+        "root": "<root>/native",
+        "currentInstall": null,
+        "retentionDays": 30,
+        "keepRecent": 0,
+        "referencesComplete": true,
+        "remove": [],
+        "keep": [{ "name": "mid-install", "reason": "incomplete" }],
+        "reclaimableBytes": 0
+      },
+      "inputSha256": "4937ed7e88154b454958529174ccdf7be3972b9eafce50ae2693a3c7fdf023fc"
+    },
+    {
+      "id": "install-cleanup-018",
+      "name": "offers the oldest installs first so a capped sweep drains predictably",
+      "source": "src/install-cleanup.test.ts",
+      "input": { "scenario": "oldest-first" },
+      "output": {
+        "root": "<root>/native",
+        "currentInstall": null,
+        "retentionDays": 30,
+        "keepRecent": 0,
+        "referencesComplete": true,
+        "remove": [
+          { "name": "oldest", "path": "<root>/native/oldest", "ageDays": 300, "sizeBytes": 1034 },
+          { "name": "middle", "path": "<root>/native/middle", "ageDays": 100, "sizeBytes": 1034 },
+          { "name": "newest", "path": "<root>/native/newest", "ageDays": 40, "sizeBytes": 1034 }
+        ],
+        "keep": [],
+        "reclaimableBytes": 3102
+      },
+      "inputSha256": "33dbd0023d07fdcd7a135c6efb5e079b1f44b6a0bb02a447d9d0297c88a112cf"
+    },
+    {
+      "id": "install-cleanup-019",
+      "name": "removes at most the requested number of installs",
+      "source": "src/install-cleanup.test.ts",
+      "input": { "scenario": "limit-removals" },
+      "output": {
+        "result": {
+          "dryRun": false,
+          "plan": {
+            "root": "<root>/native",
+            "currentInstall": null,
+            "retentionDays": 30,
+            "keepRecent": 0,
+            "referencesComplete": true,
+            "remove": [
+              { "name": "a", "path": "<root>/native/a", "ageDays": 300, "sizeBytes": 1034 },
+              { "name": "b", "path": "<root>/native/b", "ageDays": 200, "sizeBytes": 1034 },
+              { "name": "c", "path": "<root>/native/c", "ageDays": 100, "sizeBytes": 1034 }
+            ],
+            "keep": [],
+            "reclaimableBytes": 3102
+          },
+          "results": [
+            { "name": "a", "status": "removed", "sizeBytes": 1034 },
+            { "name": "b", "status": "removed", "sizeBytes": 1034 }
+          ],
+          "reclaimedBytes": 2068
+        },
+        "removed": ["<root>/native/a", "<root>/native/b"]
+      },
+      "inputSha256": "21f431aeb60cfb373e6599e157a89c94366603152fbbe942140a4800d4277a8f"
+    },
+    {
+      "id": "install-cleanup-020",
+      "name": "always reclaims debris left by an interrupted delete",
+      "source": "src/install-cleanup.test.ts",
+      "input": { "scenario": "debris" },
+      "output": {
+        "root": "<root>/native",
+        "currentInstall": null,
+        "retentionDays": 30,
+        "keepRecent": 0,
+        "referencesComplete": true,
+        "remove": [
+          {
+            "name": "abandoned.aimux-removing",
+            "path": "<root>/native/abandoned.aimux-removing",
+            "ageDays": 0,
+            "sizeBytes": 0
+          }
+        ],
+        "keep": [],
+        "reclaimableBytes": 0
+      },
+      "inputSha256": "4df3d722eb0ff62dd74b90d8a9d3a7d14faa6baa5cc9183a371f3e90d2c37410"
+    },
+    {
+      "id": "install-cleanup-021",
+      "name": "renames out of the way before deleting so a kill cannot strand a stump",
+      "source": "src/install-cleanup.test.ts",
+      "input": { "scenario": "rename-before-delete" },
+      "output": {
+        "result": {
+          "dryRun": false,
+          "plan": {
+            "root": "<root>/native",
+            "currentInstall": null,
+            "retentionDays": 30,
+            "keepRecent": 0,
+            "referencesComplete": true,
+            "remove": [{ "name": "doomed", "path": "<root>/native/doomed", "ageDays": 90, "sizeBytes": 1034 }],
+            "keep": [],
+            "reclaimableBytes": 1034
+          },
+          "results": [{ "name": "doomed", "status": "removed", "sizeBytes": 1034 }],
+          "reclaimedBytes": 1034
+        },
+        "exists": false,
+        "removingExists": false
+      },
+      "inputSha256": "9d7f3fa82fde0a6675bbd9d5b6118809729deb8f91df1e6db2d583fde18baf31"
+    },
+    {
+      "id": "install-cleanup-022",
+      "name": "exposes conservative defaults",
+      "source": "src/install-cleanup.test.ts",
+      "input": { "scenario": "defaults" },
+      "output": { "defaultRetentionDays": 30, "defaultKeepRecent": 10 },
+      "inputSha256": "1ad55abbfa791e0a1b74edb4ac269a144bf29264b3d340b930acb93e3a110128"
+    }
+  ]
+}

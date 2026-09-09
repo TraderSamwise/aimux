@@ -1,0 +1,268 @@
+{
+  "version": 1,
+  "source": "src/transcript-turn-state.test.ts",
+  "generatedBy": "scripts/capture-transcript-turn-state-contract.mjs",
+  "description": "Claude/Codex transcript turn-state, tail-read, probe, and Codex transcript path contracts captured by running TypeScript.",
+  "cases": [
+    {
+      "id": "transcript-turn-state-001",
+      "name": "claude complete when last assistant entry is end_turn",
+      "source": "src/transcript-turn-state.test.ts",
+      "api": "claudeTurnState",
+      "input": { "tail": "{\"type\":\"assistant\",\"message\":{\"stop_reason\":\"end_turn\"}}\n" },
+      "output": "complete",
+      "inputSha256": "05977173fa75d87fc1020491d344ca37a4e3cff703cb23c525372eddc252a7fe"
+    },
+    {
+      "id": "transcript-turn-state-002",
+      "name": "claude complete with trailing bookkeeping",
+      "source": "src/transcript-turn-state.test.ts",
+      "api": "claudeTurnState",
+      "input": {
+        "tail": "{\"type\":\"assistant\",\"message\":{\"stop_reason\":\"end_turn\"}}\n{\"type\":\"last-prompt\",\"leafUuid\":\"x\"}\n{\"type\":\"ai-title\",\"title\":\"t\"}\n{\"type\":\"mode\"}\n{\"type\":\"permission-mode\"}\n"
+      },
+      "output": "complete",
+      "inputSha256": "9a527a903d66f5d4be74af1a524876604b9ced9dc121ccb2841baa11b1a9453f"
+    },
+    {
+      "id": "transcript-turn-state-003",
+      "name": "claude complete for max_tokens",
+      "source": "src/transcript-turn-state.test.ts",
+      "api": "claudeTurnState",
+      "input": { "tail": "{\"type\":\"assistant\",\"message\":{\"stop_reason\":\"max_tokens\"}}\n" },
+      "output": "complete",
+      "inputSha256": "2b757e988fbc57a93a97f856af37cc5efc34e324fb80f7623e52fa8865681fb8"
+    },
+    {
+      "id": "transcript-turn-state-004",
+      "name": "claude complete for refusal",
+      "source": "src/transcript-turn-state.test.ts",
+      "api": "claudeTurnState",
+      "input": { "tail": "{\"type\":\"assistant\",\"message\":{\"stop_reason\":\"refusal\"}}\n" },
+      "output": "complete",
+      "inputSha256": "520a77919c280df5a221844e1e93a951456e17abccc15c12c28774bf4ab0556b"
+    },
+    {
+      "id": "transcript-turn-state-005",
+      "name": "claude in_progress for pause_turn",
+      "source": "src/transcript-turn-state.test.ts",
+      "api": "claudeTurnState",
+      "input": { "tail": "{\"type\":\"assistant\",\"message\":{\"stop_reason\":\"pause_turn\"}}\n" },
+      "output": "in_progress",
+      "inputSha256": "497c47bd5e80a4b2a4c2bbf19edc84339d22ea2b8f495a27ef7f9e627e6ddd7e"
+    },
+    {
+      "id": "transcript-turn-state-006",
+      "name": "claude in_progress when user prompt follows end_turn",
+      "source": "src/transcript-turn-state.test.ts",
+      "api": "claudeTurnState",
+      "input": {
+        "tail": "{\"type\":\"assistant\",\"message\":{\"stop_reason\":\"end_turn\"}}\n{\"type\":\"last-prompt\"}\n{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"do more\"}}\n"
+      },
+      "output": "in_progress",
+      "inputSha256": "ebffd5e018e6d10bfb0f8720401a8bc57b68836ea9818d3e4c08120ae2dfc58c"
+    },
+    {
+      "id": "transcript-turn-state-007",
+      "name": "claude in_progress when last assistant entry is tool_use",
+      "source": "src/transcript-turn-state.test.ts",
+      "api": "claudeTurnState",
+      "input": {
+        "tail": "{\"type\":\"assistant\",\"message\":{\"stop_reason\":\"end_turn\"}}\n{\"type\":\"user\",\"message\":{\"role\":\"user\"}}\n{\"type\":\"assistant\",\"message\":{\"stop_reason\":\"tool_use\"}}\n{\"type\":\"user\",\"message\":{\"content\":[{\"type\":\"tool_result\"}]}}\n"
+      },
+      "output": "in_progress",
+      "inputSha256": "74dc4857865290241a3f923ff03c4b474eca7d9abdcb9d7002f1972a75533c55"
+    },
+    {
+      "id": "transcript-turn-state-008",
+      "name": "claude tolerates partial leading line",
+      "source": "src/transcript-turn-state.test.ts",
+      "api": "claudeTurnState",
+      "input": {
+        "tail": "_reason\":\"tool_use\"}}\n{\"type\":\"assistant\",\"message\":{\"stop_reason\":\"end_turn\"}}\n"
+      },
+      "output": "complete",
+      "inputSha256": "a1ea1f8a7f94416087f0c83b99a65c3e609fd97bca49fd1c68b785626657b31b"
+    },
+    {
+      "id": "transcript-turn-state-009",
+      "name": "claude unknown with no assistant entry",
+      "source": "src/transcript-turn-state.test.ts",
+      "api": "claudeTurnState",
+      "input": { "tail": "{\"type\":\"user\"}\n{\"type\":\"mode\"}\n" },
+      "output": "unknown",
+      "inputSha256": "2947212e10b2bcb06968e2a40023ae7eee6da65ae503fd83edc36053906f3db6"
+    },
+    {
+      "id": "transcript-turn-state-010",
+      "name": "claude unknown for empty tail",
+      "source": "src/transcript-turn-state.test.ts",
+      "api": "claudeTurnState",
+      "input": { "tail": "" },
+      "output": "unknown",
+      "inputSha256": "b12b7bd58f0f848c69c009157c5ce4a10f2d7f1cb46dd6e127fadec3be75c22b"
+    },
+    {
+      "id": "transcript-turn-state-011",
+      "name": "claude unknown for null message",
+      "source": "src/transcript-turn-state.test.ts",
+      "api": "claudeTurnState",
+      "input": { "tail": "{\"type\":\"assistant\",\"message\":null}\n" },
+      "output": "unknown",
+      "inputSha256": "95ac886b9d5cb60ca75962411ebaa8a7c0abe8c235b6409b63d465cbdd2802b0"
+    },
+    {
+      "id": "transcript-turn-state-012",
+      "name": "claude unknown for absent message",
+      "source": "src/transcript-turn-state.test.ts",
+      "api": "claudeTurnState",
+      "input": { "tail": "{\"type\":\"assistant\"}\n" },
+      "output": "unknown",
+      "inputSha256": "db87955f13c68e5dc4eca14dbe5ece5ccdc20efb5f8ec5bfbec2cb94b4004498"
+    },
+    {
+      "id": "transcript-turn-state-013",
+      "name": "codex complete on task_complete",
+      "source": "src/transcript-turn-state.test.ts",
+      "api": "codexTurnState",
+      "input": { "tail": "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\"}}\n" },
+      "output": "complete",
+      "inputSha256": "da60a48aa8c461d09837c7713d57818199566b6c782afd7229fccfa9f7835280"
+    },
+    {
+      "id": "transcript-turn-state-014",
+      "name": "codex complete on turn_aborted",
+      "source": "src/transcript-turn-state.test.ts",
+      "api": "codexTurnState",
+      "input": { "tail": "{\"type\":\"event_msg\",\"payload\":{\"type\":\"turn_aborted\"}}\n" },
+      "output": "complete",
+      "inputSha256": "6580cd551f390fc7355864491f08979246b85eec8ee9ca37c1f8136944ccdfe0"
+    },
+    {
+      "id": "transcript-turn-state-015",
+      "name": "codex in_progress when a turn started without completing",
+      "source": "src/transcript-turn-state.test.ts",
+      "api": "codexTurnState",
+      "input": {
+        "tail": "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\"}}\n{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\"}}\n{\"type\":\"response_item\",\"payload\":{\"role\":\"assistant\"}}\n"
+      },
+      "output": "in_progress",
+      "inputSha256": "1dfd563f87250d30bdbd00b63a4a5f4f085e3a06bf8fec8bf0d97e31a742bbb5"
+    },
+    {
+      "id": "transcript-turn-state-016",
+      "name": "codex ignores unrelated event_msg payloads and scans back",
+      "source": "src/transcript-turn-state.test.ts",
+      "api": "codexTurnState",
+      "input": {
+        "tail": "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\"}}\n{\"type\":\"event_msg\",\"payload\":{\"type\":\"agent_message_delta\"}}\n"
+      },
+      "output": "complete",
+      "inputSha256": "51279a8a1951f389a7f94d870cc63eae3debb6a789c518582053ff8bb552b0b6"
+    },
+    {
+      "id": "transcript-turn-state-017",
+      "name": "codex treats null payload as skipped",
+      "source": "src/transcript-turn-state.test.ts",
+      "api": "codexTurnState",
+      "input": {
+        "tail": "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\"}}\n{\"type\":\"event_msg\",\"payload\":null}\n"
+      },
+      "output": "complete",
+      "inputSha256": "c7ab9a3c9810c2e99866aa8e2098d9ddd2abb618e51989c2017d5fe9c595107f"
+    },
+    {
+      "id": "transcript-turn-state-018",
+      "name": "readFileTail reads only the last bytes",
+      "source": "src/transcript-turn-state.test.ts",
+      "api": "readFileTail",
+      "input": { "contents": "AAAA\nBBBB\nCCCC\n", "maxBytes": 5 },
+      "output": "CCCC\n",
+      "inputSha256": "f74be03dc5de0194f389ce84d25f141b77c91a9cb270aacce9ed33bbf1ee132d"
+    },
+    {
+      "id": "transcript-turn-state-019",
+      "name": "readFileTail missing file",
+      "source": "src/transcript-turn-state.test.ts",
+      "api": "readFileTail",
+      "input": { "missing": true },
+      "output": null,
+      "inputSha256": "7dc386e22fccb03994ed06cb561164205272a488be8d121895fb86de2c654f39"
+    },
+    {
+      "id": "transcript-turn-state-020",
+      "name": "probeTranscript missing file",
+      "source": "src/transcript-turn-state.test.ts",
+      "api": "probeTranscript",
+      "input": { "tool": "claude", "missing": true },
+      "output": null,
+      "inputSha256": "c194fe57319518c50aacbc18dc9bc3eefee0ebe58ebb365fa6317c27e07d5690"
+    },
+    {
+      "id": "transcript-turn-state-021",
+      "name": "probeTranscript claude complete with stat metadata",
+      "source": "src/transcript-turn-state.test.ts",
+      "api": "probeTranscript",
+      "input": {
+        "tool": "claude",
+        "contents": "{\"type\":\"assistant\",\"message\":{\"stop_reason\":\"end_turn\"}}\n"
+      },
+      "output": { "turn": "complete", "sizePositive": true, "mtimeMsType": "number" },
+      "inputSha256": "f0342468f6dd6153bcf8d0326113d43cf0a397019f4f6e18545c6ceb4797d56d"
+    },
+    {
+      "id": "transcript-turn-state-022",
+      "name": "probeTranscript routes codex transcripts to codex parser",
+      "source": "src/transcript-turn-state.test.ts",
+      "api": "probeTranscript",
+      "input": { "tool": "codex", "contents": "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\"}}\n" },
+      "output": "complete",
+      "inputSha256": "064ec3152c9d42199edbfc5541c20fc5b8447a9ca91592ff9379df2ab6d9fedd"
+    },
+    {
+      "id": "transcript-turn-state-023",
+      "name": "zero-byte file has empty tail and unknown Claude turn state",
+      "source": "src/transcript-turn-state.test.ts",
+      "api": "readFileTail+claudeTurnState",
+      "input": { "contents": "" },
+      "output": { "tail": "", "claudeTurnState": "unknown" },
+      "inputSha256": "85bad993a0dbebac8610ac5b8b7e1e2966209d6e8f89f0ae4f0eb9241b0219d5"
+    },
+    {
+      "id": "transcript-turn-state-024",
+      "name": "findCodexTranscriptPath locates date-nested rollout file by uuid suffix",
+      "source": "src/transcript-turn-state.test.ts",
+      "api": "findCodexTranscriptPath",
+      "input": { "backendSessionId": "11111111-2222-3333-4444-555555555555", "sessionsDir": "<tmp>" },
+      "output": "<tmp>/2026/06/16/rollout-2026-06-16T00-00-00-11111111-2222-3333-4444-555555555555.jsonl",
+      "inputSha256": "29d7558341aedb4b9ef76751766479e81c684103f076d65e36272b76cc295f53"
+    },
+    {
+      "id": "transcript-turn-state-025",
+      "name": "findCodexTranscriptPath refuses non-uuid id",
+      "source": "src/transcript-turn-state.test.ts",
+      "api": "findCodexTranscriptPath",
+      "input": { "backendSessionId": "notes", "sessionsDir": "<tmp>" },
+      "output": null,
+      "inputSha256": "fb65cd123cb65973126a11b1a23b76a7c23f90efaaa7e69fcf61ffa424e008d2"
+    },
+    {
+      "id": "transcript-turn-state-026",
+      "name": "findCodexTranscriptPath absent dir",
+      "source": "src/transcript-turn-state.test.ts",
+      "api": "findCodexTranscriptPath",
+      "input": { "backendSessionId": "11111111-2222-3333-4444-555555555555", "sessionsDir": "<tmp>/missing" },
+      "output": null,
+      "inputSha256": "f4a92022f749ef33e3c4f7a6805a79e977502252afe011f1d331b4c5d79f8743"
+    },
+    {
+      "id": "transcript-turn-state-027",
+      "name": "findCodexTranscriptPath no match",
+      "source": "src/transcript-turn-state.test.ts",
+      "api": "findCodexTranscriptPath",
+      "input": { "backendSessionId": "22222222-3333-4444-5555-666666666666", "sessionsDir": "<tmp>" },
+      "output": null,
+      "inputSha256": "9ef6c260cb8495d204d147279772ce8691ea91f37ed5880ce07853d588339974"
+    }
+  ]
+}

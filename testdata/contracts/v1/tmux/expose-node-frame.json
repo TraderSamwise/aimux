@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "generator": "a9220736^:src/tmux/expose.ts runTmuxExpose manageTerminal=false; first synchronized frame extracted from emitted Node bytes",
+  "cases": [
+    {
+      "id": "tmux-expose-node-frame-001",
+      "name": "renders whole project-scope expose frame from hot snapshot",
+      "input": {
+        "options": {
+          "projectRoot": "/repo",
+          "currentWindow": "dashboard",
+          "currentWindowId": "@dashboard",
+          "currentPath": "/repo",
+          "currentClientSession": "aimux-test-client-12345678",
+          "daemonEndpoint": "http://127.0.0.1:45593",
+          "columns": 80,
+          "rows": 24,
+          "exposeConfig": {
+            "initialScope": "project"
+          }
+        },
+        "hotSnapshot": {
+          "key": {
+            "projectRoot": "/repo",
+            "scope": "project"
+          },
+          "view": {
+            "scope": "project",
+            "scopeLabel": "all worktrees",
+            "sublabel": "worktree",
+            "items": [
+              {
+                "id": "session-@1",
+                "label": "codex",
+                "urgency": 0,
+                "activity": 0,
+                "recentRank": 0,
+                "previewSnapshot": {
+                  "output": "first preview line\nsecond preview line\n",
+                  "capturedAt": "2099-01-01T00:00:00.000Z",
+                  "source": "capture",
+                  "windowId": "@1",
+                  "startLine": -40,
+                  "lineCount": 40
+                },
+                "target": {
+                  "sessionName": "aimux-test",
+                  "windowId": "@1",
+                  "windowIndex": 1,
+                  "windowName": "codex"
+                },
+                "metadata": {
+                  "kind": "agent",
+                  "sessionId": "session-@1",
+                  "command": "codex",
+                  "args": [],
+                  "toolConfigKey": "codex",
+                  "worktreePath": "/repo",
+                  "statusText": "ready to work",
+                  "recencyAt": "2099-01-01T00:00:00.000Z",
+                  "recencyLabel": "output",
+                  "semantic": {
+                    "user": {
+                      "label": "done",
+                      "attention": "normal"
+                    },
+                    "presentation": {
+                      "statusLabel": "done",
+                      "compactHint": "done"
+                    },
+                    "notifications": {
+                      "unreadCount": 1
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "inputBytes": "q"
+      },
+      "output": {
+        "exitCode": 0,
+        "frame": "\u001b[?2026h\u001b[2J\u001b[1;2H\u001b[1mExposé · all worktrees (1) · default order\u001b[0m\u001b[0m\u001b[2;1H\u001b[1;38;5;39m╔ \u001b[0m\u001b[1;33m▸\u001b[0m \u001b[1;33m1\u001b[0m \u001b[1;38;2;84;228;130mmain\u001b[0m  \u001b[2mcodex\u001b[0m\u001b[0m \u001b[1;38;5;39m═════════════════════════════════════════════════════════════╗\u001b[0m\u001b[3;1H\u001b[1;38;5;39m║\u001b[0m   \u001b[2moutput just now · ready to work\u001b[0m\u001b[0m                                            \u001b[1;38;5;39m║\u001b[0m\u001b[4;1H\u001b[1;38;5;39m║\u001b[0m first preview line                                                           \u001b[1;38;5;39m║\u001b[0m\u001b[5;1H\u001b[1;38;5;39m║\u001b[0m second preview line                                                          \u001b[1;38;5;39m║\u001b[0m\u001b[6;1H\u001b[1;38;5;39m║\u001b[0m                                                                              \u001b[1;38;5;39m║\u001b[0m\u001b[7;1H\u001b[1;38;5;39m║\u001b[0m                                                                              \u001b[1;38;5;39m║\u001b[0m\u001b[8;1H\u001b[1;38;5;39m║\u001b[0m                                                                              \u001b[1;38;5;39m║\u001b[0m\u001b[9;1H\u001b[1;38;5;39m║\u001b[0m                                                                              \u001b[1;38;5;39m║\u001b[0m\u001b[10;1H\u001b[1;38;5;39m║\u001b[0m                                                                              \u001b[1;38;5;39m║\u001b[0m\u001b[11;1H\u001b[1;38;5;39m║\u001b[0m                                                                              \u001b[1;38;5;39m║\u001b[0m\u001b[12;1H\u001b[1;38;5;39m║\u001b[0m                                                                              \u001b[1;38;5;39m║\u001b[0m\u001b[13;1H\u001b[1;38;5;39m║\u001b[0m                                                                              \u001b[1;38;5;39m║\u001b[0m\u001b[14;1H\u001b[1;38;5;39m║\u001b[0m                                                                              \u001b[1;38;5;39m║\u001b[0m\u001b[15;1H\u001b[1;38;5;39m║\u001b[0m                                                                              \u001b[1;38;5;39m║\u001b[0m\u001b[16;1H\u001b[1;38;5;39m║\u001b[0m                                                                              \u001b[1;38;5;39m║\u001b[0m\u001b[17;1H\u001b[1;38;5;39m║\u001b[0m                                                                              \u001b[1;38;5;39m║\u001b[0m\u001b[18;1H\u001b[1;38;5;39m║\u001b[0m                                                                              \u001b[1;38;5;39m║\u001b[0m\u001b[19;1H\u001b[1;38;5;39m║\u001b[0m                                                                              \u001b[1;38;5;39m║\u001b[0m\u001b[20;1H\u001b[1;38;5;39m║\u001b[0m                                                                              \u001b[1;38;5;39m║\u001b[0m\u001b[21;1H\u001b[1;38;5;39m║\u001b[0m                                                                              \u001b[1;38;5;39m║\u001b[0m\u001b[22;1H\u001b[1;38;5;39m║\u001b[0m                                                                              \u001b[1;38;5;39m║\u001b[0m\u001b[23;1H\u001b[1;38;5;39m╚══════════════════════════════════════════════════════════════════════════════╝\u001b[0m\u001b[24;2H\u001b[2m1-9 open · ↑↓←→/n/p move · Enter open · r sort · O overseer · ^A d dashboard …\u001b[0m\u001b[?2026l"
+      }
+    }
+  ]
+}

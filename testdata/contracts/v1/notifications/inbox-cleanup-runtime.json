@@ -1,0 +1,163 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/inbox-cleanup-runtime.test.ts",
+  "generatedBy": "scripts/capture-inbox-cleanup-runtime-contract.mjs",
+  "description": "Dashboard cleanupInbox runtime side effects captured by running TypeScript persistenceMethods.cleanupInbox.",
+  "normalization": {
+    "ids": "UUID-like identifiers are replaced with <id:n> tokens in first-appearance order after TypeScript execution.",
+    "timestamps": "Timestamps not fixed by the test scenario are replaced with <ts:n> tokens in first-appearance order after TypeScript execution."
+  },
+  "cases": [
+    {
+      "id": "notifications-inbox-cleanup-runtime-001",
+      "name": "archives a read+aged notification and refreshes service-backed consumers",
+      "source": "src/multiplexer/inbox-cleanup-runtime.test.ts",
+      "sourceName": "archives a read+aged notification and refreshes service-backed consumers",
+      "api": "persistenceMethods.cleanupInbox",
+      "input": { "now": "2026-06-01T00:00:00.000Z" },
+      "output": {
+        "result": {
+          "dryRun": false,
+          "plan": {
+            "enabled": true,
+            "now": "2026-06-01T00:00:00.000Z",
+            "cutoff": "2026-05-18T00:00:00.000Z",
+            "retentionDays": 14,
+            "maxSize": 10,
+            "targets": [
+              { "id": "<id:1>", "reason": "aged", "createdAt": "2026-01-01T00:00:00.000Z", "sessionId": "claude-1" }
+            ]
+          },
+          "results": [{ "id": "<id:1>", "reason": "aged", "status": "cleared" }]
+        },
+        "calls": {
+          "isDashboardScreen": [["coordination"], ["coordination"]],
+          "metadataServerNotifyChange": [[]],
+          "refreshCoordinationFromService": [
+            [
+              {
+                "lifecycle": {
+                  "mode": "dashboard",
+                  "inputEpoch": 0,
+                  "requiresInputEpoch": true,
+                  "screen": "coordination"
+                }
+              }
+            ]
+          ],
+          "renderCurrentDashboardView": [[]]
+        },
+        "notificationsBefore": {
+          "notifications": [
+            {
+              "id": "<id:1>",
+              "title": "needs input",
+              "body": "waiting",
+              "sessionId": "claude-1",
+              "targetKey": "session:claude-1",
+              "targetKind": "session",
+              "kind": "needs_input",
+              "unread": false,
+              "cleared": false,
+              "createdAt": "2026-01-01T00:00:00.000Z",
+              "updatedAt": "2026-01-01T00:00:00.000Z"
+            }
+          ],
+          "total": 1,
+          "unreadCount": 0,
+          "truncated": false
+        },
+        "notificationsAfter": {
+          "notifications": [
+            {
+              "id": "<id:1>",
+              "title": "needs input",
+              "body": "waiting",
+              "sessionId": "claude-1",
+              "targetKey": "session:claude-1",
+              "targetKind": "session",
+              "kind": "needs_input",
+              "unread": false,
+              "cleared": true,
+              "createdAt": "2026-01-01T00:00:00.000Z",
+              "updatedAt": "2026-01-01T00:00:00.000Z"
+            }
+          ],
+          "total": 1,
+          "unreadCount": 0,
+          "truncated": false
+        }
+      },
+      "inputSha256": "454a5561a75037dff2dcc0297ca83ae39a82614f888f692e36805321ce98e505"
+    },
+    {
+      "id": "notifications-inbox-cleanup-runtime-002",
+      "name": "does not refresh or notify when nothing is eligible",
+      "source": "src/multiplexer/inbox-cleanup-runtime.test.ts",
+      "sourceName": "does not refresh or notify when nothing is eligible",
+      "api": "persistenceMethods.cleanupInbox",
+      "input": { "now": "2026-06-01T00:00:00.000Z" },
+      "output": {
+        "result": {
+          "dryRun": false,
+          "plan": {
+            "enabled": true,
+            "now": "2026-06-01T00:00:00.000Z",
+            "cutoff": "2026-05-18T00:00:00.000Z",
+            "retentionDays": 14,
+            "maxSize": 10,
+            "targets": []
+          },
+          "results": []
+        },
+        "calls": {
+          "isDashboardScreen": [],
+          "metadataServerNotifyChange": [],
+          "refreshCoordinationFromService": [],
+          "renderCurrentDashboardView": []
+        },
+        "notificationsBefore": {
+          "notifications": [
+            {
+              "id": "<id:1>",
+              "title": "needs input",
+              "body": "waiting",
+              "sessionId": "claude-1",
+              "targetKey": "session:claude-1",
+              "targetKind": "session",
+              "kind": "needs_input",
+              "unread": true,
+              "cleared": false,
+              "createdAt": "<ts:1>",
+              "updatedAt": "<ts:1>"
+            }
+          ],
+          "total": 1,
+          "unreadCount": 1,
+          "truncated": false
+        },
+        "notificationsAfter": {
+          "notifications": [
+            {
+              "id": "<id:1>",
+              "title": "needs input",
+              "body": "waiting",
+              "sessionId": "claude-1",
+              "targetKey": "session:claude-1",
+              "targetKind": "session",
+              "kind": "needs_input",
+              "unread": true,
+              "cleared": false,
+              "createdAt": "<ts:1>",
+              "updatedAt": "<ts:1>"
+            }
+          ],
+          "total": 1,
+          "unreadCount": 1,
+          "truncated": false
+        }
+      },
+      "inputSha256": "454a5561a75037dff2dcc0297ca83ae39a82614f888f692e36805321ce98e505"
+    }
+  ]
+}

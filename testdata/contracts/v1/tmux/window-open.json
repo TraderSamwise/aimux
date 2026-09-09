@@ -1,0 +1,445 @@
+{
+  "version": 1,
+  "generatedAt": "2026-09-07T00:00:00.000Z",
+  "generatedBy": "scripts/capture-tmux-window-open-contract.mjs",
+  "source": "src/tmux/window-open.ts",
+  "sources": [
+    "src/tmux/window-open.test.ts",
+    "src/tmux/window-open.ts"
+  ],
+  "subject": "src/tmux/window-open.ts",
+  "description": "managed tmux window opening captured by running TypeScript window-open helpers against a fake tmux runtime.",
+  "caseCount": 8,
+  "cases": [
+    {
+      "id": "tmux-window-open-001",
+      "name": "opens agent windows from project managed windows",
+      "source": "src/tmux/window-open.ts",
+      "api": "openManagedSessionWindow",
+      "input": {
+        "name": "opens agent windows from project managed windows",
+        "projectRoot": "/repo",
+        "entry": { "id": "codex-1", "tmuxWindowId": "@agent" }
+      },
+      "output": {
+        "target": { "sessionName": "project-client-1", "windowId": "@agent", "windowIndex": 3, "windowName": "codex" },
+        "calls": [
+          { "name": "listProjectManagedWindows", "args": ["/repo"] },
+          {
+            "name": "isWindowAlive",
+            "args": [
+              { "sessionName": "project-client-1", "windowId": "@agent", "windowIndex": 3, "windowName": "codex" }
+            ]
+          },
+          { "name": "isInsideTmux", "args": [] },
+          {
+            "name": "openTarget",
+            "args": [
+              { "sessionName": "project-client-1", "windowId": "@agent", "windowIndex": 3, "windowName": "codex" },
+              { "insideTmux": false }
+            ]
+          }
+        ]
+      },
+      "inputSha256": "42e8eea71ccf37a16ff28014f8fdd4a2ae8f88f47512b4b70b38556d34d999af"
+    },
+    {
+      "id": "tmux-window-open-002",
+      "name": "opens agent windows by backend session id",
+      "source": "src/tmux/window-open.ts",
+      "api": "openManagedSessionWindow",
+      "input": {
+        "name": "opens agent windows by backend session id",
+        "projectRoot": "/repo",
+        "entry": { "id": "codex-new", "backendSessionId": "backend-1" }
+      },
+      "output": {
+        "target": { "sessionName": "project-client-1", "windowId": "@agent", "windowIndex": 3, "windowName": "codex" },
+        "calls": [
+          { "name": "listProjectManagedWindows", "args": ["/repo"] },
+          {
+            "name": "isWindowAlive",
+            "args": [
+              { "sessionName": "project-client-1", "windowId": "@agent", "windowIndex": 3, "windowName": "codex" }
+            ]
+          },
+          { "name": "isInsideTmux", "args": [] },
+          {
+            "name": "openTarget",
+            "args": [
+              { "sessionName": "project-client-1", "windowId": "@agent", "windowIndex": 3, "windowName": "codex" },
+              { "insideTmux": false }
+            ]
+          }
+        ]
+      },
+      "inputSha256": "29ac57149b60175320c1bda66b8be8d45414d6800ed248090ad20416d253cc90"
+    },
+    {
+      "id": "tmux-window-open-003",
+      "name": "skips dead stale agent matches",
+      "source": "src/tmux/window-open.ts",
+      "api": "openManagedSessionWindow",
+      "input": {
+        "name": "skips dead stale agent matches",
+        "projectRoot": "/repo",
+        "entry": { "id": "codex-1", "backendSessionId": "backend-1" },
+        "liveWindowIds": ["@live-agent"],
+        "managedWindows": [
+          {
+            "target": {
+              "sessionName": "project-client-1",
+              "windowId": "@dead-agent",
+              "windowIndex": 2,
+              "windowName": "codex"
+            },
+            "metadata": { "kind": "agent", "sessionId": "codex-1", "backendSessionId": "backend-1" }
+          },
+          {
+            "target": {
+              "sessionName": "project-client-1",
+              "windowId": "@live-agent",
+              "windowIndex": 5,
+              "windowName": "codex"
+            },
+            "metadata": { "kind": "agent", "sessionId": "codex-1", "backendSessionId": "backend-1" }
+          }
+        ]
+      },
+      "output": {
+        "target": {
+          "sessionName": "project-client-1",
+          "windowId": "@live-agent",
+          "windowIndex": 5,
+          "windowName": "codex"
+        },
+        "calls": [
+          { "name": "listProjectManagedWindows", "args": ["/repo"] },
+          {
+            "name": "isWindowAlive",
+            "args": [
+              { "sessionName": "project-client-1", "windowId": "@dead-agent", "windowIndex": 2, "windowName": "codex" }
+            ]
+          },
+          {
+            "name": "isWindowAlive",
+            "args": [
+              { "sessionName": "project-client-1", "windowId": "@live-agent", "windowIndex": 5, "windowName": "codex" }
+            ]
+          },
+          { "name": "isInsideTmux", "args": [] },
+          {
+            "name": "openTarget",
+            "args": [
+              { "sessionName": "project-client-1", "windowId": "@live-agent", "windowIndex": 5, "windowName": "codex" },
+              { "insideTmux": false }
+            ]
+          }
+        ]
+      },
+      "inputSha256": "62a865235cda8f20697b09aecce439ca57bd026a0b70ecf50420f449b57c803a"
+    },
+    {
+      "id": "tmux-window-open-004",
+      "name": "prefers exact agent tmux window id over duplicate live match",
+      "source": "src/tmux/window-open.ts",
+      "api": "openManagedSessionWindow",
+      "input": {
+        "name": "prefers exact agent tmux window id over duplicate live match",
+        "projectRoot": "/repo",
+        "entry": { "id": "codex-1", "tmuxWindowId": "@exact-agent" },
+        "liveWindowIds": ["@duplicate-agent", "@exact-agent"],
+        "managedWindows": [
+          {
+            "target": {
+              "sessionName": "project-client-1",
+              "windowId": "@duplicate-agent",
+              "windowIndex": 2,
+              "windowName": "codex"
+            },
+            "metadata": { "kind": "agent", "sessionId": "codex-1", "backendSessionId": "backend-1" }
+          },
+          {
+            "target": {
+              "sessionName": "project-client-1",
+              "windowId": "@exact-agent",
+              "windowIndex": 5,
+              "windowName": "codex"
+            },
+            "metadata": { "kind": "agent", "sessionId": "codex-1", "backendSessionId": "backend-1" }
+          }
+        ]
+      },
+      "output": {
+        "target": {
+          "sessionName": "project-client-1",
+          "windowId": "@exact-agent",
+          "windowIndex": 5,
+          "windowName": "codex"
+        },
+        "calls": [
+          { "name": "listProjectManagedWindows", "args": ["/repo"] },
+          {
+            "name": "isWindowAlive",
+            "args": [
+              {
+                "sessionName": "project-client-1",
+                "windowId": "@duplicate-agent",
+                "windowIndex": 2,
+                "windowName": "codex"
+              }
+            ]
+          },
+          {
+            "name": "isWindowAlive",
+            "args": [
+              { "sessionName": "project-client-1", "windowId": "@exact-agent", "windowIndex": 5, "windowName": "codex" }
+            ]
+          },
+          { "name": "isInsideTmux", "args": [] },
+          {
+            "name": "openTarget",
+            "args": [
+              {
+                "sessionName": "project-client-1",
+                "windowId": "@exact-agent",
+                "windowIndex": 5,
+                "windowName": "codex"
+              },
+              { "insideTmux": false }
+            ]
+          }
+        ]
+      },
+      "inputSha256": "0edc3938ebba9d8d783c1bc89ce11ef6e20f294a482d67640eec4a4bfb158f5c"
+    },
+    {
+      "id": "tmux-window-open-005",
+      "name": "opens service windows from project managed windows",
+      "source": "src/tmux/window-open.ts",
+      "api": "openManagedServiceWindow",
+      "input": {
+        "name": "opens service windows from project managed windows",
+        "projectRoot": "/repo",
+        "service": "service-1"
+      },
+      "output": {
+        "target": {
+          "sessionName": "project-client-1",
+          "windowId": "@service",
+          "windowIndex": 4,
+          "windowName": "shell"
+        },
+        "calls": [
+          { "name": "listProjectManagedWindows", "args": ["/repo"] },
+          {
+            "name": "isWindowAlive",
+            "args": [
+              { "sessionName": "project-client-1", "windowId": "@service", "windowIndex": 4, "windowName": "shell" }
+            ]
+          },
+          { "name": "isInsideTmux", "args": [] },
+          {
+            "name": "openTarget",
+            "args": [
+              { "sessionName": "project-client-1", "windowId": "@service", "windowIndex": 4, "windowName": "shell" },
+              { "insideTmux": false }
+            ]
+          }
+        ]
+      },
+      "inputSha256": "624ce00261f13fab69fa158d77759ef5f9b264d185bb13df95bb0873e4f7bc32"
+    },
+    {
+      "id": "tmux-window-open-006",
+      "name": "prefers exact service tmux window id over duplicate live match",
+      "source": "src/tmux/window-open.ts",
+      "api": "openManagedServiceWindow",
+      "input": {
+        "name": "prefers exact service tmux window id over duplicate live match",
+        "projectRoot": "/repo",
+        "service": { "id": "service-1", "tmuxWindowId": "@exact-service" },
+        "liveWindowIds": ["@duplicate-service", "@exact-service"],
+        "managedWindows": [
+          {
+            "target": {
+              "sessionName": "project-client-1",
+              "windowId": "@duplicate-service",
+              "windowIndex": 4,
+              "windowName": "shell"
+            },
+            "metadata": { "kind": "service", "sessionId": "service-1" }
+          },
+          {
+            "target": {
+              "sessionName": "project-client-1",
+              "windowId": "@exact-service",
+              "windowIndex": 6,
+              "windowName": "shell"
+            },
+            "metadata": { "kind": "service", "sessionId": "service-1" }
+          }
+        ]
+      },
+      "output": {
+        "target": {
+          "sessionName": "project-client-1",
+          "windowId": "@exact-service",
+          "windowIndex": 6,
+          "windowName": "shell"
+        },
+        "calls": [
+          { "name": "listProjectManagedWindows", "args": ["/repo"] },
+          {
+            "name": "isWindowAlive",
+            "args": [
+              {
+                "sessionName": "project-client-1",
+                "windowId": "@duplicate-service",
+                "windowIndex": 4,
+                "windowName": "shell"
+              }
+            ]
+          },
+          {
+            "name": "isWindowAlive",
+            "args": [
+              {
+                "sessionName": "project-client-1",
+                "windowId": "@exact-service",
+                "windowIndex": 6,
+                "windowName": "shell"
+              }
+            ]
+          },
+          { "name": "isInsideTmux", "args": [] },
+          {
+            "name": "openTarget",
+            "args": [
+              {
+                "sessionName": "project-client-1",
+                "windowId": "@exact-service",
+                "windowIndex": 6,
+                "windowName": "shell"
+              },
+              { "insideTmux": false }
+            ]
+          }
+        ]
+      },
+      "inputSha256": "8565914bc48ebe73d993afe6c5f5619ab694b3e9519ebe895802da2404ff9ff0"
+    },
+    {
+      "id": "tmux-window-open-007",
+      "name": "selects linked target while already inside tmux",
+      "source": "src/tmux/window-open.ts",
+      "api": "openManagedSessionWindow",
+      "input": {
+        "name": "selects linked target while already inside tmux",
+        "projectRoot": "/repo",
+        "entry": { "id": "codex-1", "tmuxWindowId": "@agent" },
+        "insideTmux": true,
+        "runtimeCurrentClientSession": "project-client-live",
+        "linkedTargets": [
+          { "sessionName": "project-client-live", "windowId": "@agent", "windowIndex": 8, "windowName": "codex" }
+        ]
+      },
+      "output": {
+        "target": { "sessionName": "project-client-1", "windowId": "@agent", "windowIndex": 3, "windowName": "codex" },
+        "calls": [
+          { "name": "listProjectManagedWindows", "args": ["/repo"] },
+          {
+            "name": "isWindowAlive",
+            "args": [
+              { "sessionName": "project-client-1", "windowId": "@agent", "windowIndex": 3, "windowName": "codex" }
+            ]
+          },
+          { "name": "isInsideTmux", "args": [] },
+          { "name": "currentClientSession", "args": [] },
+          { "name": "getTargetByWindowId", "args": ["project-client-live", "@agent"] },
+          {
+            "name": "selectWindow",
+            "args": [
+              { "sessionName": "project-client-live", "windowId": "@agent", "windowIndex": 8, "windowName": "codex" }
+            ]
+          }
+        ]
+      },
+      "inputSha256": "cb88b967c7b07cf48469cf9aa645cc3dfe8dd4ca338b903031f5536497ff8d18"
+    },
+    {
+      "id": "tmux-window-open-008",
+      "name": "focus context switches live client by preferred tty and sends dashboard focus",
+      "source": "src/tmux/window-open.ts",
+      "api": "openManagedSessionWindow",
+      "input": {
+        "name": "focus context switches live client by preferred tty and sends dashboard focus",
+        "projectRoot": "/repo",
+        "entry": { "id": "dashboard-agent", "tmuxWindowId": "@dashboard" },
+        "managedWindows": [
+          {
+            "target": {
+              "sessionName": "project-client-1",
+              "windowId": "@dashboard",
+              "windowIndex": 0,
+              "windowName": "dashboard"
+            },
+            "metadata": { "kind": "agent", "sessionId": "dashboard-agent" }
+          }
+        ],
+        "focusContext": { "currentClientSession": "project-client-live", "clientTty": "/dev/ttys001" },
+        "clients": [
+          { "tty": "/dev/ttys001", "sessionName": "project-client-live", "windowId": "@agent", "name": "client" }
+        ]
+      },
+      "output": {
+        "target": {
+          "sessionName": "project-client-1",
+          "windowId": "@dashboard",
+          "windowIndex": 0,
+          "windowName": "dashboard"
+        },
+        "calls": [
+          { "name": "listProjectManagedWindows", "args": ["/repo"] },
+          {
+            "name": "isWindowAlive",
+            "args": [
+              {
+                "sessionName": "project-client-1",
+                "windowId": "@dashboard",
+                "windowIndex": 0,
+                "windowName": "dashboard"
+              }
+            ]
+          },
+          { "name": "findClientByTty", "args": ["/dev/ttys001"] },
+          {
+            "name": "switchClientToTarget",
+            "args": [
+              "/dev/ttys001",
+              {
+                "sessionName": "project-client-1",
+                "windowId": "@dashboard",
+                "windowIndex": 0,
+                "windowName": "dashboard"
+              }
+            ]
+          },
+          { "name": "refreshStatus", "args": [] },
+          {
+            "name": "sendFocusIn",
+            "args": [
+              {
+                "sessionName": "project-client-1",
+                "windowId": "@dashboard",
+                "windowIndex": 0,
+                "windowName": "dashboard"
+              }
+            ]
+          }
+        ]
+      },
+      "inputSha256": "18ae0fa85f133e069d7629ebcbb424e5867d863f6a408584328d30f292ae68e5"
+    }
+  ]
+}

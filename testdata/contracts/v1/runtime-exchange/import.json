@@ -1,0 +1,308 @@
+{
+  "version": 1,
+  "source": "src/runtime-core/exchange-import.test.ts",
+  "generatedBy": "scripts/capture-runtime-exchange-import-contract.mjs",
+  "description": "Runtime exchange legacy snapshot and file import contracts captured by running TypeScript.",
+  "cases": [
+    {
+      "id": "runtime-exchange-import-001",
+      "name": "converts legacy thread, message, task, handoff, review, wait, and inbox shapes",
+      "source": "src/runtime-core/exchange-import.test.ts",
+      "api": "buildRuntimeExchangeFromLegacySnapshot",
+      "input": {
+        "now": "2026-05-25T00:00:00.000Z",
+        "threads": [
+          {
+            "id": "thread-1",
+            "title": "Task",
+            "kind": "handoff",
+            "status": "waiting",
+            "createdAt": "2026-05-25T00:00:00.000Z",
+            "updatedAt": "2026-05-25T00:00:00.000Z",
+            "createdBy": "user",
+            "participants": ["user", "codex-1"],
+            "owner": "user",
+            "waitingOn": ["codex-1"],
+            "taskId": "task-1",
+            "unreadBy": ["codex-1"]
+          }
+        ],
+        "messages": [
+          {
+            "id": "msg-1",
+            "threadId": "thread-1",
+            "ts": "2026-05-25T00:00:00.000Z",
+            "from": "user",
+            "to": ["codex-1"],
+            "kind": "handoff",
+            "body": "Take this.",
+            "taskId": "task-1"
+          }
+        ],
+        "tasks": [
+          {
+            "id": "task-1",
+            "status": "pending",
+            "assignedBy": "user",
+            "assignedTo": "codex-1",
+            "threadId": "thread-1",
+            "description": "Review changes",
+            "prompt": "Review changes",
+            "createdAt": "2026-05-25T00:00:00.000Z",
+            "updatedAt": "2026-05-25T00:00:00.000Z",
+            "type": "review",
+            "reviewStatus": "request-changes",
+            "reviewFeedback": "Needs tests",
+            "reviewOf": "task-root"
+          }
+        ],
+        "planPaths": ["<repo>/.aimux/plans/codex-1.md"],
+        "historyPaths": ["<repo>/.aimux/history/codex-1.jsonl"],
+        "contextPaths": ["<repo>/.aimux/context/codex-1/live.md"],
+        "recordingPaths": ["C:\\repo\\.aimux\\recordings\\codex-1.txt"],
+        "statusPaths": ["<repo>/.aimux/status/codex-1.md"],
+        "attachments": [
+          {
+            "id": "attachment-1",
+            "kind": "image",
+            "filename": "image.png",
+            "mimeType": "image/png",
+            "sizeBytes": 10,
+            "sha256": "abc",
+            "createdAt": "2026-05-25T00:00:00.000Z",
+            "source": "path",
+            "contentPath": "<repo>/.aimux/attachments/image.png"
+          }
+        ]
+      },
+      "output": {
+        "version": 1,
+        "generatedAt": "2026-05-25T00:00:00.000Z",
+        "threads": [
+          {
+            "id": "thread-1",
+            "title": "Task",
+            "kind": "handoff",
+            "status": "waiting",
+            "createdAt": "2026-05-25T00:00:00.000Z",
+            "updatedAt": "2026-05-25T00:00:00.000Z",
+            "createdBy": "user",
+            "participants": ["user", "codex-1"],
+            "owner": "user",
+            "waitingOn": ["codex-1"],
+            "taskId": "task-1",
+            "unreadBy": ["codex-1"]
+          }
+        ],
+        "messages": [
+          {
+            "id": "msg-1",
+            "threadId": "thread-1",
+            "ts": "2026-05-25T00:00:00.000Z",
+            "from": "user",
+            "to": ["codex-1"],
+            "kind": "handoff",
+            "body": "Take this.",
+            "taskId": "task-1"
+          }
+        ],
+        "tasks": [
+          {
+            "id": "task-1",
+            "status": "pending",
+            "assignedBy": "user",
+            "assignedTo": "codex-1",
+            "threadId": "thread-1",
+            "description": "Review changes",
+            "prompt": "Review changes",
+            "createdAt": "2026-05-25T00:00:00.000Z",
+            "updatedAt": "2026-05-25T00:00:00.000Z",
+            "type": "review",
+            "reviewStatus": "changes_requested",
+            "reviewFeedback": "Needs tests",
+            "reviewOf": "task-root"
+          }
+        ],
+        "handoffs": [
+          {
+            "id": "handoff:thread-1",
+            "threadId": "thread-1",
+            "status": "waiting",
+            "from": "user",
+            "to": ["codex-1"],
+            "createdAt": "2026-05-25T00:00:00.000Z",
+            "updatedAt": "2026-05-25T00:00:00.000Z"
+          }
+        ],
+        "reviews": [
+          {
+            "id": "review:task-1",
+            "taskId": "task-1",
+            "reviewOf": "task-root",
+            "reviewer": "codex-1",
+            "status": "changes_requested",
+            "feedback": "Needs tests",
+            "createdAt": "2026-05-25T00:00:00.000Z",
+            "updatedAt": "2026-05-25T00:00:00.000Z"
+          }
+        ],
+        "waits": [
+          {
+            "id": "wait:thread:thread-1",
+            "status": "waiting",
+            "subjectKind": "thread",
+            "subjectId": "thread-1",
+            "waitingOn": ["codex-1"],
+            "owner": "user",
+            "createdAt": "2026-05-25T00:00:00.000Z",
+            "updatedAt": "2026-05-25T00:00:00.000Z"
+          }
+        ],
+        "inbox": [
+          {
+            "id": "inbox:codex-1:thread:thread-1",
+            "participantId": "codex-1",
+            "subjectKind": "thread",
+            "subjectId": "thread-1",
+            "state": "waiting",
+            "urgency": 13,
+            "updatedAt": "2026-05-25T00:00:00.000Z"
+          }
+        ],
+        "planRefs": [
+          {
+            "id": "plan:codex-1",
+            "path": "<repo>/.aimux/plans/codex-1.md",
+            "ownerSessionId": "codex-1",
+            "title": "codex-1",
+            "createdAt": "2026-05-25T00:00:00.000Z",
+            "updatedAt": "2026-05-25T00:00:00.000Z"
+          }
+        ],
+        "continuityRefs": [
+          {
+            "id": "history:codex-1:codex-1.jsonl",
+            "kind": "history",
+            "path": "<repo>/.aimux/history/codex-1.jsonl",
+            "sessionId": "codex-1",
+            "createdAt": "2026-05-25T00:00:00.000Z",
+            "updatedAt": "2026-05-25T00:00:00.000Z"
+          },
+          {
+            "id": "context:live:live.md",
+            "kind": "context",
+            "path": "<repo>/.aimux/context/codex-1/live.md",
+            "sessionId": "live",
+            "createdAt": "2026-05-25T00:00:00.000Z",
+            "updatedAt": "2026-05-25T00:00:00.000Z"
+          },
+          {
+            "id": "recording:C:\\repo\\.aimux\\recordings\\codex-1:C:\\repo\\.aimux\\recordings\\codex-1.txt",
+            "kind": "recording",
+            "path": "C:\\repo\\.aimux\\recordings\\codex-1.txt",
+            "sessionId": "C:\\repo\\.aimux\\recordings\\codex-1",
+            "createdAt": "2026-05-25T00:00:00.000Z",
+            "updatedAt": "2026-05-25T00:00:00.000Z"
+          },
+          {
+            "id": "status:codex-1:codex-1.md",
+            "kind": "status",
+            "path": "<repo>/.aimux/status/codex-1.md",
+            "sessionId": "codex-1",
+            "createdAt": "2026-05-25T00:00:00.000Z",
+            "updatedAt": "2026-05-25T00:00:00.000Z"
+          }
+        ],
+        "attachmentRefs": [
+          {
+            "id": "attachment-1",
+            "path": "<repo>/.aimux/attachments/image.png",
+            "contentUrl": "/attachments/attachment-1/content",
+            "mediaType": "image/png",
+            "createdAt": "2026-05-25T00:00:00.000Z",
+            "updatedAt": "2026-05-25T00:00:00.000Z"
+          }
+        ]
+      },
+      "inputSha256": "fe1a41c2e67a4f2089ade96fe41acab62f9e7f81762be53b690b422a84ed3cfb"
+    },
+    {
+      "id": "runtime-exchange-import-002",
+      "name": "imports legacy files without creating missing legacy directories",
+      "source": "src/runtime-core/exchange-import.test.ts",
+      "api": "importRuntimeExchangeFromLegacyFiles",
+      "input": {
+        "files": {
+          "thread": {
+            "id": "thread-1",
+            "title": "Task",
+            "kind": "handoff",
+            "status": "waiting",
+            "createdAt": "2026-05-25T00:00:00.000Z",
+            "updatedAt": "2026-05-25T00:00:00.000Z",
+            "createdBy": "user",
+            "participants": ["user", "codex-1"],
+            "owner": "user",
+            "waitingOn": ["codex-1"],
+            "taskId": "task-1",
+            "unreadBy": ["codex-1"]
+          },
+          "message": {
+            "id": "msg-1",
+            "threadId": "thread-1",
+            "ts": "2026-05-25T00:00:00.000Z",
+            "from": "user",
+            "kind": "request",
+            "body": "Do task."
+          },
+          "task": {
+            "id": "task-1",
+            "status": "pending",
+            "assignedBy": "user",
+            "threadId": "thread-1",
+            "description": "Do task",
+            "prompt": "Do task.",
+            "createdAt": "2026-05-25T00:00:00.000Z",
+            "updatedAt": "2026-05-25T00:00:00.000Z"
+          },
+          "planPath": "<repo>/.aimux/plans/codex-1.md",
+          "historyPath": "<repo>/.aimux/history/codex-1.jsonl",
+          "contextPath": "<repo>/.aimux/context/codex-1/live.md",
+          "recordingPath": "<repo>/.aimux/recordings/codex-1.txt",
+          "statusPath": "<repo>/.aimux/status/codex-1.md",
+          "attachment": {
+            "id": "attachment-1",
+            "kind": "image",
+            "filename": "image.png",
+            "mimeType": "image/png",
+            "sizeBytes": 10,
+            "sha256": "abc",
+            "createdAt": "2026-05-25T00:00:00.000Z",
+            "source": "path",
+            "contentPath": "<repo>/.aimux/attachments/image.png"
+          }
+        },
+        "now": "2026-05-25T00:00:00.000Z"
+      },
+      "output": {
+        "threadIds": ["thread-1"],
+        "messageIds": ["msg-1"],
+        "taskIds": ["task-1"],
+        "waitIds": ["wait:thread:thread-1"],
+        "planRefIds": ["plan:codex-1"],
+        "continuityKinds": ["context", "history", "status"],
+        "attachmentRefIds": ["attachment-1"]
+      },
+      "inputSha256": "56a728c1d4549c00862bcd576e297412fc69189d272f80df3f14bc31c46710e8"
+    },
+    {
+      "id": "runtime-exchange-import-003",
+      "name": "leaves absent optional legacy directories untouched",
+      "source": "src/runtime-core/exchange-import.test.ts",
+      "api": "importRuntimeExchangeFromLegacyFiles",
+      "input": { "removeRecordingsDir": true, "now": "2026-05-25T00:00:00.000Z" },
+      "output": { "continuityRefs": [], "recordingsDirExists": false },
+      "inputSha256": "d7aefa219dd01e9bcacd83c814fb1a2ee4f7703f4e794bcc2d54536f2b0a547a"
+    }
+  ]
+}

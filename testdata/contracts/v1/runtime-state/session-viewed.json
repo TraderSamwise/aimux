@@ -1,0 +1,131 @@
+{
+  "version": 1,
+  "source": "src/session-viewed.test.ts",
+  "generatedBy": "scripts/capture-session-viewed-contract.mjs",
+  "description": "Session viewed metadata attention, activity, notification read, explicit-project, and config override contracts captured by running TypeScript.",
+  "cases": [
+    {
+      "id": "runtime-state-session-viewed-001",
+      "name": "marks notifications read and clears generic needs-input attention by default",
+      "source": "src/session-viewed.test.ts",
+      "api": "markSessionViewed",
+      "input": {
+        "sessionId": "claude-1",
+        "derived": { "activity": "waiting", "attention": "needs_input", "unseenCount": 3 },
+        "notifications": [{ "kind": "needs_input" }]
+      },
+      "output": {
+        "result": { "notificationsRead": 1, "attentionCleared": true },
+        "derived": { "activity": "idle", "attention": "normal", "unseenCount": 0 },
+        "semanticLabel": "ready",
+        "notificationUnread": [false],
+        "notificationCount": 1
+      },
+      "inputSha256": "4bcf7ba93e7c65c6271a3af22a59625a820ea9d9b8e39a5c66ad1bc3eeae273b"
+    },
+    {
+      "id": "runtime-state-session-viewed-002",
+      "name": "marks notifications read in the explicit project root",
+      "source": "src/session-viewed.test.ts",
+      "api": "markSessionViewed",
+      "input": {
+        "sessionId": "claude-other",
+        "explicitProjectRoot": true,
+        "derived": { "activity": "waiting", "attention": "needs_input", "unseenCount": 2 },
+        "notifications": [{ "kind": "needs_input" }]
+      },
+      "output": {
+        "result": { "notificationsRead": 1, "attentionCleared": true },
+        "derived": { "activity": "idle", "attention": "normal", "unseenCount": 0 },
+        "semanticLabel": "ready",
+        "notificationUnread": [false],
+        "notificationCount": 1,
+        "defaultProjectNotificationCount": 0
+      },
+      "inputSha256": "afc6063111d0910f15dab8d4e890f1277a467ee8a017b1ea8cb97204ab3c13cc"
+    },
+    {
+      "id": "runtime-state-session-viewed-003",
+      "name": "leaves a genuinely working agent's activity untouched",
+      "source": "src/session-viewed.test.ts",
+      "api": "markSessionViewed",
+      "input": {
+        "sessionId": "claude-busy",
+        "derived": { "activity": "running", "attention": "normal", "unseenCount": 1 },
+        "notifications": []
+      },
+      "output": {
+        "result": { "notificationsRead": 0, "attentionCleared": false },
+        "derived": { "activity": "running", "attention": "normal", "unseenCount": 0 },
+        "semanticLabel": "working",
+        "notificationUnread": [],
+        "notificationCount": 0
+      },
+      "inputSha256": "fd2e522453c8c18dda4ad28c69b0f0883c8966f452c9c98f8a3792ca0251dd12"
+    },
+    {
+      "id": "runtime-state-session-viewed-004",
+      "name": "does not clear formal interaction attention by default",
+      "source": "src/session-viewed.test.ts",
+      "api": "markSessionViewed",
+      "input": {
+        "sessionId": "codex-ask",
+        "derived": { "activity": "waiting", "attention": "needs_response", "unseenCount": 3 },
+        "notifications": [{ "kind": "interaction_request" }]
+      },
+      "output": {
+        "result": { "notificationsRead": 1, "attentionCleared": false },
+        "derived": { "activity": "waiting", "attention": "needs_response", "unseenCount": 0 },
+        "semanticLabel": "needs_response",
+        "notificationUnread": [false],
+        "notificationCount": 1
+      },
+      "inputSha256": "6d072e7ba440f735c9515478be26a11198ba562ac1b26328b352723d5a978221"
+    },
+    {
+      "id": "runtime-state-session-viewed-005",
+      "name": "does not clear blocked attention on view",
+      "source": "src/session-viewed.test.ts",
+      "api": "markSessionViewed",
+      "input": {
+        "sessionId": "codex-blocked",
+        "derived": { "activity": "waiting", "attention": "blocked", "unseenCount": 3 },
+        "notifications": []
+      },
+      "output": {
+        "result": { "notificationsRead": 0, "attentionCleared": false },
+        "derived": { "activity": "waiting", "attention": "blocked", "unseenCount": 0 },
+        "semanticLabel": "blocked",
+        "notificationUnread": [],
+        "notificationCount": 0
+      },
+      "inputSha256": "6806c3766892843551f545d2d40fee2d5c6190498e6a8f99e02749e0d08f0e7c"
+    },
+    {
+      "id": "runtime-state-session-viewed-006",
+      "name": "honors view behavior config overrides",
+      "source": "src/session-viewed.test.ts",
+      "api": "markSessionViewed",
+      "input": {
+        "sessionId": "codex-ask",
+        "config": {
+          "notifications": {
+            "markReadOnView": false,
+            "clearNeedsInputOnView": false,
+            "clearFormalInteractionsOnView": true
+          }
+        },
+        "derived": { "activity": "waiting", "attention": "needs_response", "unseenCount": 3 },
+        "notifications": [{ "kind": "interaction_request" }]
+      },
+      "output": {
+        "result": { "notificationsRead": 0, "attentionCleared": true },
+        "derived": { "activity": "idle", "attention": "normal", "unseenCount": 0 },
+        "semanticLabel": "ready",
+        "notificationUnread": [true],
+        "notificationCount": 1
+      },
+      "inputSha256": "2f5bad51cef6548fe701859351a8ac8ae78b8571a90a0b9f1ed0432e5c8deaa4"
+    }
+  ]
+}

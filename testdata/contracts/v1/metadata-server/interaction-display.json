@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "source": "src/metadata-server/interaction-display.test.ts",
+  "generatedBy": "scripts/capture-metadata-server-helpers-contract.mjs",
+  "description": "Metadata-server interaction display title/message/summary behavior captured by running TypeScript summarizeInteractionForDisplay.",
+  "cases": [
+    {
+      "id": "metadata-interaction-display-001",
+      "name": "formats question payloads with option labels",
+      "source": "src/metadata-server/interaction-display.test.ts",
+      "api": "summarizeInteractionForDisplay",
+      "input": {
+        "sessionId": "codex-one",
+        "type": "question",
+        "payload": {
+          "questions": [
+            { "question": "Which branch?", "options": [{ "label": "master" }, "current HEAD"] },
+            { "question": "Run tests?", "options": [{ "label": "yes" }, { "label": "no" }] }
+          ]
+        }
+      },
+      "output": {
+        "title": "AskUserQuestion",
+        "message": "1. Which branch?\nOptions: master; current HEAD\n\n2. Run tests?\nOptions: yes; no",
+        "summary": "Which branch?; Run tests?"
+      },
+      "inputSha256": "6e4a7e0bd23df91164f6a20004ff8907ef95aae119574f9fa3ed5b7a2b72df20"
+    },
+    {
+      "id": "metadata-interaction-display-002",
+      "name": "does not show raw JSON summaries as user-facing text",
+      "source": "src/metadata-server/interaction-display.test.ts",
+      "api": "summarizeInteractionForDisplay",
+      "input": { "sessionId": "claude-one", "type": "permission", "payload": {}, "summary": "{\"toolName\":\"Bash\"}" },
+      "output": { "title": "claude-one needs a response", "message": "Agent is waiting on a permission response." },
+      "inputSha256": "55521ec45114c17e426bd453b043ad251947cfdffc75adb719e3137fbd6c2913"
+    },
+    {
+      "id": "metadata-interaction-display-003",
+      "name": "falls back to a parsed question summary when payload has no prompt",
+      "source": "src/metadata-server/interaction-display.test.ts",
+      "api": "summarizeInteractionForDisplay",
+      "input": {
+        "sessionId": "codex-two",
+        "type": "question",
+        "payload": {},
+        "summary": "{\"question\":\"Continue?\",\"options\":[{\"label\":\"yes\"},\"no\"]}"
+      },
+      "output": { "title": "AskUserQuestion", "message": "Continue?\nOptions: yes; no", "summary": "Continue?" },
+      "inputSha256": "c3d170c8a834f5010cccee520e8710b7d759ffe0543e3daa80d59addfed1e498"
+    },
+    {
+      "id": "metadata-interaction-display-004",
+      "name": "uses trimmed readable summary for non-question interactions",
+      "source": "src/metadata-server/interaction-display.test.ts",
+      "api": "summarizeInteractionForDisplay",
+      "input": { "sessionId": "codex-three", "type": "approval", "payload": {}, "summary": "  Run cargo test?  " },
+      "output": { "title": "codex-three needs a response", "message": "Run cargo test?", "summary": "Run cargo test?" },
+      "inputSha256": "db51091c1a1cca9fdbeaf838704845ad65fd34754289d17c3924d068f5b53e67"
+    },
+    {
+      "id": "metadata-interaction-display-005",
+      "name": "drops blank question options and keeps a single prompt unnumbered",
+      "source": "src/metadata-server/interaction-display.test.ts",
+      "api": "summarizeInteractionForDisplay",
+      "input": {
+        "sessionId": "codex-four",
+        "type": "question",
+        "payload": {
+          "question": "Pick target",
+          "options": ["  ", { "label": " local " }, { "value": "ignored" }, "remote"]
+        }
+      },
+      "output": {
+        "title": "AskUserQuestion",
+        "message": "Pick target\nOptions: local; remote",
+        "summary": "Pick target"
+      },
+      "inputSha256": "293cdd1e390607968fe056cc4f735188ca362d07a8df0a25fa42e849c533cb44"
+    }
+  ]
+}

@@ -1,0 +1,499 @@
+{
+  "version": 1,
+  "source": [
+    "src/daemon-client.test.ts",
+    "src/core-command-client.test.ts",
+    "src/control-plane-restart-client.test.ts"
+  ],
+  "generatedBy": "scripts/capture-service-client-contract.mjs",
+  "description": "Daemon JSON client, core command client, and CLI control-plane restart orchestration contracts captured by running TypeScript client helpers with mocked dependencies.",
+  "cases": [
+    {
+      "id": "service-client-001",
+      "name": "throws when the daemon is not running",
+      "source": "src/daemon-client.test.ts",
+      "api": "requestDaemonJson",
+      "input": {
+        "name": "throws when the daemon is not running",
+        "source": "src/daemon-client.test.ts",
+        "api": "requestDaemonJson",
+        "path": "/health",
+        "state": { "daemonInfo": null }
+      },
+      "output": { "ok": false, "error": "aimux daemon is not running" },
+      "inputSha256": "78cafee60d28790d938a527406a9b560964238e91e659cd8f8674453beb94ca2"
+    },
+    {
+      "id": "service-client-002",
+      "name": "passes request fields to the stored daemon endpoint",
+      "source": "src/daemon-client.test.ts",
+      "api": "requestDaemonJson",
+      "input": {
+        "name": "passes request fields to the stored daemon endpoint",
+        "source": "src/daemon-client.test.ts",
+        "api": "requestDaemonJson",
+        "path": "/commands",
+        "init": {
+          "method": "POST",
+          "headers": { "content-type": "application/json" },
+          "body": "{\"command\":\"ping\"}",
+          "timeoutMs": 1234
+        },
+        "state": {
+          "daemonInfo": {
+            "pid": 123,
+            "port": 43210,
+            "startedAt": "1970-01-01T00:00:00.000Z",
+            "updatedAt": "1970-01-01T00:00:00.000Z"
+          },
+          "requestResult": { "status": 200, "json": { "ok": true, "value": 1 } }
+        }
+      },
+      "output": {
+        "ok": true,
+        "value": {
+          "result": { "ok": true, "value": 1 },
+          "calls": [
+            {
+              "url": "http://127.0.0.1:43210/commands",
+              "init": {
+                "method": "POST",
+                "headers": { "content-type": "application/json" },
+                "body": "{\"command\":\"ping\"}",
+                "timeoutMs": 1234
+              }
+            }
+          ]
+        }
+      },
+      "inputSha256": "5a49d85fceb3e501f6caa87134f748f96500a76c2f828d60f0037de2f5ec334b"
+    },
+    {
+      "id": "service-client-003",
+      "name": "throws daemon error payloads for non-2xx responses",
+      "source": "src/daemon-client.test.ts",
+      "api": "requestDaemonJson",
+      "input": {
+        "name": "throws daemon error payloads for non-2xx responses",
+        "source": "src/daemon-client.test.ts",
+        "api": "requestDaemonJson",
+        "path": "/health",
+        "state": {
+          "daemonInfo": {
+            "pid": 123,
+            "port": 43210,
+            "startedAt": "1970-01-01T00:00:00.000Z",
+            "updatedAt": "1970-01-01T00:00:00.000Z"
+          },
+          "requestResult": { "status": 503, "json": { "error": "daemon unavailable" } }
+        }
+      },
+      "output": { "ok": false, "error": "daemon unavailable" },
+      "inputSha256": "e102b2c5629303102966509edf363a5c93147beec0e23d8e28011dc5788bd3ab"
+    },
+    {
+      "id": "service-client-004",
+      "name": "throws daemon error payloads when ok is false",
+      "source": "src/daemon-client.test.ts",
+      "api": "requestDaemonJson",
+      "input": {
+        "name": "throws daemon error payloads when ok is false",
+        "source": "src/daemon-client.test.ts",
+        "api": "requestDaemonJson",
+        "path": "/commands",
+        "state": {
+          "daemonInfo": {
+            "pid": 123,
+            "port": 43210,
+            "startedAt": "1970-01-01T00:00:00.000Z",
+            "updatedAt": "1970-01-01T00:00:00.000Z"
+          },
+          "requestResult": { "status": 200, "json": { "ok": false, "error": "bad command" } }
+        }
+      },
+      "output": { "ok": false, "error": "bad command" },
+      "inputSha256": "828b7b3db768db6047332914ec5738fd562269533194ecca01cf2ee0356bfb7e"
+    },
+    {
+      "id": "service-client-005",
+      "name": "requestCoreCommand ensures the daemon by default",
+      "source": "src/core-command-client.test.ts",
+      "api": "requestCoreCommand",
+      "input": {
+        "name": "requestCoreCommand ensures the daemon by default",
+        "source": "src/core-command-client.test.ts",
+        "api": "requestCoreCommand",
+        "command": "ping"
+      },
+      "output": {
+        "ok": true,
+        "value": {
+          "result": {
+            "ok": true,
+            "id": "test",
+            "command": "ping",
+            "issuedAt": "1970-01-01T00:00:00.000Z",
+            "result": { "pong": true }
+          },
+          "calls": { "ensureCalls": 1, "sendCalls": [{ "command": "ping", "options": {} }] }
+        }
+      },
+      "inputSha256": "261899b99554c159ba13fb744dfe5dab6436293966015b49ea1901f46ab938ca"
+    },
+    {
+      "id": "service-client-006",
+      "name": "requestCoreCommand can skip daemon startup for read-only diagnostics",
+      "source": "src/core-command-client.test.ts",
+      "api": "requestCoreCommand",
+      "input": {
+        "name": "requestCoreCommand can skip daemon startup for read-only diagnostics",
+        "source": "src/core-command-client.test.ts",
+        "api": "requestCoreCommand",
+        "command": "relay.status",
+        "options": { "ensureDaemon": false }
+      },
+      "output": {
+        "ok": true,
+        "value": {
+          "result": {
+            "ok": true,
+            "id": "test",
+            "command": "relay.status",
+            "issuedAt": "1970-01-01T00:00:00.000Z",
+            "result": { "pong": true }
+          },
+          "calls": { "ensureCalls": 0, "sendCalls": [{ "command": "relay.status", "options": {} }] }
+        }
+      },
+      "inputSha256": "44ac0d27ba5d1d7ffd4e0073298dc1ba5e4e0370b9903c74f620c99130373c46"
+    },
+    {
+      "id": "service-client-007",
+      "name": "requestCoreCommand passes command options to pure transport",
+      "source": "src/core-command-client.test.ts",
+      "api": "requestCoreCommand",
+      "input": {
+        "name": "requestCoreCommand passes command options to pure transport",
+        "source": "src/core-command-client.test.ts",
+        "api": "requestCoreCommand",
+        "command": "relay.status",
+        "options": { "ensureDaemon": false, "timeoutMs": 1234 }
+      },
+      "output": {
+        "ok": true,
+        "value": {
+          "result": {
+            "ok": true,
+            "id": "test",
+            "command": "relay.status",
+            "issuedAt": "1970-01-01T00:00:00.000Z",
+            "result": { "pong": true }
+          },
+          "calls": { "ensureCalls": 0, "sendCalls": [{ "command": "relay.status", "options": { "timeoutMs": 1234 } }] }
+        }
+      },
+      "inputSha256": "34995b68b0d507af9b10c9ef4697dfd05521136b25613580507864ab0db9e302"
+    },
+    {
+      "id": "service-client-008",
+      "name": "restartControlPlaneFromCli runs restart through local repair orchestration",
+      "source": "src/control-plane-restart-client.test.ts",
+      "api": "restartControlPlaneFromCli",
+      "input": {
+        "name": "restartControlPlaneFromCli runs restart through local repair orchestration",
+        "source": "src/control-plane-restart-client.test.ts",
+        "api": "restartControlPlaneFromCli",
+        "state": {}
+      },
+      "output": {
+        "ok": true,
+        "value": {
+          "result": {
+            "restart": {
+              "startedAt": "2026-01-01T00:00:00.000Z",
+              "finishedAt": "2026-01-01T00:00:01.000Z",
+              "before": {},
+              "verification": { "status": "skipped", "after": null, "error": null },
+              "daemon": {
+                "previous": null,
+                "current": {
+                  "pid": 42,
+                  "port": 43190,
+                  "startedAt": "2026-01-01T00:00:00.000Z",
+                  "updatedAt": "2026-01-01T00:00:00.000Z"
+                }
+              },
+              "projects": [],
+              "summary": {
+                "projects": 0,
+                "servicesEnsured": 0,
+                "runtimeRepairs": 0,
+                "dashboardsReloaded": 0,
+                "runtimeRebuildRequired": 0,
+                "failures": 0
+              }
+            },
+            "text": "restart text",
+            "source": "local-bootstrap"
+          },
+          "calls": [
+            { "fn": "loadDaemonInfo" },
+            { "fn": "loadDaemonState" },
+            {
+              "fn": "restartAimuxControlPlane",
+              "options": { "reason": "cli", "hasStopDaemon": false, "hasEnsureDaemonRunning": true }
+            },
+            { "fn": "ensureDaemonRunning", "options": { "adoptExisting": false } },
+            {
+              "fn": "renderRuntimeRestartResult",
+              "restart": {
+                "startedAt": "2026-01-01T00:00:00.000Z",
+                "finishedAt": "2026-01-01T00:00:01.000Z",
+                "before": {},
+                "verification": { "status": "skipped", "after": null, "error": null },
+                "daemon": {
+                  "previous": null,
+                  "current": {
+                    "pid": 42,
+                    "port": 43190,
+                    "startedAt": "2026-01-01T00:00:00.000Z",
+                    "updatedAt": "2026-01-01T00:00:00.000Z"
+                  }
+                },
+                "projects": [],
+                "summary": {
+                  "projects": 0,
+                  "servicesEnsured": 0,
+                  "runtimeRepairs": 0,
+                  "dashboardsReloaded": 0,
+                  "runtimeRebuildRequired": 0,
+                  "failures": 0
+                }
+              }
+            }
+          ]
+        }
+      },
+      "inputSha256": "f8963c371f4bd91058108098fe4a59b9029626ba03b9ba536cad61cb4ff1b9eb"
+    },
+    {
+      "id": "service-client-009",
+      "name": "restartControlPlaneFromCli passes project-scoped restart requests",
+      "source": "src/control-plane-restart-client.test.ts",
+      "api": "restartControlPlaneFromCli",
+      "input": {
+        "name": "restartControlPlaneFromCli passes project-scoped restart requests",
+        "source": "src/control-plane-restart-client.test.ts",
+        "api": "restartControlPlaneFromCli",
+        "projectRoot": "/repo",
+        "state": {}
+      },
+      "output": {
+        "ok": true,
+        "value": {
+          "result": {
+            "restart": {
+              "startedAt": "2026-01-01T00:00:00.000Z",
+              "finishedAt": "2026-01-01T00:00:01.000Z",
+              "before": {},
+              "verification": { "status": "skipped", "after": null, "error": null },
+              "daemon": {
+                "previous": null,
+                "current": {
+                  "pid": 42,
+                  "port": 43190,
+                  "startedAt": "2026-01-01T00:00:00.000Z",
+                  "updatedAt": "2026-01-01T00:00:00.000Z"
+                }
+              },
+              "projects": [],
+              "summary": {
+                "projects": 0,
+                "servicesEnsured": 0,
+                "runtimeRepairs": 0,
+                "dashboardsReloaded": 0,
+                "runtimeRebuildRequired": 0,
+                "failures": 0
+              }
+            },
+            "text": "restart text",
+            "source": "local-bootstrap"
+          },
+          "calls": [
+            { "fn": "loadDaemonInfo" },
+            { "fn": "loadDaemonState" },
+            {
+              "fn": "restartAimuxControlPlane",
+              "options": {
+                "reason": "cli",
+                "projectRoot": "/repo",
+                "hasStopDaemon": false,
+                "hasEnsureDaemonRunning": true
+              }
+            },
+            { "fn": "ensureDaemonRunning", "options": { "adoptExisting": false } },
+            {
+              "fn": "renderRuntimeRestartResult",
+              "restart": {
+                "startedAt": "2026-01-01T00:00:00.000Z",
+                "finishedAt": "2026-01-01T00:00:01.000Z",
+                "before": {},
+                "verification": { "status": "skipped", "after": null, "error": null },
+                "daemon": {
+                  "previous": null,
+                  "current": {
+                    "pid": 42,
+                    "port": 43190,
+                    "startedAt": "2026-01-01T00:00:00.000Z",
+                    "updatedAt": "2026-01-01T00:00:00.000Z"
+                  }
+                },
+                "projects": [],
+                "summary": {
+                  "projects": 0,
+                  "servicesEnsured": 0,
+                  "runtimeRepairs": 0,
+                  "dashboardsReloaded": 0,
+                  "runtimeRebuildRequired": 0,
+                  "failures": 0
+                }
+              }
+            }
+          ]
+        }
+      },
+      "inputSha256": "a71ded986284d528717b4bd2d002be62e7e17efdee8abd19427e2a7e259f2189"
+    },
+    {
+      "id": "service-client-010",
+      "name": "restartControlPlaneFromCli preserves stale daemon info for local bootstrap repair",
+      "source": "src/control-plane-restart-client.test.ts",
+      "api": "restartControlPlaneFromCli",
+      "input": {
+        "name": "restartControlPlaneFromCli preserves stale daemon info for local bootstrap repair",
+        "source": "src/control-plane-restart-client.test.ts",
+        "api": "restartControlPlaneFromCli",
+        "projectRoot": "/repo",
+        "state": {
+          "daemonInfo": {
+            "pid": 111,
+            "port": 43190,
+            "startedAt": "1970-01-01T00:00:00.000Z",
+            "updatedAt": "1970-01-01T00:00:00.000Z"
+          },
+          "daemonState": {
+            "version": 1,
+            "updatedAt": "2026-01-01T00:00:00.000Z",
+            "projects": {
+              "alpha": {
+                "projectId": "alpha",
+                "projectRoot": "/repo",
+                "pid": 222,
+                "startedAt": "2026-01-01T00:00:00.000Z",
+                "updatedAt": "2026-01-01T00:00:00.000Z"
+              }
+            }
+          }
+        }
+      },
+      "output": {
+        "ok": true,
+        "value": {
+          "result": {
+            "restart": {
+              "startedAt": "2026-01-01T00:00:00.000Z",
+              "finishedAt": "2026-01-01T00:00:01.000Z",
+              "before": {},
+              "verification": { "status": "skipped", "after": null, "error": null },
+              "daemon": {
+                "previous": null,
+                "current": {
+                  "pid": 42,
+                  "port": 43190,
+                  "startedAt": "2026-01-01T00:00:00.000Z",
+                  "updatedAt": "2026-01-01T00:00:00.000Z"
+                }
+              },
+              "projects": [],
+              "summary": {
+                "projects": 0,
+                "servicesEnsured": 0,
+                "runtimeRepairs": 0,
+                "dashboardsReloaded": 0,
+                "runtimeRebuildRequired": 0,
+                "failures": 0
+              }
+            },
+            "text": "restart text",
+            "source": "local-bootstrap"
+          },
+          "calls": [
+            { "fn": "loadDaemonInfo" },
+            { "fn": "loadDaemonState" },
+            {
+              "fn": "restartAimuxControlPlane",
+              "options": {
+                "reason": "cli",
+                "projectRoot": "/repo",
+                "hasStopDaemon": true,
+                "hasEnsureDaemonRunning": true
+              }
+            },
+            { "fn": "ensureDaemonRunning", "options": { "adoptExisting": false } },
+            { "fn": "assertNotStoppingNewerDaemon" },
+            {
+              "fn": "stopDaemonInfo",
+              "daemon": {
+                "pid": 111,
+                "port": 43190,
+                "startedAt": "1970-01-01T00:00:00.000Z",
+                "updatedAt": "1970-01-01T00:00:00.000Z"
+              },
+              "state": {
+                "version": 1,
+                "updatedAt": "2026-01-01T00:00:00.000Z",
+                "projects": {
+                  "alpha": {
+                    "projectId": "alpha",
+                    "projectRoot": "/repo",
+                    "pid": 222,
+                    "startedAt": "2026-01-01T00:00:00.000Z",
+                    "updatedAt": "2026-01-01T00:00:00.000Z"
+                  }
+                }
+              }
+            },
+            {
+              "fn": "renderRuntimeRestartResult",
+              "restart": {
+                "startedAt": "2026-01-01T00:00:00.000Z",
+                "finishedAt": "2026-01-01T00:00:01.000Z",
+                "before": {},
+                "verification": { "status": "skipped", "after": null, "error": null },
+                "daemon": {
+                  "previous": null,
+                  "current": {
+                    "pid": 42,
+                    "port": 43190,
+                    "startedAt": "2026-01-01T00:00:00.000Z",
+                    "updatedAt": "2026-01-01T00:00:00.000Z"
+                  }
+                },
+                "projects": [],
+                "summary": {
+                  "projects": 0,
+                  "servicesEnsured": 0,
+                  "runtimeRepairs": 0,
+                  "dashboardsReloaded": 0,
+                  "runtimeRebuildRequired": 0,
+                  "failures": 0
+                }
+              }
+            }
+          ]
+        }
+      },
+      "inputSha256": "045cebe2029db6c9d6d7a02a9df64c345e4fd131961dd691f6436c7d43e056fd"
+    }
+  ]
+}

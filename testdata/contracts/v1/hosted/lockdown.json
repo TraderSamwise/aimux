@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "source": "src/full/hosted-lockdown.test.ts",
+  "generatedBy": "scripts/capture-hosted-security-contract.mjs",
+  "description": "Hosted lockdown marker/cache and hosted outbox drain/torn-line/CLI-audit side-effect behavior captured by running TypeScript hosted-lockdown and hosted-outbox helpers. Lockdown timestamps are normalized after execution.",
+  "cases": [
+    {
+      "id": "hosted-lockdown-001",
+      "name": "is off until engaged, and clears again",
+      "source": "src/full/hosted-lockdown.test.ts",
+      "api": "hostedLockdownState/setHostedLockdown",
+      "input": { "scenario": "engage-clear" },
+      "output": {
+        "initial": { "locked": false, "state": { "active": false, "since": null } },
+        "engaged": { "active": true, "since": "<ts:1>" },
+        "afterEngage": { "locked": true, "state": { "active": true, "since": "<ts:1>" } },
+        "cleared": { "active": false, "since": null },
+        "afterClear": { "locked": false, "markerExists": false }
+      },
+      "inputSha256": "55231fa0d6d98f5e30d6d0faac45173dc13a022c00c8972cbb43011ba4fa190c"
+    },
+    {
+      "id": "hosted-lockdown-002",
+      "name": "writes the marker 0600",
+      "source": "src/full/hosted-lockdown.test.ts",
+      "api": "setHostedLockdown",
+      "input": { "scenario": "marker-mode" },
+      "output": { "mode": 384 },
+      "inputSha256": "9e4a4b9a775caf8a686f7e5b60f39dac79d6709ca61d098a338fcb9ef0636b01"
+    },
+    {
+      "id": "hosted-lockdown-003",
+      "name": "treats an unreadable marker as locked down",
+      "source": "src/full/hosted-lockdown.test.ts",
+      "api": "hostedLockdownState",
+      "input": { "scenario": "corrupt-marker" },
+      "output": { "state": { "active": true, "since": null }, "locked": true },
+      "inputSha256": "d66c1cf2e7cc5be024d6359882eb0f659dc8dbacf7c56d3689584e24a48a2d2a"
+    },
+    {
+      "id": "hosted-lockdown-004",
+      "name": "caches for a second but sees a change after it expires",
+      "source": "src/full/hosted-lockdown.test.ts",
+      "api": "isHostedLockedDown",
+      "input": { "scenario": "cache-window" },
+      "output": { "first": false, "within": false, "after": true },
+      "inputSha256": "86fefefdc93ef81156437c579d330ef800b1d474e8431c768600890427ab8476"
+    },
+    {
+      "id": "hosted-lockdown-005",
+      "name": "drains what was spooled and leaves the file empty",
+      "source": "src/full/hosted-lockdown.test.ts",
+      "api": "drainHostedOutbox/spoolHostedEvent",
+      "input": { "scenario": "drain-spooled" },
+      "output": {
+        "kinds": ["hosted_token_revoked", "hosted_grant_changed"],
+        "existsAfterDrain": false,
+        "secondDrain": []
+      },
+      "inputSha256": "7b0f05071711b28702f27dac37599c93ed98e6044082db7a7361509695f65463"
+    },
+    {
+      "id": "hosted-lockdown-006",
+      "name": "skips a torn line rather than failing the drain",
+      "source": "src/full/hosted-lockdown.test.ts",
+      "api": "drainHostedOutbox",
+      "input": { "scenario": "torn-line" },
+      "output": { "drainedLength": 2 },
+      "inputSha256": "e333fc20839a2bc8be98f387a3977d3ea9c477ef3265d122181e6cd1b12c86a3"
+    },
+    {
+      "id": "hosted-lockdown-007",
+      "name": "records a CLI event in the audit log as well as the outbox",
+      "source": "src/full/hosted-lockdown.test.ts",
+      "api": "raiseHostedCliEvent",
+      "input": {
+        "scenario": "cli-event",
+        "kind": "hosted_token_revoked",
+        "principalId": "prn_a",
+        "detail": "revoked via CLI"
+      },
+      "output": {
+        "audit": {
+          "event": "hosted_token_revoked",
+          "detail": "revoked via CLI",
+          "principalId": "prn_a",
+          "label": "cli"
+        },
+        "outboxKinds": ["hosted_token_revoked"]
+      },
+      "inputSha256": "f111741aaf9de31177024fd24f56c0b46bfeb055e5767c6860255873bfd48b72"
+    }
+  ]
+}

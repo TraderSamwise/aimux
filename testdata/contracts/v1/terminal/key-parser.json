@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "source": "src/key-parser.test.ts",
+  "generatedBy": "scripts/capture-key-parser-contract.mjs",
+  "description": "Terminal key parser enter, alt-enter, and focus-report splitting behavior captured by running TypeScript parseKeys.",
+  "cases": [
+    {
+      "id": "terminal-key-parser-001",
+      "name": "normalizes carriage return to enter",
+      "source": "src/key-parser.test.ts",
+      "sourceName": "normalizes carriage return and line feed to enter",
+      "api": "parseKeys",
+      "input": { "raw": "\r" },
+      "output": [{ "char": "", "name": "enter", "shift": false, "ctrl": false, "alt": false, "raw": "\r" }],
+      "inputSha256": "89c094a691eed01bbc2e286358ecfae1cf5e204b4464554434c8a61c05b8563c"
+    },
+    {
+      "id": "terminal-key-parser-002",
+      "name": "normalizes line feed to enter",
+      "source": "src/key-parser.test.ts",
+      "sourceName": "normalizes carriage return and line feed to enter",
+      "api": "parseKeys",
+      "input": { "raw": "\n" },
+      "output": [{ "char": "", "name": "enter", "shift": false, "ctrl": false, "alt": false, "raw": "\n" }],
+      "inputSha256": "748ab040017152907b59361921f0bc93d855262b58d896a77f9fab18381c12ce"
+    },
+    {
+      "id": "terminal-key-parser-003",
+      "name": "normalizes alt carriage return to alt+enter",
+      "source": "src/key-parser.test.ts",
+      "sourceName": "normalizes alt carriage return and alt line feed to alt+enter",
+      "api": "parseKeys",
+      "input": { "raw": "\u001b\r" },
+      "output": [{ "char": "", "name": "enter", "shift": false, "ctrl": false, "alt": true, "raw": "\u001b\r" }],
+      "inputSha256": "a46529d957cf06d181597944a59d50b64add0ac17684dfe97c46ba6a1ce00b6c"
+    },
+    {
+      "id": "terminal-key-parser-004",
+      "name": "normalizes alt line feed to alt+enter",
+      "source": "src/key-parser.test.ts",
+      "sourceName": "normalizes alt carriage return and alt line feed to alt+enter",
+      "api": "parseKeys",
+      "input": { "raw": "\u001b\n" },
+      "output": [{ "char": "", "name": "enter", "shift": false, "ctrl": false, "alt": true, "raw": "\u001b\n" }],
+      "inputSha256": "e0b305da99e295fc42ebb4cc48e0f17dd515adc55bb69f21154bd8ed9263270f"
+    },
+    {
+      "id": "terminal-key-parser-005",
+      "name": "keeps focus reports and following keys as separate events",
+      "source": "src/key-parser.test.ts",
+      "sourceName": "keeps focus reports and following keys as separate events",
+      "api": "parseKeys",
+      "input": { "raw": "\u001b[I\r" },
+      "output": [
+        { "char": "", "name": "focusin", "shift": false, "ctrl": false, "alt": false, "raw": "\u001b[I" },
+        { "char": "", "name": "enter", "shift": false, "ctrl": false, "alt": false, "raw": "\r" }
+      ],
+      "inputSha256": "3258ef223bb569af8e6c2e91938d4e4190266df3719151a78692ed743e3dd32d"
+    }
+  ]
+}

@@ -1,0 +1,296 @@
+{
+  "version": 1,
+  "source": "src/runtime-restart.test.ts",
+  "generatedBy": "scripts/capture-runtime-restart-render-contract.mjs",
+  "description": "Runtime restart result text rendering captured by running TypeScript renderRuntimeRestartResult.",
+  "cases": [
+    {
+      "id": "runtime-restart-render-001",
+      "name": "renders a restarted daemon and ensured service",
+      "source": "src/runtime-restart.test.ts",
+      "api": "renderRuntimeRestartResult",
+      "input": {
+        "startedAt": "2026-06-20T00:00:00.000Z",
+        "finishedAt": "2026-06-20T00:00:01.000Z",
+        "before": {
+          "generatedAt": "2026-06-20T00:00:00.000Z",
+          "cliVersion": "0.1.21",
+          "cliLaunch": { "command": "/Users/sam/.local/bin/aimux", "args": [], "source": "stable-shim" },
+          "expected": {
+            "projectService": { "apiVersion": 4, "capabilities": {}, "buildStamp": "service-new" },
+            "runtimeOwner": "owner-new",
+            "runtimeContract": "contract-new"
+          },
+          "daemon": {
+            "running": true,
+            "info": { "pid": 9001, "port": 43190, "startedAt": "then", "updatedAt": "now" },
+            "process": null,
+            "projectCount": 1
+          },
+          "tmux": { "available": true, "version": "tmux 3.5a", "sessionCount": 1 },
+          "projects": [],
+          "staleHookProcesses": [],
+          "summary": { "projects": 0, "ok": 0, "needsRestart": 0, "runtimeRebuildRequired": 0 }
+        },
+        "verification": { "status": "skipped", "after": null, "error": null },
+        "daemon": {
+          "previous": { "pid": 9001, "port": 43190, "startedAt": "then", "updatedAt": "now" },
+          "current": { "pid": 9002, "port": 43190, "startedAt": "after", "updatedAt": "after" }
+        },
+        "orphanCleanup": {
+          "attemptedProcessPids": [],
+          "processPids": [],
+          "failedProcessPids": [],
+          "attemptedTmuxSessions": [],
+          "tmuxSessions": [],
+          "failedTmuxSessions": [],
+          "errors": []
+        },
+        "projects": [
+          {
+            "projectRoot": "/repo/alpha",
+            "runtimeRebuildRequired": false,
+            "runtime": { "status": "skipped", "error": null },
+            "service": {
+              "status": "ensured",
+              "state": { "projectId": "alpha", "projectRoot": "/repo/alpha", "pid": 1001 },
+              "error": null
+            },
+            "dashboard": {
+              "status": "reloaded",
+              "sessionName": "aimux-alpha-111",
+              "target": {
+                "sessionName": "aimux-alpha-111",
+                "windowId": "@1",
+                "windowIndex": 0,
+                "windowName": "dashboard"
+              },
+              "error": null
+            }
+          }
+        ],
+        "summary": {
+          "projects": 1,
+          "servicesEnsured": 1,
+          "runtimeRepairs": 0,
+          "dashboardsReloaded": 1,
+          "runtimeRebuildRequired": 0,
+          "orphanProcessesCleaned": 0,
+          "orphanTmuxSessionsCleaned": 0,
+          "failures": 0
+        }
+      },
+      "output": "Aimux Restart\n  daemon: restarted pid=9001 -> pid=9002\n  projects: 1\n  services ensured: 1\n  runtime repaired: 0\n  dashboards reloaded: 1\n  validation orphans: 0 processes, 0 tmux sessions\n  failures: 0\n\nProject: /repo/alpha\n  runtime: skipped\n  service: ensured\n  dashboard: reloaded aimux-alpha-111:@1",
+      "inputSha256": "c2d3bc7ed919fd6b2b5943996cedd8939ece9a17f7b7b44da6de56b85f86b7aa"
+    },
+    {
+      "id": "runtime-restart-render-002",
+      "name": "renders a retained daemon",
+      "source": "src/runtime-restart.test.ts",
+      "api": "renderRuntimeRestartResult",
+      "input": {
+        "startedAt": "2026-06-20T00:00:00.000Z",
+        "finishedAt": "2026-06-20T00:00:01.000Z",
+        "before": {
+          "generatedAt": "2026-06-20T00:00:00.000Z",
+          "cliVersion": "0.1.21",
+          "cliLaunch": { "command": "/Users/sam/.local/bin/aimux", "args": [], "source": "stable-shim" },
+          "expected": {
+            "projectService": { "apiVersion": 4, "capabilities": {}, "buildStamp": "service-new" },
+            "runtimeOwner": "owner-new",
+            "runtimeContract": "contract-new"
+          },
+          "daemon": {
+            "running": true,
+            "info": { "pid": 9001, "port": 43190, "startedAt": "then", "updatedAt": "now" },
+            "process": null,
+            "projectCount": 1
+          },
+          "tmux": { "available": true, "version": "tmux 3.5a", "sessionCount": 1 },
+          "projects": [],
+          "staleHookProcesses": [],
+          "summary": { "projects": 0, "ok": 0, "needsRestart": 0, "runtimeRebuildRequired": 0 }
+        },
+        "verification": { "status": "skipped", "after": null, "error": null },
+        "daemon": {
+          "previous": { "pid": 9002, "port": 43190, "startedAt": "then", "updatedAt": "now" },
+          "current": { "pid": 9002, "port": 43190, "startedAt": "then", "updatedAt": "now" },
+          "retained": true
+        },
+        "orphanCleanup": {
+          "attemptedProcessPids": [],
+          "processPids": [],
+          "failedProcessPids": [],
+          "attemptedTmuxSessions": [],
+          "tmuxSessions": [],
+          "failedTmuxSessions": [],
+          "errors": []
+        },
+        "projects": [
+          {
+            "projectRoot": "/repo/alpha",
+            "runtimeRebuildRequired": false,
+            "runtime": { "status": "skipped", "error": null },
+            "service": {
+              "status": "ensured",
+              "state": { "projectId": "alpha", "projectRoot": "/repo/alpha", "pid": 1001 },
+              "error": null
+            },
+            "dashboard": { "status": "skipped", "sessionName": null, "target": null, "error": null }
+          }
+        ],
+        "summary": {
+          "projects": 1,
+          "servicesEnsured": 1,
+          "runtimeRepairs": 0,
+          "dashboardsReloaded": 0,
+          "runtimeRebuildRequired": 0,
+          "orphanProcessesCleaned": 0,
+          "orphanTmuxSessionsCleaned": 0,
+          "failures": 0
+        }
+      },
+      "output": "Aimux Restart\n  daemon: retained pid=9002\n  projects: 1\n  services ensured: 1\n  runtime repaired: 0\n  dashboards reloaded: 0\n  validation orphans: 0 processes, 0 tmux sessions\n  failures: 0\n\nProject: /repo/alpha\n  runtime: skipped\n  service: ensured\n  dashboard: skipped",
+      "inputSha256": "cad6c92cf0e93e5972e64c8e0dbe99379cb8fdafea992857e9ab907668e66134"
+    },
+    {
+      "id": "runtime-restart-render-003",
+      "name": "renders runtime repair section",
+      "source": "src/runtime-restart.test.ts",
+      "api": "renderRuntimeRestartResult",
+      "input": {
+        "startedAt": "2026-06-20T00:00:00.000Z",
+        "finishedAt": "2026-06-20T00:00:01.000Z",
+        "before": {
+          "generatedAt": "2026-06-20T00:00:00.000Z",
+          "cliVersion": "0.1.21",
+          "cliLaunch": { "command": "/Users/sam/.local/bin/aimux", "args": [], "source": "stable-shim" },
+          "expected": {
+            "projectService": { "apiVersion": 4, "capabilities": {}, "buildStamp": "service-new" },
+            "runtimeOwner": "owner-new",
+            "runtimeContract": "contract-new"
+          },
+          "daemon": {
+            "running": true,
+            "info": { "pid": 9001, "port": 43190, "startedAt": "then", "updatedAt": "now" },
+            "process": null,
+            "projectCount": 1
+          },
+          "tmux": { "available": true, "version": "tmux 3.5a", "sessionCount": 1 },
+          "projects": [],
+          "staleHookProcesses": [],
+          "summary": { "projects": 0, "ok": 0, "needsRestart": 0, "runtimeRebuildRequired": 0 }
+        },
+        "verification": { "status": "skipped", "after": null, "error": null },
+        "daemon": {
+          "previous": { "pid": 9001, "port": 43190, "startedAt": "then", "updatedAt": "now" },
+          "current": { "pid": 9002, "port": 43190, "startedAt": "after", "updatedAt": "after" }
+        },
+        "orphanCleanup": {
+          "attemptedProcessPids": [],
+          "processPids": [],
+          "failedProcessPids": [],
+          "attemptedTmuxSessions": [],
+          "tmuxSessions": [],
+          "failedTmuxSessions": [],
+          "errors": []
+        },
+        "projects": [
+          {
+            "projectRoot": "/repo/alpha",
+            "runtimeRebuildRequired": true,
+            "runtime": { "status": "repaired", "error": null },
+            "service": {
+              "status": "ensured",
+              "state": { "projectId": "alpha", "projectRoot": "/repo/alpha", "pid": 1001 },
+              "error": null
+            },
+            "dashboard": { "status": "skipped", "sessionName": null, "target": null, "error": null }
+          }
+        ],
+        "summary": {
+          "projects": 1,
+          "servicesEnsured": 1,
+          "runtimeRepairs": 1,
+          "dashboardsReloaded": 0,
+          "runtimeRebuildRequired": 1,
+          "orphanProcessesCleaned": 0,
+          "orphanTmuxSessionsCleaned": 0,
+          "failures": 0
+        }
+      },
+      "output": "Aimux Restart\n  daemon: restarted pid=9001 -> pid=9002\n  projects: 1\n  services ensured: 1\n  runtime repaired: 1\n  dashboards reloaded: 0\n  validation orphans: 0 processes, 0 tmux sessions\n  failures: 0\n\nRuntime repaired:\n  /repo/alpha\n\nProject: /repo/alpha\n  runtime: repaired\n  service: ensured\n  dashboard: skipped",
+      "inputSha256": "75251f2dcd5c6e8b17117b41f7030748be20c8d4653a8226960b069c5ff4ff92"
+    },
+    {
+      "id": "runtime-restart-render-004",
+      "name": "renders project step failures",
+      "source": "src/runtime-restart.test.ts",
+      "api": "renderRuntimeRestartResult",
+      "input": {
+        "startedAt": "2026-06-20T00:00:00.000Z",
+        "finishedAt": "2026-06-20T00:00:01.000Z",
+        "before": {
+          "generatedAt": "2026-06-20T00:00:00.000Z",
+          "cliVersion": "0.1.21",
+          "cliLaunch": { "command": "/Users/sam/.local/bin/aimux", "args": [], "source": "stable-shim" },
+          "expected": {
+            "projectService": { "apiVersion": 4, "capabilities": {}, "buildStamp": "service-new" },
+            "runtimeOwner": "owner-new",
+            "runtimeContract": "contract-new"
+          },
+          "daemon": {
+            "running": true,
+            "info": { "pid": 9001, "port": 43190, "startedAt": "then", "updatedAt": "now" },
+            "process": null,
+            "projectCount": 1
+          },
+          "tmux": { "available": true, "version": "tmux 3.5a", "sessionCount": 1 },
+          "projects": [],
+          "staleHookProcesses": [],
+          "summary": { "projects": 0, "ok": 0, "needsRestart": 0, "runtimeRebuildRequired": 0 }
+        },
+        "verification": { "status": "skipped", "after": null, "error": null },
+        "daemon": {
+          "previous": { "pid": 9001, "port": 43190, "startedAt": "then", "updatedAt": "now" },
+          "current": { "pid": 9002, "port": 43190, "startedAt": "after", "updatedAt": "after" }
+        },
+        "orphanCleanup": {
+          "attemptedProcessPids": [],
+          "processPids": [],
+          "failedProcessPids": [],
+          "attemptedTmuxSessions": [],
+          "tmuxSessions": [],
+          "failedTmuxSessions": [],
+          "errors": []
+        },
+        "projects": [
+          {
+            "projectRoot": "/repo/alpha",
+            "runtimeRebuildRequired": false,
+            "runtime": { "status": "failed", "error": "tmux option write failed" },
+            "service": { "status": "failed", "state": null, "error": "service refused" },
+            "dashboard": {
+              "status": "failed",
+              "sessionName": null,
+              "target": null,
+              "error": "dashboard target missing"
+            }
+          }
+        ],
+        "summary": {
+          "projects": 1,
+          "servicesEnsured": 0,
+          "runtimeRepairs": 0,
+          "dashboardsReloaded": 0,
+          "runtimeRebuildRequired": 0,
+          "orphanProcessesCleaned": 0,
+          "orphanTmuxSessionsCleaned": 0,
+          "failures": 1
+        }
+      },
+      "output": "Aimux Restart\n  daemon: restarted pid=9001 -> pid=9002\n  projects: 1\n  services ensured: 0\n  runtime repaired: 0\n  dashboards reloaded: 0\n  validation orphans: 0 processes, 0 tmux sessions\n  failures: 1\n\nProject: /repo/alpha\n  runtime: failed (tmux option write failed)\n  service: failed (service refused)\n  dashboard: failed (dashboard target missing)\n\nBefore restart:\nAimux Versions\n  cli version: 0.1.21\n  build profile: undefined\ncli launcher: stable-shim /Users/sam/.local/bin/aimux\n  cli current entry: undefined\n  cli stable shim: undefined\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: contract-new\n  daemon: running pid=9001\n    daemon process: (unknown)\n  daemon projects: 1\n  tmux: tmux 3.5a\n  tmux sessions: 1\n  projects: 0 (0 ok, 0 need restart, 0 need runtime rebuild)",
+      "inputSha256": "9aa464558fe4486753980f088f31ec4c123563671d0fff05b82a68efddd912df"
+    }
+  ]
+}

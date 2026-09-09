@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "source": "src/event-loop-metrics.test.ts",
+  "generatedBy": "scripts/capture-event-loop-contract.mjs",
+  "description": "Event-loop monitor start/stop/not-monitoring observations captured by running TypeScript.",
+  "cases": [
+    {
+      "id": "event-loop-metrics-001",
+      "name": "reports not-monitoring rather than a healthy-looking zero",
+      "source": "src/event-loop-metrics.test.ts",
+      "api": "getEventLoopDelayBeforeStart",
+      "input": { "action": "getEventLoopDelayBeforeStart" },
+      "output": { "p50": 0, "p90": 0, "p99": 0, "max": 0, "mean": 0, "monitoring": false },
+      "inputSha256": "f326dd6ad54595ee9cb454113c34f01b0606d0eb60c89e80e992015811438518"
+    },
+    {
+      "id": "event-loop-metrics-002",
+      "name": "is idempotent, so repeated starts do not stack samplers",
+      "source": "src/event-loop-metrics.test.ts",
+      "api": "startEventLoopMonitorTwice",
+      "input": { "action": "startEventLoopMonitorTwice" },
+      "output": {
+        "monitoring": true,
+        "p50LeP99": true,
+        "p99LeMax": true,
+        "maxPlausibleMilliseconds": true,
+        "values": { "p50": 0, "p90": 0, "p99": 0, "max": 0, "mean": 0, "monitoring": true }
+      },
+      "inputSha256": "7619d360226fa89e8e6baec9c50d76c7e164cbf3d2826579f3ca81f594ad0f7c"
+    },
+    {
+      "id": "event-loop-metrics-003",
+      "name": "stops cleanly and reports not-monitoring again",
+      "source": "src/event-loop-metrics.test.ts",
+      "api": "stopEventLoopMonitor",
+      "input": { "action": "stopEventLoopMonitor" },
+      "output": { "p50": 0, "p90": 0, "p99": 0, "max": 0, "mean": 0, "monitoring": false },
+      "inputSha256": "22a6e47a2131991cc5a933c1953385100000e14e626abb5bf36e95135938aae9"
+    }
+  ]
+}

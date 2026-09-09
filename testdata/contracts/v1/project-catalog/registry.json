@@ -1,0 +1,118 @@
+{
+  "version": 1,
+  "source": "src/project-scanner.ts",
+  "sources": ["src/project-scanner.test.ts", "src/project-scanner.ts"],
+  "generatedBy": "scripts/capture-project-catalog-registry-contract.mjs",
+  "description": "Project registry discovery, desktop filtering, and dashboard session-name contracts captured by running TypeScript project-scanner helpers with a temporary AIMUX_HOME.",
+  "normalization": {
+    "paths": "Temporary home, tmp, project roots, timestamps, and generated project ids are replaced with stable tokens."
+  },
+  "cases": [
+    {
+      "id": "project-catalog-registry-001",
+      "name": "lists registered git projects with default dashboard session names",
+      "source": "src/project-scanner.test.ts",
+      "api": "listRegisteredDesktopProjects",
+      "input": { "registryPath": "<home>/.aimux/projects.json" },
+      "output": [
+        {
+          "id": "<projectAId>",
+          "name": "project-a",
+          "path": "<home>/work/project-a",
+          "lastSeen": "<ts>",
+          "dashboardSessionName": "aimux-<projectAId>"
+        },
+        {
+          "id": "<projectBId>",
+          "name": "project-b",
+          "path": "<home>/work/project-b",
+          "lastSeen": "<ts>",
+          "dashboardSessionName": "aimux-<projectBId>"
+        },
+        {
+          "id": "<projectCId>",
+          "name": "project-c",
+          "path": "<home>/work/project-c",
+          "lastSeen": "<ts>",
+          "dashboardSessionName": "aimux-<projectCId>"
+        }
+      ],
+      "inputSha256": "702fd958b9f7729610c2e763a7262b4ff3b0c497c08bea86b5f7efc2dbe4cc1a"
+    },
+    {
+      "id": "project-catalog-registry-002",
+      "name": "hides missing tmp and non-git registry entries from desktop registry lists",
+      "source": "src/project-scanner.test.ts",
+      "api": "listRegisteredDesktopProjects",
+      "input": {
+        "missingProject": "<home>/missing-project",
+        "tmpProject": "<tmp>/aimux-project-registry-hidden",
+        "nonGitProject": "<home>/work/logs"
+      },
+      "output": [
+        {
+          "id": "<projectAId>",
+          "name": "project-a",
+          "path": "<home>/work/project-a",
+          "lastSeen": "<ts>",
+          "dashboardSessionName": "aimux-<projectAId>"
+        },
+        {
+          "id": "<projectBId>",
+          "name": "project-b",
+          "path": "<home>/work/project-b",
+          "lastSeen": "<ts>",
+          "dashboardSessionName": "aimux-<projectBId>"
+        },
+        {
+          "id": "<projectCId>",
+          "name": "project-c",
+          "path": "<home>/work/project-c",
+          "lastSeen": "<ts>",
+          "dashboardSessionName": "aimux-<projectCId>"
+        }
+      ],
+      "inputSha256": "c7a6c5d919908fc1cf4fdcf676bc21cc7c44a98950bc6b1faa3d11718ead4ae0"
+    },
+    {
+      "id": "project-catalog-registry-003",
+      "name": "builds registered dashboard session names from each project config",
+      "source": "src/project-scanner.test.ts",
+      "api": "listRegisteredDesktopProjects",
+      "input": { "configs": { "projectA": { "sessionPrefix": "alpha" }, "projectB": { "sessionPrefix": "beta" } } },
+      "output": [
+        {
+          "id": "<projectAId>",
+          "name": "project-a",
+          "path": "<home>/work/project-a",
+          "lastSeen": "<ts>",
+          "dashboardSessionName": "alpha-<projectAId>"
+        },
+        {
+          "id": "<projectBId>",
+          "name": "project-b",
+          "path": "<home>/work/project-b",
+          "lastSeen": "<ts>",
+          "dashboardSessionName": "beta-<projectBId>"
+        },
+        {
+          "id": "<projectCId>",
+          "name": "project-c",
+          "path": "<home>/work/project-c",
+          "lastSeen": "<ts>",
+          "dashboardSessionName": "aimux-<projectCId>"
+        }
+      ],
+      "inputSha256": "214b35cfc44f6f42df6c5f70906e13c152dd11223d9f04e50ce5dad8d9a81219"
+    },
+    {
+      "id": "project-catalog-registry-004",
+      "name": "discovers only existing registered projects",
+      "source": "src/project-scanner.test.ts",
+      "api": "discoverProjects",
+      "input": { "registryPath": "<home>/.aimux/projects.json" },
+      "output": ["<home>/work/project-a", "<home>/work/project-b", "<home>/work/project-c"],
+      "inputSha256": "702fd958b9f7729610c2e763a7262b4ff3b0c497c08bea86b5f7efc2dbe4cc1a"
+    }
+  ]
+}

@@ -1,0 +1,305 @@
+{
+  "version": 1,
+  "generatedAt": "2026-09-07T00:00:00.000Z",
+  "generatedBy": "scripts/capture-dashboard-alert-flash-contract.mjs",
+  "source": "src/multiplexer/project-event-stream.ts",
+  "subject": "applyDashboardAlert",
+  "description": "Dashboard alert footer flash behavior captured by running TypeScript.",
+  "caseCount": 15,
+  "cases": [
+    {
+      "id": "dashboard-alert-flash-001",
+      "name": "ignores alerts outside dashboard mode",
+      "source": "src/multiplexer/project-event-stream.ts",
+      "api": "applyDashboardAlert",
+      "input": {
+        "name": "ignores alerts outside dashboard mode",
+        "mode": "client",
+        "event": {
+          "type": "alert",
+          "projectId": "project",
+          "title": "Inbox",
+          "message": "Needs attention",
+          "ts": "2026-09-07T00:00:00.000Z",
+          "kind": "notification"
+        }
+      },
+      "output": { "footerFlash": "previous flash", "footerFlashTicks": 2, "renders": 0 },
+      "inputSha256": "2473bebb0094f50d22720fa65c538b43315de975f8cb5cd532fd034630b38a9f"
+    },
+    {
+      "id": "dashboard-alert-flash-002",
+      "name": "notification flashes alert title",
+      "source": "src/multiplexer/project-event-stream.ts",
+      "api": "applyDashboardAlert",
+      "input": {
+        "name": "notification flashes alert title",
+        "event": {
+          "type": "alert",
+          "projectId": "project",
+          "title": "Inbox ready",
+          "message": "Needs attention",
+          "ts": "2026-09-07T00:00:00.000Z",
+          "kind": "notification"
+        }
+      },
+      "output": { "footerFlash": "◌ Inbox ready", "footerFlashTicks": 4, "renders": 1 },
+      "inputSha256": "16a160c9949a6abb9584046be2e73621e742e6ac4163a0fb9c029c6536f63e6c"
+    },
+    {
+      "id": "dashboard-alert-flash-003",
+      "name": "needs input uses session id",
+      "source": "src/multiplexer/project-event-stream.ts",
+      "api": "applyDashboardAlert",
+      "input": {
+        "name": "needs input uses session id",
+        "event": {
+          "type": "alert",
+          "projectId": "project",
+          "title": "Build blocked",
+          "message": "Needs attention",
+          "ts": "2026-09-07T00:00:00.000Z",
+          "kind": "needs_input",
+          "sessionId": "codex-1"
+        }
+      },
+      "output": { "footerFlash": "◉ codex-1 needs input", "footerFlashTicks": 4, "renders": 1 },
+      "inputSha256": "4111f6bcc23ea9a71efb9cd3d9941396d3fbcc1180d865ef53e35cb2280efdb5"
+    },
+    {
+      "id": "dashboard-alert-flash-004",
+      "name": "needs input falls back to agent",
+      "source": "src/multiplexer/project-event-stream.ts",
+      "api": "applyDashboardAlert",
+      "input": {
+        "name": "needs input falls back to agent",
+        "event": {
+          "type": "alert",
+          "projectId": "project",
+          "title": "Build blocked",
+          "message": "Needs attention",
+          "ts": "2026-09-07T00:00:00.000Z",
+          "kind": "needs_input"
+        }
+      },
+      "output": { "footerFlash": "◉ agent needs input", "footerFlashTicks": 4, "renders": 1 },
+      "inputSha256": "ffe5d0c4bd2c6d9c45560416d7ddac94add75fd947f5f1d08ec61cef1f5fd2e4"
+    },
+    {
+      "id": "dashboard-alert-flash-005",
+      "name": "next step uses session id",
+      "source": "src/multiplexer/project-event-stream.ts",
+      "api": "applyDashboardAlert",
+      "input": {
+        "name": "next step uses session id",
+        "event": {
+          "type": "alert",
+          "projectId": "project",
+          "title": "Build blocked",
+          "message": "Needs attention",
+          "ts": "2026-09-07T00:00:00.000Z",
+          "kind": "next_step",
+          "sessionId": "claude-2"
+        }
+      },
+      "output": { "footerFlash": "◉ claude-2 ready for next step", "footerFlashTicks": 4, "renders": 1 },
+      "inputSha256": "d5cfb35c777c66ea0256db3f20178bc1f58b3bdf57c0bfd3a84ec9a85f12c537"
+    },
+    {
+      "id": "dashboard-alert-flash-006",
+      "name": "next step falls back to agent",
+      "source": "src/multiplexer/project-event-stream.ts",
+      "api": "applyDashboardAlert",
+      "input": {
+        "name": "next step falls back to agent",
+        "event": {
+          "type": "alert",
+          "projectId": "project",
+          "title": "Build blocked",
+          "message": "Needs attention",
+          "ts": "2026-09-07T00:00:00.000Z",
+          "kind": "next_step"
+        }
+      },
+      "output": { "footerFlash": "◉ agent ready for next step", "footerFlashTicks": 4, "renders": 1 },
+      "inputSha256": "756690d8d3b4e960bf135a646bdf1bbf4224b832dfe2eb893066c1f18d2341a9"
+    },
+    {
+      "id": "dashboard-alert-flash-007",
+      "name": "message waiting targets the session",
+      "source": "src/multiplexer/project-event-stream.ts",
+      "api": "applyDashboardAlert",
+      "input": {
+        "name": "message waiting targets the session",
+        "event": {
+          "type": "alert",
+          "projectId": "project",
+          "title": "Build blocked",
+          "message": "Needs attention",
+          "ts": "2026-09-07T00:00:00.000Z",
+          "kind": "message_waiting",
+          "sessionId": "codex-3"
+        }
+      },
+      "output": { "footerFlash": "✉ Message waiting → codex-3", "footerFlashTicks": 4, "renders": 1 },
+      "inputSha256": "3d5ebbbae3c7d3ff3f1a4acff183293b663c2868e4ed097f3f9350d61a6590c0"
+    },
+    {
+      "id": "dashboard-alert-flash-008",
+      "name": "handoff waiting targets the session",
+      "source": "src/multiplexer/project-event-stream.ts",
+      "api": "applyDashboardAlert",
+      "input": {
+        "name": "handoff waiting targets the session",
+        "event": {
+          "type": "alert",
+          "projectId": "project",
+          "title": "Build blocked",
+          "message": "Needs attention",
+          "ts": "2026-09-07T00:00:00.000Z",
+          "kind": "handoff_waiting",
+          "sessionId": "claude-4"
+        }
+      },
+      "output": { "footerFlash": "⇢ Handoff waiting → claude-4", "footerFlashTicks": 4, "renders": 1 },
+      "inputSha256": "0de6441d3490a18b5edaefe40e241b5782b2289d1d1a6ced151a1277d1bb892e"
+    },
+    {
+      "id": "dashboard-alert-flash-009",
+      "name": "task assigned targets the session",
+      "source": "src/multiplexer/project-event-stream.ts",
+      "api": "applyDashboardAlert",
+      "input": {
+        "name": "task assigned targets the session",
+        "event": {
+          "type": "alert",
+          "projectId": "project",
+          "title": "Build blocked",
+          "message": "Needs attention",
+          "ts": "2026-09-07T00:00:00.000Z",
+          "kind": "task_assigned",
+          "sessionId": "aider-5"
+        }
+      },
+      "output": { "footerFlash": "⧫ Task assigned → aider-5", "footerFlashTicks": 4, "renders": 1 },
+      "inputSha256": "f5c94a5082b7ae13ac03174ab748e27951e7045b55ad371287ac9a0fb5e7060d"
+    },
+    {
+      "id": "dashboard-alert-flash-010",
+      "name": "review waiting targets the session",
+      "source": "src/multiplexer/project-event-stream.ts",
+      "api": "applyDashboardAlert",
+      "input": {
+        "name": "review waiting targets the session",
+        "event": {
+          "type": "alert",
+          "projectId": "project",
+          "title": "Build blocked",
+          "message": "Needs attention",
+          "ts": "2026-09-07T00:00:00.000Z",
+          "kind": "review_waiting",
+          "sessionId": "reviewer-6"
+        }
+      },
+      "output": { "footerFlash": "◌ Review waiting → reviewer-6", "footerFlashTicks": 4, "renders": 1 },
+      "inputSha256": "d31bde772e4b36aa51ff893fdb87213c495285e9e7fd4f0640ccdc9c821a49b0"
+    },
+    {
+      "id": "dashboard-alert-flash-011",
+      "name": "blocked flashes title",
+      "source": "src/multiplexer/project-event-stream.ts",
+      "api": "applyDashboardAlert",
+      "input": {
+        "name": "blocked flashes title",
+        "event": {
+          "type": "alert",
+          "projectId": "project",
+          "title": "Waiting on merge",
+          "message": "Needs attention",
+          "ts": "2026-09-07T00:00:00.000Z",
+          "kind": "blocked"
+        }
+      },
+      "output": { "footerFlash": "⧗ Waiting on merge", "footerFlashTicks": 4, "renders": 1 },
+      "inputSha256": "bad28f4584c4aa1b97be151d720fb5b70edc1f67fe0735ba0625874078ebfdff"
+    },
+    {
+      "id": "dashboard-alert-flash-012",
+      "name": "task done flashes title",
+      "source": "src/multiplexer/project-event-stream.ts",
+      "api": "applyDashboardAlert",
+      "input": {
+        "name": "task done flashes title",
+        "event": {
+          "type": "alert",
+          "projectId": "project",
+          "title": "Fixture captured",
+          "message": "Needs attention",
+          "ts": "2026-09-07T00:00:00.000Z",
+          "kind": "task_done"
+        }
+      },
+      "output": { "footerFlash": "✓ Fixture captured", "footerFlashTicks": 4, "renders": 1 },
+      "inputSha256": "5d424cdde965b53764d7df000bc6f559cfd7aed809905999db0235fde3911151"
+    },
+    {
+      "id": "dashboard-alert-flash-013",
+      "name": "task failed flashes title",
+      "source": "src/multiplexer/project-event-stream.ts",
+      "api": "applyDashboardAlert",
+      "input": {
+        "name": "task failed flashes title",
+        "event": {
+          "type": "alert",
+          "projectId": "project",
+          "title": "Fixture failed",
+          "message": "Needs attention",
+          "ts": "2026-09-07T00:00:00.000Z",
+          "kind": "task_failed"
+        }
+      },
+      "output": { "footerFlash": "✗ Fixture failed", "footerFlashTicks": 4, "renders": 1 },
+      "inputSha256": "7fea5a1cdeeca2b597d6f0cc15aab16778eecd9a3d4ab648d2e577e9f1eb62c2"
+    },
+    {
+      "id": "dashboard-alert-flash-014",
+      "name": "interaction request does not flash",
+      "source": "src/multiplexer/project-event-stream.ts",
+      "api": "applyDashboardAlert",
+      "input": {
+        "name": "interaction request does not flash",
+        "event": {
+          "type": "alert",
+          "projectId": "project",
+          "title": "Build blocked",
+          "message": "Needs attention",
+          "ts": "2026-09-07T00:00:00.000Z",
+          "kind": "interaction_request",
+          "sessionId": "codex-7"
+        }
+      },
+      "output": { "footerFlash": "previous flash", "footerFlashTicks": 2, "renders": 0 },
+      "inputSha256": "0513289c02f32204b3e3247452c8153d2f47210dbe68582640863b8ef22f0e8d"
+    },
+    {
+      "id": "dashboard-alert-flash-015",
+      "name": "unknown runtime kind does not flash",
+      "source": "src/multiplexer/project-event-stream.ts",
+      "api": "applyDashboardAlert",
+      "input": {
+        "name": "unknown runtime kind does not flash",
+        "event": {
+          "type": "alert",
+          "projectId": "project",
+          "title": "Build blocked",
+          "message": "Needs attention",
+          "ts": "2026-09-07T00:00:00.000Z",
+          "kind": "unknown_kind",
+          "sessionId": "codex-8"
+        }
+      },
+      "output": { "footerFlash": "previous flash", "footerFlashTicks": 2, "renders": 0 },
+      "inputSha256": "3a429cdd3d8cf80db7d04f24aec8f0c9ec1b85ae142788b3a79f759e53e05c5a"
+    }
+  ]
+}

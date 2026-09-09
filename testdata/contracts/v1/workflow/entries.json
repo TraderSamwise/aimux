@@ -1,0 +1,2179 @@
+{
+  "version": 1,
+  "source": "src/workflow.test.ts",
+  "generatedBy": "scripts/capture-workflow-contract.mjs",
+  "description": "Workflow entry, coordination-thread, filter, family, and next-action contracts captured by running TypeScript workflow helpers over runtime-exchange snapshots.",
+  "normalization": {
+    "ids": "Generated and fixture ids are tokenized in first-appearance order where they match dynamic exchange id patterns.",
+    "timestamps": "ISO timestamps are replaced with <ts> after per-object monotonicity checks."
+  },
+  "cases": [
+    {
+      "id": "workflow-workflow-families",
+      "name": "groups related task and review items into the same workflow family",
+      "source": "src/workflow.test.ts",
+      "input": {
+        "scenario": "families",
+        "participant": "reviewer",
+        "exchange": {
+          "version": 1,
+          "generatedAt": "<ts>",
+          "threads": [
+            {
+              "id": "<id:1>",
+              "title": "Task: Audit the parser failure path",
+              "kind": "task",
+              "status": "waiting",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-lead",
+              "participants": ["claude-lead", "codex-worker"],
+              "owner": "codex-worker",
+              "waitingOn": ["codex-worker"],
+              "taskId": "<id:2>",
+              "lastMessageId": "<id:3>",
+              "unreadBy": ["codex-worker"]
+            },
+            {
+              "id": "<id:4>",
+              "title": "Review: Audit the parser failure path",
+              "kind": "review",
+              "status": "open",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "codex-worker",
+              "participants": ["codex-worker", "reviewer"],
+              "taskId": "<id:5>"
+            }
+          ],
+          "messages": [
+            {
+              "id": "<id:3>",
+              "threadId": "<id:1>",
+              "ts": "<ts>",
+              "from": "claude-lead",
+              "to": ["codex-worker"],
+              "kind": "request",
+              "body": "Audit the parser failure path",
+              "taskId": "<id:2>",
+              "metadata": { "taskId": "<id:2>", "taskAction": "assigned" }
+            }
+          ],
+          "tasks": [
+            {
+              "id": "<id:2>",
+              "status": "pending",
+              "assignedBy": "claude-lead",
+              "assignedTo": "codex-worker",
+              "threadId": "<id:1>",
+              "description": "Audit the parser failure path",
+              "prompt": "Audit the parser failure path",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "type": "task"
+            },
+            {
+              "id": "<id:5>",
+              "status": "pending",
+              "assignedBy": "codex-worker",
+              "assignee": "reviewer",
+              "description": "Review: Audit the parser failure path",
+              "prompt": "Please review the parser fix.",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "type": "review",
+              "reviewStatus": "pending",
+              "reviewOf": "<id:2>"
+            }
+          ],
+          "handoffs": [],
+          "reviews": [
+            {
+              "id": "review:<id:5>",
+              "taskId": "<id:5>",
+              "reviewOf": "<id:2>",
+              "reviewer": "reviewer",
+              "status": "pending",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>"
+            }
+          ],
+          "waits": [
+            {
+              "id": "wait:thread:<id:1>",
+              "status": "waiting",
+              "subjectKind": "thread",
+              "subjectId": "<id:1>",
+              "waitingOn": ["codex-worker"],
+              "owner": "codex-worker",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>"
+            },
+            {
+              "id": "wait:task:<id:2>",
+              "status": "waiting",
+              "subjectKind": "task",
+              "subjectId": "<id:2>",
+              "waitingOn": ["codex-worker"],
+              "owner": "claude-lead",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>"
+            },
+            {
+              "id": "wait:task:<id:5>",
+              "status": "waiting",
+              "subjectKind": "task",
+              "subjectId": "<id:5>",
+              "waitingOn": ["reviewer"],
+              "owner": "codex-worker",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>"
+            }
+          ],
+          "inbox": [
+            {
+              "id": "inbox:codex-worker:thread:<id:1>",
+              "participantId": "codex-worker",
+              "subjectKind": "thread",
+              "subjectId": "<id:1>",
+              "state": "waiting",
+              "urgency": 13,
+              "updatedAt": "<ts>"
+            },
+            {
+              "id": "inbox:codex-worker:task:<id:2>",
+              "participantId": "codex-worker",
+              "subjectKind": "task",
+              "subjectId": "<id:2>",
+              "state": "waiting",
+              "urgency": 6,
+              "updatedAt": "<ts>"
+            },
+            {
+              "id": "inbox:reviewer:task:<id:5>",
+              "participantId": "reviewer",
+              "subjectKind": "task",
+              "subjectId": "<id:5>",
+              "state": "waiting",
+              "urgency": 8,
+              "updatedAt": "<ts>"
+            }
+          ],
+          "planRefs": [],
+          "continuityRefs": [],
+          "attachmentRefs": []
+        }
+      },
+      "output": {
+        "workflowEntries": [
+          {
+            "thread": {
+              "id": "<id:1>",
+              "title": "Task: Audit the parser failure path",
+              "kind": "task",
+              "status": "waiting",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-lead",
+              "participants": ["claude-lead", "codex-worker"],
+              "owner": "codex-worker",
+              "waitingOn": ["codex-worker"],
+              "taskId": "<id:2>",
+              "lastMessageId": "<id:3>",
+              "unreadBy": ["codex-worker"]
+            },
+            "latestMessage": {
+              "id": "<id:3>",
+              "threadId": "<id:1>",
+              "ts": "<ts>",
+              "from": "claude-lead",
+              "to": ["codex-worker"],
+              "kind": "request",
+              "body": "Audit the parser failure path",
+              "taskId": "<id:2>",
+              "metadata": { "taskId": "<id:2>", "taskAction": "assigned" }
+            },
+            "displayTitle": "Task: Audit the parser failure path",
+            "messages": [
+              {
+                "id": "<id:3>",
+                "threadId": "<id:1>",
+                "ts": "<ts>",
+                "from": "claude-lead",
+                "to": ["codex-worker"],
+                "kind": "request",
+                "body": "Audit the parser failure path",
+                "taskId": "<id:2>",
+                "metadata": { "taskId": "<id:2>", "taskAction": "assigned" }
+              }
+            ],
+            "pendingDeliveries": 1,
+            "latestPendingRecipients": ["codex-worker"],
+            "task": {
+              "id": "<id:2>",
+              "status": "pending",
+              "assignedBy": "claude-lead",
+              "assignedTo": "codex-worker",
+              "threadId": "<id:1>",
+              "description": "Audit the parser failure path",
+              "prompt": "Audit the parser failure path",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "type": "task"
+            },
+            "urgency": 4,
+            "stateLabel": "on codex-worker",
+            "familyRootTaskId": "<id:2>",
+            "familyTaskIds": ["<id:2>", "<id:5>"]
+          },
+          {
+            "thread": {
+              "id": "<id:4>",
+              "title": "Review: Audit the parser failure path",
+              "kind": "review",
+              "status": "open",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "codex-worker",
+              "participants": ["codex-worker", "reviewer"],
+              "taskId": "<id:5>"
+            },
+            "displayTitle": "Review: Audit the parser failure path",
+            "messages": [],
+            "pendingDeliveries": 0,
+            "latestPendingRecipients": [],
+            "task": {
+              "id": "<id:5>",
+              "status": "pending",
+              "assignedBy": "codex-worker",
+              "assignee": "reviewer",
+              "description": "Review: Audit the parser failure path",
+              "prompt": "Please review the parser fix.",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "type": "review",
+              "reviewStatus": "pending",
+              "reviewOf": "<id:2>"
+            },
+            "urgency": 0,
+            "stateLabel": "pending",
+            "familyRootTaskId": "<id:2>",
+            "familyTaskIds": ["<id:2>", "<id:5>"]
+          }
+        ],
+        "coordinationThreadEntries": [
+          {
+            "thread": {
+              "id": "<id:1>",
+              "title": "Task: Audit the parser failure path",
+              "kind": "task",
+              "status": "waiting",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-lead",
+              "participants": ["claude-lead", "codex-worker"],
+              "owner": "codex-worker",
+              "waitingOn": ["codex-worker"],
+              "taskId": "<id:2>",
+              "lastMessageId": "<id:3>",
+              "unreadBy": ["codex-worker"]
+            },
+            "latestMessage": {
+              "id": "<id:3>",
+              "threadId": "<id:1>",
+              "ts": "<ts>",
+              "from": "claude-lead",
+              "to": ["codex-worker"],
+              "kind": "request",
+              "body": "Audit the parser failure path",
+              "taskId": "<id:2>",
+              "metadata": { "taskId": "<id:2>", "taskAction": "assigned" }
+            },
+            "displayTitle": "Task: Audit the parser failure path",
+            "messages": [
+              {
+                "id": "<id:3>",
+                "threadId": "<id:1>",
+                "ts": "<ts>",
+                "from": "claude-lead",
+                "to": ["codex-worker"],
+                "kind": "request",
+                "body": "Audit the parser failure path",
+                "taskId": "<id:2>",
+                "metadata": { "taskId": "<id:2>", "taskAction": "assigned" }
+              }
+            ],
+            "pendingDeliveries": 1,
+            "latestPendingRecipients": ["codex-worker"],
+            "task": {
+              "id": "<id:2>",
+              "status": "pending",
+              "assignedBy": "claude-lead",
+              "assignedTo": "codex-worker",
+              "threadId": "<id:1>",
+              "description": "Audit the parser failure path",
+              "prompt": "Audit the parser failure path",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "type": "task"
+            },
+            "urgency": 4,
+            "stateLabel": "on codex-worker",
+            "familyRootTaskId": "<id:2>",
+            "familyTaskIds": ["<id:2>", "<id:5>"]
+          },
+          {
+            "thread": {
+              "id": "<id:4>",
+              "title": "Review: Audit the parser failure path",
+              "kind": "review",
+              "status": "open",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "codex-worker",
+              "participants": ["codex-worker", "reviewer"],
+              "taskId": "<id:5>"
+            },
+            "displayTitle": "Review: Audit the parser failure path",
+            "messages": [],
+            "pendingDeliveries": 0,
+            "latestPendingRecipients": [],
+            "task": {
+              "id": "<id:5>",
+              "status": "pending",
+              "assignedBy": "codex-worker",
+              "assignee": "reviewer",
+              "description": "Review: Audit the parser failure path",
+              "prompt": "Please review the parser fix.",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "type": "review",
+              "reviewStatus": "pending",
+              "reviewOf": "<id:2>"
+            },
+            "urgency": 0,
+            "stateLabel": "pending",
+            "familyRootTaskId": "<id:2>",
+            "familyTaskIds": ["<id:2>", "<id:5>"]
+          }
+        ],
+        "filters": {
+          "all": [
+            {
+              "thread": {
+                "id": "<id:1>",
+                "title": "Task: Audit the parser failure path",
+                "kind": "task",
+                "status": "waiting",
+                "createdAt": "<ts>",
+                "updatedAt": "<ts>",
+                "createdBy": "claude-lead",
+                "participants": ["claude-lead", "codex-worker"],
+                "owner": "codex-worker",
+                "waitingOn": ["codex-worker"],
+                "taskId": "<id:2>",
+                "lastMessageId": "<id:3>",
+                "unreadBy": ["codex-worker"]
+              },
+              "latestMessage": {
+                "id": "<id:3>",
+                "threadId": "<id:1>",
+                "ts": "<ts>",
+                "from": "claude-lead",
+                "to": ["codex-worker"],
+                "kind": "request",
+                "body": "Audit the parser failure path",
+                "taskId": "<id:2>",
+                "metadata": { "taskId": "<id:2>", "taskAction": "assigned" }
+              },
+              "displayTitle": "Task: Audit the parser failure path",
+              "messages": [
+                {
+                  "id": "<id:3>",
+                  "threadId": "<id:1>",
+                  "ts": "<ts>",
+                  "from": "claude-lead",
+                  "to": ["codex-worker"],
+                  "kind": "request",
+                  "body": "Audit the parser failure path",
+                  "taskId": "<id:2>",
+                  "metadata": { "taskId": "<id:2>", "taskAction": "assigned" }
+                }
+              ],
+              "pendingDeliveries": 1,
+              "latestPendingRecipients": ["codex-worker"],
+              "task": {
+                "id": "<id:2>",
+                "status": "pending",
+                "assignedBy": "claude-lead",
+                "assignedTo": "codex-worker",
+                "threadId": "<id:1>",
+                "description": "Audit the parser failure path",
+                "prompt": "Audit the parser failure path",
+                "createdAt": "<ts>",
+                "updatedAt": "<ts>",
+                "type": "task"
+              },
+              "urgency": 4,
+              "stateLabel": "on codex-worker",
+              "familyRootTaskId": "<id:2>",
+              "familyTaskIds": ["<id:2>", "<id:5>"]
+            },
+            {
+              "thread": {
+                "id": "<id:4>",
+                "title": "Review: Audit the parser failure path",
+                "kind": "review",
+                "status": "open",
+                "createdAt": "<ts>",
+                "updatedAt": "<ts>",
+                "createdBy": "codex-worker",
+                "participants": ["codex-worker", "reviewer"],
+                "taskId": "<id:5>"
+              },
+              "displayTitle": "Review: Audit the parser failure path",
+              "messages": [],
+              "pendingDeliveries": 0,
+              "latestPendingRecipients": [],
+              "task": {
+                "id": "<id:5>",
+                "status": "pending",
+                "assignedBy": "codex-worker",
+                "assignee": "reviewer",
+                "description": "Review: Audit the parser failure path",
+                "prompt": "Please review the parser fix.",
+                "createdAt": "<ts>",
+                "updatedAt": "<ts>",
+                "type": "review",
+                "reviewStatus": "pending",
+                "reviewOf": "<id:2>"
+              },
+              "urgency": 0,
+              "stateLabel": "pending",
+              "familyRootTaskId": "<id:2>",
+              "familyTaskIds": ["<id:2>", "<id:5>"]
+            }
+          ],
+          "onMe": [],
+          "blocked": [],
+          "families": [
+            {
+              "thread": {
+                "id": "<id:1>",
+                "title": "Task: Audit the parser failure path",
+                "kind": "task",
+                "status": "waiting",
+                "createdAt": "<ts>",
+                "updatedAt": "<ts>",
+                "createdBy": "claude-lead",
+                "participants": ["claude-lead", "codex-worker"],
+                "owner": "codex-worker",
+                "waitingOn": ["codex-worker"],
+                "taskId": "<id:2>",
+                "lastMessageId": "<id:3>",
+                "unreadBy": ["codex-worker"]
+              },
+              "latestMessage": {
+                "id": "<id:3>",
+                "threadId": "<id:1>",
+                "ts": "<ts>",
+                "from": "claude-lead",
+                "to": ["codex-worker"],
+                "kind": "request",
+                "body": "Audit the parser failure path",
+                "taskId": "<id:2>",
+                "metadata": { "taskId": "<id:2>", "taskAction": "assigned" }
+              },
+              "displayTitle": "Task: Audit the parser failure path",
+              "messages": [
+                {
+                  "id": "<id:3>",
+                  "threadId": "<id:1>",
+                  "ts": "<ts>",
+                  "from": "claude-lead",
+                  "to": ["codex-worker"],
+                  "kind": "request",
+                  "body": "Audit the parser failure path",
+                  "taskId": "<id:2>",
+                  "metadata": { "taskId": "<id:2>", "taskAction": "assigned" }
+                }
+              ],
+              "pendingDeliveries": 1,
+              "latestPendingRecipients": ["codex-worker"],
+              "task": {
+                "id": "<id:2>",
+                "status": "pending",
+                "assignedBy": "claude-lead",
+                "assignedTo": "codex-worker",
+                "threadId": "<id:1>",
+                "description": "Audit the parser failure path",
+                "prompt": "Audit the parser failure path",
+                "createdAt": "<ts>",
+                "updatedAt": "<ts>",
+                "type": "task"
+              },
+              "urgency": 4,
+              "stateLabel": "on codex-worker",
+              "familyRootTaskId": "<id:2>",
+              "familyTaskIds": ["<id:2>", "<id:5>"]
+            },
+            {
+              "thread": {
+                "id": "<id:4>",
+                "title": "Review: Audit the parser failure path",
+                "kind": "review",
+                "status": "open",
+                "createdAt": "<ts>",
+                "updatedAt": "<ts>",
+                "createdBy": "codex-worker",
+                "participants": ["codex-worker", "reviewer"],
+                "taskId": "<id:5>"
+              },
+              "displayTitle": "Review: Audit the parser failure path",
+              "messages": [],
+              "pendingDeliveries": 0,
+              "latestPendingRecipients": [],
+              "task": {
+                "id": "<id:5>",
+                "status": "pending",
+                "assignedBy": "codex-worker",
+                "assignee": "reviewer",
+                "description": "Review: Audit the parser failure path",
+                "prompt": "Please review the parser fix.",
+                "createdAt": "<ts>",
+                "updatedAt": "<ts>",
+                "type": "review",
+                "reviewStatus": "pending",
+                "reviewOf": "<id:2>"
+              },
+              "urgency": 0,
+              "stateLabel": "pending",
+              "familyRootTaskId": "<id:2>",
+              "familyTaskIds": ["<id:2>", "<id:5>"]
+            }
+          ]
+        },
+        "nextActions": [
+          { "threadId": "<id:1>", "taskId": "<id:2>", "action": "continue chain" },
+          { "threadId": "<id:4>", "taskId": "<id:5>", "action": "review thread" }
+        ]
+      },
+      "inputSha256": "7de9cee94305f844c6f30adc2d1262b45df33af133dd93a47280d4d9f21a13fb"
+    },
+    {
+      "id": "workflow-workflow-notification-filter",
+      "name": "excludes notification-tagged threads from coordination thread entries",
+      "source": "src/workflow.test.ts",
+      "input": {
+        "scenario": "<id:1>",
+        "participant": "user",
+        "exchange": {
+          "version": 1,
+          "generatedAt": "<ts>",
+          "threads": [
+            {
+              "id": "<id:2>",
+              "title": "aimux / beautify-tui",
+              "kind": "conversation",
+              "status": "open",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "aimux",
+              "participants": ["aimux", "claude-x"],
+              "lastMessageId": "message-<id:2>",
+              "unreadBy": ["claude-x"],
+              "tags": ["notification"]
+            },
+            {
+              "id": "<id:3>",
+              "title": "Task: Audit the parser failure path",
+              "kind": "task",
+              "status": "waiting",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-lead",
+              "participants": ["claude-lead", "codex-worker"],
+              "owner": "codex-worker",
+              "waitingOn": ["codex-worker"],
+              "taskId": "<id:4>",
+              "lastMessageId": "<id:5>",
+              "unreadBy": ["codex-worker"]
+            }
+          ],
+          "messages": [
+            {
+              "id": "message-<id:2>",
+              "threadId": "<id:2>",
+              "ts": "<ts>",
+              "from": "aimux",
+              "to": ["claude-x"],
+              "kind": "note",
+              "body": "Needs input: claude @ beautify-tui - Claude is waiting for your input",
+              "metadata": {
+                "notificationRecordId": "3225050d-291e-4e81-8b4b-a409966b9855",
+                "notificationSubtitle": null,
+                "notificationSessionId": "claude-x",
+                "notificationTargetKey": "session:claude-x",
+                "notificationTargetKind": "session",
+                "notificationKind": "needs_input",
+                "notificationProjectName": null,
+                "notificationProjectRoot": null,
+                "notificationWorktreePath": null,
+                "notificationWorktreeName": null,
+                "notificationBranch": null,
+                "notificationCategoryLabel": null,
+                "notificationReasonLabel": null,
+                "notificationDedupeKey": null,
+                "notificationCleared": false,
+                "notificationInteractionId": null,
+                "notificationInteractionType": null,
+                "notificationInteractionSummary": null,
+                "notificationInteractionTelemetry": false,
+                "notificationInteractionToolName": null,
+                "notificationInteractionToolInputJSON": null
+              }
+            },
+            {
+              "id": "<id:5>",
+              "threadId": "<id:3>",
+              "ts": "<ts>",
+              "from": "claude-lead",
+              "to": ["codex-worker"],
+              "kind": "request",
+              "body": "Audit the parser failure path",
+              "taskId": "<id:4>",
+              "metadata": { "taskId": "<id:4>", "taskAction": "assigned" }
+            }
+          ],
+          "tasks": [
+            {
+              "id": "<id:4>",
+              "status": "pending",
+              "assignedBy": "claude-lead",
+              "assignedTo": "codex-worker",
+              "threadId": "<id:3>",
+              "description": "Audit the parser failure path",
+              "prompt": "Audit the parser failure path",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "type": "task"
+            }
+          ],
+          "handoffs": [],
+          "reviews": [],
+          "waits": [
+            {
+              "id": "wait:thread:<id:3>",
+              "status": "waiting",
+              "subjectKind": "thread",
+              "subjectId": "<id:3>",
+              "waitingOn": ["codex-worker"],
+              "owner": "codex-worker",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>"
+            },
+            {
+              "id": "wait:task:<id:4>",
+              "status": "waiting",
+              "subjectKind": "task",
+              "subjectId": "<id:4>",
+              "waitingOn": ["codex-worker"],
+              "owner": "claude-lead",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>"
+            }
+          ],
+          "inbox": [
+            {
+              "id": "inbox:claude-x:thread:<id:2>",
+              "participantId": "claude-x",
+              "subjectKind": "thread",
+              "subjectId": "<id:2>",
+              "state": "unread",
+              "urgency": 3,
+              "updatedAt": "<ts>"
+            },
+            {
+              "id": "inbox:codex-worker:thread:<id:3>",
+              "participantId": "codex-worker",
+              "subjectKind": "thread",
+              "subjectId": "<id:3>",
+              "state": "waiting",
+              "urgency": 13,
+              "updatedAt": "<ts>"
+            },
+            {
+              "id": "inbox:codex-worker:task:<id:4>",
+              "participantId": "codex-worker",
+              "subjectKind": "task",
+              "subjectId": "<id:4>",
+              "state": "waiting",
+              "urgency": 6,
+              "updatedAt": "<ts>"
+            }
+          ],
+          "planRefs": [],
+          "continuityRefs": [],
+          "attachmentRefs": []
+        }
+      },
+      "output": {
+        "workflowEntries": [
+          {
+            "thread": {
+              "id": "<id:3>",
+              "title": "Task: Audit the parser failure path",
+              "kind": "task",
+              "status": "waiting",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-lead",
+              "participants": ["claude-lead", "codex-worker"],
+              "owner": "codex-worker",
+              "waitingOn": ["codex-worker"],
+              "taskId": "<id:4>",
+              "lastMessageId": "<id:5>",
+              "unreadBy": ["codex-worker"]
+            },
+            "latestMessage": {
+              "id": "<id:5>",
+              "threadId": "<id:3>",
+              "ts": "<ts>",
+              "from": "claude-lead",
+              "to": ["codex-worker"],
+              "kind": "request",
+              "body": "Audit the parser failure path",
+              "taskId": "<id:4>",
+              "metadata": { "taskId": "<id:4>", "taskAction": "assigned" }
+            },
+            "displayTitle": "Task: Audit the parser failure path",
+            "messages": [
+              {
+                "id": "<id:5>",
+                "threadId": "<id:3>",
+                "ts": "<ts>",
+                "from": "claude-lead",
+                "to": ["codex-worker"],
+                "kind": "request",
+                "body": "Audit the parser failure path",
+                "taskId": "<id:4>",
+                "metadata": { "taskId": "<id:4>", "taskAction": "assigned" }
+              }
+            ],
+            "pendingDeliveries": 1,
+            "latestPendingRecipients": ["codex-worker"],
+            "task": {
+              "id": "<id:4>",
+              "status": "pending",
+              "assignedBy": "claude-lead",
+              "assignedTo": "codex-worker",
+              "threadId": "<id:3>",
+              "description": "Audit the parser failure path",
+              "prompt": "Audit the parser failure path",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "type": "task"
+            },
+            "urgency": 4,
+            "stateLabel": "on codex-worker",
+            "familyRootTaskId": "<id:4>",
+            "familyTaskIds": ["<id:4>"]
+          }
+        ],
+        "coordinationThreadEntries": [
+          {
+            "thread": {
+              "id": "<id:3>",
+              "title": "Task: Audit the parser failure path",
+              "kind": "task",
+              "status": "waiting",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-lead",
+              "participants": ["claude-lead", "codex-worker"],
+              "owner": "codex-worker",
+              "waitingOn": ["codex-worker"],
+              "taskId": "<id:4>",
+              "lastMessageId": "<id:5>",
+              "unreadBy": ["codex-worker"]
+            },
+            "latestMessage": {
+              "id": "<id:5>",
+              "threadId": "<id:3>",
+              "ts": "<ts>",
+              "from": "claude-lead",
+              "to": ["codex-worker"],
+              "kind": "request",
+              "body": "Audit the parser failure path",
+              "taskId": "<id:4>",
+              "metadata": { "taskId": "<id:4>", "taskAction": "assigned" }
+            },
+            "displayTitle": "Task: Audit the parser failure path",
+            "messages": [
+              {
+                "id": "<id:5>",
+                "threadId": "<id:3>",
+                "ts": "<ts>",
+                "from": "claude-lead",
+                "to": ["codex-worker"],
+                "kind": "request",
+                "body": "Audit the parser failure path",
+                "taskId": "<id:4>",
+                "metadata": { "taskId": "<id:4>", "taskAction": "assigned" }
+              }
+            ],
+            "pendingDeliveries": 1,
+            "latestPendingRecipients": ["codex-worker"],
+            "task": {
+              "id": "<id:4>",
+              "status": "pending",
+              "assignedBy": "claude-lead",
+              "assignedTo": "codex-worker",
+              "threadId": "<id:3>",
+              "description": "Audit the parser failure path",
+              "prompt": "Audit the parser failure path",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "type": "task"
+            },
+            "urgency": 4,
+            "stateLabel": "on codex-worker",
+            "familyRootTaskId": "<id:4>",
+            "familyTaskIds": ["<id:4>"]
+          }
+        ],
+        "filters": {
+          "all": [
+            {
+              "thread": {
+                "id": "<id:3>",
+                "title": "Task: Audit the parser failure path",
+                "kind": "task",
+                "status": "waiting",
+                "createdAt": "<ts>",
+                "updatedAt": "<ts>",
+                "createdBy": "claude-lead",
+                "participants": ["claude-lead", "codex-worker"],
+                "owner": "codex-worker",
+                "waitingOn": ["codex-worker"],
+                "taskId": "<id:4>",
+                "lastMessageId": "<id:5>",
+                "unreadBy": ["codex-worker"]
+              },
+              "latestMessage": {
+                "id": "<id:5>",
+                "threadId": "<id:3>",
+                "ts": "<ts>",
+                "from": "claude-lead",
+                "to": ["codex-worker"],
+                "kind": "request",
+                "body": "Audit the parser failure path",
+                "taskId": "<id:4>",
+                "metadata": { "taskId": "<id:4>", "taskAction": "assigned" }
+              },
+              "displayTitle": "Task: Audit the parser failure path",
+              "messages": [
+                {
+                  "id": "<id:5>",
+                  "threadId": "<id:3>",
+                  "ts": "<ts>",
+                  "from": "claude-lead",
+                  "to": ["codex-worker"],
+                  "kind": "request",
+                  "body": "Audit the parser failure path",
+                  "taskId": "<id:4>",
+                  "metadata": { "taskId": "<id:4>", "taskAction": "assigned" }
+                }
+              ],
+              "pendingDeliveries": 1,
+              "latestPendingRecipients": ["codex-worker"],
+              "task": {
+                "id": "<id:4>",
+                "status": "pending",
+                "assignedBy": "claude-lead",
+                "assignedTo": "codex-worker",
+                "threadId": "<id:3>",
+                "description": "Audit the parser failure path",
+                "prompt": "Audit the parser failure path",
+                "createdAt": "<ts>",
+                "updatedAt": "<ts>",
+                "type": "task"
+              },
+              "urgency": 4,
+              "stateLabel": "on codex-worker",
+              "familyRootTaskId": "<id:4>",
+              "familyTaskIds": ["<id:4>"]
+            }
+          ],
+          "onMe": [],
+          "blocked": [],
+          "families": []
+        },
+        "nextActions": [{ "threadId": "<id:3>", "taskId": "<id:4>", "action": "open thread" }]
+      },
+      "inputSha256": "0357f6fa5499119a8004bdb966bf8384f613f12f8069d6cf2f5fc013064bef21"
+    },
+    {
+      "id": "workflow-workflow-filters",
+      "name": "filters workflow entries by waiting-on-me, blocked, and families",
+      "source": "src/workflow.test.ts",
+      "input": {
+        "scenario": "filters",
+        "participant": "reviewer",
+        "exchange": {
+          "version": 1,
+          "generatedAt": "<ts>",
+          "threads": [
+            {
+              "id": "<id:1>",
+              "title": "Task: Audit the parser failure path",
+              "kind": "task",
+              "status": "waiting",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-lead",
+              "participants": ["claude-lead", "reviewer"],
+              "owner": "reviewer",
+              "waitingOn": ["reviewer"],
+              "taskId": "<id:2>",
+              "lastMessageId": "<id:3>",
+              "unreadBy": ["reviewer"]
+            },
+            {
+              "id": "<id:4>",
+              "title": "Review: Audit the parser failure path",
+              "kind": "review",
+              "status": "open",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "reviewer",
+              "participants": ["reviewer", "claude-lead"],
+              "taskId": "<id:5>"
+            }
+          ],
+          "messages": [
+            {
+              "id": "<id:3>",
+              "threadId": "<id:1>",
+              "ts": "<ts>",
+              "from": "claude-lead",
+              "to": ["reviewer"],
+              "kind": "request",
+              "body": "Audit the parser failure path",
+              "taskId": "<id:2>",
+              "metadata": { "taskId": "<id:2>", "taskAction": "assigned" }
+            }
+          ],
+          "tasks": [
+            {
+              "id": "<id:2>",
+              "status": "pending",
+              "assignedBy": "claude-lead",
+              "assignedTo": "reviewer",
+              "threadId": "<id:1>",
+              "description": "Audit the parser failure path",
+              "prompt": "Audit the parser failure path",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "type": "task"
+            },
+            {
+              "id": "<id:5>",
+              "status": "blocked",
+              "assignedBy": "reviewer",
+              "assignedTo": "reviewer",
+              "assignee": "reviewer",
+              "description": "Review: Audit the parser failure path",
+              "prompt": "Please review the parser fix.",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "type": "review",
+              "reviewStatus": "pending",
+              "reviewOf": "<id:2>"
+            }
+          ],
+          "handoffs": [],
+          "reviews": [
+            {
+              "id": "review:<id:5>",
+              "taskId": "<id:5>",
+              "reviewOf": "<id:2>",
+              "reviewer": "reviewer",
+              "status": "pending",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>"
+            }
+          ],
+          "waits": [
+            {
+              "id": "wait:thread:<id:1>",
+              "status": "waiting",
+              "subjectKind": "thread",
+              "subjectId": "<id:1>",
+              "waitingOn": ["reviewer"],
+              "owner": "reviewer",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>"
+            },
+            {
+              "id": "wait:task:<id:2>",
+              "status": "waiting",
+              "subjectKind": "task",
+              "subjectId": "<id:2>",
+              "waitingOn": ["reviewer"],
+              "owner": "claude-lead",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>"
+            },
+            {
+              "id": "wait:task:<id:5>",
+              "status": "waiting",
+              "subjectKind": "task",
+              "subjectId": "<id:5>",
+              "waitingOn": ["reviewer"],
+              "owner": "reviewer",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>"
+            }
+          ],
+          "inbox": [
+            {
+              "id": "inbox:reviewer:thread:<id:1>",
+              "participantId": "reviewer",
+              "subjectKind": "thread",
+              "subjectId": "<id:1>",
+              "state": "waiting",
+              "urgency": 13,
+              "updatedAt": "<ts>"
+            },
+            {
+              "id": "inbox:reviewer:task:<id:2>",
+              "participantId": "reviewer",
+              "subjectKind": "task",
+              "subjectId": "<id:2>",
+              "state": "waiting",
+              "urgency": 6,
+              "updatedAt": "<ts>"
+            },
+            {
+              "id": "inbox:reviewer:task:<id:5>",
+              "participantId": "reviewer",
+              "subjectKind": "task",
+              "subjectId": "<id:5>",
+              "state": "blocked",
+              "urgency": 12,
+              "updatedAt": "<ts>"
+            }
+          ],
+          "planRefs": [],
+          "continuityRefs": [],
+          "attachmentRefs": []
+        }
+      },
+      "output": {
+        "workflowEntries": [
+          {
+            "thread": {
+              "id": "<id:1>",
+              "title": "Task: Audit the parser failure path",
+              "kind": "task",
+              "status": "waiting",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-lead",
+              "participants": ["claude-lead", "reviewer"],
+              "owner": "reviewer",
+              "waitingOn": ["reviewer"],
+              "taskId": "<id:2>",
+              "lastMessageId": "<id:3>",
+              "unreadBy": ["reviewer"]
+            },
+            "latestMessage": {
+              "id": "<id:3>",
+              "threadId": "<id:1>",
+              "ts": "<ts>",
+              "from": "claude-lead",
+              "to": ["reviewer"],
+              "kind": "request",
+              "body": "Audit the parser failure path",
+              "taskId": "<id:2>",
+              "metadata": { "taskId": "<id:2>", "taskAction": "assigned" }
+            },
+            "displayTitle": "Task: Audit the parser failure path",
+            "messages": [
+              {
+                "id": "<id:3>",
+                "threadId": "<id:1>",
+                "ts": "<ts>",
+                "from": "claude-lead",
+                "to": ["reviewer"],
+                "kind": "request",
+                "body": "Audit the parser failure path",
+                "taskId": "<id:2>",
+                "metadata": { "taskId": "<id:2>", "taskAction": "assigned" }
+              }
+            ],
+            "pendingDeliveries": 1,
+            "latestPendingRecipients": ["reviewer"],
+            "task": {
+              "id": "<id:2>",
+              "status": "pending",
+              "assignedBy": "claude-lead",
+              "assignedTo": "reviewer",
+              "threadId": "<id:1>",
+              "description": "Audit the parser failure path",
+              "prompt": "Audit the parser failure path",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "type": "task"
+            },
+            "urgency": 17,
+            "stateLabel": "on me",
+            "familyRootTaskId": "<id:2>",
+            "familyTaskIds": ["<id:2>", "<id:5>"]
+          },
+          {
+            "thread": {
+              "id": "<id:4>",
+              "title": "Review: Audit the parser failure path",
+              "kind": "review",
+              "status": "open",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "reviewer",
+              "participants": ["reviewer", "claude-lead"],
+              "taskId": "<id:5>"
+            },
+            "displayTitle": "Review: Audit the parser failure path",
+            "messages": [],
+            "pendingDeliveries": 0,
+            "latestPendingRecipients": [],
+            "task": {
+              "id": "<id:5>",
+              "status": "blocked",
+              "assignedBy": "reviewer",
+              "assignedTo": "reviewer",
+              "assignee": "reviewer",
+              "description": "Review: Audit the parser failure path",
+              "prompt": "Please review the parser fix.",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "type": "review",
+              "reviewStatus": "pending",
+              "reviewOf": "<id:2>"
+            },
+            "urgency": 2,
+            "stateLabel": "blocked",
+            "familyRootTaskId": "<id:2>",
+            "familyTaskIds": ["<id:2>", "<id:5>"]
+          }
+        ],
+        "coordinationThreadEntries": [
+          {
+            "thread": {
+              "id": "<id:1>",
+              "title": "Task: Audit the parser failure path",
+              "kind": "task",
+              "status": "waiting",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-lead",
+              "participants": ["claude-lead", "reviewer"],
+              "owner": "reviewer",
+              "waitingOn": ["reviewer"],
+              "taskId": "<id:2>",
+              "lastMessageId": "<id:3>",
+              "unreadBy": ["reviewer"]
+            },
+            "latestMessage": {
+              "id": "<id:3>",
+              "threadId": "<id:1>",
+              "ts": "<ts>",
+              "from": "claude-lead",
+              "to": ["reviewer"],
+              "kind": "request",
+              "body": "Audit the parser failure path",
+              "taskId": "<id:2>",
+              "metadata": { "taskId": "<id:2>", "taskAction": "assigned" }
+            },
+            "displayTitle": "Task: Audit the parser failure path",
+            "messages": [
+              {
+                "id": "<id:3>",
+                "threadId": "<id:1>",
+                "ts": "<ts>",
+                "from": "claude-lead",
+                "to": ["reviewer"],
+                "kind": "request",
+                "body": "Audit the parser failure path",
+                "taskId": "<id:2>",
+                "metadata": { "taskId": "<id:2>", "taskAction": "assigned" }
+              }
+            ],
+            "pendingDeliveries": 1,
+            "latestPendingRecipients": ["reviewer"],
+            "task": {
+              "id": "<id:2>",
+              "status": "pending",
+              "assignedBy": "claude-lead",
+              "assignedTo": "reviewer",
+              "threadId": "<id:1>",
+              "description": "Audit the parser failure path",
+              "prompt": "Audit the parser failure path",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "type": "task"
+            },
+            "urgency": 17,
+            "stateLabel": "on me",
+            "familyRootTaskId": "<id:2>",
+            "familyTaskIds": ["<id:2>", "<id:5>"]
+          },
+          {
+            "thread": {
+              "id": "<id:4>",
+              "title": "Review: Audit the parser failure path",
+              "kind": "review",
+              "status": "open",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "reviewer",
+              "participants": ["reviewer", "claude-lead"],
+              "taskId": "<id:5>"
+            },
+            "displayTitle": "Review: Audit the parser failure path",
+            "messages": [],
+            "pendingDeliveries": 0,
+            "latestPendingRecipients": [],
+            "task": {
+              "id": "<id:5>",
+              "status": "blocked",
+              "assignedBy": "reviewer",
+              "assignedTo": "reviewer",
+              "assignee": "reviewer",
+              "description": "Review: Audit the parser failure path",
+              "prompt": "Please review the parser fix.",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "type": "review",
+              "reviewStatus": "pending",
+              "reviewOf": "<id:2>"
+            },
+            "urgency": 2,
+            "stateLabel": "blocked",
+            "familyRootTaskId": "<id:2>",
+            "familyTaskIds": ["<id:2>", "<id:5>"]
+          }
+        ],
+        "filters": {
+          "all": [
+            {
+              "thread": {
+                "id": "<id:1>",
+                "title": "Task: Audit the parser failure path",
+                "kind": "task",
+                "status": "waiting",
+                "createdAt": "<ts>",
+                "updatedAt": "<ts>",
+                "createdBy": "claude-lead",
+                "participants": ["claude-lead", "reviewer"],
+                "owner": "reviewer",
+                "waitingOn": ["reviewer"],
+                "taskId": "<id:2>",
+                "lastMessageId": "<id:3>",
+                "unreadBy": ["reviewer"]
+              },
+              "latestMessage": {
+                "id": "<id:3>",
+                "threadId": "<id:1>",
+                "ts": "<ts>",
+                "from": "claude-lead",
+                "to": ["reviewer"],
+                "kind": "request",
+                "body": "Audit the parser failure path",
+                "taskId": "<id:2>",
+                "metadata": { "taskId": "<id:2>", "taskAction": "assigned" }
+              },
+              "displayTitle": "Task: Audit the parser failure path",
+              "messages": [
+                {
+                  "id": "<id:3>",
+                  "threadId": "<id:1>",
+                  "ts": "<ts>",
+                  "from": "claude-lead",
+                  "to": ["reviewer"],
+                  "kind": "request",
+                  "body": "Audit the parser failure path",
+                  "taskId": "<id:2>",
+                  "metadata": { "taskId": "<id:2>", "taskAction": "assigned" }
+                }
+              ],
+              "pendingDeliveries": 1,
+              "latestPendingRecipients": ["reviewer"],
+              "task": {
+                "id": "<id:2>",
+                "status": "pending",
+                "assignedBy": "claude-lead",
+                "assignedTo": "reviewer",
+                "threadId": "<id:1>",
+                "description": "Audit the parser failure path",
+                "prompt": "Audit the parser failure path",
+                "createdAt": "<ts>",
+                "updatedAt": "<ts>",
+                "type": "task"
+              },
+              "urgency": 17,
+              "stateLabel": "on me",
+              "familyRootTaskId": "<id:2>",
+              "familyTaskIds": ["<id:2>", "<id:5>"]
+            },
+            {
+              "thread": {
+                "id": "<id:4>",
+                "title": "Review: Audit the parser failure path",
+                "kind": "review",
+                "status": "open",
+                "createdAt": "<ts>",
+                "updatedAt": "<ts>",
+                "createdBy": "reviewer",
+                "participants": ["reviewer", "claude-lead"],
+                "taskId": "<id:5>"
+              },
+              "displayTitle": "Review: Audit the parser failure path",
+              "messages": [],
+              "pendingDeliveries": 0,
+              "latestPendingRecipients": [],
+              "task": {
+                "id": "<id:5>",
+                "status": "blocked",
+                "assignedBy": "reviewer",
+                "assignedTo": "reviewer",
+                "assignee": "reviewer",
+                "description": "Review: Audit the parser failure path",
+                "prompt": "Please review the parser fix.",
+                "createdAt": "<ts>",
+                "updatedAt": "<ts>",
+                "type": "review",
+                "reviewStatus": "pending",
+                "reviewOf": "<id:2>"
+              },
+              "urgency": 2,
+              "stateLabel": "blocked",
+              "familyRootTaskId": "<id:2>",
+              "familyTaskIds": ["<id:2>", "<id:5>"]
+            }
+          ],
+          "onMe": [
+            {
+              "thread": {
+                "id": "<id:1>",
+                "title": "Task: Audit the parser failure path",
+                "kind": "task",
+                "status": "waiting",
+                "createdAt": "<ts>",
+                "updatedAt": "<ts>",
+                "createdBy": "claude-lead",
+                "participants": ["claude-lead", "reviewer"],
+                "owner": "reviewer",
+                "waitingOn": ["reviewer"],
+                "taskId": "<id:2>",
+                "lastMessageId": "<id:3>",
+                "unreadBy": ["reviewer"]
+              },
+              "latestMessage": {
+                "id": "<id:3>",
+                "threadId": "<id:1>",
+                "ts": "<ts>",
+                "from": "claude-lead",
+                "to": ["reviewer"],
+                "kind": "request",
+                "body": "Audit the parser failure path",
+                "taskId": "<id:2>",
+                "metadata": { "taskId": "<id:2>", "taskAction": "assigned" }
+              },
+              "displayTitle": "Task: Audit the parser failure path",
+              "messages": [
+                {
+                  "id": "<id:3>",
+                  "threadId": "<id:1>",
+                  "ts": "<ts>",
+                  "from": "claude-lead",
+                  "to": ["reviewer"],
+                  "kind": "request",
+                  "body": "Audit the parser failure path",
+                  "taskId": "<id:2>",
+                  "metadata": { "taskId": "<id:2>", "taskAction": "assigned" }
+                }
+              ],
+              "pendingDeliveries": 1,
+              "latestPendingRecipients": ["reviewer"],
+              "task": {
+                "id": "<id:2>",
+                "status": "pending",
+                "assignedBy": "claude-lead",
+                "assignedTo": "reviewer",
+                "threadId": "<id:1>",
+                "description": "Audit the parser failure path",
+                "prompt": "Audit the parser failure path",
+                "createdAt": "<ts>",
+                "updatedAt": "<ts>",
+                "type": "task"
+              },
+              "urgency": 17,
+              "stateLabel": "on me",
+              "familyRootTaskId": "<id:2>",
+              "familyTaskIds": ["<id:2>", "<id:5>"]
+            }
+          ],
+          "blocked": [
+            {
+              "thread": {
+                "id": "<id:4>",
+                "title": "Review: Audit the parser failure path",
+                "kind": "review",
+                "status": "open",
+                "createdAt": "<ts>",
+                "updatedAt": "<ts>",
+                "createdBy": "reviewer",
+                "participants": ["reviewer", "claude-lead"],
+                "taskId": "<id:5>"
+              },
+              "displayTitle": "Review: Audit the parser failure path",
+              "messages": [],
+              "pendingDeliveries": 0,
+              "latestPendingRecipients": [],
+              "task": {
+                "id": "<id:5>",
+                "status": "blocked",
+                "assignedBy": "reviewer",
+                "assignedTo": "reviewer",
+                "assignee": "reviewer",
+                "description": "Review: Audit the parser failure path",
+                "prompt": "Please review the parser fix.",
+                "createdAt": "<ts>",
+                "updatedAt": "<ts>",
+                "type": "review",
+                "reviewStatus": "pending",
+                "reviewOf": "<id:2>"
+              },
+              "urgency": 2,
+              "stateLabel": "blocked",
+              "familyRootTaskId": "<id:2>",
+              "familyTaskIds": ["<id:2>", "<id:5>"]
+            }
+          ],
+          "families": [
+            {
+              "thread": {
+                "id": "<id:1>",
+                "title": "Task: Audit the parser failure path",
+                "kind": "task",
+                "status": "waiting",
+                "createdAt": "<ts>",
+                "updatedAt": "<ts>",
+                "createdBy": "claude-lead",
+                "participants": ["claude-lead", "reviewer"],
+                "owner": "reviewer",
+                "waitingOn": ["reviewer"],
+                "taskId": "<id:2>",
+                "lastMessageId": "<id:3>",
+                "unreadBy": ["reviewer"]
+              },
+              "latestMessage": {
+                "id": "<id:3>",
+                "threadId": "<id:1>",
+                "ts": "<ts>",
+                "from": "claude-lead",
+                "to": ["reviewer"],
+                "kind": "request",
+                "body": "Audit the parser failure path",
+                "taskId": "<id:2>",
+                "metadata": { "taskId": "<id:2>", "taskAction": "assigned" }
+              },
+              "displayTitle": "Task: Audit the parser failure path",
+              "messages": [
+                {
+                  "id": "<id:3>",
+                  "threadId": "<id:1>",
+                  "ts": "<ts>",
+                  "from": "claude-lead",
+                  "to": ["reviewer"],
+                  "kind": "request",
+                  "body": "Audit the parser failure path",
+                  "taskId": "<id:2>",
+                  "metadata": { "taskId": "<id:2>", "taskAction": "assigned" }
+                }
+              ],
+              "pendingDeliveries": 1,
+              "latestPendingRecipients": ["reviewer"],
+              "task": {
+                "id": "<id:2>",
+                "status": "pending",
+                "assignedBy": "claude-lead",
+                "assignedTo": "reviewer",
+                "threadId": "<id:1>",
+                "description": "Audit the parser failure path",
+                "prompt": "Audit the parser failure path",
+                "createdAt": "<ts>",
+                "updatedAt": "<ts>",
+                "type": "task"
+              },
+              "urgency": 17,
+              "stateLabel": "on me",
+              "familyRootTaskId": "<id:2>",
+              "familyTaskIds": ["<id:2>", "<id:5>"]
+            },
+            {
+              "thread": {
+                "id": "<id:4>",
+                "title": "Review: Audit the parser failure path",
+                "kind": "review",
+                "status": "open",
+                "createdAt": "<ts>",
+                "updatedAt": "<ts>",
+                "createdBy": "reviewer",
+                "participants": ["reviewer", "claude-lead"],
+                "taskId": "<id:5>"
+              },
+              "displayTitle": "Review: Audit the parser failure path",
+              "messages": [],
+              "pendingDeliveries": 0,
+              "latestPendingRecipients": [],
+              "task": {
+                "id": "<id:5>",
+                "status": "blocked",
+                "assignedBy": "reviewer",
+                "assignedTo": "reviewer",
+                "assignee": "reviewer",
+                "description": "Review: Audit the parser failure path",
+                "prompt": "Please review the parser fix.",
+                "createdAt": "<ts>",
+                "updatedAt": "<ts>",
+                "type": "review",
+                "reviewStatus": "pending",
+                "reviewOf": "<id:2>"
+              },
+              "urgency": 2,
+              "stateLabel": "blocked",
+              "familyRootTaskId": "<id:2>",
+              "familyTaskIds": ["<id:2>", "<id:5>"]
+            }
+          ]
+        },
+        "nextActions": [
+          { "threadId": "<id:1>", "taskId": "<id:2>", "action": "continue chain" },
+          { "threadId": "<id:4>", "taskId": "<id:5>", "action": "review thread" }
+        ]
+      },
+      "inputSha256": "994bf0a40f248260d62e1aac10e9eee85cc2280422d2d0d0f9240ada5406c86b"
+    },
+    {
+      "id": "workflow-workflow-next-actions",
+      "name": "derives next action labels for handoff, review, task, and plain thread states",
+      "source": "src/workflow.test.ts",
+      "input": {
+        "scenario": "next-actions",
+        "participant": "reviewer",
+        "exchange": {
+          "version": 1,
+          "generatedAt": "<ts>",
+          "threads": [
+            {
+              "id": "handoff-waiting",
+              "title": "Take parser follow-up",
+              "kind": "handoff",
+              "status": "waiting",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-lead",
+              "participants": ["claude-lead", "reviewer"],
+              "owner": "claude-lead",
+              "waitingOn": ["reviewer"],
+              "lastMessageId": "<id:1>"
+            },
+            {
+              "id": "<id:2>",
+              "title": "Review parser",
+              "kind": "review",
+              "status": "waiting",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-lead",
+              "participants": ["claude-lead", "reviewer"],
+              "owner": "claude-lead",
+              "waitingOn": ["reviewer"],
+              "taskId": "<id:3>"
+            },
+            {
+              "id": "<id:4>",
+              "title": "Continue parser",
+              "kind": "task",
+              "status": "open",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-lead",
+              "participants": ["claude-lead", "codex-worker"],
+              "waitingOn": [],
+              "taskId": "<id:4>"
+            },
+            {
+              "id": "<id:5>",
+              "title": "Blocked discussion",
+              "kind": "handoff",
+              "status": "blocked",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-lead",
+              "participants": ["claude-lead", "codex-worker"],
+              "waitingOn": []
+            }
+          ],
+          "messages": [
+            {
+              "id": "<id:1>",
+              "threadId": "handoff-waiting",
+              "ts": "<ts>",
+              "from": "claude-lead",
+              "to": ["reviewer"],
+              "kind": "handoff",
+              "body": "Take parser follow-up."
+            }
+          ],
+          "tasks": [
+            {
+              "id": "<id:3>",
+              "status": "pending",
+              "assignedBy": "claude-lead",
+              "assignedTo": "reviewer",
+              "description": "Review parser",
+              "prompt": "Please review parser.",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "type": "review",
+              "reviewStatus": "changes_requested"
+            },
+            {
+              "id": "<id:4>",
+              "status": "assigned",
+              "assignedBy": "claude-lead",
+              "assignedTo": "codex-worker",
+              "description": "Continue parser",
+              "prompt": "Continue parser.",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>"
+            }
+          ],
+          "handoffs": [],
+          "reviews": [],
+          "waits": [],
+          "inbox": [],
+          "planRefs": [],
+          "continuityRefs": [],
+          "attachmentRefs": []
+        }
+      },
+      "output": {
+        "workflowEntries": [
+          {
+            "thread": {
+              "id": "handoff-waiting",
+              "title": "Take parser follow-up",
+              "kind": "handoff",
+              "status": "waiting",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-lead",
+              "participants": ["claude-lead", "reviewer"],
+              "owner": "claude-lead",
+              "waitingOn": ["reviewer"],
+              "lastMessageId": "<id:1>"
+            },
+            "latestMessage": {
+              "id": "<id:1>",
+              "threadId": "handoff-waiting",
+              "ts": "<ts>",
+              "from": "claude-lead",
+              "to": ["reviewer"],
+              "kind": "handoff",
+              "body": "Take parser follow-up."
+            },
+            "displayTitle": "Take parser follow-up",
+            "messages": [
+              {
+                "id": "<id:1>",
+                "threadId": "handoff-waiting",
+                "ts": "<ts>",
+                "from": "claude-lead",
+                "to": ["reviewer"],
+                "kind": "handoff",
+                "body": "Take parser follow-up."
+              }
+            ],
+            "pendingDeliveries": 1,
+            "latestPendingRecipients": ["reviewer"],
+            "urgency": 14,
+            "stateLabel": "on me",
+            "familyTaskIds": []
+          },
+          {
+            "thread": {
+              "id": "<id:2>",
+              "title": "Review parser",
+              "kind": "review",
+              "status": "waiting",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-lead",
+              "participants": ["claude-lead", "reviewer"],
+              "owner": "claude-lead",
+              "waitingOn": ["reviewer"],
+              "taskId": "<id:3>"
+            },
+            "displayTitle": "Review parser",
+            "messages": [],
+            "pendingDeliveries": 0,
+            "latestPendingRecipients": [],
+            "task": {
+              "id": "<id:3>",
+              "status": "pending",
+              "assignedBy": "claude-lead",
+              "assignedTo": "reviewer",
+              "description": "Review parser",
+              "prompt": "Please review parser.",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "type": "review",
+              "reviewStatus": "changes_requested"
+            },
+            "urgency": 10,
+            "stateLabel": "on me",
+            "familyRootTaskId": "<id:3>",
+            "familyTaskIds": ["<id:3>"]
+          },
+          {
+            "thread": {
+              "id": "<id:5>",
+              "title": "Blocked discussion",
+              "kind": "handoff",
+              "status": "blocked",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-lead",
+              "participants": ["claude-lead", "codex-worker"],
+              "waitingOn": []
+            },
+            "displayTitle": "Blocked discussion",
+            "messages": [],
+            "pendingDeliveries": 0,
+            "latestPendingRecipients": [],
+            "urgency": 8,
+            "stateLabel": "blocked",
+            "familyTaskIds": []
+          },
+          {
+            "thread": {
+              "id": "<id:4>",
+              "title": "Continue parser",
+              "kind": "task",
+              "status": "open",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-lead",
+              "participants": ["claude-lead", "codex-worker"],
+              "waitingOn": [],
+              "taskId": "<id:4>"
+            },
+            "displayTitle": "Continue parser",
+            "messages": [],
+            "pendingDeliveries": 0,
+            "latestPendingRecipients": [],
+            "task": {
+              "id": "<id:4>",
+              "status": "assigned",
+              "assignedBy": "claude-lead",
+              "assignedTo": "codex-worker",
+              "description": "Continue parser",
+              "prompt": "Continue parser.",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>"
+            },
+            "urgency": 2,
+            "stateLabel": "assigned",
+            "familyRootTaskId": "<id:4>",
+            "familyTaskIds": ["<id:4>"]
+          }
+        ],
+        "coordinationThreadEntries": [
+          {
+            "thread": {
+              "id": "handoff-waiting",
+              "title": "Take parser follow-up",
+              "kind": "handoff",
+              "status": "waiting",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-lead",
+              "participants": ["claude-lead", "reviewer"],
+              "owner": "claude-lead",
+              "waitingOn": ["reviewer"],
+              "lastMessageId": "<id:1>"
+            },
+            "latestMessage": {
+              "id": "<id:1>",
+              "threadId": "handoff-waiting",
+              "ts": "<ts>",
+              "from": "claude-lead",
+              "to": ["reviewer"],
+              "kind": "handoff",
+              "body": "Take parser follow-up."
+            },
+            "displayTitle": "Take parser follow-up",
+            "messages": [
+              {
+                "id": "<id:1>",
+                "threadId": "handoff-waiting",
+                "ts": "<ts>",
+                "from": "claude-lead",
+                "to": ["reviewer"],
+                "kind": "handoff",
+                "body": "Take parser follow-up."
+              }
+            ],
+            "pendingDeliveries": 1,
+            "latestPendingRecipients": ["reviewer"],
+            "urgency": 14,
+            "stateLabel": "on me",
+            "familyTaskIds": []
+          },
+          {
+            "thread": {
+              "id": "<id:2>",
+              "title": "Review parser",
+              "kind": "review",
+              "status": "waiting",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-lead",
+              "participants": ["claude-lead", "reviewer"],
+              "owner": "claude-lead",
+              "waitingOn": ["reviewer"],
+              "taskId": "<id:3>"
+            },
+            "displayTitle": "Review parser",
+            "messages": [],
+            "pendingDeliveries": 0,
+            "latestPendingRecipients": [],
+            "task": {
+              "id": "<id:3>",
+              "status": "pending",
+              "assignedBy": "claude-lead",
+              "assignedTo": "reviewer",
+              "description": "Review parser",
+              "prompt": "Please review parser.",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "type": "review",
+              "reviewStatus": "changes_requested"
+            },
+            "urgency": 10,
+            "stateLabel": "on me",
+            "familyRootTaskId": "<id:3>",
+            "familyTaskIds": ["<id:3>"]
+          },
+          {
+            "thread": {
+              "id": "<id:5>",
+              "title": "Blocked discussion",
+              "kind": "handoff",
+              "status": "blocked",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-lead",
+              "participants": ["claude-lead", "codex-worker"],
+              "waitingOn": []
+            },
+            "displayTitle": "Blocked discussion",
+            "messages": [],
+            "pendingDeliveries": 0,
+            "latestPendingRecipients": [],
+            "urgency": 8,
+            "stateLabel": "blocked",
+            "familyTaskIds": []
+          },
+          {
+            "thread": {
+              "id": "<id:4>",
+              "title": "Continue parser",
+              "kind": "task",
+              "status": "open",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>",
+              "createdBy": "claude-lead",
+              "participants": ["claude-lead", "codex-worker"],
+              "waitingOn": [],
+              "taskId": "<id:4>"
+            },
+            "displayTitle": "Continue parser",
+            "messages": [],
+            "pendingDeliveries": 0,
+            "latestPendingRecipients": [],
+            "task": {
+              "id": "<id:4>",
+              "status": "assigned",
+              "assignedBy": "claude-lead",
+              "assignedTo": "codex-worker",
+              "description": "Continue parser",
+              "prompt": "Continue parser.",
+              "createdAt": "<ts>",
+              "updatedAt": "<ts>"
+            },
+            "urgency": 2,
+            "stateLabel": "assigned",
+            "familyRootTaskId": "<id:4>",
+            "familyTaskIds": ["<id:4>"]
+          }
+        ],
+        "filters": {
+          "all": [
+            {
+              "thread": {
+                "id": "handoff-waiting",
+                "title": "Take parser follow-up",
+                "kind": "handoff",
+                "status": "waiting",
+                "createdAt": "<ts>",
+                "updatedAt": "<ts>",
+                "createdBy": "claude-lead",
+                "participants": ["claude-lead", "reviewer"],
+                "owner": "claude-lead",
+                "waitingOn": ["reviewer"],
+                "lastMessageId": "<id:1>"
+              },
+              "latestMessage": {
+                "id": "<id:1>",
+                "threadId": "handoff-waiting",
+                "ts": "<ts>",
+                "from": "claude-lead",
+                "to": ["reviewer"],
+                "kind": "handoff",
+                "body": "Take parser follow-up."
+              },
+              "displayTitle": "Take parser follow-up",
+              "messages": [
+                {
+                  "id": "<id:1>",
+                  "threadId": "handoff-waiting",
+                  "ts": "<ts>",
+                  "from": "claude-lead",
+                  "to": ["reviewer"],
+                  "kind": "handoff",
+                  "body": "Take parser follow-up."
+                }
+              ],
+              "pendingDeliveries": 1,
+              "latestPendingRecipients": ["reviewer"],
+              "urgency": 14,
+              "stateLabel": "on me",
+              "familyTaskIds": []
+            },
+            {
+              "thread": {
+                "id": "<id:2>",
+                "title": "Review parser",
+                "kind": "review",
+                "status": "waiting",
+                "createdAt": "<ts>",
+                "updatedAt": "<ts>",
+                "createdBy": "claude-lead",
+                "participants": ["claude-lead", "reviewer"],
+                "owner": "claude-lead",
+                "waitingOn": ["reviewer"],
+                "taskId": "<id:3>"
+              },
+              "displayTitle": "Review parser",
+              "messages": [],
+              "pendingDeliveries": 0,
+              "latestPendingRecipients": [],
+              "task": {
+                "id": "<id:3>",
+                "status": "pending",
+                "assignedBy": "claude-lead",
+                "assignedTo": "reviewer",
+                "description": "Review parser",
+                "prompt": "Please review parser.",
+                "createdAt": "<ts>",
+                "updatedAt": "<ts>",
+                "type": "review",
+                "reviewStatus": "changes_requested"
+              },
+              "urgency": 10,
+              "stateLabel": "on me",
+              "familyRootTaskId": "<id:3>",
+              "familyTaskIds": ["<id:3>"]
+            },
+            {
+              "thread": {
+                "id": "<id:5>",
+                "title": "Blocked discussion",
+                "kind": "handoff",
+                "status": "blocked",
+                "createdAt": "<ts>",
+                "updatedAt": "<ts>",
+                "createdBy": "claude-lead",
+                "participants": ["claude-lead", "codex-worker"],
+                "waitingOn": []
+              },
+              "displayTitle": "Blocked discussion",
+              "messages": [],
+              "pendingDeliveries": 0,
+              "latestPendingRecipients": [],
+              "urgency": 8,
+              "stateLabel": "blocked",
+              "familyTaskIds": []
+            },
+            {
+              "thread": {
+                "id": "<id:4>",
+                "title": "Continue parser",
+                "kind": "task",
+                "status": "open",
+                "createdAt": "<ts>",
+                "updatedAt": "<ts>",
+                "createdBy": "claude-lead",
+                "participants": ["claude-lead", "codex-worker"],
+                "waitingOn": [],
+                "taskId": "<id:4>"
+              },
+              "displayTitle": "Continue parser",
+              "messages": [],
+              "pendingDeliveries": 0,
+              "latestPendingRecipients": [],
+              "task": {
+                "id": "<id:4>",
+                "status": "assigned",
+                "assignedBy": "claude-lead",
+                "assignedTo": "codex-worker",
+                "description": "Continue parser",
+                "prompt": "Continue parser.",
+                "createdAt": "<ts>",
+                "updatedAt": "<ts>"
+              },
+              "urgency": 2,
+              "stateLabel": "assigned",
+              "familyRootTaskId": "<id:4>",
+              "familyTaskIds": ["<id:4>"]
+            }
+          ],
+          "onMe": [
+            {
+              "thread": {
+                "id": "handoff-waiting",
+                "title": "Take parser follow-up",
+                "kind": "handoff",
+                "status": "waiting",
+                "createdAt": "<ts>",
+                "updatedAt": "<ts>",
+                "createdBy": "claude-lead",
+                "participants": ["claude-lead", "reviewer"],
+                "owner": "claude-lead",
+                "waitingOn": ["reviewer"],
+                "lastMessageId": "<id:1>"
+              },
+              "latestMessage": {
+                "id": "<id:1>",
+                "threadId": "handoff-waiting",
+                "ts": "<ts>",
+                "from": "claude-lead",
+                "to": ["reviewer"],
+                "kind": "handoff",
+                "body": "Take parser follow-up."
+              },
+              "displayTitle": "Take parser follow-up",
+              "messages": [
+                {
+                  "id": "<id:1>",
+                  "threadId": "handoff-waiting",
+                  "ts": "<ts>",
+                  "from": "claude-lead",
+                  "to": ["reviewer"],
+                  "kind": "handoff",
+                  "body": "Take parser follow-up."
+                }
+              ],
+              "pendingDeliveries": 1,
+              "latestPendingRecipients": ["reviewer"],
+              "urgency": 14,
+              "stateLabel": "on me",
+              "familyTaskIds": []
+            },
+            {
+              "thread": {
+                "id": "<id:2>",
+                "title": "Review parser",
+                "kind": "review",
+                "status": "waiting",
+                "createdAt": "<ts>",
+                "updatedAt": "<ts>",
+                "createdBy": "claude-lead",
+                "participants": ["claude-lead", "reviewer"],
+                "owner": "claude-lead",
+                "waitingOn": ["reviewer"],
+                "taskId": "<id:3>"
+              },
+              "displayTitle": "Review parser",
+              "messages": [],
+              "pendingDeliveries": 0,
+              "latestPendingRecipients": [],
+              "task": {
+                "id": "<id:3>",
+                "status": "pending",
+                "assignedBy": "claude-lead",
+                "assignedTo": "reviewer",
+                "description": "Review parser",
+                "prompt": "Please review parser.",
+                "createdAt": "<ts>",
+                "updatedAt": "<ts>",
+                "type": "review",
+                "reviewStatus": "changes_requested"
+              },
+              "urgency": 10,
+              "stateLabel": "on me",
+              "familyRootTaskId": "<id:3>",
+              "familyTaskIds": ["<id:3>"]
+            }
+          ],
+          "blocked": [
+            {
+              "thread": {
+                "id": "<id:5>",
+                "title": "Blocked discussion",
+                "kind": "handoff",
+                "status": "blocked",
+                "createdAt": "<ts>",
+                "updatedAt": "<ts>",
+                "createdBy": "claude-lead",
+                "participants": ["claude-lead", "codex-worker"],
+                "waitingOn": []
+              },
+              "displayTitle": "Blocked discussion",
+              "messages": [],
+              "pendingDeliveries": 0,
+              "latestPendingRecipients": [],
+              "urgency": 8,
+              "stateLabel": "blocked",
+              "familyTaskIds": []
+            }
+          ],
+          "families": []
+        },
+        "nextActions": [
+          { "threadId": "handoff-waiting", "action": "accept handoff" },
+          { "threadId": "<id:2>", "taskId": "<id:3>", "action": "review decision" },
+          { "threadId": "<id:5>", "action": "check handoff" },
+          { "threadId": "<id:4>", "taskId": "<id:4>", "action": "accept task" }
+        ]
+      },
+      "inputSha256": "73e1dcfd7d9a5fd6de9a46ce0487eee798aaa52acb408c8fc43d84bacfb2b7e3"
+    }
+  ]
+}

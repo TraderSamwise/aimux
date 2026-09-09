@@ -1,0 +1,637 @@
+{
+  "version": 1,
+  "source": "src/config.test.ts",
+  "generatedBy": "scripts/capture-config-contract.mjs",
+  "description": "Config merge and normalization behavior captured by running TypeScript config tests through loadConfig/loadGlobalConfig.",
+  "cases": [
+    {
+      "id": "config-behavior-001",
+      "name": "leaves automatic scribe creation disabled by default",
+      "source": "src/config.test.ts",
+      "api": "loadConfig",
+      "input": { "includeGlobal": false, "select": ["scribe"] },
+      "output": { "defaultAgent": null },
+      "inputSha256": "5b3f8c4b8ce6e64606cbc99c1bf7d1c6cd579892279325573adc5f88639e2cd0"
+    },
+    {
+      "id": "config-behavior-002",
+      "name": "loads a global default scribe agent through global config",
+      "source": "src/config.test.ts",
+      "api": "loadGlobalConfig",
+      "input": {
+        "mode": "loadGlobalConfig",
+        "global": { "scribe": { "defaultAgent": "claude" } },
+        "select": ["scribe", "defaultAgent"]
+      },
+      "output": "claude",
+      "inputSha256": "5be3ce816effdf4a0bb161008c9a0348a402b9cc42daa4f9f201d025e383a90f"
+    },
+    {
+      "id": "config-behavior-003",
+      "name": "loads a global default scribe agent through merged config",
+      "source": "src/config.test.ts",
+      "api": "loadConfig",
+      "input": { "global": { "scribe": { "defaultAgent": "claude" } }, "select": ["scribe", "defaultAgent"] },
+      "output": "claude",
+      "inputSha256": "c5bb443ce69bd155ab693a878f5448364335c896c42ed4cade15e87cd2ce5c64"
+    },
+    {
+      "id": "config-behavior-004",
+      "name": "lets project config disable a global default scribe agent",
+      "source": "src/config.test.ts",
+      "api": "loadConfig",
+      "input": {
+        "global": { "scribe": { "defaultAgent": "claude" } },
+        "project": { "scribe": { "defaultAgent": null } },
+        "select": ["scribe", "defaultAgent"]
+      },
+      "output": null,
+      "inputSha256": "06919935c4269402376b8ffc884992e6cdb938c217f6b2a3141cc0bf69622675"
+    },
+    {
+      "id": "config-behavior-005",
+      "name": "normalizes object-form default scribe launch options",
+      "source": "src/config.test.ts",
+      "api": "loadConfig",
+      "input": {
+        "includeGlobal": false,
+        "project": {
+          "scribe": {
+            "defaultAgent": {
+              "tool": "claude",
+              "extraArgs": ["--model", "sonnet"],
+              "env": { "AIMUX_TEST_MODEL": "sonnet" }
+            }
+          }
+        },
+        "select": ["scribe", "defaultAgent"]
+      },
+      "output": { "tool": "claude", "extraArgs": ["--model", "sonnet"], "env": { "AIMUX_TEST_MODEL": "sonnet" } },
+      "inputSha256": "cf6cbce6be4a4f4f632a34551c7e971a94eface8ff13b24611e195c3092af9a0"
+    },
+    {
+      "id": "config-behavior-006",
+      "name": "normalizes exact Claude resume as backend-session resumable",
+      "source": "src/config.test.ts",
+      "api": "loadConfig",
+      "input": {
+        "includeGlobal": false,
+        "project": {
+          "tools": {
+            "claude": {
+              "command": "claude",
+              "args": ["--dangerously-skip-permissions"],
+              "enabled": true,
+              "sessionIdFlag": ["--session-id", "{sessionId}"],
+              "resumeArgs": ["--resume", "{sessionId}"],
+              "resumeByBackendSessionId": false
+            }
+          }
+        },
+        "select": ["tools", "claude", "resumeByBackendSessionId"]
+      },
+      "output": true,
+      "inputSha256": "03a1f28362e9e93ee2ba447781ce6e4e400199d5b9d1a21d2d70d8e151a9de5e"
+    },
+    {
+      "id": "config-behavior-007",
+      "name": "normalizes stale built-in resume args while preserving fallbacks",
+      "source": "src/config.test.ts",
+      "api": "loadConfig",
+      "input": {
+        "includeGlobal": false,
+        "project": {
+          "tools": {
+            "claude": {
+              "command": "claude",
+              "args": ["--dangerously-skip-permissions"],
+              "enabled": true,
+              "preambleFlag": ["--append-system-prompt"],
+              "resumeArgs": ["--continue"]
+            },
+            "codex": { "command": "codex", "args": [], "enabled": true, "resumeArgs": ["resume", "--last"] }
+          }
+        },
+        "select": ["tools"]
+      },
+      "output": {
+        "claude": {
+          "command": "claude",
+          "args": ["--dangerously-skip-permissions"],
+          "enabled": true,
+          "wrapperEnabled": true,
+          "preambleFlag": ["--append-system-prompt"],
+          "sessionIdFlag": ["--session-id", "{sessionId}"],
+          "resumeArgs": ["--resume", "{sessionId}"],
+          "forkArgs": ["--resume", "{sessionId}", "--fork-session"],
+          "resumeByBackendSessionId": true,
+          "resumeFallback": ["--continue"],
+          "promptPatterns": ["^> $", "\\$ $"],
+          "turnPatterns": ["^[❯>]\\s*(.+)", "^❯\\s+(.+)", "^>\\s+(.+)"],
+          "compactCommand": "claude --print --output-format text"
+        },
+        "codex": {
+          "command": "codex",
+          "args": [],
+          "enabled": true,
+          "resumeArgs": ["resume", "{sessionId}"],
+          "forkArgs": ["fork", "{sessionId}"],
+          "resumeByBackendSessionId": true,
+          "resumeFallback": ["resume", "--last"],
+          "developerInstructionsConfigKey": "developer_instructions",
+          "promptPatterns": ["^> $"],
+          "turnPatterns": ["^[>❯]\\s*(.+)"],
+          "startupInterstitials": [
+            {
+              "id": "codex-update-available",
+              "when": ["Update available!", "Press enter to continue"],
+              "choose": "^[\\s›>❯]*(\\d+)\\.\\s+Skip\\s*$"
+            }
+          ]
+        },
+        "aider": {
+          "command": "aider",
+          "args": [],
+          "enabled": true,
+          "resumeFallback": ["--restore-chat-history"],
+          "promptPatterns": ["^aider> $", "^> $"],
+          "turnPatterns": ["^aider>\\s*(.+)", "^>\\s*(.+)"]
+        }
+      },
+      "inputSha256": "b652a60499e1c958b623375aaf34d115457d56709a05d24eedd44d7c7367cebe"
+    },
+    {
+      "id": "config-behavior-008",
+      "name": "preserves explicit built-in resumeFallback overrides",
+      "source": "src/config.test.ts",
+      "api": "loadConfig",
+      "input": {
+        "includeGlobal": false,
+        "project": {
+          "tools": {
+            "claude": {
+              "command": "claude",
+              "enabled": true,
+              "resumeArgs": ["--continue"],
+              "resumeFallback": ["--resume-fallback", "claude-explicit"]
+            },
+            "codex": {
+              "command": "codex",
+              "enabled": true,
+              "resumeArgs": ["resume", "--last"],
+              "resumeFallback": ["resume", "codex-explicit"]
+            }
+          }
+        },
+        "select": ["tools"]
+      },
+      "output": {
+        "claude": {
+          "command": "claude",
+          "args": ["--dangerously-skip-permissions"],
+          "enabled": true,
+          "wrapperEnabled": true,
+          "preambleFlag": ["--append-system-prompt"],
+          "sessionIdFlag": ["--session-id", "{sessionId}"],
+          "resumeArgs": ["--resume", "{sessionId}"],
+          "forkArgs": ["--resume", "{sessionId}", "--fork-session"],
+          "resumeByBackendSessionId": true,
+          "resumeFallback": ["--resume-fallback", "claude-explicit"],
+          "promptPatterns": ["^> $", "\\$ $"],
+          "turnPatterns": ["^[❯>]\\s*(.+)", "^❯\\s+(.+)", "^>\\s+(.+)"],
+          "compactCommand": "claude --print --output-format text"
+        },
+        "codex": {
+          "command": "codex",
+          "args": ["--dangerously-bypass-approvals-and-sandbox"],
+          "enabled": true,
+          "resumeArgs": ["resume", "{sessionId}"],
+          "forkArgs": ["fork", "{sessionId}"],
+          "resumeByBackendSessionId": true,
+          "resumeFallback": ["resume", "codex-explicit"],
+          "developerInstructionsConfigKey": "developer_instructions",
+          "promptPatterns": ["^> $"],
+          "turnPatterns": ["^[>❯]\\s*(.+)"],
+          "startupInterstitials": [
+            {
+              "id": "codex-update-available",
+              "when": ["Update available!", "Press enter to continue"],
+              "choose": "^[\\s›>❯]*(\\d+)\\.\\s+Skip\\s*$"
+            }
+          ]
+        },
+        "aider": {
+          "command": "aider",
+          "args": [],
+          "enabled": true,
+          "resumeFallback": ["--restore-chat-history"],
+          "promptPatterns": ["^aider> $", "^> $"],
+          "turnPatterns": ["^aider>\\s*(.+)", "^>\\s*(.+)"]
+        }
+      },
+      "inputSha256": "687db808b4ee73c6df3452f2d06079f4d977d78c97dc5c3d33a846ce877e056a"
+    },
+    {
+      "id": "config-behavior-009",
+      "name": "preserves explicit exact-resume opt-outs on built-in tools",
+      "source": "src/config.test.ts",
+      "api": "loadConfig",
+      "input": {
+        "includeGlobal": false,
+        "project": {
+          "tools": {
+            "claude": {
+              "command": "claude",
+              "enabled": true,
+              "resumeArgs": ["--continue"],
+              "resumeByBackendSessionId": false
+            },
+            "codex": {
+              "command": "codex",
+              "enabled": true,
+              "resumeArgs": ["resume", "--last"],
+              "resumeByBackendSessionId": false
+            }
+          }
+        },
+        "select": ["tools"]
+      },
+      "output": {
+        "claude": {
+          "command": "claude",
+          "args": ["--dangerously-skip-permissions"],
+          "enabled": true,
+          "wrapperEnabled": true,
+          "preambleFlag": ["--append-system-prompt"],
+          "sessionIdFlag": ["--session-id", "{sessionId}"],
+          "resumeArgs": ["--continue"],
+          "forkArgs": ["--resume", "{sessionId}", "--fork-session"],
+          "resumeByBackendSessionId": false,
+          "resumeFallback": ["--continue"],
+          "promptPatterns": ["^> $", "\\$ $"],
+          "turnPatterns": ["^[❯>]\\s*(.+)", "^❯\\s+(.+)", "^>\\s+(.+)"],
+          "compactCommand": "claude --print --output-format text"
+        },
+        "codex": {
+          "command": "codex",
+          "args": ["--dangerously-bypass-approvals-and-sandbox"],
+          "enabled": true,
+          "resumeArgs": ["resume", "--last"],
+          "forkArgs": ["fork", "{sessionId}"],
+          "resumeByBackendSessionId": false,
+          "resumeFallback": ["resume", "--last"],
+          "developerInstructionsConfigKey": "developer_instructions",
+          "promptPatterns": ["^> $"],
+          "turnPatterns": ["^[>❯]\\s*(.+)"],
+          "startupInterstitials": [
+            {
+              "id": "codex-update-available",
+              "when": ["Update available!", "Press enter to continue"],
+              "choose": "^[\\s›>❯]*(\\d+)\\.\\s+Skip\\s*$"
+            }
+          ]
+        },
+        "aider": {
+          "command": "aider",
+          "args": [],
+          "enabled": true,
+          "resumeFallback": ["--restore-chat-history"],
+          "promptPatterns": ["^aider> $", "^> $"],
+          "turnPatterns": ["^aider>\\s*(.+)", "^>\\s*(.+)"]
+        }
+      },
+      "inputSha256": "964463ea1c7094f49bf35167b18f0e223527aa9272328da2e63f5d6ca5eac687"
+    },
+    {
+      "id": "config-behavior-010",
+      "name": "preserves unknown built-in non-placeholder resume args",
+      "source": "src/config.test.ts",
+      "api": "loadConfig",
+      "input": {
+        "includeGlobal": false,
+        "project": {
+          "tools": {
+            "claude": { "command": "claude", "enabled": true, "resumeArgs": ["--custom-continue"] },
+            "codex": { "command": "codex", "enabled": true, "resumeArgs": ["resume", "custom"] }
+          }
+        },
+        "select": ["tools"]
+      },
+      "output": {
+        "claude": {
+          "command": "claude",
+          "args": ["--dangerously-skip-permissions"],
+          "enabled": true,
+          "wrapperEnabled": true,
+          "preambleFlag": ["--append-system-prompt"],
+          "sessionIdFlag": ["--session-id", "{sessionId}"],
+          "resumeArgs": ["--custom-continue"],
+          "forkArgs": ["--resume", "{sessionId}", "--fork-session"],
+          "resumeByBackendSessionId": true,
+          "resumeFallback": ["--continue"],
+          "promptPatterns": ["^> $", "\\$ $"],
+          "turnPatterns": ["^[❯>]\\s*(.+)", "^❯\\s+(.+)", "^>\\s+(.+)"],
+          "compactCommand": "claude --print --output-format text"
+        },
+        "codex": {
+          "command": "codex",
+          "args": ["--dangerously-bypass-approvals-and-sandbox"],
+          "enabled": true,
+          "resumeArgs": ["resume", "custom"],
+          "forkArgs": ["fork", "{sessionId}"],
+          "resumeByBackendSessionId": true,
+          "resumeFallback": ["resume", "--last"],
+          "developerInstructionsConfigKey": "developer_instructions",
+          "promptPatterns": ["^> $"],
+          "turnPatterns": ["^[>❯]\\s*(.+)"],
+          "startupInterstitials": [
+            {
+              "id": "codex-update-available",
+              "when": ["Update available!", "Press enter to continue"],
+              "choose": "^[\\s›>❯]*(\\d+)\\.\\s+Skip\\s*$"
+            }
+          ]
+        },
+        "aider": {
+          "command": "aider",
+          "args": [],
+          "enabled": true,
+          "resumeFallback": ["--restore-chat-history"],
+          "promptPatterns": ["^aider> $", "^> $"],
+          "turnPatterns": ["^aider>\\s*(.+)", "^>\\s*(.+)"]
+        }
+      },
+      "inputSha256": "374855277d79b21c9c91b416a171c111b8344fd5f11c24b148fc733116477a60"
+    },
+    {
+      "id": "config-behavior-011",
+      "name": "does not normalize stale resume args for custom tool configs",
+      "source": "src/config.test.ts",
+      "api": "loadConfig",
+      "input": {
+        "includeGlobal": false,
+        "project": {
+          "tools": {
+            "codex-custom": { "command": "codex", "args": [], "enabled": true, "resumeArgs": ["resume", "--last"] }
+          }
+        },
+        "select": ["tools", "codex-custom", "resumeArgs"]
+      },
+      "output": ["resume", "--last"],
+      "inputSha256": "b76b0d07561f67e9f98a8cd009e863bf35d2617cc173da6a2f6726d8982f5c42"
+    },
+    {
+      "id": "config-behavior-012",
+      "name": "ships a default claude config that assigns a backend session id at launch",
+      "source": "src/config.test.ts",
+      "api": "loadConfig",
+      "input": { "includeGlobal": false, "select": ["tools", "claude"] },
+      "output": {
+        "command": "claude",
+        "args": ["--dangerously-skip-permissions"],
+        "enabled": true,
+        "wrapperEnabled": true,
+        "preambleFlag": ["--append-system-prompt"],
+        "sessionIdFlag": ["--session-id", "{sessionId}"],
+        "resumeArgs": ["--resume", "{sessionId}"],
+        "forkArgs": ["--resume", "{sessionId}", "--fork-session"],
+        "resumeByBackendSessionId": true,
+        "resumeFallback": ["--continue"],
+        "promptPatterns": ["^> $", "\\$ $"],
+        "turnPatterns": ["^[❯>]\\s*(.+)", "^❯\\s+(.+)", "^>\\s+(.+)"],
+        "compactCommand": "claude --print --output-format text"
+      },
+      "inputSha256": "5893c68acab028be75ed45278c7a4f91fc930b97b0b785bb598ff973c672c9b1"
+    },
+    {
+      "id": "config-behavior-013",
+      "name": "defaults logging to disabled structured project logs",
+      "source": "src/config.test.ts",
+      "api": "loadConfig",
+      "input": { "includeGlobal": false, "select": ["logging"] },
+      "output": { "enabled": false, "level": "info", "categories": ["*"], "maxBytes": 10000000, "maxFiles": 5 },
+      "inputSha256": "c66699fe7f881de2d1f44244de491e92f4f82834d96c85f7f13d7c3acf65f1c8"
+    },
+    {
+      "id": "config-behavior-014",
+      "name": "defaults notification view acknowledgement behavior",
+      "source": "src/config.test.ts",
+      "api": "loadConfig",
+      "input": { "includeGlobal": false, "select": ["notifications"] },
+      "output": {
+        "enabled": true,
+        "onPrompt": true,
+        "onError": true,
+        "onComplete": true,
+        "markReadOnView": true,
+        "clearNeedsInputOnView": true,
+        "clearFormalInteractionsOnView": false
+      },
+      "inputSha256": "de0e59cada54fcf9c5ff18c970d3261e1e18bdad49199e8ccf9cf9abb87a1e98"
+    },
+    {
+      "id": "config-behavior-015",
+      "name": "defaults expose to the current worktree",
+      "source": "src/config.test.ts",
+      "api": "loadConfig",
+      "input": { "includeGlobal": false, "select": ["expose"] },
+      "output": { "initialScope": "worktree", "hotSnapshotsEnabled": true },
+      "inputSha256": "88d110efcabac34c362b828d71d47f910cf72be576141c16d5d3c0f1adb5aa59"
+    },
+    {
+      "id": "config-behavior-016",
+      "name": "allows project config to choose the initial expose scope",
+      "source": "src/config.test.ts",
+      "api": "loadConfig",
+      "input": {
+        "includeGlobal": false,
+        "project": { "expose": { "initialScope": "global" } },
+        "select": ["expose", "initialScope"]
+      },
+      "output": "global",
+      "inputSha256": "04d69c2e85f3e35df8663ba58eb1d4dfed61528f4b4467136d45baae0a884bb5"
+    },
+    {
+      "id": "config-behavior-017",
+      "name": "allows config to disable expose hot snapshots",
+      "source": "src/config.test.ts",
+      "api": "loadConfig",
+      "input": {
+        "includeGlobal": false,
+        "project": { "expose": { "hotSnapshotsEnabled": false } },
+        "select": ["expose"]
+      },
+      "output": { "initialScope": "worktree", "hotSnapshotsEnabled": false },
+      "inputSha256": "fb55dcb73b03558c8a90b102cc35847c699df16906a00de0b5b8b5ed3367e0d4"
+    },
+    {
+      "id": "config-behavior-018",
+      "name": "loads global expose hot snapshot config without project config",
+      "source": "src/config.test.ts",
+      "api": "loadGlobalConfig",
+      "input": {
+        "mode": "loadGlobalConfig",
+        "global": { "expose": { "initialScope": "global", "hotSnapshotsEnabled": false } },
+        "project": { "expose": { "initialScope": "project" } },
+        "select": ["expose"]
+      },
+      "output": { "initialScope": "global", "hotSnapshotsEnabled": false },
+      "inputSha256": "4af2870b39744876c42fa6e4ff3b3ff5b3e6f0a7ef41ebfff8b13aeec9004b69"
+    },
+    {
+      "id": "config-behavior-019",
+      "name": "normalizes invalid expose scope config",
+      "source": "src/config.test.ts",
+      "api": "loadConfig",
+      "input": {
+        "includeGlobal": false,
+        "project": { "expose": { "initialScope": "somewhere" } },
+        "select": ["expose", "initialScope"]
+      },
+      "output": "worktree",
+      "inputSha256": "f21ab180b973b280b82ea25c565f9239c4b046931d1bbb67f582ca4651cf32a3"
+    },
+    {
+      "id": "config-behavior-020",
+      "name": "reads an explicit projectRoot config without touching global path state",
+      "source": "src/config.test.ts",
+      "api": "loadConfig",
+      "input": {
+        "includeGlobal": false,
+        "projectRoot": "current",
+        "project": { "worktrees": { "baseDir": ".custom-worktrees" } },
+        "select": ["worktrees", "baseDir"]
+      },
+      "output": ".custom-worktrees",
+      "inputSha256": "07cf490b5d6c5f5906fa3be0fdf1b27dc1ff7c24ea4689bd8799ddc270efeffc"
+    },
+    {
+      "id": "config-behavior-021",
+      "name": "defaults worktree cache cleanup to scheduled dry-run reports",
+      "source": "src/config.test.ts",
+      "api": "loadConfig",
+      "input": { "includeGlobal": false, "select": ["worktrees"] },
+      "output": {
+        "baseDir": ".aimux/worktrees",
+        "cacheCleanupDirs": ["node_modules", ".next"],
+        "cacheCleanupEnabled": true,
+        "cacheCleanupApply": false,
+        "cacheCleanupIntervalMs": 86400000,
+        "cacheCleanupInitialDelayMs": 300000
+      },
+      "inputSha256": "07611a3a753abcf807f0b967f6ad3447d71eb553229d54a469ab4790d4d5d91c"
+    },
+    {
+      "id": "config-behavior-022",
+      "name": "normalizes invalid worktree cache cleanup config",
+      "source": "src/config.test.ts",
+      "api": "loadConfig",
+      "input": {
+        "includeGlobal": false,
+        "project": {
+          "worktrees": {
+            "cacheCleanupDirs": "node_modules",
+            "cacheCleanupEnabled": "yes",
+            "cacheCleanupApply": "yes",
+            "cacheCleanupIntervalMs": -1,
+            "cacheCleanupInitialDelayMs": 0
+          }
+        },
+        "select": ["worktrees"]
+      },
+      "output": {
+        "baseDir": ".aimux/worktrees",
+        "cacheCleanupDirs": ["node_modules", ".next"],
+        "cacheCleanupEnabled": true,
+        "cacheCleanupApply": false,
+        "cacheCleanupIntervalMs": 86400000,
+        "cacheCleanupInitialDelayMs": 300000
+      },
+      "inputSha256": "402a6e8fdbd625331a1c1ad577c13c9ebc5b06042edf8f7774cb42e4f38efa2f"
+    },
+    {
+      "id": "config-behavior-023",
+      "name": "normalizes array worktree config to defaults",
+      "source": "src/config.test.ts",
+      "api": "loadConfig",
+      "input": { "includeGlobal": false, "project": { "worktrees": [] }, "select": ["worktrees"] },
+      "output": {
+        "baseDir": ".aimux/worktrees",
+        "cacheCleanupDirs": ["node_modules", ".next"],
+        "cacheCleanupEnabled": true,
+        "cacheCleanupApply": false,
+        "cacheCleanupIntervalMs": 86400000,
+        "cacheCleanupInitialDelayMs": 300000
+      },
+      "inputSha256": "0fa553c6de522345154e67f98d02baa0493adf36e130f188bf9c4007d92ead74"
+    },
+    {
+      "id": "config-behavior-024",
+      "name": "defaults inbox cleanup to a retention window and item cap",
+      "source": "src/config.test.ts",
+      "api": "loadConfig",
+      "input": { "includeGlobal": false, "select": ["inbox"] },
+      "output": { "cleanupEnabled": true, "retentionDays": 14, "cleanupIntervalMs": 86400000, "maxSize": 10 },
+      "inputSha256": "fafd9a0ca7f3220ab9c096770d07007d51c61fba319b30e0f39e3734514970b7"
+    },
+    {
+      "id": "config-behavior-025",
+      "name": "defaults graveyard cleanup to a retention window",
+      "source": "src/config.test.ts",
+      "api": "loadConfig",
+      "input": { "includeGlobal": false, "select": ["graveyard"] },
+      "output": { "cleanupEnabled": true, "retentionDays": 14, "cleanupIntervalMs": 86400000 },
+      "inputSha256": "e8c81b098933fa3dc21247fe36a1dacee8fafaf4b5895c217866a6b34292841b"
+    },
+    {
+      "id": "config-behavior-026",
+      "name": "allows project loop copy config to override global loop copy config",
+      "source": "src/config.test.ts",
+      "api": "loadConfig",
+      "input": {
+        "global": { "loop": { "overseerBriefingTemplate": "global {{count}}\n{{candidates}}" } },
+        "project": { "loop": { "overseerBriefingTemplate": "project {{count}}\n{{candidates}}" } },
+        "select": ["loop"]
+      },
+      "output": {
+        "scanIntervalMs": 15000,
+        "nudgeCooldownMs": 60000,
+        "autoNudgeWithoutOverseer": false,
+        "overseerBriefingTemplate": "project {{count}}\n{{candidates}}"
+      },
+      "inputSha256": "1b22ec8d2c8e47dc333587304ed0412a829b8bf13eb4d628041e0438e6699c45"
+    },
+    {
+      "id": "config-behavior-027",
+      "name": "allows project graveyard config to override global graveyard config",
+      "source": "src/config.test.ts",
+      "api": "loadConfig",
+      "input": {
+        "global": { "graveyard": { "cleanupEnabled": false, "retentionDays": 30 } },
+        "project": { "graveyard": { "retentionDays": 7 } },
+        "select": ["graveyard"]
+      },
+      "output": { "cleanupEnabled": false, "retentionDays": 7, "cleanupIntervalMs": 86400000 },
+      "inputSha256": "bb86797f9b12a69c3d2c1fd117a35dcdba14038ebc55ca4466d97f66131d40be"
+    },
+    {
+      "id": "config-behavior-028",
+      "name": "deep merges logging config overrides",
+      "source": "src/config.test.ts",
+      "api": "loadConfig",
+      "input": {
+        "includeGlobal": false,
+        "project": { "logging": { "enabled": true, "level": "debug", "categories": ["daemon", "session"] } },
+        "select": ["logging"]
+      },
+      "output": {
+        "enabled": true,
+        "level": "debug",
+        "categories": ["daemon", "session"],
+        "maxBytes": 10000000,
+        "maxFiles": 5
+      },
+      "inputSha256": "47f738d65dcd221a20cb33aa20c9083adba605b7336a887ad31dd0f8ea4edebc"
+    }
+  ]
+}

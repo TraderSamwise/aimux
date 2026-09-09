@@ -1,0 +1,1212 @@
+{
+  "version": 1,
+  "source": "src/runtime-core/topology-store.test.ts",
+  "generatedBy": "scripts/capture-runtime-topology-store-contract.mjs",
+  "description": "Runtime topology store clone, cache invalidation, YAML read/write, lock, validation, and reference-pruning contracts captured by running TypeScript.",
+  "cases": [
+    {
+      "id": "runtime-topology-store-001",
+      "name": "does not share the team object with its caller in either direction",
+      "source": "src/runtime-core/topology-store.test.ts",
+      "api": "teamClone",
+      "input": {
+        "topology": {
+          "version": 1,
+          "generatedAt": "2026-05-25T00:00:00.000Z",
+          "rigs": [
+            {
+              "id": "rig-main",
+              "name": "aimux",
+              "projectRoot": "/repo",
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "nodes": [
+            {
+              "id": "node-codex-1",
+              "rigId": "rig-main",
+              "logicalId": "codex-1",
+              "runtime": "codex",
+              "toolConfigKey": "codex",
+              "cwd": "/repo",
+              "label": "coder",
+              "createdAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "edges": [],
+          "bindings": [],
+          "sessions": [
+            {
+              "id": "codex-1",
+              "nodeId": "node-codex-1",
+              "status": "running",
+              "tool": "codex",
+              "command": "codex",
+              "args": ["-C", "/repo"],
+              "backendSessionId": "backend-1",
+              "worktreePath": "/repo",
+              "team": { "name": "reviewers", "role": "reviewer", "members": ["codex-1"] },
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z",
+              "lastSeenAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "services": [],
+          "worktrees": [],
+          "worktreeGraveyard": [],
+          "teamRoles": [],
+          "remoteClients": [],
+          "lifecycleOperations": [],
+          "exchangeRefs": []
+        }
+      },
+      "output": {
+        "writtenTeam": { "name": "reviewers", "role": "reviewer", "members": ["codex-1"] },
+        "firstTeamBeforeMutation": { "name": "reviewers", "role": "reviewer", "members": ["codex-1"] },
+        "rereadTeam": { "name": "reviewers", "role": "reviewer", "members": ["codex-1"] }
+      },
+      "inputSha256": "e183bb447914af59d6394244e3baff5521051268a92708c31173a4d377081f93"
+    },
+    {
+      "id": "runtime-topology-store-002",
+      "name": "never lets a caller's mutation leak into a later read",
+      "source": "src/runtime-core/topology-store.test.ts",
+      "api": "readIsolation",
+      "input": {
+        "topology": {
+          "version": 1,
+          "generatedAt": "2026-05-25T00:00:00.000Z",
+          "rigs": [
+            {
+              "id": "rig-main",
+              "name": "aimux",
+              "projectRoot": "/repo",
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "nodes": [
+            {
+              "id": "node-codex-1",
+              "rigId": "rig-main",
+              "logicalId": "codex-1",
+              "runtime": "codex",
+              "toolConfigKey": "codex",
+              "cwd": "/repo",
+              "label": "coder",
+              "createdAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "edges": [],
+          "bindings": [
+            {
+              "id": "binding-codex-1",
+              "nodeId": "node-codex-1",
+              "tmuxSession": "aimux-repo",
+              "tmuxWindowId": "@1",
+              "tmuxWindowIndex": 1,
+              "tmuxWindowName": "codex",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "sessions": [
+            {
+              "id": "codex-1",
+              "nodeId": "node-codex-1",
+              "status": "running",
+              "tool": "codex",
+              "command": "codex",
+              "args": ["-C", "/repo"],
+              "backendSessionId": "backend-1",
+              "worktreePath": "/repo",
+              "team": { "name": "reviewers", "role": "reviewer", "members": ["codex-1"] },
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z",
+              "lastSeenAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "services": [
+            {
+              "id": "service-web",
+              "rigId": "rig-main",
+              "status": "running",
+              "command": "zsh",
+              "args": ["-lc", "yarn web"],
+              "launchCommandLine": "yarn web",
+              "worktreePath": "/repo",
+              "label": "web",
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z",
+              "lastSeenAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "worktrees": [
+            {
+              "id": "worktree-main",
+              "rigId": "rig-main",
+              "path": "/repo",
+              "name": "aimux",
+              "status": "active",
+              "branch": "master",
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "worktreeGraveyard": [
+            {
+              "id": "graveyard-old",
+              "rigId": "rig-main",
+              "worktreeId": "worktree-main",
+              "path": "/repo-old",
+              "name": "old",
+              "graveyardedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "teamRoles": [
+            {
+              "id": "role-coder",
+              "rigId": "rig-main",
+              "nodeId": "node-codex-1",
+              "role": "coder",
+              "label": "Coder",
+              "order": 1,
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "remoteClients": [
+            {
+              "id": "client-sam",
+              "rigId": "rig-main",
+              "userId": "sam",
+              "status": "online",
+              "connectedAt": "2026-05-25T00:00:00.000Z",
+              "lastSeenAt": "2026-05-25T00:00:00.000Z",
+              "ownsSessionIds": ["codex-1"]
+            }
+          ],
+          "lifecycleOperations": [
+            {
+              "id": "op-stop-codex",
+              "rigId": "rig-main",
+              "kind": "agent.stop",
+              "status": "pending",
+              "targetKind": "session",
+              "targetId": "codex-1",
+              "startedAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "exchangeRefs": [
+            {
+              "id": "exchange-task-1",
+              "rigId": "rig-main",
+              "kind": "task",
+              "exchangeId": "task-1",
+              "nodeId": "node-codex-1",
+              "sessionId": "codex-1",
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ]
+        }
+      },
+      "output": {
+        "pristine": {
+          "version": 1,
+          "generatedAt": "2026-05-25T00:00:00.000Z",
+          "rigs": [
+            {
+              "id": "rig-main",
+              "name": "aimux",
+              "projectRoot": "/repo",
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "nodes": [
+            {
+              "id": "node-codex-1",
+              "rigId": "rig-main",
+              "logicalId": "codex-1",
+              "runtime": "codex",
+              "toolConfigKey": "codex",
+              "cwd": "/repo",
+              "label": "coder",
+              "createdAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "edges": [],
+          "bindings": [
+            {
+              "id": "binding-codex-1",
+              "nodeId": "node-codex-1",
+              "tmuxSession": "aimux-repo",
+              "tmuxWindowId": "@1",
+              "tmuxWindowIndex": 1,
+              "tmuxWindowName": "codex",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "sessions": [
+            {
+              "id": "codex-1",
+              "nodeId": "node-codex-1",
+              "status": "running",
+              "tool": "codex",
+              "command": "codex",
+              "args": ["-C", "/repo"],
+              "backendSessionId": "backend-1",
+              "worktreePath": "/repo",
+              "team": { "name": "reviewers", "role": "reviewer", "members": ["codex-1"] },
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z",
+              "lastSeenAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "services": [
+            {
+              "id": "service-web",
+              "rigId": "rig-main",
+              "status": "running",
+              "command": "zsh",
+              "args": ["-lc", "yarn web"],
+              "launchCommandLine": "yarn web",
+              "worktreePath": "/repo",
+              "label": "web",
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z",
+              "lastSeenAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "worktrees": [
+            {
+              "id": "worktree-main",
+              "rigId": "rig-main",
+              "path": "/repo",
+              "name": "aimux",
+              "status": "active",
+              "branch": "master",
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "worktreeGraveyard": [
+            {
+              "id": "graveyard-old",
+              "rigId": "rig-main",
+              "worktreeId": "worktree-main",
+              "path": "/repo-old",
+              "name": "old",
+              "graveyardedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "teamRoles": [
+            {
+              "id": "role-coder",
+              "rigId": "rig-main",
+              "nodeId": "node-codex-1",
+              "role": "coder",
+              "label": "Coder",
+              "order": 1,
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "remoteClients": [
+            {
+              "id": "client-sam",
+              "rigId": "rig-main",
+              "userId": "sam",
+              "status": "online",
+              "connectedAt": "2026-05-25T00:00:00.000Z",
+              "lastSeenAt": "2026-05-25T00:00:00.000Z",
+              "ownsSessionIds": ["codex-1"]
+            }
+          ],
+          "lifecycleOperations": [
+            {
+              "id": "op-stop-codex",
+              "rigId": "rig-main",
+              "kind": "agent.stop",
+              "status": "pending",
+              "targetKind": "session",
+              "targetId": "codex-1",
+              "startedAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "exchangeRefs": [
+            {
+              "id": "exchange-task-1",
+              "rigId": "rig-main",
+              "kind": "task",
+              "exchangeId": "task-1",
+              "nodeId": "node-codex-1",
+              "sessionId": "codex-1",
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ]
+        },
+        "reread": {
+          "version": 1,
+          "generatedAt": "2026-05-25T00:00:00.000Z",
+          "rigs": [
+            {
+              "id": "rig-main",
+              "name": "aimux",
+              "projectRoot": "/repo",
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "nodes": [
+            {
+              "id": "node-codex-1",
+              "rigId": "rig-main",
+              "logicalId": "codex-1",
+              "runtime": "codex",
+              "toolConfigKey": "codex",
+              "cwd": "/repo",
+              "label": "coder",
+              "createdAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "edges": [],
+          "bindings": [
+            {
+              "id": "binding-codex-1",
+              "nodeId": "node-codex-1",
+              "tmuxSession": "aimux-repo",
+              "tmuxWindowId": "@1",
+              "tmuxWindowIndex": 1,
+              "tmuxWindowName": "codex",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "sessions": [
+            {
+              "id": "codex-1",
+              "nodeId": "node-codex-1",
+              "status": "running",
+              "tool": "codex",
+              "command": "codex",
+              "args": ["-C", "/repo"],
+              "backendSessionId": "backend-1",
+              "worktreePath": "/repo",
+              "team": { "name": "reviewers", "role": "reviewer", "members": ["codex-1"] },
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z",
+              "lastSeenAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "services": [
+            {
+              "id": "service-web",
+              "rigId": "rig-main",
+              "status": "running",
+              "command": "zsh",
+              "args": ["-lc", "yarn web"],
+              "launchCommandLine": "yarn web",
+              "worktreePath": "/repo",
+              "label": "web",
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z",
+              "lastSeenAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "worktrees": [
+            {
+              "id": "worktree-main",
+              "rigId": "rig-main",
+              "path": "/repo",
+              "name": "aimux",
+              "status": "active",
+              "branch": "master",
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "worktreeGraveyard": [
+            {
+              "id": "graveyard-old",
+              "rigId": "rig-main",
+              "worktreeId": "worktree-main",
+              "path": "/repo-old",
+              "name": "old",
+              "graveyardedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "teamRoles": [
+            {
+              "id": "role-coder",
+              "rigId": "rig-main",
+              "nodeId": "node-codex-1",
+              "role": "coder",
+              "label": "Coder",
+              "order": 1,
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "remoteClients": [
+            {
+              "id": "client-sam",
+              "rigId": "rig-main",
+              "userId": "sam",
+              "status": "online",
+              "connectedAt": "2026-05-25T00:00:00.000Z",
+              "lastSeenAt": "2026-05-25T00:00:00.000Z",
+              "ownsSessionIds": ["codex-1"]
+            }
+          ],
+          "lifecycleOperations": [
+            {
+              "id": "op-stop-codex",
+              "rigId": "rig-main",
+              "kind": "agent.stop",
+              "status": "pending",
+              "targetKind": "session",
+              "targetId": "codex-1",
+              "startedAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "exchangeRefs": [
+            {
+              "id": "exchange-task-1",
+              "rigId": "rig-main",
+              "kind": "task",
+              "exchangeId": "task-1",
+              "nodeId": "node-codex-1",
+              "sessionId": "codex-1",
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ]
+        },
+        "equal": true
+      },
+      "inputSha256": "c7326d6f4444cc04366bb7ba45c3503bc614c9f884b0199c7484479a6434c9b8"
+    },
+    {
+      "id": "runtime-topology-store-003",
+      "name": "serves a rewritten file rather than a cached parse",
+      "source": "src/runtime-core/topology-store.test.ts",
+      "api": "rewrittenFile",
+      "input": {
+        "topology": {
+          "version": 1,
+          "generatedAt": "2026-05-25T00:00:00.000Z",
+          "rigs": [
+            {
+              "id": "rig-main",
+              "name": "aimux",
+              "projectRoot": "/repo",
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "nodes": [
+            {
+              "id": "node-codex-1",
+              "rigId": "rig-main",
+              "logicalId": "codex-1",
+              "runtime": "codex",
+              "toolConfigKey": "codex",
+              "cwd": "/repo",
+              "label": "coder",
+              "createdAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "edges": [],
+          "bindings": [],
+          "sessions": [
+            {
+              "id": "codex-1",
+              "nodeId": "node-codex-1",
+              "status": "running",
+              "tool": "codex",
+              "command": "codex",
+              "args": ["-C", "/repo"],
+              "backendSessionId": "backend-1",
+              "worktreePath": "/repo",
+              "team": { "name": "reviewers", "role": "reviewer", "members": ["codex-1"] },
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z",
+              "lastSeenAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "services": [],
+          "worktrees": [],
+          "worktreeGraveyard": [],
+          "teamRoles": [],
+          "remoteClients": [],
+          "lifecycleOperations": [],
+          "exchangeRefs": []
+        }
+      },
+      "output": { "firstName": "aimux", "secondName": "aimuz", "afterDeleteRigCount": 0, "sameLength": true },
+      "inputSha256": "e183bb447914af59d6394244e3baff5521051268a92708c31173a4d377081f93"
+    },
+    {
+      "id": "runtime-topology-store-004",
+      "name": "round-trips the OpenRig-style runtime topology YAML",
+      "source": "src/runtime-core/topology-store.test.ts",
+      "api": "writeRead",
+      "input": {
+        "topology": {
+          "version": 1,
+          "generatedAt": "2026-05-25T00:00:00.000Z",
+          "rigs": [
+            {
+              "id": "rig-main",
+              "name": "aimux",
+              "projectRoot": "/repo",
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "nodes": [
+            {
+              "id": "node-codex-1",
+              "rigId": "rig-main",
+              "logicalId": "codex-1",
+              "runtime": "codex",
+              "toolConfigKey": "codex",
+              "cwd": "/repo",
+              "label": "coder",
+              "createdAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "edges": [],
+          "bindings": [
+            {
+              "id": "binding-codex-1",
+              "nodeId": "node-codex-1",
+              "tmuxSession": "aimux-repo",
+              "tmuxWindowId": "@1",
+              "tmuxWindowIndex": 1,
+              "tmuxWindowName": "codex",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "sessions": [
+            {
+              "id": "codex-1",
+              "nodeId": "node-codex-1",
+              "status": "running",
+              "tool": "codex",
+              "command": "codex",
+              "args": ["-C", "/repo"],
+              "backendSessionId": "backend-1",
+              "worktreePath": "/repo",
+              "team": { "name": "reviewers", "role": "reviewer", "members": ["codex-1"] },
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z",
+              "lastSeenAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "services": [
+            {
+              "id": "service-web",
+              "rigId": "rig-main",
+              "status": "running",
+              "command": "zsh",
+              "args": ["-lc", "yarn web"],
+              "launchCommandLine": "yarn web",
+              "worktreePath": "/repo",
+              "label": "web",
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z",
+              "lastSeenAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "worktrees": [
+            {
+              "id": "worktree-main",
+              "rigId": "rig-main",
+              "path": "/repo",
+              "name": "aimux",
+              "status": "active",
+              "branch": "master",
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "worktreeGraveyard": [
+            {
+              "id": "graveyard-old",
+              "rigId": "rig-main",
+              "worktreeId": "worktree-main",
+              "path": "/repo-old",
+              "name": "old",
+              "graveyardedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "teamRoles": [
+            {
+              "id": "role-coder",
+              "rigId": "rig-main",
+              "nodeId": "node-codex-1",
+              "role": "coder",
+              "label": "Coder",
+              "order": 1,
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "remoteClients": [
+            {
+              "id": "client-sam",
+              "rigId": "rig-main",
+              "userId": "sam",
+              "status": "online",
+              "connectedAt": "2026-05-25T00:00:00.000Z",
+              "lastSeenAt": "2026-05-25T00:00:00.000Z",
+              "ownsSessionIds": ["codex-1"]
+            }
+          ],
+          "lifecycleOperations": [
+            {
+              "id": "op-stop-codex",
+              "rigId": "rig-main",
+              "kind": "agent.stop",
+              "status": "pending",
+              "targetKind": "session",
+              "targetId": "codex-1",
+              "startedAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "exchangeRefs": [
+            {
+              "id": "exchange-task-1",
+              "rigId": "rig-main",
+              "kind": "task",
+              "exchangeId": "task-1",
+              "nodeId": "node-codex-1",
+              "sessionId": "codex-1",
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ]
+        }
+      },
+      "output": {
+        "ok": true,
+        "value": {
+          "version": 1,
+          "generatedAt": "2026-05-25T00:00:00.000Z",
+          "rigs": [
+            {
+              "id": "rig-main",
+              "name": "aimux",
+              "projectRoot": "/repo",
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "nodes": [
+            {
+              "id": "node-codex-1",
+              "rigId": "rig-main",
+              "logicalId": "codex-1",
+              "runtime": "codex",
+              "toolConfigKey": "codex",
+              "cwd": "/repo",
+              "label": "coder",
+              "createdAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "edges": [],
+          "bindings": [
+            {
+              "id": "binding-codex-1",
+              "nodeId": "node-codex-1",
+              "tmuxSession": "aimux-repo",
+              "tmuxWindowId": "@1",
+              "tmuxWindowIndex": 1,
+              "tmuxWindowName": "codex",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "sessions": [
+            {
+              "id": "codex-1",
+              "nodeId": "node-codex-1",
+              "status": "running",
+              "tool": "codex",
+              "command": "codex",
+              "args": ["-C", "/repo"],
+              "backendSessionId": "backend-1",
+              "worktreePath": "/repo",
+              "team": { "name": "reviewers", "role": "reviewer", "members": ["codex-1"] },
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z",
+              "lastSeenAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "services": [
+            {
+              "id": "service-web",
+              "rigId": "rig-main",
+              "status": "running",
+              "command": "zsh",
+              "args": ["-lc", "yarn web"],
+              "launchCommandLine": "yarn web",
+              "worktreePath": "/repo",
+              "label": "web",
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z",
+              "lastSeenAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "worktrees": [
+            {
+              "id": "worktree-main",
+              "rigId": "rig-main",
+              "path": "/repo",
+              "name": "aimux",
+              "status": "active",
+              "branch": "master",
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "worktreeGraveyard": [
+            {
+              "id": "graveyard-old",
+              "rigId": "rig-main",
+              "worktreeId": "worktree-main",
+              "path": "/repo-old",
+              "name": "old",
+              "graveyardedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "teamRoles": [
+            {
+              "id": "role-coder",
+              "rigId": "rig-main",
+              "nodeId": "node-codex-1",
+              "role": "coder",
+              "label": "Coder",
+              "order": 1,
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "remoteClients": [
+            {
+              "id": "client-sam",
+              "rigId": "rig-main",
+              "userId": "sam",
+              "status": "online",
+              "connectedAt": "2026-05-25T00:00:00.000Z",
+              "lastSeenAt": "2026-05-25T00:00:00.000Z",
+              "ownsSessionIds": ["codex-1"]
+            }
+          ],
+          "lifecycleOperations": [
+            {
+              "id": "op-stop-codex",
+              "rigId": "rig-main",
+              "kind": "agent.stop",
+              "status": "pending",
+              "targetKind": "session",
+              "targetId": "codex-1",
+              "startedAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "exchangeRefs": [
+            {
+              "id": "exchange-task-1",
+              "rigId": "rig-main",
+              "kind": "task",
+              "exchangeId": "task-1",
+              "nodeId": "node-codex-1",
+              "sessionId": "codex-1",
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ]
+        }
+      },
+      "inputSha256": "c7326d6f4444cc04366bb7ba45c3503bc614c9f884b0199c7484479a6434c9b8"
+    },
+    {
+      "id": "runtime-topology-store-005",
+      "name": "rejects corrupt topology YAML instead of silently resetting runtime truth",
+      "source": "src/runtime-core/topology-store.test.ts",
+      "api": "readYaml",
+      "input": { "yaml": "version: nope\n" },
+      "output": { "ok": false, "error": "unsupported runtime topology version: nope" },
+      "inputSha256": "d1eccf526169de1328f48a79001b02ff8b1bd87635a3c4a3e7900eee76a1ac97"
+    },
+    {
+      "id": "runtime-topology-store-006",
+      "name": "rejects unsupported lifecycle target kinds instead of remapping them",
+      "source": "src/runtime-core/topology-store.test.ts",
+      "api": "readYaml",
+      "input": {
+        "yaml": "version: 1\ngeneratedAt: 2026-05-25T00:00:00.000Z\nrigs:\n  - id: rig-main\n    name: repo\n    projectRoot: /repo\n    createdAt: 2026-05-25T00:00:00.000Z\n    updatedAt: 2026-05-25T00:00:00.000Z\nnodes: []\nedges: []\nbindings: []\nsessions: []\nservices: []\nworktrees: []\nworktreeGraveyard: []\nteamRoles: []\nremoteClients: []\nlifecycleOperations:\n  - id: op-bad\n    rigId: rig-main\n    kind: agent.stop\n    status: pending\n    targetKind: bogus\n    targetId: rig-main\n    startedAt: 2026-05-25T00:00:00.000Z\n    updatedAt: 2026-05-25T00:00:00.000Z\nexchangeRefs: []\n"
+      },
+      "output": {
+        "ok": false,
+        "error": "invalid runtime topology: lifecycleOperations[0].targetKind must be a supported target kind"
+      },
+      "inputSha256": "abc1fbfa407c0c2e6ba79476eabbd137d2b9375590e11b8d8f19c9f477c95ac5"
+    },
+    {
+      "id": "runtime-topology-store-007",
+      "name": "rejects unsupported exchange reference kinds instead of remapping them",
+      "source": "src/runtime-core/topology-store.test.ts",
+      "api": "readYaml",
+      "input": {
+        "yaml": "version: 1\ngeneratedAt: 2026-05-25T00:00:00.000Z\nrigs:\n  - id: rig-main\n    name: repo\n    projectRoot: /repo\n    createdAt: 2026-05-25T00:00:00.000Z\n    updatedAt: 2026-05-25T00:00:00.000Z\nnodes: []\nedges: []\nbindings: []\nsessions: []\nservices: []\nworktrees: []\nworktreeGraveyard: []\nteamRoles: []\nremoteClients: []\nlifecycleOperations: []\nexchangeRefs:\n  - id: exchange-bad\n    rigId: rig-main\n    kind: bogus\n    exchangeId: item-1\n    createdAt: 2026-05-25T00:00:00.000Z\n    updatedAt: 2026-05-25T00:00:00.000Z\n"
+      },
+      "output": {
+        "ok": false,
+        "error": "invalid runtime topology: exchangeRefs[0].kind must be a supported exchange ref kind"
+      },
+      "inputSha256": "9616db7f509170a1bd36e7d047ea25a5478e1ceffbeb7d936c1fad57e5d7f1f1"
+    },
+    {
+      "id": "runtime-topology-store-008",
+      "name": "serializes update with a filesystem lock and releases it after writing",
+      "source": "src/runtime-core/topology-store.test.ts",
+      "api": "updateLock",
+      "input": {
+        "topology": {
+          "version": 1,
+          "generatedAt": "2026-05-25T00:00:00.000Z",
+          "rigs": [
+            {
+              "id": "rig-main",
+              "name": "aimux",
+              "projectRoot": "/repo",
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "nodes": [
+            {
+              "id": "node-codex-1",
+              "rigId": "rig-main",
+              "logicalId": "codex-1",
+              "runtime": "codex",
+              "toolConfigKey": "codex",
+              "cwd": "/repo",
+              "label": "coder",
+              "createdAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "edges": [],
+          "bindings": [],
+          "sessions": [
+            {
+              "id": "codex-1",
+              "nodeId": "node-codex-1",
+              "status": "running",
+              "tool": "codex",
+              "command": "codex",
+              "args": ["-C", "/repo"],
+              "backendSessionId": "backend-1",
+              "worktreePath": "/repo",
+              "team": { "name": "reviewers", "role": "reviewer", "members": ["codex-1"] },
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z",
+              "lastSeenAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "services": [],
+          "worktrees": [],
+          "worktreeGraveyard": [],
+          "teamRoles": [],
+          "remoteClients": [],
+          "lifecycleOperations": [],
+          "exchangeRefs": []
+        }
+      },
+      "output": { "lockExists": false, "sessions": ["codex-1"] },
+      "inputSha256": "e183bb447914af59d6394244e3baff5521051268a92708c31173a4d377081f93"
+    },
+    {
+      "id": "runtime-topology-store-009",
+      "name": "reclaims a stale lock left behind by a dead owner instead of timing out",
+      "source": "src/runtime-core/topology-store.test.ts",
+      "api": "staleLock",
+      "input": {},
+      "output": { "lockExists": false, "version": 1 },
+      "inputSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "id": "runtime-topology-store-010",
+      "name": "prunes extended topology references to missing rigs, nodes, sessions, services, and worktrees",
+      "source": "src/runtime-core/topology-store.test.ts",
+      "api": "writeRead",
+      "input": {
+        "topology": {
+          "version": 1,
+          "generatedAt": "2026-05-25T00:00:00.000Z",
+          "rigs": [
+            {
+              "id": "rig-main",
+              "name": "repo",
+              "projectRoot": "/repo",
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "nodes": [
+            { "id": "agent:keep", "rigId": "rig-main", "logicalId": "keep", "createdAt": "2026-05-25T00:00:00.000Z" }
+          ],
+          "edges": [],
+          "bindings": [],
+          "sessions": [
+            {
+              "id": "keep",
+              "nodeId": "agent:keep",
+              "status": "offline",
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "services": [
+            {
+              "id": "service-keep",
+              "rigId": "rig-main",
+              "status": "running",
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            },
+            {
+              "id": "service-drop",
+              "rigId": "missing-rig",
+              "status": "running",
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "worktrees": [
+            {
+              "id": "worktree-keep",
+              "rigId": "rig-main",
+              "path": "/repo",
+              "name": "repo",
+              "status": "active",
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            },
+            {
+              "id": "worktree-drop",
+              "rigId": "missing-rig",
+              "path": "/repo/drop",
+              "name": "drop",
+              "status": "active",
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "worktreeGraveyard": [
+            {
+              "id": "graveyard-keep",
+              "rigId": "rig-main",
+              "worktreeId": "worktree-keep",
+              "path": "/repo-old",
+              "graveyardedAt": "2026-05-25T00:00:00.000Z"
+            },
+            {
+              "id": "graveyard-drop",
+              "rigId": "rig-main",
+              "worktreeId": "worktree-drop",
+              "path": "/repo-drop",
+              "graveyardedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "teamRoles": [
+            {
+              "id": "role-keep",
+              "rigId": "rig-main",
+              "nodeId": "agent:keep",
+              "role": "coder",
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            },
+            {
+              "id": "role-drop",
+              "rigId": "rig-main",
+              "nodeId": "agent:drop",
+              "role": "coder",
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "remoteClients": [
+            {
+              "id": "client-keep",
+              "rigId": "rig-main",
+              "status": "online",
+              "lastSeenAt": "2026-05-25T00:00:00.000Z",
+              "ownsSessionIds": ["keep", "drop"]
+            }
+          ],
+          "lifecycleOperations": [
+            {
+              "id": "op-keep",
+              "rigId": "rig-main",
+              "kind": "agent.stop",
+              "status": "pending",
+              "targetKind": "session",
+              "targetId": "keep",
+              "startedAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            },
+            {
+              "id": "op-drop",
+              "rigId": "rig-main",
+              "kind": "service.stop",
+              "status": "pending",
+              "targetKind": "service",
+              "targetId": "service-drop",
+              "startedAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "exchangeRefs": [
+            {
+              "id": "exchange-keep",
+              "rigId": "rig-main",
+              "kind": "task",
+              "exchangeId": "task-1",
+              "sessionId": "keep",
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            },
+            {
+              "id": "exchange-drop",
+              "rigId": "rig-main",
+              "kind": "task",
+              "exchangeId": "task-2",
+              "sessionId": "drop",
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ]
+        }
+      },
+      "output": {
+        "ok": true,
+        "value": {
+          "version": 1,
+          "generatedAt": "2026-05-25T00:00:00.000Z",
+          "rigs": [
+            {
+              "id": "rig-main",
+              "name": "repo",
+              "projectRoot": "/repo",
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "nodes": [
+            { "id": "agent:keep", "rigId": "rig-main", "logicalId": "keep", "createdAt": "2026-05-25T00:00:00.000Z" }
+          ],
+          "edges": [],
+          "bindings": [],
+          "sessions": [
+            {
+              "id": "keep",
+              "nodeId": "agent:keep",
+              "status": "offline",
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "services": [
+            {
+              "id": "service-keep",
+              "rigId": "rig-main",
+              "status": "running",
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "worktrees": [
+            {
+              "id": "worktree-keep",
+              "rigId": "rig-main",
+              "path": "/repo",
+              "name": "repo",
+              "status": "active",
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "worktreeGraveyard": [
+            {
+              "id": "graveyard-keep",
+              "rigId": "rig-main",
+              "worktreeId": "worktree-keep",
+              "path": "/repo-old",
+              "graveyardedAt": "2026-05-25T00:00:00.000Z"
+            },
+            {
+              "id": "graveyard-drop",
+              "rigId": "rig-main",
+              "worktreeId": "worktree-drop",
+              "path": "/repo-drop",
+              "graveyardedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "teamRoles": [
+            {
+              "id": "role-keep",
+              "rigId": "rig-main",
+              "nodeId": "agent:keep",
+              "role": "coder",
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "remoteClients": [
+            {
+              "id": "client-keep",
+              "rigId": "rig-main",
+              "status": "online",
+              "lastSeenAt": "2026-05-25T00:00:00.000Z",
+              "ownsSessionIds": ["keep"]
+            }
+          ],
+          "lifecycleOperations": [
+            {
+              "id": "op-keep",
+              "rigId": "rig-main",
+              "kind": "agent.stop",
+              "status": "pending",
+              "targetKind": "session",
+              "targetId": "keep",
+              "startedAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ],
+          "exchangeRefs": [
+            {
+              "id": "exchange-keep",
+              "rigId": "rig-main",
+              "kind": "task",
+              "exchangeId": "task-1",
+              "sessionId": "keep",
+              "createdAt": "2026-05-25T00:00:00.000Z",
+              "updatedAt": "2026-05-25T00:00:00.000Z"
+            }
+          ]
+        }
+      },
+      "inputSha256": "ff63d856a61900689a5860ea267a5c14e793c697498af95b610b7d8cfb8e8f0d"
+    }
+  ]
+}

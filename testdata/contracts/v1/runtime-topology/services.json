@@ -1,0 +1,224 @@
+{
+  "version": 1,
+  "source": "src/runtime-core/topology-services.test.ts",
+  "generatedBy": "scripts/capture-runtime-topology-services-contract.mjs",
+  "description": "Runtime topology service lifecycle and removal contracts captured by running TypeScript.",
+  "cases": [
+    {
+      "id": "runtime-topology-services-001",
+      "name": "tracks live service state and tmux bindings in topology",
+      "source": "src/runtime-core/topology-services.test.ts",
+      "api": "upsert-running",
+      "input": {
+        "service": {
+          "id": "service-web",
+          "command": "zsh",
+          "args": ["-lc", "yarn web"],
+          "launchCommandLine": "yarn web",
+          "worktreePath": "<repo>",
+          "cwd": "<repo>",
+          "label": "web",
+          "tmuxTarget": { "sessionName": "aimux-repo", "windowId": "@2", "windowIndex": 2, "windowName": "web" }
+        }
+      },
+      "output": {
+        "services": [
+          {
+            "id": "service-web",
+            "rigId": "<rig:1>",
+            "nodeId": "service:service-web",
+            "status": "running",
+            "command": "zsh",
+            "args": ["-lc", "yarn web"],
+            "launchCommandLine": "yarn web",
+            "worktreePath": "<repo>",
+            "cwd": "<repo>",
+            "label": "web",
+            "createdAt": "2026-05-25T00:00:00.000Z",
+            "updatedAt": "2026-05-25T00:00:00.000Z",
+            "lastSeenAt": "2026-05-25T00:00:00.000Z"
+          }
+        ],
+        "nodes": [
+          {
+            "id": "service:service-web",
+            "rigId": "<rig:1>",
+            "logicalId": "service-web",
+            "role": "service",
+            "runtime": "service",
+            "toolConfigKey": "service",
+            "cwd": "<repo>",
+            "label": "web",
+            "createdAt": "2026-05-25T00:00:00.000Z"
+          }
+        ],
+        "bindings": [
+          {
+            "id": "tmux:service:service-web",
+            "nodeId": "service:service-web",
+            "tmuxSession": "aimux-repo",
+            "tmuxWindowId": "@2",
+            "tmuxWindowIndex": 2,
+            "tmuxWindowName": "web",
+            "updatedAt": "2026-05-25T00:00:00.000Z"
+          }
+        ],
+        "state": {
+          "id": "service-web",
+          "status": "running",
+          "command": "zsh",
+          "args": ["-lc", "yarn web"],
+          "launchCommandLine": "yarn web",
+          "worktreePath": "<repo>",
+          "cwd": "<repo>",
+          "label": "web",
+          "createdAt": "2026-05-25T00:00:00.000Z",
+          "lastSeenAt": "2026-05-25T00:00:00.000Z",
+          "tmuxTarget": { "sessionName": "aimux-repo", "windowId": "@2", "windowIndex": 2, "windowName": "web" }
+        }
+      },
+      "inputSha256": "704fd68065a99c1b588bffa82eee4e3892edd4f0ac9aec4a62a58117be649791"
+    },
+    {
+      "id": "runtime-topology-services-002",
+      "name": "drops live bindings when a service stops",
+      "source": "src/runtime-core/topology-services.test.ts",
+      "api": "upsert-running-then-stopped",
+      "input": {
+        "service": {
+          "id": "service-api",
+          "command": "zsh",
+          "args": ["-lc", "yarn api"],
+          "launchCommandLine": "yarn api"
+        },
+        "tmuxTarget": { "sessionName": "aimux-repo", "windowId": "@3", "windowIndex": 3, "windowName": "api" }
+      },
+      "output": {
+        "bindings": [],
+        "stopped": [
+          {
+            "id": "service-api",
+            "status": "stopped",
+            "command": "zsh",
+            "args": ["-lc", "yarn api"],
+            "launchCommandLine": "yarn api",
+            "createdAt": "2026-05-25T01:00:00.000Z"
+          }
+        ]
+      },
+      "inputSha256": "ea1ace829486811db27273483868bafd9bd1dc5d8a490efa61b0b02e2c9b6919"
+    },
+    {
+      "id": "runtime-topology-services-003",
+      "name": "drops tmux bindings for stopped services",
+      "source": "src/runtime-core/topology-services.test.ts",
+      "api": "upsert-stopped-with-target",
+      "input": {
+        "service": {
+          "id": "service-api",
+          "command": "zsh",
+          "args": ["-lc", "yarn api"],
+          "launchCommandLine": "yarn api",
+          "tmuxTarget": { "sessionName": "aimux-repo", "windowId": "@3", "windowIndex": 3, "windowName": "api" }
+        }
+      },
+      "output": {
+        "bindings": [],
+        "stopped": [
+          {
+            "id": "service-api",
+            "status": "stopped",
+            "command": "zsh",
+            "args": ["-lc", "yarn api"],
+            "launchCommandLine": "yarn api",
+            "createdAt": "2026-05-25T00:00:00.000Z"
+          }
+        ]
+      },
+      "inputSha256": "ddf2a1105df573ddc75320975b73e326c48014a6fd9ba86b0ea8efdcd983937e"
+    },
+    {
+      "id": "runtime-topology-services-004",
+      "name": "batch upserts multiple service records in one topology update",
+      "source": "src/runtime-core/topology-services.test.ts",
+      "api": "batch-upsert-stopped",
+      "input": {
+        "services": [
+          {
+            "id": "service-api",
+            "launchCommandLine": "yarn api",
+            "tmuxTarget": { "sessionName": "aimux-repo", "windowId": "@3", "windowIndex": 3, "windowName": "api" }
+          },
+          {
+            "id": "service-web",
+            "launchCommandLine": "yarn web",
+            "tmuxTarget": { "sessionName": "aimux-repo", "windowId": "@4", "windowIndex": 4, "windowName": "web" }
+          }
+        ]
+      },
+      "output": {
+        "stopped": [
+          {
+            "id": "service-api",
+            "status": "stopped",
+            "args": [],
+            "launchCommandLine": "yarn api",
+            "createdAt": "2026-05-25T00:00:00.000Z"
+          },
+          {
+            "id": "service-web",
+            "status": "stopped",
+            "args": [],
+            "launchCommandLine": "yarn web",
+            "createdAt": "2026-05-25T00:00:00.000Z"
+          }
+        ],
+        "bindings": []
+      },
+      "inputSha256": "7acca42eb34d1ae61071bee176fe9b57b614b588f7e030577381baada265c8b7"
+    },
+    {
+      "id": "runtime-topology-services-005",
+      "name": "removes service topology and dependent operation references",
+      "source": "src/runtime-core/topology-services.test.ts",
+      "api": "remove-service",
+      "input": { "service": { "id": "service-web", "command": "zsh" } },
+      "output": {
+        "removed": {
+          "id": "service-web",
+          "status": "stopped",
+          "command": "zsh",
+          "args": [],
+          "createdAt": "2026-05-25T00:00:00.000Z"
+        },
+        "services": [],
+        "nodes": [],
+        "lifecycleOperations": []
+      },
+      "inputSha256": "ba819bc3368bfe6e363fbb328e33d183494f1237bd4ec709bc9bcc18726bdd22"
+    },
+    {
+      "id": "runtime-topology-services-006",
+      "name": "removes services for a worktree and keeps other services",
+      "source": "src/runtime-core/topology-services.test.ts",
+      "api": "remove-services-for-worktree",
+      "input": { "worktreePath": "<repo>/feature-a", "keepPath": "<repo>" },
+      "output": {
+        "removed": [
+          {
+            "id": "service-a",
+            "status": "stopped",
+            "command": "zsh",
+            "args": [],
+            "worktreePath": "<repo>/feature-a",
+            "cwd": "<repo>/feature-a",
+            "createdAt": "2026-05-25T00:00:00.000Z"
+          }
+        ],
+        "serviceIds": ["service-b"],
+        "nodeIds": ["service:service-b"]
+      },
+      "inputSha256": "17e64db132cf1e0f41363fb8c6a7346c2c125b1bdc3c1e9c2cdb00510d0731d2"
+    }
+  ]
+}

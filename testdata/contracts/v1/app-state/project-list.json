@@ -1,0 +1,159 @@
+{
+  "version": 1,
+  "source": ["app/stores/projects.test.ts", "app/stores/projects.ts"],
+  "generatedBy": "scripts/capture-app-store-runtime-contract.mjs",
+  "description": "App daemon project list reconciliation, selected-project retention, explicit selection guard, and per-project view memory captured by running the TypeScript Jotai project store.",
+  "cases": [
+    {
+      "id": "app-state-project-list-001",
+      "name": "preserves the previous array when the daemon snapshot is unchanged",
+      "source": "app/stores/projects.test.ts",
+      "api": "reconcileProjectList",
+      "input": {
+        "name": "preserves the previous array when the daemon snapshot is unchanged",
+        "source": "app/stores/projects.test.ts",
+        "api": "reconcileProjectList",
+        "previous": [{ "id": "b", "name": "Beta", "path": "/repo/b" }],
+        "incoming": [{ "id": "b", "name": "Beta", "path": "/repo/b" }]
+      },
+      "output": { "sameReference": true, "ids": ["b"], "names": ["Beta"], "paths": ["/repo/b"] },
+      "inputSha256": "dab6338d46c68199b257da69ed5c1d404b712f9b6d55d9313cbd5e3f0b50298c"
+    },
+    {
+      "id": "app-state-project-list-002",
+      "name": "returns a sorted replacement when project content changes",
+      "source": "app/stores/projects.test.ts",
+      "api": "reconcileProjectList",
+      "input": {
+        "name": "returns a sorted replacement when project content changes",
+        "source": "app/stores/projects.test.ts",
+        "api": "reconcileProjectList",
+        "previous": [{ "id": "b", "name": "Beta", "path": "/repo/b" }],
+        "incoming": [
+          { "id": "b", "name": "Beta", "path": "/repo/b" },
+          { "id": "a", "name": "Alpha", "path": "/repo/a" }
+        ]
+      },
+      "output": {
+        "sameReference": false,
+        "ids": ["a", "b"],
+        "names": ["Alpha", "Beta"],
+        "paths": ["/repo/a", "/repo/b"]
+      },
+      "inputSha256": "66880c31d050729f8e9500db055c04fb2522c635ab74f34901ea2f45f7b0d6b8"
+    },
+    {
+      "id": "app-state-project-list-003",
+      "name": "sorts duplicate project names by stable project identity",
+      "source": "app/stores/projects.test.ts",
+      "api": "reconcileProjectList",
+      "input": {
+        "name": "sorts duplicate project names by stable project identity",
+        "source": "app/stores/projects.test.ts",
+        "api": "reconcileProjectList",
+        "previous": [],
+        "incoming": [
+          { "id": "z", "name": "Same", "path": "/repo/z" },
+          { "id": "a", "name": "Same", "path": "/repo/a" },
+          { "id": "b", "name": "Same", "path": "/repo/a" }
+        ]
+      },
+      "output": {
+        "sameReference": false,
+        "ids": ["a", "b", "z"],
+        "names": ["Same", "Same", "Same"],
+        "paths": ["/repo/a", "/repo/a", "/repo/z"]
+      },
+      "inputSha256": "f74808113a827303237084c55ab94690d0addba7ce5e84dcc47251fdc633b004"
+    },
+    {
+      "id": "app-state-project-list-004",
+      "name": "keeps the selected project during transient empty discovery snapshots",
+      "source": "app/stores/projects.test.ts",
+      "api": "reconcileProjectsAtom",
+      "input": {
+        "name": "keeps the selected project during transient empty discovery snapshots",
+        "source": "app/stores/projects.test.ts",
+        "api": "reconcileProjectsAtom",
+        "seed": {
+          "projects": [
+            { "id": "tealstreet-next", "name": "Tealstreet", "path": "/tealstreet-next" },
+            { "id": "thegrand", "name": "The Grand", "path": "/thegrand" }
+          ],
+          "selectedProjectPath": "/thegrand",
+          "selectedSessionId": "claude-1",
+          "explicitProjectSelection": { "path": "/thegrand", "expiresAt": 1788523201000 }
+        },
+        "incoming": []
+      },
+      "output": {
+        "projectPaths": ["/tealstreet-next", "/thegrand"],
+        "selectedProjectPath": "/thegrand",
+        "selectedSessionId": "claude-1",
+        "lastSyncAt": 1788523200000
+      },
+      "inputSha256": "bf66704d17760d0def3658704e316d66eb908538b6c46063f27e608638dccea6"
+    },
+    {
+      "id": "app-state-project-list-005",
+      "name": "clears stale selection when discovery really becomes empty",
+      "source": "app/stores/projects.test.ts",
+      "api": "reconcileProjectsAtom",
+      "input": {
+        "name": "clears stale selection when discovery really becomes empty",
+        "source": "app/stores/projects.test.ts",
+        "api": "reconcileProjectsAtom",
+        "seed": {
+          "projects": [{ "id": "tealstreet-next", "name": "Tealstreet", "path": "/tealstreet-next" }],
+          "selectedProjectPath": "/tealstreet-next",
+          "selectedSessionId": "claude-1"
+        },
+        "incoming": []
+      },
+      "output": {
+        "projectPaths": [],
+        "selectedProjectPath": null,
+        "selectedSessionId": null,
+        "lastSyncAt": 1788523200000
+      },
+      "inputSha256": "14589d7102207b6512e4e27793a27e8077a0f0eb93d82c9be6d3023c11dd4512"
+    },
+    {
+      "id": "app-state-project-list-006",
+      "name": "records a short explicit-selection guard when the user picks a project",
+      "source": "app/stores/projects.test.ts",
+      "api": "selectProjectAtom",
+      "input": {
+        "name": "records a short explicit-selection guard when the user picks a project",
+        "source": "app/stores/projects.test.ts",
+        "api": "selectProjectAtom",
+        "projectPath": "/thegrand"
+      },
+      "output": {
+        "selectedProjectPath": "/thegrand",
+        "selectedSessionId": null,
+        "explicitProjectSelection": { "path": "/thegrand", "expiresAt": 1788523201500 },
+        "explicitHoldMs": 1500
+      },
+      "inputSha256": "56a4280f7a8bad664b3a58fc1b147245e28d287d6a6805e4e0d7e317c27350c5"
+    },
+    {
+      "id": "app-state-project-list-007",
+      "name": "keeps per-project view memory in process only",
+      "source": "app/stores/projects.test.ts",
+      "api": "rememberProjectViewPath",
+      "input": {
+        "name": "keeps per-project view memory in process only",
+        "source": "app/stores/projects.test.ts",
+        "api": "rememberProjectViewPath",
+        "calls": [
+          { "projectPath": "/thegrand", "viewPath": "/agent/claude-1/chat?project=%2Fthegrand" },
+          { "projectPath": "/aimux", "viewPath": "/project?project=%2Faimux&section=queue" }
+        ],
+        "lookups": ["/thegrand", "/aimux", "/missing"]
+      },
+      "output": ["/agent/claude-1/chat?project=%2Fthegrand", "/project?project=%2Faimux&section=queue", null],
+      "inputSha256": "afdfb2ddf1c3f6319bb36aedd0cd1623edc56a6bce9d52ed2a6610adae8e81ec"
+    }
+  ]
+}

@@ -1,0 +1,119 @@
+{
+  "version": 1,
+  "source": "src/cli/agent-list.test.ts",
+  "generatedBy": "scripts/capture-cli-agent-list-contract.mjs",
+  "description": "CLI agent-list flat and worktree-grouped renderer outputs captured by running the TypeScript cli/agent-list helpers.",
+  "cases": [
+    {
+      "id": "cli-agent-list-001",
+      "name": "renders flat agent summaries with canonical backend state role loop and task fields",
+      "source": "src/cli/agent-list.test.ts",
+      "api": "renderAgentsFlatLines",
+      "input": {
+        "name": "renders flat agent summaries with canonical backend state role loop and task fields",
+        "api": "renderAgentsFlatLines",
+        "projectRoot": "/repo",
+        "agents": [
+          {
+            "id": "codex-2",
+            "command": "codex",
+            "tool": "codex",
+            "toolConfigKey": "codex",
+            "status": "running",
+            "worktreePath": "/repo/worktrees/feature",
+            "activity": "working",
+            "attention": "ok",
+            "role": "coder",
+            "backendSessionId": "backend-2",
+            "loop": { "active": true, "goal": "ship" }
+          },
+          {
+            "id": "claude-1",
+            "command": "claude",
+            "tool": "claude",
+            "toolConfigKey": "claude",
+            "status": "idle",
+            "worktreePath": "/repo",
+            "task": { "description": "Review handoff", "status": "pending" }
+          }
+        ]
+      },
+      "output": [
+        "codex-2  [codex]  coder",
+        "  running  canonical=codex  aimux=codex-2  backend=backend-2  state=working/ok  role=coder loop=ship",
+        "    worktree: /repo/worktrees/feature",
+        "claude-1  [claude]",
+        "  idle  canonical=claude  aimux=claude-1",
+        "    worktree: /repo",
+        "    task: Review handoff (pending)"
+      ],
+      "inputSha256": "d8a80965db3211443be32754f292c89527caa86f7d51e4d118068a9fa491436b"
+    },
+    {
+      "id": "cli-agent-list-002",
+      "name": "renders worktree grouped summaries with main checkout first",
+      "source": "src/cli/agent-list.test.ts",
+      "api": "renderAgentsByWorktreeLines",
+      "input": {
+        "name": "renders worktree grouped summaries with main checkout first",
+        "api": "renderAgentsByWorktreeLines",
+        "projectRoot": "/repo",
+        "agents": [
+          {
+            "id": "codex-2",
+            "command": "codex",
+            "tool": "codex",
+            "toolConfigKey": "codex",
+            "status": "running",
+            "worktreePath": "/repo/worktrees/feature",
+            "activity": "working",
+            "attention": "ok",
+            "role": "coder",
+            "backendSessionId": "backend-2",
+            "loop": { "active": true, "goal": "ship" }
+          },
+          {
+            "id": "claude-1",
+            "command": "claude",
+            "tool": "claude",
+            "toolConfigKey": "claude",
+            "status": "idle",
+            "worktreePath": "/repo",
+            "task": { "description": "Review handoff", "status": "pending" }
+          }
+        ]
+      },
+      "output": [
+        "Main Checkout  /repo",
+        "  idle  canonical=claude  aimux=claude-1",
+        "    task: Review handoff (pending)",
+        "",
+        "feature  /repo/worktrees/feature",
+        "  running  canonical=codex  aimux=codex-2  backend=backend-2  state=working/ok  role=coder loop=ship"
+      ],
+      "inputSha256": "87810e518fdc917e098b17de5aa4bbe16d8997cdc8f54caf1bbd0ce748bc1f36"
+    },
+    {
+      "id": "cli-agent-list-003",
+      "name": "renders empty inventory explicitly",
+      "source": "src/cli/agent-list.test.ts",
+      "api": "renderAgentsFlatLines",
+      "input": { "name": "renders empty inventory explicitly", "api": "renderAgentsFlatLines", "agents": [] },
+      "output": ["no agents"],
+      "inputSha256": "ca8b41c0ff0a74821744eb62d4d601e7c15f2a95919a91bfb30d1ac06d4c4048"
+    },
+    {
+      "id": "cli-agent-list-004",
+      "name": "renders empty grouped inventory explicitly",
+      "source": "src/cli/agent-list.test.ts",
+      "api": "renderAgentsByWorktreeLines",
+      "input": {
+        "name": "renders empty grouped inventory explicitly",
+        "api": "renderAgentsByWorktreeLines",
+        "agents": []
+      },
+      "output": ["no agents"],
+      "inputSha256": "afea132a44e8350e54a2100dbb1ce847422f2d3303b80cda70293c360600f20c"
+    }
+  ]
+}

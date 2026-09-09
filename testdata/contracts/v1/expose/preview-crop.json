@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "source": "src/expose-preview-crop.test.ts",
+  "generatedBy": "scripts/capture-hosted-runtime-contract.mjs",
+  "description": "Expose preview footer crop row thresholds and line-window behavior captured by running TypeScript expose-preview-crop helpers.",
+  "cases": [
+    {
+      "id": "expose-preview-crop-001",
+      "name": "crops more bottom rows as the preview gets shorter",
+      "source": "src/expose-preview-crop.test.ts",
+      "api": "exposePreviewFooterCropRows",
+      "input": {
+        "name": "crops more bottom rows as the preview gets shorter",
+        "api": "exposePreviewFooterCropRows",
+        "values": [6, 10, 13, 16, 0, -1]
+      },
+      "output": [3, 2, 1, 0, 0, 0],
+      "inputSha256": "dddf77ebdbc05d6b6a36b433ca0308fbff44f977f80482fcd337eb4c771cd76d"
+    },
+    {
+      "id": "expose-preview-crop-002",
+      "name": "slides older content up rather than shrinking the rendered preview",
+      "source": "src/expose-preview-crop.test.ts",
+      "api": "cropExposePreviewFooter",
+      "input": {
+        "name": "slides older content up rather than shrinking the rendered preview",
+        "api": "cropExposePreviewFooter",
+        "lines": ["content 1", "content 2", "content 3", "footer 1", "footer 2", "footer 3"],
+        "visibleLineCount": 3
+      },
+      "output": ["content 1", "content 2", "content 3"],
+      "inputSha256": "907082115498396590c3cd6c94b2f5a1b0fbe4edad5c5d29515d6e80b28f7c99"
+    },
+    {
+      "id": "expose-preview-crop-003",
+      "name": "does not crop when there are no replacement rows",
+      "source": "src/expose-preview-crop.test.ts",
+      "api": "cropExposePreviewFooter",
+      "input": {
+        "name": "does not crop when there are no replacement rows",
+        "api": "cropExposePreviewFooter",
+        "lines": ["one", "two", "three"],
+        "visibleLineCount": 3
+      },
+      "output": ["one", "two", "three"],
+      "inputSha256": "6f19bd9e5ae66beeea609bc1f0c748c7d33f11d8e69773fff3790406134a6769"
+    },
+    {
+      "id": "expose-preview-crop-004",
+      "name": "floors fractional visible counts before cropping",
+      "source": "src/expose-preview-crop.test.ts",
+      "api": "cropExposePreviewFooter",
+      "input": {
+        "name": "floors fractional visible counts before cropping",
+        "api": "cropExposePreviewFooter",
+        "lines": ["a", "b", "c", "d"],
+        "visibleLineCount": 2.9
+      },
+      "output": ["a", "b"],
+      "inputSha256": "52b9a65847c7edd63a0ed9537e218eb3b34acbc6b2a84c2590814b5fa1405bd3"
+    }
+  ]
+}

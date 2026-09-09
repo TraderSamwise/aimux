@@ -1,0 +1,210 @@
+{
+  "version": 1,
+  "source": "src/agent-output-bounds.ts",
+  "sources": [
+    "src/agent-output-bounds.test.ts",
+    "src/agent-output-bounds.ts"
+  ],
+  "generatedBy": "scripts/capture-agent-output-io-contracts.mjs",
+  "description": "Agent output capture bounds captured by running the TypeScript bounds helpers.",
+  "constants": { "DEFAULT_AGENT_OUTPUT_START_LINE": -120, "MAX_AGENT_OUTPUT_CAPTURE_LINES": 2000 },
+  "cases": [
+    {
+      "id": "agent-output-bounds-001",
+      "name": "default-start-line",
+      "source": "src/agent-output-bounds.ts",
+      "input": {},
+      "output": {
+        "boundedStartLine": -120,
+        "captureWindow": {
+          "requestedStartLine": -120,
+          "startLine": -120,
+          "maxLines": 2000,
+          "tailOnly": true,
+          "clamped": false
+        }
+      },
+      "inputSha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "id": "agent-output-bounds-002",
+      "name": "start-line--999999",
+      "source": "src/agent-output-bounds.ts",
+      "input": { "startLine": -999999 },
+      "output": {
+        "boundedStartLine": -2000,
+        "captureWindow": {
+          "requestedStartLine": -999999,
+          "startLine": -2000,
+          "maxLines": 2000,
+          "tailOnly": true,
+          "clamped": true
+        }
+      },
+      "inputSha256": "5d313e8a6f74df8f5316dff8b48a2b1062153cd6b839f40c14b94be69b43afe1"
+    },
+    {
+      "id": "agent-output-bounds-003",
+      "name": "start-line--2000",
+      "source": "src/agent-output-bounds.ts",
+      "input": { "startLine": -2000 },
+      "output": {
+        "boundedStartLine": -2000,
+        "captureWindow": {
+          "requestedStartLine": -2000,
+          "startLine": -2000,
+          "maxLines": 2000,
+          "tailOnly": true,
+          "clamped": false
+        }
+      },
+      "inputSha256": "f817a84e4f554fff920ecbd1aec24be2351fc34f80ed3d4f6216454d621d7889"
+    },
+    {
+      "id": "agent-output-bounds-004",
+      "name": "start-line--120",
+      "source": "src/agent-output-bounds.ts",
+      "input": { "startLine": -120 },
+      "output": {
+        "boundedStartLine": -120,
+        "captureWindow": {
+          "requestedStartLine": -120,
+          "startLine": -120,
+          "maxLines": 2000,
+          "tailOnly": true,
+          "clamped": false
+        }
+      },
+      "inputSha256": "b3cb917c4437b1355b2a844e11790b26d72d792fe6f59cd3aa2530a34fff445e"
+    },
+    {
+      "id": "agent-output-bounds-005",
+      "name": "start-line--80",
+      "source": "src/agent-output-bounds.ts",
+      "input": { "startLine": -80 },
+      "output": {
+        "boundedStartLine": -80,
+        "captureWindow": {
+          "requestedStartLine": -80,
+          "startLine": -80,
+          "maxLines": 2000,
+          "tailOnly": true,
+          "clamped": false
+        }
+      },
+      "inputSha256": "34e9ed4ca5de7d0fa5077fe7e11ea7e2562a15c066d310eb9b7132ec45d707b6"
+    },
+    {
+      "id": "agent-output-bounds-006",
+      "name": "start-line--1",
+      "source": "src/agent-output-bounds.ts",
+      "input": { "startLine": -1 },
+      "output": {
+        "boundedStartLine": -1,
+        "captureWindow": {
+          "requestedStartLine": -1,
+          "startLine": -1,
+          "maxLines": 2000,
+          "tailOnly": true,
+          "clamped": false
+        }
+      },
+      "inputSha256": "98936d5bde88c5db58c29c252f3ddf2f526c6407ac919c00e78980dda72ba124"
+    },
+    {
+      "id": "agent-output-bounds-007",
+      "name": "start-line-0",
+      "source": "src/agent-output-bounds.ts",
+      "input": { "startLine": 0 },
+      "output": {
+        "boundedStartLine": 0,
+        "boundedEndLine": 1999,
+        "captureWindow": {
+          "requestedStartLine": 0,
+          "startLine": 0,
+          "endLine": 1999,
+          "maxLines": 2000,
+          "tailOnly": false,
+          "clamped": false
+        }
+      },
+      "inputSha256": "b716f475db9cb2bacde032b2c5c6e04300b184cf7af48985f8122b6ef8e1e14f"
+    },
+    {
+      "id": "agent-output-bounds-008",
+      "name": "start-line-25",
+      "source": "src/agent-output-bounds.ts",
+      "input": { "startLine": 25 },
+      "output": {
+        "boundedStartLine": 25,
+        "boundedEndLine": 2024,
+        "captureWindow": {
+          "requestedStartLine": 25,
+          "startLine": 25,
+          "endLine": 2024,
+          "maxLines": 2000,
+          "tailOnly": false,
+          "clamped": false
+        }
+      },
+      "inputSha256": "fcc821db2e1f6c6902afdb564e8d2e13b1081ac08c44473d5987bf3b46000de4"
+    },
+    {
+      "id": "agent-output-bounds-009",
+      "name": "start-line-1999",
+      "source": "src/agent-output-bounds.ts",
+      "input": { "startLine": 1999 },
+      "output": {
+        "boundedStartLine": 1999,
+        "boundedEndLine": 3998,
+        "captureWindow": {
+          "requestedStartLine": 1999,
+          "startLine": 1999,
+          "endLine": 3998,
+          "maxLines": 2000,
+          "tailOnly": false,
+          "clamped": false
+        }
+      },
+      "inputSha256": "67a84855260242bf4987ec7f0980876aaa3994bde2d13ed07a152a2f86993b96"
+    },
+    {
+      "id": "agent-output-bounds-010",
+      "name": "start-line-2000",
+      "source": "src/agent-output-bounds.ts",
+      "input": { "startLine": 2000 },
+      "output": {
+        "boundedStartLine": 2000,
+        "boundedEndLine": 3999,
+        "captureWindow": {
+          "requestedStartLine": 2000,
+          "startLine": 2000,
+          "endLine": 3999,
+          "maxLines": 2000,
+          "tailOnly": false,
+          "clamped": false
+        }
+      },
+      "inputSha256": "0bfafe645fb04630902fe19036efc637a5ed788b0c26349d14ed8f629ead037f"
+    },
+    {
+      "id": "agent-output-bounds-011",
+      "name": "start-line-4096",
+      "source": "src/agent-output-bounds.ts",
+      "input": { "startLine": 4096 },
+      "output": {
+        "boundedStartLine": 4096,
+        "boundedEndLine": 6095,
+        "captureWindow": {
+          "requestedStartLine": 4096,
+          "startLine": 4096,
+          "endLine": 6095,
+          "maxLines": 2000,
+          "tailOnly": false,
+          "clamped": false
+        }
+      },
+      "inputSha256": "e739aec826f4ae756d441c0827a0b57c24acdf64c1981764ef958712b9fa04a5"
+    }
+  ]
+}

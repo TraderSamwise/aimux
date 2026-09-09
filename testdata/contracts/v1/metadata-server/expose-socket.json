@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "source": "src/metadata-server/expose-socket.test.ts",
+  "generatedBy": "scripts/capture-metadata-server-runtime-contract.mjs",
+  "description": "Metadata-server expose socket positive-header-integer and launch-header split behavior captured by running TypeScript expose-socket helpers.",
+  "cases": [
+    {
+      "id": "metadata-expose-socket-001",
+      "name": "parses positive integer header fields only",
+      "source": "src/metadata-server/expose-socket.test.ts",
+      "api": "parsePositiveHeaderInteger",
+      "input": { "api": "parsePositiveHeaderInteger", "values": ["80", "0", "-1", "abc", null, "12px"] },
+      "output": [80, null, null, null, null, 12],
+      "inputSha256": "4517fd9496696a534893292eae0ef7f57217536ef753356f28959bc4ff340a93"
+    },
+    {
+      "id": "metadata-expose-socket-002",
+      "name": "splits exactly after the launch header and preserves the first body chunk",
+      "source": "src/metadata-server/expose-socket.test.ts",
+      "api": "splitExposeHeader",
+      "input": {
+        "api": "splitExposeHeader",
+        "buffer": "line-1\nline-2\nline-3\nline-4\nline-5\nline-6\nline-7\nline-8\nline-9\nline-10\nline-11\nline-12\nline-13\nline-14\nline-15\nbody\nrest"
+      },
+      "output": {
+        "header": [
+          "line-1",
+          "line-2",
+          "line-3",
+          "line-4",
+          "line-5",
+          "line-6",
+          "line-7",
+          "line-8",
+          "line-9",
+          "line-10",
+          "line-11",
+          "line-12",
+          "line-13",
+          "line-14",
+          "line-15"
+        ],
+        "rest": "body\nrest"
+      },
+      "inputSha256": "b7df2f5cd0568b39140d38bbfeaeaffaecca689bfedc64b3357814c3e0ea5248"
+    },
+    {
+      "id": "metadata-expose-socket-003",
+      "name": "waits for a complete launch header",
+      "source": "src/metadata-server/expose-socket.test.ts",
+      "api": "splitExposeHeader",
+      "input": { "api": "splitExposeHeader", "buffer": "one\ntwo\n" },
+      "output": null,
+      "inputSha256": "d0b26e1726190ffd01c0143b4a2bec8d44e0d9c75c743433da087f81b0a36209"
+    }
+  ]
+}

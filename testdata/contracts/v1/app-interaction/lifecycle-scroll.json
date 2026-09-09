@@ -1,0 +1,271 @@
+{
+  "version": 1,
+  "source": ["app/lib/agent-lifecycle.test.ts", "app/lib/chat-scroll-policy.test.ts"],
+  "generatedBy": "scripts/capture-app-interaction-contract.mjs",
+  "description": "App session resume affordance and chat scroll policy thresholds, distance math, user-scroll intent, and auto-scroll command behavior captured by running TypeScript app helpers.",
+  "cases": [
+    {
+      "id": "app-interaction-001",
+      "name": "allows offline sessions unless restore is blocked",
+      "source": "app/lib/agent-lifecycle.test.ts",
+      "api": "canResumeSession",
+      "input": {
+        "name": "allows offline sessions unless restore is blocked",
+        "source": "app/lib/agent-lifecycle.test.ts",
+        "api": "canResumeSession",
+        "session": { "status": "offline" }
+      },
+      "output": true,
+      "inputSha256": "baa89aaeab8d20124811dcf30bf7185bb94eb16b483178c1631aee2148417f18"
+    },
+    {
+      "id": "app-interaction-002",
+      "name": "allows exited sessions with ready restore state",
+      "source": "app/lib/agent-lifecycle.test.ts",
+      "api": "canResumeSession",
+      "input": {
+        "name": "allows exited sessions with ready restore state",
+        "source": "app/lib/agent-lifecycle.test.ts",
+        "api": "canResumeSession",
+        "session": { "status": "exited", "restoreState": "ready" }
+      },
+      "output": true,
+      "inputSha256": "3b330a0c2563b21dda78e17b396004fd75da2d8d5b4025438bbb561faa4a2e1f"
+    },
+    {
+      "id": "app-interaction-003",
+      "name": "blocks resume when restore state is blocked",
+      "source": "app/lib/agent-lifecycle.test.ts",
+      "api": "canResumeSession",
+      "input": {
+        "name": "blocks resume when restore state is blocked",
+        "source": "app/lib/agent-lifecycle.test.ts",
+        "api": "canResumeSession",
+        "session": { "status": "offline", "restoreState": "blocked" }
+      },
+      "output": false,
+      "inputSha256": "7c27b4e5cd9ddf15727169167855f397c08047adf482f1eb0bcf3e4f7e996838"
+    },
+    {
+      "id": "app-interaction-004",
+      "name": "does not offer resume for running sessions",
+      "source": "app/lib/agent-lifecycle.test.ts",
+      "api": "canResumeSession",
+      "input": {
+        "name": "does not offer resume for running sessions",
+        "source": "app/lib/agent-lifecycle.test.ts",
+        "api": "canResumeSession",
+        "session": { "status": "running", "restoreState": "ready" }
+      },
+      "output": false,
+      "inputSha256": "b586a9c05da204f8f6a93a28613109fc5073dd04bbb12b9877cf861766c8403e"
+    },
+    {
+      "id": "app-interaction-005",
+      "name": "exposes chat scroll end threshold",
+      "source": "app/lib/chat-scroll-policy.test.ts",
+      "api": "CHAT_SCROLL_END_THRESHOLD",
+      "input": {
+        "name": "exposes chat scroll end threshold",
+        "source": "app/lib/chat-scroll-policy.test.ts",
+        "api": "CHAT_SCROLL_END_THRESHOLD"
+      },
+      "output": 20,
+      "inputSha256": "112eab1fa8ab03ae846741cd7104490f09610c9ce6936e5e71f81679423b8fe5"
+    },
+    {
+      "id": "app-interaction-006",
+      "name": "starts pinned to newest content",
+      "source": "app/lib/chat-scroll-policy.test.ts",
+      "api": "createChatScrollPolicy",
+      "input": {
+        "name": "starts pinned to newest content",
+        "source": "app/lib/chat-scroll-policy.test.ts",
+        "api": "createChatScrollPolicy"
+      },
+      "output": { "intent": "pinned" },
+      "inputSha256": "5a9fc512ead6d01f4a0cf2805c8438e009cf76093f1496759dd5a9f127dddf22"
+    },
+    {
+      "id": "app-interaction-007",
+      "name": "computes distance from bottom",
+      "source": "app/lib/chat-scroll-policy.test.ts",
+      "api": "chatDistanceFromEnd",
+      "input": {
+        "name": "computes distance from bottom",
+        "source": "app/lib/chat-scroll-policy.test.ts",
+        "api": "chatDistanceFromEnd",
+        "metrics": { "contentHeight": 1000, "offsetY": 600, "viewportHeight": 300 }
+      },
+      "output": 100,
+      "inputSha256": "c6d2eee680b2ba0693a975a74f56206cc2de24fb8ea55384ddb4d76b6af17663"
+    },
+    {
+      "id": "app-interaction-008",
+      "name": "clamps short transcript distance to zero",
+      "source": "app/lib/chat-scroll-policy.test.ts",
+      "api": "chatDistanceFromEnd",
+      "input": {
+        "name": "clamps short transcript distance to zero",
+        "source": "app/lib/chat-scroll-policy.test.ts",
+        "api": "chatDistanceFromEnd",
+        "metrics": { "contentHeight": 200, "offsetY": 0, "viewportHeight": 300 }
+      },
+      "output": 0,
+      "inputSha256": "5e016051c57eb107971ce99222f2df148364ce4ed10351d8c3f66046e114a27d"
+    },
+    {
+      "id": "app-interaction-009",
+      "name": "treats threshold offsets as pinned",
+      "source": "app/lib/chat-scroll-policy.test.ts",
+      "api": "isChatPinnedToEnd",
+      "input": {
+        "name": "treats threshold offsets as pinned",
+        "source": "app/lib/chat-scroll-policy.test.ts",
+        "api": "isChatPinnedToEnd",
+        "metrics": { "contentHeight": 1000, "offsetY": 680, "viewportHeight": 300 }
+      },
+      "output": true,
+      "inputSha256": "768acd937fe375b839e0cb594d45db95d220cf097da947a9d8cdc89f706f3ff2"
+    },
+    {
+      "id": "app-interaction-010",
+      "name": "treats offsets beyond threshold as reading",
+      "source": "app/lib/chat-scroll-policy.test.ts",
+      "api": "isChatPinnedToEnd",
+      "input": {
+        "name": "treats offsets beyond threshold as reading",
+        "source": "app/lib/chat-scroll-policy.test.ts",
+        "api": "isChatPinnedToEnd",
+        "metrics": { "contentHeight": 1000, "offsetY": 679, "viewportHeight": 300 }
+      },
+      "output": false,
+      "inputSha256": "56c4684e8ae35a76b840b18431137441a883f8821cb3ffc3c741c796e3a670eb"
+    },
+    {
+      "id": "app-interaction-011",
+      "name": "freezes when user scrolls away",
+      "source": "app/lib/chat-scroll-policy.test.ts",
+      "api": "chatPolicyAfterUserScroll",
+      "input": {
+        "name": "freezes when user scrolls away",
+        "source": "app/lib/chat-scroll-policy.test.ts",
+        "api": "chatPolicyAfterUserScroll",
+        "policy": { "intent": "pinned" },
+        "metrics": { "contentHeight": 1600, "offsetY": 500, "viewportHeight": 400 }
+      },
+      "output": { "intent": "reading" },
+      "inputSha256": "00920927561ec136c7c3cc1dc1ce7434641ec063eb8aa758c4ec296162660868"
+    },
+    {
+      "id": "app-interaction-012",
+      "name": "returns to pinned at newest content",
+      "source": "app/lib/chat-scroll-policy.test.ts",
+      "api": "chatPolicyAfterUserScroll",
+      "input": {
+        "name": "returns to pinned at newest content",
+        "source": "app/lib/chat-scroll-policy.test.ts",
+        "api": "chatPolicyAfterUserScroll",
+        "policy": { "intent": "reading" },
+        "metrics": { "contentHeight": 1600, "offsetY": 1200, "viewportHeight": 400 }
+      },
+      "output": { "intent": "pinned" },
+      "inputSha256": "de977e6f37945d3f3619dbfa98f4344f9284b1adaff0dfa33fe64b961de99dc2"
+    },
+    {
+      "id": "app-interaction-013",
+      "name": "content changes scroll only while pinned",
+      "source": "app/lib/chat-scroll-policy.test.ts",
+      "api": "chatCommandForContentChange",
+      "input": {
+        "name": "content changes scroll only while pinned",
+        "source": "app/lib/chat-scroll-policy.test.ts",
+        "api": "chatCommandForContentChange",
+        "policy": { "intent": "pinned" }
+      },
+      "output": { "animated": false, "kind": "scrollToEnd", "reason": "content" },
+      "inputSha256": "e4f0c8697ec653b0e361062d09baee4ccbb1344bb2f85bfbb237665aec637981"
+    },
+    {
+      "id": "app-interaction-014",
+      "name": "content changes do nothing while reading",
+      "source": "app/lib/chat-scroll-policy.test.ts",
+      "api": "chatCommandForContentChange",
+      "input": {
+        "name": "content changes do nothing while reading",
+        "source": "app/lib/chat-scroll-policy.test.ts",
+        "api": "chatCommandForContentChange",
+        "policy": { "intent": "reading" }
+      },
+      "output": { "kind": "none" },
+      "inputSha256": "8349e7fca4fa59176b5c85433a3840f663de29b56dd8192e79b391f33b75067b"
+    },
+    {
+      "id": "app-interaction-015",
+      "name": "keyboard changes scroll only while pinned",
+      "source": "app/lib/chat-scroll-policy.test.ts",
+      "api": "chatCommandForKeyboardChange",
+      "input": {
+        "name": "keyboard changes scroll only while pinned",
+        "source": "app/lib/chat-scroll-policy.test.ts",
+        "api": "chatCommandForKeyboardChange",
+        "policy": { "intent": "pinned" }
+      },
+      "output": { "animated": false, "kind": "scrollToEnd", "reason": "keyboard" },
+      "inputSha256": "f95486358cb74be4672eb0cda300c14de1d4680b72bb8bd928d44c4777d25858"
+    },
+    {
+      "id": "app-interaction-016",
+      "name": "keyboard changes do nothing while reading",
+      "source": "app/lib/chat-scroll-policy.test.ts",
+      "api": "chatCommandForKeyboardChange",
+      "input": {
+        "name": "keyboard changes do nothing while reading",
+        "source": "app/lib/chat-scroll-policy.test.ts",
+        "api": "chatCommandForKeyboardChange",
+        "policy": { "intent": "reading" }
+      },
+      "output": { "kind": "none" },
+      "inputSha256": "2e3d646793ee305389e42df478f70f2772017b24a863831a41cbfc0a56de6f20"
+    },
+    {
+      "id": "app-interaction-017",
+      "name": "navigation focus resets policy",
+      "source": "app/lib/chat-scroll-policy.test.ts",
+      "api": "chatPolicyAfterNavigationFocus",
+      "input": {
+        "name": "navigation focus resets policy",
+        "source": "app/lib/chat-scroll-policy.test.ts",
+        "api": "chatPolicyAfterNavigationFocus"
+      },
+      "output": { "intent": "pinned" },
+      "inputSha256": "80f41ccac2a43b77d4a9199e56a8b90c539ba1161ddf8508b8281ead01e0c853"
+    },
+    {
+      "id": "app-interaction-018",
+      "name": "navigation focus scroll command",
+      "source": "app/lib/chat-scroll-policy.test.ts",
+      "api": "chatCommandForNavigationFocus",
+      "input": {
+        "name": "navigation focus scroll command",
+        "source": "app/lib/chat-scroll-policy.test.ts",
+        "api": "chatCommandForNavigationFocus"
+      },
+      "output": { "animated": false, "kind": "scrollToEnd", "reason": "navigation" },
+      "inputSha256": "2cf4bdecffe7fc157f8c9c66489180e3234f7a720a499bc282b7582137977cfb"
+    },
+    {
+      "id": "app-interaction-019",
+      "name": "initial layout scroll command",
+      "source": "app/lib/chat-scroll-policy.test.ts",
+      "api": "chatCommandForInitialLayout",
+      "input": {
+        "name": "initial layout scroll command",
+        "source": "app/lib/chat-scroll-policy.test.ts",
+        "api": "chatCommandForInitialLayout"
+      },
+      "output": { "animated": false, "kind": "scrollToEnd", "reason": "initial" },
+      "inputSha256": "3da70a9ecb26c22223e930b4f7cbd67e41dc9f9551a6de23442cc9d9c1076cb6"
+    }
+  ]
+}

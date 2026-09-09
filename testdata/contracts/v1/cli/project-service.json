@@ -1,0 +1,84 @@
+{
+  "version": 1,
+  "source": "src/cli/project-service.test.ts",
+  "generatedBy": "scripts/capture-cli-project-service-contract.mjs",
+  "description": "CLI project-service path matching, pid extraction, and version-help text captured by running TypeScript cli/project-service helpers.",
+  "cases": [
+    {
+      "id": "cli-project-service-001",
+      "name": "matches projects by resolved path",
+      "source": "src/cli/project-service.test.ts",
+      "api": "findCoreProject",
+      "input": {
+        "name": "matches projects by resolved path",
+        "api": "findCoreProject",
+        "projects": [
+          { "path": "/tmp/aimux/a/../a", "service": { "pid": 123 } },
+          { "path": "/tmp/aimux/b", "service": null }
+        ],
+        "projectRoot": "/tmp/aimux/a"
+      },
+      "output": { "path": "/tmp/aimux/a/../a", "service": { "pid": 123 } },
+      "inputSha256": "79005350b5e33532024836c8aa6f4b84923b76b9ee45f2b23c58292a5f188371"
+    },
+    {
+      "id": "cli-project-service-002",
+      "name": "returns null for unmatched resolved path",
+      "source": "src/cli/project-service.test.ts",
+      "api": "findCoreProject",
+      "input": {
+        "name": "returns null for unmatched resolved path",
+        "api": "findCoreProject",
+        "projects": [
+          { "path": "/tmp/aimux/a/../a", "service": { "pid": 123 } },
+          { "path": "/tmp/aimux/b", "service": null }
+        ],
+        "projectRoot": "/tmp/aimux/c"
+      },
+      "output": null,
+      "inputSha256": "847b16ffd435002278979ed8ae23fe1d30bd9721cd6d68f9cb32277d22dc39a5"
+    },
+    {
+      "id": "cli-project-service-003",
+      "name": "reads numeric project service pid",
+      "source": "src/cli/project-service.test.ts",
+      "api": "coreProjectServicePid",
+      "input": {
+        "name": "reads numeric project service pid",
+        "api": "coreProjectServicePid",
+        "project": { "service": { "pid": 123 } }
+      },
+      "output": 123,
+      "inputSha256": "0b64da589aafbe695919946ae186a95010245d509c96b898bafea907836a6b5c"
+    },
+    {
+      "id": "cli-project-service-004",
+      "name": "rejects string project service pid",
+      "source": "src/cli/project-service.test.ts",
+      "api": "coreProjectServicePid",
+      "input": {
+        "name": "rejects string project service pid",
+        "api": "coreProjectServicePid",
+        "project": { "service": { "pid": "123" } }
+      },
+      "output": null,
+      "inputSha256": "14d282db3dd41d8a0ec07e32f6b089d38c61eda24b1fac32f8c67f6e8b04e317"
+    },
+    {
+      "id": "cli-project-service-005",
+      "name": "renders stale project-service build help",
+      "source": "src/cli/project-service.test.ts",
+      "api": "renderProjectServiceVersionHelp",
+      "input": {
+        "name": "renders stale project-service build help",
+        "api": "renderProjectServiceVersionHelp",
+        "message": "stale",
+        "projectRoot": "/repo",
+        "expected": { "version": "local-a", "buildStamp": "local-a" },
+        "actual": { "version": "local-b", "buildStamp": "local-b" }
+      },
+      "output": "aimux: the running project service is from a different local build.\n\nProject: /repo\nExpected build: local-a\nRunning build: local-b\n\nRestart the local aimux control plane, then retry:\n  aimux restart\n\nInspect the local version inventory with:\n  aimux doctor versions",
+      "inputSha256": "a7a591ef0b2a777a3586fbf58ff328df89fb6ef22317c43f96a04c6ae0f04c5f"
+    }
+  ]
+}

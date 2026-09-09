@@ -132,7 +132,7 @@ jobs:
             exit 1
           fi
 
-      - name: Stage macOS notifier helpers for npm package
+      - name: Stage macOS native assets for npm package
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
@@ -147,13 +147,13 @@ jobs:
             EXTRACT_DIR="$TMP_DIR/extract-${arch}"
             mkdir -p "$EXTRACT_DIR"
             tar -xzf "$TMP_DIR/aimux-darwin-${arch}.tar.gz" -C "$EXTRACT_DIR" \
+              "aimux/native/darwin-${arch}/aimux" \
               aimux/native/darwin/aimux-notifier.app
             rm -rf "native/darwin-${arch}"
             mkdir -p "native/darwin-${arch}"
+            mv "$EXTRACT_DIR/aimux/native/darwin-${arch}/aimux" "native/darwin-${arch}/"
             mv "$EXTRACT_DIR/aimux/native/darwin/aimux-notifier.app" "native/darwin-${arch}/"
           done
-
-      - run: yarn build:release
 
       - name: Verify npm package has no source maps
         run: |
@@ -165,13 +165,25 @@ jobs:
           const jsonStart = raw.lastIndexOf('\n[');
           const json = jsonStart >= 0 ? raw.slice(jsonStart + 1) : raw;
           const pack = JSON.parse(json)[0];
-          const maps = pack.files
-            .map((file) => file.path)
+          const paths = pack.files.map((file) => file.path);
+          const maps = paths
             .filter((path) => path.endsWith('.map'));
           if (maps.length > 0) {
             console.error('npm package contains source maps:');
             for (const path of maps) console.error(`- ${path}`);
             process.exit(1);
+          }
+          const runtimeDist = paths.filter((path) => path === 'dist' || path.startsWith('dist/'));
+          if (runtimeDist.length > 0) {
+            console.error('npm package contains retired CLI dist payload:');
+            for (const path of runtimeDist) console.error(`- ${path}`);
+            process.exit(1);
+          }
+          for (const required of ['native/darwin-arm64/aimux', 'native/darwin-x64/aimux']) {
+            if (!paths.includes(required)) {
+              console.error(`npm package is missing ${required}`);
+              process.exit(1);
+            }
           }
           NODE
 
@@ -264,7 +276,6 @@ jobs:
               end
             end
 
-            depends_on "node"
             depends_on "tmux"
 
             def install

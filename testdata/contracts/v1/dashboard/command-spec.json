@@ -1,0 +1,495 @@
+{
+  "version": 1,
+  "generatedAt": "2026-09-07T00:00:00.000Z",
+  "generatedBy": "scripts/capture-dashboard-command-spec-contract.mjs",
+  "source": "src/dashboard/command-spec.test.ts",
+  "sources": ["src/dashboard/command-spec.test.ts", "src/dashboard/command-spec.ts"],
+  "subject": "getDashboardCommandSpec",
+  "description": "Dashboard tmux launch command and build-stamp behavior captured by running TypeScript getDashboardCommandSpec.",
+  "normalizedFields": ["script paths", "temp paths", "dashboardBuildStamp"],
+  "caseCount": 9,
+  "cases": [
+    {
+      "id": "dashboard-command-spec-001",
+      "name": "default source checkout command",
+      "source": "src/dashboard/command-spec.test.ts",
+      "api": "getDashboardCommandSpec",
+      "input": { "projectRoot": "/tmp/repo", "env": {} },
+      "output": {
+        "scriptPath": "<REPO>/dist/launcher-bin.js",
+        "dashboardBuildStamp": "acacad52ee2b1a20-d620036557b5ade5",
+        "dashboardCommand": {
+          "cwd": "/tmp/repo",
+          "command": "bash",
+          "args": [
+            "-lc",
+            "output_file=$(mktemp /tmp/aimux-dashboard-output.XXXXXX) ; trap 'rm -f \"$output_file\"' EXIT ; trap 'rm -f \"$output_file\"; exit 130' INT TERM HUP ; set -o pipefail ; printf '\n%s\n%s\n' 'Starting Aimux dashboard...' 'Loading local control plane.' ; env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '--tmux-dashboard-internal' 2>&1 | tee \"$output_file\" ; code=$? ; if [ $code -ne 0 ] ; then printf '\\033[?1049l\\033[H\\033[2J' ; if [ -s \"$output_file\" ] ; then cat \"$output_file\" ; else printf '%s\\n' 'No dashboard stderr/stdout was captured.' ; fi ; printf '%s\\n' '' ; printf '%s\\n%s\\n%s\\n%s\\n%s\\n' 'aimux dashboard failed to start.' 'The error above was captured from the dashboard process.' 'If that output is empty, rerun aimux with --debug to record the next attempt.' 'Press q, Enter, or Ctrl+C to close this pane.' '' ; printf '%s\\n' \"exit code: $code\" ; while IFS= read -rsn1 key ; do if [ -z \"$key\" ] || [ \"$key\" = 'q' ] ; then exit 0 ; fi ; done ; fi"
+          ]
+        },
+        "derived": {
+          "shellSyntaxOk": true,
+          "usesBashWrapper": true,
+          "includesLegacyNodeDashboardEntrypoint": true,
+          "includesNativeDashboardEntrypoint": false,
+          "quotesPrintfNewline": true,
+          "hasExitCleanupTrap": true,
+          "hasSignalCleanupTrap": true,
+          "appendsSharedDebugLog": false,
+          "printsStartupFrameBeforeEntrypoint": true,
+          "entersAlternateScreenBeforeStartup": false
+        }
+      },
+      "inputSha256": "3ada2df3d3f4cb4d796f0855668e3226b186fc048bcb8a38fd09de0b768afd03"
+    },
+    {
+      "id": "dashboard-command-spec-002",
+      "name": "allowlisted environment is quoted",
+      "source": "src/dashboard/command-spec.test.ts",
+      "api": "getDashboardCommandSpec",
+      "input": {
+        "projectRoot": "/tmp/repo",
+        "env": {
+          "AIMUX_HOME": "/tmp/custom'home; echo unsafe",
+          "AIMUX_DAEMON_PORT": "43219",
+          "SECRET_TOKEN": "not-for-tmux"
+        }
+      },
+      "output": {
+        "scriptPath": "<REPO>/dist/launcher-bin.js",
+        "dashboardBuildStamp": "acacad52ee2b1a20-e0816da817656e23",
+        "dashboardCommand": {
+          "cwd": "/tmp/repo",
+          "command": "bash",
+          "args": [
+            "-lc",
+            "output_file=$(mktemp /tmp/aimux-dashboard-output.XXXXXX) ; trap 'rm -f \"$output_file\"' EXIT ; trap 'rm -f \"$output_file\"; exit 130' INT TERM HUP ; set -o pipefail ; printf '\n%s\n%s\n' 'Starting Aimux dashboard...' 'Loading local control plane.' ; env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' AIMUX_HOME='/tmp/custom'\"'\"'home; echo unsafe' AIMUX_DAEMON_PORT='43219' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '--tmux-dashboard-internal' 2>&1 | tee \"$output_file\" ; code=$? ; if [ $code -ne 0 ] ; then printf '\\033[?1049l\\033[H\\033[2J' ; if [ -s \"$output_file\" ] ; then cat \"$output_file\" ; else printf '%s\\n' 'No dashboard stderr/stdout was captured.' ; fi ; printf '%s\\n' '' ; printf '%s\\n%s\\n%s\\n%s\\n%s\\n' 'aimux dashboard failed to start.' 'The error above was captured from the dashboard process.' 'If that output is empty, rerun aimux with --debug to record the next attempt.' 'Press q, Enter, or Ctrl+C to close this pane.' '' ; printf '%s\\n' \"exit code: $code\" ; while IFS= read -rsn1 key ; do if [ -z \"$key\" ] || [ \"$key\" = 'q' ] ; then exit 0 ; fi ; done ; fi"
+          ]
+        },
+        "derived": {
+          "shellSyntaxOk": true,
+          "usesBashWrapper": true,
+          "includesLegacyNodeDashboardEntrypoint": true,
+          "includesNativeDashboardEntrypoint": false,
+          "quotesPrintfNewline": true,
+          "hasExitCleanupTrap": true,
+          "hasSignalCleanupTrap": true,
+          "appendsSharedDebugLog": false,
+          "printsStartupFrameBeforeEntrypoint": true,
+          "entersAlternateScreenBeforeStartup": false
+        }
+      },
+      "inputSha256": "fcf2fb24e3a301c9d3b478cc3a32822966812e8dff54439d5674311aa1cbc428"
+    },
+    {
+      "id": "dashboard-command-spec-003",
+      "name": "source checkout unsets stable shim env",
+      "source": "src/dashboard/command-spec.test.ts",
+      "api": "getDashboardCommandSpec",
+      "input": {
+        "projectRoot": "/tmp/repo",
+        "env": {
+          "AIMUX_HOME": "/tmp/aimux",
+          "AIMUX_CLI_BIN": "/Users/sam/.local/bin/aimux",
+          "AIMUX_INSTALL_ROOT": "/Users/sam/.aimux/native"
+        }
+      },
+      "output": {
+        "scriptPath": "<REPO>/dist/launcher-bin.js",
+        "dashboardBuildStamp": "acacad52ee2b1a20-9cb8ac3d18efdf82",
+        "dashboardCommand": {
+          "cwd": "/tmp/repo",
+          "command": "bash",
+          "args": [
+            "-lc",
+            "output_file=$(mktemp /tmp/aimux-dashboard-output.XXXXXX) ; trap 'rm -f \"$output_file\"' EXIT ; trap 'rm -f \"$output_file\"; exit 130' INT TERM HUP ; set -o pipefail ; printf '\n%s\n%s\n' 'Starting Aimux dashboard...' 'Loading local control plane.' ; env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' AIMUX_HOME='/tmp/aimux' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '--tmux-dashboard-internal' 2>&1 | tee \"$output_file\" ; code=$? ; if [ $code -ne 0 ] ; then printf '\\033[?1049l\\033[H\\033[2J' ; if [ -s \"$output_file\" ] ; then cat \"$output_file\" ; else printf '%s\\n' 'No dashboard stderr/stdout was captured.' ; fi ; printf '%s\\n' '' ; printf '%s\\n%s\\n%s\\n%s\\n%s\\n' 'aimux dashboard failed to start.' 'The error above was captured from the dashboard process.' 'If that output is empty, rerun aimux with --debug to record the next attempt.' 'Press q, Enter, or Ctrl+C to close this pane.' '' ; printf '%s\\n' \"exit code: $code\" ; while IFS= read -rsn1 key ; do if [ -z \"$key\" ] || [ \"$key\" = 'q' ] ; then exit 0 ; fi ; done ; fi"
+          ]
+        },
+        "derived": {
+          "shellSyntaxOk": true,
+          "usesBashWrapper": true,
+          "includesLegacyNodeDashboardEntrypoint": true,
+          "includesNativeDashboardEntrypoint": false,
+          "quotesPrintfNewline": true,
+          "hasExitCleanupTrap": true,
+          "hasSignalCleanupTrap": true,
+          "appendsSharedDebugLog": false,
+          "printsStartupFrameBeforeEntrypoint": true,
+          "entersAlternateScreenBeforeStartup": false
+        }
+      },
+      "inputSha256": "9e7c2677e045d3f38b2a57b8e776d30c8b091b479628efaa89f3f3ad10025d6f"
+    },
+    {
+      "id": "dashboard-command-spec-004",
+      "name": "environment change alters build stamp",
+      "source": "src/dashboard/command-spec.test.ts",
+      "api": "getDashboardCommandSpec",
+      "input": {
+        "projectRoot": "/tmp/repo",
+        "envs": [{ "AIMUX_DAEMON_PORT": "43190" }, { "AIMUX_DAEMON_PORT": "43191" }]
+      },
+      "output": {
+        "first": {
+          "scriptPath": "<REPO>/dist/launcher-bin.js",
+          "dashboardBuildStamp": "acacad52ee2b1a20-d620036557b5ade5",
+          "dashboardCommand": {
+            "cwd": "/tmp/repo",
+            "command": "bash",
+            "args": [
+              "-lc",
+              "output_file=$(mktemp /tmp/aimux-dashboard-output.XXXXXX) ; trap 'rm -f \"$output_file\"' EXIT ; trap 'rm -f \"$output_file\"; exit 130' INT TERM HUP ; set -o pipefail ; printf '\n%s\n%s\n' 'Starting Aimux dashboard...' 'Loading local control plane.' ; env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' AIMUX_DAEMON_PORT='43190' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '--tmux-dashboard-internal' 2>&1 | tee \"$output_file\" ; code=$? ; if [ $code -ne 0 ] ; then printf '\\033[?1049l\\033[H\\033[2J' ; if [ -s \"$output_file\" ] ; then cat \"$output_file\" ; else printf '%s\\n' 'No dashboard stderr/stdout was captured.' ; fi ; printf '%s\\n' '' ; printf '%s\\n%s\\n%s\\n%s\\n%s\\n' 'aimux dashboard failed to start.' 'The error above was captured from the dashboard process.' 'If that output is empty, rerun aimux with --debug to record the next attempt.' 'Press q, Enter, or Ctrl+C to close this pane.' '' ; printf '%s\\n' \"exit code: $code\" ; while IFS= read -rsn1 key ; do if [ -z \"$key\" ] || [ \"$key\" = 'q' ] ; then exit 0 ; fi ; done ; fi"
+            ]
+          },
+          "derived": {
+            "shellSyntaxOk": true,
+            "usesBashWrapper": true,
+            "includesLegacyNodeDashboardEntrypoint": true,
+            "includesNativeDashboardEntrypoint": false,
+            "quotesPrintfNewline": true,
+            "hasExitCleanupTrap": true,
+            "hasSignalCleanupTrap": true,
+            "appendsSharedDebugLog": false,
+            "printsStartupFrameBeforeEntrypoint": true,
+            "entersAlternateScreenBeforeStartup": false
+          }
+        },
+        "second": {
+          "scriptPath": "<REPO>/dist/launcher-bin.js",
+          "dashboardBuildStamp": "acacad52ee2b1a20-dd33e4a6d1cff0a5",
+          "dashboardCommand": {
+            "cwd": "/tmp/repo",
+            "command": "bash",
+            "args": [
+              "-lc",
+              "output_file=$(mktemp /tmp/aimux-dashboard-output.XXXXXX) ; trap 'rm -f \"$output_file\"' EXIT ; trap 'rm -f \"$output_file\"; exit 130' INT TERM HUP ; set -o pipefail ; printf '\n%s\n%s\n' 'Starting Aimux dashboard...' 'Loading local control plane.' ; env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' AIMUX_DAEMON_PORT='43191' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '--tmux-dashboard-internal' 2>&1 | tee \"$output_file\" ; code=$? ; if [ $code -ne 0 ] ; then printf '\\033[?1049l\\033[H\\033[2J' ; if [ -s \"$output_file\" ] ; then cat \"$output_file\" ; else printf '%s\\n' 'No dashboard stderr/stdout was captured.' ; fi ; printf '%s\\n' '' ; printf '%s\\n%s\\n%s\\n%s\\n%s\\n' 'aimux dashboard failed to start.' 'The error above was captured from the dashboard process.' 'If that output is empty, rerun aimux with --debug to record the next attempt.' 'Press q, Enter, or Ctrl+C to close this pane.' '' ; printf '%s\\n' \"exit code: $code\" ; while IFS= read -rsn1 key ; do if [ -z \"$key\" ] || [ \"$key\" = 'q' ] ; then exit 0 ; fi ; done ; fi"
+            ]
+          },
+          "derived": {
+            "shellSyntaxOk": true,
+            "usesBashWrapper": true,
+            "includesLegacyNodeDashboardEntrypoint": true,
+            "includesNativeDashboardEntrypoint": false,
+            "quotesPrintfNewline": true,
+            "hasExitCleanupTrap": true,
+            "hasSignalCleanupTrap": true,
+            "appendsSharedDebugLog": false,
+            "printsStartupFrameBeforeEntrypoint": true,
+            "entersAlternateScreenBeforeStartup": false
+          }
+        },
+        "sameStamp": false
+      },
+      "inputSha256": "61292b19e90ee570c8c74db8b5aed370c5989b9e1811abe46287d643874470e9"
+    },
+    {
+      "id": "dashboard-command-spec-005",
+      "name": "explicit production defaults do not alter build stamp",
+      "source": "src/dashboard/command-spec.test.ts",
+      "api": "getDashboardCommandSpec",
+      "input": {
+        "projectRoot": "/tmp/repo",
+        "envs": [{}, { "AIMUX_ENV": "production", "AIMUX_WEB_APP_URL": "https://aimux.app" }]
+      },
+      "output": {
+        "implicit": {
+          "scriptPath": "<REPO>/dist/launcher-bin.js",
+          "dashboardBuildStamp": "acacad52ee2b1a20-d620036557b5ade5",
+          "dashboardCommand": {
+            "cwd": "/tmp/repo",
+            "command": "bash",
+            "args": [
+              "-lc",
+              "output_file=$(mktemp /tmp/aimux-dashboard-output.XXXXXX) ; trap 'rm -f \"$output_file\"' EXIT ; trap 'rm -f \"$output_file\"; exit 130' INT TERM HUP ; set -o pipefail ; printf '\n%s\n%s\n' 'Starting Aimux dashboard...' 'Loading local control plane.' ; env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '--tmux-dashboard-internal' 2>&1 | tee \"$output_file\" ; code=$? ; if [ $code -ne 0 ] ; then printf '\\033[?1049l\\033[H\\033[2J' ; if [ -s \"$output_file\" ] ; then cat \"$output_file\" ; else printf '%s\\n' 'No dashboard stderr/stdout was captured.' ; fi ; printf '%s\\n' '' ; printf '%s\\n%s\\n%s\\n%s\\n%s\\n' 'aimux dashboard failed to start.' 'The error above was captured from the dashboard process.' 'If that output is empty, rerun aimux with --debug to record the next attempt.' 'Press q, Enter, or Ctrl+C to close this pane.' '' ; printf '%s\\n' \"exit code: $code\" ; while IFS= read -rsn1 key ; do if [ -z \"$key\" ] || [ \"$key\" = 'q' ] ; then exit 0 ; fi ; done ; fi"
+            ]
+          },
+          "derived": {
+            "shellSyntaxOk": true,
+            "usesBashWrapper": true,
+            "includesLegacyNodeDashboardEntrypoint": true,
+            "includesNativeDashboardEntrypoint": false,
+            "quotesPrintfNewline": true,
+            "hasExitCleanupTrap": true,
+            "hasSignalCleanupTrap": true,
+            "appendsSharedDebugLog": false,
+            "printsStartupFrameBeforeEntrypoint": true,
+            "entersAlternateScreenBeforeStartup": false
+          }
+        },
+        "explicit": {
+          "scriptPath": "<REPO>/dist/launcher-bin.js",
+          "dashboardBuildStamp": "acacad52ee2b1a20-d620036557b5ade5",
+          "dashboardCommand": {
+            "cwd": "/tmp/repo",
+            "command": "bash",
+            "args": [
+              "-lc",
+              "output_file=$(mktemp /tmp/aimux-dashboard-output.XXXXXX) ; trap 'rm -f \"$output_file\"' EXIT ; trap 'rm -f \"$output_file\"; exit 130' INT TERM HUP ; set -o pipefail ; printf '\n%s\n%s\n' 'Starting Aimux dashboard...' 'Loading local control plane.' ; env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' AIMUX_ENV='production' AIMUX_WEB_APP_URL='https://aimux.app' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '--tmux-dashboard-internal' 2>&1 | tee \"$output_file\" ; code=$? ; if [ $code -ne 0 ] ; then printf '\\033[?1049l\\033[H\\033[2J' ; if [ -s \"$output_file\" ] ; then cat \"$output_file\" ; else printf '%s\\n' 'No dashboard stderr/stdout was captured.' ; fi ; printf '%s\\n' '' ; printf '%s\\n%s\\n%s\\n%s\\n%s\\n' 'aimux dashboard failed to start.' 'The error above was captured from the dashboard process.' 'If that output is empty, rerun aimux with --debug to record the next attempt.' 'Press q, Enter, or Ctrl+C to close this pane.' '' ; printf '%s\\n' \"exit code: $code\" ; while IFS= read -rsn1 key ; do if [ -z \"$key\" ] || [ \"$key\" = 'q' ] ; then exit 0 ; fi ; done ; fi"
+            ]
+          },
+          "derived": {
+            "shellSyntaxOk": true,
+            "usesBashWrapper": true,
+            "includesLegacyNodeDashboardEntrypoint": true,
+            "includesNativeDashboardEntrypoint": false,
+            "quotesPrintfNewline": true,
+            "hasExitCleanupTrap": true,
+            "hasSignalCleanupTrap": true,
+            "appendsSharedDebugLog": false,
+            "printsStartupFrameBeforeEntrypoint": true,
+            "entersAlternateScreenBeforeStartup": false
+          }
+        },
+        "sameStamp": true
+      },
+      "inputSha256": "b7b2e1e5bfb54c250ec3ff473ba5b126dfbf37e970fcb6d50d01cd2e82260124"
+    },
+    {
+      "id": "dashboard-command-spec-006",
+      "name": "prepared stable CLI defaults do not alter build stamp",
+      "source": "src/dashboard/command-spec.test.ts",
+      "api": "getDashboardCommandSpec",
+      "input": { "projectRoot": "/tmp/repo", "envPreparedBy": "prepareStableCliEnv" },
+      "output": {
+        "implicit": {
+          "scriptPath": "<REPO>/dist/launcher-bin.js",
+          "dashboardBuildStamp": "acacad52ee2b1a20-d620036557b5ade5",
+          "dashboardCommand": {
+            "cwd": "/tmp/repo",
+            "command": "bash",
+            "args": [
+              "-lc",
+              "output_file=$(mktemp /tmp/aimux-dashboard-output.XXXXXX) ; trap 'rm -f \"$output_file\"' EXIT ; trap 'rm -f \"$output_file\"; exit 130' INT TERM HUP ; set -o pipefail ; printf '\n%s\n%s\n' 'Starting Aimux dashboard...' 'Loading local control plane.' ; env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '--tmux-dashboard-internal' 2>&1 | tee \"$output_file\" ; code=$? ; if [ $code -ne 0 ] ; then printf '\\033[?1049l\\033[H\\033[2J' ; if [ -s \"$output_file\" ] ; then cat \"$output_file\" ; else printf '%s\\n' 'No dashboard stderr/stdout was captured.' ; fi ; printf '%s\\n' '' ; printf '%s\\n%s\\n%s\\n%s\\n%s\\n' 'aimux dashboard failed to start.' 'The error above was captured from the dashboard process.' 'If that output is empty, rerun aimux with --debug to record the next attempt.' 'Press q, Enter, or Ctrl+C to close this pane.' '' ; printf '%s\\n' \"exit code: $code\" ; while IFS= read -rsn1 key ; do if [ -z \"$key\" ] || [ \"$key\" = 'q' ] ; then exit 0 ; fi ; done ; fi"
+            ]
+          },
+          "derived": {
+            "shellSyntaxOk": true,
+            "usesBashWrapper": true,
+            "includesLegacyNodeDashboardEntrypoint": true,
+            "includesNativeDashboardEntrypoint": false,
+            "quotesPrintfNewline": true,
+            "hasExitCleanupTrap": true,
+            "hasSignalCleanupTrap": true,
+            "appendsSharedDebugLog": false,
+            "printsStartupFrameBeforeEntrypoint": true,
+            "entersAlternateScreenBeforeStartup": false
+          }
+        },
+        "prepared": {
+          "scriptPath": "<REPO>/dist/launcher-bin.js",
+          "dashboardBuildStamp": "acacad52ee2b1a20-d620036557b5ade5",
+          "dashboardCommand": {
+            "cwd": "/tmp/repo",
+            "command": "bash",
+            "args": [
+              "-lc",
+              "output_file=$(mktemp /tmp/aimux-dashboard-output.XXXXXX) ; trap 'rm -f \"$output_file\"' EXIT ; trap 'rm -f \"$output_file\"; exit 130' INT TERM HUP ; set -o pipefail ; printf '\n%s\n%s\n' 'Starting Aimux dashboard...' 'Loading local control plane.' ; env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' AIMUX_HOME='/Users/sam/.aimux' AIMUX_DAEMON_PORT='43190' AIMUX_ENV='production' AIMUX_WEB_APP_URL='https://aimux.app' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '--tmux-dashboard-internal' 2>&1 | tee \"$output_file\" ; code=$? ; if [ $code -ne 0 ] ; then printf '\\033[?1049l\\033[H\\033[2J' ; if [ -s \"$output_file\" ] ; then cat \"$output_file\" ; else printf '%s\\n' 'No dashboard stderr/stdout was captured.' ; fi ; printf '%s\\n' '' ; printf '%s\\n%s\\n%s\\n%s\\n%s\\n' 'aimux dashboard failed to start.' 'The error above was captured from the dashboard process.' 'If that output is empty, rerun aimux with --debug to record the next attempt.' 'Press q, Enter, or Ctrl+C to close this pane.' '' ; printf '%s\\n' \"exit code: $code\" ; while IFS= read -rsn1 key ; do if [ -z \"$key\" ] || [ \"$key\" = 'q' ] ; then exit 0 ; fi ; done ; fi"
+            ]
+          },
+          "derived": {
+            "shellSyntaxOk": true,
+            "usesBashWrapper": true,
+            "includesLegacyNodeDashboardEntrypoint": true,
+            "includesNativeDashboardEntrypoint": false,
+            "quotesPrintfNewline": true,
+            "hasExitCleanupTrap": true,
+            "hasSignalCleanupTrap": true,
+            "appendsSharedDebugLog": false,
+            "printsStartupFrameBeforeEntrypoint": true,
+            "entersAlternateScreenBeforeStartup": false
+          }
+        },
+        "sameStamp": true
+      },
+      "inputSha256": "3bf321db715488982618a414dc9a38994a88bfdbb45c1494ced950d95a05d5a9"
+    },
+    {
+      "id": "dashboard-command-spec-007",
+      "name": "non-default web app env changes build stamp",
+      "source": "src/dashboard/command-spec.test.ts",
+      "api": "getDashboardCommandSpec",
+      "input": {
+        "projectRoot": "/tmp/repo",
+        "envs": [
+          { "AIMUX_ENV": "production", "AIMUX_WEB_APP_URL": "https://aimux.app" },
+          { "AIMUX_ENV": "development", "AIMUX_WEB_APP_URL": "http://localhost:8081" }
+        ]
+      },
+      "output": {
+        "production": {
+          "scriptPath": "<REPO>/dist/launcher-bin.js",
+          "dashboardBuildStamp": "acacad52ee2b1a20-d620036557b5ade5",
+          "dashboardCommand": {
+            "cwd": "/tmp/repo",
+            "command": "bash",
+            "args": [
+              "-lc",
+              "output_file=$(mktemp /tmp/aimux-dashboard-output.XXXXXX) ; trap 'rm -f \"$output_file\"' EXIT ; trap 'rm -f \"$output_file\"; exit 130' INT TERM HUP ; set -o pipefail ; printf '\n%s\n%s\n' 'Starting Aimux dashboard...' 'Loading local control plane.' ; env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' AIMUX_ENV='production' AIMUX_WEB_APP_URL='https://aimux.app' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '--tmux-dashboard-internal' 2>&1 | tee \"$output_file\" ; code=$? ; if [ $code -ne 0 ] ; then printf '\\033[?1049l\\033[H\\033[2J' ; if [ -s \"$output_file\" ] ; then cat \"$output_file\" ; else printf '%s\\n' 'No dashboard stderr/stdout was captured.' ; fi ; printf '%s\\n' '' ; printf '%s\\n%s\\n%s\\n%s\\n%s\\n' 'aimux dashboard failed to start.' 'The error above was captured from the dashboard process.' 'If that output is empty, rerun aimux with --debug to record the next attempt.' 'Press q, Enter, or Ctrl+C to close this pane.' '' ; printf '%s\\n' \"exit code: $code\" ; while IFS= read -rsn1 key ; do if [ -z \"$key\" ] || [ \"$key\" = 'q' ] ; then exit 0 ; fi ; done ; fi"
+            ]
+          },
+          "derived": {
+            "shellSyntaxOk": true,
+            "usesBashWrapper": true,
+            "includesLegacyNodeDashboardEntrypoint": true,
+            "includesNativeDashboardEntrypoint": false,
+            "quotesPrintfNewline": true,
+            "hasExitCleanupTrap": true,
+            "hasSignalCleanupTrap": true,
+            "appendsSharedDebugLog": false,
+            "printsStartupFrameBeforeEntrypoint": true,
+            "entersAlternateScreenBeforeStartup": false
+          }
+        },
+        "development": {
+          "scriptPath": "<REPO>/dist/launcher-bin.js",
+          "dashboardBuildStamp": "acacad52ee2b1a20-2d9bac789a46fff0",
+          "dashboardCommand": {
+            "cwd": "/tmp/repo",
+            "command": "bash",
+            "args": [
+              "-lc",
+              "output_file=$(mktemp /tmp/aimux-dashboard-output.XXXXXX) ; trap 'rm -f \"$output_file\"' EXIT ; trap 'rm -f \"$output_file\"; exit 130' INT TERM HUP ; set -o pipefail ; printf '\n%s\n%s\n' 'Starting Aimux dashboard...' 'Loading local control plane.' ; env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' AIMUX_ENV='development' AIMUX_WEB_APP_URL='http://localhost:8081' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '--tmux-dashboard-internal' 2>&1 | tee \"$output_file\" ; code=$? ; if [ $code -ne 0 ] ; then printf '\\033[?1049l\\033[H\\033[2J' ; if [ -s \"$output_file\" ] ; then cat \"$output_file\" ; else printf '%s\\n' 'No dashboard stderr/stdout was captured.' ; fi ; printf '%s\\n' '' ; printf '%s\\n%s\\n%s\\n%s\\n%s\\n' 'aimux dashboard failed to start.' 'The error above was captured from the dashboard process.' 'If that output is empty, rerun aimux with --debug to record the next attempt.' 'Press q, Enter, or Ctrl+C to close this pane.' '' ; printf '%s\\n' \"exit code: $code\" ; while IFS= read -rsn1 key ; do if [ -z \"$key\" ] || [ \"$key\" = 'q' ] ; then exit 0 ; fi ; done ; fi"
+            ]
+          },
+          "derived": {
+            "shellSyntaxOk": true,
+            "usesBashWrapper": true,
+            "includesLegacyNodeDashboardEntrypoint": true,
+            "includesNativeDashboardEntrypoint": false,
+            "quotesPrintfNewline": true,
+            "hasExitCleanupTrap": true,
+            "hasSignalCleanupTrap": true,
+            "appendsSharedDebugLog": false,
+            "printsStartupFrameBeforeEntrypoint": true,
+            "entersAlternateScreenBeforeStartup": false
+          }
+        },
+        "sameStamp": false
+      },
+      "inputSha256": "9fd07a29db0514948b4ca9d990472de29029c1af776342a9dbf9c0c6e36d81bf"
+    },
+    {
+      "id": "dashboard-command-spec-008",
+      "name": "stable shim launch stamp follows install root",
+      "source": "src/dashboard/command-spec.test.ts",
+      "api": "getDashboardCommandSpec",
+      "input": {
+        "projectRoot": "/tmp/repo",
+        "env": { "AIMUX_CLI_BIN": "<TMP>/bin/aimux", "AIMUX_INSTALL_ROOT": "<REPO>/src" }
+      },
+      "output": {
+        "first": {
+          "scriptPath": "<REPO>/dist/launcher-bin.js",
+          "dashboardBuildStamp": "acacad52ee2b1a20-d620036557b5ade5",
+          "dashboardCommand": {
+            "cwd": "/tmp/repo",
+            "command": "bash",
+            "args": [
+              "-lc",
+              "output_file=$(mktemp /tmp/aimux-dashboard-output.XXXXXX) ; trap 'rm -f \"$output_file\"' EXIT ; trap 'rm -f \"$output_file\"; exit 130' INT TERM HUP ; set -o pipefail ; printf '\n%s\n%s\n' 'Starting Aimux dashboard...' 'Loading local control plane.' ; env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '--tmux-dashboard-internal' 2>&1 | tee \"$output_file\" ; code=$? ; if [ $code -ne 0 ] ; then printf '\\033[?1049l\\033[H\\033[2J' ; if [ -s \"$output_file\" ] ; then cat \"$output_file\" ; else printf '%s\\n' 'No dashboard stderr/stdout was captured.' ; fi ; printf '%s\\n' '' ; printf '%s\\n%s\\n%s\\n%s\\n%s\\n' 'aimux dashboard failed to start.' 'The error above was captured from the dashboard process.' 'If that output is empty, rerun aimux with --debug to record the next attempt.' 'Press q, Enter, or Ctrl+C to close this pane.' '' ; printf '%s\\n' \"exit code: $code\" ; while IFS= read -rsn1 key ; do if [ -z \"$key\" ] || [ \"$key\" = 'q' ] ; then exit 0 ; fi ; done ; fi"
+            ]
+          },
+          "derived": {
+            "shellSyntaxOk": true,
+            "usesBashWrapper": true,
+            "includesLegacyNodeDashboardEntrypoint": true,
+            "includesNativeDashboardEntrypoint": false,
+            "quotesPrintfNewline": true,
+            "hasExitCleanupTrap": true,
+            "hasSignalCleanupTrap": true,
+            "appendsSharedDebugLog": false,
+            "printsStartupFrameBeforeEntrypoint": true,
+            "entersAlternateScreenBeforeStartup": false
+          }
+        },
+        "second": {
+          "scriptPath": "<REPO>/dist/launcher-bin.js",
+          "dashboardBuildStamp": "acacad52ee2b1a20-d620036557b5ade5",
+          "dashboardCommand": {
+            "cwd": "/tmp/repo",
+            "command": "bash",
+            "args": [
+              "-lc",
+              "output_file=$(mktemp /tmp/aimux-dashboard-output.XXXXXX) ; trap 'rm -f \"$output_file\"' EXIT ; trap 'rm -f \"$output_file\"; exit 130' INT TERM HUP ; set -o pipefail ; printf '\n%s\n%s\n' 'Starting Aimux dashboard...' 'Loading local control plane.' ; env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '--tmux-dashboard-internal' 2>&1 | tee \"$output_file\" ; code=$? ; if [ $code -ne 0 ] ; then printf '\\033[?1049l\\033[H\\033[2J' ; if [ -s \"$output_file\" ] ; then cat \"$output_file\" ; else printf '%s\\n' 'No dashboard stderr/stdout was captured.' ; fi ; printf '%s\\n' '' ; printf '%s\\n%s\\n%s\\n%s\\n%s\\n' 'aimux dashboard failed to start.' 'The error above was captured from the dashboard process.' 'If that output is empty, rerun aimux with --debug to record the next attempt.' 'Press q, Enter, or Ctrl+C to close this pane.' '' ; printf '%s\\n' \"exit code: $code\" ; while IFS= read -rsn1 key ; do if [ -z \"$key\" ] || [ \"$key\" = 'q' ] ; then exit 0 ; fi ; done ; fi"
+            ]
+          },
+          "derived": {
+            "shellSyntaxOk": true,
+            "usesBashWrapper": true,
+            "includesLegacyNodeDashboardEntrypoint": true,
+            "includesNativeDashboardEntrypoint": false,
+            "quotesPrintfNewline": true,
+            "hasExitCleanupTrap": true,
+            "hasSignalCleanupTrap": true,
+            "appendsSharedDebugLog": false,
+            "printsStartupFrameBeforeEntrypoint": true,
+            "entersAlternateScreenBeforeStartup": false
+          }
+        },
+        "sameStamp": true
+      },
+      "inputSha256": "07fddf2c59b6b04b0082a4da3e8301716bd9d4f064e48929858ec2022b50569d"
+    },
+    {
+      "id": "dashboard-command-spec-009",
+      "name": "stable shim launch stamp follows native binary bytes",
+      "source": "src/dashboard/command-spec.test.ts",
+      "api": "getDashboardCommandSpec",
+      "input": {
+        "projectRoot": "/tmp/repo",
+        "env": { "AIMUX_CLI_BIN": "<TMP>/bin/aimux", "AIMUX_INSTALL_ROOT": "<REPO>/src" }
+      },
+      "output": {
+        "first": {
+          "scriptPath": "<REPO>/dist/launcher-bin.js",
+          "dashboardBuildStamp": "acacad52ee2b1a20-d620036557b5ade5",
+          "dashboardCommand": {
+            "cwd": "/tmp/repo",
+            "command": "bash",
+            "args": [
+              "-lc",
+              "output_file=$(mktemp /tmp/aimux-dashboard-output.XXXXXX) ; trap 'rm -f \"$output_file\"' EXIT ; trap 'rm -f \"$output_file\"; exit 130' INT TERM HUP ; set -o pipefail ; printf '\n%s\n%s\n' 'Starting Aimux dashboard...' 'Loading local control plane.' ; env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '--tmux-dashboard-internal' 2>&1 | tee \"$output_file\" ; code=$? ; if [ $code -ne 0 ] ; then printf '\\033[?1049l\\033[H\\033[2J' ; if [ -s \"$output_file\" ] ; then cat \"$output_file\" ; else printf '%s\\n' 'No dashboard stderr/stdout was captured.' ; fi ; printf '%s\\n' '' ; printf '%s\\n%s\\n%s\\n%s\\n%s\\n' 'aimux dashboard failed to start.' 'The error above was captured from the dashboard process.' 'If that output is empty, rerun aimux with --debug to record the next attempt.' 'Press q, Enter, or Ctrl+C to close this pane.' '' ; printf '%s\\n' \"exit code: $code\" ; while IFS= read -rsn1 key ; do if [ -z \"$key\" ] || [ \"$key\" = 'q' ] ; then exit 0 ; fi ; done ; fi"
+            ]
+          },
+          "derived": {
+            "shellSyntaxOk": true,
+            "usesBashWrapper": true,
+            "includesLegacyNodeDashboardEntrypoint": true,
+            "includesNativeDashboardEntrypoint": false,
+            "quotesPrintfNewline": true,
+            "hasExitCleanupTrap": true,
+            "hasSignalCleanupTrap": true,
+            "appendsSharedDebugLog": false,
+            "printsStartupFrameBeforeEntrypoint": true,
+            "entersAlternateScreenBeforeStartup": false
+          }
+        },
+        "second": {
+          "scriptPath": "<REPO>/dist/launcher-bin.js",
+          "dashboardBuildStamp": "acacad52ee2b1a20-d620036557b5ade5",
+          "dashboardCommand": {
+            "cwd": "/tmp/repo",
+            "command": "bash",
+            "args": [
+              "-lc",
+              "output_file=$(mktemp /tmp/aimux-dashboard-output.XXXXXX) ; trap 'rm -f \"$output_file\"' EXIT ; trap 'rm -f \"$output_file\"; exit 130' INT TERM HUP ; set -o pipefail ; printf '\n%s\n%s\n' 'Starting Aimux dashboard...' 'Loading local control plane.' ; env -u 'AIMUX_CLI_BIN' -u 'AIMUX_INSTALL_ROOT' '/opt/homebrew/Cellar/node/25.8.1_1/bin/node' '<REPO>/dist/launcher-bin.js' '--tmux-dashboard-internal' 2>&1 | tee \"$output_file\" ; code=$? ; if [ $code -ne 0 ] ; then printf '\\033[?1049l\\033[H\\033[2J' ; if [ -s \"$output_file\" ] ; then cat \"$output_file\" ; else printf '%s\\n' 'No dashboard stderr/stdout was captured.' ; fi ; printf '%s\\n' '' ; printf '%s\\n%s\\n%s\\n%s\\n%s\\n' 'aimux dashboard failed to start.' 'The error above was captured from the dashboard process.' 'If that output is empty, rerun aimux with --debug to record the next attempt.' 'Press q, Enter, or Ctrl+C to close this pane.' '' ; printf '%s\\n' \"exit code: $code\" ; while IFS= read -rsn1 key ; do if [ -z \"$key\" ] || [ \"$key\" = 'q' ] ; then exit 0 ; fi ; done ; fi"
+            ]
+          },
+          "derived": {
+            "shellSyntaxOk": true,
+            "usesBashWrapper": true,
+            "includesLegacyNodeDashboardEntrypoint": true,
+            "includesNativeDashboardEntrypoint": false,
+            "quotesPrintfNewline": true,
+            "hasExitCleanupTrap": true,
+            "hasSignalCleanupTrap": true,
+            "appendsSharedDebugLog": false,
+            "printsStartupFrameBeforeEntrypoint": true,
+            "entersAlternateScreenBeforeStartup": false
+          }
+        },
+        "sameStamp": true
+      },
+      "inputSha256": "07fddf2c59b6b04b0082a4da3e8301716bd9d4f064e48929858ec2022b50569d"
+    }
+  ]
+}

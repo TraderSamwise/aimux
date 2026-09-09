@@ -1,0 +1,118 @@
+{
+  "version": 1,
+  "source": "src/project-takeover.test.ts",
+  "generatedBy": "scripts/capture-project-takeover-contract.mjs",
+  "description": "Project takeover alternate-owner stop requests, stale project state cleanup, endpoint file removal, topology preservation, and process-signal decisions captured by running TypeScript project-takeover against fake ps/lsof and a local daemon endpoint.",
+  "cases": [
+    {
+      "id": "project-takeover-001",
+      "name": "stops only the matching project service in the default aimux home",
+      "source": "src/project-takeover.test.ts",
+      "api": "takeOverProjectFromOtherOwners",
+      "input": {
+        "mode": "exact",
+        "includeOtherProject": true,
+        "writeHostJson": true,
+        "projectRoot": "<tempRoot>/repo-a",
+        "otherProjectRoot": "<tempRoot>/repo-b"
+      },
+      "output": {
+        "requests": [{ "method": "POST", "url": "/projects/stop", "body": { "projectRoot": "<tempRoot>/repo-a" } }],
+        "killed": [[2001, "SIGTERM"]],
+        "livePids": [1001, 2002],
+        "stateProjectIds": ["<otherProjectId>"],
+        "files": { "metadataJson": false, "metadataText": false, "hostJson": true, "topology": null }
+      },
+      "inputSha256": "c56aeef2c73c9c07611c0b9e993abad8475f1987f06ecef52a747ab4a851b7cc"
+    },
+    {
+      "id": "project-takeover-002",
+      "name": "preserves the default owner topology while clearing stale connection files",
+      "source": "src/project-takeover.test.ts",
+      "api": "takeOverProjectFromOtherOwners",
+      "input": {
+        "mode": "exact",
+        "includeOtherProject": false,
+        "writeTopology": "version: 1\nsessions:\n  - id: codex-custom\n    status: offline\n",
+        "projectRoot": "<tempRoot>/repo-a",
+        "otherProjectRoot": "<tempRoot>/repo-b"
+      },
+      "output": {
+        "requests": [{ "method": "POST", "url": "/projects/stop", "body": { "projectRoot": "<tempRoot>/repo-a" } }],
+        "killed": [[2001, "SIGTERM"]],
+        "livePids": [1001, 2002],
+        "stateProjectIds": [],
+        "files": {
+          "metadataJson": false,
+          "metadataText": false,
+          "hostJson": false,
+          "topology": "version: 1\nsessions:\n  - id: codex-custom\n    status: offline\n"
+        }
+      },
+      "inputSha256": "ac8e362fae5067d9b1dafa3c63013ae20373d1f244533d656d641a2d7a69bcf5"
+    },
+    {
+      "id": "project-takeover-003",
+      "name": "does not signal a stale pid that is not an aimux project service",
+      "source": "src/project-takeover.test.ts",
+      "api": "takeOverProjectFromOtherOwners",
+      "input": {
+        "mode": "sleep",
+        "includeOtherProject": false,
+        "httpStatus": 500,
+        "projectRoot": "<tempRoot>/repo-a",
+        "otherProjectRoot": "<tempRoot>/repo-b"
+      },
+      "output": {
+        "requests": [{ "method": "POST", "url": "/projects/stop", "body": { "projectRoot": "<tempRoot>/repo-a" } }],
+        "killed": [],
+        "livePids": [1001, 2001, 2002],
+        "stateProjectIds": [],
+        "files": { "metadataJson": false, "metadataText": false, "hostJson": false, "topology": null }
+      },
+      "inputSha256": "c2a2e50b0cde5ad40c62f0bf16925df5a4b04b812ba8bbb3420d55cae1fb5559"
+    },
+    {
+      "id": "project-takeover-004",
+      "name": "does not signal a stale pid whose project root only prefix-matches",
+      "source": "src/project-takeover.test.ts",
+      "api": "takeOverProjectFromOtherOwners",
+      "input": {
+        "mode": "prefix",
+        "includeOtherProject": false,
+        "httpStatus": 500,
+        "projectRoot": "<tempRoot>/repo-a",
+        "otherProjectRoot": "<tempRoot>/repo-b"
+      },
+      "output": {
+        "requests": [{ "method": "POST", "url": "/projects/stop", "body": { "projectRoot": "<tempRoot>/repo-a" } }],
+        "killed": [],
+        "livePids": [1001, 2001, 2002],
+        "stateProjectIds": [],
+        "files": { "metadataJson": false, "metadataText": false, "hostJson": false, "topology": null }
+      },
+      "inputSha256": "df8d8fadc25b3477b00d32b0180a71f05a6b5744c6b503602dd7d5bd3cb66dec"
+    },
+    {
+      "id": "project-takeover-005",
+      "name": "accepts legacy project service pids only when cwd matches the project",
+      "source": "src/project-takeover.test.ts",
+      "api": "takeOverProjectFromOtherOwners",
+      "input": {
+        "mode": "legacy",
+        "includeOtherProject": false,
+        "httpStatus": 500,
+        "projectRoot": "<tempRoot>/repo-a",
+        "otherProjectRoot": "<tempRoot>/repo-b"
+      },
+      "output": {
+        "requests": [{ "method": "POST", "url": "/projects/stop", "body": { "projectRoot": "<tempRoot>/repo-a" } }],
+        "killed": [[2001, "SIGTERM"]],
+        "livePids": [1001, 2002],
+        "stateProjectIds": [],
+        "files": { "metadataJson": false, "metadataText": false, "hostJson": false, "topology": null }
+      },
+      "inputSha256": "783ca2f238a0784d67909a023113c950275fc4e90cd280a69ddcf0ddae540902"
+    }
+  ]
+}

@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "source": "src/runtime-guard-repair-history.test.ts",
+  "generatedBy": "scripts/capture-runtime-guard-repair-contract.mjs",
+  "description": "Runtime guard repair attempt persistence, pruning, project-key normalization, and corrupt-history behavior captured by running TypeScript.",
+  "cases": [
+    {
+      "id": "runtime-state-guard-repair-history-001",
+      "name": "survives the process that recorded it, which is the entire point",
+      "source": "src/runtime-guard-repair-history.test.ts",
+      "api": "recordAndLoad",
+      "input": { "projectRoot": "/p", "windowMs": 120000, "attempts": [1000, 2000], "loadNow": 2000 },
+      "output": [1000, 2000],
+      "inputSha256": "73b81501efc769c10bd40ea57ae3237ccad7398c78dd4d6d83142beda8edd93d"
+    },
+    {
+      "id": "runtime-state-guard-repair-history-002",
+      "name": "counts up to a limit rather than resetting",
+      "source": "src/runtime-guard-repair-history.test.ts",
+      "api": "recordAndCount",
+      "input": { "projectRoot": "/p", "windowMs": 120000, "attempts": [1, 2, 3, 4, 5], "loadNow": 5 },
+      "output": { "count": 5 },
+      "inputSha256": "d9f0255328b957c3d29ff064585234c744acc58da0570e7e6d52c3855c7b7b97"
+    },
+    {
+      "id": "runtime-state-guard-repair-history-003",
+      "name": "forgets attempts older than the window",
+      "source": "src/runtime-guard-repair-history.test.ts",
+      "api": "pruneWindow",
+      "input": { "projectRoot": "/p", "windowMs": 120000, "attempts": [879999, 1000000], "loadNow": 1000000 },
+      "output": [1000000],
+      "inputSha256": "00e0ecdde6c8bbc25b13461ec3761e7c3c29139568fdd3980cb5d96a6bac14bc"
+    },
+    {
+      "id": "runtime-state-guard-repair-history-004",
+      "name": "keeps projects separate, so one flapping project does not spend another's budget",
+      "source": "src/runtime-guard-repair-history.test.ts",
+      "api": "separateProjects",
+      "input": {
+        "windowMs": 120000,
+        "records": [
+          ["/a", 1000],
+          ["/a", 2000],
+          ["/b", 3000]
+        ],
+        "loadNow": 3000
+      },
+      "output": { "a": [1000, 2000], "b": [3000] },
+      "inputSha256": "a64e0dc8cc41779009af9d4b4128d3c479e51b3ac9362e2339175f8db698b526"
+    },
+    {
+      "id": "runtime-state-guard-repair-history-005",
+      "name": "normalizes the key, so the same project by another spelling is the same project",
+      "source": "src/runtime-guard-repair-history.test.ts",
+      "api": "normalizeProjectKey",
+      "input": { "recordRoot": "/p/../p", "loadRoot": "/p", "windowMs": 120000, "now": 1000 },
+      "output": [1000],
+      "inputSha256": "86248c76a4d4394f769c02ce1920bb0f9b5fc7a1675731d43408c9eb8c027eca"
+    },
+    {
+      "id": "runtime-state-guard-repair-history-006",
+      "name": "clears on request, so a settled project starts from zero",
+      "source": "src/runtime-guard-repair-history.test.ts",
+      "api": "clear",
+      "input": { "projectRoot": "/p", "windowMs": 120000, "now": 1000 },
+      "output": [],
+      "inputSha256": "72179bafc7d62282b3bdcffd0f140c38710a3020f2679602418a7a305baec928"
+    },
+    {
+      "id": "runtime-state-guard-repair-history-007",
+      "name": "treats unreadable history as empty rather than blocking repair",
+      "source": "src/runtime-guard-repair-history.test.ts",
+      "api": "corruptHistory",
+      "input": { "projectRoot": "/p", "windowMs": 120000, "now": 1000, "fileText": "{ not json" },
+      "output": { "before": [], "recordOk": true, "after": [1000] },
+      "inputSha256": "87fdf14683939966649c54fa8bbca6055ac38acc062c4c72f5ac03dcb20a178d"
+    },
+    {
+      "id": "runtime-state-guard-repair-history-008",
+      "name": "reaches the limit across processes, which the in-memory counter never could",
+      "source": "src/runtime-guard-repair-history.test.ts",
+      "api": "limitProgression",
+      "input": { "projectRoot": "/p", "windowMs": 120000, "limit": 5, "attempts": [1000, 2000, 3000, 4000, 5000] },
+      "output": { "beforeCounts": [0, 1, 2, 3, 4], "finalCount": 5 },
+      "inputSha256": "9569f4c099da9cbb74be63421c41901bff0c9a863f034d1ad3775546e0dd8964"
+    },
+    {
+      "id": "runtime-state-guard-repair-history-009",
+      "name": "does not grow without bound as projects come and go",
+      "source": "src/runtime-guard-repair-history.test.ts",
+      "api": "pruneOtherProjects",
+      "input": {
+        "windowMs": 120000,
+        "records": [
+          ["/gone", 4879999],
+          ["/live", 5000000]
+        ],
+        "loadNow": 5000000
+      },
+      "output": { "gone": [], "storedKeys": ["/live"] },
+      "inputSha256": "69b66ba4754c348ddd69701c0d0f145d945e54cbe9ed6d87ad6fcca57109d28f"
+    }
+  ]
+}

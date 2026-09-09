@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "source": "src/multiplexer/dashboard-model.ts",
+  "generatedBy": "scripts/capture-dashboard-model-process-info-contract.mjs",
+  "description": "Dashboard tmux process command, pid, and preview-line parsing captured by running TypeScript.",
+  "cases": [
+    {
+      "id": "dashboard-model-process-info-001",
+      "name": "parses pane command pid and last nonblank preview line",
+      "source": "src/multiplexer/dashboard-model.ts",
+      "api": "readTmuxProcessInfo",
+      "input": {
+        "target": { "windowId": "@7" },
+        "displayMessage": " node \t 12345 ",
+        "captureOutput": "first line\n\n  running server  \n"
+      },
+      "output": {
+        "result": { "command": "node", "pid": 12345, "previewLine": "running server" },
+        "calls": [
+          { "method": "displayMessage", "args": ["#{pane_current_command}\t#{pane_pid}", "@7"] },
+          { "method": "captureTarget", "args": [{ "windowId": "@7" }, { "startLine": -8 }] }
+        ]
+      },
+      "inputSha256": "2ad98b36192cc61e205b60e82ada59844359555e1874a6fec22aac0e645296dd"
+    },
+    {
+      "id": "dashboard-model-process-info-002",
+      "name": "omits empty command and nonnumeric pid when capture is empty",
+      "source": "src/multiplexer/dashboard-model.ts",
+      "api": "readTmuxProcessInfo",
+      "input": { "target": { "windowId": "@8" }, "displayMessage": "   \t not-a-pid ", "captureOutput": "\n  \n" },
+      "output": {
+        "result": {},
+        "calls": [
+          { "method": "displayMessage", "args": ["#{pane_current_command}\t#{pane_pid}", "@8"] },
+          { "method": "captureTarget", "args": [{ "windowId": "@8" }, { "startLine": -8 }] }
+        ]
+      },
+      "inputSha256": "cf004b31813578de5e86624ac9ee6b60e0203537b23dfdf745850df2f18cbecb"
+    },
+    {
+      "id": "dashboard-model-process-info-003",
+      "name": "keeps command when pid is absent and ignores capture failures",
+      "source": "src/multiplexer/dashboard-model.ts",
+      "api": "readTmuxProcessInfo",
+      "input": { "target": { "windowId": "@9" }, "displayMessage": "python\t", "captureThrows": "pane gone" },
+      "output": {
+        "result": { "command": "python" },
+        "calls": [
+          { "method": "displayMessage", "args": ["#{pane_current_command}\t#{pane_pid}", "@9"] },
+          { "method": "captureTarget", "args": [{ "windowId": "@9" }, { "startLine": -8 }] }
+        ]
+      },
+      "inputSha256": "13a67d1e6cc78d89982e906fc29b93192953d6d06dadd6c72271eab08698e344"
+    }
+  ]
+}

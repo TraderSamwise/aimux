@@ -1,0 +1,181 @@
+use serde_json::{Map, Value, json};
+use std::path::Path;
+
+use crate::daemon_state::{load_metadata_state, save_metadata_state};
+use crate::tmux::{MANAGED_TMUX_AGENT_WINDOW_OPTIONS, TmuxTarget};
+
+use super::json_helpers::*;
+use super::runtime_adapter::ProjectLifecycleRuntime;
+use super::{ensure_rig, existing_node_created_at, now_iso, upsert_array_item};
+
+pub(super) fn clear_session_derived_metadata(project_state_dir: &Path, session_id: &str) {
+    let mut state = load_metadata_state(project_state_dir);
+    if let Some(Value::Object(session)) = state.sessions.get_mut(session_id) {
+        session.remove("derived");
+        session.remove("status");
+        session.remove("progress");
+        let _ = save_metadata_state(project_state_dir, &state);
+    }
+}
+
+pub(super) fn settle_running_activity_to_idle(project_state_dir: &Path, session_id: &str) {
+    let mut state = load_metadata_state(project_state_dir);
+    let mut changed = false;
+    if let Some(Value::Object(session)) = state.sessions.get_mut(session_id)
+        && let Some(Value::Object(derived)) = session.get_mut("derived")
+        && derived.get("activity").and_then(Value::as_str) == Some("running")
+    {
+        derived.insert("activity".into(), Value::String("idle".into()));
+        changed = true;
+    }
+    if changed {
+        let _ = save_metadata_state(project_state_dir, &state);
+    }
+}
+
+pub(super) fn agent_window_metadata(
+    session: &Value,
+    session_id: &str,
+    tool_key: &str,
+    command: &str,
+    persist_args: Vec<String>,
+    backend_session_id: Option<&str>,
+) -> Value {
+    let mut metadata = Map::new();
+    metadata.insert("kind".into(), Value::String("agent".into()));
+    metadata.insert("sessionId".into(), Value::String(session_id.to_owned()));
+    metadata.insert("command".into(), Value::String(command.to_owned()));
+    metadata.insert(
+        "args".into(),
+        Value::Array(persist_args.into_iter().map(Value::String).collect()),
+    );
+    metadata.insert("toolConfigKey".into(), Value::String(tool_key.to_owned()));
+    if let Some(backend_session_id) = backend_session_id {
+        metadata.insert(
+            "backendSessionId".into(),
+            Value::String(backend_session_id.to_owned()),
+        );
+    }
+    for key in ["team", "worktreePath", "label", "headline", "createdAt"] {
+        if let Some(value) = session.get(key).cloned().filter(|value| !value.is_null()) {
+            metadata.insert(key.into(), value);
+        }
+    }
+    if !metadata.contains_key("createdAt") {
+        metadata.insert("createdAt".into(), Value::String(now_iso()));
+    }
+    Value::Object(metadata)
+}
+
+pub(super) fn apply_agent_window_policy(
+    runtime: &mut impl ProjectLifecycleRuntime,
+    window_id: &str,
+    tool_key: &str,
+) -> Result<(), String> {
+    runtime.set_window_option(window_id, "@aimux-tool", tool_key)?;
+    runtime.set_window_option(
+        window_id,
+        "allow-passthrough",
+        MANAGED_TMUX_AGENT_WINDOW_OPTIONS.allow_passthrough,
+    )?;
+    runtime.set_window_option(
+        window_id,
+        "aggressive-resize",
+        MANAGED_TMUX_AGENT_WINDOW_OPTIONS.aggressive_resize,
+    )
+}
+
+pub(super) fn upsert_agent_topology(
+    mut topology: Value,
+    metadata: &Value,
+    worktree_path: Option<&str>,
+    target: &TmuxTarget,
+    status: &str,
+    project_root: &str,
+) -> Value {
+    let now = now_iso();
+    let rig_id = ensure_rig(&mut topology, project_root, &now);
+    let session_id = string_field(metadata, "sessionId");
+    let node_id = format!("agent:{session_id}");
+    let mut node = Map::new();
+    node.insert("id".into(), Value::String(node_id.clone()));
+    node.insert("rigId".into(), Value::String(rig_id.clone()));
+    node.insert("logicalId".into(), Value::String(session_id.clone()));
+    if let Some(role) = metadata
+        .get("team")
+        .and_then(|team| team.get("role"))
+        .and_then(Value::as_str)
+    {
+        node.insert("role".into(), Value::String(role.to_owned()));
+    }
+    node.insert(
+        "runtime".into(),
+        Value::String(
+            metadata["toolConfigKey"]
+                .as_str()
+                .unwrap_or("unknown")
+                .to_owned(),
+        ),
+    );
+    node.insert("toolConfigKey".into(), metadata["toolConfigKey"].clone());
+    if let Some(worktree_path) = worktree_path {
+        node.insert("cwd".into(), Value::String(worktree_path.to_owned()));
+    }
+    if let Some(label) = metadata
+        .get("label")
+        .cloned()
+        .filter(|value| !value.is_null())
+    {
+        node.insert("label".into(), label);
+    }
+    node.insert(
+        "createdAt".into(),
+        Value::String(
+            existing_node_created_at(&topology, &node_id)
+                .or_else(|| trimmed_string(metadata.get("createdAt")))
+                .unwrap_or_else(|| now.clone()),
+        ),
+    );
+    upsert_array_item(&mut topology, "nodes", Value::Object(node));
+
+    let mut session = Map::new();
+    session.insert("id".into(), Value::String(session_id.clone()));
+    session.insert("nodeId".into(), Value::String(node_id.clone()));
+    session.insert("status".into(), Value::String(status.to_owned()));
+    session.insert("tool".into(), metadata["toolConfigKey"].clone());
+    session.insert("toolConfigKey".into(), metadata["toolConfigKey"].clone());
+    session.insert("command".into(), metadata["command"].clone());
+    session.insert("args".into(), metadata["args"].clone());
+    if let Some(backend_session_id) = metadata
+        .get("backendSessionId")
+        .cloned()
+        .filter(|value| !value.is_null())
+    {
+        session.insert("backendSessionId".into(), backend_session_id);
+    }
+    for key in ["team", "worktreePath", "label", "headline"] {
+        if let Some(value) = metadata.get(key).cloned().filter(|value| !value.is_null()) {
+            session.insert(key.into(), value);
+        }
+    }
+    session.insert("createdAt".into(), metadata["createdAt"].clone());
+    session.insert("updatedAt".into(), Value::String(now.clone()));
+    session.insert("lastSeenAt".into(), Value::String(now.clone()));
+    upsert_array_item(&mut topology, "sessions", Value::Object(session));
+
+    upsert_array_item(
+        &mut topology,
+        "bindings",
+        json!({
+            "id": format!("tmux:{session_id}"),
+            "nodeId": node_id,
+            "tmuxSession": target.session_name,
+            "tmuxWindowId": target.window_id,
+            "tmuxWindowIndex": target.window_index,
+            "tmuxWindowName": target.window_name,
+            "updatedAt": now,
+        }),
+    );
+    object_insert_mut(&mut topology, "generatedAt", Value::String(now_iso()));
+    topology
+}

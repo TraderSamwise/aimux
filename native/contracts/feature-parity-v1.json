@@ -1,0 +1,81 @@
+{
+  "version": 1,
+  "strategy": "translation-first",
+  "endState": "zero Node in the normal Aimux CLI, daemon, project-service, tmux runtime, and dashboard hot path",
+  "rules": [
+    "Committed corpora and live residual smokes are the spec for retired TypeScript behavior.",
+    "Port files, functions, line logic, loops, names, and data shapes before refactoring.",
+    "Keep external CLI, HTTP, SSE, tmux metadata, and persistence contracts compatible unless a phase explicitly records an intentional break.",
+    "Every phase must add or preserve a parity gate that would catch regressions in the translated surface."
+  ],
+  "areas": [
+    {
+      "id": "cli",
+      "sourceSpec": ["testdata/contracts/v1/cli", "scripts/phase8-live-residuals.py", "src/core-command-contract.ts"],
+      "nativeOwner": "native/crates/aimux/src/bin/aimux.rs",
+      "parityGate": "native CLI stdout/stderr/status matches committed corpora and live front-door residuals"
+    },
+    {
+      "id": "daemon",
+      "sourceSpec": [
+        "testdata/contracts/v1/daemon",
+        "testdata/contracts/v1/metadata-store",
+        "scripts/phase8-live-residuals.py"
+      ],
+      "nativeOwner": "native/crates/aimux/src/daemon",
+      "parityGate": "daemon status, project catalog, and lifecycle JSON match committed corpora"
+    },
+    {
+      "id": "project-service",
+      "sourceSpec": [
+        "testdata/contracts/v1/project-service",
+        "testdata/contracts/v1/runtime-state",
+        "src/project-api-contract.ts"
+      ],
+      "nativeOwner": "native/crates/aimux/src/metadata_server",
+      "parityGate": "project API routes and SSE payloads match committed corpora and project-api-contract"
+    },
+    {
+      "id": "tmux-runtime",
+      "sourceSpec": ["testdata/contracts/v1/tmux", "scripts/phase8-live-residuals.py"],
+      "nativeOwner": "native/crates/aimux/src/tmux",
+      "parityGate": "tmux targets, metadata, statusline, expose, and doctor output match committed corpora and live residuals"
+    },
+    {
+      "id": "multiplexer",
+      "sourceSpec": [
+        "testdata/contracts/v1/multiplexer",
+        "testdata/contracts/v1/dashboard",
+        "src/multiplexer/*.contract.v1.json"
+      ],
+      "nativeOwner": "native/crates/aimux/src/multiplexer",
+      "parityGate": "desktop-state snapshots and dashboard model golden fixtures match committed corpora"
+    },
+    {
+      "id": "runtime-exchange",
+      "sourceSpec": [
+        "testdata/contracts/v1/runtime-state",
+        "testdata/contracts/v1/runtime-coherence",
+        "testdata/contracts/v1/project-takeover"
+      ],
+      "nativeOwner": "native/crates/aimux/src/runtime_core",
+      "parityGate": "task, handoff, thread, notification, topology, and graveyard stores round-trip"
+    },
+    {
+      "id": "output",
+      "sourceSpec": ["testdata/contracts/v1/agent-output", "app/lib/ansi.ts", "app/lib/terminal-output.ts"],
+      "nativeOwner": "native/crates/aimux/src/output",
+      "parityGate": "ANSI, preview, transcript, and liveness adversarial corpora match"
+    },
+    {
+      "id": "dashboard-tui",
+      "sourceSpec": [
+        "testdata/contracts/v1/dashboard",
+        "testdata/contracts/v1/multiplexer",
+        "scripts/phase8-live-residuals.py"
+      ],
+      "nativeOwner": "native/crates/aimux/src/tui",
+      "parityGate": "keybindings, rendered rows, dialogs, lifecycle actions, and terminal smoke behavior match committed fixtures"
+    }
+  ]
+}

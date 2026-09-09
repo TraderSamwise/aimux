@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "source": "src/repair-events.test.ts",
+  "generatedBy": "scripts/capture-repair-events-contract.mjs",
+  "description": "Repair event durable log side-effect contracts captured by running TypeScript.",
+  "cases": [
+    {
+      "id": "runtime-state-repair-events-001",
+      "name": "records repair events in the project repair log",
+      "source": "src/repair-events.test.ts",
+      "api": "recordRepairEvent",
+      "input": {
+        "event": {
+          "ts": "2026-06-22T00:00:00.000Z",
+          "projectRoot": "/tmp/aimux-repair-project",
+          "action": "tmux-runtime-repair",
+          "reason": "runtime contract drift",
+          "status": "repaired",
+          "details": { "currentDaemonPid": 123 }
+        }
+      },
+      "output": {
+        "exists": true,
+        "line": {
+          "ts": "2026-06-22T00:00:00.000Z",
+          "projectRoot": "/tmp/aimux-repair-project",
+          "action": "tmux-runtime-repair",
+          "reason": "runtime contract drift",
+          "status": "repaired",
+          "details": { "currentDaemonPid": 123 }
+        }
+      },
+      "inputSha256": "95d9fecacddf0c70978dfd02c4a5e40d54160d56e461dc1cec0b7b53522900fb"
+    }
+  ]
+}

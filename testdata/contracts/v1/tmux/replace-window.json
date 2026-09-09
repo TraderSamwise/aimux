@@ -1,0 +1,186 @@
+{
+  "version": 1,
+  "generatedAt": "2026-09-07T00:00:00.000Z",
+  "generatedBy": "scripts/capture-tmux-replace-window-contract.mjs",
+  "source": "src/tmux/runtime-manager.ts",
+  "sources": [
+    "src/tmux/runtime-manager.test.ts",
+    "src/tmux/runtime-manager.ts"
+  ],
+  "subject": "src/tmux/runtime-manager.ts",
+  "description": "TmuxRuntimeManager.replaceWindowWhenReady behavior captured by running TypeScript.",
+  "caseCount": 3,
+  "cases": [
+    {
+      "id": "tmux-replace-window-001",
+      "name": "replaces and reselects an active window after readiness",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "TmuxRuntimeManager.replaceWindowWhenReady",
+      "input": {
+        "name": "replaces and reselects an active window after readiness",
+        "wasActive": true,
+        "target": { "sessionName": "aimux-mobile-abc", "windowId": "@1", "windowIndex": 0, "windowName": "dashboard" },
+        "spec": {
+          "cwd": "/repo/mobile",
+          "command": "/usr/local/bin/node",
+          "args": ["/repo/mobile/dist/launcher-bin.js", "--tmux-dashboard-internal"]
+        },
+        "readiness": { "option": "@ready", "value": "stamp", "timeoutMs": 100 }
+      },
+      "output": {
+        "thrown": null,
+        "result": {
+          "sessionName": "aimux-mobile-abc",
+          "windowId": "@2",
+          "windowIndex": 0,
+          "windowName": "dashboard",
+          "paneDead": false
+        },
+        "calls": [
+          ["display-message", "-p", "-t", "@1", "#{window_active}"],
+          [
+            "new-window",
+            "-d",
+            "-P",
+            "-t",
+            "aimux-mobile-abc",
+            "-c",
+            "/repo/mobile",
+            "-n",
+            "<RELOAD_WINDOW>",
+            "-F",
+            "#{window_id}\t#{window_index}\t#{window_name}",
+            "/usr/local/bin/node",
+            "/repo/mobile/dist/launcher-bin.js",
+            "--tmux-dashboard-internal",
+            { "cwd": "/repo/mobile" }
+          ],
+          ["show-window-options", "-v", "-t", "@2", "@ready"],
+          ["rename-window", "-t", "@1", "dashboard-old"],
+          ["rename-window", "-t", "@2", "dashboard"],
+          ["swap-window", "-d", "-s", "@2", "-t", "@1"],
+          [
+            "list-windows",
+            "-t",
+            "aimux-mobile-abc",
+            "-F",
+            "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}\t#{pane_dead}"
+          ],
+          ["kill-window", "-t", "@1"],
+          ["select-window", "-t", "@2"]
+        ]
+      },
+      "inputSha256": "76c2cea8b84130e493aa4327d22f25d08167122ff70a8491af4bdfbb41dfb772"
+    },
+    {
+      "id": "tmux-replace-window-002",
+      "name": "replaces without reselecting an inactive window after readiness",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "TmuxRuntimeManager.replaceWindowWhenReady",
+      "input": {
+        "name": "replaces without reselecting an inactive window after readiness",
+        "wasActive": false,
+        "target": { "sessionName": "aimux-mobile-abc", "windowId": "@1", "windowIndex": 0, "windowName": "dashboard" },
+        "spec": {
+          "cwd": "/repo/mobile",
+          "command": "/usr/local/bin/node",
+          "args": ["/repo/mobile/dist/launcher-bin.js", "--tmux-dashboard-internal"]
+        },
+        "readiness": { "option": "@ready", "value": "stamp", "timeoutMs": 100 }
+      },
+      "output": {
+        "thrown": null,
+        "result": {
+          "sessionName": "aimux-mobile-abc",
+          "windowId": "@2",
+          "windowIndex": 0,
+          "windowName": "dashboard",
+          "paneDead": false
+        },
+        "calls": [
+          ["display-message", "-p", "-t", "@1", "#{window_active}"],
+          [
+            "new-window",
+            "-d",
+            "-P",
+            "-t",
+            "aimux-mobile-abc",
+            "-c",
+            "/repo/mobile",
+            "-n",
+            "<RELOAD_WINDOW>",
+            "-F",
+            "#{window_id}\t#{window_index}\t#{window_name}",
+            "/usr/local/bin/node",
+            "/repo/mobile/dist/launcher-bin.js",
+            "--tmux-dashboard-internal",
+            { "cwd": "/repo/mobile" }
+          ],
+          ["show-window-options", "-v", "-t", "@2", "@ready"],
+          ["rename-window", "-t", "@1", "dashboard-old"],
+          ["rename-window", "-t", "@2", "dashboard"],
+          ["swap-window", "-d", "-s", "@2", "-t", "@1"],
+          [
+            "list-windows",
+            "-t",
+            "aimux-mobile-abc",
+            "-F",
+            "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}\t#{pane_dead}"
+          ],
+          ["kill-window", "-t", "@1"]
+        ]
+      },
+      "inputSha256": "7465d39da8ef5502f2b387f5ea326b914cd702c8da47990a6b3aacffc5161f3d"
+    },
+    {
+      "id": "tmux-replace-window-003",
+      "name": "rolls back renamed windows and kills replacement when swap fails",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "TmuxRuntimeManager.replaceWindowWhenReady",
+      "input": {
+        "name": "rolls back renamed windows and kills replacement when swap fails",
+        "wasActive": true,
+        "swapError": "swap failed",
+        "target": { "sessionName": "aimux-mobile-abc", "windowId": "@1", "windowIndex": 0, "windowName": "dashboard" },
+        "spec": {
+          "cwd": "/repo/mobile",
+          "command": "/usr/local/bin/node",
+          "args": ["/repo/mobile/dist/launcher-bin.js", "--tmux-dashboard-internal"]
+        },
+        "readiness": { "option": "@ready", "value": "stamp", "timeoutMs": 100 }
+      },
+      "output": {
+        "thrown": "swap failed",
+        "result": null,
+        "calls": [
+          ["display-message", "-p", "-t", "@1", "#{window_active}"],
+          [
+            "new-window",
+            "-d",
+            "-P",
+            "-t",
+            "aimux-mobile-abc",
+            "-c",
+            "/repo/mobile",
+            "-n",
+            "<RELOAD_WINDOW>",
+            "-F",
+            "#{window_id}\t#{window_index}\t#{window_name}",
+            "/usr/local/bin/node",
+            "/repo/mobile/dist/launcher-bin.js",
+            "--tmux-dashboard-internal",
+            { "cwd": "/repo/mobile" }
+          ],
+          ["show-window-options", "-v", "-t", "@2", "@ready"],
+          ["rename-window", "-t", "@1", "dashboard-old"],
+          ["rename-window", "-t", "@2", "dashboard"],
+          ["swap-window", "-d", "-s", "@2", "-t", "@1"],
+          ["rename-window", "-t", "@2", "<RELOAD_WINDOW>"],
+          ["rename-window", "-t", "@1", "dashboard"],
+          ["kill-window", "-t", "@2"]
+        ]
+      },
+      "inputSha256": "f1e283f97dff14640f1a8515bfee926436b866224b35cfcf3b8479a94e52ae75"
+    }
+  ]
+}

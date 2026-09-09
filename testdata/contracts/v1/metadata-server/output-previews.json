@@ -1,0 +1,253 @@
+{
+  "version": 1,
+  "source": "src/metadata-server/output-previews.test.ts",
+  "generatedBy": "scripts/capture-metadata-server-helpers-contract.mjs",
+  "description": "Metadata-server output preview snapshot merge, output-read coalescing, visual lease touch, and diagnostics behavior captured by running TypeScript output-previews helpers. Lease timestamps are normalized after execution.",
+  "cases": [
+    {
+      "id": "metadata-output-previews-001",
+      "name": "keeps capture output when it already includes tap output",
+      "source": "src/metadata-server/output-previews.test.ts",
+      "api": "mergeExposePreviewSnapshots",
+      "input": {
+        "name": "keeps capture output when it already includes tap output",
+        "api": "mergeExposePreviewSnapshots",
+        "captureSnapshot": {
+          "output": "one\ntwo\n",
+          "capturedAt": "2026-01-01T00:00:00.000Z",
+          "source": "capture",
+          "windowId": "@1"
+        },
+        "tapSnapshot": {
+          "output": "two\n",
+          "capturedAt": "2026-01-01T00:00:01.000Z",
+          "source": "tap",
+          "windowId": "@1"
+        }
+      },
+      "output": {
+        "output": "one\ntwo\n",
+        "capturedAt": "2026-01-01T00:00:00.000Z",
+        "source": "capture",
+        "windowId": "@1"
+      },
+      "inputSha256": "ccb0c9504b3128128d6e1d2f3b8baed49bff3026eba167c8812338f552b74bc1"
+    },
+    {
+      "id": "metadata-output-previews-002",
+      "name": "extends capture output when tap output appends new text",
+      "source": "src/metadata-server/output-previews.test.ts",
+      "api": "mergeExposePreviewSnapshots",
+      "input": {
+        "name": "extends capture output when tap output appends new text",
+        "api": "mergeExposePreviewSnapshots",
+        "captureSnapshot": {
+          "output": "one",
+          "capturedAt": "2026-01-01T00:00:00.000Z",
+          "source": "capture",
+          "windowId": "@1"
+        },
+        "tapSnapshot": { "output": "two", "capturedAt": "2026-01-01T00:00:01.000Z", "source": "tap", "windowId": "@1" }
+      },
+      "output": { "output": "one\ntwo", "capturedAt": "2026-01-01T00:00:01.000Z", "source": "tap", "windowId": "@1" },
+      "inputSha256": "9540933c23168ebf47348beb206c7839957d1ea36dfde7d21dfcd72c8c2d7712"
+    },
+    {
+      "id": "metadata-output-previews-003",
+      "name": "uses tap output when no capture snapshot exists",
+      "source": "src/metadata-server/output-previews.test.ts",
+      "api": "mergeExposePreviewSnapshots",
+      "input": {
+        "name": "uses tap output when no capture snapshot exists",
+        "api": "mergeExposePreviewSnapshots",
+        "tapSnapshot": {
+          "output": "tap-only",
+          "capturedAt": "2026-01-01T00:00:01.000Z",
+          "source": "tap",
+          "windowId": "@2"
+        }
+      },
+      "output": { "output": "tap-only", "capturedAt": "2026-01-01T00:00:01.000Z", "source": "tap", "windowId": "@2" },
+      "inputSha256": "ada67a48d42c9d246b7016f88a78e2e07941fd15d82dd4952c9cd60904d1d311"
+    },
+    {
+      "id": "metadata-output-previews-004",
+      "name": "coalesces repeated output reads for the same session and line",
+      "source": "src/metadata-server/output-previews.test.ts",
+      "api": "measureAgentOutputReadSequence",
+      "input": {
+        "name": "coalesces repeated output reads for the same session and line",
+        "api": "measureAgentOutputReadSequence",
+        "readOutputs": [{ "match": {}, "output": "hello" }],
+        "reads": [
+          { "source": "events", "input": { "sessionId": "agent-1", "startLine": -20 } },
+          { "source": "events", "input": { "sessionId": "agent-1", "startLine": -20 } }
+        ]
+      },
+      "output": {
+        "measurements": [
+          {
+            "result": { "sessionId": "agent-1", "output": "hello", "startLine": -20 },
+            "coalesced": false,
+            "duration": "<duration-ms>"
+          },
+          {
+            "result": { "sessionId": "agent-1", "output": "hello", "startLine": -20 },
+            "coalesced": true,
+            "duration": "<duration-ms>"
+          }
+        ],
+        "calls": [{ "sessionId": "agent-1", "startLine": -20 }]
+      },
+      "inputSha256": "36a28e444af51d725a43ec9e507ab517d2ebf1b5d87de6c586a7ccf00982de9c"
+    },
+    {
+      "id": "metadata-output-previews-005",
+      "name": "does not coalesce reads with different output modes or purposes",
+      "source": "src/metadata-server/output-previews.test.ts",
+      "api": "measureAgentOutputReadSequence",
+      "input": {
+        "name": "does not coalesce reads with different output modes or purposes",
+        "api": "measureAgentOutputReadSequence",
+        "readOutputs": [
+          { "match": { "mode": "chat", "purpose": "poll" }, "output": "" },
+          { "match": { "mode": "full", "purpose": "poll" }, "output": "terminal" },
+          { "match": { "mode": "full", "purpose": "interrupt" }, "output": "terminal" }
+        ],
+        "reads": [
+          {
+            "source": "events",
+            "input": { "sessionId": "agent-1", "startLine": -20, "mode": "chat", "purpose": "poll" }
+          },
+          {
+            "source": "live-pane-output",
+            "input": { "sessionId": "agent-1", "startLine": -20, "mode": "full", "purpose": "poll" }
+          },
+          {
+            "source": "live-pane-output",
+            "input": { "sessionId": "agent-1", "startLine": -20, "mode": "full", "purpose": "interrupt" }
+          }
+        ]
+      },
+      "output": {
+        "measurements": [
+          {
+            "result": { "sessionId": "agent-1", "output": "", "startLine": -20 },
+            "coalesced": false,
+            "duration": "<duration-ms>"
+          },
+          {
+            "result": { "sessionId": "agent-1", "output": "terminal", "startLine": -20 },
+            "coalesced": false,
+            "duration": "<duration-ms>"
+          },
+          {
+            "result": { "sessionId": "agent-1", "output": "terminal", "startLine": -20 },
+            "coalesced": false,
+            "duration": "<duration-ms>"
+          }
+        ],
+        "calls": [
+          { "sessionId": "agent-1", "startLine": -20, "mode": "chat", "purpose": "poll" },
+          { "sessionId": "agent-1", "startLine": -20, "mode": "full", "purpose": "poll" },
+          { "sessionId": "agent-1", "startLine": -20, "mode": "full", "purpose": "interrupt" }
+        ]
+      },
+      "inputSha256": "fe44f8facb528a64c14e546e1e414c5d739a4fc0bb30beb02825ffb03b3bff05"
+    },
+    {
+      "id": "metadata-output-previews-006",
+      "name": "does not touch visual client leases when no preview was requested",
+      "source": "src/metadata-server/output-previews.test.ts",
+      "api": "touchVisualClientLease",
+      "input": {
+        "name": "does not touch visual client leases when no preview was requested",
+        "api": "touchVisualClientLease",
+        "touches": [
+          {
+            "remoteAddress": "127.0.0.1",
+            "url": "http://localhost/agents",
+            "input": { "surface": "expose", "requestedPreview": false, "requestedChatPreview": false }
+          }
+        ]
+      },
+      "output": {
+        "touches": [{ "active": false }],
+        "diagnostics": {
+          "clients": {
+            "active": [],
+            "counts": { "tui": 0, "web": 0, "mobile": 0, "expose": 0, "api": 0 },
+            "activePreviewClients": 0
+          },
+          "cache": null,
+          "taps": null,
+          "hotSnapshots": { "enabled": false, "scheduled": false, "refreshing": false, "workerRunning": false }
+        }
+      },
+      "inputSha256": "fee897af904879f9f3cc4fdf7cae3ba4ef5b1c4bb0bc9880fff47697c132f60a"
+    },
+    {
+      "id": "metadata-output-previews-007",
+      "name": "touches preview visual leases with sanitized fallback ids",
+      "source": "src/metadata-server/output-previews.test.ts",
+      "api": "touchVisualClientLease",
+      "input": {
+        "name": "touches preview visual leases with sanitized fallback ids",
+        "api": "touchVisualClientLease",
+        "touches": [
+          {
+            "remoteAddress": "::ffff:10.0.0.5",
+            "url": "http://localhost/agents?clientKind=web&clientTtlMs=2000",
+            "input": { "surface": "dash board", "requestedPreview": true, "requestedChatPreview": false }
+          }
+        ]
+      },
+      "output": {
+        "touches": [{ "active": true }],
+        "diagnostics": {
+          "clients": {
+            "active": [
+              {
+                "id": "web:10.0.0.5",
+                "kind": "web",
+                "surface": "dash-board",
+                "requestedPreview": true,
+                "requestedChatPreview": false,
+                "startedAt": "<ts:1>",
+                "updatedAt": "<ts:1>",
+                "expiresAt": "<ts:2>"
+              }
+            ],
+            "counts": { "tui": 0, "web": 1, "mobile": 0, "expose": 0, "api": 0 },
+            "activePreviewClients": 1
+          },
+          "cache": null,
+          "taps": null,
+          "hotSnapshots": { "enabled": false, "scheduled": false, "refreshing": false, "workerRunning": false }
+        }
+      },
+      "inputSha256": "f9ec0a396482b256dd29179d11bbec664fbf4fc1d06e145345943e9ef9389cd6"
+    },
+    {
+      "id": "metadata-output-previews-008",
+      "name": "keeps default preview readers disabled when no output reader is available",
+      "source": "src/metadata-server/output-previews.test.ts",
+      "api": "defaultDiagnostics",
+      "input": {
+        "name": "keeps default preview readers disabled when no output reader is available",
+        "api": "defaultDiagnostics"
+      },
+      "output": {
+        "clients": {
+          "active": [],
+          "counts": { "tui": 0, "web": 0, "mobile": 0, "expose": 0, "api": 0 },
+          "activePreviewClients": 0
+        },
+        "hotSnapshots": { "enabled": false, "scheduled": false, "refreshing": false, "workerRunning": false },
+        "cache": null,
+        "taps": null
+      },
+      "inputSha256": "318cc0dc2e61683732632217e3e6f37105a62cc0b144b0d93fb4d76448526f13"
+    }
+  ]
+}

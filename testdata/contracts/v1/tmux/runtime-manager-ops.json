@@ -1,0 +1,354 @@
+{
+  "version": 1,
+  "generatedAt": "2026-09-07T00:00:00.000Z",
+  "generatedBy": "scripts/capture-tmux-runtime-manager-ops-contract.mjs",
+  "source": "src/tmux/runtime-manager.ts",
+  "sources": [
+    "src/tmux/runtime-manager.test.ts",
+    "src/tmux/runtime-manager.ts"
+  ],
+  "subject": "src/tmux/runtime-manager.ts",
+  "description": "TmuxRuntimeManager capture, pane pipe, persisted command text, dashboard window, metadata, and copy-mode behavior captured by running TypeScript.",
+  "caseCount": 10,
+  "cases": [
+    {
+      "id": "tmux-runtime-manager-ops-001",
+      "name": "captures default pane tail",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "captureTarget",
+      "input": { "name": "captures default pane tail" },
+      "output": {
+        "thrown": null,
+        "result": "default capture",
+        "snapshot": { "execCalls": [["capture-pane", "-p", "-J", "-t", "@3", "-S", "-"]] }
+      },
+      "inputSha256": "80ed37839ff2771aa1e8c084c937e5351840c17c99585672509f68d9819895d7"
+    },
+    {
+      "id": "tmux-runtime-manager-ops-002",
+      "name": "captures bounded pane output with escapes",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "captureTarget",
+      "input": { "name": "captures bounded pane output with escapes" },
+      "output": {
+        "thrown": null,
+        "result": "bounded capture",
+        "snapshot": { "execCalls": [["capture-pane", "-p", "-J", "-e", "-t", "@3", "-S", "0", "-E", "1999"]] }
+      },
+      "inputSha256": "a6cb5f294dd4565944842580777544ef7d8f7a2e5c8ae49aeed99aa93c59eead"
+    },
+    {
+      "id": "tmux-runtime-manager-ops-003",
+      "name": "starts file pane pipes with quoted sinks and ownership",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "pipeTargetToFile",
+      "input": { "name": "starts file pane pipes with quoted sinks and ownership" },
+      "output": {
+        "thrown": null,
+        "result": null,
+        "snapshot": {
+          "execCalls": [
+            ["pipe-pane", "-t", "@3", "cat >> /tmp/plain.log"],
+            ["pipe-pane", "-t", "@3", "-o", "cat >> '/tmp/aimux tap/it'\"'\"'s.log'"],
+            [
+              "pipe-pane",
+              "-t",
+              "@3",
+              "-o",
+              "sh -c 'token_file=$2; printf '\"'\"'%s\\t%s\\n'\"'\"' \"$$\" \"$1\" > \"$token_file\"; trap '\"'\"'rm -f \"$token_file\"'\"'\"' EXIT; cat >> \"$3\"' aimux-pane-tap 'tap-token' '/tmp/aimux tap/token.txt' '/tmp/aimux tap/output.log'"
+            ],
+            ["pipe-pane", "-t", "@3"]
+          ]
+        }
+      },
+      "inputSha256": "d093afa829f602c27e41870f81b264ba769474d780cb767e4fce7623ccf18ef8"
+    },
+    {
+      "id": "tmux-runtime-manager-ops-004",
+      "name": "collects persisted command text from global and per-session tmux stores",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "listPersistedCommandText",
+      "input": {
+        "name": "collects persisted command text from global and per-session tmux stores",
+        "responses": {
+          "list-panes -a -F #{pane_start_command}": "bash -lc dashboard",
+          "list-keys": "bind-key -T root MouseDown1Pane run-shell '/installs/a/scripts/x.sh'",
+          "show-options -g": "global option",
+          "list-sessions -F #{session_name}": "alpha\nbeta\n",
+          "show-options -t alpha": "alpha options",
+          "show-options -w -t alpha": "",
+          "show-hooks -t alpha": "pane-focus-in run-shell '/installs/b/scripts/y.sh'",
+          "show-options -t beta": "beta options",
+          "show-options -w -t beta": "beta window options",
+          "show-hooks -t beta": ""
+        }
+      },
+      "output": {
+        "thrown": null,
+        "result": {
+          "text": [
+            "bash -lc dashboard",
+            "bind-key -T root MouseDown1Pane run-shell '/installs/a/scripts/x.sh'",
+            "global option",
+            "alpha options",
+            "pane-focus-in run-shell '/installs/b/scripts/y.sh'",
+            "beta options",
+            "beta window options"
+          ],
+          "complete": true
+        },
+        "snapshot": {
+          "execCalls": [
+            ["list-panes", "-a", "-F", "#{pane_start_command}"],
+            ["list-keys"],
+            ["show-options", "-g"],
+            ["list-sessions", "-F", "#{session_name}"],
+            ["show-options", "-t", "alpha"],
+            ["show-options", "-w", "-t", "alpha"],
+            ["show-hooks", "-t", "alpha"],
+            ["show-options", "-t", "beta"],
+            ["show-options", "-w", "-t", "beta"],
+            ["show-hooks", "-t", "beta"]
+          ]
+        }
+      },
+      "inputSha256": "a58c7133a879bd1d836e26b5ddca123c94633c9fe21c41ad864b8c94f7816b09"
+    },
+    {
+      "id": "tmux-runtime-manager-ops-005",
+      "name": "marks persisted command text incomplete while keeping successful reads",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "listPersistedCommandText",
+      "input": {
+        "name": "marks persisted command text incomplete while keeping successful reads",
+        "responses": {
+          "list-keys": "",
+          "show-options -g": "global option",
+          "list-sessions -F #{session_name}": "alpha",
+          "show-options -t alpha": "alpha options",
+          "show-options -w -t alpha": ""
+        },
+        "errors": ["list-panes -a -F #{pane_start_command}", "show-hooks -t alpha"],
+        "errorMessage": "no server running"
+      },
+      "output": {
+        "thrown": null,
+        "result": { "text": ["global option", "alpha options"], "complete": false },
+        "snapshot": {
+          "execCalls": [
+            ["list-panes", "-a", "-F", "#{pane_start_command}"],
+            ["list-keys"],
+            ["show-options", "-g"],
+            ["list-sessions", "-F", "#{session_name}"],
+            ["show-options", "-t", "alpha"],
+            ["show-options", "-w", "-t", "alpha"],
+            ["show-hooks", "-t", "alpha"]
+          ]
+        }
+      },
+      "inputSha256": "e2cb581f5c9da93fd4d79ca40d571a9c59b3f6da131cafebdfe37e23fdb7c5e9"
+    },
+    {
+      "id": "tmux-runtime-manager-ops-006",
+      "name": "renames an existing dashboard window",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "ensureDashboardWindow",
+      "input": {
+        "name": "renames an existing dashboard window",
+        "listWindowsRaw": "@7\t7\tdashboard-old\t0\t22\t0\n@8\t8\tcodex\t1\t30\t0"
+      },
+      "output": {
+        "thrown": null,
+        "result": { "sessionName": "aimux-mobile-abc", "windowId": "@7", "windowIndex": 7, "windowName": "dashboard" },
+        "snapshot": {
+          "execCalls": [
+            [
+              "list-windows",
+              "-t",
+              "aimux-mobile-abc",
+              "-F",
+              "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}\t#{pane_dead}"
+            ],
+            ["rename-window", "-t", "@7", "dashboard"]
+          ]
+        }
+      },
+      "inputSha256": "804254aff2dd217897050c50d19fc9f9244962722ea9e4b3e75515834a233d57"
+    },
+    {
+      "id": "tmux-runtime-manager-ops-007",
+      "name": "creates a dashboard window when absent",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "ensureDashboardWindow",
+      "input": {
+        "name": "creates a dashboard window when absent",
+        "listWindowsRaw": "@8\t8\tcodex\t1\t30\t0",
+        "listWindowsAfterCreate": "@8\t8\tcodex\t1\t30\t0\n@0\t0\tdashboard\t0\t31\t0"
+      },
+      "output": {
+        "thrown": null,
+        "result": { "sessionName": "aimux-mobile-abc", "windowId": "@0", "windowIndex": 0, "windowName": "dashboard" },
+        "snapshot": {
+          "execCalls": [
+            [
+              "list-windows",
+              "-t",
+              "aimux-mobile-abc",
+              "-F",
+              "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}\t#{pane_dead}"
+            ],
+            [
+              "new-window",
+              "-d",
+              "-t",
+              "aimux-mobile-abc",
+              "-c",
+              "/repo/mobile",
+              "-n",
+              "dashboard",
+              "sh",
+              "-lc",
+              "tail -f /dev/null",
+              { "cwd": "/repo/mobile" }
+            ],
+            [
+              "list-windows",
+              "-t",
+              "aimux-mobile-abc",
+              "-F",
+              "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}\t#{pane_dead}"
+            ]
+          ]
+        }
+      },
+      "inputSha256": "4f746f06221cdf96e295b93908433880b4926c5e04d9ea44e36ad80c7ddf122b"
+    },
+    {
+      "id": "tmux-runtime-manager-ops-008",
+      "name": "lists managed windows and skips invalid metadata",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "listManagedWindows",
+      "input": {
+        "name": "lists managed windows and skips invalid metadata",
+        "listManagedWindowsRaw": "@3\t3\tcodex\t1\t100\t0\t{\"sessionId\":\"codex-1\",\"command\":\"codex\",\"args\":[],\"toolConfigKey\":\"codex\"}\n@4\t4\tbroken\t0\t90\t0\t{not-json\n@5\t5\tempty\t0\t80\t1\t\n@6\t6\tclaude\t0\t70\t1\t{\"sessionId\":\"claude-1\",\"backendSessionId\":\"backend-existing\",\"command\":\"claude\",\"args\":[\"--resume\"],\"toolConfigKey\":\"claude\"}"
+      },
+      "output": {
+        "thrown": null,
+        "result": [
+          {
+            "target": {
+              "sessionName": "aimux-mobile-abc",
+              "windowId": "@3",
+              "windowIndex": 3,
+              "windowName": "codex",
+              "paneDead": false
+            },
+            "metadata": { "sessionId": "codex-1", "command": "codex", "args": [], "toolConfigKey": "codex" }
+          },
+          {
+            "target": {
+              "sessionName": "aimux-mobile-abc",
+              "windowId": "@6",
+              "windowIndex": 6,
+              "windowName": "claude",
+              "paneDead": true
+            },
+            "metadata": {
+              "sessionId": "claude-1",
+              "backendSessionId": "backend-existing",
+              "command": "claude",
+              "args": ["--resume"],
+              "toolConfigKey": "claude"
+            }
+          }
+        ],
+        "snapshot": {
+          "execCalls": [
+            [
+              "list-windows",
+              "-t",
+              "aimux-mobile-abc",
+              "-F",
+              "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}\t#{pane_dead}\t#{@aimux-meta}"
+            ]
+          ]
+        }
+      },
+      "inputSha256": "6b8db60ebd05dafebdf1728b676e50d4e33ffc1e1015e737aea558a6e4fbbe25"
+    },
+    {
+      "id": "tmux-runtime-manager-ops-009",
+      "name": "finds managed windows by session or backend id",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "findManagedWindow",
+      "input": {
+        "name": "finds managed windows by session or backend id",
+        "listManagedWindowsRaw": "@3\t3\tcodex\t1\t100\t0\t{\"sessionId\":\"codex-1\",\"command\":\"codex\",\"args\":[],\"toolConfigKey\":\"codex\"}\n@6\t6\tclaude\t0\t70\t1\t{\"sessionId\":\"claude-1\",\"backendSessionId\":\"backend-existing\",\"command\":\"claude\",\"args\":[\"--resume\"],\"toolConfigKey\":\"claude\"}"
+      },
+      "output": {
+        "thrown": null,
+        "result": {
+          "bySession": {
+            "sessionName": "aimux-mobile-abc",
+            "windowId": "@3",
+            "windowIndex": 3,
+            "windowName": "codex",
+            "paneDead": false
+          },
+          "byBackend": {
+            "sessionName": "aimux-mobile-abc",
+            "windowId": "@6",
+            "windowIndex": 6,
+            "windowName": "claude",
+            "paneDead": true
+          },
+          "missing": null
+        },
+        "snapshot": {
+          "execCalls": [
+            [
+              "list-windows",
+              "-t",
+              "aimux-mobile-abc",
+              "-F",
+              "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}\t#{pane_dead}\t#{@aimux-meta}"
+            ],
+            [
+              "list-windows",
+              "-t",
+              "aimux-mobile-abc",
+              "-F",
+              "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}\t#{pane_dead}\t#{@aimux-meta}"
+            ]
+          ]
+        }
+      },
+      "inputSha256": "753fd94f778d361a7b3b0e5801865daeb0f1a7c166b852ec06be14b280f7c482"
+    },
+    {
+      "id": "tmux-runtime-manager-ops-010",
+      "name": "cancels copy mode only when pane is in mode",
+      "source": "src/tmux/runtime-manager.ts",
+      "api": "cancelCopyMode",
+      "input": {
+        "name": "cancels copy mode only when pane is in mode",
+        "responses": {
+          "display-message -p -t @0 #{pane_in_mode}": "0",
+          "display-message -p -t @3 #{pane_in_mode}": "1"
+        }
+      },
+      "output": {
+        "thrown": null,
+        "result": null,
+        "snapshot": {
+          "execCalls": [
+            ["display-message", "-p", "-t", "@0", "#{pane_in_mode}"],
+            ["display-message", "-p", "-t", "@3", "#{pane_in_mode}"],
+            ["send-keys", "-t", "@3", "-X", "cancel"]
+          ]
+        }
+      },
+      "inputSha256": "e630b94de4c7307b1b3848e882851b4a7f4876c60a224a08a8478ec1741ab5c1"
+    }
+  ]
+}

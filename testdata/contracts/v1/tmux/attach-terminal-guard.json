@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "generatedAt": "2026-09-07T00:00:00.000Z",
+  "generatedBy": "scripts/capture-tmux-attach-terminal-guard-contract.mjs",
+  "source": "src/tmux/attach-terminal-guard.test.ts",
+  "sources": ["src/tmux/attach-terminal-guard.test.ts", "src/tmux/runtime-manager.ts"],
+  "description": "tmux interactive-terminal checks and attach-session argv/error behavior captured by running TypeScript runtime-manager helpers.",
+  "caseCount": 3,
+  "cases": [
+    {
+      "id": "tmux-attach-terminal-guard-001",
+      "name": "requires both stdin and stdout to be a terminal",
+      "source": "src/tmux/attach-terminal-guard.test.ts",
+      "input": {
+        "api": "hasInteractiveTerminal",
+        "matrix": [
+          { "stdin": true, "stdout": true },
+          { "stdin": true, "stdout": false },
+          { "stdin": false, "stdout": true },
+          {}
+        ]
+      },
+      "output": { "results": [true, false, false, false] },
+      "inputSha256": "9394cbcd7af0a04a3ef527f8a97d0534e5663b50c6575f9c0fbba7d3b5885891"
+    },
+    {
+      "id": "tmux-attach-terminal-guard-002",
+      "name": "refuses to attach with no terminal, naming the command to run by hand",
+      "source": "src/tmux/attach-terminal-guard.test.ts",
+      "input": { "api": "attachSession", "isTTY": false, "sessionName": "aimux-proj", "windowIndex": 0 },
+      "output": {
+        "thrown": "cannot attach to tmux session aimux-proj:0 without a terminal; run \"tmux attach -t aimux-proj:0\" yourself",
+        "interactiveCalls": []
+      },
+      "inputSha256": "dbba4a881da3cad300a8b908025c57b6a3765c099ae14c13bf94d80eb461a6c9"
+    },
+    {
+      "id": "tmux-attach-terminal-guard-003",
+      "name": "attaches normally when a terminal is present",
+      "source": "src/tmux/attach-terminal-guard.test.ts",
+      "input": { "api": "attachSession", "isTTY": true, "sessionName": "aimux-proj", "windowIndex": 2 },
+      "output": { "thrown": null, "interactiveCalls": [["attach-session", "-t", "aimux-proj:2"]] },
+      "inputSha256": "d8ce664276292ba299534113633cf953b84aec1f39325ba725e9bae8272f5458"
+    }
+  ]
+}
