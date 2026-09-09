@@ -146,3 +146,25 @@ fn snapshot() -> DesktopStateSnapshot {
         .expect("valid fixture")
         .runtime_full
 }
+
+/// A session that still looks live but has no tmux window is a stale record.
+/// Regression: Enter sent a focus request for a window that no longer existed
+/// and the dashboard reported "dashboard action failed: 404". Resume it instead.
+#[test]
+fn enter_resumes_live_session_whose_window_is_gone() {
+    let snapshot = snapshot();
+    let mut session = snapshot.sessions[0].clone();
+    session.tmux_window_id = None;
+
+    assert_eq!(
+        plan_dashboard_action(
+            Some(DashboardEntryRef::Session(&session)),
+            DashboardActionKind::Enter
+        ),
+        DashboardActionPlan::Request(DashboardActionRequest {
+            method: "POST",
+            path: routes::agents::RESUME,
+            body: json!({ "sessionId": session.id }),
+        })
+    );
+}

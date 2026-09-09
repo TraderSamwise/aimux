@@ -38,3 +38,14 @@ fn session_with_no_tmux_target_at_all_is_reported_offline() {
         "a session with no tmux binding must be offline"
     );
 }
+
+/// The dead tmux binding must be dropped, so nothing downstream tries to focus it.
+#[test]
+fn downgraded_session_drops_its_dead_tmux_target() {
+    let topology = topology_with("running", Some("@99999"));
+    let sessions = topology_desktop_session_list(&topology, &BTreeMap::new(), &Map::new());
+    assert!(
+        sessions[0].get("tmuxTarget").is_none(),
+        "a downgraded session must not keep a binding to a window that is gone"
+    );
+}

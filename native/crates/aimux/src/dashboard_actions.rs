@@ -54,16 +54,13 @@ fn plan_session_enter(session: &DashboardSession) -> DashboardActionPlan {
     ) {
         return blocked;
     }
+    // A live-looking session with no tmux window is a stale record, not an
+    // error: focusing it 404s. Fall through and resume it instead.
     if matches!(
         session.status,
         SessionStatus::Running | SessionStatus::Idle | SessionStatus::Waiting
-    ) {
-        let Some(window_id) = session.tmux_window_id.as_ref() else {
-            return DashboardActionPlan::Blocked(format!(
-                "Session {} has no tmux window",
-                session.id
-            ));
-        };
+    ) && let Some(window_id) = session.tmux_window_id.as_ref()
+    {
         return request(
             routes::controls::FOCUS_WINDOW,
             json!({ "windowId": window_id, "focus": true }),

@@ -16,6 +16,8 @@ use super::runtime_exchange::{read_runtime_exchange, runtime_exchange_path};
 const ACTIVE_AGENT_STATUSES: &[&str] = &["starting", "running", "idle", "offline"];
 
 /// Statuses that claim the session is backed by a live tmux window.
+/// The dashboard's "needs input" label is derived from metadata rather than
+/// stored here, so it rides on one of these underlying statuses.
 const LIVE_AGENT_STATUSES: &[&str] = &["starting", "running", "idle"];
 
 /// A session claiming a live status is only live if its tmux window still exists.
@@ -113,6 +115,11 @@ pub fn topology_desktop_session_list(
             {
                 status = "offline".to_owned();
                 set_value(&mut session, "status", Value::String(status.clone()));
+                // Drop the dead binding too, so nothing downstream tries to
+                // focus a window that no longer exists.
+                if let Value::Object(map) = &mut session {
+                    map.remove("tmuxTarget");
+                }
             }
             if status == "offline" {
                 let fresh_relaunch_allowed =
