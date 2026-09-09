@@ -168,7 +168,6 @@ pub mod session_runtime_tmux_metadata_sync_contract;
 pub mod session_viewed;
 pub mod shell_args;
 pub mod shell_hooks;
-pub mod shell_hooks_contract;
 pub mod src_integration_surfaces;
 pub mod state_update_lock;
 pub mod statusline_model_contract;

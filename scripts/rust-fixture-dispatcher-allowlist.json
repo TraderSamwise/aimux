@@ -50,7 +50,6 @@
   "native/crates/aimux/src/session_runtime_output_contract.rs": "Tracked session-runtime parity fixture; keep until session-runtime behavior is production-consumed natively or culled.",
   "native/crates/aimux/src/session_runtime_tmux_metadata_sync_contract.rs": "Tracked session-runtime parity fixture; keep until session-runtime behavior is production-consumed natively or culled.",
   "native/crates/aimux/src/session_viewed.rs": "Tracked session-runtime parity fixture; keep until session-runtime behavior is production-consumed natively or culled.",
-  "native/crates/aimux/src/shell_hooks_contract.rs": "Tracked shell-hook parity fixture; keep until shell-hook behavior is production-consumed natively or culled.",
   "native/crates/aimux/src/src_integration_surfaces.rs": "Tracked source-integration parity fixture; keep until source-integration behavior is production-consumed natively or culled.",
   "native/crates/aimux/src/terminal_rich_text_contract.rs": "Tracked terminal parity fixture; keep until terminal behavior is production-consumed natively or culled.",
   "native/crates/aimux/src/transport_security_contract.rs": "Tracked transport-security parity fixture; keep until transport-security behavior is production-consumed natively or culled.",
