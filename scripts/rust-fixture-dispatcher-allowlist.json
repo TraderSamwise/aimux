@@ -13,7 +13,6 @@
   "native/crates/aimux/src/hosted_runtime_contract.rs": "Tracked hosted parity fixture while hosted runtime behavior is still being promoted.",
   "native/crates/aimux/src/hosted_security_contract.rs": "Tracked hosted parity fixture while hosted runtime behavior is still being promoted.",
   "native/crates/aimux/src/lifecycle_orphans_contract.rs": "Tracked Rust parity fixture; keep until promoted to production or removed by a cull.",
-  "native/crates/aimux/src/metadata_interaction_display_contract.rs": "Tracked metadata parity fixture; keep until metadata behavior is production-consumed natively or culled.",
   "native/crates/aimux/src/metadata_output_previews_contract.rs": "Tracked metadata parity fixture; keep until metadata behavior is production-consumed natively or culled.",
   "native/crates/aimux/src/metadata_server_runtime_contract.rs": "Tracked metadata parity fixture; keep until metadata behavior is production-consumed natively or culled.",
   "native/crates/aimux/src/monitor_capture_contract.rs": "Tracked monitor parity fixture; keep until monitor behavior is production-consumed natively or culled.",

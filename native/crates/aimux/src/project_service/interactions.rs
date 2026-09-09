@@ -932,3 +932,74 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> Option<i64> {
     let days = era * 146_097 + day_of_era - 719_468;
     (days >= 0).then_some(days)
 }
+
+#[cfg(test)]
+mod interaction_display_contract_tests {
+    use super::{InteractionInput, summarize_interaction_for_display};
+    use serde::Deserialize;
+    use serde_json::{Value, json};
+
+    const INTERACTION_DISPLAY: &str = include_str!(
+        "../../../../../testdata/contracts/v1/metadata-server/interaction-display.json"
+    );
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Contract {
+        cases: Vec<Case>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Case {
+        id: String,
+        name: String,
+        input: Value,
+        output: Value,
+    }
+
+    #[test]
+    fn metadata_interaction_display_contract_matches_typescript() {
+        let contract: Contract =
+            serde_json::from_str(INTERACTION_DISPLAY).expect("interaction display fixture parses");
+        assert_eq!(contract.cases.len(), 5);
+
+        let mut failures = Vec::new();
+        for case in contract.cases {
+            let display = summarize_interaction_for_display(&InteractionInput {
+                session_id: string_field(&case.input, "sessionId").to_owned(),
+                interaction_type: string_field(&case.input, "type").to_owned(),
+                payload: case.input.get("payload").cloned().unwrap_or(Value::Null),
+                summary: case
+                    .input
+                    .get("summary")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                id: None,
+            });
+            let mut actual = json!({
+                "title": display.title,
+                "message": display.message,
+            });
+            if let Some(summary) = display.summary {
+                actual["summary"] = Value::String(summary);
+            }
+            if actual != case.output {
+                failures.push(format!(
+                    "{} ({})\nexpected: {}\nactual:   {}",
+                    case.id, case.name, case.output, actual
+                ));
+            }
+        }
+
+        assert!(
+            failures.is_empty(),
+            "metadata interaction display parity failures:\n{}",
+            failures.join("\n\n")
+        );
+    }
+
+    fn string_field<'a>(value: &'a Value, key: &str) -> &'a str {
+        value.get(key).and_then(Value::as_str).unwrap_or_default()
+    }
+}
