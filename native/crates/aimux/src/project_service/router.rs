@@ -1,11 +1,16 @@
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
+use crate::expose_pane_output_tap::{
+    ExposePaneOutputTap, ExposePaneOutputTapItem, ExposePaneOutputTapOptions,
+};
 use crate::osc_notifications::OscNotificationOutputState;
 use crate::paths::PathResolver;
 use crate::plugin_api::NativePluginStatus;
 use crate::project_api_contract::{invalidations, project_api_views_for_mutation_route, routes};
+use crate::tmux::{TmuxRuntimeManager, TmuxTarget};
 
 use super::agent_output_projection::AgentOutputProjectionCache;
 use super::output_cache::AgentOutputCaptureCache;
@@ -57,6 +62,7 @@ pub struct ProjectServiceRequestContext {
     pub desktop_state: Option<Value>,
     pub output_cache: AgentOutputCaptureCache,
     pub osc_notifications: OscNotificationOutputState,
+    pub osc_output_tap: OscOutputTap,
     pub output_projection_cache: AgentOutputProjectionCache,
     pub output_metrics: AgentOutputReadMetrics,
     pub project_events: ProjectEventBus,
@@ -74,6 +80,7 @@ impl ProjectServiceRequestContext {
             desktop_state: None,
             output_cache: AgentOutputCaptureCache::default(),
             osc_notifications: OscNotificationOutputState::default(),
+            osc_output_tap: OscOutputTap::default(),
             output_projection_cache: AgentOutputProjectionCache::default(),
             output_metrics: AgentOutputReadMetrics::default(),
             project_events: ProjectEventBus::default(),
@@ -94,6 +101,7 @@ impl ProjectServiceRequestContext {
             desktop_state: None,
             output_cache: AgentOutputCaptureCache::default(),
             osc_notifications: OscNotificationOutputState::default(),
+            osc_output_tap: OscOutputTap::default(),
             output_projection_cache: AgentOutputProjectionCache::default(),
             output_metrics: AgentOutputReadMetrics::default(),
             project_events: ProjectEventBus::default(),
@@ -123,6 +131,15 @@ impl ProjectServiceRequestContext {
 
     pub fn with_plugin_statuses(mut self, plugin_statuses: Vec<NativePluginStatus>) -> Self {
         self.plugin_statuses = plugin_statuses;
+        self
+    }
+
+    pub fn with_osc_output_tap(mut self) -> Self {
+        let mut options = ExposePaneOutputTapOptions::new(self.project_state_dir());
+        options.active_ms = 30_000;
+        let mut tap = ExposePaneOutputTap::new(options, TmuxRuntimeManager::new());
+        tap.start();
+        self.osc_output_tap = OscOutputTap::enabled(tap);
         self
     }
 
@@ -158,6 +175,57 @@ impl ProjectServiceRequestContext {
 
     pub fn plugin_statuses_json(&self) -> Value {
         serde_json::to_value(&self.plugin_statuses).unwrap_or_else(|_| Value::Array(Vec::new()))
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct OscOutputTap {
+    inner: Option<Arc<Mutex<SendableOscTap>>>,
+}
+
+impl std::fmt::Debug for OscOutputTap {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("OscOutputTap")
+            .field("enabled", &self.inner.is_some())
+            .finish()
+    }
+}
+
+struct SendableOscTap(ExposePaneOutputTap<TmuxRuntimeManager>);
+
+// SAFETY: SendableOscTap is only constructed in this module with the default
+// command-backed TmuxRuntimeManager. All mutable access is serialized by the
+// OscOutputTap mutex, and test-only non-Send tmux managers never enter it.
+unsafe impl Send for SendableOscTap {}
+
+impl OscOutputTap {
+    fn enabled(tap: ExposePaneOutputTap<TmuxRuntimeManager>) -> Self {
+        Self {
+            inner: Some(Arc::new(Mutex::new(SendableOscTap(tap)))),
+        }
+    }
+
+    pub fn track_and_read(
+        &self,
+        session_id: &str,
+        target: TmuxTarget,
+        max_bytes: usize,
+    ) -> Option<String> {
+        let Some(inner) = &self.inner else {
+            return None;
+        };
+        let Ok(mut tap) = inner.lock() else {
+            return None;
+        };
+        let window_id = target.window_id.clone();
+        tap.0.track_items(&[ExposePaneOutputTapItem {
+            id: session_id.to_owned(),
+            target,
+        }]);
+        tap.0
+            .read(&window_id, Some(max_bytes))
+            .map(|snapshot| snapshot.output)
     }
 }
 

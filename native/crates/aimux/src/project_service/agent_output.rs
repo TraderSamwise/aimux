@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 pub use crate::agent_prompt_delivery::normalize_submitted_prompt;
 use crate::agent_prompt_delivery::{PromptSubmitRuntime, wait_for_prompt_submit};
 use crate::daemon_state::load_metadata_state;
+use crate::expose_pane_output_tap::EXPOSE_PANE_TAP_MAX_BYTES;
 use crate::osc_notifications::OscNotificationOutput;
 use crate::project_api_contract::routes;
 use crate::remote_access::{RemoteActor, RemoteActorRole, parse_remote_actor};
@@ -16,8 +17,8 @@ use crate::runtime_topology::{
     list_topology_session_states, read_runtime_topology, runtime_topology_path,
 };
 use crate::tmux::{
-    CapturePaneOptions, TMUX_SEND_TEXT_CHUNK_BYTES, capture_pane_argv, resize_window_argv,
-    send_carriage_return_argv, send_escape_argv, send_key_argv, send_text_argv,
+    CapturePaneOptions, TMUX_SEND_TEXT_CHUNK_BYTES, TmuxTarget, capture_pane_argv,
+    resize_window_argv, send_carriage_return_argv, send_escape_argv, send_key_argv, send_text_argv,
     split_text_for_tmux_send_keys,
 };
 use crate::tool_output_watchers::{classify_tool_pane, reconcile_agent_activity};
@@ -502,12 +503,13 @@ pub(super) fn read_agent_output_payload(
         Ok(topology) => topology,
         Err(error) => return Err(Box::new(json_error(500, error))),
     };
-    let Some(window_id) = resolve_session_window_id(&topology, session_id) else {
+    let Some(target) = resolve_session_target(&topology, session_id) else {
         return Err(Box::new(json_error(
             500,
             format!("Session \"{session_id}\" is not running"),
         )));
     };
+    let window_id = target.window_id.clone();
     let capture_options = CapturePaneOptions {
         start_line: Some(capture_window.start_line),
         end_line: capture_window.end_line,
@@ -533,6 +535,18 @@ pub(super) fn read_agent_output_payload(
         .to_owned();
     if let Err(error) = write_osc_notifications(context, session_id, &osc_output) {
         return Err(Box::new(json_error(500, error)));
+    }
+    if let Some(tapped_output) =
+        context
+            .osc_output_tap
+            .track_and_read(session_id, target, EXPOSE_PANE_TAP_MAX_BYTES)
+    {
+        let tapped_osc = context
+            .osc_notifications
+            .process_capture(session_id, &tapped_output);
+        if let Err(error) = write_osc_notifications(context, session_id, &tapped_osc) {
+            return Err(Box::new(json_error(500, error)));
+        }
     }
     let output = strip_sgr(&output_ansi);
     let metadata = load_metadata_state(&project_state_dir);
@@ -978,14 +992,25 @@ fn mark_session_interrupted(context: &ProjectServiceRequestContext, session_id: 
 }
 
 fn resolve_session_window_id(topology: &Value, session_id: &str) -> Option<String> {
+    resolve_session_target(topology, session_id).map(|target| target.window_id)
+}
+
+fn resolve_session_target(topology: &Value, session_id: &str) -> Option<TmuxTarget> {
     list_topology_session_states(topology, Some(ACTIVE_OUTPUT_SESSION_STATUSES))
         .into_iter()
         .find(|session| string_field(session, "id") == Some(session_id))
         .and_then(|session| {
-            session
-                .get("tmuxTarget")
-                .and_then(|target| string_field(target, "windowId"))
-                .map(str::to_owned)
+            let target = session.get("tmuxTarget")?;
+            Some(TmuxTarget {
+                session_name: string_field(target, "sessionName")?.to_owned(),
+                window_id: string_field(target, "windowId")?.to_owned(),
+                window_index: target
+                    .get("windowIndex")
+                    .and_then(Value::as_i64)
+                    .unwrap_or_default(),
+                window_name: string_field(target, "windowName").unwrap_or("").to_owned(),
+                pane_dead: None,
+            })
         })
 }
 
