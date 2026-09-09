@@ -1,5 +1,9 @@
 use serde_json::{Map, Value, json};
 
+use crate::notification_deep_link::{
+    AimuxNotificationDeepLinkTarget, build_aimux_notification_deep_link,
+};
+
 pub fn run_local_ui_server_contract_case(input: &Value) -> Value {
     if let Some(host) = input.get("host").and_then(Value::as_str)
         && !is_loopback_host(host)
@@ -82,14 +86,31 @@ pub fn run_notify_alert_contract_case(input: &Value) -> Value {
             false
         } else {
             if !external_notifications_disabled(input) {
-                desktop_calls.push(json!({
-                    "title": non_empty(event, "title").unwrap_or_else(|| "aimux".to_owned()),
-                    "message": non_empty(event, "message")
-                        .or_else(|| non_empty(event, "sessionId"))
-                        .or_else(|| non_empty(event, "kind"))
-                        .unwrap_or_default(),
-                    "sound": true,
-                }));
+                let deep_link_url =
+                    build_aimux_notification_deep_link(AimuxNotificationDeepLinkTarget {
+                        project_root: str_field_optional(event, "projectRoot"),
+                        session_id: str_field_optional(event, "sessionId"),
+                        notification_id: str_field_optional(event, "notificationId"),
+                    });
+                let mut desktop_call = Map::new();
+                desktop_call.insert(
+                    "title".to_owned(),
+                    json!(non_empty(event, "title").unwrap_or_else(|| "aimux".to_owned())),
+                );
+                desktop_call.insert(
+                    "message".to_owned(),
+                    json!(
+                        non_empty(event, "message")
+                            .or_else(|| non_empty(event, "sessionId"))
+                            .or_else(|| non_empty(event, "kind"))
+                            .unwrap_or_default()
+                    ),
+                );
+                desktop_call.insert("sound".to_owned(), json!(true));
+                if let Some(deep_link_url) = deep_link_url {
+                    desktop_call.insert("deepLinkUrl".to_owned(), json!(deep_link_url));
+                }
+                desktop_calls.push(Value::Object(desktop_call));
             }
             true
         }
@@ -164,5 +185,9 @@ fn non_empty(value: &Value, field: &str) -> Option<String> {
 }
 
 fn str_field<'a>(value: &'a Value, field: &str) -> &'a str {
-    value.get(field).and_then(Value::as_str).unwrap_or_default()
+    str_field_optional(value, field).unwrap_or("")
+}
+
+fn str_field_optional<'a>(value: &'a Value, field: &str) -> Option<&'a str> {
+    value.get(field).and_then(Value::as_str)
 }

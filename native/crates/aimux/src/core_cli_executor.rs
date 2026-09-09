@@ -130,7 +130,12 @@ pub trait CoreCliRuntime {
     fn runtime_migration_rollback(&self, manifest: &str) -> Result<String, String>;
     fn desktop_notifier_doctor_report(&self) -> Result<Value, String>;
     fn desktop_notifier_doctor_text(&self) -> Result<String, String>;
-    fn send_desktop_notification_test(&self, title: &str, body: &str) -> Result<Value, String>;
+    fn send_desktop_notification_test(
+        &self,
+        title: &str,
+        body: &str,
+        open_url: Option<&str>,
+    ) -> Result<Value, String>;
 }
 
 #[derive(Debug, Default)]
@@ -360,11 +365,17 @@ impl CoreCliRuntime for RealCoreCliRuntime {
         ))
     }
 
-    fn send_desktop_notification_test(&self, title: &str, body: &str) -> Result<Value, String> {
+    fn send_desktop_notification_test(
+        &self,
+        title: &str,
+        body: &str,
+        open_url: Option<&str>,
+    ) -> Result<Value, String> {
         let attempt = send_desktop_notification_and_wait(&DesktopNotificationPayload {
             title: title.to_owned(),
             message: body.to_owned(),
             sound: true,
+            deep_link_url: open_url.map(str::to_owned),
         });
         Ok(notification_test_json(&attempt))
     }
@@ -660,9 +671,11 @@ fn run_plan(
             runtime.runtime_migration_rollback(&manifest)?,
         ])),
         CoreCliAction::DoctorNotifications => run_doctor_notifications(output_mode, runtime),
-        CoreCliAction::NotificationTest { title, body } => {
-            run_notification_test(output_mode, &title, &body, runtime)
-        }
+        CoreCliAction::NotificationTest {
+            title,
+            body,
+            open_url,
+        } => run_notification_test(output_mode, &title, &body, open_url.as_deref(), runtime),
     }
 }
 
@@ -771,9 +784,10 @@ fn run_notification_test(
     output_mode: CoreCliOutputMode,
     title: &str,
     body: &str,
+    open_url: Option<&str>,
     runtime: &impl CoreCliRuntime,
 ) -> Result<CoreCliExecution, String> {
-    let payload = runtime.send_desktop_notification_test(title, body)?;
+    let payload = runtime.send_desktop_notification_test(title, body, open_url)?;
     let ok = payload.get("ok").and_then(Value::as_bool) == Some(true);
     if output_mode == CoreCliOutputMode::Json {
         return Ok(CoreCliExecution {

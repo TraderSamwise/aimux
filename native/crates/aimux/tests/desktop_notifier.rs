@@ -118,6 +118,7 @@ fn reports_disabled_and_does_not_spawn_transport() {
         title: "aimux".into(),
         message: "agent waiting".into(),
         sound: true,
+        deep_link_url: None,
     });
 
     assert!(external_notifications_disabled());
@@ -130,13 +131,13 @@ fn reports_disabled_and_does_not_spawn_transport() {
 fn awaits_mac_helper_delivery_for_diagnostic_sends() {
     let _lock = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let guard = EnvGuard::new("send-helper");
-    let helper = fake_helper(
+    let expected_args = "--title aimux --message agent waiting --open-url aimux:///agent/codex-1/chat?notificationId=notice+1 --sound";
+    let helper = arg_checking_helper(
         &guard
             .root
             .join("aimux-notifier.app/Contents/MacOS/aimux-notifier"),
-        0,
+        expected_args,
         "delivered\n",
-        "",
     );
     unsafe {
         std::env::set_var("AIMUX_NOTIFIER_HELPER", &helper);
@@ -146,6 +147,7 @@ fn awaits_mac_helper_delivery_for_diagnostic_sends() {
         title: "aimux".into(),
         message: "agent waiting".into(),
         sound: true,
+        deep_link_url: Some(" aimux:///agent/codex-1/chat?notificationId=notice+1 ".into()),
     });
 
     assert_eq!(result.transport, DesktopNotificationTransport::MacHelper);
@@ -212,8 +214,32 @@ fn fake_helper(path: &PathBuf, exit_code: i32, stdout: &str, stderr: &str) -> Pa
     path.to_path_buf()
 }
 
+#[cfg(unix)]
+fn arg_checking_helper(path: &PathBuf, expected_args: &str, stdout: &str) -> PathBuf {
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        path,
+        format!(
+            "#!/bin/sh\nexpected={:?}\nif [ \"$*\" != \"$expected\" ]; then printf '%s\\n' \"$*\" >&2; exit 42; fi\nprintf '%b' {:?}\n",
+            expected_args, stdout
+        ),
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(path).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(path, permissions).unwrap();
+    path.to_path_buf()
+}
+
 #[cfg(not(unix))]
 fn fake_helper(path: &PathBuf, _exit_code: i32, _stdout: &str, _stderr: &str) -> PathBuf {
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, "").unwrap();
+    path.to_path_buf()
+}
+
+#[cfg(not(unix))]
+fn arg_checking_helper(path: &PathBuf, _expected_args: &str, _stdout: &str) -> PathBuf {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(path, "").unwrap();
     path.to_path_buf()

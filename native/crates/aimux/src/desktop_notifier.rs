@@ -9,6 +9,8 @@ pub struct DesktopNotificationPayload {
     pub title: String,
     pub message: String,
     pub sound: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deep_link_url: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -313,6 +315,12 @@ fn mac_helper_args(payload: &DesktopNotificationPayload) -> Vec<String> {
         "--message".to_owned(),
         payload.message.clone(),
     ];
+    if let Some(deep_link_url) = payload.deep_link_url.as_deref().map(str::trim)
+        && !deep_link_url.is_empty()
+    {
+        args.push("--open-url".into());
+        args.push(deep_link_url.to_owned());
+    }
     if payload.sound {
         args.push("--sound".into());
     }

@@ -1026,6 +1026,8 @@ fn looks_like_tool_action_text(text: &str) -> bool {
     if (lower.starts_with("bash(") && (!trimmed.contains(')') || trimmed.ends_with(')')))
         || lower.starts_with("bashoutput")
         || lower.starts_with("background command \"")
+        || looks_like_task_output_text(trimmed)
+        || looks_like_agent_finished_text(trimmed)
         || looks_like_ran_command_text(trimmed)
         || lower.starts_with("searched for ")
         || lower.starts_with("read ") && (lower.contains(" file") || lower.contains(" pattern"))
@@ -1062,6 +1064,70 @@ fn looks_like_tool_action_text(text: &str) -> bool {
         }
     }
     false
+}
+
+fn looks_like_task_output_text(text: &str) -> bool {
+    let Some(after_prefix) = strip_ascii_case_prefix(text, "task output") else {
+        return false;
+    };
+    if !after_prefix.chars().next().is_some_and(char::is_whitespace) {
+        return false;
+    }
+    let rest = after_prefix.trim_start();
+    let hex_len = rest
+        .char_indices()
+        .take_while(|(_, ch)| ch.is_ascii_hexdigit())
+        .map(|(index, ch)| index + ch.len_utf8())
+        .last()
+        .unwrap_or(0);
+    if hex_len < 6 {
+        return false;
+    }
+    rest[hex_len..]
+        .chars()
+        .next()
+        .is_none_or(|ch| !is_js_word_char(ch))
+}
+
+fn looks_like_agent_finished_text(text: &str) -> bool {
+    let Some(after_agent) = strip_ascii_case_prefix(text, "agent") else {
+        return false;
+    };
+    let after_space = after_agent.trim_start();
+    if after_space.len() == after_agent.len() {
+        return false;
+    };
+    let Some(after_quote) = after_space.strip_prefix('"') else {
+        return false;
+    };
+    let Some(quoted_len) = after_quote.find('"') else {
+        return false;
+    };
+    if quoted_len == 0 {
+        return false;
+    }
+    let after_closing_quote = &after_quote[quoted_len + 1..];
+    let after_finished_space = after_closing_quote.trim_start();
+    if after_finished_space.len() == after_closing_quote.len() {
+        return false;
+    };
+    let Some(after_finished) = strip_ascii_case_prefix(after_finished_space, "finished") else {
+        return false;
+    };
+    after_finished
+        .chars()
+        .next()
+        .is_none_or(|ch| !is_js_word_char(ch))
+}
+
+fn strip_ascii_case_prefix<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
+    text.get(..prefix.len())
+        .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
+        .then(|| &text[prefix.len()..])
+}
+
+fn is_js_word_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || ch == '_'
 }
 
 fn looks_like_claude_collapsed_progress_text(text: &str) -> bool {

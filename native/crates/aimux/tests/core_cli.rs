@@ -1321,6 +1321,8 @@ fn desktop_notification_test_plans_native_local_action() {
             "--title",
             "Ping",
             "--body=Ready",
+            "--open-url",
+            " aimux:///agent/codex-1/chat ",
             "--json",
         ],
         &context(true, true),
@@ -1333,6 +1335,7 @@ fn desktop_notification_test_plans_native_local_action() {
         CoreCliAction::NotificationTest {
             title: "Ping".into(),
             body: "Ready".into(),
+            open_url: Some("aimux:///agent/codex-1/chat".into()),
         }
     );
 
@@ -1346,6 +1349,7 @@ fn desktop_notification_test_plans_native_local_action() {
         CoreCliAction::NotificationTest {
             title: "Aimux notification test".into(),
             body: "Desktop notification delivery is working.".into(),
+            open_url: None,
         }
     );
 }

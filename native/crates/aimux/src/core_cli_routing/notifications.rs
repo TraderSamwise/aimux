@@ -158,6 +158,7 @@ pub fn parse_core_notification_test_args<S: AsRef<str>>(
     }
     let mut title = "Aimux notification test".to_owned();
     let mut body = "Desktop notification delivery is working.".to_owned();
+    let mut open_url: Option<String> = None;
     let mut json = false;
     let mut index = 2;
     while index < args.len() {
@@ -187,6 +188,16 @@ pub fn parse_core_notification_test_args<S: AsRef<str>>(
             index += 1;
             continue;
         }
+        if arg == "--open-url" {
+            open_url = Some(required_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--open-url=") {
+            open_url = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
         return None;
     }
     let title = {
@@ -205,7 +216,15 @@ pub fn parse_core_notification_test_args<S: AsRef<str>>(
             trimmed.to_owned()
         }
     };
-    Some(CoreNotificationTestArgs { title, body, json })
+    let open_url = open_url
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
+    Some(CoreNotificationTestArgs {
+        title,
+        body,
+        open_url,
+        json,
+    })
 }
 
 fn split_notification_ids(value: &str) -> Vec<String> {

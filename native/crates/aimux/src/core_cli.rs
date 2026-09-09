@@ -285,6 +285,7 @@ pub enum CoreCliAction {
     NotificationTest {
         title: String,
         body: String,
+        open_url: Option<String>,
     },
     RuntimeMigrationAudit {
         project_root: String,
@@ -1120,6 +1121,7 @@ where
                 CoreCliAction::NotificationTest {
                     title: parsed.title,
                     body: parsed.body,
+                    open_url: parsed.open_url,
                 },
                 CoreCliFallback::None,
             )

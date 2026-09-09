@@ -287,7 +287,12 @@ impl CoreCliRuntime for FakeRuntime {
         Ok("desktop notifications disabled\n".into())
     }
 
-    fn send_desktop_notification_test(&self, _title: &str, _body: &str) -> Result<Value, String> {
+    fn send_desktop_notification_test(
+        &self,
+        _title: &str,
+        _body: &str,
+        _open_url: Option<&str>,
+    ) -> Result<Value, String> {
         Ok(json!({ "ok": false }))
     }
 }

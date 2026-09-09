@@ -288,11 +288,28 @@ fn push_prefixed(lines: &mut Vec<String>, label: &str, value: Option<&Value>) {
 }
 
 fn send_via_node_notifier(payload: Option<&Value>, calls: &mut Calls) {
-    calls.node_notify.push(json!({
-        "title": payload_string(payload, "title"),
-        "message": payload_string(payload, "message"),
-        "sound": payload.and_then(|payload| payload.get("sound")).and_then(Value::as_bool).unwrap_or(true),
-    }));
+    let mut call = Map::new();
+    call.insert("title".to_owned(), json!(payload_string(payload, "title")));
+    call.insert(
+        "message".to_owned(),
+        json!(payload_string(payload, "message")),
+    );
+    call.insert(
+        "sound".to_owned(),
+        json!(
+            payload
+                .and_then(|payload| payload.get("sound"))
+                .and_then(Value::as_bool)
+                .unwrap_or(true)
+        ),
+    );
+    if let Some(deep_link_url) = payload
+        .and_then(|payload| payload.get("deepLinkUrl"))
+        .and_then(Value::as_str)
+    {
+        call.insert("deepLinkUrl".to_owned(), json!(deep_link_url));
+    }
+    calls.node_notify.push(Value::Object(call));
 }
 
 fn mac_helper_args(payload: Option<&Value>) -> Vec<String> {
@@ -302,6 +319,15 @@ fn mac_helper_args(payload: Option<&Value>) -> Vec<String> {
         "--message".to_owned(),
         payload_string(payload, "message"),
     ];
+    if let Some(deep_link_url) = payload
+        .and_then(|payload| payload.get("deepLinkUrl"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        args.push("--open-url".to_owned());
+        args.push(deep_link_url.to_owned());
+    }
     if payload
         .and_then(|payload| payload.get("sound"))
         .and_then(Value::as_bool)

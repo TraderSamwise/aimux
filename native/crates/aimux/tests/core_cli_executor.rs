@@ -383,12 +383,17 @@ impl CoreCliRuntime for FakeRuntime {
         Ok("Desktop notifications\nPlatform: macos\nTransport: mac-helper".into())
     }
 
-    fn send_desktop_notification_test(&self, title: &str, body: &str) -> Result<Value, String> {
+    fn send_desktop_notification_test(
+        &self,
+        title: &str,
+        body: &str,
+        open_url: Option<&str>,
+    ) -> Result<Value, String> {
         Ok(json!({
             "ok": true,
             "attempt": {
                 "transport": "mac-helper",
-                "helperPath": format!("/tmp/{title}-{body}/aimux-notifier.app/Contents/MacOS/aimux-notifier"),
+                "helperPath": format!("/tmp/{title}-{body}-{}/aimux-notifier.app/Contents/MacOS/aimux-notifier", open_url.unwrap_or("none")),
                 "ok": true,
                 "exitCode": 0,
                 "stdout": "",
@@ -1475,7 +1480,15 @@ fn desktop_notification_commands_execute_native_without_core_command_fallback() 
     let doctor_json =
         run_core_cli_with(&args(&["doctor", "notifications", "--json"]), &mut runtime);
     let test_text = run_core_cli_with(
-        &args(&["notifications", "test", "--title", "Ping", "--body=Ready"]),
+        &args(&[
+            "notifications",
+            "test",
+            "--title",
+            "Ping",
+            "--body=Ready",
+            "--open-url",
+            " aimux:///agent/codex-1/chat ",
+        ]),
         &mut runtime,
     );
     let test_json = run_core_cli_with(
@@ -1501,14 +1514,14 @@ fn desktop_notification_commands_execute_native_without_core_command_fallback() 
     assert_eq!(
         test_text.stdout,
         [
-            "Sent notification via mac-helper (/tmp/Ping-Ready/aimux-notifier.app/Contents/MacOS/aimux-notifier)."
+            "Sent notification via mac-helper (/tmp/Ping-Ready-aimux:///agent/codex-1/chat/aimux-notifier.app/Contents/MacOS/aimux-notifier)."
         ]
     );
     let payload = serde_json::from_str::<Value>(&test_json.stdout[0]).unwrap();
     assert_eq!(payload["ok"], true);
     assert_eq!(
         payload["attempt"]["helperPath"],
-        "/tmp/Aimux notification test-Desktop notification delivery is working./aimux-notifier.app/Contents/MacOS/aimux-notifier"
+        "/tmp/Aimux notification test-Desktop notification delivery is working.-none/aimux-notifier.app/Contents/MacOS/aimux-notifier"
     );
     assert!(runtime.commands.is_empty());
     assert!(runtime.text_routes.is_empty());

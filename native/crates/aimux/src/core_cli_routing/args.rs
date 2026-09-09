@@ -234,6 +234,8 @@ pub struct CoreNotificationArgs {
 pub struct CoreNotificationTestArgs {
     pub title: String,
     pub body: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub open_url: Option<String>,
     pub json: bool,
 }
 

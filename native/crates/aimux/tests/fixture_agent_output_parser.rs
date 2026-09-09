@@ -57,6 +57,59 @@ fn fixture_agent_output_parser_activity_text_matches_typescript() {
 }
 
 #[test]
+fn keeps_claude_task_output_progress_out_of_assistant_chat_messages() {
+    let raw = [
+        "⏺ Sign-up takes no prefilled address, which matters.",
+        "",
+        "Task Output a214a37629dc53118",
+        "  ⎿  Read output (ctrl+o to expand)",
+        "",
+        "Agent \"Audit phase 4 plan\" finished · 1m 41s",
+        "",
+        "⏺ Now the route, and the two comments that assert the old rule.",
+        "",
+        "Task Output a51ccfed03dad09ee",
+        "  Audit phase 4 implementation",
+        "    Waiting for task (esc to give additional instructions)",
+    ]
+    .join("\n");
+
+    let projection = project_agent_output(&raw, Some("claude"));
+    let block_types: Vec<&str> = projection
+        .parsed
+        .get("blocks")
+        .and_then(Value::as_array)
+        .expect("blocks")
+        .iter()
+        .map(|block| block["type"].as_str().expect("block type"))
+        .collect();
+
+    assert_eq!(block_types, ["response", "status", "response", "status"]);
+    assert!(
+        projection.parsed["blocks"][1]["text"]
+            .as_str()
+            .is_some_and(|text| text.contains("Task Output a214a37629dc53118"))
+    );
+    assert!(
+        projection.parsed["blocks"][3]["text"]
+            .as_str()
+            .is_some_and(|text| text.contains("Waiting for task"))
+    );
+    let message_text: Vec<&str> = projection
+        .messages
+        .iter()
+        .map(|message| message["text"].as_str().expect("message text"))
+        .collect();
+    assert_eq!(
+        message_text,
+        [
+            "Sign-up takes no prefilled address, which matters.",
+            "Now the route, and the two comments that assert the old rule.",
+        ]
+    );
+}
+
+#[test]
 fn fixture_agent_output_parser_audit_matches_typescript() {
     let contract: Value =
         serde_json::from_str(PARSER_AUDIT).expect("valid parser audit fixture json");
