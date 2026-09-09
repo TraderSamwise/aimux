@@ -343,14 +343,14 @@ pub fn parse_logging_cli_options<S: AsRef<str>>(args: &[S]) -> LoggingCliOptions
             index += 1;
             continue;
         }
-        if arg == "--log-level" {
-            if let Some(value) = args.get(index + 1).map(AsRef::as_ref) {
-                if !value.is_empty() && !value.starts_with('-') {
-                    options.log_level = Some(value.to_owned());
-                    index += 2;
-                    continue;
-                }
-            }
+        if arg == "--log-level"
+            && let Some(value) = args.get(index + 1).map(AsRef::as_ref)
+            && !value.is_empty()
+            && !value.starts_with('-')
+        {
+            options.log_level = Some(value.to_owned());
+            index += 2;
+            continue;
         }
         if let Some(value) = arg.strip_prefix("--log-level=") {
             if !value.is_empty() {
@@ -359,14 +359,14 @@ pub fn parse_logging_cli_options<S: AsRef<str>>(args: &[S]) -> LoggingCliOptions
             index += 1;
             continue;
         }
-        if arg == "--log-category" {
-            if let Some(value) = args.get(index + 1).map(AsRef::as_ref) {
-                if !value.is_empty() && !value.starts_with('-') {
-                    options.log_category = Some(value.to_owned());
-                    index += 2;
-                    continue;
-                }
-            }
+        if arg == "--log-category"
+            && let Some(value) = args.get(index + 1).map(AsRef::as_ref)
+            && !value.is_empty()
+            && !value.starts_with('-')
+        {
+            options.log_category = Some(value.to_owned());
+            index += 2;
+            continue;
         }
         if let Some(value) = arg.strip_prefix("--log-category=") {
             if !value.is_empty() {
@@ -419,10 +419,10 @@ fn write_record(
     let Ok(line) = serde_json::to_string(&record).map(|line| format!("{line}\n")) else {
         return;
     };
-    if let Some(parent) = config.path.parent() {
-        if fs::create_dir_all(parent).is_err() {
-            return;
-        }
+    if let Some(parent) = config.path.parent()
+        && fs::create_dir_all(parent).is_err()
+    {
+        return;
     }
     rotate_if_needed(
         &config.path,
