@@ -22,6 +22,7 @@ struct FakeRuntime {
     text_routes: Vec<(String, Option<Value>)>,
     open_targets: Vec<Value>,
     restart_calls: Vec<Option<String>>,
+    restart_progress: Vec<String>,
     stop_daemon_calls: Vec<String>,
     stopped_daemon: Option<StoppedDaemonInfo>,
     login_calls: Cell<usize>,
@@ -53,6 +54,7 @@ impl Default for FakeRuntime {
             text_routes: Vec::new(),
             open_targets: Vec::new(),
             restart_calls: Vec::new(),
+            restart_progress: Vec::new(),
             stop_daemon_calls: Vec::new(),
             stopped_daemon: Some(StoppedDaemonInfo {
                 daemon: daemon_info(),
@@ -345,6 +347,10 @@ impl CoreCliRuntime for FakeRuntime {
             }),
             text: format!("Aimux Restart\n  failures: {}", self.restart_failures),
         })
+    }
+
+    fn emit_restart_progress(&mut self, message: &str) {
+        self.restart_progress.push(message.to_owned());
     }
 
     fn stop_daemon(&mut self, signal: &str) -> Result<Option<StoppedDaemonInfo>, String> {
@@ -2525,6 +2531,31 @@ fn restart_control_plane_does_not_require_git_cwd_without_project_scope() {
     assert!(execution.stderr.is_empty());
     assert_eq!(runtime.restart_calls, [None]);
     assert!(runtime.commands.is_empty());
+}
+
+#[test]
+fn restart_control_plane_text_emits_progress_before_route_returns() {
+    let mut runtime = FakeRuntime::default();
+
+    let execution = run_core_cli_with(&args(&["restart"]), &mut runtime);
+
+    assert_eq!(execution.code, 0);
+    assert_eq!(runtime.restart_calls, [None]);
+    assert_eq!(
+        runtime.restart_progress,
+        ["Restarting Aimux control plane..."]
+    );
+}
+
+#[test]
+fn restart_control_plane_json_does_not_emit_text_progress() {
+    let mut runtime = FakeRuntime::default();
+
+    let execution = run_core_cli_with(&args(&["restart", "--json"]), &mut runtime);
+
+    assert_eq!(execution.code, 0);
+    assert_eq!(runtime.restart_calls, [None]);
+    assert!(runtime.restart_progress.is_empty());
 }
 
 #[test]

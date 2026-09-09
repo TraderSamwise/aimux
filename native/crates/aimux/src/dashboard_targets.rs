@@ -236,6 +236,30 @@ pub fn resolve_dashboard_target(
     resolve_dashboard_target_with_context(project_root, tmux, options, &context)
 }
 
+pub fn resolve_dashboard_target_for_restart(
+    project_root: &str,
+    tmux: &mut impl DashboardTargetTmux,
+) -> Result<DashboardTargetRef, String> {
+    let context = DashboardTargetContext::for_project(project_root)?;
+    resolve_dashboard_target_for_restart_with_context(project_root, tmux, &context)
+}
+
+pub fn resolve_dashboard_target_for_restart_with_context(
+    project_root: &str,
+    tmux: &mut impl DashboardTargetTmux,
+    context: &DashboardTargetContext,
+) -> Result<DashboardTargetRef, String> {
+    resolve_dashboard_target_with_context(
+        project_root,
+        tmux,
+        DashboardResolveOptions {
+            force_reload: false,
+            open_in_host_session: true,
+        },
+        context,
+    )
+}
+
 pub fn find_live_dashboard_target_with_context(
     project_root: &str,
     tmux: &mut impl DashboardTargetTmux,
@@ -503,6 +527,15 @@ pub fn run_dashboard_targets_contract_case(case_id: &str, input: &Value) -> Valu
                 &context,
             )
             .expect("contract resolveDashboardTarget succeeds");
+            json!({ "result": dashboard_target_ref_to_value(result), "calls": tmux.calls })
+        }
+        Some("resolveDashboardTargetForRestart") => {
+            let result = resolve_dashboard_target_for_restart_with_context(
+                project_root,
+                &mut tmux,
+                &context,
+            )
+            .expect("contract resolveDashboardTargetForRestart succeeds");
             json!({ "result": dashboard_target_ref_to_value(result), "calls": tmux.calls })
         }
         api => json!({ "error": format!("unsupported dashboard targets api {api:?}") }),

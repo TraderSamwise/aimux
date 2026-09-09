@@ -69,6 +69,7 @@ use crate::daemon_state::{
 use crate::dashboard_readiness::get_runtime_owner_id;
 use crate::dashboard_targets::{
     DashboardResolveOptions, DashboardTargetRef, resolve_dashboard_target,
+    resolve_dashboard_target_for_restart,
 };
 use crate::event_loop_budget::{
     assess_loop_budget, get_event_loop_delay, start_event_loop_monitor,
@@ -2434,14 +2435,7 @@ fn session_prefix_for_project(project_root: &str) -> String {
 fn reload_dashboard_for_restart(project_root: &str) -> Result<DashboardTargetRef, String> {
     let mut tmux = TmuxRuntimeManager::new();
     let active_windows = capture_active_non_dashboard_windows(project_root, &mut tmux);
-    let resolved = resolve_dashboard_target(
-        project_root,
-        &mut tmux,
-        DashboardResolveOptions {
-            force_reload: true,
-            open_in_host_session: true,
-        },
-    );
+    let resolved = resolve_dashboard_target_for_restart(project_root, &mut tmux);
     let result = match resolved {
         Ok(target) => {
             let mut errors = cleanup_host_dashboard_session(

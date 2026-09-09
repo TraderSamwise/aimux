@@ -60,6 +60,7 @@ use crate::tmux::{attach_session_argv, switch_client_argv};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -122,6 +123,7 @@ pub trait CoreCliRuntime {
         &mut self,
         project_root: Option<&str>,
     ) -> Result<RestartControlPlaneTextResult, String>;
+    fn emit_restart_progress(&mut self, _message: &str) {}
     fn stop_daemon(&mut self, signal: &str) -> Result<Option<StoppedDaemonInfo>, String>;
     fn debug_state_report(&self, target: &str) -> Result<String, String>;
     fn runtime_migration_audit(&self, project_root: &str) -> Result<String, String>;
@@ -324,6 +326,12 @@ impl CoreCliRuntime for RealCoreCliRuntime {
         project_root: Option<&str>,
     ) -> Result<RestartControlPlaneTextResult, String> {
         restart_control_plane_from_cli(project_root)
+    }
+
+    fn emit_restart_progress(&mut self, message: &str) {
+        let mut stderr = std::io::stderr();
+        let _ = writeln!(stderr, "{message}");
+        let _ = stderr.flush();
     }
 
     fn stop_daemon(&mut self, signal: &str) -> Result<Option<StoppedDaemonInfo>, String> {
@@ -925,6 +933,9 @@ fn run_restart_control_plane(
     output_mode: CoreCliOutputMode,
     runtime: &mut impl CoreCliRuntime,
 ) -> Result<CoreCliExecution, String> {
+    if matches!(output_mode, CoreCliOutputMode::Text) {
+        runtime.emit_restart_progress("Restarting Aimux control plane...");
+    }
     let result = runtime.restart_control_plane(project_root)?;
     let failures = result
         .restart

@@ -47,6 +47,31 @@ fn fixture_dashboard_targets_contract_is_captured() {
     }
 }
 
+#[test]
+fn restart_resolution_reuses_usable_dashboard_without_replacement() {
+    let actual = run_dashboard_targets_contract_case(
+        "dashboard-targets-003",
+        &json!({
+            "api": "resolveDashboardTargetForRestart",
+            "projectRoot": "/Users/sam/cs/glyde-frontend"
+        }),
+    );
+    let calls = actual
+        .get("calls")
+        .and_then(Value::as_array)
+        .expect("restart dashboard calls");
+    let methods = calls
+        .iter()
+        .filter_map(|call| call.get("method").and_then(Value::as_str))
+        .collect::<Vec<_>>();
+
+    assert_eq!(actual["result"]["dashboardTarget"]["windowId"], json!("@1"));
+    assert!(methods.contains(&"setSessionOption"));
+    assert!(!methods.contains(&"ensureProjectSession"));
+    assert!(!methods.contains(&"ensureDashboardWindow"));
+    assert!(!methods.contains(&"replaceWindowWhenReady"));
+}
+
 fn normalize_dashboard_stamps(value: Value) -> Value {
     let mut stamps = Vec::<String>::new();
     normalize_dashboard_stamps_inner(value, &mut stamps)
