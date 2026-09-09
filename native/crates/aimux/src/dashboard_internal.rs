@@ -59,6 +59,17 @@ use crate::runtime_guard::{
     RuntimeGuardState, probe_runtime_guard, runtime_guard_overlay_copy,
     stabilize_runtime_guard_probe,
 };
+use crate::runtime_guard_repair::{
+    RUNTIME_GUARD_REPAIR_FLAP_WINDOW_MS, RUNTIME_GUARD_REPAIR_RETRY_MS, RuntimeGuardRepairDecision,
+    RuntimeGuardRepairGate, current_time_ms, runtime_guard_repair_decision,
+    runtime_guard_repair_key, start_runtime_guard_repair_daemon_request,
+    try_acquire_runtime_guard_repair_lock,
+};
+use crate::runtime_guard_repair_history::{
+    clear_attempts as clear_runtime_guard_repair_attempts,
+    load_attempts as load_runtime_guard_repair_attempts,
+    record_attempt as record_runtime_guard_repair_attempt,
+};
 use crate::tmux::TmuxRuntimeManager;
 use crate::tui_render::theme::{Tone, recede, style};
 use crate::tui_render::{OverlayBoxSpec, OverlayVariant, render_overlay_box};
@@ -73,6 +84,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
+use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -97,11 +109,17 @@ struct DashboardSnapshotLoad {
     endpoint: Option<ProjectServiceEndpoint>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct DashboardRuntimeGuardStatus {
     state: RuntimeGuardState,
     disconnected_probe_count: usize,
     entered_at: Option<Instant>,
+    repair_receiver: Option<Receiver<DashboardRuntimeGuardRepairResult>>,
+    repair_key: Option<String>,
+    repair_failed_key: Option<String>,
+    repair_retry_at_ms: Option<i64>,
+    repair_error: Option<String>,
+    repair_attempts: Vec<i64>,
 }
 
 impl Default for DashboardRuntimeGuardStatus {
@@ -110,6 +128,12 @@ impl Default for DashboardRuntimeGuardStatus {
             state: RuntimeGuardState::Ok,
             disconnected_probe_count: 0,
             entered_at: None,
+            repair_receiver: None,
+            repair_key: None,
+            repair_failed_key: None,
+            repair_retry_at_ms: None,
+            repair_error: None,
+            repair_attempts: Vec::new(),
         }
     }
 }
@@ -129,6 +153,23 @@ impl DashboardRuntimeGuardStatus {
             .map(|entered_at| entered_at.elapsed().as_millis().min(i64::MAX as u128) as i64)
             .unwrap_or_default()
     }
+
+    fn repairing(&self) -> bool {
+        self.repair_receiver.is_some()
+    }
+
+    fn repair_failed_for_current_state(&self) -> bool {
+        self.repair_failed_key
+            .as_deref()
+            .is_some_and(|key| key == runtime_guard_repair_key(&self.state))
+    }
+}
+
+#[derive(Debug)]
+struct DashboardRuntimeGuardRepairResult {
+    repair_key: String,
+    state: RuntimeGuardState,
+    result: Result<Value, String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -323,6 +364,9 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
             latest_endpoint.as_ref(),
             options.once || options.desktop_state_file.is_some(),
         );
+        if poll_dashboard_runtime_guard_repair(&mut runtime_guard, &options.project_root) {
+            render_now = true;
+        }
         if live_dashboard && last_runtime_guard_probe.elapsed() >= DASHBOARD_RUNTIME_GUARD_INTERVAL
         {
             last_runtime_guard_probe = Instant::now();
@@ -335,6 +379,20 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
             );
             runtime_guard.disconnected_probe_count = disconnected_probe_count;
             if runtime_guard.set_state(next_state) {
+                if runtime_guard.state.is_ok() {
+                    clear_runtime_guard_repair_attempts(
+                        PathResolver::from_env().global_aimux_dir(),
+                        &options.project_root.to_string_lossy(),
+                    );
+                    runtime_guard.repair_attempts.clear();
+                    runtime_guard.repair_failed_key = None;
+                    runtime_guard.repair_retry_at_ms = None;
+                    runtime_guard.repair_error = None;
+                }
+                render_now = true;
+            }
+            if maybe_start_dashboard_runtime_guard_repair(&mut runtime_guard, &options.project_root)
+            {
                 render_now = true;
             }
         }
@@ -876,6 +934,160 @@ fn elapsed_millis(start: Instant) -> i64 {
     start.elapsed().as_millis().min(i64::MAX as u128) as i64
 }
 
+fn maybe_start_dashboard_runtime_guard_repair(
+    runtime_guard: &mut DashboardRuntimeGuardStatus,
+    project_root: &PathBuf,
+) -> bool {
+    let project_root_text = project_root.to_string_lossy().into_owned();
+    let now_ms = current_time_ms();
+    let home = PathResolver::from_env().global_aimux_dir();
+    runtime_guard.repair_attempts = load_runtime_guard_repair_attempts(
+        &home,
+        &project_root_text,
+        RUNTIME_GUARD_REPAIR_FLAP_WINDOW_MS,
+        now_ms,
+    );
+    let decision = runtime_guard_repair_decision(&RuntimeGuardRepairGate {
+        state: &runtime_guard.state,
+        repairing: runtime_guard.repairing(),
+        timed_out_pending: false,
+        failed_key: runtime_guard.repair_failed_key.as_deref(),
+        retry_at_ms: runtime_guard.repair_retry_at_ms,
+        attempt_count: runtime_guard.repair_attempts.len(),
+        now_ms,
+    });
+    let RuntimeGuardRepairDecision::Start { repair_key } = decision else {
+        if matches!(decision, RuntimeGuardRepairDecision::Flapping) {
+            runtime_guard.repair_error = Some(
+                "Aimux repair is looping; run `aimux restart` after checking installed versions."
+                    .into(),
+            );
+            runtime_guard.repair_failed_key = Some(runtime_guard_repair_key(&runtime_guard.state));
+            runtime_guard.repair_retry_at_ms = None;
+            return true;
+        }
+        return false;
+    };
+
+    let lock = match try_acquire_runtime_guard_repair_lock(&home, &project_root_text, now_ms) {
+        Ok(Some(lock)) => lock,
+        Ok(None) => return false,
+        Err(error) => {
+            runtime_guard.repair_error = Some(format!("Aimux repair lock failed: {error}"));
+            runtime_guard.repair_failed_key = Some(repair_key);
+            runtime_guard.repair_retry_at_ms = Some(now_ms + RUNTIME_GUARD_REPAIR_RETRY_MS);
+            return true;
+        }
+    };
+
+    runtime_guard.repair_attempts = record_runtime_guard_repair_attempt(
+        &home,
+        &project_root_text,
+        RUNTIME_GUARD_REPAIR_FLAP_WINDOW_MS,
+        now_ms,
+    );
+    let state = runtime_guard.state.clone();
+    runtime_guard.repair_key = Some(repair_key.clone());
+    runtime_guard.repair_failed_key = None;
+    runtime_guard.repair_retry_at_ms = None;
+    runtime_guard.repair_error = None;
+    let (sender, receiver) = mpsc::channel();
+    runtime_guard.repair_receiver = Some(receiver);
+    thread::spawn(move || {
+        let result = start_runtime_guard_repair_daemon_request(&project_root_text);
+        drop(lock);
+        let _ = sender.send(DashboardRuntimeGuardRepairResult {
+            repair_key,
+            state,
+            result,
+        });
+    });
+    true
+}
+
+fn poll_dashboard_runtime_guard_repair(
+    runtime_guard: &mut DashboardRuntimeGuardStatus,
+    project_root: &PathBuf,
+) -> bool {
+    let mut changed = false;
+    loop {
+        let result = runtime_guard
+            .repair_receiver
+            .as_ref()
+            .and_then(|receiver| receiver.try_recv().ok());
+        let Some(result) = result else {
+            break;
+        };
+        runtime_guard.repair_receiver = None;
+        runtime_guard.repair_key = None;
+        changed = true;
+        match result.result {
+            Ok(restart) => {
+                if runtime_guard_repair_result_error(&restart, &project_root.to_string_lossy())
+                    .is_some()
+                {
+                    let error = runtime_guard_repair_result_error(
+                        &restart,
+                        &project_root.to_string_lossy(),
+                    )
+                    .unwrap_or_else(|| "aimux repair failed".into());
+                    fail_dashboard_runtime_guard_repair(runtime_guard, result.repair_key, error);
+                    continue;
+                }
+                if result.state == runtime_guard.state {
+                    runtime_guard.set_state(RuntimeGuardState::Ok);
+                }
+                runtime_guard.repair_failed_key = None;
+                runtime_guard.repair_retry_at_ms = None;
+                runtime_guard.repair_error = None;
+                // Do not clear persisted attempts here: a later healthy guard
+                // probe is the evidence that the repair actually settled.
+            }
+            Err(error) => {
+                fail_dashboard_runtime_guard_repair(runtime_guard, result.repair_key, error);
+            }
+        }
+    }
+    changed
+}
+
+fn fail_dashboard_runtime_guard_repair(
+    runtime_guard: &mut DashboardRuntimeGuardStatus,
+    repair_key: String,
+    error: String,
+) {
+    runtime_guard.repair_failed_key = Some(repair_key);
+    runtime_guard.repair_retry_at_ms = Some(current_time_ms() + RUNTIME_GUARD_REPAIR_RETRY_MS);
+    runtime_guard.repair_error = Some(error);
+}
+
+fn runtime_guard_repair_result_error(restart: &Value, project_root: &str) -> Option<String> {
+    let project = restart
+        .get("projects")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find(|project| project.get("projectRoot").and_then(Value::as_str) == Some(project_root));
+    let project = project?;
+    for field in ["runtime", "service", "dashboard"] {
+        let step = project.get(field).unwrap_or(&Value::Null);
+        if step.get("status").and_then(Value::as_str) == Some("failed") {
+            return Some(
+                step.get("error")
+                    .and_then(Value::as_str)
+                    .unwrap_or("aimux repair failed")
+                    .to_owned(),
+            );
+        }
+    }
+    restart
+        .get("summary")
+        .and_then(|summary| summary.get("failures"))
+        .and_then(Value::as_i64)
+        .filter(|failures| *failures > 0)
+        .map(|_| "aimux repair reported failures".to_owned())
+}
+
 fn dashboard_tmux_pane_target() -> Option<String> {
     env::var("TMUX_PANE")
         .ok()
@@ -1372,7 +1584,11 @@ fn render_dashboard_runtime_guard_overlay(
     viewport: DashboardViewport,
 ) -> Option<String> {
     let runtime_guard = runtime_guard.filter(|runtime_guard| !runtime_guard.state.is_ok())?;
-    let copy = runtime_guard_overlay_copy(&runtime_guard.state, runtime_guard.active_ms(), false);
+    let copy = runtime_guard_overlay_copy(
+        &runtime_guard.state,
+        runtime_guard.active_ms(),
+        runtime_guard.repair_failed_for_current_state(),
+    );
     if copy.title.is_empty() {
         return None;
     }
@@ -1381,6 +1597,10 @@ fn render_dashboard_runtime_guard_overlay(
         .iter()
         .map(|line| style(line, Tone::Muted))
         .collect::<Vec<_>>();
+    if let Some(error) = runtime_guard.repair_error.as_ref() {
+        body.push(style("", Tone::Muted));
+        body.push(style(error, Tone::Danger));
+    }
     if copy.waiting {
         body.push(style("", Tone::Muted));
         body.push(style("Please wait.", Tone::Muted));
