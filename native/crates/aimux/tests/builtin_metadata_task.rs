@@ -29,9 +29,61 @@ fn context_for(project: &Path) -> ProjectServiceRequestContext {
     ProjectServiceRequestContext::with_project_state_dir(project, project.join("state"))
 }
 
+fn write_live_topology(project: &Path, session_ids: &[&str]) {
+    fs::create_dir_all(project.join("state")).unwrap();
+    let nodes = session_ids
+        .iter()
+        .map(|session_id| {
+            format!(
+                "- id: agent:{session_id}\n  rigId: rig-1\n  logicalId: {session_id}\n  createdAt: \"2026-09-09T00:00:00.000Z\"\n"
+            )
+        })
+        .collect::<String>();
+    let sessions = session_ids
+        .iter()
+        .map(|session_id| {
+            format!(
+                "- id: {session_id}\n  nodeId: agent:{session_id}\n  status: running\n  tool: claude\n  createdAt: \"2026-09-09T00:00:00.000Z\"\n  updatedAt: \"2026-09-09T00:00:00.000Z\"\n"
+            )
+        })
+        .collect::<String>();
+    fs::write(
+        project.join("state").join("runtime-topology.yaml"),
+        format!(
+            concat!(
+                "version: 1\n",
+                "generatedAt: \"2026-09-09T00:00:00.000Z\"\n",
+                "rigs:\n",
+                "- id: rig-1\n",
+                "  name: local\n",
+                "  projectRoot: /repo\n",
+                "  createdAt: \"2026-09-09T00:00:00.000Z\"\n",
+                "  updatedAt: \"2026-09-09T00:00:00.000Z\"\n",
+                "nodes:\n",
+                "{nodes}",
+                "edges: []\n",
+                "bindings: []\n",
+                "sessions:\n",
+                "{sessions}",
+                "services: []\n",
+                "worktrees: []\n",
+                "worktreeGraveyard: []\n",
+                "teamRoles: []\n",
+                "remoteClients: []\n",
+                "lifecycleOperations: []\n",
+                "exchangeRefs: []\n",
+            ),
+            nodes = nodes,
+            sessions = sessions,
+        ),
+    )
+    .unwrap();
+}
+
 #[test]
 fn a_status_file_is_collected_and_becomes_a_headline() {
     let project = temp_project("status");
+    write_live_topology(&project, &["claude-a1"]);
     fs::write(
         project.join(".aimux").join("status").join("claude-a1.md"),
         "Shipping the rail\nmore detail below\n",
@@ -63,6 +115,7 @@ fn a_status_file_is_collected_and_becomes_a_headline() {
 #[test]
 fn a_plan_file_is_collected_and_becomes_progress() {
     let project = temp_project("plan");
+    write_live_topology(&project, &["claude-a1"]);
     fs::write(
         project.join(".aimux").join("plans").join("claude-a1.md"),
         "- [x] one\n- [x] two\n- [ ] three\n",
@@ -85,42 +138,7 @@ fn with_one_live_session_and_history(project: &Path) {
         "{\"ts\":\"2026-09-09T00:00:00.000Z\",\"type\":\"prompt\",\"content\":\"do the thing\",\"files\":[]}\n",
     )
     .unwrap();
-    fs::create_dir_all(project.join("state")).unwrap();
-    fs::write(
-        project.join("state").join("runtime-topology.yaml"),
-        concat!(
-            "version: 1\n",
-            "generatedAt: \"2026-09-09T00:00:00.000Z\"\n",
-            "rigs:\n",
-            "- id: rig-1\n",
-            "  name: local\n",
-            "  projectRoot: /repo\n",
-            "  createdAt: \"2026-09-09T00:00:00.000Z\"\n",
-            "  updatedAt: \"2026-09-09T00:00:00.000Z\"\n",
-            "nodes:\n",
-            "- id: agent:claude-a1\n",
-            "  rigId: rig-1\n",
-            "  logicalId: claude-a1\n",
-            "  createdAt: \"2026-09-09T00:00:00.000Z\"\n",
-            "edges: []\n",
-            "bindings: []\n",
-            "sessions:\n",
-            "- id: claude-a1\n",
-            "  nodeId: agent:claude-a1\n",
-            "  status: running\n",
-            "  tool: claude\n",
-            "  createdAt: \"2026-09-09T00:00:00.000Z\"\n",
-            "  updatedAt: \"2026-09-09T00:00:00.000Z\"\n",
-            "services: []\n",
-            "worktrees: []\n",
-            "worktreeGraveyard: []\n",
-            "teamRoles: []\n",
-            "remoteClients: []\n",
-            "lifecycleOperations: []\n",
-            "exchangeRefs: []\n",
-        ),
-    )
-    .unwrap();
+    write_live_topology(project, &["claude-a1"]);
 }
 
 #[test]
@@ -143,9 +161,11 @@ fn a_spent_budget_stops_the_scan_reading_history() {
     );
 
     let skipped = collect_watcher_sources(&context, &RailBudget::new(Duration::ZERO));
-    // the cheap directory reads still happen; only the per-session history loop
-    // is abandoned, so a slow project degrades instead of holding the rail
-    assert!(skipped.get("statusFiles").is_some());
+    // A spent budget covers the source reads themselves, not only the history
+    // tail loop, so a slow project degrades instead of holding the rail.
+    assert_eq!(skipped["statusFiles"], json!({}));
+    assert_eq!(skipped["planFiles"], json!({}));
+    assert_eq!(skipped["exchange"]["tasks"], json!([]));
     assert_eq!(skipped["history"], json!({}));
 
     let _ = fs::remove_dir_all(project);
@@ -220,6 +240,7 @@ fn a_history_turn_becomes_a_log_and_an_event_once_primed() {
 #[test]
 fn a_stray_note_in_the_status_directory_does_not_mint_a_session() {
     let project = temp_project("stray-status");
+    write_live_topology(&project, &["claude-a1"]);
     fs::write(
         project.join(".aimux").join("status").join("claude-a1.md"),
         "real headline\n",
@@ -243,6 +264,95 @@ fn a_stray_note_in_the_status_directory_does_not_mint_a_session() {
         .cloned()
         .collect::<Vec<_>>();
     assert_eq!(keys, ["claude-a1"], "got {keys:?}");
+
+    let _ = fs::remove_dir_all(project);
+}
+
+#[test]
+fn a_status_file_for_a_dead_session_does_not_mint_effects() {
+    let project = temp_project("dead-status");
+    write_live_topology(&project, &["claude-live"]);
+    fs::write(
+        project.join(".aimux").join("status").join("claude-live.md"),
+        "live headline\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join(".aimux").join("status").join("claude-dead.md"),
+        "dead headline\n",
+    )
+    .unwrap();
+    let context = context_for(&project);
+
+    let sources = collect_watcher_sources(&context, &RailBudget::new(Duration::from_secs(5)));
+    assert_eq!(
+        sources["statusFiles"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>(),
+        ["claude-live"]
+    );
+
+    let mut watchers = BuiltinMetadataWatchers::new();
+    let effects = watchers.scan(&sources);
+    assert_eq!(
+        effects.statuses,
+        vec![json!(["claude-live", "live headline", "info"])]
+    );
+
+    let _ = fs::remove_dir_all(project);
+}
+
+#[test]
+fn metadata_collection_caps_files_and_content_on_the_rail() {
+    let project = temp_project("caps");
+    let session_ids = (0..40)
+        .map(|index| format!("claude-{index:02}"))
+        .collect::<Vec<_>>();
+    let session_refs = session_ids.iter().map(String::as_str).collect::<Vec<_>>();
+    write_live_topology(&project, &session_refs);
+    for session_id in &session_ids {
+        fs::write(
+            project
+                .join(".aimux")
+                .join("plans")
+                .join(format!("{session_id}.md")),
+            "- [x] bounded\n",
+        )
+        .unwrap();
+    }
+    fs::write(
+        project.join(".aimux").join("status").join("claude-00.md"),
+        "x".repeat(20 * 1024),
+    )
+    .unwrap();
+    fs::write(
+        project.join("state").join("runtime-exchange.yaml"),
+        format!(
+            "version: 1\ngeneratedAt: \"2026-09-09T00:00:00.000Z\"\ntasks:\n- id: huge-task\n  assignedTo: claude-00\n  status: assigned\n  description: should not be read\nmessages:\n- body: {}\n",
+            "x".repeat(70 * 1024)
+        ),
+    )
+    .unwrap();
+    let context = context_for(&project);
+
+    let sources = collect_watcher_sources(&context, &RailBudget::new(Duration::from_secs(5)));
+    assert_eq!(
+        sources["planFiles"].as_object().unwrap().len(),
+        32,
+        "one tick reads only the bounded number of plan files"
+    );
+    assert!(
+        sources["statusFiles"].as_object().unwrap().is_empty(),
+        "oversized status content is skipped rather than read on the rail"
+    );
+    assert_eq!(
+        sources["exchange"]["tasks"],
+        json!([]),
+        "oversized exchange is skipped rather than parsed on the rail"
+    );
 
     let _ = fs::remove_dir_all(project);
 }

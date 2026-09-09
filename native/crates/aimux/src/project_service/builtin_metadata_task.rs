@@ -5,7 +5,9 @@
 //! the same routes the CLI and hooks use — so a status still raises its alert
 //! and a log still lands in the same place.
 
-use std::path::Path;
+use std::collections::BTreeSet;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -20,10 +22,12 @@ use crate::runtime_topology::{
 use crate::session_bootstrap::status_dir;
 
 use super::metadata::route_runtime_metadata_request;
-use super::plans::list_plan_authority_entries;
+use super::plans::{plan_authority_dir_for_project_root, validate_plan_session_id};
 use super::router::ProjectServiceRequestContext;
 use super::runtime_events::route_runtime_event_with_context;
-use super::runtime_exchange::{read_runtime_exchange, runtime_exchange_path};
+use super::runtime_exchange::{
+    empty_runtime_exchange, read_runtime_exchange, runtime_exchange_path,
+};
 use super::scheduler::PeriodicTask;
 use super::watcher_delivery::RailBudget;
 
@@ -35,6 +39,9 @@ const SCAN_INTERVAL_MS: i64 = 5_000;
 const SCAN_BUDGET: Duration = Duration::from_secs(2);
 /// Sessions whose history is worth reading — matching what the dashboard shows.
 const LIVE_SESSION_STATUSES: &[&str] = &["starting", "running", "idle"];
+const MAX_PLAN_STATUS_FILES_PER_TICK: usize = 32;
+const MAX_PLAN_STATUS_FILE_BYTES: u64 = 16 * 1024;
+const MAX_EXCHANGE_BYTES_PER_TICK: u64 = 64 * 1024;
 const HISTORY_TAIL_BYTES: usize = 16 * 1024;
 
 pub struct BuiltinMetadataTask {
@@ -77,27 +84,18 @@ pub fn collect_watcher_sources(
     let project_root = context.project_root().to_path_buf();
     let project_state_dir = context.project_state_dir();
 
-    let mut plan_files = Map::new();
-    for (session_id, content) in list_plan_authority_entries(&project_root) {
-        plan_files.insert(session_id, Value::String(content));
-    }
-
-    let status_files = read_status_files(&status_dir(&project_root));
-
-    let exchange = read_runtime_exchange(runtime_exchange_path(&project_state_dir));
-
     // scan_history reads these as bare ids, not session objects.
-    let session_ids = read_runtime_topology(runtime_topology_path(&project_state_dir))
-        .map(|topology| list_topology_session_states(&topology, Some(LIVE_SESSION_STATUSES)))
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|session| {
-            session
-                .get("id")
-                .and_then(Value::as_str)
-                .map(ToOwned::to_owned)
-        })
-        .collect::<Vec<_>>();
+    let session_ids = read_live_session_ids(&project_state_dir, budget);
+    let live_sessions = session_ids.iter().cloned().collect::<BTreeSet<_>>();
+
+    let plan_files = read_session_markdown_files(
+        &plan_authority_dir_for_project_root(&project_root),
+        &live_sessions,
+        budget,
+    );
+    let status_files =
+        read_session_markdown_files(&status_dir(&project_root), &live_sessions, budget);
+    let exchange = read_exchange_with_budget(&project_state_dir, budget);
 
     let mut history = Map::new();
     for session_id in &session_ids {
@@ -138,30 +136,86 @@ pub fn collect_watcher_sources(
     })
 }
 
-fn read_status_files(dir: &Path) -> Map<String, Value> {
+fn read_live_session_ids(project_state_dir: &Path, budget: &RailBudget) -> Vec<String> {
+    if budget.spent() {
+        return Vec::new();
+    }
+    read_runtime_topology(runtime_topology_path(project_state_dir))
+        .map(|topology| list_topology_session_states(&topology, Some(LIVE_SESSION_STATUSES)))
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|session| {
+            session
+                .get("id")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        })
+        .collect()
+}
+
+fn read_session_markdown_files(
+    dir: &Path,
+    live_sessions: &BTreeSet<String>,
+    budget: &RailBudget,
+) -> Map<String, Value> {
     let mut files = Map::new();
-    let Ok(entries) = std::fs::read_dir(dir) else {
+    if budget.spent() || live_sessions.is_empty() {
+        return files;
+    }
+    let Ok(entries) = fs::read_dir(dir) else {
         return files;
     };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|extension| extension.to_str()) != Some("md") {
-            continue;
+    let mut candidates = entries
+        .flatten()
+        .filter_map(|entry| markdown_session_file(entry.path(), live_sessions))
+        .collect::<Vec<_>>();
+    candidates.sort_by(|left, right| left.0.cmp(&right.0));
+    for (session_id, path) in candidates.into_iter().take(MAX_PLAN_STATUS_FILES_PER_TICK) {
+        if budget.spent() {
+            break;
         }
-        // keyed by session id, not filename: Node stripped the .md here
-        let Some(session_id) = path.file_stem().and_then(|stem| stem.to_str()) else {
+        let Ok(metadata) = fs::metadata(&path) else {
             continue;
         };
-        // a stray note in the directory must not mint a status for a session
-        // that does not exist
-        if crate::project_service::plans::validate_plan_session_id(session_id).is_none() {
+        if metadata.len() > MAX_PLAN_STATUS_FILE_BYTES {
             continue;
         }
-        if let Ok(content) = std::fs::read_to_string(&path) {
+        if let Ok(content) = fs::read_to_string(&path) {
             files.insert(session_id.to_owned(), Value::String(content));
         }
     }
     files
+}
+
+fn markdown_session_file(
+    path: PathBuf,
+    live_sessions: &BTreeSet<String>,
+) -> Option<(String, PathBuf)> {
+    if path.extension().and_then(|extension| extension.to_str()) != Some("md") {
+        return None;
+    }
+    // Keyed by session id, not filename: Node stripped the .md here.
+    let session_id = path.file_stem().and_then(|stem| stem.to_str())?;
+    // A stale note must not mint effects for a session that no longer exists.
+    validate_plan_session_id(session_id)?;
+    if !live_sessions.contains(session_id) {
+        return None;
+    }
+    Some((session_id.to_owned(), path))
+}
+
+fn read_exchange_with_budget(project_state_dir: &Path, budget: &RailBudget) -> Value {
+    if budget.spent() {
+        return empty_runtime_exchange();
+    }
+    let path = runtime_exchange_path(project_state_dir);
+    if fs::metadata(&path)
+        .map(|metadata| metadata.len() > MAX_EXCHANGE_BYTES_PER_TICK)
+        .unwrap_or(false)
+    {
+        return empty_runtime_exchange();
+    }
+    read_runtime_exchange(path)
 }
 
 /// Apply through the real routes rather than writing metadata directly: an
