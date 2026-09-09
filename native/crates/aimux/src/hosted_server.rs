@@ -16,7 +16,7 @@ use crate::hosted_audit::{HostedAuditRecord, HostedAuditStore, HostedPromptRecor
 use crate::hosted_auth::{authenticate_hosted, strip_trusted_headers};
 use crate::hosted_config::{HostedConfig, validate_hosted_startup};
 use crate::hosted_events::{
-    HostedDevicesStore, HostedEventDelivery, SeenDeviceInput, client_address,
+    HostedDevicesStore, HostedEvent, HostedEventDelivery, SeenDeviceInput, client_address,
 };
 use crate::hosted_lockdown::HostedLockdownStore;
 use crate::hosted_outbox::HostedOutboxStore;
@@ -48,6 +48,8 @@ const STREAM_MAX_LIFETIME_MS: u64 = 600_000;
 const STREAM_IDLE_TIMEOUT_MS: u64 = 120_000;
 const STREAM_MAX_BYTES: usize = 64 * 1024 * 1024;
 const STREAM_REAUTH_INTERVAL_MS: u64 = 5_000;
+const AUTH_FAILURE_WINDOW_MS: u128 = 60_000;
+const AUTH_FAILURE_DELIVERY_MAX: usize = 10;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HostedStreamLimits {
@@ -79,20 +81,53 @@ pub struct HostedServerState {
     outbox: HostedOutboxStore,
     limiter: HostedRateLimiter,
     peer_limiter: HostedRateLimiter,
-    delivery: Mutex<HostedEventDelivery>,
+    delivery: Arc<Mutex<HostedEventDelivery>>,
     streams_by_principal: Mutex<BTreeMap<String, usize>>,
     stream_limits: HostedStreamLimits,
+    auth_failure_throttle: Mutex<AuthFailureThrottle>,
 }
 
 impl HostedServerState {
     pub fn with_resolver(config: HostedConfig, resolver: PathResolver) -> Self {
-        Self::with_resolver_and_stream_limits(config, resolver, HostedStreamLimits::default())
+        Self::with_resolver_and_stream_limits_and_delivery(
+            config.clone(),
+            resolver,
+            HostedStreamLimits::default(),
+            HostedEventDelivery::new_from_hosted_config(&config),
+        )
     }
 
     pub fn with_resolver_and_stream_limits(
         config: HostedConfig,
         resolver: PathResolver,
         stream_limits: HostedStreamLimits,
+    ) -> Self {
+        Self::with_resolver_and_stream_limits_and_delivery(
+            config.clone(),
+            resolver,
+            stream_limits,
+            HostedEventDelivery::new_from_hosted_config(&config),
+        )
+    }
+
+    pub fn with_resolver_and_delivery(
+        config: HostedConfig,
+        resolver: PathResolver,
+        delivery: HostedEventDelivery,
+    ) -> Self {
+        Self::with_resolver_and_stream_limits_and_delivery(
+            config,
+            resolver,
+            HostedStreamLimits::default(),
+            delivery,
+        )
+    }
+
+    fn with_resolver_and_stream_limits_and_delivery(
+        config: HostedConfig,
+        resolver: PathResolver,
+        stream_limits: HostedStreamLimits,
+        delivery: HostedEventDelivery,
     ) -> Self {
         let limiter = HostedRateLimiter::new(HostedRateLimitOptions {
             requests_per_minute: config.rate_limit.requests_per_minute as f64,
@@ -106,7 +141,7 @@ impl HostedServerState {
             bytes_per_minute: config.rate_limit.bytes_per_minute as f64 * PEER_BUDGET_MULTIPLIER,
         });
         Self {
-            delivery: Mutex::new(HostedEventDelivery::new_from_hosted_config(&config)),
+            delivery: Arc::new(Mutex::new(delivery)),
             config,
             principals: HostedPrincipalsStore::with_resolver(resolver.clone()),
             audit: HostedAuditStore::with_resolver(resolver.clone()),
@@ -117,6 +152,7 @@ impl HostedServerState {
             peer_limiter,
             streams_by_principal: Mutex::new(BTreeMap::new()),
             stream_limits,
+            auth_failure_throttle: Mutex::new(AuthFailureThrottle::default()),
         }
     }
 
@@ -145,6 +181,24 @@ impl HostedServerState {
         }
     }
 
+    fn enqueue_delivery_async(&self, event: HostedEvent) {
+        let delivery = Arc::clone(&self.delivery);
+        let _ = thread::Builder::new()
+            .name("aimux-hosted-event-delivery".to_owned())
+            .spawn(move || {
+                if let Ok(mut delivery) = delivery.lock() {
+                    delivery.enqueue(event);
+                }
+            });
+    }
+
+    fn should_deliver_auth_failure(&self, key: &str) -> bool {
+        let Ok(mut throttle) = self.auth_failure_throttle.lock() else {
+            return false;
+        };
+        throttle.should_deliver(key, unix_millis(SystemTime::now()))
+    }
+
     fn acquire_stream(&self, principal_id: &str) -> bool {
         let Ok(mut streams) = self.streams_by_principal.lock() else {
             return false;
@@ -171,6 +225,41 @@ impl HostedServerState {
         } else {
             streams.insert(principal_id.to_owned(), open);
         }
+    }
+}
+
+#[derive(Debug, Default)]
+struct AuthFailureThrottle {
+    by_peer: BTreeMap<String, u128>,
+    window_start: u128,
+    window_count: usize,
+}
+
+impl AuthFailureThrottle {
+    fn should_deliver(&mut self, key: &str, now: u128) -> bool {
+        let key = if key.trim().is_empty() {
+            "unknown"
+        } else {
+            key.trim()
+        };
+        if self
+            .by_peer
+            .get(key)
+            .is_some_and(|last| now.saturating_sub(*last) < AUTH_FAILURE_WINDOW_MS)
+        {
+            return false;
+        }
+        self.by_peer.insert(key.to_owned(), now);
+
+        if now.saturating_sub(self.window_start) >= AUTH_FAILURE_WINDOW_MS {
+            self.window_start = now;
+            self.window_count = 0;
+        }
+        if self.window_count >= AUTH_FAILURE_DELIVERY_MAX {
+            return false;
+        }
+        self.window_count += 1;
+        true
     }
 }
 
@@ -227,6 +316,10 @@ where
             let Ok(mut stream) = stream else {
                 continue;
             };
+            let peer_address = stream
+                .peer_addr()
+                .ok()
+                .map(|address| address.ip().to_string());
             let handle_runtime = Arc::clone(&runtime);
             let handle_state = Arc::clone(&serve_state);
             let intercept_runtime = Arc::clone(&stream_runtime);
@@ -242,6 +335,7 @@ where
                         issued_at: now_iso(),
                         stopping: false,
                     },
+                    peer_address.as_deref(),
                 );
             });
         }
@@ -255,6 +349,7 @@ pub fn handle_hosted_daemon_stream<Runtime, Stream>(
     intercept_state: &Arc<HostedServerState>,
     stream: &mut Stream,
     metadata: DaemonRequestMetadata,
+    peer_address: Option<&str>,
 ) -> Result<(), crate::daemon::listener::DaemonListenerError>
 where
     Runtime: DaemonRouteRuntime,
@@ -270,6 +365,7 @@ where
                 intercept_state,
                 request,
                 writer,
+                peer_address,
             )
             .map_err(|error| {
                 crate::daemon::listener::DaemonListenerError::Io(std::io::Error::other(
@@ -281,7 +377,12 @@ where
             let mut runtime = handle_runtime
                 .lock()
                 .expect("hosted daemon runtime mutex poisoned");
-            handle_hosted_daemon_request(&mut *runtime, handle_state, request)
+            handle_hosted_daemon_request_from_peer(
+                &mut *runtime,
+                handle_state,
+                request,
+                peer_address,
+            )
         },
     )
 }
@@ -291,6 +392,7 @@ pub fn maybe_handle_hosted_operator_stream_request<Runtime>(
     state: &HostedServerState,
     request: &DaemonHttpRequest,
     writer: &mut impl Write,
+    peer_address: Option<&str>,
 ) -> Result<bool, HostAgentStreamError>
 where
     Runtime: DaemonRouteRuntime,
@@ -323,7 +425,9 @@ where
         return Ok(true);
     }
 
-    let peer_slot = match state.peer_limiter.acquire("unknown") {
+    let peer_key = hosted_client_address(peer_address, &request.headers, &state.config)
+        .unwrap_or_else(|| "unknown".to_owned());
+    let peer_slot = match state.peer_limiter.acquire(&peer_key) {
         HostedLimitOutcome::Allowed(release) => release,
         HostedLimitOutcome::Denied(_) => {
             write_prepared(
@@ -347,7 +451,7 @@ where
         }
     };
     if !auth.ok {
-        record_auth_failure(state, "GET", &headers, auth.reason.as_deref());
+        record_auth_failure(state, "GET", &headers, peer_address, auth.reason.as_deref());
         peer_slot.release();
         write_prepared(
             writer,
@@ -659,6 +763,15 @@ pub fn handle_hosted_daemon_request(
     state: &HostedServerState,
     request: DaemonHttpRequest,
 ) -> PreparedDaemonResponse {
+    handle_hosted_daemon_request_from_peer(runtime, state, request, None)
+}
+
+pub fn handle_hosted_daemon_request_from_peer(
+    runtime: &mut impl DaemonRouteRuntime,
+    state: &HostedServerState,
+    request: DaemonHttpRequest,
+    peer_address: Option<&str>,
+) -> PreparedDaemonResponse {
     if request.stopping {
         return hosted_json(
             503,
@@ -685,14 +798,16 @@ pub fn handle_hosted_daemon_request(
         );
     }
 
-    let peer_slot = match state.peer_limiter.acquire("unknown") {
+    let peer_key = hosted_client_address(peer_address, &request.headers, &state.config)
+        .unwrap_or_else(|| "unknown".to_owned());
+    let peer_slot = match state.peer_limiter.acquire(&peer_key) {
         HostedLimitOutcome::Allowed(release) => release,
         HostedLimitOutcome::Denied(_) => {
             return hosted_json(429, json!({ "ok": false, "error": "too many requests" }));
         }
     };
 
-    let response = handle_authenticated(runtime, state, request, &method, &route_url);
+    let response = handle_authenticated(runtime, state, request, &method, &route_url, peer_address);
     peer_slot.release();
     response
 }
@@ -703,6 +818,7 @@ fn handle_authenticated(
     request: DaemonHttpRequest,
     method: &str,
     route_url: &DaemonRouteUrl,
+    peer_address: Option<&str>,
 ) -> PreparedDaemonResponse {
     let headers = strip_trusted_headers(&request.headers);
     let auth = match authenticate_hosted(&headers, &state.principals) {
@@ -710,7 +826,13 @@ fn handle_authenticated(
         Err(_) => return hosted_json(401, json!({ "ok": false, "error": "unauthorized" })),
     };
     if !auth.ok {
-        record_auth_failure(state, method, &headers, auth.reason.as_deref());
+        record_auth_failure(
+            state,
+            method,
+            &headers,
+            peer_address,
+            auth.reason.as_deref(),
+        );
         return hosted_json(401, json!({ "ok": false, "error": "unauthorized" }));
     }
 
@@ -796,6 +918,7 @@ fn handle_authenticated(
             status,
             request_bytes,
             response_bytes,
+            peer_address,
         },
     );
     response
@@ -805,10 +928,12 @@ fn record_auth_failure(
     state: &HostedServerState,
     method: &str,
     headers: &BTreeMap<String, String>,
+    peer_address: Option<&str>,
     reason: Option<&str>,
 ) {
     let ts = now_iso();
     let detail = reason.unwrap_or("unauthorized");
+    let address = hosted_client_address(peer_address, headers, &state.config);
     state.audit.append_audit(&HostedAuditRecord {
         ts: ts.clone(),
         principal_id: "-".to_owned(),
@@ -827,20 +952,22 @@ fn record_auth_failure(
     let Some(user_agent) = headers.get("user-agent").cloned() else {
         return;
     };
-    if let Ok(mut delivery) = state.delivery.lock() {
-        delivery.enqueue(crate::hosted_events::HostedEvent {
-            id: random_uuid_like(),
-            kind: "hosted_auth_failed".to_owned(),
-            ts,
-            principal_id: None,
-            label: None,
-            session_id: None,
-            fingerprint: None,
-            address_known: false,
-            user_agent: Some(user_agent),
-            detail: Some(detail.to_owned()),
-        });
+    let key = address.as_deref().unwrap_or("unknown");
+    if !state.should_deliver_auth_failure(key) {
+        return;
     }
+    state.enqueue_delivery_async(HostedEvent {
+        id: random_uuid_like(),
+        kind: "hosted_auth_failed".to_owned(),
+        ts,
+        principal_id: None,
+        label: None,
+        session_id: None,
+        fingerprint: None,
+        address_known: address.is_some(),
+        user_agent: Some(user_agent),
+        detail: Some(detail.to_owned()),
+    });
 }
 
 struct HostedRequestBookkeeping<'a> {
@@ -851,6 +978,7 @@ struct HostedRequestBookkeeping<'a> {
     status: u16,
     request_bytes: usize,
     response_bytes: usize,
+    peer_address: Option<&'a str>,
 }
 
 fn record_authenticated_bookkeeping(
@@ -901,11 +1029,7 @@ fn record_authenticated_bookkeeping(
     let sighting = state.devices.record_device_sighting(SeenDeviceInput {
         principal_id: principal.id.clone(),
         label: bounded_field(Some(principal.label.as_str())).unwrap_or_else(|| "-".to_owned()),
-        address: client_address(
-            None,
-            request.headers,
-            state.config.trusted_forwarded_header.as_deref(),
-        ),
+        address: hosted_client_address(request.peer_address, request.headers, &state.config),
         user_agent: request.headers.get("user-agent").cloned(),
     });
     if let Some(sighting) = sighting {
@@ -924,9 +1048,7 @@ fn record_authenticated_bookkeeping(
             event: Some(sighting.kind.clone()),
             detail: sighting.fingerprint.clone(),
         });
-        if let Ok(mut delivery) = state.delivery.lock() {
-            delivery.enqueue(sighting);
-        }
+        state.enqueue_delivery_async(sighting);
     }
 }
 
@@ -1032,6 +1154,18 @@ fn hosted_body_limit_for_head(
             json!({ "ok": false, "error": "request body too large" }),
         ),
     })
+}
+
+fn hosted_client_address(
+    peer_address: Option<&str>,
+    headers: &BTreeMap<String, String>,
+    config: &HostedConfig,
+) -> Option<String> {
+    client_address(
+        peer_address,
+        headers,
+        config.trusted_forwarded_header.as_deref(),
+    )
 }
 
 fn write_hosted_stream_headers(writer: &mut impl Write) -> Result<(), HostAgentStreamError> {

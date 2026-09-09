@@ -26,20 +26,26 @@ use aimux::daemon::text::worktrees::DaemonWorktreeTextRuntime;
 use aimux::daemon_projects::ProjectsRouteProject;
 use aimux::daemon_state::{AimuxDaemonInfo, DaemonState, MetadataApiEndpoint};
 use aimux::hosted_audit::HostedAuditStore;
-use aimux::hosted_config::HostedConfig;
+use aimux::hosted_config::{HostedConfig, HostedRateLimitConfig};
+use aimux::hosted_events::{HostedEventDelivery, HostedEventDeliveryConfig};
 use aimux::hosted_principals::{HostedGrant, HostedPrincipalsStore};
 use aimux::hosted_server::{
     HostedServerState, HostedStreamLimits, handle_hosted_daemon_request,
-    handle_hosted_daemon_stream, start_hosted_server_background,
+    handle_hosted_daemon_request_from_peer, handle_hosted_daemon_stream,
+    start_hosted_server_background,
 };
 use aimux::paths::PathResolver;
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{Read, Write};
-use std::net::TcpListener;
+use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicUsize, Ordering},
+    mpsc,
+};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -685,6 +691,188 @@ struct HeldSseServer {
     worker: Mutex<Option<thread::JoinHandle<()>>>,
 }
 
+struct BlockingWebhookServer {
+    port: u16,
+    accepted: mpsc::Receiver<()>,
+    release: mpsc::Sender<()>,
+    worker: Mutex<Option<thread::JoinHandle<()>>>,
+}
+
+impl BlockingWebhookServer {
+    fn spawn() -> Self {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind webhook");
+        listener.set_nonblocking(true).expect("nonblocking webhook");
+        let port = listener.local_addr().expect("webhook addr").port();
+        let (accepted_tx, accepted_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            let (mut stream, _) = accept_one(&listener, &release_rx).expect("webhook accept");
+            let _ = read_webhook_request(&mut stream);
+            accepted_tx.send(()).expect("signal webhook accepted");
+            let _ = release_rx.recv_timeout(Duration::from_secs(2));
+            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n");
+        });
+        Self {
+            port,
+            accepted: accepted_rx,
+            release: release_tx,
+            worker: Mutex::new(Some(worker)),
+        }
+    }
+
+    fn wait_until_accepted(&self) {
+        self.accepted
+            .recv_timeout(Duration::from_secs(2))
+            .expect("webhook accepted event");
+    }
+
+    fn release(&self) {
+        let _ = self.release.send(());
+        if let Some(worker) = self.worker.lock().expect("worker lock").take() {
+            worker.join().expect("webhook worker");
+        }
+    }
+}
+
+impl Drop for BlockingWebhookServer {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
+struct CountingWebhookServer {
+    port: u16,
+    count: Arc<AtomicUsize>,
+    stop: mpsc::Sender<()>,
+    worker: Mutex<Option<thread::JoinHandle<()>>>,
+}
+
+impl CountingWebhookServer {
+    fn spawn() -> Self {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind webhook");
+        listener.set_nonblocking(true).expect("nonblocking webhook");
+        let port = listener.local_addr().expect("webhook addr").port();
+        let count = Arc::new(AtomicUsize::new(0));
+        let count_for_worker = Arc::clone(&count);
+        let (stop_tx, stop_rx) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            loop {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let _ = read_webhook_request(&mut stream);
+                        count_for_worker.fetch_add(1, Ordering::SeqCst);
+                        let _ = stream.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n");
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        if stop_rx.try_recv().is_ok() {
+                            return;
+                        }
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("accept webhook: {error}"),
+                }
+            }
+        });
+        Self {
+            port,
+            count,
+            stop: stop_tx,
+            worker: Mutex::new(Some(worker)),
+        }
+    }
+
+    fn wait_for_count(&self, expected: usize) {
+        let start = std::time::Instant::now();
+        while start.elapsed() < Duration::from_secs(2) {
+            if self.count() >= expected {
+                return;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(self.count(), expected, "webhook count did not reach target");
+    }
+
+    fn count(&self) -> usize {
+        self.count.load(Ordering::SeqCst)
+    }
+
+    fn stop(&self) {
+        let _ = self.stop.send(());
+        if let Some(worker) = self.worker.lock().expect("worker lock").take() {
+            worker.join().expect("webhook worker");
+        }
+    }
+}
+
+impl Drop for CountingWebhookServer {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+fn accept_one(
+    listener: &TcpListener,
+    stop: &mpsc::Receiver<()>,
+) -> Option<(TcpStream, std::net::SocketAddr)> {
+    loop {
+        match listener.accept() {
+            Ok(value) => return Some(value),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                if stop.try_recv().is_ok() {
+                    return None;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => panic!("accept webhook: {error}"),
+        }
+    }
+}
+
+fn read_webhook_request(stream: &mut TcpStream) -> Vec<u8> {
+    stream
+        .set_read_timeout(Some(Duration::from_millis(100)))
+        .expect("webhook read timeout");
+    let mut bytes = Vec::new();
+    let mut buffer = [0_u8; 1024];
+    loop {
+        match stream.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(count) => {
+                bytes.extend_from_slice(&buffer[..count]);
+                if webhook_request_complete(&bytes) {
+                    break;
+                }
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+                ) =>
+            {
+                break;
+            }
+            Err(error) => panic!("read webhook request: {error}"),
+        }
+    }
+    bytes
+}
+
+fn webhook_request_complete(bytes: &[u8]) -> bool {
+    let Some(header_end) = bytes.windows(4).position(|window| window == b"\r\n\r\n") else {
+        return false;
+    };
+    let Ok(headers) = std::str::from_utf8(&bytes[..header_end]) else {
+        return false;
+    };
+    let content_length = headers
+        .split("\r\n")
+        .filter_map(|line| line.split_once(':'))
+        .find(|(name, _)| name.trim().eq_ignore_ascii_case("content-length"))
+        .and_then(|(_, value)| value.trim().parse::<usize>().ok())
+        .unwrap_or(0);
+    bytes.len() >= header_end + 4 + content_length
+}
+
 impl HeldSseServer {
     fn spawn() -> Self {
         let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind upstream");
@@ -1017,6 +1205,7 @@ fn hosted_connection_rejects_oversized_content_length_before_auth() {
             issued_at: "issued".into(),
             stopping: false,
         },
+        None,
     )
     .expect("hosted response");
 
@@ -1080,6 +1269,7 @@ fn hosted_operator_stream_stops_after_principal_revocation() {
                 issued_at: "issued".into(),
                 stopping: false,
             },
+            None,
         )
         .expect("hosted stream handled");
         done_tx.send(stream.output).expect("send output");
@@ -1113,6 +1303,206 @@ fn hosted_operator_stream_stops_after_principal_revocation() {
             .iter()
             .any(|event| event == "hosted_stream_closed:revoked")
     );
+}
+
+#[test]
+fn hosted_event_delivery_does_not_block_request_response() {
+    let fixture = HostedFixture::new("delivery-nonblocking");
+    let webhook = BlockingWebhookServer::spawn();
+    let token = grant_hosted_operator(&fixture.resolver, "grand", "/repo", "s");
+    let mut runtime = FakeRuntime::empty();
+    runtime.projects = vec![hosted_project("/repo", 43210, true)];
+    let state = HostedServerState::with_resolver_and_delivery(
+        HostedConfig {
+            enabled: true,
+            webhook_url: Some(format!("http://127.0.0.1:{}/hook", webhook.port)),
+            ..HostedConfig::default()
+        },
+        fixture.resolver.clone(),
+        HostedEventDelivery::new(HostedEventDeliveryConfig {
+            webhook_url: Some(format!("http://127.0.0.1:{}/hook", webhook.port)),
+            webhook_secret: Some("secret".into()),
+        }),
+    );
+    let mut request =
+        FakeRuntime::request("GET", "/proxy/127.0.0.1/43210/agents/output?sessionId=s");
+    request.headers = bearer(&token);
+    request.headers.insert("user-agent".into(), "ua".into());
+    let (done_tx, done_rx) = mpsc::channel();
+    thread::spawn(move || {
+        let response = handle_hosted_daemon_request_from_peer(
+            &mut runtime,
+            &state,
+            request,
+            Some("127.0.0.1"),
+        );
+        done_tx.send(response.status).expect("send response");
+    });
+
+    webhook.wait_until_accepted();
+    assert_eq!(
+        done_rx
+            .recv_timeout(Duration::from_millis(150))
+            .expect("hosted response should not wait for webhook"),
+        200
+    );
+    webhook.release();
+}
+
+#[test]
+fn hosted_peer_limiter_uses_separate_client_buckets() {
+    let fixture = HostedFixture::new("peer-buckets");
+    let mut runtime = FakeRuntime::empty();
+    let state = fixture.state(HostedConfig {
+        enabled: true,
+        rate_limit: HostedRateLimitConfig {
+            requests_per_minute: 1,
+            max_concurrent: 1,
+            bytes_per_minute: 1024,
+        },
+        ..HostedConfig::default()
+    });
+
+    for _ in 0..4 {
+        let response = handle_hosted_daemon_request_from_peer(
+            &mut runtime,
+            &state,
+            FakeRuntime::request("GET", "/proxy/127.0.0.1/43210/agents/output?sessionId=s"),
+            Some("198.51.100.1"),
+        );
+        assert_eq!(response.status, 401);
+    }
+    let exhausted = handle_hosted_daemon_request_from_peer(
+        &mut runtime,
+        &state,
+        FakeRuntime::request("GET", "/proxy/127.0.0.1/43210/agents/output?sessionId=s"),
+        Some("198.51.100.1"),
+    );
+    assert_eq!(exhausted.status, 429);
+
+    let other_peer = handle_hosted_daemon_request_from_peer(
+        &mut runtime,
+        &state,
+        FakeRuntime::request("GET", "/proxy/127.0.0.1/43210/agents/output?sessionId=s"),
+        Some("198.51.100.2"),
+    );
+    assert_eq!(other_peer.status, 401);
+}
+
+#[test]
+fn hosted_device_sightings_use_trusted_forwarded_address_from_loopback_peer() {
+    let fixture = HostedFixture::new("forwarded-device");
+    let token = grant_hosted_operator(&fixture.resolver, "grand", "/repo", "s");
+    let mut runtime = FakeRuntime::empty();
+    runtime.projects = vec![hosted_project("/repo", 43210, true)];
+    let state = fixture.state(HostedConfig {
+        enabled: true,
+        trusted_forwarded_header: Some("x-forwarded-for".into()),
+        ..HostedConfig::default()
+    });
+
+    for address in ["203.0.113.1", "203.0.113.2"] {
+        let mut request =
+            FakeRuntime::request("GET", "/proxy/127.0.0.1/43210/agents/output?sessionId=s");
+        request.headers = bearer(&token);
+        request.headers.insert("user-agent".into(), "ua".into());
+        request.headers.insert(
+            "x-forwarded-for".into(),
+            format!("198.51.100.99, {address}"),
+        );
+        let response = handle_hosted_daemon_request_from_peer(
+            &mut runtime,
+            &state,
+            request,
+            Some("127.0.0.1"),
+        );
+        assert_eq!(response.status, 200);
+    }
+
+    let device_events = HostedAuditStore::with_resolver(fixture.resolver.clone())
+        .tail_audit(20)
+        .into_iter()
+        .filter_map(|record| record.event)
+        .filter(|event| event == "hosted_token_first_use" || event == "hosted_new_device")
+        .collect::<Vec<_>>();
+    assert_eq!(device_events.len(), 2);
+    assert!(
+        device_events
+            .iter()
+            .any(|event| event == "hosted_new_device")
+    );
+}
+
+#[test]
+fn hosted_auth_failure_delivery_is_per_peer_and_globally_throttled() {
+    let per_peer_fixture = HostedFixture::new("auth-fail-peer-throttle");
+    let per_peer_webhook = CountingWebhookServer::spawn();
+    let mut runtime = FakeRuntime::empty();
+    let state = HostedServerState::with_resolver_and_delivery(
+        HostedConfig {
+            enabled: true,
+            webhook_url: Some(format!("http://127.0.0.1:{}/hook", per_peer_webhook.port)),
+            ..HostedConfig::default()
+        },
+        per_peer_fixture.resolver.clone(),
+        HostedEventDelivery::new(HostedEventDeliveryConfig {
+            webhook_url: Some(format!("http://127.0.0.1:{}/hook", per_peer_webhook.port)),
+            webhook_secret: Some("secret".into()),
+        }),
+    );
+    for _ in 0..2 {
+        let mut request =
+            FakeRuntime::request("GET", "/proxy/127.0.0.1/43210/agents/output?sessionId=s");
+        request.headers.insert("user-agent".into(), "ua".into());
+        let response = handle_hosted_daemon_request_from_peer(
+            &mut runtime,
+            &state,
+            request,
+            Some("198.51.100.10"),
+        );
+        assert_eq!(response.status, 401);
+    }
+    per_peer_webhook.wait_for_count(1);
+    thread::sleep(Duration::from_millis(100));
+    assert_eq!(per_peer_webhook.count(), 1);
+    per_peer_webhook.stop();
+
+    let global_fixture = HostedFixture::new("auth-fail-global-throttle");
+    let global_webhook = CountingWebhookServer::spawn();
+    let mut runtime = FakeRuntime::empty();
+    let state = HostedServerState::with_resolver_and_delivery(
+        HostedConfig {
+            enabled: true,
+            webhook_url: Some(format!("http://127.0.0.1:{}/hook", global_webhook.port)),
+            trusted_forwarded_header: Some("x-forwarded-for".into()),
+            ..HostedConfig::default()
+        },
+        global_fixture.resolver.clone(),
+        HostedEventDelivery::new(HostedEventDeliveryConfig {
+            webhook_url: Some(format!("http://127.0.0.1:{}/hook", global_webhook.port)),
+            webhook_secret: Some("secret".into()),
+        }),
+    );
+    for index in 0..12 {
+        let mut request =
+            FakeRuntime::request("GET", "/proxy/127.0.0.1/43210/agents/output?sessionId=s");
+        request.headers.insert("user-agent".into(), "ua".into());
+        request.headers.insert(
+            "x-forwarded-for".into(),
+            format!("198.51.100.99, 203.0.113.{index}"),
+        );
+        let response = handle_hosted_daemon_request_from_peer(
+            &mut runtime,
+            &state,
+            request,
+            Some("127.0.0.1"),
+        );
+        assert_eq!(response.status, 401);
+    }
+    global_webhook.wait_for_count(10);
+    thread::sleep(Duration::from_millis(100));
+    assert_eq!(global_webhook.count(), 10);
+    global_webhook.stop();
 }
 
 #[test]
