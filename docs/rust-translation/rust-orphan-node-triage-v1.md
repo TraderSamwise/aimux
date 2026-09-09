@@ -70,6 +70,37 @@ The cargo failure is in the dashboard-targets/TUI lane and was not changed here.
 | `TmuxRuntimeManager::with_session_prefix` | No production Node caller found. | Test/private-prefix seam. Delete candidate unless private tmux prefixes are revived. |
 | `TmuxRuntimeManager::peek_open_session_name` | No production Node caller found. | Node exposed it, but only tests referenced it. Delete candidate. |
 
+## TUI-Owned Orphans
+
+Triaged after `f7c8b4d8` from `scripts/audit-rust-orphans.mjs` rows marked
+`tui-owned`.
+
+### Live Bugs
+
+| Rust symbol | Node called from real user path? | Current Rust gap |
+| --- | --- | --- |
+| `tui_render::theme::recede` | Yes. Node `src/multiplexer/dashboard-state-methods.ts` dimmed the dashboard base frame with `recede(output)` before drawing any active dashboard overlay. | Fixed in `f7c8b4d8`: Rust dashboard overlay composition now recedes the base frame before appending overlays. Missing behavior before the fix: modals rendered over a bright dashboard instead of the dimmed backdrop Node produced. Mutation proof: replacing `recede(&base.frame)` with `base.frame.clone()` fails `dashboard_overlay_recedes_base_frame_like_node_write_frame`. |
+
+### Node Yes, Rust Behavior Reached Elsewhere
+
+| Rust symbol | Node called from real user path? | Why this orphan is not a live bug |
+| --- | --- | --- |
+| `DashboardController::set_work_outline_overlay` | Yes for the behavior. Node `showWorkOutlineOverlay()` set session id, zeroed offset, loaded entries, opened the `work-outline` overlay, and rendered it. | Rust production reaches the same behavior through `DashboardControllerEffect::LoadWorkOutlineOverlay` and `dashboard_internal` calling `set_work_outline_overlay_with_offset`. The unreferenced `set_work_outline_overlay` method is the zero-offset convenience wrapper used by tests. |
+| `dashboard_controller::parse_dashboard_key` | Yes for dashboard key parsing. Node dashboard input handlers used `parseKeys()` plus `commandKey()` on real terminal bytes. | Rust production calls `parse_dashboard_keys` from `dashboard_terminal::read_dashboard_keys`. The single-key `parse_dashboard_key` wrapper is a test/helper seam; the parser behavior is wired through the multi-key function. |
+| `DashboardUiStatePersistence::persist_render_state` | Yes for UI render-state persistence. Node `persistDashboardUiState()` wrote screen, preview source, sidebar visibility, selection, and order state through `DashboardUiStateStore.persist()`. | Rust production calls the richer `persist_controller_state` after dashboard renders. The unreferenced `persist_render_state` method is an older narrow screen+preview helper retained for tests. |
+| `ExposePaneOutputTap::track_items` | Yes. Node `ProjectOutputPreviewCoordinator.attachExposePreviewSnapshots()` called `exposePaneOutputTap.trackItems(rawItems)` on project-service preview routes. | Rust reaches the visible `previewSnapshot` behavior through `project_service::preview_snapshots::capture_preview_snapshot`, hot expose snapshots, and direct tmux capture from the desktop-state and switchable-agent routes. The tap-stream implementation remains a dormant optimization path, not the active production preview source after cutover. |
+| `tmux_expose::run_tmux_expose_with_client` | Yes for the Expose runner. Node production called `runTmuxExpose()` from the project-service expose socket and popup entrypoint. | Rust production calls `run_tmux_expose` from the real binary entrypoint, which then runs through the same driver pipeline. `run_tmux_expose_with_client` is the dependency-injection wrapper used by tests. |
+| `tmux_expose::load_expose_scope_items` | Yes. Node `runTmuxExpose()` called `loadExposeScopeItems()` during initial load, reload, and scope changes. | Rust production calls `load_expose_scope_items_with` from the Expose runner so tests can inject the HTTP client. The public no-client wrapper is unused, but the scope-load behavior is wired. |
+
+### Node No, Dead Or Contract-Only
+
+| Rust symbol | Node called from real user path? | Triage |
+| --- | --- | --- |
+| `ExposePaneOutputTap::into_tmux` | No production Node equivalent found. | Test accessor for recovering the fake tmux driver from tap fixtures. |
+| `ExposePaneOutputTap::tmux_mut` | No production Node equivalent found. | Test accessor for mutating the fake tmux driver in tap fixtures. |
+| `ExposePaneOutputTap::compact_tracked_files_for_test` | No production Node equivalent found. | Explicit test-only maintenance hook for tap compaction fixtures. |
+| `tui_render::theme::keycap_hint_lines` | No production Node caller found; the recovered Node export was only exercised by `src/tui/render/theme.test.ts`. | Contract-only helper retained for fixture parity. Production footer/help rendering uses the other footer hint renderers. |
+
 ## Action List
 
 Do not delete any of the dead candidates until Sam rules on deletion. The
