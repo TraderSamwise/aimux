@@ -1,4 +1,4 @@
-use crate::tmux::{TmuxRuntimeManager, TmuxTarget};
+use crate::tmux::{TmuxRuntimeManager, TmuxTarget, pane_pipe_ownership_script};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -81,10 +81,9 @@ impl ExposePaneOutputTapTmux for TmuxRuntimeManager {
         let command = match options.ownership {
             Some(ownership) => {
                 let token_file_path = ownership.token_file_path.to_string_lossy();
-                let script = "token_file=$2; printf '%s\\t%s\\n' \"$$\" \"$1\" > \"$token_file\"; trap 'rm -f \"$token_file\"' EXIT; cat >> \"$3\"";
                 format!(
                     "sh -c {} aimux-pane-tap {} {} {}",
-                    shell_quote(script),
+                    shell_quote(pane_pipe_ownership_script()),
                     shell_quote(&ownership.token),
                     shell_quote(&token_file_path),
                     shell_quote(&file_path),

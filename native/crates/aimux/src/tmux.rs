@@ -743,11 +743,10 @@ impl TmuxRuntimeManager {
         let command = options.ownership.as_ref().map_or_else(
             || format!("cat >> {}", shell_quote(file_path)),
             |ownership| {
-                let script = "token_file=$2; printf '%s\\t%s\\n' \"$$\" \"$1\" > \"$token_file\"; trap 'rm -f \"$token_file\"' EXIT; cat >> \"$3\"";
                 [
                     "sh".to_owned(),
                     "-c".to_owned(),
-                    shell_quote(script),
+                    shell_quote(pane_pipe_ownership_script()),
                     "aimux-pane-tap".to_owned(),
                     shell_quote(&ownership.token),
                     shell_quote(&ownership.token_file_path),
@@ -2370,6 +2369,10 @@ pub fn start_pane_pipe_argv(
     }
     argv.push(command.to_owned());
     argv
+}
+
+pub(crate) fn pane_pipe_ownership_script() -> &'static str {
+    "token_file=$2; printf \"%s\\t%s\\n\" \"$$\" \"$1\" > \"$token_file\"; trap \"rm -f \\\"$token_file\\\"\" EXIT; cat >> \"$3\""
 }
 
 pub fn stop_pane_pipe_argv(window_id: &str) -> Vec<String> {

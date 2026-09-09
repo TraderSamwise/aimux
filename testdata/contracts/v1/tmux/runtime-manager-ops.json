@@ -55,7 +55,7 @@
               "-t",
               "@3",
               "-o",
-              "sh -c 'token_file=$2; printf '\"'\"'%s\\t%s\\n'\"'\"' \"$$\" \"$1\" > \"$token_file\"; trap '\"'\"'rm -f \"$token_file\"'\"'\"' EXIT; cat >> \"$3\"' aimux-pane-tap 'tap-token' '/tmp/aimux tap/token.txt' '/tmp/aimux tap/output.log'"
+              "sh -c 'token_file=$2; printf \"%s\\t%s\\n\" \"$$\" \"$1\" > \"$token_file\"; trap \"rm -f \\\"$token_file\\\"\" EXIT; cat >> \"$3\"' aimux-pane-tap 'tap-token' '/tmp/aimux tap/token.txt' '/tmp/aimux tap/output.log'"
             ],
             ["pipe-pane", "-t", "@3"]
           ]
