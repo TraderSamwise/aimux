@@ -147,12 +147,8 @@ impl WebSocketConnection for TungsteniteConnection {
             Ok(tungstenite::Message::Text(text)) => {
                 Ok(Some(WebSocketEvent::Text(text.to_string())))
             }
-            Ok(tungstenite::Message::Binary(bytes)) => {
-                Ok(Some(WebSocketEvent::Binary(bytes)))
-            }
-            Ok(tungstenite::Message::Ping(payload)) => {
-                Ok(Some(WebSocketEvent::Ping(payload)))
-            }
+            Ok(tungstenite::Message::Binary(bytes)) => Ok(Some(WebSocketEvent::Binary(bytes))),
+            Ok(tungstenite::Message::Ping(payload)) => Ok(Some(WebSocketEvent::Ping(payload))),
             Ok(tungstenite::Message::Pong(_)) => Ok(Some(WebSocketEvent::Pong)),
             Ok(tungstenite::Message::Close(frame)) => Ok(Some(WebSocketEvent::Closed {
                 code: frame.as_ref().map(|frame| u16::from(frame.code)),

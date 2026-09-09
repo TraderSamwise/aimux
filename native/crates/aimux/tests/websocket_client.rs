@@ -13,7 +13,10 @@ fn the_token_travels_as_a_subprotocol_not_a_header() {
     let protocols = relay_subprotocols("tok-123");
     assert_eq!(
         protocols,
-        vec!["aimux".to_owned(), format!("{TOKEN_PROTOCOL_PREFIX}tok-123")]
+        vec![
+            "aimux".to_owned(),
+            format!("{TOKEN_PROTOCOL_PREFIX}tok-123")
+        ]
     );
 }
 
@@ -27,7 +30,9 @@ fn the_backoff_doubles_and_then_holds_at_thirty_seconds() {
     }
     assert_eq!(
         seen,
-        vec![1_000, 2_000, 4_000, 8_000, 16_000, 30_000, 30_000, 30_000, 30_000],
+        vec![
+            1_000, 2_000, 4_000, 8_000, 16_000, 30_000, 30_000, 30_000, 30_000
+        ],
         "backoff must double to the cap and stay there"
     );
     assert_eq!(next_retry_ms(MAX_RETRY_MS), MAX_RETRY_MS);

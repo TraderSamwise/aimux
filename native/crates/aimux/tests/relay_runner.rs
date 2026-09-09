@@ -1,0 +1,364 @@
+//! The connection loop, driven by a fake socket and a fake daemon.
+
+use aimux::relay_client::RelayStatus;
+use aimux::relay_runner::{DaemonRelayBridge, DaemonRouteResponse, RelayRunner};
+use aimux::websocket::{WebSocketConnection, WebSocketConnector, WebSocketError, WebSocketEvent};
+use serde_json::{Value, json};
+use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+#[derive(Default)]
+struct Recorder {
+    sent: Mutex<Vec<String>>,
+    routed: Mutex<Vec<(String, String)>>,
+    auth_lost: Mutex<Vec<String>>,
+    clients: Mutex<Vec<String>>,
+}
+
+struct FakeBridge {
+    recorder: Arc<Recorder>,
+    subscribe_error: Option<(u16, String)>,
+}
+
+impl DaemonRelayBridge for FakeBridge {
+    fn route_request(
+        &self,
+        method: &str,
+        path: &str,
+        _body: &Value,
+        _headers: &Value,
+    ) -> DaemonRouteResponse {
+        self.recorder
+            .routed
+            .lock()
+            .unwrap()
+            .push((method.to_owned(), path.to_owned()));
+        DaemonRouteResponse {
+            status: 200,
+            body: json!({ "ok": true }),
+        }
+    }
+
+    fn subscribe_project_events(
+        &self,
+        _subscription_id: &str,
+        _path: &str,
+        _headers: &Value,
+        _send: Arc<dyn Fn(String) + Send + Sync>,
+        _cancelled: Arc<AtomicBool>,
+    ) -> Result<(), (u16, String)> {
+        match &self.subscribe_error {
+            Some((status, message)) => Err((*status, message.clone())),
+            None => Ok(()),
+        }
+    }
+
+    fn notify_client_connected(&self, title: &str, _body: &str) {
+        self.recorder.clients.lock().unwrap().push(title.to_owned());
+    }
+
+    fn notify_auth_lost(&self, message: &str) {
+        self.recorder
+            .auth_lost
+            .lock()
+            .unwrap()
+            .push(message.to_owned());
+    }
+}
+
+/// Replays one scripted socket per connect attempt.
+struct FakeConnector {
+    scripts: Vec<Result<Vec<WebSocketEvent>, WebSocketError>>,
+    attempts: Arc<Mutex<usize>>,
+    recorder: Arc<Recorder>,
+}
+
+impl WebSocketConnector for FakeConnector {
+    fn connect(
+        &mut self,
+        _url: &str,
+        _subprotocols: &[String],
+    ) -> Result<Box<dyn WebSocketConnection>, WebSocketError> {
+        let index = {
+            let mut attempts = self.attempts.lock().unwrap();
+            let index = *attempts;
+            *attempts += 1;
+            index
+        };
+        match self.scripts.get(index).cloned() {
+            Some(Ok(events)) => Ok(Box::new(FakeConnection {
+                events,
+                recorder: Arc::clone(&self.recorder),
+            })),
+            Some(Err(error)) => Err(error),
+            None => Err(WebSocketError::Transport("no more scripts".into())),
+        }
+    }
+}
+
+struct FakeConnection {
+    events: Vec<WebSocketEvent>,
+    recorder: Arc<Recorder>,
+}
+
+impl WebSocketConnection for FakeConnection {
+    fn read(&mut self, _timeout: Duration) -> Result<Option<WebSocketEvent>, WebSocketError> {
+        if self.events.is_empty() {
+            return Ok(Some(WebSocketEvent::Closed {
+                code: None,
+                reason: String::new(),
+            }));
+        }
+        Ok(Some(self.events.remove(0)))
+    }
+    fn send_text(&mut self, text: &str) -> Result<(), WebSocketError> {
+        self.recorder.sent.lock().unwrap().push(text.to_owned());
+        Ok(())
+    }
+    fn send_pong(&mut self, _payload: Vec<u8>) -> Result<(), WebSocketError> {
+        Ok(())
+    }
+    fn close(&mut self) {}
+}
+
+fn text(value: serde_json::Value) -> WebSocketEvent {
+    WebSocketEvent::Text(value.to_string())
+}
+
+fn closed(code: u16) -> WebSocketEvent {
+    WebSocketEvent::Closed {
+        code: Some(code),
+        reason: String::new(),
+    }
+}
+
+struct Harness {
+    runner: Arc<RelayRunner>,
+    recorder: Arc<Recorder>,
+    attempts: Arc<Mutex<usize>>,
+    connector: FakeConnector,
+    slept: Vec<Duration>,
+}
+
+fn harness(
+    scripts: Vec<Result<Vec<WebSocketEvent>, WebSocketError>>,
+    subscribe_error: Option<(u16, String)>,
+) -> Harness {
+    let recorder = Arc::new(Recorder::default());
+    let attempts = Arc::new(Mutex::new(0));
+    let bridge = Arc::new(FakeBridge {
+        recorder: Arc::clone(&recorder),
+        subscribe_error,
+    });
+    Harness {
+        runner: RelayRunner::new("wss://relay.example/", "tok", bridge),
+        connector: FakeConnector {
+            scripts,
+            attempts: Arc::clone(&attempts),
+            recorder: Arc::clone(&recorder),
+        },
+        recorder,
+        attempts,
+        slept: Vec::new(),
+    }
+}
+
+impl Harness {
+    /// Runs the loop, ending it from inside the injected sleep after
+    /// `max_sleeps` backoffs. Stopping the handle up front would exit before
+    /// the first connect and prove nothing.
+    fn run_until(&mut self, max_sleeps: usize) {
+        let runner = Arc::clone(&self.runner);
+        let handle = runner.handle();
+        let slept = &mut self.slept;
+        runner.run(&mut self.connector, &mut |delay| {
+            slept.push(delay);
+            if slept.len() >= max_sleeps {
+                handle.stop();
+            }
+        });
+    }
+
+    fn run(&mut self) {
+        self.run_until(1);
+    }
+    fn sent(&self) -> Vec<String> {
+        self.recorder.sent.lock().unwrap().clone()
+    }
+}
+
+#[test]
+fn a_request_frame_is_routed_and_answered_with_its_id() {
+    let mut harness = harness(
+        vec![Ok(vec![
+            text(json!({"id":"r1","type":"request","method":"GET","path":"/ps"})),
+            closed(1000),
+        ])],
+        None,
+    );
+    harness.run();
+
+    assert_eq!(
+        harness.recorder.routed.lock().unwrap().clone(),
+        vec![("GET".to_owned(), "/ps".to_owned())]
+    );
+    let sent = harness.sent();
+    assert_eq!(sent.len(), 1, "expected exactly one response, got {sent:?}");
+    let response: Value = serde_json::from_str(&sent[0]).unwrap();
+    assert_eq!(response["id"], "r1");
+    assert_eq!(response["type"], "response");
+    assert_eq!(response["status"], 200);
+}
+
+#[test]
+fn a_ping_is_answered_over_the_socket() {
+    let mut harness = harness(
+        vec![Ok(vec![text(json!({"type":"ping"})), closed(1000)])],
+        None,
+    );
+    harness.run();
+    assert_eq!(harness.sent(), vec![r#"{"type":"pong"}"#.to_owned()]);
+}
+
+#[test]
+fn a_rejected_credential_stops_the_loop_and_tells_the_human_once() {
+    let mut harness = harness(vec![Ok(vec![closed(1008)]), Ok(vec![closed(1008)])], None);
+    harness.run();
+
+    assert_eq!(
+        harness.runner.handle().status().status,
+        Some(RelayStatus::AuthFailed)
+    );
+    assert_eq!(
+        *harness.attempts.lock().unwrap(),
+        1,
+        "a refused token must not be retried"
+    );
+    assert_eq!(harness.recorder.auth_lost.lock().unwrap().len(), 1);
+    assert!(
+        harness.slept.is_empty(),
+        "it should not have backed off at all"
+    );
+}
+
+#[test]
+fn a_socket_that_connects_and_drops_resets_the_backoff() {
+    // Node reset retryMs on "open". A relay that accepts us and then drops is
+    // healthy-but-busy, not failing, so it must not be punished with a growing
+    // delay — otherwise one flaky hour leaves us waiting 30s to reconnect.
+    let mut harness = harness(
+        vec![
+            Ok(vec![closed(1011)]),
+            Ok(vec![closed(1011)]),
+            Ok(vec![closed(1011)]),
+        ],
+        None,
+    );
+    harness.run_until(3);
+
+    assert_eq!(
+        harness.slept,
+        vec![
+            Duration::from_millis(1_000),
+            Duration::from_millis(1_000),
+            Duration::from_millis(1_000),
+        ],
+        "a successful connect must reset the backoff"
+    );
+}
+
+#[test]
+fn repeated_connect_failures_escalate_the_backoff() {
+    let mut harness = harness(
+        vec![
+            Err(WebSocketError::Transport("refused".into())),
+            Err(WebSocketError::Transport("refused".into())),
+            Err(WebSocketError::Transport("refused".into())),
+        ],
+        None,
+    );
+    harness.run_until(3);
+
+    assert_eq!(
+        harness.slept,
+        vec![
+            Duration::from_millis(1_000),
+            Duration::from_millis(2_000),
+            Duration::from_millis(4_000),
+        ],
+        "with no successful connect the delay must double"
+    );
+}
+
+#[test]
+fn five_refused_handshakes_stop_the_client() {
+    let scripts = (0..6)
+        .map(|_| Err(WebSocketError::Handshake("401".into())))
+        .collect();
+    let mut harness = harness(scripts, None);
+    harness.run_until(10);
+
+    assert_eq!(
+        harness.runner.handle().status().status,
+        Some(RelayStatus::AuthFailed)
+    );
+    assert_eq!(
+        *harness.attempts.lock().unwrap(),
+        5,
+        "it must give up on the fifth refused handshake, not keep hammering"
+    );
+}
+
+#[test]
+fn a_subscription_that_cannot_start_reports_an_error_frame() {
+    let mut harness = harness(
+        vec![Ok(vec![
+            text(json!({"id":"s1","type":"project_events_subscribe","path":"/events"})),
+            closed(1000),
+        ])],
+        Some((404, "no such project".to_owned())),
+    );
+    harness.run();
+
+    let sent = harness.sent();
+    assert_eq!(sent.len(), 1, "expected one error frame, got {sent:?}");
+    let frame: Value = serde_json::from_str(&sent[0]).unwrap();
+    assert_eq!(frame["type"], "project_events_error");
+    assert_eq!(frame["status"], 404);
+    assert_eq!(frame["id"], "s1");
+}
+
+#[test]
+fn an_arriving_client_reaches_the_daemon_notifier() {
+    let mut harness = harness(
+        vec![Ok(vec![
+            text(
+                json!({"type":"security_event","event":{"kind":"new_client_detected","title":"iPhone","body":"joined"}}),
+            ),
+            closed(1000),
+        ])],
+        None,
+    );
+    harness.run();
+    assert_eq!(
+        harness.recorder.clients.lock().unwrap().clone(),
+        vec!["iPhone".to_owned()]
+    );
+}
+
+#[test]
+fn a_handle_stopped_before_the_loop_starts_never_opens_a_socket() {
+    let mut harness = harness(vec![Ok(vec![closed(1011)]), Ok(vec![closed(1011)])], None);
+    harness.runner.handle().stop();
+    harness.run();
+    assert_eq!(
+        *harness.attempts.lock().unwrap(),
+        0,
+        "a stopped client must not dial the relay at all"
+    );
+    assert_eq!(
+        harness.runner.handle().status().status,
+        Some(RelayStatus::Disconnected)
+    );
+}
