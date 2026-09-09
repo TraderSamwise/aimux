@@ -29,6 +29,7 @@ use crate::project_service::builtin_metadata_task::builtin_metadata_task;
 use crate::project_service::loop_watcher_task::loop_watcher_task;
 use crate::project_service::scheduler::spawn_project_service_scheduler;
 use crate::project_service::scribe_watcher_task::scribe_watcher_task;
+use crate::project_service::transcript_reconciler_task::transcript_reconciler_task;
 use crate::runtime_lifecycle_methods::write_instruction_files;
 use crate::tmux_expose::{
     ExposeHttpClient, ExposeHttpRequest, ExposeInputEvent, ExposeInputSource,
@@ -462,9 +463,14 @@ fn serve_project_service_listener(
         .with_hot_snapshot_background_refresh(),
     );
     let mut periodic_tasks = builtin_plugin_tick_tasks();
+    // Order matters: the rail runs co-due tasks in sequence, and the two
+    // watchers below may each hold it for 20s. The reconciler's 4s cadence is
+    // the tightest on the rail, so it goes ahead of them — behind the metadata
+    // watchers only, whose events it wants to read after, not settle over.
+    periodic_tasks.push(builtin_metadata_task(&context));
+    periodic_tasks.push(transcript_reconciler_task(&context));
     periodic_tasks.push(loop_watcher_task(&context));
     periodic_tasks.push(scribe_watcher_task(&context));
-    periodic_tasks.push(builtin_metadata_task(&context));
     spawn_project_service_scheduler(Arc::clone(&context), periodic_tasks);
     for stream in listener.incoming() {
         let Ok(mut stream) = stream else {

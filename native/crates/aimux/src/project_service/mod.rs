@@ -52,6 +52,7 @@ pub mod statusline;
 pub mod switchable_agents;
 pub mod team;
 pub mod topology;
+pub mod transcript_reconciler_task;
 pub mod usage;
 pub mod visual_clients;
 pub mod watcher_delivery;
