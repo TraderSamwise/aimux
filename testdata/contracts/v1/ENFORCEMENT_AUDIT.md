@@ -223,7 +223,6 @@ Binding statuses: PROVEN-FAILS 325, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
 | `fixture_project_topology` | PROVEN-FAILS | `testdata/contracts/v1/project-topology/topology.json` | 15 | mutated fixture output failed owning Rust suite |
 | `fixture_prompt_context` | PROVEN-FAILS | `testdata/contracts/v1/prompt-context/context.json` | 28 | mutated fixture output failed owning Rust suite |
 | `fixture_proxy_project_binding` | PROVEN-FAILS | `testdata/contracts/v1/proxy/project-binding.json` | 11 | mutated fixture output failed owning Rust suite |
-| `fixture_push_registration_url` | PROVEN-FAILS | `testdata/contracts/v1/push-registration/url.json` | 8 | mutated fixture output failed owning Rust suite |
 | `fixture_recordings` | PROVEN-FAILS | `testdata/contracts/v1/recordings/cleanup.json` | 13 | mutated fixture output failed owning Rust suite |
 | `fixture_recordings` | PROVEN-FAILS | `testdata/contracts/v1/recordings/config.json` | 8 | mutated fixture output failed owning Rust suite |
 | `fixture_relay_client` | PROVEN-FAILS | `testdata/contracts/v1/relay/client.json` | 7 | mutated fixture output failed owning Rust suite |
