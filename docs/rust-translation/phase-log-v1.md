@@ -212,12 +212,16 @@ Open gaps:
 Status: complete for current native head
 Scope: tmux-attached dashboard behavior after renderer parity: entering a
 managed session from the dashboard, returning the attached client to the
-dashboard, and repainting cleanly across live terminal resizes.
+dashboard, repainting cleanly across live terminal resizes, and the
+footer-advertised dashboard keys that switch screens or open first-level input
+surfaces.
 
 Verification:
 - `python3 -m py_compile scripts/phase8-live-residuals.py`
 - `CARGO_TARGET_DIR=/tmp/aimux-cargo-target-dashboard-focus cargo build --manifest-path native/Cargo.toml -p aimux --bin aimux`
 - `CARGO_TARGET_DIR=/tmp/aimux-cargo-target-dashboard-focus python3 scripts/phase8-live-residuals.py --only dashboard-attach --skip-build --aimux-bin /tmp/aimux-cargo-target-dashboard-focus/debug/aimux`
+- `python3 scripts/phase8-live-residuals.py --only dashboard --aimux-bin /tmp/aimux-cargo-target-resize-fix/debug/aimux --skip-build`
+- `python3 scripts/phase8-live-residuals.py --only dashboard-input --mutation dashboard-input-dead --aimux-bin /tmp/aimux-cargo-target-resize-fix/debug/aimux --skip-build` (prove-failed)
 - `CARGO_TARGET_DIR=/tmp/aimux-cargo-target-dashboard-focus python3 scripts/phase8-live-residuals.py --only dashboard-attach --mutation dashboard-resize-width-overflow --skip-build --aimux-bin /tmp/aimux-cargo-target-dashboard-focus/debug/aimux`
 - `CARGO_TARGET_DIR=/tmp/aimux-cargo-target-dashboard-focus python3 scripts/phase8-live-residuals.py --only dashboard-attach --mutation dashboard-attach-focus-target-missing --skip-build --aimux-bin /tmp/aimux-cargo-target-dashboard-focus/debug/aimux`
 - `CARGO_TARGET_DIR=/tmp/aimux-cargo-target-dashboard-focus python3 scripts/phase8-live-residuals.py --only dashboard-attach --mutation dashboard-attach-return-missing --skip-build --aimux-bin /tmp/aimux-cargo-target-dashboard-focus/debug/aimux`
