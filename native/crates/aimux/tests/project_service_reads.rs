@@ -1,4 +1,6 @@
+use aimux::plugin_project_service_host::ProjectServicePluginHost;
 use aimux::plugin_project_service_host::native_plugin_statuses_for_context;
+use aimux::plugin_registry::NativePluginRegistry;
 use aimux::project_api_contract::routes;
 use aimux::project_service::reads::route_read_request;
 use aimux::project_service::router::ProjectServiceRequestContext;
@@ -109,6 +111,68 @@ fn desktop_state_is_owned_by_router_not_legacy_read_split() {
 }
 
 #[test]
+fn native_builtin_plugin_receives_event_and_writes_through_project_service_host() {
+    let project = temp_project("plugin-event");
+    let state_dir = project.join("state");
+    create_dir_all(project.join(".aimux/history")).expect("create history dir");
+    create_dir_all(&state_dir).expect("create state dir");
+    write(
+        state_dir.join("metadata.json"),
+        json!({
+            "version": 1,
+            "sessions": {
+                "codex-1": {
+                    "updatedAt": "2026-09-09T00:00:00.000Z",
+                    "context": {}
+                }
+            }
+        })
+        .to_string(),
+    )
+    .expect("write metadata");
+    write(
+        project.join(".aimux/history/codex-1.jsonl"),
+        "{\"ts\":\"2026-09-09T00:00:00.000Z\",\"text\":\"hello\"}\n",
+    )
+    .expect("write history");
+
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut registry = NativePluginRegistry::builtins();
+    let mut host = ProjectServicePluginHost::new(&context);
+    let statuses = registry.start(&mut host);
+    assert_eq!(statuses[1].name, "transcript-length");
+    assert_eq!(statuses[1].status, "loaded");
+    let initial = read_json(state_dir.join("metadata.json"));
+    assert_eq!(
+        initial["sessions"]["codex-1"]["statusline"]["top"][0]["id"],
+        "transcript-length"
+    );
+    assert_eq!(
+        initial["sessions"]["codex-1"]["statusline"]["top"][0]["text"],
+        "49b"
+    );
+
+    write(
+        project.join(".aimux/history/codex-1.jsonl"),
+        "{\"ts\":\"2026-09-09T00:00:00.000Z\",\"text\":\"hello\"}\n{\"ts\":\"2026-09-09T00:00:01.000Z\",\"text\":\"second turn with more bytes\"}\n",
+    )
+    .expect("extend history");
+    let mut host = ProjectServicePluginHost::new(&context);
+    let statuses = registry.dispatch_event(
+        json!({ "kind": "activity", "sessionId": "codex-1" }),
+        &mut host,
+    );
+    assert_eq!(statuses[1].name, "transcript-length");
+    assert_eq!(statuses[1].status, "loaded");
+    let updated = read_json(state_dir.join("metadata.json"));
+    assert_eq!(
+        updated["sessions"]["codex-1"]["statusline"]["top"][0]["text"],
+        "120b"
+    );
+    cleanup(project);
+}
+
+#[test]
 fn state_route_loads_metadata_state_from_project_state_dir() {
     let project = temp_project("state");
     let project_state_dir = project.join("state-dir");
@@ -155,4 +219,9 @@ fn temp_project(label: &str) -> PathBuf {
 
 fn cleanup(path: PathBuf) {
     let _ = remove_dir_all(path);
+}
+
+fn read_json(path: PathBuf) -> Value {
+    let raw = std::fs::read_to_string(path).expect("read json");
+    serde_json::from_str(&raw).expect("parse json")
 }
