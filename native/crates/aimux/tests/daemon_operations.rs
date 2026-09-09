@@ -727,6 +727,27 @@ fn restart_text_sets_failure_status_and_preserves_raw_errors() {
 }
 
 #[test]
+fn restart_text_accepts_dashboard_repair_project_body() {
+    let mut runtime = FakeOperationsRuntime::default();
+    let response = route_operations_text_request(
+        &mut runtime,
+        "POST",
+        &format!("{}?json=1", CORE_API_ROUTES.restart_text),
+        Some(&json!({
+            "projectRoot": "/repo",
+            "reason": "dashboard-runtime-guard-repair",
+        })),
+    )
+    .expect("restart route");
+
+    assert_eq!(response.status, 200);
+    assert_eq!(json_text(response)["summary"]["failures"], json!(0));
+    assert_eq!(runtime.calls.len(), 1);
+    assert_eq!(runtime.calls[0].name, "restart");
+    assert_eq!(runtime.calls[0].project_root.as_deref(), Some("/repo"));
+}
+
+#[test]
 fn dashboard_reload_and_runtime_restart_parse_project_fallback_and_open_context() {
     let mut runtime = FakeOperationsRuntime::default();
     let reload = route_operations_text_request(

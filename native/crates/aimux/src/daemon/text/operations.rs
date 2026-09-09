@@ -216,7 +216,7 @@ pub fn route_operations_text_request(
         return Some(repair_exchange_text_route(runtime, &route_url, body));
     }
     if method == "POST" && pathname == CORE_API_ROUTES.restart_text {
-        return Some(restart_text_route(runtime, &route_url));
+        return Some(restart_text_route(runtime, &route_url, body));
     }
     if method == "POST" && pathname == CORE_API_ROUTES.dashboard_reload_text {
         return Some(dashboard_reload_text_route(runtime, &route_url, body));
@@ -386,11 +386,15 @@ pub fn repair_exchange_text_route(
 pub fn restart_text_route(
     runtime: &mut impl DaemonOperationsTextRuntime,
     route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
 ) -> DaemonRouteResponse {
     let issued_at = runtime.now_iso();
     let project_root = route_url
         .search_param("project")
-        .map(|project| runtime.resolve_project_root(project));
+        .map(str::to_owned)
+        .or_else(|| string_param(route_url, body, "projectRoot"))
+        .or_else(|| string_param(route_url, body, "project"))
+        .map(|project| runtime.resolve_project_root(&project));
     match runtime.restart_control_plane(&issued_at, project_root.as_deref()) {
         Ok(result) => {
             let mut response = text_or_json_lines(

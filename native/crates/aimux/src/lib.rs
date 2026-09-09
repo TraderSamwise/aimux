@@ -126,6 +126,7 @@ pub mod root_session_launch;
 pub mod runtime_coherence;
 pub mod runtime_drift;
 pub mod runtime_guard;
+pub mod runtime_guard_repair;
 pub mod runtime_guard_repair_history;
 pub mod runtime_guard_repair_start_contract;
 pub mod runtime_lifecycle_methods;
