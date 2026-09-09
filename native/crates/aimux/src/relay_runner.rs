@@ -179,17 +179,22 @@ impl RelayRunner {
                     }
                 }
                 Err(error) => {
-                    // A refused handshake looks like an abnormal close to the
-                    // policy, which is what makes a dead token stop the client.
-                    handshake_failures += 1;
-                    if let CloseDecision::AuthFailed(message) = decide_close(
-                        Some(1006),
-                        handshake_failures - 1,
-                        self.handle.is_stopped(),
-                        MAX_HANDSHAKE_FAILURES,
-                    ) {
-                        self.fail_auth(&message);
-                        return;
+                    // Only a REFUSED HANDSHAKE counts toward giving up. Node
+                    // could not tell the two apart — a browser surfaces a
+                    // rejected upgrade as a plain abnormal close — but we can,
+                    // and five flaky seconds of network should never be
+                    // mistaken for a dead token.
+                    if error.is_handshake() {
+                        handshake_failures += 1;
+                        if let CloseDecision::AuthFailed(message) = decide_close(
+                            Some(1006),
+                            handshake_failures - 1,
+                            self.handle.is_stopped(),
+                            MAX_HANDSHAKE_FAILURES,
+                        ) {
+                            self.fail_auth(&message);
+                            return;
+                        }
                     }
                     self.set_status(RelayStatus::Reconnecting, Some(error.message().to_owned()));
                 }

@@ -362,3 +362,22 @@ fn a_handle_stopped_before_the_loop_starts_never_opens_a_socket() {
         Some(RelayStatus::Disconnected)
     );
 }
+
+#[test]
+fn a_flaky_network_never_looks_like_a_dead_token() {
+    // Transport errors are the network, not the relay refusing us. Counting
+    // them toward the give-up limit would take a laptop off the relay after
+    // five seconds of bad wifi and require a manual `aimux login` to return.
+    let scripts = (0..8)
+        .map(|_| Err(WebSocketError::Transport("connection reset".into())))
+        .collect();
+    let mut harness = harness(scripts, None);
+    harness.run_until(8);
+
+    assert_ne!(
+        harness.runner.handle().status().status,
+        Some(RelayStatus::AuthFailed),
+        "a run of network errors must not be treated as a bad token"
+    );
+    assert_eq!(*harness.attempts.lock().unwrap(), 8, "it must keep trying");
+}
