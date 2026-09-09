@@ -456,6 +456,31 @@ fn task_lifecycle_updates_task_thread_and_indexes() {
         "Three blockers remain; please fix them before commit."
     );
     assert!(task["notifiedAt"].is_null());
+
+    let canceled = route_project_service_request(
+        &context,
+        "POST",
+        routes::tasks::CANCEL,
+        Some(&json!({
+            "taskId": task_id,
+            "from": "overseer",
+            "body": "No longer needed."
+        })),
+    );
+    assert_eq!(canceled.status, 200);
+    assert_eq!(canceled.body["task"]["status"], "canceled");
+    assert_eq!(canceled.body["task"]["assignedTo"], "codex-worker");
+    assert_eq!(canceled.body["task"]["canceledBy"], "overseer");
+    assert_eq!(
+        canceled.body["task"]["cancellationReason"],
+        "No longer needed."
+    );
+    assert_eq!(canceled.body["thread"]["status"], "abandoned");
+    assert_eq!(canceled.body["thread"]["waitingOn"], json!([]));
+    assert_eq!(
+        canceled.body["message"]["metadata"]["taskAction"],
+        "canceled"
+    );
     cleanup(project);
 }
 

@@ -114,6 +114,7 @@ export const PROJECT_API_ROUTES = {
     assign: "/tasks/assign",
     accept: "/tasks/accept",
     block: "/tasks/block",
+    cancel: "/tasks/cancel",
     complete: "/tasks/complete",
     reopen: "/tasks/reopen",
   },
@@ -285,6 +286,7 @@ export function projectApiViewsForMutationRoute(method: string, pathname: string
     case PROJECT_API_ROUTES.tasks.assign:
     case PROJECT_API_ROUTES.tasks.accept:
     case PROJECT_API_ROUTES.tasks.block:
+    case PROJECT_API_ROUTES.tasks.cancel:
     case PROJECT_API_ROUTES.tasks.complete:
     case PROJECT_API_ROUTES.tasks.reopen:
     case PROJECT_API_ROUTES.reviews.approve:

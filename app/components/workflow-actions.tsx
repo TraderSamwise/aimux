@@ -45,7 +45,12 @@ export function TaskWorkflowActions({
   const [busyAction, setBusyAction] = useState<WorkflowAction | null>(null);
   const [error, setError] = useState<string | null>(null);
   const status = String(task.status ?? "").toLowerCase();
-  const isClosed = status === "done" || status === "failed" || status === "abandoned";
+  const isClosed =
+    status === "done" ||
+    status === "failed" ||
+    status === "canceled" ||
+    status === "cancelled" ||
+    status === "abandoned";
   const isReview = String((task as Record<string, unknown>).type ?? "") === "review";
   const canAct = Boolean(endpoint) && !busyAction;
 
@@ -183,7 +188,8 @@ export function ThreadWorkflowActions({
   const [error, setError] = useState<string | null>(null);
   const threadId = thread.thread.id;
   const status = String(thread.thread.status ?? "").toLowerCase();
-  const isClosed = status === "done" || status === "abandoned";
+  const isClosed =
+    status === "done" || status === "canceled" || status === "cancelled" || status === "abandoned";
   const canAct = Boolean(endpoint) && !busyAction;
   const body = draft.trim();
 

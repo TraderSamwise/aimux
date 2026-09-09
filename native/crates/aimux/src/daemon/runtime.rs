@@ -70,7 +70,9 @@ use crate::dashboard_readiness::get_runtime_owner_id;
 use crate::dashboard_targets::{
     DashboardResolveOptions, DashboardTargetRef, resolve_dashboard_target,
 };
-use crate::event_loop_budget::assess_loop_budget;
+use crate::event_loop_budget::{
+    assess_loop_budget, get_event_loop_delay, start_event_loop_monitor,
+};
 use crate::install_cleanup::{
     InstallReferenceText, PlanInstallCleanupOptions, RunInstallCleanupInput, plan_install_cleanup,
     run_install_cleanup,
@@ -244,6 +246,7 @@ impl RealDaemonRuntime {
         project_service_launcher: Arc<dyn ProjectServiceLauncher>,
         project_service_startup_timeout_ms: u64,
     ) -> Self {
+        start_event_loop_monitor();
         Self {
             resolver,
             info,
@@ -266,6 +269,7 @@ impl RealDaemonRuntime {
         project_service_process_verifier: Arc<dyn ProjectServiceProcessVerifier>,
         project_service_startup_timeout_ms: u64,
     ) -> Self {
+        start_event_loop_monitor();
         Self {
             resolver,
             info,
@@ -2086,14 +2090,7 @@ impl DaemonJsonRouteRuntime for RealDaemonRuntime {
 
     fn loop_diagnostics(&self) -> Value {
         let uptime_ms = self.started_instant.elapsed().as_millis();
-        let event_loop = json!({
-            "p50": 0,
-            "p90": 0,
-            "p99": 0,
-            "max": 0,
-            "mean": 0,
-            "monitoring": true,
-        });
+        let event_loop = get_event_loop_delay();
         let tmux_exec = serde_json::to_value(get_tmux_exec_metrics()).unwrap_or_else(|_| json!({}));
         json!({
             "ok": true,

@@ -389,7 +389,10 @@ pub fn describe_session_restorability(
 fn active_task_for<'a>(tasks: &'a [Value], session_id: &str) -> Option<&'a Value> {
     tasks.iter().find(|task| {
         string_field(task, "assignedTo") == Some(session_id)
-            && !matches!(string_field(task, "status"), Some("done" | "failed"))
+            && !matches!(
+                string_field(task, "status"),
+                Some("done" | "failed" | "canceled" | "cancelled" | "abandoned")
+            )
     })
 }
 

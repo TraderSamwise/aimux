@@ -87,6 +87,7 @@ pub fn build_project_observability(input: ProjectObservabilityInput) -> Value {
         "assigned": count_tasks_by_status(&input.tasks, "assigned"),
         "in_progress": count_tasks_by_status(&input.tasks, "in_progress"),
         "blocked": count_tasks_by_status(&input.tasks, "blocked"),
+        "canceled": count_tasks_by_status(&input.tasks, "canceled"),
         "done": count_tasks_by_status(&input.tasks, "done"),
         "failed": count_tasks_by_status(&input.tasks, "failed"),
         "total": input.tasks.len(),
@@ -215,7 +216,10 @@ fn notification_story_item(notification: &Value) -> Value {
 }
 
 fn is_open_task(status: Option<&str>) -> bool {
-    !matches!(status, Some("done" | "failed"))
+    !matches!(
+        status,
+        Some("done" | "failed" | "canceled" | "cancelled" | "abandoned")
+    )
 }
 
 fn is_running_agent(status: Option<&str>) -> bool {

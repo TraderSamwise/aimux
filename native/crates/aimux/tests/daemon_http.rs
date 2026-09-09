@@ -150,6 +150,7 @@ fn text_routes_and_auth_routes_are_grouped_for_daemon_split() {
     assert!(local_auth_routes().contains(&CORE_API_ROUTES.login_text));
     assert!(local_auth_routes().contains(&CORE_API_ROUTES.security_unlock_text));
     assert!(local_cli_text_routes().contains(&CORE_API_ROUTES.task_assign_text));
+    assert!(local_cli_text_routes().contains(&CORE_API_ROUTES.task_cancel_text));
     assert!(local_cli_text_routes().contains(&CORE_API_ROUTES.host_agent_stream_text));
     assert!(local_cli_text_routes().contains(&CORE_API_ROUTES.worktree_resurrect_text));
 }

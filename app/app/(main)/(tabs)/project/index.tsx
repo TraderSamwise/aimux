@@ -280,7 +280,7 @@ export default function ProjectScreen() {
     () =>
       visibleTasks.filter((task) => {
         const status = String(task.status ?? "").toLowerCase();
-        return status !== "done" && status !== "failed" && status !== "abandoned";
+        return !["done", "failed", "canceled", "cancelled", "abandoned"].includes(status);
       }),
     [visibleTasks],
   );

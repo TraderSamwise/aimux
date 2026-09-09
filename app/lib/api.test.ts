@@ -9,6 +9,7 @@ import {
   approveReview,
   assignTask,
   blockTask,
+  cancelTask,
   cleanupGraveyard,
   clearOperationFailures,
   focusWindow,
@@ -441,6 +442,7 @@ describe("api relay routing", () => {
     });
     await acceptTask(endpoint, { taskId: "task-1", from: "user" });
     await blockTask(endpoint, { taskId: "task-1", from: "user", body: "Waiting on context." });
+    await cancelTask(endpoint, { taskId: "task-1", from: "user", body: "Obsolete." });
     await completeTask(endpoint, { taskId: "task-1", from: "user", body: "Finished." });
     await reopenTask(endpoint, { taskId: "task-1", from: "user" });
     await approveReview(endpoint, { taskId: "task-1", from: "user", body: "Looks good." });
@@ -663,22 +665,27 @@ describe("api relay routing", () => {
       from: "user",
       body: "Waiting on context.",
     });
-    expect(request).toHaveBeenNthCalledWith(35, "POST", "/proxy/127.0.0.1/43210/tasks/complete", {
+    expect(request).toHaveBeenNthCalledWith(35, "POST", "/proxy/127.0.0.1/43210/tasks/cancel", {
+      taskId: "task-1",
+      from: "user",
+      body: "Obsolete.",
+    });
+    expect(request).toHaveBeenNthCalledWith(36, "POST", "/proxy/127.0.0.1/43210/tasks/complete", {
       taskId: "task-1",
       from: "user",
       body: "Finished.",
     });
-    expect(request).toHaveBeenNthCalledWith(36, "POST", "/proxy/127.0.0.1/43210/tasks/reopen", {
+    expect(request).toHaveBeenNthCalledWith(37, "POST", "/proxy/127.0.0.1/43210/tasks/reopen", {
       taskId: "task-1",
       from: "user",
     });
-    expect(request).toHaveBeenNthCalledWith(37, "POST", "/proxy/127.0.0.1/43210/reviews/approve", {
+    expect(request).toHaveBeenNthCalledWith(38, "POST", "/proxy/127.0.0.1/43210/reviews/approve", {
       taskId: "task-1",
       from: "user",
       body: "Looks good.",
     });
     expect(request).toHaveBeenNthCalledWith(
-      38,
+      39,
       "POST",
       "/proxy/127.0.0.1/43210/reviews/request-changes",
       {

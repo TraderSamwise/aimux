@@ -97,6 +97,7 @@ pub enum CoreCliOperation {
     TaskAssign,
     TaskAccept,
     TaskBlock,
+    TaskCancel,
     TaskComplete,
     TaskReopen,
     ReviewApprove,
@@ -1291,7 +1292,10 @@ where
                 CoreCliFallback::None,
             )
         }
-        ("task", "list" | "show" | "assign" | "accept" | "block" | "complete" | "reopen")
+        (
+            "task",
+            "list" | "show" | "assign" | "accept" | "block" | "cancel" | "complete" | "reopen",
+        )
         | ("review", "approve" | "request-changes") => {
             let parsed =
                 parse_core_task_args(&args).ok_or_else(|| CoreCliPlanError::InvalidArguments {
@@ -1353,6 +1357,16 @@ where
                     ("task", "block") => (
                         CoreCliOperation::TaskBlock,
                         text_route_path(CORE_API_ROUTES.task_block_text, parsed.json),
+                        Some(json!({
+                            "project": project_root,
+                            "taskId": parsed.task_id,
+                            "from": parsed.from,
+                            "body": parsed.body,
+                        })),
+                    ),
+                    ("task", "cancel") => (
+                        CoreCliOperation::TaskCancel,
+                        text_route_path(CORE_API_ROUTES.task_cancel_text, parsed.json),
                         Some(json!({
                             "project": project_root,
                             "taskId": parsed.task_id,

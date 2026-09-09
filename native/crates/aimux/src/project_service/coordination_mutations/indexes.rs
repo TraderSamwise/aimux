@@ -228,7 +228,10 @@ fn waits_from_task(task: &Value) -> Option<Value> {
     if waiting_on.is_empty() {
         return None;
     }
-    let resolved = matches!(string_field(task, "status").as_str(), "done" | "failed");
+    let resolved = matches!(
+        string_field(task, "status").as_str(),
+        "done" | "failed" | "canceled" | "cancelled" | "abandoned"
+    );
     let mut wait = json!({
         "id": format!("wait:task:{}", string_field(task, "id")),
         "status": if resolved { "satisfied" } else { "waiting" },
@@ -284,7 +287,10 @@ fn inbox_from_task(task: &Value) -> Vec<Value> {
         } else {
             None
         },
-        if !matches!(string_field(task, "status").as_str(), "done" | "failed") {
+        if !matches!(
+            string_field(task, "status").as_str(),
+            "done" | "failed" | "canceled" | "cancelled" | "abandoned"
+        ) {
             trimmed_string(task.get("assignedTo")).or_else(|| trimmed_string(task.get("assignee")))
         } else {
             None
@@ -298,7 +304,12 @@ fn inbox_from_task(task: &Value) -> Vec<Value> {
                 "participantId": participant_id,
                 "subjectKind": "task",
                 "subjectId": string_field(task, "id"),
-                "state": if string_field(task, "status") == "blocked" { "blocked" } else if string_field(task, "status") == "done" { "done" } else { "waiting" },
+                "state": match string_field(task, "status").as_str() {
+                    "blocked" => "blocked",
+                    "done" => "done",
+                    "failed" | "canceled" | "cancelled" | "abandoned" => "done",
+                    _ => "waiting",
+                },
                 "urgency": if string_field(task, "status") == "blocked" { 12 } else if string_field(task, "type") == "review" { 8 } else { 6 },
                 "updatedAt": task.get("updatedAt").cloned().unwrap_or(Value::Null),
             })

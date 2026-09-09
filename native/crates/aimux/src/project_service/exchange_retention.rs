@@ -595,7 +595,10 @@ fn is_active_thread(thread: &Value, active_task_ids: &HashSet<String>) -> bool {
 }
 
 fn is_active_task(task: &Value) -> bool {
-    !matches!(string_field(task, "status"), Some("done" | "failed"))
+    !matches!(
+        string_field(task, "status"),
+        Some("done" | "failed" | "canceled" | "cancelled" | "abandoned")
+    )
 }
 
 fn has_pending_delivery(message: &Value) -> bool {

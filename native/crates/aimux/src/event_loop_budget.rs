@@ -1,9 +1,17 @@
 use serde_json::{Number, Value, json};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::thread;
+use std::time::{Duration, Instant};
 
 pub const MAX_SYNC_SHARE_PCT: f64 = 2.0;
 pub const MAX_LOOP_DELAY_P99_MS: f64 = 250.0;
 pub const MIN_WINDOW_MS: f64 = 10_000.0;
 pub const MIN_SYNC_CALLS: u64 = 20;
+const EVENT_LOOP_SAMPLE_MS: u64 = 10;
+const MAX_EVENT_LOOP_SAMPLES: usize = 10_000;
+
+static DAEMON_EVENT_LOOP_MONITOR: OnceLock<Arc<SharedEventLoopMonitor>> = OnceLock::new();
 
 pub fn assess_loop_budget(input: &Value) -> Value {
     let window_ms = input["windowMs"].as_f64().unwrap_or(0.0);
@@ -65,33 +73,145 @@ pub fn run_event_loop_metrics_contract_case(input: &Value) -> Value {
     }
 }
 
+pub fn start_event_loop_monitor() {
+    let monitor = DAEMON_EVENT_LOOP_MONITOR
+        .get_or_init(|| Arc::new(SharedEventLoopMonitor::default()))
+        .clone();
+    if monitor.started.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    thread::spawn(move || {
+        let sample_interval = Duration::from_millis(EVENT_LOOP_SAMPLE_MS);
+        let mut expected = Instant::now() + sample_interval;
+        loop {
+            thread::sleep(sample_interval);
+            let now = Instant::now();
+            let delay_ms = now
+                .checked_duration_since(expected)
+                .map(|delay| delay.as_secs_f64() * 1000.0)
+                .unwrap_or(0.0);
+            monitor.record(delay_ms);
+            expected = now + sample_interval;
+        }
+    });
+}
+
+pub fn get_event_loop_delay() -> Value {
+    let Some(monitor) = DAEMON_EVENT_LOOP_MONITOR.get() else {
+        return event_loop_delay_json(&[], false);
+    };
+    monitor.snapshot()
+}
+
+#[derive(Debug, Default)]
+struct SharedEventLoopMonitor {
+    started: AtomicBool,
+    samples: Mutex<Vec<f64>>,
+}
+
+impl SharedEventLoopMonitor {
+    fn record(&self, delay_ms: f64) {
+        let mut samples = self
+            .samples
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        samples.push(delay_ms.max(0.0));
+        if samples.len() > MAX_EVENT_LOOP_SAMPLES {
+            let overflow = samples.len() - MAX_EVENT_LOOP_SAMPLES;
+            samples.drain(0..overflow);
+        }
+    }
+
+    fn snapshot(&self) -> Value {
+        let samples = self
+            .samples
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone();
+        event_loop_delay_json(&samples, self.started.load(Ordering::SeqCst))
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct EventLoopDelayRecorder {
+    samples: Vec<f64>,
+    monitoring: bool,
+}
+
+impl EventLoopDelayRecorder {
+    pub fn start(&mut self) {
+        self.monitoring = true;
+    }
+
+    pub fn stop(&mut self) {
+        self.monitoring = false;
+    }
+
+    pub fn record_delay_ms(&mut self, delay_ms: f64) {
+        self.samples.push(delay_ms.max(0.0));
+    }
+
+    pub fn snapshot(&self) -> Value {
+        event_loop_delay_json(&self.samples, self.monitoring)
+    }
+}
+
 #[derive(Debug, Default)]
 struct EventLoopMonitor {
-    monitoring: bool,
+    recorder: EventLoopDelayRecorder,
 }
 
 impl EventLoopMonitor {
     fn start_event_loop_monitor(&mut self) {
-        if self.monitoring {
-            return;
-        }
-        self.monitoring = true;
+        self.recorder.start();
     }
 
     fn stop_event_loop_monitor(&mut self) {
-        self.monitoring = false;
+        self.recorder.stop();
     }
 
     fn get_event_loop_delay(&self) -> Value {
-        json!({
+        self.recorder.snapshot()
+    }
+}
+
+fn event_loop_delay_json(samples: &[f64], monitoring: bool) -> Value {
+    if !monitoring || samples.is_empty() {
+        return json!({
             "p50": 0,
             "p90": 0,
             "p99": 0,
             "max": 0,
             "mean": 0,
-            "monitoring": self.monitoring,
-        })
+            "monitoring": monitoring,
+        });
     }
+    let mut sorted = samples
+        .iter()
+        .copied()
+        .filter(|sample| sample.is_finite())
+        .collect::<Vec<_>>();
+    if sorted.is_empty() {
+        return event_loop_delay_json(&[], monitoring);
+    }
+    sorted.sort_by(|left, right| left.total_cmp(right));
+    let mean = sorted.iter().sum::<f64>() / sorted.len() as f64;
+    json!({
+        "p50": js_number(percentile(&sorted, 50.0)),
+        "p90": js_number(percentile(&sorted, 90.0)),
+        "p99": js_number(percentile(&sorted, 99.0)),
+        "max": js_number(round2(*sorted.last().unwrap_or(&0.0))),
+        "mean": js_number(round2(mean)),
+        "monitoring": true,
+    })
+}
+
+fn percentile(sorted: &[f64], pct: f64) -> f64 {
+    if sorted.is_empty() {
+        return 0.0;
+    }
+    let rank = ((pct / 100.0) * sorted.len() as f64).ceil() as usize;
+    round2(sorted[rank.saturating_sub(1).min(sorted.len() - 1)])
 }
 
 fn round2(value: f64) -> f64 {

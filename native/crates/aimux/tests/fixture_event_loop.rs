@@ -1,6 +1,6 @@
 use aimux::event_loop_budget::{
-    MAX_LOOP_DELAY_P99_MS, MAX_SYNC_SHARE_PCT, MIN_SYNC_CALLS, MIN_WINDOW_MS, assess_loop_budget,
-    run_event_loop_metrics_contract_case,
+    EventLoopDelayRecorder, MAX_LOOP_DELAY_P99_MS, MAX_SYNC_SHARE_PCT, MIN_SYNC_CALLS,
+    MIN_WINDOW_MS, assess_loop_budget, run_event_loop_metrics_contract_case,
 };
 use serde_json::{Number, Value, json};
 
@@ -70,6 +70,24 @@ fn fixture_event_loop_metrics_matches_typescript() {
         failures.len(),
         serde_json::to_string_pretty(&failures).expect("serialize failures")
     );
+}
+
+#[test]
+fn event_loop_delay_recorder_reports_sampled_percentiles() {
+    let mut recorder = EventLoopDelayRecorder::default();
+    recorder.start();
+    for sample in [1.0, 3.0, 5.0, 9.0, 20.0] {
+        recorder.record_delay_ms(sample);
+    }
+
+    let snapshot = recorder.snapshot();
+
+    assert_eq!(snapshot["monitoring"], true);
+    assert_eq!(snapshot["p50"], json!(5));
+    assert_eq!(snapshot["p90"], json!(20));
+    assert_eq!(snapshot["p99"], json!(20));
+    assert_eq!(snapshot["max"], json!(20));
+    assert_eq!(snapshot["mean"], json!(7.6));
 }
 
 fn js_number(value: f64) -> Value {

@@ -1006,6 +1006,18 @@ fn task_parser_matches_workflow_forms() {
     assert_eq!(complete.task_id.as_deref(), Some("task-1"));
     assert_eq!(complete.result.as_deref(), Some("shipped"));
 
+    let cancel = parse_core_task_args(&[
+        "task",
+        "cancel",
+        "task-1",
+        "--from=claude-1",
+        "--body=obsolete",
+    ])
+    .expect("task cancel args");
+    assert_eq!(cancel.task_id.as_deref(), Some("task-1"));
+    assert_eq!(cancel.from.as_deref(), Some("claude-1"));
+    assert_eq!(cancel.body.as_deref(), Some("obsolete"));
+
     let review = parse_core_task_args(&[
         "review",
         "request-changes",

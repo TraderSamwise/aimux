@@ -331,6 +331,7 @@ const LOCAL_CLI_TEXT_ROUTES: &[&str] = &[
     crate::core_command_contract::CORE_API_ROUTES.task_accept_text,
     crate::core_command_contract::CORE_API_ROUTES.task_assign_text,
     crate::core_command_contract::CORE_API_ROUTES.task_block_text,
+    crate::core_command_contract::CORE_API_ROUTES.task_cancel_text,
     crate::core_command_contract::CORE_API_ROUTES.task_complete_text,
     crate::core_command_contract::CORE_API_ROUTES.task_list_text,
     crate::core_command_contract::CORE_API_ROUTES.task_reopen_text,

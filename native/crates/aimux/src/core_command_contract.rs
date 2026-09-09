@@ -28,7 +28,7 @@ macro_rules! define_string_contract {
 define_string_contract!(
     CoreApiRoutes,
     CORE_API_ROUTES,
-    100,
+    101,
     {
         commands => ("commands", "/core/commands"),
         daemon_ensure_text => ("daemonEnsureText", "/core/daemon-ensure-text"),
@@ -107,6 +107,7 @@ define_string_contract!(
         task_accept_text => ("taskAcceptText", "/core/task/accept-text"),
         task_assign_text => ("taskAssignText", "/core/task/assign-text"),
         task_block_text => ("taskBlockText", "/core/task/block-text"),
+        task_cancel_text => ("taskCancelText", "/core/task/cancel-text"),
         task_complete_text => ("taskCompleteText", "/core/task/complete-text"),
         task_list_text => ("taskListText", "/core/task/list-text"),
         task_reopen_text => ("taskReopenText", "/core/task/reopen-text"),

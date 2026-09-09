@@ -55,6 +55,7 @@ pub fn route_coordination_mutation_request_with_runtime(
         routes::agents::RAW_TEAMMATE_SEND => route_raw_teammate_send_removed(),
         routes::tasks::ACCEPT => route_task_accept(&project_state_dir, body),
         routes::tasks::BLOCK => route_task_block(&project_state_dir, body),
+        routes::tasks::CANCEL => route_task_cancel(&project_state_dir, body),
         routes::tasks::COMPLETE => {
             route_task_complete(&project_state_dir, context.project_root(), body)
         }
@@ -644,6 +645,36 @@ fn route_task_complete(
                     json!([string_field(task, "assignedBy")]),
                 );
                 object_insert_mut(&mut thread, "status", Value::String("waiting".into()));
+                thread
+            },
+        },
+    )
+}
+
+fn route_task_cancel(project_state_dir: &Path, body: &Value) -> ProjectServiceDispatchResponse {
+    task_lifecycle(
+        project_state_dir,
+        body,
+        |mut task, actor, body| {
+            object_insert_mut(&mut task, "status", Value::String("canceled".into()));
+            if !actor.is_empty() {
+                object_insert_mut(&mut task, "canceledBy", Value::String(actor));
+            }
+            if let Some(body) = body.filter(|body| !body.is_empty()) {
+                object_insert_mut(&mut task, "cancellationReason", Value::String(body));
+            }
+            object_insert_mut(&mut task, "notifiedAt", Value::String(now_iso()));
+            task
+        },
+        TaskThreadUpdate {
+            default_body: "Canceled task.",
+            action: "canceled",
+            kind: "status",
+            after_task: None,
+            transform: |mut thread, actor, _task| {
+                object_insert_mut(&mut thread, "owner", Value::String(actor));
+                object_insert_mut(&mut thread, "waitingOn", Value::Array(Vec::new()));
+                object_insert_mut(&mut thread, "status", Value::String("abandoned".into()));
                 thread
             },
         },

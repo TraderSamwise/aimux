@@ -251,6 +251,7 @@ fn task_routes_round_trip_through_daemon_http_to_project_service() {
         json!({ "task": { "id": "task-1" }, "thread": { "id": "thread-1" } }),
         json!({ "task": { "id": "task-1" }, "thread": { "id": "thread-1" } }),
         json!({ "task": { "id": "task-1" }, "thread": { "id": "thread-1" } }),
+        json!({ "task": { "id": "task-1" }, "thread": { "id": "thread-1" } }),
     ]);
     let mut runtime = fixture.runtime_for_project(&project, server.port);
 
@@ -346,6 +347,21 @@ fn task_routes_round_trip_through_daemon_http_to_project_service() {
     assert_eq!(completed.status, 200);
     assert_eq!(text_body(&completed), "task task-1\nthread thread-1\n");
 
+    let canceled = handle_daemon_runtime_request(
+        &mut runtime,
+        request(
+            "POST",
+            CORE_API_ROUTES.task_cancel_text,
+            Some(json!({
+                "project": project_text,
+                "taskId": "task-1",
+                "body": "obsolete"
+            })),
+        ),
+    );
+    assert_eq!(canceled.status, 200);
+    assert_eq!(text_body(&canceled), "task task-1\nthread thread-1\n");
+
     let reopened = handle_daemon_runtime_request(
         &mut runtime,
         request(
@@ -391,9 +407,14 @@ fn task_routes_round_trip_through_daemon_http_to_project_service() {
         request_json_body(&requests[5]),
         json!({ "taskId": "task-1", "from": "user", "body": "done" })
     );
-    assert_request_path(&requests[6], "POST", project_routes::tasks::REOPEN);
+    assert_request_path(&requests[6], "POST", project_routes::tasks::CANCEL);
     assert_eq!(
         request_json_body(&requests[6]),
+        json!({ "taskId": "task-1", "from": "user", "body": "obsolete" })
+    );
+    assert_request_path(&requests[7], "POST", project_routes::tasks::REOPEN);
+    assert_eq!(
+        request_json_body(&requests[7]),
         json!({ "taskId": "task-1", "from": "user", "body": "follow-up" })
     );
     fixture.cleanup();

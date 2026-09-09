@@ -27,6 +27,7 @@ pub const ROUTES: &[Spec] = &[
     Spec::exact(Method::Post, routes::tasks::ASSIGN, Group::Collaboration),
     Spec::exact(Method::Post, routes::tasks::ACCEPT, Group::Collaboration),
     Spec::exact(Method::Post, routes::tasks::BLOCK, Group::Collaboration),
+    Spec::exact(Method::Post, routes::tasks::CANCEL, Group::Collaboration),
     Spec::exact(Method::Post, routes::tasks::COMPLETE, Group::Collaboration),
     Spec::exact(Method::Post, routes::tasks::REOPEN, Group::Collaboration),
     Spec::exact(Method::Post, routes::handoff::SEND, Group::Collaboration),

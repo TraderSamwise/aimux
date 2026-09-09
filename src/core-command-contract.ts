@@ -77,6 +77,7 @@ export const CORE_API_ROUTES = {
   taskAcceptText: "/core/task/accept-text",
   taskAssignText: "/core/task/assign-text",
   taskBlockText: "/core/task/block-text",
+  taskCancelText: "/core/task/cancel-text",
   taskCompleteText: "/core/task/complete-text",
   taskListText: "/core/task/list-text",
   taskReopenText: "/core/task/reopen-text",

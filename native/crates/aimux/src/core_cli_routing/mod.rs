@@ -593,7 +593,7 @@ fn has_workflow_required_positional<S: AsRef<str>>(args: &[S]) -> bool {
     let requires_positional = (command == "task"
         && matches!(
             subcommand,
-            "show" | "assign" | "accept" | "block" | "complete" | "reopen"
+            "show" | "assign" | "accept" | "block" | "cancel" | "complete" | "reopen"
         ))
         || (command == "message" && subcommand == "send")
         || (command == "handoff" && matches!(subcommand, "send" | "accept" | "complete"))
@@ -704,9 +704,10 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
             has_workflow_required_positional(args)
         }
         (Some("task"), Some("list")) => true,
-        (Some("task"), Some("show" | "assign" | "accept" | "block" | "complete" | "reopen")) => {
-            has_workflow_required_positional(args)
-        }
+        (
+            Some("task"),
+            Some("show" | "assign" | "accept" | "block" | "cancel" | "complete" | "reopen"),
+        ) => has_workflow_required_positional(args),
         (Some("review"), Some("list")) => true,
         (Some("review"), Some("approve" | "request-changes")) => {
             has_workflow_required_positional(args)

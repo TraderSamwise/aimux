@@ -8,7 +8,7 @@ pub fn parse_core_task_args<S: AsRef<str>>(args: &[S]) -> Option<CoreTaskArgs> {
     let valid = (command == "task"
         && matches!(
             subcommand,
-            "list" | "show" | "assign" | "accept" | "block" | "complete" | "reopen"
+            "list" | "show" | "assign" | "accept" | "block" | "cancel" | "complete" | "reopen"
         ))
         || (command == "review" && matches!(subcommand, "approve" | "request-changes"));
     if !valid {
@@ -78,7 +78,14 @@ pub fn parse_core_task_args<S: AsRef<str>>(args: &[S]) -> Option<CoreTaskArgs> {
         }
         if matches!(
             subcommand,
-            "assign" | "accept" | "block" | "complete" | "reopen" | "approve" | "request-changes"
+            "assign"
+                | "accept"
+                | "block"
+                | "cancel"
+                | "complete"
+                | "reopen"
+                | "approve"
+                | "request-changes"
         ) && arg == "--from"
         {
             parsed.from = Some(required_non_flag_value(args, index)?.to_owned());
@@ -87,7 +94,14 @@ pub fn parse_core_task_args<S: AsRef<str>>(args: &[S]) -> Option<CoreTaskArgs> {
         }
         if matches!(
             subcommand,
-            "assign" | "accept" | "block" | "complete" | "reopen" | "approve" | "request-changes"
+            "assign"
+                | "accept"
+                | "block"
+                | "cancel"
+                | "complete"
+                | "reopen"
+                | "approve"
+                | "request-changes"
         ) && let Some(value) = arg.strip_prefix("--from=")
         {
             parsed.from = Some(non_flag_inline_value(value)?.to_owned());
@@ -180,7 +194,7 @@ pub fn parse_core_task_args<S: AsRef<str>>(args: &[S]) -> Option<CoreTaskArgs> {
         }
         if matches!(
             subcommand,
-            "accept" | "block" | "complete" | "reopen" | "approve" | "request-changes"
+            "accept" | "block" | "cancel" | "complete" | "reopen" | "approve" | "request-changes"
         ) && arg == "--body"
         {
             parsed.body = Some(required_value(args, index)?.to_owned());
@@ -189,7 +203,7 @@ pub fn parse_core_task_args<S: AsRef<str>>(args: &[S]) -> Option<CoreTaskArgs> {
         }
         if matches!(
             subcommand,
-            "accept" | "block" | "complete" | "reopen" | "approve" | "request-changes"
+            "accept" | "block" | "cancel" | "complete" | "reopen" | "approve" | "request-changes"
         ) && let Some(value) = arg.strip_prefix("--body=")
         {
             parsed.body = Some(value.to_owned());
@@ -218,7 +232,8 @@ pub fn parse_core_task_args<S: AsRef<str>>(args: &[S]) -> Option<CoreTaskArgs> {
                 }
                 parsed.description = Some(arg.to_owned());
             }
-            "show" | "accept" | "block" | "complete" | "reopen" | "approve" | "request-changes" => {
+            "show" | "accept" | "block" | "cancel" | "complete" | "reopen" | "approve"
+            | "request-changes" => {
                 if parsed.task_id.is_some() {
                     return None;
                 }
@@ -237,7 +252,8 @@ pub fn parse_core_task_args<S: AsRef<str>>(args: &[S]) -> Option<CoreTaskArgs> {
                 return None;
             }
         }
-        "show" | "accept" | "block" | "complete" | "reopen" | "approve" | "request-changes" => {
+        "show" | "accept" | "block" | "cancel" | "complete" | "reopen" | "approve"
+        | "request-changes" => {
             parsed.task_id.as_ref()?;
         }
         _ => unreachable!("validated task subcommand"),

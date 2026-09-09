@@ -114,6 +114,14 @@ pub fn route_collaboration_text_request(
             task_block_input(),
         ));
     }
+    if method == "POST" && pathname == CORE_API_ROUTES.task_cancel_text {
+        return Some(task_mutation_text_route(
+            runtime,
+            &route_url,
+            body,
+            task_cancel_input(),
+        ));
+    }
     if method == "POST" && pathname == CORE_API_ROUTES.task_complete_text {
         return Some(task_mutation_text_route(
             runtime,
@@ -898,6 +906,13 @@ fn task_block_input() -> TaskMutationInput {
     TaskMutationInput {
         action: "task block",
         route_path: project_routes::tasks::BLOCK,
+    }
+}
+
+fn task_cancel_input() -> TaskMutationInput {
+    TaskMutationInput {
+        action: "task cancel",
+        route_path: project_routes::tasks::CANCEL,
     }
 }
 

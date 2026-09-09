@@ -123,6 +123,7 @@ pub mod routes {
         pub const ASSIGN: &str = "/tasks/assign";
         pub const ACCEPT: &str = "/tasks/accept";
         pub const BLOCK: &str = "/tasks/block";
+        pub const CANCEL: &str = "/tasks/cancel";
         pub const COMPLETE: &str = "/tasks/complete";
         pub const REOPEN: &str = "/tasks/reopen";
     }
@@ -318,6 +319,7 @@ pub fn project_api_views_for_mutation_route(
         | tasks::ASSIGN
         | tasks::ACCEPT
         | tasks::BLOCK
+        | tasks::CANCEL
         | tasks::COMPLETE
         | tasks::REOPEN
         | reviews::APPROVE

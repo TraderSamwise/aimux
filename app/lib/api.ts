@@ -1659,6 +1659,20 @@ export async function blockTask(
   );
 }
 
+export async function cancelTask(
+  endpoint: ServiceEndpoint,
+  input: TaskLifecycleInput,
+  opts?: ApiOpts,
+): Promise<WorkflowMutationResponse> {
+  return callProjectJson<WorkflowMutationResponse>(
+    endpoint,
+    "POST",
+    PROJECT_API_ROUTES.tasks.cancel,
+    opts,
+    input,
+  );
+}
+
 export async function completeTask(
   endpoint: ServiceEndpoint,
   input: TaskLifecycleInput,
