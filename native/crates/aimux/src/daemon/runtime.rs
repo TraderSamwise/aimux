@@ -101,6 +101,7 @@ use crate::runtime_coherence::{
     RuntimeCoherenceHealth, RuntimeCoherenceHealthProbe, RuntimeCoherenceInput,
     RuntimeCoherenceTmux, build_runtime_coherence_report, render_runtime_coherence_report,
 };
+use crate::runtime_guard::read_runtime_rebuild_required;
 use crate::service_state_snapshot::stop_project_tmux_runtime_with_service_snapshots;
 use crate::tmux::{
     TmuxRuntimeManager, TmuxTarget, is_dashboard_window_name, is_tmux_client_session_for_host,
@@ -745,6 +746,15 @@ impl RealDaemonRuntime {
 
     fn restart_control_plane_project(&mut self, project_root: &str) -> Value {
         let mut result = empty_restart_project_result(project_root);
+        let runtime_rebuild_required = read_runtime_rebuild_required(project_root);
+        let runtime = if runtime_rebuild_required {
+            match system_tmux_repair_result(&mut self.resolver, project_root, false) {
+                Ok((report, _text)) => json!({ "status": "repaired", "report": report }),
+                Err(error) => json!({ "status": "failed", "error": error }),
+            }
+        } else {
+            json!({ "status": "skipped" })
+        };
         let service =
             match <Self as DaemonCoreCommandRuntime>::stop_project(self, project_root, false)
                 .and_then(|_| {
@@ -765,6 +775,11 @@ impl RealDaemonRuntime {
             Err(error) => json!({ "status": "failed", "error": error }),
         };
         if let Value::Object(object) = &mut result {
+            object.insert(
+                "runtimeRebuildRequired".into(),
+                json!(runtime_rebuild_required),
+            );
+            object.insert("runtime".into(), runtime);
             object.insert("service".into(), service);
             object.insert("dashboard".into(), dashboard);
         }

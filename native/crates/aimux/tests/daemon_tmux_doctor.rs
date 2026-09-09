@@ -2,7 +2,10 @@ use aimux::daemon::tmux_doctor::{
     TmuxDoctorCommandRunner, TmuxDoctorInput, TmuxRepairInput, build_tmux_doctor_report,
     render_tmux_doctor_report, render_tmux_repair_result, repair_tmux_runtime,
 };
-use aimux::tmux::{AIMUX_TMUX_RUNTIME_CONTRACT_VERSION, TmuxCommandSpec, project_session};
+use aimux::tmux::{
+    AIMUX_TMUX_RUNTIME_CONTRACT_VERSION, TMUX_RUNTIME_CONTRACT_OPTION,
+    TMUX_RUNTIME_REBUILD_REQUIRED_OPTION, TmuxCommandSpec, project_session,
+};
 use serde_json::{Value, json};
 use std::collections::{HashMap, VecDeque};
 use std::fs;
@@ -579,6 +582,26 @@ fn repairs_managed_sessions_dashboard_and_agent_window_policy() {
             "@aimux-project-root".to_owned(),
             canonical_project_root.to_string_lossy().into_owned(),
         ]));
+    assert!(runner.calls.iter().any(|(_, args)| args
+        == &[
+            "set-option".to_owned(),
+            "-t".to_owned(),
+            result.session_name.clone(),
+            TMUX_RUNTIME_CONTRACT_OPTION.to_owned(),
+            AIMUX_TMUX_RUNTIME_CONTRACT_VERSION.to_owned(),
+        ]));
+    assert!(runner.calls.iter().any(|(_, args)| args
+        == &[
+            "set-option".to_owned(),
+            "-t".to_owned(),
+            result.session_name.clone(),
+            TMUX_RUNTIME_REBUILD_REQUIRED_OPTION.to_owned(),
+            "0".to_owned(),
+        ]));
+    assert!(!runner.calls.iter().any(|(_, args)| {
+        args.first().map(String::as_str) == Some("kill-window")
+            && args.iter().any(|arg| arg == "@3")
+    }));
     let repaired_commands = runner
         .calls
         .iter()

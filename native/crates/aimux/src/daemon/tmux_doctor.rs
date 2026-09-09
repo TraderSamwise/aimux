@@ -6,7 +6,8 @@ use crate::shell_hooks::shell_quote;
 use crate::tmux::{
     AIMUX_TMUX_RUNTIME_CONTRACT_VERSION, MANAGED_TMUX_AGENT_WINDOW_OPTIONS,
     MANAGED_TMUX_SESSION_OPTIONS, MANAGED_TMUX_TERMINAL_FEATURES, TMUX_RUNTIME_CONTRACT_OPTION,
-    TMUX_RUNTIME_OWNER_OPTION, TmuxCommandSpec, WINDOW_LIST_FORMAT, append_session_option_argv,
+    TMUX_RUNTIME_OWNER_OPTION, TMUX_RUNTIME_REBUILD_REQUIRED_OPTION, TmuxCommandSpec,
+    WINDOW_LIST_FORMAT, append_session_option_argv,
     build_default_root_mouse_bindings_install_config_for_command, is_dashboard_window_name,
     is_tmux_client_session_for_host, legacy_project_session_name, new_dashboard_window_argv,
     new_session_argv, project_session, refresh_status_argv, rename_session_argv,
@@ -287,15 +288,6 @@ pub fn repair_tmux_runtime(
     )?;
 
     let existed = has_session(runner, &host_session.session_name);
-    let current_contract = existed
-        .then(|| {
-            session_option(
-                runner,
-                &host_session.session_name,
-                TMUX_RUNTIME_CONTRACT_OPTION,
-            )
-        })
-        .flatten();
     if !existed {
         let argv = new_session_argv(&host_session.session_name, &project_root_text, None);
         run_tmux_owned(runner, &argv)?;
@@ -306,14 +298,6 @@ pub fn repair_tmux_runtime(
         &host_session.session_name,
         &project_root_text,
     )?;
-    if !existed || current_contract.is_none() {
-        set_session_option(
-            runner,
-            &host_session.session_name,
-            TMUX_RUNTIME_CONTRACT_OPTION,
-            AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
-        )?;
-    }
     if !known_sessions.contains(&host_session.session_name) {
         known_sessions.push(host_session.session_name.clone());
     }
@@ -528,6 +512,11 @@ fn configure_managed_session(
         ("@aimux-project-root", project_root),
         ("@aimux-project-state-dir", &project_state_dir_text),
         (TMUX_RUNTIME_OWNER_OPTION, &runtime_owner),
+        (
+            TMUX_RUNTIME_CONTRACT_OPTION,
+            AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
+        ),
+        (TMUX_RUNTIME_REBUILD_REQUIRED_OPTION, "0"),
         ("prefix", MANAGED_TMUX_SESSION_OPTIONS.prefix),
         ("prefix2", MANAGED_TMUX_SESSION_OPTIONS.prefix2),
         ("mouse", MANAGED_TMUX_SESSION_OPTIONS.mouse),
