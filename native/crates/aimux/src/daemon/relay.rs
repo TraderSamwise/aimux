@@ -586,3 +586,78 @@ fn sanitize_request_token(value: &str, fallback: &str) -> String {
     }
     value.to_owned()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        LoopbackRelayBridge, MAX_RELAY_DAEMON_RESPONSE_BYTES, MAX_RELAY_EVENT_SUBSCRIPTIONS,
+        MAX_RELAY_SSE_BUFFER_BYTES, append_limited_sse_chunk, read_status_and_body,
+    };
+    use std::io::Cursor;
+
+    #[test]
+    fn relay_daemon_response_over_the_cap_is_an_error() {
+        let mut response = b"HTTP/1.1 200 OK\r\n\r\n".to_vec();
+        response.extend(std::iter::repeat_n(
+            b'x',
+            MAX_RELAY_DAEMON_RESPONSE_BYTES + 1,
+        ));
+
+        let error = read_status_and_body(&mut Cursor::new(response)).expect_err("must refuse");
+        assert!(
+            error.contains("daemon response exceeded relay limit"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn relay_sse_buffer_over_the_cap_is_an_error() {
+        let mut buffer = String::new();
+        let oversized = vec![b'x'; MAX_RELAY_SSE_BUFFER_BYTES + 1];
+
+        let error = append_limited_sse_chunk(&mut buffer, &oversized).expect_err("must refuse");
+        assert_eq!(
+            error,
+            "project event stream exceeded relay SSE buffer limit"
+        );
+        assert!(buffer.is_empty(), "oversized partial frame must be dropped");
+    }
+
+    #[test]
+    fn relay_sse_buffer_keeps_normal_frames_flowing() {
+        let mut buffer = String::new();
+
+        let frames =
+            append_limited_sse_chunk(&mut buffer, b"data: {\"ok\":true}\n\n").expect("valid frame");
+
+        assert_eq!(frames, vec!["data: {\"ok\":true}".to_owned()]);
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn relay_event_subscription_permits_are_bounded_and_released() {
+        let bridge = LoopbackRelayBridge::default();
+        let mut permits = Vec::new();
+        for _ in 0..MAX_RELAY_EVENT_SUBSCRIPTIONS {
+            permits.push(
+                bridge
+                    .acquire_event_subscription()
+                    .expect("permit under cap"),
+            );
+        }
+
+        let error = match bridge.acquire_event_subscription() {
+            Ok(_) => panic!("must refuse over cap"),
+            Err(error) => error,
+        };
+        assert_eq!(error.0, 429);
+        assert!(
+            error
+                .1
+                .contains("too many relay project event subscriptions")
+        );
+
+        drop(permits.pop());
+        assert!(bridge.acquire_event_subscription().is_ok());
+    }
+}

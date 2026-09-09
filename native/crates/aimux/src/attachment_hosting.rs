@@ -67,10 +67,11 @@ pub fn parse_hosted_response(status: u16, body: &Value) -> Result<HostedAttachme
     let content_url = hosted
         .get("contentUrl")
         .and_then(Value::as_str)
-        .filter(|url| !url.trim().is_empty())
+        .map(validate_hosted_content_url)
+        .transpose()?
         .ok_or_else(|| "relay returned no content url".to_owned())?;
     Ok(HostedAttachment {
-        content_url: content_url.to_owned(),
+        content_url,
         expires_at: hosted
             .get("expiresAt")
             .and_then(Value::as_str)
@@ -82,6 +83,55 @@ pub fn parse_hosted_response(status: u16, body: &Value) -> Result<HostedAttachme
             .map(str::to_owned),
         size_bytes: hosted.get("sizeBytes").and_then(Value::as_u64),
     })
+}
+
+fn validate_hosted_content_url(content_url: &str) -> Result<String, String> {
+    let trimmed = content_url.trim();
+    if trimmed.is_empty() {
+        return Err("relay returned no content url".to_owned());
+    }
+    if trimmed
+        .chars()
+        .any(|character| character.is_whitespace() || character.is_control())
+    {
+        return Err("relay returned unsafe hosted attachment url".to_owned());
+    }
+    let (scheme, rest) = trimmed
+        .split_once("://")
+        .ok_or_else(|| "relay returned unsupported hosted attachment url scheme".to_owned())?;
+    let scheme = scheme.to_ascii_lowercase();
+    if !matches!(scheme.as_str(), "https" | "http") {
+        return Err("relay returned unsupported hosted attachment url scheme".to_owned());
+    }
+    let authority = hosted_content_url_authority(rest)
+        .ok_or_else(|| "relay returned unsafe hosted attachment url".to_owned())?;
+    match scheme.as_str() {
+        "https" => Ok(trimmed.to_owned()),
+        "http" if is_loopback_authority(authority) => Ok(trimmed.to_owned()),
+        "http" => Err("relay returned non-loopback http hosted attachment url".to_owned()),
+        _ => Err("relay returned unsupported hosted attachment url scheme".to_owned()),
+    }
+}
+
+fn hosted_content_url_authority(rest: &str) -> Option<&str> {
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    if authority.is_empty() || authority.contains('@') {
+        return None;
+    }
+    Some(authority)
+}
+
+fn is_loopback_authority(authority: &str) -> bool {
+    let host = if let Some(rest) = authority.strip_prefix('[') {
+        let (host, _) = rest.split_once(']').unwrap_or((rest, ""));
+        host
+    } else {
+        authority.split(':').next().unwrap_or_default()
+    };
+    matches!(
+        host.to_ascii_lowercase().as_str(),
+        "localhost" | "127.0.0.1" | "::1"
+    )
 }
 
 fn error_message(body: &Value) -> Option<String> {

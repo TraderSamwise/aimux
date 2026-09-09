@@ -4,6 +4,7 @@
 //! driven by fakes — a relay client that can only be tested against a live
 //! relay is a relay client nobody tests.
 
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -21,6 +22,11 @@ use crate::websocket::{
 
 /// How long a read blocks before the loop looks at its stop flag again.
 const READ_TIMEOUT: Duration = Duration::from_millis(500);
+/// The pump drains the outbox before every socket read, including each 500 ms
+/// idle timeout. Five hundred twelve frames allows short stalls and bursty
+/// project events, but a dead relay cannot turn reader threads into unbounded
+/// memory. Overflow evicts old project-event frames before notification pushes.
+pub const MAX_RELAY_OUTBOX_FRAMES: usize = 512;
 
 pub struct DaemonRouteResponse {
     pub status: u16,
@@ -89,7 +95,7 @@ pub struct RelayRunner {
     subscriptions: Mutex<Vec<(String, Arc<AtomicBool>)>>,
     /// A project-event reader runs on its own thread and cannot hold the
     /// socket, so it queues frames here and the pump loop drains them.
-    outbox: Arc<Mutex<Vec<String>>>,
+    outbox: Arc<Mutex<VecDeque<String>>>,
 }
 
 impl RelayRunner {
@@ -109,7 +115,7 @@ impl RelayRunner {
             token: token.to_owned(),
             bridge,
             subscriptions: Mutex::new(Vec::new()),
-            outbox: Arc::new(Mutex::new(Vec::new())),
+            outbox: Arc::new(Mutex::new(VecDeque::new())),
         })
     }
 
@@ -284,19 +290,24 @@ impl RelayRunner {
         let outbox = Arc::clone(&self.outbox);
         let sender: Arc<dyn Fn(String) + Send + Sync> = Arc::new(move |frame: String| {
             if let Ok(mut queue) = outbox.lock() {
-                queue.push(frame);
+                let _ = push_outbox_frame(&mut queue, frame);
             }
         });
-        match self
-            .bridge
-            .subscribe_project_events(id, path, headers, sender, Arc::clone(&cancelled))
-        {
+        match self.bridge.subscribe_project_events(
+            id,
+            path,
+            headers,
+            sender,
+            Arc::clone(&cancelled),
+        ) {
             // The relay waits for this before treating the subscription as
             // live. It was missing entirely: nothing in production ever sent
             // it, and the corpus fixture hid that by building it by hand.
-            Ok(()) => self.queue(project_events_subscribed_frame(id)),
+            Ok(()) => {
+                let _ = self.queue(project_events_subscribed_frame(id));
+            }
             Err((status, message)) => {
-                self.queue(project_events_error_frame(id, status, &message));
+                let _ = self.queue(project_events_error_frame(id, status, &message));
                 self.abort_subscription(id);
             }
         }
@@ -312,14 +323,15 @@ impl RelayRunner {
         let Some(frame) = crate::relay_client::notification_push_frame(notification) else {
             return Err("notification_missing_title".to_owned());
         };
-        self.queue(frame);
-        Ok(())
+        self.queue(frame)
     }
 
-    fn queue(&self, frame: String) {
-        if let Ok(mut outbox) = self.outbox.lock() {
-            outbox.push(frame);
-        }
+    fn queue(&self, frame: String) -> Result<(), String> {
+        let mut outbox = self
+            .outbox
+            .lock()
+            .map_err(|_| "relay_outbox_unavailable".to_owned())?;
+        push_outbox_frame(&mut outbox, frame)
     }
 
     fn drain_outbox(&self, connection: &mut dyn WebSocketConnection) {
@@ -351,6 +363,92 @@ impl RelayRunner {
             }
             subscriptions.clear();
         }
+    }
+}
+
+fn push_outbox_frame(outbox: &mut VecDeque<String>, frame: String) -> Result<(), String> {
+    if outbox.len() >= MAX_RELAY_OUTBOX_FRAMES && !drop_oldest_project_event(outbox) {
+        return Err("relay_outbox_full".to_owned());
+    }
+    outbox.push_back(frame);
+    Ok(())
+}
+
+fn drop_oldest_project_event(outbox: &mut VecDeque<String>) -> bool {
+    let Some(index) = outbox
+        .iter()
+        .position(|frame| is_project_event_frame(frame))
+    else {
+        return false;
+    };
+    outbox.remove(index);
+    true
+}
+
+fn is_project_event_frame(frame: &str) -> bool {
+    serde_json::from_str::<Value>(frame)
+        .ok()
+        .and_then(|value| value.get("type").and_then(Value::as_str).map(str::to_owned))
+        .as_deref()
+        == Some("project_event")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MAX_RELAY_OUTBOX_FRAMES, push_outbox_frame};
+    use serde_json::{Value, json};
+    use std::collections::VecDeque;
+
+    fn project_event_frame(seq: usize) -> String {
+        json!({
+            "id": "sub-1",
+            "type": "project_event",
+            "event": "message",
+            "data": { "seq": seq },
+        })
+        .to_string()
+    }
+
+    fn has_project_event_seq(outbox: &VecDeque<String>, seq: usize) -> bool {
+        outbox.iter().any(|frame| {
+            serde_json::from_str::<Value>(frame)
+                .ok()
+                .and_then(|value| value["data"]["seq"].as_u64())
+                == Some(seq as u64)
+        })
+    }
+
+    #[test]
+    fn relay_outbox_is_bounded_and_preserves_notification_pushes() {
+        let mut outbox = VecDeque::new();
+        for seq in 0..MAX_RELAY_OUTBOX_FRAMES {
+            push_outbox_frame(&mut outbox, project_event_frame(seq)).expect("event queued");
+        }
+
+        let notification = json!({
+            "type": "notification_push",
+            "notification": { "title": "important" },
+        })
+        .to_string();
+        push_outbox_frame(&mut outbox, notification.clone()).expect("notification queued");
+
+        assert_eq!(
+            outbox.len(),
+            MAX_RELAY_OUTBOX_FRAMES,
+            "a dead or slow relay must not grow memory without bound"
+        );
+        assert!(
+            outbox.iter().any(|frame| frame == &notification),
+            "notification push should be retained ahead of old project events"
+        );
+        assert!(
+            !has_project_event_seq(&outbox, 0),
+            "oldest project event should be evicted first"
+        );
+        assert!(
+            has_project_event_seq(&outbox, 1),
+            "newer project events should remain after one eviction"
+        );
     }
 }
 
