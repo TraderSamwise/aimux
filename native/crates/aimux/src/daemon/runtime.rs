@@ -63,7 +63,9 @@ use crate::daemon_state::{
     remove_metadata_endpoint, save_daemon_info, save_daemon_state,
 };
 use crate::dashboard_readiness::get_runtime_owner_id;
-use crate::dashboard_targets::{DashboardResolveOptions, resolve_dashboard_target};
+use crate::dashboard_targets::{
+    DashboardResolveOptions, DashboardTargetRef, resolve_dashboard_target,
+};
 use crate::logs::{LogSelectionOptions, clear_log_file, read_last_log_lines, selected_log_path};
 use crate::paths::{PathResolver, compute_project_id};
 use crate::process_inspector::{
@@ -83,12 +85,12 @@ use crate::runtime_coherence::{
     RuntimeCoherenceTmux, build_runtime_coherence_report, render_runtime_coherence_report,
 };
 use crate::tmux::{
-    TmuxRuntimeManager, TmuxTarget, is_tmux_client_session_for_host, kill_session_argv,
-    project_session,
+    TmuxRuntimeManager, TmuxTarget, is_dashboard_window_name, is_tmux_client_session_for_host,
+    kill_session_argv, project_session,
 };
 use anyhow::{Context, Result};
 use serde_json::{Map, Value, json};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::{self, Formatter};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -564,6 +566,8 @@ impl RealDaemonRuntime {
     ) -> RestartControlPlaneTextResult {
         let before = restart_before_report(self, issued_at);
         let project_roots = self.restart_project_roots(project_root);
+        let project_root_set = project_roots.iter().cloned().collect::<HashSet<_>>();
+        stop_pre_restart_dashboard_repair_windows(&before, &project_root_set);
         let mut projects = Vec::with_capacity(project_roots.len());
         for project_root in project_roots {
             projects.push(self.restart_control_plane_project(&project_root));
@@ -630,12 +634,15 @@ impl RealDaemonRuntime {
                 Ok(state) => json!({ "status": "ensured", "state": state }),
                 Err(error) => json!({ "status": "failed", "error": error }),
             };
-        let dashboard = match self.reload_dashboard_runtime(project_root, None) {
-            Ok(payload) => json!({
-                "status": "reloaded",
-                "sessionName": payload.get("dashboardSessionName").cloned().unwrap_or(Value::Null),
-                "target": payload.get("dashboardTarget").cloned().unwrap_or(Value::Null),
-            }),
+        let dashboard = match reload_dashboard_for_restart(project_root) {
+            Ok(target) => {
+                self.refresh_project_statusline(project_root);
+                json!({
+                    "status": "reloaded",
+                    "sessionName": target.dashboard_session.session_name,
+                    "target": tmux_target_json(&target.dashboard_target),
+                })
+            }
             Err(error) => json!({ "status": "failed", "error": error }),
         };
         if let Value::Object(object) = &mut result {
@@ -2110,6 +2117,221 @@ fn session_prefix_for_project(project_root: &str) -> String {
         .to_owned()
 }
 
+fn reload_dashboard_for_restart(project_root: &str) -> Result<DashboardTargetRef, String> {
+    let mut tmux = TmuxRuntimeManager::new();
+    let active_windows = capture_active_non_dashboard_windows(project_root, &mut tmux);
+    let resolved = resolve_dashboard_target(
+        project_root,
+        &mut tmux,
+        DashboardResolveOptions {
+            force_reload: true,
+            open_in_host_session: true,
+        },
+    );
+    let result = match resolved {
+        Ok(target) => {
+            let mut errors = cleanup_host_dashboard_session(
+                &mut tmux,
+                &target.dashboard_session.session_name,
+                &target.dashboard_target,
+            );
+            errors.extend(relink_dashboard_to_client_sessions(
+                project_root,
+                &mut tmux,
+                &target.dashboard_target,
+            ));
+            if errors.is_empty() {
+                Ok(target)
+            } else {
+                Err(format!("dashboard relink failed for {}", errors.join("; ")))
+            }
+        }
+        Err(error) => Err(error),
+    };
+    restore_active_windows(&mut tmux, &active_windows);
+    result
+}
+
+fn capture_active_non_dashboard_windows(
+    project_root: &str,
+    tmux: &mut TmuxRuntimeManager,
+) -> Vec<TmuxTarget> {
+    if !tmux.is_available() {
+        return Vec::new();
+    }
+    let host_session = tmux.get_project_session(project_root).session_name;
+    tmux.list_session_names()
+        .into_iter()
+        .filter(|session_name| {
+            session_name == &host_session
+                || is_tmux_client_session_for_host(session_name, &host_session)
+        })
+        .filter_map(|session_name| {
+            tmux.list_windows(&session_name)
+                .into_iter()
+                .find(|window| window.active && !is_dashboard_window_name(&window.name))
+                .map(|window| TmuxTarget {
+                    session_name: session_name.clone(),
+                    window_id: window.id,
+                    window_index: window.index,
+                    window_name: window.name,
+                    pane_dead: window.pane_dead,
+                })
+        })
+        .collect()
+}
+
+fn restore_active_windows(tmux: &mut TmuxRuntimeManager, targets: &[TmuxTarget]) {
+    if !tmux.is_available() {
+        return;
+    }
+    for target in targets {
+        if tmux.has_window(target) {
+            let _ = tmux.select_window(target);
+        }
+    }
+}
+
+fn cleanup_host_dashboard_session(
+    tmux: &mut TmuxRuntimeManager,
+    session_name: &str,
+    dashboard_target: &TmuxTarget,
+) -> Vec<String> {
+    cleanup_stale_dashboard_links(tmux, session_name, dashboard_target)
+}
+
+fn relink_dashboard_to_client_sessions(
+    project_root: &str,
+    tmux: &mut TmuxRuntimeManager,
+    dashboard_target: &TmuxTarget,
+) -> Vec<String> {
+    if !tmux.is_available() {
+        return Vec::new();
+    }
+    let host_session = tmux.get_project_session(project_root).session_name;
+    let mut errors = Vec::new();
+    for session_name in tmux.list_session_names() {
+        if !is_tmux_client_session_for_host(&session_name, &host_session) {
+            continue;
+        }
+        let slot_zero = tmux
+            .list_windows(&session_name)
+            .into_iter()
+            .find(|window| window.index == 0);
+        if let Some(slot_zero) = slot_zero
+            && slot_zero.id != dashboard_target.window_id
+            && !is_dashboard_window_name(&slot_zero.name)
+        {
+            continue;
+        }
+        match tmux.link_window_to_session(&session_name, dashboard_target, Some(0)) {
+            Ok(linked) if linked.window_index == 0 => {
+                let cleanup_errors = cleanup_stale_dashboard_links(tmux, &session_name, &linked);
+                if !cleanup_errors.is_empty() {
+                    errors.push(format!(
+                        "{session_name}: stale dashboard cleanup failed for {}",
+                        cleanup_errors.join("; ")
+                    ));
+                }
+            }
+            Ok(linked) => errors.push(format!(
+                "{session_name}: indexed=dashboard linked at index {}, expected 0",
+                linked.window_index
+            )),
+            Err(error) => errors.push(format!("{session_name}: indexed={error}")),
+        }
+    }
+    errors
+}
+
+fn cleanup_stale_dashboard_links(
+    tmux: &mut TmuxRuntimeManager,
+    session_name: &str,
+    linked_dashboard: &TmuxTarget,
+) -> Vec<String> {
+    let mut errors = Vec::new();
+    for window in tmux.list_windows(session_name) {
+        if !is_dashboard_window_name(&window.name) || window.id == linked_dashboard.window_id {
+            continue;
+        }
+        let stale = TmuxTarget {
+            session_name: session_name.to_owned(),
+            window_id: window.id,
+            window_index: window.index,
+            window_name: window.name,
+            pane_dead: window.pane_dead,
+        };
+        match tmux.unlink_window(&stale) {
+            Ok(()) => {}
+            Err(error) if error.contains("only linked to one session") => {
+                if let Err(kill_error) = tmux.kill_window(&stale) {
+                    errors.push(format!("{}: {kill_error}", stale.window_id));
+                }
+            }
+            Err(error) => errors.push(format!("{}: {error}", stale.window_id)),
+        }
+    }
+    errors
+}
+
+fn stop_pre_restart_dashboard_repair_windows(before: &Value, project_roots: &HashSet<String>) {
+    let mut tmux = TmuxRuntimeManager::new();
+    if !tmux.is_available() {
+        return;
+    }
+    let mut seen = HashSet::<String>::new();
+    for project in before
+        .get("projects")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let Some(project_root) = project.get("projectRoot").and_then(Value::as_str) else {
+            continue;
+        };
+        if !project_roots.contains(project_root) {
+            continue;
+        }
+        for dashboard in project
+            .get("dashboards")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if dashboard.get("status").and_then(Value::as_str) == Some("ok") {
+                continue;
+            }
+            let Some(window_id) = dashboard.get("windowId").and_then(Value::as_str) else {
+                continue;
+            };
+            if !seen.insert(window_id.to_owned()) {
+                continue;
+            }
+            let target = TmuxTarget {
+                session_name: dashboard
+                    .get("sessionName")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+                window_id: window_id.to_owned(),
+                window_index: dashboard
+                    .get("windowIndex")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(0),
+                window_name: dashboard
+                    .get("windowName")
+                    .and_then(Value::as_str)
+                    .unwrap_or("dashboard")
+                    .to_owned(),
+                pane_dead: None,
+            };
+            if tmux.has_window(&target) {
+                let _ = tmux.kill_window(&target);
+            }
+        }
+    }
+}
+
 fn dashboard_payload_from_target(
     project_root: &str,
     target: &TmuxTarget,
@@ -2312,6 +2534,9 @@ fn current_unix_millis() -> u128 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tmux::project_session;
+    use std::cell::RefCell;
+    use std::rc::Rc;
 
     #[test]
     fn restart_all_project_roots_follow_daemon_state_and_registry() {
@@ -2358,5 +2583,250 @@ mod tests {
             ),
             vec!["/repo/only".to_owned()]
         );
+    }
+
+    #[test]
+    fn restart_dashboard_relinks_into_client_sessions_and_cleans_stale_dashboards() {
+        let project_root = "/repo";
+        let host = project_session(project_root, "aimux").session_name;
+        let client = format!("{host}-client-deadbeef");
+        let state = Rc::new(RefCell::new(FakeTmuxState::new(
+            vec![host.clone(), client.clone(), "other".to_owned()],
+            [
+                (host.clone(), vec![fake_window("@1", 0, "dashboard", true)]),
+                (
+                    client.clone(),
+                    vec![fake_window("@old", 0, "dashboard", true)],
+                ),
+                (
+                    "other".to_owned(),
+                    vec![fake_window("@9", 0, "dashboard", true)],
+                ),
+            ],
+        )));
+        let mut tmux = fake_tmux_manager(Rc::clone(&state));
+        let target = TmuxTarget {
+            session_name: host,
+            window_id: "@1".to_owned(),
+            window_index: 0,
+            window_name: "dashboard".to_owned(),
+            pane_dead: Some(false),
+        };
+
+        let errors = relink_dashboard_to_client_sessions(project_root, &mut tmux, &target);
+
+        assert!(errors.is_empty(), "{errors:?}");
+        let calls = state.borrow().calls.clone();
+        assert!(
+            calls
+                .iter()
+                .any(|call| call == &format!("link-window -d -s @1 -t {client}"))
+        );
+        assert!(
+            calls
+                .iter()
+                .any(|call| call == &format!("swap-window -s {client}:@1 -t {client}:0"))
+        );
+        assert!(
+            calls
+                .iter()
+                .any(|call| call == &format!("unlink-window -t {client}:@old"))
+        );
+    }
+
+    #[test]
+    fn restart_dashboard_restores_active_non_dashboard_windows_that_still_exist() {
+        let project_root = "/repo";
+        let host = project_session(project_root, "aimux").session_name;
+        let client = format!("{host}-client-deadbeef");
+        let state = Rc::new(RefCell::new(FakeTmuxState::new(
+            vec![host.clone(), client.clone()],
+            [
+                (
+                    host.clone(),
+                    vec![
+                        fake_window("@dash", 0, "dashboard", false),
+                        fake_window("@agent", 1, "claude", true),
+                    ],
+                ),
+                (
+                    client,
+                    vec![
+                        fake_window("@client-dash", 0, "dashboard", false),
+                        fake_window("@client-agent", 1, "codex", true),
+                    ],
+                ),
+            ],
+        )));
+        let mut tmux = fake_tmux_manager(Rc::clone(&state));
+
+        let active = capture_active_non_dashboard_windows(project_root, &mut tmux);
+        restore_active_windows(&mut tmux, &active);
+
+        let calls = state.borrow().calls.clone();
+        assert_eq!(
+            active
+                .iter()
+                .map(|target| target.window_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["@agent", "@client-agent"]
+        );
+        assert!(calls.iter().any(|call| call == "select-window -t @agent"));
+        assert!(
+            calls
+                .iter()
+                .any(|call| call == "select-window -t @client-agent")
+        );
+    }
+
+    #[derive(Debug, Clone)]
+    struct FakeWindow {
+        id: String,
+        index: i64,
+        name: String,
+        active: bool,
+    }
+
+    #[derive(Debug)]
+    struct FakeTmuxState {
+        sessions: Vec<String>,
+        windows: HashMap<String, Vec<FakeWindow>>,
+        calls: Vec<String>,
+    }
+
+    impl FakeTmuxState {
+        fn new(
+            sessions: Vec<String>,
+            windows: impl IntoIterator<Item = (String, Vec<FakeWindow>)>,
+        ) -> Self {
+            Self {
+                sessions,
+                windows: windows.into_iter().collect(),
+                calls: Vec::new(),
+            }
+        }
+
+        fn run(&mut self, args: &[String]) -> Result<String, String> {
+            let joined = args.join(" ");
+            self.calls.push(joined);
+            match args.first().map(String::as_str) {
+                Some("-V") => Ok("tmux 3.4".to_owned()),
+                Some("list-sessions") => Ok(self.sessions.join("\n")),
+                Some("list-windows") => {
+                    let session = arg_after(args, "-t").unwrap_or_default();
+                    Ok(self
+                        .windows
+                        .get(session)
+                        .into_iter()
+                        .flatten()
+                        .map(|window| {
+                            format!(
+                                "{}\t{}\t{}\t{}\t0\t0",
+                                window.id,
+                                window.index,
+                                window.name,
+                                if window.active { "1" } else { "0" }
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n"))
+                }
+                Some("link-window") => {
+                    let source = arg_after(args, "-s").unwrap_or_default();
+                    let destination = arg_after(args, "-t").unwrap_or_default();
+                    let destination_session = destination.split(':').next().unwrap_or(destination);
+                    let source_window = self
+                        .windows
+                        .values()
+                        .flat_map(|windows| windows.iter())
+                        .find(|window| window.id == source)
+                        .cloned()
+                        .ok_or_else(|| format!("missing source window {source}"))?;
+                    let windows = self
+                        .windows
+                        .entry(destination_session.to_owned())
+                        .or_default();
+                    if !windows.iter().any(|window| window.id == source_window.id) {
+                        let mut linked = source_window;
+                        linked.index = windows
+                            .iter()
+                            .map(|window| window.index)
+                            .max()
+                            .unwrap_or(-1)
+                            + 1;
+                        linked.active = false;
+                        windows.push(linked);
+                    }
+                    Ok(String::new())
+                }
+                Some("show-options") => Ok("on".to_owned()),
+                Some("set-option") => Ok(String::new()),
+                Some("swap-window") => {
+                    let source = arg_after(args, "-s").unwrap_or_default();
+                    let target = arg_after(args, "-t").unwrap_or_default();
+                    let (session, window_id) = split_session_window_id(source);
+                    let target_index = target
+                        .rsplit_once(':')
+                        .and_then(|(_, index)| index.parse::<i64>().ok())
+                        .unwrap_or(0);
+                    if let Some(windows) = self.windows.get_mut(session) {
+                        let old_index = windows
+                            .iter()
+                            .find(|window| window.id == window_id)
+                            .map(|window| window.index)
+                            .unwrap_or(target_index);
+                        for window in windows {
+                            if window.id == window_id {
+                                window.index = target_index;
+                            } else if window.index == target_index {
+                                window.index = old_index;
+                            }
+                        }
+                    }
+                    Ok(String::new())
+                }
+                Some("unlink-window") => {
+                    let target = arg_after(args, "-t").unwrap_or_default();
+                    let (session, window_id) = split_session_window_id(target);
+                    if let Some(windows) = self.windows.get_mut(session) {
+                        windows.retain(|window| window.id != window_id);
+                    }
+                    Ok(String::new())
+                }
+                Some("select-window") => Ok(String::new()),
+                Some("kill-window") => Ok(String::new()),
+                command => Err(format!(
+                    "unexpected tmux command {command:?}: {}",
+                    args.join(" ")
+                )),
+            }
+        }
+    }
+
+    fn fake_tmux_manager(state: Rc<RefCell<FakeTmuxState>>) -> TmuxRuntimeManager {
+        TmuxRuntimeManager::with_exec(move |args, _options| state.borrow_mut().run(args))
+    }
+
+    fn fake_window(id: &str, index: i64, name: &str, active: bool) -> FakeWindow {
+        FakeWindow {
+            id: id.to_owned(),
+            index,
+            name: name.to_owned(),
+            active,
+        }
+    }
+
+    fn arg_after<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
+        args.windows(2).find_map(|pair| {
+            if pair[0] == flag {
+                Some(pair[1].as_str())
+            } else {
+                None
+            }
+        })
+    }
+
+    fn split_session_window_id(target: &str) -> (&str, &str) {
+        target.rsplit_once(':').unwrap_or(("", target))
     }
 }
