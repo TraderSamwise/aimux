@@ -1,88 +1,91 @@
-# Unported Node subsystems — inventory v1
+# Unported Node Subsystems
 
-Scope: what phase 8 deleted from `src/` (282 non-test TypeScript modules at
-`a9220736^`) that has no live counterpart in the Rust binary.
+Scope: runtime behavior Node had wired before the Rust cutover, but the Rust
+binary either still does not perform or only preserves as an uncalled contract.
 
-## Why the existing gates missed these
+## Why The Gates Missed These
 
-- The corpus proves a fixture-twin module reproduces Node's outputs. Twins are
-  self-contained — `dashboard_interaction_navigation_contract.rs` carries its own
-  `NavigationState` — so a green suite says nothing about whether production Rust
-  implements the same behavior.
-- Twins are not all named `*_contract.rs`. 138 modules expose a fixture-case
-  dispatcher; 23 of them carry ordinary names, and 13 of those have no production
-  reference at all (`multiplexer_runtime_helpers`, `transcript_turn_state`,
-  `dashboard_api_client`, `dashboard_lifecycle`, `coordination_threads`,
-  `multiplexer_notifications`, `multiplexer_resource_refresh`,
-  `multiplexer_dashboard_state_helpers`, `tui_runtime_mutations`,
-  `dashboard_repair_notices`, `hotkeys`, `inbox_cleanup`, plus the audit
-  scaffolding). A filename-keyed sweep misses every one. Some are dead by
-  design — `hotkeys` mirrors Node's in-process multiplexer host, which tmux
-  replaced — and the set has not been sorted into dead-by-design vs missing.
-- `scripts/audit-rust-orphans.mjs` filters out `fixture-contract` candidates
-  (line 287), which is exactly the shape a subsystem takes when only its contract
-  was ported.
-- The compiler cannot see it: an unreferenced `pub fn` inside a `pub mod` never
-  warns.
+- Fixture twins are self-contained Rust copies of Node behavior. A green fixture
+  proves the twin matches Node, not that production Rust calls the behavior.
+- Twins are not always named `*_contract.rs`, so filename-only sweeps miss some
+  of them.
+- The compiler does not warn for an unreferenced `pub fn` inside a `pub mod`.
 
-## Confirmed missing (Node had it wired, Rust has no implementation)
+## Still Outstanding
 
-| Node module | What it did | Node call site |
-| --- | --- | --- |
-| `src/full/relay-client.ts` | daemon's websocket client to the relay | daemon remote features |
-| `src/daemon-remote-features.ts`, `src/core-cli-remote-features.ts` | wiring that starts the relay client | daemon + core CLI |
-| `src/mobile-push-bridge.ts` | forwards every alert to the daemon's `/internal/push` | `metadata-server.ts:1060` |
-| `src/tool-output-watchers.ts` | `classifyToolPane` | `session-runtime-core.ts`, `context-bridge.ts` |
-| `src/multiplexer/service-state-snapshot.ts` | persists runtime/service snapshots before a tmux stop | multiplexer lifecycle |
+Ranked by cost of absence, not by implementation size.
 
-## Ported since this inventory
+1. **Runtime guard repair start.** The native dashboard probes runtime-guard
+   state and renders stale/rebuild/disconnected overlays, but no production path
+   starts the guarded dashboard repair workflow from that state. Cost: Sam sees
+   a stale or rebuild-required live TUI stay blocked until a manual CLI repair.
+   Size: days, mostly promotion plus dashboard/daemon integration.
 
-Each was a promotion, not a translation: the twin's logic lifted into a
-production module with real I/O behind a deps trait, wired to a real caller, the
-fixture test repointed at production, and the twin deleted in the same commit.
+2. **Debug logging.** Native has log tail/clear helpers and parses debug flags,
+   but not Node's process-wide JSONL logger with env/CLI config, level/category
+   filtering, redaction, rotation, and always-on lifecycle warnings. Cost:
+   incident work loses the cause data needed to debug restart, repair, and
+   watcher failures. Size: days, translation plus promotion.
 
-| Node module | Rust production module | Scheduled task |
-| --- | --- | --- |
-| — | `project_service/scheduler.rs` (the rail every watcher lands on) | — |
-| `src/loop-watcher.ts` | `loop_watcher.rs` | `project_service/loop_watcher_task.rs` |
-| `src/scribe-watcher.ts` | `scribe_watcher.rs` | `project_service/scribe_watcher_task.rs` |
-| `src/builtin-metadata-watchers.ts` | `builtin_metadata_watchers.rs` | `project_service/builtin_metadata_task.rs` |
-| `src/multiplexer/transcript-reconciler.ts` | `transcript_reconciler.rs` | `project_service/transcript_reconciler_task.rs` |
+3. **Lifecycle orphan cleanup.** Native can identify orphaned dashboards, but
+   restart still reports empty orphan cleanup and there is no production
+   equivalent of Node's validation tmux/process and orphan dashboard cleanup.
+   Cost: validation leftovers and stale dashboards can accumulate and make
+   runtime state or restart reports misleading. Size: about a day to days,
+   promotion with careful process/tmux integration.
 
-## Re-audited and withdrawn
+4. **Attachment text recovery.** Live Rust transcript projection has a simpler
+   attached-files parser than Node's shared helper for tmux-wrapped attachment
+   paths, multiple/bare references, and filename/mime recovery. Cost: wrapped
+   or multi-attachment transcript blocks can render as plain text or lose labels
+   in GUI chat/transcript views. Size: hours, promotion into the projection path.
 
-- `src/project-takeover.ts` — not a gap. It only takes a project from another
-  daemon home/port, which was the dev-daemon split. One daemon, nothing to take.
-- `src/full/attachment-hosting.ts` — not an independent subsystem. It uploads a
-  published attachment to the relay and no-ops when remote is disabled, so it is
-  part of the relay port rather than extra work.
+5. **Repair events.** `repair_events.rs` can append the JSONL record, but no
+   production repair/restart path calls it for control-plane restart,
+   project-service ensure, tmux repair, dashboard reload, or orphan cleanup.
+   Cost: repairs still work, but the durable repair timeline and notification
+   trail are missing for postmortems. Size: hours, promotion into daemon/repair
+   call sites.
 
-## Stubs that return a fixed answer instead of consulting anything
+6. **OSC terminal notifications.** Routing parity was duplicate and removed, but
+   OSC 9/777/99 parsing is not wired to production terminal output. The parser
+   and corpus remain as the tracked spec. Cost: terminal-emitted notifications
+   do not become Aimux notifications; low frequency but real if tools depend on
+   OSC notify. Size: hours, promotion into the output/event pipeline.
 
-- `daemon/runtime.rs:2069` `push_notification` → `{"suppressed": true, "reason": "relay_unavailable"}`.
-- `daemon/runtime.rs` `relay_status` → hardcoded `disconnected` whenever remote is enabled.
-- `daemon/runtime.rs` `loop_diagnostics` → event-loop percentiles hardcoded to 0.
+## Deleted As Duplicate Or Dead
 
-## Production paths that duplicate a ported module
+- `coordination_threads`: production coordination mutation routes and indexes
+  already implement direct thread reuse, send/mark-seen/status, waits/inbox, and
+  completed-task reactivation.
+- `desktop_notifier_contract`: production `desktop_notifier.rs` owns notifier
+  behavior; the old contract modeled stale Node fallback details.
+- `project_service/agent_tracker_derivation`: production
+  `project_service/runtime_event_state.rs` derives activity, attention, unread,
+  event history, and focus suppression.
+- `worktree_state_contract`: production `project_service/worktrees.rs` owns the
+  worktree/graveyard projection with live tests.
+- `orchestration_routing_contract`: production
+  `project_service/orchestration_routes.rs` owns routing selection. OSC parsing
+  was split out and kept.
+- `project_takeover_contract`: already deleted. The old feature only took a
+  project from another daemon home/port in the dev-daemon split; the one-daemon
+  model has nothing to take over.
 
-- `tmux_runtime_stop.rs::stop_project_tmux_runtime` accepts a
-  `persist_snapshots_before_stop` hook and is called only from a test. The
-  daemon runs its own copy (`daemon/runtime.rs:2627`) with no hook, which is why
-  the service snapshot never happens.
+## Tracked But Not Rust Rewrite Ports
 
-## Wired-but-uncalled
+- **Transport security contract.** Shared-chat actor resolution and browser
+  device-proof encoding are live in the TypeScript app and relay. Keep the
+  invariant tracked there; no native Rust port is needed.
+- **Plugin runtime contract.** Native replaced the built-in JS plugins with the
+  native plugin registry/API/scheduler. The unported part is custom
+  `~/.aimux/plugins/*.js` userland plugin loading; port it only if custom JS
+  plugins remain a supported product surface.
 
-- `runtime_topology_sessions.rs::reconcile_runtime_topology_sessions` has no
-  caller. Node ran it on every state save
-  (`multiplexer/runtime-lifecycle-methods.ts:296`) with `removedSessionIds`.
+## Fixed Since The Original Audit
 
-## Verified present (checked, not missing)
-
-`hosted-audit`, `hosted-principals`, `security-devices-client`,
-`runtime-guard-repair-history`, the plugin runtime, expose, desktop notifier.
-
-## HTTP surface is complete
-
-All 136 project-service route specs dispatch to a real handler; none fall
-through to the `501 project service route not ported` branch. The gaps above are
-background behavior, not routes.
+The original 2026-09-09 audit entries for hosted mode, relay client, mobile
+push bridge, attachment hosting, tool-output watchers, service-state snapshots,
+runtime topology reconciliation, builtin metadata watchers, loop watcher,
+scribe watcher, transcript reconciler, and agent prompt delivery have all been
+ported and wired.

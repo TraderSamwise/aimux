@@ -1,4 +1,3 @@
-use aimux::coordination_threads::run_direct_thread_helper_contract_case;
 use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
 use aimux::project_service::runtime_exchange::{read_runtime_exchange, runtime_exchange_path};
 use serde_json::{Map, Value, json};
@@ -51,17 +50,13 @@ fn fixture_orchestration_mutations_match_typescript() {
         .expect("coordination mutation cases");
     assert_eq!(
         cases.len(),
-        6,
+        2,
         "unexpected coordination mutation case count"
     );
     let mut failures = Vec::new();
     for case in cases {
-        let raw = if case["input"]["source"] == "threads" {
-            run_direct_thread_helper_contract_case(&case["input"])
-        } else {
-            let project = TestProject::new(case["input"]["scenario"].as_str().unwrap_or("case"));
-            run_case(&project, &case["input"])
-        };
+        let project = TestProject::new(case["input"]["scenario"].as_str().unwrap_or("case"));
+        let raw = run_case(&project, &case["input"]);
         assert_dynamic_structure(&raw, case["id"].as_str().unwrap_or("case"));
         let actual = normalize_dynamic(strip_route_only_fields(raw));
         if actual != case["output"] {
@@ -105,17 +100,6 @@ fn run_case(project: &TestProject, input: &Value) -> Value {
             state.saved.insert(save.to_owned(), response.body.clone());
         }
         match input["scenario"].as_str().unwrap_or_default() {
-            "threads-open" => {
-                results.insert("thread".into(), response.body["thread"].clone());
-            }
-            "threads-send" => {
-                results.insert("thread".into(), response.body["thread"].clone());
-                results.insert("message".into(), response.body["message"].clone());
-                results.insert("messages".into(), response.body["messages"].clone());
-            }
-            "threads-mark-seen" | "threads-status" => {
-                results.insert("thread".into(), response.body["thread"].clone());
-            }
             "direct-reuse" => {
                 results.insert(
                     if index == 0 { "first" } else { "second" }.into(),
