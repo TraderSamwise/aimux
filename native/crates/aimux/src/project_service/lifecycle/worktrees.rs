@@ -8,6 +8,10 @@ use crate::daemon_state::{load_metadata_state, save_metadata_state};
 use crate::paths::{is_git_project_root, project_checkout_required_message};
 use crate::project_service::dispatcher::ProjectServiceDispatchResponse;
 use crate::project_service::graveyard_cleanup::build_graveyard_cleanup_plan;
+use crate::project_service::operation_failures::{
+    OperationFailureInput, OperationFailureMatch, WorktreePathMatch,
+    add_dashboard_operation_failure, clear_dashboard_operation_failures,
+};
 use crate::project_service::router::ProjectServiceRequestContext;
 use crate::project_service::worktree_cache_cleanup::run_worktree_cache_cleanup;
 use crate::runtime_topology::{runtime_topology_path, update_runtime_topology};
@@ -145,8 +149,18 @@ pub(super) fn route_worktree_create(
         );
     }
     if existing_worktree_create_conflicts(&topology, &target_path) {
-        return json_error(500, format!("Worktree \"{name}\" already exists"));
+        let message = format!("Worktree \"{name}\" already exists");
+        record_worktree_operation_failure(
+            &project_state_dir,
+            "create",
+            format!("Failed to create worktree \"{name}\""),
+            message.clone(),
+            &target_path,
+            Some(&name),
+        );
+        return json_error(500, message);
     }
+    clear_worktree_operation_failure(&project_state_dir, "create", &target_path);
     let created_at = now_iso();
     let topology_input = WorktreeCreateTopologyInput {
         project_state_dir: &project_state_dir,
@@ -164,6 +178,7 @@ pub(super) fn route_worktree_create(
             if let Err(error) = upsert_created_worktree_topology(&topology_input, "active", None) {
                 return json_error(500, error);
             }
+            clear_worktree_operation_failure(&project_state_dir, "create", &target_path);
             lifecycle_response(
                 json!({ "path": target_path, "status": "created" }),
                 "worktree.create",
@@ -173,6 +188,14 @@ pub(super) fn route_worktree_create(
         }
         Err(error) => {
             let _ = upsert_created_worktree_topology(&topology_input, "error", Some(&error));
+            record_worktree_operation_failure(
+                &project_state_dir,
+                "create",
+                format!("Failed to create worktree \"{name}\""),
+                error.clone(),
+                &target_path,
+                Some(&name),
+            );
             json_error(500, error)
         }
     }
@@ -246,6 +269,14 @@ pub(super) fn route_worktree_remove(
     if Path::new(&path).exists() {
         if let Err(error) = remove_git_worktree_checkout(&project_root, &path) {
             mark_worktree_remove_error(&project_state_dir, &path, &worktree_name, &error);
+            record_worktree_operation_failure(
+                &project_state_dir,
+                "remove",
+                format!("Failed to remove worktree \"{worktree_name}\""),
+                error.clone(),
+                &path,
+                Some(&worktree_name),
+            );
             return json_error(500, error);
         }
     } else {
@@ -271,12 +302,52 @@ pub(super) fn route_worktree_remove(
         let _ = runtime.kill_window(&window_id);
     }
     prune_git_worktrees(&project_root);
+    clear_worktree_operation_failure(&project_state_dir, "remove", &path);
     lifecycle_response(
         json!({ "path": path, "status": "removed" }),
         "worktree.remove",
         "worktree",
         Some(&path),
     )
+}
+
+fn record_worktree_operation_failure(
+    project_state_dir: &Path,
+    operation: &str,
+    title: String,
+    message: String,
+    worktree_path: &str,
+    worktree_name: Option<&str>,
+) {
+    let _ = add_dashboard_operation_failure(
+        project_state_dir,
+        OperationFailureInput {
+            target_kind: "worktree".into(),
+            operation: operation.into(),
+            title,
+            message,
+            target_id: None,
+            worktree_path: Some(worktree_path.to_owned()),
+            worktree_name: worktree_name.map(str::to_owned),
+            created_at: None,
+        },
+    );
+}
+
+fn clear_worktree_operation_failure(
+    project_state_dir: &Path,
+    operation: &str,
+    worktree_path: &str,
+) {
+    let _ = clear_dashboard_operation_failures(
+        project_state_dir,
+        OperationFailureMatch {
+            target_kind: Some("worktree".into()),
+            operation: Some(operation.into()),
+            target_id: None,
+            worktree_path: WorktreePathMatch::Exact(worktree_path.to_owned()),
+        },
+    );
 }
 
 pub(super) fn route_graveyard_worktree_resurrect(

@@ -3,6 +3,7 @@ use aimux::project_api_contract::routes;
 use aimux::project_service::lifecycle::{
     ProjectLifecycleRuntime, ensure_default_scribe_agent, route_lifecycle_request_with_runtime,
 };
+use aimux::project_service::operation_failures::list_dashboard_operation_failures;
 use aimux::project_service::process::{ProjectServiceStartup, run_project_service_startup_tasks};
 use aimux::project_service::prompt_context::{get_prompt_context_text, set_prompt_context};
 use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
@@ -2023,6 +2024,15 @@ fn worktree_create_rejects_existing_non_pending_worktree() {
         read_topology(&state_dir)["worktrees"][0]["status"],
         "active"
     );
+    let failures = list_dashboard_operation_failures(&state_dir);
+    assert_eq!(failures.len(), 1);
+    assert_eq!(failures[0]["targetKind"], "worktree");
+    assert_eq!(failures[0]["operation"], "create");
+    assert_eq!(failures[0]["message"], "Worktree \"demo\" already exists");
+    assert_eq!(
+        failures[0]["worktreePath"],
+        target_path.to_string_lossy().as_ref()
+    );
     cleanup(project);
 }
 
@@ -2104,6 +2114,11 @@ fn worktree_create_failure_persists_error_topology_entry() {
         topology["worktrees"][0]["operationFailure"],
         "fatal: branch failed"
     );
+    let failures = list_dashboard_operation_failures(&state_dir);
+    assert_eq!(failures.len(), 1);
+    assert_eq!(failures[0]["targetKind"], "worktree");
+    assert_eq!(failures[0]["operation"], "create");
+    assert_eq!(failures[0]["message"], "fatal: branch failed");
     cleanup(project);
 }
 
