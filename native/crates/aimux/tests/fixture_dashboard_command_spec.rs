@@ -79,14 +79,14 @@ fn dashboard_command_strings(value: &Value) -> Vec<&str> {
     match value {
         Value::Object(object) => {
             let mut commands = Vec::new();
-            if let Some(args) = object
+            if let Some(command) = object
                 .get("dashboardCommand")
                 .and_then(|command| command.get("args"))
                 .and_then(Value::as_array)
+                .and_then(|args| args.get(1))
+                .and_then(Value::as_str)
             {
-                if let Some(command) = args.get(1).and_then(Value::as_str) {
-                    commands.push(command);
-                }
+                commands.push(command);
             }
             for child in object.values() {
                 commands.extend(dashboard_command_strings(child));
