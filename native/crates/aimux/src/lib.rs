@@ -170,6 +170,7 @@ pub mod runtime_topology_worktrees;
 pub mod runtime_topology_worktrees_services_contract;
 pub mod scribe_watcher;
 pub mod service_notify_contract;
+pub mod service_state_snapshot;
 pub mod session_bootstrap;
 pub mod session_launch;
 pub mod session_launch_actions_contract;
@@ -222,6 +223,7 @@ pub mod tui_render;
 pub mod tui_runtime_mutations;
 pub mod tui_screen_renderers;
 pub mod visual_client_leases_contract;
+pub mod websocket;
 pub mod worktree_state_contract;
 
 pub use build_info::{BuildInfo, build_info};
