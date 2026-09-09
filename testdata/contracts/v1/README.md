@@ -808,10 +808,6 @@ level/category gating, secret redaction, rotation, and lifecycle records.
 - `runtime-state/last-used.json`: last-used recency ordering, monotonic
   timestamp updates, per-client isolation, pruning, and legacy seeding captured
   by running TypeScript `last-used`.
-- `runtime-state/lifecycle-orphans.json`: lifecycle-validation process and
-  tmux-session orphan classification, dashboard orphan reaping, pid-reread
-  guards, and killed-process/session side effects captured by running
-  TypeScript `lifecycle-orphans` helpers.
 - `runtime-state/runtime-guard.json`: runtime guard state classification,
   equality, disconnected-probe stabilization, guarded key disposition, and
   overlay copy captured by running TypeScript `multiplexer/runtime-guard`.
@@ -869,8 +865,6 @@ level/category gating, secret redaction, rotation, and lifecycle records.
   `classifyToolPane`.
 - `runtime-state/drift.json`: local-build drift error classification captured
   by running TypeScript `runtime-drift`.
-- `runtime-state/repair-events.json`: durable repair event JSONL logging
-  captured by running TypeScript `repair-events`.
 - `runtime-migration/migration.json`: report, explicit import, rollback,
   corrupt legacy file, global agent-dir copy avoidance, and blocked existing
   exchange behavior captured by running TypeScript `runtime-migration` helpers

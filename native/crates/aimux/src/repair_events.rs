@@ -1,6 +1,6 @@
 use std::fs::{self, OpenOptions};
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde_json::{Value, json};
 
@@ -16,23 +16,6 @@ pub const STATUS_STARTED: &str = "started";
 pub const STATUS_REPAIRED: &str = "repaired";
 pub const STATUS_SKIPPED: &str = "skipped";
 pub const STATUS_FAILED: &str = "failed";
-
-pub fn repair_events_contract(case: &Value, home: impl AsRef<Path>) -> Value {
-    match case["api"].as_str().unwrap_or_default() {
-        "recordRepairEvent" => {
-            let event = &case["input"]["event"];
-            let path = record_repair_event(event, home).expect("record repair event");
-            let line = fs::read_to_string(&path)
-                .expect("read repair log")
-                .lines()
-                .next()
-                .and_then(|line| serde_json::from_str::<Value>(line).ok())
-                .unwrap_or(Value::Null);
-            json!({ "exists": path.exists(), "line": line })
-        }
-        _ => Value::Null,
-    }
-}
 
 pub fn record_repair_event_for_project(
     resolver: &PathResolver,
@@ -57,11 +40,6 @@ pub fn record_repair_event_from_env(
     let mut resolver = PathResolver::from_env();
     let event = repair_event(project_root, action, reason, status, details);
     let _ = record_repair_event_to_resolver(&event, &mut resolver);
-}
-
-pub fn record_repair_event(event: &Value, home: impl AsRef<Path>) -> std::io::Result<PathBuf> {
-    let mut resolver = PathResolver::new("/", home.as_ref(), None);
-    record_repair_event_to_resolver(event, &mut resolver)
 }
 
 fn record_repair_event_to_resolver(

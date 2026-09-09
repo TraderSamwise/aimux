@@ -159,7 +159,6 @@ Binding statuses: PROVEN-FAILS 325, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
 | `fixture_last_used` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/last-used.json` | 5 | mutated fixture output failed owning Rust suite |
 | `fixture_launcher_env` | PROVEN-FAILS | `testdata/contracts/v1/launch/launcher-env.json` | 9 | mutated fixture output failed owning Rust suite |
 | `fixture_library_entries` | PROVEN-FAILS | `testdata/contracts/v1/library/entries.json` | 8 | mutated fixture output failed owning Rust suite |
-| `fixture_lifecycle_orphans` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/lifecycle-orphans.json` | 15 | mutated fixture output failed owning Rust suite |
 | `fixture_line_editor` | PROVEN-FAILS | `testdata/contracts/v1/terminal/line-editor.json` | 14 | mutated fixture output failed owning Rust suite |
 | `fixture_loop_watcher` | PROVEN-FAILS | `testdata/contracts/v1/coordination/loop-watcher.json` | 15 | mutated fixture output failed owning Rust suite |
 | `fixture_managed_launch_env` | PROVEN-FAILS | `testdata/contracts/v1/launch/managed-env.json` | 5 | mutated fixture output failed owning Rust suite |
@@ -225,7 +224,6 @@ Binding statuses: PROVEN-FAILS 325, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
 | `fixture_relay_client` | PROVEN-FAILS | `testdata/contracts/v1/relay/client.json` | 7 | mutated fixture output failed owning Rust suite |
 | `fixture_release_asset` | PROVEN-FAILS | `testdata/contracts/v1/release/asset.json` | 3 | mutated fixture output failed owning Rust suite |
 | `fixture_remote_access` | PROVEN-FAILS | `testdata/contracts/v1/remote-access/access.json` | 18 | mutated fixture output failed owning Rust suite |
-| `fixture_repair_events` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/repair-events.json` | 1 | mutated fixture output failed owning Rust suite |
 | `fixture_request_errors` | PROVEN-FAILS | `testdata/contracts/v1/request-errors/classification.json` | 18 | mutated fixture output failed owning Rust suite |
 | `fixture_rich_text` | PROVEN-FAILS | `testdata/contracts/v1/terminal/rich-text.json` | 6 | mutated fixture output failed owning Rust suite |
 | `fixture_route_share` | PROVEN-FAILS | `testdata/contracts/v1/transport/route-share.json` | 9 | mutated fixture output failed owning Rust suite |

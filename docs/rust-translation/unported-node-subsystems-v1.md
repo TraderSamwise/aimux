@@ -15,27 +15,13 @@ binary either still does not perform or only preserves as an uncalled contract.
 
 Ranked by cost of absence, not by implementation size.
 
-1. **Lifecycle orphan cleanup.** Native can identify orphaned dashboards, but
-   restart still reports empty orphan cleanup and there is no production
-   equivalent of Node's validation tmux/process and orphan dashboard cleanup.
-   Cost: validation leftovers and stale dashboards can accumulate and make
-   runtime state or restart reports misleading. Size: about a day to days,
-   promotion with careful process/tmux integration.
-
-2. **Attachment text recovery.** Live Rust transcript projection has a simpler
+1. **Attachment text recovery.** Live Rust transcript projection has a simpler
    attached-files parser than Node's shared helper for tmux-wrapped attachment
    paths, multiple/bare references, and filename/mime recovery. Cost: wrapped
    or multi-attachment transcript blocks can render as plain text or lose labels
    in GUI chat/transcript views. Size: hours, promotion into the projection path.
 
-3. **Repair events.** `repair_events.rs` can append the JSONL record, but no
-   production repair/restart path calls it for control-plane restart,
-   project-service ensure, tmux repair, dashboard reload, or orphan cleanup.
-   Cost: repairs still work, but the durable repair timeline and notification
-   trail are missing for postmortems. Size: hours, promotion into daemon/repair
-   call sites.
-
-4. **OSC terminal notifications.** Routing parity was duplicate and removed, but
+2. **OSC terminal notifications.** Routing parity was duplicate and removed, but
    OSC 9/777/99 parsing is not wired to production terminal output. The parser
    and corpus remain as the tracked spec. Cost: terminal-emitted notifications
    do not become Aimux notifications; low frequency but real if tools depend on
@@ -80,4 +66,10 @@ repair start, and debug logging have all been ported and wired. Debug logging
 now lives in native `debug_logging.rs` with production call sites for control
 plane restart, project-service ensure/startup, tmux repair, runtime-guard
 repair, and watcher rail diagnostics; the old debug parity fixtures were
-deleted.
+deleted. Repair events now write durable project `repairs.jsonl` entries from
+control-plane restart, project-service ensure, tmux runtime repair, dashboard
+reload, dashboard-triggered runtime-guard repair, and lifecycle orphan cleanup.
+Lifecycle orphan cleanup now runs during restart with Node-parity validation
+artifact and orphan-dashboard rules, plan-first repair-event logging, restart
+summary counts, and PID re-read guards before SIGKILL; its parity fixture was
+deleted after promotion.
