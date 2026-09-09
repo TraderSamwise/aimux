@@ -1,6 +1,7 @@
 use aimux::daemon_state::{MetadataState, load_metadata_endpoint, save_metadata_state};
 #[cfg(unix)]
 use aimux::expose_socket::{expose_socket_path, expose_socket_path_file};
+use aimux::project_api_contract::routes;
 use aimux::project_service::agent_output::AgentOutputCaptureRuntime;
 use aimux::project_service::dispatcher::{ProjectServiceStreamKind, ProjectServiceStreamPlan};
 use aimux::project_service::http::prepare_project_service_sse_response;
@@ -11,7 +12,10 @@ use aimux::project_service::process::{
     publish_project_service_endpoint, write_project_service_response,
     write_project_service_response_with_runtime,
 };
-use aimux::project_service::router::ProjectServiceRequestContext;
+use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
+use aimux::project_service::server::{
+    ProjectServiceHttpRequest, handle_project_service_http_request,
+};
 use aimux::runtime_topology::{
     coerce_runtime_topology, runtime_topology_path, write_runtime_topology,
 };
@@ -22,6 +26,9 @@ use std::fs::{create_dir_all, read_to_string, remove_dir_all, write};
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc;
+use std::thread;
+use std::time::{Duration, Instant};
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -298,6 +305,108 @@ fn output_stream_writer_emits_native_chat_output_frames() {
     cleanup(project);
 }
 
+#[test]
+fn interaction_stream_registers_watcher_for_request_lifetime() {
+    let project = temp_project("interaction-stream-watch");
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let response_context = context.clone();
+    let mut response = handle_project_service_http_request(
+        ProjectServiceHttpRequest {
+            method: "GET".into(),
+            path: routes::agents::INTERACTION_STREAM.into(),
+            headers: Default::default(),
+            body_chunks: Vec::new(),
+        },
+        |method, path, body| route_project_service_request(&response_context, method, path, body),
+    );
+    let stream = response.stream.as_mut().expect("stream plan");
+    stream.interval_ms = 100;
+    stream.keepalive_interval_ms = Some(100);
+
+    let writer_context = context.clone();
+    let (opened_tx, opened_rx) = mpsc::channel();
+    let (disconnect_tx, disconnect_rx) = mpsc::channel();
+    let stream_thread = thread::spawn(move || {
+        let mut writer = SignalThenDisconnectWriter::new(opened_tx, disconnect_rx);
+        let mut runtime = FakeStreamRuntime::default();
+        let result = write_project_service_response_with_runtime(
+            &mut writer,
+            &response,
+            Some(&writer_context),
+            &mut runtime,
+        );
+        (result, writer.output)
+    });
+
+    opened_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("interaction stream should write ready frame");
+
+    let request_context = context.clone();
+    let waiting = thread::spawn(move || {
+        route_project_service_request(
+            &request_context,
+            "POST",
+            "/agents/interaction/request",
+            Some(&json!({
+                "session": "codex-stream",
+                "type": "permission",
+                "payload": { "toolName": "Bash" },
+                "timeoutMs": 2000
+            })),
+        )
+    });
+
+    let started = Instant::now();
+    let id = loop {
+        let pending = route_project_service_request(
+            &context,
+            "GET",
+            "/agents/interaction/pending?sessionId=codex-stream",
+            None,
+        );
+        if let Some(id) = pending.body["requests"]
+            .as_array()
+            .and_then(|requests| requests.first())
+            .and_then(|request| request["id"].as_str())
+        {
+            break id.to_owned();
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "interaction stream did not register an active watcher"
+        );
+        thread::sleep(Duration::from_millis(10));
+    };
+
+    let responded = route_project_service_request(
+        &context,
+        "POST",
+        "/agents/interaction/respond",
+        Some(&json!({ "id": id, "response": { "decision": "allow_once" } })),
+    );
+    assert_eq!(responded.status, 200);
+
+    let settled = waiting.join().expect("interaction request thread");
+    assert_eq!(settled.status, 200);
+    assert_eq!(settled.body["request"]["status"], "resolved");
+    assert_eq!(
+        settled.body["request"]["response"]["decision"],
+        "allow_once"
+    );
+
+    disconnect_tx.send(()).expect("release stream writer");
+    let (stream_result, output) = stream_thread.join().expect("stream thread");
+    assert!(matches!(
+        stream_result.expect_err("stream should end when client disconnects"),
+        aimux::daemon::listener::DaemonListenerError::Io(_)
+    ));
+    let output = String::from_utf8(output).expect("stream output");
+    assert!(output.contains("event: ready\ndata: {\"pending\":[]}\n\n"));
+    cleanup(project);
+}
+
 #[cfg(unix)]
 #[test]
 fn project_service_expose_socket_publishes_and_cleans_up_path() {
@@ -337,6 +446,13 @@ struct DisconnectAfterWrites {
     output: Vec<u8>,
 }
 
+struct SignalThenDisconnectWriter {
+    output: Vec<u8>,
+    writes: usize,
+    opened_tx: Option<mpsc::Sender<()>>,
+    disconnect_rx: mpsc::Receiver<()>,
+}
+
 impl DisconnectAfterWrites {
     fn new(writes_left: usize) -> Self {
         Self {
@@ -357,6 +473,39 @@ impl Write for DisconnectAfterWrites {
         self.writes_left -= 1;
         self.output.extend_from_slice(buffer);
         Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl SignalThenDisconnectWriter {
+    fn new(opened_tx: mpsc::Sender<()>, disconnect_rx: mpsc::Receiver<()>) -> Self {
+        Self {
+            output: Vec::new(),
+            writes: 0,
+            opened_tx: Some(opened_tx),
+            disconnect_rx,
+        }
+    }
+}
+
+impl Write for SignalThenDisconnectWriter {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        self.writes += 1;
+        if self.writes == 1 {
+            self.output.extend_from_slice(buffer);
+            if let Some(opened_tx) = self.opened_tx.take() {
+                let _ = opened_tx.send(());
+            }
+            return Ok(buffer.len());
+        }
+        let _ = self.disconnect_rx.recv_timeout(Duration::from_secs(2));
+        Err(io::Error::new(
+            io::ErrorKind::BrokenPipe,
+            "client disconnected",
+        ))
     }
 
     fn flush(&mut self) -> io::Result<()> {

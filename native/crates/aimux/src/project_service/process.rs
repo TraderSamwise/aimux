@@ -37,6 +37,7 @@ use super::agent_output::{
 use super::dispatcher::ProjectServiceStreamKind;
 use super::event_streams::{encode_sse_event, encode_sse_keepalive};
 use super::http::PreparedProjectServiceResponse;
+use super::interactions::register_interaction_watcher;
 use super::lifecycle::{
     ProjectLifecycleRuntime, SystemProjectLifecycleRuntime, ensure_default_scribe_agent,
 };
@@ -185,6 +186,13 @@ pub fn write_project_service_response_with_runtime(
     context: Option<&ProjectServiceRequestContext>,
     runtime: &mut impl AgentOutputCaptureRuntime,
 ) -> Result<(), DaemonListenerError> {
+    let _interaction_watcher = response
+        .stream
+        .as_ref()
+        .filter(|stream| stream.kind == ProjectServiceStreamKind::AgentInteraction)
+        .and_then(|_| {
+            context.map(|context| register_interaction_watcher(context.project_state_dir()))
+        });
     writer.write_all(&prepared_response_bytes(
         &prepared_project_response_to_daemon(response),
     ))?;
