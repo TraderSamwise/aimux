@@ -623,6 +623,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                     controller,
                     &visible_model.snapshot,
                     render_requested_by_input,
+                    rendered_once,
                 );
                 let frame = render_dashboard_snapshot(
                     &options,
@@ -1763,13 +1764,20 @@ fn parse_desktop_state_snapshot(contents: &str) -> Result<DesktopStateSnapshot> 
     })
 }
 
+/// Seed navigation from persisted client state on the first paint only.
+///
+/// Persisted state is a resume hint, not an authority. Restoring it on every
+/// refresh-driven render overwrote the live controller, so releasing a held
+/// arrow key made the selection walk back up the list one refresh at a time:
+/// keypress renders skip the restore, refresh renders undid them.
 fn restore_dashboard_navigation_for_render(
     ui_state: Option<&DashboardUiStatePersistence>,
     controller: &mut DashboardController,
     snapshot: &DesktopStateSnapshot,
     render_requested_by_input: bool,
+    rendered_once: bool,
 ) {
-    if render_requested_by_input {
+    if render_requested_by_input || rendered_once {
         return;
     }
     let Some(ui_state) = ui_state else {
