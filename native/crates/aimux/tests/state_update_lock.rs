@@ -83,3 +83,30 @@ fn a_reclaimed_holder_does_not_release_the_new_owners_lock() {
     assert!(!lock_path.exists());
     let _ = fs::remove_dir_all(path.parent().unwrap());
 }
+
+#[test]
+fn a_reclaimed_holder_cannot_commit_after_a_new_owner_takes_the_lock() {
+    let path = temp_state_file("commit-fence");
+    let stale = acquire_state_update_lock(&path).expect("first acquire");
+
+    let lock_path = state_update_lock_path(&path);
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(120);
+    let dir = fs::File::open(&lock_path).unwrap();
+    dir.set_times(fs::FileTimes::new().set_modified(old))
+        .unwrap();
+    let fresh = acquire_state_update_lock(&path).expect("reclaim stale lock");
+
+    let error = stale
+        .ensure_owned_for_commit()
+        .expect_err("reclaimed holder must be fenced before commit");
+    assert!(
+        error.contains("was reclaimed before commit"),
+        "unexpected error: {error}"
+    );
+    fresh
+        .ensure_owned_for_commit()
+        .expect("current owner can commit");
+    drop(stale);
+    drop(fresh);
+    let _ = fs::remove_dir_all(path.parent().unwrap());
+}

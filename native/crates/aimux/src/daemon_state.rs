@@ -280,13 +280,14 @@ pub fn mutate_metadata_state(
     mutator: impl FnOnce(&mut MetadataState) -> bool,
 ) -> Result<(), String> {
     let project_state_dir = project_state_dir.as_ref();
-    let _lock = crate::state_update_lock::acquire_state_update_lock(&metadata_state_path(
+    let lock = crate::state_update_lock::acquire_state_update_lock(&metadata_state_path(
         project_state_dir,
     ))?;
     let mut state = load_metadata_state(project_state_dir);
     if !mutator(&mut state) {
         return Ok(());
     }
+    lock.ensure_owned_for_commit()?;
     save_metadata_state(project_state_dir, &state).map_err(|error| error.to_string())
 }
 

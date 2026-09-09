@@ -269,7 +269,7 @@ pub fn update_session_metadata_at(
     // handler writing at once would otherwise lose one of the two updates.
     // Propagated rather than ignored — proceeding unlocked would reopen exactly
     // the race the lock exists to close.
-    let _lock = acquire_state_update_lock(&metadata_state_path(project_state_dir))?;
+    let lock = acquire_state_update_lock(&metadata_state_path(project_state_dir))?;
     let mut state = parse_iso_millis(now)
         .map(|now| load_metadata_state_at_unix_millis(project_state_dir, now))
         .unwrap_or_else(|| load_metadata_state(project_state_dir));
@@ -290,6 +290,7 @@ pub fn update_session_metadata_at(
     state
         .sessions
         .insert(session_id.to_owned(), Value::Object(next));
+    lock.ensure_owned_for_commit()?;
     save_metadata_state(project_state_dir, &state).map_err(|error| error.to_string())?;
     Ok(MetadataUpdateResult {
         state,

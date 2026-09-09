@@ -27,6 +27,25 @@ pub struct StateUpdateLock {
     owner: String,
 }
 
+impl StateUpdateLock {
+    /// Fence a read-modify-write commit against stale-lock reclamation.
+    ///
+    /// Reclaiming stale directories is intentionally optimistic: a holder may
+    /// only be paused, not dead. A writer must call this immediately before it
+    /// writes the protected file, otherwise that paused writer can wake after a
+    /// later owner committed and overwrite newer state.
+    pub fn ensure_owned_for_commit(&self) -> Result<(), String> {
+        if read_owner(&self.path).as_deref() == Some(self.owner.as_str()) {
+            Ok(())
+        } else {
+            Err(format!(
+                "State update lock at {} was reclaimed before commit",
+                self.path.display()
+            ))
+        }
+    }
+}
+
 impl Drop for StateUpdateLock {
     fn drop(&mut self) {
         // Only release a lock we still own. If ours went stale and someone else
