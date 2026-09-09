@@ -22,6 +22,11 @@ pub trait PeriodicTask: Send {
     /// Re-read every reschedule, so a config change takes effect without a restart.
     fn interval_ms(&self) -> i64;
     fn run(&mut self, context: &ProjectServiceRequestContext);
+    /// Whether the first run should happen at startup instead of one interval
+    /// out. Node's scribe watcher scanned on `start()`; its loop watcher did not.
+    fn run_immediately(&self) -> bool {
+        false
+    }
 }
 
 struct ScheduledTask {
@@ -35,12 +40,18 @@ pub struct PeriodicScheduler {
 }
 
 impl PeriodicScheduler {
-    /// Tasks are first due one interval out: startup already ran them once.
+    /// Tasks are first due one interval out unless they ask otherwise: the
+    /// plugins already ran once at startup, but a watcher that wants to look
+    /// straight away should not wait a whole interval to say so.
     pub fn new(tasks: Vec<Box<dyn PeriodicTask>>, now_ms: i64) -> Self {
         let tasks = tasks
             .into_iter()
             .map(|task| {
-                let next_due_ms = now_ms.saturating_add(interval_of(task.as_ref()));
+                let next_due_ms = if task.run_immediately() {
+                    now_ms
+                } else {
+                    now_ms.saturating_add(interval_of(task.as_ref()))
+                };
                 ScheduledTask { task, next_due_ms }
             })
             .collect();

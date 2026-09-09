@@ -166,6 +166,7 @@ pub mod runtime_topology_sessions_contract;
 pub mod runtime_topology_store_contract;
 pub mod runtime_topology_worktrees;
 pub mod runtime_topology_worktrees_services_contract;
+pub mod scribe_watcher;
 pub mod service_notify_contract;
 pub mod session_bootstrap;
 pub mod session_launch;

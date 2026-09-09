@@ -18,7 +18,7 @@ use crate::runtime_topology::{
 use super::interactions::pending_interactions_for_stream;
 use super::router::ProjectServiceRequestContext;
 use super::scheduler::PeriodicTask;
-use super::watcher_delivery::deliver_agent_input;
+use super::watcher_delivery::{RailBudget, deliver_agent_input};
 
 /// Only a session backed by a live window can be nudged. This is also what
 /// keeps a graveyarded or offline session with stale `loop.active` metadata
@@ -27,6 +27,9 @@ pub const NUDGEABLE_SESSION_STATUSES: &[&str] = &["starting", "running", "idle"]
 const DEFAULT_SCAN_INTERVAL_MS: i64 = 15_000;
 /// Blast-radius cap: no single scan may message more agents than this.
 const MAX_SENDS_PER_SCAN: usize = 8;
+/// Longest one scan may hold the shared rail; eight unanswered sends would
+/// otherwise block every other task for over a minute.
+const SCAN_BUDGET: std::time::Duration = std::time::Duration::from_secs(20);
 
 pub struct LoopWatcherTask {
     project_root: String,
@@ -75,9 +78,10 @@ impl PeriodicTask for LoopWatcherTask {
         let pending = pending_interactions_for_stream(&project_state_dir);
         let input = build_scan_input(sessions, &metadata, &pending, self.loop_config());
 
+        let budget = RailBudget::new(SCAN_BUDGET);
         let mut delivered = 0usize;
         let mut deliver = |send: &LoopSend| {
-            if delivered >= MAX_SENDS_PER_SCAN {
+            if delivered >= MAX_SENDS_PER_SCAN || budget.spent() {
                 return false;
             }
             delivered += 1;

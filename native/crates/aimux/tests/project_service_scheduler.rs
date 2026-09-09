@@ -184,3 +184,46 @@ fn a_task_that_overruns_its_interval_still_gets_a_full_gap_afterwards() {
     scheduler.run_due(&ctx, &mut now);
     assert_eq!(runs.load(Ordering::SeqCst), 2);
 }
+
+struct EagerTask {
+    runs: Arc<AtomicUsize>,
+}
+
+impl PeriodicTask for EagerTask {
+    fn name(&self) -> &str {
+        "eager"
+    }
+    fn interval_ms(&self) -> i64 {
+        60_000
+    }
+    fn run(&mut self, _context: &ProjectServiceRequestContext) {
+        self.runs.fetch_add(1, Ordering::SeqCst);
+    }
+    fn run_immediately(&self) -> bool {
+        true
+    }
+}
+
+#[test]
+fn a_task_can_ask_to_run_at_startup_instead_of_one_interval_out() {
+    let eager = Arc::new(AtomicUsize::new(0));
+    let patient = Arc::new(AtomicUsize::new(0));
+    let mut scheduler = PeriodicScheduler::new(
+        vec![
+            Box::new(EagerTask {
+                runs: Arc::clone(&eager),
+            }),
+            task("patient", 60_000, &patient, false),
+        ],
+        0,
+    );
+    let ctx = context();
+
+    assert_eq!(scheduler.run_due_at(&ctx, 0), vec!["eager".to_owned()]);
+    assert_eq!(eager.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        patient.load(Ordering::SeqCst),
+        0,
+        "the default is unchanged"
+    );
+}
