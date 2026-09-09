@@ -13,6 +13,7 @@ use crate::core_command_transport::{
     CoreCommandTransportError, DaemonHttpMethod, DaemonJsonRequest,
     execute_loopback_binary_request, execute_loopback_json_request,
 };
+use crate::daemon::access::build_daemon_route_context;
 use crate::daemon::core_commands::{CoreCommandFailure, DaemonCoreCommandRuntime};
 use crate::daemon::disk_doctor::build_disk_doctor_report;
 use crate::daemon::expose::{
@@ -20,6 +21,7 @@ use crate::daemon::expose::{
     expose_focus_route, expose_items_route, open_target_for_client,
 };
 use crate::daemon::http::DaemonResponseBody;
+use crate::daemon::http::PreparedDaemonResponse;
 use crate::daemon::json::{
     DaemonJsonRouteRuntime, ExposeFocusRequest, ProxyBinaryResponse, ProxyJsonResponse,
 };
@@ -27,7 +29,9 @@ use crate::daemon::listener::{
     DaemonListenConfig, serve_daemon_http_with_metadata_and_interceptor,
 };
 use crate::daemon::process::handle_daemon_runtime_request;
-use crate::daemon::status::DaemonStatusRuntime;
+use crate::daemon::routing::{DaemonRouteResponse, DaemonRouteUrl};
+use crate::daemon::server::{DaemonHttpRequest, handle_daemon_http_request};
+use crate::daemon::status::{DAEMON_HEALTH_KIND, DaemonStatusRuntime};
 use crate::daemon::stream::{
     maybe_handle_host_agent_stream_request_with_runtime_mutex,
     maybe_handle_project_event_stream_request,
@@ -104,6 +108,11 @@ pub struct RealDaemonRuntime {
     project_service_startup_timeout_ms: u64,
     auth_flows: Mutex<HashMap<String, LoginFlowWaiter>>,
     global_expose_hot_snapshots: GlobalExposeHotSnapshotCoordinator,
+}
+
+struct DaemonProjectReadSnapshot {
+    resolver: PathResolver,
+    project_service_process_verifier: Arc<dyn ProjectServiceProcessVerifier>,
 }
 
 pub trait ProjectServiceProcessVerifier: Send + Sync {
@@ -409,13 +418,6 @@ impl RealDaemonRuntime {
         }
     }
 
-    fn project_service_state_by_id(&self) -> HashMap<String, Value> {
-        load_daemon_state(self.resolver.daemon_state_path())
-            .projects
-            .into_iter()
-            .collect()
-    }
-
     fn save_project_service_state(&self, service: &ProjectServiceState) -> Result<(), String> {
         let mut state = load_daemon_state(self.resolver.daemon_state_path());
         state.updated_at = Some(Value::String(service.updated_at.clone()));
@@ -642,24 +644,159 @@ impl RealDaemonRuntime {
         }
         result
     }
+}
 
-    fn service_endpoints_by_id(&self) -> HashMap<String, Value> {
-        let Ok(registry) = self.resolver.load_registry() else {
-            return HashMap::new();
-        };
-        let mut resolver = self.resolver.clone();
-        registry
-            .projects
-            .into_iter()
-            .filter_map(|entry| {
-                let endpoint =
-                    load_metadata_endpoint(resolver.project_state_dir_for(&entry.repo_root))?;
-                serde_json::to_value(endpoint)
-                    .ok()
-                    .map(|endpoint| (entry.id, endpoint))
-            })
-            .collect()
+fn daemon_project_read_snapshot(
+    runtime: &Arc<Mutex<RealDaemonRuntime>>,
+) -> DaemonProjectReadSnapshot {
+    let runtime = runtime.lock().expect("daemon runtime mutex poisoned");
+    DaemonProjectReadSnapshot {
+        resolver: runtime.resolver.clone(),
+        project_service_process_verifier: Arc::clone(&runtime.project_service_process_verifier),
     }
+}
+
+fn list_projects_for_route_from_snapshot(
+    snapshot: &DaemonProjectReadSnapshot,
+) -> Vec<ProjectsRouteProject> {
+    let entries = snapshot.resolver.list_projects().unwrap_or_default();
+    let tmp_dirs = hidden_project_tmp_dirs(std::env::temp_dir());
+    let mut session_prefix_by_root = HashMap::<String, String>::new();
+    for entry in &entries {
+        session_prefix_by_root
+            .entry(entry.repo_root.clone())
+            .or_insert_with(|| session_prefix_for_project(&entry.repo_root));
+    }
+    let projects = list_registered_desktop_projects(&entries, &tmp_dirs, |entry| {
+        session_prefix_by_root
+            .get(&entry.repo_root)
+            .cloned()
+            .unwrap_or_else(|| "aimux".to_owned())
+    });
+    let services_by_id = project_service_state_by_id_from_resolver(&snapshot.resolver);
+    let endpoints_by_id = service_endpoints_by_id_from_resolver(&snapshot.resolver);
+    build_projects_route_projects(
+        &projects,
+        &services_by_id,
+        &services_by_id,
+        &endpoints_by_id,
+        |service| {
+            serde_json::from_value::<ProjectServiceState>(service.clone())
+                .ok()
+                .is_some_and(|service| {
+                    service.status != Some(crate::daemon_state::ProjectServiceStatus::Stopped)
+                        && snapshot
+                            .project_service_process_verifier
+                            .is_live_native_project_service(&service)
+                })
+        },
+    )
+}
+
+fn project_service_state_by_id_from_resolver(resolver: &PathResolver) -> HashMap<String, Value> {
+    load_daemon_state(resolver.daemon_state_path())
+        .projects
+        .into_iter()
+        .collect()
+}
+
+fn service_endpoints_by_id_from_resolver(resolver: &PathResolver) -> HashMap<String, Value> {
+    let Ok(registry) = resolver.load_registry() else {
+        return HashMap::new();
+    };
+    registry
+        .projects
+        .into_iter()
+        .filter_map(|entry| {
+            let endpoint = load_metadata_endpoint(
+                resolver.global_aimux_dir().join("projects").join(&entry.id),
+            )?;
+            serde_json::to_value(endpoint)
+                .ok()
+                .map(|endpoint| (entry.id, endpoint))
+        })
+        .collect()
+}
+
+fn project_service_info_value() -> Value {
+    get_project_service_manifest()
+        .and_then(|manifest| serde_json::to_value(manifest).map_err(std::io::Error::other))
+        .unwrap_or_else(|error| json!({ "error": error.to_string() }))
+}
+
+pub fn handle_daemon_runtime_request_with_mutex(
+    runtime: &Arc<Mutex<RealDaemonRuntime>>,
+    request: DaemonHttpRequest,
+) -> PreparedDaemonResponse {
+    let route_url = DaemonRouteUrl::parse(&request.path);
+    let pathname = route_url.pathname().to_owned();
+    if request.method == "GET" && pathname == "/health" {
+        return handle_daemon_http_request(
+            request,
+            |method, path, body, headers| {
+                build_daemon_route_context(method, path, body, headers.clone(), &[])
+            },
+            |_, _, _, context, issued_at| {
+                if let Some(access) = &context.access_decision
+                    && !access.ok
+                {
+                    return DaemonRouteResponse::json(
+                        access.status.unwrap_or(403),
+                        json!({
+                            "ok": false,
+                            "error": access.error.as_deref().unwrap_or("remote access denied")
+                        }),
+                    );
+                }
+                let info = {
+                    let runtime = runtime.lock().expect("daemon runtime mutex poisoned");
+                    runtime.current_daemon_info(issued_at)
+                };
+                DaemonRouteResponse::json(
+                    200,
+                    json!({
+                        "ok": true,
+                        "kind": DAEMON_HEALTH_KIND,
+                        "pid": info.pid,
+                        "port": info.port,
+                        "serviceInfo": project_service_info_value(),
+                    }),
+                )
+            },
+        );
+    }
+    if request.method == "GET" && pathname == "/projects" {
+        return handle_daemon_http_request(
+            request,
+            |method, path, body, headers| {
+                build_daemon_route_context(method, path, body, headers.clone(), &[])
+            },
+            |_, _, _, context, _| {
+                if let Some(access) = &context.access_decision
+                    && !access.ok
+                {
+                    return DaemonRouteResponse::json(
+                        access.status.unwrap_or(403),
+                        json!({
+                            "ok": false,
+                            "error": access.error.as_deref().unwrap_or("remote access denied")
+                        }),
+                    );
+                }
+                DaemonRouteResponse::json(
+                    200,
+                    json!({
+                        "ok": true,
+                        "projects": list_projects_for_route_from_snapshot(
+                            &daemon_project_read_snapshot(runtime),
+                        ),
+                    }),
+                )
+            },
+        );
+    }
+    let mut runtime = runtime.lock().expect("daemon runtime mutex poisoned");
+    handle_daemon_runtime_request(&mut *runtime, request)
 }
 
 fn aimux_cli_launch_json(launch: AimuxCliLaunchCommand) -> Value {
@@ -778,10 +915,7 @@ pub fn run_daemon_internal() -> Result<()> {
     let stream_runtime = Arc::clone(&runtime);
     serve_daemon_http_with_metadata_and_interceptor(
         DaemonListenConfig { host, port },
-        move |request| {
-            let mut runtime = runtime.lock().expect("daemon runtime mutex poisoned");
-            handle_daemon_runtime_request(&mut *runtime, request)
-        },
+        move |request| handle_daemon_runtime_request_with_mutex(&runtime, request),
         || crate::daemon::listener::DaemonRequestMetadata {
             issued_at: now_iso(),
             stopping: false,
@@ -818,35 +952,14 @@ impl DaemonStatusRuntime for RealDaemonRuntime {
     }
 
     fn project_service_info(&self) -> Value {
-        get_project_service_manifest()
-            .and_then(|manifest| serde_json::to_value(manifest).map_err(std::io::Error::other))
-            .unwrap_or_else(|error| json!({ "error": error.to_string() }))
+        project_service_info_value()
     }
 
     fn list_projects_for_route(&self) -> Vec<ProjectsRouteProject> {
-        let entries = self.resolver.list_projects().unwrap_or_default();
-        let tmp_dirs = hidden_project_tmp_dirs(std::env::temp_dir());
-        let projects = list_registered_desktop_projects(&entries, &tmp_dirs, |entry| {
-            session_prefix_for_project(&entry.repo_root)
-        });
-        let services_by_id = self.project_service_state_by_id();
-        let endpoints_by_id = self.service_endpoints_by_id();
-        build_projects_route_projects(
-            &projects,
-            &services_by_id,
-            &services_by_id,
-            &endpoints_by_id,
-            |service| {
-                serde_json::from_value::<ProjectServiceState>(service.clone())
-                    .ok()
-                    .is_some_and(|service| {
-                        service.status != Some(crate::daemon_state::ProjectServiceStatus::Stopped)
-                            && self
-                                .project_service_process_verifier
-                                .is_live_native_project_service(&service)
-                    })
-            },
-        )
+        list_projects_for_route_from_snapshot(&DaemonProjectReadSnapshot {
+            resolver: self.resolver.clone(),
+            project_service_process_verifier: Arc::clone(&self.project_service_process_verifier),
+        })
     }
 
     fn daemon_state(&self) -> DaemonState {

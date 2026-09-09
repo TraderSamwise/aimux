@@ -241,6 +241,9 @@ pub fn maybe_handle_host_agent_stream_request_with_runtime_mutex<Runtime>(
 where
     Runtime: DaemonHostAgentTextRuntime,
 {
+    if !is_host_agent_stream_text_request(request) {
+        return Ok(false);
+    }
     let resolution = {
         let mut runtime = runtime.lock().expect("daemon runtime mutex poisoned");
         resolve_host_agent_stream_request(&mut *runtime, request)
@@ -249,6 +252,13 @@ where
         return Ok(false);
     };
     write_host_agent_stream_resolution(resolution, writer)
+}
+
+fn is_host_agent_stream_text_request(request: &DaemonHttpRequest) -> bool {
+    let route_url = DaemonRouteUrl::parse(&request.path);
+    request.method == "GET"
+        && route_url.pathname()
+            == crate::core_command_contract::CORE_API_ROUTES.host_agent_stream_text
 }
 
 pub fn resolve_host_agent_stream_request(

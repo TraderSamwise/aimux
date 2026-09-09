@@ -6,10 +6,13 @@ use aimux::daemon::expose::{
 };
 use aimux::daemon::json::DaemonJsonRouteRuntime;
 use aimux::daemon::json::ExposeFocusRequest;
+use aimux::daemon::listener::{
+    DaemonRequestMetadata, handle_daemon_stream_with_metadata_and_interceptor,
+};
 use aimux::daemon::process::handle_daemon_runtime_request;
 use aimux::daemon::runtime::{
     PROJECT_SERVICE_STARTUP_TIMEOUT_MS, ProjectServiceLauncher, ProjectServiceProcessVerifier,
-    RealDaemonRuntime, SystemProjectServiceLauncher,
+    RealDaemonRuntime, SystemProjectServiceLauncher, handle_daemon_runtime_request_with_mutex,
 };
 use aimux::daemon::status::DaemonStatusRuntime;
 use aimux::daemon::text::agents::DaemonAgentTextRuntime;
@@ -34,6 +37,7 @@ use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -146,6 +150,143 @@ fn native_daemon_http_routes_health_and_projects_through_real_runtime() {
     assert_eq!(projects_json["projects"].as_array().map(Vec::len), Some(1));
     assert_eq!(projects_json["projects"][0]["name"], "repo");
     assert_eq!(projects_json["projects"][0]["serviceAlive"], false);
+    fixture.cleanup();
+}
+
+#[test]
+fn native_daemon_projects_route_handles_concurrent_project_fleet_load() {
+    let fixture = RuntimeFixture::new("projects-load");
+    let mut resolver = fixture.resolver();
+    let mut services = Map::new();
+    let mut live_pids = Vec::new();
+    for index in 0..12 {
+        let project = fixture.project(&format!("repo-{index:02}"));
+        let entry = resolver
+            .register_project(&project)
+            .expect("register project")
+            .expect("project entry");
+        let pid = 80_000 + index;
+        live_pids.push(pid);
+        let service = ProjectServiceState {
+            project_id: entry.id.clone(),
+            project_root: project.to_string_lossy().into_owned(),
+            pid,
+            started_at: "then".into(),
+            updated_at: "now".into(),
+            status: Some(ProjectServiceStatus::Running),
+            restart_count: Some(0),
+            last_restart_at: None,
+            last_exit: None,
+        };
+        services.insert(
+            entry.id.clone(),
+            serde_json::to_value(&service).expect("service json"),
+        );
+        save_metadata_endpoint(
+            resolver.project_state_dir_for(&project),
+            &MetadataApiEndpoint {
+                host: "127.0.0.1".into(),
+                port: 45_000 + index as u16,
+                pid,
+                updated_at: "now".into(),
+            },
+        )
+        .expect("metadata endpoint");
+    }
+    save_daemon_state(
+        resolver.daemon_state_path(),
+        &DaemonState {
+            version: 1,
+            updated_at: Some(json!("now")),
+            projects: services,
+        },
+    )
+    .expect("daemon state");
+
+    let runtime = fixture.runtime_with_launcher_and_verifier(
+        Arc::new(SystemProjectServiceLauncher),
+        Arc::new(SlowNativeVerifier {
+            live: live_pids.into_iter().collect(),
+            delay: Duration::from_millis(25),
+        }),
+        PROJECT_SERVICE_STARTUP_TIMEOUT_MS,
+    );
+    let runtime = Arc::new(Mutex::new(runtime));
+    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind daemon listener");
+    let address = listener.local_addr().expect("daemon address");
+    let request_count = 60 * 5 + 1;
+    let server_runtime = Arc::clone(&runtime);
+    let server_join = std::thread::spawn(move || {
+        let mut joins = Vec::new();
+        for _ in 0..request_count {
+            let (mut stream, _) = listener.accept().expect("accept daemon request");
+            let request_runtime = Arc::clone(&server_runtime);
+            joins.push(std::thread::spawn(move || {
+                let _ = handle_daemon_stream_with_metadata_and_interceptor(
+                    &mut stream,
+                    DaemonRequestMetadata {
+                        issued_at: "issued".into(),
+                        stopping: false,
+                    },
+                    &mut |request, writer| {
+                        if aimux::daemon::stream::maybe_handle_project_event_stream_request(
+                            request, writer,
+                        )
+                        .map_err(|error| {
+                            aimux::daemon::listener::DaemonListenerError::Io(
+                                std::io::Error::other(error.to_string()),
+                            )
+                        })? {
+                            return Ok(true);
+                        }
+                        aimux::daemon::stream::maybe_handle_host_agent_stream_request_with_runtime_mutex(
+                            &request_runtime,
+                            request,
+                            writer,
+                        )
+                        .map_err(|error| {
+                            aimux::daemon::listener::DaemonListenerError::Io(
+                                std::io::Error::other(error.to_string()),
+                            )
+                        })
+                    },
+                    &mut |request| {
+                        handle_daemon_runtime_request_with_mutex(&request_runtime, request)
+                    },
+                );
+            }));
+        }
+        for join in joins {
+            join.join().expect("daemon request thread");
+        }
+    });
+
+    for _ in 0..5 {
+        let (tx, rx) = mpsc::channel();
+        for _ in 0..60 {
+            let tx = tx.clone();
+            std::thread::spawn(move || {
+                tx.send(request_http(address, "/projects", Duration::from_secs(3)))
+                    .expect("send project response");
+            });
+        }
+        drop(tx);
+        for _ in 0..60 {
+            let response = rx
+                .recv_timeout(Duration::from_secs(4))
+                .expect("projects request completed under concurrent load")
+                .expect("projects response");
+            assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
+            assert!(response.contains(r#""ok":true"#));
+            assert!(response.contains(r#""serviceAlive":true"#));
+        }
+    }
+    let health = request_http(address, "/health", Duration::from_secs(2))
+        .expect("health response after load");
+    assert!(health.starts_with("HTTP/1.1 200 OK\r\n"));
+    assert!(health.contains(r#""kind":"aimux-daemon""#));
+
+    server_join.join().expect("daemon server");
     fixture.cleanup();
 }
 
@@ -1579,6 +1720,26 @@ impl ProjectServiceProcessVerifier for FakeProcessVerifier {
     }
 }
 
+struct SlowNativeVerifier {
+    live: BTreeSet<i32>,
+    delay: Duration,
+}
+
+impl ProjectServiceProcessVerifier for SlowNativeVerifier {
+    fn is_live(&self, pid: i32) -> bool {
+        self.live.contains(&pid)
+    }
+
+    fn is_live_native_project_service(&self, service: &ProjectServiceState) -> bool {
+        std::thread::sleep(self.delay);
+        self.live.contains(&service.pid)
+    }
+
+    fn live_project_service_pids(&self, _project_id: &str, _project_root: &str) -> Vec<i32> {
+        Vec::new()
+    }
+}
+
 fn persist_service(
     resolver: &PathResolver,
     project_id: &str,
@@ -1701,6 +1862,31 @@ fn read_http_request(stream: &mut TcpStream) -> String {
         }
     }
     String::from_utf8_lossy(&buffer).into_owned()
+}
+
+fn request_http(
+    address: std::net::SocketAddr,
+    path: &str,
+    timeout: Duration,
+) -> Result<String, String> {
+    let mut stream = TcpStream::connect(address).map_err(|error| error.to_string())?;
+    stream
+        .set_read_timeout(Some(timeout))
+        .map_err(|error| error.to_string())?;
+    stream
+        .set_write_timeout(Some(timeout))
+        .map_err(|error| error.to_string())?;
+    stream
+        .write_all(
+            format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+                .as_bytes(),
+        )
+        .map_err(|error| error.to_string())?;
+    let mut response = String::new();
+    stream
+        .read_to_string(&mut response)
+        .map_err(|error| error.to_string())?;
+    Ok(response)
 }
 
 fn request_is_complete(buffer: &[u8]) -> bool {
