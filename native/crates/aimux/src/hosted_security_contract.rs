@@ -1,3 +1,4 @@
+use aimux::hosted_audit::HostedAuditRecord;
 use aimux::hosted_auth::{
     HostedAuthentication, authenticate_hosted_value,
     bearer_token_value as hosted_bearer_token_value, strip_trusted_headers_value,
@@ -5,7 +6,7 @@ use aimux::hosted_auth::{
 use aimux::hosted_lockdown::{
     HostedLockdownState, HostedLockdownStore, reset_hosted_lockdown_cache,
 };
-use aimux::hosted_outbox::{HostedAuditRecord, HostedEvent, HostedOutboxStore};
+use aimux::hosted_outbox::{HostedEvent, HostedOutboxStore};
 use aimux::hosted_principals::{HostedPrincipalsStore, clear_hosted_principals_cache};
 use aimux::paths::PathResolver;
 use serde_json::{Value, json};

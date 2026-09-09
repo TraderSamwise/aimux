@@ -1,3 +1,4 @@
+use crate::hosted_audit::{HostedAuditRecord, HostedAuditStore};
 use crate::hosted_lock::{HostedLockOptions, with_hosted_lock};
 use crate::paths::PathResolver;
 use anyhow::{Result, anyhow};
@@ -21,28 +22,6 @@ pub struct HostedEvent {
     pub fingerprint: Option<String>,
     pub address_known: bool,
     pub user_agent: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub detail: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct HostedAuditRecord {
-    pub ts: String,
-    pub principal_id: String,
-    pub label: String,
-    pub method: String,
-    pub path: String,
-    pub session_id: Option<String>,
-    pub status: i64,
-    pub request_bytes: i64,
-    pub response_bytes: i64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub prompt_hash: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub prompt_ref: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub event: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
 }
@@ -97,7 +76,7 @@ impl HostedOutboxStore {
             event: Some(kind.to_owned()),
             detail: Some(detail.to_owned()),
         };
-        append_jsonl(self.audit_path(), &audit)?;
+        HostedAuditStore::with_resolver(self.resolver.clone()).append_audit(&audit);
         self.spool_event(&HostedEvent {
             id: random_uuid_like()?,
             kind: kind.to_owned(),

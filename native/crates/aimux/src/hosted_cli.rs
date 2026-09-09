@@ -1,3 +1,4 @@
+use crate::hosted_audit::{HostedAuditRecord, HostedAuditStore};
 use crate::hosted_config::{
     HostedConfig, load_hosted_config_with_resolver, validate_hosted_startup,
 };
@@ -8,32 +9,8 @@ use crate::hosted_principals::{
 };
 use crate::paths::PathResolver;
 use anyhow::{Result, anyhow, bail};
-use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::fs;
-use std::path::{Path, PathBuf};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct HostedAuditRecord {
-    pub ts: String,
-    pub principal_id: String,
-    pub label: String,
-    pub method: String,
-    pub path: String,
-    pub session_id: Option<String>,
-    pub status: i64,
-    pub request_bytes: i64,
-    pub response_bytes: i64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub prompt_hash: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub prompt_ref: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub event: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub detail: Option<String>,
-}
+use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostedCliOutput {
@@ -373,10 +350,6 @@ impl HostedStore {
         })
     }
 
-    fn audit_path(&self) -> PathBuf {
-        self.resolver.hosted_audit_path()
-    }
-
     fn resolve_project_root(&mut self, project: &str) -> String {
         self.resolver
             .resolve_repo_root(Path::new(project))
@@ -434,14 +407,7 @@ impl HostedStore {
     }
 
     fn tail_audit(&self, count: usize) -> Vec<HostedAuditRecord> {
-        let mut records = read_jsonl::<HostedAuditRecord>(self.audit_path(), Some(count));
-        records.extend(read_jsonl::<HostedAuditRecord>(
-            pending_path_for(&self.audit_path()),
-            Some(count),
-        ));
-        records.sort_by(|left, right| left.ts.cmp(&right.ts));
-        let start = records.len().saturating_sub(count);
-        records[start..].to_vec()
+        HostedAuditStore::with_resolver(self.resolver.clone()).tail_audit(count)
     }
 }
 
@@ -460,26 +426,4 @@ fn option_value<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
 
 fn has_flag(args: &[String], name: &str) -> bool {
     args.iter().any(|arg| arg == name)
-}
-
-fn read_jsonl<T: for<'de> Deserialize<'de>>(path: PathBuf, limit: Option<usize>) -> Vec<T> {
-    let Ok(raw) = fs::read_to_string(path) else {
-        return Vec::new();
-    };
-    let mut lines = raw
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .collect::<Vec<_>>();
-    if let Some(limit) = limit {
-        let start = lines.len().saturating_sub(limit);
-        lines = lines[start..].to_vec();
-    }
-    lines
-        .into_iter()
-        .filter_map(|line| serde_json::from_str(line).ok())
-        .collect()
-}
-
-fn pending_path_for(path: &Path) -> PathBuf {
-    PathBuf::from(format!("{}.pending", path.to_string_lossy()))
 }
