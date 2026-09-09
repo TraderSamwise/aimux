@@ -161,6 +161,8 @@ impl TmuxRuntimeManager {
             let started_at = Instant::now();
             let mut command = Command::new("tmux");
             command.args(args);
+            command.env_remove("TMUX");
+            command.env_remove("TMUX_PANE");
             if let Some(cwd) = options.and_then(|options| options.cwd.as_deref()) {
                 command.current_dir(cwd);
             }
@@ -1470,7 +1472,16 @@ impl TmuxRuntimeManager {
             } else {
                 None
             };
-        let should_resolve_managed_client = options.inside_tmux
+        let target_server_has_client_tty = options
+            .client_tty
+            .as_deref()
+            .is_some_and(|client_tty| self.find_client_by_tty(client_tty).is_some());
+        let target_server_missing_client_tty = options
+            .client_tty
+            .as_deref()
+            .is_some_and(|client_tty| !client_tty.is_empty() && !target_server_has_client_tty);
+        let resolve_inside_tmux = options.inside_tmux && !target_server_missing_client_tty;
+        let should_resolve_managed_client = resolve_inside_tmux
             && !self.is_client_session_name(&open_session_name)
             && (self.is_managed_session_name(&open_session_name) || open_project_root.is_some());
         let session_name = if should_resolve_managed_client {
@@ -1481,11 +1492,11 @@ impl TmuxRuntimeManager {
                 options.client_tty.as_deref(),
             )?
         } else if options.already_resolved {
-            open_session_name
+            open_session_name.clone()
         } else {
             self.resolve_open_session_name(
                 &open_session_name,
-                options.inside_tmux,
+                resolve_inside_tmux,
                 options.client_suffix.as_deref(),
                 options.client_tty.as_deref(),
             )?
@@ -1508,10 +1519,18 @@ impl TmuxRuntimeManager {
         if is_dashboard_window_name(&effective_target.window_name) {
             self.cancel_copy_mode(&effective_target.window_id)?;
         }
-        if options.inside_tmux {
-            let current = options
-                .return_session_name
-                .or_else(|| self.current_client_session());
+        let current_client_session = if options.inside_tmux {
+            self.current_client_session()
+        } else {
+            None
+        };
+        let can_switch_client = options.inside_tmux
+            && !target_server_missing_client_tty
+            && (options.client_suffix.is_some()
+                || current_client_session.is_some()
+                || target_server_has_client_tty);
+        if can_switch_client {
+            let current = options.return_session_name.or(current_client_session);
             if current
                 .as_deref()
                 .is_some_and(|current| current != session_name)
@@ -1523,10 +1542,16 @@ impl TmuxRuntimeManager {
                 effective_target.window_index,
                 options.client_tty.as_deref(),
             )?;
+            Ok(effective_target)
         } else {
-            self.attach_session(&session_name, Some(effective_target.window_index))?;
+            let mut attach_target = target.clone();
+            attach_target.session_name = open_session_name;
+            self.attach_session(
+                &attach_target.session_name,
+                Some(attach_target.window_index),
+            )?;
+            Ok(attach_target)
         }
-        Ok(effective_target)
     }
 
     fn resolve_open_session_name(
@@ -2915,6 +2940,10 @@ fn default_interactive_exec(
 ) -> Result<(), String> {
     let mut command = Command::new("tmux");
     command.args(args);
+    if args.first().map(String::as_str) == Some("attach-session") {
+        command.env_remove("TMUX");
+        command.env_remove("TMUX_PANE");
+    }
     if let Some(cwd) = options.and_then(|options| options.cwd.as_deref()) {
         command.current_dir(cwd);
     }

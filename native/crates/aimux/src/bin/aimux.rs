@@ -589,12 +589,13 @@ fn run_root_dashboard_command() -> Result<ExitCode> {
         return Ok(ExitCode::SUCCESS);
     }
 
+    let open_in_host_session = should_open_dashboard_in_host_session(&mut tmux, &project_root_text);
     let resolved = resolve_dashboard_target(
         &project_root_text,
         &mut tmux,
         DashboardResolveOptions {
             force_reload: false,
-            open_in_host_session: false,
+            open_in_host_session,
         },
     )
     .map_err(anyhow::Error::msg)?;
@@ -686,17 +687,49 @@ fn open_dashboard_target_from_foreground(
     target: &TmuxTarget,
     already_resolved: bool,
 ) -> Result<()> {
+    let foreground_tty = foreground_tty().or_else(|| single_attached_tmux_client_tty(tmux));
+    let inside_by_client = foreground_tty
+        .as_deref()
+        .is_some_and(|tty| tmux.find_client_by_tty(tty).is_some());
+    let inside_by_socket = tmux_env_socket_path().is_some_and(|env_socket| {
+        tmux.display_message("#{socket_path}", Some(&target.window_id))
+            .as_deref()
+            == Some(env_socket.as_str())
+    });
+    let inside_tmux = inside_by_client || inside_by_socket;
+    let client_tty = if inside_tmux { foreground_tty } else { None };
     tmux.open_target(
         target,
         OpenTargetOptions {
-            inside_tmux: std::env::var_os("TMUX").is_some(),
-            client_tty: foreground_tty(),
+            inside_tmux,
+            client_tty,
             already_resolved,
             ..OpenTargetOptions::default()
         },
     )
     .map_err(anyhow::Error::msg)?;
     Ok(())
+}
+
+fn single_attached_tmux_client_tty(tmux: &mut TmuxRuntimeManager) -> Option<String> {
+    let clients = tmux.list_clients();
+    if clients.len() == 1 {
+        return clients.first().map(|client| client.tty.clone());
+    }
+    None
+}
+
+fn should_open_dashboard_in_host_session(
+    tmux: &mut TmuxRuntimeManager,
+    project_root: &str,
+) -> bool {
+    let Some(env_socket) = tmux_env_socket_path() else {
+        return false;
+    };
+    let session = tmux.get_project_session(project_root);
+    tmux.display_message("#{socket_path}", Some(&session.session_name))
+        .as_deref()
+        != Some(env_socket.as_str())
 }
 
 fn tmux_target_from_value(value: &Value) -> Option<TmuxTarget> {
@@ -726,9 +759,26 @@ fn foreground_tty() -> Option<String> {
         .filter(|tty| !tty.is_empty() && tty != "not a tty")
 }
 
+fn tmux_env_socket_path() -> Option<String> {
+    std::env::var("TMUX")
+        .ok()
+        .and_then(|value| value.split(',').next().map(str::to_owned))
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+}
+
 fn tmux_display_message(format: &str) -> Option<String> {
-    std::process::Command::new("tmux")
-        .args(["display-message", "-p", format])
+    let mut command = std::process::Command::new("tmux");
+    command.args(["display-message", "-p"]);
+    if let Some(pane_id) = std::env::var("TMUX_PANE")
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+    {
+        command.args(["-t", pane_id.as_str()]);
+    }
+    command
+        .arg(format)
         .output()
         .ok()
         .filter(|output| output.status.success())

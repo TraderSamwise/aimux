@@ -608,7 +608,9 @@ fn async_named_runtime_methods_use_the_same_tmux_commands() {
 #[test]
 fn ensure_project_session_creates_and_configures_missing_session() {
     let calls = Rc::new(RefCell::new(Vec::<(Vec<String>, Option<String>)>::new()));
+    let created = Rc::new(RefCell::new(false));
     let calls_for_exec = calls.clone();
+    let created_for_exec = created.clone();
     let mut manager = TmuxRuntimeManager::with_exec(move |args, options| {
         calls_for_exec.borrow_mut().push((
             args.to_vec(),
@@ -616,7 +618,15 @@ fn ensure_project_session_creates_and_configures_missing_session() {
         ));
         let joined = args.join(" ");
         if joined.starts_with("has-session") {
-            return Err("no such session".to_owned());
+            return if *created_for_exec.borrow() {
+                Ok(String::new())
+            } else {
+                Err("no such session".to_owned())
+            };
+        }
+        if joined.starts_with("new-session") {
+            *created_for_exec.borrow_mut() = true;
+            return Ok(String::new());
         }
         if joined == "list-sessions -F #{session_name}" {
             return Ok(String::new());
