@@ -1,4 +1,4 @@
-#[path = "../src/hosted_runtime_contract.rs"]
+#[path = "fixture_hosted_runtime_contract.rs"]
 mod hosted_runtime_contract;
 
 use hosted_runtime_contract::run_hosted_runtime_contract_case;

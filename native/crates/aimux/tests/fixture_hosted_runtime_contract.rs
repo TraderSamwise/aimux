@@ -1,9 +1,17 @@
+use aimux::config::merge_config_layers;
 use aimux::hosted_config::{
-    HostedConfig, hosted_config_to_value, is_loopback_bind_address, normalize_hosted_config,
-    normalize_hosted_config_value, validate_hosted_startup,
+    HostedConfig, hosted_config_to_value, is_loopback_bind_address,
+    load_hosted_config_from_global_path, normalize_hosted_config, normalize_hosted_config_value,
+    validate_hosted_startup,
 };
 use aimux::hosted_rate_limit::{HostedLimitOutcome, HostedRateLimitOptions, HostedRateLimiter};
+use aimux::tmux_expose::{
+    crop_expose_preview_footer as production_crop_expose_preview_footer,
+    expose_preview_footer_crop_rows as production_expose_preview_footer_crop_rows,
+};
 use serde_json::{Value, json};
+use std::fs;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -24,15 +32,8 @@ pub fn run_hosted_runtime_contract_case(input: &Value) -> Value {
         ),
         "normalizeHostedConfig" => normalize_hosted_config_case(input),
         "loadHostedConfig" => load_hosted_config_case(input),
-        "loadHostedConfig/loadConfig" => json!({
-            "hostedConfig": hosted_config_to_value(&HostedConfig::default()),
-            "projectHosted": null,
-        }),
-        "loadConfig" => input
-            .get("globalConfig")
-            .and_then(|config| config.get("hosted"))
-            .cloned()
-            .unwrap_or(Value::Null),
+        "loadHostedConfig/loadConfig" => load_hosted_config_load_config_case(input),
+        "loadConfig" => load_config_case(input),
         "validateHostedStartup" => validate_hosted_startup_case(input),
         "HostedRateLimiter.acquire" | "HostedRateLimiter.prune" | "HostedRateLimiter.charge" => {
             hosted_rate_limiter_case(input)
@@ -42,23 +43,7 @@ pub fn run_hosted_runtime_contract_case(input: &Value) -> Value {
 }
 
 fn expose_preview_footer_crop_rows_value(value: &Value) -> i64 {
-    expose_preview_footer_crop_rows(value.as_f64().unwrap_or_default())
-}
-
-fn expose_preview_footer_crop_rows(visible_line_count: f64) -> i64 {
-    if visible_line_count <= 0.0 {
-        return 0;
-    }
-    if visible_line_count <= 8.0 {
-        return 3;
-    }
-    if visible_line_count <= 11.0 {
-        return 2;
-    }
-    if visible_line_count <= 14.0 {
-        return 1;
-    }
-    0
+    production_expose_preview_footer_crop_rows(value.as_f64().unwrap_or_default() as i64)
 }
 
 fn crop_expose_preview_footer(input: &Value) -> Value {
@@ -68,20 +53,8 @@ fn crop_expose_preview_footer(input: &Value) -> Value {
         .and_then(Value::as_f64)
         .unwrap_or_default()
         .floor()
-        .max(0.0) as usize;
-    if count == 0 {
-        return json!([]);
-    }
-    let desired_drop = expose_preview_footer_crop_rows(count as f64) as usize;
-    let drop = desired_drop.min(lines.len().saturating_sub(count));
-    let source_end = if drop > 0 {
-        lines.len() - drop
-    } else {
-        lines.len()
-    };
-    let source = &lines[..source_end];
-    let start = source.len().saturating_sub(count);
-    Value::Array(source[start..].to_vec())
+        .max(0.0) as i64;
+    Value::Array(production_crop_expose_preview_footer(lines, count))
 }
 
 fn normalize_hosted_config_case(input: &Value) -> Value {
@@ -150,17 +123,88 @@ fn normalize_hosted_config_case(input: &Value) -> Value {
 }
 
 fn load_hosted_config_case(input: &Value) -> Value {
-    if input.get("globalConfigText").is_some() {
+    let fixture = ConfigFixture::new();
+    if let Some(text) = input.get("globalConfigText").and_then(Value::as_str) {
+        fixture.write_global_text(text);
+        let config = load_hosted_config_from_global_path(&fixture.global_config_path);
         return json!({
-            "config": hosted_config_to_value(&HostedConfig::default()),
-            "quarantined": true,
+            "config": hosted_config_to_value(&config),
+            "quarantined": fixture.has_quarantined_global_config(),
         });
     }
-    input
-        .get("globalConfig")
-        .and_then(|config| config.get("hosted"))
-        .map(normalize_hosted_config_value)
-        .unwrap_or_else(|| hosted_config_to_value(&HostedConfig::default()))
+    if let Some(global_config) = input.get("globalConfig") {
+        fixture.write_global_value(global_config);
+    }
+    hosted_config_to_value(&load_hosted_config_from_global_path(
+        &fixture.global_config_path,
+    ))
+}
+
+fn load_hosted_config_load_config_case(input: &Value) -> Value {
+    let merged = merge_config_layers(None, input.get("projectConfig"));
+    json!({
+        "hostedConfig": hosted_config_to_value(&HostedConfig::default()),
+        "projectHosted": merged.get("hosted").cloned().unwrap_or(Value::Null),
+    })
+}
+
+fn load_config_case(input: &Value) -> Value {
+    merge_config_layers(input.get("globalConfig"), None)
+        .get("hosted")
+        .cloned()
+        .unwrap_or(Value::Null)
+}
+
+struct ConfigFixture {
+    global_config_path: PathBuf,
+}
+
+impl ConfigFixture {
+    fn new() -> Self {
+        static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "aimux-hosted-runtime-contract-{}-{}",
+            std::process::id(),
+            NEXT_ID.fetch_add(1, Ordering::SeqCst)
+        ));
+        fs::create_dir_all(&root).expect("hosted runtime temp dir created");
+        Self {
+            global_config_path: root.join("config.json"),
+        }
+    }
+
+    fn write_global_text(&self, text: &str) {
+        fs::write(&self.global_config_path, text).expect("hosted runtime global config written");
+    }
+
+    fn write_global_value(&self, value: &Value) {
+        self.write_global_text(&serde_json::to_string(value).expect("global config serializes"));
+    }
+
+    fn has_quarantined_global_config(&self) -> bool {
+        let Some(parent) = self.global_config_path.parent() else {
+            return false;
+        };
+        let Some(file_name) = self
+            .global_config_path
+            .file_name()
+            .and_then(|name| name.to_str())
+        else {
+            return false;
+        };
+        let prefix = format!("{file_name}.corrupt-");
+        fs::read_dir(parent)
+            .ok()
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+            .any(|entry| {
+                entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.starts_with(&prefix))
+            })
+    }
 }
 
 fn validate_hosted_startup_case(input: &Value) -> Value {
