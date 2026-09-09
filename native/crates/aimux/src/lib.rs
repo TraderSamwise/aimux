@@ -9,7 +9,6 @@ pub mod ansi_sgr_spans;
 pub mod atomic_write;
 pub mod attachment_hosting;
 pub mod attachment_store_contract;
-pub mod attachment_text_contract;
 pub mod backend_id_reconcile_contract;
 pub mod backend_session_ids;
 pub mod backend_session_ids_contract;

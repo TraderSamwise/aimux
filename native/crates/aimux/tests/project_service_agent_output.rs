@@ -21,6 +21,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+const ATTACHMENT_TEXT: &str =
+    include_str!("../../../../testdata/contracts/v1/attachments/text.json");
 
 #[derive(Default)]
 struct FakeCaptureRuntime {
@@ -232,6 +234,151 @@ fn output_projection_reads_tool_progress_activity_text() {
     );
     assert_eq!(transcript.messages[0]["latest"], Value::Null);
     assert_eq!(transcript.messages[1]["latest"], true);
+}
+
+#[test]
+fn output_projection_recovers_wrapped_attachment_text_from_transcripts() {
+    let contract: Value = serde_json::from_str(ATTACHMENT_TEXT).expect("valid attachment fixture");
+    let cases = contract["cases"].as_array().expect("attachment cases");
+    assert_eq!(cases.len(), 129, "unexpected attachment text case count");
+
+    let mut failures = Vec::new();
+    for case in cases {
+        let tail = case["input"]["tail"].as_str().expect("case tail");
+        let raw = format!("› Attached files:\n{tail}");
+        let projection = project_agent_output(&raw, Some("codex"));
+        let parts = projection
+            .messages
+            .first()
+            .and_then(|message| message.get("parts"))
+            .cloned()
+            .unwrap_or(Value::Null);
+
+        let actual = if case["output"].is_null() {
+            json!({
+                "structured": parts.as_array().is_some_and(|parts| {
+                    parts.iter().any(|part| {
+                        matches!(
+                            part.get("type").and_then(Value::as_str),
+                            Some("image_reference" | "attachment_reference")
+                        )
+                    })
+                })
+            })
+        } else {
+            json!({
+                "parts": parts,
+                "text": projection.messages[0]["text"],
+            })
+        };
+        let expected = if case["output"].is_null() {
+            json!({ "structured": false })
+        } else {
+            json!({
+                "parts": expected_attachment_parts(&case["output"]),
+                "text": case["output"]["prose"].as_str().unwrap_or(""),
+            })
+        };
+        if actual != expected {
+            failures.push(json!({
+                "id": case["id"],
+                "name": case["name"],
+                "expected": expected,
+                "actual": actual,
+            }));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} production attachment projection failures:\n{}",
+        failures.len(),
+        serde_json::to_string_pretty(&failures).expect("serialize failures")
+    );
+}
+
+#[test]
+fn output_projection_treats_bare_paths_under_image_header_as_images() {
+    let projection = project_agent_output(
+        "› Attached image files:\nlook: /srv/x/.aimux/attach ments/att_bare.png",
+        Some("codex"),
+    );
+    assert_eq!(
+        projection.messages[0]["parts"],
+        json!([
+            { "type": "text", "text": "look:" },
+            {
+                "type": "image_reference",
+                "label": "[image #1]",
+                "attachmentId": "att_bare",
+                "mimeType": "image/unknown"
+            }
+        ])
+    );
+}
+
+fn expected_attachment_parts(output: &Value) -> Vec<Value> {
+    let mut parts = Vec::new();
+    let prose = output["prose"].as_str().unwrap_or("");
+    if !prose.is_empty() {
+        parts.push(json!({ "type": "text", "text": prose }));
+    }
+
+    let mut image_index = 1;
+    let mut file_index = 1;
+    for attachment in output["attachments"]
+        .as_array()
+        .expect("output attachments")
+    {
+        let attachment_id = attachment["attachmentId"]
+            .as_str()
+            .expect("attachment id")
+            .to_owned();
+        let filename = attachment.get("filename").and_then(Value::as_str);
+        let mime_type = attachment.get("mimeType").and_then(Value::as_str);
+        let mut part = serde_json::Map::new();
+        if mime_type.is_some_and(|mime_type| mime_type.starts_with("image/")) {
+            part.insert(
+                "type".to_owned(),
+                Value::String("image_reference".to_owned()),
+            );
+            part.insert(
+                "label".to_owned(),
+                Value::String(format!("[image #{image_index}]")),
+            );
+            image_index += 1;
+        } else {
+            part.insert(
+                "type".to_owned(),
+                Value::String("attachment_reference".to_owned()),
+            );
+            part.insert(
+                "label".to_owned(),
+                Value::String(format!("[file #{file_index}]")),
+            );
+            file_index += 1;
+            part.insert(
+                "kind".to_owned(),
+                Value::String(expected_attachment_kind(mime_type).to_owned()),
+            );
+        }
+        part.insert("attachmentId".to_owned(), Value::String(attachment_id));
+        if let Some(filename) = filename {
+            part.insert("filename".to_owned(), Value::String(filename.to_owned()));
+        }
+        if let Some(mime_type) = mime_type {
+            part.insert("mimeType".to_owned(), Value::String(mime_type.to_owned()));
+        }
+        parts.push(Value::Object(part));
+    }
+    parts
+}
+
+fn expected_attachment_kind(mime_type: Option<&str>) -> &'static str {
+    match mime_type.unwrap_or_default() {
+        "application/pdf" => "pdf",
+        mime_type if mime_type.starts_with("text/") || mime_type == "application/json" => "text",
+        _ => "file",
+    }
 }
 
 #[test]
