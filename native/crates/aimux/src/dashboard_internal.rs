@@ -57,7 +57,7 @@ use crate::runtime_guard::{
     stabilize_runtime_guard_probe,
 };
 use crate::tmux::TmuxRuntimeManager;
-use crate::tui_render::theme::{Tone, style};
+use crate::tui_render::theme::{Tone, recede, style};
 use crate::tui_render::{OverlayBoxSpec, OverlayVariant, render_overlay_box};
 use crate::tui_screen_renderers::{
     render_overseer_overlay_output, render_overseer_watch_instructions_overlay_output,
@@ -1165,24 +1165,17 @@ fn render_dashboard_snapshot(
         scribe_preview_entries: &scribe_preview_entries,
     });
     if controller.overseer_overlay_open {
-        let mut output = frame.frame;
         let ctx = serde_json::json!({
             "dashboardOverseerSessionsCache": &overseer_sessions,
             "dashboardSessionsCache": &snapshot.sessions,
             "dashboardTeammatesCache": &snapshot.teammates,
         });
-        output.push_str(&render_overseer_overlay_output(
-            &ctx,
-            viewport.cols,
-            viewport.rows,
-        ));
-        return crate::tui_render::screen_frame::ScreenFrameResult {
-            frame: output,
-            scroll_offset: frame.scroll_offset,
-        };
+        return dashboard_overlay_frame(
+            &frame,
+            render_overseer_overlay_output(&ctx, viewport.cols, viewport.rows),
+        );
     }
     if let Some(watch) = controller.overseer_watch_instructions.as_ref() {
-        let mut output = frame.frame;
         let ctx = serde_json::json!({
             "overseerWatchInstructionsTarget": &watch.target,
             "overseerWatchInstructionsBuffer": &watch.buffer,
@@ -1190,15 +1183,11 @@ fn render_dashboard_snapshot(
         if let Some(overlay) =
             render_overseer_watch_instructions_overlay_output(&ctx, viewport.cols, viewport.rows)
         {
-            output.push_str(&overlay);
+            return dashboard_overlay_frame(&frame, overlay);
         }
-        return crate::tui_render::screen_frame::ScreenFrameResult {
-            frame: output,
-            scroll_offset: frame.scroll_offset,
-        };
+        return frame;
     }
     if let Some(work_outline_overlay) = controller.work_outline_overlay.as_ref() {
-        let mut output = frame.frame;
         let mut ctx = serde_json::json!({
             "workOutlineOverlayEntries": &work_outline_overlay.entries,
             "workOutlineOverlayOffset": work_outline_overlay.offset,
@@ -1212,129 +1201,78 @@ fn render_dashboard_snapshot(
                 serde_json::Value::String(session_id.clone()),
             );
         }
-        output.push_str(&render_work_outline_overlay_output(
-            &ctx,
-            viewport.cols,
-            viewport.rows,
-        ));
-        return crate::tui_render::screen_frame::ScreenFrameResult {
-            frame: output,
-            scroll_offset: frame.scroll_offset,
-        };
+        return dashboard_overlay_frame(
+            &frame,
+            render_work_outline_overlay_output(&ctx, viewport.cols, viewport.rows),
+        );
     }
     if let Some(launch_options) = controller.launch_options.as_ref() {
-        let mut output = frame.frame;
         let selected_tool = controller
             .tool_picker
             .as_ref()
             .and_then(|picker| picker.selected_tool());
-        output.push_str(&render_launch_options_overlay(
-            launch_options,
-            selected_tool,
-            viewport.cols,
-            viewport.rows,
-        ));
-        return crate::tui_render::screen_frame::ScreenFrameResult {
-            frame: output,
-            scroll_offset: frame.scroll_offset,
-        };
+        return dashboard_overlay_frame(
+            &frame,
+            render_launch_options_overlay(
+                launch_options,
+                selected_tool,
+                viewport.cols,
+                viewport.rows,
+            ),
+        );
     }
     if let Some(tool_picker) = controller.tool_picker.as_ref() {
-        let mut output = frame.frame;
-        output.push_str(&render_tool_picker_overlay(
-            tool_picker,
-            viewport.cols,
-            viewport.rows,
-        ));
-        return crate::tui_render::screen_frame::ScreenFrameResult {
-            frame: output,
-            scroll_offset: frame.scroll_offset,
-        };
+        return dashboard_overlay_frame(
+            &frame,
+            render_tool_picker_overlay(tool_picker, viewport.cols, viewport.rows),
+        );
     }
     if let Some(service_input) = controller.service_input.as_ref() {
-        let mut output = frame.frame;
-        output.push_str(&render_service_input_overlay(
-            service_input,
-            viewport.cols,
-            viewport.rows,
-        ));
-        return crate::tui_render::screen_frame::ScreenFrameResult {
-            frame: output,
-            scroll_offset: frame.scroll_offset,
-        };
+        return dashboard_overlay_frame(
+            &frame,
+            render_service_input_overlay(service_input, viewport.cols, viewport.rows),
+        );
     }
     if let Some(worktree_input) = controller.worktree_input.as_ref() {
-        let mut output = frame.frame;
-        output.push_str(&render_worktree_input_overlay(
-            worktree_input,
-            viewport.cols,
-            viewport.rows,
-        ));
-        return crate::tui_render::screen_frame::ScreenFrameResult {
-            frame: output,
-            scroll_offset: frame.scroll_offset,
-        };
+        return dashboard_overlay_frame(
+            &frame,
+            render_worktree_input_overlay(worktree_input, viewport.cols, viewport.rows),
+        );
     }
     if let Some(migrate_picker) = controller.migrate_picker.as_ref() {
-        let mut output = frame.frame;
-        output.push_str(&render_migrate_picker_overlay(
-            migrate_picker,
-            viewport.cols,
-            viewport.rows,
-        ));
-        return crate::tui_render::screen_frame::ScreenFrameResult {
-            frame: output,
-            scroll_offset: frame.scroll_offset,
-        };
+        return dashboard_overlay_frame(
+            &frame,
+            render_migrate_picker_overlay(migrate_picker, viewport.cols, viewport.rows),
+        );
     }
     if let Some(label_input) = controller.label_input.as_ref() {
-        let mut output = frame.frame;
-        output.push_str(&render_label_input_overlay(
-            label_input,
-            viewport.cols,
-            viewport.rows,
-        ));
-        return crate::tui_render::screen_frame::ScreenFrameResult {
-            frame: output,
-            scroll_offset: frame.scroll_offset,
-        };
+        return dashboard_overlay_frame(
+            &frame,
+            render_label_input_overlay(label_input, viewport.cols, viewport.rows),
+        );
     }
     if let Some(confirm) = controller.worktree_remove_confirm.as_ref() {
-        let mut output = frame.frame;
-        output.push_str(&render_worktree_remove_confirm_overlay(
-            &confirm.name,
-            &confirm.path,
-            viewport.cols,
-            viewport.rows,
-        ));
-        return crate::tui_render::screen_frame::ScreenFrameResult {
-            frame: output,
-            scroll_offset: frame.scroll_offset,
-        };
+        return dashboard_overlay_frame(
+            &frame,
+            render_worktree_remove_confirm_overlay(
+                &confirm.name,
+                &confirm.path,
+                viewport.cols,
+                viewport.rows,
+            ),
+        );
     }
     if controller.worktree_list_open {
-        let mut output = frame.frame;
-        output.push_str(&render_worktree_list_overlay(
-            &snapshot.worktree_groups,
-            viewport.cols,
-            viewport.rows,
-        ));
-        return crate::tui_render::screen_frame::ScreenFrameResult {
-            frame: output,
-            scroll_offset: frame.scroll_offset,
-        };
+        return dashboard_overlay_frame(
+            &frame,
+            render_worktree_list_overlay(&snapshot.worktree_groups, viewport.cols, viewport.rows),
+        );
     }
     if let Some(preview) = controller.worktree_cache_cleanup_confirm.as_ref() {
-        let mut output = frame.frame;
-        output.push_str(&render_worktree_cache_cleanup_confirm_overlay(
-            preview,
-            viewport.cols,
-            viewport.rows,
-        ));
-        return crate::tui_render::screen_frame::ScreenFrameResult {
-            frame: output,
-            scroll_offset: frame.scroll_offset,
-        };
+        return dashboard_overlay_frame(
+            &frame,
+            render_worktree_cache_cleanup_confirm_overlay(preview, viewport.cols, viewport.rows),
+        );
     }
     if let Some(teammate_picker) = controller.teammate_picker.as_ref() {
         let teammates = crate::dashboard_controller::sorted_teammates_for_parent(
@@ -1347,59 +1285,43 @@ fn render_dashboard_snapshot(
             viewport.cols,
             viewport.rows,
         ) {
-            let mut output = frame.frame;
-            output.push_str(&overlay);
-            return crate::tui_render::screen_frame::ScreenFrameResult {
-                frame: output,
-                scroll_offset: frame.scroll_offset,
-            };
+            return dashboard_overlay_frame(&frame, overlay);
         }
     }
     if let Some(route_picker) = controller.orchestration_route_picker.as_ref() {
-        let mut output = frame.frame;
-        output.push_str(&render_orchestration_route_picker_overlay(
-            route_picker,
-            viewport.cols,
-            viewport.rows,
-        ));
-        return crate::tui_render::screen_frame::ScreenFrameResult {
-            frame: output,
-            scroll_offset: frame.scroll_offset,
-        };
+        return dashboard_overlay_frame(
+            &frame,
+            render_orchestration_route_picker_overlay(route_picker, viewport.cols, viewport.rows),
+        );
     }
     if let Some(input) = controller.orchestration_input.as_ref() {
-        let mut output = frame.frame;
-        output.push_str(&render_orchestration_input_overlay(
-            input,
-            viewport.cols,
-            viewport.rows,
-        ));
-        return crate::tui_render::screen_frame::ScreenFrameResult {
-            frame: output,
-            scroll_offset: frame.scroll_offset,
-        };
+        return dashboard_overlay_frame(
+            &frame,
+            render_orchestration_input_overlay(input, viewport.cols, viewport.rows),
+        );
     }
     if let Some(reply) = controller.thread_reply.as_ref() {
-        let mut output = frame.frame;
-        output.push_str(&render_thread_reply_overlay(
-            reply,
-            viewport.cols,
-            viewport.rows,
-        ));
-        return crate::tui_render::screen_frame::ScreenFrameResult {
-            frame: output,
-            scroll_offset: frame.scroll_offset,
-        };
+        return dashboard_overlay_frame(
+            &frame,
+            render_thread_reply_overlay(reply, viewport.cols, viewport.rows),
+        );
     }
     if let Some(overlay) = render_dashboard_runtime_guard_overlay(context.runtime_guard, viewport) {
-        let mut output = frame.frame;
-        output.push_str(&overlay);
-        return crate::tui_render::screen_frame::ScreenFrameResult {
-            frame: output,
-            scroll_offset: frame.scroll_offset,
-        };
+        return dashboard_overlay_frame(&frame, overlay);
     }
     frame
+}
+
+fn dashboard_overlay_frame(
+    base: &crate::tui_render::screen_frame::ScreenFrameResult,
+    overlay: String,
+) -> crate::tui_render::screen_frame::ScreenFrameResult {
+    let mut frame = recede(&base.frame);
+    frame.push_str(&overlay);
+    crate::tui_render::screen_frame::ScreenFrameResult {
+        frame,
+        scroll_offset: base.scroll_offset,
+    }
 }
 
 fn render_dashboard_runtime_guard_overlay(
@@ -2009,5 +1931,39 @@ mod tests {
         };
         assert_eq!(selected.id, expected_id);
         fs::remove_dir_all(root).ok();
+    }
+
+    #[test]
+    fn dashboard_overlay_recedes_base_frame_like_node_write_frame() {
+        let snapshot = fixture_snapshot();
+        let options = NativeDashboardOptions {
+            project_root: PathBuf::from("/repo"),
+            desktop_state_file: None,
+            cols: 120,
+            rows: 30,
+            once: true,
+        };
+        let context = DashboardSnapshotRenderContext {
+            viewport: DashboardViewport {
+                cols: 120,
+                rows: 30,
+            },
+            endpoint: None,
+            hidden_offline_agent_count: 0,
+            scroll_offset: 0,
+            runtime_guard: None,
+        };
+
+        let mut plain_controller = DashboardController::new(&snapshot);
+        let plain =
+            render_dashboard_snapshot(&options, &mut plain_controller, &snapshot, context).frame;
+        assert!(!plain.starts_with("\x1b[2;38;5;240m"));
+
+        let mut overlay_controller = DashboardController::new(&snapshot);
+        overlay_controller.overseer_overlay_open = true;
+        let overlay =
+            render_dashboard_snapshot(&options, &mut overlay_controller, &snapshot, context).frame;
+        assert!(overlay.starts_with("\x1b[2;38;5;240m"));
+        assert!(overlay.contains("OVERSEER"));
     }
 }
