@@ -28,6 +28,7 @@ import { Button } from "@/components/ui/button";
 import { Text } from "@/components/ui/text";
 import { getSidebarPresentation } from "@/lib/app-shell-layout";
 import { chatTopBarReserveHeight } from "@/lib/chat-chrome-layout";
+import { useChatPerfProbe } from "@/lib/chat-perf-probe";
 import { isDesktopZoomCommand, subscribeNativeAppCommands } from "@/lib/native-app-commands";
 import { resolveChromeTopInset } from "@/lib/native-safe-area";
 import { useRuntimeTuning } from "@/lib/runtime-tuning";
@@ -46,6 +47,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const sidebarPresentation = getSidebarPresentation(width);
   const usesPersistentSidebar = sidebarPresentation === "persistent";
   const usesDrawerSidebar = !usesPersistentSidebar;
+  useChatPerfProbe("shell", `${Math.round(width)} ${sidebarPresentation}`);
 
   const [sidebarOpen, setSidebarOpen] = useAtom(sidebarOpenAtom);
   const setDesktopAppZoom = useSetAtom(desktopAppZoomAtom);

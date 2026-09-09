@@ -59,6 +59,7 @@ import { AgentManagementPanel } from "@/components/agent-management-panel";
 import { TeammatePanel } from "@/components/teammate-panel";
 import { ChatChromeMotion } from "@/components/ChatChromeMotion";
 import { ChatNewMessagesBadge } from "@/components/ChatNewMessagesBadge";
+import { ChatPerfHud } from "@/components/ChatPerfHud";
 import { Button } from "@/components/ui/button";
 import { Input, NO_BROWSER_FOCUS_RING } from "@/components/ui/input";
 import { MessageBlock } from "@/components/MessageBlock";
@@ -128,6 +129,7 @@ import {
 } from "@/lib/chat-visible-transcript";
 import { chatFrozenNewMessageCount } from "@/lib/chat-new-message-badge";
 import { canUseChatSplitView, chatOutputPaneVisibility } from "@/lib/chat-output-mode";
+import { useChatPerfProbe } from "@/lib/chat-perf-probe";
 import { chatViewportKeyForRoute } from "@/lib/chat-viewport-key";
 import { CHAT_OUTPUT_CAPTURE_START_LINE } from "@/lib/chat-output-constants";
 import {
@@ -541,6 +543,7 @@ export default function ChatScreen() {
   const router = useRouter();
   const pathname = usePathname();
   const { width, height: windowHeight } = useWindowDimensions();
+  useChatPerfProbe("chat-screen", `${Math.round(width)} ${agentOutputViewMode}`);
   const insets = useSafeAreaInsets();
   const keyboardVisible = useKeyboardVisible(Platform.OS !== "web");
   const appVisible = useAppVisible();
@@ -2526,6 +2529,7 @@ export default function ChatScreen() {
               </View>
             )}
             {showComposerFooter ? composerFooter : null}
+            <ChatPerfHud />
           </View>
         </View>
       </View>
@@ -2613,6 +2617,7 @@ function AgentTerminalOutputPane({
   sessionKey: string;
   topContentInset: number;
 }) {
+  useChatPerfProbe("terminal-pane", `${dividerWidth} ${sessionKey.slice(-6)}`);
   const outputPlain = useAtomValue(outputBufferFamily(sessionKey));
   const outputAnsi = useAtomValue(outputAnsiFamily(sessionKey));
   const outputAvailable = useAtomValue(outputAvailableFamily(sessionKey));
@@ -2814,6 +2819,7 @@ const AgentChatSessionViewport = React.forwardRef<
   },
   ref,
 ) {
+  useChatPerfProbe("chat-viewport", `${allMessages.length} ${sessionKey.slice(-6)}`);
   const liveChatTranscript = useMemo(
     () =>
       chatVisibleTranscriptForPinned({
@@ -3135,6 +3141,7 @@ const AgentChatTranscript = React.memo(
     },
     ref,
   ) {
+    useChatPerfProbe("chat-transcript", `${messages.length} ${dividerWidth}`);
     const extraContentPadding = useSharedValue(bottomContentInset);
 
     useEffect(() => {
