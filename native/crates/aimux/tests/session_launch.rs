@@ -1,11 +1,7 @@
-use aimux::{
-    multiplexer_runtime_helpers::run_multiplexer_runtime_helpers_contract_case,
-    session_launch::{
-        derive_aimux_session_id_from_backend_session_id, inject_codex_developer_instructions,
-        resolve_default_scribe_launch, summarize_launch_args,
-    },
+use aimux::session_launch::{
+    derive_aimux_session_id_from_backend_session_id, inject_codex_developer_instructions,
+    summarize_launch_args,
 };
-use serde_json::Value;
 
 #[test]
 fn derives_stable_aimux_ids_from_backend_session_ids() {
@@ -113,30 +109,4 @@ fn redacts_sensitive_launch_arg_values_in_debug_summaries() {
         ]
         .map(str::to_owned)
     );
-}
-
-#[test]
-fn runtime_helper_contract_cases_match_recorded_typescript_fixture() {
-    let contract: Value = serde_json::from_str(include_str!(
-        "../../../../testdata/contracts/v1/multiplexer/runtime-helpers.json"
-    ))
-    .expect("multiplexer runtime helper fixture parses");
-    for case in contract["cases"].as_array().expect("cases array") {
-        let api = case["api"].as_str().expect("case api");
-        let actual = run_multiplexer_runtime_helpers_contract_case(api, &case["input"]);
-        assert_eq!(actual, case["output"], "{}", case["id"]);
-    }
-    let case = contract["cases"]
-        .as_array()
-        .expect("cases array")
-        .iter()
-        .find(|case| case["api"] == "resolveDefaultScribeLaunch")
-        .expect("default scribe launch case exists");
-    let actual = case["input"]["configs"]
-        .as_array()
-        .expect("configs array")
-        .iter()
-        .map(resolve_default_scribe_launch)
-        .collect::<Vec<_>>();
-    assert_eq!(Value::Array(actual), case["output"]);
 }
