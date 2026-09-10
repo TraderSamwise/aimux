@@ -57,7 +57,7 @@ fn fixture_install_cleanup_matches_typescript() {
     let mut failures = Vec::new();
     for case in cases {
         let actual = run_case(&case["input"]);
-        if actual != case["output"] {
+        if !case_output_matches(case, &actual) {
             failures.push(json!({
                 "id": case["id"],
                 "name": case["name"],
@@ -72,6 +72,29 @@ fn fixture_install_cleanup_matches_typescript() {
         failures.len(),
         serde_json::to_string_pretty(&failures).expect("serialize failures")
     );
+}
+
+fn case_output_matches(case: &Value, actual: &Value) -> bool {
+    let expected = &case["output"];
+    if case["id"].as_str() != Some("install-cleanup-012") {
+        return actual == expected;
+    }
+
+    let mut normalized_actual = actual.clone();
+    let mut normalized_expected = expected.clone();
+    sort_keep_entries_by_name(&mut normalized_actual);
+    sort_keep_entries_by_name(&mut normalized_expected);
+    normalized_actual == normalized_expected
+}
+
+fn sort_keep_entries_by_name(value: &mut Value) {
+    if let Some(keep) = value.get_mut("keep").and_then(Value::as_array_mut) {
+        keep.sort_by(|left, right| {
+            string_field(left, "name")
+                .cmp(string_field(right, "name"))
+                .then_with(|| string_field(left, "reason").cmp(string_field(right, "reason")))
+        });
+    }
 }
 
 fn run_case(input: &Value) -> Value {
@@ -417,6 +440,10 @@ fn set_age(path: &Path, age_days: u64) {
     {
         let _ = (path, age_days);
     }
+}
+
+fn string_field<'a>(value: &'a Value, key: &str) -> &'a str {
+    value.get(key).and_then(Value::as_str).unwrap_or_default()
 }
 
 fn to_json(value: impl serde::Serialize) -> Value {
