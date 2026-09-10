@@ -55,7 +55,7 @@ jobs:
         run: yarn native:clippy:all-targets
 
   rust-tests:
-    name: Rust tests
+    name: Rust tests (Linux advisory)
     runs-on: ubuntu-latest
     # Advisory until master is green. cargo test uses --no-fail-fast so a red
     # library target cannot hide the integration binaries that carry most
@@ -65,7 +65,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Prepare job Aimux env
-        run: echo "AIMUX_HOME=$RUNNER_TEMP/aimux-home" >> "$GITHUB_ENV"
+        run: |
+          echo "AIMUX_HOME=$RUNNER_TEMP/aimux-home" >> "$GITHUB_ENV"
+          echo "AIMUX_TMUX_SOCKET_PATH=$RUNNER_TEMP/aimux-tmux.sock" >> "$GITHUB_ENV"
 
       - name: Install Rust toolchain
         run: rustup toolchain install --profile minimal
@@ -94,6 +96,56 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y tmux
+
+      - name: cargo test
+        run: yarn native:test
+
+  rust-tests-macos:
+    name: Rust tests (macOS)
+    runs-on: macos-latest
+    # Temporary until the first macOS CI run proves green. This job is the
+    # intended blocking Rust test gate because the Node parity contracts were
+    # captured on macOS; remove continue-on-error once it reports zero failures.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare job Aimux env
+        run: |
+          echo "AIMUX_HOME=$RUNNER_TEMP/aimux-home" >> "$GITHUB_ENV"
+          echo "AIMUX_TMUX_SOCKET_PATH=$RUNNER_TEMP/aimux-tmux.sock" >> "$GITHUB_ENV"
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install --profile minimal
+
+      - name: Cache cargo artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/git
+            ~/.cargo/registry
+            /tmp/aimux-cargo-target-ci
+          key: ${{ runner.os }}-${{ github.job }}-cargo-${{ hashFiles('native/Cargo.lock') }}-${{ hashFiles('native/crates/**/*.rs') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ github.job }}-cargo-${{ hashFiles('native/Cargo.lock') }}-
+            ${{ runner.os }}-${{ github.job }}-cargo-
+
+      - name: Prepare isolated Aimux home
+        run: |
+          mkdir -p "$AIMUX_HOME"
+          # This marker intentionally disables the cargo-test materialization
+          # guard for CI's disposable AIMUX_HOME. A test that relies on ambient
+          # AIMUX_HOME can pass here while being refused on a developer laptop.
+          printf '{"kind":"github-actions","ownerPid":%s}\n' "$$" > "$AIMUX_HOME/test-isolation.json"
+
+      - name: Ensure tmux is available
+        run: |
+          if command -v tmux >/dev/null 2>&1; then
+            tmux -V
+          else
+            brew install tmux
+            tmux -V
+          fi
 
       - name: cargo test
         run: yarn native:test
