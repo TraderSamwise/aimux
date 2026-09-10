@@ -9,13 +9,14 @@ on:
 env:
   CARGO_INCREMENTAL: "0"
   CARGO_TARGET_DIR: /tmp/aimux-cargo-target-ci
-  AIMUX_HOME: ${{ runner.temp }}/aimux-home
   AIMUX_DAEMON_PORT: "47390"
 
 jobs:
   rust-format-advisory:
     name: Rust format advisory
     runs-on: ubuntu-latest
+    env:
+      AIMUX_HOME: ${{ runner.temp }}/aimux-home
     # Advisory until the existing master formatting drift is committed. Another
     # agent currently has the formatted versions dirty in the shared checkout,
     # so a working-tree fmt check can look clean while master blobs still fail.
@@ -31,6 +32,8 @@ jobs:
   rust-clippy:
     name: Rust clippy all targets
     runs-on: ubuntu-latest
+    env:
+      AIMUX_HOME: ${{ runner.temp }}/aimux-home
     steps:
       - uses: actions/checkout@v4
 
@@ -54,6 +57,8 @@ jobs:
   rust-tests:
     name: Rust tests
     runs-on: ubuntu-latest
+    env:
+      AIMUX_HOME: ${{ runner.temp }}/aimux-home
     # Advisory until master is green. cargo test uses --no-fail-fast so a red
     # library target cannot hide the integration binaries that carry most
     # fixture and contract coverage.
