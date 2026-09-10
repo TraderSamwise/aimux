@@ -297,6 +297,8 @@ pub fn lifecycle_spawn_text_route(
         "worktreePath": worktree_path.unwrap_or_else(|| project_root.clone()),
         "opened": open,
         "tmuxTarget": json.get("tmuxTarget").cloned().unwrap_or(Value::Null),
+        "warning": json.get("warning").cloned().unwrap_or(Value::Null),
+        "warnings": json.get("warnings").cloned().unwrap_or(Value::Null),
     });
     text_or_json_lines(
         route_url,

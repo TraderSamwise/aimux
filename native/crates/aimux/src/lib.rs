@@ -160,6 +160,7 @@ pub mod tmux_session_transport;
 pub mod tmux_startup_interstitials;
 pub mod tmux_statusline_script;
 pub mod tmux_window_open;
+pub mod tool_capabilities;
 pub mod tool_hooks;
 pub mod tool_hooks_contract;
 pub mod tool_output_watchers;

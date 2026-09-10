@@ -1645,11 +1645,14 @@ fn renders_unavailable_footer_hint_for_blocked_offline_session() {
     let fixture: DesktopStateGoldenFixture =
         serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
     let mut snapshot = fixture.runtime_light.clone();
-    snapshot.sessions[0].status = SessionStatus::Offline;
-    snapshot.sessions[0].extra.insert(
-        "restoreState".into(),
-        serde_json::Value::String("blocked".into()),
-    );
+    let offline = snapshot
+        .sessions
+        .iter_mut()
+        .find(|session| session.id == "codex-offline")
+        .expect("offline session fixture");
+    offline.restore_state = Some("blocked".into());
+    offline.restore_blocked_reason =
+        Some("agent tool \"aider\" does not support exact backend resume".into());
 
     let result = render_dashboard_frame(&DashboardRenderInput {
         snapshot: &snapshot,
@@ -1658,7 +1661,7 @@ fn renders_unavailable_footer_hint_for_blocked_offline_session() {
         cols: 140,
         rows: 24,
         nav_level: DashboardNavLevel::Sessions,
-        selected_session_id: Some("claude-0"),
+        selected_session_id: Some("codex-offline"),
         selected_service_id: None,
         focused_worktree_path: None,
         runtime_label: None,
@@ -1668,12 +1671,15 @@ fn renders_unavailable_footer_hint_for_blocked_offline_session() {
         hidden_offline_agent_count: 0,
         scroll_offset: 0,
         footer_message: None,
-        details_sidebar_visible: false,
+        details_sidebar_visible: true,
         preview_source: "output",
         scribe_preview_entries: &[],
     });
     let plain = strip_ansi(&result.frame);
 
+    assert!(plain.contains("restore blocked:"));
+    assert!(plain.contains("Restore: agent tool \"aider\" does not support exact"));
+    assert!(plain.contains("backend resume"));
     assert!(plain.contains("Enter/→/l unavailable"));
     assert!(plain.contains("x kill"));
 }

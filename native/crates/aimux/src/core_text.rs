@@ -470,10 +470,17 @@ pub fn render_core_remote_security_device_mutation_line(action: &str, device: &V
 }
 
 pub fn render_core_lifecycle_spawn_lines(payload: &Value) -> Vec<String> {
-    vec![format!(
+    let mut lines = vec![format!(
         "spawned {}",
         js_string(field(payload, "sessionId"))
-    )]
+    )];
+    if let Some(warning) = field(payload, "warning")
+        .and_then(Value::as_str)
+        .filter(|warning| !warning.trim().is_empty())
+    {
+        lines.push(format!("warning: {warning}"));
+    }
+    lines
 }
 pub fn render_core_lifecycle_stop_lines(payload: &Value) -> Vec<String> {
     vec![format!(

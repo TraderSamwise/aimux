@@ -21,6 +21,7 @@ use crate::session_bootstrap::{
 };
 use crate::team_contract::{is_overseer_session, is_scribe_session};
 use crate::tmux::project_session;
+use crate::tool_capabilities::restart_restore_warning;
 
 use super::LIVE_STATUSES;
 use super::agent_launch_helpers::*;
@@ -203,6 +204,7 @@ pub(super) fn route_agent_spawn(
         Err(error) => return json_error(500, error),
     };
     let backend_session_id = launch_backend_session_id(tool_config, &command, &args);
+    let restore_warning = restart_restore_warning(&tool_key, Some(tool_config));
     let session_id = trimmed_string(body.get("sessionId")).unwrap_or_else(|| {
         generated_session_id_for_launch(&topology, &command, backend_session_id.as_deref())
     });
@@ -242,7 +244,7 @@ pub(super) fn route_agent_spawn(
                     context.project_state_dir(),
                     worktree_path.as_deref(),
                 );
-                json!({
+                let mut payload = json!({
                     "sessionId": result.session_id,
                     "tmuxTarget": {
                         "sessionName": result.target.session_name,
@@ -250,7 +252,16 @@ pub(super) fn route_agent_spawn(
                         "windowIndex": result.target.window_index,
                         "windowName": result.target.window_name,
                     }
-                })
+                });
+                if let Some(warning) = restore_warning {
+                    object_insert_mut(&mut payload, "warning", Value::String(warning.clone()));
+                    object_insert_mut(
+                        &mut payload,
+                        "warnings",
+                        json!([{ "kind": "restartRestore", "message": warning }]),
+                    );
+                }
+                payload
             },
             "agent.spawn",
             "agent",

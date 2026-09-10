@@ -101,6 +101,12 @@ aimux thread list --project /path/to/repo --json
 Aimux reads defaults, then `~/.aimux/config.json`, then `.aimux/config.json`
 inside the project. Project config wins over global config.
 
+Tool restart restore is capability-based. A tool supports exact restart restore
+only when its config has `resumeArgs` containing `{sessionId}` and
+`resumeByBackendSessionId` is not `false`. Tools without that capability can
+still be launched, but Aimux warns at spawn time and labels the session with the
+restore-blocked reason if it is offline after a restart.
+
 Automatic project scribes are disabled by default. To create one whenever a
 project service starts, set a default scribe tool:
 

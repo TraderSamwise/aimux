@@ -316,6 +316,8 @@ fn agent_spawn_launches_tool_and_records_topology_metadata() {
     assert_eq!(response.body["tmuxTarget"]["windowId"], "@11");
     assert_eq!(response.body["tmuxTarget"]["windowIndex"], 11);
     assert_eq!(response.body["tmuxTarget"]["windowName"], "/bin/mock");
+    assert!(response.body.get("warning").is_none());
+    assert!(response.body.get("warnings").is_none());
     assert_eq!(response.body["transition"]["operation"], "agent.spawn");
     assert_eq!(runtime.created[0].name, "/bin/mock");
     assert_eq!(runtime.created[0].cwd, worktree.to_string_lossy());
@@ -338,6 +340,39 @@ fn agent_spawn_launches_tool_and_records_topology_metadata() {
     assert_eq!(session["status"], "running");
     assert_eq!(session["toolConfigKey"], "mock");
     assert_eq!(session["worktreePath"], worktree.to_string_lossy().as_ref());
+    cleanup(project);
+}
+
+#[test]
+fn agent_spawn_warns_when_tool_lacks_exact_backend_resume() {
+    let project = temp_project("agent-spawn-restore-warning");
+    write_project_tool_config(&project);
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::SPAWN,
+        Some(&json!({
+            "tool": "mock-unresumable",
+            "sessionId": "mock-unresumable-new",
+            "open": false
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    let warning = "agent tool \"mock-unresumable\" does not support exact backend resume; this session cannot be restored after an Aimux restart";
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["sessionId"], "mock-unresumable-new");
+    assert_eq!(response.body["warning"], warning);
+    assert_eq!(
+        response.body["warnings"],
+        json!([{ "kind": "restartRestore", "message": warning }])
+    );
+    assert_eq!(runtime.created.len(), 1);
     cleanup(project);
 }
 
@@ -3440,6 +3475,13 @@ fn write_project_tool_config(project: &Path) {
                     "resumeArgs": ["--resume", "{sessionId}"],
                     "forkArgs": ["--fork", "{sessionId}"],
                     "resumeByBackendSessionId": true
+                },
+                "mock-unresumable": {
+                    "command": "/bin/mock-unresumable",
+                    "args": ["--base-unresumable"],
+                    "enabled": true,
+                    "wrapperEnabled": true,
+                    "resumeFallback": ["--restore-chat-history"]
                 }
             }
         }))

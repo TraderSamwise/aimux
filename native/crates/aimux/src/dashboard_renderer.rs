@@ -1049,6 +1049,7 @@ fn agent_row(
     let hint_tone = |active: Tone| if offline { Tone::Muted } else { active };
     let trailing = [
         session_activity_chips(session),
+        restore_blocked_chip(session),
         if is_recently_idle(session) {
             style("idle now", hint_tone(Tone::Ready))
         } else {
@@ -1469,6 +1470,23 @@ fn session_activity_chips(session: &DashboardSession) -> String {
         ));
     }
     chips.join(" ")
+}
+
+fn restore_blocked_chip(session: &DashboardSession) -> String {
+    if !is_session_offline(session) {
+        return String::new();
+    }
+    let Some(reason) = session
+        .restore_blocked_reason
+        .as_deref()
+        .filter(|reason| !reason.trim().is_empty())
+    else {
+        return String::new();
+    };
+    chip(
+        &format!("restore blocked: {}", truncate(reason, 42)),
+        ChipTone::Danger,
+    )
 }
 
 fn session_status_dot(session: &DashboardSession) -> String {
@@ -1931,6 +1949,13 @@ fn render_selected_details_panel(
                 width,
             );
         }
+    }
+    if let Some(reason) = selected
+        .restore_blocked_reason
+        .as_deref()
+        .filter(|reason| !reason.trim().is_empty())
+    {
+        push_kv(&mut lines, "Restore", reason, width);
     }
     if let Some(message) = selected
         .last_event
@@ -4012,6 +4037,9 @@ fn render_graveyard_details(
         }
         if let Some(backend) = string_at(entry, &["backendSessionId"]) {
             lines.extend(wrap_key_value("Backend", backend, width));
+        }
+        if let Some(reason) = string_at(entry, &["restoreBlockedReason"]) {
+            lines.extend(wrap_key_value("Restore", reason, width));
         }
         if let Some(headline) = string_at(entry, &["headline"]) {
             lines.extend(wrap_key_value("Headline", headline, width));

@@ -82,6 +82,19 @@ impl DaemonAgentTextRuntime for FakeAgentRuntime {
             ensure_project: Some(options.ensure_project),
         });
         match route_path {
+            project_routes::agents::SPAWN if body["tool"] == "aider" => {
+                ProjectServiceJsonResult::ok(
+                    "/repo",
+                    json!({
+                        "sessionId": "aider-1",
+                        "warning": "agent tool \"aider\" does not support exact backend resume; this session cannot be restored after an Aimux restart",
+                        "warnings": [{
+                            "kind": "restartRestore",
+                            "message": "agent tool \"aider\" does not support exact backend resume; this session cannot be restored after an Aimux restart"
+                        }]
+                    }),
+                )
+            }
             project_routes::agents::SPAWN => {
                 ProjectServiceJsonResult::ok("/repo", json!({ "sessionId": "claude-1" }))
             }
@@ -165,6 +178,21 @@ fn lifecycle_routes_match_agent_project_service_contracts() {
             "extraArgs": ["--model", "gpt-5"],
             "open": false
         })
+    );
+
+    let spawned_unresumable = route_agent_text_request(
+        &mut runtime,
+        "POST",
+        &format!(
+            "{}?project=.&tool=aider&open=0",
+            CORE_API_ROUTES.lifecycle_spawn_text
+        ),
+        None,
+    )
+    .expect("unresumable spawn route");
+    assert_eq!(
+        text_body(spawned_unresumable),
+        "spawned aider-1\nwarning: agent tool \"aider\" does not support exact backend resume; this session cannot be restored after an Aimux restart\n"
     );
 
     let service = route_agent_text_request(

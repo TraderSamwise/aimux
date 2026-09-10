@@ -8,6 +8,7 @@ use crate::runtime_topology::{
     list_topology_session_states, read_runtime_topology, runtime_topology_path,
 };
 use crate::team_contract::{project_control_display_role, session_with_stored_control_flags};
+use crate::tool_capabilities::exact_backend_resume_blocked_reason;
 
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::http::{query_params, trimmed_query};
@@ -407,10 +408,8 @@ pub fn describe_session_restorability(
     if tool_config.is_none() {
         return Some(blocked_restorability("unknown agent tool"));
     }
-    if !exact_backend_resume_supported(tool_config) {
-        return Some(blocked_restorability(&format!(
-            "agent tool \"{tool_key}\" does not support exact backend resume"
-        )));
+    if let Some(reason) = exact_backend_resume_blocked_reason(tool_key, tool_config) {
+        return Some(blocked_restorability(&reason));
     }
     if string_field(session, "backendSessionId").is_none()
         && session.get("freshRelaunchAllowed").and_then(Value::as_bool) != Some(true)
@@ -474,24 +473,6 @@ fn should_relaunch_fresh_session(
         return false;
     }
     session.get("freshRelaunchAllowed").and_then(Value::as_bool) == Some(true)
-}
-
-fn exact_backend_resume_supported(tool_config: Option<&Value>) -> bool {
-    let Some(tool_config) = tool_config else {
-        return false;
-    };
-    let has_session_placeholder = tool_config
-        .get("resumeArgs")
-        .and_then(Value::as_array)
-        .is_some_and(|args| {
-            args.iter()
-                .any(|arg| arg.as_str().is_some_and(|arg| arg.contains("{sessionId}")))
-        });
-    has_session_placeholder
-        && tool_config
-            .get("resumeByBackendSessionId")
-            .and_then(Value::as_bool)
-            != Some(false)
 }
 
 fn blocked_restorability(reason: &str) -> Value {

@@ -112,6 +112,11 @@ fn computes_offline_restore_state_like_typescript() {
         find(&sessions, "unknown-tool")["restoreBlockedReason"],
         "unknown agent tool"
     );
+    assert_eq!(find(&sessions, "aider-offline")["restoreState"], "blocked");
+    assert_eq!(
+        find(&sessions, "aider-offline")["restoreBlockedReason"],
+        "agent tool \"aider\" does not support exact backend resume"
+    );
 }
 
 #[test]
@@ -526,7 +531,8 @@ fn topology_fixture() -> Value {
             { "id": "node-offline", "rigId": "rig-1", "logicalId": "codex-offline", "toolConfigKey": "codex", "createdAt": "2026-01-01T00:00:00.000Z" },
             { "id": "node-fresh", "rigId": "rig-1", "logicalId": "codex-fresh", "toolConfigKey": "codex", "createdAt": "2026-01-01T00:00:00.000Z" },
             { "id": "node-error", "rigId": "rig-1", "logicalId": "codex-error", "toolConfigKey": "codex", "createdAt": "2026-01-01T00:00:00.000Z" },
-            { "id": "node-unknown", "rigId": "rig-1", "logicalId": "unknown-tool", "toolConfigKey": "custom", "createdAt": "2026-01-01T00:00:00.000Z" }
+            { "id": "node-unknown", "rigId": "rig-1", "logicalId": "unknown-tool", "toolConfigKey": "custom", "createdAt": "2026-01-01T00:00:00.000Z" },
+            { "id": "node-aider", "rigId": "rig-1", "logicalId": "aider-offline", "toolConfigKey": "aider", "createdAt": "2026-01-01T00:00:00.000Z" }
         ],
         "edges": [],
         "bindings": [],
@@ -536,6 +542,7 @@ fn topology_fixture() -> Value {
             { "id": "codex-fresh", "nodeId": "node-fresh", "status": "offline", "command": "codex", "freshRelaunchAllowed": true, "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" },
             { "id": "codex-error", "nodeId": "node-error", "status": "offline", "command": "codex", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" },
             { "id": "unknown-tool", "nodeId": "node-unknown", "status": "offline", "command": "custom", "backendSessionId": "backend-custom", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" },
+            { "id": "aider-offline", "nodeId": "node-aider", "status": "offline", "command": "aider", "backendSessionId": "backend-aider", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" },
             { "id": "graveyarded", "nodeId": "node-live", "status": "graveyard", "command": "codex", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" }
         ],
         "services": [],

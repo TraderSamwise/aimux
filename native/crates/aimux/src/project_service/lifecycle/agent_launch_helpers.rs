@@ -5,6 +5,7 @@ use super::ids::{sha256_hex, short_id};
 use super::json_helpers::{
     array_field, string_array_field, string_field, string_field_value, trimmed_string,
 };
+use crate::tool_capabilities::supports_exact_backend_resume;
 
 pub(super) fn tool_config_key_for_session(session: &Value) -> Option<String> {
     trimmed_string(session.get("toolConfigKey"))
@@ -27,17 +28,7 @@ pub(super) fn can_resume_with_backend_session_id(
     backend_session_id: Option<&str>,
 ) -> bool {
     backend_session_id.is_some_and(|id| !id.trim().is_empty())
-        && tool_config
-            .get("resumeArgs")
-            .and_then(Value::as_array)
-            .is_some_and(|args| {
-                args.iter()
-                    .any(|arg| arg.as_str().is_some_and(|arg| arg.contains("{sessionId}")))
-            })
-        && tool_config
-            .get("resumeByBackendSessionId")
-            .and_then(Value::as_bool)
-            != Some(false)
+        && supports_exact_backend_resume(Some(tool_config))
 }
 
 pub(super) fn resume_args(tool_config: &Value, backend_session_id: &str) -> Vec<String> {

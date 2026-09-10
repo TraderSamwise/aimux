@@ -712,6 +712,13 @@ fn run_root_tool_launch_command(args: &[String]) -> Result<ExitCode> {
         return Ok(ExitCode::from(1));
     }
     let payload = parse_single_json_stdout(&execution.stdout)?;
+    if let Some(warning) = payload
+        .get("warning")
+        .and_then(Value::as_str)
+        .filter(|warning| !warning.trim().is_empty())
+    {
+        eprintln!("warning: {warning}");
+    }
     open_payload_target_from_foreground(&payload)?;
     Ok(ExitCode::SUCCESS)
 }
