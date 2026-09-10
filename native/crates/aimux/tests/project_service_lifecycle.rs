@@ -1570,7 +1570,7 @@ fn service_create_launches_detached_window_with_metadata_policy_and_topology() {
             .last()
             .is_some_and(|arg| arg.contains("Service command exited with status"))
     );
-    assert!(state_dir.join("shell-integration/.zshrc").exists());
+    assert!(expected_shell_rc_path(&state_dir).exists());
     assert_eq!(runtime.metadata[0].0, "@11");
     assert_eq!(runtime.metadata[0].1["kind"], "service");
     assert_eq!(runtime.metadata[0].1["sessionId"], "svc-dev");
@@ -3642,4 +3642,19 @@ fn temp_plain_project(label: &str) -> PathBuf {
 
 fn cleanup(path: PathBuf) {
     let _ = remove_dir_all(path);
+}
+
+fn expected_shell_rc_path(state_dir: &Path) -> PathBuf {
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "zsh".to_owned());
+    let shell_base = Path::new(&shell)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or(&shell)
+        .to_ascii_lowercase();
+    let rc_name = if shell_base.contains("bash") {
+        "aimux-bashrc"
+    } else {
+        ".zshrc"
+    };
+    state_dir.join("shell-integration").join(rc_name)
 }
