@@ -1,4 +1,4 @@
-pub mod agent_display_contract;
+pub mod agent_display;
 pub mod agent_output_liveness_contract;
 pub mod agent_prompt_delivery;
 pub mod agent_prompt_delivery_contract;

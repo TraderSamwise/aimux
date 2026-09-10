@@ -239,7 +239,7 @@ fn serialization_and_status_chips_match_fast_control_shapes() {
         &json!({}),
     );
 
-    assert_eq!(items[0].label, "claude(coder)");
+    assert_eq!(items[0].label, "claude (coder)");
     assert_eq!(
         serialize_fast_control_item(&items[0]),
         json!({
@@ -257,7 +257,7 @@ fn serialization_and_status_chips_match_fast_control_shapes() {
                 "activity": "running",
                 "attention": "needs_input"
             },
-            "label": "claude(coder)",
+            "label": "claude (coder)",
             "urgency": 0,
             "activity": 1,
             "recentRank": 9007199254740991i64,

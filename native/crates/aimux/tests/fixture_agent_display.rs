@@ -1,6 +1,9 @@
-use aimux::agent_display_contract::run_agent_display_contract_case;
+use aimux::agent_display::{
+    AgentDisplayInput, agent_compact_identity, agent_role_label, agent_short_name,
+    agent_tool_name, is_generated_agent_label,
+};
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 const FIXTURE: &str = include_str!("../../../../testdata/contracts/v1/agent-display/labels.json");
 
@@ -36,4 +39,24 @@ fn agent_display_contract_matches_typescript() {
     }
 
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+}
+
+fn run_agent_display_contract_case(input: &Value) -> Value {
+    let api = input.get("api").and_then(Value::as_str).unwrap_or_default();
+    let default_agent = Value::Null;
+    let agent = AgentDisplayInput::from_value(input.get("agent").unwrap_or(&default_agent));
+    match api {
+        "agentToolName" => json!(agent_tool_name(&agent)),
+        "isGeneratedAgentLabel" => json!(is_generated_agent_label(
+            input
+                .get("label")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            &agent
+        )),
+        "agentShortName" => json!(agent_short_name(&agent)),
+        "agentRoleLabel" => json!(agent_role_label(&agent)),
+        "agentCompactIdentity" => json!(agent_compact_identity(&agent)),
+        _ => panic!("unknown agent display contract api: {api}"),
+    }
 }
