@@ -424,15 +424,17 @@ fn restart_control_plane_from_cli(
     )
 }
 
-struct RestartControlPlaneCliDeps<AssertNewer, StopDaemon, EnsureDaemon, RequestRestart> {
-    should_stop_daemon: bool,
-    assert_not_stopping_newer_daemon: AssertNewer,
-    stop_daemon_process: StopDaemon,
-    ensure_daemon_running: EnsureDaemon,
-    request_core_command: RequestRestart,
+#[doc(hidden)]
+pub struct RestartControlPlaneCliDeps<AssertNewer, StopDaemon, EnsureDaemon, RequestRestart> {
+    pub should_stop_daemon: bool,
+    pub assert_not_stopping_newer_daemon: AssertNewer,
+    pub stop_daemon_process: StopDaemon,
+    pub ensure_daemon_running: EnsureDaemon,
+    pub request_core_command: RequestRestart,
 }
 
-fn restart_control_plane_from_cli_with<AssertNewer, StopDaemon, EnsureDaemon, RequestRestart>(
+#[doc(hidden)]
+pub fn restart_control_plane_from_cli_with<AssertNewer, StopDaemon, EnsureDaemon, RequestRestart>(
     project_root: Option<&str>,
     deps: RestartControlPlaneCliDeps<AssertNewer, StopDaemon, EnsureDaemon, RequestRestart>,
 ) -> Result<RestartControlPlaneTextResult, String>
