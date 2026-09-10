@@ -268,6 +268,7 @@ fn stop_daemon_process_info_preserves_project_state_and_signals_only_daemon() {
     save_daemon_state(resolver.daemon_state_path(), &state).expect("save daemon state");
 
     let mut signaled = Vec::new();
+    let mut waits = Vec::new();
     let stopped = stop_daemon_process_info_with(
         &resolver,
         &info,
@@ -277,17 +278,106 @@ fn stop_daemon_process_info_preserves_project_state_and_signals_only_daemon() {
             signaled.push((pid, signal.to_owned()));
             Ok(())
         },
+        |info, timeout_ms| {
+            waits.push((info.pid, timeout_ms));
+            true
+        },
     )
     .expect("stop daemon process");
 
     assert_eq!(stopped.daemon, info);
     assert!(stopped.stopped_project_services.is_empty());
     assert_eq!(signaled, vec![(9_999_991, "SIGTERM".into())]);
+    assert_eq!(waits, vec![(9_999_991, 1_500)]);
     assert_eq!(
         fs::read_to_string(resolver.daemon_info_path()).expect("read daemon info"),
         ""
     );
     assert_eq!(load_daemon_state(resolver.daemon_state_path()), state);
+}
+
+#[test]
+fn stop_daemon_process_info_escalates_when_sigterm_does_not_exit() {
+    let test_dir = TestDir::new();
+    let resolver = test_dir.resolver();
+    let info = AimuxDaemonInfo {
+        pid: 9_999_991,
+        port: 43190,
+        started_at: "then".into(),
+        updated_at: "now".into(),
+    };
+    save_daemon_info(resolver.daemon_info_path(), &info).expect("save daemon info");
+
+    let mut signaled = Vec::new();
+    let mut waits = Vec::new();
+    let mut wait_results = [false, true].into_iter();
+    let stopped = stop_daemon_process_info_with(
+        &resolver,
+        &info,
+        "SIGTERM",
+        |_| true,
+        |pid, signal| {
+            signaled.push((pid, signal.to_owned()));
+            Ok(())
+        },
+        |info, timeout_ms| {
+            waits.push((info.pid, timeout_ms));
+            wait_results.next().unwrap_or(true)
+        },
+    )
+    .expect("stop daemon process after kill");
+
+    assert_eq!(stopped.daemon, info);
+    assert_eq!(
+        signaled,
+        vec![(9_999_991, "SIGTERM".into()), (9_999_991, "SIGKILL".into())]
+    );
+    assert_eq!(waits, vec![(9_999_991, 1_500), (9_999_991, 1_500)]);
+    assert_eq!(
+        fs::read_to_string(resolver.daemon_info_path()).expect("read daemon info"),
+        ""
+    );
+}
+
+#[test]
+fn stop_daemon_process_info_keeps_daemon_info_when_process_never_exits() {
+    let test_dir = TestDir::new();
+    let resolver = test_dir.resolver();
+    let info = AimuxDaemonInfo {
+        pid: 9_999_991,
+        port: 43190,
+        started_at: "then".into(),
+        updated_at: "now".into(),
+    };
+    save_daemon_info(resolver.daemon_info_path(), &info).expect("save daemon info");
+
+    let mut signaled = Vec::new();
+    let error = stop_daemon_process_info_with(
+        &resolver,
+        &info,
+        "SIGTERM",
+        |_| true,
+        |pid, signal| {
+            signaled.push((pid, signal.to_owned()));
+            Ok(())
+        },
+        |_, _| false,
+    )
+    .expect_err("non-exiting daemon must fail");
+
+    assert_eq!(
+        error.to_string(),
+        "timed out stopping aimux daemon pid=9999991"
+    );
+    assert_eq!(
+        signaled,
+        vec![(9_999_991, "SIGTERM".into()), (9_999_991, "SIGKILL".into())]
+    );
+    assert!(
+        fs::read_to_string(resolver.daemon_info_path())
+            .expect("read daemon info")
+            .contains("\"pid\": 9999991")
+    );
 }
 
 #[test]

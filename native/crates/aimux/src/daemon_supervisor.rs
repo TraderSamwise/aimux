@@ -531,19 +531,22 @@ pub fn stop_daemon_process_info(
         signal,
         |info| is_aimux_daemon_process(info.pid),
         send_signal,
+        wait_for_daemon_info_exit,
     )
 }
 
-pub fn stop_daemon_process_info_with<VerifyDaemon, Signal>(
+pub fn stop_daemon_process_info_with<VerifyDaemon, Signal, WaitDaemonExit>(
     resolver: &PathResolver,
     info: &AimuxDaemonInfo,
     signal: &str,
     verify_daemon_process: VerifyDaemon,
     mut send_signal_to_pid: Signal,
+    mut wait_daemon_exit: WaitDaemonExit,
 ) -> Result<StoppedDaemonInfo, DaemonSupervisorError>
 where
     VerifyDaemon: Fn(&AimuxDaemonInfo) -> bool,
     Signal: FnMut(i32, &str) -> io::Result<()>,
+    WaitDaemonExit: FnMut(&AimuxDaemonInfo, u64) -> bool,
 {
     signal_to_number(signal)?;
     if !verify_daemon_process(info) {
@@ -553,11 +556,33 @@ where
         )));
     }
     send_signal_to_pid(info.pid, signal)?;
+    let mut exited = wait_daemon_exit(info, 1_500);
+    if !exited && signal == "SIGTERM" {
+        let _ = send_signal_to_pid(info.pid, "SIGKILL");
+        exited = wait_daemon_exit(info, 1_500);
+    }
+    if !exited {
+        return Err(DaemonSupervisorError::Message(format!(
+            "timed out stopping aimux daemon pid={}",
+            info.pid
+        )));
+    }
     clear_daemon_info(resolver.daemon_info_path())?;
     Ok(StoppedDaemonInfo {
         daemon: info.clone(),
         stopped_project_services: Vec::new(),
     })
+}
+
+fn wait_for_daemon_info_exit(info: &AimuxDaemonInfo, timeout_ms: u64) -> bool {
+    let deadline = current_unix_millis() + u128::from(timeout_ms);
+    while current_unix_millis() < deadline {
+        if !is_aimux_daemon_process(info.pid) {
+            return true;
+        }
+        sleep_ms(100);
+    }
+    !is_aimux_daemon_process(info.pid)
 }
 
 pub fn stop_daemon_info_with<VerifyProject, VerifyDaemon, Signal>(
