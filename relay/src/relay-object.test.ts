@@ -738,7 +738,7 @@ describe("RelayObject owner device security", () => {
   it("delivers every repeated test push to Expo", async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValue(new Response(JSON.stringify({ data: [{ status: "ok" }] }), { status: 200 }));
+      .mockImplementation(async () => new Response(JSON.stringify({ data: [{ status: "ok" }] }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const storage = storageWithSockets([]);
     await storage.put("security-state:v1", {
@@ -786,7 +786,7 @@ describe("RelayObject owner device security", () => {
   it("delivers every daemon-originated mobile push to Expo", async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValue(new Response(JSON.stringify({ data: [{ status: "ok" }] }), { status: 200 }));
+      .mockImplementation(async () => new Response(JSON.stringify({ data: [{ status: "ok" }] }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const daemonSocket = fakeSocket(["daemon", "user:user_owner"]);
     const storage = storageWithSockets([daemonSocket]);
