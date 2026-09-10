@@ -4394,8 +4394,23 @@ mod tests {
     use std::rc::Rc;
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+    fn unique_temp_fixture_project_root(label: &str) -> PathBuf {
+        let sequence = TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        std::env::temp_dir()
+            .join(format!(
+                "aimux-expose-dashboard-cmd.{label}-{}-{sequence}-{timestamp}",
+                std::process::id()
+            ))
+            .join("repo")
+    }
 
     #[test]
     fn doctor_versions_tmux_snapshot_uses_runtime_tmux_manager() {
@@ -5056,13 +5071,7 @@ mod tests {
     #[test]
     fn ensure_project_refuses_nested_temp_fixture_repo_before_launch() {
         let fixture = restart_service_fixture("ensure-refuse-temp");
-        let project = PathBuf::from("/private/tmp")
-            .join(format!(
-                "aimux-expose-dashboard-cmd.{}-{}",
-                std::process::id(),
-                TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
-            ))
-            .join("repo");
+        let project = unique_temp_fixture_project_root("ensure-refuse-temp");
         fs::create_dir_all(project.join(".git")).expect("project git");
         let project = project.to_string_lossy().into_owned();
         let launcher = Arc::new(RestartTestLauncher::new(91_404));
