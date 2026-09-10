@@ -425,7 +425,13 @@
         "onComplete": true,
         "markReadOnView": true,
         "clearNeedsInputOnView": true,
-        "clearFormalInteractionsOnView": false
+        "clearFormalInteractionsOnView": false,
+        "deliveryRoles": {
+          "ordinary": true,
+          "overseerNeedsInput": true,
+          "overseerOther": false,
+          "scribe": false
+        }
       },
       "inputSha256": "de0e59cada54fcf9c5ff18c970d3261e1e18bdad49199e8ccf9cf9abb87a1e98"
     },
