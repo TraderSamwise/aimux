@@ -16,7 +16,7 @@ use aimux::project_service::router::{
     OscOutputTap, ProjectServiceRequestContext, route_project_service_request,
 };
 use aimux::runtime_topology::{coerce_runtime_topology, runtime_topology_path};
-use aimux::tmux::CapturePaneOptions;
+use aimux::tmux::{CapturePaneOptions, TmuxTarget};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::fs::{create_dir_all, remove_dir_all, write};
@@ -45,6 +45,21 @@ enum FakeRuntimeAction {
     Key(String, String),
     CarriageReturn(String),
     Escape(String),
+}
+
+struct FakeMetadataSyncRuntime {
+    output: String,
+    existing_metadata: Value,
+    actions: Vec<FakeMetadataSyncAction>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum FakeMetadataSyncAction {
+    Capture(String),
+    GetTarget(String, String),
+    GetMetadata(String),
+    SetMetadata(String, Value),
+    ApplyPolicy(String, String),
 }
 
 impl AgentOutputCaptureRuntime for FakeCaptureRuntime {
@@ -88,6 +103,63 @@ impl AgentOutputCaptureRuntime for FakeCaptureRuntime {
     fn send_escape(&mut self, window_id: &str) -> Result<(), String> {
         self.actions
             .push(FakeRuntimeAction::Escape(window_id.to_owned()));
+        Ok(())
+    }
+}
+
+impl AgentOutputCaptureRuntime for FakeMetadataSyncRuntime {
+    fn capture_pane(
+        &mut self,
+        window_id: &str,
+        _options: CapturePaneOptions,
+    ) -> Result<String, String> {
+        self.actions
+            .push(FakeMetadataSyncAction::Capture(window_id.to_owned()));
+        Ok(self.output.clone())
+    }
+
+    fn get_target_by_window_id(
+        &mut self,
+        session_name: &str,
+        window_id: &str,
+    ) -> Option<TmuxTarget> {
+        self.actions.push(FakeMetadataSyncAction::GetTarget(
+            session_name.to_owned(),
+            window_id.to_owned(),
+        ));
+        Some(TmuxTarget {
+            session_name: session_name.to_owned(),
+            window_id: window_id.to_owned(),
+            window_index: 1,
+            window_name: "codex".into(),
+            pane_dead: Some(false),
+        })
+    }
+
+    fn get_window_metadata(&mut self, window_id: &str) -> Option<Value> {
+        self.actions
+            .push(FakeMetadataSyncAction::GetMetadata(window_id.to_owned()));
+        Some(self.existing_metadata.clone())
+    }
+
+    fn set_window_metadata(&mut self, window_id: &str, metadata: &Value) -> Result<(), String> {
+        self.actions.push(FakeMetadataSyncAction::SetMetadata(
+            window_id.to_owned(),
+            metadata.clone(),
+        ));
+        self.existing_metadata = metadata.clone();
+        Ok(())
+    }
+
+    fn apply_managed_agent_window_policy(
+        &mut self,
+        window_id: &str,
+        tool_config_key: &str,
+    ) -> Result<(), String> {
+        self.actions.push(FakeMetadataSyncAction::ApplyPolicy(
+            window_id.to_owned(),
+            tool_config_key.to_owned(),
+        ));
         Ok(())
     }
 }
@@ -940,6 +1012,170 @@ fn output_route_rejects_offline_sessions_without_capture() {
         json!({ "ok": false, "error": "Session \"codex-offline\" is not running" })
     );
     assert!(runtime.calls.is_empty());
+    cleanup(project);
+}
+
+#[test]
+fn output_route_syncs_live_tmux_metadata_from_project_state() {
+    let project = temp_project("metadata-sync");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    update_session_metadata(&state_dir, "codex-1", |current| {
+        let mut object = current.as_object().cloned().unwrap_or_default();
+        object.insert(
+            "derived".into(),
+            json!({
+                "activity": "waiting",
+                "attention": "needs_input",
+                "unseenCount": 2,
+                "lastOutputAt": "2026-09-05T00:00:01.000Z"
+            }),
+        );
+        object.insert("status".into(), json!({ "text": "Waiting for input" }));
+        json!(object)
+    })
+    .expect("seed metadata");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeMetadataSyncRuntime {
+        output: "Ready\n".into(),
+        existing_metadata: json!({
+            "kind": "agent",
+            "sessionId": "codex-1",
+            "command": "codex",
+            "createdAt": "2026-09-05T00:00:00.000Z"
+        }),
+        actions: Vec::new(),
+    };
+
+    let response = route_agent_output_request_with_runtime(
+        &context,
+        "GET",
+        "/agents/output?sessionId=codex-1",
+        None,
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    let written = runtime
+        .actions
+        .iter()
+        .find_map(|action| match action {
+            FakeMetadataSyncAction::SetMetadata(_, metadata) => Some(metadata),
+            _ => None,
+        })
+        .expect("metadata write");
+    assert_eq!(written["sessionId"], "codex-1");
+    assert_eq!(written["activity"], "waiting");
+    assert_eq!(written["attention"], "needs_input");
+    assert_eq!(written["unseenCount"], 2);
+    assert_eq!(written["statusText"], "Waiting for input");
+    assert_eq!(written["userLabel"], "needs_input");
+    assert_eq!(written["recencyLabel"], "prompted");
+    assert_eq!(written["createdAt"], "2026-09-05T00:00:00.000Z");
+    assert!(
+        runtime
+            .actions
+            .iter()
+            .any(|action| action
+                == &FakeMetadataSyncAction::ApplyPolicy("@1".into(), "codex".into()))
+    );
+    cleanup(project);
+}
+
+#[test]
+fn output_route_skips_unchanged_tmux_metadata_and_applies_policy_once() {
+    let project = temp_project("metadata-sync-skip");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).unwrap();
+    let topology = coerce_runtime_topology(&json!({
+        "version": 1,
+        "generatedAt": "2026-09-05T00:00:00.000Z",
+        "rigs": [
+            { "id": "rig-1", "name": "aimux", "projectRoot": "/repo", "createdAt": "2026-09-05T00:00:00.000Z", "updatedAt": "2026-09-05T00:00:00.000Z" }
+        ],
+        "nodes": [
+            { "id": "node-live", "rigId": "rig-1", "logicalId": "codex-skip", "toolConfigKey": "codex", "createdAt": "2026-09-05T00:00:00.000Z" }
+        ],
+        "edges": [],
+        "bindings": [
+            { "id": "binding-live", "nodeId": "node-live", "tmuxSession": "aimux-repo", "tmuxWindowId": "@metadata-sync-skip", "tmuxWindowIndex": 1, "tmuxWindowName": "codex", "updatedAt": "2026-09-05T00:00:00.000Z" }
+        ],
+        "sessions": [
+            { "id": "codex-skip", "nodeId": "node-live", "status": "running", "command": "codex", "args": [], "toolConfigKey": "codex", "createdAt": "2026-09-05T00:00:00.000Z", "updatedAt": "2026-09-05T00:00:00.000Z" }
+        ],
+        "services": [],
+        "worktrees": [],
+        "worktreeGraveyard": [],
+        "teamRoles": [],
+        "remoteClients": [],
+        "lifecycleOperations": [],
+        "exchangeRefs": []
+    }))
+    .unwrap();
+    write(
+        runtime_topology_path(&state_dir),
+        serde_yaml::to_string(&topology).unwrap(),
+    )
+    .unwrap();
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::new(),
+        },
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeMetadataSyncRuntime {
+        output: "Ready\n".into(),
+        existing_metadata: json!({
+            "kind": "agent",
+            "sessionId": "codex-skip",
+            "command": "codex",
+            "args": [],
+            "toolConfigKey": "codex",
+            "overseer": false,
+            "scribe": false,
+            "projectControl": false,
+            "userLabel": "ready",
+            "createdAt": "2026-09-05T00:00:00.000Z"
+        }),
+        actions: Vec::new(),
+    };
+
+    for _ in 0..2 {
+        let response = route_agent_output_request_with_runtime(
+            &context,
+            "GET",
+            "/agents/output?sessionId=codex-skip",
+            None,
+            &mut runtime,
+        )
+        .unwrap();
+        assert_eq!(response.status, 200);
+    }
+
+    assert!(
+        runtime
+            .actions
+            .iter()
+            .all(|action| !matches!(action, FakeMetadataSyncAction::SetMetadata(_, _))),
+        "unchanged metadata should not be rewritten: {:?}",
+        runtime.actions
+    );
+    let policy_count = runtime
+        .actions
+        .iter()
+        .filter(|action| {
+            matches!(
+                action,
+                FakeMetadataSyncAction::ApplyPolicy(window_id, tool)
+                    if window_id == "@metadata-sync-skip" && tool == "codex"
+            )
+        })
+        .count();
+    assert_eq!(policy_count, 1);
     cleanup(project);
 }
 

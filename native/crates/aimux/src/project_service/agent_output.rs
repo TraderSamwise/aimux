@@ -16,6 +16,7 @@ use crate::remote_access::{RemoteActor, RemoteActorRole, parse_remote_actor};
 use crate::runtime_topology::{
     list_topology_session_states, read_runtime_topology, runtime_topology_path,
 };
+use crate::tmux::TmuxRuntimeManager;
 use crate::tmux::{
     CapturePaneOptions, TMUX_SEND_TEXT_CHUNK_BYTES, TmuxTarget, capture_pane_argv,
     resize_window_argv, send_carriage_return_argv, send_escape_argv, send_key_argv, send_text_argv,
@@ -37,6 +38,7 @@ use super::output_cache::AgentOutputCaptureCacheKey;
 use super::output_metrics::AgentOutputReadRecord;
 use super::prompt_context::{compose_with_prompt_context, get_prompt_context_text};
 use super::router::ProjectServiceRequestContext;
+use super::tmux_metadata_sync::{TmuxMetadataSyncRuntime, sync_tmux_window_metadata};
 
 pub const DEFAULT_AGENT_OUTPUT_START_LINE: i64 = -120;
 pub const MAX_AGENT_OUTPUT_CAPTURE_LINES: i64 = 2_000;
@@ -105,6 +107,60 @@ pub trait AgentOutputCaptureRuntime {
     fn send_escape(&mut self, _window_id: &str) -> Result<(), String> {
         Err("agent interrupt not supported by this service".into())
     }
+
+    fn get_target_by_window_id(
+        &mut self,
+        _session_name: &str,
+        _window_id: &str,
+    ) -> Option<TmuxTarget> {
+        None
+    }
+
+    fn get_window_metadata(&mut self, _window_id: &str) -> Option<Value> {
+        None
+    }
+
+    fn set_window_metadata(&mut self, _window_id: &str, _metadata: &Value) -> Result<(), String> {
+        Err("tmux metadata sync not supported by this service".into())
+    }
+
+    fn apply_managed_agent_window_policy(
+        &mut self,
+        _window_id: &str,
+        _tool_config_key: &str,
+    ) -> Result<(), String> {
+        Err("tmux metadata sync not supported by this service".into())
+    }
+}
+
+impl<T: AgentOutputCaptureRuntime> TmuxMetadataSyncRuntime for T {
+    fn get_target_by_window_id(
+        &mut self,
+        session_name: &str,
+        window_id: &str,
+    ) -> Option<TmuxTarget> {
+        AgentOutputCaptureRuntime::get_target_by_window_id(self, session_name, window_id)
+    }
+
+    fn get_window_metadata(&mut self, window_id: &str) -> Option<Value> {
+        AgentOutputCaptureRuntime::get_window_metadata(self, window_id)
+    }
+
+    fn set_window_metadata(&mut self, window_id: &str, metadata: &Value) -> Result<(), String> {
+        AgentOutputCaptureRuntime::set_window_metadata(self, window_id, metadata)
+    }
+
+    fn apply_managed_agent_window_policy(
+        &mut self,
+        window_id: &str,
+        tool_config_key: &str,
+    ) -> Result<(), String> {
+        AgentOutputCaptureRuntime::apply_managed_agent_window_policy(
+            self,
+            window_id,
+            tool_config_key,
+        )
+    }
 }
 
 pub struct SystemAgentOutputCaptureRuntime;
@@ -162,6 +218,30 @@ impl AgentOutputCaptureRuntime for SystemAgentOutputCaptureRuntime {
             format!("tmux send escape failed for {window_id}"),
         )
         .map(|_| ())
+    }
+
+    fn get_target_by_window_id(
+        &mut self,
+        session_name: &str,
+        window_id: &str,
+    ) -> Option<TmuxTarget> {
+        TmuxRuntimeManager::new().get_target_by_window_id(session_name, window_id)
+    }
+
+    fn get_window_metadata(&mut self, window_id: &str) -> Option<Value> {
+        TmuxRuntimeManager::new().get_window_metadata(window_id)
+    }
+
+    fn set_window_metadata(&mut self, window_id: &str, metadata: &Value) -> Result<(), String> {
+        TmuxRuntimeManager::new().set_window_metadata(window_id, metadata)
+    }
+
+    fn apply_managed_agent_window_policy(
+        &mut self,
+        window_id: &str,
+        tool_config_key: &str,
+    ) -> Result<(), String> {
+        TmuxRuntimeManager::new().apply_managed_agent_window_policy(window_id, tool_config_key)
     }
 }
 
@@ -260,6 +340,30 @@ impl AgentOutputCaptureRuntime for BoundedAgentOutputCaptureRuntime {
             format!("tmux send escape failed for {window_id}"),
         )
         .map(|_| ())
+    }
+
+    fn get_target_by_window_id(
+        &mut self,
+        session_name: &str,
+        window_id: &str,
+    ) -> Option<TmuxTarget> {
+        TmuxRuntimeManager::new().get_target_by_window_id(session_name, window_id)
+    }
+
+    fn get_window_metadata(&mut self, window_id: &str) -> Option<Value> {
+        TmuxRuntimeManager::new().get_window_metadata(window_id)
+    }
+
+    fn set_window_metadata(&mut self, window_id: &str, metadata: &Value) -> Result<(), String> {
+        TmuxRuntimeManager::new().set_window_metadata(window_id, metadata)
+    }
+
+    fn apply_managed_agent_window_policy(
+        &mut self,
+        window_id: &str,
+        tool_config_key: &str,
+    ) -> Result<(), String> {
+        TmuxRuntimeManager::new().apply_managed_agent_window_policy(window_id, tool_config_key)
     }
 }
 
@@ -536,10 +640,11 @@ pub(super) fn read_agent_output_payload(
         return Err(Box::new(json_error(500, error)));
     }
     if output_has_osc
-        && let Some(tapped_output) =
-            context
-                .osc_output_tap
-                .track_and_read(session_id, target, EXPOSE_PANE_TAP_MAX_BYTES)
+        && let Some(tapped_output) = context.osc_output_tap.track_and_read(
+            session_id,
+            target.clone(),
+            EXPOSE_PANE_TAP_MAX_BYTES,
+        )
     {
         let tapped_osc = context
             .osc_notifications
@@ -574,6 +679,7 @@ pub(super) fn read_agent_output_payload(
         .sessions
         .get(session_id)
         .and_then(|metadata| metadata.get("derived"));
+    let _ = sync_tmux_window_metadata(runtime, &project_state_dir, &topology, session_id, &target);
     if let Some(derived) = derived {
         for key in ["activity", "activityText", "attention"] {
             insert_value(&mut result, key, derived.get(key).cloned());

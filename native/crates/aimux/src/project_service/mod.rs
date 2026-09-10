@@ -50,6 +50,7 @@ pub mod shell_state;
 pub mod statusline;
 pub mod switchable_agents;
 pub mod team;
+pub mod tmux_metadata_sync;
 pub mod topology;
 pub mod transcript_reconciler_task;
 pub mod usage;

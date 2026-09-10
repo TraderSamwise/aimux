@@ -143,7 +143,6 @@ pub mod session_bootstrap;
 pub mod session_launch;
 pub mod session_recency;
 pub mod session_runtime;
-pub mod session_runtime_tmux_metadata_sync_contract;
 pub mod session_viewed;
 pub mod shell_args;
 pub mod shell_hooks;
