@@ -12,13 +12,9 @@ env:
   AIMUX_DAEMON_PORT: "47390"
 
 jobs:
-  rust-format-advisory:
-    name: Rust format advisory
+  rust-format:
+    name: Rust format
     runs-on: ubuntu-latest
-    # Advisory until the existing master formatting drift is committed. Another
-    # agent currently has the formatted versions dirty in the shared checkout,
-    # so a working-tree fmt check can look clean while master blobs still fail.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
