@@ -424,7 +424,9 @@ pub struct DashboardOperationFailure {
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionTeamMetadata {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub team_id: String,
+    #[serde(default)]
     pub parent_session_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub role: Option<String>,

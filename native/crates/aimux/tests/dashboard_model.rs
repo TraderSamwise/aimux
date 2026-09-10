@@ -131,6 +131,31 @@ fn dashboard_session_metadata_round_trips() {
 }
 
 #[test]
+fn dashboard_session_metadata_accepts_legacy_partial_team() {
+    let session = serde_json::json!({
+        "index": 0,
+        "id": "claude-legacy",
+        "command": "claude",
+        "status": "running",
+        "active": true,
+        "team": { "parentSessionId": "" },
+        "overseer": false,
+        "scribe": false
+    });
+    let parsed =
+        serde_json::from_value::<aimux::dashboard_model::DashboardSession>(session.clone())
+            .expect("dashboard session with partial legacy team parses");
+
+    let team = parsed.team.as_ref().expect("team metadata");
+    assert_eq!(team.team_id, "");
+    assert_eq!(team.parent_session_id, "");
+    let serialized = serde_json::to_value(parsed).expect("dashboard session serializes");
+    assert_eq!(serialized["team"], session["team"]);
+    assert_eq!(serialized["overseer"], session["overseer"]);
+    assert_eq!(serialized["scribe"], session["scribe"]);
+}
+
+#[test]
 fn dashboard_visible_model_hides_offline_agents_and_keeps_related_services() {
     let fixture: DesktopStateGoldenFixture =
         serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
