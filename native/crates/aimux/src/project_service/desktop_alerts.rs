@@ -175,13 +175,12 @@ fn notification_target_role(project_state_dir: &Path, event: &Value) -> Notifica
     if let Some(session) = metadata.sessions.get(session_id) {
         return notification_target_role_for_session(session);
     }
-    if let Ok(topology) = read_runtime_topology(runtime_topology_path(project_state_dir)) {
-        if let Some(session) = list_topology_session_states(&topology, None)
+    if let Ok(topology) = read_runtime_topology(runtime_topology_path(project_state_dir))
+        && let Some(session) = list_topology_session_states(&topology, None)
             .into_iter()
             .find(|session| session.get("id").and_then(Value::as_str) == Some(session_id))
-        {
-            return notification_target_role_for_session(&session);
-        }
+    {
+        return notification_target_role_for_session(&session);
     }
     NotificationTargetRole::Ordinary
 }

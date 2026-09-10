@@ -394,7 +394,7 @@ fn overseer_reminder_due(
     {
         let ticks = ticks.max(1);
         return unchanged_ticks > 0
-            && unchanged_ticks % ticks == 0
+            && unchanged_ticks.is_multiple_of(ticks)
             && elapsed_since_last_wake_ms >= cooldown_ms;
     }
     elapsed_since_last_wake_ms >= cooldown_ms

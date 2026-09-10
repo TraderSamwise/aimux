@@ -584,7 +584,7 @@ fn session_switchable_entry(
         metadata_sessions.get(id),
     );
     for key in ["role", "team"] {
-        if !control_probe.get(key).is_some_and(|value| !value.is_null()) {
+        if control_probe.get(key).is_none_or(|value| value.is_null()) {
             metadata.remove(key);
         }
     }

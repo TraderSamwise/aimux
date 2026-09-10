@@ -671,14 +671,12 @@ fn acquire_daemon_info_lock(path: &Path) -> io::Result<DaemonInfoLock> {
 }
 
 fn daemon_info_lock_path(path: &Path) -> PathBuf {
-    if path.file_name().is_some_and(|name| name == "daemon.json") {
-        if let Some(daemon_dir) = path.parent() {
-            if daemon_dir.file_name().is_some_and(|name| name == "daemon") {
-                if let Some(aimux_home) = daemon_dir.parent() {
-                    return aimux_home.join("locks").join("daemon-info");
-                }
-            }
-        }
+    if path.file_name().is_some_and(|name| name == "daemon.json")
+        && let Some(daemon_dir) = path.parent()
+        && daemon_dir.file_name().is_some_and(|name| name == "daemon")
+        && let Some(aimux_home) = daemon_dir.parent()
+    {
+        return aimux_home.join("locks").join("daemon-info");
     }
     PathBuf::from(format!("{}.lock", path.to_string_lossy()))
 }

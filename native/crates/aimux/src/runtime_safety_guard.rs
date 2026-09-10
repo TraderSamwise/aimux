@@ -140,13 +140,10 @@ fn is_cargo_test_harness_binary_path() -> Option<()> {
     let Ok(exe) = std::env::current_exe() else {
         return None;
     };
-    let Some(parent) = exe
+    let parent = exe
         .parent()
         .and_then(Path::file_name)
-        .and_then(|name| name.to_str())
-    else {
-        return None;
-    };
+        .and_then(|name| name.to_str())?;
     if parent != "deps" {
         return None;
     }
@@ -181,10 +178,10 @@ fn is_any_cargo_test_harness_binary_path() -> bool {
 }
 
 fn is_cargo_target_aimux_binary_path(path: &Path) -> bool {
-    if !path
+    if path
         .file_name()
         .and_then(|name| name.to_str())
-        .is_some_and(|name| name == "aimux")
+        .is_none_or(|name| name != "aimux")
     {
         return false;
     }
@@ -205,9 +202,7 @@ fn is_cargo_target_aimux_binary_path(path: &Path) -> bool {
 
 fn path_has_test_fixture_component(path: &Path) -> bool {
     path.components().any(|component| match component {
-        Component::Normal(name) => name
-            .to_str()
-            .is_some_and(|value| has_test_fixture_prefix(value)),
+        Component::Normal(name) => name.to_str().is_some_and(has_test_fixture_prefix),
         _ => false,
     })
 }

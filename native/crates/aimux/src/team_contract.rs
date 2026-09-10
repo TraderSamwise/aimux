@@ -91,9 +91,8 @@ pub fn is_overseer_session(session: Option<&Value>) -> bool {
     let Some(session) = session else {
         return false;
     };
-    match bool_field(session, "overseer") {
-        Some(value) => return value,
-        None => {}
+    if let Some(value) = bool_field(session, "overseer") {
+        return value;
     }
     if bool_field(session, "projectControl") == Some(false) {
         return false;
@@ -105,9 +104,8 @@ pub fn is_scribe_session(session: Option<&Value>) -> bool {
     let Some(session) = session else {
         return false;
     };
-    match bool_field(session, "scribe") {
-        Some(value) => return value,
-        None => {}
+    if let Some(value) = bool_field(session, "scribe") {
+        return value;
     }
     if bool_field(session, "projectControl") == Some(false) {
         return false;

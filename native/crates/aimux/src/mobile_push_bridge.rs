@@ -136,15 +136,15 @@ pub fn push_payload_for_alert_with_config(
     let project_root_fallback = std::env::current_dir()
         .map(|path| path.to_string_lossy().into_owned())
         .unwrap_or_default();
-    if let Some(project_state_dir) = project_state_dir {
-        if !should_deliver_external_alert_with_config(
+    if let Some(project_state_dir) = project_state_dir
+        && !should_deliver_external_alert_with_config(
             project_state_dir,
             event,
             notifications,
             false,
-        ) {
-            return None;
-        }
+        )
+    {
+        return None;
     }
     Some(build_push_payload(event, &project_root_fallback))
 }

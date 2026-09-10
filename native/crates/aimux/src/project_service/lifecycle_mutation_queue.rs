@@ -61,11 +61,11 @@ impl LifecycleTransitionInput {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LifecycleMutationError {
     Conflict {
-        requested: LifecycleTransitionInput,
-        active: LifecycleTransitionInput,
+        requested: Box<LifecycleTransitionInput>,
+        active: Box<LifecycleTransitionInput>,
     },
     QueueFull {
-        requested: LifecycleTransitionInput,
+        requested: Box<LifecycleTransitionInput>,
         queued_count: usize,
         limit: usize,
     },
@@ -176,8 +176,8 @@ impl LifecycleMutationQueue {
             {
                 state.telemetry.rejected_conflicts += 1;
                 return Err(LifecycleMutationError::Conflict {
-                    requested: transition.clone(),
-                    active,
+                    requested: Box::new(transition.clone()),
+                    active: Box::new(active),
                 });
             }
             if let Some(transition) = transition.as_ref()
@@ -185,7 +185,7 @@ impl LifecycleMutationQueue {
             {
                 state.telemetry.rejected_queue_full += 1;
                 return Err(LifecycleMutationError::QueueFull {
-                    requested: transition.clone(),
+                    requested: Box::new(transition.clone()),
                     queued_count: state.queued_count,
                     limit: self.inner.queue_limit,
                 });

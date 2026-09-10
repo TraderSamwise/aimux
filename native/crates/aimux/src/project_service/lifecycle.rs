@@ -71,11 +71,11 @@ pub fn route_lifecycle_request_with_runtime(
             context, pathname, body, runtime,
         ))
     });
-    return Some(match result {
+    Some(match result {
         Ok(Ok(response)) => response?,
         Ok(Err(error)) => return Some(lifecycle_queue_operation_error_response(error)),
         Err(error) => lifecycle_queue_error_response(error),
-    });
+    })
 }
 
 fn route_lifecycle_request_unqueued(

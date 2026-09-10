@@ -84,9 +84,9 @@ pub fn sync_tmux_window_metadata(
         return None;
     }
     let mut metadata = build_tmux_window_metadata(project_state_dir, &session, Some(&existing));
-    if !metadata
+    if metadata
         .get("createdAt")
-        .is_some_and(|value| !value.is_null())
+        .is_none_or(|value| value.is_null())
     {
         insert_optional_value(
             object_mut(&mut metadata),
