@@ -1,7 +1,6 @@
 {
   "native/crates/aimux/src/agent_display_contract.rs": "Tracked Rust parity fixture; keep until promoted to production or removed by a cull.",
   "native/crates/aimux/src/ansi_sgr_spans.rs": "Tracked Rust parity fixture; keep until promoted to production or removed by a cull.",
-  "native/crates/aimux/src/cli_wrappers_contract.rs": "Tracked CLI parity fixture; keep until CLI behavior is production-consumed natively or culled.",
   "native/crates/aimux/src/composer_protocol_contract.rs": "Tracked Rust parity fixture; keep until promoted to production or removed by a cull.",
   "native/crates/aimux/src/metadata_output_previews_contract.rs": "Tracked metadata parity fixture; keep until metadata behavior is production-consumed natively or culled.",
   "native/crates/aimux/src/metadata_server_runtime_contract.rs": "Tracked metadata parity fixture; keep until metadata behavior is production-consumed natively or culled.",

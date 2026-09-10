@@ -60,8 +60,8 @@ fn outline_list_text_route(
     let mut route_path = project_routes::work_outline::LIST.to_owned();
     push_project_query(
         &mut route_path,
-        "entryId",
-        trimmed_string(route_url, body, "entryId"),
+        "q",
+        trimmed_string(route_url, body, "search"),
     );
     push_project_query(
         &mut route_path,
@@ -80,13 +80,13 @@ fn outline_list_text_route(
     );
     push_project_query(
         &mut route_path,
-        "q",
-        trimmed_string(route_url, body, "search"),
+        "limit",
+        trimmed_string(route_url, body, "limit"),
     );
     push_project_query(
         &mut route_path,
-        "limit",
-        trimmed_string(route_url, body, "limit"),
+        "entryId",
+        trimmed_string(route_url, body, "entryId"),
     );
     let (json, project_root) =
         match unwrap_project_result(runtime.get_project_service_json(&project, &route_path)) {

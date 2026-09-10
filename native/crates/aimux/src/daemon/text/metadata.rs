@@ -197,7 +197,7 @@ fn parse_set_progress(args: &[String]) -> MetadataCliResult {
     let total = args.get(3).and_then(|value| parse_js_finite_number(value));
     if !valid_required(session) || current.is_none() || total.is_none() {
         return MetadataCliResult::Error(
-            "metadata set-progress requires <session> <current> <total>".into(),
+            "metadata set-progress requires numeric <current> and <total>".into(),
         );
     }
     let mut label: Option<String> = None;

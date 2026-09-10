@@ -863,7 +863,7 @@ fn unified_router_dispatches_status_command_and_split_text_modules() {
         runtime
             .calls
             .iter()
-            .any(|call| call == "get:/repo:/work-outline?sessionId=codex-1&q=parser")
+            .any(|call| call == "get:/repo:/work-outline?q=parser&sessionId=codex-1")
     );
 
     let scribe = route_daemon_request(
