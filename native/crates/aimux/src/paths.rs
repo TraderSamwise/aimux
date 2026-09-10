@@ -225,7 +225,11 @@ impl PathResolver {
     pub fn load_registry(&self) -> Result<ProjectsRegistry> {
         let path = self.projects_registry_path();
         let entries = self.load_registry_entries_raw()?;
-        normalize_registry(entries, &self.process_cwd, &path)
+        let registry = normalize_registry(entries.clone(), &self.process_cwd, &path)?;
+        if path.exists() && registry.projects != entries {
+            self.save_registry(&registry)?;
+        }
+        Ok(registry)
     }
 
     fn load_registry_entries_raw(&self) -> Result<Vec<ProjectEntry>> {

@@ -130,6 +130,18 @@ fn load_registry_filters_invalid_roots_and_keeps_last_duplicate_value() {
     assert_eq!(loaded.projects[1].last_seen, "last");
     assert_eq!(loaded.projects[2].id, "other");
 
+    let persisted: Value =
+        serde_json::from_str(&fs::read_to_string(resolver.projects_registry_path()).unwrap())
+            .expect("persisted registry");
+    let persisted_projects = persisted
+        .get("projects")
+        .and_then(Value::as_array)
+        .expect("persisted projects");
+    assert_eq!(persisted_projects.len(), 3);
+    assert!(!persisted_projects.iter().any(|project| {
+        project.get("repoRoot").and_then(Value::as_str) == Some(non_git.to_string_lossy().as_ref())
+    }));
+
     fs::remove_dir_all(ephemeral).expect("remove ephemeral repo");
 }
 

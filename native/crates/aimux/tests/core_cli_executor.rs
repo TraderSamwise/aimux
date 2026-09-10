@@ -557,7 +557,7 @@ fn init_executes_locally_without_daemon_fallback() {
 }
 
 #[test]
-fn non_git_projects_allow_project_commands_but_gate_worktree_operations() {
+fn non_git_projects_gate_materializing_project_commands_before_daemon_requests() {
     let mut runtime = FakeRuntime {
         git_project_root: false,
         ..FakeRuntime::default()
@@ -578,13 +578,31 @@ fn non_git_projects_allow_project_commands_but_gate_worktree_operations() {
         );
     }
 
-    for command in [["init"].as_slice(), ["ps"].as_slice(), ["serve"].as_slice()] {
+    for command in [["init"].as_slice(), ["projects"].as_slice()] {
         let execution = run_core_cli_with(&args(command), &mut runtime);
         assert_ne!(execution.code, 1, "{command:?}");
     }
 
-    let projects = run_core_cli_with(&args(&["projects"]), &mut runtime);
-    assert_eq!(projects.code, 0);
+    let before_commands = runtime.commands.len();
+    let before_text_routes = runtime.text_routes.len();
+    for command in [
+        ["ps"].as_slice(),
+        ["list"].as_slice(),
+        ["serve"].as_slice(),
+        ["host", "restart"].as_slice(),
+        ["dashboard-reload"].as_slice(),
+        ["restart-runtime"].as_slice(),
+    ] {
+        let execution = run_core_cli_with(&args(command), &mut runtime);
+        assert_eq!(execution.code, 1, "{command:?}");
+        assert_eq!(
+            execution.stderr,
+            std::slice::from_ref(&expected),
+            "{command:?}"
+        );
+    }
+    assert_eq!(runtime.commands.len(), before_commands);
+    assert_eq!(runtime.text_routes.len(), before_text_routes);
 }
 
 #[test]
