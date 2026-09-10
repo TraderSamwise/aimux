@@ -60,7 +60,7 @@
     "native:clippy:all-targets": "CARGO_INCREMENTAL=0 cargo clippy --manifest-path native/Cargo.toml -p aimux --all-targets -- -D warnings",
     "native:fmt": "cargo fmt --manifest-path native/Cargo.toml",
     "native:fmt:check": "cargo fmt --manifest-path native/Cargo.toml --check",
-    "native:fmt:staged": "node scripts/check-staged-rustfmt.mjs",
+    "native:fmt:staged": "bash scripts/check-staged-rustfmt.sh",
     "native:test": "CARGO_INCREMENTAL=0 cargo test --manifest-path native/Cargo.toml --no-fail-fast",
     "native:cargo-sweep": "bash scripts/cargo-sweep-stale-targets.sh",
     "prepack": "yarn build:release && yarn build:ui:local",

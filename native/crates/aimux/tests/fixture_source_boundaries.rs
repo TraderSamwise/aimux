@@ -137,7 +137,9 @@ fn visit_files(path: &Path, ts_only: bool, skip_tests: bool, out: &mut Vec<Strin
     if rel.ends_with(".d.ts") {
         return;
     }
-    if skip_tests && (rel.ends_with(".test.ts") || rel.ends_with(".test.mts")) {
+    if skip_tests
+        && (rel.ends_with(".test.ts") || rel.ends_with(".test.mts") || rel.ends_with(".test.mjs"))
+    {
         return;
     }
     if rel.starts_with("scripts/capture-") && rel.ends_with("-contract.mjs") {

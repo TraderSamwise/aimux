@@ -4,6 +4,7 @@ use crate::core_command_transport::{
     CoreCommandTransportError, DaemonHttpMethod, DaemonJsonRequest, execute_loopback_json_request,
 };
 use crate::daemon_state::get_daemon_base_url;
+use crate::debug_logging::{LogLevel, log_at};
 use crate::expose_socket::parse_positive_header_integer;
 use crate::project_api_contract::routes;
 use crate::project_service::switchable_agents::agent_status_chip;
@@ -16,7 +17,7 @@ use crate::tmux_expose_preview_sanitize::sanitize_expose_preview_output;
 use crate::tui_render::text::{truncate_ansi, wrap_text};
 use crate::tui_render::theme::{Tone, pill, style, visible_width};
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{Read, Write};
@@ -1626,8 +1627,22 @@ fn capture_missing_previews(
         if captures.contains_key(window_id) {
             continue;
         }
-        if let Ok(output) = capture.capture_target(item) {
-            captures.insert(window_id.to_owned(), output);
+        match capture.capture_target(item) {
+            Ok(output) => {
+                captures.insert(window_id.to_owned(), output);
+            }
+            Err(error) => {
+                log_at(
+                    LogLevel::Debug,
+                    "expose startup preview capture failed",
+                    "expose",
+                    Some(json!({
+                        "windowId": window_id,
+                        "sessionId": item.get("id").and_then(Value::as_str),
+                        "error": error,
+                    })),
+                );
+            }
         }
     }
 }

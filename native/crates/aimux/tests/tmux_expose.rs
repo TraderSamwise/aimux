@@ -1,5 +1,8 @@
 use aimux::core_command_contract::CORE_API_ROUTES;
 use aimux::core_command_transport::DaemonHttpMethod;
+use aimux::debug_logging::{
+    LogLevel, LoggingRuntimeConfig, configure_logging, reset_logging_for_tests,
+};
 use aimux::project_api_contract::routes;
 use aimux::tmux_expose::{
     EXPOSE_HTTP_TIMEOUT_MS, ExposeClientSizeProbe, ExposeConfig, ExposeHttpClient,
@@ -800,6 +803,60 @@ fn runner_captures_missing_previews_before_first_loaded_frame() {
             .is_some_and(|frame| frame.contains("first live capture line")),
         "first loaded frame should contain captured output:\n{rendered}"
     );
+    cleanup(state_dir);
+}
+
+#[test]
+fn runner_logs_failed_startup_preview_capture() {
+    let state_dir = temp_dir("runner-startup-capture-log");
+    let log_path = state_dir.join("debug.jsonl");
+    configure_logging(LoggingRuntimeConfig {
+        enabled: true,
+        level: LogLevel::Debug,
+        categories: vec!["expose".to_owned()],
+        path: log_path.clone(),
+        process_kind: "test".to_owned(),
+        project_id: None,
+        project_root: None,
+        ..LoggingRuntimeConfig::default()
+    });
+    let mut options = parsed_options(&state_dir);
+    options.current_window = Some("codex".into());
+    options.current_window_id = Some("@1".into());
+    options.expose_config.initial_scope = Some(ExposeScope::Project);
+    let mut client = FakeHttp::with_responses([json!({
+        "ok": true,
+        "items": [{
+            "id": "one",
+            "label": "one",
+            "target": { "sessionName": "aimux-repo", "windowId": "@1", "windowIndex": 1, "windowName": "one" },
+            "activity": 1,
+            "urgency": 0,
+            "recentRank": 0,
+            "metadata": { "sessionId": "one", "command": "codex", "worktreePath": "/repo" }
+        }]
+    })]);
+    let mut capture = FakeCapture::with_responses([Err("tmux capture failed".into())]);
+    let mut input = ScriptedInput::new([ScriptedInputEvent::Bytes(b"q".to_vec())]);
+    let mut output = Vec::new();
+
+    assert_eq!(
+        run_tmux_expose_with_stable_size(
+            options,
+            &mut input,
+            &mut output,
+            &mut client,
+            &mut capture,
+        ),
+        0
+    );
+    reset_logging_for_tests();
+
+    let raw = fs::read_to_string(&log_path).expect("debug log written");
+    assert!(raw.contains("expose startup preview capture failed"));
+    assert!(raw.contains("\"windowId\":\"@1\""));
+    assert!(raw.contains("\"sessionId\":\"one\""));
+    assert!(raw.contains("\"error\":\"tmux capture failed\""));
     cleanup(state_dir);
 }
 
