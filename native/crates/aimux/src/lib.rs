@@ -92,7 +92,6 @@ pub mod native_cli_dispatch;
 pub mod native_plugin_gh_pr_context;
 pub mod native_plugin_transcript_length;
 pub mod notification_deep_link;
-pub mod notification_delivery_format;
 pub mod notification_delivery_guard;
 pub mod osc_notifications;
 pub mod paths;

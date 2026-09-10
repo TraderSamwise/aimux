@@ -24,10 +24,10 @@ fn desktop_alert_payload_uses_event_title_message_and_chat_deep_link() {
         "notificationId": "notice 1"
     }));
 
-    assert_eq!(payload.title, "Aimux");
+    assert_eq!(payload.title, "aimux / Main Checkout (master)");
     assert_eq!(
         payload.message,
-        "Claude is waiting for input in Main Checkout"
+        "Needs input: claude @ Main Checkout - Claude is waiting for your input"
     );
     assert_eq!(payload.sound, true);
     assert_eq!(

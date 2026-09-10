@@ -13,9 +13,6 @@ use serde_json::{Map, Value, json};
 
 use crate::desktop_notifier::external_notifications_disabled;
 use crate::launcher_env::DEFAULT_DAEMON_PORT;
-use crate::notification_delivery_format::{
-    external_notification_body, external_notification_title,
-};
 use crate::notification_delivery_guard::external_notification_refusal_reason_for_event;
 
 const PUSH_TIMEOUT: Duration = Duration::from_secs(5);
@@ -29,11 +26,17 @@ pub fn build_push_payload(event: &Value, project_root_fallback: &str) -> Value {
     let mut payload = Map::new();
     payload.insert(
         "title".to_owned(),
-        Value::String(external_notification_title(event)),
+        Value::String(non_empty(get("title")).unwrap_or("aimux").to_owned()),
     );
     payload.insert(
         "body".to_owned(),
-        Value::String(external_notification_body(event)),
+        Value::String(
+            non_empty(get("message"))
+                .or_else(|| non_empty(get("sessionId")))
+                .or_else(|| non_empty(get("kind")))
+                .unwrap_or("aimux")
+                .to_owned(),
+        ),
     );
     for key in [
         "kind",

@@ -8,9 +8,6 @@ use crate::desktop_notifier::{
 use crate::notification_deep_link::{
     AimuxNotificationDeepLinkTarget, build_aimux_notification_deep_link,
 };
-use crate::notification_delivery_format::{
-    external_notification_body, external_notification_title,
-};
 use crate::notification_delivery_guard::external_notification_refusal_reason_for_event;
 
 use super::notification_context::should_suppress_notification;
@@ -57,8 +54,14 @@ pub fn build_desktop_notification_payload(event: &Value) -> DesktopNotificationP
     let session_id = string_field(event, "sessionId");
     let notification_id = string_field(event, "notificationId");
     DesktopNotificationPayload {
-        title: external_notification_title(event),
-        message: external_notification_body(event),
+        title: non_empty(string_field(event, "title"))
+            .unwrap_or("aimux")
+            .to_owned(),
+        message: non_empty(string_field(event, "message"))
+            .or_else(|| non_empty(session_id))
+            .or_else(|| non_empty(string_field(event, "kind")))
+            .unwrap_or("aimux")
+            .to_owned(),
         sound: true,
         deep_link_url: build_aimux_notification_deep_link(AimuxNotificationDeepLinkTarget {
             project_root: non_empty(project_root),
