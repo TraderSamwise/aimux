@@ -1025,16 +1025,18 @@ impl RealDaemonRuntime {
     }
 
     fn cleanup_lifecycle_validation_orphans_for_restart(&self, project_roots: &[String]) -> Value {
-        let recognized_project_roots = restart_all_project_roots(&self.daemon_state());
+        let state = self.daemon_state();
+        let recognized_project_roots = recognized_project_roots_for_orphan_cleanup(
+            &state,
+            registry_project_roots_for_orphan_cleanup(&self.resolver),
+        );
         let project_service_scope = ProjectServiceOrphanScope {
             aimux_home: self
                 .resolver
                 .global_aimux_dir()
                 .to_string_lossy()
                 .into_owned(),
-            recognized_project_roots: recognized_project_roots
-                .into_iter()
-                .collect::<BTreeSet<_>>(),
+            recognized_project_roots,
         };
         let mut plan_runtime = SystemLifecycleOrphanRuntime::new();
         let plan = plan_lifecycle_validation_orphans_with_scope(
@@ -3475,6 +3477,31 @@ fn restart_all_project_roots(state: &DaemonState) -> Vec<String> {
         .collect()
 }
 
+fn registry_project_roots_for_orphan_cleanup(resolver: &PathResolver) -> Vec<String> {
+    resolver
+        .load_registry()
+        .map(|registry| {
+            registry
+                .projects
+                .into_iter()
+                .map(|project| project.repo_root)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn recognized_project_roots_for_orphan_cleanup(
+    state: &DaemonState,
+    registry_project_roots: impl IntoIterator<Item = String>,
+) -> BTreeSet<String> {
+    restart_all_project_roots(state)
+        .into_iter()
+        .chain(registry_project_roots)
+        .map(|root| root.trim().to_owned())
+        .filter(|root| !root.is_empty())
+        .collect()
+}
+
 fn restart_project_roots_from_sources(
     project_root: Option<&str>,
     state: &DaemonState,
@@ -4164,6 +4191,29 @@ mod tests {
         assert_eq!(
             restart_project_roots_from_sources(Some("/repo/only"), &state),
             vec!["/repo/only".to_owned()]
+        );
+    }
+
+    #[test]
+    fn orphan_cleanup_recognizes_daemon_state_and_registry_roots() {
+        let state = DaemonState {
+            version: 1,
+            updated_at: Some(json!("now")),
+            projects: Map::from_iter([
+                ("active".into(), json!({ "projectRoot": "/repo/active" })),
+                (
+                    "stopped".into(),
+                    json!({ "projectRoot": "/repo/stopped", "status": "stopped" }),
+                ),
+            ]),
+        };
+
+        assert_eq!(
+            recognized_project_roots_for_orphan_cleanup(
+                &state,
+                vec!["/repo/registry-only".into(), " ".into()]
+            ),
+            BTreeSet::from(["/repo/active".to_owned(), "/repo/registry-only".to_owned()])
         );
     }
 

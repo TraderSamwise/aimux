@@ -258,7 +258,7 @@ pub fn cleanup_lifecycle_validation_orphans(
         orphaned_dashboard_pids(&processes, &parents, options.current_pid, &live_pane_pids);
 
     for pid in candidate_pids {
-        let latest_args = runtime.read_process_args(pid);
+        let latest_args = runtime.read_process_args_with_env(pid);
         if latest_args.as_deref().is_none_or(|args| {
             !is_reapable(
                 pid,
@@ -287,7 +287,7 @@ pub fn cleanup_lifecycle_validation_orphans(
         ) {
             continue;
         }
-        let args_before_kill = runtime.read_process_args(pid);
+        let args_before_kill = runtime.read_process_args_with_env(pid);
         if args_before_kill.as_deref().is_none_or(|args| {
             !is_reapable(
                 pid,
@@ -679,7 +679,9 @@ mod tests {
         parents: BTreeMap<i32, i32>,
         alive_pids: HashSet<i32>,
         read_args: HashMap<i32, Vec<String>>,
+        read_args_with_env: HashMap<i32, Vec<String>>,
         read_counts: HashMap<i32, usize>,
+        read_with_env_counts: HashMap<i32, usize>,
         tmux_available: bool,
         tmux_sessions: Vec<String>,
         tmux_options: HashMap<(String, String), String>,
@@ -700,6 +702,18 @@ mod tests {
                 .insert((session_name.to_owned(), key.to_owned()), value.to_owned());
             self
         }
+
+        fn read_sequence(
+            sequences: &HashMap<i32, Vec<String>>,
+            counts: &mut HashMap<i32, usize>,
+            pid: i32,
+        ) -> Option<String> {
+            let sequence = sequences.get(&pid)?;
+            let counter = counts.entry(pid).or_default();
+            let index = (*counter).min(sequence.len().saturating_sub(1));
+            *counter += 1;
+            sequence.get(index).cloned()
+        }
     }
 
     impl LifecycleOrphanRuntime for FakeLifecycleRuntime {
@@ -712,16 +726,24 @@ mod tests {
         }
 
         fn read_process_args(&mut self, pid: i32) -> Option<String> {
-            if let Some(sequence) = self.read_args.get(&pid) {
-                let counter = self.read_counts.entry(pid).or_default();
-                let index = (*counter).min(sequence.len().saturating_sub(1));
-                *counter += 1;
-                return sequence.get(index).cloned();
+            if let Some(args) = Self::read_sequence(&self.read_args, &mut self.read_counts, pid) {
+                return Some(args);
             }
             self.processes
                 .iter()
                 .find(|entry| entry.pid == pid)
                 .map(|entry| entry.args.clone())
+        }
+
+        fn read_process_args_with_env(&mut self, pid: i32) -> Option<String> {
+            if let Some(args) = Self::read_sequence(
+                &self.read_args_with_env,
+                &mut self.read_with_env_counts,
+                pid,
+            ) {
+                return Some(args);
+            }
+            self.read_process_args(pid)
         }
 
         fn is_pid_alive(&mut self, pid: i32) -> bool {
@@ -1012,8 +1034,43 @@ mod tests {
         let mut runtime = FakeLifecycleRuntime {
             processes: vec![ProcessArgsEntry {
                 pid: 404,
-                args: "AIMUX_HOME=/Users/sam/.aimux /Users/sam/.aimux/native/local-47a40168/native/darwin-arm64/aimux __project-service-internal --project-id sam-5e9c1a8e1d4e --project-root /Users/sam".into(),
+                args: "/Users/sam/.aimux/native/local-47a40168/native/darwin-arm64/aimux __project-service-internal --project-id sam-5e9c1a8e1d4e --project-root /Users/sam".into(),
             }],
+            read_args_with_env: HashMap::from([(
+                404,
+                vec!["/Users/sam/.aimux/native/local-47a40168/native/darwin-arm64/aimux __project-service-internal --project-id sam-5e9c1a8e1d4e --project-root /Users/sam AIMUX_HOME=/Users/sam/.aimux".into()],
+            )]),
+            alive_pids: HashSet::from([404]),
+            ..Default::default()
+        }
+        .with_kill_removing_alive();
+
+        let result = cleanup_lifecycle_validation_orphans(
+            &mut runtime,
+            CleanupLifecycleOrphansOptions {
+                current_pid: 999,
+                process_exit_timeout_ms: 0,
+                process_kill_grace_ms: 0,
+                project_service_scope: Some(ProjectServiceOrphanScope {
+                    aimux_home: "/Users/sam/.aimux".into(),
+                    recognized_project_roots: BTreeSet::from(["/Users/sam/cs/aimux".into()]),
+                }),
+            },
+        );
+
+        assert_eq!(result.attempted_process_pids, vec![404]);
+        assert_eq!(result.process_pids, vec![404]);
+        assert_eq!(runtime.killed_pids, vec![(404, "SIGTERM".into())]);
+    }
+
+    #[test]
+    fn lifecycle_cleanup_reaps_current_home_native_service_when_env_read_is_unavailable() {
+        let mut runtime = FakeLifecycleRuntime {
+            processes: vec![ProcessArgsEntry {
+                pid: 404,
+                args: "/Users/sam/.aimux/native/local-47a40168/native/darwin-arm64/aimux __project-service-internal --project-id sam-5e9c1a8e1d4e --project-root /Users/sam".into(),
+            }],
+            read_args_with_env: HashMap::from([(404, Vec::new())]),
             alive_pids: HashSet::from([404]),
             ..Default::default()
         }
