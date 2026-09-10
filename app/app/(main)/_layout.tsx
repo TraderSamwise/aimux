@@ -15,7 +15,7 @@ import {
 import type { DesktopState } from "@/lib/desktop-state";
 import { useAuth } from "@/lib/auth";
 import { CHAT_OUTPUT_CAPTURE_START_LINE } from "@/lib/chat-output-constants";
-import { isBrowserDocumentVisible, showBrowserNotification } from "@/lib/browser-notifications";
+import { deliverBrowserNotification, isBrowserDocumentVisible } from "@/lib/browser-notifications";
 import { env } from "@/lib/env";
 import { startHeartbeat } from "@/lib/heartbeat";
 import { evaluateAlertEvent } from "@/lib/notification-policy";
@@ -233,14 +233,15 @@ export default function MainLayout() {
     const unsubSecurity = transport.onSecurityEvent((event) => {
       store.set(addSecurityEventAtom, event);
       if (!isBrowserDocumentVisible()) {
-        showBrowserNotification({
+        const notification = {
           id: event.id,
           category: "system",
           kind: event.kind,
           title: event.title,
           body: event.body,
           dedupeKey: `security:${event.id}`,
-        });
+        } as const;
+        deliverBrowserNotification(notification);
       }
     });
     setApiRelay(transport);
@@ -573,7 +574,7 @@ export default function MainLayout() {
               notificationSettings.channels.browser &&
               !isBrowserDocumentVisible()
             ) {
-              showBrowserNotification(notification);
+              deliverBrowserNotification(notification);
             }
           },
           onError: (err) => {

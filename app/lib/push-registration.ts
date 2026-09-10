@@ -107,6 +107,15 @@ export async function sendSecurityTestPush(
     } catch {}
     throw new Error(detail || `Test push failed (${res.status})`);
   }
-  const body = (await res.json().catch(() => null)) as { sent?: unknown } | null;
+  let body: { sent?: unknown };
+  try {
+    body = (await res.json()) as { sent?: unknown };
+  } catch (err) {
+    throw new Error(`Test push response was not valid JSON: ${errorMessage(err)}`);
+  }
   return { sent: typeof body?.sent === "number" ? body.sent : 0 };
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

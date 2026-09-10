@@ -13,6 +13,12 @@ type BrowserNotificationConstructor = {
   new (title: string, options?: BrowserNotificationOptions): unknown;
 };
 
+export type BrowserNotificationDeliveryResult =
+  | { status: "delivered" }
+  | { status: "unsupported" }
+  | { status: "permission_denied"; permission: BrowserNotificationPermission }
+  | { status: "failed"; error: string };
+
 function browserNotificationApi(): BrowserNotificationConstructor | null {
   if (Platform.OS !== "web") return null;
   return (globalThis as { Notification?: BrowserNotificationConstructor }).Notification ?? null;
@@ -35,15 +41,50 @@ export function isBrowserDocumentVisible(): boolean {
   return documentLike?.visibilityState === "visible";
 }
 
-export function showBrowserNotification(event: ClientNotificationEvent): boolean {
+export function deliverBrowserNotification(
+  event: ClientNotificationEvent,
+): BrowserNotificationDeliveryResult {
+  const result = showBrowserNotification(event);
+  reportBrowserNotificationDeliveryFailure(event, result);
+  return result;
+}
+
+function showBrowserNotification(
+  event: ClientNotificationEvent,
+): BrowserNotificationDeliveryResult {
   const api = browserNotificationApi();
-  if (!api || api.permission !== "granted") return false;
+  if (!api) return { status: "unsupported" };
+  if (api.permission !== "granted") {
+    return { status: "permission_denied", permission: api.permission };
+  }
   try {
     new api(event.title, {
       body: event.body,
     });
-    return true;
-  } catch {
-    return false;
+    return { status: "delivered" };
+  } catch (err) {
+    return { status: "failed", error: errorMessage(err) };
   }
+}
+
+function reportBrowserNotificationDeliveryFailure(
+  event: ClientNotificationEvent,
+  result: BrowserNotificationDeliveryResult,
+): void {
+  if (result.status === "delivered" || result.status === "unsupported") return;
+  const reason =
+    result.status === "permission_denied"
+      ? `permission ${result.permission}`
+      : `constructor failed: ${result.error}`;
+  console.warn("browser notification not delivered:", {
+    reason,
+    notificationId: event.id,
+    category: event.category,
+    kind: event.kind,
+    title: event.title,
+  });
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

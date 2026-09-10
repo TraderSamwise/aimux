@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useAtomValue, useSetAtom } from "jotai";
-import { isBrowserDocumentVisible, showBrowserNotification } from "@/lib/browser-notifications";
+import { deliverBrowserNotification, isBrowserDocumentVisible } from "@/lib/browser-notifications";
 import {
   evaluateAgentNotification,
   evaluateNotificationRecordBatch,
@@ -63,7 +63,7 @@ export function NotificationProvider() {
 
     if (notificationSettings.channels.browser && !isBrowserDocumentVisible()) {
       for (const event of evaluation.events) {
-        showBrowserNotification(event);
+        deliverBrowserNotification(event);
       }
     }
 
@@ -100,7 +100,7 @@ export function NotificationProvider() {
 
       if (!event) continue;
       if (notificationSettings.channels.browser && !isBrowserDocumentVisible()) {
-        showBrowserNotification(event);
+        deliverBrowserNotification(event);
       }
     }
 
