@@ -260,6 +260,15 @@ impl DaemonSystemTextRuntime for FakeRuntime {
         Ok(json!({ "projectRoot": project_root }))
     }
 
+    fn remove_project(&mut self, project_root: &str) -> Result<Value, String> {
+        Ok(json!({
+            "projectId": "repo-id",
+            "projectRoot": project_root,
+            "project": { "projectRoot": project_root, "pid": 0, "status": "stopped" },
+            "tmuxSessionsKilled": []
+        }))
+    }
+
     fn restart_project_service(
         &mut self,
         project_root: &str,
