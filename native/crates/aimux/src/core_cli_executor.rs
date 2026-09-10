@@ -22,6 +22,7 @@ use crate::core_text::{
     render_core_remote_security_device_mutation_line, render_core_remote_security_devices_lines,
     render_core_remote_status_lines, render_core_security_unlock_lines, render_core_whoami_lines,
 };
+use crate::daemon::routing::DaemonRouteUrl;
 use crate::daemon::text::auth::AuthFlowResult;
 use crate::daemon::text::operations::RestartControlPlaneTextResult;
 use crate::daemon_state::EnsureDaemonRunningOptions;
@@ -642,7 +643,7 @@ pub fn run_core_cli_with(
         Ok(plan) => plan,
         Err(error) => return CoreCliExecution::error(error.to_string(), error.exit_code()),
     };
-    if operation_requires_git_project(plan.operation)
+    if operation_requires_current_git_project(plan.operation)
         && !runtime.is_git_project_root(&context.current_project_root)
     {
         return CoreCliExecution::error(
@@ -650,13 +651,18 @@ pub fn run_core_cli_with(
             1,
         );
     }
+    if let Some(project_root) = materialized_project_root_requiring_checkout(&plan)
+        && !runtime.is_git_project_root(&project_root)
+    {
+        return CoreCliExecution::error(project_checkout_required_message(project_root), 1);
+    }
     match run_plan(plan.operation, plan.output_mode, plan.action, runtime) {
         Ok(execution) => execution,
         Err(message) => CoreCliExecution::error(format!("Error: {message}"), 1),
     }
 }
 
-fn operation_requires_git_project(operation: CoreCliOperation) -> bool {
+fn operation_requires_current_git_project(operation: CoreCliOperation) -> bool {
     matches!(
         operation,
         CoreCliOperation::AgentMigrate
@@ -672,6 +678,54 @@ fn operation_requires_git_project(operation: CoreCliOperation) -> bool {
             | CoreCliOperation::GraveyardResurrect
             | CoreCliOperation::GraveyardCleanup
     )
+}
+
+fn materialized_project_root_requiring_checkout(
+    plan: &crate::core_cli::CoreCliPlan,
+) -> Option<String> {
+    if non_materializing_project_root_operation(plan.operation) {
+        return None;
+    }
+    action_project_root(&plan.action)
+}
+
+fn non_materializing_project_root_operation(operation: CoreCliOperation) -> bool {
+    matches!(
+        operation,
+        CoreCliOperation::HostStop
+            | CoreCliOperation::HostKill
+            | CoreCliOperation::LifecycleStop
+            | CoreCliOperation::LifecycleKill
+            | CoreCliOperation::ProjectsRemove
+    )
+}
+
+fn action_project_root(action: &CoreCliAction) -> Option<String> {
+    match action {
+        CoreCliAction::Command { request, .. } => request
+            .payload
+            .as_ref()
+            .and_then(project_root_value)
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        CoreCliAction::TextRoute { path, body } => body
+            .as_ref()
+            .and_then(project_root_value)
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .or_else(|| {
+                DaemonRouteUrl::parse(path)
+                    .search_param("project")
+                    .map(str::to_owned)
+            }),
+        _ => None,
+    }
+}
+
+fn project_root_value(payload: &Value) -> Option<&Value> {
+    payload
+        .get("projectRoot")
+        .or_else(|| payload.get("project"))
 }
 
 fn run_plan(
