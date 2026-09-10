@@ -26,7 +26,7 @@ describe("filterProjectPickerProjects", () => {
 
     expect(
       filterProjectPickerProjects(projects, { showAll: false }).map((entry) => entry.id),
-    ).toEqual(["active", "unknown"]);
+    ).toEqual(["active"]);
   });
 
   it("can show every project", () => {

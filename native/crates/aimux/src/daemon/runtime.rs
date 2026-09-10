@@ -929,24 +929,7 @@ impl RealDaemonRuntime {
     fn restart_project_roots(&self, project_root: Option<&str>) -> Vec<String> {
         match project_root {
             Some(project_root) => vec![self.resolve_project_root_value(project_root)],
-            None => {
-                let visible_project_roots = self
-                    .list_projects_for_route()
-                    .into_iter()
-                    .map(|project| project.path);
-                let registry_project_roots = self
-                    .resolver
-                    .list_projects()
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|project| project.repo_root);
-                restart_project_roots_from_sources(
-                    None,
-                    &self.daemon_state(),
-                    registry_project_roots,
-                    visible_project_roots,
-                )
-            }
+            None => restart_project_roots_from_sources(None, &self.daemon_state()),
         }
     }
 
@@ -3277,23 +3260,15 @@ fn restart_summary(projects: &[Value], orphan_cleanup: &Value) -> Value {
     })
 }
 
-fn restart_all_project_roots(
-    state: &DaemonState,
-    registry_project_roots: impl IntoIterator<Item = String>,
-) -> Vec<String> {
+fn restart_all_project_roots(state: &DaemonState) -> Vec<String> {
     state
         .projects
         .values()
+        .filter(|project| project_service_state_is_restart_active(project))
         .filter_map(|project| project.get("projectRoot").and_then(Value::as_str))
         .map(str::trim)
         .filter(|project_root| !project_root.is_empty())
         .map(str::to_owned)
-        .chain(
-            registry_project_roots
-                .into_iter()
-                .map(|project_root| project_root.trim().to_owned())
-                .filter(|project_root| !project_root.is_empty()),
-        )
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect()
@@ -3302,18 +3277,15 @@ fn restart_all_project_roots(
 fn restart_project_roots_from_sources(
     project_root: Option<&str>,
     state: &DaemonState,
-    registry_project_roots: impl IntoIterator<Item = String>,
-    visible_project_roots: impl IntoIterator<Item = String>,
 ) -> Vec<String> {
     if let Some(project_root) = project_root {
         return vec![project_root.to_owned()];
     }
-    restart_all_project_roots(
-        state,
-        registry_project_roots
-            .into_iter()
-            .chain(visible_project_roots),
-    )
+    restart_all_project_roots(state)
+}
+
+fn project_service_state_is_restart_active(project: &Value) -> bool {
+    project.get("status").and_then(Value::as_str) != Some("stopped")
 }
 
 fn restart_step_status<'a>(project: &'a Value, field: &str) -> Option<&'a str> {
@@ -3694,7 +3666,7 @@ mod tests {
     }
 
     #[test]
-    fn restart_all_project_roots_follow_daemon_state_and_registry() {
+    fn restart_project_roots_restore_active_daemon_state_only() {
         let state = DaemonState {
             version: 1,
             updated_at: Some(json!("now")),
@@ -3704,38 +3676,19 @@ mod tests {
                 ("missing".into(), json!({ "pid": 42 })),
                 ("alpha".into(), json!({ "projectRoot": "/repo/alpha" })),
                 ("dup".into(), json!({ "projectRoot": "/repo/beta" })),
+                (
+                    "stopped".into(),
+                    json!({ "projectRoot": "/repo/stopped", "status": "stopped" }),
+                ),
             ]),
         };
 
         assert_eq!(
-            restart_project_roots_from_sources(
-                None,
-                &state,
-                [
-                    "/repo/beta".to_owned(),
-                    "/repo/gamma".to_owned(),
-                    " ".to_owned(),
-                ],
-                [
-                    "/repo/gamma".to_owned(),
-                    "/repo/visible".to_owned(),
-                    " ".to_owned(),
-                ],
-            ),
-            vec![
-                "/repo/alpha".to_owned(),
-                "/repo/beta".to_owned(),
-                "/repo/gamma".to_owned(),
-                "/repo/visible".to_owned()
-            ]
+            restart_project_roots_from_sources(None, &state),
+            vec!["/repo/alpha".to_owned(), "/repo/beta".to_owned()]
         );
         assert_eq!(
-            restart_project_roots_from_sources(
-                Some("/repo/only"),
-                &state,
-                ["/repo/ignored".to_owned()],
-                ["/repo/also-ignored".to_owned()]
-            ),
+            restart_project_roots_from_sources(Some("/repo/only"), &state),
             vec!["/repo/only".to_owned()]
         );
     }

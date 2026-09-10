@@ -1,7 +1,7 @@
 import type { DaemonProject } from "@/lib/api";
 
 export function hasKnownOnlineAgents(project: Pick<DaemonProject, "onlineAgentCount">): boolean {
-  return project.onlineAgentCount === undefined || project.onlineAgentCount > 0;
+  return typeof project.onlineAgentCount === "number" && project.onlineAgentCount > 0;
 }
 
 export function filterProjectPickerProjects(
