@@ -495,13 +495,39 @@ impl Drop for TempRoot {
 fn snapshot_root(root: &Path) -> Value {
     json!({
         "root": root.to_string_lossy(),
-        "tmuxLog": read_json_lines(&root.join("tmux-log.jsonl")),
+        "tmuxLog": normalize_tmux_log(read_json_lines(&root.join("tmux-log.jsonl"))),
         "curlLog": read_text_lines(&root.join("curl-log.jsonl")),
         "aimuxLog": read_text_lines(&root.join("aimux-log.txt")),
         "state": read_json_file(&root.join("tmux-state.json")),
         "rootFiles": list_root_files(root),
         "projectFiles": list_files(&root.join("project")),
     })
+}
+
+fn normalize_tmux_log(value: Value) -> Value {
+    let Some(calls) = value.as_array() else {
+        return value;
+    };
+    Value::Array(
+        calls
+            .iter()
+            .map(|call| {
+                let Some(args) = call.as_array() else {
+                    return call.clone();
+                };
+                if args
+                    .first()
+                    .and_then(Value::as_str)
+                    .is_some_and(|arg| arg == "-S")
+                    && args.get(1).and_then(Value::as_str).is_some()
+                {
+                    Value::Array(args.iter().skip(2).cloned().collect())
+                } else {
+                    call.clone()
+                }
+            })
+            .collect(),
+    )
 }
 
 fn wait_for_expected_logs(roots: &BTreeMap<String, TempRoot>, expected: &Value, repo: &Path) {
@@ -826,9 +852,10 @@ const fs = require("node:fs");
 const { spawnSync } = require("node:child_process");
 const statePath = process.env.TMUX_FAKE_STATE;
 const logPath = process.env.TMUX_FAKE_LOG;
-const args = process.argv.slice(2);
+const rawArgs = process.argv.slice(2);
+const args = rawArgs[0] === "-S" ? rawArgs.slice(2) : rawArgs;
 const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
-fs.appendFileSync(logPath, JSON.stringify(args) + "\n");
+fs.appendFileSync(logPath, JSON.stringify(rawArgs) + "\n");
 function fail() { process.exit(1); }
 function out(value) { process.stdout.write(String(value)); }
 function listClients() {

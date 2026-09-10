@@ -306,7 +306,7 @@ impl DaemonExposeFocusRuntime for SystemDaemonExposeFocusRuntime {
 
 pub fn expose_items_route(
     resolver: &mut PathResolver,
-    session_prefix_for_project: impl Fn(&str) -> String,
+    _session_prefix_for_project: impl Fn(&str) -> String,
     path: &str,
     projects_for_refresh: &[ProjectsRouteProject],
     hot_snapshots: &GlobalExposeHotSnapshotCoordinator,
@@ -315,7 +315,7 @@ pub fn expose_items_route(
     let include_preview = route_url.search_param("includePreview") == Some("1");
     let include_chat_preview = route_url.search_param("includeChatPreview") == Some("1");
     let project_state_dirs = project_state_dirs_by_id(resolver, projects_for_refresh);
-    let items = list_all_projects_expose_items(resolver, session_prefix_for_project)?;
+    let items = list_live_projects_expose_items(resolver, projects_for_refresh)?;
     let ordered = order_global_expose_items(resolver, items);
     if include_preview || include_chat_preview {
         hot_snapshots.touch_route_lease(
@@ -487,6 +487,63 @@ pub fn list_all_projects_expose_items(
     });
     let mut items = Vec::new();
     for project in projects {
+        let project_state_dir = resolver.project_state_dir_for(&project.path);
+        let topology = read_runtime_topology(runtime_topology_path(&project_state_dir))?;
+        if topology
+            .get("sessions")
+            .and_then(Value::as_array)
+            .is_none_or(Vec::is_empty)
+            && topology
+                .get("services")
+                .and_then(Value::as_array)
+                .is_none_or(Vec::is_empty)
+        {
+            continue;
+        }
+        let metadata = load_metadata_state(&project_state_dir);
+        let entries = topology_switchable_entries_with_live_window_normalization(
+            &topology,
+            &metadata.sessions,
+        );
+        if entries.is_empty() {
+            continue;
+        }
+        let last_used = load_last_used_state(&project_state_dir);
+        let context = SwitchableContext {
+            project_root: project.path.clone(),
+            current_path: Some(project.path.clone()),
+            current_window: None,
+            current_window_id: None,
+            current_client_session: None,
+        };
+        let options = SwitchableListOptions {
+            scope: AgentListScope::All,
+            raw_labels: true,
+            ..SwitchableListOptions::default()
+        };
+        let mut project_items = list_switchable_agent_items(
+            &entries,
+            &metadata.sessions,
+            &context,
+            &options,
+            &last_used,
+        );
+        for item in &mut project_items {
+            item.project_id = Some(project.id.clone());
+            item.project_name = Some(project.name.clone());
+            item.project_root = Some(project.path.clone());
+        }
+        items.extend(project_items);
+    }
+    Ok(items)
+}
+
+fn list_live_projects_expose_items(
+    resolver: &mut PathResolver,
+    projects: &[ProjectsRouteProject],
+) -> Result<Vec<crate::project_service::switchable_agents::SwitchableAgentItem>, String> {
+    let mut items = Vec::new();
+    for project in projects.iter().filter(|project| project.service_alive) {
         let project_state_dir = resolver.project_state_dir_for(&project.path);
         let topology = read_runtime_topology(runtime_topology_path(&project_state_dir))?;
         if topology
