@@ -252,8 +252,7 @@ fn claude_hook_prefers_live_duplicate_when_backend_id_matches_stale_row() {
     let project = temp_project("claude-backend-live-duplicate");
     let state_dir = project.join("state");
     write_duplicate_hook_topology(&project, &state_dir);
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
-        .with_live_window_ids(["@2"]);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
 
     let response = route_project_service_request(
         &context,
@@ -487,7 +486,7 @@ fn write_duplicate_hook_topology(project: &std::path::Path, state_dir: &std::pat
             {
                 "id": "claude-pd1hl2",
                 "nodeId": "agent-node-stale",
-                "status": "offline",
+                "status": "running",
                 "tool": "claude",
                 "toolConfigKey": "claude",
                 "command": "claude",

@@ -153,6 +153,34 @@ fn resolve_hook_session_id(
         Err(_) => return explicit_session_id.to_owned(),
     };
     let sessions = list_topology_session_states(&topology, None);
+    let best_backend_match = sessions
+        .iter()
+        .filter(|session| {
+            session.get("backendSessionId").and_then(Value::as_str) == Some(backend_session_id)
+        })
+        .max_by_key(|session| {
+            (
+                session_match_score(context, session),
+                session
+                    .get("updatedAt")
+                    .and_then(Value::as_str)
+                    .unwrap_or(""),
+            )
+        })
+        .cloned();
+    if let Some(session) = best_backend_match.as_ref()
+        && let Some(live) = live_replacement_for_stale_session(context, &sessions, session)
+        && let Some(id) = live.get("id").and_then(Value::as_str)
+    {
+        return id.to_owned();
+    }
+    if let Some(session) = best_backend_match.as_ref()
+        && session_is_live_for_hook(context, session)
+    {
+        if let Some(id) = session.get("id").and_then(Value::as_str) {
+            return id.to_owned();
+        }
+    }
     if let Some(explicit) = sessions.iter().find(|session| {
         session.get("id").and_then(Value::as_str) == Some(explicit_session_id)
             && backend_matches_or_missing(session, backend_session_id)
@@ -161,26 +189,6 @@ fn resolve_hook_session_id(
         if let Some(id) = explicit.get("id").and_then(Value::as_str) {
             return id.to_owned();
         }
-    }
-    let best_backend_match = sessions
-        .iter()
-        .filter(|session| {
-            session.get("backendSessionId").and_then(Value::as_str) == Some(backend_session_id)
-        })
-        .max_by_key(|session| session_match_score(context, session))
-        .cloned();
-    if let Some(session) = best_backend_match.as_ref()
-        && session_is_live_for_hook(context, session)
-    {
-        if let Some(id) = session.get("id").and_then(Value::as_str) {
-            return id.to_owned();
-        }
-    }
-    if let Some(stale) = best_backend_match.as_ref()
-        && let Some(live) = live_replacement_for_stale_session(context, &sessions, stale)
-        && let Some(id) = live.get("id").and_then(Value::as_str)
-    {
-        return id.to_owned();
     }
     best_backend_match
         .and_then(|session| session.get("id").and_then(Value::as_str).map(str::to_owned))
@@ -229,8 +237,10 @@ fn live_replacement_for_stale_session<'a>(
     sessions: &'a [Value],
     stale: &Value,
 ) -> Option<&'a Value> {
+    let stale_id = stale.get("id").and_then(Value::as_str);
     sessions
         .iter()
+        .filter(|session| session.get("id").and_then(Value::as_str) != stale_id)
         .filter(|session| session_is_live_for_hook(context, session))
         .filter(|session| same_hook_identity(session, stale))
         .max_by_key(|session| {
