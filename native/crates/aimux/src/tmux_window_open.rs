@@ -39,8 +39,11 @@ pub struct TmuxSessionWindowEntry {
 pub trait TmuxWindowOpenRuntime {
     fn is_inside_tmux(&mut self) -> bool;
     fn current_client_session(&mut self) -> Option<String>;
-    fn list_project_managed_windows(&mut self, project_root: &str) -> Vec<TmuxManagedWindow>;
-    fn is_window_alive(&mut self, target: &TmuxTarget) -> bool;
+    fn list_project_managed_windows(
+        &mut self,
+        project_root: &str,
+    ) -> Result<Vec<TmuxManagedWindow>, String>;
+    fn is_window_alive(&mut self, target: &TmuxTarget) -> Result<bool, String>;
     fn open_target(
         &mut self,
         target: &TmuxTarget,
@@ -53,7 +56,7 @@ pub trait TmuxWindowOpenRuntime {
     ) -> Option<TmuxTarget>;
     fn select_window(&mut self, target: &TmuxTarget) -> Result<(), String>;
     fn find_client_by_tty(&mut self, client_tty: &str) -> Option<TmuxClientInfo>;
-    fn list_clients(&mut self) -> Vec<TmuxClientInfo>;
+    fn list_clients(&mut self) -> Result<Vec<TmuxClientInfo>, String>;
     fn get_attached_client_for_target(&mut self, target: &TmuxTarget) -> Option<TmuxClientInfo>;
     fn switch_client_to_target(
         &mut self,
@@ -74,11 +77,14 @@ impl TmuxWindowOpenRuntime for TmuxRuntimeManager {
         TmuxRuntimeManager::current_client_session(self)
     }
 
-    fn list_project_managed_windows(&mut self, project_root: &str) -> Vec<TmuxManagedWindow> {
+    fn list_project_managed_windows(
+        &mut self,
+        project_root: &str,
+    ) -> Result<Vec<TmuxManagedWindow>, String> {
         TmuxRuntimeManager::list_project_managed_windows(self, project_root)
     }
 
-    fn is_window_alive(&mut self, target: &TmuxTarget) -> bool {
+    fn is_window_alive(&mut self, target: &TmuxTarget) -> Result<bool, String> {
         TmuxRuntimeManager::is_window_alive(self, target)
     }
 
@@ -106,7 +112,7 @@ impl TmuxWindowOpenRuntime for TmuxRuntimeManager {
         TmuxRuntimeManager::find_client_by_tty(self, client_tty)
     }
 
-    fn list_clients(&mut self) -> Vec<TmuxClientInfo> {
+    fn list_clients(&mut self) -> Result<Vec<TmuxClientInfo>, String> {
         TmuxRuntimeManager::list_clients(self)
     }
 
@@ -152,6 +158,7 @@ pub fn resolve_live_client_tty<R: TmuxWindowOpenRuntime>(
         .map(str::trim)
         .filter(|value| !value.is_empty())?;
     tmux.list_clients()
+        .ok()?
         .into_iter()
         .find(|client| client.session_name == normalized_session)
         .map(|client| client.tty)
@@ -232,11 +239,15 @@ pub fn open_managed_session_window<R: TmuxWindowOpenRuntime>(
     focus_context: Option<&TmuxFocusContext>,
 ) -> Result<Option<TmuxTarget>, String> {
     let candidates = tmux
-        .list_project_managed_windows(project_root)
+        .list_project_managed_windows(project_root)?
         .into_iter()
         .filter(|candidate| metadata_kind(&candidate.metadata) == Some("agent"))
-        .filter(|candidate| tmux.is_window_alive(&candidate.target))
-        .collect::<Vec<_>>();
+        .filter_map(|candidate| match tmux.is_window_alive(&candidate.target) {
+            Ok(true) => Some(Ok(candidate)),
+            Ok(false) => None,
+            Err(error) => Some(Err(error)),
+        })
+        .collect::<Result<Vec<_>, String>>()?;
     let Some(match_window) = exact_window_match(&candidates, entry.tmux_window_id.as_deref())
         .or_else(|| {
             candidates.iter().find(|candidate| {
@@ -264,11 +275,15 @@ pub fn open_managed_service_window<R: TmuxWindowOpenRuntime>(
     focus_context: Option<&TmuxFocusContext>,
 ) -> Result<Option<TmuxTarget>, String> {
     let candidates = tmux
-        .list_project_managed_windows(project_root)
+        .list_project_managed_windows(project_root)?
         .into_iter()
         .filter(|candidate| metadata_kind(&candidate.metadata) == Some("service"))
-        .filter(|candidate| tmux.is_window_alive(&candidate.target))
-        .collect::<Vec<_>>();
+        .filter_map(|candidate| match tmux.is_window_alive(&candidate.target) {
+            Ok(true) => Some(Ok(candidate)),
+            Ok(false) => None,
+            Err(error) => Some(Err(error)),
+        })
+        .collect::<Result<Vec<_>, String>>()?;
     let Some(match_window) = exact_window_match(&candidates, service.tmux_window_id.as_deref())
         .or_else(|| {
             candidates.iter().find(|candidate| {
@@ -521,14 +536,17 @@ impl TmuxWindowOpenRuntime for ContractWindowOpenRuntime {
         self.current_client_session.clone()
     }
 
-    fn list_project_managed_windows(&mut self, project_root: &str) -> Vec<TmuxManagedWindow> {
+    fn list_project_managed_windows(
+        &mut self,
+        project_root: &str,
+    ) -> Result<Vec<TmuxManagedWindow>, String> {
         self.push_call("listProjectManagedWindows", json!([project_root]));
-        self.managed_windows.clone()
+        Ok(self.managed_windows.clone())
     }
 
-    fn is_window_alive(&mut self, target: &TmuxTarget) -> bool {
+    fn is_window_alive(&mut self, target: &TmuxTarget) -> Result<bool, String> {
         self.push_call("isWindowAlive", json!([target_to_value(target.clone())]));
-        self.live_window_ids.is_empty() || self.live_window_ids.contains(&target.window_id)
+        Ok(self.live_window_ids.is_empty() || self.live_window_ids.contains(&target.window_id))
     }
 
     fn open_target(
@@ -571,9 +589,9 @@ impl TmuxWindowOpenRuntime for ContractWindowOpenRuntime {
             .cloned()
     }
 
-    fn list_clients(&mut self) -> Vec<TmuxClientInfo> {
+    fn list_clients(&mut self) -> Result<Vec<TmuxClientInfo>, String> {
         self.push_call("listClients", json!([]));
-        self.clients.clone()
+        Ok(self.clients.clone())
     }
 
     fn get_attached_client_for_target(&mut self, target: &TmuxTarget) -> Option<TmuxClientInfo> {

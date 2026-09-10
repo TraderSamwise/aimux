@@ -184,6 +184,27 @@ fn stale_or_dead_lock_is_reclaimed_and_owner_file_must_be_integer_pid() {
     assert_eq!(read_lock_pid(&lock_path), Some(222));
 }
 
+#[cfg(unix)]
+#[test]
+fn unreadable_daemon_start_lock_owner_blocks_reclaim() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let test_dir = TestDir::new();
+    let resolver = test_dir.resolver();
+    let lock_path = daemon_start_lock_path(&resolver);
+    fs::create_dir_all(&lock_path).expect("create lock");
+    let owner_path = lock_path.join("owner.json");
+    fs::write(&owner_path, "{\"pid\":111}\n").expect("write owner");
+    fs::set_permissions(&owner_path, fs::Permissions::from_mode(0o000)).expect("chmod owner");
+
+    let error = try_acquire_daemon_start_lock_with(&lock_path, 222, current_millis(), |_| false)
+        .expect_err("unreadable owner must block reclaim");
+
+    fs::set_permissions(&owner_path, fs::Permissions::from_mode(0o600)).expect("restore owner");
+    assert_eq!(error.to_string(), "Permission denied (os error 13)");
+    assert_eq!(read_lock_pid(&lock_path), Some(111));
+}
+
 #[test]
 fn runtime_restart_lock_matches_node_busy_and_reclaim_rules() {
     let test_dir = TestDir::new();

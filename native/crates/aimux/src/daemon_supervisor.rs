@@ -176,6 +176,22 @@ pub fn read_lock_pid(lock_path: impl AsRef<Path>) -> Option<i32> {
     i32::try_from(pid).ok()
 }
 
+fn try_read_lock_pid(lock_path: impl AsRef<Path>) -> io::Result<Option<i32>> {
+    let owner_path = lock_path.as_ref().join("owner.json");
+    let bytes = match fs::read(&owner_path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let Ok(value) = serde_json::from_slice::<Value>(&bytes) else {
+        return Ok(None);
+    };
+    Ok(value
+        .get("pid")
+        .and_then(js_positive_integer)
+        .and_then(|pid| i32::try_from(pid).ok()))
+}
+
 pub fn is_lock_stale(lock_path: impl AsRef<Path>, stale_ms: u64, now_ms: u128) -> bool {
     let Ok(metadata) = fs::metadata(lock_path) else {
         return true;
@@ -224,7 +240,7 @@ pub fn try_acquire_daemon_start_lock_with(
     if let Some(acquired) = acquire()? {
         return Ok(Some(acquired));
     }
-    let pid = read_lock_pid(lock_path);
+    let pid = try_read_lock_pid(lock_path)?;
     if pid.is_some_and(is_alive) && !is_lock_stale(lock_path, DAEMON_START_LOCK_STALE_MS, now_ms) {
         return Ok(None);
     }
@@ -290,7 +306,7 @@ pub fn try_acquire_runtime_restart_lock_with(
         return Ok(Some(acquired));
     }
 
-    let owner = read_lock_pid(lock_path);
+    let owner = try_read_lock_pid(lock_path)?;
     let lock_is_stale = is_lock_stale(lock_path, RUNTIME_RESTART_LOCK_STALE_MS, now_ms);
     let owner_is_dead = owner.is_some_and(|pid| !is_alive(pid));
     if !lock_is_stale && !owner_is_dead {
@@ -302,7 +318,7 @@ pub fn try_acquire_runtime_restart_lock_with(
         return Ok(None);
     };
     let reclaim_result = (|| {
-        let current_owner = read_lock_pid(lock_path);
+        let current_owner = try_read_lock_pid(lock_path)?;
         let current_lock_is_stale = is_lock_stale(lock_path, RUNTIME_RESTART_LOCK_STALE_MS, now_ms);
         let current_owner_is_dead = current_owner.is_some_and(|pid| !is_alive(pid));
         if !current_lock_is_stale && !current_owner_is_dead {
@@ -346,7 +362,7 @@ pub fn release_daemon_start_lock(
     let Some(lock_path) = lock_path else {
         return Ok(());
     };
-    if read_lock_pid(lock_path) != Some(owner_pid) {
+    if try_read_lock_pid(lock_path)? != Some(owner_pid) {
         return Ok(());
     }
     fs::remove_dir_all(lock_path)?;
@@ -382,7 +398,7 @@ fn write_lock_owner(lock_path: &Path, owner_pid: i32) -> io::Result<()> {
 }
 
 fn release_lock_if_owner(lock_path: &Path, owner_pid: i32) -> Result<(), DaemonSupervisorError> {
-    if read_lock_pid(lock_path) != Some(owner_pid) {
+    if try_read_lock_pid(lock_path)? != Some(owner_pid) {
         return Ok(());
     }
     remove_lock_dir_if_present(lock_path)

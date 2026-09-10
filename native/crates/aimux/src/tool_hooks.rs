@@ -15,7 +15,16 @@ pub fn codex_launch_hook_args() -> Vec<String> {
 
 pub fn install_codex_hooks(codex_home: Option<&Path>) -> Result<std::path::PathBuf, String> {
     let hooks_path = codex_hooks_path(codex_home);
-    let previous = std::fs::read_to_string(&hooks_path).unwrap_or_default();
+    let previous = match std::fs::read_to_string(&hooks_path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => {
+            return Err(format!(
+                "failed to read Codex hooks file {}: {error}",
+                hooks_path.display()
+            ));
+        }
+    };
     let existing = if previous.trim().is_empty() {
         json!({})
     } else {
@@ -401,6 +410,31 @@ mod tests {
             !serde_json::to_string(&updated)
                 .unwrap()
                 .contains("old /hooks/codex")
+        );
+        let _ = std::fs::remove_dir_all(codex_home);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn install_codex_hooks_refuses_unreadable_existing_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let codex_home = temp_state_dir("codex-unreadable");
+        let hooks_path = codex_home.join("hooks.json");
+        std::fs::create_dir_all(&codex_home).unwrap();
+        std::fs::write(&hooks_path, r#"{"hooks":{"Stop":[{"hooks":[]}]}}"#).unwrap();
+        std::fs::set_permissions(&hooks_path, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        let error = install_codex_hooks(Some(&codex_home)).expect_err("unreadable hooks file");
+
+        std::fs::set_permissions(&hooks_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(
+            error.contains("failed to read Codex hooks file"),
+            "unexpected error: {error}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&hooks_path).unwrap(),
+            r#"{"hooks":{"Stop":[{"hooks":[]}]}}"#
         );
         let _ = std::fs::remove_dir_all(codex_home);
     }

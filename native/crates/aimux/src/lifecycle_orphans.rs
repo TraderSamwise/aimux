@@ -138,7 +138,7 @@ impl LifecycleOrphanRuntime for SystemLifecycleOrphanRuntime {
     }
 
     fn list_tmux_session_names(&mut self) -> Vec<String> {
-        self.tmux.list_session_names()
+        self.tmux.list_session_names().unwrap_or_default()
     }
 
     fn get_tmux_session_option(&mut self, session_name: &str, key: &str) -> Option<String> {
@@ -146,7 +146,7 @@ impl LifecycleOrphanRuntime for SystemLifecycleOrphanRuntime {
     }
 
     fn list_tmux_windows(&mut self, session_name: &str) -> Vec<TmuxWindowInfo> {
-        self.tmux.list_windows(session_name)
+        self.tmux.list_windows(session_name).unwrap_or_default()
     }
 
     fn kill_tmux_window(&mut self, target: &TmuxTarget) -> Result<(), String> {

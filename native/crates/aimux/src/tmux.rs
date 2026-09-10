@@ -239,7 +239,7 @@ impl TmuxRuntimeManager {
             return session;
         }
         let mut known_names: BTreeSet<String> = session_names
-            .unwrap_or_else(|| self.list_session_names())
+            .unwrap_or_else(|| self.list_session_names().unwrap_or_default())
             .into_iter()
             .collect();
         self.rename_known_session(
@@ -314,7 +314,7 @@ impl TmuxRuntimeManager {
         for attempt in 0..2 {
             let mut exists = self.has_session(&session.session_name);
             if !exists {
-                let before = self.list_session_names();
+                let before = self.list_session_names()?;
                 self.repair_legacy_project_session_names(project_root, Some(before));
                 exists = self.has_session(&session.session_name);
             }
@@ -381,22 +381,19 @@ impl TmuxRuntimeManager {
         self.ensure_project_session(project_root, None, config)
     }
 
-    pub fn list_session_names(&mut self) -> Vec<String> {
-        let Ok(raw) = self.exec_tmux(&["list-sessions", "-F", "#{session_name}"]) else {
-            return Vec::new();
-        };
-        raw.lines()
+    pub fn list_session_names(&mut self) -> Result<Vec<String>, String> {
+        let raw = self.exec_tmux(&["list-sessions", "-F", "#{session_name}"])?;
+        Ok(raw
+            .lines()
             .map(str::trim)
             .filter(|line| !line.is_empty())
             .map(str::to_owned)
-            .collect()
+            .collect())
     }
 
-    pub fn list_windows(&mut self, session_name: &str) -> Vec<TmuxWindowInfo> {
-        let Ok(raw) = self.exec_owned(list_windows_argv(session_name), None) else {
-            return Vec::new();
-        };
-        parse_tmux_windows(&raw)
+    pub fn list_windows(&mut self, session_name: &str) -> Result<Vec<TmuxWindowInfo>, String> {
+        let raw = self.exec_owned(list_windows_argv(session_name), None)?;
+        Ok(parse_tmux_windows(&raw))
     }
 
     pub fn get_target_by_window_id(
@@ -406,6 +403,7 @@ impl TmuxRuntimeManager {
     ) -> Option<TmuxTarget> {
         let window = self
             .list_windows(session_name)
+            .ok()?
             .into_iter()
             .find(|entry| entry.id == window_id)?;
         Some(TmuxTarget {
@@ -419,10 +417,6 @@ impl TmuxRuntimeManager {
 
     /// Window ids that currently exist across every tmux session on this server.
     /// One call, so a caller validating many sessions does not spawn tmux per session.
-    pub fn live_window_ids(&mut self) -> std::collections::BTreeSet<String> {
-        self.try_live_window_ids().unwrap_or_default()
-    }
-
     pub fn try_live_window_ids(&mut self) -> Result<std::collections::BTreeSet<String>, String> {
         let raw = self.exec_owned(list_all_window_ids_argv(), None)?;
         Ok(raw
@@ -438,12 +432,9 @@ impl TmuxRuntimeManager {
             .is_some()
     }
 
-    pub fn is_window_alive(&mut self, target: &TmuxTarget) -> bool {
-        let Ok(pane_dead) = self.display_message_raw("#{pane_dead}", Some(&target.window_id))
-        else {
-            return false;
-        };
-        pane_dead.trim() != "1"
+    pub fn is_window_alive(&mut self, target: &TmuxTarget) -> Result<bool, String> {
+        let pane_dead = self.display_message_raw("#{pane_dead}", Some(&target.window_id))?;
+        Ok(pane_dead.trim() != "1")
     }
 
     pub fn is_window_active(&mut self, target: &TmuxTarget) -> bool {
@@ -524,7 +515,7 @@ impl TmuxRuntimeManager {
     ) -> Result<TmuxTarget, String> {
         let dashboard_name = "dashboard";
         if let Some(existing) = self
-            .list_windows(session_name)
+            .list_windows(session_name)?
             .into_iter()
             .find(|window| is_dashboard_window_name(&window.name))
         {
@@ -548,7 +539,7 @@ impl TmuxRuntimeManager {
                 cwd: Some(project_root.to_owned()),
             }),
         )?;
-        self.list_windows(session_name)
+        self.list_windows(session_name)?
             .into_iter()
             .find(|window| window.name == dashboard_name)
             .map(|created| TmuxTarget {
@@ -659,7 +650,7 @@ impl TmuxRuntimeManager {
                 }
                 return Ok(swapped);
             }
-            if !self.is_window_alive(&replacement) {
+            if !self.is_window_alive(&replacement)? {
                 let output = self
                     .capture_target(
                         &replacement,
@@ -1227,11 +1218,10 @@ impl TmuxRuntimeManager {
         self.apply_managed_agent_window_policy(window_id, tool_config_key)
     }
 
-    pub fn list_clients(&mut self) -> Vec<TmuxClientInfo> {
-        let Ok(raw) = self.exec_owned(list_clients_argv(), None) else {
-            return Vec::new();
-        };
-        raw.lines()
+    pub fn list_clients(&mut self) -> Result<Vec<TmuxClientInfo>, String> {
+        let raw = self.exec_owned(list_clients_argv(), None)?;
+        Ok(raw
+            .lines()
             .filter(|line| !line.is_empty())
             .map(|line| {
                 let mut parts = line.split('\t');
@@ -1242,7 +1232,7 @@ impl TmuxRuntimeManager {
                     name: parts.next().unwrap_or_default().to_owned(),
                 }
             })
-            .collect()
+            .collect())
     }
 
     pub fn find_client_by_tty(&mut self, client_tty: &str) -> Option<TmuxClientInfo> {
@@ -1251,6 +1241,7 @@ impl TmuxRuntimeManager {
             return None;
         }
         self.list_clients()
+            .ok()?
             .into_iter()
             .find(|client| client.tty == normalized)
     }
@@ -1261,6 +1252,7 @@ impl TmuxRuntimeManager {
     ) -> Option<TmuxClientInfo> {
         let clients: Vec<TmuxClientInfo> = self
             .list_clients()
+            .ok()?
             .into_iter()
             .filter(|client| {
                 client.session_name == target.session_name
@@ -1288,18 +1280,23 @@ impl TmuxRuntimeManager {
                 Err(_) => complete = false,
             }
         }
-        for session_name in self.list_session_names() {
-            for args in [
-                vec!["show-options", "-t", session_name.as_str()],
-                vec!["show-options", "-w", "-t", session_name.as_str()],
-                vec!["show-hooks", "-t", session_name.as_str()],
-            ] {
-                match self.exec_tmux(&args) {
-                    Ok(value) if !value.is_empty() => text.push(value),
-                    Ok(_) => {}
-                    Err(_) => complete = false,
+        match self.list_session_names() {
+            Ok(session_names) => {
+                for session_name in session_names {
+                    for args in [
+                        vec!["show-options", "-t", session_name.as_str()],
+                        vec!["show-options", "-w", "-t", session_name.as_str()],
+                        vec!["show-hooks", "-t", session_name.as_str()],
+                    ] {
+                        match self.exec_tmux(&args) {
+                            Ok(value) if !value.is_empty() => text.push(value),
+                            Ok(_) => {}
+                            Err(_) => complete = false,
+                        }
+                    }
                 }
             }
+            Err(_) => complete = false,
         }
         TmuxPersistedCommandText { text, complete }
     }
@@ -1349,30 +1346,31 @@ impl TmuxRuntimeManager {
         serde_json::from_str(&raw).ok()
     }
 
-    pub fn list_managed_windows(&mut self, session_name: &str) -> Vec<TmuxManagedWindow> {
-        let Ok(raw) = self.exec_tmux(&[
+    pub fn list_managed_windows(
+        &mut self,
+        session_name: &str,
+    ) -> Result<Vec<TmuxManagedWindow>, String> {
+        let raw = self.exec_tmux(&[
             "list-windows",
             "-t",
             session_name,
             "-F",
             "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}\t#{pane_dead}\t#{@aimux-meta}",
-        ]) else {
-            return Vec::new();
-        };
-        parse_tmux_managed_windows(session_name, &raw)
+        ])?;
+        Ok(parse_tmux_managed_windows(session_name, &raw))
     }
 
     pub fn list_project_managed_windows(
         &mut self,
         project_root: impl AsRef<Path>,
-    ) -> Vec<TmuxManagedWindow> {
+    ) -> Result<Vec<TmuxManagedWindow>, String> {
         let project_root = project_root.as_ref();
         let host_session = self.get_project_session(project_root).session_name;
-        let all_session_names = self.list_session_names();
+        let all_session_names = self.list_session_names()?;
         self.repair_legacy_project_session_names(project_root, Some(all_session_names));
         let requested_root = canonicalize_filesystem_path(project_root);
         let session_names: Vec<String> = self
-            .list_session_names()
+            .list_session_names()?
             .into_iter()
             .filter(|name| {
                 if name == &host_session || is_tmux_client_session_for_host(name, &host_session) {
@@ -1390,13 +1388,13 @@ impl TmuxRuntimeManager {
         let mut seen_window_ids = BTreeSet::new();
         let mut managed = Vec::new();
         for session_name in session_names {
-            for entry in self.list_managed_windows(&session_name) {
+            for entry in self.list_managed_windows(&session_name)? {
                 if seen_window_ids.insert(entry.target.window_id.clone()) {
                     managed.push(entry);
                 }
             }
         }
-        managed
+        Ok(managed)
     }
 
     pub fn find_managed_window(
@@ -1404,11 +1402,12 @@ impl TmuxRuntimeManager {
         session_name: &str,
         session_id: Option<&str>,
         backend_session_id: Option<&str>,
-    ) -> Option<TmuxManagedWindow> {
+    ) -> Result<Option<TmuxManagedWindow>, String> {
         if session_id.is_none() && backend_session_id.is_none() {
-            return None;
+            return Ok(None);
         }
-        self.list_managed_windows(session_name)
+        Ok(self
+            .list_managed_windows(session_name)?
             .into_iter()
             .find(|entry| {
                 session_id
@@ -1416,7 +1415,7 @@ impl TmuxRuntimeManager {
                     || backend_session_id.is_some_and(|id| {
                         metadata_string(&entry.metadata, "backendSessionId") == Some(id)
                     })
-            })
+            }))
     }
 
     pub fn attach_session(
@@ -1646,7 +1645,7 @@ impl TmuxRuntimeManager {
         let client_session_exists = self.has_session(client_session_name);
         let runtime_build_stamp = managed_runtime_build_stamp();
         let client_windows = if client_session_exists {
-            self.list_windows(client_session_name)
+            self.list_windows(client_session_name)?
         } else {
             Vec::new()
         };
@@ -1785,7 +1784,7 @@ impl TmuxRuntimeManager {
         let mut occupying_dashboard = None;
         let mut original_renumber_windows = None;
         if let Some(window_index) = window_index {
-            let windows = self.list_windows(client_session_name);
+            let windows = self.list_windows(client_session_name)?;
             let occupying = windows
                 .into_iter()
                 .find(|window| window.index == window_index);
@@ -2750,7 +2749,7 @@ fn parse_tmux_windows(raw: &str) -> Vec<TmuxWindowInfo> {
                 name: parts.next().unwrap_or_default().to_owned(),
                 active: parts.next() == Some("1"),
                 activity: parse_optional_i64(parts.next()),
-                pane_dead: Some(parts.next() == Some("1")),
+                pane_dead: parts.next().map(|value| value == "1"),
             }
         })
         .collect()

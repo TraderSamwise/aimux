@@ -1,6 +1,6 @@
 use aimux::config::{
     deep_merge, default_config, init_project_with_resolver, load_global_config_with_resolver,
-    merge_config_layers,
+    merge_config_layers, try_load_global_config_with_resolver,
 };
 use aimux::paths::PathResolver;
 use serde_json::{Value, json};
@@ -114,6 +114,34 @@ fn load_global_config_reads_only_global_layer() {
 
     assert_eq!(config["defaultTool"], "codex");
     assert_eq!(config["expose"]["hotSnapshotsEnabled"], false);
+    fs::remove_dir_all(temp).expect("cleanup");
+}
+
+#[test]
+fn missing_global_config_defaults_but_invalid_global_config_is_observable() {
+    let temp = temp_path("global-read-error");
+    let repo = temp.join("repo");
+    let home = temp.join("home");
+    fs::create_dir_all(&home).expect("home");
+    let resolver = PathResolver::new(
+        &repo,
+        &home,
+        Some(home.join(".aimux").to_string_lossy().into_owned()),
+    );
+
+    let missing = try_load_global_config_with_resolver(&resolver).expect("missing config");
+    assert_eq!(missing["defaultTool"], default_config()["defaultTool"]);
+
+    fs::create_dir_all(resolver.global_aimux_dir()).expect("aimux home");
+    fs::write(resolver.global_config_path(), "{not json").expect("invalid config");
+    let error =
+        try_load_global_config_with_resolver(&resolver).expect_err("invalid config should fail");
+
+    assert!(
+        error.contains("failed to read config"),
+        "unexpected error: {error}"
+    );
+    assert!(error.contains("invalid JSON"), "unexpected error: {error}");
     fs::remove_dir_all(temp).expect("cleanup");
 }
 

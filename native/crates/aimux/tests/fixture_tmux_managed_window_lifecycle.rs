@@ -136,11 +136,11 @@ fn run_named_case(name: &str, tmux: &mut TmuxRuntimeManager) -> Result<Value, St
     match name {
         "lists managed windows across host and client sessions without duplicates"
         | "includes managed sessions whose stored root matches the requested project" => Ok(
-            managed_to_value(tmux.list_project_managed_windows("/repo/mobile")),
+            managed_to_value(tmux.list_project_managed_windows("/repo/mobile")?),
         ),
         "finds managed windows by backend session id" => Ok(tmux
             .find_managed_window("aimux-mobile-abc", None, Some("backend-existing"))
-            .map(|entry| target_to_value(&entry.target))
+            .map(|entry| entry.map(|entry| target_to_value(&entry.target)))?
             .unwrap_or(Value::Null)),
         "creates agent windows" => tmux
             .create_window(
@@ -184,7 +184,7 @@ fn run_named_case(name: &str, tmux: &mut TmuxRuntimeManager) -> Result<Value, St
             Ok(Value::Null)
         }
         "checks window liveness and activity from tmux display-message" => Ok(json!({
-            "alive": tmux.is_window_alive(&target()),
+            "alive": tmux.is_window_alive(&target())?,
             "active": tmux.is_window_active(&target()),
         })),
         "reads and writes aimux window metadata" => {

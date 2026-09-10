@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll, Wake, Waker};
 
 #[test]
-fn treats_missing_tmux_server_state_as_empty_lists() {
+fn reports_missing_tmux_server_state_as_inventory_errors() {
     let calls = Rc::new(RefCell::new(Vec::<Vec<String>>::new()));
     let calls_for_exec = calls.clone();
     let mut manager = TmuxRuntimeManager::with_exec(move |args, _options| {
@@ -29,12 +29,44 @@ fn treats_missing_tmux_server_state_as_empty_lists() {
     });
 
     assert!(manager.is_available());
-    assert_eq!(manager.list_session_names(), Vec::<String>::new());
-    assert_eq!(
-        manager.list_windows("aimux-mobile-abc"),
-        Vec::<TmuxWindowInfo>::new()
+    assert!(
+        manager
+            .list_session_names()
+            .expect_err("session inventory error")
+            .contains("error connecting")
+    );
+    assert!(
+        manager
+            .list_windows("aimux-mobile-abc")
+            .expect_err("window inventory error")
+            .contains("error connecting")
     );
     assert_eq!(calls.borrow()[0], vec!["-V"]);
+}
+
+#[test]
+fn reports_window_liveness_errors() {
+    let mut manager = TmuxRuntimeManager::with_exec(|args, _options| {
+        if args.join(" ") == "display-message -p -t @3 #{pane_dead}" {
+            return Err("error connecting to /private/tmp/tmux-501/default".to_owned());
+        }
+        Ok(String::new())
+    });
+
+    let error = manager
+        .is_window_alive(&TmuxTarget {
+            session_name: "aimux-mobile-abc".to_owned(),
+            window_id: "@3".to_owned(),
+            window_index: 3,
+            window_name: "codex".to_owned(),
+            pane_dead: None,
+        })
+        .expect_err("window liveness error");
+
+    assert!(
+        error.contains("error connecting"),
+        "unexpected error: {error}"
+    );
 }
 
 #[test]
@@ -47,7 +79,7 @@ fn lists_windows_and_resolves_window_targets() {
     });
 
     assert_eq!(
-        manager.list_windows("aimux-mobile-abc"),
+        manager.list_windows("aimux-mobile-abc").expect("windows"),
         vec![
             TmuxWindowInfo {
                 id: "@3".to_owned(),
@@ -187,7 +219,9 @@ fn lists_project_managed_windows_after_legacy_repair() {
         Ok(String::new())
     });
 
-    let windows = manager.list_project_managed_windows("/repo/mobile");
+    let windows = manager
+        .list_project_managed_windows("/repo/mobile")
+        .expect("managed windows");
 
     assert_eq!(windows.len(), 1);
     assert_eq!(windows[0].target.window_id, "@3");
@@ -222,7 +256,9 @@ fn filters_managed_sessions_by_stored_project_root() {
         Ok(String::new())
     });
 
-    let windows = manager.list_project_managed_windows("/repo/mobile");
+    let windows = manager
+        .list_project_managed_windows("/repo/mobile")
+        .expect("managed windows");
 
     assert_eq!(
         windows

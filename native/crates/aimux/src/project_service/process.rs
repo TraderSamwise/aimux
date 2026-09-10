@@ -105,7 +105,7 @@ pub fn run_project_service_internal(options: ProjectServiceInternalOptions) -> R
         project_state_dir: startup.project_state_dir.clone(),
     };
     #[cfg(unix)]
-    let _expose_socket_guard = start_project_expose_socket(&startup).ok();
+    let _expose_socket_guard = start_project_expose_socket_for_service(&startup)?;
     let mut lifecycle_runtime = SystemProjectLifecycleRuntime;
     let startup_context = ProjectServiceRequestContext::with_project_state_dir(
         startup.project_root.clone(),
@@ -583,6 +583,14 @@ pub fn start_project_expose_socket(
 }
 
 #[cfg(unix)]
+fn start_project_expose_socket_for_service(
+    startup: &ProjectServiceStartup,
+) -> Result<ProjectExposeSocketGuard> {
+    start_project_expose_socket(startup).context("start project expose socket")
+}
+
+#[cfg(unix)]
+#[derive(Debug)]
 pub struct ProjectExposeSocketGuard {
     project_state_dir: PathBuf,
     socket_path: PathBuf,
@@ -592,6 +600,38 @@ pub struct ProjectExposeSocketGuard {
 impl Drop for ProjectExposeSocketGuard {
     fn drop(&mut self) {
         clear_expose_socket_path(&self.project_state_dir, &self.socket_path);
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn expose_socket_startup_failure_is_returned_with_context() {
+        let root = std::env::temp_dir().join(format!(
+            "aimux-project-expose-socket-error-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let state_path = root.join("state-as-file");
+        fs::create_dir_all(&root).expect("root");
+        fs::write(&state_path, "not a directory").expect("state file");
+        let startup = ProjectServiceStartup {
+            project_id: "project".to_owned(),
+            project_root: root.join("repo"),
+            project_state_dir: state_path,
+            desired_port: 0,
+        };
+
+        let error = start_project_expose_socket_for_service(&startup)
+            .expect_err("socket startup should fail");
+
+        assert!(
+            format!("{error:#}").contains("start project expose socket"),
+            "unexpected error: {error:#}"
+        );
+        let _ = fs::remove_dir_all(root);
     }
 }
 

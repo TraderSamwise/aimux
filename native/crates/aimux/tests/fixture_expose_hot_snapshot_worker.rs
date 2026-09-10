@@ -380,8 +380,11 @@ impl MockProjectRuntime {
 }
 
 impl ProjectExposeHotSnapshotRuntime for MockProjectRuntime {
-    fn list_project_managed_windows(&mut self, _project_root: &Path) -> Vec<TmuxManagedWindow> {
-        self.windows.clone()
+    fn list_project_managed_windows(
+        &mut self,
+        _project_root: &Path,
+    ) -> Result<Vec<TmuxManagedWindow>, String> {
+        Ok(self.windows.clone())
     }
 
     fn capture_target(

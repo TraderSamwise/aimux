@@ -333,7 +333,9 @@ fn read_runtime_rebuild_required_with_tmux(project_root: &Path) -> bool {
         return false;
     }
     let session_name = tmux.get_project_session(project_root).session_name;
-    let session_names = tmux.list_session_names();
+    let Ok(session_names) = tmux.list_session_names() else {
+        return true;
+    };
     if !session_names.iter().any(|name| name == &session_name) {
         return false;
     }

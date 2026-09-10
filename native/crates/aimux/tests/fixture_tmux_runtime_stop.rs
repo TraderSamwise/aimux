@@ -40,7 +40,8 @@ fn run_case(case: &Value) -> Value {
     let repo_root = "<repo>";
     match case["name"].as_str().expect("case name") {
         "lists only host and client sessions with clients before host" => ok(json!({
-            "sessions": list_managed_project_session_names(&mut tmux, repo_root),
+            "sessions": list_managed_project_session_names(&mut tmux, repo_root)
+                .expect("list sessions"),
             "calls": tmux.calls,
         })),
         "stop returns empty when tmux is unavailable" => stop_case(&mut tmux, repo_root),
@@ -99,9 +100,9 @@ impl TmuxRuntimeStopManager for FakeTmux {
         self.host_session.clone()
     }
 
-    fn list_session_names(&mut self) -> Vec<String> {
+    fn list_session_names(&mut self) -> Result<Vec<String>, String> {
         self.calls.push(json!(["listSessionNames"]));
-        self.sessions.clone()
+        Ok(self.sessions.clone())
     }
 
     fn has_session(&mut self, session_name: &str) -> bool {

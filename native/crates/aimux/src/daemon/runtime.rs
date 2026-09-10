@@ -11,7 +11,7 @@ use crate::cli_launcher::{
 };
 use crate::config::{
     load_config_for_project, load_config_for_project_with_resolver, load_global_config,
-    load_global_config_with_resolver,
+    try_load_global_config_with_resolver,
 };
 use crate::core_command_transport::{
     CoreCommandTransportError, DaemonHttpMethod, DaemonJsonRequest,
@@ -654,8 +654,13 @@ impl RealDaemonRuntime {
                 let sessions = if tmux.is_available() {
                     list_managed_project_session_names(&mut tmux, project_root)
                 } else {
-                    Vec::new()
+                    Ok(Vec::new())
                 };
+                let sessions = sessions.map_err(|tmux_error| {
+                    format!(
+                        "refusing to remove project {project_root}: could not list managed tmux sessions before removal: {tmux_error}"
+                    )
+                })?;
                 if sessions.is_empty() {
                     return Ok(());
                 }
@@ -1768,7 +1773,16 @@ fn runtime_coherence_tmux_from_manager(tmux: &mut TmuxRuntimeManager) -> Runtime
             ..RuntimeCoherenceTmux::default()
         };
     };
-    let session_names = tmux.list_session_names();
+    let session_names = match tmux.list_session_names() {
+        Ok(session_names) => session_names,
+        Err(_) => {
+            return RuntimeCoherenceTmux {
+                available: false,
+                version: Some(version),
+                ..RuntimeCoherenceTmux::default()
+            };
+        }
+    };
     let mut report = RuntimeCoherenceTmux {
         available: true,
         version: Some(version),
@@ -1787,49 +1801,61 @@ fn runtime_coherence_tmux_from_manager(tmux: &mut TmuxRuntimeManager) -> Runtime
         report
             .session_options
             .insert(session_name.clone(), session_options);
-        let windows = tmux
-            .list_windows(&session_name)
-            .into_iter()
-            .map(|window| {
-                let target = TmuxTarget {
-                    session_name: session_name.clone(),
-                    window_id: window.id.clone(),
-                    window_index: window.index,
-                    window_name: window.name.clone(),
-                    pane_dead: window.pane_dead,
-                };
-                report.window_alive.insert(
-                    window.id.clone(),
-                    window
-                        .pane_dead
-                        .map_or_else(|| tmux.is_window_alive(&target), |dead| !dead),
-                );
-                report
-                    .pane_start_commands
-                    .insert(window.id.clone(), tmux.get_pane_start_command(&window.id));
-                report.window_options.insert(
-                    window.id.clone(),
-                    [
-                        (
-                            TMUX_DASHBOARD_BUILD_OPTION.to_owned(),
-                            tmux.get_window_option(&window.id, TMUX_DASHBOARD_BUILD_OPTION),
-                        ),
-                        (
-                            TMUX_DASHBOARD_OWNER_OPTION.to_owned(),
-                            tmux.get_window_option(&window.id, TMUX_DASHBOARD_OWNER_OPTION),
-                        ),
-                    ]
-                    .into_iter()
-                    .collect(),
-                );
-                RuntimeCoherenceTmuxWindow {
-                    id: window.id,
-                    index: window.index,
-                    name: window.name,
-                    active: window.active,
-                }
-            })
-            .collect::<Vec<_>>();
+        let windows = match tmux.list_windows(&session_name) {
+            Ok(windows) => windows,
+            Err(_) => {
+                report.available = false;
+                Vec::new()
+            }
+        }
+        .into_iter()
+        .map(|window| {
+            let target = TmuxTarget {
+                session_name: session_name.clone(),
+                window_id: window.id.clone(),
+                window_index: window.index,
+                window_name: window.name.clone(),
+                pane_dead: window.pane_dead,
+            };
+            report.window_alive.insert(
+                window.id.clone(),
+                window.pane_dead.map_or_else(
+                    || match tmux.is_window_alive(&target) {
+                        Ok(alive) => alive,
+                        Err(_) => {
+                            report.available = false;
+                            false
+                        }
+                    },
+                    |dead| !dead,
+                ),
+            );
+            report
+                .pane_start_commands
+                .insert(window.id.clone(), tmux.get_pane_start_command(&window.id));
+            report.window_options.insert(
+                window.id.clone(),
+                [
+                    (
+                        TMUX_DASHBOARD_BUILD_OPTION.to_owned(),
+                        tmux.get_window_option(&window.id, TMUX_DASHBOARD_BUILD_OPTION),
+                    ),
+                    (
+                        TMUX_DASHBOARD_OWNER_OPTION.to_owned(),
+                        tmux.get_window_option(&window.id, TMUX_DASHBOARD_OWNER_OPTION),
+                    ),
+                ]
+                .into_iter()
+                .collect(),
+            );
+            RuntimeCoherenceTmuxWindow {
+                id: window.id,
+                index: window.index,
+                name: window.name,
+                active: window.active,
+            }
+        })
+        .collect::<Vec<_>>();
         report.windows.insert(session_name, windows);
     }
     report
@@ -1954,7 +1980,19 @@ fn run_daemon_disk_maintenance_once(
     resolver: &PathResolver,
     options: DiskMaintenanceOptions,
 ) -> Duration {
-    let global_config = load_global_config_with_resolver(resolver);
+    let global_config = match try_load_global_config_with_resolver(resolver) {
+        Ok(config) => config,
+        Err(error) => {
+            log_lifecycle_always(
+                "skipped daemon disk maintenance: global config unreadable",
+                "daemon-maintenance",
+                Some(json!({
+                    "error": error,
+                })),
+            );
+            return Duration::from_millis(86_400_000);
+        }
+    };
     let installs_config =
         normalize_installs_config(global_config.get("installs").unwrap_or(&Value::Null));
     sweep_stale_recordings(resolver, &global_config, options.now_ms);
@@ -3532,7 +3570,7 @@ fn reload_dashboard_for_restart_with_tmux(
     project_root: &str,
     tmux: &mut TmuxRuntimeManager,
 ) -> Result<RestartDashboardTarget, String> {
-    let active_windows = capture_active_non_dashboard_windows(project_root, tmux);
+    let active_windows = capture_active_non_dashboard_windows(project_root, tmux)?;
     if let Some(target) = retained_dashboard_for_restart(project_root, tmux)? {
         let target_ref = &target.target;
         let mut errors = cleanup_host_dashboard_session(
@@ -3644,19 +3682,21 @@ fn retained_dashboard_for_restart(
 fn capture_active_non_dashboard_windows(
     project_root: &str,
     tmux: &mut TmuxRuntimeManager,
-) -> Vec<TmuxTarget> {
+) -> Result<Vec<TmuxTarget>, String> {
     if !tmux.is_available() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     let host_session = tmux.get_project_session(project_root).session_name;
-    tmux.list_session_names()
+    Ok(tmux
+        .list_session_names()?
         .into_iter()
         .filter(|session_name| {
             session_name == &host_session
                 || is_tmux_client_session_for_host(session_name, &host_session)
         })
-        .filter_map(|session_name| {
-            tmux.list_windows(&session_name)
+        .map(|session_name| {
+            Ok(tmux
+                .list_windows(&session_name)?
                 .into_iter()
                 .find(|window| window.active && !is_dashboard_window_name(&window.name))
                 .map(|window| TmuxTarget {
@@ -3665,9 +3705,12 @@ fn capture_active_non_dashboard_windows(
                     window_index: window.index,
                     window_name: window.name,
                     pane_dead: window.pane_dead,
-                })
+                }))
         })
-        .collect()
+        .collect::<Result<Vec<_>, String>>()?
+        .into_iter()
+        .flatten()
+        .collect())
 }
 
 fn restore_active_windows(tmux: &mut TmuxRuntimeManager, targets: &[TmuxTarget]) {
@@ -3699,12 +3742,19 @@ fn relink_dashboard_to_client_sessions(
     }
     let host_session = tmux.get_project_session(project_root).session_name;
     let mut errors = Vec::new();
-    for session_name in tmux.list_session_names() {
+    for session_name in match tmux.list_session_names() {
+        Ok(session_names) => session_names,
+        Err(error) => return vec![format!("list client sessions failed: {error}")],
+    } {
         if !is_tmux_client_session_for_host(&session_name, &host_session) {
             continue;
         }
         let slot_zero = tmux
             .list_windows(&session_name)
+            .unwrap_or_else(|error| {
+                errors.push(format!("{session_name}: list windows failed: {error}"));
+                Vec::new()
+            })
             .into_iter()
             .find(|window| window.index == 0);
         if let Some(slot_zero) = slot_zero
@@ -3739,7 +3789,10 @@ fn cleanup_stale_dashboard_links(
     linked_dashboard: &TmuxTarget,
 ) -> Vec<String> {
     let mut errors = Vec::new();
-    for window in tmux.list_windows(session_name) {
+    for window in match tmux.list_windows(session_name) {
+        Ok(windows) => windows,
+        Err(error) => return vec![format!("{session_name}: list windows failed: {error}")],
+    } {
         if !is_dashboard_window_name(&window.name) || window.id == linked_dashboard.window_id {
             continue;
         }
@@ -4333,7 +4386,7 @@ mod tests {
     use crate::tmux::{
         AIMUX_TMUX_RUNTIME_CONTRACT_VERSION, TMUX_DASHBOARD_OWNER_OPTION,
         TMUX_DASHBOARD_READY_OPTION, TMUX_RUNTIME_OWNER_OPTION, TmuxCommandSpec, TmuxSessionRef,
-        TmuxWindowInfo,
+        TmuxWindowInfo, WINDOW_LIST_FORMAT,
     };
     use std::cell::RefCell;
     use std::ffi::CString;
@@ -4443,6 +4496,66 @@ mod tests {
                 .iter()
                 .any(|args| args.first().map(String::as_str) == Some("list-sessions"))
         );
+    }
+
+    #[test]
+    fn doctor_versions_tmux_snapshot_marks_liveness_probe_failure_degraded() {
+        let mut tmux = TmuxRuntimeManager::with_exec(move |args, _options| match args {
+            [flag] if flag == "-V" => Ok("tmux 3.6b".to_owned()),
+            [cmd, flag, format] if cmd == "list-sessions" && flag == "-F" => {
+                assert_eq!(format, "#{session_name}");
+                Ok("aimux-test-123\n".to_owned())
+            }
+            [cmd, target_flag, session, format_flag, format]
+                if cmd == "list-windows"
+                    && target_flag == "-t"
+                    && session == "aimux-test-123"
+                    && format_flag == "-F" =>
+            {
+                assert_eq!(format, WINDOW_LIST_FORMAT);
+                Ok("@1\t0\tdashboard\t1\t0\n".to_owned())
+            }
+            [cmd, value_flag, target_flag, session, _key]
+                if cmd == "show-options"
+                    && value_flag == "-v"
+                    && target_flag == "-t"
+                    && session == "aimux-test-123" =>
+            {
+                Ok(String::new())
+            }
+            [cmd, print_flag, target_flag, window_id, format]
+                if cmd == "display-message"
+                    && print_flag == "-p"
+                    && target_flag == "-t"
+                    && window_id == "@1"
+                    && format == "#{pane_dead}" =>
+            {
+                Err("tmux pane probe failed".to_owned())
+            }
+            [cmd, print_flag, target_flag, window_id, format]
+                if cmd == "display-message"
+                    && print_flag == "-p"
+                    && target_flag == "-t"
+                    && window_id == "@1"
+                    && format == "#{pane_start_command}" =>
+            {
+                Ok(String::new())
+            }
+            [cmd, value_flag, target_flag, window_id, _key]
+                if cmd == "show-window-options"
+                    && value_flag == "-v"
+                    && target_flag == "-t"
+                    && window_id == "@1" =>
+            {
+                Ok(String::new())
+            }
+            _ => Err(format!("unexpected tmux call: {args:?}")),
+        });
+
+        let report = runtime_coherence_tmux_from_manager(&mut tmux);
+
+        assert!(!report.available);
+        assert_eq!(report.window_alive.get("@1"), Some(&false));
     }
 
     #[test]
@@ -5683,6 +5796,70 @@ mod tests {
     }
 
     #[test]
+    fn daemon_disk_maintenance_skips_cleanup_when_global_config_is_unreadable() {
+        let root = temp_root("disk-maintenance-bad-config");
+        let home = root.join("home");
+        fs::create_dir_all(&home).expect("home");
+        let resolver = PathResolver::new(
+            &root,
+            &home,
+            Some(home.join(".aimux").to_string_lossy().into_owned()),
+        );
+        fs::create_dir_all(resolver.global_aimux_dir()).expect("aimux home");
+        fs::write(resolver.global_config_path(), "{not json").expect("invalid global config");
+
+        let project = root.join("project");
+        fs::create_dir_all(project.join(".git")).expect("project git");
+        let mut project_resolver = resolver.clone();
+        project_resolver
+            .register_project(&project)
+            .expect("register project");
+        let state_dir = project_resolver.project_state_dir_for(&project);
+        let global_recordings = state_dir.join("recordings");
+        fs::create_dir_all(&global_recordings).expect("global recordings");
+        fs::write(
+            state_dir.join("state.json"),
+            json!({ "sessions": ["live"] }).to_string(),
+        )
+        .expect("state");
+        let stale_recording = global_recordings.join("stale.log");
+        fs::write(&stale_recording, "recording").expect("recording file");
+        set_mtime_ms(&stale_recording, 0);
+
+        let install_root = root.join("installs");
+        let old_install = install_root.join("local-old");
+        let old_install_bin = old_install.join("bin");
+        fs::create_dir_all(&old_install_bin).expect("install bin");
+        fs::write(old_install_bin.join("aimux"), "binary").expect("install binary");
+        set_mtime_ms(&old_install_bin.join("aimux"), 0);
+        set_mtime_ms(&old_install_bin, 0);
+        set_mtime_ms(&old_install, 0);
+
+        let interval = run_daemon_disk_maintenance_once(
+            &resolver,
+            DiskMaintenanceOptions {
+                install_root: Some(install_root.to_string_lossy().into_owned()),
+                install_reference_text: Some(InstallReferenceText {
+                    text: Vec::new(),
+                    complete: true,
+                }),
+                now_ms: Some(10 * 86_400_000),
+                env: Some(BTreeMap::from([(
+                    "AIMUX_HOME".to_owned(),
+                    home.join(".aimux").to_string_lossy().into_owned(),
+                )])),
+                home: Some(home.clone()),
+            },
+        );
+
+        assert_eq!(interval, Duration::from_millis(86_400_000));
+        assert!(stale_recording.exists());
+        assert!(old_install.exists());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn restart_project_roots_restore_active_daemon_state_only() {
         let state = DaemonState {
             version: 1,
@@ -5840,7 +6017,8 @@ mod tests {
         )));
         let mut tmux = fake_tmux_manager(Rc::clone(&state));
 
-        let active = capture_active_non_dashboard_windows(project_root, &mut tmux);
+        let active =
+            capture_active_non_dashboard_windows(project_root, &mut tmux).expect("active windows");
         restore_active_windows(&mut tmux, &active);
 
         let calls = state.borrow().calls.clone();
@@ -6344,26 +6522,26 @@ mod tests {
             None
         }
 
-        fn list_session_names(&mut self) -> Vec<String> {
-            vec![self.session_name.clone()]
+        fn list_session_names(&mut self) -> Result<Vec<String>, String> {
+            Ok(vec![self.session_name.clone()])
         }
 
         fn has_session(&mut self, session_name: &str) -> bool {
             session_name == self.session_name
         }
 
-        fn list_windows(&mut self, session_name: &str) -> Vec<TmuxWindowInfo> {
+        fn list_windows(&mut self, session_name: &str) -> Result<Vec<TmuxWindowInfo>, String> {
             if session_name != self.session_name {
-                return Vec::new();
+                return Ok(Vec::new());
             }
-            vec![TmuxWindowInfo {
+            Ok(vec![TmuxWindowInfo {
                 id: "@1".to_owned(),
                 index: 0,
                 name: "dashboard".to_owned(),
                 active: true,
                 activity: None,
                 pane_dead: Some(false),
-            }]
+            }])
         }
 
         fn get_window_option(&mut self, _target: &TmuxTarget, key: &str) -> Option<String> {
@@ -6392,8 +6570,8 @@ mod tests {
             None
         }
 
-        fn is_window_alive(&mut self, _target: &TmuxTarget) -> bool {
-            true
+        fn is_window_alive(&mut self, _target: &TmuxTarget) -> Result<bool, String> {
+            Ok(true)
         }
 
         fn ensure_project_session(

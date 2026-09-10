@@ -138,11 +138,10 @@ fn service_state_snapshot_contract(case: &Value) -> Value {
                 .map(window_from_value)
                 .collect::<Vec<_>>();
             let mut tmux = FakeSnapshotRuntime::new(windows);
-            Value::Array(snapshot_project_service_windows(
-                PathBuf::from("<repo>"),
-                &state_dir,
-                &mut tmux,
-            ))
+            Value::Array(
+                snapshot_project_service_windows(PathBuf::from("<repo>"), &state_dir, &mut tmux)
+                    .expect("snapshot service windows"),
+            )
         }
         _ => Value::Null,
     }
@@ -195,8 +194,11 @@ impl FakeSnapshotRuntime {
 }
 
 impl ServiceStateSnapshotRuntime for FakeSnapshotRuntime {
-    fn list_project_managed_windows(&mut self, _project_root: &Path) -> Vec<TmuxManagedWindow> {
-        self.windows.clone()
+    fn list_project_managed_windows(
+        &mut self,
+        _project_root: &Path,
+    ) -> Result<Vec<TmuxManagedWindow>, String> {
+        Ok(self.windows.clone())
     }
 
     fn display_message(&mut self, _format: &str, target: &str) -> Option<String> {
@@ -207,8 +209,8 @@ impl ServiceStateSnapshotRuntime for FakeSnapshotRuntime {
         }
     }
 
-    fn is_window_alive(&mut self, target: &TmuxTarget) -> bool {
-        !self.dead_windows.contains(&target.window_id)
+    fn is_window_alive(&mut self, target: &TmuxTarget) -> Result<bool, String> {
+        Ok(!self.dead_windows.contains(&target.window_id))
     }
 
     fn path_exists(&mut self, path: &str) -> bool {

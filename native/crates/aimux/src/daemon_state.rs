@@ -193,33 +193,48 @@ pub fn get_daemon_base_url(port: Option<u16>) -> Result<String, String> {
 }
 
 pub fn is_pid_alive(pid: i32) -> bool {
+    try_is_pid_alive(pid).unwrap_or(false)
+}
+
+pub fn try_is_pid_alive(pid: i32) -> Result<bool, String> {
     if pid <= 0 {
-        return false;
+        return Ok(false);
     }
     #[cfg(unix)]
     {
-        let Ok(status) = Command::new("ps")
+        let status = Command::new("ps")
             .args(["-o", "stat=", "-p", &pid.to_string()])
             .output()
-        else {
-            return false;
-        };
+            .map_err(|error| format!("failed to probe pid {pid} with ps: {error}"))?;
         if !status.status.success() {
-            return false;
+            return Ok(false);
         }
-        !String::from_utf8_lossy(&status.stdout)
+        Ok(!String::from_utf8_lossy(&status.stdout)
             .trim()
-            .starts_with('Z')
+            .starts_with('Z'))
     }
     #[cfg(not(unix))]
     {
         let _ = pid;
-        false
+        Ok(false)
     }
 }
 
 pub fn load_daemon_info(path: impl AsRef<Path>) -> Option<AimuxDaemonInfo> {
-    load_daemon_info_with(path, is_pid_alive)
+    load_daemon_info_with_probe(path, try_is_pid_alive)
+}
+
+pub fn load_daemon_info_with_probe(
+    path: impl AsRef<Path>,
+    is_alive: impl Fn(i32) -> Result<bool, String>,
+) -> Option<AimuxDaemonInfo> {
+    let info: AimuxDaemonInfo =
+        read_json(path).and_then(|value| serde_json::from_value(value).ok())?;
+    match is_alive(info.pid) {
+        Ok(true) => Some(info),
+        Ok(false) => None,
+        Err(_) => Some(info),
+    }
 }
 
 pub fn load_daemon_info_with(

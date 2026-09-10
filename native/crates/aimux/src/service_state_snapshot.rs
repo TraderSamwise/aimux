@@ -13,9 +13,12 @@ use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
 pub trait ServiceStateSnapshotRuntime {
-    fn list_project_managed_windows(&mut self, project_root: &Path) -> Vec<TmuxManagedWindow>;
+    fn list_project_managed_windows(
+        &mut self,
+        project_root: &Path,
+    ) -> Result<Vec<TmuxManagedWindow>, String>;
     fn display_message(&mut self, format: &str, target: &str) -> Option<String>;
-    fn is_window_alive(&mut self, target: &TmuxTarget) -> bool;
+    fn is_window_alive(&mut self, target: &TmuxTarget) -> Result<bool, String>;
     fn refresh_status(&mut self) {}
     fn path_exists(&mut self, path: &str) -> bool {
         Path::new(path).exists()
@@ -23,7 +26,10 @@ pub trait ServiceStateSnapshotRuntime {
 }
 
 impl ServiceStateSnapshotRuntime for TmuxRuntimeManager {
-    fn list_project_managed_windows(&mut self, project_root: &Path) -> Vec<TmuxManagedWindow> {
+    fn list_project_managed_windows(
+        &mut self,
+        project_root: &Path,
+    ) -> Result<Vec<TmuxManagedWindow>, String> {
         TmuxRuntimeManager::list_project_managed_windows(self, project_root)
     }
 
@@ -31,7 +37,7 @@ impl ServiceStateSnapshotRuntime for TmuxRuntimeManager {
         TmuxRuntimeManager::display_message(self, format, Some(target))
     }
 
-    fn is_window_alive(&mut self, target: &TmuxTarget) -> bool {
+    fn is_window_alive(&mut self, target: &TmuxTarget) -> Result<bool, String> {
         TmuxRuntimeManager::is_window_alive(self, target)
     }
 
@@ -79,12 +85,12 @@ pub fn snapshot_project_service_windows(
     project_root: impl AsRef<Path>,
     project_state_dir: impl AsRef<Path>,
     tmux: &mut impl ServiceStateSnapshotRuntime,
-) -> Vec<Value> {
+) -> Result<Vec<Value>, String> {
     let project_root = project_root.as_ref();
     let graveyard_paths = worktree_graveyard_paths(project_state_dir.as_ref());
     let mut seen = BTreeSet::new();
     let mut services = Vec::new();
-    for window in tmux.list_project_managed_windows(project_root) {
+    for window in tmux.list_project_managed_windows(project_root)? {
         let metadata = &window.metadata;
         if string_field(metadata, "kind").as_deref() != Some("service") {
             continue;
@@ -98,7 +104,7 @@ pub fn snapshot_project_service_windows(
         if !is_window_worktree_available(metadata, &graveyard_paths, tmux) {
             continue;
         }
-        if !tmux.is_window_alive(&window.target) {
+        if !tmux.is_window_alive(&window.target)? {
             continue;
         }
         seen.insert(session_id.clone());
@@ -109,7 +115,7 @@ pub fn snapshot_project_service_windows(
             tmux,
         ));
     }
-    services
+    Ok(services)
 }
 
 pub fn persist_project_runtime_snapshots_before_tmux_stop(
@@ -133,7 +139,7 @@ pub fn persist_project_runtime_snapshots_before_tmux_stop_at(
 ) -> Result<Value, String> {
     let project_root = project_root.as_ref();
     let project_state_dir = project_state_dir.as_ref();
-    let services = snapshot_project_service_windows(project_root, project_state_dir, tmux);
+    let services = snapshot_project_service_windows(project_root, project_state_dir, tmux)?;
     if !services.is_empty() {
         update_runtime_topology(runtime_topology_path(project_state_dir), |mut topology| {
             upsert_topology_services(

@@ -51,6 +51,7 @@ use crate::dashboard_tui_visibility::{
     read_dashboard_tui_visibility_for_loop, read_tmux_tui_visibility,
 };
 use crate::dashboard_ui_state::DashboardUiStatePersistence;
+use crate::debug_logging::{LogLevel, log_at};
 use crate::paths::PathResolver;
 use crate::project_service::work_outline::{
     WorkOutlineEntry, WorkOutlineQuery, list_work_outline_entries,
@@ -79,7 +80,7 @@ use crate::tui_screen_renderers::{
     render_work_outline_overlay_output,
 };
 use anyhow::{Context, Result};
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 use std::env;
 use std::fs;
 use std::io::{self, Write};
@@ -1242,7 +1243,15 @@ fn dashboard_control_client_context() -> Option<DashboardClientContext> {
         .or_else(|| tmux.display_message("#{window_id}", None));
     let ambient_client_tty = tmux.display_message("#{client_tty}", None);
     let ambient_client_session = tmux.current_client_session();
-    let clients = tmux.list_clients();
+    let clients = tmux.list_clients().unwrap_or_else(|error| {
+        log_at(
+            LogLevel::Debug,
+            "tmux client inventory failed while building dashboard context",
+            "dashboard",
+            Some(json!({ "error": error })),
+        );
+        Vec::new()
+    });
     let dashboard_client = dashboard_window_id.as_deref().and_then(|window_id| {
         clients
             .iter()

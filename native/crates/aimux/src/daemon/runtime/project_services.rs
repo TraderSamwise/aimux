@@ -1,5 +1,5 @@
 use crate::cli_launcher::{AimuxCliLaunchOptions, get_aimux_project_service_launch_command};
-use crate::daemon_state::{ProjectServiceState, is_pid_alive};
+use crate::daemon_state::{ProjectServiceState, try_is_pid_alive};
 use crate::process_inspector::{ProjectServiceProcessIdentity, is_aimux_project_service_process};
 use std::fs::{self, File, OpenOptions};
 use std::io;
@@ -82,24 +82,46 @@ impl ProjectServiceLauncher for SystemProjectServiceLauncher {
     }
 
     fn terminate(&self, service: &ProjectServiceState, force: bool) -> Result<(), String> {
-        if !is_pid_alive(service.pid) {
-            return Ok(());
-        }
         let expected = ProjectServiceProcessIdentity {
             project_id: Some(service.project_id.clone()),
             project_root: Some(service.project_root.clone()),
         };
-        if !is_aimux_project_service_process(service.pid, &expected) {
-            return Err(format!(
-                "refusing to signal unverified aimux project service pid={}",
-                service.pid
-            ));
+        if !verify_project_service_pid_for_termination(
+            service.pid,
+            &expected,
+            try_is_pid_alive,
+            is_aimux_project_service_process,
+        )? {
+            return Ok(());
         }
         signal_pid(
             service.pid,
             if force { libc::SIGKILL } else { libc::SIGTERM },
         )
         .map_err(|error| error.to_string())
+    }
+}
+
+fn verify_project_service_pid_for_termination(
+    pid: i32,
+    expected: &ProjectServiceProcessIdentity,
+    is_alive: impl Fn(i32) -> Result<bool, String>,
+    mut is_project_service_process: impl FnMut(i32, &ProjectServiceProcessIdentity) -> bool,
+) -> Result<bool, String> {
+    match is_alive(pid) {
+        Ok(false) => Ok(false),
+        Ok(true) => {
+            if is_project_service_process(pid, expected) {
+                Ok(true)
+            } else {
+                Err(format!(
+                    "refusing to signal unverified aimux project service pid={pid}"
+                ))
+            }
+        }
+        Err(error) => Err(format!(
+            "failed to verify aimux project service pid={pid} before termination: {error}"
+        )),
     }
 }
 
@@ -136,8 +158,52 @@ fn signal_pid(_pid: i32, _signal: i32) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::project_service_child_stdio;
+    use super::{
+        ProjectServiceProcessIdentity, project_service_child_stdio,
+        verify_project_service_pid_for_termination,
+    };
     use std::io::Write;
+
+    fn expected_identity() -> ProjectServiceProcessIdentity {
+        ProjectServiceProcessIdentity {
+            project_id: Some("project".to_owned()),
+            project_root: Some("/repo".to_owned()),
+        }
+    }
+
+    #[test]
+    fn termination_pid_probe_failure_is_not_reported_as_dead() {
+        let error = verify_project_service_pid_for_termination(
+            123,
+            &expected_identity(),
+            |_| Err("ps unavailable".to_owned()),
+            |_, _| true,
+        )
+        .expect_err("probe failure should block termination");
+
+        assert!(
+            error.contains("failed to verify aimux project service pid=123 before termination"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn dead_pid_skips_termination_without_identity_probe() {
+        let mut identity_probe_called = false;
+        let live = verify_project_service_pid_for_termination(
+            123,
+            &expected_identity(),
+            |_| Ok(false),
+            |_, _| {
+                identity_probe_called = true;
+                true
+            },
+        )
+        .expect("dead pid");
+
+        assert!(!live);
+        assert!(!identity_probe_called);
+    }
 
     #[test]
     fn project_service_child_stdio_captures_stdout_and_stderr() {

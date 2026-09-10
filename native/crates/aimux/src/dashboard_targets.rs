@@ -46,14 +46,14 @@ pub trait DashboardTargetTmux {
     fn is_inside_tmux(&mut self) -> bool;
     fn get_open_session_name(&mut self, session_name: &str, inside_tmux: bool) -> String;
     fn current_client_session(&mut self) -> Option<String>;
-    fn list_session_names(&mut self) -> Vec<String>;
+    fn list_session_names(&mut self) -> Result<Vec<String>, String>;
     fn has_session(&mut self, session_name: &str) -> bool;
-    fn list_windows(&mut self, session_name: &str) -> Vec<TmuxWindowInfo>;
+    fn list_windows(&mut self, session_name: &str) -> Result<Vec<TmuxWindowInfo>, String>;
     fn get_window_option(&mut self, target: &TmuxTarget, key: &str) -> Option<String>;
     fn get_session_option(&mut self, session_name: &str, key: &str) -> Option<String>;
     fn display_message(&mut self, format: &str, target: &str) -> Option<String>;
     fn capture_target(&mut self, target: &TmuxTarget, start_line: i64) -> Option<String>;
-    fn is_window_alive(&mut self, target: &TmuxTarget) -> bool;
+    fn is_window_alive(&mut self, target: &TmuxTarget) -> Result<bool, String>;
     fn ensure_project_session(
         &mut self,
         project_root: &str,
@@ -115,7 +115,7 @@ impl DashboardTargetTmux for TmuxRuntimeManager {
         TmuxRuntimeManager::current_client_session(self)
     }
 
-    fn list_session_names(&mut self) -> Vec<String> {
+    fn list_session_names(&mut self) -> Result<Vec<String>, String> {
         TmuxRuntimeManager::list_session_names(self)
     }
 
@@ -123,7 +123,7 @@ impl DashboardTargetTmux for TmuxRuntimeManager {
         TmuxRuntimeManager::has_session(self, session_name)
     }
 
-    fn list_windows(&mut self, session_name: &str) -> Vec<TmuxWindowInfo> {
+    fn list_windows(&mut self, session_name: &str) -> Result<Vec<TmuxWindowInfo>, String> {
         TmuxRuntimeManager::list_windows(self, session_name)
     }
 
@@ -151,7 +151,7 @@ impl DashboardTargetTmux for TmuxRuntimeManager {
         .ok()
     }
 
-    fn is_window_alive(&mut self, target: &TmuxTarget) -> bool {
+    fn is_window_alive(&mut self, target: &TmuxTarget) -> Result<bool, String> {
         TmuxRuntimeManager::is_window_alive(self, target)
     }
 
@@ -174,7 +174,7 @@ impl DashboardTargetTmux for TmuxRuntimeManager {
         project_root: &str,
         dashboard_command: &TmuxCommandSpec,
     ) -> Result<(TmuxTarget, bool), String> {
-        let dashboard_existed = TmuxRuntimeManager::list_windows(self, session_name)
+        let dashboard_existed = TmuxRuntimeManager::list_windows(self, session_name)?
             .into_iter()
             .any(|window| is_dashboard_window_name(&window.name));
         let target = TmuxRuntimeManager::ensure_dashboard_window(
@@ -293,7 +293,7 @@ pub fn find_live_dashboard_target_with_context(
             candidate_sessions.push(session_name);
         }
     }
-    for session_name in tmux.list_session_names() {
+    for session_name in tmux.list_session_names()? {
         if is_tmux_client_session_for_host(&session_name, &dashboard_session.session_name)
             && seen.insert(session_name.clone())
         {
@@ -305,7 +305,7 @@ pub fn find_live_dashboard_target_with_context(
         if !has_session {
             continue;
         }
-        for window in tmux.list_windows(&session_name) {
+        for window in tmux.list_windows(&session_name)? {
             if !is_dashboard_window_name(&window.name) {
                 continue;
             }
@@ -316,7 +316,7 @@ pub fn find_live_dashboard_target_with_context(
                 window_name: window.name,
                 pane_dead: window.pane_dead,
             };
-            if !is_usable_dashboard_target(project_root, tmux, context, &dashboard_target) {
+            if !is_usable_dashboard_target(project_root, tmux, context, &dashboard_target)? {
                 continue;
             }
             return Ok(Some(DashboardTargetRef {
@@ -363,7 +363,7 @@ pub fn resolve_dashboard_target_with_context(
     let current_dashboard_owner =
         tmux.get_window_option(&dashboard_target, TMUX_DASHBOARD_OWNER_OPTION);
     let should_respawn = options.force_reload
-        || !tmux.is_window_alive(&dashboard_target)
+        || !tmux.is_window_alive(&dashboard_target)?
         || current_build_stamp.as_deref() != Some(context.dashboard_build_stamp.as_str())
         || current_ready_stamp.as_deref() != Some(context.dashboard_build_stamp.as_str())
         || current_dashboard_owner.as_deref() != Some(context.runtime_owner_id.as_str());
@@ -419,7 +419,7 @@ fn wait_for_dashboard_target_ready(
         {
             return Ok(());
         }
-        if !tmux.is_window_alive(target) {
+        if !tmux.is_window_alive(target)? {
             return Err(format!(
                 "Dashboard window {} exited before becoming ready",
                 target.window_id
@@ -438,7 +438,7 @@ pub fn is_usable_dashboard_target(
     tmux: &mut impl DashboardTargetTmux,
     context: &DashboardTargetContext,
     dashboard_target: &TmuxTarget,
-) -> bool {
+) -> Result<bool, String> {
     let current_build_stamp = tmux.get_window_option(dashboard_target, TMUX_DASHBOARD_BUILD_OPTION);
     let current_ready_stamp = tmux.get_window_option(dashboard_target, TMUX_DASHBOARD_READY_OPTION);
     let target_runtime_owner =
@@ -456,7 +456,7 @@ pub fn is_usable_dashboard_target(
     } else {
         String::new()
     };
-    let window_alive = tmux.is_window_alive(dashboard_target);
+    let window_alive = tmux.is_window_alive(dashboard_target)?;
     let project_root_matches = target_project_root
         .as_deref()
         .is_some_and(|target_project_root| project_roots_match(project_root, target_project_root));
@@ -470,14 +470,14 @@ pub fn is_usable_dashboard_target(
         current_ready_stamp.as_deref() == Some(context.dashboard_build_stamp.as_str());
     let command_ok = pane_command != "cat" && pane_command != "tail";
     let tail_ok = !pane_tail.contains("aimux dashboard failed to start.");
-    window_alive
+    Ok(window_alive
         && project_root_matches
         && runtime_owner_matches
         && dashboard_owner_matches
         && build_matches
         && ready_matches
         && command_ok
-        && tail_ok
+        && tail_ok)
 }
 
 fn project_roots_match(expected: &str, actual: &str) -> bool {
@@ -686,9 +686,9 @@ impl DashboardTargetTmux for DashboardTargetsContractTmux {
         }
     }
 
-    fn list_session_names(&mut self) -> Vec<String> {
+    fn list_session_names(&mut self) -> Result<Vec<String>, String> {
         self.record("listSessionNames", json!([]));
-        match self.scenario {
+        Ok(match self.scenario {
             DashboardTargetsContractScenario::LiveOtherProjectCurrentClient => vec![
                 CONTRACT_SESSION_NAME.to_owned(),
                 "aimux-tealstreet-next-def456".to_owned(),
@@ -699,7 +699,7 @@ impl DashboardTargetTmux for DashboardTargetsContractTmux {
             | DashboardTargetsContractScenario::MissingReadyStamp => {
                 vec![CONTRACT_SESSION_NAME.to_owned()]
             }
-        }
+        })
     }
 
     fn has_session(&mut self, session_name: &str) -> bool {
@@ -707,21 +707,21 @@ impl DashboardTargetTmux for DashboardTargetsContractTmux {
         session_name == CONTRACT_SESSION_NAME
     }
 
-    fn list_windows(&mut self, session_name: &str) -> Vec<TmuxWindowInfo> {
+    fn list_windows(&mut self, session_name: &str) -> Result<Vec<TmuxWindowInfo>, String> {
         self.record("listWindows", json!([session_name]));
         let (id, name) = if session_name == CONTRACT_SESSION_NAME {
             ("@1", "dashboard")
         } else {
             ("@2", "dashboard")
         };
-        vec![TmuxWindowInfo {
+        Ok(vec![TmuxWindowInfo {
             id: id.to_owned(),
             index: 0,
             name: name.to_owned(),
             active: true,
             activity: None,
             pane_dead: None,
-        }]
+        }])
     }
 
     fn get_window_option(&mut self, target: &TmuxTarget, key: &str) -> Option<String> {
@@ -775,9 +775,9 @@ impl DashboardTargetTmux for DashboardTargetsContractTmux {
         Some(String::new())
     }
 
-    fn is_window_alive(&mut self, target: &TmuxTarget) -> bool {
+    fn is_window_alive(&mut self, target: &TmuxTarget) -> Result<bool, String> {
         self.record("isWindowAlive", json!([target_to_value(target)]));
-        true
+        Ok(true)
     }
 
     fn ensure_project_session(

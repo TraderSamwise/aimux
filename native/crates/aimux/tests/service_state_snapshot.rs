@@ -112,9 +112,9 @@ impl TmuxRuntimeStopManager for FakeTmux {
         self.host_session.clone()
     }
 
-    fn list_session_names(&mut self) -> Vec<String> {
+    fn list_session_names(&mut self) -> Result<Vec<String>, String> {
         self.calls.push("listSessionNames".into());
-        self.sessions.clone()
+        Ok(self.sessions.clone())
     }
 
     fn has_session(&mut self, session_name: &str) -> bool {
@@ -129,12 +129,15 @@ impl TmuxRuntimeStopManager for FakeTmux {
 }
 
 impl ServiceStateSnapshotRuntime for FakeTmux {
-    fn list_project_managed_windows(&mut self, project_root: &Path) -> Vec<TmuxManagedWindow> {
+    fn list_project_managed_windows(
+        &mut self,
+        project_root: &Path,
+    ) -> Result<Vec<TmuxManagedWindow>, String> {
         self.calls.push(format!(
             "listProjectManagedWindows:{}",
             project_root.display()
         ));
-        self.windows.clone()
+        Ok(self.windows.clone())
     }
 
     fn display_message(&mut self, format: &str, target: &str) -> Option<String> {
@@ -142,10 +145,10 @@ impl ServiceStateSnapshotRuntime for FakeTmux {
         Some(self.repo_root.to_string_lossy().into_owned())
     }
 
-    fn is_window_alive(&mut self, target: &TmuxTarget) -> bool {
+    fn is_window_alive(&mut self, target: &TmuxTarget) -> Result<bool, String> {
         self.calls
             .push(format!("isWindowAlive:{}", target.window_id));
-        true
+        Ok(true)
     }
 
     fn refresh_status(&mut self) {

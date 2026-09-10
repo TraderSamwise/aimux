@@ -29,7 +29,10 @@ pub struct ExposeHotSnapshotWorkerProject {
 }
 
 pub trait ProjectExposeHotSnapshotRuntime {
-    fn list_project_managed_windows(&mut self, project_root: &Path) -> Vec<TmuxManagedWindow>;
+    fn list_project_managed_windows(
+        &mut self,
+        project_root: &Path,
+    ) -> Result<Vec<TmuxManagedWindow>, String>;
     fn capture_target(
         &mut self,
         target: &TmuxTarget,
@@ -38,7 +41,10 @@ pub trait ProjectExposeHotSnapshotRuntime {
 }
 
 impl ProjectExposeHotSnapshotRuntime for TmuxRuntimeManager {
-    fn list_project_managed_windows(&mut self, project_root: &Path) -> Vec<TmuxManagedWindow> {
+    fn list_project_managed_windows(
+        &mut self,
+        project_root: &Path,
+    ) -> Result<Vec<TmuxManagedWindow>, String> {
         self.list_project_managed_windows(project_root)
     }
 
@@ -60,14 +66,28 @@ pub fn refresh_project_expose_hot_snapshots(
     let project_state_dir = project_state_dir.as_ref();
     let captured_at = now_iso();
     let mut capture_cache = HashMap::<String, Option<Value>>::new();
-    let live_launch_contexts = runtime
-        .list_project_managed_windows(Path::new(&project_root))
-        .into_iter()
-        .filter(|entry| {
-            entry.target.pane_dead != Some(true)
-                && !crate::tmux::is_dashboard_window_name(&entry.target.window_name)
-        })
-        .collect::<Vec<_>>();
+    let live_launch_contexts = match runtime.list_project_managed_windows(Path::new(&project_root))
+    {
+        Ok(windows) => windows
+            .into_iter()
+            .filter(|entry| {
+                entry.target.pane_dead != Some(true)
+                    && !crate::tmux::is_dashboard_window_name(&entry.target.window_name)
+            })
+            .collect::<Vec<_>>(),
+        Err(error) => {
+            crate::debug_logging::log_at(
+                crate::debug_logging::LogLevel::Debug,
+                "skipped project expose hot snapshot: tmux inventory failed",
+                "expose",
+                Some(json!({
+                    "projectRoot": project_root,
+                    "error": error,
+                })),
+            );
+            return;
+        }
+    };
     let project_items = list_project_switchable_items(
         ProjectSwitchableItemsInput {
             project_root: &project_root,

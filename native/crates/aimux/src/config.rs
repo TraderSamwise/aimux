@@ -1,5 +1,5 @@
 use serde_json::{Map, Number, Value, json};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::atomic_write::{write_json_atomic, write_text_atomic};
 use crate::paths::PathResolver;
@@ -210,8 +210,13 @@ pub fn load_global_config() -> Value {
 }
 
 pub fn load_global_config_with_resolver(resolver: &PathResolver) -> Value {
-    let global = read_json_file(resolver.global_config_path());
-    merge_config_layers(global.as_ref(), None)
+    try_load_global_config_with_resolver(resolver)
+        .unwrap_or_else(|_| merge_config_layers(None, None))
+}
+
+pub fn try_load_global_config_with_resolver(resolver: &PathResolver) -> Result<Value, String> {
+    let global = try_read_json_file(resolver.global_config_path())?;
+    Ok(merge_config_layers(global.as_ref(), None))
 }
 
 pub fn init_project(project_root: impl AsRef<Path>) -> Result<(), String> {
@@ -263,6 +268,22 @@ fn read_json_file(path: impl AsRef<Path>) -> Option<Value> {
     std::fs::read_to_string(path)
         .ok()
         .and_then(|text| serde_json::from_str(&text).ok())
+}
+
+fn try_read_json_file(path: impl AsRef<Path>) -> Result<Option<Value>, String> {
+    let path = path.as_ref();
+    match std::fs::read_to_string(path) {
+        Ok(text) => serde_json::from_str(&text)
+            .map(Some)
+            .map_err(|error| config_read_error(path, format!("invalid JSON: {error}"))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(config_read_error(path, error.to_string())),
+    }
+}
+
+fn config_read_error(path: &Path, reason: String) -> String {
+    let path: PathBuf = path.to_path_buf();
+    format!("failed to read config {}: {reason}", path.display())
 }
 
 fn normalize_worktrees(config: &mut Map<String, Value>, defaults: &Value) {

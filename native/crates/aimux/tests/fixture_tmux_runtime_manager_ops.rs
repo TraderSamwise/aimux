@@ -186,15 +186,15 @@ fn run_named_case(name: &str, tmux: &mut TmuxRuntimeManager) -> Result<Value, St
             .ensure_dashboard_window("aimux-mobile-abc", "/repo/mobile", None)
             .map(|target| target_to_value(&target)),
         "lists managed windows and skips invalid metadata" => Ok(managed_to_value(
-            tmux.list_managed_windows("aimux-mobile-abc"),
+            tmux.list_managed_windows("aimux-mobile-abc")?,
         )),
         "finds managed windows by session or backend id" => Ok(json!({
             "bySession": tmux.find_managed_window("aimux-mobile-abc", Some("codex-1"), None)
-                .map(|entry| target_to_value(&entry.target)),
+                .map(|entry| entry.map(|entry| target_to_value(&entry.target)))?,
             "byBackend": tmux.find_managed_window("aimux-mobile-abc", None, Some("backend-existing"))
-                .map(|entry| target_to_value(&entry.target)),
+                .map(|entry| entry.map(|entry| target_to_value(&entry.target)))?,
             "missing": tmux.find_managed_window("aimux-mobile-abc", None, None)
-                .map(|entry| managed_entry_to_value(&entry)),
+                .map(|entry| entry.map(|entry| managed_entry_to_value(&entry)))?,
         })),
         "cancels copy mode only when pane is in mode" => {
             tmux.cancel_copy_mode(dashboard_target().window_id)?;

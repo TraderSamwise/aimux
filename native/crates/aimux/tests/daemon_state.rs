@@ -1,7 +1,7 @@
 use aimux::daemon_state::{
     AimuxDaemonInfo, DaemonState, DaemonStateProjectRootStatus, MetadataApiEndpoint, MetadataState,
     clear_daemon_info_if_owned, get_daemon_base_url, get_daemon_host_from, get_daemon_port_from,
-    load_daemon_info_with, load_daemon_state, load_daemon_state_with,
+    load_daemon_info_with, load_daemon_info_with_probe, load_daemon_state, load_daemon_state_with,
     load_daemon_state_with_status, load_metadata_endpoint, load_metadata_endpoint_by_project_id,
     load_metadata_state, metadata_endpoint_path, metadata_endpoint_path_by_project_id,
     metadata_endpoint_text_path, metadata_state_path, remove_metadata_endpoint,
@@ -78,6 +78,24 @@ fn daemon_info_load_checks_liveness_and_save_is_pretty_json() {
     assert!(saved.ends_with('\n'));
     assert_eq!(load_daemon_info_with(&path, |pid| pid == 123), Some(info));
     assert_eq!(load_daemon_info_with(&path, |_| false), None);
+}
+
+#[test]
+fn daemon_info_load_preserves_registration_when_pid_probe_fails() {
+    let test_dir = TestDir::new();
+    let path = test_dir.0.join("daemon/daemon.json");
+    let info = AimuxDaemonInfo {
+        pid: 123,
+        port: 43190,
+        started_at: "then".into(),
+        updated_at: "now".into(),
+    };
+    save_daemon_info(&path, &info).expect("save info");
+
+    assert_eq!(
+        load_daemon_info_with_probe(&path, |_| Err("ps unavailable".to_owned())),
+        Some(info)
+    );
 }
 
 #[test]
