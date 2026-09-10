@@ -21,13 +21,19 @@ modules, both deliberate keeps: `plugin_runtime_contract.rs` and
   answered the fixtures itself.
 - The notification composer proved the inverse failure mode: production
   composition was correct, but a second composer at the delivery boundary
-  discarded it. The durable rule is still the same: fixtures must reach the live
+  threw the composed record away and hardcoded "Aimux". For that case, "is it
+  ported?" was the wrong question: the code existed, but a downstream caller
+  ignored it. The durable rule is still the same: fixtures must reach the live
   production path.
+- Test the inverse of every guard, gate, and precedence rule before it ships.
+  Demotion became a one-way door, classifier centralization disabled legacy
+  fallback for older windows, and a notification delivery guard fixed fixture
+  leaks by silently swallowing real alerts. Adversarial review caught those
+  regressions after the original authors missed them.
 
 ## Still Outstanding
 
-None. Attachment text recovery and OSC terminal notifications were promoted to
-production and are no longer outstanding.
+None.
 
 ## Deleted As Duplicate Or Dead
 
