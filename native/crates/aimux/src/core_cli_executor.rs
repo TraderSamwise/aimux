@@ -122,6 +122,7 @@ pub trait CoreCliRuntime {
     fn restart_control_plane(
         &mut self,
         project_root: Option<&str>,
+        force: bool,
     ) -> Result<RestartControlPlaneTextResult, String>;
     fn emit_restart_progress(&mut self, _message: &str) {}
     fn stop_daemon(&mut self, signal: &str) -> Result<Option<StoppedDaemonInfo>, String>;
@@ -326,8 +327,9 @@ impl CoreCliRuntime for RealCoreCliRuntime {
     fn restart_control_plane(
         &mut self,
         project_root: Option<&str>,
+        force: bool,
     ) -> Result<RestartControlPlaneTextResult, String> {
-        restart_control_plane_from_cli(project_root)
+        restart_control_plane_from_cli(project_root, force)
     }
 
     fn emit_restart_progress(&mut self, message: &str) {
@@ -478,9 +480,11 @@ const POST_TEXT_ROUTES: &[&str] = &[
 
 fn restart_control_plane_from_cli(
     project_root: Option<&str>,
+    force: bool,
 ) -> Result<RestartControlPlaneTextResult, String> {
     let _ = get_daemon_port()?;
     let resolver = PathResolver::from_env();
+    crate::daemon::runtime::preflight_restart_backend_id_capture(&resolver, project_root, force)?;
     let restart_lock = acquire_runtime_restart_permit(&resolver, None)
         .map_err(|error| error.to_string())?
         .ok_or_else(|| "aimux restart lock was not acquired".to_owned())?;
@@ -490,6 +494,7 @@ fn restart_control_plane_from_cli(
 
     restart_control_plane_from_cli_with_lock_owner(
         project_root,
+        force,
         Some(restart_lock_owner_pid),
         RestartControlPlaneCliDeps {
             should_stop_daemon,
@@ -542,7 +547,7 @@ where
         CoreCommandRequestOptions,
     ) -> Result<CoreCommandOk, String>,
 {
-    restart_control_plane_from_cli_with_lock_owner(project_root, None, deps)
+    restart_control_plane_from_cli_with_lock_owner(project_root, false, None, deps)
 }
 
 #[doc(hidden)]
@@ -553,6 +558,7 @@ pub fn restart_control_plane_from_cli_with_lock_owner<
     RequestRestart,
 >(
     project_root: Option<&str>,
+    force: bool,
     restart_lock_owner_pid: Option<i32>,
     deps: RestartControlPlaneCliDeps<AssertNewer, StopDaemon, EnsureDaemon, RequestRestart>,
 ) -> Result<RestartControlPlaneTextResult, String>
@@ -583,6 +589,10 @@ where
     if let Some(project_root) = project_root {
         payload.insert("projectRoot".into(), json!(project_root));
     }
+    if force {
+        payload.insert("force".into(), json!(true));
+    }
+    payload.insert("backendIdCapturePrechecked".into(), json!(true));
     if let Some(owner_pid) = restart_lock_owner_pid {
         payload.insert("restartLockOwnerPid".into(), json!(owner_pid));
     }
@@ -799,9 +809,10 @@ fn run_plan(
             output_mode,
             runtime,
         ),
-        CoreCliAction::RestartControlPlane { project_root } => {
-            run_restart_control_plane(project_root.as_deref(), output_mode, runtime)
-        }
+        CoreCliAction::RestartControlPlane {
+            project_root,
+            force,
+        } => run_restart_control_plane(project_root.as_deref(), force, output_mode, runtime),
         CoreCliAction::StopDaemon { signal } => run_stop_daemon(output_mode, signal, runtime),
         CoreCliAction::DebugState { target } => {
             let text = runtime.debug_state_report(&target)?;
@@ -1052,13 +1063,14 @@ where
 
 fn run_restart_control_plane(
     project_root: Option<&str>,
+    force: bool,
     output_mode: CoreCliOutputMode,
     runtime: &mut impl CoreCliRuntime,
 ) -> Result<CoreCliExecution, String> {
     if matches!(output_mode, CoreCliOutputMode::Text) {
         runtime.emit_restart_progress("Restarting Aimux control plane...");
     }
-    let result = runtime.restart_control_plane(project_root)?;
+    let result = runtime.restart_control_plane(project_root, force)?;
     let failures = result
         .restart
         .get("summary")
@@ -1477,6 +1489,7 @@ mod tests {
 
         let result = restart_control_plane_from_cli_with_lock_owner(
             None,
+            true,
             Some(12_345),
             RestartControlPlaneCliDeps {
                 should_stop_daemon: true,
@@ -1527,7 +1540,7 @@ mod tests {
                 "assert-not-stale",
                 "stop-daemon-process",
                 "ensure-daemon fresh",
-                "request command=core.restart payload={\"restartLockOwnerPid\":12345} ensure_daemon=false timeout=none",
+                "request command=core.restart payload={\"backendIdCapturePrechecked\":true,\"force\":true,\"restartLockOwnerPid\":12345} ensure_daemon=false timeout=none",
             ]
         );
     }

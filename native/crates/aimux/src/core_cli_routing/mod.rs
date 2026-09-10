@@ -219,10 +219,10 @@ pub fn parse_core_daemon_restart_args<S: AsRef<str>>(args: &[S]) -> Option<CoreD
         return None;
     }
     let parsed = parse_restart_flags(&args[2..])?;
-    parsed
-        .project
-        .is_none()
-        .then_some(CoreDaemonRestartArgs { json: parsed.json })
+    parsed.project.is_none().then_some(CoreDaemonRestartArgs {
+        json: parsed.json,
+        force: parsed.force,
+    })
 }
 
 pub fn parse_core_host_restart_args<S: AsRef<str>>(args: &[S]) -> Option<CoreHostRestartArgs> {

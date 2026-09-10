@@ -476,6 +476,7 @@ pub struct CoreLogsArgs {
 #[serde(rename_all = "camelCase")]
 pub struct CoreRestartArgs {
     pub json: bool,
+    pub force: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project: Option<String>,
 }
@@ -484,6 +485,7 @@ pub struct CoreRestartArgs {
 #[serde(rename_all = "camelCase")]
 pub struct CoreDaemonRestartArgs {
     pub json: bool,
+    pub force: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

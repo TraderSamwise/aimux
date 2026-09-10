@@ -115,15 +115,20 @@ fn restart_parsers_keep_global_and_daemon_forms_distinct() {
             "/wrong",
             "--project=/repo",
             "--json",
+            "--force",
         ]),
         Some(CoreRestartArgs {
             json: true,
+            force: true,
             project: Some("/repo".into()),
         })
     );
     assert_eq!(
-        parse_core_daemon_restart_args(&["daemon", "restart", "--json"]),
-        Some(CoreDaemonRestartArgs { json: true })
+        parse_core_daemon_restart_args(&["daemon", "restart", "--json", "--force"]),
+        Some(CoreDaemonRestartArgs {
+            json: true,
+            force: true
+        })
     );
     assert_eq!(
         parse_core_daemon_restart_args(&["daemon", "restart", "--project", "/repo"]),

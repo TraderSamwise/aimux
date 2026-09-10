@@ -27,6 +27,8 @@ struct Call {
     window_id: Option<String>,
     issued_at: Option<String>,
     route_path: Option<String>,
+    force: bool,
+    wait_for_capture: bool,
 }
 
 impl Call {
@@ -42,6 +44,8 @@ impl Call {
             window_id: None,
             issued_at: None,
             route_path: None,
+            force: false,
+            wait_for_capture: false,
         }
     }
 }
@@ -51,6 +55,7 @@ struct FakeOperationsRuntime {
     calls: Vec<Call>,
     fail: Option<&'static str>,
     restart_failures: i64,
+    record_prepare: bool,
 }
 
 impl DaemonOperationsTextRuntime for FakeOperationsRuntime {
@@ -152,6 +157,24 @@ impl DaemonOperationsTextRuntime for FakeOperationsRuntime {
             json!({ "ok": true, "backendReconcile": { "reconciled": [] } }),
             "Tmux Repair\n  ok".into(),
         ))
+    }
+
+    fn prepare_restart_control_plane(
+        &mut self,
+        project_root: Option<&str>,
+        force: bool,
+        wait_for_capture: bool,
+    ) -> Result<(), String> {
+        if self.record_prepare {
+            self.calls.push(Call {
+                name: "prepare",
+                project_root: project_root.map(str::to_owned),
+                force,
+                wait_for_capture,
+                ..Call::simple("prepare")
+            });
+        }
+        Ok(())
     }
 
     fn get_project_service_json(
@@ -761,7 +784,10 @@ fn restart_text_refuses_concurrent_restart_before_runtime_call() {
     let _lock = try_acquire_runtime_restart_lock(&resolver)
         .expect("acquire restart lock")
         .expect("restart lock");
-    let mut runtime = FakeOperationsRuntime::default();
+    let mut runtime = FakeOperationsRuntime {
+        record_prepare: true,
+        ..FakeOperationsRuntime::default()
+    };
 
     let response =
         route_operations_text_request(&mut runtime, "POST", CORE_API_ROUTES.restart_text, None)
@@ -769,7 +795,40 @@ fn restart_text_refuses_concurrent_restart_before_runtime_call() {
 
     assert_eq!(response.status, 500);
     assert_eq!(text_body(response), "aimux restart is already running\n");
-    assert!(runtime.calls.is_empty());
+    assert_eq!(runtime.calls.len(), 1);
+    assert_eq!(runtime.calls[0].name, "prepare");
+    assert!(runtime.calls[0].project_root.is_none());
+    assert!(!runtime.calls[0].force);
+    assert!(runtime.calls[0].wait_for_capture);
+}
+
+#[test]
+fn restart_text_forwards_force_to_preflight_and_locked_recheck() {
+    let _isolation = TestIsolation::new("daemon-operations-restart-force");
+    let mut runtime = FakeOperationsRuntime {
+        record_prepare: true,
+        ..FakeOperationsRuntime::default()
+    };
+
+    let response = route_operations_text_request(
+        &mut runtime,
+        "POST",
+        &format!("{}?force=1&project=/repo", CORE_API_ROUTES.restart_text),
+        None,
+    )
+    .expect("restart route");
+
+    assert_eq!(response.status, 200);
+    assert_eq!(runtime.calls.len(), 3);
+    assert_eq!(runtime.calls[0].name, "prepare");
+    assert_eq!(runtime.calls[0].project_root.as_deref(), Some("/repo"));
+    assert!(runtime.calls[0].force);
+    assert!(runtime.calls[0].wait_for_capture);
+    assert_eq!(runtime.calls[1].name, "prepare");
+    assert_eq!(runtime.calls[1].project_root.as_deref(), Some("/repo"));
+    assert!(runtime.calls[1].force);
+    assert!(!runtime.calls[1].wait_for_capture);
+    assert_eq!(runtime.calls[2].name, "restart");
 }
 
 #[test]

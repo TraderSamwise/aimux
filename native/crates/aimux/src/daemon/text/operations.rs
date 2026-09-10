@@ -170,6 +170,15 @@ pub trait DaemonOperationsTextRuntime {
         route_path: &str,
         body: Value,
     ) -> ProjectServiceJsonResult;
+    fn prepare_restart_control_plane(
+        &mut self,
+        project_root: Option<&str>,
+        force: bool,
+        wait_for_capture: bool,
+    ) -> Result<(), String> {
+        let _ = (project_root, force, wait_for_capture);
+        Ok(())
+    }
     fn restart_control_plane(
         &mut self,
         issued_at: &str,
@@ -397,12 +406,23 @@ pub fn restart_text_route(
         .or_else(|| string_param(route_url, body, "projectRoot"))
         .or_else(|| string_param(route_url, body, "project"))
         .map(|project| runtime.resolve_project_root(&project));
+    let force = bool_param(route_url, body, "force");
+    if !bool_param(route_url, body, "backendIdCapturePrechecked")
+        && let Err(error) =
+            runtime.prepare_restart_control_plane(project_root.as_deref(), force, true)
+    {
+        return DaemonRouteResponse::text(500, format!("{error}\n"));
+    }
     let resolver = PathResolver::from_env();
     let _restart_lock =
         match acquire_runtime_restart_permit(&resolver, restart_lock_owner_pid(body)) {
             Ok(permit) => permit,
             Err(error) => return DaemonRouteResponse::text(500, format!("{error}\n")),
         };
+    if let Err(error) = runtime.prepare_restart_control_plane(project_root.as_deref(), force, false)
+    {
+        return DaemonRouteResponse::text(500, format!("{error}\n"));
+    }
     match runtime.restart_control_plane(&issued_at, project_root.as_deref()) {
         Ok(result) => {
             let mut response = text_or_json_lines(
@@ -424,6 +444,30 @@ fn restart_lock_owner_pid(body: Option<&Value>) -> Option<i32> {
         .and_then(Value::as_i64)
         .and_then(|pid| i32::try_from(pid).ok())
         .filter(|pid| *pid > 0)
+}
+
+fn bool_param(route_url: &DaemonRouteUrl, body: Option<&Value>, key: &str) -> bool {
+    route_url
+        .search_param(key)
+        .map(parse_bool_like)
+        .or_else(|| body.and_then(|body| body.get(key)).map(value_bool_like))
+        .unwrap_or(false)
+}
+
+fn value_bool_like(value: &Value) -> bool {
+    match value {
+        Value::Bool(value) => *value,
+        Value::String(value) => parse_bool_like(value),
+        Value::Number(value) => value.as_i64().is_some_and(|value| value != 0),
+        _ => false,
+    }
+}
+
+fn parse_bool_like(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
 }
 
 pub fn dashboard_reload_text_route(

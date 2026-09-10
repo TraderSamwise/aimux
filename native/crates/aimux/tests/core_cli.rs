@@ -170,6 +170,7 @@ fn project_ensure_and_restart_use_the_supplied_project_resolver() {
         restart.action,
         CoreCliAction::RestartControlPlane {
             project_root: Some("/resolved/./child".into()),
+            force: false,
         }
     );
 
@@ -178,7 +179,10 @@ fn project_ensure_and_restart_use_the_supplied_project_resolver() {
     assert_eq!(global_restart.operation, CoreCliOperation::Restart);
     assert_eq!(
         global_restart.action,
-        CoreCliAction::RestartControlPlane { project_root: None }
+        CoreCliAction::RestartControlPlane {
+            project_root: None,
+            force: false,
+        }
     );
 }
 
@@ -2094,7 +2098,10 @@ fn local_diagnostics_and_restart_do_not_become_command_requests() {
     assert_eq!(daemon_restart.output_mode, CoreCliOutputMode::Json);
     assert_eq!(
         daemon_restart.action,
-        CoreCliAction::RestartControlPlane { project_root: None }
+        CoreCliAction::RestartControlPlane {
+            project_root: None,
+            force: false,
+        }
     );
 
     let daemon_stop =

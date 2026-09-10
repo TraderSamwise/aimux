@@ -19,6 +19,7 @@ struct FakeCoreRuntime {
     calls: Vec<String>,
     credentials: bool,
     relay: Value,
+    record_prepare: bool,
 }
 
 impl Default for FakeCoreRuntime {
@@ -27,6 +28,7 @@ impl Default for FakeCoreRuntime {
             calls: Vec::new(),
             credentials: true,
             relay: json!({ "status": "connected" }),
+            record_prepare: false,
         }
     }
 }
@@ -148,6 +150,21 @@ impl DaemonCoreCommandRuntime for FakeCoreRuntime {
         Ok(
             json!({ "restart": { "summary": { "failures": 0 } }, "text": "Aimux Restart\n  failures: 0" }),
         )
+    }
+
+    fn prepare_restart_control_plane(
+        &mut self,
+        project_root: Option<&str>,
+        force: bool,
+        wait_for_capture: bool,
+    ) -> Result<(), String> {
+        if self.record_prepare {
+            self.calls.push(format!(
+                "prepare:{}:{force}:{wait_for_capture}",
+                project_root.unwrap_or("")
+            ));
+        }
+        Ok(())
     }
 
     fn has_remote_credentials(&self) -> bool {
@@ -374,7 +391,10 @@ fn restart_core_command_refuses_concurrent_restart_before_runtime_call() {
     let _lock = try_acquire_runtime_restart_lock(&resolver)
         .expect("acquire restart lock")
         .expect("restart lock");
-    let mut runtime = FakeCoreRuntime::default();
+    let mut runtime = FakeCoreRuntime {
+        record_prepare: true,
+        ..FakeCoreRuntime::default()
+    };
     let response = json_body(route_core_command(
         &mut runtime,
         Some(&json!({ "id": "r", "command": CORE_COMMAND_NAMES.restart })),
@@ -384,7 +404,36 @@ fn restart_core_command_refuses_concurrent_restart_before_runtime_call() {
         response,
         json!({ "ok": false, "id": "r", "command": CORE_COMMAND_NAMES.restart, "error": "aimux restart is already running" })
     );
-    assert!(runtime.calls.is_empty());
+    assert_eq!(runtime.calls, vec!["prepare::false:true"]);
+}
+
+#[test]
+fn restart_core_command_forwards_force_to_preflight_and_locked_recheck() {
+    let _isolation = TestIsolation::new("daemon-core-restart-force");
+    let mut runtime = FakeCoreRuntime {
+        record_prepare: true,
+        ..FakeCoreRuntime::default()
+    };
+
+    let response = json_body(route_core_command(
+        &mut runtime,
+        Some(&json!({
+            "id": "r",
+            "command": CORE_COMMAND_NAMES.restart,
+            "payload": { "projectRoot": "/repo", "force": true }
+        })),
+        "issued",
+    ));
+
+    assert_eq!(response["result"]["text"], "Aimux Restart\n  failures: 0");
+    assert_eq!(
+        runtime.calls,
+        vec![
+            "prepare:/repo:true:true",
+            "prepare:/repo:true:false",
+            "control:issued:/repo",
+        ]
+    );
 }
 
 #[test]

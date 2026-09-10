@@ -50,6 +50,10 @@
   },
   "runtime": {
     "agentPreambleEnabled": true,
+    "restart": {
+      "backendIdCaptureWaitMs": 30000,
+      "backendIdCapturePollMs": 250
+    },
     "tmux": {
       "sessionPrefix": "aimux"
     }

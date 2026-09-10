@@ -27,6 +27,15 @@ pub trait DaemonCoreCommandRuntime: DaemonStatusRuntime {
         issued_at: &str,
         project_root: Option<&str>,
     ) -> Result<Value, String>;
+    fn prepare_restart_control_plane(
+        &mut self,
+        project_root: Option<&str>,
+        force: bool,
+        wait_for_capture: bool,
+    ) -> Result<(), String> {
+        let _ = (project_root, force, wait_for_capture);
+        Ok(())
+    }
     fn has_remote_credentials(&self) -> bool;
     fn enable_relay_for_user_request(&mut self) -> Value;
     fn disable_relay(&mut self) -> Value;
@@ -158,6 +167,13 @@ pub fn route_core_command(
                 Ok(project_root) => project_root,
                 Err(response) => return response,
             };
+            let force = bool_payload_param(payload, "force");
+            if !bool_payload_param(payload, "backendIdCapturePrechecked")
+                && let Err(error) =
+                    runtime.prepare_restart_control_plane(project_root.as_deref(), force, true)
+            {
+                return DaemonRouteResponse::json(500, command_error(&id, Some(command), error));
+            }
             let resolver = PathResolver::from_env();
             let _restart_lock =
                 match acquire_runtime_restart_permit(&resolver, restart_lock_owner_pid(payload)) {
@@ -169,6 +185,11 @@ pub fn route_core_command(
                         );
                     }
                 };
+            if let Err(error) =
+                runtime.prepare_restart_control_plane(project_root.as_deref(), force, false)
+            {
+                return DaemonRouteResponse::json(500, command_error(&id, Some(command), error));
+            }
             runtime.restart_control_plane(issued_at, project_root.as_deref())
         }
         command if command == CORE_COMMAND_NAMES.relay_status => {
@@ -210,6 +231,25 @@ fn restart_lock_owner_pid(payload: Option<&Value>) -> Option<i32> {
         .and_then(Value::as_i64)
         .and_then(|pid| i32::try_from(pid).ok())
         .filter(|pid| *pid > 0)
+}
+
+fn bool_payload_param(payload: Option<&Value>, key: &str) -> bool {
+    payload
+        .and_then(|payload| payload.get(key))
+        .map(value_bool_like)
+        .unwrap_or(false)
+}
+
+fn value_bool_like(value: &Value) -> bool {
+    match value {
+        Value::Bool(value) => *value,
+        Value::String(value) => matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        ),
+        Value::Number(value) => value.as_i64().is_some_and(|value| value != 0),
+        _ => false,
+    }
 }
 
 pub fn require_project_root(

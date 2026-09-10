@@ -86,6 +86,7 @@ pub(super) fn required_value<S: AsRef<str>>(args: &[S], index: usize) -> Option<
 pub(super) fn parse_restart_flags<S: AsRef<str>>(args: &[S]) -> Option<CoreRestartArgs> {
     let mut parsed = CoreRestartArgs {
         json: false,
+        force: false,
         project: None,
     };
     let mut index = 0;
@@ -93,6 +94,11 @@ pub(super) fn parse_restart_flags<S: AsRef<str>>(args: &[S]) -> Option<CoreResta
         let arg = args[index].as_ref();
         if arg == "--json" {
             parsed.json = true;
+            index += 1;
+            continue;
+        }
+        if arg == "--force" {
+            parsed.force = true;
             index += 1;
             continue;
         }

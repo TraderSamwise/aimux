@@ -80,6 +80,10 @@ pub fn default_config() -> Value {
         },
         "runtime": {
             "agentPreambleEnabled": true,
+            "restart": {
+                "backendIdCaptureWaitMs": 30_000,
+                "backendIdCapturePollMs": 250
+            },
             "tmux": {
                 "sessionPrefix": "aimux"
             }

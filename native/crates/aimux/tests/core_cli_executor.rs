@@ -21,7 +21,7 @@ struct FakeRuntime {
     commands: Vec<CoreCommandCall>,
     text_routes: Vec<(String, Option<Value>)>,
     open_targets: Vec<Value>,
-    restart_calls: Vec<Option<String>>,
+    restart_calls: Vec<(Option<String>, bool)>,
     restart_progress: Vec<String>,
     stop_daemon_calls: Vec<String>,
     stopped_daemon: Option<StoppedDaemonInfo>,
@@ -324,8 +324,10 @@ impl CoreCliRuntime for FakeRuntime {
     fn restart_control_plane(
         &mut self,
         project_root: Option<&str>,
+        force: bool,
     ) -> Result<RestartControlPlaneTextResult, String> {
-        self.restart_calls.push(project_root.map(str::to_owned));
+        self.restart_calls
+            .push((project_root.map(str::to_owned), force));
         Ok(RestartControlPlaneTextResult {
             restart: json!({
                 "daemon": {
@@ -2501,17 +2503,20 @@ fn restart_control_plane_runs_native_restart_and_preserves_project_scope() {
     assert_eq!(current.code, 0);
     assert_eq!(current.stdout, ["Aimux Restart\n  failures: 0"]);
     assert!(current.stderr.is_empty());
-    assert_eq!(runtime.restart_calls, [None]);
+    assert_eq!(runtime.restart_calls, [(None, false)]);
     assert!(runtime.commands.is_empty());
 
-    let execution = run_core_cli_with(&args(&["restart", "--project", "child"]), &mut runtime);
+    let execution = run_core_cli_with(
+        &args(&["restart", "--project", "child", "--force"]),
+        &mut runtime,
+    );
 
     assert_eq!(execution.code, 0);
     assert_eq!(execution.stdout, ["Aimux Restart\n  failures: 0"]);
     assert!(execution.stderr.is_empty());
     assert_eq!(
         runtime.restart_calls,
-        [None, Some("/resolved/child".into())]
+        [(None, false), (Some("/resolved/child".into()), true)]
     );
     assert!(runtime.commands.is_empty());
 }
@@ -2529,7 +2534,7 @@ fn restart_control_plane_does_not_require_git_cwd_without_project_scope() {
     assert_eq!(execution.code, 0);
     assert_eq!(execution.stdout, ["Aimux Restart\n  failures: 0"]);
     assert!(execution.stderr.is_empty());
-    assert_eq!(runtime.restart_calls, [None]);
+    assert_eq!(runtime.restart_calls, [(None, false)]);
     assert!(runtime.commands.is_empty());
 }
 
@@ -2540,7 +2545,7 @@ fn restart_control_plane_text_emits_progress_before_route_returns() {
     let execution = run_core_cli_with(&args(&["restart"]), &mut runtime);
 
     assert_eq!(execution.code, 0);
-    assert_eq!(runtime.restart_calls, [None]);
+    assert_eq!(runtime.restart_calls, [(None, false)]);
     assert_eq!(
         runtime.restart_progress,
         ["Restarting Aimux control plane..."]
@@ -2554,7 +2559,7 @@ fn restart_control_plane_json_does_not_emit_text_progress() {
     let execution = run_core_cli_with(&args(&["restart", "--json"]), &mut runtime);
 
     assert_eq!(execution.code, 0);
-    assert_eq!(runtime.restart_calls, [None]);
+    assert_eq!(runtime.restart_calls, [(None, false)]);
     assert!(runtime.restart_progress.is_empty());
 }
 
@@ -2569,7 +2574,7 @@ fn restart_control_plane_json_outputs_restart_report_and_fails_on_failures() {
 
     assert_eq!(execution.code, 1);
     assert!(execution.stderr.is_empty());
-    assert_eq!(runtime.restart_calls, [None]);
+    assert_eq!(runtime.restart_calls, [(None, false)]);
     let report: Value = serde_json::from_str(&execution.stdout[0]).expect("restart json");
     assert_eq!(report["summary"]["failures"], json!(2));
 }

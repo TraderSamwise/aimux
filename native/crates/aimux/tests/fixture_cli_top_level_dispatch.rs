@@ -255,6 +255,7 @@ impl CoreCliRuntime for FakeRuntime {
     fn restart_control_plane(
         &mut self,
         _project_root: Option<&str>,
+        _force: bool,
     ) -> Result<RestartControlPlaneTextResult, String> {
         unreachable!("top-level dispatch fixture does not exercise restart")
     }
