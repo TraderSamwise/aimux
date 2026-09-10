@@ -1,7 +1,9 @@
 use serde_json::{Map, Value, json};
+use std::path::Path;
 
 use crate::daemon_state::mutate_metadata_state;
 use crate::project_api_contract::routes;
+use crate::runtime_topology::{runtime_topology_path, update_runtime_topology};
 
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::metadata::{update_session_metadata, update_session_metadata_at};
@@ -132,6 +134,7 @@ pub fn clear_project_flag_at(
     key: &str,
     now: &str,
 ) -> Result<(), String> {
+    let project_state_dir = project_state_dir.as_ref();
     update_session_metadata_at(project_state_dir, session_id, now, |current| {
         let mut current = object_value(current);
         if key == "scribe" {
@@ -142,7 +145,8 @@ pub fn clear_project_flag_at(
         clear_matching_control_role_metadata(&mut current, key);
         Value::Object(current)
     })
-    .map(|_| ())
+    .map(|_| ())?;
+    clear_runtime_topology_control_role(project_state_dir, session_id, key, now)
 }
 
 fn clear_matching_control_role_metadata(current: &mut Map<String, Value>, key: &str) {
@@ -164,6 +168,58 @@ fn clear_matching_control_role_metadata(current: &mut Map<String, Value>, key: &
     if team.is_empty() {
         current.remove("team");
     }
+}
+
+fn clear_runtime_topology_control_role(
+    project_state_dir: &Path,
+    session_id: &str,
+    key: &str,
+    now: &str,
+) -> Result<(), String> {
+    if key != "overseer" && key != "scribe" {
+        return Ok(());
+    }
+    let path = runtime_topology_path(project_state_dir);
+    if !path.is_file() {
+        return Ok(());
+    }
+    update_runtime_topology(path, |mut topology| {
+        let mut changed = false;
+        if let Some(nodes) = topology.get_mut("nodes").and_then(Value::as_array_mut) {
+            for node in nodes {
+                let Some(node) = node.as_object_mut() else {
+                    continue;
+                };
+                if node.get("logicalId").and_then(Value::as_str) == Some(session_id)
+                    && node.get("role").and_then(Value::as_str) == Some(key)
+                {
+                    node.remove("role");
+                    changed = true;
+                }
+            }
+        }
+        if let Some(sessions) = topology.get_mut("sessions").and_then(Value::as_array_mut) {
+            for session in sessions {
+                let Some(session) = session.as_object_mut() else {
+                    continue;
+                };
+                if session.get("id").and_then(Value::as_str) != Some(session_id) {
+                    continue;
+                }
+                let before = session.clone();
+                clear_matching_control_role_metadata(session, key);
+                if *session != before {
+                    session.insert("updatedAt".into(), Value::String(now.to_owned()));
+                    changed = true;
+                }
+            }
+        }
+        if changed && let Some(topology) = topology.as_object_mut() {
+            topology.insert("generatedAt".into(), Value::String(now.to_owned()));
+        }
+        topology
+    })
+    .map(|_| ())
 }
 
 fn route_loop(
@@ -393,8 +449,9 @@ fn json_error(status: u16, error: impl Into<String>) -> ProjectServiceDispatchRe
 mod tests {
     use super::*;
     use crate::daemon_state::{
-        load_metadata_state_at_unix_millis, save_metadata_state, MetadataState,
+        MetadataState, load_metadata_state_at_unix_millis, save_metadata_state,
     };
+    use crate::runtime_topology::{read_runtime_topology, write_runtime_topology};
     use std::collections::BTreeMap;
     use std::fs;
     use std::path::PathBuf;
@@ -447,6 +504,45 @@ mod tests {
             },
         )
         .expect("save state");
+        write_runtime_topology(
+            runtime_topology_path(&state_dir),
+            &json!({
+                "version": 1,
+                "generatedAt": "2026-09-09T00:00:00.000Z",
+                "rigs": [{
+                    "id": "rig",
+                    "name": "repo",
+                    "projectRoot": "/repo",
+                    "createdAt": "2026-09-09T00:00:00.000Z",
+                    "updatedAt": "2026-09-09T00:00:00.000Z"
+                }],
+                "nodes": [{
+                    "id": "agent:worker",
+                    "rigId": "rig",
+                    "logicalId": "worker",
+                    "role": "scribe",
+                    "createdAt": "2026-09-09T00:00:00.000Z"
+                }],
+                "edges": [],
+                "bindings": [],
+                "sessions": [{
+                    "id": "worker",
+                    "nodeId": "agent:worker",
+                    "status": "running",
+                    "team": { "teamId": "scribe", "role": "scribe", "label": "keep" },
+                    "createdAt": "2026-09-09T00:00:00.000Z",
+                    "updatedAt": "2026-09-09T00:00:00.000Z"
+                }],
+                "services": [],
+                "worktrees": [],
+                "worktreeGraveyard": [],
+                "teamRoles": [],
+                "remoteClients": [],
+                "lifecycleOperations": [],
+                "exchangeRefs": []
+            }),
+        )
+        .expect("save topology");
 
         clear_project_flag_at(&state_dir, "worker", "scribe", "2026-09-10T00:00:00.000Z")
             .expect("clear scribe");
@@ -461,5 +557,22 @@ mod tests {
         );
         assert_eq!(session.pointer("/team/role"), None);
         assert_eq!(session.pointer("/team/teamId"), None);
+        let topology =
+            read_runtime_topology(runtime_topology_path(&state_dir)).expect("read topology");
+        assert_eq!(
+            topology
+                .pointer("/nodes/0/logicalId")
+                .and_then(Value::as_str),
+            Some("worker")
+        );
+        assert_eq!(topology.pointer("/nodes/0/role"), None);
+        assert_eq!(
+            topology
+                .pointer("/sessions/0/team/label")
+                .and_then(Value::as_str),
+            Some("keep")
+        );
+        assert_eq!(topology.pointer("/sessions/0/team/role"), None);
+        assert_eq!(topology.pointer("/sessions/0/team/teamId"), None);
     }
 }
