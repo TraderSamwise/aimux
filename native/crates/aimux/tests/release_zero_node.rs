@@ -270,8 +270,7 @@ fn release_asset_builder_rejects_cross_arch_labeling_before_build() {
 fn release_source_hash_no_git_fallback_handles_paths_with_spaces() {
     let repo = repo_root();
     let temp = TempDir::new("release-source-hash-spaces");
-    fs::write(temp.0.join("package.json"), "{\"version\":\"0.1.0\"}\n")
-        .expect("write package");
+    fs::write(temp.0.join("package.json"), "{\"version\":\"0.1.0\"}\n").expect("write package");
     fs::write(temp.0.join("yarn.lock"), "# lock\n").expect("write lock");
     for dir in ["scripts", "native", "app", "docs"] {
         fs::create_dir_all(temp.0.join(dir)).expect("create top-level dir");
@@ -280,8 +279,11 @@ fn release_source_hash_no_git_fallback_handles_paths_with_spaces() {
         .0
         .join("app/ios/Pods/Target Support Files/Aimux Fixture");
     fs::create_dir_all(&spaced_dir).expect("create spaced dir");
-    fs::write(spaced_dir.join("fixture config [one] $value.txt"), "fixture\n")
-        .expect("write spaced file");
+    fs::write(
+        spaced_dir.join("fixture config [one] $value.txt"),
+        "fixture\n",
+    )
+    .expect("write spaced file");
 
     let script =
         fs::read_to_string(repo.join("scripts/build-release-asset.sh")).expect("read script");
@@ -301,7 +303,9 @@ fn release_source_hash_no_git_fallback_handles_paths_with_spaces() {
         ),
     )
     .expect("write runner");
-    let mut permissions = fs::metadata(&runner).expect("runner metadata").permissions();
+    let mut permissions = fs::metadata(&runner)
+        .expect("runner metadata")
+        .permissions();
     permissions.set_mode(0o755);
     fs::set_permissions(&runner, permissions).expect("chmod runner");
 
@@ -333,10 +337,7 @@ fn repo_root() -> PathBuf {
 }
 
 fn shell_quote(path: &Path) -> String {
-    format!(
-        "'{}'",
-        path.to_string_lossy().replace('\'', "'\\''")
-    )
+    format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"))
 }
 
 fn create_release_archive(root: &Path) -> PathBuf {
