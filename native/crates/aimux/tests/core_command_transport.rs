@@ -13,7 +13,7 @@ use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::mpsc::{self, Receiver};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 fn daemon_info(port: u16) -> AimuxDaemonInfo {
     AimuxDaemonInfo {
@@ -335,8 +335,51 @@ fn loopback_transport_reports_configured_read_timeout() {
     .expect("build timeout request");
 
     let error = execute_loopback_json_request(&request).expect_err("request must time out");
-    assert_eq!(error.to_string(), "request timed out after 20ms");
+    match error {
+        CoreCommandTransportError::TransientIoExhausted {
+            operation,
+            attempts,
+            timeout_ms,
+            ..
+        } => {
+            assert_eq!(operation, "read");
+            assert!(attempts > 0);
+            assert_eq!(timeout_ms, 20);
+        }
+        CoreCommandTransportError::Timeout { timeout_ms } => assert_eq!(timeout_ms, 20),
+        other => panic!("request should report the configured read bound, got {other}"),
+    }
     handle.join().expect("timeout server thread");
+}
+
+#[test]
+fn loopback_transport_fails_fast_when_nothing_is_listening() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind unused loopback port");
+    let port = listener.local_addr().expect("unused server address").port();
+    drop(listener);
+    let request = build_daemon_json_request(
+        &daemon_info(port),
+        "/health",
+        DaemonRequestInit {
+            timeout_ms: Some(500),
+            ..DaemonRequestInit::default()
+        },
+    )
+    .expect("build request");
+
+    let started = Instant::now();
+    let error = execute_loopback_json_request(&request).expect_err("missing listener must fail");
+
+    assert!(
+        started.elapsed() < Duration::from_millis(100),
+        "connection refused should fail without burning the retry budget: {error}"
+    );
+    match error {
+        CoreCommandTransportError::Io(error) => {
+            assert_eq!(error.kind(), std::io::ErrorKind::ConnectionRefused);
+        }
+        other => panic!("hard failure should surface directly: {other}"),
+    }
 }
 
 #[test]

@@ -9,9 +9,13 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 use std::io::{self, Read, Write};
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::path::Path;
-use std::time::Duration;
+use std::thread;
+use std::time::{Duration, Instant};
+
+const DEFAULT_LOOPBACK_TRANSIENT_RETRY_MS: u64 = 1_000;
+const LOOPBACK_TRANSIENT_RETRY_SLEEP_MS: u64 = 10;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DaemonHttpMethod {
@@ -65,10 +69,21 @@ pub enum CoreCommandTransportError {
     EnsureDaemon(String),
     InvalidDaemonUrl(String),
     InvalidHttpResponse(String),
-    Timeout { timeout_ms: u64 },
+    Timeout {
+        timeout_ms: u64,
+    },
+    TransientIoExhausted {
+        operation: &'static str,
+        attempts: usize,
+        timeout_ms: u64,
+        source: io::Error,
+    },
     Io(io::Error),
     Json(serde_json::Error),
-    DaemonRequest { status: u16, message: String },
+    DaemonRequest {
+        status: u16,
+        message: String,
+    },
     CommandResponse(CoreCommandResponseError),
 }
 
@@ -91,6 +106,15 @@ impl Display for CoreCommandTransportError {
             Self::Timeout { timeout_ms } => {
                 write!(formatter, "request timed out after {timeout_ms}ms")
             }
+            Self::TransientIoExhausted {
+                operation,
+                attempts,
+                timeout_ms,
+                source,
+            } => write!(
+                formatter,
+                "daemon loopback {operation} retried transient error {attempts} times over {timeout_ms}ms: {source}"
+            ),
             Self::Io(error) => Display::fmt(error, formatter),
             Self::Json(error) => Display::fmt(error, formatter),
             Self::DaemonRequest { message, .. } => formatter.write_str(message),
@@ -103,6 +127,7 @@ impl Error for CoreCommandTransportError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Io(error) => Some(error),
+            Self::TransientIoExhausted { source, .. } => Some(source),
             Self::Json(error) => Some(error),
             Self::CommandResponse(error) => Some(error),
             _ => None,
@@ -316,10 +341,7 @@ fn execute_loopback_http_request(
 ) -> Result<Vec<u8>, CoreCommandTransportError> {
     let endpoint = parse_loopback_url(&request.url)?;
     let mut stream = connect_loopback(&endpoint, request.timeout_ms)?;
-    let timeout = request
-        .timeout_ms
-        .filter(|timeout_ms| *timeout_ms > 0)
-        .map(Duration::from_millis);
+    let timeout = request_timeout(request.timeout_ms);
     stream
         .set_read_timeout(timeout)
         .map_err(CoreCommandTransportError::Io)?;
@@ -403,24 +425,14 @@ fn connect_loopback(
         .map_err(CoreCommandTransportError::Io)?
         .filter(|address| address.ip().is_loopback())
         .collect::<Vec<_>>();
-    let timeout = timeout_ms
-        .filter(|value| *value > 0)
-        .map(Duration::from_millis);
+    let timeout = request_timeout(timeout_ms);
+    let retry = LoopbackRetry::new("connect", timeout_ms);
     let mut last_error = None;
     for address in addresses {
-        let result = match timeout {
-            Some(timeout) => TcpStream::connect_timeout(&address, timeout),
-            None => TcpStream::connect(address),
-        };
-        match result {
+        match connect_loopback_address(address, timeout, retry)? {
             Ok(stream) => return Ok(stream),
-            Err(error) if is_timeout(&error) => {
-                return Err(CoreCommandTransportError::Timeout {
-                    timeout_ms: timeout_ms.unwrap_or(0),
-                });
-            }
             Err(error) => last_error = Some(error),
-        }
+        };
     }
     Err(CoreCommandTransportError::Io(last_error.unwrap_or_else(
         || {
@@ -432,14 +444,26 @@ fn connect_loopback(
     )))
 }
 
+fn connect_loopback_address(
+    address: SocketAddr,
+    timeout: Option<Duration>,
+    retry: LoopbackRetry,
+) -> Result<Result<TcpStream, io::Error>, CoreCommandTransportError> {
+    retry.run(|| match timeout {
+        Some(timeout) => TcpStream::connect_timeout(&address, timeout),
+        None => TcpStream::connect(address),
+    })
+}
+
 fn write_all(
     stream: &mut TcpStream,
     bytes: &[u8],
     timeout_ms: Option<u64>,
 ) -> Result<(), CoreCommandTransportError> {
-    stream
-        .write_all(bytes)
-        .map_err(|error| map_io_error(error, timeout_ms))
+    match LoopbackRetry::new("write", timeout_ms).run(|| stream.write_all(bytes))? {
+        Ok(()) => Ok(()),
+        Err(error) => Err(map_io_error(error, timeout_ms)),
+    }
 }
 
 fn read_response_message(
@@ -453,9 +477,10 @@ fn read_response_message(
             bytes.truncate(length);
             return Ok(bytes);
         }
-        let count = stream
-            .read(&mut buffer)
-            .map_err(|error| map_io_error(error, timeout_ms))?;
+        let count = match LoopbackRetry::new("read", timeout_ms).run(|| stream.read(&mut buffer))? {
+            Ok(count) => count,
+            Err(error) => return Err(map_io_error(error, timeout_ms)),
+        };
         if count == 0 {
             return Ok(bytes);
         }
@@ -478,6 +503,70 @@ fn is_timeout(error: &io::Error) -> bool {
         error.kind(),
         io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
     )
+}
+
+fn request_timeout(timeout_ms: Option<u64>) -> Option<Duration> {
+    timeout_ms
+        .filter(|value| *value > 0)
+        .map(Duration::from_millis)
+}
+
+#[derive(Clone, Copy)]
+struct LoopbackRetry {
+    operation: &'static str,
+    timeout_ms: u64,
+    deadline: Instant,
+}
+
+impl LoopbackRetry {
+    fn new(operation: &'static str, timeout_ms: Option<u64>) -> Self {
+        let timeout_ms = timeout_ms
+            .filter(|value| *value > 0)
+            .unwrap_or(DEFAULT_LOOPBACK_TRANSIENT_RETRY_MS);
+        Self {
+            operation,
+            timeout_ms,
+            deadline: Instant::now() + Duration::from_millis(timeout_ms),
+        }
+    }
+
+    fn run<T>(
+        self,
+        mut operation: impl FnMut() -> io::Result<T>,
+    ) -> Result<Result<T, io::Error>, CoreCommandTransportError> {
+        let mut attempts = 0;
+        loop {
+            match operation() {
+                Ok(value) => return Ok(Ok(value)),
+                Err(error) if is_transient_loopback_error(&error) => {
+                    attempts += 1;
+                    if Instant::now() >= self.deadline {
+                        return Err(CoreCommandTransportError::TransientIoExhausted {
+                            operation: self.operation,
+                            attempts,
+                            timeout_ms: self.timeout_ms,
+                            source: error,
+                        });
+                    }
+                    thread::sleep(Duration::from_millis(LOOPBACK_TRANSIENT_RETRY_SLEEP_MS));
+                }
+                Err(error) if is_timeout(&error) => {
+                    return Err(CoreCommandTransportError::Timeout {
+                        timeout_ms: self.timeout_ms,
+                    });
+                }
+                Err(error) => return Ok(Err(error)),
+            }
+        }
+    }
+}
+
+fn is_transient_loopback_error(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+    ) || error.raw_os_error() == Some(libc::EAGAIN)
+        || error.raw_os_error() == Some(libc::EWOULDBLOCK)
 }
 
 fn parse_json_response(bytes: &[u8]) -> Result<DaemonJsonResponse, CoreCommandTransportError> {
@@ -696,4 +785,48 @@ fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack
         .windows(needle.len())
         .position(|window| window == needle)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn loopback_retry_treats_eagain_as_transient_until_success() {
+        let mut attempts = 0;
+
+        let result = LoopbackRetry::new("read", Some(100))
+            .run(|| {
+                attempts += 1;
+                if attempts == 1 {
+                    Err(io::Error::from_raw_os_error(libc::EAGAIN))
+                } else {
+                    Ok("ok")
+                }
+            })
+            .expect("retry should not exhaust")
+            .expect("transient EAGAIN should eventually succeed");
+
+        assert_eq!(result, "ok");
+        assert_eq!(attempts, 2);
+    }
+
+    #[test]
+    fn loopback_retry_does_not_retry_hard_failures() {
+        let mut attempts = 0;
+
+        let error = LoopbackRetry::new("connect", Some(500))
+            .run(|| {
+                attempts += 1;
+                Err::<(), _>(io::Error::new(
+                    io::ErrorKind::ConnectionRefused,
+                    "nothing listening",
+                ))
+            })
+            .expect("hard failure should not become transport retry exhaustion")
+            .expect_err("hard failure remains the operation error");
+
+        assert_eq!(attempts, 1);
+        assert_eq!(error.kind(), io::ErrorKind::ConnectionRefused);
+    }
 }
