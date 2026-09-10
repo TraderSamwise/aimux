@@ -13,7 +13,7 @@ use crate::notification_delivery_guard::external_notification_refusal_reason_for
 use crate::runtime_topology::{
     list_topology_session_states, read_runtime_topology, runtime_topology_path,
 };
-use crate::team_contract::{is_overseer_session, is_scribe_session};
+use crate::team_contract::is_project_control_session;
 
 use super::notification_context::should_suppress_notification;
 
@@ -187,13 +187,45 @@ fn notification_target_role(project_state_dir: &Path, event: &Value) -> Notifica
 }
 
 fn notification_target_role_for_session(session: &Value) -> NotificationTargetRole {
-    if is_scribe_session(Some(session)) {
+    if optional_bool_field(session, "projectControl") == Some(false) {
+        return NotificationTargetRole::Ordinary;
+    }
+    if session_is_scribe(session) {
         NotificationTargetRole::Scribe
-    } else if is_overseer_session(Some(session)) {
+    } else if session_is_overseer(session) || is_project_control_session(Some(session)) {
         NotificationTargetRole::Overseer
     } else {
         NotificationTargetRole::Ordinary
     }
+}
+
+fn session_is_scribe(session: &Value) -> bool {
+    if let Some(value) = optional_bool_field(session, "scribe") {
+        return value;
+    }
+    session_role(session) == Some("scribe")
+}
+
+fn session_is_overseer(session: &Value) -> bool {
+    if let Some(value) = optional_bool_field(session, "overseer") {
+        return value;
+    }
+    session_role(session) == Some("overseer")
+}
+
+fn session_role(session: &Value) -> Option<&str> {
+    string_field(session, "role")
+        .split_whitespace()
+        .next()
+        .filter(|role| !role.is_empty())
+        .or_else(|| {
+            session
+                .get("team")
+                .and_then(|team| team.get("role"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|role| !role.is_empty())
+        })
 }
 
 fn role_delivery_field(notifications: &Value, key: &str, fallback: bool) -> bool {
@@ -202,6 +234,10 @@ fn role_delivery_field(notifications: &Value, key: &str, fallback: bool) -> bool
         .and_then(|roles| roles.get(key))
         .and_then(Value::as_bool)
         .unwrap_or(fallback)
+}
+
+fn optional_bool_field(value: &Value, key: &str) -> Option<bool> {
+    value.get(key).and_then(Value::as_bool)
 }
 
 fn is_prompt_kind(kind: &str) -> bool {
