@@ -143,7 +143,6 @@ pub mod service_notify_contract;
 pub mod service_state_snapshot;
 pub mod session_bootstrap;
 pub mod session_launch;
-pub mod session_launch_resume_contract;
 pub mod session_launch_startup_contract;
 pub mod session_recency;
 pub mod session_runtime;
