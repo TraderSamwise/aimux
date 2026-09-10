@@ -5,7 +5,7 @@ const BASE_16: [&str; 16] = [
     "#7f848e", "#ff7b86", "#b5e08a", "#e5c07b", "#7cc5ff", "#dd93ec", "#66d9e2", "#ffffff",
 ];
 
-pub fn parse_ansi_lines_contract(text: &str) -> Value {
+pub fn parse_ansi_lines(text: &str) -> Value {
     let mut attributes = Attributes::default();
     let mut plain_lines = Vec::new();
     let lines = text
@@ -20,6 +20,39 @@ pub fn parse_ansi_lines_contract(text: &str) -> Value {
         "lines": lines,
         "text": plain_lines.join("\n"),
     })
+}
+
+pub(crate) fn parse_ansi_rich_text_spans(text: &str) -> Vec<Value> {
+    let mut attributes = Attributes::default();
+    let mut spans = Vec::new();
+    for (line_index, line) in text.split('\n').enumerate() {
+        if line_index > 0 {
+            spans.push(json!({ "text": "\n" }));
+        }
+        spans.extend(parse_ansi_rich_text_line(line, &mut attributes));
+    }
+    spans
+}
+
+fn parse_ansi_rich_text_line(line: &str, attributes: &mut Attributes) -> Vec<Value> {
+    let mut spans = Vec::new();
+    let mut cursor = 0;
+    while let Some(relative) = line[cursor..].find("\u{1b}[") {
+        let start = cursor + relative;
+        let params_start = start + 2;
+        let Some((end, params)) = sgr_params(line, params_start) else {
+            break;
+        };
+        if start > cursor {
+            spans.push(rich_text_span_json(&line[cursor..start], attributes));
+        }
+        apply_params(attributes, params);
+        cursor = end + 1;
+    }
+    if cursor < line.len() {
+        spans.push(rich_text_span_json(&line[cursor..], attributes));
+    }
+    spans
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -154,6 +187,9 @@ fn set_color(attributes: &mut Attributes, foreground: bool, color: String) {
 }
 
 fn xterm256(index: u16) -> Option<String> {
+    if index > 255 {
+        return None;
+    }
     if index < 16 {
         return Some(BASE_16[index as usize].to_owned());
     }
@@ -184,6 +220,49 @@ fn span_json(text: &str, attributes: &Attributes) -> Value {
         "text": text,
         "style": style_json(attributes),
     })
+}
+
+fn rich_text_span_json(text: &str, attributes: &Attributes) -> Value {
+    let fg = if attributes.inverse {
+        attributes.bg.as_deref()
+    } else {
+        attributes.fg.as_deref()
+    };
+    let bg = if attributes.inverse {
+        attributes.fg.as_deref()
+    } else {
+        attributes.bg.as_deref()
+    };
+    let mut span = Map::new();
+    span.insert("text".to_owned(), Value::String(text.to_owned()));
+
+    let marks = [
+        (attributes.bold, "bold"),
+        (attributes.dim, "dim"),
+        (attributes.italic, "italic"),
+        (attributes.underline, "underline"),
+        (attributes.strike, "strike"),
+    ]
+    .into_iter()
+    .filter(|(enabled, _)| *enabled)
+    .map(|(_, mark)| Value::String(mark.to_owned()))
+    .collect::<Vec<_>>();
+    if !marks.is_empty() {
+        span.insert("marks".to_owned(), Value::Array(marks));
+    }
+    if let Some(fg) = fg {
+        span.insert(
+            "foreground".to_owned(),
+            json!({ "model": "rgb", "value": fg }),
+        );
+    }
+    if let Some(bg) = bg {
+        span.insert(
+            "background".to_owned(),
+            json!({ "model": "rgb", "value": bg }),
+        );
+    }
+    Value::Object(span)
 }
 
 fn style_json(attributes: &Attributes) -> Value {

@@ -1,4 +1,4 @@
-use aimux::ansi_sgr_spans::parse_ansi_lines_contract;
+use aimux::ansi_sgr_spans::parse_ansi_lines;
 use serde_json::Value;
 
 const SGR_SPANS: &str = include_str!("../../../../testdata/contracts/v1/ansi/sgr-spans.json");
@@ -11,7 +11,7 @@ fn fixture_ansi_sgr_span_contract_cases_match_typescript() {
     let mut failures = Vec::new();
     for case in cases {
         let input = case["input"].as_str().expect("SGR case input");
-        let actual = parse_ansi_lines_contract(input);
+        let actual = parse_ansi_lines(input);
         if actual != case["output"] {
             failures.push(serde_json::json!({
                 "id": case["id"],

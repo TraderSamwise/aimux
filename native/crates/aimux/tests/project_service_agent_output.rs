@@ -8,7 +8,7 @@ use aimux::project_service::agent_output::{
     project_agent_output_payload, route_agent_output_request_with_runtime, strip_sgr,
 };
 use aimux::project_service::agent_output_projection::{
-    AgentOutputProjectionCache, project_agent_output,
+    AgentOutputProjectionCache, project_agent_output, project_agent_output_with_ansi,
 };
 use aimux::project_service::metadata::update_session_metadata;
 use aimux::project_service::notifications::{NotificationQuery, list_notification_snapshot};
@@ -312,6 +312,28 @@ fn output_projection_reads_tool_progress_activity_text() {
     );
     assert_eq!(transcript.messages[0]["latest"], Value::Null);
     assert_eq!(transcript.messages[1]["latest"], true);
+}
+
+#[test]
+fn output_projection_preserves_full_sgr_spans_from_ansi_capture() {
+    let ansi = [
+        "› use colors?",
+        "• \u{1b}[2;4;38;2;215;119;87;48;5;18mWarm\u{1b}[0m",
+    ]
+    .join("\n");
+    let projection = project_agent_output_with_ansi(&strip_sgr(&ansi), Some(&ansi), Some("codex"));
+
+    assert_eq!(
+        projection.messages[1]["parts"][0]["spans"],
+        json!([
+            {
+                "text": "Warm",
+                "marks": ["dim", "underline"],
+                "foreground": { "model": "rgb", "value": "#d77757" },
+                "background": { "model": "rgb", "value": "#000087" }
+            }
+        ])
+    );
 }
 
 #[test]

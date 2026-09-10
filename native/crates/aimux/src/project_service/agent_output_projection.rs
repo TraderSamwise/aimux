@@ -1,3 +1,4 @@
+use crate::ansi_sgr_spans::parse_ansi_rich_text_spans;
 use serde_json::{Map, Value, json};
 use sha1::{Digest, Sha1};
 use std::collections::{BTreeMap, BTreeSet};
@@ -1452,7 +1453,7 @@ fn looks_like_active_work_status(text: &str) -> bool {
 fn messages_from_blocks(blocks: &[AgentOutputBlock], ansi: Option<&str>) -> Vec<Value> {
     let mut messages = Vec::new();
     let mut seen = Map::new();
-    let rich_spans = ansi.map(parse_ansi_spans);
+    let rich_spans = ansi.map(parse_ansi_rich_text_spans);
     let mut span_cursor = 0;
     let mut labels = AttachmentLabels::default();
     for block in blocks {
@@ -1535,13 +1536,6 @@ impl AttachmentLabels {
         self.by_id.insert(attachment_id.to_owned(), label.clone());
         label
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct RichSpan {
-    text: String,
-    foreground: Option<&'static str>,
-    bold: bool,
 }
 
 fn parts_from_text(text: &str, labels: &mut AttachmentLabels) -> Vec<Value> {
@@ -2888,122 +2882,14 @@ fn published_attachment_part(entry: &Value, labels: &mut AttachmentLabels) -> Va
     part
 }
 
-fn parse_ansi_spans(ansi: &str) -> Vec<RichSpan> {
-    let mut spans = Vec::new();
-    let mut current = String::new();
-    let mut foreground: Option<&'static str> = None;
-    let mut bold = false;
-    let mut chars = ansi.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch == '\u{1b}' && chars.peek() == Some(&'[') {
-            chars.next();
-            let mut code = String::new();
-            for next in chars.by_ref() {
-                if next == 'm' {
-                    break;
-                }
-                code.push(next);
-            }
-            flush_rich_span(&mut spans, &mut current, foreground, bold);
-            for part in code.split(';') {
-                match part.parse::<u16>().unwrap_or(0) {
-                    0 => {
-                        foreground = None;
-                        bold = false;
-                    }
-                    1 => bold = true,
-                    22 => bold = false,
-                    31 => foreground = Some("#e06c75"),
-                    32 => foreground = Some("#98c379"),
-                    36 => foreground = Some("#56b6c2"),
-                    39 => foreground = None,
-                    _ => {}
-                }
-            }
-            continue;
-        }
-        if ch == '\n' {
-            flush_rich_span(&mut spans, &mut current, foreground, bold);
-            spans.push(RichSpan {
-                text: "\n".to_owned(),
-                foreground: None,
-                bold: false,
-            });
-            continue;
-        }
-        current.push(ch);
-    }
-    flush_rich_span(&mut spans, &mut current, foreground, bold);
-    spans
-}
-
-fn flush_rich_span(
-    spans: &mut Vec<RichSpan>,
-    current: &mut String,
-    foreground: Option<&'static str>,
-    bold: bool,
-) {
-    if current.is_empty() {
-        return;
-    }
-    spans.push(RichSpan {
-        text: std::mem::take(current),
-        foreground,
-        bold,
-    });
-}
-
-fn slice_spans_for_text(
-    spans: &[RichSpan],
-    text: &str,
-    span_cursor: &mut usize,
-) -> Option<Vec<Value>> {
-    let plain = spans
-        .iter()
-        .map(|span| span.text.as_str())
-        .collect::<String>();
+fn slice_spans_for_text(spans: &[Value], text: &str, span_cursor: &mut usize) -> Option<Vec<Value>> {
+    let plain = spans_text(spans);
     let haystack = plain.get(*span_cursor..).unwrap_or_default();
     let relative_start = haystack.find(text)?;
     let start = *span_cursor + relative_start;
     let end = start + text.len();
     *span_cursor = end;
-    let mut cursor = 0;
-    let mut sliced = Vec::new();
-    for span in spans {
-        let span_start = cursor;
-        let span_end = cursor + span.text.len();
-        cursor = span_end;
-        if span_end <= start || span_start >= end {
-            continue;
-        }
-        let from = start.saturating_sub(span_start);
-        let to = span.text.len().min(end.saturating_sub(span_start));
-        let Some(piece) = span.text.get(from..to) else {
-            continue;
-        };
-        if piece.is_empty() {
-            continue;
-        }
-        let mut value = Map::new();
-        value.insert("text".to_owned(), Value::String(piece.to_owned()));
-        if let Some(color) = span.foreground {
-            value.insert(
-                "foreground".to_owned(),
-                json!({
-                    "model": "rgb",
-                    "value": color,
-                }),
-            );
-        }
-        if span.bold {
-            value.insert(
-                "marks".to_owned(),
-                Value::Array(vec![Value::String("bold".to_owned())]),
-            );
-        }
-        sliced.push(Value::Object(value));
-    }
-    Some(sliced)
+    Some(slice_value_spans(spans, start, end))
 }
 
 fn content_id(role: &str, text: &str) -> String {
