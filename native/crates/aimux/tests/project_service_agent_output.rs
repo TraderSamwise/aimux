@@ -1157,8 +1157,6 @@ fn output_route_skips_unchanged_tmux_metadata_and_applies_policy_once() {
             "command": "codex",
             "args": [],
             "toolConfigKey": "codex",
-            "overseer": false,
-            "scribe": false,
             "projectControl": false,
             "userLabel": "ready",
             "createdAt": "2026-09-05T00:00:00.000Z"

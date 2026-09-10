@@ -1655,7 +1655,15 @@ fn recover_wrapped_attachments(tail: &str) -> Option<RecoveredAttachmentText> {
             {
                 bullet = previous_char_boundary(&squashed, bullet);
             }
-            let filename = squashed[bullet..metadata.start].to_owned();
+            let filename_source = source_slice_for_squashed_range(
+                tail,
+                &squashed,
+                &source_index,
+                bullet,
+                metadata.start,
+            );
+            let filename = filename_source.trim_start_matches(['-', '•']).trim();
+            let filename = normalize_recovered_filename(filename);
             if bullet > 0 && !filename.is_empty() {
                 attachment.filename = Some(filename);
             }
@@ -1799,6 +1807,55 @@ fn previous_boundary_at_or_before(text: &str, index: usize) -> usize {
 
 fn byte_to_char_index(text: &str, byte: usize) -> usize {
     text[..byte].chars().count()
+}
+
+fn source_slice_for_squashed_range(
+    source: &str,
+    squashed: &str,
+    source_index: &[usize],
+    start: usize,
+    end: usize,
+) -> String {
+    let start_char = byte_to_char_index(squashed, start);
+    let end_char = byte_to_char_index(squashed, end);
+    if start_char >= end_char || end_char > source_index.len() {
+        return String::new();
+    }
+    let source_start = source_index[start_char];
+    let last_source = source_index[end_char - 1];
+    let source_end = last_source
+        + source[last_source..]
+            .chars()
+            .next()
+            .map(char::len_utf8)
+            .unwrap_or_default();
+    source[source_start..source_end].to_owned()
+}
+
+fn normalize_recovered_filename(filename: &str) -> String {
+    let mut normalized = String::new();
+    let mut chars = filename.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if !ch.is_whitespace() {
+            normalized.push(ch);
+            continue;
+        }
+        let mut saw_line_break = matches!(ch, '\n' | '\r');
+        while chars.peek().is_some_and(|next| next.is_whitespace()) {
+            let next = chars.next().expect("peeked whitespace");
+            saw_line_break |= matches!(next, '\n' | '\r');
+        }
+        let previous = normalized.chars().next_back();
+        let next = chars.peek().copied();
+        if !saw_line_break
+            && previous.is_some_and(char::is_alphanumeric)
+            && next.is_some_and(char::is_alphanumeric)
+            && !normalized.ends_with(' ')
+        {
+            normalized.push(' ');
+        }
+    }
+    normalized.trim().to_owned()
 }
 
 fn attachment_reference_part(
@@ -2882,7 +2939,11 @@ fn published_attachment_part(entry: &Value, labels: &mut AttachmentLabels) -> Va
     part
 }
 
-fn slice_spans_for_text(spans: &[Value], text: &str, span_cursor: &mut usize) -> Option<Vec<Value>> {
+fn slice_spans_for_text(
+    spans: &[Value],
+    text: &str,
+    span_cursor: &mut usize,
+) -> Option<Vec<Value>> {
     let plain = spans_text(spans);
     let haystack = plain.get(*span_cursor..).unwrap_or_default();
     let relative_start = haystack.find(text)?;

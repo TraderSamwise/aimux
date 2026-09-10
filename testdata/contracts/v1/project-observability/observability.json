@@ -11,15 +11,32 @@
       "input": {
         "scenario": "summary-rollup",
         "sessions": [
-          { "status": "running" },
-          { "status": "idle" },
-          { "status": "ready" },
-          { "status": "waiting" },
-          { "status": "offline" },
-          { "status": "exited" }
+          {
+            "status": "running"
+          },
+          {
+            "status": "idle"
+          },
+          {
+            "status": "ready"
+          },
+          {
+            "status": "waiting"
+          },
+          {
+            "status": "offline"
+          },
+          {
+            "status": "exited"
+          }
         ],
-        "services": [{}, {}],
-        "worktrees": [{}],
+        "services": [
+          {},
+          {}
+        ],
+        "worktrees": [
+          {}
+        ],
         "tasks": [
           {
             "id": "a",
@@ -81,7 +98,16 @@
           "doneTasks": 1,
           "unreadNotifications": 1
         },
-        "progress": { "pending": 0, "assigned": 0, "in_progress": 1, "blocked": 0, "done": 1, "failed": 1, "total": 3 },
+        "progress": {
+          "pending": 0,
+          "assigned": 0,
+          "in_progress": 1,
+          "blocked": 0,
+          "done": 1,
+          "failed": 1,
+          "total": 3,
+          "canceled": 0
+        },
         "story": [
           {
             "id": "task:a",
@@ -219,7 +245,16 @@
           "doneTasks": 1,
           "unreadNotifications": 0
         },
-        "progress": { "pending": 2, "assigned": 1, "in_progress": 1, "blocked": 1, "done": 1, "failed": 1, "total": 7 },
+        "progress": {
+          "pending": 2,
+          "assigned": 1,
+          "in_progress": 1,
+          "blocked": 1,
+          "done": 1,
+          "failed": 1,
+          "total": 7,
+          "canceled": 0
+        },
         "story": [
           {
             "id": "task:a",
@@ -331,7 +366,16 @@
           "doneTasks": 0,
           "unreadNotifications": 1
         },
-        "progress": { "pending": 1, "assigned": 0, "in_progress": 0, "blocked": 0, "done": 0, "failed": 0, "total": 1 },
+        "progress": {
+          "pending": 1,
+          "assigned": 0,
+          "in_progress": 0,
+          "blocked": 0,
+          "done": 0,
+          "failed": 0,
+          "total": 1,
+          "canceled": 0
+        },
         "story": [
           {
             "id": "notif:new",
@@ -757,7 +801,8 @@
           "blocked": 0,
           "done": 0,
           "failed": 0,
-          "total": 41
+          "total": 41,
+          "canceled": 0
         },
         "story": [
           {
@@ -832,7 +877,16 @@
           "doneTasks": 0,
           "unreadNotifications": 0
         },
-        "progress": { "pending": 0, "assigned": 0, "in_progress": 0, "blocked": 0, "done": 0, "failed": 0, "total": 0 },
+        "progress": {
+          "pending": 0,
+          "assigned": 0,
+          "in_progress": 0,
+          "blocked": 0,
+          "done": 0,
+          "failed": 0,
+          "total": 0,
+          "canceled": 0
+        },
         "story": []
       },
       "inputSha256": "0a7f4ca103059cb6b726ad878fffb99b1bd05ef94f1b9c6a2dd65cbf398100d1"

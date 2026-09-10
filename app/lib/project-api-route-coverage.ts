@@ -99,6 +99,7 @@ export const APP_PROJECT_ROUTE_COVERAGE = {
   "/tasks/assign": "client-api",
   "/tasks/accept": "client-api",
   "/tasks/block": "client-api",
+  "/tasks/cancel": "client-api",
   "/tasks/complete": "client-api",
   "/tasks/reopen": "client-api",
   "/handoff": "client-api",

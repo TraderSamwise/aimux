@@ -753,6 +753,7 @@ export interface ProjectObservabilityResponse extends ProjectApiOk {
       assigned: number;
       in_progress: number;
       blocked: number;
+      canceled: number;
       done: number;
       failed: number;
       total: number;

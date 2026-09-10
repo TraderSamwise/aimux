@@ -80,6 +80,7 @@ fn counts_task_progress_by_status() {
             "assigned": 1,
             "in_progress": 1,
             "blocked": 1,
+            "canceled": 0,
             "done": 1,
             "failed": 1,
             "total": 7,

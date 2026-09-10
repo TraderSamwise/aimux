@@ -15,7 +15,7 @@
         "contains": [
           "cargo build --manifest-path native/Cargo.toml -p aimux --release",
           "mkdir -p \"$PKG_DIR/native/$PLATFORM-$ARCH\"",
-          "cp native/target/release/aimux \"$PKG_DIR/native/$PLATFORM-$ARCH/aimux\"",
+          "cp \"$NATIVE_BUILD_ARTIFACT\" \"$PKG_DIR/native/$PLATFORM-$ARCH/aimux\"",
           "chmod +x \"$PKG_DIR/native/$PLATFORM-$ARCH/aimux\""
         ],
         "notContains": []
@@ -24,7 +24,7 @@
         "contains": [
           { "needle": "cargo build --manifest-path native/Cargo.toml -p aimux --release", "present": true },
           { "needle": "mkdir -p \"$PKG_DIR/native/$PLATFORM-$ARCH\"", "present": true },
-          { "needle": "cp native/target/release/aimux \"$PKG_DIR/native/$PLATFORM-$ARCH/aimux\"", "present": true },
+          { "needle": "cp \"$NATIVE_BUILD_ARTIFACT\" \"$PKG_DIR/native/$PLATFORM-$ARCH/aimux\"", "present": true },
           { "needle": "chmod +x \"$PKG_DIR/native/$PLATFORM-$ARCH/aimux\"", "present": true }
         ],
         "notContains": []
@@ -33,25 +33,26 @@
     },
     {
       "id": "release-asset-002",
-      "name": "includes the Rust CLI binary in build-stamp coherence",
+      "name": "includes release-wide stamp coherence",
       "source": "src/release-asset-contract.test.ts",
       "sourceName": "includes the Rust CLI binary in build-stamp coherence",
       "api": "build-release-asset.sh static contract",
       "input": {
         "sourcePath": "scripts/build-release-asset.sh",
         "contains": [
+          "BUILD_STAMP=\"$(release_build_stamp)\"",
+          "export AIMUX_RELEASE_BUILD_STAMP=\"$BUILD_STAMP\"",
           "NATIVE_ARTIFACT=\"$PKG_DIR/native/$PLATFORM-$ARCH/aimux\"",
-          "BUILD_STAMP=\"$(artifact_mtime_ms \"$NATIVE_ARTIFACT\")-$(shasum -a 1 \"$NATIVE_ARTIFACT\""
+          "bash \"$ROOT_DIR/scripts/verify-release-asset.sh\" \"$OUT_DIR/$ASSET\" \"$PLATFORM-$ARCH\""
         ],
         "notContains": ["PKG_DIR/dist/launcher-bin.js", "MAIN_ARTIFACT_NAME=\"main.js\""]
       },
       "output": {
         "contains": [
+          { "needle": "BUILD_STAMP=\"$(release_build_stamp)\"", "present": true },
+          { "needle": "export AIMUX_RELEASE_BUILD_STAMP=\"$BUILD_STAMP\"", "present": true },
           { "needle": "NATIVE_ARTIFACT=\"$PKG_DIR/native/$PLATFORM-$ARCH/aimux\"", "present": true },
-          {
-            "needle": "BUILD_STAMP=\"$(artifact_mtime_ms \"$NATIVE_ARTIFACT\")-$(shasum -a 1 \"$NATIVE_ARTIFACT\"",
-            "present": true
-          }
+          { "needle": "bash \"$ROOT_DIR/scripts/verify-release-asset.sh\" \"$OUT_DIR/$ASSET\" \"$PLATFORM-$ARCH\"", "present": true }
         ],
         "notContains": [
           { "needle": "PKG_DIR/dist/launcher-bin.js", "present": false },

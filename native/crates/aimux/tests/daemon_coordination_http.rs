@@ -1,7 +1,8 @@
 use aimux::core_command_contract::CORE_API_ROUTES;
 use aimux::daemon::process::handle_daemon_runtime_request;
 use aimux::daemon::runtime::{
-    ProjectServiceLauncher, ProjectServiceProcessVerifier, RealDaemonRuntime,
+    ProjectServiceHealthProbe, ProjectServiceLauncher, ProjectServiceProcessVerifier,
+    RealDaemonRuntime,
 };
 use aimux::daemon::server::DaemonHttpRequest;
 use aimux::daemon_state::{
@@ -1274,6 +1275,7 @@ impl CoordinationHttpFixture {
             Arc::new(FakeProcessVerifier::native([pid])),
             0,
         )
+        .with_project_service_health_probe(Arc::new(AlwaysReadyHealthProbe))
     }
 
     fn cleanup(self) {
@@ -1322,6 +1324,14 @@ impl ProjectServiceProcessVerifier for FakeProcessVerifier {
 
     fn live_project_service_pids(&self, _project_id: &str, _project_root: &str) -> Vec<i32> {
         Vec::new()
+    }
+}
+
+struct AlwaysReadyHealthProbe;
+
+impl ProjectServiceHealthProbe for AlwaysReadyHealthProbe {
+    fn is_ready(&self, _endpoint: &MetadataApiEndpoint, _pid: i32) -> bool {
+        true
     }
 }
 

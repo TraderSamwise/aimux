@@ -53,7 +53,7 @@ fn root_version_and_help_stay_native_even_when_node_fallback_is_configured() {
     assert!(version.status.success());
     assert_eq!(
         String::from_utf8_lossy(&version.stdout),
-        format!("{}\n", expected_source_checkout_runtime_version())
+        format!("{}\n", read_aimux_version_from_package_root(&root))
     );
     assert!(
         !log.exists(),
@@ -239,7 +239,7 @@ fn native_dashboard_internal_once_renders_snapshot_without_node_fallback() {
     assert!(
         strip_ansi(&stdout).contains(&format!(
             "aimux v{}",
-            expected_source_checkout_runtime_version()
+            read_aimux_version_from_package_root(&root)
         )),
         "{stdout}"
     );
@@ -1004,10 +1004,6 @@ fn temp_root(label: &str) -> PathBuf {
 
 fn cleanup(path: PathBuf) {
     let _ = fs::remove_dir_all(path);
-}
-
-fn expected_source_checkout_runtime_version() -> String {
-    read_aimux_version_from_package_root(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.."))
 }
 
 struct NativeEntrypointFixture {

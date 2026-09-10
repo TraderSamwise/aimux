@@ -154,7 +154,7 @@ fn worktree_path_falls_back_to_the_stored_context() {
 #[test]
 fn a_session_with_no_derived_record_is_skipped_without_dropping_its_pending() {
     let mut reconciler = TranscriptReconciler::new();
-    let live = metadata(running(), json!({ "transcriptPath": "/t/a.jsonl" }));
+    let live = metadata(running(), json!({ "transcriptPath": "/t/be-a.jsonl" }));
     let bare = json!({ "sessions": { "a": { "context": {} } } });
     let mut deps = TestDeps {
         probe_result: complete(),
@@ -182,7 +182,7 @@ fn a_session_with_no_derived_record_is_skipped_without_dropping_its_pending() {
 #[test]
 fn an_unreadable_transcript_drops_the_pending_confirmation() {
     let mut reconciler = TranscriptReconciler::new();
-    let metadata = metadata(running(), json!({ "transcriptPath": "/t/a.jsonl" }));
+    let metadata = metadata(running(), json!({ "transcriptPath": "/t/be-a.jsonl" }));
     let mut deps = TestDeps {
         probe_result: complete(),
         ..Default::default()

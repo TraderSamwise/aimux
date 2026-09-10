@@ -15,7 +15,7 @@
         "afterFirst": {
           "settleActivity": [],
           "clearStaleResponse": [],
-          "probe": [["claude", "/t/a.jsonl"]],
+          "probe": [["claude", "/t/be-a.jsonl"]],
           "findCodexPath": [],
           "hasPendingInteraction": []
         },
@@ -23,8 +23,8 @@
           "settleActivity": [["a"]],
           "clearStaleResponse": [],
           "probe": [
-            ["claude", "/t/a.jsonl"],
-            ["claude", "/t/a.jsonl"]
+            ["claude", "/t/be-a.jsonl"],
+            ["claude", "/t/be-a.jsonl"]
           ],
           "findCodexPath": [],
           "hasPendingInteraction": []
@@ -44,9 +44,9 @@
           "settleActivity": [],
           "clearStaleResponse": [],
           "probe": [
-            ["claude", "/t/a.jsonl"],
-            ["claude", "/t/a.jsonl"],
-            ["claude", "/t/a.jsonl"]
+            ["claude", "/t/be-a.jsonl"],
+            ["claude", "/t/be-a.jsonl"],
+            ["claude", "/t/be-a.jsonl"]
           ],
           "findCodexPath": [],
           "hasPendingInteraction": []
@@ -66,8 +66,8 @@
           "settleActivity": [],
           "clearStaleResponse": [],
           "probe": [
-            ["claude", "/t/a.jsonl"],
-            ["claude", "/t/a.jsonl"]
+            ["claude", "/t/be-a.jsonl"],
+            ["claude", "/t/be-a.jsonl"]
           ],
           "findCodexPath": [],
           "hasPendingInteraction": []
@@ -123,8 +123,8 @@
           "settleActivity": [["a"]],
           "clearStaleResponse": [],
           "probe": [
-            ["claude", "/t/a.jsonl"],
-            ["claude", "/t/a.jsonl"]
+            ["claude", "/t/be-a.jsonl"],
+            ["claude", "/t/be-a.jsonl"]
           ],
           "findCodexPath": [],
           "hasPendingInteraction": []
