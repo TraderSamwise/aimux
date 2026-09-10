@@ -34,7 +34,7 @@ fn install_script_installs_native_cli_without_js_runtime() {
     let install_root = temp.0.join("install-root");
     let bin_dir = temp.0.join("bin");
 
-    let output = Command::new("/bin/sh")
+    let output = Command::new(posix_sh())
         .arg(repo_root.join("scripts/install.sh"))
         .arg(&archive)
         .env("PATH", &tool_path)
@@ -87,7 +87,7 @@ fn install_script_rejects_archives_without_native_cli() {
     fs::write(package_root.join("BUILD_STAMP"), "build-native\n").expect("write build stamp");
     let archive = tar_package(&temp.0);
 
-    let output = Command::new("/bin/sh")
+    let output = Command::new(posix_sh())
         .arg(repo_root.join("scripts/install.sh"))
         .arg(&archive)
         .env("PATH", create_tool_path(&temp.0))
@@ -173,7 +173,7 @@ fn release_asset_compiles_native_binary_with_selected_build_profile() {
         "release asset must not accept a caller-supplied stamp as proof"
     );
     assert!(
-        script.contains("scripts/verify-release-asset.sh"),
+        script.contains("bash \"$ROOT_DIR/scripts/verify-release-asset.sh\""),
         "release asset must verify the archived runtime against an independent binary witness"
     );
     assert!(
@@ -193,7 +193,7 @@ fn release_asset_verifier_rejects_mismatched_archive_build_stamp() {
     create_witness_archive(&temp.0, "stamp-from-archive", "stamp-from-binary");
     let archive = tar_package(&temp.0);
 
-    let output = Command::new("/bin/sh")
+    let output = Command::new("bash")
         .arg(repo.join("scripts/verify-release-asset.sh"))
         .arg(&archive)
         .output()
@@ -221,7 +221,7 @@ fn release_asset_verifier_accepts_matching_archive_build_stamp() {
     create_witness_archive(&temp.0, "matching-stamp", "matching-stamp");
     let archive = tar_package(&temp.0);
 
-    let output = Command::new("/bin/sh")
+    let output = Command::new("bash")
         .arg(repo.join("scripts/verify-release-asset.sh"))
         .arg(&archive)
         .output()
@@ -244,7 +244,7 @@ fn release_asset_builder_rejects_cross_arch_labeling_before_build() {
         .expect("platform arch fixture contains dash");
     let requested_arch = if arch == "arm64" { "x64" } else { "arm64" };
 
-    let output = Command::new("/bin/sh")
+    let output = Command::new("bash")
         .arg(repo.join("scripts/build-release-asset.sh"))
         .env("AIMUX_RELEASE_PLATFORM", platform)
         .env("AIMUX_RELEASE_ARCH", requested_arch)
@@ -297,7 +297,7 @@ fn release_source_hash_no_git_fallback_handles_paths_with_spaces() {
     fs::write(
         &runner,
         format!(
-            "#!/bin/sh\nset -euo pipefail\nROOT_DIR={}\ncd \"$ROOT_DIR\"\n{}\nrelease_source_hash\n",
+            "#!/usr/bin/env bash\nset -euo pipefail\nROOT_DIR={}\ncd \"$ROOT_DIR\"\n{}\nrelease_source_hash\n",
             shell_quote(&temp.0),
             &script[function_start..function_end]
         ),
@@ -309,7 +309,7 @@ fn release_source_hash_no_git_fallback_handles_paths_with_spaces() {
     permissions.set_mode(0o755);
     fs::set_permissions(&runner, permissions).expect("chmod runner");
 
-    let output = Command::new("/bin/sh")
+    let output = Command::new("bash")
         .arg(&runner)
         .env_clear()
         .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
@@ -327,6 +327,40 @@ fn release_source_hash_no_git_fallback_handles_paths_with_spaces() {
         12,
         "source hash should remain the 12-character stamp suffix witness"
     );
+}
+
+#[test]
+fn release_bash_scripts_report_clear_error_when_invoked_with_sh() {
+    let repo = repo_root();
+
+    for script in [
+        "scripts/build-local-ui.sh",
+        "scripts/build-release-asset.sh",
+        "scripts/cargo-sweep-stale-targets.sh",
+        "scripts/check-staged-rustfmt.sh",
+        "scripts/verify-codex-developer-instructions.sh",
+        "scripts/verify-release-asset.sh",
+    ] {
+        let output = Command::new(posix_sh())
+            .arg(repo.join(script))
+            .output()
+            .expect("run release script with sh");
+
+        assert!(
+            !output.status.success(),
+            "{script} unexpectedly succeeded under sh"
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("must be run with bash"),
+            "{script} did not report the required interpreter\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            !String::from_utf8_lossy(&output.stderr).contains("Illegal option"),
+            "{script} still leaked the shell's pipefail error\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }
 
 fn repo_root() -> PathBuf {
@@ -430,5 +464,13 @@ fn platform_arch() -> &'static str {
         ("linux", "aarch64") => "linux-arm64",
         ("linux", "x86_64") => "linux-x64",
         other => panic!("unsupported test platform: {other:?}"),
+    }
+}
+
+fn posix_sh() -> &'static str {
+    if Path::new("/bin/dash").exists() {
+        "/bin/dash"
+    } else {
+        "/bin/sh"
     }
 }
