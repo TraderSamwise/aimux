@@ -63,7 +63,8 @@ export function isRelayUnavailableForProjectDiscovery(status: RelayStatus): bool
     status === "device_pending" ||
     status === "daemon_offline" ||
     status === "relay_unavailable" ||
-    status === "auth_failed"
+    status === "auth_failed" ||
+    status === "client_storage_error"
   );
 }
 
@@ -87,6 +88,13 @@ export function relayUnavailableProjectCopy(status: RelayStatus): {
     return {
       title: "Remote access blocked.",
       detail: "Open Inbox and approve this device, then refresh.",
+    };
+  }
+  if (status === "client_storage_error") {
+    return {
+      title: "Device storage unavailable.",
+      detail:
+        "Aimux could not read this device identity. Check browser or app storage permissions, then reload.",
     };
   }
   return {

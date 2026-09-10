@@ -9,6 +9,7 @@ vi.mock("expo-crypto", () => ({
 vi.mock("expo-secure-store", () => ({}));
 
 import { RelayTransport, type RelayStatus } from "@/lib/relay-transport";
+import { ClientDeviceStorageError } from "@/lib/client-device";
 
 class MockWebSocket {
   static OPEN = 1;
@@ -52,6 +53,52 @@ const testProofOptions = {
 };
 
 describe("RelayTransport remote security state", () => {
+  it("reports device storage failures instead of retrying as disconnected", async () => {
+    vi.useFakeTimers();
+    const originalWebSocket = globalThis.WebSocket;
+    const sockets: MockWebSocket[] = [];
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      vi.stubGlobal(
+        "WebSocket",
+        class extends MockWebSocket {
+          constructor(url: string, protocols: string[]) {
+            super(url, protocols);
+            sockets.push(this);
+          }
+        },
+      );
+      const statuses: RelayStatus[] = [];
+      const transport = new RelayTransport(
+        "wss://relay.example.test",
+        async () => "token",
+        async () => {
+          throw new ClientDeviceStorageError(
+            "Client device storage read failed for device id: keychain denied",
+          );
+        },
+        testProofOptions,
+      );
+      transport.onStatusChange((status) => statuses.push(status));
+
+      await transport.connect();
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      expect(statuses).toEqual(["connecting", "client_storage_error"]);
+      expect(sockets).toHaveLength(0);
+      expect(error).toHaveBeenCalledWith(
+        "relay client device storage failed:",
+        expect.objectContaining({
+          message: "Client device storage read failed for device id: keychain denied",
+        }),
+      );
+    } finally {
+      error.mockRestore();
+      vi.stubGlobal("WebSocket", originalWebSocket);
+      vi.useRealTimers();
+    }
+  });
+
   it("stops reconnecting when the relay rejects auth or lockdown state", async () => {
     vi.useFakeTimers();
     const originalWebSocket = globalThis.WebSocket;

@@ -24,6 +24,17 @@ let deviceIdPromise: Promise<string> | null = null;
 let cachedApprovalCode: string | null = null;
 let approvalCodePromise: Promise<string> | null = null;
 
+export class ClientDeviceStorageError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "ClientDeviceStorageError";
+  }
+}
+
+export function isClientDeviceStorageError(error: unknown): error is ClientDeviceStorageError {
+  return error instanceof ClientDeviceStorageError;
+}
+
 export async function getClientDeviceInfo(): Promise<ClientDeviceInfo> {
   const deviceId = await getOrCreateDeviceId();
   const approvalCode = await getOrCreateApprovalCode();
@@ -60,10 +71,10 @@ async function getOrCreateDeviceId(): Promise<string> {
 
 async function readDeviceId(): Promise<string | null> {
   try {
-    if (Platform.OS === "web") return AsyncStorage.getItem(DEVICE_ID_KEY);
-    return SecureStore.getItemAsync(DEVICE_ID_KEY);
-  } catch {
-    return null;
+    if (Platform.OS === "web") return await AsyncStorage.getItem(DEVICE_ID_KEY);
+    return await SecureStore.getItemAsync(DEVICE_ID_KEY);
+  } catch (error) {
+    throw storageReadError("device id", error);
   }
 }
 
@@ -116,10 +127,10 @@ function defaultDeviceName(kind: ClientDeviceKind): string {
 
 async function readStoredValue(key: string): Promise<string | null> {
   try {
-    if (Platform.OS === "web") return AsyncStorage.getItem(key);
-    return SecureStore.getItemAsync(key);
-  } catch {
-    return null;
+    if (Platform.OS === "web") return await AsyncStorage.getItem(key);
+    return await SecureStore.getItemAsync(key);
+  } catch (error) {
+    throw storageReadError(key === APPROVAL_CODE_KEY ? "approval code" : "stored value", error);
   }
 }
 
@@ -157,4 +168,17 @@ function randomId(): string {
   const random = globalThis.crypto?.randomUUID?.();
   if (random) return random;
   return `${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`;
+}
+
+function storageReadError(label: string, error: unknown): ClientDeviceStorageError {
+  return new ClientDeviceStorageError(
+    `Client device storage read failed for ${label}: ${errorMessage(error)}`,
+    {
+      cause: error,
+    },
+  );
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

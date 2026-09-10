@@ -20,6 +20,7 @@ const STATUS_META: Record<RelayStatus, { label: string; dot: string; text: strin
   daemon_offline: { label: "Host offline", dot: "bg-zinc-500", text: "text-zinc-400" },
   relay_unavailable: { label: "Remote unavailable", dot: "bg-zinc-600", text: "text-zinc-400" },
   auth_failed: { label: "Remote blocked", dot: "bg-red-500", text: "text-red-400" },
+  client_storage_error: { label: "Storage unavailable", dot: "bg-red-500", text: "text-red-400" },
   disconnected: { label: "Remote offline", dot: "bg-zinc-600", text: "text-zinc-500" },
 };
 
