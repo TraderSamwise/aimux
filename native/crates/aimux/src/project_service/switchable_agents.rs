@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::agent_display::{AgentDisplayInput, agent_compact_identity};
+use crate::agent_display::{AgentDisplayInput, resolve_statusline_model};
 use crate::config::default_config;
 use crate::daemon_state::load_metadata_state;
 use crate::project_api_contract::routes;
@@ -863,27 +863,7 @@ fn metadata_with_stored_control_flags(
 }
 
 fn compact_session_title(metadata: &Value) -> String {
-    if string_field(metadata, "kind") == Some("service")
-        && let Some(command) = string_field(metadata, "launchCommandLine")
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-    {
-        return command.to_owned();
-    }
-    let base = if string_field(metadata, "kind") == Some("service") {
-        let tool = string_field(metadata, "command").unwrap_or("");
-        string_field(metadata, "label")
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or(if tool.is_empty() { "service" } else { tool })
-            .to_owned()
-    } else {
-        agent_compact_identity(&AgentDisplayInput::from_value(metadata))
-    };
-    if string_field(metadata, "kind") == Some("service") {
-        return format!("{base}[svc]");
-    }
-    base
+    resolve_statusline_model(&AgentDisplayInput::from_value(metadata)).compact_title()
 }
 
 fn urgency_for(metadata_sessions: &BTreeMap<String, Value>, session_id: &str) -> i64 {
