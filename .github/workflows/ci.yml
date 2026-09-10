@@ -103,6 +103,8 @@ jobs:
   rust-tests-macos:
     name: Rust tests (macOS)
     runs-on: macos-latest
+    env:
+      RUST_TEST_THREADS: "1"
     # Temporary until the first macOS CI run proves green. This job is the
     # intended blocking Rust test gate because the Node parity contracts were
     # captured on macOS; remove continue-on-error once it reports zero failures.
@@ -147,5 +149,18 @@ jobs:
             tmux -V
           fi
 
+      - name: Prepare macOS fixture home
+        run: |
+          # The Node parity fixtures were captured on Sam's Mac and still
+          # include /Users/sam in stable launcher defaults. Keep this scoped to
+          # the disposable test step until the fixtures are parameterized.
+          sudo mkdir -p /Users/sam
+          sudo chown "$USER" /Users/sam
+
       - name: cargo test
+        env:
+          CARGO_HOME: /Users/runner/.cargo
+          HOME: /Users/sam
+          RUSTUP_HOME: /Users/runner/.rustup
+          SHELL: /bin/zsh
         run: yarn native:test
