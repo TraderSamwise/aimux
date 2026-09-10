@@ -4,7 +4,7 @@ export default defineConfig({
   test: {
     fileParallelism: false,
     globals: true,
-    include: ["relay/src/**/*.test.ts"],
+    include: ["relay/src/**/*.test.ts", "scripts/**/*.test.mjs"],
     testTimeout: 10_000,
   },
 });
