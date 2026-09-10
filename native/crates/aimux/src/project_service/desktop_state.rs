@@ -20,7 +20,8 @@ use crate::tmux::TmuxTarget;
 
 use super::agent_output::{AgentOutputCaptureRuntime, SystemAgentOutputCaptureRuntime};
 use super::agents::{
-    topology_desktop_session_list, topology_desktop_session_list_with_live_window_ids,
+    LiveWindowIdsProjection, topology_desktop_session_list_with_live_window_projection,
+    try_live_window_ids_for_session_projection,
 };
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::http::query_params;
@@ -161,20 +162,44 @@ pub fn desktop_state_for_context(context: &ProjectServiceRequestContext) -> Resu
     let topology = read_runtime_topology(runtime_topology_path(&project_state_dir))?;
     let metadata = load_metadata_state(&project_state_dir);
     let exchange = read_runtime_exchange(runtime_exchange_path(&project_state_dir));
-    let mut state = build_desktop_state_with_live_window_ids(
+    let live_window_ids_owned;
+    let mut live_window_query_error = None;
+    let live_window_projection = match context.live_window_ids_status() {
+        Some(Ok(live_window_ids)) => LiveWindowIdsProjection::Known(live_window_ids),
+        Some(Err(error)) => {
+            live_window_query_error = Some(error.to_owned());
+            LiveWindowIdsProjection::Unavailable(error)
+        }
+        None => match try_live_window_ids_for_session_projection("desktop-state") {
+            Ok(live_window_ids) => {
+                live_window_ids_owned = live_window_ids;
+                LiveWindowIdsProjection::Known(&live_window_ids_owned)
+            }
+            Err(error) => {
+                live_window_query_error = Some(error);
+                LiveWindowIdsProjection::Unavailable(
+                    live_window_query_error
+                        .as_deref()
+                        .expect("live window query error was just stored"),
+                )
+            }
+        },
+    };
+    let mut state = build_desktop_state_with_live_window_projection(
         DesktopStateInput {
             project_root: context.project_root().to_string_lossy().into_owned(),
             topology: &topology,
             metadata_sessions: &metadata.sessions,
             exchange: &exchange,
         },
-        context.live_window_ids(),
+        live_window_projection,
     );
     if let Value::Object(object) = &mut state {
-        object.insert(
-            "operationFailures".into(),
-            Value::Array(list_dashboard_operation_failures(&project_state_dir)),
-        );
+        let mut operation_failures = list_dashboard_operation_failures(&project_state_dir);
+        if let Some(error) = live_window_query_error {
+            operation_failures.insert(0, tmux_live_window_query_failure(&error));
+        }
+        object.insert("operationFailures".into(), Value::Array(operation_failures));
     }
     Ok(state)
 }
@@ -187,27 +212,46 @@ pub struct DesktopStateInput<'a> {
 }
 
 pub fn build_desktop_state(input: DesktopStateInput<'_>) -> Value {
-    build_desktop_state_with_live_window_ids(input, None)
+    match try_live_window_ids_for_session_projection("desktop-state-builder") {
+        Ok(live_window_ids) => build_desktop_state_with_live_window_projection(
+            input,
+            LiveWindowIdsProjection::Known(&live_window_ids),
+        ),
+        Err(error) => build_desktop_state_with_live_window_projection(
+            input,
+            LiveWindowIdsProjection::Unavailable(&error),
+        ),
+    }
 }
 
 pub fn build_desktop_state_with_live_window_ids(
     input: DesktopStateInput<'_>,
     live_window_ids: Option<&std::collections::BTreeSet<String>>,
 ) -> Value {
+    match live_window_ids {
+        Some(live_window_ids) => build_desktop_state_with_live_window_projection(
+            input,
+            LiveWindowIdsProjection::Known(live_window_ids),
+        ),
+        None => build_desktop_state(input),
+    }
+}
+
+pub fn build_desktop_state_with_live_window_projection(
+    input: DesktopStateInput<'_>,
+    live_window_ids: LiveWindowIdsProjection<'_>,
+) -> Value {
     let tools = default_config()
         .get("tools")
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
-    let all_sessions = match live_window_ids {
-        Some(live_window_ids) => topology_desktop_session_list_with_live_window_ids(
-            input.topology,
-            input.metadata_sessions,
-            &tools,
-            live_window_ids,
-        ),
-        None => topology_desktop_session_list(input.topology, input.metadata_sessions, &tools),
-    }
+    let all_sessions = topology_desktop_session_list_with_live_window_projection(
+        input.topology,
+        input.metadata_sessions,
+        &tools,
+        live_window_ids,
+    )
     .into_iter()
     .filter(|session| {
         string_field(session, "status")
@@ -277,6 +321,21 @@ pub fn build_desktop_state_with_live_window_ids(
     state.insert("controlPlane".into(), control_plane());
     state.insert("tasks".into(), task_counts(input.exchange));
     Value::Object(state)
+}
+
+fn tmux_live_window_query_failure(error: &str) -> Value {
+    json!({
+        "id": "tmux-live-window-query",
+        "targetKind": "tmux",
+        "operation": "live-window-query",
+        "title": "Could not verify tmux windows",
+        "message": format!(
+            "tmux live window query failed; preserving session liveness until the next refresh: {error}"
+        ),
+        "createdAt": time::OffsetDateTime::now_utc()
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_owned()),
+    })
 }
 
 pub fn attach_desktop_state_previews(

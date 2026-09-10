@@ -64,7 +64,7 @@ pub struct ProjectServiceRequestContext {
     pub request_headers: BTreeMap<String, String>,
     pub remote_address: Option<String>,
     pub desktop_state: Option<Value>,
-    pub live_window_ids: Option<BTreeSet<String>>,
+    pub live_window_ids: Option<Result<BTreeSet<String>, String>>,
     pub output_cache: AgentOutputCaptureCache,
     pub osc_notifications: OscNotificationOutputState,
     pub lifecycle_mutations: LifecycleMutationQueue,
@@ -155,12 +155,27 @@ impl ProjectServiceRequestContext {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.live_window_ids = Some(live_window_ids.into_iter().map(Into::into).collect());
+        self.live_window_ids = Some(Ok(live_window_ids.into_iter().map(Into::into).collect()));
+        self
+    }
+
+    #[doc(hidden)]
+    pub fn with_live_window_ids_error(mut self, error: impl Into<String>) -> Self {
+        self.live_window_ids = Some(Err(error.into()));
         self
     }
 
     pub fn live_window_ids(&self) -> Option<&BTreeSet<String>> {
-        self.live_window_ids.as_ref()
+        self.live_window_ids
+            .as_ref()
+            .and_then(|result| result.as_ref().ok())
+    }
+
+    pub fn live_window_ids_status(&self) -> Option<Result<&BTreeSet<String>, &str>> {
+        self.live_window_ids.as_ref().map(|result| match result {
+            Ok(live_window_ids) => Ok(live_window_ids),
+            Err(error) => Err(error.as_str()),
+        })
     }
 
     pub fn with_plugin_statuses(mut self, plugin_statuses: Vec<NativePluginStatus>) -> Self {

@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::config::default_config;
 use crate::daemon_state::load_metadata_state;
+use crate::debug_logging::{LogLevel, log_always_at};
 use crate::project_api_contract::routes;
 use crate::runtime_topology::{
     list_topology_session_states, read_runtime_topology, runtime_topology_path,
@@ -22,6 +23,12 @@ const ACTIVE_AGENT_STATUSES: &[&str] = &["starting", "running", "idle", "offline
 /// stored here, so it rides on one of these underlying statuses.
 const LIVE_AGENT_STATUSES: &[&str] = &["starting", "running", "idle"];
 
+#[derive(Clone, Copy)]
+pub enum LiveWindowIdsProjection<'a> {
+    Known(&'a BTreeSet<String>),
+    Unavailable(&'a str),
+}
+
 /// A session claiming a live status is only live if its tmux window still exists.
 ///
 /// Node rebuilt topology from live SessionRuntime objects on every save, so a dead
@@ -35,6 +42,26 @@ fn session_is_backed_by_live_window(session: &Value, live_window_ids: &BTreeSet<
         .and_then(Value::as_str)
         .map(|window_id| live_window_ids.contains(window_id))
         .unwrap_or(false)
+}
+
+pub fn try_live_window_ids_for_session_projection(
+    surface: &str,
+) -> Result<BTreeSet<String>, String> {
+    match crate::tmux::TmuxRuntimeManager::new().try_live_window_ids() {
+        Ok(live_window_ids) => Ok(live_window_ids),
+        Err(error) => {
+            log_always_at(
+                LogLevel::Warn,
+                "tmux live window query failed; preserving session liveness",
+                "project-service",
+                Some(json!({
+                    "surface": surface,
+                    "error": error,
+                })),
+            );
+            Err(error)
+        }
+    }
 }
 
 pub fn route_agent_read_request(
@@ -110,13 +137,20 @@ pub fn topology_desktop_session_list(
     metadata_sessions: &BTreeMap<String, Value>,
     tools: &Map<String, Value>,
 ) -> Vec<Value> {
-    let live_window_ids = crate::tmux::TmuxRuntimeManager::new().live_window_ids();
-    topology_desktop_session_list_with_live_window_ids(
-        topology,
-        metadata_sessions,
-        tools,
-        &live_window_ids,
-    )
+    match try_live_window_ids_for_session_projection("topology-desktop-session-list") {
+        Ok(live_window_ids) => topology_desktop_session_list_with_live_window_ids(
+            topology,
+            metadata_sessions,
+            tools,
+            &live_window_ids,
+        ),
+        Err(error) => topology_desktop_session_list_with_live_window_projection(
+            topology,
+            metadata_sessions,
+            tools,
+            LiveWindowIdsProjection::Unavailable(&error),
+        ),
+    }
 }
 
 pub fn topology_desktop_session_list_for_context(
@@ -125,15 +159,20 @@ pub fn topology_desktop_session_list_for_context(
     metadata_sessions: &BTreeMap<String, Value>,
     tools: &Map<String, Value>,
 ) -> Vec<Value> {
-    if let Some(live_window_ids) = context.live_window_ids() {
-        topology_desktop_session_list_with_live_window_ids(
+    match context.live_window_ids_status() {
+        Some(Ok(live_window_ids)) => topology_desktop_session_list_with_live_window_ids(
             topology,
             metadata_sessions,
             tools,
             live_window_ids,
-        )
-    } else {
-        topology_desktop_session_list(topology, metadata_sessions, tools)
+        ),
+        Some(Err(error)) => topology_desktop_session_list_with_live_window_projection(
+            topology,
+            metadata_sessions,
+            tools,
+            LiveWindowIdsProjection::Unavailable(error),
+        ),
+        None => topology_desktop_session_list(topology, metadata_sessions, tools),
     }
 }
 
@@ -143,21 +182,44 @@ pub fn topology_desktop_session_list_with_live_window_ids(
     tools: &Map<String, Value>,
     live_window_ids: &BTreeSet<String>,
 ) -> Vec<Value> {
+    topology_desktop_session_list_with_live_window_projection(
+        topology,
+        metadata_sessions,
+        tools,
+        LiveWindowIdsProjection::Known(live_window_ids),
+    )
+}
+
+pub fn topology_desktop_session_list_with_live_window_projection(
+    topology: &Value,
+    metadata_sessions: &BTreeMap<String, Value>,
+    tools: &Map<String, Value>,
+    live_window_ids: LiveWindowIdsProjection<'_>,
+) -> Vec<Value> {
     list_topology_session_states(topology, Some(ACTIVE_AGENT_STATUSES))
         .into_iter()
         .map(|mut session| {
             let mut status = string_field(&session, "status")
                 .unwrap_or("offline")
                 .to_owned();
-            if LIVE_AGENT_STATUSES.contains(&status.as_str())
-                && !session_is_backed_by_live_window(&session, &live_window_ids)
-            {
-                status = "offline".to_owned();
-                set_value(&mut session, "status", Value::String(status.clone()));
-                // Drop the dead binding too, so nothing downstream tries to
-                // focus a window that no longer exists.
-                if let Value::Object(map) = &mut session {
-                    map.remove("tmuxTarget");
+            if LIVE_AGENT_STATUSES.contains(&status.as_str()) {
+                match live_window_ids {
+                    LiveWindowIdsProjection::Known(live_window_ids)
+                        if !session_is_backed_by_live_window(&session, live_window_ids) =>
+                    {
+                        status = "offline".to_owned();
+                        set_value(&mut session, "status", Value::String(status.clone()));
+                        // Drop the dead binding too, so nothing downstream tries to
+                        // focus a window that no longer exists.
+                        if let Value::Object(map) = &mut session {
+                            map.remove("tmuxTarget");
+                        }
+                    }
+                    // Node did not downgrade sessions on read. Rust only does it after a
+                    // successful tmux inventory query proves the binding is gone; a tmux
+                    // query failure is not evidence that every window disappeared.
+                    LiveWindowIdsProjection::Unavailable(_) | LiveWindowIdsProjection::Known(_) => {
+                    }
                 }
             }
             if status == "offline" {
