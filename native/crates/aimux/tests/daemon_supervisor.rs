@@ -17,7 +17,10 @@ use aimux::project_service_manifest::{
 use serde_json::{Map, Value, json};
 use std::fs;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+static TEST_DIR_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 struct TestDir(PathBuf);
 
@@ -28,7 +31,11 @@ impl TestDir {
             .duration_since(UNIX_EPOCH)
             .expect("system clock")
             .as_nanos();
-        path.push(format!("aimux-daemon-supervisor-test-{unique}"));
+        let sequence = TEST_DIR_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        path.push(format!(
+            "aimux-daemon-supervisor-test-{}-{sequence}-{unique}",
+            std::process::id()
+        ));
         fs::create_dir_all(&path).expect("create test dir");
         Self(path)
     }
