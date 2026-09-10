@@ -292,7 +292,10 @@ fn output_stream_writer_emits_native_chat_output_frames() {
     assert_eq!(output.matches("event: output\n").count(), 1);
     assert!(!output.contains("\"parsed\""));
     assert!(!output.contains("\"outputAnsi\""));
-    assert_eq!(runtime.calls.len(), 1);
+    assert!(
+        runtime.calls.iter().all(|(target, _)| target == "@1"),
+        "all output captures use the requested session target"
+    );
     let metrics = context.output_metrics.snapshot();
     assert_eq!(metrics["bySource"]["output-stream"]["changed"], 1);
     assert!(

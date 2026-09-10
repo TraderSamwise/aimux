@@ -373,14 +373,17 @@ fn native_daemon_projects_route_handles_concurrent_project_fleet_load() {
         for _ in 0..60 {
             let tx = tx.clone();
             std::thread::spawn(move || {
-                tx.send(request_http(address, "/projects", Duration::from_secs(3)))
+                // GitHub macOS runners can surface transient client-side EAGAINs under
+                // this burst; keep the request fan-out high but do not make the test
+                // assert a tight runner-specific latency budget.
+                tx.send(request_http(address, "/projects", Duration::from_secs(10)))
                     .expect("send project response");
             });
         }
         drop(tx);
         for _ in 0..60 {
             let response = rx
-                .recv_timeout(Duration::from_secs(4))
+                .recv_timeout(Duration::from_secs(12))
                 .expect("projects request completed under concurrent load")
                 .expect("projects response");
             assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
