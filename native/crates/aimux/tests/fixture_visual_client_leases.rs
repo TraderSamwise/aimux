@@ -1,9 +1,8 @@
 use aimux::project_service::visual_clients::{
     ProjectHotSnapshotCoordinator, VisualClientLeaseRoute,
 };
-use aimux::visual_client_leases_contract::{
-    parse_iso_millis, parse_visual_client_kind, run_registry_steps,
-};
+use aimux::visual_client_leases::{parse_iso_millis, parse_visual_client_kind};
+use aimux::visual_client_leases_contract::run_registry_steps;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -94,6 +93,7 @@ fn project_service_preview_route_lease_adapter_matches_typescript_registry() {
                 requested_preview: input["requestedPreview"].as_bool().unwrap_or(false),
                 requested_chat_preview: input["requestedChatPreview"].as_bool().unwrap_or(false),
                 default_kind: None,
+                remote_address: Some("127.0.0.1"),
             },
             Path::new("/repo"),
             Path::new("/state"),

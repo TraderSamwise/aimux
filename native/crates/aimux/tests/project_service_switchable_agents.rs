@@ -1,5 +1,6 @@
 use aimux::daemon_state::{MetadataState, save_metadata_state};
 use aimux::project_service::agent_output::AgentOutputCaptureRuntime;
+use aimux::project_service::preview_snapshots::capture_preview_snapshot_with_tap;
 use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
 use aimux::project_service::switchable_agents::{
     AgentListScope, ManagedWindowEntry, SwitchableContext, SwitchableListOptions,
@@ -416,6 +417,70 @@ fn route_switchable_agents_attaches_expose_previews_through_capture_cache() {
         find(second_items, "codex-live")["previewSnapshot"]["output"],
         live["previewSnapshot"]["output"]
     );
+    cleanup(project);
+}
+
+#[test]
+fn preview_snapshot_builder_merges_capture_with_tap_output() {
+    let project = temp_project("route-switchable-preview-tap");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let tap_snapshot = json!({
+        "output": "two",
+        "capturedAt": "2026-01-01T00:00:01.000Z",
+        "source": "tap",
+        "windowId": "@1",
+    });
+    let mut runtime = FakePreviewRuntime {
+        output: "one".into(),
+        calls: Vec::new(),
+    };
+
+    let preview = capture_preview_snapshot_with_tap(
+        &context,
+        "@1",
+        Some(&tap_snapshot),
+        &mut runtime,
+        40,
+        8_192,
+    )
+    .expect("preview snapshot");
+
+    assert_eq!(preview["output"], "one\ntwo");
+    assert_eq!(preview["source"], "tap");
+    assert_eq!(runtime.calls.len(), 1);
+    cleanup(project);
+}
+
+#[test]
+fn route_switchable_agents_uses_remote_address_for_anonymous_preview_client_id() {
+    let project = temp_project("route-switchable-preview-remote-client");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).unwrap();
+    write(
+        runtime_topology_path(&state_dir),
+        serde_yaml::to_string(&topology_fixture()).unwrap(),
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_remote_address("::ffff:10.0.0.5");
+    let mut runtime = FakePreviewRuntime {
+        output: "preview".into(),
+        calls: Vec::new(),
+    };
+
+    let response = route_switchable_agent_request_with_runtime(
+        &context,
+        "GET",
+        "/control/switchable-agents?currentPath=/repo/wt&currentWindowId=%401&labelFormat=raw&expose=1&includePreview=1&clientKind=web",
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    let snapshot = context.visual_clients.snapshot();
+    assert_eq!(snapshot["active"][0]["id"], "web:10.0.0.5");
     cleanup(project);
 }
 

@@ -18,8 +18,31 @@ pub fn capture_preview_snapshot(
     line_count: i64,
     max_chars: usize,
 ) -> Option<Value> {
+    capture_preview_snapshot_with_tap(context, window_id, None, runtime, line_count, max_chars)
+}
+
+pub fn capture_preview_snapshot_with_tap(
+    context: &ProjectServiceRequestContext,
+    window_id: &str,
+    tap_snapshot: Option<&Value>,
+    runtime: &mut impl AgentOutputCaptureRuntime,
+    line_count: i64,
+    max_chars: usize,
+) -> Option<Value> {
     if let Some(snapshot) = hot_preview_snapshot(context, window_id, max_chars) {
-        return Some(snapshot);
+        return merge_expose_preview_snapshots(Some(&snapshot), tap_snapshot).map(
+            |mut snapshot| {
+                if let Some(output) = snapshot
+                    .get("output")
+                    .and_then(Value::as_str)
+                    .map(|output| trailing_chars(output, max_chars))
+                    && let Some(object) = snapshot.as_object_mut()
+                {
+                    object.insert("output".into(), Value::String(output));
+                }
+                snapshot
+            },
+        );
     }
     let options = CapturePaneOptions {
         start_line: Some(-line_count),
@@ -36,14 +59,25 @@ pub fn capture_preview_snapshot(
             || runtime.capture_pane(window_id, options),
         )
         .ok()?;
-    Some(json!({
+    let capture_snapshot = json!({
         "output": trailing_chars(&output, max_chars),
         "capturedAt": now_iso(),
         "source": "capture",
         "windowId": window_id,
         "startLine": -line_count,
         "lineCount": line_count,
-    }))
+    });
+    merge_expose_preview_snapshots(Some(&capture_snapshot), tap_snapshot).map(|mut snapshot| {
+        if let Some(output) = snapshot
+            .get("output")
+            .and_then(Value::as_str)
+            .map(|output| trailing_chars(output, max_chars))
+            && let Some(object) = snapshot.as_object_mut()
+        {
+            object.insert("output".into(), Value::String(output));
+        }
+        snapshot
+    })
 }
 
 pub fn hot_preview_snapshot(
@@ -89,6 +123,56 @@ fn trailing_chars(value: &str, max_chars: usize) -> String {
         return value.to_owned();
     }
     value.chars().skip(char_count - max_chars).collect()
+}
+
+pub fn merge_expose_preview_snapshots(
+    capture_snapshot: Option<&Value>,
+    tap_snapshot: Option<&Value>,
+) -> Option<Value> {
+    let capture_snapshot = capture_snapshot.filter(|value| !value.is_null());
+    let tap_snapshot = tap_snapshot.filter(|value| !value.is_null());
+    let Some(tap_snapshot) = tap_snapshot else {
+        return capture_snapshot.cloned();
+    };
+    let Some(capture_snapshot) = capture_snapshot else {
+        return Some(json!({
+            "output": string_field(tap_snapshot, "output"),
+            "capturedAt": string_field(tap_snapshot, "capturedAt"),
+            "source": string_field(tap_snapshot, "source"),
+            "windowId": string_field(tap_snapshot, "windowId"),
+        }));
+    };
+    let tap_output = string_field(tap_snapshot, "output");
+    let capture_output = string_field(capture_snapshot, "output");
+    if tap_output.is_empty() {
+        return Some(capture_snapshot.clone());
+    }
+    if capture_output.is_empty() || tap_output.starts_with(capture_output) {
+        return Some(json!({
+            "output": tap_output,
+            "capturedAt": string_field(tap_snapshot, "capturedAt"),
+            "source": string_field(tap_snapshot, "source"),
+            "windowId": string_field(tap_snapshot, "windowId"),
+        }));
+    }
+    if capture_output.ends_with(tap_output) {
+        return Some(capture_snapshot.clone());
+    }
+    let separator = if capture_output.ends_with('\n') || tap_output.starts_with('\n') {
+        ""
+    } else {
+        "\n"
+    };
+    Some(json!({
+        "output": format!("{capture_output}{separator}{tap_output}"),
+        "capturedAt": string_field(tap_snapshot, "capturedAt"),
+        "source": string_field(tap_snapshot, "source"),
+        "windowId": string_field(tap_snapshot, "windowId"),
+    }))
+}
+
+fn string_field<'a>(value: &'a Value, key: &str) -> &'a str {
+    value.get(key).and_then(Value::as_str).unwrap_or_default()
 }
 
 fn now_iso() -> String {

@@ -10,6 +10,7 @@ use crate::runtime_topology::{
     list_topology_service_states, list_topology_session_states, read_runtime_topology,
     runtime_topology_path,
 };
+use crate::tmux::TmuxTarget;
 
 use super::agent_output::{AgentOutputCaptureRuntime, SystemAgentOutputCaptureRuntime};
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
@@ -19,7 +20,7 @@ use super::expose_ordering::{
 };
 use super::http::{query_params, trimmed_query};
 use super::preview_snapshots::{
-    DEFAULT_PREVIEW_CAPTURE_LINES, DEFAULT_PREVIEW_MAX_CHARS, capture_preview_snapshot,
+    DEFAULT_PREVIEW_CAPTURE_LINES, DEFAULT_PREVIEW_MAX_CHARS, capture_preview_snapshot_with_tap,
 };
 use super::router::ProjectServiceRequestContext;
 use super::usage::{load_last_used_state, parse_recency_timestamp};
@@ -161,6 +162,7 @@ pub fn route_switchable_agent_request_with_runtime(
                 requested_preview: include_preview,
                 requested_chat_preview: include_chat_preview,
                 default_kind: if expose { Some("expose") } else { None },
+                remote_address: context.remote_address.as_deref(),
             },
             context.project_root(),
             &project_state_dir,
@@ -634,9 +636,18 @@ fn attach_expose_preview_snapshot(
     else {
         return;
     };
-    let Some(preview) = capture_preview_snapshot(
+    let target = item.get("target").and_then(tmux_target_from_value);
+    let tap_snapshot = target.and_then(|target| {
+        context.osc_output_tap.track_and_read_snapshot(
+            string_field(item, "id").unwrap_or_default(),
+            target,
+            DEFAULT_PREVIEW_MAX_CHARS,
+        )
+    });
+    let Some(preview) = capture_preview_snapshot_with_tap(
         context,
         &window_id,
+        tap_snapshot.as_ref(),
         runtime,
         DEFAULT_PREVIEW_CAPTURE_LINES,
         DEFAULT_PREVIEW_MAX_CHARS,
@@ -647,6 +658,20 @@ fn attach_expose_preview_snapshot(
         return;
     };
     map.insert("previewSnapshot".into(), preview);
+}
+
+fn tmux_target_from_value(target: &Value) -> Option<TmuxTarget> {
+    Some(TmuxTarget {
+        session_name: target_string_field(target, "sessionName")
+            .unwrap_or("")
+            .to_owned(),
+        window_id: target_string_field(target, "windowId")?.to_owned(),
+        window_index: target_number_field(target, "windowIndex").unwrap_or(0),
+        window_name: target_string_field(target, "windowName")
+            .unwrap_or("")
+            .to_owned(),
+        pane_dead: target.get("paneDead").and_then(Value::as_bool),
+    })
 }
 
 fn resolve_current_managed_window<'a>(

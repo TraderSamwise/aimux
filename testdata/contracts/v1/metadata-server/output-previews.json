@@ -97,13 +97,13 @@
             "duration": "<duration-ms>"
           }
         ],
-        "calls": [{ "sessionId": "agent-1", "startLine": -20 }]
+        "calls": [{ "windowId": "@agent-1", "startLine": -20, "endLine": null, "includeEscapes": true }]
       },
       "inputSha256": "36a28e444af51d725a43ec9e507ab517d2ebf1b5d87de6c586a7ccf00982de9c"
     },
     {
       "id": "metadata-output-previews-005",
-      "name": "does not coalesce reads with different output modes or purposes",
+      "name": "reuses the same tmux capture across different output modes or purposes",
       "source": "src/metadata-server/output-previews.test.ts",
       "api": "measureAgentOutputReadSequence",
       "input": {
@@ -132,26 +132,22 @@
       "output": {
         "measurements": [
           {
-            "result": { "sessionId": "agent-1", "output": "", "startLine": -20 },
+            "result": { "sessionId": "agent-1", "startLine": -20 },
             "coalesced": false,
             "duration": "<duration-ms>"
           },
           {
             "result": { "sessionId": "agent-1", "output": "terminal", "startLine": -20 },
-            "coalesced": false,
+            "coalesced": true,
             "duration": "<duration-ms>"
           },
           {
             "result": { "sessionId": "agent-1", "output": "terminal", "startLine": -20 },
-            "coalesced": false,
+            "coalesced": true,
             "duration": "<duration-ms>"
           }
         ],
-        "calls": [
-          { "sessionId": "agent-1", "startLine": -20, "mode": "chat", "purpose": "poll" },
-          { "sessionId": "agent-1", "startLine": -20, "mode": "full", "purpose": "poll" },
-          { "sessionId": "agent-1", "startLine": -20, "mode": "full", "purpose": "interrupt" }
-        ]
+        "calls": [{ "windowId": "@agent-1", "startLine": -20, "endLine": null, "includeEscapes": true }]
       },
       "inputSha256": "fe44f8facb528a64c14e546e1e414c5d739a4fc0bb30beb02825ffb03b3bff05"
     },

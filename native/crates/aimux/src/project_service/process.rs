@@ -3,7 +3,7 @@ use serde_json::json;
 use sha1::{Digest, Sha1};
 use std::fs;
 use std::io::{self, Read};
-use std::net::TcpListener;
+use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
@@ -191,12 +191,37 @@ pub fn handle_project_service_connection<Stream>(
 where
     Stream: std::io::Read + std::io::Write,
 {
+    handle_project_service_connection_with_remote(stream, context, None)
+}
+
+fn handle_project_service_tcp_connection(
+    stream: &mut TcpStream,
+    context: &ProjectServiceRequestContext,
+) -> Result<(), DaemonListenerError> {
+    let remote_address = stream
+        .peer_addr()
+        .ok()
+        .map(|address| address.ip().to_string());
+    handle_project_service_connection_with_remote(stream, context, remote_address)
+}
+
+fn handle_project_service_connection_with_remote<Stream>(
+    stream: &mut Stream,
+    context: &ProjectServiceRequestContext,
+    remote_address: Option<String>,
+) -> Result<(), DaemonListenerError>
+where
+    Stream: std::io::Read + std::io::Write,
+{
     let bytes = read_http_request(stream)?;
     let request = parse_daemon_http_request(&bytes)?;
     let request = project_request_from_daemon(request);
-    let request_context = context
+    let mut request_context = context
         .clone()
         .with_request_headers(request.headers.clone());
+    if let Some(remote_address) = remote_address {
+        request_context = request_context.with_remote_address(remote_address);
+    }
     let response = handle_project_service_http_request(request, |method, path, body| {
         route_project_service_request(&request_context, method, path, body)
     });
@@ -526,7 +551,7 @@ fn serve_project_service_listener(
         };
         let context = Arc::clone(&context);
         thread::spawn(move || {
-            let _ = handle_project_service_connection(&mut stream, &context);
+            let _ = handle_project_service_tcp_connection(&mut stream, &context);
         });
     }
 }

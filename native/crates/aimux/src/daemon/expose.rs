@@ -25,7 +25,7 @@ use crate::tmux_expose_hot_snapshot::{HotExposeScopeKey, read_hot_expose_scope_v
 use crate::tmux_expose_hot_snapshot_worker::{
     ExposeHotSnapshotWorkerProject, refresh_global_expose_hot_snapshots,
 };
-use crate::visual_client_leases_contract::{VisualClientLeaseRegistry, parse_visual_client_kind};
+use crate::visual_client_leases::{VisualClientLeaseRegistry, parse_visual_client_kind};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::io::IsTerminal;

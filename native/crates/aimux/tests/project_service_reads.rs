@@ -54,7 +54,24 @@ fn diagnostics_route_reports_resources_and_runtime_exchange() {
     );
     assert_eq!(response.body["recentSlowRequests"], json!([]));
     assert_eq!(response.body["plugins"], json!([]));
-    assert_eq!(response.body["previews"], json!({}));
+    assert_eq!(
+        response.body["previews"],
+        json!({
+            "clients": {
+                "active": [],
+                "counts": { "tui": 0, "web": 0, "mobile": 0, "expose": 0, "api": 0 },
+                "activePreviewClients": 0
+            },
+            "hotSnapshots": {
+                "enabled": false,
+                "scheduled": false,
+                "refreshing": false,
+                "workerRunning": false
+            },
+            "cache": null,
+            "taps": null
+        })
+    );
     assert_eq!(response.body["agentOutputReads"]["total"]["count"], 0);
     assert_eq!(response.body["runtimeExchange"]["exists"], false);
     cleanup(project);

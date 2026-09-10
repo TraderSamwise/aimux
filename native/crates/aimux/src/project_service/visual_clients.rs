@@ -8,7 +8,7 @@ use crate::config::load_config_for_project;
 use crate::tmux::TmuxRuntimeManager;
 use crate::tmux_expose_hot_snapshot::prune_expired_hot_expose_snapshots;
 use crate::tmux_expose_hot_snapshot_worker::refresh_project_expose_hot_snapshots;
-use crate::visual_client_leases_contract::{VisualClientLeaseRegistry, parse_visual_client_kind};
+use crate::visual_client_leases::{VisualClientLeaseRegistry, parse_visual_client_kind};
 
 use super::http::trimmed_query;
 
@@ -20,6 +20,7 @@ pub struct VisualClientLeaseRoute<'a> {
     pub requested_preview: bool,
     pub requested_chat_preview: bool,
     pub default_kind: Option<&'a str>,
+    pub remote_address: Option<&'a str>,
 }
 
 #[derive(Clone)]
@@ -103,7 +104,15 @@ impl ProjectHotSnapshotCoordinator {
                 .map(String::as_str)
                 .or(route.default_kind),
         );
-        let id = trimmed_query(params, "clientId").unwrap_or_else(|| format!("{kind}:local"));
+        let id = trimmed_query(params, "clientId").unwrap_or_else(|| {
+            format!(
+                "{kind}:{}",
+                route
+                    .remote_address
+                    .map(sanitize_remote_address)
+                    .unwrap_or_else(|| "127.0.0.1".to_owned())
+            )
+        });
         let ttl_ms = params
             .get("clientTtlMs")
             .map(|value| Value::String(value.clone()))
@@ -148,6 +157,29 @@ impl ProjectHotSnapshotCoordinator {
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .snapshot(now_ms)
+    }
+
+    pub fn diagnostics(&self, project_root: &Path) -> Value {
+        self.diagnostics_at(project_root, current_unix_millis())
+    }
+
+    pub fn diagnostics_at(&self, project_root: &Path, now_ms: i64) -> Value {
+        let clients = self.snapshot_at(now_ms);
+        let refresh = self
+            .refresh
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        json!({
+            "clients": clients,
+            "hotSnapshots": {
+                "enabled": self.background_refresh_enabled && project_hot_snapshots_enabled(project_root),
+                "scheduled": refresh.scheduled,
+                "refreshing": refresh.refreshing,
+                "workerRunning": false,
+            },
+            "cache": null,
+            "taps": null,
+        })
     }
 
     fn schedule_project_refresh(&self, project_root: PathBuf, project_state_dir: PathBuf) {
@@ -228,4 +260,11 @@ fn current_unix_millis() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
         .unwrap_or(0)
+}
+
+fn sanitize_remote_address(remote_address: &str) -> String {
+    remote_address
+        .strip_prefix("::ffff:")
+        .unwrap_or(remote_address)
+        .to_owned()
 }

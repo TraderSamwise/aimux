@@ -1,6 +1,5 @@
 {
   "native/crates/aimux/src/composer_protocol_contract.rs": "Tracked Rust parity fixture; keep until promoted to production or removed by a cull.",
-  "native/crates/aimux/src/metadata_output_previews_contract.rs": "Tracked metadata parity fixture; keep until metadata behavior is production-consumed natively or culled.",
   "native/crates/aimux/src/metadata_server_runtime_contract.rs": "Tracked metadata parity fixture; keep until metadata behavior is production-consumed natively or culled.",
   "native/crates/aimux/src/notification_policy_contract.rs": "Tracked notification parity fixture; keep until notification behavior is production-consumed natively or culled.",
   "native/crates/aimux/src/plugin_runtime_contract.rs": "Tracked plugin parity fixture; keep until plugin behavior is production-consumed natively or culled.",

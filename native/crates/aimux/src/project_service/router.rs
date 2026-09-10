@@ -60,6 +60,7 @@ pub struct ProjectServiceRequestContext {
     pub project_state_dir: Option<PathBuf>,
     pub session_labels: BTreeMap<String, String>,
     pub request_headers: BTreeMap<String, String>,
+    pub remote_address: Option<String>,
     pub desktop_state: Option<Value>,
     pub live_window_ids: Option<BTreeSet<String>>,
     pub output_cache: AgentOutputCaptureCache,
@@ -79,6 +80,7 @@ impl ProjectServiceRequestContext {
             project_state_dir: None,
             session_labels: BTreeMap::new(),
             request_headers: BTreeMap::new(),
+            remote_address: None,
             desktop_state: None,
             live_window_ids: None,
             output_cache: AgentOutputCaptureCache::default(),
@@ -101,6 +103,7 @@ impl ProjectServiceRequestContext {
             project_state_dir: Some(project_state_dir.into()),
             session_labels: BTreeMap::new(),
             request_headers: BTreeMap::new(),
+            remote_address: None,
             desktop_state: None,
             live_window_ids: None,
             output_cache: AgentOutputCaptureCache::default(),
@@ -169,6 +172,11 @@ impl ProjectServiceRequestContext {
             .into_iter()
             .map(|(key, value)| (key.into().to_ascii_lowercase(), value.into()))
             .collect();
+        self
+    }
+
+    pub fn with_remote_address(mut self, remote_address: impl Into<String>) -> Self {
+        self.remote_address = Some(remote_address.into());
         self
     }
 
@@ -245,6 +253,21 @@ impl OscOutputTap {
         target: TmuxTarget,
         max_bytes: usize,
     ) -> Option<String> {
+        self.track_and_read_snapshot(session_id, target, max_bytes)
+            .and_then(|snapshot| {
+                snapshot
+                    .get("output")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            })
+    }
+
+    pub fn track_and_read_snapshot(
+        &self,
+        session_id: &str,
+        target: TmuxTarget,
+        max_bytes: usize,
+    ) -> Option<Value> {
         self.track_read_calls.fetch_add(1, Ordering::Relaxed);
         let Some(inner) = &self.inner else {
             return None;
@@ -257,9 +280,14 @@ impl OscOutputTap {
             id: session_id.to_owned(),
             target,
         }]);
-        tap.0
-            .read(&window_id, Some(max_bytes))
-            .map(|snapshot| snapshot.output)
+        tap.0.read(&window_id, Some(max_bytes)).map(|snapshot| {
+            serde_json::json!({
+                "output": snapshot.output,
+                "capturedAt": snapshot.captured_at,
+                "source": snapshot.source,
+                "windowId": snapshot.window_id,
+            })
+        })
     }
 }
 
