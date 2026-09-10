@@ -10,6 +10,8 @@ use std::fs::{create_dir_all, remove_dir_all, write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+mod support;
+
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Default)]
@@ -29,7 +31,7 @@ fn open_dashboard_resolves_existing_dashboard_without_focus() {
     let project = temp_project("dashboard");
     let state_dir = project.join("state");
     write_topology(&state_dir, topology_fixture());
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let context = fixture_context(&project, &state_dir);
 
     let response = route_project_service_request(
         &context,
@@ -51,7 +53,7 @@ fn open_notification_target_reports_live_target_and_offline_services() {
     let project = temp_project("notification-target");
     let state_dir = project.join("state");
     write_topology(&state_dir, topology_fixture());
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let context = fixture_context(&project, &state_dir);
 
     let live = route_project_service_request(
         &context,
@@ -92,7 +94,7 @@ fn focus_window_marks_agent_seen_and_recent_when_focused() {
         },
     )
     .unwrap();
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let context = fixture_context(&project, &state_dir);
     let mut runtime = FakeControlRuntime::default();
 
     let response = route_control_request_with_runtime(
@@ -139,7 +141,7 @@ fn switch_next_prev_and_attention_reuse_switchable_model() {
         },
     )
     .unwrap();
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let context = fixture_context(&project, &state_dir);
 
     let next = route_project_service_request(
         &context,
@@ -193,7 +195,7 @@ fn active_window_requires_client_and_window_then_marks_current_seen() {
         },
     )
     .unwrap();
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let context = fixture_context(&project, &state_dir);
 
     let missing = route_project_service_request(
         &context,
@@ -243,7 +245,8 @@ fn focus_window_reaches_a_scribe_window_hidden_from_switch_cycling() {
         "createdAt": "2026-09-05T00:00:00.000Z", "updatedAt": "2026-09-05T00:00:00.000Z"
     }));
     write_topology(&state_dir, topology);
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let context = fixture_context(&project, &state_dir)
+        .with_live_window_ids(support::live_window_ids(&["@1", "@3", "@4", "@7", "@9"]));
     let mut runtime = FakeControlRuntime::default();
 
     let response = route_control_request_with_runtime(
@@ -269,6 +272,11 @@ fn write_topology(state_dir: &PathBuf, topology: Value) {
         serde_yaml::to_string(&topology).unwrap(),
     )
     .unwrap();
+}
+
+fn fixture_context(project: &PathBuf, state_dir: &PathBuf) -> ProjectServiceRequestContext {
+    ProjectServiceRequestContext::with_project_state_dir(project, state_dir)
+        .with_live_window_ids(support::live_window_ids(&["@1", "@3", "@4", "@9"]))
 }
 
 fn topology_fixture() -> Value {

@@ -11,7 +11,8 @@ use crate::project_service::expose_ordering::{
 };
 use crate::project_service::switchable_agents::{
     AgentListScope, SwitchableContext, SwitchableListOptions, agent_status_chip,
-    list_switchable_agent_items, serialize_fast_control_item, topology_switchable_entries,
+    list_switchable_agent_items, serialize_fast_control_item,
+    topology_switchable_entries_with_live_window_normalization,
 };
 use crate::project_service::usage::load_last_used_state;
 use crate::runtime_topology::{read_runtime_topology, runtime_topology_path};
@@ -500,7 +501,10 @@ pub fn list_all_projects_expose_items(
             continue;
         }
         let metadata = load_metadata_state(&project_state_dir);
-        let entries = topology_switchable_entries(&topology, &metadata.sessions);
+        let entries = topology_switchable_entries_with_live_window_normalization(
+            &topology,
+            &metadata.sessions,
+        );
         if entries.is_empty() {
             continue;
         }

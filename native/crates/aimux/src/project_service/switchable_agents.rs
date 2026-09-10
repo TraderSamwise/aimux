@@ -4,11 +4,11 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::agent_display::{AgentDisplayInput, agent_compact_identity};
+use crate::config::default_config;
 use crate::daemon_state::load_metadata_state;
 use crate::project_api_contract::routes;
 use crate::runtime_topology::{
-    list_topology_service_states, list_topology_session_states, read_runtime_topology,
-    runtime_topology_path,
+    list_topology_service_states, read_runtime_topology, runtime_topology_path,
 };
 use crate::team_contract::{
     is_overseer_session, is_project_control_session as team_is_project_control_session,
@@ -17,6 +17,7 @@ use crate::team_contract::{
 use crate::tmux::TmuxTarget;
 
 use super::agent_output::{AgentOutputCaptureRuntime, SystemAgentOutputCaptureRuntime};
+use super::agents::{topology_desktop_session_list, topology_desktop_session_list_for_context};
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::expose_ordering::{
     ExposeOrderingOptions, ExposeSublabel, assign_worktree_tones, dashboard_worktree_order_paths,
@@ -173,7 +174,7 @@ pub fn route_switchable_agent_request_with_runtime(
         );
     }
     let metadata = load_metadata_state(&project_state_dir);
-    let entries = topology_switchable_entries(&topology, &metadata.sessions);
+    let entries = topology_switchable_entries_for_context(context, &topology, &metadata.sessions);
     let last_used = load_last_used_state(&project_state_dir);
     let mut items = list_switchable_agent_items(
         &entries,
@@ -230,12 +231,36 @@ pub fn route_switchable_agent_request_with_runtime(
     ))
 }
 
-pub fn topology_switchable_entries(
+pub fn topology_switchable_entries_for_context(
+    context: &ProjectServiceRequestContext,
+    topology: &Value,
+    metadata_sessions: &BTreeMap<String, Value>,
+) -> Vec<ManagedWindowEntry> {
+    let tools = default_tools_config();
+    let sessions =
+        topology_desktop_session_list_for_context(context, topology, metadata_sessions, &tools);
+    topology_switchable_entries_from_sessions(sessions, topology, metadata_sessions)
+}
+
+pub fn topology_switchable_entries_with_live_window_normalization(
+    topology: &Value,
+    metadata_sessions: &BTreeMap<String, Value>,
+) -> Vec<ManagedWindowEntry> {
+    let tools = default_tools_config();
+    let sessions = topology_desktop_session_list(topology, metadata_sessions, &tools);
+    topology_switchable_entries_from_sessions(sessions, topology, metadata_sessions)
+}
+
+fn topology_switchable_entries_from_sessions(
+    sessions: Vec<Value>,
     topology: &Value,
     metadata_sessions: &BTreeMap<String, Value>,
 ) -> Vec<ManagedWindowEntry> {
     let mut entries = Vec::new();
-    for session in list_topology_session_states(topology, Some(LIVE_SESSION_STATUSES)) {
+    for session in sessions
+        .into_iter()
+        .filter(|session| string_field(session, "status").is_some_and(is_live_session_status))
+    {
         if let Some(entry) = session_switchable_entry(&session, metadata_sessions) {
             entries.push(entry);
         }
@@ -246,6 +271,18 @@ pub fn topology_switchable_entries(
         }
     }
     entries
+}
+
+fn default_tools_config() -> Map<String, Value> {
+    default_config()
+        .get("tools")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default()
+}
+
+fn is_live_session_status(status: &str) -> bool {
+    LIVE_SESSION_STATUSES.contains(&status)
 }
 
 pub fn list_switchable_agent_items(

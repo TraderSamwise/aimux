@@ -17,7 +17,7 @@ use super::switchable_agents::{
     AgentListScope, ManagedWindowEntry, SwitchableAgentItem, SwitchableContext,
     SwitchableListOptions, find_managed_window_item, list_switchable_agent_items,
     resolve_next_agent, resolve_prev_agent, serialize_fast_control_item,
-    topology_switchable_entries,
+    topology_switchable_entries_for_context,
 };
 use super::usage::{MarkLastUsedOptions, load_last_used_state, mark_last_used};
 
@@ -399,7 +399,7 @@ fn load_control_model(context: &ProjectServiceRequestContext) -> Result<ControlM
     let topology = load_topology(context)?;
     let project_state_dir = context.project_state_dir();
     let metadata = load_metadata_state(&project_state_dir);
-    let entries = topology_switchable_entries(&topology, &metadata.sessions);
+    let entries = topology_switchable_entries_for_context(context, &topology, &metadata.sessions);
     let last_used = load_last_used_state(&project_state_dir);
     let switch_context = SwitchableContext {
         project_root: context.project_root().to_string_lossy().into_owned(),

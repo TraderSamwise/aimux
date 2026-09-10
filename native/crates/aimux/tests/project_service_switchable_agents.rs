@@ -6,7 +6,7 @@ use aimux::project_service::switchable_agents::{
     AgentListScope, ManagedWindowEntry, SwitchableContext, SwitchableListOptions,
     agent_status_chip, list_switchable_agent_items, resolve_next_agent, resolve_prev_agent,
     route_switchable_agent_request_with_runtime, serialize_fast_control_item,
-    topology_switchable_entries,
+    topology_switchable_entries_for_context,
 };
 use aimux::runtime_topology::runtime_topology_path;
 use aimux::tmux::CapturePaneOptions;
@@ -15,6 +15,8 @@ use std::collections::BTreeMap;
 use std::fs::{create_dir_all, remove_dir_all, write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
+
+mod support;
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -128,7 +130,10 @@ fn topology_entries_apply_stored_control_demotion_over_stale_tmux_metadata() {
     let metadata = BTreeMap::from([("worker".into(), json!({ "scribe": false }))]);
     let context = context("@1", "/repo");
 
-    let entries = topology_switchable_entries(&topology, &metadata);
+    let request_context = ProjectServiceRequestContext::new("/repo")
+        .with_live_window_ids(support::live_window_ids(&["@7"]));
+
+    let entries = topology_switchable_entries_for_context(&request_context, &topology, &metadata);
 
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].metadata.get("role"), None);
@@ -381,7 +386,8 @@ fn route_switchable_agents_reads_topology_metadata_and_last_used() {
     )
     .unwrap();
 
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids(support::live_window_ids(&["@1", "@2", "@3"]));
     let response = route_project_service_request(
         &context,
         "GET",
@@ -410,6 +416,64 @@ fn route_switchable_agents_reads_topology_metadata_and_last_used() {
 }
 
 #[test]
+fn route_switchable_agents_drops_sessions_without_live_tmux_windows() {
+    let project = temp_project("route-switchable-live-window-filter");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).unwrap();
+    let mut topology = topology_fixture();
+    topology["bindings"] = json!([
+        { "id": "binding-codex", "nodeId": "node-codex", "tmuxSession": "aimux-repo", "tmuxWindowId": "@1", "tmuxWindowIndex": 1, "tmuxWindowName": "codex", "updatedAt": "2026-09-05T00:00:00.000Z" },
+        { "id": "binding-stale", "nodeId": "node-stale", "tmuxSession": "aimux-repo", "tmuxWindowId": "@99", "tmuxWindowIndex": 99, "tmuxWindowName": "codex", "updatedAt": "2026-09-05T00:00:00.000Z" }
+    ]);
+    topology["nodes"] = json!([
+        { "id": "node-codex", "rigId": "rig-1", "logicalId": "codex", "toolConfigKey": "codex", "cwd": "/repo/wt", "label": "codex-live", "createdAt": "2026-09-05T00:00:00.000Z" },
+        { "id": "node-stale", "rigId": "rig-1", "logicalId": "codex-stale", "toolConfigKey": "codex", "cwd": "/repo/wt", "label": "codex-stale", "createdAt": "2026-09-05T00:00:00.000Z" }
+    ]);
+    topology["sessions"] = json!([
+        { "id": "codex-live", "nodeId": "node-codex", "status": "running", "tool": "codex", "command": "codex", "worktreePath": "/repo/wt", "label": "codex-live", "createdAt": "2026-09-05T00:00:00.000Z", "updatedAt": "2026-09-05T00:00:00.000Z" },
+        { "id": "codex-stale", "nodeId": "node-stale", "status": "idle", "tool": "codex", "command": "codex", "worktreePath": "/repo/wt", "label": "codex-stale", "createdAt": "2026-09-05T00:00:00.000Z", "updatedAt": "2026-09-05T00:00:00.000Z" },
+        { "id": "claude-offline", "nodeId": "node-stale", "status": "offline", "tool": "claude", "command": "claude", "worktreePath": "/repo/wt", "label": "claude-offline", "createdAt": "2026-09-05T00:00:00.000Z", "updatedAt": "2026-09-05T00:00:00.000Z" }
+    ]);
+    topology["services"] = json!([]);
+    write(
+        runtime_topology_path(&state_dir),
+        serde_yaml::to_string(&topology).unwrap(),
+    )
+    .unwrap();
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([(
+                "codex-stale".into(),
+                json!({ "derived": { "activity": "idle" } }),
+            )]),
+        },
+    )
+    .unwrap();
+
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids(support::live_window_ids(&["@1"]));
+    let response = route_project_service_request(
+        &context,
+        "GET",
+        "/control/switchable-agents?currentPath=/repo/wt&currentWindowId=%401&labelFormat=raw&expose=1",
+        None,
+    );
+
+    assert_eq!(response.status, 200);
+    let items = response.body["items"].as_array().unwrap();
+    assert_eq!(
+        items
+            .iter()
+            .map(|item| item["id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["codex-live"]
+    );
+    cleanup(project);
+}
+
+#[test]
 fn route_switchable_agents_attaches_expose_previews_through_capture_cache() {
     let project = temp_project("route-switchable-preview");
     let state_dir = project.join("state");
@@ -430,7 +494,8 @@ fn route_switchable_agents_attaches_expose_previews_through_capture_cache() {
         },
     )
     .unwrap();
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids(support::live_window_ids(&["@1", "@2", "@3"]));
     let path = "/control/switchable-agents?currentPath=/repo/wt&currentWindowId=%401&labelFormat=raw&expose=1";
     let mut runtime = FakePreviewRuntime {
         output: format!("{}tail", "x".repeat(9_000)),
@@ -543,7 +608,8 @@ fn route_switchable_agents_uses_remote_address_for_anonymous_preview_client_id()
     )
     .unwrap();
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
-        .with_remote_address("::ffff:10.0.0.5");
+        .with_remote_address("::ffff:10.0.0.5")
+        .with_live_window_ids(support::live_window_ids(&["@1", "@2", "@3"]));
     let mut runtime = FakePreviewRuntime {
         output: "preview".into(),
         calls: Vec::new(),
