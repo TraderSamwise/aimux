@@ -381,7 +381,10 @@ fn overseer_reminder_due(
         .and_then(|config| config.get("unchangedReminderTicks"))
         .and_then(Value::as_u64)
     {
-        return unchanged_ticks >= ticks.max(1);
+        let ticks = ticks.max(1);
+        return unchanged_ticks > 0
+            && unchanged_ticks % ticks == 0
+            && elapsed_since_last_wake_ms >= cooldown_ms;
     }
     elapsed_since_last_wake_ms >= cooldown_ms
 }

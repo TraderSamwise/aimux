@@ -155,7 +155,7 @@ fn overseer_wakeups_are_edge_triggered_then_reminded_by_tick_count() {
     let mut input = input_with_config(
         vec![boss.clone(), worker],
         json!({ "sessions": { "boss": boss_meta.clone(), "worker": worker_meta } }),
-        json!({ "nudgeCooldownMs": 60_000, "stoppedDwellMs": 0, "unchangedReminderTicks": 2 }),
+        json!({ "nudgeCooldownMs": 0, "stoppedDwellMs": 0, "unchangedReminderTicks": 2 }),
     );
 
     let mut watcher = LoopWatcher::new();
@@ -173,6 +173,29 @@ fn overseer_wakeups_are_edge_triggered_then_reminded_by_tick_count() {
         1,
         "a changed candidate set is a new edge and bypasses the unchanged reminder"
     );
+}
+
+#[test]
+fn unchanged_candidate_reminders_do_not_bypass_the_cooldown_floor() {
+    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    boss_meta["overseer"] = json!(true);
+    let (worker, worker_meta) = looping_session("worker", "idle");
+    let input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta } }),
+        json!({ "nudgeCooldownMs": 60_000, "stoppedDwellMs": 0, "unchangedReminderTicks": 2 }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    let mut ok = |_: &LoopSend| true;
+    assert_eq!(watcher.scan(&input, NOW, &mut ok).len(), 1);
+    assert!(watcher.scan(&input, NOW + 15_000, &mut ok).is_empty());
+    assert!(
+        watcher.scan(&input, NOW + 30_000, &mut ok).is_empty(),
+        "tick cadence alone must not spam while the cooldown floor still holds"
+    );
+    assert!(watcher.scan(&input, NOW + 45_000, &mut ok).is_empty());
+    assert_eq!(watcher.scan(&input, NOW + 60_000, &mut ok).len(), 1);
 }
 
 #[test]
@@ -205,7 +228,7 @@ fn without_an_overseer_nothing_is_sent_unless_auto_nudge_is_enabled() {
 
 mod task_inputs {
     use aimux::project_service::loop_watcher_task::{
-        NUDGEABLE_SESSION_STATUSES, build_scan_input, is_scribe,
+        NUDGEABLE_SESSION_STATUSES, apply_live_activity_override, build_scan_input, is_scribe,
     };
     use serde_json::json;
 
@@ -270,6 +293,47 @@ mod task_inputs {
         assert!(
             watcher.scan(&input, super::NOW, &mut ok).is_empty(),
             "a missing config must not enable auto-nudging"
+        );
+    }
+
+    #[test]
+    fn live_running_activity_overrides_stale_stopped_metadata() {
+        use aimux::loop_watcher::{LoopSend, LoopWatcher};
+
+        let mut boss_meta = json!({
+            "overseer": true,
+            "derived": { "activity": "idle", "attention": "normal" }
+        });
+        boss_meta["loop"] = json!({ "active": false });
+        let metadata = json!({ "sessions": {
+            "boss": boss_meta,
+            "worker": {
+                "loop": { "active": true, "since": "2026-09-09T00:00:00.000Z" },
+                "derived": { "activity": "done", "attention": "normal" }
+            }
+        }});
+        let sessions = vec![
+            json!({ "id": "boss", "tool": "claude" }),
+            json!({ "id": "worker", "tool": "codex" }),
+        ];
+        let mut input = build_scan_input(
+            sessions,
+            &metadata,
+            &[],
+            json!({ "nudgeCooldownMs": 0, "stoppedDwellMs": 0 }),
+        );
+
+        apply_live_activity_override(
+            &mut input,
+            "worker",
+            &json!({ "activity": "running", "activityText": "Working (3s)" }),
+        );
+
+        let mut watcher = LoopWatcher::new();
+        let mut ok = |_: &LoopSend| true;
+        assert!(
+            watcher.scan(&input, super::NOW, &mut ok).is_empty(),
+            "a visible working pane must not be reported as stopped just because metadata is stale"
         );
     }
 }

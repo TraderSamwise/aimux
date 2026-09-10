@@ -15,6 +15,10 @@ use crate::runtime_topology::{
     list_topology_session_states, read_runtime_topology, runtime_topology_path,
 };
 
+use super::agent_output::{
+    AgentOutputCaptureRuntime, AgentOutputResponseMode, SystemAgentOutputCaptureRuntime,
+    read_agent_output_payload,
+};
 use super::interactions::pending_interactions_for_stream;
 use super::router::ProjectServiceRequestContext;
 use super::scheduler::PeriodicTask;
@@ -33,6 +37,7 @@ const MAX_SENDS_PER_SCAN: usize = 8;
 /// Longest one scan may hold the shared rail; eight unanswered sends would
 /// otherwise block every other task for over a minute.
 const SCAN_BUDGET: std::time::Duration = std::time::Duration::from_secs(20);
+const LIVE_ACTIVITY_PROBE_START_LINE: i64 = -80;
 
 pub struct LoopWatcherTask {
     project_root: String,
@@ -103,7 +108,8 @@ impl PeriodicTask for LoopWatcherTask {
             .unwrap_or_else(|_| json!({ "sessions": {} }));
         let sessions = list_topology_session_states(&topology, Some(NUDGEABLE_SESSION_STATUSES));
         let pending = pending_interactions_for_stream(&project_state_dir);
-        let input = build_scan_input(sessions, &metadata, &pending, self.loop_config());
+        let mut input = build_scan_input(sessions, &metadata, &pending, self.loop_config());
+        apply_live_activity_overrides_for_scan(context, &mut input);
 
         let budget = RailBudget::new(SCAN_BUDGET);
         let mut delivered = 0usize;
@@ -149,6 +155,103 @@ pub fn build_scan_input(
     })
 }
 
+fn apply_live_activity_overrides_for_scan(
+    context: &ProjectServiceRequestContext,
+    input: &mut Value,
+) {
+    let candidate_ids = stopped_metadata_session_ids(input);
+    if candidate_ids.is_empty() {
+        return;
+    }
+    let mut runtime = SystemAgentOutputCaptureRuntime;
+    for session_id in candidate_ids {
+        if let Some(live) = live_activity_override(context, &session_id, &mut runtime) {
+            apply_live_activity_override(input, &session_id, &live);
+        }
+    }
+}
+
+fn live_activity_override(
+    context: &ProjectServiceRequestContext,
+    session_id: &str,
+    runtime: &mut impl AgentOutputCaptureRuntime,
+) -> Option<Value> {
+    let payload = read_agent_output_payload(
+        context,
+        session_id,
+        Some(LIVE_ACTIVITY_PROBE_START_LINE),
+        AgentOutputResponseMode::Full,
+        runtime,
+    )
+    .ok()?
+    .payload;
+    let activity = payload.get("activity").and_then(Value::as_str)?;
+    if matches!(activity, "idle" | "done") {
+        return None;
+    }
+    let mut live = Map::new();
+    live.insert("activity".to_owned(), Value::String(activity.to_owned()));
+    insert_value(&mut live, "activityText", payload.get("activityText"));
+    insert_value(&mut live, "attention", payload.get("attention"));
+    Some(Value::Object(live))
+}
+
+fn stopped_metadata_session_ids(input: &Value) -> Vec<String> {
+    array_field(input, "sessions")
+        .iter()
+        .filter_map(|session| {
+            let id = session.get("id").and_then(Value::as_str)?;
+            if matches!(metadata_activity(input, id), Some("idle" | "done")) {
+                Some(id.to_owned())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn metadata_activity<'a>(input: &'a Value, session_id: &str) -> Option<&'a str> {
+    input
+        .get("metadata")
+        .and_then(|metadata| metadata.get("sessions"))
+        .and_then(Value::as_object)
+        .and_then(|sessions| sessions.get(session_id))
+        .and_then(|session| session.get("derived"))
+        .and_then(|derived| derived.get("activity"))
+        .and_then(Value::as_str)
+}
+
+pub fn apply_live_activity_override(input: &mut Value, session_id: &str, live: &Value) {
+    let activity = live.get("activity").and_then(Value::as_str).unwrap_or("");
+    if activity.is_empty() || matches!(activity, "idle" | "done") {
+        return;
+    }
+    let Some(metadata) = input.get_mut("metadata").and_then(Value::as_object_mut) else {
+        return;
+    };
+    let sessions = metadata
+        .entry("sessions".to_owned())
+        .or_insert_with(|| Value::Object(Map::new()));
+    let Some(sessions) = sessions.as_object_mut() else {
+        return;
+    };
+    let session = sessions
+        .entry(session_id.to_owned())
+        .or_insert_with(|| Value::Object(Map::new()));
+    let Some(session) = session.as_object_mut() else {
+        return;
+    };
+    let derived = session
+        .entry("derived".to_owned())
+        .or_insert_with(|| Value::Object(Map::new()));
+    let Some(derived) = derived.as_object_mut() else {
+        return;
+    };
+    derived.insert("activity".to_owned(), Value::String(activity.to_owned()));
+    insert_value(derived, "activityText", live.get("activityText"));
+    insert_value(derived, "attention", live.get("attention"));
+}
+
 /// The scribe narrates the project; nudging it as if it were doing loop work is
 /// never what the loop meant, even if something set `loop.active` on it.
 ///
@@ -182,6 +285,20 @@ fn insert_default_u64(object: &mut Map<String, Value>, key: &str, value: u64) {
     if !matches!(object.get(key), Some(Value::Number(_))) {
         object.insert(key.to_owned(), Value::from(value));
     }
+}
+
+fn insert_value(map: &mut Map<String, Value>, key: &str, value: Option<&Value>) {
+    if let Some(value) = value {
+        map.insert(key.to_owned(), value.clone());
+    }
+}
+
+fn array_field<'a>(value: &'a Value, key: &str) -> Vec<&'a Value> {
+    value
+        .get(key)
+        .and_then(Value::as_array)
+        .map(|values| values.iter().collect())
+        .unwrap_or_default()
 }
 
 pub fn loop_watcher_task(context: &Arc<ProjectServiceRequestContext>) -> Box<dyn PeriodicTask> {
