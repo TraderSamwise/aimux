@@ -21,7 +21,7 @@ while IFS= read -r -d '' file; do
     failed=1
     continue
   fi
-  if ! rustfmt --edition 2024 --check "$temp_file"; then
+  if ! rustfmt --edition 2024 --check --config skip_children=true "$temp_file"; then
     echo "staged Rust file is not rustfmt-clean: $file" >&2
     failed=1
   fi
