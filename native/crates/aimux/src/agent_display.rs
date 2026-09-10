@@ -30,24 +30,12 @@ pub fn agent_tool_name(agent: &AgentDisplayInput<'_>) -> String {
 }
 
 pub fn is_generated_agent_label(label: &str, agent: &AgentDisplayInput<'_>) -> bool {
-    let normalized_label = label.trim();
-    if normalized_label.is_empty() {
+    let label = label.trim().to_ascii_lowercase();
+    let tool = agent_tool_name(agent).trim().to_ascii_lowercase();
+    if label.is_empty() || tool.is_empty() {
         return false;
     }
-    if agent
-        .id
-        .is_some_and(|id| !id.trim().is_empty() && normalized_label == id.trim())
-    {
-        return true;
-    }
-    if generated_agent_label_tool(normalized_label).is_none() {
-        return false;
-    }
-    let tool = agent_tool_name(agent).to_ascii_lowercase();
-    !tool.is_empty()
-        && normalized_label
-            .to_ascii_lowercase()
-            .starts_with(&format!("{tool}-"))
+    label == tool || label.starts_with(&format!("{tool}-"))
 }
 
 pub fn agent_short_name(agent: &AgentDisplayInput<'_>) -> String {
@@ -69,7 +57,7 @@ pub fn agent_compact_identity(agent: &AgentDisplayInput<'_>) -> String {
     if role.is_empty() {
         name
     } else {
-        format!("{name} ({role})")
+        format!("{name}({role})")
     }
 }
 
@@ -107,4 +95,31 @@ fn generated_agent_label_tool(value: &str) -> Option<String> {
 
 fn string_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
     value.get(key).and_then(Value::as_str)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generated_label_matches_node_rule_without_id_equality() {
+        let agent = AgentDisplayInput {
+            id: Some("reviewer"),
+            label: Some("reviewer"),
+            command: Some("codex"),
+            ..AgentDisplayInput::default()
+        };
+        assert!(!is_generated_agent_label("reviewer", &agent));
+        assert_eq!(agent_short_name(&agent), "reviewer");
+
+        let generated = AgentDisplayInput {
+            id: Some("codex-abc"),
+            label: Some("Codex"),
+            command: Some("codex"),
+            role: Some("coder"),
+            ..AgentDisplayInput::default()
+        };
+        assert!(is_generated_agent_label("Codex", &generated));
+        assert_eq!(agent_compact_identity(&generated), "codex(coder)");
+    }
 }

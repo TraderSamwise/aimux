@@ -180,6 +180,36 @@ fn topology_entries_apply_stored_control_demotion_over_stale_tmux_metadata() {
 }
 
 #[test]
+fn stored_control_flags_classify_without_polluting_serialized_metadata() {
+    let mut entry = agent_entry("@2", 2, "boss", "claude", "/repo", None, true);
+    entry.metadata["label"] = json!("Overseer");
+    entry.metadata["team"] = json!({
+        "teamId": "overseer",
+        "parentSessionId": "",
+        "role": "overseer"
+    });
+    let metadata = BTreeMap::from([("boss".into(), json!({ "overseer": true }))]);
+    let options = SwitchableListOptions {
+        include_overseer: true,
+        ..SwitchableListOptions::default()
+    };
+
+    let items = list_switchable_agent_items(
+        &[entry],
+        &metadata,
+        &context("@1", "/repo"),
+        &options,
+        &json!({}),
+    );
+    assert_eq!(items.len(), 1);
+    assert!(items[0].overseer);
+
+    let serialized = serialize_fast_control_item(&items[0]);
+    assert_eq!(serialized["overseer"], true);
+    assert_eq!(serialized["metadata"].get("overseer"), None);
+}
+
+#[test]
 fn cycles_only_direct_teammates_after_entering_teammate_land() {
     let entries = vec![
         agent_entry("@1", 1, "parent", "claude", "/repo/wt", None, true),
@@ -324,7 +354,7 @@ fn serialization_and_status_chips_match_fast_control_shapes() {
         &json!({}),
     );
 
-    assert_eq!(items[0].label, "claude (coder)");
+    assert_eq!(items[0].label, "claude(coder)");
     assert_eq!(
         serialize_fast_control_item(&items[0]),
         json!({
@@ -342,7 +372,7 @@ fn serialization_and_status_chips_match_fast_control_shapes() {
                 "activity": "running",
                 "attention": "needs_input"
             },
-            "label": "claude (coder)",
+            "label": "claude(coder)",
             "urgency": 0,
             "activity": 1,
             "recentRank": 9007199254740991i64,

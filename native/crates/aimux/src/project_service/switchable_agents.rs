@@ -490,18 +490,19 @@ pub fn managed_window_item(
         .to_owned();
     let last_used_at = last_used_at(last_used, &id).map(str::to_owned);
     let recent_rank = recent_rank(last_used, context.current_client_session.as_deref(), &id);
-    let metadata = metadata_with_stored_control_flags(&entry.metadata, metadata_sessions);
+    let classification_metadata =
+        metadata_with_stored_control_flags(&entry.metadata, metadata_sessions);
     SwitchableAgentItem {
         id: id.clone(),
         target: entry.target.clone(),
-        metadata: metadata.clone(),
-        label: compact_session_title(&metadata),
+        metadata: entry.metadata.clone(),
+        label: compact_session_title(&classification_metadata),
         urgency: urgency_for(metadata_sessions, &id),
         activity: entry.activity,
         last_used_at,
         recent_rank,
-        overseer: is_overseer_session(Some(&metadata)),
-        scribe: is_scribe_session(Some(&metadata)),
+        overseer: is_overseer_session(Some(&classification_metadata)),
+        scribe: is_scribe_session(Some(&classification_metadata)),
         alive: entry.alive,
         project_id: None,
         project_root: None,
