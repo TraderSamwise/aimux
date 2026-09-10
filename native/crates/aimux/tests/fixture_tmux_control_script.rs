@@ -12,6 +12,7 @@ const TMUX_CONTROL_SCRIPT: &str =
     include_str!("../../../../testdata/contracts/v1/tmux/control-script.json");
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+const NORMALIZED_DAEMON_PORT: &str = "43190";
 
 #[test]
 fn fixture_tmux_control_script_matches_typescript_contract() {
@@ -296,9 +297,17 @@ fn run_case(case: &Value, runner: TmuxControlRunner) -> Value {
     wait_for_expected_logs(&roots, &case["output"], &repo);
 
     let replacements = placeholder_map(&roots);
+    let normalization = FixtureNormalization::from_case(case);
     let snapshots = roots
         .values()
-        .map(|root| normalize_value(snapshot_root(root.path()), &repo, &replacements))
+        .map(|root| {
+            normalize_value(
+                snapshot_root(root.path()),
+                &repo,
+                &replacements,
+                &normalization,
+            )
+        })
         .collect::<Vec<_>>();
 
     json!({
@@ -548,8 +557,12 @@ fn wait_for_expected_logs(roots: &BTreeMap<String, TempRoot>, expected: &Value, 
             text_line_count(&root.path().join("curl-log.jsonl")) >= expected_curl
                 && text_line_count(&root.path().join("aimux-log.txt")) >= expected_aimux
                 && text_line_count(&root.path().join("tmux-log.jsonl")) >= expected_tmux
-                && normalize_value(list_root_files(root.path()), repo, &replacements)
-                    == *expected_root_files
+                && normalize_value(
+                    list_root_files(root.path()),
+                    repo,
+                    &replacements,
+                    &FixtureNormalization::none(),
+                ) == *expected_root_files
         });
         if ready {
             return;
@@ -682,21 +695,66 @@ fn placeholder_map(roots: &BTreeMap<String, TempRoot>) -> BTreeMap<String, Strin
         .collect()
 }
 
-fn normalize_value(value: Value, repo: &Path, replacements: &BTreeMap<String, String>) -> Value {
+#[derive(Debug, Clone)]
+struct FixtureNormalization {
+    daemon_port: Option<String>,
+}
+
+impl FixtureNormalization {
+    fn none() -> Self {
+        Self { daemon_port: None }
+    }
+
+    fn from_case(case: &Value) -> Self {
+        let uses_explicit_daemon_port = case["input"]["execCalls"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|call| {
+                call["args"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .any(|arg| arg.as_str() == Some("--daemon-port"))
+            });
+        if uses_explicit_daemon_port {
+            return Self::none();
+        }
+        Self {
+            daemon_port: std::env::var("AIMUX_DAEMON_PORT")
+                .ok()
+                .filter(|port| !port.trim().is_empty() && port != NORMALIZED_DAEMON_PORT),
+        }
+    }
+}
+
+fn normalize_value(
+    value: Value,
+    repo: &Path,
+    replacements: &BTreeMap<String, String>,
+    normalization: &FixtureNormalization,
+) -> Value {
     match value {
         Value::Array(items) => Value::Array(
             items
                 .into_iter()
-                .map(|value| normalize_value(value, repo, replacements))
+                .map(|value| normalize_value(value, repo, replacements, normalization))
                 .collect(),
         ),
         Value::Object(object) => Value::Object(
             object
                 .into_iter()
-                .map(|(key, value)| (key, normalize_value(value, repo, replacements)))
+                .map(|(key, value)| {
+                    (
+                        key,
+                        normalize_value(value, repo, replacements, normalization),
+                    )
+                })
                 .collect(),
         ),
-        Value::String(value) => Value::String(normalize_string(&value, repo, replacements)),
+        Value::String(value) => {
+            Value::String(normalize_string(&value, repo, replacements, normalization))
+        }
         other => other,
     }
 }
@@ -720,7 +778,12 @@ fn denormalize_value(value: Value, repo: &Path, replacements: &BTreeMap<String, 
     }
 }
 
-fn normalize_string(value: &str, repo: &Path, replacements: &BTreeMap<String, String>) -> String {
+fn normalize_string(
+    value: &str,
+    repo: &Path,
+    replacements: &BTreeMap<String, String>,
+    normalization: &FixtureNormalization,
+) -> String {
     let mut output = value.replace(&repo.to_string_lossy().to_string(), "<repo>");
     for (placeholder, real) in replacements {
         output = output.replace(
@@ -729,7 +792,23 @@ fn normalize_string(value: &str, repo: &Path, replacements: &BTreeMap<String, St
         );
         output = output.replace(real, placeholder);
     }
-    normalize_tempfile_paths(&output)
+    output = normalize_tempfile_paths(&output);
+    normalize_daemon_port(&output, normalization)
+}
+
+fn normalize_daemon_port(value: &str, normalization: &FixtureNormalization) -> String {
+    let Some(port) = normalization.daemon_port.as_deref() else {
+        return value.to_owned();
+    };
+    value
+        .replace(
+            &format!("http://127.0.0.1:{port}/projects"),
+            &format!("http://127.0.0.1:{NORMALIZED_DAEMON_PORT}/projects"),
+        )
+        .replace(
+            &format!("http://localhost:{port}/projects"),
+            &format!("http://localhost:{NORMALIZED_DAEMON_PORT}/projects"),
+        )
 }
 
 fn denormalize_string(value: &str, repo: &Path, replacements: &BTreeMap<String, String>) -> String {
