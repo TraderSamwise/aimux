@@ -1,7 +1,7 @@
 use aimux::project_api_contract::routes;
 use aimux::project_service::agent_output::AgentOutputCaptureRuntime;
 use aimux::project_service::coordination_mutations::route_coordination_mutation_request_with_runtime;
-use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
+use aimux::project_service::router::route_project_service_request;
 use aimux::project_service::runtime_exchange::{
     read_runtime_exchange, runtime_exchange_path, write_runtime_exchange,
 };
@@ -12,6 +12,8 @@ use serde_json::{Value, json};
 use std::fs::{create_dir_all, read_to_string, remove_dir_all, write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
+
+mod support;
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -78,7 +80,8 @@ impl AgentOutputCaptureRuntime for FakeDeliveryRuntime {
 fn task_assign_creates_thread_message_and_derived_indexes() {
     let project = temp_project("task-assign");
     let state_dir = project.join("state");
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let isolation = support::TestIsolation::new("coordination-teammate-task");
+    let context = isolation.project_context(&project, &state_dir);
 
     let response = route_project_service_request(
         &context,
@@ -139,7 +142,8 @@ fn task_assignment_records_work_without_tmux_prompt_delivery() {
     let project = temp_project("task-assignment-delivery");
     let state_dir = project.join("state");
     write_delivery_topology(&state_dir, &[("codex-worker", "@worker")]);
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let isolation = support::TestIsolation::new("coordination-teammate-non-direct");
+    let context = isolation.project_context(&project, &state_dir);
     let mut runtime = FakeDeliveryRuntime::default();
 
     let response = route_coordination_mutation_request_with_runtime(
@@ -188,7 +192,8 @@ fn teammate_task_assigns_direct_teammate_without_tmux_prompt_delivery() {
             ),
         ],
     );
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let isolation = support::TestIsolation::new("coordination-teammate-task");
+    let context = isolation.project_context(&project, &state_dir);
     let mut runtime = FakeDeliveryRuntime::default();
 
     let response = route_coordination_mutation_request_with_runtime(
@@ -240,7 +245,8 @@ fn teammate_task_assigns_direct_teammate_without_tmux_prompt_delivery() {
 fn teammate_task_rejects_missing_teammate_session_id() {
     let project = temp_project("teammate-task-missing-teammate");
     let state_dir = project.join("state");
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let isolation = support::TestIsolation::new("coordination-auto-review");
+    let context = isolation.project_context(&project, &state_dir);
 
     let response = route_project_service_request(
         &context,
@@ -260,7 +266,8 @@ fn teammate_task_rejects_missing_teammate_session_id() {
 fn teammate_task_rejects_missing_prompt_or_body() {
     let project = temp_project("teammate-task-missing-body");
     let state_dir = project.join("state");
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let isolation = support::TestIsolation::new("coordination-auto-review");
+    let context = isolation.project_context(&project, &state_dir);
 
     let response = route_project_service_request(
         &context,
@@ -297,7 +304,8 @@ fn teammate_task_rejects_non_direct_teammate() {
             ),
         ],
     );
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let isolation = support::TestIsolation::new("coordination-teammate-non-direct");
+    let context = isolation.project_context(&project, &state_dir);
 
     let response = route_project_service_request(
         &context,
@@ -321,7 +329,8 @@ fn teammate_task_rejects_non_direct_teammate() {
 fn raw_teammate_send_is_retired_in_favor_of_durable_tasks() {
     let project = temp_project("raw-teammate-send");
     let state_dir = project.join("state");
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let isolation = support::TestIsolation::new("coordination");
+    let context = isolation.project_context(&project, &state_dir);
 
     let response = route_project_service_request(
         &context,
@@ -348,7 +357,8 @@ fn raw_teammate_send_is_retired_in_favor_of_durable_tasks() {
 fn task_lifecycle_updates_task_thread_and_indexes() {
     let project = temp_project("task-lifecycle");
     let state_dir = project.join("state");
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let isolation = support::TestIsolation::new("coordination-task-lifecycle");
+    let context = isolation.project_context(&project, &state_dir);
     let created = route_project_service_request(
         &context,
         "POST",
@@ -489,7 +499,8 @@ fn thread_send_delivers_to_each_live_recipient_with_recipient_reply_actions() {
     let project = temp_project("thread-delivery");
     let state_dir = project.join("state");
     write_delivery_topology(&state_dir, &[("codex-one", "@one"), ("codex-two", "@two")]);
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let isolation = support::TestIsolation::new("coordination");
+    let context = isolation.project_context(&project, &state_dir);
     let opened = route_project_service_request(
         &context,
         "POST",
@@ -538,7 +549,8 @@ fn thread_send_delivers_to_each_live_recipient_with_recipient_reply_actions() {
 fn handoff_send_accept_complete_updates_derived_handoffs() {
     let project = temp_project("handoff");
     let state_dir = project.join("state");
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let isolation = support::TestIsolation::new("coordination");
+    let context = isolation.project_context(&project, &state_dir);
 
     let sent = route_project_service_request(
         &context,
@@ -602,7 +614,8 @@ fn handoff_send_accept_complete_updates_derived_handoffs() {
 fn review_approve_request_changes_and_reopen_workflow() {
     let project = temp_project("review");
     let state_dir = project.join("state");
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let isolation = support::TestIsolation::new("coordination");
+    let context = isolation.project_context(&project, &state_dir);
     let approved_review = route_project_service_request(
         &context,
         "POST",
@@ -705,7 +718,8 @@ fn task_completion_creates_review_task_from_team_config() {
         }),
     )
     .expect("seed team config");
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let isolation = support::TestIsolation::new("coordination");
+    let context = isolation.project_context(&project, &state_dir);
     create_dir_all(&state_dir).expect("state dir");
     write_runtime_exchange(
         runtime_exchange_path(&state_dir),
@@ -775,7 +789,8 @@ fn mutation_preserves_malformed_exchange_file() {
     let path = runtime_exchange_path(&state_dir);
     write(&path, "version: 1\nthreads: [").expect("invalid exchange");
     let before = read_to_string(&path).expect("before");
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let isolation = support::TestIsolation::new("coordination");
+    let context = isolation.project_context(&project, &state_dir);
 
     let response = route_project_service_request(
         &context,
@@ -796,7 +811,8 @@ fn mutation_preserves_malformed_exchange_file() {
 fn thread_routes_send_mark_seen_and_set_status() {
     let project = temp_project("threads");
     let state_dir = project.join("state");
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let isolation = support::TestIsolation::new("coordination");
+    let context = isolation.project_context(&project, &state_dir);
     let opened = route_project_service_request(
         &context,
         "POST",

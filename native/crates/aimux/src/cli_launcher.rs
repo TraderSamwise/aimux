@@ -110,13 +110,6 @@ pub fn is_cargo_test_aimux_binary(path: impl AsRef<Path>) -> bool {
             .and_then(|parent| parent.file_name())
             .and_then(|value| value.to_str())
             == Some("debug")
-        && path
-            .parent()
-            .and_then(Path::parent)
-            .and_then(Path::parent)
-            .and_then(|parent| parent.file_name())
-            .and_then(|value| value.to_str())
-            == Some("target")
 }
 
 pub fn resolve_aimux_cli_launch_command(

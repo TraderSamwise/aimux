@@ -9,6 +9,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
+mod support;
+
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[test]
@@ -442,14 +444,16 @@ fn doctor_installs_stays_native_even_when_node_fallback_is_configured() {
     let log = root.join("node.log");
     let node = fake_node(&root, &log, 9);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_aimux"))
+    let isolation = support::TestIsolation::new("native-doctor-installs");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_aimux"));
+    isolation
+        .apply_to_command(&mut command)
         .current_dir(&root)
         .env("AIMUX_ROOT", &root)
         .env("AIMUX_INSTALL_ROOT", &install_root)
         .env("AIMUX_NODE_BIN", node)
-        .args(["doctor", "installs", "--json"])
-        .output()
-        .expect("run native aimux");
+        .args(["doctor", "installs", "--json"]);
+    let output = command.output().expect("run native aimux");
 
     assert!(output.status.success());
     assert!(

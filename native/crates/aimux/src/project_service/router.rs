@@ -1,5 +1,5 @@
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -61,6 +61,7 @@ pub struct ProjectServiceRequestContext {
     pub session_labels: BTreeMap<String, String>,
     pub request_headers: BTreeMap<String, String>,
     pub desktop_state: Option<Value>,
+    pub live_window_ids: Option<BTreeSet<String>>,
     pub output_cache: AgentOutputCaptureCache,
     pub osc_notifications: OscNotificationOutputState,
     pub osc_output_tap: OscOutputTap,
@@ -79,6 +80,7 @@ impl ProjectServiceRequestContext {
             session_labels: BTreeMap::new(),
             request_headers: BTreeMap::new(),
             desktop_state: None,
+            live_window_ids: None,
             output_cache: AgentOutputCaptureCache::default(),
             osc_notifications: OscNotificationOutputState::default(),
             osc_output_tap: OscOutputTap::default(),
@@ -100,6 +102,7 @@ impl ProjectServiceRequestContext {
             session_labels: BTreeMap::new(),
             request_headers: BTreeMap::new(),
             desktop_state: None,
+            live_window_ids: None,
             output_cache: AgentOutputCaptureCache::default(),
             osc_notifications: OscNotificationOutputState::default(),
             osc_output_tap: OscOutputTap::default(),
@@ -128,6 +131,20 @@ impl ProjectServiceRequestContext {
     pub fn with_desktop_state(mut self, desktop_state: Value) -> Self {
         self.desktop_state = Some(desktop_state);
         self
+    }
+
+    #[doc(hidden)]
+    pub fn with_live_window_ids<I, S>(mut self, live_window_ids: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.live_window_ids = Some(live_window_ids.into_iter().map(Into::into).collect());
+        self
+    }
+
+    pub fn live_window_ids(&self) -> Option<&BTreeSet<String>> {
+        self.live_window_ids.as_ref()
     }
 
     pub fn with_plugin_statuses(mut self, plugin_statuses: Vec<NativePluginStatus>) -> Self {

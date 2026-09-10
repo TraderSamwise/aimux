@@ -4,7 +4,7 @@ use crate::config::load_config_for_project;
 use crate::daemon_state::load_metadata_state;
 use crate::project_api_contract::routes;
 use crate::project_service::agents::{
-    resolve_direct_teammates, select_direct_teammates, topology_desktop_session_list,
+    resolve_direct_teammates, select_direct_teammates, topology_desktop_session_list_for_context,
 };
 use crate::project_service::coordination_mutations::route_coordination_mutation_request;
 use crate::project_service::dispatcher::ProjectServiceDispatchResponse;
@@ -40,7 +40,12 @@ pub(super) fn route_agent_create_teammate(
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
-    let sessions = topology_desktop_session_list(&topology, &metadata_state.sessions, &tools);
+    let sessions = topology_desktop_session_list_for_context(
+        context,
+        &topology,
+        &metadata_state.sessions,
+        &tools,
+    );
     if let Err(error) = resolve_direct_teammates(&sessions, &parent_session_id) {
         return json_error(error.status, error.error);
     }
@@ -270,8 +275,12 @@ fn resolve_lifecycle_direct_teammate(
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
-    let active_sessions =
-        topology_desktop_session_list(&topology, &metadata_state.sessions, &tools);
+    let active_sessions = topology_desktop_session_list_for_context(
+        context,
+        &topology,
+        &metadata_state.sessions,
+        &tools,
+    );
     let resolved = resolve_direct_teammates(&active_sessions, &parent_session_id)
         .map_err(|error| Box::new(json_error(error.status, error.error)))?;
     let teammate = if graveyard {

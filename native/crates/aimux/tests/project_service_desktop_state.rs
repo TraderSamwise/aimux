@@ -2,7 +2,8 @@ use aimux::daemon_state::{MetadataState, save_metadata_state};
 use aimux::project_api_contract::routes;
 use aimux::project_service::agent_output::AgentOutputCaptureRuntime;
 use aimux::project_service::desktop_state::{
-    DesktopStateInput, build_desktop_state, route_desktop_state_request_with_runtime,
+    DesktopStateInput, build_desktop_state_with_live_window_ids,
+    route_desktop_state_request_with_runtime,
 };
 use aimux::project_service::operation_failures::{
     OperationFailureInput, add_dashboard_operation_failure,
@@ -18,6 +19,8 @@ use std::collections::BTreeMap;
 use std::fs::{create_dir_all, remove_dir_all, write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
+
+mod support;
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -44,12 +47,15 @@ fn builds_desktop_state_from_topology_metadata_and_exchange_without_live_runtime
     let metadata = metadata_fixture();
     let exchange = exchange_fixture();
 
-    let state = build_desktop_state(DesktopStateInput {
-        project_root: "/repo".into(),
-        topology: &topology,
-        metadata_sessions: &metadata,
-        exchange: &exchange,
-    });
+    let state = build_desktop_state_with_live_window_ids(
+        DesktopStateInput {
+            project_root: "/repo".into(),
+            topology: &topology,
+            metadata_sessions: &metadata,
+            exchange: &exchange,
+        },
+        Some(&support::live_window_ids(&["@1", "@2", "@3", "@4"])),
+    );
 
     assert_eq!(state["ok"], true);
     assert_eq!(state["pendingInteractions"], json!([]));
@@ -216,7 +222,8 @@ fn route_desktop_state_reads_catalog_files_and_preserves_existing_snapshot_shape
     .unwrap();
     write_runtime_exchange(runtime_exchange_path(&state_dir), &exchange_fixture()).unwrap();
 
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let isolation = support::TestIsolation::new("desktop-state-route");
+    let context = isolation.project_context(&project, &state_dir);
     let response = route_project_service_request(&context, "GET", routes::DESKTOP_STATE, None);
 
     assert_eq!(response.status, 200);
@@ -271,7 +278,8 @@ fn route_desktop_state_reports_persisted_operation_failures() {
             ..OperationFailureInput::default()
         },
     );
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let isolation = support::TestIsolation::new("desktop-state-operation-failures");
+    let context = isolation.project_context(&project, &state_dir);
 
     let response = route_project_service_request(&context, "GET", routes::DESKTOP_STATE, None);
 
@@ -291,7 +299,8 @@ fn route_desktop_state_reports_persisted_operation_failures() {
 #[test]
 fn desktop_state_preview_query_controls_capture_and_session_snapshots() {
     let (project, state_dir) = write_desktop_state_fixtures("preview");
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let isolation = support::TestIsolation::new("desktop-state-preview");
+    let context = isolation.project_context(&project, &state_dir);
     let mut runtime = FakePreviewRuntime {
         output: "cold".into(),
         calls: Vec::new(),
@@ -366,7 +375,8 @@ fn desktop_state_preview_query_controls_capture_and_session_snapshots() {
 #[test]
 fn desktop_state_previews_reuse_cached_capture_per_window() {
     let (project, state_dir) = write_desktop_state_fixtures("preview-cache");
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let isolation = support::TestIsolation::new("desktop-state-preview-cache");
+    let context = isolation.project_context(&project, &state_dir);
     let mut runtime = FakePreviewRuntime {
         output: "first".into(),
         calls: Vec::new(),
@@ -432,7 +442,8 @@ fn desktop_state_previews_use_hot_snapshot_before_live_capture() {
         },
         None,
     );
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let isolation = support::TestIsolation::new("desktop-state-preview-hot-cache");
+    let context = isolation.project_context(&project, &state_dir);
     let mut runtime = FakePreviewRuntime {
         output: "live".into(),
         calls: Vec::new(),

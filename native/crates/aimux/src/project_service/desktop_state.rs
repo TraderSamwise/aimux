@@ -14,7 +14,9 @@ use crate::runtime_topology::{
 };
 
 use super::agent_output::{AgentOutputCaptureRuntime, SystemAgentOutputCaptureRuntime};
-use super::agents::topology_desktop_session_list;
+use super::agents::{
+    topology_desktop_session_list, topology_desktop_session_list_with_live_window_ids,
+};
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::http::query_params;
 use super::operation_failures::list_dashboard_operation_failures;
@@ -153,12 +155,15 @@ pub fn desktop_state_for_context(context: &ProjectServiceRequestContext) -> Resu
     let topology = read_runtime_topology(runtime_topology_path(&project_state_dir))?;
     let metadata = load_metadata_state(&project_state_dir);
     let exchange = read_runtime_exchange(runtime_exchange_path(&project_state_dir));
-    let mut state = build_desktop_state(DesktopStateInput {
-        project_root: context.project_root().to_string_lossy().into_owned(),
-        topology: &topology,
-        metadata_sessions: &metadata.sessions,
-        exchange: &exchange,
-    });
+    let mut state = build_desktop_state_with_live_window_ids(
+        DesktopStateInput {
+            project_root: context.project_root().to_string_lossy().into_owned(),
+            topology: &topology,
+            metadata_sessions: &metadata.sessions,
+            exchange: &exchange,
+        },
+        context.live_window_ids(),
+    );
     if let Value::Object(object) = &mut state {
         object.insert(
             "operationFailures".into(),
@@ -176,19 +181,33 @@ pub struct DesktopStateInput<'a> {
 }
 
 pub fn build_desktop_state(input: DesktopStateInput<'_>) -> Value {
+    build_desktop_state_with_live_window_ids(input, None)
+}
+
+pub fn build_desktop_state_with_live_window_ids(
+    input: DesktopStateInput<'_>,
+    live_window_ids: Option<&std::collections::BTreeSet<String>>,
+) -> Value {
     let tools = default_config()
         .get("tools")
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
-    let all_sessions =
-        topology_desktop_session_list(input.topology, input.metadata_sessions, &tools)
-            .into_iter()
-            .filter(|session| {
-                string_field(session, "status")
-                    .is_some_and(|status| DASHBOARD_SESSION_STATUSES.contains(&status))
-            })
-            .collect::<Vec<_>>();
+    let all_sessions = match live_window_ids {
+        Some(live_window_ids) => topology_desktop_session_list_with_live_window_ids(
+            input.topology,
+            input.metadata_sessions,
+            &tools,
+            live_window_ids,
+        ),
+        None => topology_desktop_session_list(input.topology, input.metadata_sessions, &tools),
+    }
+    .into_iter()
+    .filter(|session| {
+        string_field(session, "status")
+            .is_some_and(|status| DASHBOARD_SESSION_STATUSES.contains(&status))
+    })
+    .collect::<Vec<_>>();
     let worktrees = desktop_worktrees(&input.project_root, input.topology);
     let worktree_by_path = worktrees
         .iter()

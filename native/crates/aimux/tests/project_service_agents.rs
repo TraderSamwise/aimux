@@ -3,7 +3,8 @@ use aimux::daemon_state::{MetadataState, save_metadata_state};
 use aimux::project_api_contract::routes;
 use aimux::project_service::agents::{
     build_agent_list, describe_session_restorability, resolve_direct_teammates,
-    select_direct_teammates, teammate_api_record, topology_desktop_session_list,
+    select_direct_teammates, teammate_api_record,
+    topology_desktop_session_list_with_live_window_ids,
 };
 use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
 use aimux::project_service::runtime_exchange::{runtime_exchange_path, write_runtime_exchange};
@@ -13,6 +14,8 @@ use std::collections::BTreeMap;
 use std::fs::{create_dir_all, remove_dir_all, write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
+
+mod support;
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -87,7 +90,12 @@ fn computes_offline_restore_state_like_typescript() {
     );
     let tools = tools();
 
-    let sessions = topology_desktop_session_list(&topology, &metadata, &tools);
+    let sessions = topology_desktop_session_list_with_live_window_ids(
+        &topology,
+        &metadata,
+        &tools,
+        &support::live_window_ids(&["@1", "@2", "@3"]),
+    );
     assert_eq!(find(&sessions, "codex-offline")["restoreState"], "ready");
     assert_eq!(find(&sessions, "codex-fresh")["restoreState"], "ready");
     assert_eq!(find(&sessions, "codex-error")["freshRelaunchAllowed"], true);
@@ -178,7 +186,8 @@ fn route_agents_reads_topology_metadata_and_exchange_tasks() {
     )
     .unwrap();
 
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let isolation = support::TestIsolation::new("agents-route");
+    let context = isolation.project_context(&project, &state_dir);
     let response = route_project_service_request(&context, "GET", routes::agents::LIST, None);
 
     assert_eq!(response.status, 200);

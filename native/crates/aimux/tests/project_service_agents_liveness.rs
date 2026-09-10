@@ -1,6 +1,8 @@
-use aimux::project_service::agents::topology_desktop_session_list;
+use aimux::project_service::agents::topology_desktop_session_list_with_live_window_ids;
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
+
+mod support;
 
 fn topology_with(status: &str, window_id: Option<&str>) -> Value {
     let mut session = Map::new();
@@ -19,7 +21,12 @@ fn topology_with(status: &str, window_id: Option<&str>) -> Value {
 #[test]
 fn session_without_live_tmux_window_is_reported_offline() {
     let topology = topology_with("running", Some("@99999"));
-    let sessions = topology_desktop_session_list(&topology, &BTreeMap::new(), &Map::new());
+    let sessions = topology_desktop_session_list_with_live_window_ids(
+        &topology,
+        &BTreeMap::new(),
+        &Map::new(),
+        &support::live_window_ids(&[]),
+    );
     assert_eq!(sessions.len(), 1);
     assert_eq!(
         sessions[0].get("status").and_then(Value::as_str),
@@ -31,7 +38,12 @@ fn session_without_live_tmux_window_is_reported_offline() {
 #[test]
 fn session_with_no_tmux_target_at_all_is_reported_offline() {
     let topology = topology_with("running", None);
-    let sessions = topology_desktop_session_list(&topology, &BTreeMap::new(), &Map::new());
+    let sessions = topology_desktop_session_list_with_live_window_ids(
+        &topology,
+        &BTreeMap::new(),
+        &Map::new(),
+        &support::live_window_ids(&[]),
+    );
     assert_eq!(
         sessions[0].get("status").and_then(Value::as_str),
         Some("offline"),
@@ -43,7 +55,12 @@ fn session_with_no_tmux_target_at_all_is_reported_offline() {
 #[test]
 fn downgraded_session_drops_its_dead_tmux_target() {
     let topology = topology_with("running", Some("@99999"));
-    let sessions = topology_desktop_session_list(&topology, &BTreeMap::new(), &Map::new());
+    let sessions = topology_desktop_session_list_with_live_window_ids(
+        &topology,
+        &BTreeMap::new(),
+        &Map::new(),
+        &support::live_window_ids(&[]),
+    );
     assert!(
         sessions[0].get("tmuxTarget").is_none(),
         "a downgraded session must not keep a binding to a window that is gone"

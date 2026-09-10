@@ -65,7 +65,12 @@ pub fn route_agent_read_request(
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
-    let sessions = topology_desktop_session_list(&topology, &metadata_state.sessions, &tools);
+    let sessions = topology_desktop_session_list_for_context(
+        context,
+        &topology,
+        &metadata_state.sessions,
+        &tools,
+    );
     if pathname == routes::agents::TEAMMATES {
         return Some(route_teammates(path, &sessions));
     }
@@ -104,6 +109,38 @@ pub fn topology_desktop_session_list(
     tools: &Map<String, Value>,
 ) -> Vec<Value> {
     let live_window_ids = crate::tmux::TmuxRuntimeManager::new().live_window_ids();
+    topology_desktop_session_list_with_live_window_ids(
+        topology,
+        metadata_sessions,
+        tools,
+        &live_window_ids,
+    )
+}
+
+pub fn topology_desktop_session_list_for_context(
+    context: &ProjectServiceRequestContext,
+    topology: &Value,
+    metadata_sessions: &BTreeMap<String, Value>,
+    tools: &Map<String, Value>,
+) -> Vec<Value> {
+    if let Some(live_window_ids) = context.live_window_ids() {
+        topology_desktop_session_list_with_live_window_ids(
+            topology,
+            metadata_sessions,
+            tools,
+            live_window_ids,
+        )
+    } else {
+        topology_desktop_session_list(topology, metadata_sessions, tools)
+    }
+}
+
+pub fn topology_desktop_session_list_with_live_window_ids(
+    topology: &Value,
+    metadata_sessions: &BTreeMap<String, Value>,
+    tools: &Map<String, Value>,
+    live_window_ids: &BTreeSet<String>,
+) -> Vec<Value> {
     list_topology_session_states(topology, Some(ACTIVE_AGENT_STATUSES))
         .into_iter()
         .map(|mut session| {

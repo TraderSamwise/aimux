@@ -8,6 +8,8 @@ use std::fs::remove_dir_all;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+mod support;
+
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[test]
@@ -63,7 +65,8 @@ fn router_keeps_fallback_errors_explicit() {
 fn every_declared_project_service_route_is_claimed_by_rust() {
     let project = temp_project("route-coverage");
     let state_dir = project.join("state");
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let isolation = support::TestIsolation::new("route-coverage");
+    let context = isolation.project_context(&project, &state_dir);
 
     for spec in project_service_route_specs() {
         let method = spec.method.as_str();

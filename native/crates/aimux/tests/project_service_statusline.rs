@@ -1,6 +1,6 @@
 use aimux::daemon_state::{MetadataState, save_metadata_state};
 use aimux::project_api_contract::routes;
-use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
+use aimux::project_service::router::route_project_service_request;
 use aimux::project_service::statusline::{
     StatuslineRefreshInput, refresh_project_statusline_with_tmux_refresh,
 };
@@ -9,6 +9,8 @@ use serde_json::{Value, json};
 use std::fs::{create_dir_all, read_to_string, remove_dir_all, write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
+
+mod support;
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -52,7 +54,8 @@ fn statusline_refresh_writes_snapshot_and_tmux_artifacts() {
         },
     )
     .expect("metadata");
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let isolation = support::TestIsolation::new("statusline-refresh");
+    let context = isolation.project_context(&project, &state_dir);
 
     let response = route_project_service_request(
         &context,
@@ -126,7 +129,8 @@ fn statusline_refresh_requests_tmux_refresh_after_writing_artifacts() {
         &topology_fixture(&project),
     )
     .expect("topology");
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let isolation = support::TestIsolation::new("statusline-refresh-client");
+    let context = isolation.project_context(&project, &state_dir);
     let mut calls = Vec::new();
 
     refresh_project_statusline_with_tmux_refresh(
@@ -167,7 +171,8 @@ fn statusline_refresh_uses_client_dashboard_screen_for_client_bottom_artifact() 
         r#"{"screen":"coordination"}"#,
     )
     .expect("client ui state");
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let isolation = support::TestIsolation::new("statusline-client-screen");
+    let context = isolation.project_context(&project, &state_dir);
 
     refresh_project_statusline_with_tmux_refresh(
         &context,

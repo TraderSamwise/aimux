@@ -12,7 +12,7 @@ use crate::project_api_contract::routes;
 use crate::runtime_topology::{read_runtime_topology, runtime_topology_path};
 use crate::tmux::{refresh_status_argv, tmux_command_from_env};
 
-use super::desktop_state::{DesktopStateInput, build_desktop_state};
+use super::desktop_state::{DesktopStateInput, build_desktop_state_with_live_window_ids};
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::router::ProjectServiceRequestContext;
 use super::runtime_exchange::{read_runtime_exchange, runtime_exchange_path};
@@ -90,12 +90,15 @@ pub fn build_statusline_snapshot(context: &ProjectServiceRequestContext) -> Resu
     } else {
         let topology = read_runtime_topology(runtime_topology_path(&project_state_dir))?;
         let exchange = read_runtime_exchange(runtime_exchange_path(&project_state_dir));
-        build_desktop_state(DesktopStateInput {
-            project_root: context.project_root().to_string_lossy().into_owned(),
-            topology: &topology,
-            metadata_sessions: &metadata.sessions,
-            exchange: &exchange,
-        })
+        build_desktop_state_with_live_window_ids(
+            DesktopStateInput {
+                project_root: context.project_root().to_string_lossy().into_owned(),
+                topology: &topology,
+                metadata_sessions: &metadata.sessions,
+                exchange: &exchange,
+            },
+            context.live_window_ids(),
+        )
     };
     let sessions = statusline_sessions(array_field(&desktop_state, "sessions"), "agent")
         .into_iter()

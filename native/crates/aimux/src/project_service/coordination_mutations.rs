@@ -8,7 +8,7 @@ use crate::project_api_contract::routes;
 use crate::runtime_topology::{read_runtime_topology, runtime_topology_path};
 
 use super::agent_output::{AgentOutputCaptureRuntime, SystemAgentOutputCaptureRuntime};
-use super::agents::{resolve_direct_teammates, topology_desktop_session_list};
+use super::agents::{resolve_direct_teammates, topology_desktop_session_list_for_context};
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::router::ProjectServiceRequestContext;
 use super::runtime_exchange::{runtime_exchange_path, update_runtime_exchange};
@@ -508,7 +508,12 @@ fn resolve_teammate_task_target(
     let metadata_state = load_metadata_state(project_state_dir);
     let topology = read_runtime_topology(runtime_topology_path(project_state_dir))
         .map_err(|error| Box::new(json_response(500, json!({ "ok": false, "error": error }))))?;
-    let sessions = topology_desktop_session_list(&topology, &metadata_state.sessions, &tools);
+    let sessions = topology_desktop_session_list_for_context(
+        context,
+        &topology,
+        &metadata_state.sessions,
+        &tools,
+    );
     let resolved = resolve_direct_teammates(&sessions, parent_session_id).map_err(|error| {
         Box::new(json_response(
             error.status,
