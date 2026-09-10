@@ -1,9 +1,9 @@
 use crate::dashboard_model::{
-    is_dashboard_project_control_session, DashboardService, DashboardSession, DesktopStateSnapshot,
-    WorktreeGroup,
+    DashboardService, DashboardSession, DesktopStateSnapshot, WorktreeGroup,
+    is_dashboard_project_control_session,
 };
 use crate::dashboard_renderer::DashboardNavLevel;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DashboardNavigationState {

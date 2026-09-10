@@ -2,25 +2,26 @@ mod footer;
 
 use crate::dashboard_controller::DashboardScreen;
 use crate::dashboard_model::{
-    is_dashboard_project_control_session, is_dashboard_scribe_session, DashboardOperationFailure,
-    DashboardService, DashboardSession, DesktopStateSnapshot, ServiceStatus, SessionStatus,
+    DashboardOperationFailure, DashboardService, DashboardSession, DesktopStateSnapshot,
+    ServiceStatus, SessionStatus, is_dashboard_project_control_session,
+    is_dashboard_scribe_session,
 };
 use crate::project_service::work_outline::{WorkOutlineEntry, WorkOutlineStatus};
 use crate::project_service::worktree_colors_contract::worktree_color_ansi;
 use crate::tmux_expose_preview_sanitize::sanitize_expose_preview_output;
 use crate::tui_render::screen_frame::{
-    compose_screen_frame, screen_content_width, screen_left_width, ScreenFrameInput,
-    ScreenFrameResult,
+    ScreenFrameInput, ScreenFrameResult, compose_screen_frame, screen_content_width,
+    screen_left_width,
 };
 use crate::tui_render::text::{
     center, js_len, truncate, truncate_ansi, truncate_plain, wrap_key_value, wrap_text,
 };
 use crate::tui_render::theme::{
-    card, chip, cols as grid_cols, footer_hints, keycap_hint, pill, render_footer_hints,
-    status_dot, style, visible_width, CardSpec, ChipTone, Column, FooterHint, KeyTone, StatusKind,
-    Tone,
+    CardSpec, ChipTone, Column, FooterHint, KeyTone, StatusKind, Tone, card, chip,
+    cols as grid_cols, footer_hints, keycap_hint, pill, render_footer_hints, status_dot, style,
+    visible_width,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 

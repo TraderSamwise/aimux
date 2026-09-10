@@ -177,7 +177,12 @@ pub fn is_dashboard_scribe_session(session: &DashboardSession) -> bool {
 
 fn dashboard_session_classifier_probe(session: &DashboardSession) -> Value {
     let mut probe = Map::new();
-    if let Some(role) = session.role.as_deref().map(str::trim).filter(|role| !role.is_empty()) {
+    if let Some(role) = session
+        .role
+        .as_deref()
+        .map(str::trim)
+        .filter(|role| !role.is_empty())
+    {
         probe.insert("role".into(), Value::String(role.to_owned()));
     }
     if let Some(team) = session

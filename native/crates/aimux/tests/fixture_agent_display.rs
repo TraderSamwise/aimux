@@ -1,6 +1,6 @@
 use aimux::agent_display::{
-    AgentDisplayInput, agent_compact_identity, agent_role_label, agent_short_name,
-    agent_tool_name, is_generated_agent_label,
+    AgentDisplayInput, agent_compact_identity, agent_role_label, agent_short_name, agent_tool_name,
+    is_generated_agent_label,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
