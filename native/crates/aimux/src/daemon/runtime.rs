@@ -245,6 +245,18 @@ pub trait ProjectServiceHealthProbe: Send + Sync {
     fn is_ready(&self, endpoint: &MetadataApiEndpoint, pid: i32) -> bool;
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProjectServiceHealthWaitFailure {
+    TimedOut,
+    ProcessExited,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ProjectServiceHealthWait {
+    Ready(MetadataApiEndpoint),
+    NotReady(ProjectServiceHealthWaitFailure),
+}
+
 struct SystemProjectServiceHealthProbe;
 
 impl ProjectServiceHealthProbe for SystemProjectServiceHealthProbe {
@@ -920,22 +932,44 @@ impl RealDaemonRuntime {
         &self,
         project_state_dir: &Path,
         pid: i32,
-    ) -> Option<MetadataApiEndpoint> {
+    ) -> ProjectServiceHealthWait {
         let deadline = current_unix_millis() + u128::from(self.project_service_startup_timeout_ms);
         loop {
             if let Some(endpoint) =
                 load_metadata_endpoint(project_state_dir).filter(|endpoint| endpoint.pid == pid)
                 && self.project_service_health_probe.is_ready(&endpoint, pid)
             {
-                return Some(endpoint);
+                return ProjectServiceHealthWait::Ready(endpoint);
             }
-            if self.project_service_startup_timeout_ms == 0
-                || current_unix_millis() >= deadline
-                || !self.project_service_process_verifier.is_live(pid)
-            {
-                return None;
+            if !self.project_service_process_verifier.is_live(pid) {
+                return ProjectServiceHealthWait::NotReady(
+                    ProjectServiceHealthWaitFailure::ProcessExited,
+                );
+            }
+            if self.project_service_startup_timeout_ms == 0 || current_unix_millis() >= deadline {
+                return ProjectServiceHealthWait::NotReady(
+                    ProjectServiceHealthWaitFailure::TimedOut,
+                );
             }
             thread::sleep(Duration::from_millis(100));
+        }
+    }
+
+    fn project_service_health_wait_failure_message(
+        &self,
+        project_root: &str,
+        project_id: &str,
+        pid: i32,
+        failure: ProjectServiceHealthWaitFailure,
+    ) -> String {
+        match failure {
+            ProjectServiceHealthWaitFailure::TimedOut => format!(
+                "project service health wait timed out after {}ms for {project_root} (projectId {project_id}, pid {pid})",
+                self.project_service_startup_timeout_ms
+            ),
+            ProjectServiceHealthWaitFailure::ProcessExited => format!(
+                "project service process exited before /health became ready for {project_root} (projectId {project_id}, pid {pid})"
+            ),
         }
     }
 
@@ -1321,22 +1355,34 @@ impl RealDaemonRuntime {
         } else {
             json!({ "status": "skipped" })
         };
-        let service = match <Self as DaemonCoreCommandRuntime>::ensure_project(self, project_root) {
-            Ok(state) => json!({ "status": "ensured", "state": state }),
-            Err(error) => json!({ "status": "failed", "error": error }),
-        };
-        let dashboard = match reload_dashboard(project_root) {
-            Ok(restart_dashboard) => {
-                refresh_statusline(self, project_root);
-                let status = restart_dashboard.status();
-                let target = restart_dashboard.target;
-                json!({
-                    "status": status,
-                    "sessionName": target.dashboard_session.session_name,
-                    "target": tmux_target_json(&target.dashboard_target),
-                })
+        let (service, service_error) =
+            match <Self as DaemonCoreCommandRuntime>::ensure_project(self, project_root) {
+                Ok(state) => (json!({ "status": "ensured", "state": state }), None),
+                Err(error) => (
+                    json!({ "status": "failed", "error": error.clone() }),
+                    Some(error),
+                ),
+            };
+        let dashboard = if let Some(error) = service_error {
+            json!({
+                "status": "skipped",
+                "reason": "project-service-health-unavailable",
+                "error": error,
+            })
+        } else {
+            match reload_dashboard(project_root) {
+                Ok(restart_dashboard) => {
+                    refresh_statusline(self, project_root);
+                    let status = restart_dashboard.status();
+                    let target = restart_dashboard.target;
+                    json!({
+                        "status": status,
+                        "sessionName": target.dashboard_session.session_name,
+                        "target": tmux_target_json(&target.dashboard_target),
+                    })
+                }
+                Err(error) => json!({ "status": "failed", "error": error }),
             }
-            Err(error) => json!({ "status": "failed", "error": error }),
         };
         if let Value::Object(object) = &mut result {
             object.insert(
@@ -2036,61 +2082,71 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
                     &signaled_pids,
                     None,
                 );
-                if self
-                    .wait_for_live_project_service(&project_state_dir, service.pid)
-                    .is_some()
-                {
-                    service.status = Some(crate::daemon_state::ProjectServiceStatus::Running);
-                    if !was_running {
+                match self.wait_for_live_project_service(&project_state_dir, service.pid) {
+                    ProjectServiceHealthWait::Ready(_) => {
+                        service.status = Some(crate::daemon_state::ProjectServiceStatus::Running);
+                        if !was_running {
+                            service.updated_at = now_iso();
+                            self.save_project_service_state(&service)?;
+                        }
+                        log_at(
+                            LogLevel::Debug,
+                            "project service ensure reused live service",
+                            "project-service",
+                            Some(json!({
+                                "projectId": project_id.clone(),
+                                "projectRoot": project_root.clone(),
+                                "pid": service.pid,
+                            })),
+                        );
+                        record_repair_event_for_project(
+                            &self.resolver,
+                            &project_root,
+                            ACTION_PROJECT_SERVICE_ENSURE,
+                            "project-service-ensure",
+                            STATUS_SKIPPED,
+                            Some(json!({
+                                "projectId": project_id.clone(),
+                                "pid": service.pid,
+                                "status": "running",
+                            })),
+                        );
+                    }
+                    ProjectServiceHealthWait::NotReady(failure) => {
+                        service.status = Some(crate::daemon_state::ProjectServiceStatus::Starting);
                         service.updated_at = now_iso();
                         self.save_project_service_state(&service)?;
+                        let error = self.project_service_health_wait_failure_message(
+                            &project_root,
+                            &project_id,
+                            service.pid,
+                            failure,
+                        );
+                        log_lifecycle_always(
+                            "project service ensure health wait failed",
+                            "project-service",
+                            Some(json!({
+                                "projectId": project_id.clone(),
+                                "projectRoot": project_root.clone(),
+                                "pid": service.pid,
+                                "error": error.clone(),
+                            })),
+                        );
+                        record_repair_event_for_project(
+                            &self.resolver,
+                            &project_root,
+                            ACTION_PROJECT_SERVICE_ENSURE,
+                            "project-service-ensure",
+                            STATUS_FAILED,
+                            Some(json!({
+                                "projectId": project_id.clone(),
+                                "pid": service.pid,
+                                "status": "starting",
+                                "error": error.clone(),
+                            })),
+                        );
+                        return Err(error);
                     }
-                    log_at(
-                        LogLevel::Debug,
-                        "project service ensure reused live service",
-                        "project-service",
-                        Some(json!({
-                            "projectId": project_id.clone(),
-                            "projectRoot": project_root.clone(),
-                            "pid": service.pid,
-                        })),
-                    );
-                    record_repair_event_for_project(
-                        &self.resolver,
-                        &project_root,
-                        ACTION_PROJECT_SERVICE_ENSURE,
-                        "project-service-ensure",
-                        STATUS_SKIPPED,
-                        Some(json!({
-                            "projectId": project_id.clone(),
-                            "pid": service.pid,
-                            "status": "running",
-                        })),
-                    );
-                } else {
-                    service.status = Some(crate::daemon_state::ProjectServiceStatus::Starting);
-                    log_lifecycle_always(
-                        "project service ensure found live process without endpoint",
-                        "project-service",
-                        Some(json!({
-                            "projectId": project_id.clone(),
-                            "projectRoot": project_root.clone(),
-                            "pid": service.pid,
-                        })),
-                    );
-                    record_repair_event_for_project(
-                        &self.resolver,
-                        &project_root,
-                        ACTION_PROJECT_SERVICE_ENSURE,
-                        "project-service-ensure",
-                        STATUS_SKIPPED,
-                        Some(json!({
-                            "projectId": project_id.clone(),
-                            "pid": service.pid,
-                            "status": "starting",
-                            "reason": "live-process-without-endpoint",
-                        })),
-                    );
                 }
                 return serde_json::to_value(service).map_err(|error| error.to_string());
             }
@@ -2177,39 +2233,62 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
             last_exit: None,
         };
         self.save_project_service_state(&service)?;
-        if self
-            .wait_for_live_project_service(&project_state_dir, pid)
-            .is_some()
-        {
-            service.status = Some(crate::daemon_state::ProjectServiceStatus::Running);
-            service.updated_at = now_iso();
-            self.save_project_service_state(&service)?;
-            log_lifecycle_always(
-                "project service ensure reached running",
-                "project-service",
-                Some(json!({
-                    "projectId": project_id.clone(),
-                    "projectRoot": project_root.clone(),
-                    "pid": pid,
-                })),
-            );
-        } else {
-            log_lifecycle_always(
-                "project service ensure left service starting",
-                "project-service",
-                Some(json!({
-                    "projectId": project_id.clone(),
-                    "projectRoot": project_root.clone(),
-                    "pid": pid,
-                })),
-            );
-        }
+        let ensure_status = match self.wait_for_live_project_service(&project_state_dir, pid) {
+            ProjectServiceHealthWait::Ready(_) => {
+                service.status = Some(crate::daemon_state::ProjectServiceStatus::Running);
+                service.updated_at = now_iso();
+                self.save_project_service_state(&service)?;
+                log_lifecycle_always(
+                    "project service ensure reached running",
+                    "project-service",
+                    Some(json!({
+                        "projectId": project_id.clone(),
+                        "projectRoot": project_root.clone(),
+                        "pid": pid,
+                    })),
+                );
+                STATUS_REPAIRED
+            }
+            ProjectServiceHealthWait::NotReady(failure) => {
+                let error = self.project_service_health_wait_failure_message(
+                    &project_root,
+                    &project_id,
+                    pid,
+                    failure,
+                );
+                log_lifecycle_always(
+                    "project service ensure health wait failed",
+                    "project-service",
+                    Some(json!({
+                        "projectId": project_id.clone(),
+                        "projectRoot": project_root.clone(),
+                        "pid": pid,
+                        "error": error.clone(),
+                    })),
+                );
+                record_repair_event_for_project(
+                    &self.resolver,
+                    &project_root,
+                    ACTION_PROJECT_SERVICE_ENSURE,
+                    "project-service-ensure",
+                    STATUS_FAILED,
+                    Some(json!({
+                        "projectId": project_id.clone(),
+                        "pid": pid,
+                        "status": "starting",
+                        "error": error.clone(),
+                        "signaledPids": signaled_pids,
+                    })),
+                );
+                return Err(error);
+            }
+        };
         record_repair_event_for_project(
             &self.resolver,
             &project_root,
             ACTION_PROJECT_SERVICE_ENSURE,
             "project-service-ensure",
-            STATUS_REPAIRED,
+            ensure_status,
             Some(json!({
                 "projectId": project_id,
                 "pid": pid,
@@ -4768,7 +4847,10 @@ mod tests {
 
         let ready = runtime.wait_for_live_project_service(&state_dir, 91_020);
 
-        assert!(ready.is_none());
+        assert_eq!(
+            ready,
+            ProjectServiceHealthWait::NotReady(ProjectServiceHealthWaitFailure::TimedOut)
+        );
         assert_eq!(health.calls(), vec![91_020]);
         fixture.cleanup();
     }
@@ -4800,8 +4882,109 @@ mod tests {
 
         let ready = runtime.wait_for_live_project_service(&state_dir, 91_021);
 
-        assert_eq!(ready.map(|endpoint| endpoint.pid), Some(91_021));
+        assert!(matches!(
+            ready,
+            ProjectServiceHealthWait::Ready(MetadataApiEndpoint { pid: 91_021, .. })
+        ));
         assert_eq!(health.calls(), vec![91_021]);
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn ensure_project_reports_health_timeout_instead_of_starting_success() {
+        let fixture = restart_service_fixture("ensure-health-timeout");
+        let project = fixture.project_root.clone();
+        let launcher = Arc::new(RestartTestLauncher::new(91_022).with_endpoint(45_903));
+        let verifier = Arc::new(RestartTestProcessVerifier::current_native([91_022]));
+        let health = Arc::new(RestartTestHealthProbe::not_ready());
+        let mut runtime = RealDaemonRuntime::with_project_service_launcher_and_process_verifier(
+            fixture.resolver.clone(),
+            fixture.daemon_info.clone(),
+            launcher.clone(),
+            verifier,
+            0,
+        )
+        .with_project_service_health_probe(health.clone());
+
+        let error =
+            <RealDaemonRuntime as DaemonCoreCommandRuntime>::ensure_project(&mut runtime, &project)
+                .expect_err("health timeout should be visible");
+
+        assert!(error.contains("project service health wait timed out after 0ms"));
+        assert!(error.contains(&project));
+        assert!(error.contains("pid 91022"));
+        assert_eq!(launcher.calls(), vec![project]);
+        assert_eq!(health.calls(), vec![91_022]);
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn ensure_project_allows_slow_service_that_becomes_healthy_before_timeout() {
+        let fixture = restart_service_fixture("ensure-health-slow-ok");
+        let project = fixture.project_root.clone();
+        let launcher = Arc::new(RestartTestLauncher::new(91_023).with_endpoint(45_904));
+        let verifier = Arc::new(RestartTestProcessVerifier::current_native([91_023]));
+        let health = Arc::new(RestartTestHealthProbe::sequence(vec![false, true]));
+        let mut runtime = RealDaemonRuntime::with_project_service_launcher_and_process_verifier(
+            fixture.resolver.clone(),
+            fixture.daemon_info.clone(),
+            launcher.clone(),
+            verifier,
+            250,
+        )
+        .with_project_service_health_probe(health.clone());
+
+        let state =
+            <RealDaemonRuntime as DaemonCoreCommandRuntime>::ensure_project(&mut runtime, &project)
+                .expect("service became healthy inside timeout");
+
+        assert_eq!(state["status"], json!("running"));
+        assert_eq!(state["pid"], json!(91_023));
+        assert_eq!(launcher.calls(), vec![project]);
+        assert_eq!(health.calls(), vec![91_023, 91_023]);
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn control_plane_restart_skips_dashboard_reload_when_service_health_times_out() {
+        let fixture = restart_service_fixture("restart-health-timeout");
+        let project = fixture.project_root.clone();
+        let project_id = fixture.register_project();
+        fixture.persist_service(&project_id, 91_024, ProjectServiceStatus::Running);
+        fixture.persist_endpoint(91_024);
+        let launcher = Arc::new(RestartTestLauncher::new(91_124));
+        let verifier = Arc::new(RestartTestProcessVerifier::current_native([91_024]));
+        let health = Arc::new(RestartTestHealthProbe::not_ready());
+        let mut runtime = RealDaemonRuntime::with_project_service_launcher_and_process_verifier(
+            fixture.resolver.clone(),
+            fixture.daemon_info.clone(),
+            launcher.clone(),
+            verifier,
+            0,
+        )
+        .with_project_service_health_probe(health.clone());
+        let refreshed = RefCell::new(Vec::<String>::new());
+
+        let result = runtime.restart_control_plane_project_with_statusline(
+            &project,
+            |_project| -> Result<RestartDashboardTarget, String> {
+                panic!("dashboard reload must not run after service health timeout")
+            },
+            |_runtime, project_root| refreshed.borrow_mut().push(project_root.to_owned()),
+        );
+
+        let error = result["service"]["error"].as_str().expect("service error");
+        assert_eq!(result["service"]["status"], json!("failed"));
+        assert!(error.contains("project service health wait timed out after 0ms"));
+        assert!(error.contains("pid 91024"));
+        assert_eq!(result["dashboard"]["status"], json!("skipped"));
+        assert_eq!(
+            result["dashboard"]["reason"],
+            json!("project-service-health-unavailable")
+        );
+        assert_eq!(result["dashboard"]["error"], json!(error));
+        assert!(refreshed.into_inner().is_empty());
+        assert!(launcher.calls().is_empty());
         fixture.cleanup();
     }
 
@@ -5867,21 +6050,22 @@ mod tests {
     }
 
     struct RestartTestHealthProbe {
-        ready: bool,
+        responses: Mutex<Vec<bool>>,
         calls: Mutex<Vec<i32>>,
     }
 
     impl RestartTestHealthProbe {
         fn ready() -> Self {
-            Self {
-                ready: true,
-                calls: Mutex::new(Vec::new()),
-            }
+            Self::sequence(vec![true])
         }
 
         fn not_ready() -> Self {
+            Self::sequence(vec![false])
+        }
+
+        fn sequence(responses: Vec<bool>) -> Self {
             Self {
-                ready: false,
+                responses: Mutex::new(responses),
                 calls: Mutex::new(Vec::new()),
             }
         }
@@ -5894,7 +6078,12 @@ mod tests {
     impl ProjectServiceHealthProbe for RestartTestHealthProbe {
         fn is_ready(&self, _endpoint: &MetadataApiEndpoint, pid: i32) -> bool {
             self.calls.lock().expect("health calls").push(pid);
-            self.ready
+            let mut responses = self.responses.lock().expect("health responses");
+            if responses.len() > 1 {
+                responses.remove(0)
+            } else {
+                responses.first().copied().unwrap_or(false)
+            }
         }
     }
 
