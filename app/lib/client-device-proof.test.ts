@@ -2,21 +2,24 @@ import { p256 } from "@noble/curves/nist.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const storage = new Map<string, string>();
+const storageMock = vi.hoisted(() => ({
+  values: new Map<string, string>(),
+  getItem: vi.fn<(key: string) => Promise<string | null>>(),
+  setItem: vi.fn<(key: string, value: string) => Promise<void>>(),
+}));
 
 vi.mock("react-native", () => ({ Platform: { OS: "web" } }));
+vi.mock("expo-constants", () => ({ default: { expoConfig: { version: "test" } } }));
 vi.mock("@react-native-async-storage/async-storage", () => ({
   default: {
-    getItem: vi.fn(async (key: string) => storage.get(key) ?? null),
-    setItem: vi.fn(async (key: string, value: string) => {
-      storage.set(key, value);
-    }),
+    getItem: storageMock.getItem,
+    setItem: storageMock.setItem,
   },
 }));
 vi.mock("expo-secure-store", () => ({
-  getItemAsync: vi.fn(async (key: string) => storage.get(key) ?? null),
+  getItemAsync: vi.fn(async (key: string) => storageMock.values.get(key) ?? null),
   setItemAsync: vi.fn(async (key: string, value: string) => {
-    storage.set(key, value);
+    storageMock.values.set(key, value);
   }),
 }));
 vi.mock("expo-crypto", () => ({
@@ -31,7 +34,31 @@ import { deviceProofMessage, getClientDeviceProof } from "@/lib/client-device-pr
 
 describe("client device proof", () => {
   beforeEach(() => {
-    storage.clear();
+    storageMock.values.clear();
+    storageMock.getItem.mockImplementation(
+      async (key: string) => storageMock.values.get(key) ?? null,
+    );
+    storageMock.setItem.mockImplementation(async (key: string, value: string) => {
+      storageMock.values.set(key, value);
+    });
+  });
+
+  it("does not mint a new proof key when storage read fails", async () => {
+    storageMock.getItem.mockRejectedValueOnce(new Error("keychain denied"));
+    const device = {
+      deviceId: "client_1",
+      kind: "web" as const,
+      name: "Web browser",
+      platform: "web",
+    };
+
+    await expect(getClientDeviceProof(device)).rejects.toThrow(
+      /Client device storage read failed for proof key: keychain denied/,
+    );
+    expect(storageMock.setItem).not.toHaveBeenCalledWith(
+      "aimux.clientDeviceProofKey.v1",
+      expect.any(String),
+    );
   });
 
   it("creates a stored P-256 proof that verifies with the exported public key", async () => {
@@ -51,7 +78,7 @@ describe("client device proof", () => {
     expect(
       p256.verify(base64UrlDecode(proof.signature), digest, publicKey, { prehash: false }),
     ).toBe(true);
-    expect(storage.size).toBe(1);
+    expect(storageMock.values.size).toBe(1);
   });
 });
 

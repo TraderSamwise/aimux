@@ -5,7 +5,7 @@ import * as Crypto from "expo-crypto";
 import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
 
-import type { ClientDeviceInfo } from "@/lib/client-device";
+import { ClientDeviceStorageError, type ClientDeviceInfo } from "@/lib/client-device";
 
 const DEVICE_KEY_STORE_KEY = "aimux.clientDeviceProofKey.v1";
 
@@ -73,26 +73,54 @@ async function getOrCreateDeviceProofKey(): Promise<StoredDeviceProofKey> {
 }
 
 async function readStoredKey(): Promise<StoredDeviceProofKey | null> {
+  let raw: string | null;
   try {
-    const raw =
+    raw =
       Platform.OS === "web"
         ? await AsyncStorage.getItem(DEVICE_KEY_STORE_KEY)
         : await SecureStore.getItemAsync(DEVICE_KEY_STORE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<StoredDeviceProofKey>;
-    if (
-      parsed.version !== 1 ||
-      typeof parsed.privateKey !== "string" ||
-      !isValidPublicJwk(parsed.publicKeyJwk)
-    ) {
-      return null;
-    }
-    const privateKey = base64UrlDecode(parsed.privateKey);
-    if (!p256.utils.isValidSecretKey(privateKey)) return null;
-    return { version: 1, privateKey: parsed.privateKey, publicKeyJwk: parsed.publicKeyJwk };
-  } catch {
-    return null;
+  } catch (error) {
+    throw new ClientDeviceStorageError(
+      `Client device storage read failed for proof key: ${errorMessage(error)}`,
+      {
+        cause: error,
+      },
+    );
   }
+  if (!raw) return null;
+  let parsed: Partial<StoredDeviceProofKey>;
+  try {
+    parsed = JSON.parse(raw) as Partial<StoredDeviceProofKey>;
+  } catch (error) {
+    throw new ClientDeviceStorageError(
+      `Stored client device proof key is unreadable: ${errorMessage(error)}`,
+      {
+        cause: error,
+      },
+    );
+  }
+  if (
+    parsed.version !== 1 ||
+    typeof parsed.privateKey !== "string" ||
+    !isValidPublicJwk(parsed.publicKeyJwk)
+  ) {
+    throw new ClientDeviceStorageError("Stored client device proof key is invalid");
+  }
+  let privateKey: Uint8Array;
+  try {
+    privateKey = base64UrlDecode(parsed.privateKey);
+  } catch (error) {
+    throw new ClientDeviceStorageError(
+      `Stored client device proof key is unreadable: ${errorMessage(error)}`,
+      {
+        cause: error,
+      },
+    );
+  }
+  if (!p256.utils.isValidSecretKey(privateKey)) {
+    throw new ClientDeviceStorageError("Stored client device proof key has an invalid private key");
+  }
+  return { version: 1, privateKey: parsed.privateKey, publicKeyJwk: parsed.publicKeyJwk };
 }
 
 async function writeStoredKey(key: StoredDeviceProofKey): Promise<void> {
@@ -155,4 +183,8 @@ function base64UrlDecode(value: string): Uint8Array {
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
   return bytes;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

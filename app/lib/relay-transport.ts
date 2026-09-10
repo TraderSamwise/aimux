@@ -1,4 +1,8 @@
-import { getClientDeviceInfo, type ClientDeviceInfo } from "@/lib/client-device";
+import {
+  getClientDeviceInfo,
+  isClientDeviceStorageError,
+  type ClientDeviceInfo,
+} from "@/lib/client-device";
 import {
   encodeDevicePublicKey,
   getClientDeviceProof,
@@ -76,7 +80,8 @@ export type RelayStatus =
   | "device_pending"
   | "daemon_offline"
   | "relay_unavailable"
-  | "auth_failed";
+  | "auth_failed"
+  | "client_storage_error";
 
 export type RelayStatusListener = (status: RelayStatus) => void;
 export type RelayPendingApprovalListener = (
@@ -175,7 +180,12 @@ export class RelayTransport {
       const deviceProof = await (this.options.getDeviceProof ?? getClientDeviceProof)(deviceInfo);
       const url = this.clientConnectUrl(deviceInfo, deviceProof);
       this.ws = new WebSocket(url, ["aimux", `${TOKEN_PROTOCOL_PREFIX}${token}`]);
-    } catch {
+    } catch (error) {
+      if (isClientDeviceStorageError(error)) {
+        console.error("relay client device storage failed:", error);
+        this.setStatus("client_storage_error");
+        return;
+      }
       this.setStatus("disconnected");
       this.scheduleRetry();
       return;
