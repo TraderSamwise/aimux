@@ -38,6 +38,7 @@ pub struct LifecycleOrphanPlan {
     pub process_pids: Vec<i32>,
     pub tmux_sessions: Vec<String>,
     pub tmux_windows: Vec<String>,
+    pub errors: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -82,7 +83,7 @@ pub trait LifecycleOrphanRuntime {
     fn list_tmux_windows(&mut self, session_name: &str) -> Vec<TmuxWindowInfo>;
     fn kill_tmux_window(&mut self, target: &TmuxTarget) -> Result<(), String>;
     fn kill_tmux_session(&mut self, session_name: &str) -> Result<(), String>;
-    fn list_live_tmux_pane_pids(&mut self) -> BTreeSet<i32>;
+    fn list_live_tmux_pane_pids(&mut self) -> Result<BTreeSet<i32>, String>;
 }
 
 pub struct SystemLifecycleOrphanRuntime {
@@ -156,7 +157,7 @@ impl LifecycleOrphanRuntime for SystemLifecycleOrphanRuntime {
         self.tmux.kill_session(session_name)
     }
 
-    fn list_live_tmux_pane_pids(&mut self) -> BTreeSet<i32> {
+    fn list_live_tmux_pane_pids(&mut self) -> Result<BTreeSet<i32>, String> {
         list_live_tmux_pane_pids()
     }
 }
@@ -195,6 +196,17 @@ pub fn plan_lifecycle_validation_orphans_with_scope(
     project_service_scope: Option<&ProjectServiceOrphanScope>,
 ) -> LifecycleOrphanPlan {
     let tmux_available = runtime.tmux_is_available();
+    let live_pane_pids = match live_tmux_pane_pids_for_cleanup(runtime, tmux_available) {
+        Ok(live_pane_pids) => live_pane_pids,
+        Err(error) => {
+            return LifecycleOrphanPlan {
+                process_pids: Vec::new(),
+                tmux_sessions: Vec::new(),
+                tmux_windows: Vec::new(),
+                errors: vec![error],
+            };
+        }
+    };
     let (tmux_sessions, tmux_windows) =
         if tmux_available {
             let tmux_sessions =
@@ -210,11 +222,6 @@ pub fn plan_lifecycle_validation_orphans_with_scope(
         };
     let processes = runtime.list_processes();
     let parents = runtime.list_process_parents();
-    let live_pane_pids = if tmux_available {
-        runtime.list_live_tmux_pane_pids()
-    } else {
-        BTreeSet::new()
-    };
     let process_pids = candidate_process_pids(
         runtime,
         &processes,
@@ -227,6 +234,7 @@ pub fn plan_lifecycle_validation_orphans_with_scope(
         process_pids,
         tmux_sessions,
         tmux_windows,
+        errors: Vec::new(),
     }
 }
 
@@ -248,6 +256,13 @@ pub fn cleanup_lifecycle_validation_orphans(
     };
 
     let tmux_available = runtime.tmux_is_available();
+    let live_pane_pids = match live_tmux_pane_pids_for_cleanup(runtime, tmux_available) {
+        Ok(live_pane_pids) => live_pane_pids,
+        Err(error) => {
+            result.errors.push(error);
+            return result;
+        }
+    };
     if tmux_available {
         let mut killed_sessions = BTreeSet::new();
         for session_name in unique_strings(runtime.list_tmux_session_names()) {
@@ -288,11 +303,6 @@ pub fn cleanup_lifecycle_validation_orphans(
 
     let processes = runtime.list_processes();
     let parents = runtime.list_process_parents();
-    let live_pane_pids = if tmux_available {
-        runtime.list_live_tmux_pane_pids()
-    } else {
-        BTreeSet::new()
-    };
     let candidate_pids = candidate_process_pids(
         runtime,
         &processes,
@@ -392,6 +402,18 @@ pub fn cleanup_lifecycle_validation_orphans(
     result.tmux_windows = unique_strings(result.tmux_windows);
     result.failed_tmux_windows = unique_strings(result.failed_tmux_windows);
     result
+}
+
+fn live_tmux_pane_pids_for_cleanup(
+    runtime: &mut impl LifecycleOrphanRuntime,
+    tmux_available: bool,
+) -> Result<BTreeSet<i32>, String> {
+    if !tmux_available {
+        return Ok(BTreeSet::new());
+    }
+    runtime.list_live_tmux_pane_pids().map_err(|error| {
+        format!("skipped lifecycle orphan cleanup: tmux live pane inventory failed: {error}")
+    })
 }
 
 fn has_direct_validation_native_node_entry(args: &str) -> bool {
@@ -751,23 +773,27 @@ fn wait_for_pid_exit(
     !runtime.is_pid_alive(pid)
 }
 
-fn list_live_tmux_pane_pids() -> BTreeSet<i32> {
-    let Ok(output) = tmux_command_from_env()
+fn list_live_tmux_pane_pids() -> Result<BTreeSet<i32>, String> {
+    let output = tmux_command_from_env()
         .args(["list-panes", "-a", "-F", "#{pane_pid}"])
         .env_remove("TMUX")
         .env_remove("TMUX_PANE")
         .output()
-    else {
-        return BTreeSet::new();
-    };
+        .map_err(|error| format!("failed to run tmux list-panes: {error}"))?;
     if !output.status.success() {
-        return BTreeSet::new();
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        let detail = if stderr.is_empty() {
+            output.status.to_string()
+        } else {
+            format!("{}: {stderr}", output.status)
+        };
+        return Err(format!("tmux list-panes failed: {detail}"));
     }
-    String::from_utf8_lossy(&output.stdout)
+    Ok(String::from_utf8_lossy(&output.stdout)
         .lines()
         .filter_map(|line| line.trim().parse::<i32>().ok())
         .filter(|pid| *pid > 0)
-        .collect()
+        .collect())
 }
 
 fn kill_pid(pid: i32, signal: &str) -> Result<(), String> {
@@ -835,6 +861,7 @@ mod tests {
         tmux_options: HashMap<(String, String), String>,
         tmux_windows: HashMap<String, Vec<TmuxWindowInfo>>,
         live_pane_pids: BTreeSet<i32>,
+        live_pane_pids_error: Option<String>,
         killed_pids: Vec<(i32, String)>,
         killed_sessions: Vec<String>,
         killed_windows: Vec<String>,
@@ -957,8 +984,11 @@ mod tests {
             Ok(())
         }
 
-        fn list_live_tmux_pane_pids(&mut self) -> BTreeSet<i32> {
-            self.live_pane_pids.clone()
+        fn list_live_tmux_pane_pids(&mut self) -> Result<BTreeSet<i32>, String> {
+            if let Some(error) = self.live_pane_pids_error.clone() {
+                return Err(error);
+            }
+            Ok(self.live_pane_pids.clone())
         }
     }
 
@@ -1166,6 +1196,101 @@ mod tests {
         assert_eq!(
             runtime.killed_pids,
             vec![(11, "SIGTERM".into()), (12, "SIGTERM".into())]
+        );
+    }
+
+    #[test]
+    fn lifecycle_cleanup_skips_all_reaping_when_live_pane_inventory_fails() {
+        let mut cleanup_runtime = FakeLifecycleRuntime {
+            processes: vec![
+                ProcessArgsEntry {
+                    pid: 11,
+                    args: "/Users/sam/.aimux/native/local-old/bin/aimux __dashboard-internal-native"
+                        .into(),
+                },
+                ProcessArgsEntry {
+                    pid: 404,
+                    args: "/Users/sam/.aimux/native/local-current/native/darwin-arm64/aimux __project-service-internal --project-id sam-home --project-root /Users/sam".into(),
+                },
+            ],
+            parents: BTreeMap::from([(11, 111), (111, 1)]),
+            read_args_with_env: HashMap::from([(
+                404,
+                vec!["/Users/sam/.aimux/native/local-current/native/darwin-arm64/aimux __project-service-internal --project-id sam-home --project-root /Users/sam AIMUX_HOME=/Users/sam/.aimux".into()],
+            )]),
+            alive_pids: HashSet::from([11, 404]),
+            tmux_available: true,
+            tmux_sessions: vec![
+                "aimux-aimux-lifecycle-validate25".into(),
+                "aimux-sam-5e9c1a8e1d4e".into(),
+            ],
+            live_pane_pids_error: Some("tmux list-panes exited 1".into()),
+            ..Default::default()
+        }
+        .option(
+            "aimux-sam-5e9c1a8e1d4e",
+            "@aimux-project-root",
+            "/Users/sam",
+        )
+        .option(
+            "aimux-sam-5e9c1a8e1d4e",
+            TMUX_RUNTIME_OWNER_OPTION,
+            "owner-new",
+        )
+        .dashboard_window("aimux-sam-5e9c1a8e1d4e", "@1190")
+        .with_kill_removing_alive();
+        let scope = ProjectServiceOrphanScope {
+            aimux_home: "/Users/sam/.aimux".into(),
+            runtime_owner: "owner-new".into(),
+            recognized_project_roots: BTreeSet::from(["/Users/sam/cs/aimux".into()]),
+        };
+
+        let result = cleanup_lifecycle_validation_orphans(
+            &mut cleanup_runtime,
+            CleanupLifecycleOrphansOptions {
+                current_pid: 999,
+                process_exit_timeout_ms: 0,
+                process_kill_grace_ms: 0,
+                project_service_scope: Some(scope.clone()),
+            },
+        );
+
+        assert!(result.attempted_process_pids.is_empty());
+        assert!(result.attempted_tmux_sessions.is_empty());
+        assert!(result.attempted_tmux_windows.is_empty());
+        assert!(cleanup_runtime.killed_pids.is_empty());
+        assert!(cleanup_runtime.killed_sessions.is_empty());
+        assert!(cleanup_runtime.killed_windows.is_empty());
+        assert_eq!(
+            result.errors,
+            vec![
+                "skipped lifecycle orphan cleanup: tmux live pane inventory failed: tmux list-panes exited 1"
+            ]
+        );
+
+        let mut plan_runtime = FakeLifecycleRuntime {
+            tmux_available: true,
+            tmux_sessions: vec!["aimux-aimux-lifecycle-validate25".into()],
+            live_pane_pids_error: Some("tmux list-panes exited 1".into()),
+            ..Default::default()
+        }
+        .option(
+            "aimux-aimux-lifecycle-validate25",
+            "@aimux-project-state-dir",
+            "/tmp/aimux-home-validate25/state",
+        );
+
+        let plan =
+            plan_lifecycle_validation_orphans_with_scope(&mut plan_runtime, 999, Some(&scope));
+
+        assert!(plan.process_pids.is_empty());
+        assert!(plan.tmux_sessions.is_empty());
+        assert!(plan.tmux_windows.is_empty());
+        assert_eq!(
+            plan.errors,
+            vec![
+                "skipped lifecycle orphan cleanup: tmux live pane inventory failed: tmux list-panes exited 1"
+            ]
         );
     }
 
