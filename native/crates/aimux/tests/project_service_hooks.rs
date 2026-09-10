@@ -143,7 +143,7 @@ fn claude_notification_and_stop_hooks_update_events() {
     assert_eq!(snapshot.notifications[0]["kind"], "needs_input");
     assert_eq!(
         snapshot.notifications[0]["body"],
-        "Claude is waiting for your input"
+        "Needs input: claude-1 - Claude is waiting for your input"
     );
     cleanup(project);
 }
@@ -159,6 +159,7 @@ fn claude_hook_backend_id_updates_the_topology_session_row() {
         Some("claude-backend-1"),
     );
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids(["@1"])
         .with_request_headers([("x-aimux-session-id", "claude-backend-1")]);
 
     let response = route_project_service_request(
@@ -243,6 +244,38 @@ fn claude_hook_backend_id_updates_the_topology_session_row() {
     assert!(plain.contains("Done"));
     assert!(plain.contains("output "));
     assert!(plain.contains("2 unseen"));
+    cleanup(project);
+}
+
+#[test]
+fn claude_hook_prefers_live_duplicate_when_backend_id_matches_stale_row() {
+    let project = temp_project("claude-backend-live-duplicate");
+    let state_dir = project.join("state");
+    write_duplicate_hook_topology(&project, &state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids(["@2"]);
+
+    let response = route_project_service_request(
+        &context,
+        "POST",
+        "/hooks/claude?action=notification&sessionId=claude-pd1hl2",
+        Some(&json!({
+            "session_id": "94760225-52eb-4f6d-973d-e1393fea8885",
+            "message": "Claude is waiting for your input"
+        })),
+    );
+    assert_eq!(response.status, 200);
+
+    let state = load_metadata_state(&state_dir);
+    assert!(state.sessions.contains_key("claude-gqaapg"));
+    assert!(!state.sessions.contains_key("claude-pd1hl2"));
+    let snapshot = list_notification_snapshot(&state_dir, NotificationQuery::default());
+    assert_eq!(snapshot.total, 1);
+    assert_eq!(snapshot.notifications[0]["sessionId"], "claude-gqaapg");
+    assert_eq!(
+        snapshot.notifications[0]["body"],
+        "Needs input: claude @ Main Checkout - Claude is waiting for your input"
+    );
     cleanup(project);
 }
 
@@ -371,6 +404,105 @@ fn write_hook_topology(
             "updatedAt": "2026-09-08T00:00:00.000Z"
         }],
         "sessions": [session],
+        "services": [],
+        "worktrees": [{
+            "id": "main",
+            "rigId": "rig-1",
+            "path": project_root,
+            "name": "Main Checkout",
+            "status": "active",
+            "branch": "master",
+            "createdAt": "2026-09-08T00:00:00.000Z",
+            "updatedAt": "2026-09-08T00:00:00.000Z"
+        }],
+        "worktreeGraveyard": [],
+        "teamRoles": [],
+        "remoteClients": [],
+        "lifecycleOperations": [],
+        "exchangeRefs": []
+    });
+    write_runtime_topology(runtime_topology_path(state_dir), &topology).expect("write topology");
+}
+
+fn write_duplicate_hook_topology(project: &std::path::Path, state_dir: &std::path::Path) {
+    create_dir_all(state_dir).expect("create state dir");
+    let project_root = project.to_string_lossy().into_owned();
+    let backend_id = "94760225-52eb-4f6d-973d-e1393fea8885";
+    let topology = json!({
+        "version": 1,
+        "generatedAt": "2026-09-08T00:00:00.000Z",
+        "rigs": [{
+            "id": "rig-1",
+            "name": "aimux",
+            "projectRoot": project_root.clone(),
+            "createdAt": "2026-09-08T00:00:00.000Z",
+            "updatedAt": "2026-09-08T00:00:00.000Z"
+        }],
+        "nodes": [
+            {
+                "id": "agent-node-stale",
+                "rigId": "rig-1",
+                "logicalId": "claude-pd1hl2",
+                "toolConfigKey": "claude",
+                "cwd": project_root.clone(),
+                "createdAt": "2026-09-08T00:00:00.000Z"
+            },
+            {
+                "id": "agent-node-live",
+                "rigId": "rig-1",
+                "logicalId": "claude-gqaapg",
+                "toolConfigKey": "claude",
+                "cwd": project_root.clone(),
+                "createdAt": "2026-09-08T00:00:01.000Z"
+            }
+        ],
+        "edges": [],
+        "bindings": [
+            {
+                "id": "tmux:stale",
+                "nodeId": "agent-node-stale",
+                "tmuxSession": "aimux-test",
+                "tmuxWindowId": "@1",
+                "tmuxWindowIndex": 1,
+                "tmuxWindowName": "claude",
+                "updatedAt": "2026-09-08T00:00:00.000Z"
+            },
+            {
+                "id": "tmux:live",
+                "nodeId": "agent-node-live",
+                "tmuxSession": "aimux-test",
+                "tmuxWindowId": "@2",
+                "tmuxWindowIndex": 2,
+                "tmuxWindowName": "claude",
+                "updatedAt": "2026-09-08T00:00:01.000Z"
+            }
+        ],
+        "sessions": [
+            {
+                "id": "claude-pd1hl2",
+                "nodeId": "agent-node-stale",
+                "status": "offline",
+                "tool": "claude",
+                "toolConfigKey": "claude",
+                "command": "claude",
+                "backendSessionId": backend_id,
+                "worktreePath": project_root.clone(),
+                "createdAt": "2026-09-08T00:00:00.000Z",
+                "updatedAt": "2026-09-08T00:00:00.000Z"
+            },
+            {
+                "id": "claude-gqaapg",
+                "nodeId": "agent-node-live",
+                "status": "running",
+                "tool": "claude",
+                "toolConfigKey": "claude",
+                "command": "claude",
+                "backendSessionId": backend_id,
+                "worktreePath": project_root.clone(),
+                "createdAt": "2026-09-08T00:00:01.000Z",
+                "updatedAt": "2026-09-08T00:00:01.000Z"
+            }
+        ],
         "services": [],
         "worktrees": [{
             "id": "main",

@@ -188,7 +188,14 @@ fn runtime_event_dispatcher_publishes_alert_and_project_update_events() {
     assert_eq!(events[0].event["type"], "alert");
     assert_eq!(events[0].event["kind"], "needs_input");
     assert_eq!(events[0].event["sessionId"], "codex-1");
-    assert_eq!(events[0].event["message"], "Approve the command");
+    assert_eq!(
+        events[0].event["title"],
+        project.file_name().unwrap().to_str().unwrap()
+    );
+    assert_eq!(
+        events[0].event["message"],
+        "Needs input: codex-1 - Approve the command"
+    );
     assert!(
         events[0].event["notificationId"]
             .as_str()
@@ -232,7 +239,14 @@ fn runtime_set_attention_dispatcher_publishes_alert_and_project_update_events() 
     assert_eq!(events[0].event["type"], "alert");
     assert_eq!(events[0].event["kind"], "needs_input");
     assert_eq!(events[0].event["sessionId"], "codex-1");
-    assert_eq!(events[0].event["message"], "Agent is waiting for input.");
+    assert_eq!(
+        events[0].event["title"],
+        project.file_name().unwrap().to_str().unwrap()
+    );
+    assert_eq!(
+        events[0].event["message"],
+        "Needs input: codex-1 - Agent is waiting for input."
+    );
     assert!(
         events[0].event["notificationId"]
             .as_str()
@@ -409,7 +423,10 @@ fn runtime_event_records_focused_alerts_as_read() {
     );
     assert_eq!(snapshot.total, 1);
     assert_eq!(snapshot.unread_count, 0);
-    assert_eq!(snapshot.notifications[0]["body"], "Approve the command");
+    assert_eq!(
+        snapshot.notifications[0]["body"],
+        "Needs input: codex-1 - Approve the command"
+    );
     assert_eq!(snapshot.notifications[0]["unread"], false);
     cleanup(project);
 }
@@ -537,7 +554,10 @@ fn runtime_event_maps_completion_failure_thread_and_alert_state() {
     assert_eq!(snapshot.unread_count, 1);
     assert_eq!(snapshot.notifications[0]["kind"], "task_failed");
     assert_eq!(snapshot.notifications[0]["dedupeKey"], "error:codex-1");
-    assert_eq!(snapshot.notifications[0]["body"], "Tests failed");
+    assert_eq!(
+        snapshot.notifications[0]["body"],
+        "Agent or service errored: codex-1 errored - Tests failed"
+    );
     cleanup(project);
 }
 
@@ -655,7 +675,10 @@ fn runtime_event_dispatcher_updates_history_alerts_and_focused_unread_state() {
     assert_eq!(snapshot.unread_count, 0);
     assert_eq!(snapshot.notifications[0]["kind"], "needs_input");
     assert_eq!(snapshot.notifications[0]["unread"], false);
-    assert_eq!(snapshot.notifications[0]["body"], "Approve the command");
+    assert_eq!(
+        snapshot.notifications[0]["body"],
+        "Needs input: codex-1 - Approve the command"
+    );
     cleanup(project);
 }
 
@@ -715,16 +738,27 @@ fn runtime_event_alerts_include_project_and_worktree_display_context() {
     );
     assert_eq!(notification["worktreeName"], "feature-a");
     assert_eq!(notification["branch"], "feat/a");
-    assert_eq!(notification["categoryLabel"], "Needs Input");
-    assert_eq!(notification["reasonLabel"], "Agent needs input");
+    assert_eq!(
+        notification["title"],
+        format!(
+            "{} / feature-a (feat/a)",
+            project.file_name().unwrap().to_str().unwrap()
+        )
+    );
+    assert_eq!(
+        notification["body"],
+        "Needs input: codex-1 @ feature-a - Approve the command"
+    );
+    assert_eq!(notification["categoryLabel"], "Needs input");
+    assert_eq!(notification["reasonLabel"], "Agent is waiting for input");
 
     let events = context.project_events.events_since(0, None);
     assert_eq!(events[0].event["type"], "alert");
     assert_eq!(events[0].event["projectName"], notification["projectName"]);
     assert_eq!(events[0].event["projectRoot"], notification["projectRoot"]);
     assert_eq!(events[0].event["worktreeName"], "feature-a");
-    assert_eq!(events[0].event["categoryLabel"], "Needs Input");
-    assert_eq!(events[0].event["reasonLabel"], "Agent needs input");
+    assert_eq!(events[0].event["categoryLabel"], "Needs input");
+    assert_eq!(events[0].event["reasonLabel"], "Agent is waiting for input");
     cleanup(project);
 }
 
@@ -777,7 +811,7 @@ fn runtime_event_notify_records_custom_alert_without_derived_state_change() {
         },
     );
     assert_eq!(snapshot.total, 1);
-    assert_eq!(snapshot.notifications[0]["title"], "watcher");
+    assert_eq!(snapshot.notifications[0]["title"], "[Activity] state");
     assert_eq!(snapshot.notifications[0]["kind"], "notification");
     assert_eq!(
         snapshot.notifications[0]["dedupeKey"],

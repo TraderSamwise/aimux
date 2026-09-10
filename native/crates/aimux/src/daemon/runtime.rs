@@ -2552,6 +2552,13 @@ impl DaemonJsonRouteRuntime for RealDaemonRuntime {
     /// This used to answer `suppressed: relay_unavailable` unconditionally,
     /// which was true only because nothing ever held a relay connection.
     fn push_notification(&mut self, payload: &Value) -> Value {
+        if let Some(reason) =
+            crate::notification_delivery_guard::external_notification_refusal_reason_for_payload(
+                payload,
+            )
+        {
+            return json!({ "ok": true, "suppressed": true, "reason": reason });
+        }
         let notification = crate::mobile_push_bridge::relay_notification(payload);
         match self.relay.push(&notification) {
             Ok(()) => json!({ "ok": true, "suppressed": false }),

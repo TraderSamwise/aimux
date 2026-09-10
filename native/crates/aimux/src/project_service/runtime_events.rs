@@ -79,7 +79,12 @@ fn route_runtime_event_inner(
         match add_notification(project_state_dir, notification.clone()) {
             Ok(record) => {
                 if let Some(event_bus) = event_bus {
-                    event_bus.publish_alert_from_notification(project_root, &notification, &record);
+                    event_bus.publish_alert_from_notification_with_state_dir(
+                        project_root,
+                        project_state_dir,
+                        &notification,
+                        &record,
+                    );
                 }
             }
             Err(error) => return Some(json_response(500, json!({ "ok": false, "error": error }))),
@@ -141,7 +146,12 @@ fn route_runtime_set_attention_inner(
         match add_notification(project_state_dir, notification.clone()) {
             Ok(record) => {
                 if let Some(event_bus) = event_bus {
-                    event_bus.publish_alert_from_notification(project_root, &notification, &record);
+                    event_bus.publish_alert_from_notification_with_state_dir(
+                        project_root,
+                        project_state_dir,
+                        &notification,
+                        &record,
+                    );
                 }
             }
             Err(error) => return Some(json_response(500, json!({ "ok": false, "error": error }))),
@@ -170,6 +180,8 @@ fn runtime_notification_context(
     let display = context
         .map(|context| resolve_session_display_context(context, session_id, worktree_path))
         .unwrap_or_else(|| NotificationDisplayContext {
+            label: None,
+            command: None,
             worktree_path: worktree_path.map(str::to_owned),
             worktree_name: None,
             branch: None,
@@ -185,6 +197,8 @@ fn contextualize_runtime_notification(
     mut notification: super::notifications::NotificationWriteInput,
     context: RuntimeNotificationContext,
 ) -> super::notifications::NotificationWriteInput {
+    let original_title = notification.title.clone();
+    let original_body = notification.body.clone();
     notification
         .project_name
         .get_or_insert(context.project_name);
@@ -193,15 +207,15 @@ fn contextualize_runtime_notification(
         .get_or_insert(context.project_root);
     notification
         .worktree_path
-        .get_or_insert_with(|| context.display.worktree_path.unwrap_or_default());
+        .get_or_insert_with(|| context.display.worktree_path.clone().unwrap_or_default());
     if notification.worktree_path.as_deref() == Some("") {
         notification.worktree_path = None;
     }
     if notification.worktree_name.is_none() {
-        notification.worktree_name = context.display.worktree_name;
+        notification.worktree_name = context.display.worktree_name.clone();
     }
     if notification.branch.is_none() {
-        notification.branch = context.display.branch;
+        notification.branch = context.display.branch.clone();
     }
     if notification.category_label.is_none() {
         notification.category_label =
@@ -211,25 +225,212 @@ fn contextualize_runtime_notification(
         notification.reason_label =
             Some(runtime_reason_label(notification.kind.as_deref()).to_owned());
     }
+    notification.title = alert_display_title(&notification, &context.display);
+    let kind = notification.kind.as_deref().unwrap_or_default();
+    let subject_title = session_alert_title(
+        kind,
+        notification.session_id.as_deref(),
+        Some(&original_title),
+        &context.display,
+    );
+    let body_reason = if kind == "needs_input" {
+        notification.category_label.as_deref().unwrap_or_default()
+    } else {
+        notification.reason_label.as_deref().unwrap_or_default()
+    };
+    let body_subject = if kind == "needs_input" {
+        session_alert_subject(notification.session_id.as_deref(), &context.display)
+            .unwrap_or_else(|| subject_title.clone())
+    } else {
+        subject_title
+    };
+    notification.body = alert_message_body(body_reason, &body_subject, &original_body);
     notification
 }
 
 fn runtime_category_label(kind: Option<&str>) -> &'static str {
     match kind {
-        Some("needs_input") => "Needs Input",
+        Some("needs_input") => "Needs input",
+        Some("next_step") => "Next step",
+        Some("task_done") => "Done",
         Some("blocked") => "Blocked",
         Some("task_failed") => "Error",
-        _ => "Notification",
+        Some("message_waiting") => "Message",
+        Some("handoff_waiting") => "Handoff",
+        Some("task_assigned") => "Task",
+        Some("review_waiting") => "Review",
+        _ => "Activity",
     }
 }
 
 fn runtime_reason_label(kind: Option<&str>) -> &'static str {
     match kind {
-        Some("needs_input") => "Agent needs input",
-        Some("blocked") => "Agent blocked",
-        Some("task_failed") => "Agent error",
-        _ => "Agent notification",
+        Some("needs_input") => "Agent is waiting for input",
+        Some("next_step") => "Agent stopped after a turn",
+        Some("task_done") => "Agent or service finished",
+        Some("blocked") => "Agent is blocked",
+        Some("task_failed") => "Agent or service errored",
+        Some("message_waiting") => "Message is waiting",
+        Some("handoff_waiting") => "Handoff is waiting",
+        Some("task_assigned") => "Task was assigned",
+        Some("review_waiting") => "Review is waiting",
+        _ => "Notification",
     }
+}
+
+fn alert_display_title(
+    notification: &super::notifications::NotificationWriteInput,
+    context: &NotificationDisplayContext,
+) -> String {
+    let location = alert_location_title(notification, context);
+    if notification.kind.as_deref() == Some("needs_input") {
+        location
+    } else {
+        let category = notification.category_label.as_deref().unwrap_or("Activity");
+        format!("[{category}] {location}")
+    }
+}
+
+fn alert_location_title(
+    notification: &super::notifications::NotificationWriteInput,
+    context: &NotificationDisplayContext,
+) -> String {
+    let project_name = notification.project_name.as_deref().unwrap_or("aimux");
+    let worktree = notification
+        .worktree_name
+        .as_deref()
+        .and_then(trimmed_str)
+        .or(context.worktree_name.as_deref().and_then(trimmed_str));
+    let branch = notification
+        .branch
+        .as_deref()
+        .and_then(trimmed_str)
+        .or(context.branch.as_deref().and_then(trimmed_str));
+    match (worktree, branch) {
+        (Some(worktree), Some(branch)) if branch != worktree => {
+            format!("{project_name} / {worktree} ({branch})")
+        }
+        (Some(worktree), _) => format!("{project_name} / {worktree}"),
+        _ => project_name.to_owned(),
+    }
+}
+
+fn session_alert_subject(
+    session_id: Option<&str>,
+    context: &NotificationDisplayContext,
+) -> Option<String> {
+    let session_id = session_id?;
+    let label = context
+        .label
+        .as_deref()
+        .and_then(trimmed_str)
+        .or(context.command.as_deref().and_then(trimmed_str))
+        .map(str::to_owned)
+        .unwrap_or_else(|| compact_session_id(session_id));
+    let worktree = context.worktree_name.as_deref().and_then(trimmed_str);
+    Some(match worktree {
+        Some(worktree) => format!("{label} @ {worktree}"),
+        None => label,
+    })
+}
+
+fn session_alert_title(
+    kind: &str,
+    session_id: Option<&str>,
+    fallback: Option<&str>,
+    context: &NotificationDisplayContext,
+) -> String {
+    let title = fallback.and_then(trimmed_str);
+    let Some(subject) = session_alert_subject(session_id, context) else {
+        return title.unwrap_or("aimux").to_owned();
+    };
+    match kind {
+        "needs_input" => format!("{subject} needs input"),
+        "next_step" => format!("{subject} ready for next step"),
+        "blocked" => {
+            if title.is_none()
+                || session_id.is_some_and(|id| title == Some(format!("{id} is blocked").as_str()))
+            {
+                format!("{subject} is blocked")
+            } else {
+                title.unwrap_or_default().to_owned()
+            }
+        }
+        "task_failed" => {
+            if title.is_none()
+                || session_id.is_some_and(|id| {
+                    title == Some(format!("{id} errored").as_str())
+                        || title == Some(format!("{id} failed").as_str())
+                })
+            {
+                format!("{subject} errored")
+            } else {
+                title.unwrap_or_default().to_owned()
+            }
+        }
+        "task_done" => {
+            let compact = session_id.map(compact_session_id).unwrap_or_default();
+            let generic = [
+                context.label.as_deref().unwrap_or_default(),
+                context.command.as_deref().unwrap_or_default(),
+                compact.as_str(),
+                "service",
+                "shell",
+            ];
+            if title.is_none() || title.is_some_and(|title| generic.contains(&title)) {
+                format!("{subject} finished")
+            } else {
+                title.unwrap_or_default().to_owned()
+            }
+        }
+        _ => title
+            .map(|title| {
+                if title.contains(&subject) {
+                    title.to_owned()
+                } else if let Some(session_id) = session_id.filter(|id| title.contains(*id)) {
+                    title.replace(session_id, &subject)
+                } else {
+                    format!("{subject}: {title}")
+                }
+            })
+            .unwrap_or(subject),
+    }
+}
+
+fn alert_message_body(reason: &str, subject: &str, message: &str) -> String {
+    let detail = message.trim();
+    let subject = subject.trim();
+    let parts = [reason, subject]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(": ");
+    let comparable_detail = detail.trim_end_matches(['.', '!', '?']);
+    if detail.is_empty() || comparable_detail == reason || detail == subject || detail == parts {
+        if parts.is_empty() {
+            detail.to_owned()
+        } else {
+            parts
+        }
+    } else {
+        format!("{parts} - {detail}")
+    }
+}
+
+fn compact_session_id(session_id: &str) -> String {
+    let Some((head, tail)) = session_id.rsplit_once('-') else {
+        return session_id.to_owned();
+    };
+    if tail.len() >= 4 && tail.chars().all(|ch| ch.is_ascii_alphanumeric()) {
+        head.to_owned()
+    } else {
+        session_id.to_owned()
+    }
+}
+
+fn trimmed_str(value: &str) -> Option<&str> {
+    let trimmed = value.trim();
+    (!trimmed.is_empty()).then_some(trimmed)
 }
 
 fn json_response(status: u16, body: Value) -> ProjectServiceDispatchResponse {

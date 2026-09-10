@@ -10,6 +10,7 @@ use crate::project_api_contract::{
     project_api_views_for_mutation_route,
 };
 
+use super::desktop_alerts::forward_alert_to_desktop_notification;
 use super::dispatcher::project_service_pathname;
 use super::notifications::NotificationWriteInput;
 
@@ -210,6 +211,68 @@ impl ProjectEventBus {
             input.worktree_path.clone(),
         );
     }
+
+    pub fn publish_alert_from_notification_with_state_dir(
+        &self,
+        project_root: &Path,
+        project_state_dir: &Path,
+        input: &NotificationWriteInput,
+        record: &Value,
+    ) {
+        let event = alert_event_from_notification(project_root, input, record);
+        forward_alert_to_desktop_notification(project_root, project_state_dir, &event);
+        // Hand off to the daemon's push route. Nothing here waits on it.
+        crate::mobile_push_bridge::forward_alert_to_mobile_push(&event);
+        self.publish(event);
+        self.publish_project_update(
+            project_root,
+            invalidations::NOTIFICATIONS.to_vec(),
+            "alert".to_owned(),
+            input.session_id.clone(),
+            input.worktree_path.clone(),
+        );
+    }
+}
+
+fn alert_event_from_notification(
+    project_root: &Path,
+    input: &NotificationWriteInput,
+    record: &Value,
+) -> Value {
+    let mut event = Map::new();
+    event.insert(
+        "type".to_owned(),
+        Value::String(event_names::ALERT.to_owned()),
+    );
+    event.insert(
+        "projectId".to_owned(),
+        Value::String(compute_project_id(project_root)),
+    );
+    insert_record_or_now(record, &mut event, "ts", "createdAt");
+    insert_record_string(record, &mut event, "kind", "kind");
+    insert_record_string(record, &mut event, "sessionId", "sessionId");
+    insert_record_string(record, &mut event, "title", "title");
+    insert_record_string_as(record, &mut event, "body", "message");
+    insert_record_string(record, &mut event, "id", "notificationId");
+    insert_record_string(record, &mut event, "projectName", "projectName");
+    insert_record_string(record, &mut event, "projectRoot", "projectRoot");
+    insert_record_string(record, &mut event, "worktreePath", "worktreePath");
+    insert_record_string(record, &mut event, "worktreeName", "worktreeName");
+    insert_record_string(record, &mut event, "branch", "branch");
+    insert_record_string(record, &mut event, "categoryLabel", "categoryLabel");
+    insert_record_string(record, &mut event, "reasonLabel", "reasonLabel");
+    insert_record_string(record, &mut event, "dedupeKey", "dedupeKey");
+    if input.force_notify {
+        event.insert("forceNotify".to_owned(), Value::Bool(true));
+    }
+    if let Some(interaction) = record
+        .get("interaction")
+        .cloned()
+        .filter(|value| !value.is_null())
+    {
+        event.insert("interaction".to_owned(), interaction);
+    }
+    Value::Object(event)
 }
 
 fn events_since_locked(

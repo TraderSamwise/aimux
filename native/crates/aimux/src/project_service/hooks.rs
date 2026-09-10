@@ -152,13 +152,61 @@ fn resolve_hook_session_id(
         Ok(topology) => topology,
         Err(_) => return explicit_session_id.to_owned(),
     };
-    list_topology_session_states(&topology, None)
-        .into_iter()
-        .find(|session| {
+    let sessions = list_topology_session_states(&topology, None);
+    if let Some(explicit) = sessions.iter().find(|session| {
+        session.get("id").and_then(Value::as_str) == Some(explicit_session_id)
+            && backend_matches_or_missing(session, backend_session_id)
+            && session_is_live_for_hook(context, session)
+    }) {
+        if let Some(id) = explicit.get("id").and_then(Value::as_str) {
+            return id.to_owned();
+        }
+    }
+    sessions
+        .iter()
+        .filter(|session| {
             session.get("backendSessionId").and_then(Value::as_str) == Some(backend_session_id)
         })
+        .max_by_key(|session| session_match_score(context, session))
         .and_then(|session| session.get("id").and_then(Value::as_str).map(str::to_owned))
         .unwrap_or_else(|| explicit_session_id.to_owned())
+}
+
+fn backend_matches_or_missing(session: &Value, backend_session_id: &str) -> bool {
+    session
+        .get("backendSessionId")
+        .and_then(Value::as_str)
+        .is_none_or(|existing| existing.trim().is_empty() || existing == backend_session_id)
+}
+
+fn session_match_score(context: &ProjectServiceRequestContext, session: &Value) -> i32 {
+    if session_is_live_for_hook(context, session) {
+        2
+    } else if !matches!(
+        session.get("status").and_then(Value::as_str),
+        Some("offline" | "exited")
+    ) {
+        1
+    } else {
+        0
+    }
+}
+
+fn session_is_live_for_hook(context: &ProjectServiceRequestContext, session: &Value) -> bool {
+    if matches!(
+        session.get("status").and_then(Value::as_str),
+        Some("offline" | "exited")
+    ) {
+        return false;
+    }
+    let Some(live_window_ids) = context.live_window_ids() else {
+        return true;
+    };
+    session
+        .get("tmuxTarget")
+        .and_then(|target| target.get("windowId"))
+        .and_then(Value::as_str)
+        .is_some_and(|window_id| live_window_ids.contains(window_id))
 }
 
 fn record_hook_backend_session_id(

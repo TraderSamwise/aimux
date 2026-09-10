@@ -8,6 +8,7 @@ pub mod builtin_metadata_task;
 pub mod controls;
 pub mod coordination_mutations;
 pub mod coordination_worklist;
+pub mod desktop_alerts;
 pub mod desktop_state;
 pub mod dispatcher;
 pub mod event_streams;

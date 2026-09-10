@@ -107,6 +107,20 @@ fn derives_bundled_helper_candidates_from_aimux_root() {
 }
 
 #[test]
+fn macos_missing_helper_fails_closed_instead_of_osascript() {
+    let _lock = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let _guard = EnvGuard::new("missing-helper");
+
+    let report = build_desktop_notifier_doctor_report();
+
+    if report.platform == "macos" {
+        assert_eq!(report.transport, DesktopNotificationTransport::Disabled);
+        assert_eq!(report.helper_path, None);
+        assert!(!render_desktop_notifier_doctor_report(&report).contains("osascript"));
+    }
+}
+
+#[test]
 fn reports_disabled_and_does_not_spawn_transport() {
     let _lock = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let _guard = EnvGuard::new("disabled");
@@ -128,7 +142,7 @@ fn reports_disabled_and_does_not_spawn_transport() {
 }
 
 #[test]
-fn awaits_mac_helper_delivery_for_diagnostic_sends() {
+fn refuses_cargo_test_harness_before_mac_helper_delivery() {
     let _lock = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let guard = EnvGuard::new("send-helper");
     let expected_args = "--title aimux --message agent waiting --open-url aimux:///agent/codex-1/chat?notificationId=notice+1 --sound";
@@ -150,14 +164,9 @@ fn awaits_mac_helper_delivery_for_diagnostic_sends() {
         deep_link_url: Some(" aimux:///agent/codex-1/chat?notificationId=notice+1 ".into()),
     });
 
-    assert_eq!(result.transport, DesktopNotificationTransport::MacHelper);
-    assert_eq!(
-        result.helper_path.as_deref(),
-        Some(path_string(&helper).as_str())
-    );
-    assert!(result.ok);
-    assert_eq!(result.exit_code, Some(0));
-    assert_eq!(result.stdout.as_deref(), Some("delivered"));
+    assert_eq!(result.transport, DesktopNotificationTransport::Disabled);
+    assert!(!result.ok);
+    assert_eq!(result.error.as_deref(), Some("cargo test harness"));
 }
 
 #[test]

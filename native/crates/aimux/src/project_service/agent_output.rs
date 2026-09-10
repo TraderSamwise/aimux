@@ -790,11 +790,14 @@ fn write_osc_notifications(
             ..NotificationWriteInput::default()
         };
         let record = upsert_notification(&project_state_dir, input.clone())?;
-        context.project_events.publish_alert_from_notification(
-            context.project_root(),
-            &input,
-            &record,
-        );
+        context
+            .project_events
+            .publish_alert_from_notification_with_state_dir(
+                context.project_root(),
+                &context.project_state_dir(),
+                &input,
+                &record,
+            );
     }
     Ok(())
 }

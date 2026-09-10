@@ -3,6 +3,7 @@
 //! payload shape is worth pinning.
 
 use aimux::mobile_push_bridge::{build_push_payload, relay_notification};
+use aimux::notification_delivery_guard::fixture_notification_refusal_reason_for_payload;
 use serde_json::json;
 
 #[test]
@@ -14,11 +15,15 @@ fn an_alert_becomes_a_push_with_its_title_and_message() {
             "kind": "needs_input",
             "sessionId": "claude-a1",
             "projectRoot": "/Users/sam/cs/aimux",
+            "worktreeName": "Main Checkout",
         }),
         "/fallback",
     );
-    assert_eq!(payload["title"], "claude-a1 needs input");
-    assert_eq!(payload["body"], "Agent is waiting for input.");
+    assert_eq!(payload["title"], "Aimux");
+    assert_eq!(
+        payload["body"],
+        "Agent is waiting for input in Main Checkout"
+    );
     assert_eq!(payload["kind"], "needs_input");
     assert_eq!(payload["projectRoot"], "/Users/sam/cs/aimux");
 }
@@ -26,7 +31,7 @@ fn an_alert_becomes_a_push_with_its_title_and_message() {
 #[test]
 fn a_missing_title_falls_back_to_the_product_name_not_an_empty_string() {
     let payload = build_push_payload(&json!({ "message": "something" }), "/fallback");
-    assert_eq!(payload["title"], "aimux");
+    assert_eq!(payload["title"], "Aimux");
 }
 
 #[test]
@@ -69,9 +74,28 @@ fn the_relay_frame_carries_the_fields_the_phone_renders() {
         "/fallback",
     );
     let notification = relay_notification(&payload);
-    assert_eq!(notification["title"], "t");
-    assert_eq!(notification["body"], "m");
+    assert_eq!(notification["title"], "Aimux");
+    assert_eq!(notification["body"], "m in main");
     assert_eq!(notification["sessionId"], "s1");
     assert_eq!(notification["projectName"], "aimux");
     assert_eq!(notification["worktreeName"], "main");
+}
+
+#[test]
+fn fixture_push_payload_is_refused_at_delivery_boundary() {
+    let payload = build_push_payload(
+        &json!({
+            "title": "aimux-rust-project-service-hooks-claude-123-0",
+            "message": "Claude is waiting for your input",
+            "kind": "needs_input",
+            "projectRoot": "/tmp/aimux-rust-project-service-hooks-claude-123-0",
+            "worktreeName": "Main Checkout"
+        }),
+        "/fallback",
+    );
+
+    assert_eq!(
+        fixture_notification_refusal_reason_for_payload(&payload),
+        Some("test fixture project")
+    );
 }

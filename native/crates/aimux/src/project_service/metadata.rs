@@ -248,11 +248,14 @@ fn route_runtime_notify(
     let alert = notification.clone();
     match add_notification(project_state_dir, notification) {
         Ok(record) => {
-            context.project_events.publish_alert_from_notification(
-                context.project_root(),
-                &alert,
-                &record,
-            );
+            context
+                .project_events
+                .publish_alert_from_notification_with_state_dir(
+                    context.project_root(),
+                    &context.project_state_dir(),
+                    &alert,
+                    &record,
+                );
             ok()
         }
         Err(error) => json_response(500, json!({ "ok": false, "error": error })),

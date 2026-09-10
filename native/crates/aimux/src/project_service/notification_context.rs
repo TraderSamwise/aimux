@@ -182,6 +182,34 @@ pub fn is_session_notification_focused(
     })
 }
 
+pub fn should_suppress_notification(project_state_dir: impl AsRef<Path>, event: &Value) -> bool {
+    if event.get("forceNotify") == Some(&Value::Bool(true)) {
+        return false;
+    }
+    let session_id = event
+        .get("sessionId")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let state = load_notification_context_state(project_state_dir);
+    state.contexts.values().any(|value| {
+        let Ok(entry) = serde_json::from_value::<NotificationContextEntry>(value.clone()) else {
+            return false;
+        };
+        if !entry.focused || !is_fresh(&entry) {
+            return false;
+        }
+        if let Some(session_id) = session_id {
+            return is_direct_session_focus(&entry, session_id);
+        }
+        entry
+            .screen
+            .as_deref()
+            .is_some_and(|screen| screen != "dashboard")
+            && !entry.panel_open
+    })
+}
+
 fn empty_state() -> NotificationContextState {
     NotificationContextState {
         version: 1,
@@ -194,6 +222,12 @@ fn is_fresh(entry: &NotificationContextEntry) -> bool {
         return false;
     };
     now_epoch_millis().saturating_sub(updated_at) <= CONTEXT_FRESH_MS
+}
+
+fn is_direct_session_focus(entry: &NotificationContextEntry, session_id: &str) -> bool {
+    entry.session_id.as_deref() == Some(session_id)
+        && entry.screen.as_deref() != Some("dashboard")
+        && !entry.panel_open
 }
 
 fn now_epoch_millis() -> u128 {

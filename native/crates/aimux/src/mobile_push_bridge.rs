@@ -13,6 +13,10 @@ use serde_json::{Map, Value, json};
 
 use crate::desktop_notifier::external_notifications_disabled;
 use crate::launcher_env::DEFAULT_DAEMON_PORT;
+use crate::notification_delivery_format::{
+    external_notification_body, external_notification_title,
+};
+use crate::notification_delivery_guard::external_notification_refusal_reason_for_event;
 
 const PUSH_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -25,16 +29,11 @@ pub fn build_push_payload(event: &Value, project_root_fallback: &str) -> Value {
     let mut payload = Map::new();
     payload.insert(
         "title".to_owned(),
-        Value::String(non_empty(get("title")).unwrap_or("aimux").to_owned()),
+        Value::String(external_notification_title(event)),
     );
     payload.insert(
         "body".to_owned(),
-        Value::String(
-            non_empty(get("message"))
-                .or_else(|| non_empty(get("sessionId")))
-                .unwrap_or(get("kind"))
-                .to_owned(),
-        ),
+        Value::String(external_notification_body(event)),
     );
     for key in [
         "kind",
@@ -67,6 +66,9 @@ pub fn build_push_payload(event: &Value, project_root_fallback: &str) -> Value {
 /// Hand an alert to the daemon's push route. Never blocks the caller.
 pub fn forward_alert_to_mobile_push(event: &Value) {
     if external_notifications_disabled() {
+        return;
+    }
+    if external_notification_refusal_reason_for_event(None, None, event).is_some() {
         return;
     }
     let project_root_fallback = std::env::current_dir()

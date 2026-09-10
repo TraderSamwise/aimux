@@ -3,6 +3,8 @@ use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use crate::notification_delivery_guard::current_process_external_notification_refusal_reason;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DesktopNotificationPayload {
@@ -115,15 +117,10 @@ pub fn send_desktop_notification_and_wait(
     payload: &DesktopNotificationPayload,
 ) -> DesktopNotificationDeliveryResult {
     if external_notifications_disabled() {
-        return DesktopNotificationDeliveryResult {
-            transport: DesktopNotificationTransport::Disabled,
-            helper_path: None,
-            ok: false,
-            exit_code: None,
-            stdout: None,
-            stderr: None,
-            error: Some("disabled".into()),
-        };
+        return disabled_delivery("disabled");
+    }
+    if let Some(reason) = current_process_external_notification_refusal_reason() {
+        return disabled_delivery(reason);
     }
     if std::env::consts::OS == "macos"
         && let Some(helper_path) = find_mac_notifier_helper()
@@ -135,23 +132,7 @@ pub fn send_desktop_notification_and_wait(
             &mac_helper_args(payload),
         );
     }
-    if std::env::consts::OS == "macos" {
-        return run_notification_command(
-            DesktopNotificationTransport::OsaScript,
-            None,
-            "osascript",
-            &osascript_args(payload),
-        );
-    }
-    DesktopNotificationDeliveryResult {
-        transport: DesktopNotificationTransport::OsaScript,
-        helper_path: None,
-        ok: false,
-        exit_code: None,
-        stdout: None,
-        stderr: None,
-        error: Some("desktop notifications are only implemented natively on macOS".into()),
-    }
+    disabled_delivery("macOS notification helper not found")
 }
 
 pub fn build_desktop_notifier_doctor_report() -> DesktopNotifierDoctorReport {
@@ -172,7 +153,7 @@ pub fn build_desktop_notifier_doctor_report() -> DesktopNotifierDoctorReport {
     } else if platform == "macos" && helper_path.is_some() {
         DesktopNotificationTransport::MacHelper
     } else {
-        DesktopNotificationTransport::OsaScript
+        DesktopNotificationTransport::Disabled
     };
     DesktopNotifierDoctorReport {
         platform,
@@ -327,27 +308,6 @@ fn mac_helper_args(payload: &DesktopNotificationPayload) -> Vec<String> {
     args
 }
 
-fn osascript_args(payload: &DesktopNotificationPayload) -> Vec<String> {
-    let sound = if payload.sound {
-        " sound name \"default\""
-    } else {
-        ""
-    };
-    vec![
-        "-e".into(),
-        format!(
-            "display notification {} with title {}{}",
-            apple_script_string(&payload.message),
-            apple_script_string(&payload.title),
-            sound
-        ),
-    ]
-}
-
-fn apple_script_string(value: &str) -> String {
-    format!("{:?}", value)
-}
-
 fn is_mac_notifier_app_executable(candidate: &str) -> bool {
     candidate
         .replace('\\', "/")
@@ -377,6 +337,18 @@ fn transport_name(transport: &DesktopNotificationTransport) -> &'static str {
         DesktopNotificationTransport::MacHelper => "mac-helper",
         DesktopNotificationTransport::OsaScript => "osascript",
         DesktopNotificationTransport::Disabled => "disabled",
+    }
+}
+
+fn disabled_delivery(reason: &str) -> DesktopNotificationDeliveryResult {
+    DesktopNotificationDeliveryResult {
+        transport: DesktopNotificationTransport::Disabled,
+        helper_path: None,
+        ok: false,
+        exit_code: None,
+        stdout: None,
+        stderr: None,
+        error: Some(reason.to_owned()),
     }
 }
 

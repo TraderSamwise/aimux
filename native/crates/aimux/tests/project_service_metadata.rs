@@ -400,10 +400,13 @@ fn runtime_set_attention_updates_derived_attention() {
     );
     assert_eq!(snapshot.total, 1);
     assert_eq!(snapshot.unread_count, 1);
-    assert_eq!(snapshot.notifications[0]["title"], "codex-1 needs input");
+    assert_eq!(
+        snapshot.notifications[0]["title"],
+        project.file_name().unwrap().to_str().unwrap()
+    );
     assert_eq!(
         snapshot.notifications[0]["body"],
-        "Agent is waiting for input."
+        "Needs input: codex-1 - Agent is waiting for input."
     );
     assert_eq!(
         snapshot.notifications[0]["dedupeKey"],
@@ -811,8 +814,14 @@ fn runtime_event_emits_attention_notifications() {
     );
     assert_eq!(snapshot.total, 1);
     assert_eq!(snapshot.unread_count, 1);
-    assert_eq!(snapshot.notifications[0]["title"], "codex-1 needs input");
-    assert_eq!(snapshot.notifications[0]["body"], "Approve deploy");
+    assert_eq!(
+        snapshot.notifications[0]["title"],
+        project.file_name().unwrap().to_str().unwrap()
+    );
+    assert_eq!(
+        snapshot.notifications[0]["body"],
+        "Needs input: codex-1 - Approve deploy"
+    );
     assert_eq!(snapshot.notifications[0]["kind"], "needs_input");
     assert_eq!(
         snapshot.notifications[0]["dedupeKey"],
@@ -854,15 +863,31 @@ fn runtime_event_maps_blocked_failed_and_notify_alerts() {
     );
     assert_eq!(snapshot.total, 4);
     let records = snapshot.notifications;
-    assert_eq!(records[0]["body"], "Crashed");
+    assert_eq!(
+        records[0]["body"],
+        "Agent or service errored: codex-1 errored - Crashed"
+    );
     assert_eq!(records[0]["kind"], "task_failed");
     assert_eq!(records[0]["dedupeKey"], "error:codex-1");
-    assert_eq!(records[1]["title"], "watcher");
+    assert_eq!(
+        records[1]["title"],
+        format!(
+            "[Activity] {}",
+            project.file_name().unwrap().to_string_lossy()
+        )
+    );
+    assert_eq!(records[1]["body"], "Notification: codex-1: watcher - FYI");
     assert_eq!(records[1]["kind"], "notification");
     assert_eq!(records[1]["dedupeKey"], "notify:codex-1:FYI");
-    assert_eq!(records[2]["body"], "Tests failed");
+    assert_eq!(
+        records[2]["body"],
+        "Agent or service errored: codex-1 errored - Tests failed"
+    );
     assert_eq!(records[2]["kind"], "task_failed");
-    assert_eq!(records[3]["body"], "Need credentials");
+    assert_eq!(
+        records[3]["body"],
+        "Agent is blocked: codex-1 is blocked - Need credentials"
+    );
     assert_eq!(records[3]["kind"], "blocked");
     cleanup(project);
 }
