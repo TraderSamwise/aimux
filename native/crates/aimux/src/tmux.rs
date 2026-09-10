@@ -656,6 +656,30 @@ impl TmuxRuntimeManager {
                 }
                 return Ok(swapped);
             }
+            if !self.is_window_alive(&replacement) {
+                let output = self
+                    .capture_target(
+                        &replacement,
+                        CapturePaneOptions {
+                            start_line: Some(-80),
+                            ..CapturePaneOptions::default()
+                        },
+                    )
+                    .unwrap_or_default();
+                let _ = self.kill_window(&replacement);
+                let output = output.trim();
+                return Err(if output.is_empty() {
+                    format!(
+                        "Replacement tmux window {} exited before dashboard readiness",
+                        replacement.window_id
+                    )
+                } else {
+                    format!(
+                        "Replacement tmux window {} exited before dashboard readiness:\n{}",
+                        replacement.window_id, output
+                    )
+                });
+            }
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
         let _ = self.kill_window(&replacement);
