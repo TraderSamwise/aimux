@@ -2331,6 +2331,7 @@ fn retry_read_http_response(
 
 fn transient_http_client_error(error: &std::io::Error) -> bool {
     matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::Interrupted)
+        || error.raw_os_error() == Some(libc::EAGAIN)
 }
 
 fn request_is_complete(buffer: &[u8]) -> bool {
