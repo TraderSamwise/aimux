@@ -107,7 +107,7 @@ impl LifecycleOrphanRuntime for SystemLifecycleOrphanRuntime {
     }
 
     fn read_process_args_with_env(&mut self, pid: i32) -> Option<String> {
-        read_process_args_with_env(pid)
+        read_process_args_with_env(pid).or_else(|| read_process_args(pid))
     }
 
     fn is_pid_alive(&mut self, pid: i32) -> bool {
@@ -504,12 +504,9 @@ fn is_unrecognized_same_home_project_service(
     if !is_aimux_project_service_process_args(args, None, &Default::default()) {
         return false;
     }
-    let Some(process_home) = process_env_value(args, "AIMUX_HOME") else {
+    if !project_service_process_belongs_to_home(args, scope) {
         return false;
     };
-    if normalize_path(&process_home) != normalize_path(&scope.aimux_home) {
-        return false;
-    }
     let Some(project_root) = project_service_project_root(args) else {
         return false;
     };
@@ -531,6 +528,36 @@ fn log_project_service_orphan_candidate(pid: i32, args: &str) {
             "reason": "same aimux home project service not recognized by daemon state",
         })),
     );
+}
+
+fn project_service_process_belongs_to_home(args: &str, scope: &ProjectServiceOrphanScope) -> bool {
+    if let Some(process_home) = process_env_value(args, "AIMUX_HOME") {
+        return normalize_path(&process_home) == normalize_path(&scope.aimux_home);
+    }
+    let Some(executable) = project_service_executable(args) else {
+        return false;
+    };
+    path_is_under(
+        &normalize_path_buf(&executable),
+        &normalize_path_buf(
+            &Path::new(&scope.aimux_home)
+                .join("native")
+                .to_string_lossy(),
+        ),
+    )
+}
+
+fn project_service_executable(args: &str) -> Option<String> {
+    let tokens = args.split_whitespace().collect::<Vec<_>>();
+    let marker = tokens
+        .iter()
+        .position(|token| *token == "__project-service-internal")?;
+    tokens[..marker]
+        .iter()
+        .rev()
+        .map(|token| trim_shell_quotes(token))
+        .find(|token| Path::new(token).file_name().and_then(|name| name.to_str()) == Some("aimux"))
+        .map(str::to_owned)
 }
 
 fn project_service_project_root(args: &str) -> Option<String> {
@@ -573,19 +600,25 @@ fn trim_shell_quotes(value: &str) -> &str {
 }
 
 fn normalize_path(path: &str) -> String {
-    std::fs::canonicalize(path)
-        .unwrap_or_else(|_| {
-            let path = Path::new(path);
-            if path.is_absolute() {
-                path.to_path_buf()
-            } else {
-                std::env::current_dir()
-                    .unwrap_or_else(|_| PathBuf::from("."))
-                    .join(path)
-            }
-        })
-        .to_string_lossy()
-        .into_owned()
+    normalize_path_buf(path).to_string_lossy().into_owned()
+}
+
+fn normalize_path_buf(path: &str) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| lexical_absolute_path(Path::new(path)))
+}
+
+fn lexical_absolute_path(path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(path)
+    }
+}
+
+fn path_is_under(path: &Path, parent: &Path) -> bool {
+    path == parent || path.starts_with(parent)
 }
 
 fn wait_for_pid_exit(
