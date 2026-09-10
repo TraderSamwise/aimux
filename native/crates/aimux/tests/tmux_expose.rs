@@ -752,6 +752,58 @@ fn runner_renders_loading_frame_before_initial_item_discovery() {
 }
 
 #[test]
+fn runner_captures_missing_previews_before_first_loaded_frame() {
+    let state_dir = temp_dir("runner-startup-capture");
+    let mut options = parsed_options(&state_dir);
+    options.current_window = Some("codex".into());
+    options.current_window_id = Some("@1".into());
+    options.expose_config.initial_scope = Some(ExposeScope::Project);
+    let mut client = FakeHttp::with_responses([json!({
+        "ok": true,
+        "items": [{
+            "id": "one",
+            "label": "one",
+            "target": { "sessionName": "aimux-repo", "windowId": "@1", "windowIndex": 1, "windowName": "one" },
+            "activity": 1,
+            "urgency": 0,
+            "recentRank": 0,
+            "metadata": {
+                "sessionId": "one",
+                "command": "codex",
+                "args": [],
+                "toolConfigKey": "codex",
+                "worktreePath": "/repo"
+            }
+        }]
+    })]);
+    let mut capture = FakeCapture::with_responses([Ok("first live capture line\n".into())]);
+    let mut input = ScriptedInput::new([ScriptedInputEvent::Bytes(b"q".to_vec())]);
+    let mut output = Vec::new();
+
+    assert_eq!(
+        run_tmux_expose_with_stable_size(
+            options,
+            &mut input,
+            &mut output,
+            &mut client,
+            &mut capture,
+        ),
+        0
+    );
+
+    let rendered = String::from_utf8(output).expect("utf8 output");
+    let frames = synchronized_frames(&rendered);
+    assert_eq!(capture.calls, vec!["@1"]);
+    assert!(
+        frames
+            .get(1)
+            .is_some_and(|frame| frame.contains("first live capture line")),
+        "first loaded frame should contain captured output:\n{rendered}"
+    );
+    cleanup(state_dir);
+}
+
+#[test]
 fn runner_applies_pending_navigation_after_initial_item_discovery() {
     let state_dir = temp_dir("runner-pending-navigation");
     let mut options = parsed_options(&state_dir);
@@ -1293,25 +1345,32 @@ fn expose_sublabel_value(value: &Value) -> ExposeSublabel {
 }
 
 fn first_synchronized_frame(output: &str) -> &str {
-    let start = output
-        .find("\x1b[?2026h")
-        .expect("synchronized frame start");
-    let end = output[start..]
-        .find("\x1b[?2026l")
-        .map(|offset| start + offset + "\x1b[?2026l".len())
-        .expect("synchronized frame end");
-    &output[start..end]
+    synchronized_frames(output)
+        .into_iter()
+        .next()
+        .expect("synchronized frame")
 }
 
 fn last_synchronized_frame(output: &str) -> &str {
-    let start = output
-        .rfind("\x1b[?2026h")
-        .expect("synchronized frame start");
-    let end = output[start..]
-        .find("\x1b[?2026l")
-        .map(|offset| start + offset + "\x1b[?2026l".len())
-        .expect("synchronized frame end");
-    &output[start..end]
+    synchronized_frames(output)
+        .into_iter()
+        .last()
+        .expect("synchronized frame")
+}
+
+fn synchronized_frames(output: &str) -> Vec<&str> {
+    let mut frames = Vec::new();
+    let mut cursor = 0;
+    while let Some(relative_start) = output[cursor..].find("\x1b[?2026h") {
+        let start = cursor + relative_start;
+        let Some(relative_end) = output[start..].find("\x1b[?2026l") else {
+            break;
+        };
+        let end = start + relative_end + "\x1b[?2026l".len();
+        frames.push(&output[start..end]);
+        cursor = end;
+    }
+    frames
 }
 
 fn temp_dir(label: &str) -> PathBuf {

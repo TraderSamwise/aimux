@@ -952,6 +952,7 @@ pub fn run_tmux_expose_with_drivers(
                 write_loaded_hot_snapshot(&options, scope, &view);
                 items = order_items(&view, &options.project_root, sort_mode);
                 captures = seed_preview_snapshots(&items);
+                capture_missing_previews(&items, &mut captures, capture);
                 index = selected_or_current_index(
                     &items,
                     selected_window_id.as_deref(),
@@ -1611,6 +1612,24 @@ fn refresh_captures(
         captures.insert(window_id.to_owned(), next);
     }
     changed
+}
+
+fn capture_missing_previews(
+    items: &[Value],
+    captures: &mut BTreeMap<String, String>,
+    capture: &mut impl ExposeTmuxCapture,
+) {
+    for item in items {
+        let Some(window_id) = item_window_id(Some(item)) else {
+            continue;
+        };
+        if captures.contains_key(window_id) {
+            continue;
+        }
+        if let Ok(output) = capture.capture_target(item) {
+            captures.insert(window_id.to_owned(), output);
+        }
+    }
 }
 
 fn focus_or_select(
