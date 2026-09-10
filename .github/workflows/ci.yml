@@ -1,0 +1,51 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_TARGET_DIR: /tmp/aimux-cargo-target-ci
+  AIMUX_HOME: ${{ runner.temp }}/aimux-home
+  AIMUX_DAEMON_PORT: "43190"
+
+jobs:
+  rust-format-advisory:
+    name: Rust format advisory
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: rustup component add rustfmt
+
+      - name: cargo fmt --check
+        run: yarn native:fmt:check
+
+  rust-clippy:
+    name: Rust clippy all targets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: rustup component add clippy
+
+      - name: cargo clippy --all-targets
+        run: yarn native:clippy:all-targets
+
+  rust-tests:
+    name: Rust tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tmux
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tmux
+
+      - name: cargo test
+        run: yarn native:test
