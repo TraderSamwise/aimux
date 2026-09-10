@@ -284,12 +284,6 @@ Priority fixture groups:
   filtering, and dashboard session-name contracts captured by running
   TypeScript `project-scanner` registry helpers with a temporary `AIMUX_HOME`.
 
-## Project Connection
-
-- `project-connection/display.json`: app project endpoint labels,
-  project-state error copy, relay discovery gates, and relay-unavailable copy
-  captured by running TypeScript `app/lib/project-connection-display` helpers.
-
 ## Process
 
 - `process/inspector.json`: process args, process-list, cwd, exited-state, and

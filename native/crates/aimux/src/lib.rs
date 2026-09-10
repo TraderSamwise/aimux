@@ -102,7 +102,6 @@ pub mod process_args;
 pub mod process_inspector;
 pub mod project_api_contract;
 pub mod project_catalog;
-pub mod project_connection_display_contract;
 pub mod project_service;
 pub mod project_service_manifest;
 pub mod proxy_project_binding;

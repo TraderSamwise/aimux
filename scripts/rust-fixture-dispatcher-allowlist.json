@@ -1,7 +1,6 @@
 {
   "native/crates/aimux/src/metadata_server_runtime_contract.rs": "Tracked metadata parity fixture; keep until metadata behavior is production-consumed natively or culled.",
   "native/crates/aimux/src/plugin_runtime_contract.rs": "Tracked plugin parity fixture; keep until plugin behavior is production-consumed natively or culled.",
-  "native/crates/aimux/src/project_connection_display_contract.rs": "Tracked project API parity fixture; keep until project API behavior is production-consumed natively or culled.",
   "native/crates/aimux/src/route_share_contract.rs": "Tracked route-share parity fixture; keep until route-share behavior is production-consumed natively or culled.",
   "native/crates/aimux/src/service_client_contract.rs": "Tracked service parity fixture; keep until service behavior is production-consumed natively or culled.",
   "native/crates/aimux/src/service_notify_contract.rs": "Tracked service parity fixture; keep until service behavior is production-consumed natively or culled.",
