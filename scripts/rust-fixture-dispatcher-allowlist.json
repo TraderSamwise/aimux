@@ -2,6 +2,5 @@
   "native/crates/aimux/src/plugin_runtime_contract.rs": "Tracked plugin parity fixture; keep until plugin behavior is production-consumed natively or culled.",
   "native/crates/aimux/src/service_client_contract.rs": "Tracked service parity fixture; keep until service behavior is production-consumed natively or culled.",
   "native/crates/aimux/src/service_notify_contract.rs": "Tracked service parity fixture; keep until service behavior is production-consumed natively or culled.",
-  "native/crates/aimux/src/terminal_rich_text_contract.rs": "Tracked terminal parity fixture; keep until terminal behavior is production-consumed natively or culled.",
   "native/crates/aimux/src/transport_security_contract.rs": "Tracked transport-security parity fixture; keep until transport-security behavior is production-consumed natively or culled."
 }

@@ -145,7 +145,6 @@ pub mod state_update_lock;
 pub mod statusline_model_contract;
 pub mod team_contract;
 pub mod terminal_key_parser;
-pub mod terminal_rich_text_contract;
 pub mod tmux;
 pub mod tmux_control;
 pub mod tmux_exec_metrics;

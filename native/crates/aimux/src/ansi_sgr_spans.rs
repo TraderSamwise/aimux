@@ -34,6 +34,24 @@ pub(crate) fn parse_ansi_rich_text_spans(text: &str) -> Vec<Value> {
     spans
 }
 
+pub fn parse_ansi_rich_text_lines(text: &str) -> Value {
+    let mut attributes = Attributes::default();
+    let mut line_texts = Vec::new();
+    let lines = text
+        .split('\n')
+        .map(|line| {
+            let spans = parse_ansi_rich_text_line(line, &mut attributes);
+            line_texts.push(line_text(&spans));
+            Value::Array(spans)
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "lines": lines,
+        "lineTexts": line_texts,
+        "text": line_texts.join("\n"),
+    })
+}
+
 fn parse_ansi_rich_text_line(line: &str, attributes: &mut Attributes) -> Vec<Value> {
     let mut spans = Vec::new();
     let mut cursor = 0;

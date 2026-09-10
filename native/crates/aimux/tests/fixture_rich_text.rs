@@ -1,4 +1,4 @@
-use aimux::terminal_rich_text_contract::parse_sgr_rich_text_contract;
+use aimux::ansi_sgr_spans::parse_ansi_rich_text_lines;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -33,7 +33,7 @@ fn fixture_rich_text_contract_is_captured() {
             .get("text")
             .and_then(Value::as_str)
             .expect("input text");
-        let actual = parse_sgr_rich_text_contract(text);
+        let actual = parse_ansi_rich_text_lines(text);
         if actual != case.output {
             failures.push(json!({
                 "id": case.id,
