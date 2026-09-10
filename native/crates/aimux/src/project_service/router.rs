@@ -35,6 +35,7 @@ use super::hooks::route_hook_request;
 use super::interactions::route_interaction_request;
 use super::library::route_library_request;
 use super::lifecycle::route_lifecycle_request;
+use super::lifecycle_mutation_queue::LifecycleMutationQueue;
 use super::metadata::route_runtime_metadata_request;
 use super::notification_context::route_notification_context_request;
 use super::notifications::route_notifications_request;
@@ -65,6 +66,7 @@ pub struct ProjectServiceRequestContext {
     pub live_window_ids: Option<BTreeSet<String>>,
     pub output_cache: AgentOutputCaptureCache,
     pub osc_notifications: OscNotificationOutputState,
+    pub lifecycle_mutations: LifecycleMutationQueue,
     pub osc_output_tap: OscOutputTap,
     pub output_projection_cache: AgentOutputProjectionCache,
     pub output_metrics: AgentOutputReadMetrics,
@@ -85,6 +87,7 @@ impl ProjectServiceRequestContext {
             live_window_ids: None,
             output_cache: AgentOutputCaptureCache::default(),
             osc_notifications: OscNotificationOutputState::default(),
+            lifecycle_mutations: LifecycleMutationQueue::default(),
             osc_output_tap: OscOutputTap::default(),
             output_projection_cache: AgentOutputProjectionCache::default(),
             output_metrics: AgentOutputReadMetrics::default(),
@@ -108,6 +111,7 @@ impl ProjectServiceRequestContext {
             live_window_ids: None,
             output_cache: AgentOutputCaptureCache::default(),
             osc_notifications: OscNotificationOutputState::default(),
+            lifecycle_mutations: LifecycleMutationQueue::default(),
             osc_output_tap: OscOutputTap::default(),
             output_projection_cache: AgentOutputProjectionCache::default(),
             output_metrics: AgentOutputReadMetrics::default(),

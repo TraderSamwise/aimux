@@ -138,7 +138,7 @@ fn parses_integer_inputs_consistently() {
     );
     assert_eq!(
         parse_integer_value(&json!(9_007_199_254_740_992_i64), "rows"),
-        Err("rows must be a safe integer".into())
+        Err("rows must be an integer".into())
     );
     assert_eq!(
         parse_positive_integer_value(&json!(0), "rows"),

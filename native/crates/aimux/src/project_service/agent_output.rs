@@ -24,6 +24,10 @@ use crate::tmux::{
 };
 use crate::tool_output_watchers::{classify_tool_pane, reconcile_agent_activity};
 
+use super::agent_input::{
+    format_agent_input_with_attachments, shared_chat_body_actor_prompt,
+    shared_chat_remote_actor_prompt,
+};
 use super::agent_output_projection::insert_projection_fields;
 use super::attachments::get_attachment_record;
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
@@ -1184,129 +1188,6 @@ fn remote_actor_from_headers(
     headers: &std::collections::BTreeMap<String, String>,
 ) -> Option<RemoteActor> {
     parse_remote_actor(headers)
-}
-
-fn shared_chat_remote_actor_prompt(actor: &RemoteActor, text: &str) -> Option<String> {
-    shared_chat_actor_prompt(
-        match actor.role {
-            RemoteActorRole::Owner => "owner",
-            RemoteActorRole::Guest => "guest",
-            RemoteActorRole::Operator => "operator",
-        },
-        actor.display_name.as_deref(),
-        actor.email.as_deref(),
-        text,
-    )
-}
-
-fn shared_chat_body_actor_prompt(body: &Value, text: &str) -> Option<String> {
-    if text.trim().is_empty() {
-        return None;
-    }
-    let actor = body.get("sharedChatActor")?.as_object()?;
-    let role = actor.get("role")?.as_str()?;
-    if role != "owner" && role != "guest" {
-        return None;
-    }
-    let has_identity = actor
-        .get("displayName")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .is_some()
-        || actor
-            .get("email")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .is_some();
-    if !has_identity {
-        return None;
-    }
-    shared_chat_actor_prompt(
-        role,
-        actor.get("displayName").and_then(Value::as_str),
-        actor.get("email").and_then(Value::as_str),
-        text,
-    )
-}
-
-fn shared_chat_actor_prompt(
-    role: &str,
-    display_name: Option<&str>,
-    email: Option<&str>,
-    text: &str,
-) -> Option<String> {
-    if text.trim().is_empty() {
-        return None;
-    }
-    if role != "owner" && role != "guest" {
-        return None;
-    }
-    let display_name = display_name
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    let email = email.map(str::trim).filter(|value| !value.is_empty());
-    let fallback = if role == "owner" {
-        "chat owner"
-    } else {
-        "shared guest"
-    };
-    let raw_name = display_name.or(email).unwrap_or(fallback);
-    let name = collapse_whitespace(raw_name)
-        .chars()
-        .take(80)
-        .collect::<String>();
-    Some(format!(
-        "[{}] {}",
-        if name.is_empty() { fallback } else { &name },
-        text.trim()
-    ))
-}
-
-fn format_agent_input_with_attachments(text: &str, attachments: &[Value]) -> String {
-    if attachments.is_empty() {
-        return text.to_owned();
-    }
-    let body = if text.trim().is_empty() {
-        "Please review the attached file(s).".to_owned()
-    } else {
-        text.trim().to_owned()
-    };
-    let attachment_lines = attachments
-        .iter()
-        .map(|attachment| {
-            format!(
-                "- {} ({}, {} bytes): {}",
-                string_field(attachment, "filename").unwrap_or("attachment"),
-                string_field(attachment, "mimeType").unwrap_or("application/octet-stream"),
-                attachment
-                    .get("sizeBytes")
-                    .and_then(Value::as_i64)
-                    .unwrap_or(0),
-                string_field(attachment, "contentPath").unwrap_or("")
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    format!("{body}\n\nAttached files:\n{attachment_lines}")
-}
-
-fn collapse_whitespace(value: &str) -> String {
-    let mut output = String::new();
-    let mut pending_space = false;
-    for character in value.chars() {
-        if character.is_whitespace() {
-            pending_space = true;
-        } else {
-            if pending_space && !output.is_empty() {
-                output.push(' ');
-            }
-            output.push(character);
-            pending_space = false;
-        }
-    }
-    output
 }
 
 fn run_tmux_argv(argv: Vec<String>, fallback_error: String) -> Result<Output, String> {

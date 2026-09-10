@@ -335,7 +335,7 @@ fn parse_integer_number(number: &Number, field: &str) -> Result<i64, String> {
         return Err(format!("{field} must be an integer"));
     };
     if !is_js_safe_integer(value) {
-        return Err(format!("{field} must be a safe integer"));
+        return Err(format!("{field} must be an integer"));
     }
     Ok(value)
 }

@@ -63,24 +63,9 @@ pub fn route_read_request(
     if pathname == routes::DIAGNOSTICS_LIFECYCLE {
         return Some(ProjectServiceDispatchResponse::json(
             200,
-            json!({
-                "ok": true,
-                "pid": std::process::id(),
-                "projectRoot": context.project_root().to_string_lossy(),
-                "queuedCount": 0,
-                "queueLimit": 0,
-                "runningCount": 0,
-                "pending": [],
-                "running": [],
-                "telemetry": {
-                    "enqueued": 0,
-                    "completed": 0,
-                    "failed": 0,
-                    "rejected": 0,
-                    "maxQueuedCount": 0,
-                    "maxRunningCount": 0,
-                },
-            }),
+            context
+                .lifecycle_mutations
+                .diagnostics(&context.project_root().to_string_lossy()),
         ));
     }
 

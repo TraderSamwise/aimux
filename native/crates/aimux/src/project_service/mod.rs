@@ -1,4 +1,5 @@
 pub mod agent_controls;
+pub mod agent_input;
 pub mod agent_output;
 pub mod agent_output_projection;
 pub mod agents;
@@ -19,6 +20,7 @@ pub mod http;
 pub mod interactions;
 pub mod library;
 pub mod lifecycle;
+pub mod lifecycle_mutation_queue;
 pub mod loop_watcher_task;
 pub mod metadata;
 pub mod notification_context;

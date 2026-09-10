@@ -11,6 +11,7 @@ use crate::project_api_contract::routes;
 use crate::remote_access::{RemoteActorRole, parse_remote_actor};
 use crate::runtime_topology::{read_runtime_topology, runtime_topology_path};
 
+use super::agent_input::hosted_attachment_from_body;
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::router::ProjectServiceRequestContext;
 
@@ -1108,22 +1109,6 @@ fn is_safe_extension(extension: &str) -> bool {
         && raw[1..]
             .iter()
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
-}
-
-fn hosted_attachment_from_body(value: Option<&Value>) -> Option<Value> {
-    let object = value?.as_object()?;
-    let content_url = object.get("contentUrl")?.as_str()?;
-    let expires_at = object.get("expiresAt")?.as_str()?;
-    let mut hosted = Map::new();
-    hosted.insert("contentUrl".into(), Value::String(content_url.to_owned()));
-    hosted.insert("expiresAt".into(), Value::String(expires_at.to_owned()));
-    if let Some(sha256) = object.get("sha256").and_then(Value::as_str) {
-        hosted.insert("sha256".into(), Value::String(sha256.to_owned()));
-    }
-    if let Some(size_bytes) = object.get("sizeBytes").and_then(Value::as_i64) {
-        hosted.insert("sizeBytes".into(), Value::from(size_bytes));
-    }
-    Some(Value::Object(hosted))
 }
 
 fn normalize_hosted_attachment_reference(

@@ -62,6 +62,10 @@ impl TestIsolation {
         .with_live_window_ids(default_live_window_ids())
     }
 
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
     pub fn apply_to_command<'a>(&self, command: &'a mut Command) -> &'a mut Command {
         command
             .env("HOME", &self.home)

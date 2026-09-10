@@ -120,7 +120,7 @@ impl ControlInput {
                 window_id: trimmed_query(&params, "windowId"),
                 session_id: trimmed_query(&params, "sessionId"),
                 focus: query_bool(&params, "focus", true),
-                screen: trimmed_query(&params, "screen"),
+                screen: parse_dashboard_control_screen_value(trimmed_query(&params, "screen")),
             };
         }
         Self {
@@ -132,9 +132,28 @@ impl ControlInput {
             window_id: trimmed_string(body.get("windowId")),
             session_id: trimmed_string(body.get("sessionId")),
             focus: body_bool(body, "focus", true),
-            screen: trimmed_string(body.get("screen")),
+            screen: parse_dashboard_control_screen_value(trimmed_string(body.get("screen"))),
         }
     }
+}
+
+pub fn parse_dashboard_control_screen(input: &str) -> Option<&'static str> {
+    match input.trim() {
+        "dashboard" => Some("dashboard"),
+        "coordination" => Some("coordination"),
+        "project" => Some("project"),
+        "library" => Some("library"),
+        "topology" => Some("topology"),
+        "graveyard" => Some("graveyard"),
+        _ => None,
+    }
+}
+
+fn parse_dashboard_control_screen_value(input: Option<String>) -> Option<String> {
+    input
+        .as_deref()
+        .and_then(parse_dashboard_control_screen)
+        .map(str::to_owned)
 }
 
 enum SwitchDirection {

@@ -97,7 +97,7 @@ fn diagnostics_route_reports_native_plugin_statuses() {
 }
 
 #[test]
-fn diagnostics_lifecycle_route_reports_empty_rust_queue() {
+fn diagnostics_lifecycle_route_reports_real_mutation_queue() {
     let project = temp_project("diagnostics-lifecycle");
     let context =
         ProjectServiceRequestContext::with_project_state_dir(&project, project.join("state"));
@@ -111,9 +111,10 @@ fn diagnostics_lifecycle_route_reports_empty_rust_queue() {
         project.to_string_lossy().as_ref()
     );
     assert_eq!(response.body["queuedCount"], 0);
-    assert_eq!(response.body["runningCount"], 0);
-    assert_eq!(response.body["pending"], json!([]));
-    assert_eq!(response.body["running"], json!([]));
+    assert_eq!(response.body["queueLimit"], 32);
+    assert_eq!(response.body["activeTargets"], json!([]));
+    assert_eq!(response.body["telemetry"]["enqueued"], 0);
+    assert_eq!(response.body["telemetry"]["rejectedConflicts"], 0);
     cleanup(project);
 }
 

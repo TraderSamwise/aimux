@@ -4,6 +4,7 @@ use crate::project_api_contract::routes;
 use crate::runtime_topology::read_runtime_topology;
 
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
+use super::lifecycle_mutation_queue::{LifecycleMutationError, lifecycle_transition_for_route};
 use super::router::ProjectServiceRequestContext;
 
 mod agent_launch_helpers;
@@ -64,6 +65,25 @@ pub fn route_lifecycle_request_with_runtime(
     }
     let pathname = project_service_pathname(path);
     let body = body.unwrap_or(&Value::Null);
+    let transition = lifecycle_transition_for_route(pathname, body);
+    let result = context.lifecycle_mutations.enqueue(transition, || {
+        Ok(route_lifecycle_request_unqueued(
+            context, pathname, body, runtime,
+        ))
+    });
+    return Some(match result {
+        Ok(Ok(response)) => response?,
+        Ok(Err(error)) => return Some(lifecycle_queue_operation_error_response(error)),
+        Err(error) => lifecycle_queue_error_response(error),
+    });
+}
+
+fn route_lifecycle_request_unqueued(
+    context: &ProjectServiceRequestContext,
+    pathname: &str,
+    body: &Value,
+    runtime: &mut impl ProjectLifecycleRuntime,
+) -> Option<ProjectServiceDispatchResponse> {
     match pathname {
         routes::agents::SPAWN => Some(route_agent_spawn(context, body, runtime)),
         routes::agents::FORK => Some(route_agent_fork(context, body, runtime)),
@@ -111,4 +131,15 @@ pub fn route_lifecycle_request_with_runtime(
         routes::graveyard_actions::CLEANUP => Some(route_graveyard_cleanup(context, body)),
         _ => None,
     }
+}
+
+fn lifecycle_queue_error_response(error: LifecycleMutationError) -> ProjectServiceDispatchResponse {
+    ProjectServiceDispatchResponse::json(
+        error.status(),
+        serde_json::json!({ "ok": false, "error": error.message() }),
+    )
+}
+
+fn lifecycle_queue_operation_error_response(error: String) -> ProjectServiceDispatchResponse {
+    ProjectServiceDispatchResponse::json(500, serde_json::json!({ "ok": false, "error": error }))
 }
