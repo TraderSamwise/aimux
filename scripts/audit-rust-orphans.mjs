@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 
 const repoRoot = process.cwd();
 const crateRoot = join(repoRoot, 'native/crates/aimux');
 const srcRoot = join(crateRoot, 'src');
 const testsRoot = join(crateRoot, 'tests');
+const contractCorpusRoot = join(repoRoot, 'testdata/contracts/v1');
 const fixtureDispatcherAllowlistPath = join(repoRoot, 'scripts/rust-fixture-dispatcher-allowlist.json');
 const enforceFixtureDispatchers = process.argv.includes('--enforce-fixture-twins');
 
@@ -31,6 +32,23 @@ function walk(dir) {
     if (stat.isDirectory()) {
       files.push(...walk(path));
     } else if (entry.endsWith('.rs')) {
+      files.push(path);
+    }
+  }
+  return files;
+}
+
+function walkFiles(dir, predicate) {
+  if (!existsSync(dir)) {
+    return [];
+  }
+  const files = [];
+  for (const entry of readdirSync(dir)) {
+    const path = join(dir, entry);
+    const stat = statSync(path);
+    if (stat.isDirectory()) {
+      files.push(...walkFiles(path, predicate));
+    } else if (predicate(path)) {
       files.push(path);
     }
   }
@@ -252,6 +270,8 @@ function isFixtureDispatcherName(name) {
 }
 
 const sourceFiles = [...walk(srcRoot), ...walk(testsRoot)];
+const productionSourceFiles = sourceFiles.filter((file) => relative(repoRoot, file).startsWith('native/crates/aimux/src/'));
+const testSourceFiles = sourceFiles.filter((file) => relative(repoRoot, file).startsWith('native/crates/aimux/tests/'));
 const defs = sourceFiles.flatMap(parseFunctions);
 const defsById = new Map(defs.map((def) => [def.id, def]));
 const defsByName = new Map();
@@ -269,8 +289,16 @@ const testRoots = defs.filter((def) => def.testFile).map((def) => def.id);
 const productionReachable = reachableFrom(productionRoots, defsById, defsByName);
 const testReachable = reachableFrom(testRoots, defsById, defsByName);
 const sourceCache = new Map();
-for (const file of sourceFiles.filter((file) => relative(repoRoot, file).startsWith('native/crates/aimux/src/'))) {
+for (const file of productionSourceFiles) {
   sourceCache.set(relative(repoRoot, file), stripCommentsAndStrings(readFileSync(file, 'utf8')));
+}
+const testSourceCache = new Map();
+for (const file of testSourceFiles) {
+  testSourceCache.set(relative(repoRoot, file), stripCommentsAndStrings(readFileSync(file, 'utf8')));
+}
+const rawSourceCache = new Map();
+for (const file of sourceFiles) {
+  rawSourceCache.set(relative(repoRoot, file), readFileSync(file, 'utf8'));
 }
 
 const definitionNameRanges = new Map();
@@ -350,6 +378,96 @@ const fixtureDispatcherGate = {
   untracked: untrackedFixtureDispatchers,
   stale: staleFixtureDispatcherAllowlist,
 };
+
+const libPath = join(srcRoot, 'lib.rs');
+
+function moduleSourceFile(moduleName) {
+  const flat = join(srcRoot, `${moduleName}.rs`);
+  if (existsSync(flat)) {
+    return relative(repoRoot, flat);
+  }
+  return relative(repoRoot, join(srcRoot, moduleName, 'mod.rs'));
+}
+
+function publicLibModules() {
+  if (!existsSync(libPath)) {
+    return [];
+  }
+  const raw = readFileSync(libPath, 'utf8');
+  const source = stripCommentsAndStrings(raw);
+  const modules = [];
+  const pattern = /^pub\s+mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;/gm;
+  let match;
+  while ((match = pattern.exec(source)) !== null) {
+    modules.push({
+      name: match[1],
+      file: moduleSourceFile(match[1]),
+      line: lineFor(raw, match.index),
+    });
+  }
+  return modules;
+}
+
+function referenceCountForModule(moduleName, moduleFile) {
+  const needle = new RegExp(`\\b${moduleName}\\b`, 'g');
+  let count = 0;
+  for (const [file, source] of [...sourceCache, ...testSourceCache]) {
+    if (file === moduleFile) {
+      continue;
+    }
+    let match;
+    while ((match = needle.exec(source)) !== null) {
+      if (file === relative(repoRoot, libPath)) {
+        const lineStart = source.lastIndexOf('\n', match.index) + 1;
+        const lineEnd = source.indexOf('\n', match.index);
+        const line = source.slice(lineStart, lineEnd < 0 ? source.length : lineEnd);
+        if (new RegExp(`\\bpub\\s+mod\\s+${moduleName}\\s*;`).test(line)) {
+          continue;
+        }
+      }
+      count += 1;
+    }
+  }
+  return count;
+}
+
+const unreferencedExportedModules = publicLibModules()
+  .map((module) => ({
+    ...module,
+    references: referenceCountForModule(module.name, module.file),
+  }))
+  .filter((module) => module.references === 0)
+  .sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line);
+
+const corpusReferenceCache = rawSourceCache;
+
+function contractCorpusFiles() {
+  return walkFiles(
+    contractCorpusRoot,
+    (path) => /\.(?:json|jsonl|txt)$/.test(path),
+  ).map((path) => relative(repoRoot, path));
+}
+
+function referencedCorpusPath(rel) {
+  for (const source of corpusReferenceCache.values()) {
+    if (source.includes(rel)) {
+      return true;
+    }
+    let parent = dirname(rel);
+    while (parent && parent !== 'testdata/contracts/v1' && parent !== '.') {
+      if (source.includes(parent)) {
+        return true;
+      }
+      parent = dirname(parent);
+    }
+  }
+  return false;
+}
+
+const unreferencedContractCorpusFiles = contractCorpusFiles()
+  .filter((file) => !referencedCorpusPath(file))
+  .sort();
+
 const json = process.argv.includes('--json');
 if (json) {
   console.log(JSON.stringify({
@@ -360,6 +478,13 @@ if (json) {
     candidates,
     actionable,
     fixtureDispatcherGate,
+    exportedModuleGate: {
+      unreferenced: unreferencedExportedModules,
+    },
+    contractCorpusGate: {
+      checked: contractCorpusFiles().length,
+      unreferenced: unreferencedContractCorpusFiles,
+    },
   }, null, 2));
 } else {
   console.log(`# Rust orphan sweep`);
@@ -399,8 +524,39 @@ if (json) {
       console.log(`| ${file} |`);
     }
   }
+  console.log('');
+  console.log('## Exported module gate');
+  console.log(`Unreferenced exported modules: ${unreferencedExportedModules.length}`);
+  if (unreferencedExportedModules.length > 0) {
+    console.log('');
+    console.log('| module file | line | module |');
+    console.log('| --- | ---: | --- |');
+    for (const entry of unreferencedExportedModules) {
+      console.log(`| ${entry.file} | ${entry.line} | \`${entry.name}\` |`);
+    }
+  }
+  console.log('');
+  console.log('## Contract corpus gate');
+  console.log(`Contract corpus files checked: ${contractCorpusFiles().length}`);
+  console.log(`Unreferenced contract corpus files: ${unreferencedContractCorpusFiles.length}`);
+  if (unreferencedContractCorpusFiles.length > 0) {
+    console.log('');
+    console.log('| unreferenced corpus file |');
+    console.log('| --- |');
+    for (const file of unreferencedContractCorpusFiles) {
+      console.log(`| ${file} |`);
+    }
+  }
 }
 
-if (enforceFixtureDispatchers && (untrackedFixtureDispatchers.length > 0 || staleFixtureDispatcherAllowlist.length > 0)) {
+if (
+  enforceFixtureDispatchers
+  && (
+    untrackedFixtureDispatchers.length > 0
+    || staleFixtureDispatcherAllowlist.length > 0
+    || unreferencedExportedModules.length > 0
+    || unreferencedContractCorpusFiles.length > 0
+  )
+) {
   process.exitCode = 1;
 }

@@ -107,56 +107,6 @@ pub fn project_materialization_refusal_reason(project_root: &Path) -> Option<&'s
     None
 }
 
-pub fn fixture_refusal_reason_for_event(
-    project_root: Option<&Path>,
-    project_state_dir: Option<&Path>,
-    event: &Value,
-) -> Option<&'static str> {
-    if project_root.is_some_and(path_has_test_fixture_component)
-        || project_state_dir.is_some_and(path_has_test_fixture_component)
-    {
-        return Some("test fixture project");
-    }
-    for key in [
-        "projectId",
-        "projectRoot",
-        "projectName",
-        "worktreePath",
-        "worktreeName",
-    ] {
-        if event
-            .get(key)
-            .and_then(Value::as_str)
-            .is_some_and(string_has_test_fixture_component)
-        {
-            return Some("test fixture project");
-        }
-    }
-    None
-}
-
-pub fn fixture_refusal_reason_for_payload(payload: &Value) -> Option<&'static str> {
-    for key in [
-        "projectId",
-        "projectRoot",
-        "projectName",
-        "worktreePath",
-        "worktreeName",
-        "title",
-        "body",
-        "message",
-    ] {
-        if payload
-            .get(key)
-            .and_then(Value::as_str)
-            .is_some_and(string_has_test_fixture_component)
-        {
-            return Some("test fixture project");
-        }
-    }
-    None
-}
-
 pub fn is_cargo_test_harness_binary() -> bool {
     is_cargo_test_harness_binary_path().is_some()
 }
