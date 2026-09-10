@@ -85,6 +85,32 @@ change, apply these rules before it ships:
   a fixture is stale, or a behavior is deliberately new. When Rust intentionally
   differs from Node, state that explicitly in the commit body.
 
+## Shared Checkout Git Protocol
+
+When multiple agents share this checkout, treat uncommitted files as owned by
+the agent that changed them. Apply these rules before every commit:
+
+- Stage explicit paths only. Never use `git add -A`, `git add .`, or broad
+  pathspecs that can sweep in another agent's work.
+- Do not stash, checkout, restore, reset, or format a file you did not write.
+  If a pull or tool wants a clean tree, commit your own work first or stop and
+  report the blocker.
+- Do not amend, rebase, squash, or otherwise rewrite history in a shared
+  checkout, pushed or not. Rewriting a local commit can silently absorb or drop
+  another agent's nearby work while leaving the branch looking coherent.
+- Fetch and merge remote work. Do not rebase over another agent's pushed
+  commits, and do not force-push from a shared checkout.
+- Commit your own work promptly with a message that names its actual scope.
+  Small explicit commits are easier to audit and cannot be swept into someone
+  else's later commit.
+- If a hook fails because of unrelated shared-tree changes, do not bypass it
+  with `HUSKY=0`. Hooks must run without stashing or hiding unstaged files; if
+  they still cannot run safely, report the hook conflict instead of committing
+  around it.
+- If your commit picked up someone else's file, say so before pushing. Do not
+  amend to hide it; wait for coordination or make a follow-up correction with
+  explicit paths.
+
 ## Background Work
 
 Background work belongs on the shared periodic rail, never a bare
