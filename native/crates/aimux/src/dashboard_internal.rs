@@ -276,6 +276,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
         rows: options.rows,
     };
     let live_dashboard = !options.once && options.desktop_state_file.is_none();
+    let mut dashboard_ready_since: Option<Instant> = None;
     let mut viewport_state = DashboardViewportState::default();
     if live_dashboard {
         viewport = viewport_state.get_viewport_size(viewport);
@@ -376,8 +377,11 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
         if poll_dashboard_runtime_guard_repair(&mut runtime_guard, &options.project_root) {
             render_now = true;
         }
-        if live_dashboard && last_runtime_guard_probe.elapsed() >= DASHBOARD_RUNTIME_GUARD_INTERVAL
-        {
+        if should_probe_dashboard_runtime_guard(
+            live_dashboard,
+            dashboard_ready_since.map(|ready_since| ready_since.elapsed()),
+            last_runtime_guard_probe.elapsed(),
+        ) {
             last_runtime_guard_probe = Instant::now();
             let raw_probe = probe_runtime_guard(&options.project_root);
             let (next_state, disconnected_probe_count) = stabilize_runtime_guard_probe(
@@ -769,6 +773,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                 if !ready_marked {
                     let _ = mark_native_dashboard_ready(&options.project_root);
                     ready_marked = true;
+                    dashboard_ready_since = Some(Instant::now());
                 }
                 latest_snapshot = Some(visible_model.snapshot);
                 latest_endpoint = loaded.endpoint;
@@ -940,6 +945,16 @@ fn reconcile_dashboard_event_stream(
 
 fn elapsed_millis(start: Instant) -> i64 {
     start.elapsed().as_millis().min(i64::MAX as u128) as i64
+}
+
+fn should_probe_dashboard_runtime_guard(
+    live_dashboard: bool,
+    ready_age: Option<Duration>,
+    elapsed_since_last_probe: Duration,
+) -> bool {
+    live_dashboard
+        && ready_age.is_some_and(|age| age >= DASHBOARD_RUNTIME_GUARD_INTERVAL)
+        && elapsed_since_last_probe >= DASHBOARD_RUNTIME_GUARD_INTERVAL
 }
 
 fn maybe_start_dashboard_runtime_guard_repair(
@@ -2168,6 +2183,35 @@ mod tests {
         );
         assert!(deferred.is_empty());
         drop(accepted);
+    }
+
+    #[test]
+    fn live_dashboard_waits_until_ready_before_runtime_guard_probe() {
+        assert!(!should_probe_dashboard_runtime_guard(
+            true,
+            None,
+            DASHBOARD_RUNTIME_GUARD_INTERVAL
+        ));
+        assert!(!should_probe_dashboard_runtime_guard(
+            true,
+            Some(DASHBOARD_RUNTIME_GUARD_INTERVAL - Duration::from_millis(1)),
+            DASHBOARD_RUNTIME_GUARD_INTERVAL
+        ));
+        assert!(should_probe_dashboard_runtime_guard(
+            true,
+            Some(DASHBOARD_RUNTIME_GUARD_INTERVAL),
+            DASHBOARD_RUNTIME_GUARD_INTERVAL
+        ));
+        assert!(!should_probe_dashboard_runtime_guard(
+            false,
+            Some(DASHBOARD_RUNTIME_GUARD_INTERVAL),
+            DASHBOARD_RUNTIME_GUARD_INTERVAL
+        ));
+        assert!(!should_probe_dashboard_runtime_guard(
+            true,
+            Some(DASHBOARD_RUNTIME_GUARD_INTERVAL),
+            DASHBOARD_RUNTIME_GUARD_INTERVAL - Duration::from_millis(1)
+        ));
     }
 
     use crate::dashboard_renderer::DashboardNavLevel;
