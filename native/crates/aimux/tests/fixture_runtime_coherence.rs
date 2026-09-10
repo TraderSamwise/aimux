@@ -1,6 +1,7 @@
+use aimux::paths::PathResolver;
 use aimux::runtime_coherence::{
     RuntimeCoherenceHealth, RuntimeCoherenceHealthProbe, RuntimeCoherenceInput,
-    RuntimeCoherenceTmux, RuntimeCoherenceTmuxWindow, build_runtime_coherence_report,
+    RuntimeCoherenceTmux, RuntimeCoherenceTmuxWindow, build_runtime_coherence_report_with_resolver,
     render_runtime_coherence_report,
 };
 use aimux::tmux::{
@@ -25,7 +26,11 @@ fn fixture_runtime_coherence_cases_match_typescript_contract() {
     let mut failures = Vec::new();
     for case in cases {
         let id = case["id"].as_str().expect("case id");
-        let actual_report = build_runtime_coherence_report(scenario_input(id, &case["input"]));
+        let mut resolver = fixture_resolver();
+        let actual_report = build_runtime_coherence_report_with_resolver(
+            scenario_input(id, &case["input"]),
+            &mut resolver,
+        );
         let mut actual = json!({
             "report": actual_report,
             "rendered": render_runtime_coherence_report(&actual_report),
@@ -49,6 +54,108 @@ fn fixture_runtime_coherence_cases_match_typescript_contract() {
         failures.len(),
         serde_json::to_string_pretty(&failures).expect("serialize failures")
     );
+}
+
+#[test]
+fn runtime_coherence_uses_resolver_for_expected_project_state_dir() {
+    let project_root = "/Users/samuelsteady/cs/mini-project";
+    let mut state_resolver = PathResolver::new("/", "/Users/samuelsteady", None);
+    let expected_state_dir = state_resolver
+        .project_state_dir_for(project_root)
+        .to_string_lossy()
+        .into_owned();
+    let mut daemon_projects = BTreeMap::new();
+    daemon_projects.insert(
+        "mini".into(),
+        json!({
+            "projectId": "mini",
+            "projectRoot": project_root,
+            "pid": 4242,
+            "startedAt": "then",
+            "updatedAt": "now",
+        }),
+    );
+    let expected_project_service = expected_manifest();
+    let mut health = BTreeMap::new();
+    health.insert(
+        "127.0.0.1:43211".into(),
+        vec![RuntimeCoherenceHealthProbe::Ok(RuntimeCoherenceHealth {
+            status: 200,
+            body: json!({
+                "ok": true,
+                "pid": 4242,
+                "projectStateDir": expected_state_dir,
+                "serviceInfo": expected_project_service,
+            }),
+        })],
+    );
+    let mut resolver = PathResolver::new("/", "/Users/samuelsteady", None);
+    let report = build_runtime_coherence_report_with_resolver(
+        RuntimeCoherenceInput {
+            generated_at: "2026-06-20T00:00:00.000Z".into(),
+            cli_version: "0.1.34".into(),
+            build_profile: "full".into(),
+            cli_launch: cli_launch(),
+            expected_project_service: expected_manifest(),
+            expected_runtime_owner: "owner-new".into(),
+            daemon_info: Some(json!({
+                "pid": 9001,
+                "port": 43190,
+                "startedAt": "then",
+                "updatedAt": "now",
+            })),
+            daemon_projects,
+            endpoints: [(
+                project_root.to_owned(),
+                Some(json!({
+                    "host": "127.0.0.1",
+                    "port": 43211,
+                    "pid": 4242,
+                    "updatedAt": "now",
+                })),
+            )]
+            .into_iter()
+            .collect(),
+            health,
+            tmux: RuntimeCoherenceTmux {
+                available: false,
+                version: None,
+                ..RuntimeCoherenceTmux::default()
+            },
+            dashboard_build_stamps: [(project_root.to_owned(), "dashboard-new".to_owned())]
+                .into_iter()
+                .collect(),
+            process_args: BTreeMap::new(),
+            process_list: Vec::new(),
+        },
+        &mut resolver,
+    );
+
+    assert_eq!(
+        report.pointer("/summary/ok").and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        report
+            .pointer("/summary/needsRestart")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        report
+            .pointer("/projects/0/service/status")
+            .and_then(Value::as_str),
+        Some("ok")
+    );
+    assert!(
+        !serde_json::to_string(&report)
+            .expect("serialize report")
+            .contains("/Users/sam/.aimux")
+    );
+}
+
+fn fixture_resolver() -> PathResolver {
+    PathResolver::new("/", "/Users/sam", None)
 }
 
 fn request_log_for_case(id: &str, input: &Value) -> Value {
@@ -368,10 +475,11 @@ fn service_health(project_root: &str, pid: i64, service_info: &Value) -> Value {
 }
 
 fn project_state_dir_for(project_root: &str) -> String {
-    format!(
-        "/Users/sam/.aimux/projects/{}",
-        aimux::paths::compute_project_id(project_root)
-    )
+    let mut resolver = fixture_resolver();
+    resolver
+        .project_state_dir_for(project_root)
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn expected_manifest() -> Value {

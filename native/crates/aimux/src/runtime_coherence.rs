@@ -1,7 +1,7 @@
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::paths::compute_project_id;
+use crate::paths::PathResolver;
 use crate::tmux::{
     AIMUX_TMUX_RUNTIME_CONTRACT_VERSION, TMUX_DASHBOARD_OWNER_OPTION, TMUX_RUNTIME_CONTRACT_OPTION,
     TMUX_RUNTIME_OWNER_OPTION,
@@ -73,6 +73,14 @@ pub struct RuntimeCoherenceInput {
 }
 
 pub fn build_runtime_coherence_report(input: RuntimeCoherenceInput) -> Value {
+    let mut resolver = PathResolver::from_env();
+    build_runtime_coherence_report_with_resolver(input, &mut resolver)
+}
+
+pub fn build_runtime_coherence_report_with_resolver(
+    input: RuntimeCoherenceInput,
+    resolver: &mut PathResolver,
+) -> Value {
     let session_names = if input.tmux.available {
         input.tmux.session_names.clone()
     } else {
@@ -92,11 +100,15 @@ pub fn build_runtime_coherence_report(input: RuntimeCoherenceInput) -> Value {
             .get(&project_root.project_root)
             .cloned()
             .flatten();
+        let expected_state_dir = resolver
+            .project_state_dir_for(&project_root.project_root)
+            .to_string_lossy()
+            .into_owned();
         let mut service = read_project_service_health(
-            &project_root.project_root,
             endpoint,
             &input.expected_project_service,
             &input.health,
+            &expected_state_dir,
         );
         let daemon_state =
             find_project_daemon_state(&input.daemon_projects, &project_root.project_root);
@@ -470,10 +482,10 @@ fn add_known_project(
 }
 
 fn read_project_service_health(
-    project_root: &str,
     endpoint: Option<Value>,
     expected: &Value,
     health: &BTreeMap<String, Vec<RuntimeCoherenceHealthProbe>>,
+    expected_state_dir: &str,
 ) -> Value {
     let Some(endpoint) = endpoint else {
         return json!({
@@ -519,9 +531,8 @@ fn read_project_service_health(
                     .filter(|value| value.is_object())
                     .cloned()
                     .unwrap_or(Value::Null);
-                let expected_state_dir = project_state_dir_for(project_root);
                 let actual_state_dir = response.body.get("projectStateDir").and_then(Value::as_str);
-                if actual_state_dir != Some(expected_state_dir.as_str()) {
+                if actual_state_dir != Some(expected_state_dir) {
                     return json!({
                         "status": "mismatch",
                         "daemonState": null,
@@ -820,13 +831,6 @@ fn project_session_name(project_root: &str) -> String {
     } else {
         "aimux-beta-222".into()
     }
-}
-
-fn project_state_dir_for(project_root: &str) -> String {
-    format!(
-        "/Users/sam/.aimux/projects/{}",
-        compute_project_id(project_root)
-    )
 }
 
 fn is_managed_session_name(session_name: &str) -> bool {
