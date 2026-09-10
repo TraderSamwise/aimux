@@ -1,4 +1,7 @@
-use aimux::project_service::agents::topology_desktop_session_list_with_live_window_ids;
+use aimux::project_service::agents::{
+    LiveWindowIdsProjection, topology_desktop_session_list_with_live_window_ids,
+    topology_desktop_session_list_with_live_window_projection,
+};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 
@@ -81,6 +84,28 @@ fn session_with_live_tmux_window_keeps_live_status_and_target() {
         "a session backed by a live tmux window must not be downgraded"
     );
     assert_eq!(sessions[0]["tmuxTarget"]["windowId"], "@1");
+}
+
+/// A failed tmux query is not evidence that every window disappeared. Preserve
+/// the projection and let a later successful query settle the liveness.
+#[test]
+fn session_with_live_tmux_window_is_preserved_when_tmux_query_fails() {
+    let topology = topology_with("running", Some("@1"));
+    let sessions = topology_desktop_session_list_with_live_window_projection(
+        &topology,
+        &BTreeMap::new(),
+        &Map::new(),
+        LiveWindowIdsProjection::Unavailable("tmux socket busy"),
+    );
+    assert_eq!(
+        sessions[0].get("status").and_then(Value::as_str),
+        Some("running"),
+        "a tmux query failure must not downgrade an otherwise live session"
+    );
+    assert_eq!(
+        sessions[0]["tmuxTarget"]["windowId"], "@1",
+        "a tmux query failure must not remove the focus binding"
+    );
 }
 
 /// The dead tmux binding must be dropped, so nothing downstream tries to focus it.

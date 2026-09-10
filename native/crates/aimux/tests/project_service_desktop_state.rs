@@ -300,6 +300,44 @@ fn route_desktop_state_reports_persisted_operation_failures() {
 }
 
 #[test]
+fn route_desktop_state_preserves_live_sessions_and_reports_tmux_liveness_query_errors() {
+    let (project, state_dir) = write_desktop_state_fixtures("tmux-liveness-error");
+    let isolation = support::TestIsolation::new("desktop-state-tmux-liveness-error");
+    let context = isolation
+        .project_context(&project, &state_dir)
+        .with_live_window_ids_error("tmux socket busy");
+
+    let response = route_project_service_request(&context, "GET", routes::DESKTOP_STATE, None);
+
+    assert_eq!(response.status, 200);
+    let sessions = response.body["sessions"].as_array().expect("sessions");
+    let live = find(sessions, "codex-live");
+    assert_eq!(
+        live["status"], "running",
+        "a tmux query error must not downgrade a live session"
+    );
+    assert_eq!(
+        live["tmuxWindowId"], "@1",
+        "a tmux query error must not remove the focus binding"
+    );
+    let failures = response.body["operationFailures"]
+        .as_array()
+        .expect("operation failures");
+    assert!(
+        failures.iter().any(|failure| {
+            failure["id"] == "tmux-live-window-query"
+                && failure["targetKind"] == "tmux"
+                && failure["operation"] == "live-window-query"
+                && failure["message"]
+                    .as_str()
+                    .is_some_and(|message| message.contains("tmux socket busy"))
+        }),
+        "desktop-state must name tmux liveness query failures: {failures:#?}"
+    );
+    cleanup(project);
+}
+
+#[test]
 fn desktop_state_preview_query_controls_capture_and_session_snapshots() {
     let (project, state_dir) = write_desktop_state_fixtures("preview");
     let isolation = support::TestIsolation::new("desktop-state-preview");

@@ -16,7 +16,11 @@ use crate::team_contract::{
 };
 use crate::tmux::{refresh_status_argv, tmux_command_from_env};
 
-use super::desktop_state::{DesktopStateInput, build_desktop_state_with_live_window_ids};
+use super::agents::LiveWindowIdsProjection;
+use super::desktop_state::{
+    DesktopStateInput, build_desktop_state, build_desktop_state_with_live_window_ids,
+    build_desktop_state_with_live_window_projection,
+};
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::router::ProjectServiceRequestContext;
 use super::runtime_exchange::{read_runtime_exchange, runtime_exchange_path};
@@ -94,15 +98,22 @@ pub fn build_statusline_snapshot(context: &ProjectServiceRequestContext) -> Resu
     } else {
         let topology = read_runtime_topology(runtime_topology_path(&project_state_dir))?;
         let exchange = read_runtime_exchange(runtime_exchange_path(&project_state_dir));
-        build_desktop_state_with_live_window_ids(
-            DesktopStateInput {
-                project_root: context.project_root().to_string_lossy().into_owned(),
-                topology: &topology,
-                metadata_sessions: &metadata.sessions,
-                exchange: &exchange,
-            },
-            context.live_window_ids(),
-        )
+        let input = DesktopStateInput {
+            project_root: context.project_root().to_string_lossy().into_owned(),
+            topology: &topology,
+            metadata_sessions: &metadata.sessions,
+            exchange: &exchange,
+        };
+        match context.live_window_ids_status() {
+            Some(Ok(live_window_ids)) => {
+                build_desktop_state_with_live_window_ids(input, Some(live_window_ids))
+            }
+            Some(Err(error)) => build_desktop_state_with_live_window_projection(
+                input,
+                LiveWindowIdsProjection::Unavailable(error),
+            ),
+            None => build_desktop_state(input),
+        }
     };
     let sessions = statusline_sessions(array_field(&desktop_state, "sessions"), "agent")
         .into_iter()

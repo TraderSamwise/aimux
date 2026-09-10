@@ -156,6 +156,18 @@ pub fn build_runtime_coherence_report_with_resolver(
         .iter()
         .filter(|project| project.get("status").and_then(Value::as_str) == Some("ok"))
         .count();
+    let stopped = projects
+        .iter()
+        .filter(|project| project.get("status").and_then(Value::as_str) == Some("stopped"))
+        .count();
+    let inactive = projects
+        .iter()
+        .filter(|project| project.get("status").and_then(Value::as_str) == Some("inactive"))
+        .count();
+    let needs_attention = projects
+        .iter()
+        .filter(|project| project.get("status").and_then(Value::as_str) == Some("needs-attention"))
+        .count();
     let runtime_rebuild_required = projects
         .iter()
         .filter(|project| {
@@ -201,7 +213,10 @@ pub fn build_runtime_coherence_report_with_resolver(
         "summary": {
             "projects": projects.len(),
             "ok": ok,
-            "needsRestart": projects.len() - ok,
+            "stopped": stopped,
+            "inactive": inactive,
+            "needsAttention": needs_attention,
+            "needsRestart": needs_attention,
             "runtimeRebuildRequired": runtime_rebuild_required,
         },
     })
@@ -269,7 +284,7 @@ pub fn render_runtime_coherence_report(report: &Value) -> String {
             .unwrap_or(0)
     ));
     lines.push(format!(
-        "  projects: {} ({} ok, {} need restart, {} need runtime rebuild)",
+        "  projects: {} ({} ok, {} stopped, {} inactive, {} need attention, {} need runtime rebuild)",
         report
             .pointer("/summary/projects")
             .and_then(Value::as_u64)
@@ -279,7 +294,15 @@ pub fn render_runtime_coherence_report(report: &Value) -> String {
             .and_then(Value::as_u64)
             .unwrap_or(0),
         report
-            .pointer("/summary/needsRestart")
+            .pointer("/summary/stopped")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        report
+            .pointer("/summary/inactive")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        report
+            .pointer("/summary/needsAttention")
             .and_then(Value::as_u64)
             .unwrap_or(0),
         report
@@ -292,11 +315,7 @@ pub fn render_runtime_coherence_report(report: &Value) -> String {
         lines.push(String::new());
         lines.push(format!(
             "Project {}: {}",
-            if project["status"].as_str() == Some("ok") {
-                "ok"
-            } else {
-                "needs-restart"
-            },
+            render_project_status(project["status"].as_str()),
             project["projectRoot"].as_str().unwrap_or_default()
         ));
         lines.push(format!(
@@ -786,18 +805,57 @@ fn manifests_match(expected: &Value, actual: &Value) -> bool {
 }
 
 fn project_status(runtime: &Value, service: &Value, dashboards: &[Value]) -> &'static str {
+    if service_deliberately_stopped(service) {
+        return "stopped";
+    }
+    if service_inactive(service, dashboards) && runtime["rebuildRequired"].as_bool() != Some(true) {
+        return "inactive";
+    }
     if runtime["rebuildRequired"].as_bool() == Some(true)
         || service["status"].as_str() != Some("ok")
     {
-        return "needs-restart";
+        return "needs-attention";
     }
     if dashboards
         .iter()
         .any(|dashboard| dashboard["status"].as_str() != Some("ok"))
     {
-        "needs-restart"
+        "needs-attention"
     } else {
         "ok"
+    }
+}
+
+fn service_deliberately_stopped(service: &Value) -> bool {
+    service
+        .pointer("/daemonState/status")
+        .and_then(Value::as_str)
+        == Some("stopped")
+        && service.get("endpoint").is_some_and(Value::is_null)
+        && service
+            .pointer("/daemonState/lastExit/expected")
+            .and_then(Value::as_bool)
+            != Some(false)
+        && matches!(
+            service.get("status").and_then(Value::as_str),
+            Some("missing" | "unreachable")
+        )
+}
+
+fn service_inactive(service: &Value, dashboards: &[Value]) -> bool {
+    service["daemonState"].is_null()
+        && service["endpoint"].is_null()
+        && service["status"].as_str() == Some("missing")
+        && dashboards.is_empty()
+}
+
+fn render_project_status(status: Option<&str>) -> &'static str {
+    match status {
+        Some("ok") => "ok",
+        Some("stopped") => "stopped",
+        Some("inactive") => "inactive",
+        Some("needs-attention") => "needs-attention",
+        _ => "needs-attention",
     }
 }
 
