@@ -1,4 +1,5 @@
 use serde_json::Value;
+use std::fs;
 use std::path::Path;
 
 use crate::daemon_state::load_metadata_state;
@@ -252,7 +253,7 @@ fn worktree_display_context(
             command: None,
             worktree_path: Some(project_root.into_owned()),
             worktree_name: Some("Main Checkout".to_owned()),
-            branch: None,
+            branch: git_branch_for_path(&context.project_root),
         };
     }
     NotificationDisplayContext {
@@ -281,6 +282,30 @@ fn path_basename(path: &str) -> Option<String> {
     Path::new(path)
         .file_name()
         .and_then(|name| name.to_str())
+        .and_then(trimmed_str)
+        .map(str::to_owned)
+}
+
+fn git_branch_for_path(path: &Path) -> Option<String> {
+    let dot_git = path.join(".git");
+    let head_path = if dot_git.is_dir() {
+        dot_git.join("HEAD")
+    } else {
+        let gitdir = fs::read_to_string(&dot_git).ok()?;
+        let gitdir = gitdir.trim().strip_prefix("gitdir:")?.trim();
+        let gitdir_path = Path::new(gitdir);
+        if gitdir_path.is_absolute() {
+            gitdir_path.join("HEAD")
+        } else {
+            path.join(gitdir_path).join("HEAD")
+        }
+    };
+    let head = fs::read_to_string(head_path).ok()?;
+    let head = trimmed_str(&head)?;
+    let branch_ref = head.strip_prefix("ref:")?.trim();
+    branch_ref
+        .rsplit('/')
+        .next()
         .and_then(trimmed_str)
         .map(str::to_owned)
 }

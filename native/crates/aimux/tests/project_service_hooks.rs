@@ -9,7 +9,7 @@ use aimux::runtime_topology::{
 };
 use aimux::tui_render::text::strip_ansi;
 use serde_json::json;
-use std::fs::{create_dir_all, remove_dir_all};
+use std::fs::{create_dir_all, remove_dir_all, write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -326,6 +326,55 @@ fn claude_hook_replaces_stale_backend_row_when_live_duplicate_has_no_backend_id(
     let snapshot = list_notification_snapshot(&state_dir, NotificationQuery::default());
     assert_eq!(snapshot.total, 1);
     assert_eq!(snapshot.notifications[0]["sessionId"], "claude-gqaapg");
+    assert_eq!(
+        snapshot.notifications[0]["title"],
+        format!(
+            "{} / Main Checkout (master)",
+            project.file_name().unwrap().to_str().unwrap()
+        )
+    );
+    assert_eq!(
+        snapshot.notifications[0]["body"],
+        "Needs input: claude @ Main Checkout - Claude is waiting for your input"
+    );
+    cleanup(project);
+}
+
+#[test]
+fn claude_hook_resolves_main_branch_from_git_when_topology_worktrees_are_missing() {
+    let project = temp_project("claude-backend-main-branch-from-git");
+    let state_dir = project.join("state");
+    write_duplicate_hook_topology(&project, &state_dir);
+    update_runtime_topology(runtime_topology_path(&state_dir), |mut topology| {
+        topology["worktrees"] = json!([]);
+        topology
+    })
+    .expect("remove topology worktrees");
+    create_dir_all(project.join(".git")).expect("create git dir");
+    write(
+        project.join(".git").join("HEAD"),
+        "ref: refs/heads/master\n",
+    )
+    .expect("write HEAD");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let response = route_project_service_request(
+        &context,
+        "POST",
+        "/hooks/claude?action=notification&sessionId=claude-pd1hl2",
+        Some(&json!({
+            "session_id": "94760225-52eb-4f6d-973d-e1393fea8885",
+            "message": "Claude is waiting for your input",
+            "cwd": project.to_string_lossy()
+        })),
+    );
+    assert_eq!(response.status, 200);
+
+    let snapshot = list_notification_snapshot(&state_dir, NotificationQuery::default());
+    assert_eq!(snapshot.total, 1);
+    assert_eq!(snapshot.notifications[0]["sessionId"], "claude-gqaapg");
+    assert_eq!(snapshot.notifications[0]["worktreeName"], "Main Checkout");
+    assert_eq!(snapshot.notifications[0]["branch"], "master");
     assert_eq!(
         snapshot.notifications[0]["title"],
         format!(
