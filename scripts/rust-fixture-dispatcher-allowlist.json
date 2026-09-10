@@ -14,7 +14,6 @@
   "native/crates/aimux/src/route_share_contract.rs": "Tracked route-share parity fixture; keep until route-share behavior is production-consumed natively or culled.",
   "native/crates/aimux/src/service_client_contract.rs": "Tracked service parity fixture; keep until service behavior is production-consumed natively or culled.",
   "native/crates/aimux/src/service_notify_contract.rs": "Tracked service parity fixture; keep until service behavior is production-consumed natively or culled.",
-  "native/crates/aimux/src/session_launch_migrate_switch_contract.rs": "Tracked session-launch parity fixture; keep until session-launch behavior is production-consumed natively or culled.",
   "native/crates/aimux/src/session_launch_resume_contract.rs": "Tracked session-launch parity fixture; keep until session-launch behavior is production-consumed natively or culled.",
   "native/crates/aimux/src/session_launch_startup_contract.rs": "Tracked session-launch parity fixture; keep until session-launch behavior is production-consumed natively or culled.",
   "native/crates/aimux/src/session_runtime_agent_controls_contract.rs": "Tracked session-runtime parity fixture; keep until session-runtime behavior is production-consumed natively or culled.",
