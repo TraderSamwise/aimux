@@ -57,6 +57,34 @@ When changing dashboard or app behavior, preserve that boundary:
   thread/task/review state, topology, worktree, or graveyard state.
 - Treat `statusline.json` as derived/debug state, not a primary transport.
 
+## Runtime Guardrails
+
+When adding a guard, gate, refusal path, runtime identity check, or precedence
+change, apply these rules before it ships:
+
+- Key on identity, not spelling. Use the actual `AIMUX_HOME`, daemon port,
+  runtime owner, caller identity, project root classification, or test-harness
+  signal. Do not decide from project names, path shapes, prefixes, or where a
+  binary happens to live unless that spelling is only evidence for a stronger
+  identity check.
+- Test the inverse. A guard is unfinished until a scoped test proves the real
+  case it must catch and the real case it must not catch. Include foreign
+  `AIMUX_HOME`, non-default daemon ports, legacy metadata fallbacks,
+  registry-only or transiently unavailable projects, and legitimate checkouts
+  under temporary directories when they are in the blast radius.
+- Do not let wrappers lie. A wait, launcher, restart, reload, or repair wrapper
+  must report the child error or compared values that caused failure. Never
+  convert a child crash into a readiness timeout, a truncated response into a
+  daemon framing claim, or a build-stamp mismatch into an indefinite syncing
+  state without naming both sides of the comparison.
+- Prove gates can fail. A release, runtime, safety, or parity gate needs a test
+  that deliberately makes the gate fail. If the failing case cannot be written,
+  the gate is not checking the invariant.
+- Recover Node before deciding parity. Use
+  `git show a9220736^:<path>` before choosing whether Rust diverges from Node,
+  a fixture is stale, or a behavior is deliberately new. When Rust intentionally
+  differs from Node, state that explicitly in the commit body.
+
 ## Background Work
 
 Background work belongs on the shared periodic rail, never a bare
