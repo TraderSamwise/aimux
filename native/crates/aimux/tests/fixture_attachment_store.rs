@@ -22,12 +22,14 @@ fn fixture_attachment_store_matches_typescript() {
             case["id"]
         );
         let actual = attachment_store_contract(case);
-        if actual != case["output"] {
+        let expected = normalize_platform_path_spellings(case["output"].clone());
+        let actual = normalize_platform_path_spellings(actual);
+        if actual != expected {
             failures.push(json!({
                 "id": case["id"],
                 "name": case["name"],
                 "api": case["api"],
-                "expected": case["output"],
+                "expected": expected,
                 "actual": actual,
             }));
         }
@@ -38,4 +40,37 @@ fn fixture_attachment_store_matches_typescript() {
         failures.len(),
         serde_json::to_string_pretty(&failures).expect("serialize failures")
     );
+}
+
+fn normalize_platform_path_spellings(value: Value) -> Value {
+    match value {
+        Value::Array(items) => Value::Array(
+            items
+                .into_iter()
+                .map(normalize_platform_path_spellings)
+                .collect(),
+        ),
+        Value::Object(map) => Value::Object(
+            map.into_iter()
+                .map(|(key, value)| (key, normalize_platform_path_spellings(value)))
+                .collect(),
+        ),
+        Value::String(text) => Value::String(normalize_platform_path_text(&text)),
+        value => value,
+    }
+}
+
+fn normalize_platform_path_text(text: &str) -> String {
+    let mut output = text.to_owned();
+    for placeholder in ["<project>", "<temp>", "<scratch>", "<outside>"] {
+        output = output.replace(&format!("/private{placeholder}"), placeholder);
+    }
+    for (macos, portable) in [
+        ("/private/etc/", "/etc/"),
+        ("/private/tmp/", "/tmp/"),
+        ("/private/var/", "/var/"),
+    ] {
+        output = output.replace(macos, portable);
+    }
+    output
 }
