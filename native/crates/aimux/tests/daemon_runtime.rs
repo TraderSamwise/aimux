@@ -2258,7 +2258,19 @@ fn request_http(
     path: &str,
     timeout: Duration,
 ) -> Result<String, String> {
-    let mut stream = TcpStream::connect(address).map_err(|error| error.to_string())?;
+    let started = std::time::Instant::now();
+    let mut stream = loop {
+        match TcpStream::connect(address) {
+            Ok(stream) => break stream,
+            Err(error)
+                if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::Interrupted)
+                    && started.elapsed() < timeout =>
+            {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    };
     stream
         .set_read_timeout(Some(timeout))
         .map_err(|error| error.to_string())?;

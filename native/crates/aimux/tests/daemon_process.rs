@@ -1254,7 +1254,10 @@ fn hosted_operator_stream_stops_after_principal_revocation() {
             max_lifetime_ms: 10_000,
             idle_timeout_ms: 10_000,
             max_bytes: 1024 * 1024,
-            reauth_interval_ms: 50,
+            // This interval also bounds the upstream stream read timeout. Keep
+            // the revocation test fast without making CI prove a 50ms upstream
+            // accept-and-header budget.
+            reauth_interval_ms: 250,
         },
     ));
     let request = format!(
@@ -1299,7 +1302,10 @@ fn hosted_operator_stream_stops_after_principal_revocation() {
     worker.join().expect("hosted stream worker");
 
     let response = String::from_utf8(output).expect("stream response");
-    assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
+    assert!(
+        response.starts_with("HTTP/1.1 200 OK\r\n"),
+        "unexpected hosted stream response: {response:?}"
+    );
     assert!(response.contains("data: first\n\n"));
     let events = HostedAuditStore::with_resolver(fixture.resolver.clone())
         .tail_audit(10)

@@ -14,6 +14,7 @@ use std::fs;
 use std::io::IsTerminal;
 use std::path::Path;
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -35,6 +36,7 @@ pub const TMUX_RUNTIME_CONTRACT_OPTION: &str = "@aimux-runtime-contract";
 pub const TMUX_RUNTIME_REBUILD_REQUIRED_OPTION: &str = "@aimux-runtime-rebuild-required";
 pub const AIMUX_TMUX_RUNTIME_CONTRACT_VERSION: &str = "2";
 pub const AIMUX_TMUX_SOCKET_PATH_ENV: &str = "AIMUX_TMUX_SOCKET_PATH";
+static TMUX_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ManagedTmuxSessionOptions {
@@ -2094,9 +2096,10 @@ impl TmuxRuntimeManager {
         config: &TmuxRuntimeConfig,
     ) -> Result<(), String> {
         let dir = std::env::temp_dir().join(format!(
-            "aimux-tmux-{}-{}",
+            "aimux-tmux-{}-{}-{}",
             std::process::id(),
-            now_millis()
+            now_millis(),
+            TMUX_TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir_all(&dir).map_err(|error| format!("create tmux config dir: {error}"))?;
         let file = dir.join("mouse-bindings.conf");
