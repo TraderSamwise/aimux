@@ -247,10 +247,6 @@ Priority fixture groups:
 - `notifications/mobile-push.json`: mobile push alert forwarding request shape
   and external-notification disable gates captured by running TypeScript
   `mobile-push-bridge` against a local daemon endpoint.
-- `notifications/notify-alert.json`: notifyAlert category gates, focus
-  suppression, external-notification guard, and desktop delivery payloads
-  captured by running TypeScript notify with config/suppression/desktop
-  recorders.
 - `notifications/store.json`: notification list/filter/count, mark-read, clear,
   add/upsert, live alert event, focus-suppression, dedupe, interaction metadata,
   and runtime-exchange side-effect behavior captured by running TypeScript

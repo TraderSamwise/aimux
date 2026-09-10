@@ -238,7 +238,6 @@ Binding statuses: PROVEN-FAILS 325, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
 | `fixture_scribe_watcher` | PROVEN-FAILS | `testdata/contracts/v1/coordination/scribe-watcher.json` | 14 | mutated fixture output failed owning Rust suite |
 | `fixture_service_client` | PROVEN-FAILS | `testdata/contracts/v1/service-client/client.json` | 10 | mutated fixture output failed owning Rust suite |
 | `fixture_service_notify` | PROVEN-FAILS | `testdata/contracts/v1/service/local-ui-server.json` | 6 | mutated fixture output failed owning Rust suite |
-| `fixture_service_notify` | PROVEN-FAILS | `testdata/contracts/v1/notifications/notify-alert.json` | 9 | mutated fixture output failed owning Rust suite |
 | `fixture_service_state_snapshot` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/service-state-snapshot.json` | 5 | mutated fixture output failed owning Rust suite |
 | `fixture_session_bootstrap` | PROVEN-FAILS | `testdata/contracts/v1/session-bootstrap/action-args.json` | 9 | mutated fixture output failed owning Rust suite |
 | `fixture_session_bootstrap` | PROVEN-FAILS | `testdata/contracts/v1/session-bootstrap/preamble.json` | 14 | mutated fixture output failed owning Rust suite |

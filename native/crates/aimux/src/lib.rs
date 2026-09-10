@@ -134,7 +134,6 @@ pub mod runtime_topology_state_save;
 pub mod runtime_topology_store_contract;
 pub mod runtime_topology_worktrees;
 pub mod scribe_watcher;
-pub mod service_notify_contract;
 pub mod service_state_snapshot;
 pub mod session_bootstrap;
 pub mod session_launch;
