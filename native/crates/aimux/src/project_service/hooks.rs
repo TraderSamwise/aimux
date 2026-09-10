@@ -245,7 +245,7 @@ fn same_hook_identity(candidate: &Value, stale: &Value) -> bool {
     same_non_empty_field(candidate, stale, "tool")
         && same_optional_field(candidate, stale, "toolConfigKey")
         && same_optional_field(candidate, stale, "command")
-        && same_non_empty_field(candidate, stale, "worktreePath")
+        && compatible_optional_field(candidate, stale, "worktreePath")
         && same_nested_optional_field(candidate, stale, &["team", "role"])
 }
 
@@ -257,6 +257,12 @@ fn same_non_empty_field(left: &Value, right: &Value, key: &str) -> bool {
 fn same_optional_field(left: &Value, right: &Value, key: &str) -> bool {
     trimmed_value(left.get(key).and_then(Value::as_str))
         == trimmed_value(right.get(key).and_then(Value::as_str))
+}
+
+fn compatible_optional_field(left: &Value, right: &Value, key: &str) -> bool {
+    let left = trimmed_value(left.get(key).and_then(Value::as_str));
+    let right = trimmed_value(right.get(key).and_then(Value::as_str));
+    left.is_empty() || right.is_empty() || left == right
 }
 
 fn same_nested_optional_field(left: &Value, right: &Value, path: &[&str]) -> bool {
@@ -328,9 +334,24 @@ fn mark_hook_session_running(
 fn emit_hook_event(
     context: &ProjectServiceRequestContext,
     session_id: &str,
-    event: Value,
+    mut event: Value,
     worktree_path: Option<String>,
 ) -> ProjectServiceDispatchResponse {
+    if let Some(worktree_path) = worktree_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        && let Some(event_object) = event.as_object_mut()
+        && event_object
+            .get("worktreePath")
+            .and_then(Value::as_str)
+            .is_none_or(|path| path.trim().is_empty())
+    {
+        event_object.insert(
+            "worktreePath".to_owned(),
+            Value::String(worktree_path.to_owned()),
+        );
+    }
     let response = route_runtime_metadata_request(
         context,
         "POST",

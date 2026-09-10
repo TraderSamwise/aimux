@@ -261,7 +261,8 @@ fn claude_hook_prefers_live_duplicate_when_backend_id_matches_stale_row() {
         "/hooks/claude?action=notification&sessionId=claude-pd1hl2",
         Some(&json!({
             "session_id": "94760225-52eb-4f6d-973d-e1393fea8885",
-            "message": "Claude is waiting for your input"
+            "message": "Claude is waiting for your input",
+            "cwd": project.to_string_lossy()
         })),
     );
     assert_eq!(response.status, 200);
@@ -272,10 +273,16 @@ fn claude_hook_prefers_live_duplicate_when_backend_id_matches_stale_row() {
     let snapshot = list_notification_snapshot(&state_dir, NotificationQuery::default());
     assert_eq!(snapshot.total, 1);
     assert_eq!(snapshot.notifications[0]["sessionId"], "claude-gqaapg");
+    assert_eq!(snapshot.notifications[0]["worktreeName"], "Main Checkout");
+    assert_eq!(snapshot.notifications[0]["branch"], "master");
     assert_eq!(
         snapshot.notifications[0]["body"],
         "Needs input: claude @ Main Checkout - Claude is waiting for your input"
     );
+    let events = context.project_events.events_since(0, None);
+    assert_eq!(events[0].event["sessionId"], "claude-gqaapg");
+    assert_eq!(events[0].event["worktreeName"], "Main Checkout");
+    assert_eq!(events[0].event["branch"], "master");
     cleanup(project);
 }
 
@@ -452,7 +459,6 @@ fn write_duplicate_hook_topology(project: &std::path::Path, state_dir: &std::pat
                 "rigId": "rig-1",
                 "logicalId": "claude-gqaapg",
                 "toolConfigKey": "claude",
-                "cwd": project_root.clone(),
                 "createdAt": "2026-09-08T00:00:01.000Z"
             }
         ],
@@ -497,7 +503,6 @@ fn write_duplicate_hook_topology(project: &std::path::Path, state_dir: &std::pat
                 "tool": "claude",
                 "toolConfigKey": "claude",
                 "command": "claude",
-                "worktreePath": project_root.clone(),
                 "createdAt": "2026-09-08T00:00:01.000Z",
                 "updatedAt": "2026-09-08T00:00:01.000Z"
             }
