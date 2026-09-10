@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 
 pub const TEST_HARNESS_HEADER: &str = "x-aimux-test-harness";
+pub const TEST_ISOLATION_MARKER: &str = "test-isolation.json";
 const CARGO_TEST_HEADER_VALUE: &str = "cargo-test";
 const TEST_PROJECT_PREFIXES: &[&str] = &[
     "aimux-dashboard-cmd-installed.",
@@ -23,11 +24,9 @@ const PROJECT_ROOT_REQUEST_FIELDS: &[&str] = &[
     "worktreePath",
 ];
 
-pub fn mark_default_daemon_test_harness_request(
-    headers: &mut BTreeMap<String, String>,
-    daemon_port: u16,
-) {
-    if daemon_port == crate::daemon_state::DEFAULT_DAEMON_PORT && is_cargo_test_process_context() {
+pub fn mark_daemon_test_harness_request(headers: &mut BTreeMap<String, String>) {
+    let aimux_home = crate::paths::PathResolver::from_env().global_aimux_dir();
+    if should_refuse_cargo_test_for_daemon_home(&aimux_home) {
         headers.insert(
             TEST_HARNESS_HEADER.to_owned(),
             CARGO_TEST_HEADER_VALUE.to_owned(),
@@ -35,10 +34,16 @@ pub fn mark_default_daemon_test_harness_request(
     }
 }
 
-pub fn default_daemon_test_harness_header_for_url(
+pub fn daemon_test_harness_header_for_url(url: &str) -> Option<(&'static str, &'static str)> {
+    let aimux_home = crate::paths::PathResolver::from_env().global_aimux_dir();
+    daemon_test_harness_header_for_url_with_home(url, &aimux_home)
+}
+
+pub fn daemon_test_harness_header_for_url_with_home(
     url: &str,
+    daemon_home: &Path,
 ) -> Option<(&'static str, &'static str)> {
-    (is_default_daemon_url(url) && is_cargo_test_process_context())
+    (is_loopback_daemon_url(url) && should_refuse_cargo_test_for_daemon_home(daemon_home))
         .then_some((TEST_HARNESS_HEADER, CARGO_TEST_HEADER_VALUE))
 }
 
@@ -94,7 +99,7 @@ pub fn request_missing_project_refusal_reason(
 
 pub fn project_materialization_refusal_reason(
     project_root: &Path,
-    daemon_port: u16,
+    daemon_home: &Path,
 ) -> Option<&'static str> {
     if is_ephemeral_or_fixture_temp_project_root(project_root) {
         return Some("temporary project");
@@ -104,10 +109,18 @@ pub fn project_materialization_refusal_reason(
         crate::paths::ProjectRootStatus::NotCheckout => return Some("non-checkout project"),
         crate::paths::ProjectRootStatus::Unreachable => return Some("unreachable project"),
     }
-    if daemon_port == crate::daemon_state::DEFAULT_DAEMON_PORT && is_cargo_test_harness_binary() {
+    if is_cargo_test_harness_binary() && !is_isolated_test_aimux_home(daemon_home) {
         return Some("cargo test harness");
     }
     None
+}
+
+pub fn should_refuse_cargo_test_for_daemon_home(daemon_home: &Path) -> bool {
+    is_cargo_test_process_context() && !is_isolated_test_aimux_home(daemon_home)
+}
+
+pub fn is_isolated_test_aimux_home(daemon_home: &Path) -> bool {
+    daemon_home.join(TEST_ISOLATION_MARKER).is_file()
 }
 
 pub fn is_cargo_test_harness_binary() -> bool {
@@ -374,17 +387,20 @@ fn canonical_header_name(name: &str) -> String {
         .join("-")
 }
 
-fn is_default_daemon_url(url: &str) -> bool {
+fn is_loopback_daemon_url(url: &str) -> bool {
     let Some(rest) = url.strip_prefix("http://") else {
         return false;
     };
     let Some(authority) = rest.split('/').next() else {
         return false;
     };
-    matches!(
-        authority,
-        "127.0.0.1:43190" | "localhost:43190" | "[::1]:43190"
-    )
+    let Some((host, port)) = authority.rsplit_once(':') else {
+        return false;
+    };
+    if port.parse::<u16>().is_err() {
+        return false;
+    }
+    matches!(host, "127.0.0.1" | "localhost" | "[::1]")
 }
 
 #[cfg(test)]

@@ -32,11 +32,11 @@ use aimux::debug_logging::{
 };
 use aimux::project_api_contract::routes as project_routes;
 use aimux::runtime_safety_guard::{
-    TEST_HARNESS_HEADER, default_daemon_test_harness_header_for_url,
+    TEST_HARNESS_HEADER, TEST_ISOLATION_MARKER, daemon_test_harness_header_for_url_with_home,
 };
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
-use std::fs::{read_to_string, remove_file};
+use std::fs::{self, read_to_string, remove_file};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Default)]
@@ -837,15 +837,37 @@ fn unified_router_refuses_test_harness_side_effects_before_dispatch() {
 }
 
 #[test]
-fn test_harness_header_marks_raw_default_daemon_urls_only() {
+fn test_harness_header_marks_real_daemon_urls_on_any_loopback_port() {
+    let real_home = Path::new("/Users/sam/.aimux");
     assert_eq!(
-        default_daemon_test_harness_header_for_url("http://127.0.0.1:43190/projects"),
+        daemon_test_harness_header_for_url_with_home("http://127.0.0.1:43190/projects", real_home,),
         Some((TEST_HARNESS_HEADER, "cargo-test"))
     );
     assert_eq!(
-        default_daemon_test_harness_header_for_url("http://127.0.0.1:43191/projects"),
+        daemon_test_harness_header_for_url_with_home("http://127.0.0.1:43191/projects", real_home,),
+        Some((TEST_HARNESS_HEADER, "cargo-test"))
+    );
+}
+
+#[test]
+fn test_harness_header_skips_isolated_daemon_home_on_non_default_port() {
+    let root = std::env::temp_dir().join(format!("aimux-router-isolation-{}", std::process::id()));
+    let aimux_home = root.join("aimux-home");
+    fs::create_dir_all(&aimux_home).expect("aimux home");
+    fs::write(
+        aimux_home.join(TEST_ISOLATION_MARKER),
+        r#"{"ownerPid":1,"kind":"cargo-test"}"#,
+    )
+    .expect("test marker");
+
+    assert_eq!(
+        daemon_test_harness_header_for_url_with_home(
+            "http://127.0.0.1:43191/projects",
+            &aimux_home,
+        ),
         None
     );
+    fs::remove_dir_all(root).expect("cleanup");
 }
 
 #[test]

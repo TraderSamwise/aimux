@@ -1205,7 +1205,16 @@ impl CoordinationHttpFixture {
         ));
         let _ = remove_dir_all(&root);
         let home = root.join("home");
-        fs::create_dir_all(&home).expect("home");
+        let aimux_home = home.join(".aimux");
+        fs::create_dir_all(&aimux_home).expect("aimux home");
+        fs::write(
+            aimux_home.join(aimux::runtime_safety_guard::TEST_ISOLATION_MARKER),
+            format!(
+                r#"{{"ownerPid":{},"kind":"cargo-test"}}"#,
+                std::process::id()
+            ),
+        )
+        .expect("write isolated aimux home marker");
         Self { root, home }
     }
 

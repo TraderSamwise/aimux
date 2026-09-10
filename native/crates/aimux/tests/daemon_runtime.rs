@@ -1049,6 +1049,40 @@ fn ensure_project_launches_service_and_persists_starting_state() {
 }
 
 #[test]
+fn ensure_project_refuses_cargo_test_harness_for_real_non_default_daemon_home_before_launch() {
+    let fixture = RuntimeFixture::new("ensure-refuse-real-non-default");
+    let project = fixture.project("repo");
+    let resolver = fixture.resolver();
+    fs::remove_file(
+        resolver
+            .global_aimux_dir()
+            .join(aimux::runtime_safety_guard::TEST_ISOLATION_MARKER),
+    )
+    .expect("remove isolated marker to model a real daemon home");
+    let launcher = Arc::new(FakeLauncher::new(87_655));
+    let verifier = Arc::new(FakeProcessVerifier::native([]));
+    let daemon_info = AimuxDaemonInfo {
+        port: 43_191,
+        ..fixture.info.clone()
+    };
+    let mut runtime = RealDaemonRuntime::with_project_service_launcher_and_process_verifier(
+        resolver,
+        daemon_info,
+        launcher.clone(),
+        verifier,
+        PROJECT_SERVICE_STARTUP_TIMEOUT_MS,
+    );
+
+    let error = runtime
+        .ensure_project(project.to_str().expect("project path"))
+        .expect_err("real non-default daemon home should refuse cargo test materialization");
+
+    assert!(error.contains("refusing to materialize cargo test harness"));
+    assert!(launcher.calls().is_empty());
+    fixture.cleanup();
+}
+
+#[test]
 fn ensure_project_reuses_existing_live_state_without_launching() {
     let fixture = RuntimeFixture::new("ensure-reuse");
     let project = fixture.project("repo");
@@ -1759,7 +1793,16 @@ impl RuntimeFixture {
         ));
         let _ = remove_dir_all(&root);
         let home = root.join("home");
-        fs::create_dir_all(&home).expect("home");
+        let aimux_home = home.join(".aimux");
+        fs::create_dir_all(&aimux_home).expect("aimux home");
+        fs::write(
+            aimux_home.join(aimux::runtime_safety_guard::TEST_ISOLATION_MARKER),
+            format!(
+                r#"{{"ownerPid":{},"kind":"cargo-test"}}"#,
+                std::process::id()
+            ),
+        )
+        .expect("write isolated aimux home marker");
         Self {
             root,
             home,

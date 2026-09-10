@@ -2065,7 +2065,7 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
         let project_id = compute_project_id(&project_root_path);
         if let Some(reason) = crate::runtime_safety_guard::project_materialization_refusal_reason(
             &project_root_path,
-            self.info.port,
+            &self.resolver.global_aimux_dir(),
         ) {
             log_at(
                 LogLevel::Debug,

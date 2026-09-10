@@ -104,6 +104,15 @@ impl TestIsolation {
         let daemon_dir = self.aimux_home.join("daemon");
         fs::create_dir_all(&daemon_dir).expect("create isolated daemon dir");
         fs::write(
+            self.aimux_home
+                .join(aimux::runtime_safety_guard::TEST_ISOLATION_MARKER),
+            format!(
+                r#"{{"ownerPid":{},"kind":"cargo-test"}}"#,
+                std::process::id()
+            ),
+        )
+        .expect("write isolated aimux home marker");
+        fs::write(
             daemon_dir.join("daemon.json"),
             format!(
                 r#"{{"pid":{},"port":{},"startedAt":"2026-01-01T00:00:00.000Z","updatedAt":"2026-01-01T00:00:00.000Z"}}"#,

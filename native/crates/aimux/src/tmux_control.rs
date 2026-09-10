@@ -1848,7 +1848,7 @@ impl TmuxControl {
             "content-type: application/json".to_owned(),
         ];
         if let Some((name, value)) =
-            crate::runtime_safety_guard::default_daemon_test_harness_header_for_url(url)
+            crate::runtime_safety_guard::daemon_test_harness_header_for_url(url)
         {
             args.push("-H".to_owned());
             args.push(format!("{name}: {value}"));
