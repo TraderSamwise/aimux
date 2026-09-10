@@ -6,10 +6,13 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::thread::sleep;
+use std::time::Duration;
 
 pub const DEFAULT_DAEMON_PORT: u16 = 43190;
 pub const DEFAULT_DAEMON_HOST: &str = "127.0.0.1";
 const EPOCH_ISO: &str = "1970-01-01T00:00:00.000Z";
+const DAEMON_INFO_LOCK_WAIT_MS: u128 = 5_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -229,26 +232,18 @@ pub fn load_daemon_info_with(
 }
 
 pub fn save_daemon_info(path: impl AsRef<Path>, info: &AimuxDaemonInfo) -> io::Result<()> {
-    save_json_with_fallback(path, info)
+    let path = path.as_ref();
+    with_daemon_info_lock(path, || save_json_with_fallback(path, info))
 }
 
 pub fn clear_daemon_info(path: impl AsRef<Path>) -> io::Result<()> {
-    clear_file(path)
+    let path = path.as_ref();
+    with_daemon_info_lock(path, || clear_file(path))
 }
 
 pub fn clear_daemon_info_if_owned(path: impl AsRef<Path>, owner_pid: i32) -> io::Result<bool> {
     let path = path.as_ref();
-    let Ok(contents) = fs::read(path) else {
-        return Ok(false);
-    };
-    let Ok(info) = serde_json::from_slice::<AimuxDaemonInfo>(&contents) else {
-        return Ok(false);
-    };
-    if info.pid != owner_pid {
-        return Ok(false);
-    }
-    clear_file(path)?;
-    Ok(true)
+    clear_daemon_info_if_owned_with_after_match(path, owner_pid, || {})
 }
 
 pub fn load_daemon_state(path: impl AsRef<Path>) -> DaemonState {
@@ -613,6 +608,81 @@ fn save_json(path: impl AsRef<Path>, value: &impl Serialize) -> io::Result<()> {
     write_json_atomic(path, value)
 }
 
+fn clear_daemon_info_if_owned_with_after_match(
+    path: &Path,
+    owner_pid: i32,
+    after_match: impl FnOnce(),
+) -> io::Result<bool> {
+    with_daemon_info_lock(path, || {
+        let Ok(contents) = fs::read(path) else {
+            return Ok(false);
+        };
+        let Ok(info) = serde_json::from_slice::<AimuxDaemonInfo>(&contents) else {
+            return Ok(false);
+        };
+        if info.pid != owner_pid {
+            return Ok(false);
+        }
+        after_match();
+        clear_file(path)?;
+        Ok(true)
+    })
+}
+
+fn with_daemon_info_lock<T>(path: &Path, action: impl FnOnce() -> io::Result<T>) -> io::Result<T> {
+    let lock = acquire_daemon_info_lock(path)?;
+    let result = action();
+    drop(lock);
+    result
+}
+
+struct DaemonInfoLock {
+    path: PathBuf,
+}
+
+impl Drop for DaemonInfoLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
+}
+
+fn acquire_daemon_info_lock(path: &Path) -> io::Result<DaemonInfoLock> {
+    let lock_path = daemon_info_lock_path(path);
+    fs::create_dir_all(lock_path.parent().unwrap_or_else(|| Path::new(".")))?;
+    let deadline = current_unix_millis() + DAEMON_INFO_LOCK_WAIT_MS;
+    loop {
+        match fs::create_dir(&lock_path) {
+            Ok(()) => return Ok(DaemonInfoLock { path: lock_path }),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                if current_unix_millis() >= deadline {
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        format!(
+                            "timed out waiting for daemon info lock {}",
+                            lock_path.display()
+                        ),
+                    ));
+                }
+                sleep(Duration::from_millis(10));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+fn daemon_info_lock_path(path: &Path) -> PathBuf {
+    if path.file_name().is_some_and(|name| name == "daemon.json") {
+        if let Some(daemon_dir) = path.parent() {
+            if daemon_dir.file_name().is_some_and(|name| name == "daemon") {
+                if let Some(aimux_home) = daemon_dir.parent() {
+                    return aimux_home.join("locks").join("daemon-info");
+                }
+            }
+        }
+    }
+    PathBuf::from(format!("{}.lock", path.to_string_lossy()))
+}
+
 fn save_json_with_fallback(path: impl AsRef<Path>, value: &impl Serialize) -> io::Result<()> {
     let path = path.as_ref();
     match save_json(path, value) {
@@ -630,4 +700,82 @@ fn clear_file(path: impl AsRef<Path>) -> io::Result<()> {
     let path = path.as_ref();
     fs::create_dir_all(path.parent().unwrap_or_else(|| Path::new(".")))?;
     fs::write(path, [])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::mpsc;
+    use std::thread;
+
+    static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+    struct TestDir(PathBuf);
+
+    impl TestDir {
+        fn new() -> Self {
+            let sequence = TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir()
+                .join("rust-daemon-info-lock-tests")
+                .join(format!("{}-{sequence}", std::process::id()));
+            fs::create_dir_all(&path).expect("create test directory");
+            Self(path)
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn daemon_info_owned_clear_serializes_against_replacement_save() {
+        let test_dir = TestDir::new();
+        let path = test_dir.0.join("daemon/daemon.json");
+        let owner = AimuxDaemonInfo {
+            pid: 123,
+            port: 43190,
+            started_at: "owner-start".into(),
+            updated_at: "owner-update".into(),
+        };
+        let replacement = AimuxDaemonInfo {
+            pid: 456,
+            port: 43190,
+            started_at: "replacement-start".into(),
+            updated_at: "replacement-update".into(),
+        };
+        save_daemon_info(&path, &owner).expect("save owner");
+
+        let mut save_thread = None;
+
+        assert!(
+            clear_daemon_info_if_owned_with_after_match(&path, owner.pid, || {
+                let (saved_tx, saved_rx) = mpsc::channel();
+                let path_for_save = path.clone();
+                let replacement_for_save = replacement.clone();
+                save_thread = Some(thread::spawn(move || {
+                    save_daemon_info(&path_for_save, &replacement_for_save)
+                        .expect("save replacement");
+                    let _ = saved_tx.send(());
+                }));
+                assert!(
+                    saved_rx.recv_timeout(Duration::from_millis(100)).is_err(),
+                    "replacement save must wait until owned clear releases the daemon-info lock"
+                );
+            })
+            .expect("clear owner"),
+            "owner should clear while it still owns daemon info"
+        );
+
+        save_thread
+            .expect("replacement save should be spawned")
+            .join()
+            .expect("join replacement save");
+        assert_eq!(
+            load_daemon_info_with(&path, |pid| pid == replacement.pid),
+            Some(replacement)
+        );
+    }
 }
