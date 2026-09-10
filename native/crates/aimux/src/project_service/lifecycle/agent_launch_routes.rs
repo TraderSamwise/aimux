@@ -733,12 +733,48 @@ pub(super) fn resume_agent_session(
 }
 
 fn inherited_launch_team(source_session: &Value) -> Option<Value> {
-    let team = source_session.get("team")?.clone();
-    let role = team.get("role").and_then(Value::as_str);
-    match role {
+    let Value::Object(mut team) = source_session.get("team")?.clone() else {
+        return None;
+    };
+    let role = team
+        .get("role")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|role| !role.is_empty())
+        .map(str::to_owned);
+    match role.as_deref() {
         Some("overseer") if !is_overseer_session(Some(source_session)) => None,
         Some("scribe") if !is_scribe_session(Some(source_session)) => None,
-        _ => Some(team),
+        _ => {
+            let parent_session_id = team
+                .get("parentSessionId")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .unwrap_or_default()
+                .to_owned();
+            let team_id = team
+                .get("teamId")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|team_id| !team_id.is_empty())
+                .map(str::to_owned);
+            if parent_session_id.is_empty() && team_id.is_none() {
+                let Some(control_role @ ("overseer" | "scribe")) = role.as_deref() else {
+                    return None;
+                };
+                team.insert("teamId".into(), Value::String(control_role.to_owned()));
+                team.insert("parentSessionId".into(), Value::String(String::new()));
+                return Some(Value::Object(team));
+            }
+            if !parent_session_id.is_empty() && team_id.is_none() {
+                team.insert(
+                    "teamId".into(),
+                    Value::String(format!("team-{parent_session_id}")),
+                );
+            }
+            team.insert("parentSessionId".into(), Value::String(parent_session_id));
+            Some(Value::Object(team))
+        }
     }
 }
 
@@ -829,7 +865,34 @@ mod tests {
 
         assert_eq!(
             inherited_launch_team(&source),
-            Some(json!({ "teamId": "scribe", "role": "scribe" }))
+            Some(json!({ "teamId": "scribe", "parentSessionId": "", "role": "scribe" }))
+        );
+    }
+
+    #[test]
+    fn inherited_launch_team_drops_empty_legacy_team_metadata() {
+        let source = json!({
+            "id": "claude-legacy",
+            "team": { "parentSessionId": "" }
+        });
+
+        assert_eq!(inherited_launch_team(&source), None);
+    }
+
+    #[test]
+    fn inherited_launch_team_backfills_legacy_teammate_team_id() {
+        let source = json!({
+            "id": "claude-legacy-teammate",
+            "team": { "parentSessionId": "claude-parent", "role": "coder" }
+        });
+
+        assert_eq!(
+            inherited_launch_team(&source),
+            Some(json!({
+                "teamId": "team-claude-parent",
+                "parentSessionId": "claude-parent",
+                "role": "coder"
+            }))
         );
     }
 }
