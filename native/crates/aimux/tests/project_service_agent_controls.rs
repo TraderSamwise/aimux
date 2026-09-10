@@ -128,7 +128,7 @@ fn loop_and_control_routes_validate_required_fields() {
 }
 
 #[test]
-fn overseer_route_enforces_single_project_overseer_and_clear_removes_flag() {
+fn overseer_route_enforces_single_project_overseer_and_clear_sets_false_override() {
     let project = temp_project("overseer");
     let state_dir = project.join("state");
     seed_metadata(&state_dir);
@@ -144,6 +144,7 @@ fn overseer_route_enforces_single_project_overseer_and_clear_removes_flag() {
     assert_eq!(response.body["overseer"], true);
     let state = load_metadata_state(&state_dir);
     assert!(state.sessions["boss-1"].get("overseer").is_none());
+    assert_eq!(state.sessions["boss-1"]["projectControl"], false);
     assert_eq!(state.sessions["boss-2"]["overseer"], true);
 
     let clear = route_project_service_request(
@@ -155,7 +156,8 @@ fn overseer_route_enforces_single_project_overseer_and_clear_removes_flag() {
     assert_eq!(clear.status, 200);
     assert_eq!(clear.body["overseer"], false);
     let state = load_metadata_state(&state_dir);
-    assert!(state.sessions["boss-2"].get("overseer").is_none());
+    assert_eq!(state.sessions["boss-2"]["overseer"], false);
+    assert_eq!(state.sessions["boss-2"]["projectControl"], false);
     cleanup(project);
 }
 
@@ -176,6 +178,7 @@ fn scribe_route_enforces_single_scribe_and_clear_sets_false_override() {
     assert_eq!(response.body["scribe"], true);
     let state = load_metadata_state(&state_dir);
     assert!(state.sessions["scribe-1"].get("scribe").is_none());
+    assert_eq!(state.sessions["scribe-1"]["projectControl"], false);
     assert_eq!(state.sessions["scribe-2"]["scribe"], true);
 
     let clear = route_project_service_request(

@@ -95,10 +95,13 @@ pub fn set_project_session_flag_at(
     value: bool,
     now: &str,
 ) -> Result<(), String> {
+    let project_state_dir = project_state_dir.as_ref();
+    if is_control_role_key(key) {
+        return set_project_control_role_at(project_state_dir, session_id, key, value, now);
+    }
     if !value {
         return clear_project_flag_at(project_state_dir, session_id, key, now);
     }
-    let project_state_dir = project_state_dir.as_ref();
     mutate_metadata_state(project_state_dir, |state| {
         for (id, session) in &mut state.sessions {
             if id != session_id
@@ -128,6 +131,55 @@ pub fn set_project_session_flag_at(
     })
 }
 
+fn set_project_control_role_at(
+    project_state_dir: &Path,
+    session_id: &str,
+    key: &str,
+    value: bool,
+    now: &str,
+) -> Result<(), String> {
+    let mut replaced_session_ids = Vec::new();
+    mutate_metadata_state(project_state_dir, |state| {
+        if value {
+            for (id, session) in &mut state.sessions {
+                if id != session_id
+                    && session
+                        .get(key)
+                        .and_then(Value::as_bool)
+                        .is_some_and(|current| current)
+                    && let Value::Object(map) = session
+                {
+                    map.remove(key);
+                    clear_matching_control_role_metadata(map, key);
+                    mark_project_control_false_if_no_control_role(map);
+                    map.insert("updatedAt".into(), Value::String(now.to_owned()));
+                    replaced_session_ids.push(id.clone());
+                }
+            }
+        }
+        let mut current = state
+            .sessions
+            .remove(session_id)
+            .map(object_value)
+            .unwrap_or_else(|| {
+                Map::from_iter([("updatedAt".into(), Value::String(now.to_owned()))])
+            });
+        set_control_role_metadata(&mut current, key, value);
+        current.insert("updatedAt".into(), Value::String(now.to_owned()));
+        state
+            .sessions
+            .insert(session_id.to_owned(), Value::Object(current));
+        true
+    })?;
+    if value {
+        for replaced_session_id in replaced_session_ids {
+            clear_runtime_topology_control_role(project_state_dir, &replaced_session_id, key, now)?;
+        }
+        return Ok(());
+    }
+    clear_runtime_topology_control_role(project_state_dir, session_id, key, now)
+}
+
 pub fn clear_project_flag_at(
     project_state_dir: impl AsRef<std::path::Path>,
     session_id: &str,
@@ -135,23 +187,34 @@ pub fn clear_project_flag_at(
     now: &str,
 ) -> Result<(), String> {
     let project_state_dir = project_state_dir.as_ref();
+    if is_control_role_key(key) {
+        return set_project_control_role_at(project_state_dir, session_id, key, false, now);
+    }
     update_session_metadata_at(project_state_dir, session_id, now, |current| {
         let mut current = object_value(current);
-        if key == "overseer" || key == "scribe" {
-            current.insert(key.into(), Value::Bool(false));
-        } else {
-            current.remove(key);
-        }
-        clear_matching_control_role_metadata(&mut current, key);
-        mark_project_control_false_if_no_control_role(&mut current);
+        current.remove(key);
         Value::Object(current)
     })
-    .map(|_| ())?;
-    clear_runtime_topology_control_role(project_state_dir, session_id, key, now)
+    .map(|_| ())
+}
+
+fn is_control_role_key(key: &str) -> bool {
+    key == "overseer" || key == "scribe"
+}
+
+fn set_control_role_metadata(current: &mut Map<String, Value>, key: &str, value: bool) {
+    if value {
+        current.insert(key.into(), Value::Bool(true));
+        current.remove("projectControl");
+        return;
+    }
+    current.insert(key.into(), Value::Bool(false));
+    clear_matching_control_role_metadata(current, key);
+    mark_project_control_false_if_no_control_role(current);
 }
 
 fn clear_matching_control_role_metadata(current: &mut Map<String, Value>, key: &str) {
-    if key != "overseer" && key != "scribe" {
+    if !is_control_role_key(key) {
         return;
     }
     if current.get("role").and_then(Value::as_str) == Some(key) {
@@ -594,5 +657,99 @@ mod tests {
         );
         assert_eq!(topology.pointer("/sessions/0/team/role"), None);
         assert_eq!(topology.pointer("/sessions/0/team/teamId"), None);
+    }
+
+    #[test]
+    fn promoting_after_demotion_clears_project_control_false_override() {
+        let fixture = TestDir::new("promote-after-demote");
+        let state_dir = fixture.state_dir();
+        let mut sessions = BTreeMap::new();
+        sessions.insert(
+            "worker".to_owned(),
+            json!({
+                "id": "worker",
+                "scribe": false,
+                "projectControl": false,
+                "updatedAt": "2026-09-10T00:00:00.000Z"
+            }),
+        );
+        save_metadata_state(
+            &state_dir,
+            &MetadataState {
+                version: 1,
+                sessions,
+            },
+        )
+        .expect("save state");
+
+        set_project_session_flag_at(
+            &state_dir,
+            "worker",
+            "scribe",
+            true,
+            "2026-09-10T00:01:00.000Z",
+        )
+        .expect("promote scribe");
+
+        let state = load_metadata_state_at_unix_millis(&state_dir, 0);
+        let session = state.sessions.get("worker").expect("worker session");
+        assert_eq!(session.get("scribe").and_then(Value::as_bool), Some(true));
+        assert_eq!(session.get("projectControl"), None);
+        assert!(crate::team_contract::is_scribe_session(Some(session)));
+        assert!(crate::team_contract::is_project_control_session(Some(
+            session
+        )));
+    }
+
+    #[test]
+    fn promoting_and_demoting_control_roles_are_symmetric() {
+        for key in ["overseer", "scribe"] {
+            let fixture = TestDir::new(key);
+            let state_dir = fixture.state_dir();
+
+            set_project_session_flag_at(
+                &state_dir,
+                "worker",
+                key,
+                true,
+                "2026-09-10T00:01:00.000Z",
+            )
+            .expect("promote fresh session");
+            let state = load_metadata_state_at_unix_millis(&state_dir, 0);
+            let session = state.sessions.get("worker").expect("worker session");
+            assert_eq!(session.get(key).and_then(Value::as_bool), Some(true));
+            assert!(crate::team_contract::is_project_control_session(Some(
+                session
+            )));
+
+            clear_project_flag_at(&state_dir, "worker", key, "2026-09-10T00:02:00.000Z")
+                .expect("demote session");
+            let state = load_metadata_state_at_unix_millis(&state_dir, 0);
+            let session = state.sessions.get("worker").expect("worker session");
+            assert_eq!(session.get(key).and_then(Value::as_bool), Some(false));
+            assert_eq!(
+                session.get("projectControl").and_then(Value::as_bool),
+                Some(false)
+            );
+            assert!(!crate::team_contract::is_project_control_session(Some(
+                session
+            )));
+
+            set_project_session_flag_at(
+                &state_dir,
+                "worker",
+                key,
+                true,
+                "2026-09-10T00:03:00.000Z",
+            )
+            .expect("promote demoted session");
+            let state = load_metadata_state_at_unix_millis(&state_dir, 0);
+            let session = state.sessions.get("worker").expect("worker session");
+            assert_eq!(session.get(key).and_then(Value::as_bool), Some(true));
+            assert_eq!(session.get("projectControl"), None);
+            assert!(crate::team_contract::is_project_control_session(Some(
+                session
+            )));
+        }
     }
 }
