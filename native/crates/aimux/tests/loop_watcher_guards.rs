@@ -15,10 +15,18 @@ fn looping_session(id: &str, activity: &str) -> (Value, Value) {
 }
 
 fn input(sessions: Vec<Value>, metadata: Value, auto_nudge: bool) -> Value {
+    input_with_config(
+        sessions,
+        metadata,
+        json!({ "nudgeCooldownMs": 60_000, "autoNudgeWithoutOverseer": auto_nudge }),
+    )
+}
+
+fn input_with_config(sessions: Vec<Value>, metadata: Value, config: Value) -> Value {
     json!({
         "sessions": sessions,
         "metadata": metadata,
-        "config": { "nudgeCooldownMs": 60_000, "autoNudgeWithoutOverseer": auto_nudge },
+        "config": config,
         "pendingInteractions": []
     })
 }
@@ -91,6 +99,80 @@ fn a_running_agent_is_left_alone() {
     let mut watcher = LoopWatcher::new();
     let mut ok = |_: &LoopSend| true;
     assert!(watcher.scan(&input, NOW, &mut ok).is_empty());
+}
+
+#[test]
+fn a_loop_candidate_must_remain_stopped_for_the_dwell_window() {
+    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    boss_meta["overseer"] = json!(true);
+    let (worker, worker_meta) = looping_session("worker", "idle");
+    let input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta } }),
+        json!({ "nudgeCooldownMs": 60_000, "stoppedDwellMs": 30_000 }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    let mut ok = |_: &LoopSend| true;
+    assert!(watcher.scan(&input, NOW, &mut ok).is_empty());
+    assert!(watcher.scan(&input, NOW + 29_999, &mut ok).is_empty());
+    assert_eq!(watcher.scan(&input, NOW + 30_000, &mut ok).len(), 1);
+}
+
+#[test]
+fn running_resets_the_stopped_dwell_window() {
+    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    boss_meta["overseer"] = json!(true);
+    let (worker, mut worker_meta) = looping_session("worker", "idle");
+    let mut input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta.clone() } }),
+        json!({ "nudgeCooldownMs": 60_000, "stoppedDwellMs": 30_000 }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    let mut ok = |_: &LoopSend| true;
+    assert!(watcher.scan(&input, NOW, &mut ok).is_empty());
+    worker_meta["derived"]["activity"] = json!("running");
+    input["metadata"]["sessions"]["worker"] = worker_meta.clone();
+    assert!(watcher.scan(&input, NOW + 15_000, &mut ok).is_empty());
+
+    worker_meta["derived"]["activity"] = json!("idle");
+    input["metadata"]["sessions"]["worker"] = worker_meta;
+    assert!(
+        watcher.scan(&input, NOW + 30_000, &mut ok).is_empty(),
+        "the second idle observation must start a fresh dwell window"
+    );
+    assert_eq!(watcher.scan(&input, NOW + 60_000, &mut ok).len(), 1);
+}
+
+#[test]
+fn overseer_wakeups_are_edge_triggered_then_reminded_by_tick_count() {
+    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    boss_meta["overseer"] = json!(true);
+    let (worker, worker_meta) = looping_session("worker", "idle");
+    let (second, second_meta) = looping_session("second", "idle");
+    let mut input = input_with_config(
+        vec![boss.clone(), worker],
+        json!({ "sessions": { "boss": boss_meta.clone(), "worker": worker_meta } }),
+        json!({ "nudgeCooldownMs": 60_000, "stoppedDwellMs": 0, "unchangedReminderTicks": 2 }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    let mut ok = |_: &LoopSend| true;
+    assert_eq!(watcher.scan(&input, NOW, &mut ok).len(), 1);
+    assert!(watcher.scan(&input, NOW + 1, &mut ok).is_empty());
+    assert_eq!(watcher.scan(&input, NOW + 2, &mut ok).len(), 1);
+
+    input["sessions"] =
+        json!([boss, { "id": "worker", "tool": "claude", "worktreePath": "/repo" }, second]);
+    input["metadata"]["sessions"]["boss"] = boss_meta;
+    input["metadata"]["sessions"]["second"] = second_meta;
+    assert_eq!(
+        watcher.scan(&input, NOW + 3, &mut ok).len(),
+        1,
+        "a changed candidate set is a new edge and bypasses the unchanged reminder"
+    );
 }
 
 #[test]

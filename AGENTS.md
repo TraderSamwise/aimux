@@ -64,6 +64,15 @@ Background work belongs on the shared periodic rail, never a bare
 from when it fell due. If an event already reports the change, drive the work
 from that event and keep any periodic scan as a slow backstop only.
 
+Rail tasks declare cadence as a multiple of the shared scheduler tick. Use the
+tick cadence for normal scans, and use the scheduler force/kick handle when a
+route or event already knows a task should re-check on the next tick. Tasks
+that watch a level state, such as "agent is idle", must distinguish edges from
+unchanged levels: fire when the state first becomes actionable, then back off to
+a documented reminder cadence while the state remains unchanged. For stopped or
+idle detection, require a continuous dwell window before treating a momentary
+state trough as actionable.
+
 For Rust project-service background tasks, the shared rail is
 `native/crates/aimux/src/project_service/scheduler.rs`: implement
 `PeriodicTask`, wire it from `project_service/process.rs`, and keep the

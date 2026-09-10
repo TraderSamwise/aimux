@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 use crate::config::load_config_for_project;
 use crate::daemon_state::load_metadata_state;
@@ -25,6 +25,9 @@ use super::watcher_delivery::{RailBudget, deliver_agent_input};
 /// from ever being messaged.
 pub const NUDGEABLE_SESSION_STATUSES: &[&str] = &["starting", "running", "idle"];
 const DEFAULT_SCAN_INTERVAL_MS: i64 = 15_000;
+const DEFAULT_SCAN_EVERY_TICKS: u64 = 60;
+const DEFAULT_STOPPED_DWELL_MS: i64 = 30_000;
+const DEFAULT_UNCHANGED_REMINDER_TICKS: u64 = 4;
 /// Blast-radius cap: no single scan may message more agents than this.
 const MAX_SENDS_PER_SCAN: usize = 8;
 /// Longest one scan may hold the shared rail; eight unanswered sends would
@@ -47,10 +50,26 @@ impl LoopWatcherTask {
     }
 
     fn loop_config(&self) -> Value {
-        load_config_for_project(&self.project_root)
+        let mut config = load_config_for_project(&self.project_root)
             .get("loop")
             .cloned()
-            .unwrap_or(Value::Null)
+            .unwrap_or(Value::Null);
+        let object = match &mut config {
+            Value::Object(object) => object,
+            _ => {
+                config = Value::Object(Map::new());
+                config.as_object_mut().expect("object inserted")
+            }
+        };
+        insert_default_i64(object, "scanIntervalMs", DEFAULT_SCAN_INTERVAL_MS);
+        insert_default_u64(object, "scanEveryTicks", DEFAULT_SCAN_EVERY_TICKS);
+        insert_default_i64(object, "stoppedDwellMs", DEFAULT_STOPPED_DWELL_MS);
+        insert_default_u64(
+            object,
+            "unchangedReminderTicks",
+            DEFAULT_UNCHANGED_REMINDER_TICKS,
+        );
+        config
     }
 }
 
@@ -64,6 +83,14 @@ impl PeriodicTask for LoopWatcherTask {
             .get("scanIntervalMs")
             .and_then(Value::as_i64)
             .unwrap_or(DEFAULT_SCAN_INTERVAL_MS)
+    }
+
+    fn tick_multiple(&self) -> u64 {
+        self.loop_config()
+            .get("scanEveryTicks")
+            .and_then(Value::as_u64)
+            .unwrap_or(DEFAULT_SCAN_EVERY_TICKS)
+            .max(1)
     }
 
     fn run(&mut self, context: &ProjectServiceRequestContext) {
@@ -143,6 +170,18 @@ pub fn is_scribe(metadata: &Value, session: &Value) -> bool {
 
 fn now_ms() -> i64 {
     super::scheduler::scheduler_now_ms()
+}
+
+fn insert_default_i64(object: &mut Map<String, Value>, key: &str, value: i64) {
+    if !matches!(object.get(key), Some(Value::Number(_))) {
+        object.insert(key.to_owned(), Value::from(value));
+    }
+}
+
+fn insert_default_u64(object: &mut Map<String, Value>, key: &str, value: u64) {
+    if !matches!(object.get(key), Some(Value::Number(_))) {
+        object.insert(key.to_owned(), Value::from(value));
+    }
 }
 
 pub fn loop_watcher_task(context: &Arc<ProjectServiceRequestContext>) -> Box<dyn PeriodicTask> {

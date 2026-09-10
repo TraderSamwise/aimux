@@ -29,7 +29,7 @@ use crate::plugin_project_service_host::{
 };
 use crate::project_service::builtin_metadata_task::builtin_metadata_task;
 use crate::project_service::loop_watcher_task::loop_watcher_task;
-use crate::project_service::scheduler::spawn_project_service_scheduler;
+use crate::project_service::scheduler::{ProjectSchedulerHandle, spawn_project_service_scheduler};
 use crate::project_service::scribe_watcher_task::scribe_watcher_task;
 use crate::project_service::transcript_reconciler_task::transcript_reconciler_task;
 use crate::runtime_lifecycle_methods::write_instruction_files;
@@ -509,11 +509,13 @@ fn serve_project_service_listener(
     startup: ProjectServiceStartup,
     plugin_statuses: Vec<NativePluginStatus>,
 ) {
+    let scheduler = ProjectSchedulerHandle::default();
     let context = Arc::new(
         ProjectServiceRequestContext::with_project_state_dir(
             startup.project_root,
             startup.project_state_dir,
         )
+        .with_scheduler(scheduler.clone())
         .with_osc_output_tap()
         .with_plugin_statuses(plugin_statuses)
         .with_hot_snapshot_background_refresh(),
@@ -536,7 +538,7 @@ fn serve_project_service_listener(
             "projectStateDir": context.project_state_dir().to_string_lossy(),
         })),
     );
-    spawn_project_service_scheduler(Arc::clone(&context), periodic_tasks);
+    spawn_project_service_scheduler(Arc::clone(&context), periodic_tasks, scheduler);
     log_lifecycle_always(
         "project service serving",
         "project-service",

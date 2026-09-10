@@ -1,11 +1,15 @@
+use aimux::project_api_contract::routes;
 use aimux::project_service::router::ProjectServiceRequestContext;
-use aimux::project_service::scheduler::{PeriodicScheduler, PeriodicTask};
+use aimux::project_service::router::route_project_service_request;
+use aimux::project_service::scheduler::{PeriodicScheduler, PeriodicTask, ProjectSchedulerHandle};
+use serde_json::json;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 struct CountingTask {
     name: String,
     interval_ms: i64,
+    tick_multiple: Option<u64>,
     runs: Arc<AtomicUsize>,
     panics: bool,
 }
@@ -16,6 +20,13 @@ impl PeriodicTask for CountingTask {
     }
     fn interval_ms(&self) -> i64 {
         self.interval_ms
+    }
+    fn tick_multiple(&self) -> u64 {
+        self.tick_multiple.unwrap_or_else(|| {
+            u64::try_from((self.interval_ms.max(250) + 249) / 250)
+                .unwrap_or(1)
+                .max(1)
+        })
     }
     fn run(&mut self, _context: &ProjectServiceRequestContext) {
         self.runs.fetch_add(1, Ordering::SeqCst);
@@ -32,14 +43,31 @@ fn task(
     Box::new(CountingTask {
         name: name.to_owned(),
         interval_ms,
+        tick_multiple: None,
         runs: Arc::clone(runs),
         panics,
+    })
+}
+
+fn tick_task(name: &str, ticks: u64, runs: &Arc<AtomicUsize>) -> Box<dyn PeriodicTask> {
+    Box::new(CountingTask {
+        name: name.to_owned(),
+        interval_ms: 99_999,
+        tick_multiple: Some(ticks),
+        runs: Arc::clone(runs),
+        panics: false,
     })
 }
 
 fn context() -> ProjectServiceRequestContext {
     let dir = std::env::temp_dir().join("aimux-scheduler-test");
     ProjectServiceRequestContext::with_project_state_dir(&dir, dir.join("state"))
+}
+
+fn context_with_scheduler(scheduler: ProjectSchedulerHandle) -> ProjectServiceRequestContext {
+    let dir = std::env::temp_dir().join("aimux-scheduler-kick-test");
+    ProjectServiceRequestContext::with_project_state_dir(&dir, dir.join("state"))
+        .with_scheduler(scheduler)
 }
 
 #[test]
@@ -87,6 +115,60 @@ fn tasks_with_different_intervals_fire_independently() {
 
     assert_eq!(fast.load(Ordering::SeqCst), 5);
     assert_eq!(slow.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn a_task_can_declare_cadence_as_a_tick_multiple() {
+    let runs = Arc::new(AtomicUsize::new(0));
+    let mut scheduler = PeriodicScheduler::new(vec![tick_task("three-ticks", 3, &runs)], 0);
+    let ctx = context();
+
+    assert!(scheduler.run_due_at(&ctx, 749).is_empty());
+    assert_eq!(scheduler.run_due_at(&ctx, 750), vec!["three-ticks"]);
+    assert_eq!(runs.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn a_named_force_kick_runs_a_task_on_the_next_tick() {
+    let runs = Arc::new(AtomicUsize::new(0));
+    let handle = ProjectSchedulerHandle::default();
+    let mut scheduler =
+        PeriodicScheduler::with_handle(vec![task("slow", 10_000, &runs, false)], 0, handle.clone());
+    let ctx = context();
+
+    assert!(scheduler.run_due_at(&ctx, 1_000).is_empty());
+    handle.force_task_next_tick("slow");
+    assert_eq!(scheduler.run_due_at(&ctx, 1_001), vec!["slow"]);
+    assert_eq!(runs.load(Ordering::SeqCst), 1);
+    assert!(scheduler.run_due_at(&ctx, 10_000).is_empty());
+    assert_eq!(scheduler.run_due_at(&ctx, 11_001), vec!["slow"]);
+    assert_eq!(runs.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn a_runtime_event_kicks_the_loop_watcher_onto_the_next_tick() {
+    let runs = Arc::new(AtomicUsize::new(0));
+    let handle = ProjectSchedulerHandle::default();
+    let ctx = context_with_scheduler(handle.clone());
+    let mut scheduler =
+        PeriodicScheduler::with_handle(vec![task("loop-watcher", 60_000, &runs, false)], 0, handle);
+
+    assert!(scheduler.run_due_at(&ctx, 1_000).is_empty());
+    let response = route_project_service_request(
+        &ctx,
+        "POST",
+        routes::runtime::EVENT,
+        Some(&json!({
+            "session": "worker",
+            "event": { "kind": "status", "activity": "idle" }
+        })),
+    );
+    assert!(
+        (200..300).contains(&response.status),
+        "runtime event should be accepted"
+    );
+    assert_eq!(scheduler.run_due_at(&ctx, 1_001), vec!["loop-watcher"]);
+    assert_eq!(runs.load(Ordering::SeqCst), 1);
 }
 
 #[test]

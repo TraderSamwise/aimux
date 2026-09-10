@@ -17,6 +17,7 @@ use super::agent_output_projection::AgentOutputProjectionCache;
 use super::output_cache::AgentOutputCaptureCache;
 use super::output_metrics::AgentOutputReadMetrics;
 use super::project_events::ProjectEventBus;
+use super::scheduler::ProjectSchedulerHandle;
 
 use super::agent_controls::route_agent_control_request;
 use super::agent_output::route_agent_output_request;
@@ -73,6 +74,7 @@ pub struct ProjectServiceRequestContext {
     pub project_events: ProjectEventBus,
     pub visual_clients: ProjectHotSnapshotCoordinator,
     pub plugin_statuses: Vec<NativePluginStatus>,
+    pub scheduler: ProjectSchedulerHandle,
 }
 
 impl ProjectServiceRequestContext {
@@ -94,6 +96,7 @@ impl ProjectServiceRequestContext {
             project_events: ProjectEventBus::default(),
             visual_clients: ProjectHotSnapshotCoordinator::default(),
             plugin_statuses: Vec::new(),
+            scheduler: ProjectSchedulerHandle::default(),
         }
     }
 
@@ -118,7 +121,13 @@ impl ProjectServiceRequestContext {
             project_events: ProjectEventBus::default(),
             visual_clients: ProjectHotSnapshotCoordinator::default(),
             plugin_statuses: Vec::new(),
+            scheduler: ProjectSchedulerHandle::default(),
         }
+    }
+
+    pub fn with_scheduler(mut self, scheduler: ProjectSchedulerHandle) -> Self {
+        self.scheduler = scheduler;
+        self
     }
 
     pub fn with_hot_snapshot_background_refresh(mut self) -> Self {
@@ -398,7 +407,11 @@ fn publish_project_update_for_response(
                 .and_then(Value::as_str)
                 .map(str::to_owned),
         );
+        context.scheduler.force_task_next_tick("loop-watcher");
         return;
+    }
+    if method == "POST" && pathname == routes::agents::LOOP {
+        context.scheduler.force_task_next_tick("loop-watcher");
     }
     if project_api_views_for_mutation_route(method, pathname).is_none() {
         return;

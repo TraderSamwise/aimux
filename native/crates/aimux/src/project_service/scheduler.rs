@@ -5,8 +5,9 @@
 //! that depended on one went unported together. One thread drives every task
 //! here; a task is a small object that says how often it wants to run.
 
+use std::collections::BTreeSet;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::Arc;
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -20,12 +21,63 @@ use super::router::ProjectServiceRequestContext;
 const IDLE_SLEEP: Duration = Duration::from_millis(1_000);
 /// Floor on a task's interval, so a misconfigured value cannot spin the thread.
 const MIN_INTERVAL_MS: i64 = 250;
+const TICK_INTERVAL_MS: i64 = MIN_INTERVAL_MS;
 const SLOW_TASK_WARNING_MS: i64 = 5_000;
+
+#[derive(Debug, Clone, Default)]
+pub struct ProjectSchedulerHandle {
+    inner: Arc<ProjectSchedulerSignal>,
+}
+
+#[derive(Debug, Default)]
+struct ProjectSchedulerSignal {
+    forced_tasks: Mutex<BTreeSet<String>>,
+    changed: Condvar,
+}
+
+impl ProjectSchedulerHandle {
+    pub fn force_task_next_tick(&self, name: impl AsRef<str>) {
+        let name = name.as_ref().trim();
+        if name.is_empty() {
+            return;
+        }
+        if let Ok(mut forced_tasks) = self.inner.forced_tasks.lock() {
+            forced_tasks.insert(name.to_owned());
+            drop(forced_tasks);
+            self.inner.changed.notify_all();
+        }
+    }
+
+    fn take_forced_tasks(&self) -> BTreeSet<String> {
+        self.inner
+            .forced_tasks
+            .lock()
+            .map(|mut forced_tasks| std::mem::take(&mut *forced_tasks))
+            .unwrap_or_default()
+    }
+
+    fn wait_for_force_or_timeout(&self, timeout: Duration) {
+        let Ok(forced_tasks) = self.inner.forced_tasks.lock() else {
+            thread::sleep(timeout);
+            return;
+        };
+        if !forced_tasks.is_empty() {
+            return;
+        }
+        let _ = self.inner.changed.wait_timeout(forced_tasks, timeout);
+    }
+}
 
 pub trait PeriodicTask: Send {
     fn name(&self) -> &str;
     /// Re-read every reschedule, so a config change takes effect without a restart.
     fn interval_ms(&self) -> i64;
+    /// Cadence as a multiple of the shared rail tick. Existing interval-based
+    /// tasks ride the default conversion; tasks with tick-native config can
+    /// override this directly.
+    fn tick_multiple(&self) -> u64 {
+        interval_ms_to_ticks(self.interval_ms())
+    }
     fn run(&mut self, context: &ProjectServiceRequestContext);
     /// Whether the first run should happen at startup instead of one interval
     /// out. Node's scribe watcher scanned on `start()`; its loop watcher did not.
@@ -42,6 +94,7 @@ struct ScheduledTask {
 #[derive(Default)]
 pub struct PeriodicScheduler {
     tasks: Vec<ScheduledTask>,
+    handle: ProjectSchedulerHandle,
 }
 
 impl PeriodicScheduler {
@@ -49,6 +102,14 @@ impl PeriodicScheduler {
     /// plugins already ran once at startup, but a watcher that wants to look
     /// straight away should not wait a whole interval to say so.
     pub fn new(tasks: Vec<Box<dyn PeriodicTask>>, now_ms: i64) -> Self {
+        Self::with_handle(tasks, now_ms, ProjectSchedulerHandle::default())
+    }
+
+    pub fn with_handle(
+        tasks: Vec<Box<dyn PeriodicTask>>,
+        now_ms: i64,
+        handle: ProjectSchedulerHandle,
+    ) -> Self {
         let tasks = tasks
             .into_iter()
             .map(|task| {
@@ -60,7 +121,7 @@ impl PeriodicScheduler {
                 ScheduledTask { task, next_due_ms }
             })
             .collect();
-        Self { tasks }
+        Self { tasks, handle }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -82,12 +143,14 @@ impl PeriodicScheduler {
         clock: &mut dyn FnMut() -> i64,
     ) -> Vec<String> {
         let now_ms = clock();
+        let forced_tasks = self.handle.take_forced_tasks();
         let mut ran = Vec::new();
         for scheduled in &mut self.tasks {
-            if scheduled.next_due_ms > now_ms {
+            let name = scheduled.task.name().to_owned();
+            let forced = forced_tasks.contains(&name);
+            if scheduled.next_due_ms > now_ms && !forced {
                 continue;
             }
-            let name = scheduled.task.name().to_owned();
             let task = &mut scheduled.task;
             let started = Instant::now();
             let outcome = catch_unwind(AssertUnwindSafe(|| task.run(context)));
@@ -103,6 +166,8 @@ impl PeriodicScheduler {
                     "task": name.clone(),
                     "elapsedMs": elapsed_ms,
                     "intervalMs": interval_ms,
+                    "tickMultiple": scheduled.task.tick_multiple(),
+                    "forced": forced,
                     "panicked": outcome.is_err(),
                 })),
             );
@@ -152,10 +217,6 @@ impl PeriodicScheduler {
     }
 }
 
-fn interval_of(task: &dyn PeriodicTask) -> i64 {
-    task.interval_ms().max(MIN_INTERVAL_MS)
-}
-
 pub fn scheduler_now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -169,18 +230,32 @@ pub fn scheduler_now_ms() -> i64 {
 pub fn spawn_project_service_scheduler(
     context: Arc<ProjectServiceRequestContext>,
     tasks: Vec<Box<dyn PeriodicTask>>,
+    handle: ProjectSchedulerHandle,
 ) {
     if tasks.is_empty() {
         return;
     }
     thread::spawn(move || {
-        let mut scheduler = PeriodicScheduler::new(tasks, scheduler_now_ms());
+        let mut scheduler = PeriodicScheduler::with_handle(tasks, scheduler_now_ms(), handle);
         loop {
             // Sleep is computed after the work, so a long tick delays the next
             // one rather than being chased by an alarm that already went off.
             scheduler.run_due(&context, &mut scheduler_now_ms);
             let sleep_ms = scheduler.sleep_ms(scheduler_now_ms()).max(50);
-            thread::sleep(Duration::from_millis(sleep_ms as u64));
+            scheduler
+                .handle
+                .wait_for_force_or_timeout(Duration::from_millis(sleep_ms as u64));
         }
     });
+}
+
+fn interval_ms_to_ticks(interval_ms: i64) -> u64 {
+    let interval_ms = interval_ms.max(MIN_INTERVAL_MS);
+    let ticks = interval_ms.saturating_add(TICK_INTERVAL_MS - 1) / TICK_INTERVAL_MS;
+    u64::try_from(ticks).unwrap_or(1).max(1)
+}
+
+fn interval_of(task: &dyn PeriodicTask) -> i64 {
+    let ticks = i64::try_from(task.tick_multiple()).unwrap_or(i64::MAX);
+    ticks.saturating_mul(TICK_INTERVAL_MS).max(MIN_INTERVAL_MS)
 }

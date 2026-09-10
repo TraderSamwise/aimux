@@ -21,6 +21,10 @@ pub struct LoopSend {
 pub struct LoopWatcher {
     last_nudge_at: BTreeMap<String, i64>,
     last_overseer_wake_at: i64,
+    stopped_since: BTreeMap<String, i64>,
+    last_candidate_signature: Option<String>,
+    last_overseer_reported_signature: Option<String>,
+    unchanged_candidate_ticks: u64,
 }
 
 impl LoopWatcher {
@@ -43,22 +47,41 @@ impl LoopWatcher {
         let mut sends = Vec::new();
         let metadata = input.get("metadata").unwrap_or(&Value::Null);
         let overseer_id = find_overseer_session_id(metadata);
-        let candidates = find_loop_candidates_with_overseer(input, overseer_id.as_deref());
+        let raw_candidates = find_loop_candidates_with_overseer(input, overseer_id.as_deref());
+        let candidates = self.dwelled_candidates(
+            raw_candidates,
+            now_ms,
+            config_i64(input, "stoppedDwellMs", 0),
+        );
         if candidates.is_empty() {
+            self.last_candidate_signature = None;
+            self.last_overseer_reported_signature = None;
+            self.unchanged_candidate_ticks = 0;
             return sends;
         }
+        let candidate_signature = candidate_signature(&candidates);
+        if self.last_candidate_signature.as_deref() == Some(candidate_signature.as_str()) {
+            self.unchanged_candidate_ticks = self.unchanged_candidate_ticks.saturating_add(1);
+        } else {
+            self.last_candidate_signature = Some(candidate_signature.clone());
+            self.unchanged_candidate_ticks = 0;
+        }
 
-        let cooldown = input
-            .get("config")
-            .and_then(|config| config.get("nudgeCooldownMs"))
-            .and_then(Value::as_i64)
-            .unwrap_or(60_000);
+        let cooldown = config_i64(input, "nudgeCooldownMs", 60_000);
         let overseer_running = overseer_id
             .as_deref()
             .is_some_and(|id| session_exists(input, id));
 
         if let Some(overseer_id) = overseer_id.filter(|_| overseer_running) {
-            if now_ms - self.last_overseer_wake_at < cooldown {
+            let already_reported = self.last_overseer_reported_signature.as_deref()
+                == Some(candidate_signature.as_str());
+            let reminder_due = overseer_reminder_due(
+                input,
+                self.unchanged_candidate_ticks,
+                now_ms.saturating_sub(self.last_overseer_wake_at),
+                cooldown,
+            );
+            if already_reported && !reminder_due {
                 return sends;
             }
             let send = LoopSend {
@@ -70,6 +93,7 @@ impl LoopWatcher {
             };
             if deliver(&send) {
                 self.last_overseer_wake_at = now_ms;
+                self.last_overseer_reported_signature = Some(candidate_signature);
             }
             sends.push(send);
             return sends;
@@ -99,6 +123,29 @@ impl LoopWatcher {
             sends.push(send);
         }
         sends
+    }
+
+    fn dwelled_candidates(
+        &mut self,
+        candidates: Vec<Value>,
+        now_ms: i64,
+        dwell_ms: i64,
+    ) -> Vec<Value> {
+        let dwell_ms = dwell_ms.max(0);
+        let current_ids = candidates
+            .iter()
+            .filter_map(|candidate| optional_str(candidate, "id").map(str::to_owned))
+            .collect::<BTreeSet<_>>();
+        self.stopped_since
+            .retain(|id, _| current_ids.contains(id.as_str()));
+        candidates
+            .into_iter()
+            .filter(|candidate| {
+                let id = str_field(candidate, "id");
+                let first_seen = self.stopped_since.entry(id.to_owned()).or_insert(now_ms);
+                now_ms.saturating_sub(*first_seen) >= dwell_ms
+            })
+            .collect()
     }
 }
 
@@ -321,6 +368,47 @@ fn session_exists(input: &Value, id: &str) -> bool {
     array_field(input, "sessions")
         .iter()
         .any(|session| str_field(session, "id") == id)
+}
+
+fn overseer_reminder_due(
+    input: &Value,
+    unchanged_ticks: u64,
+    elapsed_since_last_wake_ms: i64,
+    cooldown_ms: i64,
+) -> bool {
+    if let Some(ticks) = input
+        .get("config")
+        .and_then(|config| config.get("unchangedReminderTicks"))
+        .and_then(Value::as_u64)
+    {
+        return unchanged_ticks >= ticks.max(1);
+    }
+    elapsed_since_last_wake_ms >= cooldown_ms
+}
+
+fn candidate_signature(candidates: &[Value]) -> String {
+    let mut ids = candidates
+        .iter()
+        .map(|candidate| {
+            [
+                str_field(candidate, "id"),
+                str_field(candidate, "loopSince"),
+                optional_str(candidate, "goal").unwrap_or_default(),
+                optional_str(candidate, "loopSource").unwrap_or_default(),
+            ]
+            .join("\u{1f}")
+        })
+        .collect::<Vec<_>>();
+    ids.sort();
+    ids.join("\u{1e}")
+}
+
+fn config_i64(input: &Value, field: &str, fallback: i64) -> i64 {
+    input
+        .get("config")
+        .and_then(|config| config.get(field))
+        .and_then(Value::as_i64)
+        .unwrap_or(fallback)
 }
 
 fn config_string<'a>(input: &'a Value, field: &str) -> Option<&'a str> {
