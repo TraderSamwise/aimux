@@ -45,6 +45,19 @@ Ranked by cost of absence, not by implementation size.
 - `project_takeover_contract`: already deleted. The old feature only took a
   project from another daemon home/port in the dev-daemon split; the one-daemon
   model has nothing to take over.
+- `session_launch_actions_contract`: production dashboard/session actions are
+  no longer dispatched through the old Node `handleAction`/`focusSession` host
+  object. The live Rust surfaces are the dashboard controller and action/focus
+  modules, plus project-service lifecycle routes for shared state mutations:
+  `dashboard_controller.rs`, `dashboard_actions.rs`, `dashboard_focus.rs`,
+  `dashboard_targets.rs`, `project_service/lifecycle.rs`, and the routed
+  handlers under `project_service/lifecycle/`.
+- `session_launch_create_contract`: the fixture was replaced by scoped tests
+  against the production spawn path. The tested caller enters
+  `route_lifecycle_request_with_runtime`, routes to `/agents/spawn`, and reaches
+  `launch_agent_session` in `project_service/lifecycle/agent_session_launch.rs`
+  through the real project-service lifecycle dispatcher, with tmux/file effects
+  behind the fake lifecycle runtime.
 
 ## Tracked But Not Rust Rewrite Ports
 
