@@ -117,7 +117,12 @@ fn session_display_context(
     context: &ProjectServiceRequestContext,
     session: &Value,
 ) -> NotificationDisplayContext {
-    let worktree_path = session.get("worktreePath").and_then(Value::as_str);
+    let project_root = context.project_root.to_string_lossy();
+    let worktree_path = session
+        .get("worktreePath")
+        .and_then(Value::as_str)
+        .and_then(trimmed_str)
+        .or_else(|| trimmed_str(&project_root));
     let mut display = worktree_path
         .map(|path| worktree_display_context(context, path))
         .unwrap_or_default();
@@ -154,7 +159,7 @@ fn session_display_context(
                 .and_then(trimmed_str)
                 .map(str::to_owned)
         });
-    if let Some(path) = worktree_path.and_then(trimmed_str) {
+    if let Some(path) = worktree_path {
         display.worktree_path.get_or_insert_with(|| path.to_owned());
     }
     display

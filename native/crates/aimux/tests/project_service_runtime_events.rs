@@ -14,7 +14,7 @@ use aimux::runtime_topology::{runtime_topology_path, write_runtime_topology};
 use serde_json::Value;
 use serde_json::json;
 use std::collections::BTreeMap;
-use std::fs::remove_dir_all;
+use std::fs::{create_dir_all, remove_dir_all, write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -762,6 +762,103 @@ fn runtime_event_alerts_include_project_and_worktree_display_context() {
     assert_eq!(events[0].event["worktreeName"], "feature-a");
     assert_eq!(events[0].event["categoryLabel"], "Needs input");
     assert_eq!(events[0].event["reasonLabel"], "Agent is waiting for input");
+    cleanup(project);
+}
+
+#[test]
+fn runtime_event_alerts_resolve_topology_session_without_worktree_path_to_main_checkout() {
+    let project = temp_project("alert-topology-main-context");
+    let state_dir = project.join("state");
+    let project_root = project.to_string_lossy().into_owned();
+    create_dir_all(project.join(".git")).expect("create git dir");
+    write(
+        project.join(".git").join("HEAD"),
+        "ref: refs/heads/master\n",
+    )
+    .expect("write HEAD");
+    write_runtime_topology(
+        runtime_topology_path(&state_dir),
+        &json!({
+            "version": 1,
+            "generatedAt": "2026-09-10T00:00:00.000Z",
+            "rigs": [{
+                "id": "rig-1",
+                "name": "aimux",
+                "projectRoot": project_root,
+                "createdAt": "2026-09-10T00:00:00.000Z",
+                "updatedAt": "2026-09-10T00:00:00.000Z"
+            }],
+            "nodes": [{
+                "id": "agent-node-live",
+                "rigId": "rig-1",
+                "logicalId": "claude-gqaapg",
+                "toolConfigKey": "claude",
+                "createdAt": "2026-09-10T00:00:00.000Z"
+            }],
+            "edges": [],
+            "bindings": [],
+            "sessions": [{
+                "id": "claude-gqaapg",
+                "nodeId": "agent-node-live",
+                "status": "running",
+                "tool": "claude",
+                "toolConfigKey": "claude",
+                "command": "claude",
+                "createdAt": "2026-09-10T00:00:00.000Z",
+                "updatedAt": "2026-09-10T00:00:00.000Z"
+            }],
+            "services": [],
+            "worktrees": [],
+            "worktreeGraveyard": [],
+            "teamRoles": [],
+            "remoteClients": [],
+            "lifecycleOperations": [],
+            "exchangeRefs": []
+        }),
+    )
+    .expect("write topology");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let response = route_runtime_metadata_request(
+        &context,
+        "POST",
+        routes::runtime::EVENT,
+        Some(&json!({
+            "session": "claude-gqaapg",
+            "event": {
+                "kind": "needs_input",
+                "message": "Claude is waiting for your input",
+                "ts": "2026-09-10T00:00:30.000Z"
+            }
+        })),
+    )
+    .expect("runtime event route");
+
+    assert_eq!(response.status, 200);
+    let snapshot = list_notification_snapshot(
+        &state_dir,
+        NotificationQuery {
+            unread_only: false,
+            include_cleared: false,
+            session_id: Some("claude-gqaapg".into()),
+            limit: Some(10),
+        },
+    );
+    assert_eq!(snapshot.total, 1);
+    let notification = &snapshot.notifications[0];
+    assert_eq!(notification["worktreeName"], "Main Checkout");
+    assert_eq!(notification["branch"], "master");
+    assert_eq!(
+        notification["title"],
+        format!(
+            "{} / Main Checkout (master)",
+            project.file_name().unwrap().to_str().unwrap()
+        )
+    );
+    assert_eq!(
+        notification["body"],
+        "Needs input: claude @ Main Checkout - Claude is waiting for your input"
+    );
     cleanup(project);
 }
 
