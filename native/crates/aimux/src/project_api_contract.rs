@@ -483,6 +483,7 @@ pub fn collect_project_api_routes() -> Vec<&'static str> {
         tasks::ASSIGN,
         tasks::ACCEPT,
         tasks::BLOCK,
+        tasks::CANCEL,
         tasks::COMPLETE,
         tasks::REOPEN,
         handoff::SEND,

@@ -253,7 +253,7 @@ fn context_transcript_path(input: &Value) -> Option<String> {
     if matches!(input.get("session"), Some(Value::Object(map)) if map.is_empty()) {
         return None;
     }
-    Some("/t/a.jsonl".to_owned())
+    Some("/t/be-a.jsonl".to_owned())
 }
 
 fn string_field(map: Option<&Map<String, Value>>, field: &str, fallback: &str) -> String {

@@ -2047,9 +2047,10 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
         let project_root_path = resolver.resolve_repo_root(project_root);
         let project_root = project_root_path.to_string_lossy().into_owned();
         let project_id = compute_project_id(&project_root_path);
-        if let Some(reason) =
-            crate::runtime_safety_guard::project_materialization_refusal_reason(&project_root_path)
-        {
+        if let Some(reason) = crate::runtime_safety_guard::project_materialization_refusal_reason(
+            &project_root_path,
+            self.info.port,
+        ) {
             log_at(
                 LogLevel::Debug,
                 "project materialization refused",

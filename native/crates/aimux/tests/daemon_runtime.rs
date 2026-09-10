@@ -11,8 +11,9 @@ use aimux::daemon::listener::{
 };
 use aimux::daemon::process::handle_daemon_runtime_request;
 use aimux::daemon::runtime::{
-    PROJECT_SERVICE_STARTUP_TIMEOUT_MS, ProjectServiceLauncher, ProjectServiceProcessVerifier,
-    RealDaemonRuntime, SystemProjectServiceLauncher, handle_daemon_runtime_request_with_mutex,
+    PROJECT_SERVICE_STARTUP_TIMEOUT_MS, ProjectServiceHealthProbe, ProjectServiceLauncher,
+    ProjectServiceProcessVerifier, RealDaemonRuntime, SystemProjectServiceLauncher,
+    handle_daemon_runtime_request_with_mutex,
 };
 use aimux::daemon::status::DaemonStatusRuntime;
 use aimux::daemon::text::agents::DaemonAgentTextRuntime;
@@ -392,17 +393,17 @@ fn native_daemon_projects_route_handles_concurrent_project_fleet_load() {
 }
 
 #[test]
-fn native_daemon_global_expose_items_read_project_topology_without_waking_cold_projects() {
+fn native_daemon_global_expose_items_hides_stale_project_topology_without_waking_cold_projects() {
     let fixture = RuntimeFixture::new("global-expose-items");
     let alpha = fixture.project("alpha");
     let beta = fixture.project("beta");
     let cold = fixture.project("cold");
     let mut resolver = fixture.resolver();
-    let alpha_entry = resolver
+    resolver
         .register_project(&alpha)
         .expect("register alpha")
         .expect("alpha entry");
-    let beta_entry = resolver
+    resolver
         .register_project(&beta)
         .expect("register beta")
         .expect("beta entry");
@@ -483,28 +484,7 @@ fn native_daemon_global_expose_items_read_project_topology_without_waking_cold_p
     assert_eq!(response.status, 200);
     assert_eq!(body["ok"], true);
     let items = body["items"].as_array().expect("items array");
-    assert_eq!(
-        items
-            .iter()
-            .map(|item| item["id"].as_str().unwrap())
-            .collect::<Vec<_>>(),
-        vec!["alpha-agent", "beta-agent"]
-    );
-    assert_eq!(items[0]["projectId"], alpha_entry.id);
-    assert_eq!(items[0]["projectName"], "alpha");
-    assert_eq!(
-        items[0]["projectRoot"].as_str(),
-        Some(alpha.to_string_lossy().as_ref())
-    );
-    assert_eq!(items[0]["exposeContext"]["project"], "alpha");
-    assert_eq!(items[0]["exposeContext"]["worktree"], "main");
-    assert!(items[0]["exposeContext"]["tone"].as_i64().is_some());
-    assert_eq!(
-        items[0]["exposeStatus"],
-        json!({ "kind": "needs", "label": "Needs input" })
-    );
-    assert_eq!(items[0]["previewSnapshot"], alpha_preview);
-    assert_eq!(items[1]["projectId"], beta_entry.id);
+    assert!(items.is_empty(), "stale windows must not be exposed");
     fixture.cleanup();
 }
 
@@ -916,7 +896,8 @@ fn ensure_project_launches_service_and_persists_starting_state() {
     let fixture = RuntimeFixture::new("ensure-launch");
     let project = fixture.project("repo");
     let launcher = Arc::new(FakeLauncher::new(87_654));
-    let mut runtime = fixture.runtime_with_launcher(launcher.clone(), 0);
+    let mut runtime =
+        fixture.runtime_with_launcher(launcher.clone(), PROJECT_SERVICE_STARTUP_TIMEOUT_MS);
 
     let project_json = runtime
         .ensure_project(project.to_str().expect("project path"))
@@ -931,7 +912,7 @@ fn ensure_project_launches_service_and_persists_starting_state() {
         json!(project.to_string_lossy())
     );
     assert_eq!(project_json["pid"], json!(87_654));
-    assert_eq!(project_json["status"], "starting");
+    assert_eq!(project_json["status"], "running");
     let state = fixture.resolver().load_registry().expect("registry");
     assert_eq!(state.projects.len(), 1);
     let daemon_state = fixture.runtime().daemon_state();
@@ -942,7 +923,7 @@ fn ensure_project_launches_service_and_persists_starting_state() {
             .values()
             .next()
             .and_then(|value| value.get("status")),
-        Some(&json!("starting"))
+        Some(&json!("running"))
     );
     fixture.cleanup();
 }
@@ -990,7 +971,8 @@ fn ensure_project_reuses_existing_live_state_without_launching() {
     )
     .expect("endpoint");
     let launcher = Arc::new(FakeLauncher::new(87_655));
-    let mut runtime = fixture.runtime_with_launcher(launcher.clone(), 0);
+    let mut runtime =
+        fixture.runtime_with_launcher(launcher.clone(), PROJECT_SERVICE_STARTUP_TIMEOUT_MS);
 
     let project_json = runtime
         .ensure_project(project.to_str().expect("project path"))
@@ -1030,10 +1012,15 @@ fn ensure_project_replaces_live_legacy_node_service_with_native_launch() {
     )
     .expect("endpoint");
     let launcher = Arc::new(FakeLauncher::new(87_661));
-    let verifier = Arc::new(FakeProcessVerifier::legacy_node(
-        [std::process::id() as i32],
-    ));
-    let mut runtime = fixture.runtime_with_launcher_and_verifier(launcher.clone(), verifier, 0);
+    let verifier = Arc::new(FakeProcessVerifier::legacy_node([
+        std::process::id() as i32,
+        launcher.pid,
+    ]));
+    let mut runtime = fixture.runtime_with_launcher_and_verifier(
+        launcher.clone(),
+        verifier,
+        PROJECT_SERVICE_STARTUP_TIMEOUT_MS,
+    );
 
     let project_json = runtime
         .ensure_project(project.to_str().expect("project path"))
@@ -1048,10 +1035,13 @@ fn ensure_project_replaces_live_legacy_node_service_with_native_launch() {
         vec![(std::process::id() as i32, false)]
     );
     assert_eq!(project_json["pid"], json!(87_661));
-    assert_eq!(project_json["status"], "starting");
-    assert!(
-        load_metadata_endpoint(resolver.project_state_dir_for(&project)).is_none(),
-        "legacy endpoint must be cleared before native relaunch publishes its own endpoint"
+    assert_eq!(project_json["status"], "running");
+    assert_eq!(
+        load_metadata_endpoint(resolver.project_state_dir_for(&project))
+            .as_ref()
+            .map(|endpoint| endpoint.pid),
+        Some(87_661),
+        "legacy endpoint must be replaced by the relaunched native endpoint"
     );
     fixture.cleanup();
 }
@@ -1085,8 +1075,13 @@ fn ensure_project_replaces_live_previous_native_build_with_current_launch() {
     let launcher = Arc::new(FakeLauncher::new(87_662));
     let verifier = Arc::new(FakeProcessVerifier::previous_native_build([
         std::process::id() as i32,
+        launcher.pid,
     ]));
-    let mut runtime = fixture.runtime_with_launcher_and_verifier(launcher.clone(), verifier, 0);
+    let mut runtime = fixture.runtime_with_launcher_and_verifier(
+        launcher.clone(),
+        verifier,
+        PROJECT_SERVICE_STARTUP_TIMEOUT_MS,
+    );
 
     let project_json = runtime
         .ensure_project(project.to_str().expect("project path"))
@@ -1101,10 +1096,13 @@ fn ensure_project_replaces_live_previous_native_build_with_current_launch() {
         vec![(std::process::id() as i32, false)]
     );
     assert_eq!(project_json["pid"], json!(87_662));
-    assert_eq!(project_json["status"], "starting");
-    assert!(
-        load_metadata_endpoint(resolver.project_state_dir_for(&project)).is_none(),
-        "old native endpoint must be cleared before relaunch publishes its own endpoint"
+    assert_eq!(project_json["status"], "running");
+    assert_eq!(
+        load_metadata_endpoint(resolver.project_state_dir_for(&project))
+            .as_ref()
+            .map(|endpoint| endpoint.pid),
+        Some(87_662),
+        "old native endpoint must be replaced by the relaunched endpoint"
     );
     fixture.cleanup();
 }
@@ -1157,7 +1155,7 @@ fn ensure_project_terminates_duplicate_project_services_for_same_project() {
 }
 
 #[test]
-fn ensure_project_keeps_existing_live_pid_starting_until_endpoint_exists() {
+fn ensure_project_reports_existing_live_pid_without_endpoint_as_unhealthy() {
     let fixture = RuntimeFixture::new("ensure-wait-endpoint");
     let project = fixture.project("repo");
     let mut resolver = fixture.resolver();
@@ -1175,13 +1173,13 @@ fn ensure_project_keeps_existing_live_pid_starting_until_endpoint_exists() {
     let launcher = Arc::new(FakeLauncher::new(87_659));
     let mut runtime = fixture.runtime_with_launcher(launcher.clone(), 0);
 
-    let project_json = runtime
+    let error = runtime
         .ensure_project(project.to_str().expect("project path"))
-        .expect("ensure project");
+        .expect_err("missing endpoint should fail health wait");
 
     assert!(launcher.calls().is_empty());
-    assert_eq!(project_json["pid"], json!(std::process::id() as i32));
-    assert_eq!(project_json["status"], "starting");
+    assert!(error.contains("project service health wait timed out after 0ms"));
+    assert!(error.contains(&format!("pid {}", std::process::id())));
     fixture.cleanup();
 }
 
@@ -1190,7 +1188,8 @@ fn core_projects_ensure_route_uses_native_supervision_runtime() {
     let fixture = RuntimeFixture::new("ensure-route");
     let project = fixture.project("repo");
     let launcher = Arc::new(FakeLauncher::new(87_656));
-    let mut runtime = fixture.runtime_with_launcher(launcher.clone(), 0);
+    let mut runtime =
+        fixture.runtime_with_launcher(launcher.clone(), PROJECT_SERVICE_STARTUP_TIMEOUT_MS);
     let body = format!(r#"{{"projectRoot":{}}}"#, json!(project.to_string_lossy()));
     let mut request = request("POST", "/projects/ensure");
     request
@@ -1260,7 +1259,8 @@ fn overseer_watch_spawns_overseer_loops_target_and_sends_prompt() {
     )
     .expect("endpoint");
     let launcher = Arc::new(FakeLauncher::new(87_660));
-    let mut runtime = fixture.runtime_with_launcher(launcher.clone(), 0);
+    let mut runtime =
+        fixture.runtime_with_launcher(launcher.clone(), PROJECT_SERVICE_STARTUP_TIMEOUT_MS);
 
     let result = runtime
         .overseer_watch(
@@ -1336,7 +1336,9 @@ fn overseer_watch_refuses_missing_agent_before_mutation() {
         },
     )
     .expect("endpoint");
-    let mut runtime = fixture.runtime();
+    let launcher = Arc::new(FakeLauncher::new(87_663));
+    let mut runtime =
+        fixture.runtime_with_launcher(launcher.clone(), PROJECT_SERVICE_STARTUP_TIMEOUT_MS);
 
     let error = runtime
         .overseer_watch(
@@ -1384,7 +1386,9 @@ fn overseer_watch_refuses_project_control_agent_before_mutation() {
         },
     )
     .expect("endpoint");
-    let mut runtime = fixture.runtime();
+    let launcher = Arc::new(FakeLauncher::new(87_664));
+    let mut runtime =
+        fixture.runtime_with_launcher(launcher.clone(), PROJECT_SERVICE_STARTUP_TIMEOUT_MS);
 
     let error = runtime
         .overseer_watch(
@@ -1533,7 +1537,7 @@ fn restart_project_stops_then_launches_fresh_service() {
         vec![project.to_string_lossy().into_owned()]
     );
     assert_eq!(restarted["project"]["pid"], json!(87_658));
-    assert_eq!(restarted["project"]["status"], "starting");
+    assert_eq!(restarted["project"]["status"], "running");
     fixture.cleanup();
 }
 
@@ -1597,7 +1601,7 @@ fn native_daemon_auth_reads_and_updates_credentials() {
 }
 
 #[test]
-fn native_daemon_push_acknowledges_when_relay_is_unavailable() {
+fn native_daemon_push_acknowledges_when_relay_is_off() {
     let fixture = RuntimeFixture::new("push-relay-unavailable");
     let mut runtime = fixture.runtime();
 
@@ -1609,7 +1613,7 @@ fn native_daemon_push_acknowledges_when_relay_is_unavailable() {
 
     assert_eq!(
         result,
-        json!({ "ok": true, "suppressed": true, "reason": "relay_unavailable" })
+        json!({ "ok": true, "suppressed": true, "reason": "relay_off" })
     );
     fixture.cleanup();
 }
@@ -1641,7 +1645,7 @@ impl RuntimeFixture {
             home,
             info: AimuxDaemonInfo {
                 pid: std::process::id() as i32,
-                port: 43_190,
+                port: 46_100,
                 started_at: "then".into(),
                 updated_at: "now".into(),
             },
@@ -1673,12 +1677,14 @@ impl RuntimeFixture {
 
     fn runtime_with_launcher(
         &self,
-        launcher: Arc<dyn ProjectServiceLauncher>,
+        launcher: Arc<FakeLauncher>,
         startup_timeout_ms: u64,
     ) -> RealDaemonRuntime {
+        let mut live_pids = vec![std::process::id() as i32];
+        live_pids.push(launcher.pid);
         self.runtime_with_launcher_and_verifier(
             launcher,
-            Arc::new(FakeProcessVerifier::native([std::process::id() as i32])),
+            Arc::new(FakeProcessVerifier::native(live_pids)),
             startup_timeout_ms,
         )
     }
@@ -1696,6 +1702,7 @@ impl RuntimeFixture {
             verifier,
             startup_timeout_ms,
         )
+        .with_project_service_health_probe(Arc::new(AlwaysReadyHealthProbe))
     }
 
     fn project(&self, name: &str) -> PathBuf {
@@ -1813,7 +1820,7 @@ impl FakeLauncher {
     fn new(pid: i32) -> Self {
         Self {
             pid,
-            endpoint_port: None,
+            endpoint_port: Some(45_900),
             calls: Mutex::new(Vec::new()),
             terminations: Mutex::new(Vec::new()),
         }
@@ -1948,6 +1955,14 @@ impl ProjectServiceProcessVerifier for SlowNativeVerifier {
 
     fn live_project_service_pids(&self, _project_id: &str, _project_root: &str) -> Vec<i32> {
         Vec::new()
+    }
+}
+
+struct AlwaysReadyHealthProbe;
+
+impl ProjectServiceHealthProbe for AlwaysReadyHealthProbe {
+    fn is_ready(&self, _endpoint: &MetadataApiEndpoint, _pid: i32) -> bool {
+        true
     }
 }
 

@@ -92,7 +92,10 @@ pub fn request_missing_project_refusal_reason(
     body.and_then(missing_project_root_fields_refusal_reason)
 }
 
-pub fn project_materialization_refusal_reason(project_root: &Path) -> Option<&'static str> {
+pub fn project_materialization_refusal_reason(
+    project_root: &Path,
+    daemon_port: u16,
+) -> Option<&'static str> {
     if is_ephemeral_or_fixture_temp_project_root(project_root) {
         return Some("temporary project");
     }
@@ -101,7 +104,7 @@ pub fn project_materialization_refusal_reason(project_root: &Path) -> Option<&'s
         crate::paths::ProjectRootStatus::NotCheckout => return Some("non-checkout project"),
         crate::paths::ProjectRootStatus::Unreachable => return Some("unreachable project"),
     }
-    if is_cargo_test_harness_binary() {
+    if daemon_port == crate::daemon_state::DEFAULT_DAEMON_PORT && is_cargo_test_harness_binary() {
         return Some("cargo test harness");
     }
     None

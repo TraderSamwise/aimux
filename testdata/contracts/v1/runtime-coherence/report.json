@@ -9,7 +9,13 @@
   "description": "Runtime coherence version, restart, tmux contract, dashboard staleness, process path, and rendered-report contracts captured by running TypeScript with mocked runtime dependencies.",
   "constants": {
     "AIMUX_TMUX_RUNTIME_CONTRACT_VERSION": "2",
-    "expectedManifest": { "apiVersion": 4, "capabilities": { "parsedAgentOutput": true }, "buildStamp": "service-new" }
+    "expectedManifest": {
+      "apiVersion": 4,
+      "capabilities": {
+        "parsedAgentOutput": true
+      },
+      "buildStamp": "service-new"
+    }
   },
   "cases": [
     {
@@ -17,7 +23,12 @@
       "name": "reports service and dashboard version mismatches across known projects",
       "source": "src/runtime-coherence.ts",
       "api": "buildRuntimeCoherenceReport/renderRuntimeCoherenceReport",
-      "input": { "daemonProjects": ["/repo/alpha"], "tmuxSessions": "default" },
+      "input": {
+        "daemonProjects": [
+          "/repo/alpha"
+        ],
+        "tmuxSessions": "default"
+      },
       "output": {
         "report": {
           "generatedAt": "2026-06-20T00:00:00.000Z",
@@ -33,7 +44,9 @@
           "expected": {
             "projectService": {
               "apiVersion": 4,
-              "capabilities": { "parsedAgentOutput": true },
+              "capabilities": {
+                "parsedAgentOutput": true
+              },
               "buildStamp": "service-new"
             },
             "runtimeOwner": "owner-new",
@@ -41,15 +54,33 @@
           },
           "daemon": {
             "running": true,
-            "info": { "pid": 9001, "port": 43190, "startedAt": "then", "updatedAt": "now" },
-            "process": { "pid": 9001, "argsPreview": null, "pathHints": [], "staleNativePath": false, "error": null },
+            "info": {
+              "pid": 9001,
+              "port": 43190,
+              "startedAt": "then",
+              "updatedAt": "now"
+            },
+            "process": {
+              "pid": 9001,
+              "argsPreview": null,
+              "pathHints": [],
+              "staleNativePath": false,
+              "error": null
+            },
             "projectCount": 1
           },
-          "tmux": { "available": true, "version": "tmux 3.5a", "sessionCount": 3 },
+          "tmux": {
+            "available": true,
+            "version": "tmux 3.5a",
+            "sessionCount": 3
+          },
           "projects": [
             {
               "projectRoot": "/repo/alpha",
-              "sources": ["daemon-state", "tmux"],
+              "sources": [
+                "daemon-state",
+                "tmux"
+              ],
               "expectedDashboardBuildStamp": "dashboard-new",
               "runtime": {
                 "sessionName": "aimux-alpha-111",
@@ -57,7 +88,11 @@
                 "expectedContract": "2",
                 "rebuildRequired": false,
                 "clientSessions": [
-                  { "sessionName": "aimux-alpha-111-client-deadbeef", "contract": "2", "rebuildRequired": false }
+                  {
+                    "sessionName": "aimux-alpha-111-client-deadbeef",
+                    "contract": "2",
+                    "rebuildRequired": false
+                  }
                 ]
               },
               "service": {
@@ -85,7 +120,9 @@
                 },
                 "serviceInfo": {
                   "apiVersion": 4,
-                  "capabilities": { "parsedAgentOutput": true },
+                  "capabilities": {
+                    "parsedAgentOutput": true
+                  },
                   "buildStamp": "service-old"
                 },
                 "error": null
@@ -114,7 +151,9 @@
             },
             {
               "projectRoot": "/repo/beta",
-              "sources": ["tmux"],
+              "sources": [
+                "tmux"
+              ],
               "expectedDashboardBuildStamp": "dashboard-new",
               "runtime": {
                 "sessionName": "aimux-beta-222",
@@ -142,7 +181,9 @@
                 },
                 "serviceInfo": {
                   "apiVersion": 4,
-                  "capabilities": { "parsedAgentOutput": true },
+                  "capabilities": {
+                    "parsedAgentOutput": true
+                  },
                   "buildStamp": "service-new"
                 },
                 "error": null
@@ -171,7 +212,12 @@
             }
           ],
           "staleHookProcesses": [],
-          "summary": { "projects": 2, "ok": 1, "needsRestart": 1, "runtimeRebuildRequired": 0 }
+          "summary": {
+            "projects": 2,
+            "ok": 1,
+            "needsRestart": 1,
+            "runtimeRebuildRequired": 0
+          }
         },
         "rendered": "Aimux Versions\n  cli version: 0.1.34\n  build profile: full\ncli launcher: stable-shim /opt/aimux/bin/aimux\n  cli current entry: /opt/aimux/native/local-current/dist/launcher-bin.js\n  cli stable shim: /opt/aimux/bin/aimux\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: 2\n  daemon: running pid=9001\n    daemon process: pid=9001\n  daemon projects: 1\n  tmux: tmux 3.5a\n  tmux sessions: 3\n  projects: 2 (1 ok, 1 need restart, 0 need runtime rebuild)\n\nProject needs-restart: /repo/alpha\n  sources: daemon-state, tmux\n  runtime: contract=2 expected=2 rebuild=no\n  service: mismatch endpoint=127.0.0.1:43211 pid=1001\n    supervisor: status=unknown restarts=0 pid=1001\n    process: pid=1001\n    running: api=4 build=service-old\n    expected: api=4 build=service-new\n  dashboards:\n    mismatch aimux-alpha-111:@1 dashboard alive=yes\n      process: pid=(unknown)\n        args: node /current/dist/launcher-bin.js --tmux-dashboard-internal\n      build: dashboard-old expected=dashboard-new\n      owner: owner-new runtimeOwner=owner-new\n\nProject ok: /repo/beta\n  sources: tmux\n  runtime: contract=2 expected=2 rebuild=no\n  service: ok endpoint=127.0.0.1:43212 pid=1002\n    process: pid=1002\n    running: api=4 build=service-new\n    expected: api=4 build=service-new\n  dashboards:\n    ok aimux-beta-222:@2 dashboard alive=yes\n      process: pid=(unknown)\n        args: node /current/dist/launcher-bin.js --tmux-dashboard-internal\n      build: dashboard-new expected=dashboard-new\n      owner: owner-new runtimeOwner=owner-new"
       },
@@ -182,7 +228,15 @@
       "name": "ignores tmux-only projects owned by another Aimux install",
       "source": "src/runtime-coherence.ts",
       "api": "buildRuntimeCoherenceReport/renderRuntimeCoherenceReport",
-      "input": { "daemonProjects": ["/repo/alpha"], "tmuxSessions": ["aimux-alpha-111", "aimux-foreign-333"] },
+      "input": {
+        "daemonProjects": [
+          "/repo/alpha"
+        ],
+        "tmuxSessions": [
+          "aimux-alpha-111",
+          "aimux-foreign-333"
+        ]
+      },
       "output": {
         "report": {
           "generatedAt": "2026-06-20T00:00:00.000Z",
@@ -198,7 +252,9 @@
           "expected": {
             "projectService": {
               "apiVersion": 4,
-              "capabilities": { "parsedAgentOutput": true },
+              "capabilities": {
+                "parsedAgentOutput": true
+              },
               "buildStamp": "service-new"
             },
             "runtimeOwner": "owner-new",
@@ -206,15 +262,33 @@
           },
           "daemon": {
             "running": true,
-            "info": { "pid": 9001, "port": 43190, "startedAt": "then", "updatedAt": "now" },
-            "process": { "pid": 9001, "argsPreview": null, "pathHints": [], "staleNativePath": false, "error": null },
+            "info": {
+              "pid": 9001,
+              "port": 43190,
+              "startedAt": "then",
+              "updatedAt": "now"
+            },
+            "process": {
+              "pid": 9001,
+              "argsPreview": null,
+              "pathHints": [],
+              "staleNativePath": false,
+              "error": null
+            },
             "projectCount": 1
           },
-          "tmux": { "available": true, "version": "tmux 3.5a", "sessionCount": 2 },
+          "tmux": {
+            "available": true,
+            "version": "tmux 3.5a",
+            "sessionCount": 2
+          },
           "projects": [
             {
               "projectRoot": "/repo/alpha",
-              "sources": ["daemon-state", "tmux"],
+              "sources": [
+                "daemon-state",
+                "tmux"
+              ],
               "expectedDashboardBuildStamp": "dashboard-new",
               "runtime": {
                 "sessionName": "aimux-alpha-111",
@@ -248,7 +322,9 @@
                 },
                 "serviceInfo": {
                   "apiVersion": 4,
-                  "capabilities": { "parsedAgentOutput": true },
+                  "capabilities": {
+                    "parsedAgentOutput": true
+                  },
                   "buildStamp": "service-new"
                 },
                 "error": null
@@ -277,7 +353,12 @@
             }
           ],
           "staleHookProcesses": [],
-          "summary": { "projects": 1, "ok": 0, "needsRestart": 1, "runtimeRebuildRequired": 0 }
+          "summary": {
+            "projects": 1,
+            "ok": 0,
+            "needsRestart": 1,
+            "runtimeRebuildRequired": 0
+          }
         },
         "rendered": "Aimux Versions\n  cli version: 0.1.34\n  build profile: full\ncli launcher: stable-shim /opt/aimux/bin/aimux\n  cli current entry: /opt/aimux/native/local-current/dist/launcher-bin.js\n  cli stable shim: /opt/aimux/bin/aimux\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: 2\n  daemon: running pid=9001\n    daemon process: pid=9001\n  daemon projects: 1\n  tmux: tmux 3.5a\n  tmux sessions: 2\n  projects: 1 (0 ok, 1 need restart, 0 need runtime rebuild)\n\nProject needs-restart: /repo/alpha\n  sources: daemon-state, tmux\n  runtime: contract=2 expected=2 rebuild=no\n  service: ok endpoint=127.0.0.1:43211 pid=1001\n    supervisor: status=unknown restarts=0 pid=1001\n    process: pid=1001\n    running: api=4 build=service-new\n    expected: api=4 build=service-new\n  dashboards:\n    mismatch aimux-alpha-111:@1 dashboard alive=yes\n      process: pid=(unknown)\n        args: node /current/dist/launcher-bin.js --tmux-dashboard-internal\n      build: dashboard-old expected=dashboard-new\n      owner: owner-new runtimeOwner=owner-new"
       },
@@ -288,7 +369,12 @@
       "name": "keeps ownerless tmux-only projects in the versions report",
       "source": "src/runtime-coherence.ts",
       "api": "buildRuntimeCoherenceReport/renderRuntimeCoherenceReport",
-      "input": { "daemonProjects": [], "tmuxSessions": ["aimux-legacy-333"] },
+      "input": {
+        "daemonProjects": [],
+        "tmuxSessions": [
+          "aimux-legacy-333"
+        ]
+      },
       "output": {
         "report": {
           "generatedAt": "2026-06-20T00:00:00.000Z",
@@ -304,7 +390,9 @@
           "expected": {
             "projectService": {
               "apiVersion": 4,
-              "capabilities": { "parsedAgentOutput": true },
+              "capabilities": {
+                "parsedAgentOutput": true
+              },
               "buildStamp": "service-new"
             },
             "runtimeOwner": "owner-new",
@@ -312,19 +400,36 @@
           },
           "daemon": {
             "running": true,
-            "info": { "pid": 9001, "port": 43190, "startedAt": "then", "updatedAt": "now" },
-            "process": { "pid": 9001, "argsPreview": null, "pathHints": [], "staleNativePath": false, "error": null },
+            "info": {
+              "pid": 9001,
+              "port": 43190,
+              "startedAt": "then",
+              "updatedAt": "now"
+            },
+            "process": {
+              "pid": 9001,
+              "argsPreview": null,
+              "pathHints": [],
+              "staleNativePath": false,
+              "error": null
+            },
             "projectCount": 0
           },
-          "tmux": { "available": true, "version": "tmux 3.5a", "sessionCount": 1 },
+          "tmux": {
+            "available": true,
+            "version": "tmux 3.5a",
+            "sessionCount": 1
+          },
           "projects": [
             {
               "projectRoot": "/repo/legacy",
-              "sources": ["tmux"],
+              "sources": [
+                "tmux"
+              ],
               "expectedDashboardBuildStamp": "dashboard-new",
               "runtime": {
-                "sessionName": "aimux-beta-222",
-                "contract": null,
+                "sessionName": "aimux-legacy-333",
+                "contract": "2",
                 "expectedContract": "2",
                 "rebuildRequired": false,
                 "clientSessions": []
@@ -348,7 +453,9 @@
                 },
                 "serviceInfo": {
                   "apiVersion": 4,
-                  "capabilities": { "parsedAgentOutput": true },
+                  "capabilities": {
+                    "parsedAgentOutput": true
+                  },
                   "buildStamp": "service-new"
                 },
                 "error": null
@@ -377,9 +484,14 @@
             }
           ],
           "staleHookProcesses": [],
-          "summary": { "projects": 1, "ok": 0, "needsRestart": 1, "runtimeRebuildRequired": 0 }
+          "summary": {
+            "projects": 1,
+            "ok": 0,
+            "needsRestart": 1,
+            "runtimeRebuildRequired": 0
+          }
         },
-        "rendered": "Aimux Versions\n  cli version: 0.1.34\n  build profile: full\ncli launcher: stable-shim /opt/aimux/bin/aimux\n  cli current entry: /opt/aimux/native/local-current/dist/launcher-bin.js\n  cli stable shim: /opt/aimux/bin/aimux\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: 2\n  daemon: running pid=9001\n    daemon process: pid=9001\n  daemon projects: 0\n  tmux: tmux 3.5a\n  tmux sessions: 1\n  projects: 1 (0 ok, 1 need restart, 0 need runtime rebuild)\n\nProject needs-restart: /repo/legacy\n  sources: tmux\n  runtime: contract=(missing) expected=2 rebuild=no\n  service: ok endpoint=127.0.0.1:43212 pid=1001\n    process: pid=1001\n    running: api=4 build=service-new\n    expected: api=4 build=service-new\n  dashboards:\n    mismatch aimux-legacy-333:@3 dashboard alive=yes\n      process: pid=(unknown)\n        args: node /current/dist/launcher-bin.js --tmux-dashboard-internal\n      build: dashboard-new expected=dashboard-new\n      owner: owner-new runtimeOwner=(missing)"
+        "rendered": "Aimux Versions\n  cli version: 0.1.34\n  build profile: full\ncli launcher: stable-shim /opt/aimux/bin/aimux\n  cli current entry: /opt/aimux/native/local-current/dist/launcher-bin.js\n  cli stable shim: /opt/aimux/bin/aimux\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: 2\n  daemon: running pid=9001\n    daemon process: pid=9001\n  daemon projects: 0\n  tmux: tmux 3.5a\n  tmux sessions: 1\n  projects: 1 (0 ok, 1 need restart, 0 need runtime rebuild)\n\nProject needs-restart: /repo/legacy\n  sources: tmux\n  runtime: contract=2 expected=2 rebuild=no\n  service: ok endpoint=127.0.0.1:43212 pid=1001\n    process: pid=1001\n    running: api=4 build=service-new\n    expected: api=4 build=service-new\n  dashboards:\n    mismatch aimux-legacy-333:@3 dashboard alive=yes\n      process: pid=(unknown)\n        args: node /current/dist/launcher-bin.js --tmux-dashboard-internal\n      build: dashboard-new expected=dashboard-new\n      owner: owner-new runtimeOwner=(missing)"
       },
       "inputSha256": "ff08d2b06e47a465bdc4f962f06ef132cf8d898756f076c0376528d771373889"
     },
@@ -388,7 +500,12 @@
       "name": "keeps unreachable services visible in versions report",
       "source": "src/runtime-coherence.ts",
       "api": "buildRuntimeCoherenceReport/renderRuntimeCoherenceReport",
-      "input": { "daemonProjects": ["/repo/alpha"], "serviceError": "connection refused" },
+      "input": {
+        "daemonProjects": [
+          "/repo/alpha"
+        ],
+        "serviceError": "connection refused"
+      },
       "output": {
         "report": {
           "generatedAt": "2026-06-20T00:00:00.000Z",
@@ -404,7 +521,9 @@
           "expected": {
             "projectService": {
               "apiVersion": 4,
-              "capabilities": { "parsedAgentOutput": true },
+              "capabilities": {
+                "parsedAgentOutput": true
+              },
               "buildStamp": "service-new"
             },
             "runtimeOwner": "owner-new",
@@ -412,18 +531,35 @@
           },
           "daemon": {
             "running": true,
-            "info": { "pid": 9001, "port": 43190, "startedAt": "then", "updatedAt": "now" },
-            "process": { "pid": 9001, "argsPreview": null, "pathHints": [], "staleNativePath": false, "error": null },
+            "info": {
+              "pid": 9001,
+              "port": 43190,
+              "startedAt": "then",
+              "updatedAt": "now"
+            },
+            "process": {
+              "pid": 9001,
+              "argsPreview": null,
+              "pathHints": [],
+              "staleNativePath": false,
+              "error": null
+            },
             "projectCount": 1
           },
-          "tmux": { "available": true, "version": "tmux 3.5a", "sessionCount": 0 },
+          "tmux": {
+            "available": true,
+            "version": "tmux 3.5a",
+            "sessionCount": 0
+          },
           "projects": [
             {
               "projectRoot": "/repo/alpha",
-              "sources": ["daemon-state"],
+              "sources": [
+                "daemon-state"
+              ],
               "expectedDashboardBuildStamp": "dashboard-new",
               "runtime": {
-                "sessionName": "aimux-alpha-111",
+                "sessionName": "aimux-alpha-e9602a6bd7fe",
                 "contract": null,
                 "expectedContract": "2",
                 "rebuildRequired": false,
@@ -460,7 +596,12 @@
             }
           ],
           "staleHookProcesses": [],
-          "summary": { "projects": 1, "ok": 0, "needsRestart": 1, "runtimeRebuildRequired": 0 }
+          "summary": {
+            "projects": 1,
+            "ok": 0,
+            "needsRestart": 1,
+            "runtimeRebuildRequired": 0
+          }
         },
         "rendered": "Aimux Versions\n  cli version: 0.1.34\n  build profile: full\ncli launcher: stable-shim /opt/aimux/bin/aimux\n  cli current entry: /opt/aimux/native/local-current/dist/launcher-bin.js\n  cli stable shim: /opt/aimux/bin/aimux\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: 2\n  daemon: running pid=9001\n    daemon process: pid=9001\n  daemon projects: 1\n  tmux: tmux 3.5a\n  tmux sessions: 0\n  projects: 1 (0 ok, 1 need restart, 0 need runtime rebuild)\n\nProject needs-restart: /repo/alpha\n  sources: daemon-state\n  runtime: contract=(missing) expected=2 rebuild=no\n  service: unreachable endpoint=127.0.0.1:43211 pid=1001\n    supervisor: status=unknown restarts=0 pid=1001\n    process: pid=1001\n    running: (unknown)\n    expected: api=4 build=service-new\n    error: connection refused\n  dashboards: none"
       },
@@ -471,7 +612,12 @@
       "name": "renders supervised project-service restart metadata from daemon state",
       "source": "src/runtime-coherence.ts",
       "api": "buildRuntimeCoherenceReport/renderRuntimeCoherenceReport",
-      "input": { "daemonProjects": ["/repo/alpha"], "supervisor": "restarted" },
+      "input": {
+        "daemonProjects": [
+          "/repo/alpha"
+        ],
+        "supervisor": "restarted"
+      },
       "output": {
         "report": {
           "generatedAt": "2026-06-20T00:00:00.000Z",
@@ -487,7 +633,9 @@
           "expected": {
             "projectService": {
               "apiVersion": 4,
-              "capabilities": { "parsedAgentOutput": true },
+              "capabilities": {
+                "parsedAgentOutput": true
+              },
               "buildStamp": "service-new"
             },
             "runtimeOwner": "owner-new",
@@ -495,18 +643,35 @@
           },
           "daemon": {
             "running": true,
-            "info": { "pid": 9001, "port": 43190, "startedAt": "then", "updatedAt": "now" },
-            "process": { "pid": 9001, "argsPreview": null, "pathHints": [], "staleNativePath": false, "error": null },
+            "info": {
+              "pid": 9001,
+              "port": 43190,
+              "startedAt": "then",
+              "updatedAt": "now"
+            },
+            "process": {
+              "pid": 9001,
+              "argsPreview": null,
+              "pathHints": [],
+              "staleNativePath": false,
+              "error": null
+            },
             "projectCount": 1
           },
-          "tmux": { "available": true, "version": "tmux 3.5a", "sessionCount": 0 },
+          "tmux": {
+            "available": true,
+            "version": "tmux 3.5a",
+            "sessionCount": 0
+          },
           "projects": [
             {
               "projectRoot": "/repo/alpha",
-              "sources": ["daemon-state"],
+              "sources": [
+                "daemon-state"
+              ],
               "expectedDashboardBuildStamp": "dashboard-new",
               "runtime": {
-                "sessionName": "aimux-alpha-111",
+                "sessionName": "aimux-alpha-e9602a6bd7fe",
                 "contract": null,
                 "expectedContract": "2",
                 "rebuildRequired": false,
@@ -523,7 +688,12 @@
                   "status": "running",
                   "restartCount": 2,
                   "lastRestartAt": "2026-08-10T07:00:02.000Z",
-                  "lastExit": { "at": "2026-08-10T07:00:00.000Z", "code": 1, "signal": null, "expected": false }
+                  "lastExit": {
+                    "at": "2026-08-10T07:00:00.000Z",
+                    "code": 1,
+                    "signal": null,
+                    "expected": false
+                  }
                 },
                 "endpoint": {
                   "host": "127.0.0.1",
@@ -541,7 +711,9 @@
                 },
                 "serviceInfo": {
                   "apiVersion": 4,
-                  "capabilities": { "parsedAgentOutput": true },
+                  "capabilities": {
+                    "parsedAgentOutput": true
+                  },
                   "buildStamp": "service-new"
                 },
                 "error": null
@@ -551,7 +723,12 @@
             }
           ],
           "staleHookProcesses": [],
-          "summary": { "projects": 1, "ok": 1, "needsRestart": 0, "runtimeRebuildRequired": 0 }
+          "summary": {
+            "projects": 1,
+            "ok": 1,
+            "needsRestart": 0,
+            "runtimeRebuildRequired": 0
+          }
         },
         "rendered": "Aimux Versions\n  cli version: 0.1.34\n  build profile: full\ncli launcher: stable-shim /opt/aimux/bin/aimux\n  cli current entry: /opt/aimux/native/local-current/dist/launcher-bin.js\n  cli stable shim: /opt/aimux/bin/aimux\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: 2\n  daemon: running pid=9001\n    daemon process: pid=9001\n  daemon projects: 1\n  tmux: tmux 3.5a\n  tmux sessions: 0\n  projects: 1 (1 ok, 0 need restart, 0 need runtime rebuild)\n\nProject ok: /repo/alpha\n  sources: daemon-state\n  runtime: contract=(missing) expected=2 rebuild=no\n  service: ok endpoint=127.0.0.1:43211 pid=1001\n    supervisor: status=running restarts=2 pid=1001\n      last restart: 2026-08-10T07:00:02.000Z\n      last exit: unexpected code=1 signal=(none) at=2026-08-10T07:00:00.000Z\n    process: pid=1001\n    running: api=4 build=service-new\n    expected: api=4 build=service-new\n  dashboards: none"
       },
@@ -562,7 +739,12 @@
       "name": "rejects service health for wrong project state directory",
       "source": "src/runtime-coherence.ts",
       "api": "buildRuntimeCoherenceReport/renderRuntimeCoherenceReport",
-      "input": { "daemonProjects": ["/repo/alpha"], "healthProjectRoot": "/repo/beta" },
+      "input": {
+        "daemonProjects": [
+          "/repo/alpha"
+        ],
+        "healthProjectRoot": "/repo/beta"
+      },
       "output": {
         "report": {
           "generatedAt": "2026-06-20T00:00:00.000Z",
@@ -578,7 +760,9 @@
           "expected": {
             "projectService": {
               "apiVersion": 4,
-              "capabilities": { "parsedAgentOutput": true },
+              "capabilities": {
+                "parsedAgentOutput": true
+              },
               "buildStamp": "service-new"
             },
             "runtimeOwner": "owner-new",
@@ -586,18 +770,35 @@
           },
           "daemon": {
             "running": true,
-            "info": { "pid": 9001, "port": 43190, "startedAt": "then", "updatedAt": "now" },
-            "process": { "pid": 9001, "argsPreview": null, "pathHints": [], "staleNativePath": false, "error": null },
+            "info": {
+              "pid": 9001,
+              "port": 43190,
+              "startedAt": "then",
+              "updatedAt": "now"
+            },
+            "process": {
+              "pid": 9001,
+              "argsPreview": null,
+              "pathHints": [],
+              "staleNativePath": false,
+              "error": null
+            },
             "projectCount": 1
           },
-          "tmux": { "available": true, "version": "tmux 3.5a", "sessionCount": 0 },
+          "tmux": {
+            "available": true,
+            "version": "tmux 3.5a",
+            "sessionCount": 0
+          },
           "projects": [
             {
               "projectRoot": "/repo/alpha",
-              "sources": ["daemon-state"],
+              "sources": [
+                "daemon-state"
+              ],
               "expectedDashboardBuildStamp": "dashboard-new",
               "runtime": {
-                "sessionName": "aimux-alpha-111",
+                "sessionName": "aimux-alpha-e9602a6bd7fe",
                 "contract": null,
                 "expectedContract": "2",
                 "rebuildRequired": false,
@@ -628,7 +829,9 @@
                 },
                 "serviceInfo": {
                   "apiVersion": 4,
-                  "capabilities": { "parsedAgentOutput": true },
+                  "capabilities": {
+                    "parsedAgentOutput": true
+                  },
                   "buildStamp": "service-new"
                 },
                 "error": "projectStateDir mismatch: expected /Users/sam/.aimux/projects/alpha-e9602a6bd7fe actual /Users/sam/.aimux/projects/beta-5458e3c21af1"
@@ -638,7 +841,12 @@
             }
           ],
           "staleHookProcesses": [],
-          "summary": { "projects": 1, "ok": 0, "needsRestart": 1, "runtimeRebuildRequired": 0 }
+          "summary": {
+            "projects": 1,
+            "ok": 0,
+            "needsRestart": 1,
+            "runtimeRebuildRequired": 0
+          }
         },
         "rendered": "Aimux Versions\n  cli version: 0.1.34\n  build profile: full\ncli launcher: stable-shim /opt/aimux/bin/aimux\n  cli current entry: /opt/aimux/native/local-current/dist/launcher-bin.js\n  cli stable shim: /opt/aimux/bin/aimux\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: 2\n  daemon: running pid=9001\n    daemon process: pid=9001\n  daemon projects: 1\n  tmux: tmux 3.5a\n  tmux sessions: 0\n  projects: 1 (0 ok, 1 need restart, 0 need runtime rebuild)\n\nProject needs-restart: /repo/alpha\n  sources: daemon-state\n  runtime: contract=(missing) expected=2 rebuild=no\n  service: mismatch endpoint=127.0.0.1:43211 pid=1001\n    supervisor: status=unknown restarts=0 pid=1001\n    process: pid=1001\n    running: api=4 build=service-new\n    expected: api=4 build=service-new\n    error: projectStateDir mismatch: expected /Users/sam/.aimux/projects/alpha-e9602a6bd7fe actual /Users/sam/.aimux/projects/beta-5458e3c21af1\n  dashboards: none"
       },
@@ -649,7 +857,13 @@
       "name": "retries slow health probe before marking service unreachable",
       "source": "src/runtime-coherence.ts",
       "api": "buildRuntimeCoherenceReport/renderRuntimeCoherenceReport",
-      "input": { "daemonProjects": ["/repo/alpha"], "firstProbe": "timeout", "secondProbe": "ok" },
+      "input": {
+        "daemonProjects": [
+          "/repo/alpha"
+        ],
+        "firstProbe": "timeout",
+        "secondProbe": "ok"
+      },
       "output": {
         "report": {
           "generatedAt": "2026-06-20T00:00:00.000Z",
@@ -665,7 +879,9 @@
           "expected": {
             "projectService": {
               "apiVersion": 4,
-              "capabilities": { "parsedAgentOutput": true },
+              "capabilities": {
+                "parsedAgentOutput": true
+              },
               "buildStamp": "service-new"
             },
             "runtimeOwner": "owner-new",
@@ -673,18 +889,35 @@
           },
           "daemon": {
             "running": true,
-            "info": { "pid": 9001, "port": 43190, "startedAt": "then", "updatedAt": "now" },
-            "process": { "pid": 9001, "argsPreview": null, "pathHints": [], "staleNativePath": false, "error": null },
+            "info": {
+              "pid": 9001,
+              "port": 43190,
+              "startedAt": "then",
+              "updatedAt": "now"
+            },
+            "process": {
+              "pid": 9001,
+              "argsPreview": null,
+              "pathHints": [],
+              "staleNativePath": false,
+              "error": null
+            },
             "projectCount": 1
           },
-          "tmux": { "available": true, "version": "tmux 3.5a", "sessionCount": 0 },
+          "tmux": {
+            "available": true,
+            "version": "tmux 3.5a",
+            "sessionCount": 0
+          },
           "projects": [
             {
               "projectRoot": "/repo/alpha",
-              "sources": ["daemon-state"],
+              "sources": [
+                "daemon-state"
+              ],
               "expectedDashboardBuildStamp": "dashboard-new",
               "runtime": {
-                "sessionName": "aimux-alpha-111",
+                "sessionName": "aimux-alpha-e9602a6bd7fe",
                 "contract": null,
                 "expectedContract": "2",
                 "rebuildRequired": false,
@@ -715,7 +948,9 @@
                 },
                 "serviceInfo": {
                   "apiVersion": 4,
-                  "capabilities": { "parsedAgentOutput": true },
+                  "capabilities": {
+                    "parsedAgentOutput": true
+                  },
                   "buildStamp": "service-new"
                 },
                 "error": null
@@ -725,12 +960,27 @@
             }
           ],
           "staleHookProcesses": [],
-          "summary": { "projects": 1, "ok": 1, "needsRestart": 0, "runtimeRebuildRequired": 0 }
+          "summary": {
+            "projects": 1,
+            "ok": 1,
+            "needsRestart": 0,
+            "runtimeRebuildRequired": 0
+          }
         },
         "rendered": "Aimux Versions\n  cli version: 0.1.34\n  build profile: full\ncli launcher: stable-shim /opt/aimux/bin/aimux\n  cli current entry: /opt/aimux/native/local-current/dist/launcher-bin.js\n  cli stable shim: /opt/aimux/bin/aimux\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: 2\n  daemon: running pid=9001\n    daemon process: pid=9001\n  daemon projects: 1\n  tmux: tmux 3.5a\n  tmux sessions: 0\n  projects: 1 (1 ok, 0 need restart, 0 need runtime rebuild)\n\nProject ok: /repo/alpha\n  sources: daemon-state\n  runtime: contract=(missing) expected=2 rebuild=no\n  service: ok endpoint=127.0.0.1:43211 pid=1001\n    supervisor: status=unknown restarts=0 pid=1001\n    process: pid=1001\n    running: api=4 build=service-new\n    expected: api=4 build=service-new\n  dashboards: none",
         "requestLog": [
-          { "url": "http://127.0.0.1:43211/health", "options": { "timeoutMs": 1000 } },
-          { "url": "http://127.0.0.1:43211/health", "options": { "timeoutMs": 4000 } }
+          {
+            "url": "http://127.0.0.1:43211/health",
+            "options": {
+              "timeoutMs": 1000
+            }
+          },
+          {
+            "url": "http://127.0.0.1:43211/health",
+            "options": {
+              "timeoutMs": 4000
+            }
+          }
         ]
       },
       "inputSha256": "7e70bad305ff1220585dafddf4a7a5057782c07db595340f51eab335d9e3e490"
@@ -740,7 +990,12 @@
       "name": "marks dashboards stale when tmux runtime owner differs",
       "source": "src/runtime-coherence.ts",
       "api": "buildRuntimeCoherenceReport/renderRuntimeCoherenceReport",
-      "input": { "daemonProjects": ["/repo/beta"], "runtimeOwner": "owner-old" },
+      "input": {
+        "daemonProjects": [
+          "/repo/beta"
+        ],
+        "runtimeOwner": "owner-old"
+      },
       "output": {
         "report": {
           "generatedAt": "2026-06-20T00:00:00.000Z",
@@ -756,7 +1011,9 @@
           "expected": {
             "projectService": {
               "apiVersion": 4,
-              "capabilities": { "parsedAgentOutput": true },
+              "capabilities": {
+                "parsedAgentOutput": true
+              },
               "buildStamp": "service-new"
             },
             "runtimeOwner": "owner-new",
@@ -764,15 +1021,32 @@
           },
           "daemon": {
             "running": true,
-            "info": { "pid": 9001, "port": 43190, "startedAt": "then", "updatedAt": "now" },
-            "process": { "pid": 9001, "argsPreview": null, "pathHints": [], "staleNativePath": false, "error": null },
+            "info": {
+              "pid": 9001,
+              "port": 43190,
+              "startedAt": "then",
+              "updatedAt": "now"
+            },
+            "process": {
+              "pid": 9001,
+              "argsPreview": null,
+              "pathHints": [],
+              "staleNativePath": false,
+              "error": null
+            },
             "projectCount": 1
           },
-          "tmux": { "available": true, "version": "tmux 3.5a", "sessionCount": 1 },
+          "tmux": {
+            "available": true,
+            "version": "tmux 3.5a",
+            "sessionCount": 1
+          },
           "projects": [
             {
               "projectRoot": "/repo/beta",
-              "sources": ["daemon-state"],
+              "sources": [
+                "daemon-state"
+              ],
               "expectedDashboardBuildStamp": "dashboard-new",
               "runtime": {
                 "sessionName": "aimux-beta-222",
@@ -806,7 +1080,9 @@
                 },
                 "serviceInfo": {
                   "apiVersion": 4,
-                  "capabilities": { "parsedAgentOutput": true },
+                  "capabilities": {
+                    "parsedAgentOutput": true
+                  },
                   "buildStamp": "service-new"
                 },
                 "error": null
@@ -835,7 +1111,12 @@
             }
           ],
           "staleHookProcesses": [],
-          "summary": { "projects": 1, "ok": 0, "needsRestart": 1, "runtimeRebuildRequired": 0 }
+          "summary": {
+            "projects": 1,
+            "ok": 0,
+            "needsRestart": 1,
+            "runtimeRebuildRequired": 0
+          }
         },
         "rendered": "Aimux Versions\n  cli version: 0.1.34\n  build profile: full\ncli launcher: stable-shim /opt/aimux/bin/aimux\n  cli current entry: /opt/aimux/native/local-current/dist/launcher-bin.js\n  cli stable shim: /opt/aimux/bin/aimux\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: 2\n  daemon: running pid=9001\n    daemon process: pid=9001\n  daemon projects: 1\n  tmux: tmux 3.5a\n  tmux sessions: 1\n  projects: 1 (0 ok, 1 need restart, 0 need runtime rebuild)\n\nProject needs-restart: /repo/beta\n  sources: daemon-state\n  runtime: contract=2 expected=2 rebuild=no\n  service: ok endpoint=127.0.0.1:43212 pid=1002\n    supervisor: status=unknown restarts=0 pid=1002\n    process: pid=1002\n    running: api=4 build=service-new\n    expected: api=4 build=service-new\n  dashboards:\n    mismatch aimux-beta-222:@2 dashboard alive=yes\n      process: pid=(unknown)\n        args: node /current/dist/launcher-bin.js --tmux-dashboard-internal\n      build: dashboard-new expected=dashboard-new\n      owner: owner-new runtimeOwner=owner-old"
       },
@@ -846,7 +1127,14 @@
       "name": "reports host tmux runtime contract mismatch as requiring rebuild",
       "source": "src/runtime-coherence.ts",
       "api": "buildRuntimeCoherenceReport/renderRuntimeCoherenceReport",
-      "input": { "daemonProjects": ["/repo/beta"], "tmuxSessions": ["aimux-beta-222"] },
+      "input": {
+        "daemonProjects": [
+          "/repo/beta"
+        ],
+        "tmuxSessions": [
+          "aimux-beta-222"
+        ]
+      },
       "output": {
         "report": {
           "generatedAt": "2026-06-20T00:00:00.000Z",
@@ -862,7 +1150,9 @@
           "expected": {
             "projectService": {
               "apiVersion": 4,
-              "capabilities": { "parsedAgentOutput": true },
+              "capabilities": {
+                "parsedAgentOutput": true
+              },
               "buildStamp": "service-new"
             },
             "runtimeOwner": "owner-new",
@@ -870,15 +1160,33 @@
           },
           "daemon": {
             "running": true,
-            "info": { "pid": 9001, "port": 43190, "startedAt": "then", "updatedAt": "now" },
-            "process": { "pid": 9001, "argsPreview": null, "pathHints": [], "staleNativePath": false, "error": null },
+            "info": {
+              "pid": 9001,
+              "port": 43190,
+              "startedAt": "then",
+              "updatedAt": "now"
+            },
+            "process": {
+              "pid": 9001,
+              "argsPreview": null,
+              "pathHints": [],
+              "staleNativePath": false,
+              "error": null
+            },
             "projectCount": 1
           },
-          "tmux": { "available": true, "version": "tmux 3.5a", "sessionCount": 1 },
+          "tmux": {
+            "available": true,
+            "version": "tmux 3.5a",
+            "sessionCount": 1
+          },
           "projects": [
             {
               "projectRoot": "/repo/beta",
-              "sources": ["daemon-state", "tmux"],
+              "sources": [
+                "daemon-state",
+                "tmux"
+              ],
               "expectedDashboardBuildStamp": "dashboard-new",
               "runtime": {
                 "sessionName": "aimux-beta-222",
@@ -912,7 +1220,9 @@
                 },
                 "serviceInfo": {
                   "apiVersion": 4,
-                  "capabilities": { "parsedAgentOutput": true },
+                  "capabilities": {
+                    "parsedAgentOutput": true
+                  },
                   "buildStamp": "service-new"
                 },
                 "error": null
@@ -941,7 +1251,12 @@
             }
           ],
           "staleHookProcesses": [],
-          "summary": { "projects": 1, "ok": 0, "needsRestart": 1, "runtimeRebuildRequired": 1 }
+          "summary": {
+            "projects": 1,
+            "ok": 0,
+            "needsRestart": 1,
+            "runtimeRebuildRequired": 1
+          }
         },
         "rendered": "Aimux Versions\n  cli version: 0.1.34\n  build profile: full\ncli launcher: stable-shim /opt/aimux/bin/aimux\n  cli current entry: /opt/aimux/native/local-current/dist/launcher-bin.js\n  cli stable shim: /opt/aimux/bin/aimux\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: 2\n  daemon: running pid=9001\n    daemon process: pid=9001\n  daemon projects: 1\n  tmux: tmux 3.5a\n  tmux sessions: 1\n  projects: 1 (0 ok, 1 need restart, 1 need runtime rebuild)\n\nProject needs-restart: /repo/beta\n  sources: daemon-state, tmux\n  runtime: contract=legacy-contract expected=2 rebuild=yes\n  service: ok endpoint=127.0.0.1:43212 pid=1002\n    supervisor: status=unknown restarts=0 pid=1002\n    process: pid=1002\n    running: api=4 build=service-new\n    expected: api=4 build=service-new\n  dashboards:\n    ok aimux-beta-222:@2 dashboard alive=yes\n      process: pid=(unknown)\n        args: node /current/dist/launcher-bin.js --tmux-dashboard-internal\n      build: dashboard-new expected=dashboard-new\n      owner: owner-new runtimeOwner=owner-new"
       },
@@ -953,8 +1268,13 @@
       "source": "src/runtime-coherence.ts",
       "api": "buildRuntimeCoherenceReport/renderRuntimeCoherenceReport",
       "input": {
-        "daemonProjects": ["/repo/beta"],
-        "tmuxSessions": ["aimux-beta-222", "aimux-beta-222-client-deadbeef"]
+        "daemonProjects": [
+          "/repo/beta"
+        ],
+        "tmuxSessions": [
+          "aimux-beta-222",
+          "aimux-beta-222-client-deadbeef"
+        ]
       },
       "output": {
         "report": {
@@ -971,7 +1291,9 @@
           "expected": {
             "projectService": {
               "apiVersion": 4,
-              "capabilities": { "parsedAgentOutput": true },
+              "capabilities": {
+                "parsedAgentOutput": true
+              },
               "buildStamp": "service-new"
             },
             "runtimeOwner": "owner-new",
@@ -979,15 +1301,33 @@
           },
           "daemon": {
             "running": true,
-            "info": { "pid": 9001, "port": 43190, "startedAt": "then", "updatedAt": "now" },
-            "process": { "pid": 9001, "argsPreview": null, "pathHints": [], "staleNativePath": false, "error": null },
+            "info": {
+              "pid": 9001,
+              "port": 43190,
+              "startedAt": "then",
+              "updatedAt": "now"
+            },
+            "process": {
+              "pid": 9001,
+              "argsPreview": null,
+              "pathHints": [],
+              "staleNativePath": false,
+              "error": null
+            },
             "projectCount": 1
           },
-          "tmux": { "available": true, "version": "tmux 3.5a", "sessionCount": 2 },
+          "tmux": {
+            "available": true,
+            "version": "tmux 3.5a",
+            "sessionCount": 2
+          },
           "projects": [
             {
               "projectRoot": "/repo/beta",
-              "sources": ["daemon-state", "tmux"],
+              "sources": [
+                "daemon-state",
+                "tmux"
+              ],
               "expectedDashboardBuildStamp": "dashboard-new",
               "runtime": {
                 "sessionName": "aimux-beta-222",
@@ -1027,7 +1367,9 @@
                 },
                 "serviceInfo": {
                   "apiVersion": 4,
-                  "capabilities": { "parsedAgentOutput": true },
+                  "capabilities": {
+                    "parsedAgentOutput": true
+                  },
                   "buildStamp": "service-new"
                 },
                 "error": null
@@ -1056,7 +1398,12 @@
             }
           ],
           "staleHookProcesses": [],
-          "summary": { "projects": 1, "ok": 0, "needsRestart": 1, "runtimeRebuildRequired": 1 }
+          "summary": {
+            "projects": 1,
+            "ok": 0,
+            "needsRestart": 1,
+            "runtimeRebuildRequired": 1
+          }
         },
         "rendered": "Aimux Versions\n  cli version: 0.1.34\n  build profile: full\ncli launcher: stable-shim /opt/aimux/bin/aimux\n  cli current entry: /opt/aimux/native/local-current/dist/launcher-bin.js\n  cli stable shim: /opt/aimux/bin/aimux\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: 2\n  daemon: running pid=9001\n    daemon process: pid=9001\n  daemon projects: 1\n  tmux: tmux 3.5a\n  tmux sessions: 2\n  projects: 1 (0 ok, 1 need restart, 1 need runtime rebuild)\n\nProject needs-restart: /repo/beta\n  sources: daemon-state, tmux\n  runtime: contract=2 expected=2 rebuild=yes\n    client: aimux-beta-222-client-deadbeef contract=legacy-contract expected=2 rebuild=yes\n  service: ok endpoint=127.0.0.1:43212 pid=1002\n    supervisor: status=unknown restarts=0 pid=1002\n    process: pid=1002\n    running: api=4 build=service-new\n    expected: api=4 build=service-new\n  dashboards:\n    ok aimux-beta-222:@2 dashboard alive=yes\n      process: pid=(unknown)\n        args: node /current/dist/launcher-bin.js --tmux-dashboard-internal\n      build: dashboard-new expected=dashboard-new\n      owner: owner-new runtimeOwner=owner-new"
       },
@@ -1068,8 +1415,13 @@
       "source": "src/runtime-coherence.ts",
       "api": "buildRuntimeCoherenceReport/renderRuntimeCoherenceReport",
       "input": {
-        "daemonProjects": ["/repo/beta"],
-        "tmuxSessions": ["aimux-beta-222", "aimux-beta-222-client-aaaaaaaa"]
+        "daemonProjects": [
+          "/repo/beta"
+        ],
+        "tmuxSessions": [
+          "aimux-beta-222",
+          "aimux-beta-222-client-aaaaaaaa"
+        ]
       },
       "output": {
         "report": {
@@ -1086,7 +1438,9 @@
           "expected": {
             "projectService": {
               "apiVersion": 4,
-              "capabilities": { "parsedAgentOutput": true },
+              "capabilities": {
+                "parsedAgentOutput": true
+              },
               "buildStamp": "service-new"
             },
             "runtimeOwner": "owner-new",
@@ -1094,15 +1448,33 @@
           },
           "daemon": {
             "running": true,
-            "info": { "pid": 9001, "port": 43190, "startedAt": "then", "updatedAt": "now" },
-            "process": { "pid": 9001, "argsPreview": null, "pathHints": [], "staleNativePath": false, "error": null },
+            "info": {
+              "pid": 9001,
+              "port": 43190,
+              "startedAt": "then",
+              "updatedAt": "now"
+            },
+            "process": {
+              "pid": 9001,
+              "argsPreview": null,
+              "pathHints": [],
+              "staleNativePath": false,
+              "error": null
+            },
             "projectCount": 1
           },
-          "tmux": { "available": true, "version": "tmux 3.5a", "sessionCount": 2 },
+          "tmux": {
+            "available": true,
+            "version": "tmux 3.5a",
+            "sessionCount": 2
+          },
           "projects": [
             {
               "projectRoot": "/repo/beta",
-              "sources": ["daemon-state", "tmux"],
+              "sources": [
+                "daemon-state",
+                "tmux"
+              ],
               "expectedDashboardBuildStamp": "dashboard-new",
               "runtime": {
                 "sessionName": "aimux-beta-222",
@@ -1110,7 +1482,11 @@
                 "expectedContract": "2",
                 "rebuildRequired": true,
                 "clientSessions": [
-                  { "sessionName": "aimux-beta-222-client-aaaaaaaa", "contract": null, "rebuildRequired": true }
+                  {
+                    "sessionName": "aimux-beta-222-client-aaaaaaaa",
+                    "contract": null,
+                    "rebuildRequired": true
+                  }
                 ]
               },
               "service": {
@@ -1138,7 +1514,9 @@
                 },
                 "serviceInfo": {
                   "apiVersion": 4,
-                  "capabilities": { "parsedAgentOutput": true },
+                  "capabilities": {
+                    "parsedAgentOutput": true
+                  },
                   "buildStamp": "service-new"
                 },
                 "error": null
@@ -1167,7 +1545,12 @@
             }
           ],
           "staleHookProcesses": [],
-          "summary": { "projects": 1, "ok": 0, "needsRestart": 1, "runtimeRebuildRequired": 1 }
+          "summary": {
+            "projects": 1,
+            "ok": 0,
+            "needsRestart": 1,
+            "runtimeRebuildRequired": 1
+          }
         },
         "rendered": "Aimux Versions\n  cli version: 0.1.34\n  build profile: full\ncli launcher: stable-shim /opt/aimux/bin/aimux\n  cli current entry: /opt/aimux/native/local-current/dist/launcher-bin.js\n  cli stable shim: /opt/aimux/bin/aimux\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: 2\n  daemon: running pid=9001\n    daemon process: pid=9001\n  daemon projects: 1\n  tmux: tmux 3.5a\n  tmux sessions: 2\n  projects: 1 (0 ok, 1 need restart, 1 need runtime rebuild)\n\nProject needs-restart: /repo/beta\n  sources: daemon-state, tmux\n  runtime: contract=2 expected=2 rebuild=yes\n    client: aimux-beta-222-client-aaaaaaaa contract=(missing) expected=2 rebuild=yes\n  service: ok endpoint=127.0.0.1:43212 pid=1002\n    supervisor: status=unknown restarts=0 pid=1002\n    process: pid=1002\n    running: api=4 build=service-new\n    expected: api=4 build=service-new\n  dashboards:\n    ok aimux-beta-222:@2 dashboard alive=yes\n      process: pid=(unknown)\n        args: node /current/dist/launcher-bin.js --tmux-dashboard-internal\n      build: dashboard-new expected=dashboard-new\n      owner: owner-new runtimeOwner=owner-new"
       },
@@ -1178,7 +1561,15 @@
       "name": "ignores malformed client-like session suffixes for rebuild checks",
       "source": "src/runtime-coherence.ts",
       "api": "buildRuntimeCoherenceReport/renderRuntimeCoherenceReport",
-      "input": { "daemonProjects": ["/repo/beta"], "tmuxSessions": ["aimux-beta-222", "aimux-beta-222-client-stale"] },
+      "input": {
+        "daemonProjects": [
+          "/repo/beta"
+        ],
+        "tmuxSessions": [
+          "aimux-beta-222",
+          "aimux-beta-222-client-stale"
+        ]
+      },
       "output": {
         "report": {
           "generatedAt": "2026-06-20T00:00:00.000Z",
@@ -1194,7 +1585,9 @@
           "expected": {
             "projectService": {
               "apiVersion": 4,
-              "capabilities": { "parsedAgentOutput": true },
+              "capabilities": {
+                "parsedAgentOutput": true
+              },
               "buildStamp": "service-new"
             },
             "runtimeOwner": "owner-new",
@@ -1202,15 +1595,33 @@
           },
           "daemon": {
             "running": true,
-            "info": { "pid": 9001, "port": 43190, "startedAt": "then", "updatedAt": "now" },
-            "process": { "pid": 9001, "argsPreview": null, "pathHints": [], "staleNativePath": false, "error": null },
+            "info": {
+              "pid": 9001,
+              "port": 43190,
+              "startedAt": "then",
+              "updatedAt": "now"
+            },
+            "process": {
+              "pid": 9001,
+              "argsPreview": null,
+              "pathHints": [],
+              "staleNativePath": false,
+              "error": null
+            },
             "projectCount": 1
           },
-          "tmux": { "available": true, "version": "tmux 3.5a", "sessionCount": 2 },
+          "tmux": {
+            "available": true,
+            "version": "tmux 3.5a",
+            "sessionCount": 2
+          },
           "projects": [
             {
               "projectRoot": "/repo/beta",
-              "sources": ["daemon-state", "tmux"],
+              "sources": [
+                "daemon-state",
+                "tmux"
+              ],
               "expectedDashboardBuildStamp": "dashboard-new",
               "runtime": {
                 "sessionName": "aimux-beta-222",
@@ -1244,7 +1655,9 @@
                 },
                 "serviceInfo": {
                   "apiVersion": 4,
-                  "capabilities": { "parsedAgentOutput": true },
+                  "capabilities": {
+                    "parsedAgentOutput": true
+                  },
                   "buildStamp": "service-new"
                 },
                 "error": null
@@ -1273,7 +1686,12 @@
             }
           ],
           "staleHookProcesses": [],
-          "summary": { "projects": 1, "ok": 1, "needsRestart": 0, "runtimeRebuildRequired": 0 }
+          "summary": {
+            "projects": 1,
+            "ok": 1,
+            "needsRestart": 0,
+            "runtimeRebuildRequired": 0
+          }
         },
         "rendered": "Aimux Versions\n  cli version: 0.1.34\n  build profile: full\ncli launcher: stable-shim /opt/aimux/bin/aimux\n  cli current entry: /opt/aimux/native/local-current/dist/launcher-bin.js\n  cli stable shim: /opt/aimux/bin/aimux\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: 2\n  daemon: running pid=9001\n    daemon process: pid=9001\n  daemon projects: 1\n  tmux: tmux 3.5a\n  tmux sessions: 2\n  projects: 1 (1 ok, 0 need restart, 0 need runtime rebuild)\n\nProject ok: /repo/beta\n  sources: daemon-state, tmux\n  runtime: contract=2 expected=2 rebuild=no\n  service: ok endpoint=127.0.0.1:43212 pid=1002\n    supervisor: status=unknown restarts=0 pid=1002\n    process: pid=1002\n    running: api=4 build=service-new\n    expected: api=4 build=service-new\n  dashboards:\n    ok aimux-beta-222:@2 dashboard alive=yes\n      process: pid=(unknown)\n        args: node /current/dist/launcher-bin.js --tmux-dashboard-internal\n      build: dashboard-new expected=dashboard-new\n      owner: owner-new runtimeOwner=owner-new"
       },
@@ -1284,7 +1702,12 @@
       "name": "ignores tmux client placeholder dashboard windows",
       "source": "src/runtime-coherence.ts",
       "api": "buildRuntimeCoherenceReport/renderRuntimeCoherenceReport",
-      "input": { "daemonProjects": ["/repo/beta"], "placeholderWindow": "@3" },
+      "input": {
+        "daemonProjects": [
+          "/repo/beta"
+        ],
+        "placeholderWindow": "@3"
+      },
       "output": {
         "report": {
           "generatedAt": "2026-06-20T00:00:00.000Z",
@@ -1300,7 +1723,9 @@
           "expected": {
             "projectService": {
               "apiVersion": 4,
-              "capabilities": { "parsedAgentOutput": true },
+              "capabilities": {
+                "parsedAgentOutput": true
+              },
               "buildStamp": "service-new"
             },
             "runtimeOwner": "owner-new",
@@ -1308,15 +1733,33 @@
           },
           "daemon": {
             "running": true,
-            "info": { "pid": 9001, "port": 43190, "startedAt": "then", "updatedAt": "now" },
-            "process": { "pid": 9001, "argsPreview": null, "pathHints": [], "staleNativePath": false, "error": null },
+            "info": {
+              "pid": 9001,
+              "port": 43190,
+              "startedAt": "then",
+              "updatedAt": "now"
+            },
+            "process": {
+              "pid": 9001,
+              "argsPreview": null,
+              "pathHints": [],
+              "staleNativePath": false,
+              "error": null
+            },
             "projectCount": 1
           },
-          "tmux": { "available": true, "version": "tmux 3.5a", "sessionCount": 2 },
+          "tmux": {
+            "available": true,
+            "version": "tmux 3.5a",
+            "sessionCount": 2
+          },
           "projects": [
             {
               "projectRoot": "/repo/beta",
-              "sources": ["daemon-state", "tmux"],
+              "sources": [
+                "daemon-state",
+                "tmux"
+              ],
               "expectedDashboardBuildStamp": "dashboard-new",
               "runtime": {
                 "sessionName": "aimux-beta-222",
@@ -1324,7 +1767,11 @@
                 "expectedContract": "2",
                 "rebuildRequired": false,
                 "clientSessions": [
-                  { "sessionName": "aimux-beta-222-client-deadbeef", "contract": "2", "rebuildRequired": false }
+                  {
+                    "sessionName": "aimux-beta-222-client-deadbeef",
+                    "contract": "2",
+                    "rebuildRequired": false
+                  }
                 ]
               },
               "service": {
@@ -1352,7 +1799,9 @@
                 },
                 "serviceInfo": {
                   "apiVersion": 4,
-                  "capabilities": { "parsedAgentOutput": true },
+                  "capabilities": {
+                    "parsedAgentOutput": true
+                  },
                   "buildStamp": "service-new"
                 },
                 "error": null
@@ -1381,7 +1830,12 @@
             }
           ],
           "staleHookProcesses": [],
-          "summary": { "projects": 1, "ok": 1, "needsRestart": 0, "runtimeRebuildRequired": 0 }
+          "summary": {
+            "projects": 1,
+            "ok": 1,
+            "needsRestart": 0,
+            "runtimeRebuildRequired": 0
+          }
         },
         "rendered": "Aimux Versions\n  cli version: 0.1.34\n  build profile: full\ncli launcher: stable-shim /opt/aimux/bin/aimux\n  cli current entry: /opt/aimux/native/local-current/dist/launcher-bin.js\n  cli stable shim: /opt/aimux/bin/aimux\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: 2\n  daemon: running pid=9001\n    daemon process: pid=9001\n  daemon projects: 1\n  tmux: tmux 3.5a\n  tmux sessions: 2\n  projects: 1 (1 ok, 0 need restart, 0 need runtime rebuild)\n\nProject ok: /repo/beta\n  sources: daemon-state, tmux\n  runtime: contract=2 expected=2 rebuild=no\n  service: ok endpoint=127.0.0.1:43212 pid=1002\n    supervisor: status=unknown restarts=0 pid=1002\n    process: pid=1002\n    running: api=4 build=service-new\n    expected: api=4 build=service-new\n  dashboards:\n    ok aimux-beta-222:@2 dashboard alive=yes\n      process: pid=(unknown)\n        args: node /current/dist/launcher-bin.js --tmux-dashboard-internal\n      build: dashboard-new expected=dashboard-new\n      owner: owner-new runtimeOwner=owner-new"
       },
@@ -1392,7 +1846,12 @@
       "name": "does not require runtime rebuild for daemon-only project without tmux host session",
       "source": "src/runtime-coherence.ts",
       "api": "buildRuntimeCoherenceReport/renderRuntimeCoherenceReport",
-      "input": { "daemonProjects": ["/repo/beta"], "tmuxSessions": [] },
+      "input": {
+        "daemonProjects": [
+          "/repo/beta"
+        ],
+        "tmuxSessions": []
+      },
       "output": {
         "report": {
           "generatedAt": "2026-06-20T00:00:00.000Z",
@@ -1408,7 +1867,9 @@
           "expected": {
             "projectService": {
               "apiVersion": 4,
-              "capabilities": { "parsedAgentOutput": true },
+              "capabilities": {
+                "parsedAgentOutput": true
+              },
               "buildStamp": "service-new"
             },
             "runtimeOwner": "owner-new",
@@ -1416,18 +1877,35 @@
           },
           "daemon": {
             "running": true,
-            "info": { "pid": 9001, "port": 43190, "startedAt": "then", "updatedAt": "now" },
-            "process": { "pid": 9001, "argsPreview": null, "pathHints": [], "staleNativePath": false, "error": null },
+            "info": {
+              "pid": 9001,
+              "port": 43190,
+              "startedAt": "then",
+              "updatedAt": "now"
+            },
+            "process": {
+              "pid": 9001,
+              "argsPreview": null,
+              "pathHints": [],
+              "staleNativePath": false,
+              "error": null
+            },
             "projectCount": 1
           },
-          "tmux": { "available": true, "version": "tmux 3.5a", "sessionCount": 0 },
+          "tmux": {
+            "available": true,
+            "version": "tmux 3.5a",
+            "sessionCount": 0
+          },
           "projects": [
             {
               "projectRoot": "/repo/beta",
-              "sources": ["daemon-state"],
+              "sources": [
+                "daemon-state"
+              ],
               "expectedDashboardBuildStamp": "dashboard-new",
               "runtime": {
-                "sessionName": "aimux-beta-222",
+                "sessionName": "aimux-beta-5458e3c21af1",
                 "contract": null,
                 "expectedContract": "2",
                 "rebuildRequired": false,
@@ -1458,7 +1936,9 @@
                 },
                 "serviceInfo": {
                   "apiVersion": 4,
-                  "capabilities": { "parsedAgentOutput": true },
+                  "capabilities": {
+                    "parsedAgentOutput": true
+                  },
                   "buildStamp": "service-new"
                 },
                 "error": null
@@ -1468,7 +1948,12 @@
             }
           ],
           "staleHookProcesses": [],
-          "summary": { "projects": 1, "ok": 1, "needsRestart": 0, "runtimeRebuildRequired": 0 }
+          "summary": {
+            "projects": 1,
+            "ok": 1,
+            "needsRestart": 0,
+            "runtimeRebuildRequired": 0
+          }
         },
         "rendered": "Aimux Versions\n  cli version: 0.1.34\n  build profile: full\ncli launcher: stable-shim /opt/aimux/bin/aimux\n  cli current entry: /opt/aimux/native/local-current/dist/launcher-bin.js\n  cli stable shim: /opt/aimux/bin/aimux\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: 2\n  daemon: running pid=9001\n    daemon process: pid=9001\n  daemon projects: 1\n  tmux: tmux 3.5a\n  tmux sessions: 0\n  projects: 1 (1 ok, 0 need restart, 0 need runtime rebuild)\n\nProject ok: /repo/beta\n  sources: daemon-state\n  runtime: contract=(missing) expected=2 rebuild=no\n  service: ok endpoint=127.0.0.1:43212 pid=1002\n    supervisor: status=unknown restarts=0 pid=1002\n    process: pid=1002\n    running: api=4 build=service-new\n    expected: api=4 build=service-new\n  dashboards: none"
       },
@@ -1479,7 +1964,12 @@
       "name": "reports stale native paths in processes and hook commands",
       "source": "src/runtime-coherence.ts",
       "api": "buildRuntimeCoherenceReport/renderRuntimeCoherenceReport",
-      "input": { "daemonProjects": ["/repo/beta"], "staleNativePath": "/opt/aimux/native/local-old/dist/main.js" },
+      "input": {
+        "daemonProjects": [
+          "/repo/beta"
+        ],
+        "staleNativePath": "/opt/aimux/native/local-old/dist/main.js"
+      },
       "output": {
         "report": {
           "generatedAt": "2026-06-20T00:00:00.000Z",
@@ -1495,7 +1985,9 @@
           "expected": {
             "projectService": {
               "apiVersion": 4,
-              "capabilities": { "parsedAgentOutput": true },
+              "capabilities": {
+                "parsedAgentOutput": true
+              },
               "buildStamp": "service-new"
             },
             "runtimeOwner": "owner-new",
@@ -1503,21 +1995,35 @@
           },
           "daemon": {
             "running": true,
-            "info": { "pid": 9001, "port": 43190, "startedAt": "then", "updatedAt": "now" },
+            "info": {
+              "pid": 9001,
+              "port": 43190,
+              "startedAt": "then",
+              "updatedAt": "now"
+            },
             "process": {
               "pid": 9001,
               "argsPreview": "/opt/aimux/native/local-current/bin/aimux daemon run",
-              "pathHints": ["/opt/aimux/native/local-current/bin/aimux"],
+              "pathHints": [
+                "/opt/aimux/native/local-current/bin/aimux"
+              ],
               "staleNativePath": false,
               "error": null
             },
             "projectCount": 1
           },
-          "tmux": { "available": true, "version": "tmux 3.5a", "sessionCount": 1 },
+          "tmux": {
+            "available": true,
+            "version": "tmux 3.5a",
+            "sessionCount": 1
+          },
           "projects": [
             {
               "projectRoot": "/repo/beta",
-              "sources": ["daemon-state", "tmux"],
+              "sources": [
+                "daemon-state",
+                "tmux"
+              ],
               "expectedDashboardBuildStamp": "dashboard-new",
               "runtime": {
                 "sessionName": "aimux-beta-222",
@@ -1545,13 +2051,17 @@
                 "process": {
                   "pid": 1002,
                   "argsPreview": "/opt/aimux/native/local-old/dist/main.js __project-service-internal",
-                  "pathHints": ["/opt/aimux/native/local-old/dist/main.js"],
+                  "pathHints": [
+                    "/opt/aimux/native/local-old/dist/main.js"
+                  ],
                   "staleNativePath": true,
                   "error": null
                 },
                 "serviceInfo": {
                   "apiVersion": 4,
-                  "capabilities": { "parsedAgentOutput": true },
+                  "capabilities": {
+                    "parsedAgentOutput": true
+                  },
                   "buildStamp": "service-new"
                 },
                 "error": null
@@ -1569,7 +2079,9 @@
                   "process": {
                     "pid": null,
                     "argsPreview": "/opt/aimux/native/local-old/dist/main.js --tmux-dashboard-internal",
-                    "pathHints": ["/opt/aimux/native/local-old/dist/main.js"],
+                    "pathHints": [
+                      "/opt/aimux/native/local-old/dist/main.js"
+                    ],
                     "staleNativePath": true,
                     "error": null
                   },
@@ -1583,13 +2095,20 @@
             {
               "pid": 77,
               "argsPreview": "/Users/sam/.volta/bin/claude --settings command='/opt/aimux/native/local-old/dist/main.js' claude-hook stop --project /repo/alpha",
-              "pathHints": ["/opt/aimux/native/local-old/dist/main.js"],
+              "pathHints": [
+                "/opt/aimux/native/local-old/dist/main.js"
+              ],
               "staleNativePath": true,
               "error": null,
               "projectRoot": "/repo/alpha"
             }
           ],
-          "summary": { "projects": 1, "ok": 1, "needsRestart": 0, "runtimeRebuildRequired": 0 }
+          "summary": {
+            "projects": 1,
+            "ok": 1,
+            "needsRestart": 0,
+            "runtimeRebuildRequired": 0
+          }
         },
         "rendered": "Aimux Versions\n  cli version: 0.1.34\n  build profile: full\ncli launcher: stable-shim /opt/aimux/bin/aimux\n  cli current entry: /opt/aimux/native/local-current/dist/launcher-bin.js\n  cli stable shim: /opt/aimux/bin/aimux\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: 2\n  daemon: running pid=9001\n    daemon process: pid=9001\n      args: /opt/aimux/native/local-current/bin/aimux daemon run\n      native paths: /opt/aimux/native/local-current/bin/aimux\n  daemon projects: 1\n  tmux: tmux 3.5a\n  tmux sessions: 1\n  projects: 1 (1 ok, 0 need restart, 0 need runtime rebuild)\n\nProject ok: /repo/beta\n  sources: daemon-state, tmux\n  runtime: contract=2 expected=2 rebuild=no\n  service: ok endpoint=127.0.0.1:43212 pid=1002\n    supervisor: status=unknown restarts=0 pid=1002\n    process: pid=1002 stale-native-path=yes\n      args: /opt/aimux/native/local-old/dist/main.js __project-service-internal\n      native paths: /opt/aimux/native/local-old/dist/main.js\n    running: api=4 build=service-new\n    expected: api=4 build=service-new\n  dashboards:\n    ok aimux-beta-222:@2 dashboard alive=yes\n      process: pid=(unknown) stale-native-path=yes\n        args: /opt/aimux/native/local-old/dist/main.js --tmux-dashboard-internal\n        native paths: /opt/aimux/native/local-old/dist/main.js\n      build: dashboard-new expected=dashboard-new\n      owner: owner-new runtimeOwner=owner-new\n\nStale hook processes: 1\n  hook process: pid=77 stale-native-path=yes\n    args: /Users/sam/.volta/bin/claude --settings command='/opt/aimux/native/local-old/dist/main.js' claude-hook stop --project /repo/alpha\n    native paths: /opt/aimux/native/local-old/dist/main.js"
       },

@@ -61,18 +61,25 @@ pub fn session_with_stored_control_flags(session: &Value, stored_session: Option
         let stored_project_control = stored_session
             .get("projectControl")
             .and_then(Value::as_bool);
-        let has_explicit_control = stored_overseer.unwrap_or(false)
-            || stored_scribe.unwrap_or(false)
-            || stored_project_control.unwrap_or(false);
         for key in ["overseer", "scribe", "projectControl"] {
             insert_value(&mut probe, key, stored_session.get(key).cloned());
         }
+        let has_remaining_role_control = bool_value(&probe, "overseer") == Some(true)
+            || bool_value(&probe, "scribe") == Some(true)
+            || legacy_role(&Value::Object(probe.clone())).is_some_and(|role| match role {
+                "overseer" => stored_overseer != Some(false),
+                "scribe" => stored_scribe != Some(false),
+                _ => false,
+            });
         if stored_project_control.is_none()
             && (stored_overseer == Some(true) || stored_scribe == Some(true))
         {
             probe.remove("projectControl");
         }
-        if had_explicit_demote && !has_explicit_control {
+        if had_explicit_demote
+            && stored_project_control != Some(true)
+            && !has_remaining_role_control
+        {
             probe.insert("projectControl".into(), Value::Bool(false));
             remove_stale_project_control_role(&mut probe);
         }
@@ -120,6 +127,10 @@ pub fn project_control_display_role(session: Option<&Value>) -> Option<&str> {
 
 fn bool_field(session: &Value, key: &str) -> Option<bool> {
     session.get(key).and_then(Value::as_bool)
+}
+
+fn bool_value(map: &Map<String, Value>, key: &str) -> Option<bool> {
+    map.get(key).and_then(Value::as_bool)
 }
 
 fn insert_value(map: &mut Map<String, Value>, key: &str, value: Option<Value>) {
@@ -295,6 +306,18 @@ mod tests {
         let probe = session_with_stored_control_flags(&session, Some(&stored));
 
         assert!(is_scribe_session(Some(&probe)));
+        assert!(is_project_control_session(Some(&probe)));
+        assert_eq!(probe.get("projectControl"), None);
+    }
+
+    #[test]
+    fn stored_scribe_false_does_not_demote_live_overseer() {
+        let session = json!({ "overseer": true });
+        let stored = json!({ "scribe": false });
+
+        let probe = session_with_stored_control_flags(&session, Some(&stored));
+
+        assert!(is_overseer_session(Some(&probe)));
         assert!(is_project_control_session(Some(&probe)));
         assert_eq!(probe.get("projectControl"), None);
     }
