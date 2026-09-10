@@ -77,6 +77,20 @@ change, apply these rules before it ships:
   convert a child crash into a readiness timeout, a truncated response into a
   daemon framing claim, or a build-stamp mismatch into an indefinite syncing
   state without naming both sides of the comparison.
+- Errors are not empty values. A succeeded-with-nothing result,
+  succeeded-with-data result, and could-not-ask error are three different
+  outcomes; do not collapse fallible I/O, IPC, tmux, process, storage, HTTP,
+  parser, or config failures into `[]`, `{}`, `None`, `false`, or "dead".
+- Audit the spellings that hide fallibility. In Rust, review
+  `unwrap_or_default()`, `unwrap_or(false)`, `let Ok(..) else`, and fallible
+  `if let Ok(..)` branches. In TypeScript, review empty `catch`,
+  `.catch(() => null)`, `.catch(() => [])`, and `?? []` or `|| []` applied to a
+  failed call rather than an absent field.
+- Severity follows the wrong answer's effect. Before accepting a default, ask
+  what that answer can cause on delete, kill, refusal, trust, delivery, repair,
+  or config paths. Fixes for this class need mutation proof in both directions:
+  the real error must not pass as absent, and genuine absence must still take
+  the intended no-data path.
 - Prove gates can fail. A release, runtime, safety, or parity gate needs a test
   that deliberately makes the gate fail. If the failing case cannot be written,
   the gate is not checking the invariant.
