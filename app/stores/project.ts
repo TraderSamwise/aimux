@@ -161,6 +161,7 @@ export function emptyProjectObservability(): ProjectObservabilityModel {
       assigned: 0,
       in_progress: 0,
       blocked: 0,
+      canceled: 0,
       done: 0,
       failed: 0,
       total: 0,
