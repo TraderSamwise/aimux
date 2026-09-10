@@ -141,7 +141,6 @@ pub mod session_runtime;
 pub mod session_viewed;
 pub mod shell_args;
 pub mod shell_hooks;
-pub mod src_integration_surfaces;
 pub mod state_update_lock;
 pub mod statusline_model_contract;
 pub mod team_contract;
