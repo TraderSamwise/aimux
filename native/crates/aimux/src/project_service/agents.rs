@@ -380,7 +380,8 @@ pub fn build_agent_list(
 
 fn active_display_role(session: &Value, metadata: Option<&Value>) -> Option<String> {
     let mut probe = Map::new();
-    if let Some(role) = team_string_field(session, "role") {
+    if let Some(role) = string_field(session, "role").or_else(|| team_string_field(session, "role"))
+    {
         probe.insert("role".into(), Value::String(role.to_owned()));
     }
     if let Some(team) = session
@@ -393,6 +394,11 @@ fn active_display_role(session: &Value, metadata: Option<&Value>) -> Option<Stri
     if let Some(metadata) = metadata {
         for key in ["overseer", "scribe", "projectControl"] {
             insert_value(&mut probe, key, metadata.get(key).cloned());
+        }
+    }
+    for key in ["overseer", "scribe"] {
+        if !probe.contains_key(key) {
+            probe.insert(key.into(), Value::Bool(false));
         }
     }
     project_control_display_role(Some(&Value::Object(probe))).map(str::to_owned)
@@ -581,4 +587,29 @@ fn team_number_field(value: &Value, key: &str) -> Option<f64> {
 
 fn json_response(status: u16, body: Value) -> ProjectServiceDispatchResponse {
     ProjectServiceDispatchResponse::json(status, body)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn agent_list_role_uses_same_effective_scribe_flag_as_response() {
+        let agents = build_agent_list(
+            &[json!({
+                "id": "claude-7owt0o",
+                "tool": "claude",
+                "role": "scribe",
+                "team": { "role": "scribe" },
+                "status": "running"
+            })],
+            &BTreeMap::new(),
+            &[],
+        );
+
+        assert_eq!(agents.len(), 1);
+        assert_eq!(agents[0].get("role"), None);
+        assert_eq!(agents[0].get("scribe").and_then(Value::as_bool), Some(false));
+    }
 }
