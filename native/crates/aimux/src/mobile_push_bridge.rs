@@ -17,6 +17,7 @@ use crate::desktop_notifier::external_notifications_disabled;
 use crate::launcher_env::DEFAULT_DAEMON_PORT;
 use crate::notification_delivery_guard::{
     external_notification_refusal_reason_for_event, fixture_notification_refusal_reason_for_event,
+    mark_cargo_test_notification_payload,
 };
 use crate::project_service::desktop_alerts::should_deliver_external_alert_with_config;
 
@@ -154,6 +155,10 @@ fn post_internal_push(payload: &Value) -> Result<(), String> {
         .map(|port| port.trim().to_owned())
         .filter(|port| !port.is_empty())
         .unwrap_or_else(|| DEFAULT_DAEMON_PORT.to_owned());
+    let mut payload = payload.clone();
+    if port.parse::<u16>().unwrap_or(43_190) == 43_190 {
+        mark_cargo_test_notification_payload(&mut payload);
+    }
     let body = payload.to_string();
     let mut stream = TcpStream::connect(("127.0.0.1", port.parse::<u16>().unwrap_or(43_190)))
         .map_err(|error| error.to_string())?;

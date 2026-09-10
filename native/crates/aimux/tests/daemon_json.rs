@@ -10,6 +10,9 @@ use aimux::daemon::routing::DaemonRouteResponse;
 use aimux::daemon::status::DaemonStatusRuntime;
 use aimux::daemon_projects::ProjectsRouteProject;
 use aimux::daemon_state::{AimuxDaemonInfo, DaemonState};
+use aimux::notification_delivery_guard::{
+    TEST_NOTIFICATION_SOURCE_FIELD, TEST_NOTIFICATION_SOURCE_VALUE,
+};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 
@@ -335,6 +338,25 @@ fn internal_push_and_diagnostics_are_loopback_only() {
     )
     .expect("internal push");
     assert_eq!(truthy_non_string.status, 200);
+    let calls_before_test_push = runtime.calls.len();
+
+    let test_push = route_json_daemon_request(
+        &mut runtime,
+        "POST",
+        "/internal/push",
+        Some(&json!({
+            "title": "test alert",
+            TEST_NOTIFICATION_SOURCE_FIELD: TEST_NOTIFICATION_SOURCE_VALUE
+        })),
+        &BTreeMap::new(),
+        false,
+    )
+    .expect("internal push");
+    assert_eq!(
+        json_body(test_push),
+        json!({ "ok": true, "suppressed": true, "reason": "cargo test harness" })
+    );
+    assert_eq!(runtime.calls.len(), calls_before_test_push);
 
     let diagnostics = route_json_daemon_request(
         &mut runtime,

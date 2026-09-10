@@ -143,7 +143,18 @@ fn live_replacement_for_stale_session<'a>(
         .filter(|session| session_is_live_for_context(context, session))
         .filter(|session| session_freshness_key(session) > session_freshness_key(stale))
         .filter(|session| same_session_identity(session, stale))
+        .filter(|session| backend_compatible_with_stale(session, stale))
         .max_by_key(|session| session_freshness_key(session))
+}
+
+fn backend_compatible_with_stale(candidate: &Value, stale: &Value) -> bool {
+    let candidate_backend =
+        trimmed_value(candidate.get("backendSessionId").and_then(Value::as_str));
+    let stale_backend = trimmed_value(stale.get("backendSessionId").and_then(Value::as_str));
+    match (candidate_backend, stale_backend) {
+        (Some(candidate), Some(stale)) => candidate == stale,
+        _ => true,
+    }
 }
 
 fn same_session_identity(candidate: &Value, stale: &Value) -> bool {

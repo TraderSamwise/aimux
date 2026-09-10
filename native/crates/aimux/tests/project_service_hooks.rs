@@ -341,6 +341,46 @@ fn claude_hook_replaces_stale_backend_row_when_live_duplicate_has_no_backend_id(
 }
 
 #[test]
+fn claude_hook_does_not_reroute_to_live_duplicate_with_different_backend_id() {
+    let project = temp_project("claude-backend-live-duplicate-different-backend");
+    let state_dir = project.join("state");
+    write_duplicate_hook_topology(&project, &state_dir);
+    update_runtime_topology(runtime_topology_path(&state_dir), |mut topology| {
+        if let Some(session) = topology
+            .get_mut("sessions")
+            .and_then(serde_json::Value::as_array_mut)
+            .and_then(|sessions| {
+                sessions
+                    .iter_mut()
+                    .find(|session| session["id"] == "claude-gqaapg")
+            })
+        {
+            session["backendSessionId"] = json!("different-live-backend");
+        }
+        topology
+    })
+    .expect("replace live backend id");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let response = route_project_service_request(
+        &context,
+        "POST",
+        "/hooks/claude?action=notification&sessionId=claude-pd1hl2",
+        Some(&json!({
+            "session_id": "94760225-52eb-4f6d-973d-e1393fea8885",
+            "message": "Claude is waiting for your input",
+            "cwd": project.to_string_lossy()
+        })),
+    );
+    assert_eq!(response.status, 200);
+
+    let snapshot = list_notification_snapshot(&state_dir, NotificationQuery::default());
+    assert_eq!(snapshot.total, 1);
+    assert_eq!(snapshot.notifications[0]["sessionId"], "claude-pd1hl2");
+    cleanup(project);
+}
+
+#[test]
 fn claude_hook_resolves_main_branch_from_git_when_topology_worktrees_are_missing() {
     let project = temp_project("claude-backend-main-branch-from-git");
     let state_dir = project.join("state");

@@ -200,7 +200,7 @@ fn desktop_alert_role_gate_applies_project_control_defaults_and_overrides() {
 }
 
 #[test]
-fn desktop_alert_refuses_project_service_fixture_delivery() {
+fn desktop_alert_refuses_delivery_from_cargo_test_process() {
     let project = temp_project("leak-guard");
     let state_dir = project.join("state");
     let event = json!({

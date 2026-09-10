@@ -119,6 +119,16 @@ pub fn route_json_daemon_request(
                 json!({ "ok": false, "error": "title is required" }),
             ));
         }
+        if let Some(reason) =
+            crate::notification_delivery_guard::external_notification_refusal_reason_for_payload(
+                &payload,
+            )
+        {
+            return Some(DaemonRouteResponse::json(
+                200,
+                json!({ "ok": true, "suppressed": true, "reason": reason }),
+            ));
+        }
         return Some(DaemonRouteResponse::json(
             200,
             runtime.push_notification(&payload),

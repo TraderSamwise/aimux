@@ -6,7 +6,10 @@ use aimux::daemon_state::{MetadataState, save_metadata_state};
 use aimux::mobile_push_bridge::{
     build_push_payload, push_payload_for_alert_with_config, relay_notification,
 };
-use aimux::notification_delivery_guard::fixture_notification_refusal_reason_for_payload;
+use aimux::notification_delivery_guard::{
+    TEST_NOTIFICATION_SOURCE_FIELD, TEST_NOTIFICATION_SOURCE_VALUE,
+    fixture_notification_refusal_reason_for_payload,
+};
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::fs::remove_dir_all;
@@ -203,21 +206,15 @@ fn mobile_push_role_gate_matches_desktop_delivery_policy() {
 }
 
 #[test]
-fn fixture_push_payload_is_refused_at_delivery_boundary() {
-    let payload = build_push_payload(
-        &json!({
-            "title": "aimux-rust-project-service-hooks-claude-123-0",
-            "message": "Claude is waiting for your input",
-            "kind": "needs_input",
-            "projectRoot": "/tmp/aimux-rust-project-service-hooks-claude-123-0",
-            "worktreeName": "Main Checkout"
-        }),
-        "/fallback",
-    );
+fn test_marked_push_payload_is_refused_at_delivery_boundary() {
+    let payload = json!({
+        "title": "fixture alert",
+        TEST_NOTIFICATION_SOURCE_FIELD: TEST_NOTIFICATION_SOURCE_VALUE
+    });
 
     assert_eq!(
         fixture_notification_refusal_reason_for_payload(&payload),
-        Some("test fixture project")
+        Some("cargo test harness")
     );
 }
 
