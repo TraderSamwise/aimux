@@ -103,10 +103,8 @@ jobs:
   rust-tests-macos:
     name: Rust tests (macOS)
     runs-on: macos-latest
-    # Temporary until the first macOS CI run proves green. This job is the
-    # intended blocking Rust test gate because the Node parity contracts were
-    # captured on macOS; remove continue-on-error once it reports zero failures.
-    continue-on-error: true
+    # Blocking Rust test gate: the Node parity contracts were captured on
+    # macOS. Linux still runs separately as advisory shipped-platform coverage.
     steps:
       - uses: actions/checkout@v4
 
