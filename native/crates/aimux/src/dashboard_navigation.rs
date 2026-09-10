@@ -1,8 +1,9 @@
 use crate::dashboard_model::{
-    DashboardService, DashboardSession, DesktopStateSnapshot, WorktreeGroup,
+    is_dashboard_project_control_session, DashboardService, DashboardSession, DesktopStateSnapshot,
+    WorktreeGroup,
 };
 use crate::dashboard_renderer::DashboardNavLevel;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DashboardNavigationState {
@@ -306,22 +307,7 @@ fn entry_at(
 }
 
 fn is_project_control_session(session: &DashboardSession) -> bool {
-    session.project_control == Some(true)
-        || session.overseer == Some(true)
-        || is_overseer_session(session)
-        || is_scribe_session(session)
-}
-
-fn is_overseer_session(session: &DashboardSession) -> bool {
-    session.team.as_ref().and_then(|team| team.role.as_deref()) == Some("overseer")
-}
-
-fn is_scribe_session(session: &DashboardSession) -> bool {
-    if session.scribe == Some(false) {
-        return false;
-    }
-    session.scribe == Some(true)
-        || session.team.as_ref().and_then(|team| team.role.as_deref()) == Some("scribe")
+    is_dashboard_project_control_session(session)
 }
 
 pub fn run_show_migrate_picker_contract_case(input: &Value) -> Value {

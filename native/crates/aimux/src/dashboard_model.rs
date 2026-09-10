@@ -161,6 +161,44 @@ pub struct DashboardSession {
     pub extra: BTreeMap<String, Value>,
 }
 
+pub fn is_dashboard_project_control_session(session: &DashboardSession) -> bool {
+    crate::team_contract::is_project_control_session(Some(&dashboard_session_classifier_probe(
+        session,
+    )))
+}
+
+pub fn is_dashboard_overseer_session(session: &DashboardSession) -> bool {
+    crate::team_contract::is_overseer_session(Some(&dashboard_session_classifier_probe(session)))
+}
+
+pub fn is_dashboard_scribe_session(session: &DashboardSession) -> bool {
+    crate::team_contract::is_scribe_session(Some(&dashboard_session_classifier_probe(session)))
+}
+
+fn dashboard_session_classifier_probe(session: &DashboardSession) -> Value {
+    let mut probe = Map::new();
+    if let Some(role) = session.role.as_deref().map(str::trim).filter(|role| !role.is_empty()) {
+        probe.insert("role".into(), Value::String(role.to_owned()));
+    }
+    if let Some(team) = session
+        .team
+        .as_ref()
+        .and_then(|team| serde_json::to_value(team).ok())
+    {
+        probe.insert("team".into(), team);
+    }
+    if let Some(overseer) = session.overseer {
+        probe.insert("overseer".into(), Value::Bool(overseer));
+    }
+    if let Some(scribe) = session.scribe {
+        probe.insert("scribe".into(), Value::Bool(scribe));
+    }
+    if let Some(project_control) = session.project_control {
+        probe.insert("projectControl".into(), Value::Bool(project_control));
+    }
+    Value::Object(probe)
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum SessionStatus {
@@ -611,18 +649,7 @@ pub fn filter_dashboard_visible_model(
 }
 
 fn is_project_control_session(session: &DashboardSession) -> bool {
-    session.project_control == Some(true)
-        || session.overseer == Some(true)
-        || session.team.as_ref().and_then(|team| team.role.as_deref()) == Some("overseer")
-        || is_scribe_session(session)
-}
-
-fn is_scribe_session(session: &DashboardSession) -> bool {
-    if session.scribe == Some(false) {
-        return false;
-    }
-    session.scribe == Some(true)
-        || session.team.as_ref().and_then(|team| team.role.as_deref()) == Some("scribe")
+    is_dashboard_project_control_session(session)
 }
 
 pub fn run_dashboard_worktree_groups_contract_case(api: &str, input: &Value) -> Value {
@@ -1490,29 +1517,7 @@ fn iso_sort_key(value: &str) -> Option<i64> {
 }
 
 fn is_project_control_session_value(session: &Value) -> bool {
-    if session.get("projectControl").and_then(Value::as_bool) == Some(true) {
-        return true;
-    }
-    if session.get("overseer").and_then(Value::as_bool) == Some(true) {
-        return true;
-    }
-    if session
-        .get("team")
-        .and_then(|team| team.get("role"))
-        .and_then(Value::as_str)
-        == Some("overseer")
-    {
-        return true;
-    }
-    if session.get("scribe").and_then(Value::as_bool) == Some(false) {
-        return false;
-    }
-    session.get("scribe").and_then(Value::as_bool) == Some(true)
-        || session
-            .get("team")
-            .and_then(|team| team.get("role"))
-            .and_then(Value::as_str)
-            == Some("scribe")
+    crate::team_contract::is_project_control_session(Some(session))
 }
 
 fn has_string_field(value: &Value, key: &str) -> bool {

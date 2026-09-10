@@ -19,6 +19,7 @@ use crate::session_bootstrap::{
     build_tool_switch_continuity_preamble, overseer_team, read_fork_source_snapshot, scribe_team,
     seed_fork_artifacts,
 };
+use crate::team_contract::{is_overseer_session, is_scribe_session};
 use crate::tmux::project_session;
 
 use super::LIVE_STATUSES;
@@ -122,6 +123,8 @@ pub(super) fn route_agent_migrate(
     }
     let target_worktree =
         (target_worktree_path != project_root).then_some(target_worktree_path.clone());
+    let source_is_overseer = is_overseer_session(Some(&source_session));
+    let source_is_scribe = is_scribe_session(Some(&source_session));
     let result = launch_agent_session(
         context,
         runtime,
@@ -132,7 +135,7 @@ pub(super) fn route_agent_migrate(
             args: launch_args,
             worktree_path: target_worktree,
             label: trimmed_string(source_session.get("label")),
-            team: source_session.get("team").cloned(),
+            team: inherited_launch_team(&source_session),
             extra_preamble,
             launch_env: Vec::new(),
             backend_session_id_override: backend_override,
@@ -140,8 +143,8 @@ pub(super) fn route_agent_migrate(
             suppress_startup_preamble,
             persist_args: Some(persist_args),
             allow_replace_session: true,
-            mark_overseer: source_session.get("overseer").and_then(Value::as_bool) == Some(true),
-            mark_scribe: source_session.get("scribe").and_then(Value::as_bool) == Some(true),
+            mark_overseer: source_is_overseer,
+            mark_scribe: source_is_scribe,
         },
     );
     match result {
@@ -532,6 +535,8 @@ pub(super) fn route_agent_switch_tool(
             .map(|launch| launch.args.clone())
             .unwrap_or_else(|| string_array_field(target_tool_config.get("args"))),
     );
+    let source_is_overseer = is_overseer_session(Some(&source_session));
+    let source_is_scribe = is_scribe_session(Some(&source_session));
     let result = launch_agent_session(
         context,
         runtime,
@@ -542,7 +547,7 @@ pub(super) fn route_agent_switch_tool(
             args: original_target_args.clone(),
             worktree_path: trimmed_string(source_session.get("worktreePath")),
             label: trimmed_string(source_session.get("label")),
-            team: source_session.get("team").cloned(),
+            team: inherited_launch_team(&source_session),
             extra_preamble: Some(continuity_preamble),
             launch_env: launch_override.map(|launch| launch.env).unwrap_or_default(),
             backend_session_id_override: None,
@@ -550,8 +555,8 @@ pub(super) fn route_agent_switch_tool(
             suppress_startup_preamble: false,
             persist_args: Some(original_target_args),
             allow_replace_session: true,
-            mark_overseer: source_session.get("overseer").and_then(Value::as_bool) == Some(true),
-            mark_scribe: source_session.get("scribe").and_then(Value::as_bool) == Some(true),
+            mark_overseer: source_is_overseer,
+            mark_scribe: source_is_scribe,
         },
     );
     match result {
@@ -727,6 +732,16 @@ pub(super) fn resume_agent_session(
     )
 }
 
+fn inherited_launch_team(source_session: &Value) -> Option<Value> {
+    let team = source_session.get("team")?.clone();
+    let role = team.get("role").and_then(Value::as_str);
+    match role {
+        Some("overseer") if !is_overseer_session(Some(source_session)) => None,
+        Some("scribe") if !is_scribe_session(Some(source_session)) => None,
+        _ => Some(team),
+    }
+}
+
 fn create_fork_handoff(
     context: &ProjectServiceRequestContext,
     source_session: &Value,
@@ -788,4 +803,33 @@ fn create_fork_handoff(
         },
     )?;
     Ok(thread_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inherited_launch_team_drops_stale_scribe_role_when_flag_is_false() {
+        let source = json!({
+            "id": "claude-7owt0o",
+            "team": { "teamId": "scribe", "role": "scribe" },
+            "scribe": false
+        });
+
+        assert_eq!(inherited_launch_team(&source), None);
+    }
+
+    #[test]
+    fn inherited_launch_team_keeps_legacy_scribe_role_without_flags() {
+        let source = json!({
+            "id": "old-scribe",
+            "team": { "teamId": "scribe", "role": "scribe" }
+        });
+
+        assert_eq!(
+            inherited_launch_team(&source),
+            Some(json!({ "teamId": "scribe", "role": "scribe" }))
+        );
+    }
 }

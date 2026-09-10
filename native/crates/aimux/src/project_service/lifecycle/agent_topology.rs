@@ -1,8 +1,9 @@
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 use std::path::Path;
 
 use crate::daemon_state::mutate_metadata_state;
-use crate::tmux::{MANAGED_TMUX_AGENT_WINDOW_OPTIONS, TmuxTarget};
+use crate::team_contract::project_control_display_role;
+use crate::tmux::{TmuxTarget, MANAGED_TMUX_AGENT_WINDOW_OPTIONS};
 
 use super::json_helpers::*;
 use super::runtime_adapter::ProjectLifecycleRuntime;
@@ -104,11 +105,7 @@ pub(super) fn upsert_agent_topology(
     node.insert("id".into(), Value::String(node_id.clone()));
     node.insert("rigId".into(), Value::String(rig_id.clone()));
     node.insert("logicalId".into(), Value::String(session_id.clone()));
-    if let Some(role) = metadata
-        .get("team")
-        .and_then(|team| team.get("role"))
-        .and_then(Value::as_str)
-    {
+    if let Some(role) = project_control_display_role(Some(metadata)) {
         node.insert("role".into(), Value::String(role.to_owned()));
     }
     node.insert(
@@ -156,7 +153,10 @@ pub(super) fn upsert_agent_topology(
     {
         session.insert("backendSessionId".into(), backend_session_id);
     }
-    for key in ["team", "worktreePath", "label", "headline"] {
+    if let Some(team) = topology_session_team(metadata) {
+        session.insert("team".into(), team);
+    }
+    for key in ["worktreePath", "label", "headline"] {
         if let Some(value) = metadata.get(key).cloned().filter(|value| !value.is_null()) {
             session.insert(key.into(), value);
         }
@@ -181,4 +181,42 @@ pub(super) fn upsert_agent_topology(
     );
     object_insert_mut(&mut topology, "generatedAt", Value::String(now_iso()));
     topology
+}
+
+fn topology_session_team(metadata: &Value) -> Option<Value> {
+    let team = metadata.get("team")?.clone();
+    let role = team.get("role").and_then(Value::as_str);
+    match role {
+        Some("overseer" | "scribe") if project_control_display_role(Some(metadata)).is_none() => {
+            None
+        }
+        _ => Some(team),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn topology_session_team_drops_stale_scribe_role_when_flag_is_false() {
+        let metadata = json!({
+            "team": { "teamId": "scribe", "role": "scribe" },
+            "scribe": false
+        });
+
+        assert_eq!(topology_session_team(&metadata), None);
+    }
+
+    #[test]
+    fn topology_session_team_keeps_legacy_scribe_role_without_flags() {
+        let metadata = json!({
+            "team": { "teamId": "scribe", "role": "scribe" }
+        });
+
+        assert_eq!(
+            topology_session_team(&metadata),
+            Some(json!({ "teamId": "scribe", "role": "scribe" }))
+        );
+    }
 }

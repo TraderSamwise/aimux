@@ -1667,10 +1667,7 @@ fn is_live_session(entry: &Value) -> bool {
 }
 
 fn is_scribe_session(session: &Value) -> bool {
-    if bool_field_is(session, "scribe", false) {
-        return false;
-    }
-    bool_field(session, "scribe") || string_at(session, &["team", "role"]) == Some("scribe")
+    crate::team_contract::is_scribe_session(Some(session))
 }
 
 fn visible_text(text: &str) -> String {
@@ -1734,10 +1731,6 @@ fn bool_at(value: &Value, path: &[&str]) -> bool {
         current = current.get(*key).unwrap_or(&Value::Null);
     }
     current.as_bool().unwrap_or(false)
-}
-
-fn bool_field_is(value: &Value, key: &str, expected: bool) -> bool {
-    value.get(key).and_then(Value::as_bool) == Some(expected)
 }
 
 fn number_field(value: &Value, key: &str) -> f64 {

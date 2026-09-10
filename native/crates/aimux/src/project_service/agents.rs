@@ -7,6 +7,7 @@ use crate::project_api_contract::routes;
 use crate::runtime_topology::{
     list_topology_session_states, read_runtime_topology, runtime_topology_path,
 };
+use crate::team_contract::project_control_display_role;
 
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::http::{query_params, trimmed_query};
@@ -263,7 +264,11 @@ pub fn teammate_api_record(session: &Value) -> Value {
         "label",
         team_string_field(session, "label").or_else(|| string_field(session, "label")),
     );
-    insert_optional(&mut record, "role", team_string_field(session, "role"));
+    insert_optional(
+        &mut record,
+        "role",
+        project_control_display_role(Some(session)),
+    );
     for key in [
         "status",
         "worktreePath",
@@ -315,11 +320,7 @@ pub fn build_agent_list(
             insert_optional(
                 &mut agent,
                 "role",
-                session
-                    .get("team")
-                    .and_then(Value::as_object)
-                    .and_then(|team| team.get("role"))
-                    .and_then(Value::as_str),
+                active_display_role(session, metadata).as_deref(),
             );
             insert_value(
                 &mut agent,
@@ -375,6 +376,26 @@ pub fn build_agent_list(
             Value::Object(agent)
         })
         .collect()
+}
+
+fn active_display_role(session: &Value, metadata: Option<&Value>) -> Option<String> {
+    let mut probe = Map::new();
+    if let Some(role) = team_string_field(session, "role") {
+        probe.insert("role".into(), Value::String(role.to_owned()));
+    }
+    if let Some(team) = session
+        .get("team")
+        .cloned()
+        .filter(|value| !value.is_null())
+    {
+        probe.insert("team".into(), team);
+    }
+    if let Some(metadata) = metadata {
+        for key in ["overseer", "scribe", "projectControl"] {
+            insert_value(&mut probe, key, metadata.get(key).cloned());
+        }
+    }
+    project_control_display_role(Some(&Value::Object(probe))).map(str::to_owned)
 }
 
 pub fn describe_session_restorability(

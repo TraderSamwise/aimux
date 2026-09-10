@@ -8,19 +8,19 @@ use crate::core_text::{
     render_core_overseer_status_lines, render_core_scribe_status_lines,
 };
 use crate::daemon::routing::{
-    DaemonRouteResponse, DaemonRouteUrl, boolean_param, required_param, string_param, text_error,
-    text_or_json_lines,
+    boolean_param, required_param, string_param, text_error, text_or_json_lines,
+    DaemonRouteResponse, DaemonRouteUrl,
 };
 use crate::daemon::text::params::{
-    ProjectServiceJsonResult, required_project_service_array, required_project_service_string,
-    resolve_lifecycle_worktree, resolve_project_relative_path,
+    required_project_service_array, required_project_service_string, resolve_lifecycle_worktree,
+    resolve_project_relative_path, ProjectServiceJsonResult,
 };
 use crate::native_cli_dispatch::{
     CORE_LOOP_LIST_TEXT_ROUTE, CORE_OVERSEER_STATUS_TEXT_ROUTE, CORE_SCRIBE_STATUS_TEXT_ROUTE,
     CORE_SERVICE_CREATE_TEXT_ROUTE,
 };
 use crate::project_api_contract::routes as project_routes;
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 
 pub trait DaemonAgentTextRuntime {
     fn resolve_project_root(&self, value: &str) -> String;
@@ -560,18 +560,11 @@ fn agent_filtered_text_route(
 }
 
 fn is_project_control_agent(agent: &Value, role: &str) -> bool {
-    if agent.get(role).and_then(Value::as_bool) == Some(true) {
-        return true;
+    match role {
+        "overseer" => crate::team_contract::is_overseer_session(Some(agent)),
+        "scribe" => crate::team_contract::is_scribe_session(Some(agent)),
+        _ => false,
     }
-    if agent.get("role").and_then(Value::as_str) == Some(role) {
-        return true;
-    }
-    agent
-        .get("team")
-        .and_then(Value::as_object)
-        .and_then(|team| team.get("role"))
-        .and_then(Value::as_str)
-        == Some(role)
 }
 
 pub fn agent_list_text_route(

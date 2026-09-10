@@ -157,20 +157,15 @@ pub(crate) fn is_scribe_session(
     metadata_sessions: &BTreeMap<String, Value>,
 ) -> bool {
     let session_id = string_field(session, "id");
-    let metadata_scribe = metadata_sessions
-        .get(&session_id)
-        .and_then(|metadata| metadata.get("scribe"))
-        .and_then(Value::as_bool);
-    if metadata_scribe == Some(false) {
-        return false;
+    let mut probe = session.as_object().cloned().unwrap_or_default();
+    if let Some(metadata) = metadata_sessions.get(&session_id) {
+        for key in ["overseer", "scribe", "projectControl"] {
+            if let Some(value) = metadata.get(key).cloned() {
+                probe.insert(key.into(), value);
+            }
+        }
     }
-    metadata_scribe == Some(true)
-        || session.get("scribe").and_then(Value::as_bool) == Some(true)
-        || session
-            .get("team")
-            .and_then(|team| team.get("role"))
-            .and_then(Value::as_str)
-            == Some("scribe")
+    crate::team_contract::is_scribe_session(Some(&Value::Object(probe)))
 }
 
 struct DefaultScribeClaim {

@@ -33,26 +33,73 @@ pub fn is_project_control_session(session: Option<&Value>) -> bool {
     let Some(session) = session else {
         return false;
     };
-    session.get("projectControl").and_then(Value::as_bool) == Some(true)
-        || session.get("overseer").and_then(Value::as_bool) == Some(true)
-        || session
-            .get("team")
-            .and_then(|team| team.get("role"))
-            .and_then(Value::as_str)
-            == Some("overseer")
-        || is_scribe_session(session)
+    match bool_field(session, "projectControl") {
+        Some(true) => return true,
+        Some(false) => return false,
+        None => {}
+    }
+    is_overseer_session(Some(session)) || is_scribe_session(Some(session))
 }
 
-fn is_scribe_session(session: &Value) -> bool {
-    if session.get("scribe").and_then(Value::as_bool) == Some(false) {
+pub fn is_overseer_session(session: Option<&Value>) -> bool {
+    let Some(session) = session else {
+        return false;
+    };
+    match bool_field(session, "overseer") {
+        Some(value) => return value,
+        None => {}
+    }
+    if bool_field(session, "projectControl") == Some(false) {
         return false;
     }
-    session.get("scribe").and_then(Value::as_bool) == Some(true)
-        || session
+    legacy_role(session) == Some("overseer")
+}
+
+pub fn is_scribe_session(session: Option<&Value>) -> bool {
+    let Some(session) = session else {
+        return false;
+    };
+    match bool_field(session, "scribe") {
+        Some(value) => return value,
+        None => {}
+    }
+    if bool_field(session, "projectControl") == Some(false) {
+        return false;
+    }
+    legacy_role(session) == Some("scribe")
+}
+
+pub fn project_control_display_role(session: Option<&Value>) -> Option<&str> {
+    let session = session?;
+    let role = legacy_role(session)?;
+    match role {
+        "overseer" => is_overseer_session(Some(session)).then_some(role),
+        "scribe" => is_scribe_session(Some(session)).then_some(role),
+        _ => Some(role),
+    }
+}
+
+fn bool_field(session: &Value, key: &str) -> Option<bool> {
+    session.get(key).and_then(Value::as_bool)
+}
+
+fn legacy_role(session: &Value) -> Option<&str> {
+    string_field(session, "role").or_else(|| {
+        session
             .get("team")
             .and_then(|team| team.get("role"))
             .and_then(Value::as_str)
-            == Some("scribe")
+            .map(str::trim)
+            .filter(|role| !role.is_empty())
+    })
+}
+
+fn string_field<'a>(session: &'a Value, key: &str) -> Option<&'a str> {
+    session
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
 }
 
 fn compare_teammate_sessions(left: &Value, right: &Value) -> std::cmp::Ordering {
@@ -94,4 +141,52 @@ fn looks_like_iso_timestamp(value: &str) -> bool {
         && value.as_bytes().get(4) == Some(&b'-')
         && value.as_bytes().get(7) == Some(&b'-')
         && value.as_bytes().get(10) == Some(&b'T')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn explicit_scribe_false_beats_legacy_scribe_role() {
+        let session = json!({
+            "id": "claude-7owt0o",
+            "role": "scribe",
+            "team": { "role": "scribe" },
+            "scribe": false
+        });
+
+        assert!(!is_scribe_session(Some(&session)));
+        assert!(!is_project_control_session(Some(&session)));
+        assert_eq!(project_control_display_role(Some(&session)), None);
+    }
+
+    #[test]
+    fn explicit_project_control_false_beats_legacy_control_role() {
+        let session = json!({
+            "team": { "role": "overseer" },
+            "projectControl": false
+        });
+
+        assert!(!is_overseer_session(Some(&session)));
+        assert!(!is_project_control_session(Some(&session)));
+        assert_eq!(project_control_display_role(Some(&session)), None);
+    }
+
+    #[test]
+    fn legacy_roles_remain_fallbacks_without_explicit_flags() {
+        let scribe = json!({ "team": { "role": "scribe" } });
+        let overseer = json!({ "role": "overseer" });
+
+        assert!(is_scribe_session(Some(&scribe)));
+        assert!(is_project_control_session(Some(&scribe)));
+        assert_eq!(project_control_display_role(Some(&scribe)), Some("scribe"));
+        assert!(is_overseer_session(Some(&overseer)));
+        assert!(is_project_control_session(Some(&overseer)));
+        assert_eq!(
+            project_control_display_role(Some(&overseer)),
+            Some("overseer")
+        );
+    }
 }

@@ -19,6 +19,7 @@ use crate::dashboard_focus::DashboardFocusState;
 use crate::dashboard_launch_options::render_launch_options_overlay;
 use crate::dashboard_model::{
     DesktopStateGoldenFixture, DesktopStateSnapshot, SessionStatus, filter_dashboard_visible_model,
+    is_dashboard_overseer_session, is_dashboard_scribe_session,
 };
 use crate::dashboard_navigation::DashboardEntryRef;
 use crate::dashboard_pending_actions::{
@@ -1387,22 +1388,13 @@ fn render_dashboard_snapshot(
     let overseer_sessions = snapshot
         .sessions
         .iter()
-        .filter(|session| {
-            session.overseer == Some(true)
-                || session.team.as_ref().and_then(|team| team.role.as_deref()) == Some("overseer")
-        })
+        .filter(|session| is_dashboard_overseer_session(session))
         .cloned()
         .collect::<Vec<_>>();
     let scribe_sessions = snapshot
         .sessions
         .iter()
-        .filter(|session| {
-            if session.scribe == Some(false) {
-                return false;
-            }
-            session.scribe == Some(true)
-                || session.team.as_ref().and_then(|team| team.role.as_deref()) == Some("scribe")
-        })
+        .filter(|session| is_dashboard_scribe_session(session))
         .cloned()
         .collect::<Vec<_>>();
     let frame = render_dashboard_frame(&DashboardRenderInput {
@@ -1982,11 +1974,7 @@ fn dashboard_has_live_scribe(snapshot: &DesktopStateSnapshot) -> bool {
 }
 
 fn dashboard_is_scribe_session(session: &crate::dashboard_model::DashboardSession) -> bool {
-    if session.scribe == Some(false) {
-        return false;
-    }
-    session.scribe == Some(true)
-        || session.team.as_ref().and_then(|team| team.role.as_deref()) == Some("scribe")
+    is_dashboard_scribe_session(session)
 }
 
 fn cache_cleanup_result_from_response(response: serde_json::Value) -> Result<serde_json::Value> {

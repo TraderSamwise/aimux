@@ -3,7 +3,10 @@ use crate::dashboard_actions::{
 };
 use crate::dashboard_create::{DashboardCreateBlocked, DashboardCreatePlan};
 use crate::dashboard_launch_options::DashboardLaunchOptionsState;
-use crate::dashboard_model::{DashboardSession, DesktopStateSnapshot, SessionStatus};
+use crate::dashboard_model::{
+    DashboardSession, DesktopStateSnapshot, SessionStatus, is_dashboard_overseer_session,
+    is_dashboard_project_control_session, is_dashboard_scribe_session,
+};
 use crate::dashboard_navigation::{
     DashboardEntryRef, DashboardNavigationOutcome, DashboardNavigationState,
 };
@@ -2776,11 +2779,7 @@ fn first_scribe_session(snapshot: &DesktopStateSnapshot) -> Option<&DashboardSes
 }
 
 fn is_scribe_session(session: &DashboardSession) -> bool {
-    if session.scribe == Some(false) {
-        return false;
-    }
-    session.scribe == Some(true)
-        || session.team.as_ref().and_then(|team| team.role.as_deref()) == Some("scribe")
+    is_dashboard_scribe_session(session)
 }
 
 fn visual_dashboard_session_order(snapshot: &DesktopStateSnapshot) -> Vec<&DashboardSession> {
@@ -2839,10 +2838,7 @@ fn migrate_picker_targets(snapshot: &DesktopStateSnapshot) -> Vec<DashboardMigra
 }
 
 fn is_project_control_session(session: &DashboardSession) -> bool {
-    session.project_control == Some(true)
-        || session.overseer == Some(true)
-        || session.team.as_ref().and_then(|team| team.role.as_deref()) == Some("overseer")
-        || is_scribe_session(session)
+    is_dashboard_project_control_session(session)
 }
 
 fn live_overseer_session(snapshot: &DesktopStateSnapshot) -> Option<&DashboardSession> {
@@ -2853,8 +2849,7 @@ fn live_overseer_session(snapshot: &DesktopStateSnapshot) -> Option<&DashboardSe
 }
 
 fn is_overseer_session(session: &DashboardSession) -> bool {
-    session.overseer == Some(true)
-        || session.team.as_ref().and_then(|team| team.role.as_deref()) == Some("overseer")
+    is_dashboard_overseer_session(session)
 }
 
 fn attention_score(session: &DashboardSession) -> usize {

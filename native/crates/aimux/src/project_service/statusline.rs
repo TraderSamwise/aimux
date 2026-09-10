@@ -11,6 +11,10 @@ use crate::dashboard_ui_state::DashboardUiStatePersistence;
 use crate::paths::basename_like_node_posix;
 use crate::project_api_contract::routes;
 use crate::runtime_topology::{read_runtime_topology, runtime_topology_path};
+use crate::team_contract::{
+    is_overseer_session, is_project_control_session as team_is_project_control_session,
+    is_scribe_session, project_control_display_role,
+};
 use crate::tmux::{refresh_status_argv, tmux_command_from_env};
 
 use super::desktop_state::{DesktopStateInput, build_desktop_state_with_live_window_ids};
@@ -303,15 +307,18 @@ fn statusline_sessions(sessions: Vec<Value>, kind: &str) -> Vec<Value> {
                 "tmuxWindowIndex",
                 "headline",
                 "status",
-                "role",
                 "active",
                 "worktreePath",
                 "semantic",
                 "team",
                 "overseer",
                 "scribe",
+                "projectControl",
             ] {
                 insert_value(&mut item, key, session.get(key).cloned());
+            }
+            if let Some(role) = project_control_display_role(Some(&session)) {
+                insert_string(&mut item, "role", role);
             }
             insert_string(
                 &mut item,
@@ -771,7 +778,7 @@ fn resolve_scoped_sessions<'a>(
     for session in statusline_session_group(snapshot, "sessions")
         .into_iter()
         .filter(|session| is_live_footer_session(session))
-        .filter(|session| !is_project_control_session(session))
+        .filter(|session| !team_is_project_control_session(Some(session)))
         .filter(|session| {
             normalize_path(string_field(session, "worktreePath"), project_root) == scoped_path
         })
@@ -874,7 +881,7 @@ fn resolve_focused_control_session<'a>(
         .into_iter()
         .find(|session| {
             string_field(session, "id") == Some(exact_id)
-                && is_control_session_kind(session, control_kind)
+                && matches_control_session_kind(session, control_kind)
                 && is_live_footer_session(session)
         })
 }
@@ -1104,26 +1111,19 @@ fn compact_session_title(session: &Value) -> String {
             .unwrap_or(tool);
         return format!("{label}[svc]");
     }
-    agent_compact_identity(&AgentDisplayInput::from_value(session))
-}
-
-fn is_project_control_session(session: &Value) -> bool {
-    session.get("projectControl").and_then(Value::as_bool) == Some(true)
-        || is_control_session_kind(session, "overseer")
-        || is_control_session_kind(session, "scribe")
-}
-
-fn is_control_session_kind(session: &Value, control_kind: &str) -> bool {
-    let flag = match control_kind {
-        "overseer" => "overseer",
-        "scribe" => "scribe",
-        _ => return false,
+    let input = AgentDisplayInput {
+        role: project_control_display_role(Some(session)),
+        ..AgentDisplayInput::from_value(session)
     };
-    session.get("overseer").and_then(Value::as_bool) == Some(true) && control_kind == "overseer"
-        || session.get("scribe").and_then(Value::as_bool) == Some(true) && control_kind == "scribe"
-        || string_field(session, "role") == Some(control_kind)
-        || string_field_from_path(session, &["team", "role"]) == Some(control_kind)
-        || session.get(flag).and_then(Value::as_bool) == Some(true)
+    agent_compact_identity(&input)
+}
+
+fn matches_control_session_kind(session: &Value, control_kind: &str) -> bool {
+    match control_kind {
+        "overseer" => is_overseer_session(Some(session)),
+        "scribe" => is_scribe_session(Some(session)),
+        _ => false,
+    }
 }
 
 fn is_live_footer_session(session: &Value) -> bool {
@@ -1543,6 +1543,55 @@ mod tests {
         assert!(!rendered.contains("other"));
         assert!(rendered.find("claude (coder)").unwrap() < rendered.find("shell[svc]").unwrap());
         assert!(rendered.find("shell[svc]").unwrap() < rendered.find("team:").unwrap());
+    }
+
+    #[test]
+    fn bottom_line_treats_explicit_scribe_false_as_worker_despite_legacy_role() {
+        let snapshot = json!({
+            "sessions": [
+                {
+                    "id": "worker",
+                    "kind": "agent",
+                    "tool": "claude",
+                    "role": "scribe",
+                    "team": { "role": "scribe" },
+                    "scribe": false,
+                    "windowName": "claude",
+                    "tmuxWindowId": "@7",
+                    "worktreePath": "/repo",
+                    "status": "running",
+                    "semantic": semantic("idle", "normal", Value::Null, 0)
+                },
+                {
+                    "id": "real-scribe",
+                    "kind": "agent",
+                    "tool": "claude",
+                    "role": "scribe",
+                    "scribe": true,
+                    "projectControl": true,
+                    "windowName": "claude-scribe",
+                    "tmuxWindowId": "@8",
+                    "worktreePath": "/repo",
+                    "status": "running",
+                    "semantic": semantic("waiting", "needs_input", "1 unread", 1)
+                }
+            ]
+        });
+
+        let rendered = render_bottom_line(
+            &snapshot,
+            "/repo",
+            RenderOptions {
+                current_window: Some("claude"),
+                current_window_id: Some("@7"),
+                current_path: Some("/repo"),
+                ..RenderOptions::default()
+            },
+        );
+
+        assert!(rendered.contains("#[fg=black,bg=yellow] claude"));
+        assert!(!rendered.contains("scribe  claude"));
+        assert!(!rendered.contains("(scribe)"));
     }
 
     #[test]

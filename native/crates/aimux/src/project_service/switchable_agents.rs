@@ -10,6 +10,10 @@ use crate::runtime_topology::{
     list_topology_service_states, list_topology_session_states, read_runtime_topology,
     runtime_topology_path,
 };
+use crate::team_contract::{
+    is_overseer_session, is_project_control_session as team_is_project_control_session,
+    is_scribe_session, project_control_display_role,
+};
 use crate::tmux::TmuxTarget;
 
 use super::agent_output::{AgentOutputCaptureRuntime, SystemAgentOutputCaptureRuntime};
@@ -520,9 +524,6 @@ fn session_switchable_entry(
     ] {
         insert_value(&mut metadata, key, session.get(key).cloned());
     }
-    if let Some(role) = team_string_field(session, "role") {
-        insert_string(&mut metadata, "role", role);
-    }
     if let Some(stored) = metadata_sessions.get(id) {
         for key in ["overseer", "scribe", "projectControl"] {
             insert_value(&mut metadata, key, stored.get(key).cloned());
@@ -532,6 +533,9 @@ fn session_switchable_entry(
                 insert_value(&mut metadata, key, derived.get(key).cloned());
             }
         }
+    }
+    if let Some(role) = project_control_display_role(Some(&Value::Object(metadata.clone()))) {
+        insert_string(&mut metadata, "role", role);
     }
     Some(ManagedWindowEntry {
         activity: target_number_field(&target, "windowIndex").unwrap_or_default(),
@@ -779,98 +783,38 @@ fn is_project_control_window(
     metadata_sessions: &BTreeMap<String, Value>,
     metadata: &Value,
 ) -> bool {
-    let session_id = string_field(metadata, "sessionId").unwrap_or("");
-    let session_metadata = metadata_sessions.get(session_id);
-    if session_metadata.and_then(|value| value.get("overseer")) == Some(&Value::Bool(true))
-        || session_metadata.and_then(|value| value.get("scribe")) == Some(&Value::Bool(true))
-    {
-        return true;
-    }
-    if session_metadata.and_then(|value| value.get("scribe")) == Some(&Value::Bool(false)) {
-        return is_project_control_session(
-            metadata.get("team"),
-            session_metadata
-                .and_then(|value| value.get("overseer"))
-                .and_then(Value::as_bool)
-                .or_else(|| metadata.get("overseer").and_then(Value::as_bool)),
-            Some(false),
-            metadata.get("projectControl").and_then(Value::as_bool),
-        );
-    }
-    if let Some(project_control) = metadata.get("projectControl").and_then(Value::as_bool) {
-        return project_control;
-    }
-    is_project_control_session(
-        metadata.get("team"),
-        session_metadata
-            .and_then(|value| value.get("overseer"))
-            .and_then(Value::as_bool)
-            .or_else(|| metadata.get("overseer").and_then(Value::as_bool)),
-        session_metadata
-            .and_then(|value| value.get("scribe"))
-            .and_then(Value::as_bool)
-            .or_else(|| metadata.get("scribe").and_then(Value::as_bool)),
-        metadata.get("projectControl").and_then(Value::as_bool),
-    )
-}
-
-fn is_project_control_session(
-    team: Option<&Value>,
-    overseer: Option<bool>,
-    scribe: Option<bool>,
-    project_control: Option<bool>,
-) -> bool {
-    project_control == Some(true)
-        || overseer == Some(true)
-        || team_role(team) == Some("overseer")
-        || is_scribe_session(team, scribe)
+    team_is_project_control_session(Some(&metadata_with_stored_control_flags(
+        metadata,
+        metadata_sessions,
+    )))
 }
 
 fn is_overseer_window(metadata_sessions: &BTreeMap<String, Value>, metadata: &Value) -> bool {
-    let session_id = string_field(metadata, "sessionId").unwrap_or("");
-    metadata_sessions
-        .get(session_id)
-        .and_then(|value| value.get("overseer"))
-        .and_then(Value::as_bool)
-        == Some(true)
-        || metadata.get("overseer").and_then(Value::as_bool) == Some(true)
-        || team_role(metadata.get("team")) == Some("overseer")
+    is_overseer_session(Some(&metadata_with_stored_control_flags(
+        metadata,
+        metadata_sessions,
+    )))
 }
 
 fn is_scribe_window(metadata_sessions: &BTreeMap<String, Value>, metadata: &Value) -> bool {
-    let session_id = string_field(metadata, "sessionId").unwrap_or("");
-    let session_metadata = metadata_sessions.get(session_id);
-    if session_metadata
-        .and_then(|value| value.get("scribe"))
-        .and_then(Value::as_bool)
-        == Some(true)
-    {
-        return true;
-    }
-    if session_metadata
-        .and_then(|value| value.get("scribe"))
-        .and_then(Value::as_bool)
-        == Some(false)
-    {
-        return false;
-    }
-    if metadata.get("projectControl").and_then(Value::as_bool) == Some(false) {
-        return false;
-    }
-    is_scribe_session(
-        metadata.get("team"),
-        session_metadata
-            .and_then(|value| value.get("scribe"))
-            .and_then(Value::as_bool)
-            .or_else(|| metadata.get("scribe").and_then(Value::as_bool)),
-    )
+    is_scribe_session(Some(&metadata_with_stored_control_flags(
+        metadata,
+        metadata_sessions,
+    )))
 }
 
-fn is_scribe_session(team: Option<&Value>, scribe: Option<bool>) -> bool {
-    if scribe == Some(false) {
-        return false;
+fn metadata_with_stored_control_flags(
+    metadata: &Value,
+    metadata_sessions: &BTreeMap<String, Value>,
+) -> Value {
+    let mut probe = metadata.as_object().cloned().unwrap_or_default();
+    let session_id = string_field(metadata, "sessionId").unwrap_or("");
+    if let Some(session_metadata) = metadata_sessions.get(session_id) {
+        for key in ["overseer", "scribe", "projectControl"] {
+            insert_value(&mut probe, key, session_metadata.get(key).cloned());
+        }
     }
-    scribe == Some(true) || team_role(team) == Some("scribe")
+    Value::Object(probe)
 }
 
 fn compact_session_title(metadata: &Value) -> String {
@@ -1089,11 +1033,6 @@ fn activity_chip(value: &str) -> Option<(&'static str, &'static str)> {
         "interrupted" => Some(("idle", "Interrupted")),
         _ => None,
     }
-}
-
-fn team_role(team: Option<&Value>) -> Option<&str> {
-    team.and_then(|team| team.get("role"))
-        .and_then(Value::as_str)
 }
 
 fn team_string_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {

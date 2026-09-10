@@ -451,17 +451,7 @@ fn all_sessions(data: &Value) -> Vec<&Value> {
 }
 
 fn is_project_control_session(session: &Value) -> bool {
-    bool_field(session, "projectControl")
-        || bool_field(session, "overseer")
-        || bool_field(session, "scribe")
-        || session
-            .get("team")
-            .and_then(|team| string_field(team, "role"))
-            == Some("overseer")
-        || session
-            .get("team")
-            .and_then(|team| string_field(team, "role"))
-            == Some("scribe")
+    crate::team_contract::is_project_control_session(Some(session))
 }
 
 fn is_teammate_session(session: &Value) -> bool {

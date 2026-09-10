@@ -2,25 +2,25 @@ mod footer;
 
 use crate::dashboard_controller::DashboardScreen;
 use crate::dashboard_model::{
-    DashboardOperationFailure, DashboardService, DashboardSession, DesktopStateSnapshot,
-    ServiceStatus, SessionStatus,
+    is_dashboard_project_control_session, is_dashboard_scribe_session, DashboardOperationFailure,
+    DashboardService, DashboardSession, DesktopStateSnapshot, ServiceStatus, SessionStatus,
 };
 use crate::project_service::work_outline::{WorkOutlineEntry, WorkOutlineStatus};
 use crate::project_service::worktree_colors_contract::worktree_color_ansi;
 use crate::tmux_expose_preview_sanitize::sanitize_expose_preview_output;
 use crate::tui_render::screen_frame::{
-    ScreenFrameInput, ScreenFrameResult, compose_screen_frame, screen_content_width,
-    screen_left_width,
+    compose_screen_frame, screen_content_width, screen_left_width, ScreenFrameInput,
+    ScreenFrameResult,
 };
 use crate::tui_render::text::{
     center, js_len, truncate, truncate_ansi, truncate_plain, wrap_key_value, wrap_text,
 };
 use crate::tui_render::theme::{
-    CardSpec, ChipTone, Column, FooterHint, KeyTone, StatusKind, Tone, card, chip,
-    cols as grid_cols, footer_hints, keycap_hint, pill, render_footer_hints, status_dot, style,
-    visible_width,
+    card, chip, cols as grid_cols, footer_hints, keycap_hint, pill, render_footer_hints,
+    status_dot, style, visible_width, CardSpec, ChipTone, Column, FooterHint, KeyTone, StatusKind,
+    Tone,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -2502,24 +2502,11 @@ fn has_live_scribe(input: &DashboardRenderInput<'_>) -> bool {
 }
 
 fn is_project_control_session(session: &DashboardSession) -> bool {
-    if session.project_control == Some(true) || session.overseer == Some(true) {
-        return true;
-    }
-    if session.team.as_ref().and_then(|team| team.role.as_deref()) == Some("overseer") {
-        return true;
-    }
-    if session.scribe == Some(false) {
-        return false;
-    }
-    is_scribe_session(session)
+    is_dashboard_project_control_session(session)
 }
 
 fn is_scribe_session(session: &DashboardSession) -> bool {
-    if session.scribe == Some(false) {
-        return false;
-    }
-    session.scribe == Some(true)
-        || session.team.as_ref().and_then(|team| team.role.as_deref()) == Some("scribe")
+    is_dashboard_scribe_session(session)
 }
 
 fn dashboard_enter_verb(

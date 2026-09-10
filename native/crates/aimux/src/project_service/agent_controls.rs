@@ -139,9 +139,31 @@ pub fn clear_project_flag_at(
         } else {
             current.remove(key);
         }
+        clear_matching_control_role_metadata(&mut current, key);
         Value::Object(current)
     })
     .map(|_| ())
+}
+
+fn clear_matching_control_role_metadata(current: &mut Map<String, Value>, key: &str) {
+    if key != "overseer" && key != "scribe" {
+        return;
+    }
+    if current.get("role").and_then(Value::as_str) == Some(key) {
+        current.remove("role");
+    }
+    let Some(Value::Object(team)) = current.get_mut("team") else {
+        return;
+    };
+    if team.get("role").and_then(Value::as_str) == Some(key) {
+        team.remove("role");
+    }
+    if team.get("teamId").and_then(Value::as_str) == Some(key) {
+        team.remove("teamId");
+    }
+    if team.is_empty() {
+        current.remove("team");
+    }
 }
 
 fn route_loop(
@@ -365,4 +387,79 @@ fn now_iso() -> String {
 
 fn json_error(status: u16, error: impl Into<String>) -> ProjectServiceDispatchResponse {
     ProjectServiceDispatchResponse::json(status, json!({ "ok": false, "error": error.into() }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::daemon_state::{
+        load_metadata_state_at_unix_millis, save_metadata_state, MetadataState,
+    };
+    use std::collections::BTreeMap;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+    struct TestDir(PathBuf);
+
+    impl TestDir {
+        fn new(case_id: &str) -> Self {
+            let sequence = TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir()
+                .join("aimux-agent-controls-unit")
+                .join(format!("{}-{sequence}-{case_id}", std::process::id()));
+            fs::create_dir_all(&path).expect("create fixture dir");
+            Self(path)
+        }
+
+        fn state_dir(&self) -> PathBuf {
+            self.0.join("state")
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn clearing_scribe_removes_matching_stale_control_role_metadata() {
+        let fixture = TestDir::new("clear-stale-scribe-role");
+        let state_dir = fixture.state_dir();
+        let mut sessions = BTreeMap::new();
+        sessions.insert(
+            "worker".to_owned(),
+            json!({
+                "id": "worker",
+                "role": "scribe",
+                "team": { "teamId": "scribe", "role": "scribe", "label": "keep" },
+                "scribe": true
+            }),
+        );
+        save_metadata_state(
+            &state_dir,
+            &MetadataState {
+                version: 1,
+                sessions,
+            },
+        )
+        .expect("save state");
+
+        clear_project_flag_at(&state_dir, "worker", "scribe", "2026-09-10T00:00:00.000Z")
+            .expect("clear scribe");
+
+        let state = load_metadata_state_at_unix_millis(&state_dir, 0);
+        let session = state.sessions.get("worker").expect("worker session");
+        assert_eq!(session.get("scribe").and_then(Value::as_bool), Some(false));
+        assert_eq!(session.get("role"), None);
+        assert_eq!(
+            session.pointer("/team/label").and_then(Value::as_str),
+            Some("keep")
+        );
+        assert_eq!(session.pointer("/team/role"), None);
+        assert_eq!(session.pointer("/team/teamId"), None);
+    }
 }

@@ -5,6 +5,9 @@ use std::sync::{Mutex, OnceLock};
 
 use crate::runtime_topology::list_topology_session_states;
 use crate::session_recency::session_recency_anchor;
+use crate::team_contract::{
+    is_project_control_session, project_control_display_role,
+};
 use crate::tmux::{TmuxRuntimeManager, TmuxTarget};
 
 use super::notifications::{NotificationQuery, list_notification_snapshot};
@@ -184,8 +187,8 @@ pub fn build_tmux_window_metadata(
     for key in ["team", "worktreePath", "label", "headline"] {
         insert_optional_value(&mut out, key, session.get(key).cloned());
     }
-    if let Some(role) = team_string_field(session, "role").or_else(|| string_field(session, "role"))
-    {
+    let classifier_probe = session_with_stored_control_flags(session, stored_session);
+    if let Some(role) = project_control_display_role(Some(&classifier_probe)) {
         out.insert("role".into(), Value::String(role.to_owned()));
     }
     let overseer = stored_session
@@ -200,7 +203,7 @@ pub fn build_tmux_window_metadata(
     out.insert("scribe".into(), Value::Bool(scribe));
     out.insert(
         "projectControl".into(),
-        Value::Bool(project_control_session(session, stored_session)),
+        Value::Bool(is_project_control_session(Some(&classifier_probe))),
     );
     insert_optional_string(&mut out, "activity", activity.as_deref());
     insert_optional_string(&mut out, "attention", attention.as_deref());
@@ -302,32 +305,14 @@ fn should_apply_policy(window_id: &str) -> bool {
     applied.insert(window_id.to_owned())
 }
 
-fn project_control_session(session: &Value, stored_session: Option<&Value>) -> bool {
-    stored_session
-        .and_then(|value| value.get("projectControl"))
-        .and_then(Value::as_bool)
-        == Some(true)
-        || stored_session
-            .and_then(|value| value.get("overseer"))
-            .and_then(Value::as_bool)
-            == Some(true)
-        || team_string_field(session, "role") == Some("overseer")
-        || is_scribe_session(session, stored_session)
-}
-
-fn is_scribe_session(session: &Value, stored_session: Option<&Value>) -> bool {
-    if stored_session
-        .and_then(|value| value.get("scribe"))
-        .and_then(Value::as_bool)
-        == Some(false)
-    {
-        return false;
+fn session_with_stored_control_flags(session: &Value, stored_session: Option<&Value>) -> Value {
+    let mut probe = session.as_object().cloned().unwrap_or_default();
+    if let Some(stored_session) = stored_session {
+        for key in ["overseer", "scribe", "projectControl"] {
+            insert_optional_value(&mut probe, key, stored_session.get(key).cloned());
+        }
     }
-    stored_session
-        .and_then(|value| value.get("scribe"))
-        .and_then(Value::as_bool)
-        == Some(true)
-        || team_string_field(session, "role") == Some("scribe")
+    Value::Object(probe)
 }
 
 fn is_agent_output_event_kind(kind: &str) -> bool {
@@ -383,11 +368,4 @@ fn string_array_field(value: &Value, key: &str) -> Vec<String> {
         .filter_map(Value::as_str)
         .map(str::to_owned)
         .collect()
-}
-
-fn team_string_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
-    value
-        .get("team")
-        .and_then(|team| team.get(key))
-        .and_then(Value::as_str)
 }

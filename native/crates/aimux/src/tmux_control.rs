@@ -3,7 +3,7 @@ use crate::cli_launcher::{
 };
 use crate::tmux::tmux_command_from_env;
 use anyhow::Result;
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::ffi::OsStr;
 use std::fs;
 use std::io::Write;
@@ -2043,21 +2043,10 @@ fn value_as_i64(value: &Value) -> Option<i64> {
         })
 }
 
-fn control_role(team: &Value) -> &str {
-    team.get("role").and_then(Value::as_str).unwrap_or_default()
-}
-
 fn is_project_control_meta(meta: &Value, team: &Value) -> bool {
-    if let Some(explicit) = meta.get("projectControl").and_then(Value::as_bool) {
-        return explicit;
-    }
-    let role = control_role(team);
-    meta.get("overseer")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-        || meta.get("scribe").and_then(Value::as_bool).unwrap_or(false)
-        || role == "overseer"
-        || role == "scribe"
+    let mut probe = meta.as_object().cloned().unwrap_or_else(Map::new);
+    probe.insert("team".into(), team.clone());
+    crate::team_contract::is_project_control_session(Some(&Value::Object(probe)))
 }
 
 fn team_parent_id(team: &Value) -> Option<&str> {

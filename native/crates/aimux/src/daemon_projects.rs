@@ -1,4 +1,5 @@
 use crate::project_catalog::DesktopProjectInfo;
+use crate::team_contract::is_project_control_session;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -102,17 +103,7 @@ fn is_online_project_session(session: &Value) -> bool {
 }
 
 fn is_dashboard_hidden_project_session(session: &Value) -> bool {
-    session.get("overseer").and_then(Value::as_bool) == Some(true)
-        || session.get("scribe").and_then(Value::as_bool) == Some(true)
-        || session
-            .pointer("/team/role")
-            .and_then(Value::as_str)
-            .is_some_and(|role| role == "overseer")
-        || (session.get("scribe").and_then(Value::as_bool) != Some(false)
-            && session
-                .pointer("/team/role")
-                .and_then(Value::as_str)
-                .is_some_and(|role| role == "scribe"))
+    is_project_control_session(Some(session))
 }
 
 fn js_truthy(value: Option<&Value>) -> bool {

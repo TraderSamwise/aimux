@@ -13,6 +13,9 @@ use crate::runtime_topology::{
     list_topology_service_states, list_topology_worktree_states, read_runtime_topology,
     runtime_topology_path,
 };
+use crate::team_contract::{
+    is_project_control_session as team_is_project_control_session, project_control_display_role,
+};
 use crate::tmux::TmuxTarget;
 
 use super::agent_output::{AgentOutputCaptureRuntime, SystemAgentOutputCaptureRuntime};
@@ -432,9 +435,6 @@ fn dashboard_session(
             target.get("windowIndex").cloned(),
         );
     }
-    if let Some(role) = team_string_field(session, "role") {
-        insert_string(&mut item, "role", role);
-    }
     if let Some(worktree) = string_field(session, "worktreePath")
         .and_then(|path| worktree_by_path.get(&worktree_path_identity(path)))
     {
@@ -503,6 +503,9 @@ fn dashboard_session(
             attention = string_field(derived, "attention").map(str::to_owned);
             unseen_count = integer_field(derived, "unseenCount");
         }
+    }
+    if let Some(role) = project_control_display_role(Some(&Value::Object(item.clone()))) {
+        insert_string(&mut item, "role", role);
     }
     let thread = thread_stats.get(id).cloned().unwrap_or_default();
     let workflow = workflow_stats.get(id).cloned().unwrap_or_default();
@@ -1122,18 +1125,7 @@ fn is_teammate_session(session: &Value) -> bool {
 }
 
 fn is_project_control_session(session: &Value) -> bool {
-    session.get("projectControl").and_then(Value::as_bool) == Some(true)
-        || session.get("overseer").and_then(Value::as_bool) == Some(true)
-        || team_string_field(session, "role") == Some("overseer")
-        || is_scribe_session(session)
-}
-
-fn is_scribe_session(session: &Value) -> bool {
-    if session.get("scribe").and_then(Value::as_bool) == Some(false) {
-        return false;
-    }
-    session.get("scribe").and_then(Value::as_bool) == Some(true)
-        || team_string_field(session, "role") == Some("scribe")
+    team_is_project_control_session(Some(session))
 }
 
 fn main_checkout_branch(project_root: &str, worktrees: Option<&Value>) -> String {
