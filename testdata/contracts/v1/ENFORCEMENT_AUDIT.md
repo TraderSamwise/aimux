@@ -206,7 +206,6 @@ Binding statuses: PROVEN-FAILS 325, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
 | `fixture_priority2` | PROVEN-FAILS | `testdata/contracts/v1/agent-prompt-delivery/delivery.json` | 14 | mutated fixture output failed owning Rust suite |
 | `fixture_process_inspector` | PROVEN-FAILS | `testdata/contracts/v1/process/inspector.json` | 12 | mutated fixture output failed owning Rust suite |
 | `fixture_project_api_behavior` | PROVEN-FAILS | `testdata/contracts/v1/project-api/behavior.json` | 6 | mutated fixture output failed owning Rust suite |
-| `fixture_project_api_refresh` | PROVEN-FAILS | `testdata/contracts/v1/project-api/refresh.json` | 3 | mutated fixture output failed owning Rust suite |
 | `fixture_project_catalog_registry` | PROVEN-FAILS | `testdata/contracts/v1/project-catalog/registry.json` | 4 | mutated fixture output failed owning Rust suite |
 | `fixture_project_connection_display` | PROVEN-FAILS | `testdata/contracts/v1/project-connection/display.json` | 19 | mutated fixture output failed owning Rust suite |
 | `fixture_project_event_stream` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/project-event-stream.json` | 39 | mutated fixture output failed owning Rust suite |
