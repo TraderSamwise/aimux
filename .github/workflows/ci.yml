@@ -12,6 +12,66 @@ env:
   AIMUX_DAEMON_PORT: "47390"
 
 jobs:
+  js-tests:
+    name: JavaScript tests (root/relay)
+    runs-on: ubuntu-latest
+    # First CI execution for these suites. If the GitHub runner is green,
+    # remove continue-on-error in the same way the Rust gates were promoted.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Node from .nvmrc
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Cache node_modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            relay/node_modules
+          key: ${{ runner.os }}-${{ github.job }}-node-${{ hashFiles('.nvmrc', 'yarn.lock', 'relay/yarn.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ github.job }}-node-
+
+      - name: Install dependencies
+        run: |
+          yarn install --frozen-lockfile
+          yarn --cwd relay install --ignore-scripts --frozen-lockfile
+
+      - name: yarn test
+        run: yarn test
+
+  app-js-tests:
+    name: JavaScript tests (app)
+    runs-on: ubuntu-latest
+    # First CI execution for these suites. If the GitHub runner is green,
+    # remove continue-on-error in the same way the Rust gates were promoted.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Node from .nvmrc
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Cache node_modules
+        uses: actions/cache@v4
+        with:
+          path: app/node_modules
+          key: ${{ runner.os }}-${{ github.job }}-node-${{ hashFiles('.nvmrc', 'app/yarn.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ github.job }}-node-
+
+      - name: Install dependencies
+        run: yarn --cwd app install --frozen-lockfile
+
+      - name: yarn --cwd app test
+        run: yarn --cwd app test
+
   rust-format:
     name: Rust format
     runs-on: ubuntu-latest
