@@ -253,6 +253,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
     let mut latest_endpoint = None;
     let mut pending_actions = DashboardPendingActions::new();
     let mut deferred_requests: Vec<DeferredDashboardRequest> = Vec::new();
+    let (request_outcomes_tx, request_outcomes_rx) = mpsc::channel::<DashboardRequestOutcome>();
     let mut ui_state = if options.once || options.desktop_state_file.is_some() {
         None
     } else {
@@ -356,6 +357,13 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
             render_now = true;
         }
         if refresh_state.take_refresh_request() {
+            render_now = true;
+        }
+        if drain_dashboard_request_outcomes(
+            &request_outcomes_rx,
+            &mut pending_actions,
+            controller.as_mut(),
+        ) {
             render_now = true;
         }
         reconcile_dashboard_event_stream(
@@ -664,7 +672,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                     latest_endpoint.as_ref(),
                     &mut pending_actions,
                     controller.as_mut(),
-                    &mut render_now,
+                    &request_outcomes_tx,
                 );
                 if options.once {
                     return Ok(());
@@ -731,13 +739,12 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                 );
                 write_dashboard_frame(&mut *output, frame.frame.as_bytes())?;
                 rendered_once = true;
-                let mut flush_render = false;
                 flush_deferred_dashboard_requests(
                     &mut deferred_requests,
                     loaded.endpoint.as_ref(),
                     &mut pending_actions,
                     Some(controller),
-                    &mut flush_render,
+                    &request_outcomes_tx,
                 );
                 let statusline_client_session = ui_state.as_mut().and_then(|ui_state| {
                     ui_state
@@ -778,7 +785,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                 } else {
                     false
                 };
-                render_now = focus_render || flush_render;
+                render_now = focus_render;
                 last_render = Instant::now();
                 if options.once {
                     return Ok(());
@@ -2062,38 +2069,119 @@ type DeferredDashboardRequest = (DashboardActionRequest, Option<(PendingTarget, 
 
 /// Send the mutations queued during key handling, now that the optimistic frame
 /// has been written. Clears the overlay for any request that never left.
+/// The outcome of a mutation that ran off the render thread.
+struct DashboardRequestOutcome {
+    pending: Option<(PendingTarget, String, u64)>,
+    failure: Option<String>,
+}
+
+/// Send the mutations queued during key handling, now that the optimistic frame
+/// has been written.
+///
+/// Each one runs on its own thread. A worktree graveyard is allowed 180s, and
+/// running that inline froze the whole dashboard for its duration — no repaint,
+/// no keys — which is what a slow graveyard looked like from the outside.
 fn flush_deferred_dashboard_requests(
     deferred: &mut Vec<DeferredDashboardRequest>,
     endpoint: Option<&ProjectServiceEndpoint>,
     pending_actions: &mut DashboardPendingActions,
     mut controller: Option<&mut DashboardController>,
-    render_now: &mut bool,
+    outcomes: &mpsc::Sender<DashboardRequestOutcome>,
 ) {
     if deferred.is_empty() {
         return;
     }
     for (request, pending) in deferred.drain(..) {
-        let failure = match endpoint {
-            Some(endpoint) => execute_dashboard_controller_action(endpoint, &request)
-                .err()
-                .map(|error| error.to_string()),
-            None => Some("Dashboard action requires a project-service endpoint".to_owned()),
-        };
-        if let Some(message) = failure {
+        let Some(endpoint) = endpoint.cloned() else {
             if let Some(controller) = controller.as_deref_mut() {
-                controller.footer_message = Some(message);
+                controller.footer_message =
+                    Some("Dashboard action requires a project-service endpoint".to_owned());
             }
             if let Some((target, id, token)) = pending.as_ref() {
                 pending_actions.clear_if_token(*target, id, *token);
             }
+            continue;
+        };
+        let outcomes = outcomes.clone();
+        thread::spawn(move || {
+            let failure = execute_dashboard_controller_action(&endpoint, &request)
+                .err()
+                .map(|error| error.to_string());
+            let _ = outcomes.send(DashboardRequestOutcome { pending, failure });
+        });
+    }
+}
+
+/// Apply whatever off-thread mutations have finished. Returns true if the frame
+/// needs repainting.
+fn drain_dashboard_request_outcomes(
+    outcomes: &Receiver<DashboardRequestOutcome>,
+    pending_actions: &mut DashboardPendingActions,
+    mut controller: Option<&mut DashboardController>,
+) -> bool {
+    let mut changed = false;
+    while let Ok(outcome) = outcomes.try_recv() {
+        changed = true;
+        if let Some(message) = outcome.failure {
+            if let Some(controller) = controller.as_deref_mut() {
+                controller.footer_message = Some(message);
+            }
+            if let Some((target, id, token)) = outcome.pending.as_ref() {
+                pending_actions.clear_if_token(*target, id, *token);
+            }
         }
     }
-    *render_now = true;
+    changed
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_slow_mutation_does_not_block_the_render_loop() {
+        // A worktree graveyard is allowed 180s. Running it inline froze the
+        // dashboard for its duration, which is what a slow graveyard looked
+        // like from the outside.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("listener");
+        let endpoint = ProjectServiceEndpoint {
+            host: "127.0.0.1".to_owned(),
+            port: listener.local_addr().expect("addr").port(),
+        };
+        let accepted = thread::spawn(move || {
+            let _held = listener.accept();
+            thread::sleep(Duration::from_secs(3));
+        });
+        let mut pending_actions = DashboardPendingActions::new();
+        let token = pending_actions.set_session_action("claude-a1", "graveyarding", None, 0);
+        let mut deferred: Vec<DeferredDashboardRequest> = vec![(
+            DashboardActionRequest {
+                method: "POST",
+                path: crate::project_api_contract::routes::worktree_actions::GRAVEYARD,
+                body: serde_json::json!({ "path": "/repo/wt" }),
+            },
+            Some((PendingTarget::Session, "claude-a1".to_owned(), token)),
+        )];
+        let (tx, _rx) = mpsc::channel::<DashboardRequestOutcome>();
+
+        let started = Instant::now();
+        flush_deferred_dashboard_requests(
+            &mut deferred,
+            Some(&endpoint),
+            &mut pending_actions,
+            None,
+            &tx,
+        );
+        let elapsed = started.elapsed();
+
+        assert!(
+            elapsed < Duration::from_millis(500),
+            "flush blocked the render loop for {elapsed:?}"
+        );
+        assert!(deferred.is_empty());
+        drop(accepted);
+    }
+
     use crate::dashboard_renderer::DashboardNavLevel;
     use serde_json::json;
     use std::fs;
