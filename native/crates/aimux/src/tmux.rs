@@ -305,7 +305,7 @@ impl TmuxRuntimeManager {
     pub fn ensure_project_session(
         &mut self,
         project_root: impl AsRef<Path>,
-        _dashboard_command: Option<&TmuxCommandSpec>,
+        dashboard_command: Option<&TmuxCommandSpec>,
         config: Option<TmuxRuntimeConfig>,
     ) -> Result<TmuxSessionRef, String> {
         let project_root = project_root.as_ref();
@@ -325,7 +325,7 @@ impl TmuxRuntimeManager {
             };
             if !exists {
                 self.exec_owned(
-                    new_session_argv(&session.session_name, &project_root_text, None),
+                    new_session_argv(&session.session_name, &project_root_text, dashboard_command),
                     Some(TmuxExecOptions {
                         cwd: Some(project_root_text.clone()),
                     }),

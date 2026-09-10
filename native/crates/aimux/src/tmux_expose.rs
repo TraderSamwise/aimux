@@ -933,6 +933,46 @@ pub fn run_tmux_expose_with_drivers(
         render_state,
     )
     .unwrap_or_else(|_| compute_layout(items.len() as i64, 80, 24));
+    if loading || view_stale {
+        let selected_window_id = item_window_id(items.get(index)).map(str::to_owned);
+        match load_expose_scope_items_with(
+            scope,
+            &context,
+            &options.project_state_dir,
+            &deps,
+            client,
+        ) {
+            Ok(next_view) => {
+                view = next_view;
+                view_stale = false;
+                loading = false;
+                write_loaded_hot_snapshot(&options, scope, &view);
+                items = order_items(&view, &options.project_root, sort_mode);
+                captures = seed_preview_snapshots(&items);
+                index = selected_or_current_index(
+                    &items,
+                    selected_window_id.as_deref(),
+                    options.current_window_id.as_deref(),
+                );
+            }
+            Err(_) if loading => {
+                loading = false;
+            }
+            Err(_) => {}
+        }
+        render_state = RenderGridExposeState { sort_mode, loading };
+        layout = render_grid_expose(
+            output,
+            &view,
+            &items,
+            &captures,
+            index,
+            &options,
+            render_state,
+        )
+        .unwrap_or(layout);
+        static_size = expose_terminal_size_label(&options);
+    }
     if !loading && refresh_captures(&items, &mut captures, capture) {
         layout = render_grid_expose(
             output,
