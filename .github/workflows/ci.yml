@@ -15,9 +15,6 @@ jobs:
   js-tests:
     name: JavaScript tests (root/relay)
     runs-on: ubuntu-latest
-    # First CI execution for these suites. If the GitHub runner is green,
-    # remove continue-on-error in the same way the Rust gates were promoted.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
@@ -47,9 +44,6 @@ jobs:
   app-js-tests:
     name: JavaScript tests (app)
     runs-on: ubuntu-latest
-    # First CI execution for these suites. If the GitHub runner is green,
-    # remove continue-on-error in the same way the Rust gates were promoted.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
