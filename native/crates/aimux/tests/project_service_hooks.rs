@@ -497,7 +497,6 @@ fn write_duplicate_hook_topology(project: &std::path::Path, state_dir: &std::pat
                 "tool": "claude",
                 "toolConfigKey": "claude",
                 "command": "claude",
-                "backendSessionId": backend_id,
                 "worktreePath": project_root.clone(),
                 "createdAt": "2026-09-08T00:00:01.000Z",
                 "updatedAt": "2026-09-08T00:00:01.000Z"

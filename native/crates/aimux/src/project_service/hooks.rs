@@ -162,12 +162,27 @@ fn resolve_hook_session_id(
             return id.to_owned();
         }
     }
-    sessions
+    let best_backend_match = sessions
         .iter()
         .filter(|session| {
             session.get("backendSessionId").and_then(Value::as_str) == Some(backend_session_id)
         })
         .max_by_key(|session| session_match_score(context, session))
+        .cloned();
+    if let Some(session) = best_backend_match.as_ref()
+        && session_is_live_for_hook(context, session)
+    {
+        if let Some(id) = session.get("id").and_then(Value::as_str) {
+            return id.to_owned();
+        }
+    }
+    if let Some(stale) = best_backend_match.as_ref()
+        && let Some(live) = live_replacement_for_stale_session(context, &sessions, stale)
+        && let Some(id) = live.get("id").and_then(Value::as_str)
+    {
+        return id.to_owned();
+    }
+    best_backend_match
         .and_then(|session| session.get("id").and_then(Value::as_str).map(str::to_owned))
         .unwrap_or_else(|| explicit_session_id.to_owned())
 }
@@ -207,6 +222,57 @@ fn session_is_live_for_hook(context: &ProjectServiceRequestContext, session: &Va
         .and_then(|target| target.get("windowId"))
         .and_then(Value::as_str)
         .is_some_and(|window_id| live_window_ids.contains(window_id))
+}
+
+fn live_replacement_for_stale_session<'a>(
+    context: &ProjectServiceRequestContext,
+    sessions: &'a [Value],
+    stale: &Value,
+) -> Option<&'a Value> {
+    sessions
+        .iter()
+        .filter(|session| session_is_live_for_hook(context, session))
+        .filter(|session| same_hook_identity(session, stale))
+        .max_by_key(|session| {
+            session
+                .get("updatedAt")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+        })
+}
+
+fn same_hook_identity(candidate: &Value, stale: &Value) -> bool {
+    same_non_empty_field(candidate, stale, "tool")
+        && same_optional_field(candidate, stale, "toolConfigKey")
+        && same_optional_field(candidate, stale, "command")
+        && same_non_empty_field(candidate, stale, "worktreePath")
+        && same_nested_optional_field(candidate, stale, &["team", "role"])
+}
+
+fn same_non_empty_field(left: &Value, right: &Value, key: &str) -> bool {
+    let left = trimmed_value(left.get(key).and_then(Value::as_str));
+    !left.is_empty() && left == trimmed_value(right.get(key).and_then(Value::as_str))
+}
+
+fn same_optional_field(left: &Value, right: &Value, key: &str) -> bool {
+    trimmed_value(left.get(key).and_then(Value::as_str))
+        == trimmed_value(right.get(key).and_then(Value::as_str))
+}
+
+fn same_nested_optional_field(left: &Value, right: &Value, path: &[&str]) -> bool {
+    trimmed_value(nested_string(left, path)) == trimmed_value(nested_string(right, path))
+}
+
+fn nested_string<'a>(value: &'a Value, path: &[&str]) -> Option<&'a str> {
+    let mut current = value;
+    for key in path {
+        current = current.get(*key)?;
+    }
+    current.as_str()
+}
+
+fn trimmed_value(value: Option<&str>) -> &str {
+    value.map(str::trim).unwrap_or_default()
 }
 
 fn record_hook_backend_session_id(
