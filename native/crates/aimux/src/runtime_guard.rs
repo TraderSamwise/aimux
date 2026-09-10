@@ -333,8 +333,10 @@ fn read_runtime_rebuild_required_with_tmux(project_root: &Path) -> bool {
         return false;
     }
     let session_name = tmux.get_project_session(project_root).session_name;
-    let Ok(session_names) = tmux.list_session_names() else {
-        return true;
+    let session_names = match runtime_rebuild_session_names(tmux.list_session_names()) {
+        RuntimeRebuildSessionNames::Names(session_names) => session_names,
+        RuntimeRebuildSessionNames::NoServer => return false,
+        RuntimeRebuildSessionNames::QueryFailed => return true,
     };
     if !session_names.iter().any(|name| name == &session_name) {
         return false;
@@ -372,6 +374,33 @@ fn read_runtime_rebuild_required_with_tmux(project_root: &Path) -> bool {
                     .as_deref()
                     != Some(AIMUX_TMUX_RUNTIME_CONTRACT_VERSION)
         })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RuntimeRebuildSessionNames {
+    Names(Vec<String>),
+    NoServer,
+    QueryFailed,
+}
+
+fn runtime_rebuild_session_names(
+    result: Result<Vec<String>, String>,
+) -> RuntimeRebuildSessionNames {
+    match result {
+        Ok(session_names) => RuntimeRebuildSessionNames::Names(session_names),
+        Err(error) if tmux_list_sessions_failed_because_no_server(&error) => {
+            RuntimeRebuildSessionNames::NoServer
+        }
+        Err(_) => RuntimeRebuildSessionNames::QueryFailed,
+    }
+}
+
+fn tmux_list_sessions_failed_because_no_server(error: &str) -> bool {
+    let error = error.to_ascii_lowercase();
+    error.contains("no server running")
+        || (error.contains("error connecting to")
+            && (error.contains("no such file or directory")
+                || error.contains("connection refused")))
 }
 
 fn same_filesystem_path(left: Option<&str>, right: &str) -> bool {
@@ -412,6 +441,32 @@ mod tests {
             service_manifest,
             service_identity_mismatch: false,
         }
+    }
+
+    #[test]
+    fn missing_tmux_server_does_not_require_runtime_rebuild() {
+        assert_eq!(
+            runtime_rebuild_session_names(Err(
+                "error connecting to /tmp/aimux-test.sock (No such file or directory)".into()
+            )),
+            RuntimeRebuildSessionNames::NoServer
+        );
+        assert_eq!(
+            runtime_rebuild_session_names(Err(
+                "no server running on /private/tmp/tmux-501/default".into()
+            )),
+            RuntimeRebuildSessionNames::NoServer
+        );
+    }
+
+    #[test]
+    fn live_server_query_failure_still_requires_runtime_rebuild() {
+        assert_eq!(
+            runtime_rebuild_session_names(Err(
+                "error connecting to /tmp/aimux-test.sock (Permission denied)".into()
+            )),
+            RuntimeRebuildSessionNames::QueryFailed
+        );
     }
 
     #[test]
