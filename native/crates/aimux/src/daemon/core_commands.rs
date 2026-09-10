@@ -1,6 +1,9 @@
 use crate::core_command_contract::{CORE_COMMAND_NAMES, is_core_command_name};
 use crate::daemon::routing::DaemonRouteResponse;
 use crate::daemon::status::{DaemonStatusRuntime, project_service_fleet_json};
+use crate::daemon::text::operations::{
+    RestartBackendIdGuardNotice, attach_restart_guard_notices, render_runtime_restart_result,
+};
 use crate::daemon_supervisor::acquire_runtime_restart_permit;
 use crate::paths::PathResolver;
 use serde_json::{Map, Value, json};
@@ -32,9 +35,9 @@ pub trait DaemonCoreCommandRuntime: DaemonStatusRuntime {
         project_root: Option<&str>,
         force: bool,
         wait_for_capture: bool,
-    ) -> Result<(), String> {
+    ) -> Result<Option<RestartBackendIdGuardNotice>, String> {
         let _ = (project_root, force, wait_for_capture);
-        Ok(())
+        Ok(None)
     }
     fn has_remote_credentials(&self) -> bool;
     fn enable_relay_for_user_request(&mut self) -> Value;
@@ -168,11 +171,23 @@ pub fn route_core_command(
                 Err(response) => return response,
             };
             let force = bool_payload_param(payload, "force");
+            let mut restart_guard_notices = Vec::new();
             if !bool_payload_param(payload, "backendIdCapturePrechecked")
-                && let Err(error) =
-                    runtime.prepare_restart_control_plane(project_root.as_deref(), force, true)
+                && let Some(notice) = match runtime.prepare_restart_control_plane(
+                    project_root.as_deref(),
+                    force,
+                    true,
+                ) {
+                    Ok(notice) => notice,
+                    Err(error) => {
+                        return DaemonRouteResponse::json(
+                            500,
+                            command_error(&id, Some(command), error),
+                        );
+                    }
+                }
             {
-                return DaemonRouteResponse::json(500, command_error(&id, Some(command), error));
+                restart_guard_notices.push(notice);
             }
             let resolver = PathResolver::from_env();
             let _restart_lock =
@@ -185,12 +200,26 @@ pub fn route_core_command(
                         );
                     }
                 };
-            if let Err(error) =
-                runtime.prepare_restart_control_plane(project_root.as_deref(), force, false)
-            {
-                return DaemonRouteResponse::json(500, command_error(&id, Some(command), error));
+            match runtime.prepare_restart_control_plane(project_root.as_deref(), force, false) {
+                Ok(Some(notice)) => restart_guard_notices.push(notice),
+                Ok(None) => {}
+                Err(error) => {
+                    return DaemonRouteResponse::json(
+                        500,
+                        command_error(&id, Some(command), error),
+                    );
+                }
             }
-            runtime.restart_control_plane(issued_at, project_root.as_deref())
+            runtime
+                .restart_control_plane(issued_at, project_root.as_deref())
+                .map(|mut result| {
+                    if let Some(restart) = result.get_mut("restart")
+                        && attach_restart_guard_notices(restart, &restart_guard_notices)
+                    {
+                        result["text"] = Value::String(render_runtime_restart_result(restart));
+                    }
+                    result
+                })
         }
         command if command == CORE_COMMAND_NAMES.relay_status => {
             Ok(json!({ "relay": runtime.relay_status() }))

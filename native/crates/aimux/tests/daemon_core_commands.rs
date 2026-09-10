@@ -5,6 +5,7 @@ use aimux::daemon::core_commands::{
 };
 use aimux::daemon::http::DaemonResponseBody;
 use aimux::daemon::status::DaemonStatusRuntime;
+use aimux::daemon::text::operations::RestartBackendIdGuardNotice;
 use aimux::daemon_projects::ProjectsRouteProject;
 use aimux::daemon_state::{AimuxDaemonInfo, DaemonState};
 use aimux::daemon_supervisor::try_acquire_runtime_restart_lock;
@@ -157,14 +158,22 @@ impl DaemonCoreCommandRuntime for FakeCoreRuntime {
         project_root: Option<&str>,
         force: bool,
         wait_for_capture: bool,
-    ) -> Result<(), String> {
+    ) -> Result<Option<RestartBackendIdGuardNotice>, String> {
         if self.record_prepare {
             self.calls.push(format!(
                 "prepare:{}:{force}:{wait_for_capture}",
                 project_root.unwrap_or("")
             ));
         }
-        Ok(())
+        Ok(force.then(|| RestartBackendIdGuardNotice {
+            at_risk_sessions: vec![json!({
+                "projectRoot": project_root.unwrap_or("/repo"),
+                "sessionId": "codex-pending",
+                "tool": "codex",
+                "status": "running"
+            })],
+            tmux_error: None,
+        }))
     }
 
     fn has_remote_credentials(&self) -> bool {
@@ -425,7 +434,9 @@ fn restart_core_command_forwards_force_to_preflight_and_locked_recheck() {
         "issued",
     ));
 
-    assert_eq!(response["result"]["text"], "Aimux Restart\n  failures: 0");
+    let text = response["result"]["text"].as_str().expect("restart text");
+    assert!(text.contains("Restart forced before backendSessionId capture"));
+    assert!(text.contains("codex-pending (codex, running) in /repo"));
     assert_eq!(
         runtime.calls,
         vec![

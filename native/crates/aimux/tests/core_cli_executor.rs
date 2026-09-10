@@ -2,7 +2,9 @@ use aimux::core_cli::{CoreCommandCall, CoreCommandOk, CoreLoopActorContext};
 use aimux::core_cli_executor::{CoreCliRuntime, run_core_cli_with};
 use aimux::core_command_contract::CORE_COMMAND_NAMES;
 use aimux::daemon::text::auth::AuthFlowResult;
-use aimux::daemon::text::operations::RestartControlPlaneTextResult;
+use aimux::daemon::text::operations::{
+    RestartControlPlaneTextResult, render_runtime_restart_result,
+};
 use aimux::daemon_state::{AimuxDaemonInfo, DaemonState, StoppedDaemonInfo};
 use aimux::native_cli_dispatch::CORE_SERVICE_CREATE_TEXT_ROUTE;
 use aimux::native_cli_dispatch::{
@@ -328,27 +330,40 @@ impl CoreCliRuntime for FakeRuntime {
     ) -> Result<RestartControlPlaneTextResult, String> {
         self.restart_calls
             .push((project_root.map(str::to_owned), force));
-        Ok(RestartControlPlaneTextResult {
-            restart: json!({
-                "daemon": {
-                    "previous": null,
-                    "current": { "pid": 9001 },
-                    "retained": false
-                },
-                "projects": [],
-                "summary": {
-                    "projects": 0,
-                    "servicesEnsured": 0,
-                    "runtimeRepairs": 0,
-                    "dashboardsReloaded": 0,
-                    "runtimeRebuildRequired": 0,
-                    "orphanProcessesCleaned": 0,
-                    "orphanTmuxSessionsCleaned": 0,
-                    "failures": self.restart_failures
+        let mut restart = json!({
+            "daemon": {
+                "previous": null,
+                "current": { "pid": 9001 },
+                "retained": false
+            },
+            "projects": [],
+            "summary": {
+                "projects": 0,
+                "servicesEnsured": 0,
+                "runtimeRepairs": 0,
+                "dashboardsReloaded": 0,
+                "runtimeRebuildRequired": 0,
+                "orphanProcessesCleaned": 0,
+                "orphanTmuxSessionsCleaned": 0,
+                "failures": self.restart_failures
+            }
+        });
+        if force {
+            restart["restartGuard"] = json!({
+                "force": {
+                    "status": "bypassed",
+                    "atRiskSessions": [{
+                        "projectRoot": project_root.unwrap_or("/repo"),
+                        "sessionId": "codex-pending",
+                        "tool": "codex",
+                        "status": "running"
+                    }],
+                    "tmuxErrors": []
                 }
-            }),
-            text: format!("Aimux Restart\n  failures: {}", self.restart_failures),
-        })
+            });
+        }
+        let text = render_runtime_restart_result(&restart);
+        Ok(RestartControlPlaneTextResult { restart, text })
     }
 
     fn emit_restart_progress(&mut self, message: &str) {
@@ -2501,7 +2516,8 @@ fn restart_control_plane_runs_native_restart_and_preserves_project_scope() {
     let current = run_core_cli_with(&args(&["restart"]), &mut runtime);
 
     assert_eq!(current.code, 0);
-    assert_eq!(current.stdout, ["Aimux Restart\n  failures: 0"]);
+    assert!(current.stdout[0].contains("Aimux Restart"));
+    assert!(current.stdout[0].contains("failures: 0"));
     assert!(current.stderr.is_empty());
     assert_eq!(runtime.restart_calls, [(None, false)]);
     assert!(runtime.commands.is_empty());
@@ -2512,7 +2528,8 @@ fn restart_control_plane_runs_native_restart_and_preserves_project_scope() {
     );
 
     assert_eq!(execution.code, 0);
-    assert_eq!(execution.stdout, ["Aimux Restart\n  failures: 0"]);
+    assert!(execution.stdout[0].contains("Restart forced before backendSessionId capture"));
+    assert!(execution.stdout[0].contains("codex-pending (codex, running) in /resolved/child"));
     assert!(execution.stderr.is_empty());
     assert_eq!(
         runtime.restart_calls,
@@ -2532,7 +2549,8 @@ fn restart_control_plane_does_not_require_git_cwd_without_project_scope() {
     let execution = run_core_cli_with(&args(&["restart"]), &mut runtime);
 
     assert_eq!(execution.code, 0);
-    assert_eq!(execution.stdout, ["Aimux Restart\n  failures: 0"]);
+    assert!(execution.stdout[0].contains("Aimux Restart"));
+    assert!(execution.stdout[0].contains("failures: 0"));
     assert!(execution.stderr.is_empty());
     assert_eq!(runtime.restart_calls, [(None, false)]);
     assert!(runtime.commands.is_empty());

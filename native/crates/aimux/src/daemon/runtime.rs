@@ -48,8 +48,8 @@ use crate::daemon::text::host_agent::DaemonHostAgentTextRuntime;
 use crate::daemon::text::metadata::DaemonMetadataTextRuntime;
 use crate::daemon::text::notifications::DaemonNotificationTextRuntime;
 use crate::daemon::text::operations::{
-    DaemonOperationsTextRuntime, DashboardOpenRequest, RestartControlPlaneTextResult,
-    empty_restart_project_result, render_runtime_restart_result,
+    DaemonOperationsTextRuntime, DashboardOpenRequest, RestartBackendIdGuardNotice,
+    RestartControlPlaneTextResult, empty_restart_project_result, render_runtime_restart_result,
 };
 use crate::daemon::text::overseer::DaemonOverseerTextRuntime;
 use crate::daemon::text::params::ProjectServiceJsonResult;
@@ -67,6 +67,7 @@ use crate::daemon_state::{
     clear_daemon_info_if_owned, get_daemon_host, get_daemon_port, is_pid_alive, load_daemon_state,
     load_metadata_endpoint, remove_metadata_endpoint, save_daemon_info, save_daemon_state,
 };
+use crate::daemon_supervisor::RUNTIME_RESTART_LOCK_STALE_MS;
 use crate::dashboard_readiness::get_runtime_owner_id;
 use crate::dashboard_targets::{
     DashboardResolveOptions, DashboardTargetContext, DashboardTargetRef, DashboardTargetTmux,
@@ -147,6 +148,9 @@ const INSTALL_CLEANUP_MAX_PER_SWEEP: usize = 50;
 const RECORDING_CLEANUP_MAX_PER_SWEEP: usize = 200;
 const RESTART_BACKEND_ID_CAPTURE_WAIT_MS: u64 = 30_000;
 const RESTART_BACKEND_ID_CAPTURE_POLL_MS: u64 = 250;
+const RESTART_BACKEND_ID_CAPTURE_WAIT_MAX_MS: u64 = RUNTIME_RESTART_LOCK_STALE_MS;
+const RESTART_BACKEND_ID_CAPTURE_POLL_MIN_MS: u64 = 1;
+const RESTART_BACKEND_ID_CAPTURE_POLL_MAX_MS: u64 = 1_000;
 const RESTART_BACKEND_ID_CAPTURE_WAIT_CONFIG_PATH: &[&str] =
     &["runtime", "restart", "backendIdCaptureWaitMs"];
 const RESTART_BACKEND_ID_CAPTURE_POLL_CONFIG_PATH: &[&str] =
@@ -166,7 +170,7 @@ pub struct RealDaemonRuntime {
     restart_live_project_service_pids: Option<BTreeMap<String, Vec<i32>>>,
     restart_backend_id_capture_timeout: Duration,
     restart_backend_id_capture_poll: Duration,
-    restart_backend_id_live_window_ids: Option<BTreeSet<String>>,
+    restart_backend_id_live_window_ids: Option<Result<BTreeSet<String>, String>>,
     runtime_coherence_tmux_provider: Arc<dyn Fn() -> RuntimeCoherenceTmux + Send + Sync>,
     started_instant: Instant,
     relay: Arc<crate::daemon::relay::RelaySupervisor>,
@@ -1111,7 +1115,7 @@ impl RealDaemonRuntime {
         project_root: Option<&str>,
         force: bool,
         wait_for_capture: bool,
-    ) -> Result<(), String> {
+    ) -> Result<Option<RestartBackendIdGuardNotice>, String> {
         let project_roots = self.restart_project_roots(project_root);
         self.wait_for_restart_backend_id_capture_with_options(
             &project_roots,
@@ -1125,27 +1129,46 @@ impl RealDaemonRuntime {
         project_roots: &[String],
         force: bool,
         wait_for_capture: bool,
-    ) -> Result<(), String> {
+    ) -> Result<Option<RestartBackendIdGuardNotice>, String> {
+        let at_risk_result = self.restart_backend_id_at_risk_sessions(project_roots);
         if force {
+            let notice = match at_risk_result {
+                Ok(at_risk) => RestartBackendIdGuardNotice {
+                    at_risk_sessions: restart_backend_id_risks_json(&at_risk),
+                    tmux_error: None,
+                },
+                Err(error) => RestartBackendIdGuardNotice {
+                    at_risk_sessions: Vec::new(),
+                    tmux_error: Some(error),
+                },
+            };
             log_lifecycle_always(
                 "control plane restart backend id guard bypassed",
                 "daemon",
                 Some(json!({
                     "reason": "force",
                     "projectRoots": project_roots,
+                    "atRiskSessions": &notice.at_risk_sessions,
+                    "tmuxError": &notice.tmux_error,
                 })),
             );
-            return Ok(());
+            return Ok(Some(notice));
         }
         let (mut timeout, poll) = self.restart_backend_id_capture_timing(project_roots);
         if !wait_for_capture {
             timeout = Duration::ZERO;
         }
         let started = Instant::now();
+        let mut next_at_risk_result = Some(at_risk_result);
         loop {
-            let at_risk = self.restart_backend_id_at_risk_sessions(project_roots);
+            let at_risk = if let Some(result) = next_at_risk_result.take() {
+                result
+            } else {
+                self.restart_backend_id_at_risk_sessions(project_roots)
+            }
+            .map_err(render_backend_id_tmux_query_refusal)?;
             if at_risk.is_empty() {
-                return Ok(());
+                return Ok(None);
             }
             if started.elapsed() >= timeout {
                 let error = render_backend_id_capture_refusal(&at_risk, timeout);
@@ -1173,16 +1196,16 @@ impl RealDaemonRuntime {
     fn restart_backend_id_at_risk_sessions(
         &self,
         project_roots: &[String],
-    ) -> Vec<RestartBackendIdRisk> {
-        let live_window_ids = self
-            .restart_backend_id_live_window_ids
-            .clone()
-            .unwrap_or_else(|| TmuxRuntimeManager::new().live_window_ids());
-        restart_backend_id_at_risk_sessions_with_live_window_ids(
+    ) -> Result<Vec<RestartBackendIdRisk>, String> {
+        let live_window_ids = match self.restart_backend_id_live_window_ids.clone() {
+            Some(result) => result,
+            None => TmuxRuntimeManager::new().try_live_window_ids(),
+        }?;
+        Ok(restart_backend_id_at_risk_sessions_with_live_window_ids(
             &self.resolver,
             project_roots,
             Some(&live_window_ids),
-        )
+        ))
     }
 
     fn restart_backend_id_capture_timing(&self, project_roots: &[String]) -> (Duration, Duration) {
@@ -2410,7 +2433,7 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
         project_root: Option<&str>,
         force: bool,
         wait_for_capture: bool,
-    ) -> Result<(), String> {
+    ) -> Result<Option<RestartBackendIdGuardNotice>, String> {
         self.prepare_restart_control_plane_runtime(project_root, force, wait_for_capture)
     }
 
@@ -2593,7 +2616,7 @@ impl DaemonOperationsTextRuntime for RealDaemonRuntime {
         project_root: Option<&str>,
         force: bool,
         wait_for_capture: bool,
-    ) -> Result<(), String> {
+    ) -> Result<Option<RestartBackendIdGuardNotice>, String> {
         self.prepare_restart_control_plane_runtime(project_root, force, wait_for_capture)
     }
 
@@ -3792,11 +3815,20 @@ pub fn preflight_restart_backend_id_capture(
     resolver: &PathResolver,
     project_root: Option<&str>,
     force: bool,
-) -> Result<(), String> {
-    if force {
-        return Ok(());
-    }
+) -> Result<Option<RestartBackendIdGuardNotice>, String> {
     let project_roots = restart_backend_id_guard_project_roots(resolver, project_root);
+    if force {
+        return match restart_backend_id_at_risk_sessions(resolver, &project_roots) {
+            Ok(at_risk) => Ok(Some(RestartBackendIdGuardNotice {
+                at_risk_sessions: restart_backend_id_risks_json(&at_risk),
+                tmux_error: None,
+            })),
+            Err(error) => Ok(Some(RestartBackendIdGuardNotice {
+                at_risk_sessions: Vec::new(),
+                tmux_error: Some(error),
+            })),
+        };
+    }
     let (timeout, poll) = restart_backend_id_capture_timing_for_resolver(
         resolver,
         &project_roots,
@@ -3804,6 +3836,7 @@ pub fn preflight_restart_backend_id_capture(
         Duration::from_millis(RESTART_BACKEND_ID_CAPTURE_POLL_MS),
     );
     wait_for_restart_backend_id_capture_with_resolver(resolver, &project_roots, timeout, poll)
+        .map(|()| None)
 }
 
 fn restart_backend_id_guard_project_roots(
@@ -3820,13 +3853,13 @@ fn restart_backend_id_guard_project_roots(
 fn restart_backend_id_at_risk_sessions(
     resolver: &PathResolver,
     project_roots: &[String],
-) -> Vec<RestartBackendIdRisk> {
-    let live_window_ids = TmuxRuntimeManager::new().live_window_ids();
-    restart_backend_id_at_risk_sessions_with_live_window_ids(
+) -> Result<Vec<RestartBackendIdRisk>, String> {
+    let live_window_ids = TmuxRuntimeManager::new().try_live_window_ids()?;
+    Ok(restart_backend_id_at_risk_sessions_with_live_window_ids(
         resolver,
         project_roots,
         Some(&live_window_ids),
-    )
+    ))
 }
 
 fn restart_backend_id_at_risk_sessions_with_live_window_ids(
@@ -3930,12 +3963,20 @@ fn restart_backend_id_capture_timing_for_resolver(
         if let Some(value) =
             config_duration_millis(&config, RESTART_BACKEND_ID_CAPTURE_WAIT_CONFIG_PATH)
         {
-            timeout = timeout.max(value);
+            timeout = timeout.max(value).min(Duration::from_millis(
+                RESTART_BACKEND_ID_CAPTURE_WAIT_MAX_MS,
+            ));
         }
         if let Some(value) =
             config_duration_millis(&config, RESTART_BACKEND_ID_CAPTURE_POLL_CONFIG_PATH)
         {
-            poll = value;
+            poll = value
+                .max(Duration::from_millis(
+                    RESTART_BACKEND_ID_CAPTURE_POLL_MIN_MS,
+                ))
+                .min(Duration::from_millis(
+                    RESTART_BACKEND_ID_CAPTURE_POLL_MAX_MS,
+                ));
         }
     }
     (timeout, poll)
@@ -3949,7 +3990,8 @@ fn wait_for_restart_backend_id_capture_with_resolver(
 ) -> Result<(), String> {
     let started = Instant::now();
     loop {
-        let at_risk = restart_backend_id_at_risk_sessions(resolver, project_roots);
+        let at_risk = restart_backend_id_at_risk_sessions(resolver, project_roots)
+            .map_err(render_backend_id_tmux_query_refusal)?;
         if at_risk.is_empty() {
             return Ok(());
         }
@@ -3981,6 +4023,26 @@ fn render_backend_id_capture_refusal(risks: &[RestartBackendIdRisk], waited: Dur
             .to_owned(),
     );
     lines.join("\n")
+}
+
+fn render_backend_id_tmux_query_refusal(error: String) -> String {
+    format!(
+        "refusing to restart control plane: tmux live-window inventory failed: {error}\nrun `aimux restart --force` to proceed without live-window protection"
+    )
+}
+
+fn restart_backend_id_risks_json(risks: &[RestartBackendIdRisk]) -> Vec<Value> {
+    risks
+        .iter()
+        .map(|risk| {
+            json!({
+                "projectRoot": &risk.project_root,
+                "sessionId": &risk.session_id,
+                "tool": &risk.tool,
+                "status": &risk.status,
+            })
+        })
+        .collect()
 }
 
 fn restart_guard_tool_config<'a>(config: &'a Value, session: &Value) -> Option<&'a Value> {
@@ -4327,7 +4389,7 @@ mod tests {
         let verifier = Arc::new(RestartTestProcessVerifier::current_native([91_007]));
         let mut runtime = fixture.runtime(launcher.clone(), verifier);
         runtime.restart_backend_id_capture_timeout = Duration::ZERO;
-        runtime.restart_backend_id_live_window_ids = Some(["@codex-pending".to_owned()].into());
+        runtime.restart_backend_id_live_window_ids = Some(Ok(["@codex-pending".to_owned()].into()));
 
         let error = runtime
             .prepare_restart_control_plane_runtime(None, false, false)
@@ -4432,6 +4494,117 @@ mod tests {
     }
 
     #[test]
+    fn control_plane_restart_backend_id_wait_budget_clamps_config_edges() {
+        let fixture = restart_service_fixture("restart-backend-id-config-clamp");
+        let project = fixture.project_root.clone();
+        let mut resolver = fixture.resolver.clone();
+        crate::atomic_write::write_json_atomic(
+            resolver.config_path_for(&project),
+            &json!({
+                "runtime": {
+                    "restart": {
+                        "backendIdCaptureWaitMs": u64::MAX,
+                        "backendIdCapturePollMs": 0
+                    }
+                }
+            }),
+        )
+        .expect("write project config");
+
+        let (timeout, poll) = restart_backend_id_capture_timing_for_resolver(
+            &fixture.resolver,
+            std::slice::from_ref(&project),
+            Duration::from_millis(RESTART_BACKEND_ID_CAPTURE_WAIT_MS),
+            Duration::from_millis(RESTART_BACKEND_ID_CAPTURE_POLL_MS),
+        );
+
+        assert_eq!(timeout, Duration::from_millis(120_000));
+        assert_eq!(poll, Duration::from_millis(1));
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn tmux_live_window_query_returns_error_distinct_from_empty_inventory() {
+        let mut tmux =
+            TmuxRuntimeManager::with_exec(|_args, _options| Err("tmux unavailable".to_owned()));
+
+        let error = tmux
+            .try_live_window_ids()
+            .expect_err("tmux query failure must stay distinct from no live windows");
+
+        assert!(error.contains("tmux unavailable"));
+    }
+
+    #[test]
+    fn control_plane_restart_refuses_when_tmux_live_window_query_fails() {
+        let fixture = restart_service_fixture("restart-refuse-tmux-query-failed");
+        let project_id = fixture.register_project();
+        fixture.persist_service(&project_id, 91_018, ProjectServiceStatus::Running);
+        fixture.persist_endpoint(91_018);
+        fixture.persist_runtime_session_with_window(
+            "codex-pending",
+            "codex",
+            "running",
+            None,
+            Some("@codex-pending"),
+            None,
+        );
+        let launcher = Arc::new(RestartTestLauncher::new(91_218));
+        let verifier = Arc::new(RestartTestProcessVerifier::current_native([91_018]));
+        let mut runtime = fixture.runtime(launcher.clone(), verifier);
+        runtime.restart_backend_id_capture_timeout = Duration::ZERO;
+        runtime.restart_backend_id_live_window_ids = Some(Err("tmux unavailable".to_owned()));
+
+        let error = runtime
+            .prepare_restart_control_plane_runtime(None, false, false)
+            .expect_err("tmux query failure should refuse restart");
+
+        assert!(error.contains("tmux live-window inventory failed"));
+        assert!(error.contains("tmux unavailable"));
+        assert!(error.contains("aimux restart --force"));
+        assert!(launcher.calls().is_empty());
+        assert!(launcher.terminations().is_empty());
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn forced_restart_report_names_at_risk_sessions() {
+        let report = json!({
+            "daemon": {
+                "previous": null,
+                "current": { "pid": 9001 },
+                "retained": false
+            },
+            "restartGuard": {
+                "force": {
+                    "atRiskSessions": [{
+                        "projectRoot": "/repo",
+                        "sessionId": "codex-pending",
+                        "tool": "codex",
+                        "status": "running"
+                    }]
+                }
+            },
+            "projects": [],
+            "summary": {
+                "projects": 0,
+                "servicesEnsured": 0,
+                "runtimeRepairs": 0,
+                "dashboardsReloaded": 0,
+                "runtimeRebuildRequired": 0,
+                "orphanProcessesCleaned": 0,
+                "orphanTmuxSessionsCleaned": 0,
+                "failures": 0
+            }
+        });
+
+        let text = render_runtime_restart_result(&report);
+
+        assert!(text.contains("Restart forced before backendSessionId capture"));
+        assert!(text.contains("codex-pending (codex, running) in /repo"));
+    }
+
+    #[test]
     fn control_plane_restart_force_bypasses_stuck_backend_id_guard() {
         let fixture = restart_service_fixture("restart-force-pending-backend-id");
         let project = fixture.project_root.clone();
@@ -4450,7 +4623,7 @@ mod tests {
         let verifier = Arc::new(RestartTestProcessVerifier::current_native([91_017]));
         let mut runtime = fixture.runtime(launcher.clone(), verifier);
         runtime.restart_backend_id_capture_timeout = Duration::ZERO;
-        runtime.restart_backend_id_live_window_ids = Some(["@codex-pending".to_owned()].into());
+        runtime.restart_backend_id_live_window_ids = Some(Ok(["@codex-pending".to_owned()].into()));
 
         runtime
             .prepare_restart_control_plane_runtime(None, true, false)

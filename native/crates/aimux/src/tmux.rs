@@ -420,14 +420,17 @@ impl TmuxRuntimeManager {
     /// Window ids that currently exist across every tmux session on this server.
     /// One call, so a caller validating many sessions does not spawn tmux per session.
     pub fn live_window_ids(&mut self) -> std::collections::BTreeSet<String> {
-        let Ok(raw) = self.exec_owned(list_all_window_ids_argv(), None) else {
-            return std::collections::BTreeSet::new();
-        };
-        raw.lines()
+        self.try_live_window_ids().unwrap_or_default()
+    }
+
+    pub fn try_live_window_ids(&mut self) -> Result<std::collections::BTreeSet<String>, String> {
+        let raw = self.exec_owned(list_all_window_ids_argv(), None)?;
+        Ok(raw
+            .lines()
             .map(str::trim)
             .filter(|line| !line.is_empty())
             .map(str::to_owned)
-            .collect()
+            .collect::<std::collections::BTreeSet<_>>())
     }
 
     pub fn has_window(&mut self, target: &TmuxTarget) -> bool {

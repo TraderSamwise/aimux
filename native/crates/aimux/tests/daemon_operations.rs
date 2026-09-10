@@ -2,8 +2,8 @@ use aimux::core_command_contract::CORE_API_ROUTES;
 use aimux::daemon::http::DaemonResponseBody;
 use aimux::daemon::routing::DaemonRouteResponse;
 use aimux::daemon::text::operations::{
-    DaemonOperationsTextRuntime, DashboardOpenRequest, RestartControlPlaneTextResult,
-    route_operations_text_request,
+    DaemonOperationsTextRuntime, DashboardOpenRequest, RestartBackendIdGuardNotice,
+    RestartControlPlaneTextResult, route_operations_text_request,
 };
 use aimux::daemon::text::params::ProjectServiceJsonResult;
 use aimux::daemon_supervisor::try_acquire_runtime_restart_lock;
@@ -164,7 +164,7 @@ impl DaemonOperationsTextRuntime for FakeOperationsRuntime {
         project_root: Option<&str>,
         force: bool,
         wait_for_capture: bool,
-    ) -> Result<(), String> {
+    ) -> Result<Option<RestartBackendIdGuardNotice>, String> {
         if self.record_prepare {
             self.calls.push(Call {
                 name: "prepare",
@@ -174,7 +174,15 @@ impl DaemonOperationsTextRuntime for FakeOperationsRuntime {
                 ..Call::simple("prepare")
             });
         }
-        Ok(())
+        Ok(force.then(|| RestartBackendIdGuardNotice {
+            at_risk_sessions: vec![json!({
+                "projectRoot": project_root.unwrap_or("/repo"),
+                "sessionId": "codex-pending",
+                "tool": "codex",
+                "status": "running"
+            })],
+            tmux_error: None,
+        }))
     }
 
     fn get_project_service_json(

@@ -23,6 +23,43 @@ pub struct RestartControlPlaneTextResult {
     pub text: String,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct RestartBackendIdGuardNotice {
+    pub at_risk_sessions: Vec<Value>,
+    pub tmux_error: Option<String>,
+}
+
+pub fn attach_restart_guard_notices(
+    restart: &mut Value,
+    notices: &[RestartBackendIdGuardNotice],
+) -> bool {
+    let mut at_risk_sessions = Vec::new();
+    let mut tmux_errors = Vec::new();
+    for notice in notices {
+        at_risk_sessions.extend(notice.at_risk_sessions.iter().cloned());
+        if let Some(error) = notice.tmux_error.as_deref() {
+            tmux_errors.push(Value::String(error.to_owned()));
+        }
+    }
+    if at_risk_sessions.is_empty() && tmux_errors.is_empty() {
+        return false;
+    }
+    let Some(restart) = restart.as_object_mut() else {
+        return false;
+    };
+    restart.insert(
+        "restartGuard".to_owned(),
+        json!({
+            "force": {
+                "status": "bypassed",
+                "atRiskSessions": at_risk_sessions,
+                "tmuxErrors": tmux_errors,
+            }
+        }),
+    );
+    true
+}
+
 pub fn empty_restart_project_result(project_root: &str) -> Value {
     json!({
         "projectRoot": project_root,
@@ -79,6 +116,53 @@ pub fn render_runtime_restart_result(result: &Value) -> String {
         ),
         format!("  failures: {}", summary_number(summary, "failures")),
     ];
+
+    if let Some(force) = result
+        .get("restartGuard")
+        .and_then(|guard| guard.get("force"))
+    {
+        let at_risk = force
+            .get("atRiskSessions")
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        let tmux_errors = force
+            .get("tmuxErrors")
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        if !at_risk.is_empty() || !tmux_errors.is_empty() {
+            lines.push(String::new());
+            lines.push("Restart forced before backendSessionId capture:".into());
+            for session in at_risk {
+                lines.push(format!(
+                    "  - {} ({}, {}) in {}",
+                    session
+                        .get("sessionId")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown"),
+                    session
+                        .get("tool")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown"),
+                    session
+                        .get("status")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown"),
+                    session
+                        .get("projectRoot")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown"),
+                ));
+            }
+            for error in tmux_errors {
+                lines.push(format!(
+                    "  - tmux live-window inventory failed: {}",
+                    error.as_str().unwrap_or("unknown")
+                ));
+            }
+        }
+    }
 
     if summary
         .get("runtimeRebuildRequired")
@@ -175,9 +259,9 @@ pub trait DaemonOperationsTextRuntime {
         project_root: Option<&str>,
         force: bool,
         wait_for_capture: bool,
-    ) -> Result<(), String> {
+    ) -> Result<Option<RestartBackendIdGuardNotice>, String> {
         let _ = (project_root, force, wait_for_capture);
-        Ok(())
+        Ok(None)
     }
     fn restart_control_plane(
         &mut self,
@@ -407,11 +491,15 @@ pub fn restart_text_route(
         .or_else(|| string_param(route_url, body, "project"))
         .map(|project| runtime.resolve_project_root(&project));
     let force = bool_param(route_url, body, "force");
+    let mut restart_guard_notices = Vec::new();
     if !bool_param(route_url, body, "backendIdCapturePrechecked")
-        && let Err(error) =
-            runtime.prepare_restart_control_plane(project_root.as_deref(), force, true)
+        && let Some(notice) =
+            match runtime.prepare_restart_control_plane(project_root.as_deref(), force, true) {
+                Ok(notice) => notice,
+                Err(error) => return DaemonRouteResponse::text(500, format!("{error}\n")),
+            }
     {
-        return DaemonRouteResponse::text(500, format!("{error}\n"));
+        restart_guard_notices.push(notice);
     }
     let resolver = PathResolver::from_env();
     let _restart_lock =
@@ -419,12 +507,16 @@ pub fn restart_text_route(
             Ok(permit) => permit,
             Err(error) => return DaemonRouteResponse::text(500, format!("{error}\n")),
         };
-    if let Err(error) = runtime.prepare_restart_control_plane(project_root.as_deref(), force, false)
-    {
-        return DaemonRouteResponse::text(500, format!("{error}\n"));
+    match runtime.prepare_restart_control_plane(project_root.as_deref(), force, false) {
+        Ok(Some(notice)) => restart_guard_notices.push(notice),
+        Ok(None) => {}
+        Err(error) => return DaemonRouteResponse::text(500, format!("{error}\n")),
     }
     match runtime.restart_control_plane(&issued_at, project_root.as_deref()) {
-        Ok(result) => {
+        Ok(mut result) => {
+            if attach_restart_guard_notices(&mut result.restart, &restart_guard_notices) {
+                result.text = render_runtime_restart_result(&result.restart);
+            }
             let mut response = text_or_json_lines(
                 route_url,
                 result.restart.clone(),
