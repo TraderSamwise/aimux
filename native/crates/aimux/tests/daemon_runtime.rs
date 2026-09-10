@@ -23,12 +23,17 @@ use aimux::daemon_state::{
     ProjectServiceStatus, load_metadata_endpoint, save_daemon_state, save_metadata_endpoint,
     save_metadata_state,
 };
+use aimux::dashboard_command_spec::get_dashboard_command_spec;
+use aimux::dashboard_readiness::get_runtime_owner_id;
 use aimux::paths::PathResolver;
 use aimux::project_api_contract::routes as project_routes;
 use aimux::remote_credentials::{AimuxCredentials, load_credentials, save_credentials_at};
-use aimux::runtime_coherence::RuntimeCoherenceTmux;
+use aimux::runtime_coherence::{RuntimeCoherenceTmux, RuntimeCoherenceTmuxWindow};
 use aimux::runtime_topology::{runtime_topology_path, write_runtime_topology};
-use aimux::tmux::TmuxTarget;
+use aimux::tmux::{
+    AIMUX_TMUX_RUNTIME_CONTRACT_VERSION, TMUX_DASHBOARD_BUILD_OPTION, TMUX_DASHBOARD_OWNER_OPTION,
+    TMUX_RUNTIME_CONTRACT_OPTION, TMUX_RUNTIME_OWNER_OPTION, TmuxTarget,
+};
 use aimux::tmux_exec_metrics::{TmuxExecMode, record_tmux_exec, reset_tmux_exec_metrics};
 use aimux::tmux_expose::{ExposeScope, ExposeScopeView, ExposeSublabel};
 use aimux::tmux_expose_hot_snapshot::{HotExposeScopeKey, write_hot_expose_scope_view};
@@ -898,6 +903,121 @@ fn native_daemon_doctor_versions_reports_tmux_snapshot() {
     let body = String::from_utf8(text_response.body).expect("versions text");
     assert!(body.contains("  tmux: tmux 3.6b\n"));
     assert!(body.contains("  tmux sessions: 1\n"));
+    fixture.cleanup();
+}
+
+#[test]
+fn native_daemon_doctor_versions_uses_dashboard_launch_stamp_for_current_dashboard() {
+    let fixture = RuntimeFixture::new("doctor-dashboard-stamp");
+    let project = fixture.project("live");
+    let mut resolver = fixture.resolver();
+    let entry = resolver
+        .register_project(&project)
+        .expect("register project")
+        .expect("project entry");
+    let pid = std::process::id() as i32;
+    persist_service(
+        &resolver,
+        &entry.id,
+        &project,
+        pid,
+        ProjectServiceStatus::Running,
+    );
+    save_metadata_endpoint(
+        resolver.project_state_dir_for(&project),
+        &MetadataApiEndpoint {
+            host: "127.0.0.1".into(),
+            port: 45_901,
+            pid,
+            updated_at: "now".into(),
+        },
+    )
+    .expect("metadata endpoint");
+    let project_root = project.to_string_lossy().into_owned();
+    let session_name = aimux::tmux::project_session(&project, "aimux").session_name;
+    let dashboard_stamp = get_dashboard_command_spec(&project_root)
+        .expect("dashboard command spec")
+        .dashboard_build_stamp;
+    let runtime_owner = get_runtime_owner_id();
+    let mut runtime = fixture
+        .runtime()
+        .with_runtime_coherence_tmux_provider(Arc::new({
+            let project_root = project_root.clone();
+            let session_name = session_name.clone();
+            let dashboard_stamp = dashboard_stamp.clone();
+            let runtime_owner = runtime_owner.clone();
+            move || RuntimeCoherenceTmux {
+                available: true,
+                version: Some("tmux 3.6b".into()),
+                session_names: vec![session_name.clone()],
+                session_options: [(
+                    session_name.clone(),
+                    [
+                        ("@aimux-project-root".to_owned(), Some(project_root.clone())),
+                        (
+                            TMUX_RUNTIME_OWNER_OPTION.to_owned(),
+                            Some(runtime_owner.clone()),
+                        ),
+                        (
+                            TMUX_RUNTIME_CONTRACT_OPTION.to_owned(),
+                            Some(AIMUX_TMUX_RUNTIME_CONTRACT_VERSION.to_owned()),
+                        ),
+                    ]
+                    .into_iter()
+                    .collect(),
+                )]
+                .into_iter()
+                .collect(),
+                windows: [(
+                    session_name.clone(),
+                    vec![RuntimeCoherenceTmuxWindow {
+                        id: "@73".to_owned(),
+                        index: 0,
+                        name: "dashboard".to_owned(),
+                        active: true,
+                    }],
+                )]
+                .into_iter()
+                .collect(),
+                window_options: [(
+                    "@73".to_owned(),
+                    [
+                        (
+                            TMUX_DASHBOARD_BUILD_OPTION.to_owned(),
+                            Some(dashboard_stamp.clone()),
+                        ),
+                        (
+                            TMUX_DASHBOARD_OWNER_OPTION.to_owned(),
+                            Some(runtime_owner.clone()),
+                        ),
+                    ]
+                    .into_iter()
+                    .collect(),
+                )]
+                .into_iter()
+                .collect(),
+                window_alive: [("@73".to_owned(), true)].into_iter().collect(),
+                pane_start_commands: BTreeMap::new(),
+            }
+        }));
+
+    let response = handle_daemon_runtime_request(
+        &mut runtime,
+        request(
+            "GET",
+            &format!("{}?json=1", CORE_API_ROUTES.doctor_versions_text),
+        ),
+    );
+    let report: Value = serde_json::from_slice(&response.body).expect("report json");
+
+    assert_eq!(response.status, 200);
+    assert_eq!(
+        report["projects"][0]["expectedDashboardBuildStamp"],
+        json!(dashboard_stamp)
+    );
+    assert_eq!(report["projects"][0]["dashboards"][0]["status"], "ok");
+    assert_eq!(report["summary"]["ok"], json!(1));
+    assert_eq!(report["summary"]["needsRestart"], json!(0));
     fixture.cleanup();
 }
 
