@@ -16,6 +16,9 @@ jobs:
   rust-format-advisory:
     name: Rust format advisory
     runs-on: ubuntu-latest
+    # Advisory until the existing master formatting drift is committed. Another
+    # agent currently has the formatted versions dirty in the shared checkout,
+    # so a working-tree fmt check can look clean while master blobs still fail.
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
@@ -69,6 +72,9 @@ jobs:
       - name: Prepare isolated Aimux home
         run: |
           mkdir -p "$AIMUX_HOME"
+          # This marker intentionally disables the cargo-test materialization
+          # guard for CI's disposable AIMUX_HOME. A test that relies on ambient
+          # AIMUX_HOME can pass here while being refused on a developer laptop.
           printf '{"kind":"github-actions","ownerPid":%s}\n' "$$" > "$AIMUX_HOME/test-isolation.json"
 
       - name: Install tmux
