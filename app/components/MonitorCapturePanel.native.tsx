@@ -30,6 +30,7 @@ import {
   type MonitorSample,
   type MonitorCapturePanelProps,
 } from "@/lib/monitor-capture";
+import { resolveOnDeviceLocaleSupport } from "@/lib/monitor-speech-support";
 import {
   MONITOR_CAMERA_MAX_ZOOM,
   MONITOR_CAMERA_MIN_ZOOM,
@@ -55,17 +56,6 @@ interface FocusGesture {
   startTouches: { x: number; y: number };
   startViewport: MonitorCameraViewport;
   touchCount: number;
-}
-
-async function supportsRequestedOnDeviceLocale(locale: string): Promise<boolean> {
-  if (!ExpoSpeechRecognitionModule.supportsOnDeviceRecognition()) return false;
-  if (Platform.OS === "ios") return true;
-  try {
-    const supported = await ExpoSpeechRecognitionModule.getSupportedLocales({});
-    return supported.installedLocales.includes(locale);
-  } catch {
-    return false;
-  }
 }
 
 export function MonitorCapturePanel({
@@ -285,12 +275,17 @@ export function MonitorCapturePanel({
         setSpeechError("Speech recognition is unavailable on this device.");
         return;
       }
-      if (
-        settings.speechOnDeviceOnly &&
-        !(await supportsRequestedOnDeviceLocale(settings.speechLanguage))
-      ) {
-        setSpeechError(`On-device speech is unavailable for ${settings.speechLanguage}.`);
-        return;
+      if (settings.speechOnDeviceOnly) {
+        const localeSupport = await resolveOnDeviceLocaleSupport(settings.speechLanguage, {
+          platformOS: Platform.OS,
+          supportsOnDeviceRecognition: () =>
+            ExpoSpeechRecognitionModule.supportsOnDeviceRecognition(),
+          getSupportedLocales: () => ExpoSpeechRecognitionModule.getSupportedLocales({}),
+        });
+        if (localeSupport.status !== "supported") {
+          setSpeechError(localeSupport.message);
+          return;
+        }
       }
       const permissions = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
       if (!permissions.granted) {
