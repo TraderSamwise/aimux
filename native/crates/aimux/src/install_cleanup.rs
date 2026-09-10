@@ -1,5 +1,6 @@
 use crate::cli_launcher::get_aimux_stable_shim_path;
-use crate::process_inspector::list_process_args;
+use crate::debug_logging::log_lifecycle_always;
+use crate::process_inspector::try_list_process_args;
 use crate::tmux::tmux_command_from_env;
 use serde::{Serialize, Serializer};
 use std::collections::BTreeSet;
@@ -179,9 +180,10 @@ pub fn plan_install_cleanup(options: PlanInstallCleanupOptions) -> InstallCleanu
         .map(|(name, _, _)| name.clone())
         .collect::<BTreeSet<_>>();
 
-    let mut remove = debris
-        .into_iter()
-        .map(|name| {
+    let mut keep = Vec::new();
+    let mut remove = Vec::new();
+    if references.complete {
+        remove.extend(debris.into_iter().map(|name| {
             let path = Path::new(&root).join(&name);
             InstallCleanupCandidate {
                 name,
@@ -189,9 +191,14 @@ pub fn plan_install_cleanup(options: PlanInstallCleanupOptions) -> InstallCleanu
                 age_days: 0.0,
                 size_bytes: measure_size(&path),
             }
-        })
-        .collect::<Vec<_>>();
-    let mut keep = Vec::new();
+        }));
+    } else {
+        keep.extend(
+            debris
+                .into_iter()
+                .map(|name| kept(name, InstallKeepReason::ReferencesUnverified)),
+        );
+    }
     for (name, path, mtime_ms) in with_mtime {
         let age_days = (now as f64 - mtime_ms as f64) / MS_PER_DAY;
         if Some(name.as_str()) == current.as_deref() {
@@ -442,11 +449,30 @@ fn current_install_name(root: &str, stable_shim_path: &str) -> Option<String> {
 }
 
 fn default_reference_text() -> InstallReferenceText {
-    let process_args = list_process_args()
-        .into_iter()
-        .map(|entry| entry.args)
-        .collect::<Vec<_>>()
-        .join("\n");
+    default_reference_text_with_process_inventory(try_list_process_args)
+}
+
+fn default_reference_text_with_process_inventory(
+    list_processes: impl FnOnce() -> Result<Vec<crate::process_inspector::ProcessArgsEntry>, String>,
+) -> InstallReferenceText {
+    let (process_args, process_complete) = match list_processes() {
+        Ok(entries) => (
+            entries
+                .into_iter()
+                .map(|entry| entry.args)
+                .collect::<Vec<_>>()
+                .join("\n"),
+            true,
+        ),
+        Err(error) => {
+            log_lifecycle_always(
+                "skipped install cleanup: process reference inventory failed",
+                "install-cleanup",
+                Some(serde_json::json!({ "error": error })),
+            );
+            (String::new(), false)
+        }
+    };
     let tmux = tmux_persisted_command_text();
     let text = std::iter::once(process_args)
         .chain(tmux.text)
@@ -454,7 +480,7 @@ fn default_reference_text() -> InstallReferenceText {
         .collect();
     InstallReferenceText {
         text,
-        complete: tmux.complete,
+        complete: process_complete && tmux.complete,
     }
 }
 
@@ -711,4 +737,94 @@ fn now_ms() -> u128 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+    struct TestDir(PathBuf);
+
+    impl TestDir {
+        fn new(label: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "aimux-install-cleanup-src-{label}-{}-{}",
+                std::process::id(),
+                TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+            ));
+            let _ = fs::remove_dir_all(&path);
+            fs::create_dir_all(&path).expect("create temp dir");
+            Self(path)
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn failed_process_reference_inventory_marks_scan_incomplete() {
+        let references =
+            default_reference_text_with_process_inventory(|| Err("ps unavailable".to_owned()));
+
+        assert!(!references.complete);
+    }
+
+    #[test]
+    fn incomplete_reference_scan_blocks_all_install_removal() {
+        let temp = TestDir::new("references-unverified");
+        let root = temp.0.join("native");
+        let old = root.join("local-old/bin");
+        let debris = root.join(format!("local-debris{REMOVING_SUFFIX}"));
+        fs::create_dir_all(&old).expect("create install");
+        fs::create_dir_all(&debris).expect("create debris");
+        fs::write(old.join("aimux"), "binary").expect("write binary");
+
+        let plan = plan_install_cleanup(PlanInstallCleanupOptions {
+            root: Some(root.to_string_lossy().into_owned()),
+            keep_recent: Some(0),
+            retention_days: Some(1),
+            now_ms: Some(10 * 86_400_000),
+            stable_shim_path: Some(temp.0.join("aimux").to_string_lossy().into_owned()),
+            list_reference_text: Some(Box::new(|| InstallReferenceText {
+                text: Vec::new(),
+                complete: false,
+            })),
+            measure_size: Some(Box::new(|_| 1)),
+        });
+
+        assert!(plan.remove.is_empty(), "{:?}", plan.remove);
+        assert!(
+            plan.keep.iter().any(|entry| entry.name == "local-old"
+                && entry.reason == InstallKeepReason::ReferencesUnverified),
+            "{:?}",
+            plan.keep
+        );
+        assert!(
+            plan.keep.iter().any(
+                |entry| entry.name == format!("local-debris{REMOVING_SUFFIX}")
+                    && entry.reason == InstallKeepReason::ReferencesUnverified
+            ),
+            "{:?}",
+            plan.keep
+        );
+
+        let result = run_install_cleanup(
+            plan,
+            RunInstallCleanupInput {
+                dry_run: Some(false),
+                limit: None,
+                remove_dir: Some(Box::new(|_| {
+                    panic!("install cleanup must not remove files when references are unverified")
+                })),
+            },
+        );
+        assert!(result.results.is_empty());
+        assert!(debris.exists());
+    }
 }

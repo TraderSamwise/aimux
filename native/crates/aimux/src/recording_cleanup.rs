@@ -26,6 +26,8 @@ pub struct RecordingCleanupPlan {
     pub remove: Vec<RecordingCleanupCandidate>,
     pub kept_count: usize,
     pub reclaimable_bytes: u64,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub errors: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -76,7 +78,19 @@ pub fn plan_recording_cleanup(
     let mut kept_count = 0usize;
     for path in list_recording_files(projects_root.as_ref(), extra_dirs) {
         let dir = path.parent().unwrap_or_else(|| Path::new(""));
-        if live_session_ids(dir).contains(&recording_session_id(&path)) {
+        let live_session_ids = match live_session_ids(dir) {
+            Ok(live_session_ids) => live_session_ids,
+            Err(error) => {
+                return RecordingCleanupPlan {
+                    retention_days,
+                    remove: Vec::new(),
+                    kept_count: 0,
+                    reclaimable_bytes: 0,
+                    errors: vec![error],
+                };
+            }
+        };
+        if live_session_ids.contains(&recording_session_id(&path)) {
             kept_count += 1;
             continue;
         }
@@ -107,6 +121,7 @@ pub fn plan_recording_cleanup(
         remove,
         kept_count,
         reclaimable_bytes,
+        errors: Vec::new(),
     }
 }
 
@@ -182,18 +197,28 @@ fn list_recording_files(projects_root: &Path, extra_dirs: &[PathBuf]) -> Vec<Pat
         .collect()
 }
 
-fn live_session_ids(recordings_dir: &Path) -> BTreeSet<String> {
+fn live_session_ids(recordings_dir: &Path) -> Result<BTreeSet<String>, String> {
     let state_path = recordings_dir
         .parent()
         .unwrap_or(recordings_dir)
         .join("state.json");
-    let Ok(text) = fs::read_to_string(state_path) else {
-        return BTreeSet::new();
+    let text = match fs::read_to_string(&state_path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeSet::new()),
+        Err(error) => {
+            return Err(format!(
+                "skipped recording cleanup: failed to read live session state {}: {error}",
+                state_path.display()
+            ));
+        }
     };
-    let Ok(parsed) = serde_json::from_str::<Value>(&text) else {
-        return BTreeSet::new();
-    };
-    match parsed.get("sessions") {
+    let parsed = serde_json::from_str::<Value>(&text).map_err(|error| {
+        format!(
+            "skipped recording cleanup: failed to parse live session state {}: {error}",
+            state_path.display()
+        )
+    })?;
+    Ok(match parsed.get("sessions") {
         Some(Value::Array(sessions)) => sessions
             .iter()
             .filter_map(|session| match session {
@@ -207,7 +232,7 @@ fn live_session_ids(recordings_dir: &Path) -> BTreeSet<String> {
             .collect(),
         Some(Value::Object(sessions)) => sessions.keys().cloned().collect(),
         _ => BTreeSet::new(),
-    }
+    })
 }
 
 fn recording_session_id(path: &Path) -> String {
@@ -229,5 +254,71 @@ where
         serializer.serialize_i64(*value as i64)
     } else {
         serializer.serialize_f64(*value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+    struct TestDir(PathBuf);
+
+    impl TestDir {
+        fn new(label: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "aimux-recording-cleanup-{label}-{}-{}",
+                std::process::id(),
+                TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+            ));
+            let _ = fs::remove_dir_all(&path);
+            fs::create_dir_all(&path).expect("create temp dir");
+            Self(path)
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn unreadable_live_session_state_blocks_recording_removal() {
+        let temp = TestDir::new("bad-state");
+        let project_state = temp.0.join("projects/project-a");
+        let recordings = project_state.join("recordings");
+        fs::create_dir_all(&recordings).expect("create recordings");
+        fs::write(project_state.join("state.json"), "{").expect("write invalid state");
+        let stale = recordings.join("live.log");
+        fs::write(&stale, "recording").expect("write recording");
+
+        let plan = plan_recording_cleanup(temp.0.join("projects"), &[], Some(1.0), 10.0);
+
+        assert!(plan.remove.is_empty(), "{:?}", plan.remove);
+        assert_eq!(plan.reclaimable_bytes, 0);
+        assert!(
+            plan.errors
+                .iter()
+                .any(|error| error.contains("failed to parse live session state")),
+            "{:?}",
+            plan.errors
+        );
+        let result = run_recording_cleanup(
+            &plan,
+            RunRecordingCleanupInput {
+                dry_run: Some(false),
+                limit: None,
+            },
+            |_| {
+                panic!(
+                    "recording cleanup must not remove files when live-session state is unreadable"
+                )
+            },
+        );
+        assert_eq!(result.removed, 0);
+        assert!(stale.exists());
     }
 }

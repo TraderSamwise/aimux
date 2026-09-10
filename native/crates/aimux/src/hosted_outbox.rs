@@ -2,8 +2,9 @@ use crate::hosted_audit::{HostedAuditRecord, HostedAuditStore};
 pub use crate::hosted_events::HostedEvent;
 use crate::hosted_lock::{HostedLockOptions, with_hosted_lock};
 use crate::paths::PathResolver;
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use serde::Serialize;
+use serde_json::json;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -107,38 +108,69 @@ impl HostedOutboxStore {
     }
 
     pub fn drain_outbox(&self) -> Vec<HostedEvent> {
+        match self.try_drain_outbox() {
+            Ok(events) => events,
+            Err(error) => {
+                crate::debug_logging::log_lifecycle_always(
+                    "skipped hosted outbox drain",
+                    "hosted-outbox",
+                    Some(json!({ "error": error.to_string() })),
+                );
+                Vec::new()
+            }
+        }
+    }
+
+    pub fn try_drain_outbox(&self) -> Result<Vec<HostedEvent>> {
         let path = self.outbox_path();
         if !path.exists() {
-            return Vec::new();
+            return Ok(Vec::new());
         }
-        with_hosted_lock(
+        match with_hosted_lock(
             &path,
             || {
                 if !path.exists() {
-                    return Vec::new();
+                    return Ok(Vec::new());
                 }
-                let raw = fs::read_to_string(&path).unwrap_or_default();
-                let _ = fs::remove_file(&path);
-                let mut events = raw
-                    .lines()
-                    .filter(|line| !line.trim().is_empty())
-                    .filter_map(|line| serde_json::from_str::<HostedEvent>(line).ok())
-                    .collect::<Vec<_>>();
-                if events.len() > MAX_SPOOLED {
-                    events = events[events.len() - MAX_SPOOLED..].to_vec();
-                }
-                events
+                let raw = fs::read_to_string(&path)
+                    .with_context(|| format!("failed to read hosted outbox {}", path.display()))?;
+                let events = parse_hosted_outbox(&raw, &path)?;
+                fs::remove_file(&path).with_context(|| {
+                    format!("failed to remove drained hosted outbox {}", path.display())
+                })?;
+                Ok(events)
             },
             HostedLockOptions {
                 wait: false,
                 timeout_ms: 0,
             },
-        )
-        .map_err(|message| anyhow!(message))
-        .ok()
-        .flatten()
-        .unwrap_or_default()
+        ) {
+            Ok(Some(result)) => result,
+            Ok(None) => Err(anyhow!("hosted outbox is locked")),
+            Err(message) => Err(anyhow!(message)),
+        }
     }
+}
+
+fn parse_hosted_outbox(raw: &str, path: &Path) -> Result<Vec<HostedEvent>> {
+    let mut events = raw
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .enumerate()
+        .map(|(index, line)| {
+            serde_json::from_str::<HostedEvent>(line).with_context(|| {
+                format!(
+                    "failed to parse hosted outbox {} line {}",
+                    path.display(),
+                    index + 1
+                )
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    if events.len() > MAX_SPOOLED {
+        events = events[events.len() - MAX_SPOOLED..].to_vec();
+    }
+    Ok(events)
 }
 
 fn append_jsonl(path: PathBuf, value: &impl Serialize) -> Result<()> {
@@ -244,5 +276,79 @@ impl OpenOptionsModeExt for OpenOptions {
             let _ = mode;
             self
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+    struct TestDir(PathBuf);
+
+    impl TestDir {
+        fn new(label: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "aimux-hosted-outbox-{label}-{}-{}",
+                std::process::id(),
+                TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+            ));
+            let _ = fs::remove_dir_all(&path);
+            fs::create_dir_all(&path).expect("create temp dir");
+            Self(path)
+        }
+
+        fn store(&self) -> HostedOutboxStore {
+            let home = self.0.join("home");
+            let aimux_home = self.0.join("aimux-home");
+            fs::create_dir_all(&home).expect("create home");
+            HostedOutboxStore::with_resolver(PathResolver::new(
+                &self.0,
+                &home,
+                Some(aimux_home.to_string_lossy().into_owned()),
+            ))
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn try_drain_outbox_preserves_file_when_read_fails() {
+        let temp = TestDir::new("read-fails");
+        let store = temp.store();
+        let path = store.outbox_path();
+        fs::create_dir_all(path.parent().expect("outbox parent")).expect("create outbox parent");
+        fs::write(&path, [0xff, 0xfe, 0xfd]).expect("write invalid utf8 outbox");
+
+        let error = store.try_drain_outbox().expect_err("read should fail");
+
+        assert!(
+            error.to_string().contains("failed to read hosted outbox"),
+            "{error}"
+        );
+        assert!(path.exists(), "failed reads must not delete the outbox");
+    }
+
+    #[test]
+    fn try_drain_outbox_preserves_file_when_parse_fails() {
+        let temp = TestDir::new("parse-fails");
+        let store = temp.store();
+        let path = store.outbox_path();
+        fs::create_dir_all(path.parent().expect("outbox parent")).expect("create outbox parent");
+        fs::write(&path, "not-json\n").expect("write invalid outbox");
+
+        let error = store.try_drain_outbox().expect_err("parse should fail");
+
+        assert!(
+            error.to_string().contains("failed to parse hosted outbox"),
+            "{error}"
+        );
+        assert!(path.exists(), "parse failures must preserve the outbox");
     }
 }

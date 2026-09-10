@@ -103,14 +103,25 @@ pub fn read_process_args_from_ps_output(stdout: &str) -> Option<String> {
 }
 
 pub fn list_process_args() -> Vec<ProcessArgsEntry> {
-    let Ok(output) = Command::new("ps").args(["-axo", "pid=,args="]).output() else {
-        return Vec::new();
-    };
+    try_list_process_args().unwrap_or_default()
+}
+
+pub fn try_list_process_args() -> Result<Vec<ProcessArgsEntry>, String> {
+    let output = Command::new("ps")
+        .args(["-axo", "pid=,args="])
+        .output()
+        .map_err(|error| format!("failed to run ps process inventory: {error}"))?;
     if !output.status.success() {
-        return Vec::new();
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        let detail = if stderr.is_empty() {
+            output.status.to_string()
+        } else {
+            format!("{}: {stderr}", output.status)
+        };
+        return Err(format!("ps process inventory failed: {detail}"));
     }
     let text = String::from_utf8_lossy(&output.stdout);
-    list_process_args_from_ps_output(&text)
+    Ok(list_process_args_from_ps_output(&text))
 }
 
 pub fn list_process_args_from_ps_output(stdout: &str) -> Vec<ProcessArgsEntry> {

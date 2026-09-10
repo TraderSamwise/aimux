@@ -85,11 +85,12 @@ use crate::install_cleanup::{
 };
 use crate::install_config::{is_primary_install_lane_with_home, normalize_installs_config};
 use crate::lifecycle_orphans::{
-    CleanupLifecycleOrphansOptions, ProjectServiceOrphanScope, SystemLifecycleOrphanRuntime,
-    cleanup_lifecycle_validation_orphans, plan_lifecycle_validation_orphans_with_scope,
+    CleanupLifecycleOrphansOptions, LifecycleOrphanCleanupResult, ProjectServiceOrphanScope,
+    SystemLifecycleOrphanRuntime, cleanup_lifecycle_validation_orphans,
+    plan_lifecycle_validation_orphans_with_scope,
 };
 use crate::logs::{LogSelectionOptions, clear_log_file, read_last_log_lines, selected_log_path};
-use crate::paths::{PathResolver, compute_project_id};
+use crate::paths::{PathResolver, ProjectEntry, compute_project_id};
 use crate::process_inspector::{
     ProcessArgsEntry, ProjectServiceProcessIdentity, is_aimux_project_service_process_args,
     is_current_native_aimux_project_service_process, list_process_args,
@@ -1306,10 +1307,26 @@ impl RealDaemonRuntime {
 
     fn cleanup_lifecycle_validation_orphans_for_restart(&self, project_roots: &[String]) -> Value {
         let state = self.daemon_state();
-        let recognized_project_roots = recognized_project_roots_for_orphan_cleanup(
-            &state,
-            registry_project_roots_for_orphan_cleanup(&self.resolver),
-        );
+        let registry_roots = match registry_project_roots_for_orphan_cleanup(&self.resolver) {
+            Ok(registry_roots) => registry_roots,
+            Err(error) => {
+                let result = skipped_lifecycle_orphan_cleanup_result(error);
+                let result_value = serde_json::to_value(&result).unwrap_or(Value::Null);
+                for project_root in project_roots {
+                    record_repair_event_for_project(
+                        &self.resolver,
+                        project_root,
+                        ACTION_VALIDATION_ORPHAN_CLEANUP,
+                        "control-plane-restart",
+                        STATUS_FAILED,
+                        Some(result_value.clone()),
+                    );
+                }
+                return result_value;
+            }
+        };
+        let recognized_project_roots =
+            recognized_project_roots_for_orphan_cleanup(&state, registry_roots);
         let project_service_scope = ProjectServiceOrphanScope {
             aimux_home: self
                 .resolver
@@ -3921,17 +3938,61 @@ fn restart_all_project_roots(state: &DaemonState) -> Vec<String> {
         .collect()
 }
 
-fn registry_project_roots_for_orphan_cleanup(resolver: &PathResolver) -> Vec<String> {
-    resolver
-        .load_registry()
-        .map(|registry| {
-            registry
-                .projects
-                .into_iter()
-                .map(|project| project.repo_root)
-                .collect()
-        })
-        .unwrap_or_default()
+fn registry_project_roots_for_orphan_cleanup(
+    resolver: &PathResolver,
+) -> Result<Vec<String>, String> {
+    let path = resolver.projects_registry_path();
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let raw = fs::read_to_string(&path).map_err(|error| {
+        format!(
+            "skipped lifecycle orphan cleanup: failed to read project registry {}: {error}",
+            path.display()
+        )
+    })?;
+    let value = serde_json::from_str::<Value>(&raw).map_err(|error| {
+        format!(
+            "skipped lifecycle orphan cleanup: failed to parse project registry {}: {error}",
+            path.display()
+        )
+    })?;
+    let projects = value
+        .get("projects")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            format!(
+                "skipped lifecycle orphan cleanup: project registry {} has no projects array",
+                path.display()
+            )
+        })?;
+    let mut roots = Vec::new();
+    for (index, project) in projects.iter().enumerate() {
+        let project = serde_json::from_value::<ProjectEntry>(project.clone()).map_err(|error| {
+            format!(
+                "skipped lifecycle orphan cleanup: failed to parse project registry {} entry {}: {error}",
+                path.display(),
+                index + 1
+            )
+        })?;
+        roots.push(project.repo_root);
+    }
+    Ok(roots)
+}
+
+fn skipped_lifecycle_orphan_cleanup_result(error: String) -> LifecycleOrphanCleanupResult {
+    LifecycleOrphanCleanupResult {
+        attempted_process_pids: Vec::new(),
+        process_pids: Vec::new(),
+        failed_process_pids: Vec::new(),
+        attempted_tmux_sessions: Vec::new(),
+        tmux_sessions: Vec::new(),
+        failed_tmux_sessions: Vec::new(),
+        attempted_tmux_windows: Vec::new(),
+        tmux_windows: Vec::new(),
+        failed_tmux_windows: Vec::new(),
+        errors: vec![error],
+    }
 }
 
 fn recognized_project_roots_for_orphan_cleanup(
@@ -5670,6 +5731,38 @@ mod tests {
             ),
             BTreeSet::from(["/repo/active".to_owned(), "/repo/registry-only".to_owned()])
         );
+    }
+
+    #[test]
+    fn unreadable_registry_blocks_lifecycle_orphan_cleanup_scope() {
+        let root = temp_root("orphan-cleanup-bad-registry");
+        let home = root.join("home");
+        let resolver = PathResolver::new(
+            &root,
+            &home,
+            Some(home.join(".aimux").to_string_lossy().into_owned()),
+        );
+        fs::create_dir_all(resolver.global_aimux_dir()).expect("aimux home");
+        fs::write(resolver.projects_registry_path(), "{").expect("invalid registry");
+
+        let error = registry_project_roots_for_orphan_cleanup(&resolver)
+            .expect_err("invalid registry should block cleanup");
+        let result = skipped_lifecycle_orphan_cleanup_result(error);
+
+        assert!(result.attempted_process_pids.is_empty());
+        assert!(result.process_pids.is_empty());
+        assert!(result.attempted_tmux_windows.is_empty());
+        assert!(result.tmux_windows.is_empty());
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|error| error.contains("failed to parse project registry")),
+            "{:?}",
+            result.errors
+        );
+
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
