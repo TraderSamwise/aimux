@@ -30,6 +30,8 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+mod support;
+
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Default)]
@@ -84,7 +86,8 @@ fn publishes_metadata_endpoint_json_and_text() {
 fn project_service_connection_routes_http_to_rust_project_router() {
     let project = temp_project("connection");
     let state_dir = project.join("state");
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids(support::live_window_ids(&["@1"]));
     let mut stream = MemoryStream::new(
         b"POST /set-status HTTP/1.1\r\nContent-Type: application/json\r\nContent-Length: 36\r\n\r\n{\"session\":\"codex-1\",\"text\":\"ready\"}",
     );
@@ -111,7 +114,8 @@ fn project_service_connection_passes_hook_headers_to_desktop_state() {
     let project = temp_project("hook-headers");
     let state_dir = project.join("state");
     write_hook_header_state(&project, &state_dir, "claude-http-1", Some("9a518b4c"));
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids(support::live_window_ids(&["@1"]));
     let body = r#"{"session_id":"9a518b4c","hook_event_name":"Stop"}"#;
     let request = format!(
         "POST /hooks/claude?action=stop HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nX-Aimux-Session-Id: claude-http-1\r\nContent-Length: {}\r\n\r\n{}",
