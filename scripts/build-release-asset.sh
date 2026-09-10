@@ -13,6 +13,7 @@ case "$BUILD_PROFILE" in
 esac
 export AIMUX_BUILD_PROFILE="$BUILD_PROFILE"
 export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
+CARGO_TARGET_ROOT="${CARGO_TARGET_DIR:-"$ROOT_DIR/native/target"}"
 
 detect_platform() {
   case "$(uname -s)" in
@@ -52,6 +53,7 @@ if [ "$BUILD_PROFILE" = "full" ]; then
   yarn build:ui:local
 fi
 cargo build --manifest-path native/Cargo.toml -p aimux --release
+NATIVE_BUILD_ARTIFACT="$CARGO_TARGET_ROOT/release/aimux"
 
 PKG_DIR="$TMP_DIR/aimux"
 mkdir -p "$PKG_DIR"
@@ -60,7 +62,7 @@ cp package.json yarn.lock README.md LICENSE "$PKG_DIR/"
 mkdir -p "$PKG_DIR/bin"
 cp bin/aimux "$PKG_DIR/bin/aimux"
 mkdir -p "$PKG_DIR/native/$PLATFORM-$ARCH"
-cp native/target/release/aimux "$PKG_DIR/native/$PLATFORM-$ARCH/aimux"
+cp "$NATIVE_BUILD_ARTIFACT" "$PKG_DIR/native/$PLATFORM-$ARCH/aimux"
 if [ "$BUILD_PROFILE" = "full" ]; then
   cp -R dist-ui docs "$PKG_DIR/"
 fi
@@ -69,18 +71,12 @@ cp scripts/tmux-control.sh scripts/tmux-open-hyperlink.sh scripts/tmux-statuslin
 printf '%s\n' "$VERSION" > "$PKG_DIR/VERSION"
 printf '%s\n' "$BUILD_PROFILE" > "$PKG_DIR/BUILD_PROFILE"
 
-artifact_mtime_ms() {
-  [ -f "$1" ] || { printf 'Missing build artifact: %s\n' "$1" >&2; exit 1; }
-  case "$(uname -s)" in
-    Darwin) timestamp="$(stat -f %m "$1")" ;;
-    *) timestamp="$(stat -c %Y "$1")" ;;
-  esac
-  [ -n "$timestamp" ] || { printf 'Failed to stat build artifact: %s\n' "$1" >&2; exit 1; }
-  printf '%s000' "$timestamp"
+release_mtime_ms() {
+  printf '%s000' "$(date +%s)"
 }
 
 NATIVE_ARTIFACT="$PKG_DIR/native/$PLATFORM-$ARCH/aimux"
-BUILD_STAMP="$(artifact_mtime_ms "$NATIVE_ARTIFACT")-$(shasum -a 1 "$NATIVE_ARTIFACT" | awk '{ print substr($1, 1, 12) }')"
+BUILD_STAMP="${AIMUX_RELEASE_BUILD_STAMP:-$(release_mtime_ms)-$(shasum -a 1 "$NATIVE_ARTIFACT" | awk '{ print substr($1, 1, 12) }')}"
 printf '%s\n' "$BUILD_STAMP" > "$PKG_DIR/BUILD_STAMP"
 
 if [ "$PLATFORM" = "darwin" ]; then
@@ -91,6 +87,20 @@ fi
 chmod +x "$PKG_DIR/bin/aimux"
 chmod +x "$PKG_DIR/native/$PLATFORM-$ARCH/aimux"
 chmod +x "$PKG_DIR/scripts/"*.sh 2>/dev/null || true
+
+verify_release_build_stamp() {
+  actual="$(
+    AIMUX_ROOT="$PKG_DIR" AIMUX_NATIVE_BIN="$NATIVE_ARTIFACT" "$NATIVE_ARTIFACT" \
+      __project-service-manifest-internal --json \
+      | awk -F'"' '/"buildStamp"/ { print $4; exit }'
+  )"
+  if [ "$actual" != "$BUILD_STAMP" ]; then
+    printf 'Release build stamp mismatch: expected %s, packaged runtime reported %s\n' "$BUILD_STAMP" "${actual:-<missing>}" >&2
+    exit 1
+  fi
+}
+
+verify_release_build_stamp
 
 find "$PKG_DIR" -name '*.map' -type f -delete
 

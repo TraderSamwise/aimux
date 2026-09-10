@@ -99,6 +99,26 @@ pub fn project_service_artifact_paths_with_native_candidates(
     project_service_source_artifact_paths(module_dir)
 }
 
+pub fn project_service_build_stamp_with_release_root(
+    module_dir: impl AsRef<Path>,
+    release_root: Option<&Path>,
+    native_candidates: &[PathBuf],
+) -> io::Result<String> {
+    if let Some(stamp) = release_root.and_then(read_release_build_stamp) {
+        return Ok(stamp);
+    }
+    compute_build_stamp(&project_service_artifact_paths_with_native_candidates(
+        module_dir,
+        native_candidates,
+    )?)
+}
+
+fn read_release_build_stamp(release_root: &Path) -> Option<String> {
+    let stamp = fs::read_to_string(release_root.join("BUILD_STAMP")).ok()?;
+    let stamp = stamp.trim();
+    (!stamp.is_empty()).then(|| stamp.to_owned())
+}
+
 fn project_service_source_artifact_paths(module_dir: impl AsRef<Path>) -> io::Result<Vec<PathBuf>> {
     let module_dir = module_dir.as_ref();
     Ok(vec![
@@ -143,6 +163,12 @@ fn runtime_native_artifact_candidates() -> Vec<PathBuf> {
     candidates
 }
 
+fn runtime_release_root() -> Option<PathBuf> {
+    std::env::var_os("AIMUX_ROOT")
+        .map(PathBuf::from)
+        .filter(|path| !path.as_os_str().is_empty())
+}
+
 fn platform_native_dirname() -> String {
     format!(
         "{}-{}",
@@ -175,18 +201,28 @@ pub fn get_project_service_manifest() -> io::Result<ProjectServiceManifest> {
 }
 
 pub fn compute_current_project_service_manifest() -> io::Result<ProjectServiceManifest> {
+    let release_root = runtime_release_root();
     Ok(ProjectServiceManifest {
         api_version: PROJECT_SERVICE_API_VERSION,
         capabilities: project_service_capabilities(),
-        build_stamp: compute_project_service_build_stamp(source_project_service_module_dir())?,
+        build_stamp: project_service_build_stamp_with_release_root(
+            source_project_service_module_dir(),
+            release_root.as_deref(),
+            &runtime_native_artifact_candidates(),
+        )?,
     })
 }
 
 pub fn project_service_build_stamp() -> io::Result<String> {
     PROJECT_SERVICE_BUILD_STAMP
         .get_or_init(|| {
-            compute_project_service_build_stamp(source_project_service_module_dir())
-                .map_err(|error| error.to_string())
+            let release_root = runtime_release_root();
+            project_service_build_stamp_with_release_root(
+                source_project_service_module_dir(),
+                release_root.as_deref(),
+                &runtime_native_artifact_candidates(),
+            )
+            .map_err(|error| error.to_string())
         })
         .clone()
         .map_err(|message| io::Error::other(message.clone()))

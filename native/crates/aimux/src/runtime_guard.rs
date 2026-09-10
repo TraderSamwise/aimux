@@ -25,6 +25,7 @@ pub enum RuntimeGuardState {
     Ok,
     Stale {
         reason: RuntimeGuardStaleReason,
+        details: Option<RuntimeGuardStaleDetails>,
     },
     RuntimeRebuildRequired,
     Disconnected,
@@ -60,6 +61,12 @@ impl RuntimeGuardStaleReason {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeGuardStaleDetails {
+    pub expected_build_stamp: String,
+    pub actual_build_stamp: String,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum RuntimeGuardServiceManifest {
     Missing,
@@ -85,7 +92,7 @@ pub enum RuntimeGuardKeyDisposition {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeGuardOverlayCopy {
     pub title: &'static str,
-    pub lines: Vec<&'static str>,
+    pub lines: Vec<String>,
     pub waiting: bool,
 }
 
@@ -100,6 +107,7 @@ pub fn evaluate_runtime_guard_against(
     if input.self_drift {
         return RuntimeGuardState::Stale {
             reason: RuntimeGuardStaleReason::SelfDrift,
+            details: None,
         };
     }
     if input.runtime_rebuild_required {
@@ -116,17 +124,37 @@ pub fn evaluate_runtime_guard_against(
     if input.service_identity_mismatch {
         return RuntimeGuardState::Stale {
             reason: RuntimeGuardStaleReason::ServiceMismatch,
+            details: None,
         };
     }
     let RuntimeGuardServiceManifest::Value(actual_manifest) = &input.service_manifest else {
         return RuntimeGuardState::Disconnected;
     };
     if !expected_manifest.is_some_and(|expected| manifests_match(expected, Some(actual_manifest))) {
+        let details = expected_manifest
+            .and_then(|expected| build_stamp_mismatch_details(expected, actual_manifest));
         return RuntimeGuardState::Stale {
             reason: RuntimeGuardStaleReason::ServiceMismatch,
+            details,
         };
     }
     RuntimeGuardState::Ok
+}
+
+fn build_stamp_mismatch_details(
+    expected: &ProjectServiceManifest,
+    actual_manifest: &Value,
+) -> Option<RuntimeGuardStaleDetails> {
+    let actual_build_stamp = actual_manifest
+        .get("buildStamp")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?
+        .to_owned();
+    (actual_build_stamp != expected.build_stamp).then(|| RuntimeGuardStaleDetails {
+        expected_build_stamp: expected.build_stamp.clone(),
+        actual_build_stamp,
+    })
 }
 
 pub fn runtime_guard_key_disposition(key: &str) -> RuntimeGuardKeyDisposition {
@@ -146,6 +174,21 @@ pub fn runtime_guard_overlay_copy(
     active_ms: i64,
     repair_failed: bool,
 ) -> RuntimeGuardOverlayCopy {
+    if let RuntimeGuardState::Stale {
+        reason: RuntimeGuardStaleReason::ServiceMismatch,
+        details: Some(details),
+    } = state
+    {
+        return RuntimeGuardOverlayCopy {
+            title: "Aimux build mismatch",
+            lines: vec![
+                format!("Expected build: {}", details.expected_build_stamp),
+                format!("Running service: {}", details.actual_build_stamp),
+                "Run this in any terminal: aimux restart".into(),
+            ],
+            waiting: false,
+        };
+    }
     if !state.is_ok() && (repair_failed || active_ms >= RUNTIME_GUARD_ESCALATION_MS) {
         let reason = if matches!(state, RuntimeGuardState::Disconnected) {
             "The project service did not reconnect."
@@ -155,9 +198,9 @@ pub fn runtime_guard_overlay_copy(
         return RuntimeGuardOverlayCopy {
             title: "Aimux needs restart",
             lines: vec![
-                reason,
-                "Run this in any terminal: aimux restart",
-                "This preserves agent tmux windows.",
+                reason.into(),
+                "Run this in any terminal: aimux restart".into(),
+                "This preserves agent tmux windows.".into(),
             ],
             waiting: false,
         };
@@ -165,35 +208,36 @@ pub fn runtime_guard_overlay_copy(
     match state {
         RuntimeGuardState::Stale {
             reason: RuntimeGuardStaleReason::SelfDrift,
+            ..
         } => RuntimeGuardOverlayCopy {
             title: "Aimux is updating",
             lines: vec![
-                "Aimux is applying the current build.",
-                "Actions resume automatically when repair completes.",
+                "Aimux is applying the current build.".into(),
+                "Actions resume automatically when repair completes.".into(),
             ],
             waiting: true,
         },
         RuntimeGuardState::Stale { .. } => RuntimeGuardOverlayCopy {
             title: "Aimux is syncing",
             lines: vec![
-                "Aimux is syncing the dashboard with the project service.",
-                "Actions resume automatically.",
+                "Aimux is syncing the dashboard with the project service.".into(),
+                "Actions resume automatically.".into(),
             ],
             waiting: true,
         },
         RuntimeGuardState::Disconnected => RuntimeGuardOverlayCopy {
             title: "Aimux is reconnecting",
             lines: vec![
-                "Aimux is reconnecting the project service.",
-                "Actions resume automatically.",
+                "Aimux is reconnecting the project service.".into(),
+                "Actions resume automatically.".into(),
             ],
             waiting: true,
         },
         RuntimeGuardState::RuntimeRebuildRequired => RuntimeGuardOverlayCopy {
             title: "Aimux is repairing tmux",
             lines: vec![
-                "Aimux is repairing the managed tmux runtime.",
-                "Actions resume automatically.",
+                "Aimux is repairing the managed tmux runtime.".into(),
+                "Actions resume automatically.".into(),
             ],
             waiting: true,
         },
@@ -376,7 +420,8 @@ mod tests {
         assert_eq!(
             evaluate_runtime_guard_against(&input, Some(&manifest("new"))),
             RuntimeGuardState::Stale {
-                reason: RuntimeGuardStaleReason::SelfDrift
+                reason: RuntimeGuardStaleReason::SelfDrift,
+                details: None,
             }
         );
     }
@@ -411,7 +456,11 @@ mod tests {
         assert_eq!(
             evaluate_runtime_guard_against(&mismatch, Some(&expected)),
             RuntimeGuardState::Stale {
-                reason: RuntimeGuardStaleReason::ServiceMismatch
+                reason: RuntimeGuardStaleReason::ServiceMismatch,
+                details: Some(RuntimeGuardStaleDetails {
+                    expected_build_stamp: "current".into(),
+                    actual_build_stamp: "old".into(),
+                }),
             }
         );
         mismatch.service_manifest = RuntimeGuardServiceManifest::Value(json!({
@@ -447,5 +496,30 @@ mod tests {
         );
         assert_eq!(state, RuntimeGuardState::Disconnected);
         assert_eq!(count, 10);
+    }
+
+    #[test]
+    fn overlay_names_build_stamp_mismatch_without_waiting() {
+        let expected = manifest("expected-stamp");
+        let state = evaluate_runtime_guard_against(
+            &input(RuntimeGuardServiceManifest::Value(json!({
+                "apiVersion": 5,
+                "buildStamp": "running-stamp",
+                "capabilities": expected.capabilities,
+            }))),
+            Some(&expected),
+        );
+        let copy = runtime_guard_overlay_copy(&state, 1, false);
+
+        assert_eq!(copy.title, "Aimux build mismatch");
+        assert_eq!(
+            copy.lines,
+            vec![
+                "Expected build: expected-stamp".to_owned(),
+                "Running service: running-stamp".to_owned(),
+                "Run this in any terminal: aimux restart".to_owned(),
+            ]
+        );
+        assert!(!copy.waiting);
     }
 }

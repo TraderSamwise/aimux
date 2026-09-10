@@ -142,6 +142,26 @@ fn release_asset_compiles_native_binary_with_selected_build_profile() {
         build_script.contains("cargo:rerun-if-env-changed=AIMUX_BUILD_PROFILE"),
         "Cargo must rebuild aimux when AIMUX_BUILD_PROFILE changes"
     );
+    assert!(
+        script.contains("CARGO_TARGET_ROOT=\"${CARGO_TARGET_DIR:-\"$ROOT_DIR/native/target\"}\""),
+        "release asset must copy from the selected Cargo target directory"
+    );
+    assert!(
+        script.contains("NATIVE_BUILD_ARTIFACT=\"$CARGO_TARGET_ROOT/release/aimux\""),
+        "release asset must name the freshly built native artifact"
+    );
+    assert!(
+        script.contains("cp \"$NATIVE_BUILD_ARTIFACT\" \"$PKG_DIR/native/$PLATFORM-$ARCH/aimux\""),
+        "release asset must package the freshly built native artifact"
+    );
+    assert!(
+        script.contains("verify_release_build_stamp"),
+        "release asset must fail if the packaged runtime reports a different build stamp"
+    );
+    assert!(
+        script.contains("\nverify_release_build_stamp\n"),
+        "release asset must call the packaged runtime build-stamp gate before archiving"
+    );
 }
 
 fn repo_root() -> PathBuf {

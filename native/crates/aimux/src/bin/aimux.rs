@@ -28,6 +28,7 @@ use aimux::paths::PathResolver;
 use aimux::project_service::process::{
     ProjectServiceInternalOptions, run_project_service_internal,
 };
+use aimux::project_service_manifest::get_project_service_manifest;
 use aimux::release_version_contract::read_aimux_runtime_version;
 use aimux::root_session_launch::{
     RootResumeRequest, parse_root_resume_args, resume_saved_sessions,
@@ -89,6 +90,11 @@ enum Command {
         project_id: Option<String>,
         #[arg(long = "project-root")]
         project_root: Option<PathBuf>,
+    },
+    #[command(name = "__project-service-manifest-internal", hide = true)]
+    ProjectServiceManifestInternal {
+        #[arg(long)]
+        json: bool,
     },
     #[command(name = "__dashboard-internal-native", hide = true)]
     DashboardInternalNative {
@@ -280,6 +286,9 @@ fn main() -> Result<ExitCode> {
             })?;
             Ok(())
         }
+        Command::ProjectServiceManifestInternal { json } => {
+            print_value(get_project_service_manifest()?, json)
+        }
         Command::DashboardInternalNative {
             project_root,
             desktop_state_file,
@@ -321,6 +330,7 @@ fn is_native_main_command(args: &[String]) -> bool {
         [command, subcommand, ..] if command == "rewrite" && subcommand == "status" => true,
         [command, ..] if command == "ui" => true,
         [command, ..] if command == "__project-service-internal" => true,
+        [command, ..] if command == "__project-service-manifest-internal" => true,
         [command, ..] if command == "__dashboard-internal-native" => true,
         [command, ..] if command == "__tmux-control-internal" => true,
         [command, ..] if command == "__tmux-statusline-internal" => true,

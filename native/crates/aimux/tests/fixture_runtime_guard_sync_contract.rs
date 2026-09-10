@@ -182,6 +182,7 @@ fn runtime_guard_state(value: &Value) -> RuntimeGuardState {
                 "self-drift" => RuntimeGuardStaleReason::SelfDrift,
                 _ => RuntimeGuardStaleReason::ServiceMismatch,
             },
+            details: None,
         },
         "runtime-rebuild-required" => RuntimeGuardState::RuntimeRebuildRequired,
         "disconnected" => RuntimeGuardState::Disconnected,
@@ -192,7 +193,7 @@ fn runtime_guard_state(value: &Value) -> RuntimeGuardState {
 fn runtime_guard_state_value(state: &RuntimeGuardState) -> Value {
     match state {
         RuntimeGuardState::Ok => json!({ "kind": "ok" }),
-        RuntimeGuardState::Stale { reason } => json!({
+        RuntimeGuardState::Stale { reason, .. } => json!({
             "kind": "stale",
             "reason": reason.as_str(),
         }),

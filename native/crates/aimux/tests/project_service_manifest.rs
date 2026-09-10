@@ -1,8 +1,9 @@
 use aimux::project_service_manifest::{
     PROJECT_SERVICE_API_VERSION, ProjectServiceManifest, build_stamp_generation,
     compute_build_stamp, is_stale_against_daemon, manifests_match, project_service_artifact_paths,
-    project_service_artifact_paths_with_native_candidates, project_service_capabilities,
-    resolve_artifact, should_keep_unresponsive_daemon,
+    project_service_artifact_paths_with_native_candidates,
+    project_service_build_stamp_with_release_root, project_service_capabilities, resolve_artifact,
+    should_keep_unresponsive_daemon,
 };
 use serde_json::{Value, json};
 use std::fs;
@@ -102,6 +103,31 @@ fn build_stamp_prefers_native_runtime_artifact_when_present() {
     let stamp = compute_build_stamp(&paths).unwrap();
     assert!(!stamp.contains('.'));
     assert_eq!(stamp.rsplit_once('-').unwrap().1.len(), 12);
+
+    fs::remove_dir_all(root).expect("remove temp directory");
+}
+
+#[test]
+fn build_stamp_prefers_release_stamp_file_over_runtime_artifacts() {
+    let root = temp_dir("manifest-release-stamp");
+    let release_root = root.join("release");
+    fs::create_dir_all(&release_root).unwrap();
+    fs::write(release_root.join("BUILD_STAMP"), "release-stamp\n").unwrap();
+    fs::write(root.join("launcher-bin.js"), "stale-launcher").unwrap();
+    fs::write(root.join("main.js"), "stale-main").unwrap();
+    let native = root.join("native/darwin-arm64/aimux");
+    fs::create_dir_all(native.parent().unwrap()).unwrap();
+    fs::write(&native, "native-binary").unwrap();
+
+    assert_eq!(
+        project_service_build_stamp_with_release_root(
+            &root,
+            Some(&release_root),
+            std::slice::from_ref(&native),
+        )
+        .unwrap(),
+        "release-stamp"
+    );
 
     fs::remove_dir_all(root).expect("remove temp directory");
 }

@@ -63,7 +63,7 @@ pub fn should_auto_repair_runtime_guard(state: &RuntimeGuardState) -> bool {
 
 pub fn runtime_guard_repair_key(state: &RuntimeGuardState) -> String {
     match state {
-        RuntimeGuardState::Stale { reason } => {
+        RuntimeGuardState::Stale { reason, .. } => {
             let reason = match reason {
                 RuntimeGuardStaleReason::SelfDrift => "self-drift",
                 RuntimeGuardStaleReason::ServiceMismatch => "service-mismatch",
@@ -289,6 +289,7 @@ mod tests {
     fn starts_for_stale_and_runtime_rebuild_only() {
         let stale = RuntimeGuardState::Stale {
             reason: RuntimeGuardStaleReason::ServiceMismatch,
+            details: None,
         };
         assert_eq!(
             runtime_guard_repair_decision(&gate(&stale)),
@@ -337,6 +338,7 @@ mod tests {
     fn trips_flap_breaker_before_starting_again() {
         let state = RuntimeGuardState::Stale {
             reason: RuntimeGuardStaleReason::SelfDrift,
+            details: None,
         };
         let mut flapping = gate(&state);
         flapping.attempt_count = RUNTIME_GUARD_REPAIR_FLAP_LIMIT;
