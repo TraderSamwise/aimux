@@ -5117,6 +5117,37 @@ mod tests {
     }
 
     #[test]
+    fn ensure_project_reports_process_exit_distinct_from_health_timeout() {
+        let fixture = restart_service_fixture("ensure-health-process-exited");
+        let project = fixture.project_root.clone();
+        let project_id = compute_project_id(Path::new(&project));
+        let launcher = Arc::new(RestartTestLauncher::new(91_025).with_endpoint(45_905));
+        let verifier = Arc::new(RestartTestProcessVerifier::current_native([]));
+        let health = Arc::new(RestartTestHealthProbe::not_ready());
+        let mut runtime = RealDaemonRuntime::with_project_service_launcher_and_process_verifier(
+            fixture.resolver.clone(),
+            fixture.daemon_info.clone(),
+            launcher.clone(),
+            verifier,
+            250,
+        )
+        .with_project_service_health_probe(health.clone());
+
+        let error =
+            <RealDaemonRuntime as DaemonCoreCommandRuntime>::ensure_project(&mut runtime, &project)
+                .expect_err("process exit before health should be visible");
+
+        assert!(error.contains("project service process exited before /health became ready"));
+        assert!(!error.contains("project service health wait timed out"));
+        assert!(error.contains(&project));
+        assert!(error.contains(&format!("projectId {project_id}")));
+        assert!(error.contains("pid 91025"));
+        assert_eq!(launcher.calls(), vec![project]);
+        assert_eq!(health.calls(), vec![91_025]);
+        fixture.cleanup();
+    }
+
+    #[test]
     fn ensure_project_allows_slow_service_that_becomes_healthy_before_timeout() {
         let fixture = restart_service_fixture("ensure-health-slow-ok");
         let project = fixture.project_root.clone();
@@ -5183,6 +5214,54 @@ mod tests {
         assert_eq!(result["dashboard"]["error"], json!(error));
         assert!(refreshed.into_inner().is_empty());
         assert!(launcher.calls().is_empty());
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn control_plane_restart_surfaces_project_service_process_exit() {
+        let fixture = restart_service_fixture("restart-health-process-exited");
+        let project = fixture.project_root.clone();
+        let project_id = fixture.register_project();
+        fixture.persist_service(&project_id, 91_026, ProjectServiceStatus::Running);
+        fixture.persist_endpoint(91_026);
+        let launcher = Arc::new(RestartTestLauncher::new(91_126).with_endpoint(45_906));
+        let verifier = Arc::new(RestartTestProcessVerifier::previous_build([91_026]));
+        let health = Arc::new(RestartTestHealthProbe::not_ready());
+        let mut runtime = RealDaemonRuntime::with_project_service_launcher_and_process_verifier(
+            fixture.resolver.clone(),
+            fixture.daemon_info.clone(),
+            launcher.clone(),
+            verifier,
+            250,
+        )
+        .with_project_service_health_probe(health.clone());
+        let refreshed = RefCell::new(Vec::<String>::new());
+
+        let result = runtime.restart_control_plane_project_with_statusline(
+            &project,
+            |_project| -> Result<RestartDashboardTarget, String> {
+                panic!("dashboard reload must not run after project service process exit")
+            },
+            |_runtime, project_root| refreshed.borrow_mut().push(project_root.to_owned()),
+        );
+
+        let error = result["service"]["error"].as_str().expect("service error");
+        assert_eq!(result["service"]["status"], json!("failed"));
+        assert!(error.contains("project service process exited before /health became ready"));
+        assert!(!error.contains("project service health wait timed out"));
+        assert!(error.contains(&project));
+        assert!(error.contains(&format!("projectId {project_id}")));
+        assert!(error.contains("pid 91126"));
+        assert_eq!(result["dashboard"]["status"], json!("skipped"));
+        assert_eq!(
+            result["dashboard"]["reason"],
+            json!("project-service-health-unavailable")
+        );
+        assert_eq!(result["dashboard"]["error"], json!(error));
+        assert!(refreshed.into_inner().is_empty());
+        assert_eq!(launcher.calls(), vec![project]);
+        assert_eq!(launcher.terminations(), vec![(91_026, false)]);
+        assert_eq!(health.calls(), vec![91_126]);
         fixture.cleanup();
     }
 
