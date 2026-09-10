@@ -67,7 +67,7 @@ release_source_hash() {
       git -C "$ROOT_DIR" diff --binary HEAD -- package.json yarn.lock scripts native app docs || true
     } | shasum -a 1 | awk '{ print substr($1, 1, 12) }'
   else
-    find package.json yarn.lock scripts native app docs -maxdepth 8 -type f 2>/dev/null \
+    find package.json yarn.lock scripts native app docs -type f 2>/dev/null \
       | LC_ALL=C sort \
       | xargs shasum -a 1 \
       | shasum -a 1 \
