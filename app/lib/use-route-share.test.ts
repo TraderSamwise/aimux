@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveRouteShare } from "./route-share-resolver";
+import { resolveRouteShare, sharedChatHref } from "./route-share-resolver";
 import type { ActiveSharedSession } from "@/stores/settings";
 
 const share: ActiveSharedSession = {
@@ -106,5 +106,16 @@ describe("resolveRouteShare", () => {
         sessionId: "local-session",
       }),
     ).toBeNull();
+  });
+
+  it("builds canonical shared chat hrefs", () => {
+    expect(sharedChatHref(share)).toEqual({
+      pathname: "/shares/[ownerUserId]/[shareId]/agent/[sessionId]/chat",
+      params: {
+        ownerUserId: share.ownerUserId,
+        shareId: share.shareId,
+        sessionId: share.sessionId,
+      },
+    });
   });
 });

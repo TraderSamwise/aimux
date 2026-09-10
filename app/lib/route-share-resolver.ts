@@ -48,6 +48,17 @@ export function resolveRouteShare({
   return acceptedMatch ?? null;
 }
 
+export function sharedChatHref(share: ActiveSharedSession) {
+  return {
+    pathname: "/shares/[ownerUserId]/[shareId]/agent/[sessionId]/chat",
+    params: {
+      ownerUserId: share.ownerUserId,
+      shareId: share.shareId,
+      sessionId: share.sessionId,
+    },
+  } as const;
+}
+
 function findMatchingShare(
   shares: readonly ActiveSharedSession[],
   match: { ownerUserId: string; shareId: string; sessionId?: string | null },

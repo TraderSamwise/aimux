@@ -220,7 +220,6 @@ Binding statuses: PROVEN-FAILS 325, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
 | `fixture_remote_access` | PROVEN-FAILS | `testdata/contracts/v1/remote-access/access.json` | 18 | mutated fixture output failed owning Rust suite |
 | `fixture_request_errors` | PROVEN-FAILS | `testdata/contracts/v1/request-errors/classification.json` | 18 | mutated fixture output failed owning Rust suite |
 | `fixture_rich_text` | PROVEN-FAILS | `testdata/contracts/v1/terminal/rich-text.json` | 6 | mutated fixture output failed owning Rust suite |
-| `fixture_route_share` | PROVEN-FAILS | `testdata/contracts/v1/transport/route-share.json` | 9 | mutated fixture output failed owning Rust suite |
 | `fixture_runtime_coherence` | PROVEN-FAILS | `testdata/contracts/v1/runtime-coherence/report.json` | 15 | mutated fixture output failed owning Rust suite |
 | `fixture_runtime_exchange_import` | PROVEN-FAILS | `testdata/contracts/v1/runtime-exchange/import.json` | 3 | mutated fixture output failed owning Rust suite |
 | `fixture_runtime_exchange_store` | PROVEN-FAILS | `testdata/contracts/v1/runtime-exchange/store.json` | 19 | mutated fixture output failed owning Rust suite |
