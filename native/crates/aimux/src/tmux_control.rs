@@ -422,13 +422,6 @@ impl TmuxControl {
             self.options.project_root
         ));
         self.show_local_message("#[fg=colour220,bold]aimux#[default] reloading dashboard");
-        let Some(metadata_api) = self.read_metadata_api() else {
-            self.debug_log_line("dashboard reload api unavailable: missing metadata-api.txt");
-            self.show_local_message(
-                "#[fg=colour203,bold]aimux#[default] dashboard reload failed - project service unavailable",
-            );
-            return true;
-        };
         let tty = self
             .live_client
             .as_ref()
@@ -451,16 +444,42 @@ impl TmuxControl {
                 JsonPart::OptionalString(&self.options.current_window_id),
             ),
         ]);
-        let endpoint = format!(
-            "{}/control/open-dashboard",
-            metadata_api.trim_end_matches('/')
-        );
-        if self.curl_post(&endpoint, &body, "8").is_none() {
+        let mut attempted_endpoint = false;
+        if let Some(metadata_api) = self.read_metadata_api() {
+            attempted_endpoint = true;
+            let endpoint = format!(
+                "{}/control/open-dashboard",
+                metadata_api.trim_end_matches('/')
+            );
+            if self.curl_post(&endpoint, &body, "8").is_some() {
+                return true;
+            }
             self.debug_log_line(&format!(
                 "dashboard reload api failed endpoint={metadata_api}"
             ));
+        } else {
+            self.debug_log_line("dashboard reload api unavailable: missing metadata-api.txt");
+        }
+        if let Some(metadata_api) = self.resolve_metadata_api_from_daemon() {
+            attempted_endpoint = true;
+            let endpoint = format!(
+                "{}/control/open-dashboard",
+                metadata_api.trim_end_matches('/')
+            );
+            if self.curl_post(&endpoint, &body, "8").is_some() {
+                return true;
+            }
+            self.debug_log_line(&format!(
+                "dashboard reload api failed daemon_resolved_endpoint={metadata_api}"
+            ));
+        }
+        if attempted_endpoint {
             self.show_local_message(
-                "#[fg=colour203,bold]aimux#[default] dashboard reload failed - project service unavailable",
+                "#[fg=colour203,bold]aimux#[default] dashboard reload failed - couldn't contact project service endpoint",
+            );
+        } else {
+            self.show_local_message(
+                "#[fg=colour203,bold]aimux#[default] dashboard reload failed - project service endpoint unavailable",
             );
         }
         true
@@ -1732,6 +1751,54 @@ impl TmuxControl {
             .filter(|value| !value.is_empty())
     }
 
+    fn resolve_metadata_api_from_daemon(&mut self) -> Option<String> {
+        let daemon_base = self.daemon_base_url()?;
+        let raw = self.curl_get(
+            &format!("{}/projects", daemon_base.trim_end_matches('/')),
+            "4",
+        )?;
+        let payload: Value = serde_json::from_str(&raw).ok()?;
+        let projects = payload.get("projects")?.as_array()?;
+        let project = projects.iter().find(|project| {
+            string_value(project, "projectRoot")
+                .or_else(|| string_value(project, "path"))
+                .as_deref()
+                == Some(self.options.project_root.as_str())
+        })?;
+        let endpoint = project.get("serviceEndpoint")?;
+        let host = string_value(endpoint, "host")
+            .filter(|host| host == "127.0.0.1" || host == "localhost")?;
+        let port = endpoint.get("port").and_then(Value::as_u64)?;
+        let port = u16::try_from(port).ok()?;
+        Some(format!("http://{host}:{port}"))
+    }
+
+    fn daemon_base_url(&self) -> Option<String> {
+        let env_host = std::env::var("AIMUX_DAEMON_HOST").unwrap_or_default();
+        let host = if !self.options.daemon_host.trim().is_empty() {
+            self.options.daemon_host.trim()
+        } else if !env_host.trim().is_empty() {
+            env_host.trim()
+        } else {
+            "127.0.0.1"
+        };
+        if host != "127.0.0.1" && host != "localhost" {
+            return None;
+        }
+        let env_port = std::env::var("AIMUX_DAEMON_PORT").unwrap_or_default();
+        let port = if !self.options.daemon_port.trim().is_empty() {
+            self.options.daemon_port.trim()
+        } else if !env_port.trim().is_empty() {
+            env_port.trim()
+        } else {
+            return None;
+        };
+        if port.parse::<u16>().ok()? == 0 {
+            return None;
+        }
+        Some(format!("http://{host}:{port}"))
+    }
+
     fn debug_log_line(&self, line: &str) {
         self.append_debug_line(&format!("aimux-control: {line}"));
     }
@@ -2034,6 +2101,15 @@ fn attention_rank(item: &NavItem) -> (i64, i64, i64) {
 
 fn default_unknown(value: &str) -> &str {
     if value.is_empty() { "unknown" } else { value }
+}
+
+fn string_value(value: &Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
 }
 
 fn basename_for_menu(path: &str) -> String {

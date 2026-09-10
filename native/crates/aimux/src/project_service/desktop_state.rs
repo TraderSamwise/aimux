@@ -1,5 +1,6 @@
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
 use std::path::Path;
 use std::process::Command;
 
@@ -209,12 +210,7 @@ pub fn build_desktop_state_with_live_window_ids(
     })
     .collect::<Vec<_>>();
     let worktrees = desktop_worktrees(&input.project_root, input.topology);
-    let worktree_by_path = worktrees
-        .iter()
-        .filter_map(|worktree| {
-            string_field(worktree, "path").map(|path| (path.to_owned(), worktree.clone()))
-        })
-        .collect::<BTreeMap<_, _>>();
+    let worktree_by_path = worktree_lookup_by_identity(&worktrees);
     let thread_stats = summarize_thread_stats(input.exchange);
     let workflow_stats = summarize_workflow_stats(input.exchange);
     let notification_stats = summarize_notification_stats(input.exchange);
@@ -334,10 +330,9 @@ fn desktop_worktrees(project_root: &str, topology: &Value) -> Vec<Value> {
             Value::Object(item)
         })
         .collect::<Vec<_>>();
-    if !worktrees
-        .iter()
-        .any(|worktree| string_field(worktree, "path") == Some(project_root))
-    {
+    if !worktrees.iter().any(|worktree| {
+        string_field(worktree, "path").is_some_and(|path| same_worktree_path(path, project_root))
+    }) {
         worktrees.insert(
             0,
             json!({
@@ -419,8 +414,8 @@ fn dashboard_session(
     if let Some(role) = team_string_field(session, "role") {
         insert_string(&mut item, "role", role);
     }
-    if let Some(worktree) =
-        string_field(session, "worktreePath").and_then(|path| worktree_by_path.get(path))
+    if let Some(worktree) = string_field(session, "worktreePath")
+        .and_then(|path| worktree_by_path.get(&worktree_path_identity(path)))
     {
         insert_optional(&mut item, "worktreeName", string_field(worktree, "name"));
         insert_optional(
@@ -615,8 +610,8 @@ fn dashboard_service(
             target.get("windowIndex").cloned(),
         );
     }
-    if let Some(worktree) =
-        string_field(service, "worktreePath").and_then(|path| worktree_by_path.get(path))
+    if let Some(worktree) = string_field(service, "worktreePath")
+        .and_then(|path| worktree_by_path.get(&worktree_path_identity(path)))
     {
         insert_optional(&mut item, "worktreeName", string_field(worktree, "name"));
         insert_optional(
@@ -649,36 +644,47 @@ fn build_worktree_groups(
     services: &[Value],
 ) -> Vec<Value> {
     let main_path = project_root;
-    let mut group_paths = worktrees
+    let main_key = worktree_path_identity(main_path);
+    let mut group_paths = BTreeMap::<String, String>::new();
+    for path in worktrees
         .iter()
-        .filter_map(|worktree| string_field(worktree, "path").map(str::to_owned))
-        .collect::<BTreeSet<_>>();
+        .filter_map(|worktree| string_field(worktree, "path"))
+    {
+        group_paths
+            .entry(worktree_path_identity(path))
+            .or_insert_with(|| path.to_owned());
+    }
     for item in sessions.iter().chain(services.iter()) {
         if let Some(path) = string_field(item, "worktreePath") {
-            group_paths.insert(path.to_owned());
+            group_paths
+                .entry(worktree_path_identity(path))
+                .or_insert_with(|| path.to_owned());
         }
     }
     let mut groups = Vec::new();
     groups.push(worktree_group(
         project_root,
-        worktrees
-            .iter()
-            .find(|worktree| string_field(worktree, "path") == Some(main_path)),
+        worktrees.iter().find(|worktree| {
+            string_field(worktree, "path").is_some_and(|path| same_worktree_path(path, main_path))
+        }),
         main_path,
+        &main_key,
         true,
         sessions,
         services,
     ));
     let mut secondary = group_paths
         .into_iter()
-        .filter(|path| path != main_path)
-        .map(|path| {
+        .filter(|(path_key, _)| path_key != &main_key)
+        .map(|(path_key, path)| {
             worktree_group(
                 project_root,
-                worktrees
-                    .iter()
-                    .find(|worktree| string_field(worktree, "path") == Some(path.as_str())),
+                worktrees.iter().find(|worktree| {
+                    string_field(worktree, "path")
+                        .is_some_and(|candidate| worktree_path_identity(candidate) == path_key)
+                }),
                 &path,
+                &path_key,
                 false,
                 sessions,
                 services,
@@ -696,6 +702,7 @@ fn worktree_group(
     project_root: &str,
     worktree: Option<&Value>,
     path: &str,
+    path_key: &str,
     main: bool,
     sessions: &[Value],
     services: &[Value],
@@ -742,11 +749,7 @@ fn worktree_group(
             .iter()
             .filter(|session| {
                 !is_project_control_session(session)
-                    && if main {
-                        string_field(session, "worktreePath").is_none_or(|value| value == path)
-                    } else {
-                        string_field(session, "worktreePath") == Some(path)
-                    }
+                    && item_matches_worktree_group(session, path_key, main)
             })
             .cloned()
             .collect(),
@@ -754,13 +757,7 @@ fn worktree_group(
     let group_services = sorted_dashboard_items(
         services
             .iter()
-            .filter(|service| {
-                if main {
-                    string_field(service, "worktreePath").is_none_or(|value| value == path)
-                } else {
-                    string_field(service, "worktreePath") == Some(path)
-                }
-            })
+            .filter(|service| item_matches_worktree_group(service, path_key, main))
             .cloned()
             .collect(),
     );
@@ -1188,6 +1185,42 @@ fn dashboard_created_sort_key(entry: &Value) -> i128 {
 
 fn path_basename(path: &str) -> Option<&str> {
     Path::new(path).file_name().and_then(|name| name.to_str())
+}
+
+fn worktree_lookup_by_identity(worktrees: &[Value]) -> BTreeMap<String, Value> {
+    let mut lookup = BTreeMap::new();
+    for worktree in worktrees {
+        let Some(path) = string_field(worktree, "path") else {
+            continue;
+        };
+        lookup
+            .entry(worktree_path_identity(path))
+            .or_insert_with(|| worktree.clone());
+    }
+    lookup
+}
+
+fn item_matches_worktree_group(item: &Value, path_key: &str, main: bool) -> bool {
+    let Some(path) = string_field(item, "worktreePath") else {
+        return main;
+    };
+    worktree_path_identity(path) == path_key
+}
+
+fn same_worktree_path(left: &str, right: &str) -> bool {
+    worktree_path_identity(left) == worktree_path_identity(right)
+}
+
+fn worktree_path_identity(path: &str) -> String {
+    let trimmed = path.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    fs::canonicalize(trimmed)
+        .unwrap_or_else(|_| Path::new(trimmed).to_path_buf())
+        .to_string_lossy()
+        .trim_end_matches('/')
+        .to_owned()
 }
 
 fn team_string_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {

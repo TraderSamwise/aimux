@@ -354,6 +354,51 @@ focus_local_dashboard_target() {
   return 0
 }
 
+resolve_metadata_api_from_daemon() {
+  [ -n "$project_root" ] || return 1
+  reload_daemon_host="$daemon_host"
+  [ -n "$reload_daemon_host" ] || reload_daemon_host="${AIMUX_DAEMON_HOST-}"
+  [ -n "$reload_daemon_host" ] || reload_daemon_host="127.0.0.1"
+  case "$reload_daemon_host" in
+    127.0.0.1|localhost) ;;
+    *) return 1 ;;
+  esac
+  reload_daemon_port="$daemon_port"
+  [ -n "$reload_daemon_port" ] || reload_daemon_port="${AIMUX_DAEMON_PORT-}"
+  case "$reload_daemon_port" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  projects_raw=$(curl -fsS --max-time 4 "http://$reload_daemon_host:$reload_daemon_port/projects") || return 1
+  PROJECTS_RAW="$projects_raw" python3 - "$project_root" <<'PY'
+import json
+import os
+import sys
+
+project_root = sys.argv[1]
+try:
+    payload = json.loads(os.environ.get("PROJECTS_RAW", ""))
+except Exception:
+    raise SystemExit(1)
+
+for project in payload.get("projects") or []:
+    if not isinstance(project, dict):
+        continue
+    if project.get("projectRoot") != project_root and project.get("path") != project_root:
+        continue
+    endpoint = project.get("serviceEndpoint")
+    if not isinstance(endpoint, dict):
+        raise SystemExit(1)
+    host = endpoint.get("host")
+    port = endpoint.get("port")
+    if host not in ("127.0.0.1", "localhost") or not isinstance(port, int) or port <= 0 or port > 65535:
+        raise SystemExit(1)
+    print(f"http://{host}:{port}")
+    raise SystemExit(0)
+
+raise SystemExit(1)
+PY
+}
+
 switch_local_dashboard() {
   switch_fast_current_session_dashboard || true
   focus_local_dashboard_target || return 1
@@ -384,11 +429,12 @@ reload_local_dashboard() {
     reload_client_tty="${live_client_tty-${client_tty-}}"
     reload_client_session="${live_client_session-${current_client_session-}}"
     metadata_api=$(cat "$project_state_dir/metadata-api.txt" 2>/dev/null || true)
-    [ -n "$metadata_api" ] || {
+    attempted_endpoint=0
+    if [ -n "$metadata_api" ]; then
+      attempted_endpoint=1
+    else
       debug_log_line "dashboard reload api unavailable: missing metadata-api.txt"
-      show_local_message "#[fg=colour203,bold]aimux#[default] dashboard reload failed - project service unavailable"
-      exit 1
-    }
+    fi
     reload_body=$(python3 - "$reload_client_tty" "$reload_client_session" "$current_window_id" <<'PY'
 import json
 import sys
@@ -404,11 +450,26 @@ if current_window_id:
 print(json.dumps(body))
 PY
 )
-    curl -fsS --max-time 8 -H "content-type: application/json" --data-binary "$reload_body" "$metadata_api/control/open-dashboard" || {
+    if [ -n "$metadata_api" ] && curl -fsS --max-time 8 -H "content-type: application/json" --data-binary "$reload_body" "$metadata_api/control/open-dashboard"; then
+      exit 0
+    fi
+    if [ -n "$metadata_api" ]; then
       debug_log_line "dashboard reload api failed endpoint=$metadata_api"
-      show_local_message "#[fg=colour203,bold]aimux#[default] dashboard reload failed - project service unavailable"
-      exit 1
-    }
+    fi
+    daemon_metadata_api=$(resolve_metadata_api_from_daemon || true)
+    if [ -n "$daemon_metadata_api" ]; then
+      attempted_endpoint=1
+      if curl -fsS --max-time 8 -H "content-type: application/json" --data-binary "$reload_body" "$daemon_metadata_api/control/open-dashboard"; then
+        exit 0
+      fi
+      debug_log_line "dashboard reload api failed daemon_resolved_endpoint=$daemon_metadata_api"
+    fi
+    if [ "$attempted_endpoint" = "1" ]; then
+      show_local_message "#[fg=colour203,bold]aimux#[default] dashboard reload failed - couldn't contact project service endpoint"
+    else
+      show_local_message "#[fg=colour203,bold]aimux#[default] dashboard reload failed - project service endpoint unavailable"
+    fi
+    exit 1
   ) >/dev/null 2>&1 &
   return 0
 }

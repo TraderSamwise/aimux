@@ -2302,11 +2302,12 @@
               ["display-message", "#[fg=colour220,bold]aimux#[default] reloading dashboard"],
               [
                 "display-message",
-                "#[fg=colour203,bold]aimux#[default] dashboard reload failed - project service unavailable"
+                "#[fg=colour203,bold]aimux#[default] dashboard reload failed - couldn't contact project service endpoint"
               ]
             ],
             "curlLog": [
-              "-fsS --max-time 8 -H content-type: application/json --data-binary {\"focus\": true, \"forceReload\": true, \"clientTty\": \"/dev/live\", \"currentClientSession\": \"aimux-proj-client-1234abcd\", \"currentWindowId\": \"@shell\"} http://127.0.0.1:43444/control/open-dashboard"
+              "-fsS --max-time 8 -H content-type: application/json --data-binary {\"focus\": true, \"forceReload\": true, \"clientTty\": \"/dev/live\", \"currentClientSession\": \"aimux-proj-client-1234abcd\", \"currentWindowId\": \"@shell\"} http://127.0.0.1:43444/control/open-dashboard",
+              "-fsS --max-time 4 http://127.0.0.1:43190/projects"
             ],
             "aimuxLog": [],
             "state": {

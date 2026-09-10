@@ -23,6 +23,18 @@ fn fixture_tmux_control_native_matches_typescript_contract() {
     assert_tmux_control_contract(TmuxControlRunner::Native);
 }
 
+#[test]
+fn dashboard_reload_retries_daemon_resolved_endpoint_after_stale_cache() {
+    assert_dashboard_reload_retries_daemon_resolved_endpoint(TmuxControlRunner::ShellScript);
+    assert_dashboard_reload_retries_daemon_resolved_endpoint(TmuxControlRunner::Native);
+}
+
+#[test]
+fn dashboard_reload_failure_names_endpoint_not_service_availability() {
+    assert_dashboard_reload_failure_names_endpoint(TmuxControlRunner::ShellScript);
+    assert_dashboard_reload_failure_names_endpoint(TmuxControlRunner::Native);
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TmuxControlRunner {
     ShellScript,
@@ -55,6 +67,190 @@ fn assert_tmux_control_contract(runner: TmuxControlRunner) {
         failures.len(),
         serde_json::to_string_pretty(&failures).expect("serialize failures")
     );
+}
+
+fn assert_dashboard_reload_retries_daemon_resolved_endpoint(runner: TmuxControlRunner) {
+    let actual = run_case(
+        &dashboard_reload_case(
+            json!({
+                "TMUX_FAKE_CURL_FAIL_URL": "127.0.0.1:43444",
+                "TMUX_FAKE_PROJECTS_RESPONSE": r#"{"ok":true,"projects":[{"projectRoot":"<temp1>","serviceEndpoint":{"host":"127.0.0.1","port":51513}}]}"#,
+            }),
+            3,
+            0,
+        ),
+        runner,
+    );
+    let roots = actual["roots"].as_array().expect("roots");
+    let root = &roots[1];
+    let curl_log = root["curlLog"].as_array().expect("curl log");
+    assert_eq!(curl_log.len(), 3, "{actual:#}");
+    assert!(
+        curl_log[0]
+            .as_str()
+            .unwrap()
+            .contains("127.0.0.1:43444/control/open-dashboard")
+    );
+    assert!(
+        curl_log[1]
+            .as_str()
+            .unwrap()
+            .contains("127.0.0.1:43191/projects")
+    );
+    assert!(
+        curl_log[2]
+            .as_str()
+            .unwrap()
+            .contains("127.0.0.1:51513/control/open-dashboard")
+    );
+    let tmux_log = serde_json::to_string(&root["tmuxLog"]).expect("tmux log");
+    assert!(!tmux_log.contains("dashboard reload failed"), "{actual:#}");
+    assert_eq!(
+        root["rootFiles"]["aimux-debug.log"],
+        "aimux: tmux dashboard fallback for session=aimux-proj-client-1234abcd window=@shell\naimux-control: dashboard reload fallback project_root=<temp1>\naimux-control: dashboard reload api failed endpoint=http://127.0.0.1:43444\n"
+    );
+}
+
+fn assert_dashboard_reload_failure_names_endpoint(runner: TmuxControlRunner) {
+    let actual = run_case(
+        &dashboard_reload_case(
+            json!({
+                "TMUX_FAKE_CURL_EXIT": "28",
+            }),
+            2,
+            13,
+        ),
+        runner,
+    );
+    let root = &actual["roots"].as_array().expect("roots")[1];
+    let tmux_log = serde_json::to_string(&root["tmuxLog"]).expect("tmux log");
+    assert!(
+        tmux_log.contains("dashboard reload failed - couldn't contact project service endpoint"),
+        "{actual:#}"
+    );
+    assert!(
+        !tmux_log.contains("project service unavailable"),
+        "{actual:#}"
+    );
+}
+
+fn dashboard_reload_case(
+    env: Value,
+    expected_curl_calls: usize,
+    expected_tmux_calls: usize,
+) -> Value {
+    let mut env_map = Map::new();
+    env_map.insert(
+        "AIMUX_BIN".into(),
+        Value::String("<temp2>/bin/aimux".into()),
+    );
+    env_map.insert("PATH".into(), Value::String("<path>".into()));
+    if let Some(extra) = env.as_object() {
+        for (key, value) in extra {
+            env_map.insert(key.clone(), value.clone());
+        }
+    }
+    let expected_curl_log = (0..expected_curl_calls)
+        .map(|_| Value::String(String::new()))
+        .collect::<Vec<_>>();
+    let expected_tmux_log = (0..expected_tmux_calls)
+        .map(|_| Value::String(String::new()))
+        .collect::<Vec<_>>();
+    json!({
+        "input": {
+            "execCalls": [{
+                "command": "sh",
+                "args": [
+                    "<repo>/scripts/tmux-control.sh",
+                    "dashboard",
+                    "--daemon-host",
+                    "127.0.0.1",
+                    "--daemon-port",
+                    "43191",
+                    "--project-state-dir",
+                    "<temp2>/project",
+                    "--project-root",
+                    "<temp1>",
+                    "--current-client-session",
+                    "aimux-proj-client-1234abcd",
+                    "--client-tty",
+                    "/dev/live",
+                    "--current-window",
+                    "shell",
+                    "--current-window-id",
+                    "@shell",
+                    "--current-path",
+                    "<temp1>"
+                ],
+                "cwd": "<repo>",
+                "env": Value::Object(env_map),
+                "beforeRoot": {
+                    "root": "<temp2>",
+                    "tmuxLog": [],
+                    "curlLog": [],
+                    "aimuxLog": [],
+                    "state": dashboard_reload_tmux_state(),
+                    "rootFiles": {},
+                    "projectFiles": {
+                        "metadata-api.txt": "http://127.0.0.1:43444",
+                        "project-root.txt": "<temp1>\n"
+                    }
+                },
+                "status": 0,
+                "stdout": ""
+            }]
+        },
+        "output": {
+            "roots": [
+                { "root": "<temp1>", "rootFiles": {}, "curlLog": [], "aimuxLog": [], "tmuxLog": [] },
+                {
+                    "root": "<temp2>",
+                    "rootFiles": {
+                        "aimux-debug.log": "aimux: tmux dashboard fallback for session=aimux-proj-client-1234abcd window=@shell\naimux-control: dashboard reload fallback project_root=<temp1>\naimux-control: dashboard reload api failed endpoint=http://127.0.0.1:43444\n"
+                    },
+                    "curlLog": expected_curl_log,
+                    "aimuxLog": [],
+                    "tmuxLog": expected_tmux_log
+                }
+            ]
+        }
+    })
+}
+
+fn dashboard_reload_tmux_state() -> Value {
+    json!({
+        "clients": [{ "tty": "/dev/live", "sessionName": "aimux-proj-client-1234abcd", "windowId": "@shell" }],
+        "windows": {
+            "aimux-proj-client-1234abcd": [
+                { "id": "@dash", "index": 0, "name": "dashboard-live" },
+                { "id": "@shell", "index": 3, "name": "shell" }
+            ]
+        },
+        "sessionOptions": {
+            "aimux-proj": {
+                "@aimux-dashboard-build": "build-current",
+                "@aimux-project-root": "/repo/project",
+                "@aimux-runtime-owner": "owner-current"
+            },
+            "aimux-proj-client-1234abcd": {
+                "@aimux-project-root": "<temp1>",
+                "@aimux-runtime-owner": "owner-current"
+            }
+        },
+        "windowOptions": {
+            "@dash": { "@aimux-dashboard-build": "build-old", "@aimux-dashboard-owner": "owner-current" }
+        },
+        "panes": {
+            "@dash": {
+                "sessionName": "aimux-proj-client-1234abcd",
+                "windowId": "@dash",
+                "windowName": "dashboard-live",
+                "clientTty": "/dev/live",
+                "currentPath": "<temp1>",
+                "currentCommand": "bash"
+            }
+        }
+    })
 }
 
 fn run_case(case: &Value, runner: TmuxControlRunner) -> Value {
@@ -195,12 +391,22 @@ fn run_exec_call(
 }
 
 fn native_aimux_binary() -> String {
-    std::env::var("CARGO_BIN_EXE_aimux").unwrap_or_else(|_| {
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../target/debug/aimux")
-            .to_string_lossy()
-            .into_owned()
-    })
+    if let Ok(binary) = std::env::var("CARGO_BIN_EXE_aimux") {
+        return binary;
+    }
+    if let Some(binary) = option_env!("CARGO_BIN_EXE_aimux") {
+        return binary.to_owned();
+    }
+    if let Ok(target_dir) = std::env::var("CARGO_TARGET_DIR") {
+        let binary = Path::new(&target_dir).join("debug/aimux");
+        if binary.exists() {
+            return binary.to_string_lossy().into_owned();
+        }
+    }
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/debug/aimux")
+        .to_string_lossy()
+        .into_owned()
 }
 
 struct TempRoot {
@@ -771,8 +977,25 @@ switch (args[0]) {
 
 const FAKE_CURL: &str = r####"#!/bin/sh
 printf '%s\n' "$*" >> "$TMUX_FAKE_CURL_LOG"
+if [ -n "${TMUX_FAKE_CURL_FAIL_URL-}" ]; then
+  for arg in "$@"; do
+    case "$arg" in
+      *"$TMUX_FAKE_CURL_FAIL_URL"*)
+        exit "${TMUX_FAKE_CURL_FAIL_EXIT:-28}"
+        ;;
+    esac
+  done
+fi
 for arg in "$@"; do
   case "$arg" in
+    *"/projects"*)
+      if [ -n "$TMUX_FAKE_PROJECTS_RESPONSE" ]; then
+        printf '%s' "$TMUX_FAKE_PROJECTS_RESPONSE"
+      else
+        printf '{"ok":true,"projects":[]}'
+      fi
+      exit "${TMUX_FAKE_DAEMON_CURL_EXIT:-0}"
+      ;;
     *"/control/switchable-agents"*)
       if [ -n "$TMUX_FAKE_SWITCHABLE_RESPONSE" ]; then
         printf '%s' "$TMUX_FAKE_SWITCHABLE_RESPONSE"

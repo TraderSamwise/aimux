@@ -20,6 +20,9 @@ use std::fs::{create_dir_all, remove_dir_all, write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+#[cfg(unix)]
+use std::os::unix::fs::symlink;
+
 mod support;
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -467,6 +470,70 @@ fn desktop_state_previews_use_hot_snapshot_before_live_capture() {
             .map(|(window_id, _)| window_id.as_str())
             .collect::<Vec<_>>(),
         vec!["@3"]
+    );
+    cleanup(project);
+}
+
+#[cfg(unix)]
+#[test]
+fn main_checkout_group_coalesces_realpath_and_symlink_spellings() {
+    let project = temp_project("main-checkout-alias");
+    let real_root = project.join("repo-real");
+    let alias_root = project.join("repo-alias");
+    create_dir_all(&real_root).expect("real repo");
+    symlink(&real_root, &alias_root).expect("repo alias");
+    let real_path = real_root.to_string_lossy().into_owned();
+    let alias_path = alias_root.to_string_lossy().into_owned();
+    let topology = coerce_runtime_topology(&json!({
+        "version": 1,
+        "generatedAt": "2026-09-10T00:00:00.000Z",
+        "rigs": [
+            { "id": "rig-1", "name": "aimux", "projectRoot": real_path, "createdAt": "2026-09-10T00:00:00.000Z", "updatedAt": "2026-09-10T00:00:00.000Z" }
+        ],
+        "nodes": [
+            { "id": "node-real", "rigId": "rig-1", "logicalId": "codex-real", "toolConfigKey": "codex", "cwd": real_path, "createdAt": "2026-09-10T00:00:00.000Z" },
+            { "id": "node-alias", "rigId": "rig-1", "logicalId": "codex-alias", "toolConfigKey": "codex", "cwd": alias_path, "createdAt": "2026-09-10T00:00:01.000Z" }
+        ],
+        "edges": [],
+        "bindings": [
+            { "id": "binding-real", "nodeId": "node-real", "tmuxSession": "aimux-repo", "tmuxWindowId": "@1", "tmuxWindowIndex": 1, "tmuxWindowName": "codex", "updatedAt": "2026-09-10T00:00:00.000Z" },
+            { "id": "binding-alias", "nodeId": "node-alias", "tmuxSession": "aimux-repo", "tmuxWindowId": "@2", "tmuxWindowIndex": 2, "tmuxWindowName": "codex", "updatedAt": "2026-09-10T00:00:01.000Z" }
+        ],
+        "sessions": [
+            { "id": "codex-real", "nodeId": "node-real", "status": "running", "command": "codex", "worktreePath": real_path, "createdAt": "2026-09-10T00:00:00.000Z", "updatedAt": "2026-09-10T00:00:00.000Z" },
+            { "id": "codex-alias", "nodeId": "node-alias", "status": "running", "command": "codex", "worktreePath": alias_path, "createdAt": "2026-09-10T00:00:01.000Z", "updatedAt": "2026-09-10T00:00:01.000Z" }
+        ],
+        "services": [],
+        "worktrees": [
+            { "id": "main-alias", "rigId": "rig-1", "path": alias_path, "name": "Main Checkout", "status": "active", "branch": "master", "createdAt": "2026-09-10T00:00:00.000Z", "updatedAt": "2026-09-10T00:00:00.000Z" }
+        ],
+        "worktreeGraveyard": [],
+        "teamRoles": [],
+        "remoteClients": [],
+        "lifecycleOperations": [],
+        "exchangeRefs": []
+    }))
+    .expect("topology");
+
+    let state = build_desktop_state_with_live_window_ids(
+        DesktopStateInput {
+            project_root: real_root.to_string_lossy().into_owned(),
+            topology: &topology,
+            metadata_sessions: &BTreeMap::new(),
+            exchange: &exchange_fixture(),
+        },
+        Some(&support::live_window_ids(&["@1", "@2"])),
+    );
+
+    let groups = state["worktreeGroups"].as_array().expect("worktree groups");
+    let main_groups = groups
+        .iter()
+        .filter(|group| group["name"] == "Main Checkout")
+        .collect::<Vec<_>>();
+    assert_eq!(main_groups.len(), 1, "{groups:#?}");
+    assert_eq!(
+        ids(main_groups[0]["sessions"].as_array().unwrap()),
+        vec!["codex-alias".to_owned(), "codex-real".to_owned()]
     );
     cleanup(project);
 }
