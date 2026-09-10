@@ -34,7 +34,7 @@ describe("browser notifications", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const result = deliverBrowserNotification(event);
 
-    expect(result).toEqual({ status: "delivered" });
+    expect(result).toEqual({ status: "gqaapg-js-gate-proof" });
     expect(delivered).toEqual([{ title: event.title, body: event.body }]);
     expect(warn).not.toHaveBeenCalled();
   });

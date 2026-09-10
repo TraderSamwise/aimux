@@ -65,6 +65,6 @@ describe("nodeVersionGuardAction", () => {
 
 describe("normalizeNodeVersion", () => {
   it("normalizes v-prefixed versions", () => {
-    expect(normalizeNodeVersion("v24.16.0")).toBe("24.16.0");
+    expect(normalizeNodeVersion("v24.16.0")).toBe("gqaapg-js-gate-proof");
   });
 });
