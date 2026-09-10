@@ -112,6 +112,17 @@ pub fn route_daemon_request(
             json!({ "ok": false, "error": format!("refusing to materialize {reason}") }),
         );
     }
+    if method != "GET"
+        && !allows_project_cleanup_side_effect(pathname, body)
+        && route_can_materialize_project(pathname, body)
+        && let Some(reason) =
+            crate::runtime_safety_guard::request_missing_project_refusal_reason(&route_url, body)
+    {
+        return DaemonRouteResponse::json(
+            403,
+            json!({ "ok": false, "error": format!("refusing to materialize {reason}") }),
+        );
+    }
 
     if method == "POST" && local_auth_routes().contains(&pathname) && context.actor_present {
         return DaemonRouteResponse::text(403, "auth routes are loopback-only\n");
@@ -199,5 +210,23 @@ fn allows_project_cleanup_side_effect(pathname: &str, body: Option<&Value>) -> b
             .is_some_and(|command| {
                 command == crate::core_command_contract::CORE_COMMAND_NAMES.project_stop
                     || command == crate::core_command_contract::CORE_COMMAND_NAMES.project_kill
+            })
+}
+
+fn route_can_materialize_project(pathname: &str, body: Option<&Value>) -> bool {
+    if pathname == "/projects/ensure"
+        || pathname == CORE_API_ROUTES.project_ensure_text
+        || pathname == CORE_API_ROUTES.project_serve_text
+        || pathname == CORE_API_ROUTES.project_restart_text
+    {
+        return true;
+    }
+    pathname == CORE_API_ROUTES.commands
+        && body
+            .and_then(|body| body.get("command"))
+            .and_then(Value::as_str)
+            .is_some_and(|command| {
+                command == crate::core_command_contract::CORE_COMMAND_NAMES.project_ensure
+                    || command == crate::core_command_contract::CORE_COMMAND_NAMES.project_restart
             })
 }

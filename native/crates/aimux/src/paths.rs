@@ -252,6 +252,9 @@ impl PathResolver {
         if is_ephemeral_temp_project_root_from(&repo_root, &self.process_cwd) {
             return Ok(None);
         }
+        if !repo_root.is_dir() {
+            return Ok(None);
+        }
 
         let project_id = compute_project_id(&repo_root);
         let entry = ProjectEntry {

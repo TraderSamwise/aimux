@@ -56,12 +56,30 @@ pub fn request_project_refusal_reason(
     body.and_then(project_root_fields_refusal_reason)
 }
 
+pub fn request_missing_project_refusal_reason(
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+) -> Option<&'static str> {
+    for key in PROJECT_ROOT_REQUEST_FIELDS {
+        if let Some(reason) = route_url
+            .search_param(key)
+            .and_then(missing_project_root_text_refusal_reason)
+        {
+            return Some(reason);
+        }
+    }
+    body.and_then(missing_project_root_fields_refusal_reason)
+}
+
 pub fn project_materialization_refusal_reason(project_root: &Path) -> Option<&'static str> {
     if crate::paths::is_ephemeral_temp_project_root(project_root) {
         return Some("temporary project");
     }
     if path_has_test_fixture_component(project_root) {
         return Some("test fixture project");
+    }
+    if !project_root.is_dir() {
+        return Some("missing project");
     }
     if is_cargo_test_harness_binary() {
         return Some("cargo test harness");
@@ -189,6 +207,41 @@ fn project_root_fields_refusal_reason(value: &Value) -> Option<&'static str> {
         Value::Array(values) => values.iter().find_map(project_root_fields_refusal_reason),
         _ => None,
     }
+}
+
+fn missing_project_root_fields_refusal_reason(value: &Value) -> Option<&'static str> {
+    match value {
+        Value::Object(map) => {
+            for key in PROJECT_ROOT_REQUEST_FIELDS {
+                if let Some(reason) = map
+                    .get(*key)
+                    .and_then(Value::as_str)
+                    .and_then(missing_project_root_text_refusal_reason)
+                {
+                    return Some(reason);
+                }
+            }
+            for child in map.values() {
+                if let Some(reason) = missing_project_root_fields_refusal_reason(child) {
+                    return Some(reason);
+                }
+            }
+            None
+        }
+        Value::Array(values) => values
+            .iter()
+            .find_map(missing_project_root_fields_refusal_reason),
+        _ => None,
+    }
+}
+
+fn missing_project_root_text_refusal_reason(value: &str) -> Option<&'static str> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let path = Path::new(trimmed);
+    (path.is_absolute() && !path.is_dir()).then_some("missing project")
 }
 
 fn project_root_text_refusal_reason(value: &str) -> Option<&'static str> {

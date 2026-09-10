@@ -845,6 +845,32 @@ fn unified_router_refuses_temp_project_root_before_dispatch() {
 }
 
 #[test]
+fn unified_router_refuses_missing_project_root_before_dispatch() {
+    assert!(
+        !std::path::Path::new("/other-repo").exists(),
+        "/other-repo must remain a nonexistent fixture path for this regression"
+    );
+    let mut runtime = FakeRouterRuntime::default();
+    let context = DaemonRouteRequestContext::default();
+
+    let response = route_daemon_request(
+        &mut runtime,
+        "POST",
+        "/projects/ensure",
+        Some(&json!({ "projectRoot": "/other-repo" })),
+        "issued",
+        &context,
+    );
+
+    assert_eq!(response.status, 403);
+    assert_eq!(
+        json_body(response),
+        json!({ "ok": false, "error": "refusing to materialize missing project" })
+    );
+    assert!(runtime.calls.is_empty());
+}
+
+#[test]
 fn unified_router_allows_temp_project_stop_for_cleanup() {
     let mut runtime = FakeRouterRuntime::default();
     let context = DaemonRouteRequestContext::default();

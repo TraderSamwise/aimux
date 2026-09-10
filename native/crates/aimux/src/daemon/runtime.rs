@@ -3463,6 +3463,28 @@ mod tests {
     }
 
     #[test]
+    fn ensure_project_refuses_missing_fixture_root_before_launch() {
+        assert!(
+            !Path::new("/other-repo").exists(),
+            "/other-repo must remain a nonexistent fixture path for this regression"
+        );
+        let fixture = restart_service_fixture("ensure-refuse-missing");
+        let launcher = Arc::new(RestartTestLauncher::new(91_405));
+        let verifier = Arc::new(RestartTestProcessVerifier::current_native([]));
+        let mut runtime = fixture.runtime(launcher.clone(), verifier);
+
+        let error = <RealDaemonRuntime as DaemonCoreCommandRuntime>::ensure_project(
+            &mut runtime,
+            "/other-repo",
+        )
+        .expect_err("missing fixture root should be refused");
+
+        assert!(error.contains("refusing to materialize missing project"));
+        assert!(launcher.calls().is_empty());
+        fixture.cleanup();
+    }
+
+    #[test]
     fn control_plane_restart_reports_retained_dashboard_without_reload() {
         let fixture = restart_service_fixture("restart-retained-dashboard");
         let project = fixture.project_root.clone();

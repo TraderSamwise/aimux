@@ -320,3 +320,20 @@ fn register_project_skips_nested_temp_fixture_repos() {
     fs::remove_dir_all(leaked_shape.parent().expect("fixture parent should exist"))
         .expect("remove nested temp fixture repo");
 }
+
+#[test]
+fn register_project_skips_missing_absolute_project_roots() {
+    assert!(
+        !std::path::Path::new("/other-repo").exists(),
+        "/other-repo must remain a nonexistent fixture path for this regression"
+    );
+    let test_dir = TestDir::new();
+    let mut resolver = resolver(&test_dir);
+
+    let entry = resolver
+        .register_project("/other-repo")
+        .expect("register missing root");
+
+    assert_eq!(entry, None);
+    assert!(resolver.list_projects().expect("list projects").is_empty());
+}
