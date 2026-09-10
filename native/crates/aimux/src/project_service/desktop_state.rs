@@ -13,6 +13,7 @@ use crate::runtime_topology::{
     list_topology_service_states, list_topology_worktree_states, read_runtime_topology,
     runtime_topology_path,
 };
+use crate::tmux::TmuxTarget;
 
 use super::agent_output::{AgentOutputCaptureRuntime, SystemAgentOutputCaptureRuntime};
 use super::agents::{
@@ -22,7 +23,7 @@ use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname
 use super::http::query_params;
 use super::operation_failures::list_dashboard_operation_failures;
 use super::preview_snapshots::{
-    DEFAULT_PREVIEW_CAPTURE_LINES, DEFAULT_PREVIEW_MAX_CHARS, capture_preview_snapshot,
+    DEFAULT_PREVIEW_CAPTURE_LINES, DEFAULT_PREVIEW_MAX_CHARS, capture_preview_snapshot_with_tap,
 };
 use super::router::ProjectServiceRequestContext;
 use super::runtime_exchange::{read_runtime_exchange, runtime_exchange_path};
@@ -142,6 +143,7 @@ fn touch_desktop_preview_client(
             requested_preview,
             requested_chat_preview,
             default_kind: None,
+            remote_address: context.remote_address.as_deref(),
         },
         context.project_root(),
         &context.project_state_dir(),
@@ -239,8 +241,14 @@ pub fn build_desktop_state_with_live_window_ids(
         .iter()
         .map(|service| dashboard_service(service, input.metadata_sessions, &worktree_by_path))
         .collect::<Vec<_>>();
-    let worktree_groups =
-        build_worktree_groups(&input.project_root, &worktrees, &sessions, &services);
+    let retired_worktree_paths = retired_worktree_paths(input.topology);
+    let worktree_groups = build_worktree_groups(
+        &input.project_root,
+        &worktrees,
+        &sessions,
+        &services,
+        &retired_worktree_paths,
+    );
     let mut state = Map::new();
     state.insert("ok".into(), Value::Bool(true));
     state.insert("serviceInfo".into(), service_info());
@@ -283,9 +291,22 @@ pub fn attach_desktop_state_previews(
         let Some(window_id) = string_field(session, "tmuxWindowId").map(str::to_owned) else {
             continue;
         };
-        let Some(preview) = capture_preview_snapshot(
+        let target = TmuxTarget {
+            session_name: String::new(),
+            window_id: window_id.clone(),
+            window_index: integer_field(session, "tmuxWindowIndex"),
+            window_name: String::new(),
+            pane_dead: None,
+        };
+        let tap_snapshot = context.osc_output_tap.track_and_read_snapshot(
+            string_field(session, "id").unwrap_or_default(),
+            target,
+            DEFAULT_PREVIEW_MAX_CHARS,
+        );
+        let Some(preview) = capture_preview_snapshot_with_tap(
             context,
             &window_id,
+            tap_snapshot.as_ref(),
             runtime,
             DEFAULT_PREVIEW_CAPTURE_LINES,
             DEFAULT_PREVIEW_MAX_CHARS,
@@ -637,11 +658,28 @@ fn dashboard_service(
     Value::Object(item)
 }
 
+/// Paths of worktrees the user has graveyarded or removed.
+///
+/// They are already absent from the active worktree list, but a session that
+/// still names one would otherwise reintroduce the group, so a graveyarded
+/// worktree holding an offline agent never left the dashboard.
+fn retired_worktree_paths(topology: &Value) -> BTreeSet<String> {
+    list_topology_worktree_states(topology, None)
+        .iter()
+        .filter(|worktree| {
+            string_field(worktree, "status")
+                .is_some_and(|status| !ACTIVE_WORKTREE_STATUSES.contains(&status))
+        })
+        .filter_map(|worktree| string_field(worktree, "path").map(worktree_path_identity))
+        .collect()
+}
+
 fn build_worktree_groups(
     project_root: &str,
     worktrees: &[Value],
     sessions: &[Value],
     services: &[Value],
+    retired_paths: &BTreeSet<String>,
 ) -> Vec<Value> {
     let main_path = project_root;
     let main_key = worktree_path_identity(main_path);
@@ -656,9 +694,11 @@ fn build_worktree_groups(
     }
     for item in sessions.iter().chain(services.iter()) {
         if let Some(path) = string_field(item, "worktreePath") {
-            group_paths
-                .entry(worktree_path_identity(path))
-                .or_insert_with(|| path.to_owned());
+            let key = worktree_path_identity(path);
+            if retired_paths.contains(&key) {
+                continue;
+            }
+            group_paths.entry(key).or_insert_with(|| path.to_owned());
         }
     }
     let mut groups = Vec::new();

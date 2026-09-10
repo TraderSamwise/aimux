@@ -733,6 +733,75 @@ fn orphan_worktrees_keep_node_first_seen_order() {
 }
 
 #[test]
+fn a_session_naming_the_main_path_stays_in_the_main_checkout_card() {
+    let fixture: DesktopStateGoldenFixture =
+        serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");
+    let mut snapshot = fixture.runtime_light.clone();
+    snapshot.services.clear();
+    snapshot.main_checkout_path = Some("/repo".into());
+    snapshot.worktree_groups = vec![WorktreeGroup {
+        name: "Main Checkout".into(),
+        branch: "master".into(),
+        path: None,
+        status: WorktreeStatus::Active,
+        pending: false,
+        removing: false,
+        pending_action: None,
+        operation_failure: None,
+        sessions: Vec::new(),
+        services: Vec::new(),
+        extra: Default::default(),
+    }];
+
+    let mut unpathed = snapshot.sessions[0].clone();
+    unpathed.id = "claude-unpathed".into();
+    unpathed.worktree_path = None;
+    let mut spelled_out = snapshot.sessions[0].clone();
+    spelled_out.id = "claude-spelled-out".into();
+    spelled_out.worktree_path = Some("/repo".into());
+    spelled_out.worktree_name = Some("Main Checkout".into());
+    spelled_out.worktree_branch = Some("master".into());
+    snapshot.sessions = vec![unpathed, spelled_out];
+
+    let result = render_dashboard_frame(&DashboardRenderInput {
+        snapshot: &snapshot,
+        overseer_sessions: &[],
+        scribe_sessions: &[],
+        cols: 140,
+        rows: 40,
+        nav_level: DashboardNavLevel::Worktrees,
+        selected_session_id: None,
+        selected_service_id: None,
+        focused_worktree_path: None,
+        runtime_label: None,
+        version: None,
+        is_dev_runtime: false,
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_message: None,
+        details_sidebar_visible: false,
+        preview_source: "output",
+        scribe_preview_entries: &[],
+    });
+    let plain = strip_ansi(&result.frame);
+
+    assert_eq!(
+        plain.matches("Main Checkout").count(),
+        1,
+        "main checkout drawn more than once:\n{plain}"
+    );
+    let main_line = plain
+        .lines()
+        .find(|line| line.contains("Main Checkout"))
+        .expect("main checkout card");
+    assert!(
+        main_line.contains("2 ready"),
+        "both sessions should sit in the main card: {main_line}"
+    );
+}
+
+#[test]
 fn renders_live_agent_rows_without_jamming_identity_status_or_activity() {
     let fixture: DesktopStateGoldenFixture =
         serde_json::from_str(GOLDEN).expect("valid desktop-state fixture");

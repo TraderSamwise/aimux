@@ -698,27 +698,37 @@ fn build_dashboard_quick_jump_worktrees<'a>(
     let mut services_by_path: BTreeMap<&str, Vec<&'a DashboardService>> = BTreeMap::new();
     let mut session_path_order = Vec::new();
     let mut service_path_order = Vec::new();
+    // A session in the main checkout may carry either no worktree path or the
+    // main path spelled out. Treating only the first as main left the second
+    // unclaimed, and the orphan sweep below then drew it as a second
+    // "Main Checkout" card holding the same agents.
+    let main_path = input.snapshot.main_checkout_path.as_deref();
+    let is_main_path =
+        |path: &str| main_path.is_some_and(|main| same_dashboard_worktree_path(path, main));
+
     for session in &input.snapshot.sessions {
         if is_project_control_session(session) {
             continue;
         }
-        if let Some(path) = session.worktree_path.as_deref() {
-            if !sessions_by_path.contains_key(path) {
-                session_path_order.push(path);
+        match session.worktree_path.as_deref() {
+            Some(path) if !is_main_path(path) => {
+                if !sessions_by_path.contains_key(path) {
+                    session_path_order.push(path);
+                }
+                sessions_by_path.entry(path).or_default().push(session);
             }
-            sessions_by_path.entry(path).or_default().push(session);
-        } else {
-            main_sessions.push(session);
+            _ => main_sessions.push(session),
         }
     }
     for service in &input.snapshot.services {
-        if let Some(path) = service.worktree_path.as_deref() {
-            if !services_by_path.contains_key(path) {
-                service_path_order.push(path);
+        match service.worktree_path.as_deref() {
+            Some(path) if !is_main_path(path) => {
+                if !services_by_path.contains_key(path) {
+                    service_path_order.push(path);
+                }
+                services_by_path.entry(path).or_default().push(service);
             }
-            services_by_path.entry(path).or_default().push(service);
-        } else {
-            main_services.push(service);
+            _ => main_services.push(service),
         }
     }
     sort_sessions_by_created(&mut main_sessions);
@@ -4198,4 +4208,18 @@ fn strip_styled(line: &str) -> String {
 #[allow(dead_code)]
 fn _assert_width(line: &str, width: usize) -> bool {
     visible_width(line) <= width
+}
+
+/// Compare two worktree paths the way the project service groups them.
+fn same_dashboard_worktree_path(left: &str, right: &str) -> bool {
+    fn identity(path: &str) -> String {
+        let trimmed = path.trim().trim_end_matches('/');
+        std::fs::canonicalize(trimmed)
+            .map(|resolved| resolved.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| trimmed.to_owned())
+            .trim_end_matches('/')
+            .to_owned()
+    }
+    left.trim().trim_end_matches('/') == right.trim().trim_end_matches('/')
+        || identity(left) == identity(right)
 }

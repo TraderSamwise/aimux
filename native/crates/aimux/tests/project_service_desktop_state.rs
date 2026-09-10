@@ -476,6 +476,57 @@ fn desktop_state_previews_use_hot_snapshot_before_live_capture() {
 
 #[cfg(unix)]
 #[test]
+fn a_graveyarded_worktree_leaves_the_dashboard_even_with_an_offline_agent_in_it() {
+    let project = temp_project("graveyarded-worktree");
+    let root = project.join("repo");
+    create_dir_all(&root).expect("repo");
+    let root_path = root.to_string_lossy().into_owned();
+    let retired = format!("{root_path}/.aimux/worktrees/perf");
+    let topology = coerce_runtime_topology(&json!({
+        "version": 1,
+        "generatedAt": "2026-09-10T00:00:00.000Z",
+        "rigs": [
+            { "id": "rig-1", "name": "aimux", "projectRoot": root_path, "createdAt": "2026-09-10T00:00:00.000Z", "updatedAt": "2026-09-10T00:00:00.000Z" }
+        ],
+        "nodes": [
+            { "id": "node-perf", "rigId": "rig-1", "logicalId": "codex-perf", "toolConfigKey": "codex", "cwd": retired, "createdAt": "2026-09-10T00:00:00.000Z" }
+        ],
+        "edges": [],
+        "bindings": [],
+        "sessions": [
+            { "id": "codex-perf", "nodeId": "node-perf", "status": "offline", "command": "codex", "worktreePath": retired, "createdAt": "2026-09-10T00:00:00.000Z", "updatedAt": "2026-09-10T00:00:00.000Z" }
+        ],
+        "services": [],
+        "worktrees": [
+            { "id": "wt-perf", "rigId": "rig-1", "path": retired, "name": "perf", "status": "graveyard", "branch": "perf", "createdAt": "2026-09-10T00:00:00.000Z", "updatedAt": "2026-09-10T00:00:00.000Z", "removedAt": "2026-09-10T00:00:00.000Z" }
+        ],
+        "worktreeGraveyard": [],
+        "teamRoles": [],
+        "remoteClients": [],
+        "lifecycleOperations": [],
+        "exchangeRefs": []
+    }))
+    .expect("topology");
+
+    let state = build_desktop_state_with_live_window_ids(
+        DesktopStateInput {
+            project_root: root_path,
+            topology: &topology,
+            metadata_sessions: &BTreeMap::new(),
+            exchange: &exchange_fixture(),
+        },
+        Some(&support::live_window_ids(&[])),
+    );
+
+    let groups = state["worktreeGroups"].as_array().expect("worktree groups");
+    assert!(
+        groups.iter().all(|group| group["name"] != "perf"),
+        "graveyarded worktree still listed: {groups:#?}"
+    );
+    cleanup(project);
+}
+
+#[test]
 fn main_checkout_group_coalesces_realpath_and_symlink_spellings() {
     let project = temp_project("main-checkout-alias");
     let real_root = project.join("repo-real");

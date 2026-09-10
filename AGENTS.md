@@ -137,6 +137,28 @@ yarn dev:ios:local
 yarn dev:android:local
 ```
 
+## Build And Test Cost
+
+A full Rust build of this crate takes minutes and the machine is usually shared
+with other agents, so default to the cheapest command that answers the question.
+These are defaults, not prohibitions — when one of them is genuinely the right
+tool, use it.
+
+- Scope by default: `cargo clippy -p aimux`, `cargo test -p aimux --test <file>`,
+  `vitest run <path>`. Save whole-workspace and `--all-targets` runs for the gate
+  before a PR, or when asked.
+- Reuse a build you already made; rebuilding between a test run and an install
+  changes nothing if the source did not.
+- Wiping the build cache (`cargo clean`, `rm -rf target`) forces a full rebuild
+  and slows the next one too. It is the right move for a genuinely corrupt build,
+  a toolchain change, or a dependency problem — it is the wrong move for chasing
+  the file and line of a warning the output already named. Grep the source
+  instead.
+- Do not re-run an expensive command to get better-formatted output. Read what it
+  already printed.
+- If a slow run really is needed, run it once and read all of it rather than
+  iterating on it.
+
 ## Verification
 
 Source checks do not prove that the live installed runtime changed. Before
