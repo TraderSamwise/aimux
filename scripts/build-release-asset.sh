@@ -68,8 +68,8 @@ release_source_hash() {
     } | shasum -a 1 | awk '{ print substr($1, 1, 12) }'
   else
     find package.json yarn.lock scripts native app docs -type f 2>/dev/null \
+      -exec shasum -a 1 {} + \
       | LC_ALL=C sort \
-      | xargs shasum -a 1 \
       | shasum -a 1 \
       | awk '{ print substr($1, 1, 12) }'
   fi

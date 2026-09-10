@@ -266,11 +266,77 @@ fn release_asset_builder_rejects_cross_arch_labeling_before_build() {
     );
 }
 
+#[test]
+fn release_source_hash_no_git_fallback_handles_paths_with_spaces() {
+    let repo = repo_root();
+    let temp = TempDir::new("release-source-hash-spaces");
+    fs::write(temp.0.join("package.json"), "{\"version\":\"0.1.0\"}\n")
+        .expect("write package");
+    fs::write(temp.0.join("yarn.lock"), "# lock\n").expect("write lock");
+    for dir in ["scripts", "native", "app", "docs"] {
+        fs::create_dir_all(temp.0.join(dir)).expect("create top-level dir");
+    }
+    let spaced_dir = temp
+        .0
+        .join("app/ios/Pods/Target Support Files/Aimux Fixture");
+    fs::create_dir_all(&spaced_dir).expect("create spaced dir");
+    fs::write(spaced_dir.join("fixture config [one] $value.txt"), "fixture\n")
+        .expect("write spaced file");
+
+    let script =
+        fs::read_to_string(repo.join("scripts/build-release-asset.sh")).expect("read script");
+    let function_start = script
+        .find("release_source_hash() {")
+        .expect("release_source_hash function");
+    let function_end = script
+        .find("\nrelease_build_stamp() {")
+        .expect("release_build_stamp function");
+    let runner = temp.0.join("run-release-source-hash.sh");
+    fs::write(
+        &runner,
+        format!(
+            "#!/bin/sh\nset -euo pipefail\nROOT_DIR={}\ncd \"$ROOT_DIR\"\n{}\nrelease_source_hash\n",
+            shell_quote(&temp.0),
+            &script[function_start..function_end]
+        ),
+    )
+    .expect("write runner");
+    let mut permissions = fs::metadata(&runner).expect("runner metadata").permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&runner, permissions).expect("chmod runner");
+
+    let output = Command::new("/bin/sh")
+        .arg(&runner)
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+        .output()
+        .expect("run source hash fallback");
+
+    assert!(
+        output.status.success(),
+        "no-git source hash failed for a path with spaces\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim().len(),
+        12,
+        "source hash should remain the 12-character stamp suffix witness"
+    );
+}
+
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../..")
         .canonicalize()
         .expect("repo root")
+}
+
+fn shell_quote(path: &Path) -> String {
+    format!(
+        "'{}'",
+        path.to_string_lossy().replace('\'', "'\\''")
+    )
 }
 
 fn create_release_archive(root: &Path) -> PathBuf {
