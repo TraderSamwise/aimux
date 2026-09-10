@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { dirname, join, relative } from 'node:path';
+import { basename, dirname, join, relative } from 'node:path';
 
 const repoRoot = process.cwd();
 const crateRoot = join(repoRoot, 'native/crates/aimux');
@@ -9,7 +9,7 @@ const testsRoot = join(crateRoot, 'tests');
 const contractCorpusRoot = join(repoRoot, 'testdata/contracts/v1');
 const fixtureDispatcherAllowlistPath = join(repoRoot, 'scripts/rust-fixture-dispatcher-allowlist.json');
 const enforceFixtureDispatchers = process.argv.includes('--enforce-fixture-twins');
-
+const historicalCorpusReferencePrefixes = ['docs/rust-translation/'];
 const tuiOwnedPatterns = [
   /(^|\/)dashboard_renderer(\.rs|\/)/,
   /(^|\/)dashboard_controller\.rs$/,
@@ -54,6 +54,36 @@ function walkFiles(dir, predicate) {
   }
   return files;
 }
+
+function walkFilesPruned(dir, predicate) {
+  if (!existsSync(dir)) {
+    return [];
+  }
+  const files = [];
+  for (const entry of readdirSync(dir)) {
+    if (['.git', 'node_modules', 'target', 'release'].includes(entry)) {
+      continue;
+    }
+    const path = join(dir, entry);
+    const stat = statSync(path);
+    if (stat.isDirectory()) {
+      files.push(...walkFilesPruned(path, predicate));
+    } else if (predicate(path)) {
+      files.push(path);
+    }
+  }
+  return files;
+}
+
+const activeContractInventoryFiles = [
+  'AGENTS.md',
+  'testdata/contracts/v1/README.md',
+  'testdata/contracts/v1/ENFORCEMENT_AUDIT.md',
+  ...walkFiles(
+    contractCorpusRoot,
+    (path) => /^PHASE8_.*\.md$/.test(basename(path)),
+  ).map((path) => relative(repoRoot, path)),
+].sort();
 
 function lineFor(source, index) {
   return source.slice(0, index).split('\n').length;
@@ -448,6 +478,127 @@ function contractCorpusFiles() {
   ).map((path) => relative(repoRoot, path));
 }
 
+function isCorpusPath(rel) {
+  return rel.startsWith('testdata/contracts/v1/') && /\.(?:json|jsonl|txt)$/.test(rel);
+}
+
+function activeCorpusReferenceSources() {
+  const activeSources = new Set(activeContractInventoryFiles);
+  for (const file of sourceFiles) {
+    activeSources.add(relative(repoRoot, file));
+  }
+  for (const root of ['app', 'bin', 'scripts', '.github']) {
+    for (const file of walkFilesPruned(join(repoRoot, root), (path) => /\.(?:md|rs|ts|tsx|js|mjs|sh|py|yml|yaml)$/.test(path))) {
+      activeSources.add(relative(repoRoot, file));
+    }
+  }
+  for (const file of walkFiles(join(repoRoot, 'docs'), (path) => /\.(?:md|rs|ts|tsx|js|mjs|sh|py)$/.test(path))) {
+    const rel = relative(repoRoot, file);
+    if (historicalCorpusReferencePrefixes.some((prefix) => rel.startsWith(prefix))) {
+      continue;
+    }
+    activeSources.add(rel);
+  }
+  return [...activeSources].filter((file) => existsSync(join(repoRoot, file))).sort();
+}
+
+function isContractInventoryFile(rel) {
+  return rel === 'testdata/contracts/v1/README.md'
+    || rel === 'testdata/contracts/v1/ENFORCEMENT_AUDIT.md'
+    || /^testdata\/contracts\/v1\/PHASE8_.*\.md$/.test(rel);
+}
+
+function referencedCorpusPathsInLine(rel, line) {
+  const paths = [];
+  const fullPathPattern = /testdata\/contracts\/v1\/[A-Za-z0-9_.\/-]+\.(?:json|jsonl|txt)/g;
+  let match;
+  while ((match = fullPathPattern.exec(line)) !== null) {
+    paths.push(match[0]);
+  }
+  if (isContractInventoryFile(rel)) {
+    const backtickPathPattern = /`([A-Za-z0-9_.-]+\/[A-Za-z0-9_.\/-]+\.(?:json|jsonl|txt))`/g;
+    while ((match = backtickPathPattern.exec(line)) !== null) {
+      const candidate = match[1];
+      if (!candidate.startsWith('testdata/contracts/v1/')) {
+        paths.push(`testdata/contracts/v1/${candidate}`);
+      }
+    }
+  }
+  return paths.filter(isCorpusPath);
+}
+
+function staleReferencedCorpusPaths() {
+  const stale = [];
+  const seen = new Set();
+  for (const rel of activeCorpusReferenceSources()) {
+    const source = readFileSync(join(repoRoot, rel), 'utf8');
+    const lines = source.split('\n');
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index];
+      for (const corpusPath of referencedCorpusPathsInLine(rel, line)) {
+        if (existsSync(join(repoRoot, corpusPath))) {
+          continue;
+        }
+        const key = `${rel}\0${index + 1}\0${corpusPath}`;
+        if (seen.has(key)) {
+          continue;
+        }
+        seen.add(key);
+        stale.push({
+          source: rel,
+          line: index + 1,
+          corpus: corpusPath,
+        });
+      }
+    }
+  }
+  return stale.sort((a, b) => a.source.localeCompare(b.source) || a.line - b.line || a.corpus.localeCompare(b.corpus));
+}
+
+function enforcementRows() {
+  const report = join(contractCorpusRoot, 'ENFORCEMENT_AUDIT.md');
+  if (!existsSync(report)) {
+    return [];
+  }
+  const rows = [];
+  const lines = readFileSync(report, 'utf8').split('\n');
+  for (let index = 0; index < lines.length; index += 1) {
+    const cells = lines[index].trim().split('|').map((cell) => cell.trim()).filter(Boolean);
+    if (cells.length < 5 || cells[0] === 'Suite' || /^---+$/.test(cells[0])) {
+      continue;
+    }
+    const suite = cells[0].replace(/^`|`$/g, '');
+    const corpus = cells[2].replace(/^`|`$/g, '');
+    if (!suite || !corpus || !isCorpusPath(corpus)) {
+      continue;
+    }
+    rows.push({
+      source: relative(repoRoot, report),
+      line: index + 1,
+      suite,
+      suitePath: `native/crates/aimux/tests/${suite}.rs`,
+      corpus,
+    });
+  }
+  return rows;
+}
+
+const staleEnforcementBindings = enforcementRows()
+  .map((row) => {
+    const suiteFile = join(repoRoot, row.suitePath);
+    const missingSuite = !existsSync(suiteFile);
+    const missingCorpus = !existsSync(join(repoRoot, row.corpus));
+    const missingBinding = !missingSuite && !missingCorpus && !readFileSync(suiteFile, 'utf8').includes(row.corpus);
+    return {
+      ...row,
+      missingSuite,
+      missingCorpus,
+      missingBinding,
+    };
+  })
+  .filter((row) => row.missingSuite || row.missingCorpus || row.missingBinding)
+  .sort((a, b) => a.suite.localeCompare(b.suite) || a.corpus.localeCompare(b.corpus));
+
 function referencedCorpusPath(rel) {
   for (const source of corpusReferenceCache.values()) {
     if (source.includes(rel)) {
@@ -467,6 +618,7 @@ function referencedCorpusPath(rel) {
 const unreferencedContractCorpusFiles = contractCorpusFiles()
   .filter((file) => !referencedCorpusPath(file))
   .sort();
+const staleContractCorpusReferences = staleReferencedCorpusPaths();
 
 const json = process.argv.includes('--json');
 if (json) {
@@ -484,6 +636,8 @@ if (json) {
     contractCorpusGate: {
       checked: contractCorpusFiles().length,
       unreferenced: unreferencedContractCorpusFiles,
+      staleReferences: staleContractCorpusReferences,
+      staleEnforcementBindings,
     },
   }, null, 2));
 } else {
@@ -539,12 +693,36 @@ if (json) {
   console.log('## Contract corpus gate');
   console.log(`Contract corpus files checked: ${contractCorpusFiles().length}`);
   console.log(`Unreferenced contract corpus files: ${unreferencedContractCorpusFiles.length}`);
+  console.log(`Stale referenced corpus paths: ${staleContractCorpusReferences.length}`);
+  console.log(`Stale enforcement bindings: ${staleEnforcementBindings.length}`);
+  console.log(`Historical reference prefixes skipped: ${historicalCorpusReferencePrefixes.join(', ')}`);
   if (unreferencedContractCorpusFiles.length > 0) {
     console.log('');
     console.log('| unreferenced corpus file |');
     console.log('| --- |');
     for (const file of unreferencedContractCorpusFiles) {
       console.log(`| ${file} |`);
+    }
+  }
+  if (staleContractCorpusReferences.length > 0) {
+    console.log('');
+    console.log('| source | line | missing corpus path |');
+    console.log('| --- | ---: | --- |');
+    for (const entry of staleContractCorpusReferences) {
+      console.log(`| ${entry.source} | ${entry.line} | ${entry.corpus} |`);
+    }
+  }
+  if (staleEnforcementBindings.length > 0) {
+    console.log('');
+    console.log('| source | line | suite | corpus | missing |');
+    console.log('| --- | ---: | --- | --- | --- |');
+    for (const entry of staleEnforcementBindings) {
+      const missing = [
+        entry.missingSuite ? 'suite' : null,
+        entry.missingCorpus ? 'corpus' : null,
+        entry.missingBinding ? 'binding' : null,
+      ].filter(Boolean).join(', ');
+      console.log(`| ${entry.source} | ${entry.line} | \`${entry.suite}\` | ${entry.corpus} | ${missing} |`);
     }
   }
 }
@@ -556,6 +734,8 @@ if (
     || staleFixtureDispatcherAllowlist.length > 0
     || unreferencedExportedModules.length > 0
     || unreferencedContractCorpusFiles.length > 0
+    || staleContractCorpusReferences.length > 0
+    || staleEnforcementBindings.length > 0
   )
 ) {
   process.exitCode = 1;

@@ -1,23 +1,16 @@
 # Phase 8 Readiness
 
-Audit point: post-cut `f8c0d3cd`.
+Audit point: post-cut `f8c0d3cd` historical deletion baseline. Current active corpus enforcement is `ENFORCEMENT_AUDIT.md`; stale active references are checked by `yarn audit:rust-orphans`.
 
 Question: what actually breaks if the TypeScript hot path is deleted today?
 
-Answer: the checklist gate is clear for behavior captured before deletion: all 325 suite/corpus bindings are mutation-proven `PROVEN-FAILS`, with 0 checklist, 0 vacuous, and 0 error bindings. A local-profile release asset built from clean `HEAD` at `08f2476b` also ran from an installed shim with `dist` withheld and `node` absent from `PATH` for the installed CLI, daemon, project-service, dashboard, tmux statusline/control internal paths, and hook route. Sam has now chosen the plugin strategy: suspend the public/user JS plugin API for phase 8 and port the two built-in plugins to native Rust as real internal plugins. The built-ins now pass the recorded TypeScript corpora through an internal serializable plugin API, and project-service startup/diagnostics wiring landed in `cc99cba7` so production startup reports native plugin statuses through diagnostics. Arbitrary user JS plugin execution remains intentionally unsupported, not silently replaced.
+Answer: at the phase-cut baseline, the checklist gate was clear for behavior captured before deletion. This file records that historical deletion decision, not the current active corpus inventory. Arbitrary user JS plugin execution remains intentionally unsupported, not silently replaced.
 
 Phase 8 deletion landed in two commits: `a9220736` deleted the retired source graph, and `f8c0d3cd` deleted the TypeScript capture harness. Together they removed 803 files and 260,512 lines from this worktree.
 
 ## Evidence Baseline
 
-- Enforcement inventory: 325 suite/corpus bindings under `testdata/contracts/v1`.
-- Enforcement audit: `testdata/contracts/v1/ENFORCEMENT_AUDIT.md`.
-- The enforcement audit remains runnable after TypeScript deletion: `node scripts/audit-fixture-enforcement.mjs --write-report`.
-- Live residual suite: `scripts/phase8-live-residuals.py`, reported in `testdata/contracts/v1/PHASE8_LIVE_RESIDUALS.md`.
-- Current binding status: 325 `PROVEN-FAILS`, 0 `CHECKLIST`, 0 `VACUOUS`, 0 `ERROR`, 0 `STATIC`.
-- Current binding case count: 4,048 suite/corpus cases, all mutation-proven.
-- Current backlog: `testdata/contracts/v1/UNIMPLEMENTED.md` lists 0 ignored/checklist corpus entries.
-- Coverage definition from `UNIMPLEMENTED.md`: 245 `src/**/*.test.ts` modules, 245 covered by behavior-level corpora, 0 uncovered. This is test-module coverage, not proof that every production TS source file is safe to delete independently.
+This section is historical. It describes the proof available when Phase 8 deletion landed; current active suite/corpus bindings live in `ENFORCEMENT_AUDIT.md`.
 
 ## No-Node Smoke
 
@@ -63,7 +56,7 @@ Results:
 | Subsystem | Rust State | Evidence | Gap |
 | --- | --- | --- | --- |
 | Release/install/launcher | Implemented for installed native path | `release/installed-shim.json`, `release/asset.json`, `release/package-manifest.json`, `release/version.json`, `runtime/cli-launcher.json`, all `PROVEN-FAILS`; no-Node smoke | Source-checkout/dev `dist/launcher-bin.js` fallback still exists as a non-installed path. |
-| Core command contracts and transport | Implemented for captured surfaces | `core-command/*.json`, `cli/*.json`, `transport/core-command.json`, `service-client/client.json`, `integration/src-surfaces.json` are `PROVEN-FAILS` | Live daemon/project-service availability errors still need smoke coverage. |
+| Core command contracts and transport | Implemented for captured surfaces | Core command, CLI, transport, and service-client corpora are tracked in the current active enforcement audit. | Live daemon/project-service availability errors still need smoke coverage. |
 | Daemon lifecycle/state/project catalog | Implemented for captured surfaces | `daemon-state/state.json`, `daemon-supervisor/build-generation.json`, `daemon/projects-route-counts.json`, `runtime-coherence/report.json`, `project-catalog/*.json`, `process/inspector.json` are `PROVEN-FAILS`; no-Node daemon smoke | Live signal/port/process races are not fully fixture-proven. |
 | Project service HTTP/SSE/stores | Mostly implemented | `project-api/*.json`, `metadata-server/*.json`, `metadata-store/store.json`, `runtime-state/project-event-stream.json`, `runtime-exchange/*.json`, `runtime-topology/*.json` are `PROVEN-FAILS`; no-Node project-service smoke | End-to-end HTTP/SSE ordering under load remains live-only residual risk. |
 | Agent output/parser/transcript/state | Implemented | Parser adversarial/fuzz/audit/activity corpora, bounds/stream/read-metrics, transcript, transcript-reconciler, liveness/status/restore/tracker, ANSI/rich-text are `PROVEN-FAILS` | No checklist rows remain in this subsystem. |
@@ -71,7 +64,7 @@ Results:
 | Hooks and default plugins | Implemented for captured contracts; public plugin API suspended | `hooks/tool-hooks.json`, `shell/hooks.json`, `default-plugins/gh-pr-context.json`, `default-plugins/transcript-length.json`, `plugin/runtime.json`, `fixture_plugin_api`, and `project_service_reads` are proven; hook route smoke | The native built-ins run through the internal serializable plugin API and are wired into project-service diagnostics. Runtime execution of arbitrary user JS plugins is intentionally unavailable for phase 8. |
 | Dashboard model/TUI/client helpers | Implemented for captured surfaces | Dashboard/TUI corpora, including golden desktop state, navigation, repair notices, notifications, rich text, command spec, order, targets, interaction, lifecycle, and render helpers are `PROVEN-FAILS`; dashboard `--once` smoke | Live keyboard/terminal rendering and focus behavior still need manual/live coverage. |
 | Tmux runtime/control/render | Strong for captured surfaces | `tmux/*.json`, `terminal/*.json`, statusline/control/open/doctor/expose corpora are `PROVEN-FAILS`; limited no-Node control/statusline smoke | Live attach/detach/PTY timing cannot be fully reduced to corpus data. |
-| Hosted/remote/mobile notification surfaces | Implemented for captured contracts | `hosted/*.json`, `remote-access/access.json`, `relay/client.json`, `notifications/mobile-push.json`, `desktop-notifier/notifier.json` are `PROVEN-FAILS` | Network, platform notification delivery, and auth callback races remain live-only residual risk. |
+| Hosted/remote/mobile notification surfaces | Implemented for captured contracts | Hosted, remote-access, relay, and mobile-push corpora are tracked in the current active enforcement audit. The retired desktop-notifier corpus is not active coverage. | Network, platform notification delivery, and auth callback races remain live-only residual risk. |
 | Static/source boundary helpers | Implemented as guards | `source-boundary/inventory.json`, `paths/*.json`, `config/*.json`, `install-config/config.json`, `request-errors/classification.json` are `PROVEN-FAILS` | These prove invariants and shape, not live runtime behavior. |
 
 ## Deletion List
@@ -81,7 +74,7 @@ Safe means: the behavior was captured in a real TypeScript-generated corpus befo
 Provably safe to remove from the installed hot path now:
 
 - `dist/launcher-bin.js` and `dist/main.js` from release packages: `release/package-manifest.json` forbids `dist`, `release/asset.json` proves native binary packaging, `release/installed-shim.json` proves no Node fallback, and the temp install smoke ran without `dist` or `node`.
-- TypeScript CLI launcher, core command wrapper, and installed daemon/project-service/native dashboard selection behavior covered by `runtime/cli-launcher.json`, `core-command/*.json`, `cli/*.json`, and `integration/src-surfaces.json`.
+- TypeScript CLI launcher, core command wrapper, and installed daemon/project-service/native dashboard selection behavior were covered at the phase-cut baseline; use `ENFORCEMENT_AUDIT.md` for the current active corpus inventory.
 - TypeScript project-service route constants and response shape surfaces covered by `project-api/*.json`, `metadata-server/*.json`, `project-service-manifest/manifest.json`, and app/server contract corpora.
 - Agent output, transcript, liveness/status/restore, tracker, ANSI, and rich-text TypeScript modules covered by `agent-output/*.json`, `transcript/turn-state.json`, `ansi/sgr-spans.json`, and `terminal/rich-text.json`.
 - Runtime store/topology/exchange modules covered by `runtime-state/*.json`, `runtime-topology/*.json`, and `runtime-exchange/*.json`.

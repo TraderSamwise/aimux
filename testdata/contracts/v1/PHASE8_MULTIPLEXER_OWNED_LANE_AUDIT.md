@@ -1,6 +1,6 @@
 # Phase 8 Multiplexer Owned Lane Audit v1
 
-Audit point: `rust-translation-v1 owned-lane sufficiency pass`
+Audit point: `rust-translation-v1 owned-lane sufficiency pass` historical deletion baseline. Current active suite/corpus bindings live in `ENFORCEMENT_AUDIT.md`.
 
 Scope: the six TypeScript modules assigned to this lane before phase-8 deletion:
 `src/multiplexer/persistence-methods.ts`, `src/multiplexer/worktrees.ts`,
@@ -23,21 +23,7 @@ from their own test sources, plus adjacent corpora for inbox cleanup, text
 helpers, and worktree graveyard projection. This pass found 56 behavior-level
 misses in the owned lane and captured all 56 as enforced cases.
 
-Scoped enforcement after the pass:
-
-| Suite | Corpus | Cases | Result |
-| --- | --- | ---: | --- |
-| `fixture_project_event_stream` | `runtime-state/project-event-stream.json` | 39 | PROVEN-FAILS |
-| `fixture_tool_picker` | `multiplexer/tool-picker.json` | 31 | PROVEN-FAILS |
-| `fixture_multiplexer_services` | `multiplexer/services.json` | 8 | PROVEN-FAILS |
-| `fixture_multiplexer_services_runtime` | `multiplexer/services-runtime.json` | 19 | PROVEN-FAILS |
-| `fixture_multiplexer_worktrees` | `multiplexer/worktrees.json` | 33 | PROVEN-FAILS |
-| `fixture_multiplexer_runtime_state_methods` | `multiplexer/runtime-state-methods.json` | 59 | PROVEN-FAILS |
-| `fixture_multiplexer_persistence_worktrees` | `multiplexer/persistence-worktrees.json` | 33 | PROVEN-FAILS |
-
-Current enforcement report after scoped merges:
-325 de-duplicated suite/corpus bindings, 4,048 cases, PROVEN-FAILS 325,
-VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
+Scoped enforcement after the pass is historical; use `ENFORCEMENT_AUDIT.md` for the current active inventory.
 
 ## Module Mapping
 
@@ -53,15 +39,7 @@ Behavior families:
   calls.
 
 Corpus:
-- `multiplexer/persistence-desktop-projection.json` (6 cases)
-- `multiplexer/persistence-reapply.json` (2 cases)
-- `multiplexer/persistence-statusline-snapshot.json` (4 cases)
-- `multiplexer/persistence-statusline.json` (4 cases)
-- `multiplexer/persistence-worktree-lists.json` (2 cases)
-- `multiplexer/persistence-worktrees.json` (33 cases)
 - `notifications/inbox-cleanup-runtime.json` (2 adjacent cleanup cases)
-- `worktree/state.json` (graveyard projection case)
-- `multiplexer/dashboard-state-helpers.json` and `tui/render-text.json` (text helper projections)
 
 New misses captured in this pass: 6 maintenance timer cases covering
 start/stop for graveyard and inbox cleanup, guarded double-start behavior, and
@@ -85,8 +63,6 @@ Behavior families:
   and apply results.
 
 Corpus:
-- `multiplexer/worktrees.json` (33 cases)
-- `multiplexer/worktrees-settlement.json` (26 cases)
 
 New misses captured in this pass: 7 wrapper/action cases for direct overlay
 render exports, list display, remove/cache confirm renderers, and the `y`
@@ -111,11 +87,7 @@ Behavior families:
   restore refusal, fresh relaunch, and transcript-based backend recovery.
 
 Corpus:
-- `multiplexer/runtime-state-methods.json` (59 cases)
-- `multiplexer/runtime-state-refresh.json` (12 cases)
 - `runtime-state/runtime-sync.json` (heartbeat and project-service refresh start/stop)
-- `multiplexer/runtime-guard-repair-start.json` and `runtime-state/runtime-guard.json` (guard repair/sync callers)
-- `multiplexer/session-launch-*.json`, `multiplexer/dashboard-tail-lifecycle.json`, and `multiplexer/tui-api-runtime*.json` (startup and caller-side render/sync paths)
 
 New misses captured in this pass: 6 method wrapper/state mutation cases for
 heartbeat forwarding, project-service refresh forwarding, coordination render
@@ -138,8 +110,6 @@ Behavior families:
   suppression, optimistic dashboard rows, and resume-by-id errors/success.
 
 Corpus:
-- `multiplexer/services.json` (8 cases)
-- `multiplexer/services-runtime.json` (19 cases)
 
 New misses captured in this pass: 6 cases for blank shell service create/resume,
 blank launch-command metadata fallback, and non-service tmux-window guard
@@ -163,10 +133,6 @@ Behavior families:
   and key-handler dispatch through dashboard overlay callers.
 
 Corpus:
-- `multiplexer/tool-picker.json` (31 cases)
-- `multiplexer/dashboard-control-overlays.json` (key-handler dispatch)
-- `multiplexer/dashboard-interaction-command-keys.json` and
-  `multiplexer/session-launch-actions.json` (picker entrypoints)
 
 New misses captured in this pass: 14 key-handler cases covering escape, arrow
 movement, digit launch, options overlay entry/exit, launch option parse errors,

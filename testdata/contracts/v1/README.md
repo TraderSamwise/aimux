@@ -56,56 +56,6 @@ Priority fixture groups:
   reset, inverse, multiline, unsupported-code, and malformed-escape inputs,
   captured by running the TypeScript `app/lib/ansi.ts` parser.
 
-## App Display
-
-- `app-display/status-activity.json`: app status-tone and activity-label
-  mapping, status urgency, native colors, command-token, stale spinner, and
-  shimmer behavior captured by running TypeScript `app/lib/status-tone` and
-  `app/lib/activity-label` helpers.
-
-## App Interaction
-
-- `app-interaction/lifecycle-scroll.json`: app session resume affordance and
-  chat scroll policy thresholds, distance math, user-scroll intent, and
-  auto-scroll command behavior captured by running TypeScript
-  `app/lib/agent-lifecycle` and `app/lib/chat-scroll-policy` helpers.
-
-## App Navigation
-
-- `app-navigation/navigation.json`: initial main route selection, main tab
-  href/path mapping, public/internal route separation, and project picker
-  online-agent filtering captured by running TypeScript `app/lib/initial-main-route`,
-  `app/lib/main-tabs`, and `app/lib/project-picker` helpers.
-
-## App State
-
-- `app-state/helpers.json`: chat transcript loading visibility, native pinned
-  offset, terminal output hydration, visible-pane output mode, and active
-  shared-session mapping/equality/merge/hydration behavior captured by running
-  TypeScript app state helpers.
-- `app-state/global-inbox.json`: app global inbox request-key shape/sequence
-  and failed-project row retention captured by running TypeScript global inbox
-  helpers, with random request scope normalized after execution.
-- `app-state/lifecycle-transitions.json`: app project lifecycle transition
-  local/failure record normalization and optimistic desktop-state projection
-  captured by running TypeScript lifecycle transition helpers.
-- `app-state/project-views.json`: app project API view registry, refresh
-  dependency expansion, and update-channel routing captured by running
-  TypeScript project view helpers.
-- `app-state/project-store.json`: app project store empty observability model,
-  plan key shape, request-scope matching, and request-key construction captured
-  by running TypeScript project store helpers, with random request scope
-  normalized after execution.
-- `app-state/settings.json`: durable app settings defaults, persisted-settings
-  normalization, monitor viewport clamping, share normalization, and desktop
-  zoom helpers captured by running TypeScript settings helpers.
-
-## App Runtime
-
-- `app-runtime/projection.json`: app runtime brand selection and OpenRig-style
-  project/worktree/agent/service topology projection captured by running
-  TypeScript `runtime-brand` and `openrig-topology` helpers.
-
 ## CLI
 
 - `cli/agent-id.json`: CLI agent identity payload and text renderer behavior
@@ -149,10 +99,6 @@ Priority fixture groups:
 - `agent-output/transcript-reconciler.json`: stuck-activity settlement,
   stranded `needs_response` clearing, Codex transcript path caching, and miss
   backoff behavior captured by running TypeScript `TranscriptReconciler`.
-- `agent-output/tracker.json`: `AgentTracker` event, `markSeen`,
-  `setActivity`, `setAttention`, focus-suppression, and derived-count
-  transition snapshots captured from the TypeScript metadata store path,
-  including one-case-per-event and status-derivation branch coverage.
 - `agent-output/bounds.json`: capture-window clamping and end-line contracts
   captured from the TypeScript `agent-output-bounds` helpers.
 - `agent-output/stream.json`: SSE text handler output, tail notice, overlap,
@@ -231,13 +177,6 @@ Priority fixture groups:
 - `daemon-state/state.json`: daemon state filtering, fallback, and daemon
   host/port environment contracts captured by running TypeScript `daemon-state`
   helpers.
-
-## Desktop Notifier
-
-- `desktop-notifier/notifier.json`: macOS helper candidate selection, transport
-  routing, diagnostic delivery, doctor-report construction and rendering, and
-  side-effect call records captured by running TypeScript `desktop-notifier`
-  helpers with mocked dependencies.
 
 ## Notifications
 
@@ -327,13 +266,6 @@ Priority fixture groups:
   view, flattened-row, and count contracts captured by running TypeScript
   `project-topology` helpers.
 
-## Push Registration
-
-- `push-registration/url.json`: app security push registration/test URL
-  construction, relay protocol conversion, shared relay context query params,
-  trimming, and partial-context errors captured by running TypeScript
-  `app/lib/push-registration-url` helpers.
-
 ## Context
 
 - `context/compactor.json`: algorithmic summary provenance, metadata, checkpoint
@@ -395,15 +327,6 @@ Priority fixture groups:
   idle-prune, and byte-budget limiter behavior captured by running TypeScript
   `HostedRateLimiter`.
 
-## Integration
-
-- `integration/src-surfaces.json`: final uncovered `src` integration surface
-  slices captured by running TypeScript `runCoreCli`, `CoreProjectActor`,
-  `AimuxDaemon.routeRequest`, hosted listener HTTP requests, and
-  `MetadataServer` HTTP/interaction endpoints with nondeterministic ports, PIDs,
-  timestamps, build stamps, request IDs, and temp paths normalized after
-  execution.
-
 ## Install Cleanup
 
 - `install-cleanup/cleanup.json`: install retention planning, reference
@@ -422,20 +345,10 @@ Priority fixture groups:
 
 ## Expose
 
-- `expose/control.json`: global expose-control project/session flattening,
-  project-name ordering, session-root normalization, and list-failure handling
-  captured by running TypeScript `listAllProjectsExposeItems` with deterministic
-  dependency doubles.
-- `expose/popup-options.json`: popup expose CLI option-to-runtime option
-  mapping and path resolution captured by running TypeScript `toExposeOptions`,
-  with cwd-dependent paths normalized.
 - `expose/pane-output-tap.json`: pane output tap ownership, adoption, renewal,
   pending-start retry, expiry, compaction, lost-ownership, and tmux failure
   cases captured by running TypeScript `ExposePaneOutputTap` with mocked tmux
   calls and temporary tap files.
-- `expose/preview-cache.json`: expose preview cache tracked-target, snapshot,
-  capture-failure, in-flight, demand-expiry, and global registry behavior
-  captured by running TypeScript `ExposePreviewCache` with mocked tmux capture.
 - `expose/preview-crop.json`: expose preview footer crop thresholds and
   line-window behavior captured by running TypeScript expose-preview-crop
   helpers.
@@ -494,9 +407,6 @@ Priority fixture groups:
   runtime-exchange side-effect contracts captured by running TypeScript
   orchestration action helpers with generated IDs and timestamps normalized
   after structure checks.
-- `orchestration/routing.json`: direct, role, tool, worktree, liveness, and
-  workflow-pressure recipient routing captured by running TypeScript
-  `orchestration-routing` helpers.
 
 ## Workflow
 
@@ -580,29 +490,6 @@ level/category gating, secret redaction, rotation, and lifecycle records.
 - `dashboard/index.json`: dashboard derived status label precedence for
   semantic labels, pending-action overrides, and raw waiting fallback captured
   by running TypeScript `Dashboard` index helpers.
-- `dashboard/orphans.json`: stale dashboard build detection, dashboard
-  entrypoint recognition, orphan parent-chain detection, current-process
-  exclusion, and live-pane ancestry captured by running TypeScript
-  `dashboard-orphans` helpers.
-- `dashboard/order.json`: dashboard saved-order keying, stale-id
-  normalization, movement, and per-worktree session/service ordering captured
-  by running TypeScript `dashboard/order` helpers.
-- `dashboard/pending-actions.json`: dashboard pending-action blocking-kind
-  policy captured by running TypeScript `isBlockingPendingDashboardActionKind`.
-- `dashboard/quick-jump.json`: dashboard quick-jump worktree and entry
-  numbering plus digit target resolution captured by running TypeScript
-  `dashboard/quick-jump` helpers.
-- `dashboard/session-registry.json`: dashboard session dedupe,
-  hidden-worktree filtering, teammate inclusion, teammate metadata
-  preservation, and teammate ordering captured by running TypeScript
-  `dashboard/session-registry` helpers.
-- `dashboard/session-actions.json`: dashboard stop, graveyard, and offline
-  resume result states plus side-effect call ordering captured by running
-  TypeScript `dashboard/session-actions` helpers with a deterministic clock for
-  timeout paths.
-- `dashboard/visibility.json`: dashboard offline-session classification and
-  hide-offline model filtering captured by running TypeScript
-  `dashboard/visibility` helpers.
 
 ## Library
 
@@ -736,32 +623,6 @@ level/category gating, secret redaction, rotation, and lifecycle records.
   merging, stale compatibility state clearing, topology service demotion, and
   missing-worktree filtering captured by running TypeScript
   `multiplexer/service-state-snapshot`.
-- `multiplexer/services.json`: service launch-command recovery, service-state
-  metadata projection, and service-label derivation captured by running
-  TypeScript `multiplexer/services` helpers; tmux-backed mutation flows are
-  fenced out.
-- `multiplexer/services-runtime.json`: service create/stop/remove/resume
-  side-effect behavior, including tmux call order, failure-debug shell wrapping,
-  saved offline services, optimistic dashboard seeds, and topology service
-  projections captured by running TypeScript `multiplexer/services` against
-  deterministic fake tmux hosts and temp state files.
-- `multiplexer/worktrees.json`: dashboard worktree settle-poll backoff,
-  worktree create input, removal confirmation, removal completion, and list
-  dismissal plus worktree cache cleanup preview/apply contracts captured by
-  running TypeScript `multiplexer/worktrees` helpers against deterministic fake
-  dashboard hosts.
-- `multiplexer/persistence-worktrees.json`: persistence worktree create,
-  remove, graveyard, resurrection, deletion, host side effects, operation
-  failure records, pending dashboard actions, graveyard session resurrection,
-  graveyard cleanup wrapper refreshes, and topology transitions captured by running TypeScript
-  `multiplexer/persistence-methods` against temporary git repositories and
-  isolated topology state.
-- `multiplexer/runtime-state-methods.json`: runtime-state dashboard removal
-  index adjustment, stop-to-offline topology persistence, graveyard session
-  mutation, live tmux metadata checks, topology reconciliation, offline
-  session/service loading, orphaned service demotion, and live service
-  projection captured by running TypeScript `multiplexer/runtime-state`
-  helpers against isolated project state.
 - `multiplexer/runtime-lifecycle-methods.json`: runtime lifecycle legacy
   instruction-file managed-block cleanup and tracking reset side effects
   captured by running TypeScript `runtimeLifecycleMethods` against temporary
@@ -779,14 +640,6 @@ level/category gating, secret redaction, rotation, and lifecycle records.
 - `runtime-state/runtime-sync.json`: runtime sync heartbeat and project-service
   refresh timer behavior captured by running TypeScript
   `MultiplexerRuntimeSync` with recorded dependencies.
-- `runtime-state/dashboard-api-client.json`: dashboard API client resource
-  refresh, model refresh, mutation blocking, connection-state, and stale
-  lifecycle behavior captured by running TypeScript
-  `multiplexer/dashboard-api-client`.
-- `runtime-state/dashboard-lifecycle.json`: dashboard lifecycle token capture,
-  currentness checks, render gating, stale async suppression, and swallowed
-  handler exception behavior captured by running TypeScript
-  `multiplexer/dashboard-lifecycle`.
 - `runtime-state/dashboard-model-service.json`: dashboard desktop-state model
   refresh, cache application, lifecycle staleness, invalid payload, and tmux
   contradiction behavior captured by running TypeScript
@@ -794,9 +647,6 @@ level/category gating, secret redaction, rotation, and lifecycle records.
 - `runtime-state/dashboard-navigation.json`: dashboard migrate-picker worktree
   selection and overlay side effects captured by running TypeScript
   `multiplexer/navigation`.
-- `runtime-state/dashboard-repair-notices.json`: dashboard repair notice
-  recording, timestamp, flash suppression, and render side effects captured by
-  running TypeScript `multiplexer/repair-notices`.
 - `runtime-state/dashboard-ui-state-store.json`: dashboard UI shared/client
   persistence, screen normalization, selection restore, and item ordering
   behavior captured by running TypeScript `dashboard/ui-state-store`.
@@ -804,16 +654,6 @@ level/category gating, secret redaction, rotation, and lifecycle records.
   debounce/coalescing, hidden-dashboard rechecks, lifecycle suppression, SSE
   reconnect/backoff/idle timeout, alert flash, and buffered-event disposal
   behavior captured by running TypeScript `multiplexer/project-event-stream`.
-- `runtime-state/tui-runtime-mutations.json`: TUI runtime mutation queue
-  context coalescing, mark-seen retry, backoff preemption, and teardown side
-  effects captured by running TypeScript `multiplexer/tui-runtime-mutations`.
-- `multiplexer/tui-api-runtime.json`: TUI API mutation-blocking,
-  recoverable-error, and read-transport policy decisions captured by running
-  TypeScript `multiplexer/tui-api-runtime` pure helpers.
-- `multiplexer/tool-picker.json`: tool picker default environment formatting,
-  configured launch override, picker mode reset, picker/options overlay
-  rendering, and non-dashboard launch dispatch behavior captured by running
-  TypeScript `tool-picker` helpers.
 - `runtime-state/session-recency.json`: user-label recency anchor selection
   captured by running TypeScript `session-recency`.
 - `runtime-state/session-restorability.json`: offline-session exact backend
@@ -894,9 +734,6 @@ level/category gating, secret redaction, rotation, and lifecycle records.
 - `terminal/host.json`: raw-mode and terminal-state restore escape-sequence
   writes, including focus-reporting disable/enable behavior, captured by
   running TypeScript `TerminalHost`.
-- `terminal/hotkeys.json`: leader-key action mapping for work outline versus
-  previous-session actions and transient indicator writes captured by running
-  TypeScript `HotkeyHandler`.
 - `terminal/key-parser.json`: carriage-return/line-feed Enter normalization,
   Alt+Enter normalization, and focus-report/key splitting captured by running
   TypeScript `parseKeys`.
@@ -951,44 +788,12 @@ level/category gating, secret redaction, rotation, and lifecycle records.
   protection, dry-run/apply behavior, cleanup-name allowlist, and summarized
   report rendering captured by running TypeScript `worktree-cache-cleanup`
   helpers.
-- `worktree/state.json`: worktree path resolution, git worktree-add argv
-  selection, internal scratch-worktree classification, graveyard topology
-  projection, and graveyard view-model ordering captured by running TypeScript
-  worktree and multiplexer helpers.
 
 ## Multiplexer
 
 - `multiplexer/dashboard-interaction.json`: dashboard keyboard navigation,
   blocking, quick-jump, and screen-switch behavior captured by running
   TypeScript `dashboardInteractionMethods.handleDashboardKey`.
-- `multiplexer/dashboard-state-helpers.json`: graveyard refresh state,
-  dashboard-tail cache selectors, dashboard-view pending settlement hooks,
-  persistence projection/text helpers, and live service state projection
-  captured by running TypeScript multiplexer helpers.
-- `multiplexer/library-refresh.json`: library resource refresh return values,
-  host-state transitions, payload validation, coalescing, and project-service
-  call logs captured by running TypeScript `refreshLibrary`.
-- `multiplexer/notifications.json`: dashboard coordination notification host
-  projection, worklist filtering, target labels/states, and notification
-  mutation input shape captured by running TypeScript multiplexer notification
-  helpers.
-- `multiplexer/persistence-statusline-snapshot.json`: statusline session,
-  teammate, metadata, task-count, and dashboard-order projection behavior
-  captured by running TypeScript `persistenceMethods.buildStatuslineSnapshot`.
-- `multiplexer/persistence-worktree-lists.json`: raw git worktree inventory
-  and pending-removal projection separation captured by running TypeScript
-  `persistenceMethods.listDesktopWorktrees` against a disposable git worktree.
-- `multiplexer/project-refresh.json`: project observability refresh return
-  values, host-state transitions, payload validation, coalescing, and
-  project-service call logs captured by running TypeScript
-  `refreshProjectObservability`.
-- `multiplexer/runtime-helpers.json`: dashboard-control navigation/root helper
-  behavior, session detail text rendering, launch redaction/default-scribe ID
-  helpers, session-runtime label/activity helpers, and subscreen scoring/state
-  text captured by running TypeScript multiplexer helper functions.
-- `multiplexer/topology-refresh.json`: topology refresh return values,
-  host-state transitions, payload validation, coalescing, and project-service
-  call logs captured by running TypeScript `refreshTopology`.
 
 ## Work Outline
 
