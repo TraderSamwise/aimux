@@ -1,7 +1,15 @@
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use aimux::dashboard_targets::run_dashboard_targets_contract_case;
+use aimux::dashboard_targets::{
+    DashboardResolveOptions, DashboardTargetContext, resolve_dashboard_target_with_context,
+    run_dashboard_targets_contract_case,
+};
+use aimux::tmux::{
+    TMUX_DASHBOARD_READY_OPTION, TmuxCommandSpec, TmuxExecOptions, TmuxRuntimeManager,
+};
+use std::cell::RefCell;
+use std::rc::Rc;
 
 const TARGETS: &str = include_str!("../../../../testdata/contracts/v1/dashboard/targets.json");
 
@@ -70,6 +78,99 @@ fn restart_resolution_reuses_usable_dashboard_without_replacement() {
     assert!(!methods.contains(&"ensureProjectSession"));
     assert!(!methods.contains(&"ensureDashboardWindow"));
     assert!(!methods.contains(&"replaceWindowWhenReady"));
+}
+
+#[test]
+fn production_dashboard_target_resolution_uses_dashboard_command_for_new_session() {
+    let calls = Rc::new(RefCell::new(Vec::<Vec<String>>::new()));
+    let created = Rc::new(RefCell::new(false));
+    let calls_for_exec = calls.clone();
+    let created_for_exec = created.clone();
+    let mut tmux = TmuxRuntimeManager::with_exec(
+        move |args: &[String], _options: Option<&TmuxExecOptions>| {
+            calls_for_exec.borrow_mut().push(args.to_vec());
+            match args.first().map(String::as_str) {
+                Some("has-session") => {
+                    if *created_for_exec.borrow() {
+                        Ok(String::new())
+                    } else {
+                        Err("no such session".to_owned())
+                    }
+                }
+                Some("new-session") => {
+                    *created_for_exec.borrow_mut() = true;
+                    Ok(String::new())
+                }
+                Some("list-sessions") => Ok(String::new()),
+                Some("list-windows") => {
+                    if *created_for_exec.borrow() {
+                        Ok("@1\t0\tdashboard\t1\t0\t0\n@2\t1\taimux-reload\t0\t0\t0".to_owned())
+                    } else {
+                        Ok(String::new())
+                    }
+                }
+                Some("show-window-options")
+                    if args.last().map(String::as_str) == Some(TMUX_DASHBOARD_READY_OPTION) =>
+                {
+                    Ok("dashboard-stamp".to_owned())
+                }
+                Some("display-message")
+                    if args.last().map(String::as_str) == Some("#{pane_dead}") =>
+                {
+                    Ok("0".to_owned())
+                }
+                Some("display-message")
+                    if args.last().map(String::as_str) == Some("#{window_active}") =>
+                {
+                    Ok("1".to_owned())
+                }
+                Some("new-window") => Ok("@2\t1\taimux-reload".to_owned()),
+                _ => Ok(String::new()),
+            }
+        },
+    );
+    let context = DashboardTargetContext {
+        dashboard_build_stamp: "dashboard-stamp".to_owned(),
+        dashboard_command: TmuxCommandSpec {
+            cwd: "/repo/mobile".to_owned(),
+            command: "bash".to_owned(),
+            args: vec!["-lc".to_owned(), "echo custom-dashboard".to_owned()],
+        },
+        runtime_owner_id: "owner".to_owned(),
+    };
+
+    resolve_dashboard_target_with_context(
+        "/repo/mobile",
+        &mut tmux,
+        DashboardResolveOptions {
+            force_reload: false,
+            open_in_host_session: true,
+        },
+        &context,
+    )
+    .expect("dashboard target");
+
+    let calls = calls.borrow();
+    let new_session = calls
+        .iter()
+        .find(|args| args.first().map(String::as_str) == Some("new-session"))
+        .expect("new-session call");
+    assert_eq!(
+        new_session,
+        &vec![
+            "new-session".to_owned(),
+            "-d".to_owned(),
+            "-s".to_owned(),
+            "aimux-mobile-078d0ecd20ec".to_owned(),
+            "-c".to_owned(),
+            "/repo/mobile".to_owned(),
+            "-n".to_owned(),
+            "dashboard".to_owned(),
+            "bash".to_owned(),
+            "-lc".to_owned(),
+            "echo custom-dashboard".to_owned(),
+        ]
+    );
 }
 
 fn normalize_dashboard_stamps(value: Value) -> Value {
