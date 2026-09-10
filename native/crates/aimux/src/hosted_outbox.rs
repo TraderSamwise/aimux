@@ -134,7 +134,7 @@ impl HostedOutboxStore {
                 }
                 let raw = fs::read_to_string(&path)
                     .with_context(|| format!("failed to read hosted outbox {}", path.display()))?;
-                let events = parse_hosted_outbox(&raw, &path)?;
+                let events = parse_hosted_outbox(&raw, &path);
                 fs::remove_file(&path).with_context(|| {
                     format!("failed to remove drained hosted outbox {}", path.display())
                 })?;
@@ -152,25 +152,53 @@ impl HostedOutboxStore {
     }
 }
 
-fn parse_hosted_outbox(raw: &str, path: &Path) -> Result<Vec<HostedEvent>> {
+fn parse_hosted_outbox(raw: &str, path: &Path) -> Vec<HostedEvent> {
+    parse_hosted_outbox_with_skip_logger(raw, path, |line, error| {
+        crate::debug_logging::log_at(
+            crate::debug_logging::LogLevel::Debug,
+            "skipped malformed hosted outbox line",
+            "hosted-outbox",
+            Some(json!({
+                "path": path.to_string_lossy(),
+                "line": line,
+                "error": error,
+            })),
+        );
+    })
+}
+
+fn parse_hosted_outbox_with_skip_logger(
+    raw: &str,
+    path: &Path,
+    mut log_skip: impl FnMut(usize, String),
+) -> Vec<HostedEvent> {
     let mut events = raw
         .lines()
         .filter(|line| !line.trim().is_empty())
         .enumerate()
-        .map(|(index, line)| {
-            serde_json::from_str::<HostedEvent>(line).with_context(|| {
-                format!(
-                    "failed to parse hosted outbox {} line {}",
-                    path.display(),
-                    index + 1
-                )
-            })
-        })
-        .collect::<Result<Vec<_>>>()?;
+        .filter_map(
+            |(index, line)| match serde_json::from_str::<HostedEvent>(line) {
+                Ok(event) => Some(event),
+                Err(error) => {
+                    let line_number = index + 1;
+                    log_skip(
+                        line_number,
+                        format!(
+                            "failed to parse hosted outbox {} line {}: {}",
+                            path.display(),
+                            line_number,
+                            error
+                        ),
+                    );
+                    None
+                }
+            },
+        )
+        .collect::<Vec<_>>();
     if events.len() > MAX_SPOOLED {
         events = events[events.len() - MAX_SPOOLED..].to_vec();
     }
-    Ok(events)
+    events
 }
 
 fn append_jsonl(path: PathBuf, value: &impl Serialize) -> Result<()> {
@@ -336,19 +364,75 @@ mod tests {
     }
 
     #[test]
-    fn try_drain_outbox_preserves_file_when_parse_fails() {
-        let temp = TestDir::new("parse-fails");
+    fn try_drain_outbox_skips_malformed_lines_and_drains_valid_events() {
+        let temp = TestDir::new("torn-line");
         let store = temp.store();
         let path = store.outbox_path();
         fs::create_dir_all(path.parent().expect("outbox parent")).expect("create outbox parent");
-        fs::write(&path, "not-json\n").expect("write invalid outbox");
+        let first = hosted_event("evt_1", "hosted_lockdown");
+        let second = hosted_event("evt_2", "hosted_grant_changed");
+        fs::write(
+            &path,
+            format!(
+                "{}\n{{\"kind\":\"hosted_\n{}\n",
+                serde_json::to_string(&first).expect("first event"),
+                serde_json::to_string(&second).expect("second event")
+            ),
+        )
+        .expect("write mixed outbox");
 
-        let error = store.try_drain_outbox().expect_err("parse should fail");
+        let drained = store.try_drain_outbox().expect("torn lines are skipped");
 
-        assert!(
-            error.to_string().contains("failed to parse hosted outbox"),
-            "{error}"
+        assert_eq!(
+            drained
+                .iter()
+                .map(|event| event.kind.as_str())
+                .collect::<Vec<_>>(),
+            vec!["hosted_lockdown", "hosted_grant_changed"]
         );
-        assert!(path.exists(), "parse failures must preserve the outbox");
+        assert!(
+            !path.exists(),
+            "successfully drained valid events should delete the outbox"
+        );
+    }
+
+    #[test]
+    fn malformed_line_parser_reports_skipped_lines() {
+        let temp = TestDir::new("parse-log");
+        let path = temp.0.join("outbox.jsonl");
+        let first = hosted_event("evt_1", "hosted_lockdown");
+        let raw = format!(
+            "{}\n{{\"kind\":\"hosted_\n",
+            serde_json::to_string(&first).expect("first event")
+        );
+        let mut skipped = Vec::new();
+
+        let drained = parse_hosted_outbox_with_skip_logger(&raw, &path, |line, error| {
+            skipped.push((line, error));
+        });
+
+        assert_eq!(drained.len(), 1);
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(skipped[0].0, 2);
+        assert!(
+            skipped[0].1.contains("failed to parse hosted outbox"),
+            "{:?}",
+            skipped
+        );
+    }
+
+    fn hosted_event(id: &str, kind: &str) -> HostedEvent {
+        HostedEvent {
+            id: id.to_owned(),
+            kind: kind.to_owned(),
+            ts: "2026-01-01T00:00:00.000Z".to_owned(),
+            principal_id: Some("prn_a".to_owned()),
+            label: Some("cli".to_owned()),
+            session_id: None,
+            fingerprint: None,
+            address_known: false,
+            user_agent: None,
+            detail: None,
+        }
     }
 }
