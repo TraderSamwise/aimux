@@ -26,6 +26,7 @@ use aimux::daemon_state::{
 use aimux::paths::PathResolver;
 use aimux::project_api_contract::routes as project_routes;
 use aimux::remote_credentials::{AimuxCredentials, load_credentials, save_credentials_at};
+use aimux::runtime_coherence::RuntimeCoherenceTmux;
 use aimux::runtime_topology::{runtime_topology_path, write_runtime_topology};
 use aimux::tmux::TmuxTarget;
 use aimux::tmux_exec_metrics::{TmuxExecMode, record_tmux_exec, reset_tmux_exec_metrics};
@@ -839,6 +840,68 @@ fn native_daemon_doctor_versions_reports_catalog_and_service_counts() {
 }
 
 #[test]
+fn native_daemon_doctor_versions_reports_tmux_snapshot() {
+    let fixture = RuntimeFixture::new("doctor-versions-tmux");
+    let project = fixture.project("live");
+    let mut resolver = fixture.resolver();
+    resolver
+        .register_project(&project)
+        .expect("register project");
+    let project_root = project.to_string_lossy().into_owned();
+    let session_name = aimux::tmux::project_session(&project, "aimux").session_name;
+    let provider_project_root = project_root.clone();
+    let provider_session_name = session_name.clone();
+    let mut runtime = fixture
+        .runtime()
+        .with_runtime_coherence_tmux_provider(Arc::new(move || RuntimeCoherenceTmux {
+            available: true,
+            version: Some("tmux 3.6b".into()),
+            session_names: vec![provider_session_name.clone()],
+            session_options: [(
+                provider_session_name.clone(),
+                [(
+                    "@aimux-project-root".to_owned(),
+                    Some(provider_project_root.clone()),
+                )]
+                .into_iter()
+                .collect(),
+            )]
+            .into_iter()
+            .collect(),
+            ..RuntimeCoherenceTmux::default()
+        }));
+
+    let response = handle_daemon_runtime_request(
+        &mut runtime,
+        request(
+            "GET",
+            &format!("{}?json=1", CORE_API_ROUTES.doctor_versions_text),
+        ),
+    );
+    let text = String::from_utf8(response.body).expect("json text");
+    let report: Value = serde_json::from_str(&text).expect("report json");
+
+    assert_eq!(response.status, 200);
+    assert_eq!(report["tmux"]["available"], json!(true));
+    assert_eq!(report["tmux"]["version"], json!("tmux 3.6b"));
+    assert_eq!(report["tmux"]["sessionCount"], json!(1));
+    assert_eq!(report["projects"][0]["projectRoot"], json!(project_root));
+    assert_eq!(
+        report["projects"][0]["runtime"]["sessionName"],
+        json!(session_name)
+    );
+
+    let text_response = handle_daemon_runtime_request(
+        &mut runtime,
+        request("GET", CORE_API_ROUTES.doctor_versions_text),
+    );
+    let body = String::from_utf8(text_response.body).expect("versions text");
+    assert!(body.contains("  tmux: tmux 3.6b\n"));
+    assert!(body.contains("  tmux sessions: 1\n"));
+    fixture.cleanup();
+}
+
+#[test]
 fn native_daemon_core_command_ids_are_unique() {
     let fixture = RuntimeFixture::new("command-id");
     let runtime = fixture.runtime();
@@ -1601,6 +1664,11 @@ impl RuntimeFixture {
             Arc::new(FakeProcessVerifier::native([std::process::id() as i32])),
             PROJECT_SERVICE_STARTUP_TIMEOUT_MS,
         )
+        .with_runtime_coherence_tmux_provider(Arc::new(|| RuntimeCoherenceTmux {
+            available: false,
+            version: None,
+            ..RuntimeCoherenceTmux::default()
+        }))
     }
 
     fn runtime_with_launcher(

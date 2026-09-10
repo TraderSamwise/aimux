@@ -6,7 +6,7 @@ use aimux::runtime_coherence::{
 };
 use aimux::tmux::{
     AIMUX_TMUX_RUNTIME_CONTRACT_VERSION, TMUX_DASHBOARD_OWNER_OPTION, TMUX_RUNTIME_CONTRACT_OPTION,
-    TMUX_RUNTIME_OWNER_OPTION,
+    TMUX_RUNTIME_OWNER_OPTION, project_session,
 };
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -151,6 +151,150 @@ fn runtime_coherence_uses_resolver_for_expected_project_state_dir() {
         !serde_json::to_string(&report)
             .expect("serialize report")
             .contains("/Users/sam/.aimux")
+    );
+}
+
+#[test]
+fn runtime_coherence_reports_real_computed_tmux_session_names() {
+    let project_root = "/Users/samuelsteady/cs/tealstreet-next";
+    let session_name = project_session(project_root, "aimux").session_name;
+    let expected_project_service = expected_manifest();
+    let mut state_resolver = PathResolver::new("/", "/Users/samuelsteady", None);
+    let expected_state_dir = state_resolver
+        .project_state_dir_for(project_root)
+        .to_string_lossy()
+        .into_owned();
+    let mut session_options = BTreeMap::new();
+    session_options.insert(
+        session_name.clone(),
+        [
+            (
+                "@aimux-project-root".to_owned(),
+                Some(project_root.to_owned()),
+            ),
+            (
+                TMUX_RUNTIME_OWNER_OPTION.to_owned(),
+                Some("owner-new".to_owned()),
+            ),
+            (
+                TMUX_RUNTIME_CONTRACT_OPTION.to_owned(),
+                Some(AIMUX_TMUX_RUNTIME_CONTRACT_VERSION.to_owned()),
+            ),
+        ]
+        .into_iter()
+        .collect(),
+    );
+    let mut windows = BTreeMap::new();
+    windows.insert(
+        session_name.clone(),
+        vec![RuntimeCoherenceTmuxWindow {
+            id: "@73".to_owned(),
+            index: 0,
+            name: "dashboard".to_owned(),
+            active: true,
+        }],
+    );
+    let mut window_options = BTreeMap::new();
+    window_options.insert(
+        "@73".to_owned(),
+        [
+            (
+                "@aimux-dashboard-build".to_owned(),
+                Some("dashboard-new".to_owned()),
+            ),
+            (
+                TMUX_DASHBOARD_OWNER_OPTION.to_owned(),
+                Some("owner-new".to_owned()),
+            ),
+        ]
+        .into_iter()
+        .collect(),
+    );
+    let mut resolver = PathResolver::new("/", "/Users/samuelsteady", None);
+    let report = build_runtime_coherence_report_with_resolver(
+        RuntimeCoherenceInput {
+            generated_at: "2026-09-10T00:00:00.000Z".into(),
+            cli_version: "0.1.34".into(),
+            build_profile: "full".into(),
+            cli_launch: cli_launch(),
+            expected_project_service: expected_project_service.clone(),
+            expected_runtime_owner: "owner-new".into(),
+            daemon_info: Some(
+                json!({ "pid": 9001, "port": 43190, "startedAt": "then", "updatedAt": "now" }),
+            ),
+            daemon_projects: [(
+                "tealstreet-next".to_owned(),
+                json!({
+                    "projectId": "tealstreet-next",
+                    "projectRoot": project_root,
+                    "pid": 4242,
+                    "startedAt": "then",
+                    "updatedAt": "now",
+                }),
+            )]
+            .into_iter()
+            .collect(),
+            endpoints: [(
+                project_root.to_owned(),
+                Some(json!({
+                    "host": "127.0.0.1",
+                    "port": 43211,
+                    "pid": 4242,
+                    "updatedAt": "now",
+                })),
+            )]
+            .into_iter()
+            .collect(),
+            health: [(
+                "127.0.0.1:43211".to_owned(),
+                vec![RuntimeCoherenceHealthProbe::Ok(RuntimeCoherenceHealth {
+                    status: 200,
+                    body: json!({
+                        "ok": true,
+                        "pid": 4242,
+                        "projectStateDir": expected_state_dir,
+                        "serviceInfo": expected_project_service,
+                    }),
+                })],
+            )]
+            .into_iter()
+            .collect(),
+            tmux: RuntimeCoherenceTmux {
+                available: true,
+                version: Some("tmux 3.6b".to_owned()),
+                session_names: vec![session_name.clone()],
+                session_options,
+                windows,
+                window_options,
+                window_alive: [("@73".to_owned(), true)].into_iter().collect(),
+                pane_start_commands: BTreeMap::new(),
+            },
+            dashboard_build_stamps: [(project_root.to_owned(), "dashboard-new".to_owned())]
+                .into_iter()
+                .collect(),
+            process_args: BTreeMap::new(),
+            process_list: Vec::new(),
+        },
+        &mut resolver,
+    );
+
+    assert_eq!(
+        report
+            .pointer("/projects/0/runtime/sessionName")
+            .and_then(Value::as_str),
+        Some(session_name.as_str())
+    );
+    assert_eq!(
+        report
+            .pointer("/projects/0/dashboards/0/sessionName")
+            .and_then(Value::as_str),
+        Some(session_name.as_str())
+    );
+    assert_eq!(
+        report
+            .pointer("/summary/needsRestart")
+            .and_then(Value::as_u64),
+        Some(0)
     );
 }
 

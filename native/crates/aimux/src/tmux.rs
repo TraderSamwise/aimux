@@ -1312,6 +1312,10 @@ impl TmuxRuntimeManager {
             .filter(|value| !value.is_empty())
     }
 
+    pub fn get_pane_start_command(&mut self, window_id: &str) -> Option<String> {
+        self.display_message("#{pane_start_command}", Some(window_id))
+    }
+
     pub fn set_return_session(
         &mut self,
         session_name: &str,

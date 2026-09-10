@@ -111,7 +111,8 @@ use crate::repair_events::{
 };
 use crate::runtime_coherence::{
     RuntimeCoherenceHealth, RuntimeCoherenceHealthProbe, RuntimeCoherenceInput,
-    RuntimeCoherenceTmux, build_runtime_coherence_report, render_runtime_coherence_report,
+    RuntimeCoherenceTmux, RuntimeCoherenceTmuxWindow, build_runtime_coherence_report,
+    render_runtime_coherence_report,
 };
 use crate::runtime_guard::read_runtime_rebuild_required;
 use crate::runtime_topology::{
@@ -120,7 +121,8 @@ use crate::runtime_topology::{
 use crate::service_state_snapshot::stop_project_tmux_runtime_with_service_snapshots;
 use crate::team_contract::{is_overseer_session, is_project_control_session};
 use crate::tmux::{
-    TMUX_DASHBOARD_BUILD_OPTION, TmuxRuntimeManager, TmuxTarget, is_dashboard_window_name,
+    TMUX_DASHBOARD_BUILD_OPTION, TMUX_DASHBOARD_OWNER_OPTION, TMUX_RUNTIME_CONTRACT_OPTION,
+    TMUX_RUNTIME_OWNER_OPTION, TmuxRuntimeManager, TmuxTarget, is_dashboard_window_name,
     is_tmux_client_session_for_host,
 };
 use crate::tmux_exec_metrics::get_tmux_exec_metrics;
@@ -158,6 +160,7 @@ pub struct RealDaemonRuntime {
     restart_live_project_service_pids: Option<BTreeMap<String, Vec<i32>>>,
     restart_backend_id_capture_timeout: Duration,
     restart_backend_id_capture_poll: Duration,
+    runtime_coherence_tmux_provider: Arc<dyn Fn() -> RuntimeCoherenceTmux + Send + Sync>,
     started_instant: Instant,
     relay: Arc<crate::daemon::relay::RelaySupervisor>,
 }
@@ -387,6 +390,7 @@ impl RealDaemonRuntime {
             restart_backend_id_capture_poll: Duration::from_millis(
                 RESTART_BACKEND_ID_CAPTURE_POLL_MS,
             ),
+            runtime_coherence_tmux_provider: Arc::new(runtime_coherence_tmux),
             started_instant: Instant::now(),
             relay: Arc::new(crate::daemon::relay::RelaySupervisor::default()),
         }
@@ -417,9 +421,18 @@ impl RealDaemonRuntime {
             restart_backend_id_capture_poll: Duration::from_millis(
                 RESTART_BACKEND_ID_CAPTURE_POLL_MS,
             ),
+            runtime_coherence_tmux_provider: Arc::new(runtime_coherence_tmux),
             started_instant: Instant::now(),
             relay: Arc::new(crate::daemon::relay::RelaySupervisor::default()),
         }
+    }
+
+    pub fn with_runtime_coherence_tmux_provider(
+        mut self,
+        provider: Arc<dyn Fn() -> RuntimeCoherenceTmux + Send + Sync>,
+    ) -> Self {
+        self.runtime_coherence_tmux_provider = provider;
+        self
     }
 
     pub fn with_global_expose_hot_snapshot_background_refresh(mut self) -> Self {
@@ -1486,6 +1499,87 @@ fn endpoint_key(endpoint: &Value) -> Option<String> {
     ))
 }
 
+fn runtime_coherence_tmux() -> RuntimeCoherenceTmux {
+    let mut tmux = TmuxRuntimeManager::new();
+    runtime_coherence_tmux_from_manager(&mut tmux)
+}
+
+fn runtime_coherence_tmux_from_manager(tmux: &mut TmuxRuntimeManager) -> RuntimeCoherenceTmux {
+    let Some(version) = tmux.get_version() else {
+        return RuntimeCoherenceTmux {
+            available: false,
+            version: None,
+            ..RuntimeCoherenceTmux::default()
+        };
+    };
+    let session_names = tmux.list_session_names();
+    let mut report = RuntimeCoherenceTmux {
+        available: true,
+        version: Some(version),
+        session_names: session_names.clone(),
+        ..RuntimeCoherenceTmux::default()
+    };
+    for session_name in session_names {
+        let mut session_options = BTreeMap::new();
+        for key in [
+            "@aimux-project-root",
+            TMUX_RUNTIME_OWNER_OPTION,
+            TMUX_RUNTIME_CONTRACT_OPTION,
+        ] {
+            session_options.insert(key.to_owned(), tmux.get_session_option(&session_name, key));
+        }
+        report
+            .session_options
+            .insert(session_name.clone(), session_options);
+        let windows = tmux
+            .list_windows(&session_name)
+            .into_iter()
+            .map(|window| {
+                let target = TmuxTarget {
+                    session_name: session_name.clone(),
+                    window_id: window.id.clone(),
+                    window_index: window.index,
+                    window_name: window.name.clone(),
+                    pane_dead: window.pane_dead,
+                };
+                report.window_alive.insert(
+                    window.id.clone(),
+                    window
+                        .pane_dead
+                        .map_or_else(|| tmux.is_window_alive(&target), |dead| !dead),
+                );
+                report.pane_start_commands.insert(
+                    window.id.clone(),
+                    tmux.get_pane_start_command(&window.id),
+                );
+                report.window_options.insert(
+                    window.id.clone(),
+                    [
+                        (
+                            TMUX_DASHBOARD_BUILD_OPTION.to_owned(),
+                            tmux.get_window_option(&window.id, TMUX_DASHBOARD_BUILD_OPTION),
+                        ),
+                        (
+                            TMUX_DASHBOARD_OWNER_OPTION.to_owned(),
+                            tmux.get_window_option(&window.id, TMUX_DASHBOARD_OWNER_OPTION),
+                        ),
+                    ]
+                    .into_iter()
+                    .collect(),
+                );
+                RuntimeCoherenceTmuxWindow {
+                    id: window.id,
+                    index: window.index,
+                    name: window.name,
+                    active: window.active,
+                }
+            })
+            .collect::<Vec<_>>();
+        report.windows.insert(session_name, windows);
+    }
+    report
+}
+
 fn process_args_by_pid(processes: &[ProcessArgsEntry]) -> BTreeMap<i64, Option<String>> {
     processes
         .iter()
@@ -2299,11 +2393,7 @@ impl DaemonOperationsTextRuntime for RealDaemonRuntime {
                 &expected_project_service,
                 &mut resolver,
             ),
-            tmux: RuntimeCoherenceTmux {
-                available: false,
-                version: None,
-                ..RuntimeCoherenceTmux::default()
-            },
+            tmux: (self.runtime_coherence_tmux_provider)(),
             dashboard_build_stamps: BTreeMap::new(),
             process_args: process_args_by_pid(&process_list),
             process_list: process_list_json(process_list),
@@ -3744,8 +3834,9 @@ mod tests {
     use crate::runtime_topology::write_runtime_topology;
     use crate::tmux::project_session;
     use crate::tmux::{
-        TMUX_DASHBOARD_OWNER_OPTION, TMUX_DASHBOARD_READY_OPTION, TMUX_RUNTIME_OWNER_OPTION,
-        TmuxCommandSpec, TmuxSessionRef, TmuxWindowInfo,
+        AIMUX_TMUX_RUNTIME_CONTRACT_VERSION, TMUX_DASHBOARD_OWNER_OPTION,
+        TMUX_DASHBOARD_READY_OPTION, TMUX_RUNTIME_OWNER_OPTION, TmuxCommandSpec, TmuxSessionRef,
+        TmuxWindowInfo,
     };
     use std::cell::RefCell;
     use std::ffi::CString;
@@ -3755,6 +3846,107 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn doctor_versions_tmux_snapshot_uses_runtime_tmux_manager() {
+        let calls = Rc::new(RefCell::new(Vec::new()));
+        let calls_for_exec = calls.clone();
+        let mut tmux = TmuxRuntimeManager::with_exec(move |args, _options| {
+            calls_for_exec.borrow_mut().push(args.to_vec());
+            match args {
+                [flag] if flag == "-V" => Ok("tmux 3.6b".to_owned()),
+                [cmd, flag, format] if cmd == "list-sessions" && flag == "-F" => {
+                    assert_eq!(format, "#{session_name}");
+                    Ok("aimux-test-123\n".to_owned())
+                }
+                [cmd, target_flag, session, format_flag, _format]
+                    if cmd == "list-windows"
+                        && target_flag == "-t"
+                        && session == "aimux-test-123"
+                        && format_flag == "-F" =>
+                {
+                    Ok("@1\t0\tdashboard\t1\t0\t0\n".to_owned())
+                }
+                [cmd, value_flag, target_flag, session, key]
+                    if cmd == "show-options"
+                        && value_flag == "-v"
+                        && target_flag == "-t"
+                        && session == "aimux-test-123" =>
+                {
+                    match key.as_str() {
+                        "@aimux-project-root" => Ok("/repo/test".to_owned()),
+                        TMUX_RUNTIME_OWNER_OPTION => Ok("owner-new".to_owned()),
+                        TMUX_RUNTIME_CONTRACT_OPTION => {
+                            Ok(AIMUX_TMUX_RUNTIME_CONTRACT_VERSION.to_owned())
+                        }
+                        _ => Err(format!("unexpected session option {key}")),
+                    }
+                }
+                [cmd, value_flag, target_flag, window_id, key]
+                    if cmd == "show-window-options"
+                        && value_flag == "-v"
+                        && target_flag == "-t"
+                        && window_id == "@1" =>
+                {
+                    match key.as_str() {
+                        TMUX_DASHBOARD_BUILD_OPTION => Ok("dashboard-new".to_owned()),
+                        TMUX_DASHBOARD_OWNER_OPTION => Ok("owner-new".to_owned()),
+                        _ => Err(format!("unexpected window option {key}")),
+                    }
+                }
+                [cmd, print_flag, target_flag, window_id, format]
+                    if cmd == "display-message"
+                        && print_flag == "-p"
+                        && target_flag == "-t"
+                        && window_id == "@1"
+                        && format == "#{pane_start_command}" =>
+                {
+                    Ok("aimux __dashboard-internal-native".to_owned())
+                }
+                _ => Err(format!("unexpected tmux call: {args:?}")),
+            }
+        });
+
+        let report = runtime_coherence_tmux_from_manager(&mut tmux);
+
+        assert!(report.available);
+        assert_eq!(report.version.as_deref(), Some("tmux 3.6b"));
+        assert_eq!(report.session_names, vec!["aimux-test-123"]);
+        assert_eq!(
+            report
+                .session_options
+                .get("aimux-test-123")
+                .and_then(|options| options.get("@aimux-project-root"))
+                .cloned()
+                .flatten()
+                .as_deref(),
+            Some("/repo/test")
+        );
+        assert_eq!(
+            report
+                .windows
+                .get("aimux-test-123")
+                .and_then(|windows| windows.first())
+                .map(|window| (window.id.as_str(), window.name.as_str(), window.active)),
+            Some(("@1", "dashboard", true))
+        );
+        assert_eq!(report.window_alive.get("@1"), Some(&true));
+        assert_eq!(
+            report
+                .pane_start_commands
+                .get("@1")
+                .cloned()
+                .flatten()
+                .as_deref(),
+            Some("aimux __dashboard-internal-native")
+        );
+        assert!(
+            calls
+                .borrow()
+                .iter()
+                .any(|args| args.first().map(String::as_str) == Some("list-sessions"))
+        );
+    }
 
     #[test]
     fn watch_classifier_respects_explicit_control_demotion() {

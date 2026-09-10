@@ -1,10 +1,12 @@
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
 use crate::paths::PathResolver;
 use crate::tmux::{
     AIMUX_TMUX_RUNTIME_CONTRACT_VERSION, TMUX_DASHBOARD_OWNER_OPTION, TMUX_RUNTIME_CONTRACT_OPTION,
-    TMUX_RUNTIME_OWNER_OPTION,
+    TMUX_RUNTIME_OWNER_OPTION, is_dashboard_window_name, is_tmux_client_session_for_host,
+    project_session,
 };
 
 #[derive(Debug, Clone)]
@@ -579,7 +581,7 @@ fn list_dashboard_reports(
     if !input.tmux.available {
         return Vec::new();
     }
-    let host_session = project_session_name(project_root);
+    let host_session = project_session_name(&input.tmux, project_root);
     let mut dashboards = Vec::new();
     let mut seen = BTreeSet::new();
     for session_name in session_names.iter().filter(|session_name| {
@@ -667,7 +669,7 @@ fn list_dashboard_reports(
 const TMUX_DASHBOARD_BUILD_OPTION: &str = "@aimux-dashboard-build";
 
 fn read_project_runtime_report(tmux: &RuntimeCoherenceTmux, project_root: &str) -> Value {
-    let session_name = project_session_name(project_root);
+    let session_name = project_session_name(tmux, project_root);
     if !tmux.available {
         return json!({
             "sessionName": null,
@@ -825,30 +827,23 @@ fn window_option(tmux: &RuntimeCoherenceTmux, window_id: &str, key: &str) -> Opt
         .flatten()
 }
 
-fn project_session_name(project_root: &str) -> String {
-    if project_root.ends_with("alpha") {
-        "aimux-alpha-111".into()
-    } else {
-        "aimux-beta-222".into()
+fn project_session_name(tmux: &RuntimeCoherenceTmux, project_root: &str) -> String {
+    let computed = project_session(Path::new(project_root), "aimux").session_name;
+    if tmux.session_names.contains(&computed) {
+        return computed;
     }
+    tmux.session_names
+        .iter()
+        .find(|session_name| {
+            session_option(tmux, session_name, "@aimux-project-root").as_deref()
+                == Some(project_root)
+        })
+        .cloned()
+        .unwrap_or(computed)
 }
 
 fn is_managed_session_name(session_name: &str) -> bool {
     session_name.starts_with("aimux-")
-}
-
-fn is_dashboard_window_name(name: &str) -> bool {
-    name == "dashboard" || name.starts_with("dashboard-")
-}
-
-fn is_tmux_client_session_for_host(session_name: &str, host_session_name: &str) -> bool {
-    let Some(suffix) = session_name.strip_prefix(&format!("{host_session_name}-client-")) else {
-        return false;
-    };
-    suffix.len() == 8
-        && suffix
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
 }
 
 fn preview(value: Option<&str>) -> Value {
