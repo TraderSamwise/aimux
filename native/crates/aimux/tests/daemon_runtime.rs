@@ -2258,13 +2258,12 @@ fn request_http(
     path: &str,
     timeout: Duration,
 ) -> Result<String, String> {
-    let started = std::time::Instant::now();
+    let deadline = std::time::Instant::now() + timeout;
     let mut stream = loop {
         match TcpStream::connect(address) {
             Ok(stream) => break stream,
             Err(error)
-                if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::Interrupted)
-                    && started.elapsed() < timeout =>
+                if transient_http_client_error(&error) && std::time::Instant::now() < deadline =>
             {
                 std::thread::sleep(Duration::from_millis(10));
             }
@@ -2277,17 +2276,61 @@ fn request_http(
     stream
         .set_write_timeout(Some(timeout))
         .map_err(|error| error.to_string())?;
-    stream
-        .write_all(
-            format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
-                .as_bytes(),
-        )
-        .map_err(|error| error.to_string())?;
+    retry_write_http_request(&mut stream, path, deadline)?;
     let mut response = String::new();
-    stream
-        .read_to_string(&mut response)
-        .map_err(|error| error.to_string())?;
+    retry_read_http_response(&mut stream, &mut response, deadline)?;
     Ok(response)
+}
+
+fn retry_write_http_request(
+    stream: &mut TcpStream,
+    path: &str,
+    deadline: std::time::Instant,
+) -> Result<(), String> {
+    let request = format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
+    let mut written = 0;
+    let bytes = request.as_bytes();
+    while written < bytes.len() {
+        match stream.write(&bytes[written..]) {
+            Ok(0) => return Err("request socket closed while writing".into()),
+            Ok(count) => written += count,
+            Err(error)
+                if transient_http_client_error(&error) && std::time::Instant::now() < deadline =>
+            {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    Ok(())
+}
+
+fn retry_read_http_response(
+    stream: &mut TcpStream,
+    response: &mut String,
+    deadline: std::time::Instant,
+) -> Result<(), String> {
+    let mut bytes = Vec::new();
+    let mut buffer = [0_u8; 8192];
+    loop {
+        match stream.read(&mut buffer) {
+            Ok(0) => {
+                *response = String::from_utf8_lossy(&bytes).into_owned();
+                return Ok(());
+            }
+            Ok(count) => bytes.extend_from_slice(&buffer[..count]),
+            Err(error)
+                if transient_http_client_error(&error) && std::time::Instant::now() < deadline =>
+            {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+}
+
+fn transient_http_client_error(error: &std::io::Error) -> bool {
+    matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::Interrupted)
 }
 
 fn request_is_complete(buffer: &[u8]) -> bool {
