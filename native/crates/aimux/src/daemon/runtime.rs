@@ -3596,6 +3596,82 @@ mod tests {
     }
 
     #[test]
+    fn control_plane_restart_ignores_stale_non_checkout_daemon_state_roots() {
+        let fixture = restart_service_fixture("restart-skip-non-checkout-state");
+        let project = fixture.project_root.clone();
+        let project_id = fixture.register_project();
+        let bogus_root = fixture.root.join("not-a-project");
+        fs::create_dir_all(&bogus_root).expect("create non-checkout");
+        let bogus_id = compute_project_id(&bogus_root);
+        let valid_service = ProjectServiceState {
+            project_id: project_id.clone(),
+            project_root: project.clone(),
+            pid: 91_003,
+            started_at: "then".to_owned(),
+            updated_at: "now".to_owned(),
+            status: Some(ProjectServiceStatus::Running),
+            restart_count: Some(0),
+            last_restart_at: None,
+            last_exit: None,
+        };
+        let bogus_service = ProjectServiceState {
+            project_id: bogus_id.clone(),
+            project_root: bogus_root.to_string_lossy().into_owned(),
+            pid: 91_004,
+            started_at: "then".to_owned(),
+            updated_at: "now".to_owned(),
+            status: Some(ProjectServiceStatus::Running),
+            restart_count: Some(0),
+            last_restart_at: None,
+            last_exit: None,
+        };
+        save_daemon_state(
+            fixture.resolver.daemon_state_path(),
+            &DaemonState {
+                version: 1,
+                updated_at: Some(json!("now")),
+                projects: Map::from_iter([
+                    (
+                        project_id.clone(),
+                        serde_json::to_value(valid_service).expect("valid service json"),
+                    ),
+                    (
+                        bogus_id,
+                        serde_json::to_value(bogus_service).expect("bogus service json"),
+                    ),
+                ]),
+            },
+        )
+        .expect("daemon state");
+        fixture.persist_endpoint(91_003);
+        let launcher = Arc::new(RestartTestLauncher::new(91_203));
+        let verifier = Arc::new(RestartTestProcessVerifier::current_native([91_003]));
+        let mut runtime = fixture.runtime(launcher.clone(), verifier);
+
+        let result = runtime.restart_control_plane_runtime_with_cleanup(
+            "issued",
+            None,
+            &mut restart_test_dashboard,
+            |_runtime, project_roots| {
+                assert_eq!(project_roots, &[project.clone()]);
+                json!({
+                    "processPids": [],
+                    "tmuxSessions": [],
+                    "failedProcessPids": [],
+                    "failedTmuxSessions": [],
+                    "errors": [],
+                })
+            },
+        );
+
+        assert_eq!(result.restart["summary"]["failures"], json!(0));
+        assert_eq!(result.restart["summary"]["projects"], json!(1));
+        assert_eq!(result.restart["projects"][0]["projectRoot"], project);
+        assert!(launcher.calls().is_empty());
+        fixture.cleanup();
+    }
+
+    #[test]
     fn ensure_project_refuses_nested_temp_fixture_repo_before_launch() {
         let fixture = restart_service_fixture("ensure-refuse-temp");
         let project = PathBuf::from("/private/tmp")
@@ -3645,6 +3721,39 @@ mod tests {
 
         assert!(error.contains("refusing to materialize unreachable project"));
         assert!(launcher.calls().is_empty());
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn ensure_project_refuses_existing_non_checkout_before_state_writes() {
+        let fixture = restart_service_fixture("ensure-refuse-non-checkout");
+        let project = fixture.root.join("not-a-repo");
+        fs::create_dir_all(&project).expect("create non-checkout");
+        let launcher = Arc::new(RestartTestLauncher::new(91_406));
+        let verifier = Arc::new(RestartTestProcessVerifier::current_native([]));
+        let mut runtime = fixture.runtime(launcher.clone(), verifier);
+
+        let project_root = project.to_string_lossy();
+        let error = <RealDaemonRuntime as DaemonCoreCommandRuntime>::ensure_project(
+            &mut runtime,
+            project_root.as_ref(),
+        )
+        .expect_err("non-checkout root should be refused");
+
+        assert!(error.contains("refusing to materialize non-checkout project"));
+        assert!(launcher.calls().is_empty());
+        assert!(
+            fixture
+                .resolver
+                .list_projects()
+                .expect("projects")
+                .is_empty()
+        );
+        assert!(
+            load_daemon_state(fixture.resolver.daemon_state_path())
+                .projects
+                .is_empty()
+        );
         fixture.cleanup();
     }
 

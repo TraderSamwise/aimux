@@ -318,6 +318,8 @@ fn stop_daemon_info_clears_state_and_returns_only_verified_services() {
 fn stop_daemon_process_info_preserves_project_state_and_signals_only_daemon() {
     let test_dir = TestDir::new();
     let resolver = test_dir.resolver();
+    let project_root = test_dir.0.join("repo");
+    fs::create_dir_all(project_root.join(".git")).expect("create project git marker");
     let info = AimuxDaemonInfo {
         pid: 9_999_991,
         port: 43190,
@@ -326,7 +328,7 @@ fn stop_daemon_process_info_preserves_project_state_and_signals_only_daemon() {
     };
     let project = ProjectServiceState {
         project_id: "project-1".into(),
-        project_root: "/repo".into(),
+        project_root: project_root.to_string_lossy().into_owned(),
         pid: 9_999_992,
         started_at: "then".into(),
         updated_at: "now".into(),

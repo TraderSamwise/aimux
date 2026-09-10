@@ -69,8 +69,8 @@ pub struct EnsureDaemonRunningOptions {
     pub adopt_existing: Option<bool>,
 }
 
-/// The TypeScript loader preserves every readable record after checking only
-/// `projectRoot`, including fields a newer supervisor may have added.
+/// The loader preserves every readable project-service record whose root is
+/// still eligible to be a project, including fields a newer supervisor added.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct DaemonState {
@@ -252,12 +252,36 @@ pub fn clear_daemon_info_if_owned(path: impl AsRef<Path>, owner_pid: i32) -> io:
 }
 
 pub fn load_daemon_state(path: impl AsRef<Path>) -> DaemonState {
-    load_daemon_state_with(path, |_| true)
+    load_daemon_state_with_status(path, |root| match crate::paths::project_root_status(root) {
+        crate::paths::ProjectRootStatus::GitCheckout => DaemonStateProjectRootStatus::GitCheckout,
+        crate::paths::ProjectRootStatus::NotCheckout => DaemonStateProjectRootStatus::NotCheckout,
+        crate::paths::ProjectRootStatus::Unreachable => DaemonStateProjectRootStatus::Unreachable,
+    })
 }
 
 pub fn load_daemon_state_with(
     path: impl AsRef<Path>,
     is_git_root: impl Fn(&Path) -> bool,
+) -> DaemonState {
+    load_daemon_state_with_status(path, |root| {
+        if is_git_root(root) {
+            DaemonStateProjectRootStatus::GitCheckout
+        } else {
+            DaemonStateProjectRootStatus::NotCheckout
+        }
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DaemonStateProjectRootStatus {
+    GitCheckout,
+    NotCheckout,
+    Unreachable,
+}
+
+pub fn load_daemon_state_with_status(
+    path: impl AsRef<Path>,
+    root_status: impl Fn(&Path) -> DaemonStateProjectRootStatus,
 ) -> DaemonState {
     let Some(Value::Object(raw)) = read_json(path) else {
         return DaemonState::empty();
@@ -269,8 +293,15 @@ pub fn load_daemon_state_with(
             let Some(root) = entry.get("projectRoot").and_then(Value::as_str) else {
                 continue;
             };
-            if !root.trim().is_empty() && is_git_root(Path::new(root)) {
-                projects.insert(project_id.clone(), entry.clone());
+            if root.trim().is_empty() {
+                continue;
+            }
+            match root_status(Path::new(root)) {
+                DaemonStateProjectRootStatus::GitCheckout
+                | DaemonStateProjectRootStatus::Unreachable => {
+                    projects.insert(project_id.clone(), entry.clone());
+                }
+                DaemonStateProjectRootStatus::NotCheckout => {}
             }
         }
     }

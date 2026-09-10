@@ -1,7 +1,8 @@
 use aimux::daemon_state::{
-    AimuxDaemonInfo, DaemonState, MetadataApiEndpoint, MetadataState, clear_daemon_info_if_owned,
-    get_daemon_base_url, get_daemon_host_from, get_daemon_port_from, load_daemon_info_with,
-    load_daemon_state_with, load_metadata_endpoint, load_metadata_endpoint_by_project_id,
+    AimuxDaemonInfo, DaemonState, DaemonStateProjectRootStatus, MetadataApiEndpoint, MetadataState,
+    clear_daemon_info_if_owned, get_daemon_base_url, get_daemon_host_from, get_daemon_port_from,
+    load_daemon_info_with, load_daemon_state, load_daemon_state_with,
+    load_daemon_state_with_status, load_metadata_endpoint, load_metadata_endpoint_by_project_id,
     load_metadata_state, metadata_endpoint_path, metadata_endpoint_path_by_project_id,
     metadata_endpoint_text_path, metadata_state_path, remove_metadata_endpoint,
     resolve_project_service_endpoint, save_daemon_info, save_daemon_state, save_metadata_endpoint,
@@ -151,6 +152,79 @@ fn daemon_state_filters_project_records_like_typescript() {
             .expect("read state")
             .ends_with('\n')
     );
+}
+
+#[test]
+fn daemon_state_load_drops_existing_non_checkout_roots() {
+    let test_dir = TestDir::new();
+    let path = test_dir.0.join("daemon/state.json");
+    let repo = test_dir.0.join("repo");
+    let non_checkout = test_dir.0.join("not-a-repo");
+    fs::create_dir_all(repo.join(".git")).expect("create repo marker");
+    fs::create_dir_all(&non_checkout).expect("create non-checkout");
+    let state = json!({
+        "version": 1,
+        "updatedAt": "2026-09-10T00:00:00.000Z",
+        "projects": {
+            "repo": {
+                "projectId": "repo",
+                "projectRoot": repo,
+                "pid": 123,
+                "startedAt": "then",
+                "updatedAt": "now"
+            },
+            "home": {
+                "projectId": "home",
+                "projectRoot": non_checkout,
+                "pid": 456,
+                "startedAt": "then",
+                "updatedAt": "now"
+            }
+        }
+    });
+    fs::create_dir_all(path.parent().expect("parent")).expect("create parent");
+    fs::write(&path, serde_json::to_vec(&state).expect("serialize")).expect("write state");
+
+    let loaded = load_daemon_state(&path);
+
+    assert_eq!(loaded.projects.keys().collect::<Vec<_>>(), ["repo"]);
+}
+
+#[test]
+fn daemon_state_load_retains_unreachable_roots_as_transient() {
+    let test_dir = TestDir::new();
+    let path = test_dir.0.join("daemon/state.json");
+    let state = json!({
+        "version": 1,
+        "projects": {
+            "unmounted": {
+                "projectId": "unmounted",
+                "projectRoot": "/Volumes/work/project",
+                "pid": 789,
+                "startedAt": "then",
+                "updatedAt": "now"
+            },
+            "plain": {
+                "projectId": "plain",
+                "projectRoot": "/Users/sam",
+                "pid": 456,
+                "startedAt": "then",
+                "updatedAt": "now"
+            }
+        }
+    });
+    fs::create_dir_all(path.parent().expect("parent")).expect("create parent");
+    fs::write(&path, serde_json::to_vec(&state).expect("serialize")).expect("write state");
+
+    let loaded = load_daemon_state_with_status(&path, |root| {
+        if root == Path::new("/Volumes/work/project") {
+            DaemonStateProjectRootStatus::Unreachable
+        } else {
+            DaemonStateProjectRootStatus::NotCheckout
+        }
+    });
+
+    assert_eq!(loaded.projects.keys().collect::<Vec<_>>(), ["unmounted"]);
 }
 
 #[test]
