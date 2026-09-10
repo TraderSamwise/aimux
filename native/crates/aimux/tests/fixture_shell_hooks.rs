@@ -2,11 +2,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use aimux::shell_hooks::{
-    prepare_shell_integration, shell_quote, wrap_command_with_shell_integration_extra,
-    wrap_interactive_shell_with_integration, PreparedShellIntegration, ShellName,
+    PreparedShellIntegration, ShellName, prepare_shell_integration, shell_quote,
+    wrap_command_with_shell_integration_extra, wrap_interactive_shell_with_integration,
 };
 use serde::Deserialize;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use std::fs;
 
 const FIXTURE: &str = include_str!("../../../../testdata/contracts/v1/shell/hooks.json");

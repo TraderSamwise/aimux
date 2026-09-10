@@ -87,11 +87,8 @@ fn post_internal_push(payload: &Value) -> Result<(), String> {
         .filter(|port| !port.is_empty())
         .unwrap_or_else(|| DEFAULT_DAEMON_PORT.to_owned());
     let body = payload.to_string();
-    let mut stream = TcpStream::connect((
-        "127.0.0.1",
-        port.parse::<u16>().unwrap_or(43_190),
-    ))
-    .map_err(|error| error.to_string())?;
+    let mut stream = TcpStream::connect(("127.0.0.1", port.parse::<u16>().unwrap_or(43_190)))
+        .map_err(|error| error.to_string())?;
     stream
         .set_write_timeout(Some(PUSH_TIMEOUT))
         .map_err(|error| error.to_string())?;

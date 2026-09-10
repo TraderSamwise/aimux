@@ -64,9 +64,7 @@ fn an_ok_response_with_no_url_is_a_failure_not_a_success() {
     // The dangerous case: a relay that agrees but hosts nothing. Treating this
     // as success publishes an attachment pointing at nowhere.
     assert!(parse_hosted_response(200, &json!({ "ok": true })).is_err());
-    assert!(
-        parse_hosted_response(200, &json!({ "ok": true, "hostedAttachment": {} })).is_err()
-    );
+    assert!(parse_hosted_response(200, &json!({ "ok": true, "hostedAttachment": {} })).is_err());
     assert!(
         parse_hosted_response(
             200,
@@ -155,7 +153,11 @@ fn temp_file(contents: &[u8]) -> std::path::PathBuf {
     path
 }
 
-fn host_with(uploader: &FakeUploader, remote_enabled: bool, token: &str) -> Option<aimux::attachment_hosting::HostedAttachment> {
+fn host_with(
+    uploader: &FakeUploader,
+    remote_enabled: bool,
+    token: &str,
+) -> Option<aimux::attachment_hosting::HostedAttachment> {
     let path = temp_file(b"hello");
     let result = maybe_host_published_attachment(
         &PublishedAttachmentHostInput {

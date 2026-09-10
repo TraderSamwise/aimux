@@ -68,7 +68,10 @@ fn the_carriage_return_waits_for_the_draft_to_render_and_settle() {
 
     let submitted = wait_for_prompt_submit(&mut pane, DRAFT);
 
-    assert_eq!(pane.carriage_returns, 1, "sent more than one carriage return");
+    assert_eq!(
+        pane.carriage_returns, 1,
+        "sent more than one carriage return"
+    );
     assert!(
         pane.reads_before_submit.unwrap() > 2,
         "submitted while the pane was still blank — that is the swallowed-CR bug"

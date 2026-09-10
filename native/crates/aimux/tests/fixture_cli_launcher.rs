@@ -4,12 +4,12 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use aimux::cli_launcher::{
+    AimuxCliLaunchCommand, AimuxCliLaunchOptions, AimuxCliLaunchSource,
     get_aimux_current_cli_identity, get_aimux_daemon_launch_command,
     get_aimux_dashboard_launch_command, get_aimux_project_service_launch_command,
-    AimuxCliLaunchCommand, AimuxCliLaunchOptions, AimuxCliLaunchSource,
 };
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const FIXTURE: &str = include_str!("../../../../testdata/contracts/v1/runtime/cli-launcher.json");
 const NODE: &str = "<node>";

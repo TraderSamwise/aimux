@@ -217,7 +217,10 @@ fn a_path_carrying_crlf_cannot_smuggle_a_request_through_the_request_line() {
         None,
         "43190",
     );
-    assert!(!wire.contains("/daemon/stop"), "smuggled through the path: {wire}");
+    assert!(
+        !wire.contains("/daemon/stop"),
+        "smuggled through the path: {wire}"
+    );
     assert!(wire.starts_with("GET / HTTP/1.1\r\n"), "{wire}");
 }
 
@@ -230,12 +233,18 @@ fn a_method_carrying_crlf_or_spaces_cannot_smuggle_either() {
         None,
         "43190",
     );
-    assert!(!wire.contains("/daemon/stop"), "smuggled through the method: {wire}");
+    assert!(
+        !wire.contains("/daemon/stop"),
+        "smuggled through the method: {wire}"
+    );
     assert!(wire.starts_with("GET /ok HTTP/1.1\r\n"), "{wire}");
 }
 
 #[test]
 fn an_ordinary_method_and_path_still_pass_through_untouched() {
     let wire = build_request_head("POST", "/agents/input?x=1", &json!({}), None, "43190");
-    assert!(wire.starts_with("POST /agents/input?x=1 HTTP/1.1\r\n"), "{wire}");
+    assert!(
+        wire.starts_with("POST /agents/input?x=1 HTTP/1.1\r\n"),
+        "{wire}"
+    );
 }

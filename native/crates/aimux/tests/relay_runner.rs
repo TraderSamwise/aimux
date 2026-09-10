@@ -388,7 +388,9 @@ fn a_successful_subscription_acknowledges_itself() {
     // missing entirely, and the corpus fixture hid it by injecting the ack.
     let mut harness = harness(
         vec![Ok(vec![
-            text(json!({"id":"s1","type":"project_events_subscribe","path":"/proxy/127.0.0.1/4321/events"})),
+            text(
+                json!({"id":"s1","type":"project_events_subscribe","path":"/proxy/127.0.0.1/4321/events"}),
+            ),
             closed(1000),
         ])],
         None,
@@ -419,7 +421,9 @@ fn a_failed_subscription_acknowledges_nothing() {
         .map(|frame| serde_json::from_str(frame).unwrap())
         .collect();
     assert!(
-        frames.iter().all(|frame| frame["type"] != "project_events_subscribed"),
+        frames
+            .iter()
+            .all(|frame| frame["type"] != "project_events_subscribed"),
         "acknowledged a subscription that never started: {frames:?}"
     );
 }

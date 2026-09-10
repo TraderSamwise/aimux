@@ -1,9 +1,9 @@
 use aimux::project_service::prompt_context::{
-    compose_with_prompt_context, normalize_prompt_context, prompt_context_byte_length,
-    PROMPT_CONTEXT_MAX_BYTES,
+    PROMPT_CONTEXT_MAX_BYTES, compose_with_prompt_context, normalize_prompt_context,
+    prompt_context_byte_length,
 };
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 
 const FIXTURE: &str = include_str!("../../../../testdata/contracts/v1/prompt-context/context.json");
