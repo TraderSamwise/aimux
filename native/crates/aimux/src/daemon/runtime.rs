@@ -9,7 +9,8 @@ use crate::cli_launcher::{
     get_aimux_current_cli_identity,
 };
 use crate::config::{
-    load_config_for_project, load_global_config, load_global_config_with_resolver,
+    load_config_for_project, load_config_for_project_with_resolver, load_global_config,
+    load_global_config_with_resolver,
 };
 use crate::core_command_transport::{
     CoreCommandTransportError, DaemonHttpMethod, DaemonJsonRequest,
@@ -113,6 +114,9 @@ use crate::runtime_coherence::{
     RuntimeCoherenceTmux, build_runtime_coherence_report, render_runtime_coherence_report,
 };
 use crate::runtime_guard::read_runtime_rebuild_required;
+use crate::runtime_topology::{
+    list_topology_session_states, read_runtime_topology, runtime_topology_path,
+};
 use crate::service_state_snapshot::stop_project_tmux_runtime_with_service_snapshots;
 use crate::team_contract::{is_overseer_session, is_project_control_session};
 use crate::tmux::{
@@ -138,6 +142,8 @@ const PROJECT_ONLINE_AGENT_COUNT_TIMEOUT_MS: u64 = 500;
 const INSTALL_CLEANUP_INITIAL_DELAY_MS: u64 = 30 * 60_000;
 const INSTALL_CLEANUP_MAX_PER_SWEEP: usize = 50;
 const RECORDING_CLEANUP_MAX_PER_SWEEP: usize = 200;
+const RESTART_BACKEND_ID_CAPTURE_WAIT_MS: u64 = 10_000;
+const RESTART_BACKEND_ID_CAPTURE_POLL_MS: u64 = 250;
 
 pub struct RealDaemonRuntime {
     resolver: PathResolver,
@@ -150,6 +156,8 @@ pub struct RealDaemonRuntime {
     global_expose_hot_snapshots: GlobalExposeHotSnapshotCoordinator,
     project_online_agent_count_cache: HashMap<String, ProjectOnlineAgentCountCacheEntry>,
     restart_live_project_service_pids: Option<BTreeMap<String, Vec<i32>>>,
+    restart_backend_id_capture_timeout: Duration,
+    restart_backend_id_capture_poll: Duration,
     started_instant: Instant,
     relay: Arc<crate::daemon::relay::RelaySupervisor>,
 }
@@ -373,6 +381,12 @@ impl RealDaemonRuntime {
             global_expose_hot_snapshots: GlobalExposeHotSnapshotCoordinator::default(),
             project_online_agent_count_cache: HashMap::new(),
             restart_live_project_service_pids: None,
+            restart_backend_id_capture_timeout: Duration::from_millis(
+                RESTART_BACKEND_ID_CAPTURE_WAIT_MS,
+            ),
+            restart_backend_id_capture_poll: Duration::from_millis(
+                RESTART_BACKEND_ID_CAPTURE_POLL_MS,
+            ),
             started_instant: Instant::now(),
             relay: Arc::new(crate::daemon::relay::RelaySupervisor::default()),
         }
@@ -397,6 +411,12 @@ impl RealDaemonRuntime {
             global_expose_hot_snapshots: GlobalExposeHotSnapshotCoordinator::default(),
             project_online_agent_count_cache: HashMap::new(),
             restart_live_project_service_pids: None,
+            restart_backend_id_capture_timeout: Duration::from_millis(
+                RESTART_BACKEND_ID_CAPTURE_WAIT_MS,
+            ),
+            restart_backend_id_capture_poll: Duration::from_millis(
+                RESTART_BACKEND_ID_CAPTURE_POLL_MS,
+            ),
             started_instant: Instant::now(),
             relay: Arc::new(crate::daemon::relay::RelaySupervisor::default()),
         }
@@ -926,7 +946,7 @@ impl RealDaemonRuntime {
         &mut self,
         issued_at: &str,
         project_root: Option<&str>,
-    ) -> RestartControlPlaneTextResult {
+    ) -> Result<RestartControlPlaneTextResult, String> {
         self.restart_control_plane_runtime_with(
             issued_at,
             project_root,
@@ -939,7 +959,7 @@ impl RealDaemonRuntime {
         issued_at: &str,
         project_root: Option<&str>,
         mut reload_dashboard: impl FnMut(&str) -> Result<RestartDashboardTarget, String>,
-    ) -> RestartControlPlaneTextResult {
+    ) -> Result<RestartControlPlaneTextResult, String> {
         self.restart_control_plane_runtime_with_cleanup(
             issued_at,
             project_root,
@@ -956,7 +976,7 @@ impl RealDaemonRuntime {
         project_root: Option<&str>,
         mut reload_dashboard: impl FnMut(&str) -> Result<RestartDashboardTarget, String>,
         cleanup_orphans: impl FnOnce(&Self, &[String]) -> Value,
-    ) -> RestartControlPlaneTextResult {
+    ) -> Result<RestartControlPlaneTextResult, String> {
         log_lifecycle_always(
             "control plane restart started",
             "daemon",
@@ -967,6 +987,7 @@ impl RealDaemonRuntime {
         );
         let before = restart_before_report(self, issued_at);
         let project_roots = self.restart_project_roots(project_root);
+        self.wait_for_restart_backend_id_capture(&project_roots)?;
         let restart_live_project_service_pids =
             self.live_project_service_pids_for_restart_projects(&project_roots);
         log_at(
@@ -1021,7 +1042,42 @@ impl RealDaemonRuntime {
             })),
         );
         let text = render_runtime_restart_result(&restart);
-        RestartControlPlaneTextResult { restart, text }
+        Ok(RestartControlPlaneTextResult { restart, text })
+    }
+
+    fn wait_for_restart_backend_id_capture(&self, project_roots: &[String]) -> Result<(), String> {
+        let started = Instant::now();
+        loop {
+            let at_risk = restart_backend_id_at_risk_sessions(&self.resolver, project_roots);
+            if at_risk.is_empty() {
+                return Ok(());
+            }
+            if started.elapsed() >= self.restart_backend_id_capture_timeout {
+                let error = render_backend_id_capture_refusal(
+                    &at_risk,
+                    self.restart_backend_id_capture_timeout,
+                );
+                log_lifecycle_always(
+                    "control plane restart refused",
+                    "daemon",
+                    Some(json!({
+                        "reason": "pendingBackendSessionIdCapture",
+                        "projectRoots": project_roots,
+                        "atRiskSessions": at_risk.iter().map(|risk| json!({
+                            "projectRoot": &risk.project_root,
+                            "sessionId": &risk.session_id,
+                            "tool": &risk.tool,
+                            "status": &risk.status,
+                        })).collect::<Vec<_>>(),
+                    })),
+                );
+                return Err(error);
+            }
+            let remaining = self
+                .restart_backend_id_capture_timeout
+                .saturating_sub(started.elapsed());
+            thread::sleep(self.restart_backend_id_capture_poll.min(remaining));
+        }
     }
 
     fn cleanup_lifecycle_validation_orphans_for_restart(&self, project_roots: &[String]) -> Value {
@@ -2151,7 +2207,7 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
         _issued_at: &str,
         _project_root: Option<&str>,
     ) -> Result<Value, String> {
-        let result = self.restart_control_plane_runtime(_issued_at, _project_root);
+        let result = self.restart_control_plane_runtime(_issued_at, _project_root)?;
         Ok(json!({ "restart": result.restart, "text": result.text }))
     }
 
@@ -2330,7 +2386,7 @@ impl DaemonOperationsTextRuntime for RealDaemonRuntime {
         issued_at: &str,
         project_root: Option<&str>,
     ) -> Result<RestartControlPlaneTextResult, String> {
-        Ok(self.restart_control_plane_runtime(issued_at, project_root))
+        self.restart_control_plane_runtime(issued_at, project_root)
     }
 
     fn dashboard_reload(
@@ -3516,6 +3572,133 @@ fn project_service_state_is_restart_active(project: &Value) -> bool {
     project.get("status").and_then(Value::as_str) != Some("stopped")
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RestartBackendIdRisk {
+    project_root: String,
+    session_id: String,
+    tool: String,
+    status: String,
+}
+
+fn restart_backend_id_at_risk_sessions(
+    resolver: &PathResolver,
+    project_roots: &[String],
+) -> Vec<RestartBackendIdRisk> {
+    let mut risks = Vec::new();
+    for project_root in project_roots {
+        let mut project_resolver = resolver.clone();
+        let topology_path =
+            runtime_topology_path(project_resolver.project_state_dir_for(project_root));
+        let topology = match read_runtime_topology(topology_path) {
+            Ok(topology) => topology,
+            Err(error) => {
+                log_at(
+                    LogLevel::Debug,
+                    "skipping backend id restart guard for unreadable topology",
+                    "daemon",
+                    Some(json!({
+                        "projectRoot": project_root,
+                        "error": error,
+                    })),
+                );
+                continue;
+            }
+        };
+        let config = load_config_for_project_with_resolver(resolver, project_root);
+        for session in list_topology_session_states(
+            &topology,
+            Some(&["running", "idle", "waiting", "starting"]),
+        ) {
+            if is_project_control_session(Some(&session))
+                || trimmed_value_string(session.get("backendSessionId")).is_some()
+            {
+                continue;
+            }
+            let Some(tool_config) = restart_guard_tool_config(&config, &session) else {
+                continue;
+            };
+            if !restart_guard_tool_supports_exact_backend_resume(tool_config) {
+                continue;
+            }
+            risks.push(RestartBackendIdRisk {
+                project_root: project_root.clone(),
+                session_id: trimmed_value_string(session.get("id"))
+                    .unwrap_or("unknown")
+                    .to_owned(),
+                tool: restart_guard_session_tool(&session).to_owned(),
+                status: trimmed_value_string(session.get("status"))
+                    .unwrap_or("unknown")
+                    .to_owned(),
+            });
+        }
+    }
+    risks.sort_by(|left, right| {
+        left.project_root
+            .cmp(&right.project_root)
+            .then_with(|| left.session_id.cmp(&right.session_id))
+    });
+    risks
+}
+
+fn render_backend_id_capture_refusal(risks: &[RestartBackendIdRisk], waited: Duration) -> String {
+    let mut lines = vec![format!(
+        "refusing to restart control plane: {} live exact-resume agent session{} still {} no backendSessionId after {}ms",
+        risks.len(),
+        if risks.len() == 1 { "" } else { "s" },
+        if risks.len() == 1 { "has" } else { "have" },
+        waited.as_millis(),
+    )];
+    lines.push("at-risk sessions:".to_owned());
+    lines.extend(risks.iter().map(|risk| {
+        format!(
+            "  - {} ({}, {}) in {}",
+            risk.session_id, risk.tool, risk.status, risk.project_root
+        )
+    }));
+    lines.push(
+        "retry once aimux ps shows backendSessionId for these sessions, or stop them first"
+            .to_owned(),
+    );
+    lines.join("\n")
+}
+
+fn restart_guard_tool_config<'a>(config: &'a Value, session: &Value) -> Option<&'a Value> {
+    let tools = config.get("tools").and_then(Value::as_object)?;
+    if let Some(tool_key) = trimmed_value_string(session.get("toolConfigKey"))
+        .or_else(|| trimmed_value_string(session.get("tool")))
+        .or_else(|| trimmed_value_string(session.get("command")))
+        && let Some(tool_config) = tools.get(tool_key)
+    {
+        return Some(tool_config);
+    }
+    let command = trimmed_value_string(session.get("command"))
+        .or_else(|| trimmed_value_string(session.get("tool")))?;
+    tools
+        .values()
+        .find(|tool_config| trimmed_value_string(tool_config.get("command")) == Some(command))
+}
+
+fn restart_guard_tool_supports_exact_backend_resume(tool_config: &Value) -> bool {
+    tool_config
+        .get("resumeByBackendSessionId")
+        .and_then(Value::as_bool)
+        != Some(false)
+        && tool_config
+            .get("resumeArgs")
+            .and_then(Value::as_array)
+            .is_some_and(|args| {
+                args.iter()
+                    .any(|arg| arg.as_str().is_some_and(|arg| arg.contains("{sessionId}")))
+            })
+}
+
+fn restart_guard_session_tool(session: &Value) -> &str {
+    trimmed_value_string(session.get("toolConfigKey"))
+        .or_else(|| trimmed_value_string(session.get("tool")))
+        .or_else(|| trimmed_value_string(session.get("command")))
+        .unwrap_or("unknown")
+}
+
 fn restart_step_status<'a>(project: &'a Value, field: &str) -> Option<&'a str> {
     project
         .get(field)
@@ -3558,6 +3741,7 @@ fn project_roots_equivalent(left: &Path, right: &Path) -> bool {
 mod tests {
     use super::*;
     use crate::daemon_state::{ProjectServiceStatus, save_metadata_endpoint};
+    use crate::runtime_topology::write_runtime_topology;
     use crate::tmux::project_session;
     use crate::tmux::{
         TMUX_DASHBOARD_OWNER_OPTION, TMUX_DASHBOARD_READY_OPTION, TMUX_RUNTIME_OWNER_OPTION,
@@ -3690,25 +3874,122 @@ mod tests {
         let verifier = Arc::new(RestartTestProcessVerifier::current_native([91_003]));
         let mut runtime = fixture.runtime(launcher.clone(), verifier);
 
-        let result = runtime.restart_control_plane_runtime_with_cleanup(
-            "issued",
-            None,
-            &mut restart_test_dashboard,
-            |_runtime, project_roots| {
-                assert_eq!(project_roots, &[project.clone()]);
-                json!({
-                    "processPids": [],
-                    "tmuxSessions": [],
-                    "failedProcessPids": [],
-                    "failedTmuxSessions": [],
-                    "errors": [],
-                })
-            },
-        );
+        let result = runtime
+            .restart_control_plane_runtime_with_cleanup(
+                "issued",
+                None,
+                &mut restart_test_dashboard,
+                |_runtime, project_roots| {
+                    assert_eq!(project_roots, &[project.clone()]);
+                    json!({
+                        "processPids": [],
+                        "tmuxSessions": [],
+                        "failedProcessPids": [],
+                        "failedTmuxSessions": [],
+                        "errors": [],
+                    })
+                },
+            )
+            .expect("restart");
 
         assert_eq!(result.restart["summary"]["failures"], json!(0));
         assert_eq!(result.restart["summary"]["projects"], json!(1));
         assert_eq!(result.restart["projects"][0]["projectRoot"], project);
+        assert!(launcher.calls().is_empty());
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn control_plane_restart_refuses_live_exact_resume_agent_without_backend_id() {
+        let fixture = restart_service_fixture("restart-refuse-pending-backend-id");
+        let project = fixture.project_root.clone();
+        let project_id = fixture.register_project();
+        fixture.persist_service(&project_id, 91_007, ProjectServiceStatus::Running);
+        fixture.persist_endpoint(91_007);
+        fixture.persist_runtime_session("codex-pending", "codex", "running", None);
+        let launcher = Arc::new(RestartTestLauncher::new(91_207));
+        let verifier = Arc::new(RestartTestProcessVerifier::current_native([91_007]));
+        let mut runtime = fixture.runtime(launcher.clone(), verifier);
+        runtime.restart_backend_id_capture_timeout = Duration::ZERO;
+
+        let error = runtime
+            .restart_control_plane_runtime_with_cleanup(
+                "issued",
+                None,
+                restart_test_dashboard,
+                |_runtime, _project_roots| {
+                    panic!("orphan cleanup must not run while restart is refused")
+                },
+            )
+            .expect_err("pending backend id should refuse restart");
+
+        assert!(error.contains("refusing to restart control plane"));
+        assert!(error.contains("codex-pending"));
+        assert!(error.contains("backendSessionId"));
+        assert!(error.contains(&project));
+        assert!(launcher.calls().is_empty());
+        assert!(launcher.terminations().is_empty());
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn control_plane_restart_guard_covers_claude_exact_resume_sessions() {
+        let fixture = restart_service_fixture("restart-claude-pending-backend-id");
+        let project = fixture.project_root.clone();
+        fixture.persist_runtime_session("claude-pending", "claude", "starting", None);
+
+        let risks =
+            restart_backend_id_at_risk_sessions(&fixture.resolver, std::slice::from_ref(&project));
+
+        assert_eq!(
+            risks,
+            vec![RestartBackendIdRisk {
+                project_root: project,
+                session_id: "claude-pending".to_owned(),
+                tool: "claude".to_owned(),
+                status: "starting".to_owned(),
+            }]
+        );
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn control_plane_restart_allows_exact_resume_agent_with_backend_id() {
+        let fixture = restart_service_fixture("restart-allow-captured-backend-id");
+        let project = fixture.project_root.clone();
+        let project_id = fixture.register_project();
+        fixture.persist_service(&project_id, 91_008, ProjectServiceStatus::Running);
+        fixture.persist_endpoint(91_008);
+        fixture.persist_runtime_session(
+            "codex-ready",
+            "codex",
+            "running",
+            Some("01abcdef-0000-0000-0000-000000000000"),
+        );
+        let launcher = Arc::new(RestartTestLauncher::new(91_208));
+        let verifier = Arc::new(RestartTestProcessVerifier::current_native([91_008]));
+        let mut runtime = fixture.runtime(launcher.clone(), verifier);
+        runtime.restart_backend_id_capture_timeout = Duration::ZERO;
+
+        let result = runtime
+            .restart_control_plane_runtime_with_cleanup(
+                "issued",
+                None,
+                restart_test_dashboard,
+                |_runtime, project_roots| {
+                    assert_eq!(project_roots, &[project.clone()]);
+                    json!({
+                        "processPids": [],
+                        "tmuxSessions": [],
+                        "failedProcessPids": [],
+                        "failedTmuxSessions": [],
+                        "errors": [],
+                    })
+                },
+            )
+            .expect("captured backend id should allow restart");
+
+        assert_eq!(result.restart["summary"]["projects"], json!(1));
         assert!(launcher.calls().is_empty());
         fixture.cleanup();
     }
@@ -4046,22 +4327,24 @@ mod tests {
         );
         let mut runtime = fixture.runtime(launcher.clone(), verifier.clone());
 
-        let result = runtime.restart_control_plane_runtime_with_cleanup(
-            "2026-01-01T00:00:00.000Z",
-            None,
-            restart_test_dashboard,
-            |_runtime, _project_roots| {
-                json!({
-                    "attemptedProcessPids": [701, 702],
-                    "processPids": [701, 702],
-                    "failedProcessPids": [],
-                    "attemptedTmuxSessions": ["aimux-aimux-lifecycle-validate25"],
-                    "tmuxSessions": ["aimux-aimux-lifecycle-validate25"],
-                    "failedTmuxSessions": [],
-                    "errors": [],
-                })
-            },
-        );
+        let result = runtime
+            .restart_control_plane_runtime_with_cleanup(
+                "2026-01-01T00:00:00.000Z",
+                None,
+                restart_test_dashboard,
+                |_runtime, _project_roots| {
+                    json!({
+                        "attemptedProcessPids": [701, 702],
+                        "processPids": [701, 702],
+                        "failedProcessPids": [],
+                        "attemptedTmuxSessions": ["aimux-aimux-lifecycle-validate25"],
+                        "tmuxSessions": ["aimux-aimux-lifecycle-validate25"],
+                        "failedTmuxSessions": [],
+                        "errors": [],
+                    })
+                },
+            )
+            .expect("restart");
 
         assert_eq!(result.restart["summary"]["projects"], json!(2));
         assert_eq!(
@@ -4561,6 +4844,62 @@ mod tests {
                 },
             )
             .expect("metadata endpoint");
+        }
+
+        fn persist_runtime_session(
+            &self,
+            session_id: &str,
+            tool: &str,
+            status: &str,
+            backend_session_id: Option<&str>,
+        ) {
+            let mut resolver = self.resolver.clone();
+            let mut session = json!({
+                "id": session_id,
+                "nodeId": format!("node-{session_id}"),
+                "status": status,
+                "tool": tool,
+                "toolConfigKey": tool,
+                "command": tool,
+                "createdAt": "then",
+                "updatedAt": "now",
+            });
+            if let Some(backend_session_id) = backend_session_id {
+                session["backendSessionId"] = Value::String(backend_session_id.to_owned());
+            }
+            write_runtime_topology(
+                runtime_topology_path(resolver.project_state_dir_for(&self.project_root)),
+                &json!({
+                    "version": 1,
+                    "generatedAt": "now",
+                    "rigs": [{
+                        "id": "rig",
+                        "name": "repo",
+                        "projectRoot": self.project_root,
+                        "createdAt": "then",
+                        "updatedAt": "now",
+                    }],
+                    "nodes": [{
+                        "id": format!("node-{session_id}"),
+                        "rigId": "rig",
+                        "logicalId": format!("session:{session_id}"),
+                        "toolConfigKey": tool,
+                        "cwd": self.project_root,
+                        "createdAt": "then",
+                    }],
+                    "edges": [],
+                    "bindings": [],
+                    "sessions": [session],
+                    "services": [],
+                    "worktrees": [],
+                    "worktreeGraveyard": [],
+                    "teamRoles": [],
+                    "remoteClients": [],
+                    "lifecycleOperations": [],
+                    "exchangeRefs": [],
+                }),
+            )
+            .expect("write runtime topology");
         }
 
         fn runtime(

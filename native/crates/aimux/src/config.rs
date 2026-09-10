@@ -186,7 +186,15 @@ pub fn merge_config_layers(global: Option<&Value>, project: Option<&Value>) -> V
 }
 
 pub fn load_config_for_project(project_root: impl AsRef<Path>) -> Value {
-    let mut resolver = PathResolver::from_env();
+    let resolver = PathResolver::from_env();
+    load_config_for_project_with_resolver(&resolver, project_root)
+}
+
+pub fn load_config_for_project_with_resolver(
+    resolver: &PathResolver,
+    project_root: impl AsRef<Path>,
+) -> Value {
+    let mut resolver = resolver.clone();
     let global = read_json_file(resolver.global_config_path());
     let project = read_json_file(resolver.config_path_for(project_root));
     merge_config_layers(global.as_ref(), project.as_ref())
