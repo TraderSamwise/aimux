@@ -67,11 +67,11 @@ change, apply these rules before it ships:
   signal. Do not decide from project names, path shapes, prefixes, or where a
   binary happens to live unless that spelling is only evidence for a stronger
   identity check.
-- Test the inverse. A guard is unfinished until a scoped test proves the real
-  case it must catch and the real case it must not catch. Include foreign
-  `AIMUX_HOME`, non-default daemon ports, legacy metadata fallbacks,
-  registry-only or transiently unavailable projects, and legitimate checkouts
-  under temporary directories when they are in the blast radius.
+- Test the inverse. A guard is not done until its author has written and run
+  scoped tests for the real case it must catch and the real case it must not
+  catch. Include foreign `AIMUX_HOME`, non-default daemon ports, legacy metadata
+  fallbacks, registry-only or transiently unavailable projects, and legitimate
+  checkouts under temporary directories when they are in the blast radius.
 - Do not let wrappers lie. A wait, launcher, restart, reload, or repair wrapper
   must report the child error or compared values that caused failure. Never
   convert a child crash into a readiness timeout, a truncated response into a
@@ -88,9 +88,9 @@ change, apply these rules before it ships:
   failed call rather than an absent field.
 - Severity follows the wrong answer's effect. Before accepting a default, ask
   what that answer can cause on delete, kill, refusal, trust, delivery, repair,
-  or config paths. Fixes for this class need mutation proof in both directions:
-  the real error must not pass as absent, and genuine absence must still take
-  the intended no-data path.
+  or config paths. Fixes for this class are not done until mutation proof covers
+  both directions: the real error must not pass as absent, and genuine absence
+  must still take the intended no-data path.
 - Prove gates can fail. A release, runtime, safety, or parity gate needs a test
   that deliberately makes the gate fail. If the failing case cannot be written,
   the gate is not checking the invariant.
