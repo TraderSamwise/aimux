@@ -5,7 +5,7 @@ use aimux::project_service::notifications::{NotificationQuery, list_notification
 use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
 use aimux::runtime_topology::{
     list_topology_session_states, read_runtime_topology, runtime_topology_path,
-    write_runtime_topology,
+    update_runtime_topology, write_runtime_topology,
 };
 use aimux::tui_render::text::strip_ansi;
 use serde_json::json;
@@ -286,6 +286,61 @@ fn claude_hook_prefers_live_duplicate_when_backend_id_matches_stale_row() {
 }
 
 #[test]
+fn claude_hook_replaces_stale_backend_row_when_live_duplicate_has_no_backend_id() {
+    let project = temp_project("claude-backend-live-duplicate-missing-backend");
+    let state_dir = project.join("state");
+    write_duplicate_hook_topology(&project, &state_dir);
+    update_runtime_topology(runtime_topology_path(&state_dir), |mut topology| {
+        if let Some(session) = topology
+            .get_mut("sessions")
+            .and_then(serde_json::Value::as_array_mut)
+            .and_then(|sessions| {
+                sessions
+                    .iter_mut()
+                    .find(|session| session["id"] == "claude-gqaapg")
+            })
+            && let Some(object) = session.as_object_mut()
+        {
+            object.remove("backendSessionId");
+        }
+        topology
+    })
+    .expect("remove live backend id");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let response = route_project_service_request(
+        &context,
+        "POST",
+        "/hooks/claude?action=notification&sessionId=claude-pd1hl2",
+        Some(&json!({
+            "session_id": "94760225-52eb-4f6d-973d-e1393fea8885",
+            "message": "Claude is waiting for your input",
+            "cwd": project.to_string_lossy()
+        })),
+    );
+    assert_eq!(response.status, 200);
+
+    let state = load_metadata_state(&state_dir);
+    assert!(state.sessions.contains_key("claude-gqaapg"));
+    assert!(!state.sessions.contains_key("claude-pd1hl2"));
+    let snapshot = list_notification_snapshot(&state_dir, NotificationQuery::default());
+    assert_eq!(snapshot.total, 1);
+    assert_eq!(snapshot.notifications[0]["sessionId"], "claude-gqaapg");
+    assert_eq!(
+        snapshot.notifications[0]["title"],
+        format!(
+            "{} / Main Checkout (master)",
+            project.file_name().unwrap().to_str().unwrap()
+        )
+    );
+    assert_eq!(
+        snapshot.notifications[0]["body"],
+        "Needs input: claude @ Main Checkout - Claude is waiting for your input"
+    );
+    cleanup(project);
+}
+
+#[test]
 fn hook_payload_backend_id_is_recorded_in_runtime_topology() {
     let project = temp_project("backend-record");
     let state_dir = project.join("state");
@@ -493,7 +548,8 @@ fn write_duplicate_hook_topology(project: &std::path::Path, state_dir: &std::pat
                 "backendSessionId": backend_id,
                 "worktreePath": project_root.clone(),
                 "createdAt": "2026-09-08T00:00:00.000Z",
-                "updatedAt": "2026-09-08T00:00:00.000Z"
+                "updatedAt": "2026-09-10T05:01:03.747Z",
+                "lastSeenAt": "2026-09-08T00:00:00.000Z"
             },
             {
                 "id": "claude-gqaapg",
@@ -503,7 +559,8 @@ fn write_duplicate_hook_topology(project: &std::path::Path, state_dir: &std::pat
                 "toolConfigKey": "claude",
                 "command": "claude",
                 "createdAt": "2026-09-08T00:00:01.000Z",
-                "updatedAt": "2026-09-08T00:00:01.000Z"
+                "updatedAt": "2026-09-10T05:01:01.585Z",
+                "lastSeenAt": "2026-09-08T00:00:01.000Z"
             }
         ],
         "services": [],

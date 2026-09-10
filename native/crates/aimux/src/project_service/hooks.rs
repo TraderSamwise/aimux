@@ -153,6 +153,14 @@ fn resolve_hook_session_id(
         Err(_) => return explicit_session_id.to_owned(),
     };
     let sessions = list_topology_session_states(&topology, None);
+    if let Some(explicit) = sessions.iter().find(|session| {
+        session.get("id").and_then(Value::as_str) == Some(explicit_session_id)
+            && backend_matches_or_missing(session, backend_session_id)
+    }) && let Some(live) = live_replacement_for_stale_session(context, &sessions, explicit)
+        && let Some(id) = live.get("id").and_then(Value::as_str)
+    {
+        return id.to_owned();
+    }
     let best_backend_match = sessions
         .iter()
         .filter(|session| {
@@ -161,19 +169,10 @@ fn resolve_hook_session_id(
         .max_by_key(|session| {
             (
                 session_match_score(context, session),
-                session
-                    .get("updatedAt")
-                    .and_then(Value::as_str)
-                    .unwrap_or(""),
+                session_freshness_key(session),
             )
         })
         .cloned();
-    if let Some(session) = best_backend_match.as_ref()
-        && let Some(live) = live_replacement_for_stale_session(context, &sessions, session)
-        && let Some(id) = live.get("id").and_then(Value::as_str)
-    {
-        return id.to_owned();
-    }
     if let Some(session) = best_backend_match.as_ref()
         && session_is_live_for_hook(context, session)
     {
@@ -215,6 +214,23 @@ fn session_match_score(context: &ProjectServiceRequestContext, session: &Value) 
     }
 }
 
+fn session_freshness_key(session: &Value) -> (&str, &str, &str) {
+    (
+        session
+            .get("lastSeenAt")
+            .and_then(Value::as_str)
+            .unwrap_or(""),
+        session
+            .get("createdAt")
+            .and_then(Value::as_str)
+            .unwrap_or(""),
+        session
+            .get("updatedAt")
+            .and_then(Value::as_str)
+            .unwrap_or(""),
+    )
+}
+
 fn session_is_live_for_hook(context: &ProjectServiceRequestContext, session: &Value) -> bool {
     if matches!(
         session.get("status").and_then(Value::as_str),
@@ -243,12 +259,7 @@ fn live_replacement_for_stale_session<'a>(
         .filter(|session| session.get("id").and_then(Value::as_str) != stale_id)
         .filter(|session| session_is_live_for_hook(context, session))
         .filter(|session| same_hook_identity(session, stale))
-        .max_by_key(|session| {
-            session
-                .get("updatedAt")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-        })
+        .max_by_key(|session| session_freshness_key(session))
 }
 
 fn same_hook_identity(candidate: &Value, stale: &Value) -> bool {
