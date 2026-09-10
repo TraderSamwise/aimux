@@ -30,7 +30,7 @@
           "tmux": { "available": true, "version": "tmux 3.5a", "sessionCount": 1 },
           "projects": [],
           "staleHookProcesses": [],
-          "summary": { "projects": 0, "ok": 0, "needsRestart": 0, "runtimeRebuildRequired": 0 }
+          "summary": { "projects": 0, "ok": 0, "stopped": 0, "inactive": 0, "needsAttention": 0, "needsRestart": 0, "runtimeRebuildRequired": 0 }
         },
         "verification": { "status": "skipped", "after": null, "error": null },
         "daemon": {
@@ -80,7 +80,7 @@
           "failures": 0
         }
       },
-      "output": "Aimux Restart\n  daemon: restarted pid=9001 -> pid=9002\n  projects: 1\n  services ensured: 1\n  runtime repaired: 0\n  dashboards reloaded: 1\n  validation orphans: 0 processes, 0 tmux sessions\n  failures: 0\n\nProject: /repo/alpha\n  runtime: skipped\n  service: ensured\n  dashboard: reloaded aimux-alpha-111:@1",
+      "output": "Aimux Restart\n  daemon: restarted pid=9001 -> pid=9002\n  projects: 1\n  services ensured: 1\n  runtime repaired: 0\n  dashboards reloaded: 1\n  validation orphans: 0 processes, 0 tmux sessions, 0 tmux windows\n  failures: 0\n\nProject: /repo/alpha\n  runtime: skipped\n  service: ensured\n  dashboard: reloaded aimux-alpha-111:@1",
       "inputSha256": "c2d3bc7ed919fd6b2b5943996cedd8939ece9a17f7b7b44da6de56b85f86b7aa"
     },
     {
@@ -109,7 +109,7 @@
           "tmux": { "available": true, "version": "tmux 3.5a", "sessionCount": 1 },
           "projects": [],
           "staleHookProcesses": [],
-          "summary": { "projects": 0, "ok": 0, "needsRestart": 0, "runtimeRebuildRequired": 0 }
+          "summary": { "projects": 0, "ok": 0, "stopped": 0, "inactive": 0, "needsAttention": 0, "needsRestart": 0, "runtimeRebuildRequired": 0 }
         },
         "verification": { "status": "skipped", "after": null, "error": null },
         "daemon": {
@@ -150,7 +150,7 @@
           "failures": 0
         }
       },
-      "output": "Aimux Restart\n  daemon: retained pid=9002\n  projects: 1\n  services ensured: 1\n  runtime repaired: 0\n  dashboards reloaded: 0\n  validation orphans: 0 processes, 0 tmux sessions\n  failures: 0\n\nProject: /repo/alpha\n  runtime: skipped\n  service: ensured\n  dashboard: skipped",
+      "output": "Aimux Restart\n  daemon: retained pid=9002\n  projects: 1\n  services ensured: 1\n  runtime repaired: 0\n  dashboards reloaded: 0\n  validation orphans: 0 processes, 0 tmux sessions, 0 tmux windows\n  failures: 0\n\nProject: /repo/alpha\n  runtime: skipped\n  service: ensured\n  dashboard: skipped",
       "inputSha256": "cad6c92cf0e93e5972e64c8e0dbe99379cb8fdafea992857e9ab907668e66134"
     },
     {
@@ -179,7 +179,7 @@
           "tmux": { "available": true, "version": "tmux 3.5a", "sessionCount": 1 },
           "projects": [],
           "staleHookProcesses": [],
-          "summary": { "projects": 0, "ok": 0, "needsRestart": 0, "runtimeRebuildRequired": 0 }
+          "summary": { "projects": 0, "ok": 0, "stopped": 0, "inactive": 0, "needsAttention": 0, "needsRestart": 0, "runtimeRebuildRequired": 0 }
         },
         "verification": { "status": "skipped", "after": null, "error": null },
         "daemon": {
@@ -219,7 +219,7 @@
           "failures": 0
         }
       },
-      "output": "Aimux Restart\n  daemon: restarted pid=9001 -> pid=9002\n  projects: 1\n  services ensured: 1\n  runtime repaired: 1\n  dashboards reloaded: 0\n  validation orphans: 0 processes, 0 tmux sessions\n  failures: 0\n\nRuntime repaired:\n  /repo/alpha\n\nProject: /repo/alpha\n  runtime: repaired\n  service: ensured\n  dashboard: skipped",
+      "output": "Aimux Restart\n  daemon: restarted pid=9001 -> pid=9002\n  projects: 1\n  services ensured: 1\n  runtime repaired: 1\n  dashboards reloaded: 0\n  validation orphans: 0 processes, 0 tmux sessions, 0 tmux windows\n  failures: 0\n\nRuntime repaired:\n  /repo/alpha\n\nProject: /repo/alpha\n  runtime: repaired\n  service: ensured\n  dashboard: skipped",
       "inputSha256": "75251f2dcd5c6e8b17117b41f7030748be20c8d4653a8226960b069c5ff4ff92"
     },
     {
@@ -248,7 +248,7 @@
           "tmux": { "available": true, "version": "tmux 3.5a", "sessionCount": 1 },
           "projects": [],
           "staleHookProcesses": [],
-          "summary": { "projects": 0, "ok": 0, "needsRestart": 0, "runtimeRebuildRequired": 0 }
+          "summary": { "projects": 0, "ok": 0, "stopped": 0, "inactive": 0, "needsAttention": 0, "needsRestart": 0, "runtimeRebuildRequired": 0 }
         },
         "verification": { "status": "skipped", "after": null, "error": null },
         "daemon": {
@@ -289,7 +289,7 @@
           "failures": 1
         }
       },
-      "output": "Aimux Restart\n  daemon: restarted pid=9001 -> pid=9002\n  projects: 1\n  services ensured: 0\n  runtime repaired: 0\n  dashboards reloaded: 0\n  validation orphans: 0 processes, 0 tmux sessions\n  failures: 1\n\nProject: /repo/alpha\n  runtime: failed (tmux option write failed)\n  service: failed (service refused)\n  dashboard: failed (dashboard target missing)\n\nBefore restart:\nAimux Versions\n  cli version: 0.1.21\n  build profile: undefined\ncli launcher: stable-shim /Users/sam/.local/bin/aimux\n  cli current entry: undefined\n  cli stable shim: undefined\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: contract-new\n  daemon: running pid=9001\n    daemon process: (unknown)\n  daemon projects: 1\n  tmux: tmux 3.5a\n  tmux sessions: 1\n  projects: 0 (0 ok, 0 need restart, 0 need runtime rebuild)",
+      "output": "Aimux Restart\n  daemon: restarted pid=9001 -> pid=9002\n  projects: 1\n  services ensured: 0\n  runtime repaired: 0\n  dashboards reloaded: 0\n  validation orphans: 0 processes, 0 tmux sessions, 0 tmux windows\n  failures: 1\n\nProject: /repo/alpha\n  runtime: failed (tmux option write failed)\n  service: failed (service refused)\n  dashboard: failed (dashboard target missing)\n\nBefore restart:\nAimux Versions\n  cli version: 0.1.21\n  build profile: undefined\ncli launcher: stable-shim /Users/sam/.local/bin/aimux\n  cli current entry: undefined\n  cli stable shim: undefined\n  expected project service: api=4 build=service-new\n  expected runtime owner: owner-new\n  expected tmux runtime contract: contract-new\n  daemon: running pid=9001\n    daemon process: (unknown)\n  daemon projects: 1\n  tmux: tmux 3.5a\n  tmux sessions: 1\n  projects: 0 (0 ok, 0 stopped, 0 inactive, 0 need attention, 0 need runtime rebuild)",
       "inputSha256": "9aa464558fe4486753980f088f31ec4c123563671d0fff05b82a68efddd912df"
     }
   ]

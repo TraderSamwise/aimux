@@ -593,7 +593,9 @@ fn doctor_versions_text_and_json_routes_render_runtime_report() {
     assert!(body.contains("  cli version: test-cli\n"));
     assert!(body.contains("  daemon projects: 0\n"));
     assert!(body.contains("  tmux: unavailable\n"));
-    assert!(body.contains("  projects: 0 (0 ok, 0 need restart, 0 need runtime rebuild)\n"));
+    assert!(body.contains(
+        "  projects: 0 (0 ok, 0 stopped, 0 inactive, 0 need attention, 0 need runtime rebuild)\n"
+    ));
     assert!(!body.contains("Runtime Coherence"));
 
     let json = route_operations_text_request(

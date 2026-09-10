@@ -275,7 +275,7 @@ impl CoreCliRuntime for FakeRuntime {
                 "  daemon projects: 0\n",
                 "  tmux: unavailable\n",
                 "  tmux sessions: 0\n",
-                "  projects: 0 (0 ok, 0 need restart, 0 need runtime rebuild)\n"
+                "  projects: 0 (0 ok, 0 stopped, 0 inactive, 0 need attention, 0 need runtime rebuild)\n"
             )
             .into()
         } else if path.ends_with("?json=1") {

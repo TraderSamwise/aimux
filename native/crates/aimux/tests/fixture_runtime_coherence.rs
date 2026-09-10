@@ -298,6 +298,146 @@ fn runtime_coherence_reports_real_computed_tmux_session_names() {
     );
 }
 
+#[test]
+fn runtime_coherence_counts_deliberately_stopped_services_separately() {
+    let mut input = scenario_input(
+        "runtime-coherence-008",
+        &json!({ "daemonProjects": ["/repo/beta"] }),
+    );
+    let service = input
+        .daemon_projects
+        .get_mut("beta")
+        .expect("beta daemon project");
+    service["status"] = json!("stopped");
+    service["lastExit"] = json!({
+        "at": "2026-09-10T08:18:44.179Z",
+        "code": null,
+        "signal": "SIGTERM",
+        "expected": true,
+    });
+    input.endpoints.insert("/repo/beta".into(), None);
+    input.health.clear();
+
+    let mut resolver = fixture_resolver();
+    let report = build_runtime_coherence_report_with_resolver(input, &mut resolver);
+    let rendered = render_runtime_coherence_report(&report);
+
+    assert_eq!(report["projects"][0]["status"], json!("stopped"));
+    assert_eq!(report["summary"]["stopped"], json!(1));
+    assert_eq!(report["summary"]["needsAttention"], json!(0));
+    assert_eq!(report["summary"]["needsRestart"], json!(0));
+    assert!(rendered.contains(
+        "projects: 1 (0 ok, 1 stopped, 0 inactive, 0 need attention, 0 need runtime rebuild)"
+    ));
+    assert!(rendered.contains("Project stopped: /repo/beta"));
+}
+
+#[test]
+fn runtime_coherence_keeps_unreachable_running_services_actionable() {
+    let mut resolver = fixture_resolver();
+    let report = build_runtime_coherence_report_with_resolver(
+        scenario_input(
+            "runtime-coherence-004",
+            &json!({ "daemonProjects": ["/repo/alpha"], "serviceError": "connection refused" }),
+        ),
+        &mut resolver,
+    );
+
+    assert_eq!(report["projects"][0]["status"], json!("needs-attention"));
+    assert_eq!(report["summary"]["needsAttention"], json!(1));
+    assert_eq!(report["summary"]["needsRestart"], json!(1));
+    assert_eq!(report["summary"]["stopped"], json!(0));
+}
+
+#[test]
+fn runtime_coherence_keeps_unexpected_stopped_services_actionable() {
+    let mut input = scenario_input(
+        "runtime-coherence-008",
+        &json!({ "daemonProjects": ["/repo/beta"] }),
+    );
+    let service = input
+        .daemon_projects
+        .get_mut("beta")
+        .expect("beta daemon project");
+    service["status"] = json!("stopped");
+    service["lastExit"] = json!({
+        "at": "2026-09-10T08:18:44.179Z",
+        "code": 1,
+        "signal": null,
+        "expected": false,
+    });
+    input.endpoints.insert("/repo/beta".into(), None);
+    input.health.clear();
+
+    let mut resolver = fixture_resolver();
+    let report = build_runtime_coherence_report_with_resolver(input, &mut resolver);
+
+    assert_eq!(report["projects"][0]["status"], json!("needs-attention"));
+    assert_eq!(report["summary"]["needsAttention"], json!(1));
+    assert_eq!(report["summary"]["stopped"], json!(0));
+}
+
+#[test]
+fn runtime_coherence_reports_tmux_only_residue_as_inactive() {
+    let project_root = "/tmp/aimux-route-coverage";
+    let session_name = project_session(project_root, "aimux").session_name;
+    let mut session_options = BTreeMap::new();
+    session_options.insert(
+        session_name.clone(),
+        [
+            (
+                "@aimux-project-root".to_owned(),
+                Some(project_root.to_owned()),
+            ),
+            (
+                TMUX_RUNTIME_OWNER_OPTION.to_owned(),
+                Some("owner-new".to_owned()),
+            ),
+            (
+                TMUX_RUNTIME_CONTRACT_OPTION.to_owned(),
+                Some(AIMUX_TMUX_RUNTIME_CONTRACT_VERSION.to_owned()),
+            ),
+        ]
+        .into_iter()
+        .collect(),
+    );
+    let mut resolver = fixture_resolver();
+    let report = build_runtime_coherence_report_with_resolver(
+        RuntimeCoherenceInput {
+            generated_at: "2026-09-10T00:00:00.000Z".into(),
+            cli_version: "0.1.34".into(),
+            build_profile: "full".into(),
+            cli_launch: cli_launch(),
+            expected_project_service: expected_manifest(),
+            expected_runtime_owner: "owner-new".into(),
+            daemon_info: Some(
+                json!({ "pid": 9001, "port": 43190, "startedAt": "then", "updatedAt": "now" }),
+            ),
+            daemon_projects: BTreeMap::new(),
+            endpoints: BTreeMap::new(),
+            health: BTreeMap::new(),
+            tmux: RuntimeCoherenceTmux {
+                available: true,
+                version: Some("tmux 3.6b".to_owned()),
+                session_names: vec![session_name],
+                session_options,
+                windows: BTreeMap::new(),
+                window_options: BTreeMap::new(),
+                window_alive: BTreeMap::new(),
+                pane_start_commands: BTreeMap::new(),
+            },
+            dashboard_build_stamps: BTreeMap::new(),
+            process_args: BTreeMap::new(),
+            process_list: Vec::new(),
+        },
+        &mut resolver,
+    );
+
+    assert_eq!(report["projects"][0]["status"], json!("inactive"));
+    assert_eq!(report["summary"]["inactive"], json!(1));
+    assert_eq!(report["summary"]["needsAttention"], json!(0));
+}
+
 fn fixture_resolver() -> PathResolver {
     PathResolver::new("/", "/Users/sam", None)
 }

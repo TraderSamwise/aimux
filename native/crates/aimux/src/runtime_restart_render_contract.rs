@@ -181,10 +181,12 @@ fn render_runtime_coherence_report(report: &Value) -> String {
             number_at(report, &["tmux", "sessionCount"])
         ),
         format!(
-            "  projects: {} ({} ok, {} need restart, {} need runtime rebuild)",
+            "  projects: {} ({} ok, {} stopped, {} inactive, {} need attention, {} need runtime rebuild)",
             number_at(report, &["summary", "projects"]),
             number_at(report, &["summary", "ok"]),
-            number_at(report, &["summary", "needsRestart"]),
+            number_at(report, &["summary", "stopped"]),
+            number_at(report, &["summary", "inactive"]),
+            number_at(report, &["summary", "needsAttention"]),
             number_at(report, &["summary", "runtimeRebuildRequired"])
         ),
     ];
