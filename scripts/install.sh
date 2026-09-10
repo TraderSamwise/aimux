@@ -8,6 +8,19 @@ BIN_DIR="${AIMUX_BIN_DIR:-$HOME/.local/bin}"
 LOCAL_ARCHIVE="${AIMUX_ARCHIVE:-${1:-}}"
 HAD_EXISTING_INSTALL=0
 
+append_standard_path_dirs() {
+  current_path="${PATH:-}"
+  for dir in /usr/local/bin /opt/homebrew/bin /usr/bin /bin /usr/sbin /sbin; do
+    [ -d "$dir" ] || continue
+    case ":$current_path:" in
+      *":$dir:"*) ;;
+      *) current_path="${current_path:+$current_path:}$dir" ;;
+    esac
+  done
+  PATH="$current_path"
+  export PATH
+}
+
 fail() {
   printf 'aimux install failed: %s\n' "$*" >&2
   exit 1
@@ -57,6 +70,7 @@ download_optional() {
   fi
 }
 
+append_standard_path_dirs
 need tar
 
 if [ -e "$BIN_DIR/aimux" ] || [ -L "$BIN_DIR/aimux" ]; then

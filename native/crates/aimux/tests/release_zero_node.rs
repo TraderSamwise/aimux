@@ -78,6 +78,39 @@ fn install_script_installs_native_cli_without_js_runtime() {
 }
 
 #[test]
+fn install_script_extracts_when_gnu_tar_needs_gzip_outside_caller_path() {
+    let repo_root = repo_root();
+    let temp = TempDir::new("release-install-gzip-path");
+    let archive = create_release_archive(&temp.0);
+    let tool_path = create_gnu_tar_like_tool_path(&temp.0);
+    let install_root = temp.0.join("install-root");
+    let bin_dir = temp.0.join("bin");
+
+    let output = Command::new(posix_sh())
+        .arg(repo_root.join("scripts/install.sh"))
+        .arg(&archive)
+        .env("PATH", &tool_path)
+        .env("HOME", temp.0.join("home"))
+        .env("AIMUX_INSTALL_ROOT", &install_root)
+        .env("AIMUX_BIN_DIR", &bin_dir)
+        .env("AIMUX_SKIP_POST_INSTALL_RESTART", "1")
+        .output()
+        .expect("run installer");
+
+    assert!(
+        output.status.success(),
+        "installer failed with gzip outside the caller PATH\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !String::from_utf8_lossy(&output.stderr).contains("gzip: Cannot exec"),
+        "installer still let tar report a missing gzip helper\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn install_script_rejects_archives_without_native_cli() {
     let repo_root = repo_root();
     let temp = TempDir::new("release-no-native");
@@ -457,6 +490,27 @@ fn create_tool_path(root: &Path) -> PathBuf {
     ] {
         std::os::unix::fs::symlink(system_tool(tool), tool_dir.join(tool)).expect("link tool");
     }
+    tool_dir
+}
+
+fn create_gnu_tar_like_tool_path(root: &Path) -> PathBuf {
+    let tool_dir = create_tool_path(root);
+    fs::remove_file(tool_dir.join("tar")).expect("remove tar symlink");
+    let tar_shim = tool_dir.join("tar");
+    fs::write(
+        &tar_shim,
+        format!(
+            "#!/bin/sh\ncase \" $* \" in\n  *\" -xzf \"*)\n    command -v gzip >/dev/null 2>&1 || {{ printf 'tar (child): gzip: Cannot exec\\n' >&2; exit 127; }}\n    ;;\nesac\nexec {} \"$@\"\n",
+            shell_quote(&system_tool("tar"))
+        ),
+    )
+    .expect("write tar shim");
+    let mut permissions = fs::metadata(&tar_shim)
+        .expect("tar shim metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&tar_shim, permissions).expect("chmod tar shim");
+    let _ = system_tool("gzip");
     tool_dir
 }
 
