@@ -4,6 +4,7 @@ use serde_json::{Value, json};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -34,6 +35,18 @@ fn git_root(path: impl AsRef<Path>) -> PathBuf {
     let path = path.as_ref();
     fs::create_dir_all(path.join(".git")).expect("create git marker");
     path.to_path_buf()
+}
+
+fn unique_temp_fixture_project_root(label: &str) -> PathBuf {
+    let sequence = TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time before unix epoch")
+        .as_nanos();
+    std::env::temp_dir().join(format!(
+        "aimux-expose-dashboard-cmd.{label}-{}-{sequence}-{timestamp}",
+        std::process::id()
+    ))
 }
 
 fn resolver(test_dir: &TestDir) -> PathResolver {
@@ -332,11 +345,7 @@ fn register_project_allows_legitimate_temp_checkouts() {
 #[test]
 fn register_project_skips_ephemeral_temp_roots_by_name() {
     let test_dir = TestDir::new();
-    let leaked_shape = git_root(PathBuf::from("/private/tmp").join(format!(
-        "aimux-expose-dashboard-cmd.{}-{}",
-        std::process::id(),
-        TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
-    )));
+    let leaked_shape = git_root(unique_temp_fixture_project_root("registry-skip"));
     let mut resolver = resolver(&test_dir);
 
     assert_eq!(
