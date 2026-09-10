@@ -7,8 +7,13 @@ import { markNotificationsRead } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { getProjectServiceEndpoint } from "@/lib/project-connection-display";
 import { ensureSecurityNotificationChannel } from "@/lib/push-registration";
+import { observeNotificationStartup } from "@/lib/notification-startup";
 import { buildViewHref } from "@/lib/view-location";
 import { markNotificationRecordsReadLocalAtom } from "@/stores/notifications";
+import {
+  clearNotificationStartupIssueAtom,
+  reportNotificationStartupIssueAtom,
+} from "@/stores/notificationStartup";
 import { projectsAtom, selectedProjectPathAtom, selectedSessionIdAtom } from "@/stores/projects";
 
 if (Platform.OS !== "web") {
@@ -38,6 +43,8 @@ export function NativeNotificationRouter() {
   const selectProject = useSetAtom(selectedProjectPathAtom);
   const selectSession = useSetAtom(selectedSessionIdAtom);
   const markNotificationsReadLocal = useSetAtom(markNotificationRecordsReadLocalAtom);
+  const reportNotificationStartupIssue = useSetAtom(reportNotificationStartupIssueAtom);
+  const clearNotificationStartupIssue = useSetAtom(clearNotificationStartupIssueAtom);
   const projects = useAtomValue(projectsAtom);
   const { getToken } = useAuth();
   const projectsRef = useRef(projects);
@@ -50,7 +57,12 @@ export function NativeNotificationRouter() {
 
   useEffect(() => {
     if (Platform.OS === "web") return;
-    void ensureSecurityNotificationChannel().catch(() => undefined);
+    void observeNotificationStartup({
+      source: "security_channel",
+      operation: ensureSecurityNotificationChannel,
+      onIssue: reportNotificationStartupIssue,
+      onClear: clearNotificationStartupIssue,
+    });
 
     const route = (response: Notifications.NotificationResponse | null) => {
       const data = response?.notification.request.content.data;
@@ -97,7 +109,14 @@ export function NativeNotificationRouter() {
       active = false;
       subscription.remove();
     };
-  }, [markNotificationsReadLocal, router, selectProject, selectSession]);
+  }, [
+    clearNotificationStartupIssue,
+    markNotificationsReadLocal,
+    reportNotificationStartupIssue,
+    router,
+    selectProject,
+    selectSession,
+  ]);
 
   return null;
 }

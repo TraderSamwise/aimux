@@ -18,6 +18,7 @@ import Reanimated, {
   withTiming,
 } from "react-native-reanimated";
 import { MonitorSidebar } from "@/components/MonitorSidebar";
+import { NotificationStartupBanner } from "@/components/NotificationStartupBanner";
 import { PairDeviceDialog, APPROVE_COMMAND } from "@/components/PairDeviceDialog";
 import { ProjectSidebar } from "@/components/ProjectSidebar";
 import { SharedSidebar } from "@/components/SharedSidebar";
@@ -186,6 +187,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               visible={!overlayTopChrome || chatChromeVisible}
             >
               <TopBar left={hamburger} />
+              <NotificationStartupBanner />
               {showPairingBanner ? (
                 <Pressable
                   accessibilityLabel="Pair this browser"

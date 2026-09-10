@@ -19,6 +19,7 @@ import { deliverBrowserNotification, isBrowserDocumentVisible } from "@/lib/brow
 import { env } from "@/lib/env";
 import { startHeartbeat } from "@/lib/heartbeat";
 import { evaluateAlertEvent } from "@/lib/notification-policy";
+import { observeNotificationStartup } from "@/lib/notification-startup";
 import {
   getProjectServiceEndpoint,
   isRelayUnavailableForProjectDiscovery,
@@ -52,6 +53,10 @@ import {
   markNotificationRecordsObservedAtom,
   notificationFeedRefreshNonceAtom,
 } from "@/stores/notifications";
+import {
+  clearNotificationStartupIssueAtom,
+  reportNotificationStartupIssueAtom,
+} from "@/stores/notificationStartup";
 import {
   explicitProjectSelectionAtom,
   projectsAtom,
@@ -115,6 +120,8 @@ export default function MainLayout() {
   const applyNotificationFeedFailure = useSetAtom(applyNotificationFeedFailureAtom);
   const clearNotificationFeedResource = useSetAtom(clearNotificationFeedResourceAtom);
   const markNotificationRecordsObserved = useSetAtom(markNotificationRecordsObservedAtom);
+  const reportNotificationStartupIssue = useSetAtom(reportNotificationStartupIssueAtom);
+  const clearNotificationStartupIssue = useSetAtom(clearNotificationStartupIssueAtom);
   const setAcceptedShares = useSetAtom(acceptedSharedSessionsAtom);
   const setLegacyActiveShare = useSetAtom(activeSharedSessionAtom);
   const setAcceptedSharesRef = useRef(setAcceptedShares);
@@ -264,18 +271,24 @@ export default function MainLayout() {
         ? { ownerUserId: activeShareOwnerUserId, shareId: activeShareShareId }
         : {};
     const requestPermission = notificationSettings.enabled && notificationSettings.channels.push;
-    void registerSecurityPushToken(relayUrl, () => getTokenRef.current(), {
-      ...activeShareRelayOptions,
-      agentAlerts: requestPermission,
-      requestPermission,
-    }).catch((err) => {
-      console.warn("push registration failed:", err);
+    void observeNotificationStartup({
+      source: "push_registration",
+      operation: () =>
+        registerSecurityPushToken(relayUrl, () => getTokenRef.current(), {
+          ...activeShareRelayOptions,
+          agentAlerts: requestPermission,
+          requestPermission,
+        }),
+      onIssue: reportNotificationStartupIssue,
+      onClear: clearNotificationStartupIssue,
     });
   }, [
     activeShareOwnerUserId,
     activeShareShareId,
+    clearNotificationStartupIssue,
     notificationSettings.channels.push,
     notificationSettings.enabled,
+    reportNotificationStartupIssue,
     relayStatus,
     relayUrl,
   ]);

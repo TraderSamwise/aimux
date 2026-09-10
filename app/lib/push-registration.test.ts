@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Platform } from "react-native";
+import * as Notifications from "expo-notifications";
 
 vi.mock("react-native", () => ({ Platform: { OS: "ios" } }));
 vi.mock("expo-constants", () => ({ default: {} }));
@@ -12,7 +14,7 @@ vi.mock("expo-notifications", () => ({
 vi.mock("@/lib/client-device", () => ({ getClientDeviceInfo: vi.fn() }));
 vi.mock("@/lib/client-device-proof", () => ({ getClientDeviceProof: vi.fn() }));
 
-import { sendSecurityTestPush } from "./push-registration";
+import { ensureSecurityNotificationChannel, sendSecurityTestPush } from "./push-registration";
 import {
   buildSecurityPushRegistrationUrl,
   buildSecurityPushTestUrl,
@@ -21,6 +23,8 @@ import {
 describe("push registration", () => {
   beforeEach(() => {
     vi.unstubAllGlobals();
+    vi.clearAllMocks();
+    Platform.OS = "ios";
   });
 
   it("routes normal security push registration to the authenticated user's relay", () => {
@@ -54,6 +58,17 @@ describe("push registration", () => {
         shareId: " share_123 ",
       }).toString(),
     ).toBe("https://relay.aimux.app/security/test-push?ownerUserId=user_owner&shareId=share_123");
+  });
+
+  it("configures the Android security notification channel", async () => {
+    Platform.OS = "android";
+
+    await expect(ensureSecurityNotificationChannel()).resolves.toBeUndefined();
+
+    expect(Notifications.setNotificationChannelAsync).toHaveBeenCalledWith("security", {
+      name: "Security alerts",
+      importance: Notifications.AndroidImportance.DEFAULT,
+    });
   });
 
   it("reports the sent device count from readable test push responses", async () => {
