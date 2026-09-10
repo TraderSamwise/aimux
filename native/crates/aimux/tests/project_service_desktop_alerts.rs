@@ -31,7 +31,7 @@ fn desktop_alert_payload_uses_event_title_message_and_chat_deep_link() {
         payload.message,
         "Needs input: claude @ Main Checkout - Claude is waiting for your input"
     );
-    assert_eq!(payload.sound, true);
+    assert!(payload.sound);
     assert_eq!(
         payload.deep_link_url.as_deref(),
         Some(

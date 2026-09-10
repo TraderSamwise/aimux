@@ -156,7 +156,7 @@ impl DaemonMetadataTextRuntime for FixtureMetadataRuntime<'_> {
     }
 
     fn metadata_endpoint(&self, _project_root: &str) -> Option<MetadataApiEndpoint> {
-        push_call(&self.calls, "getProjectServiceEndpoint", json!([]));
+        push_call(self.calls, "getProjectServiceEndpoint", json!([]));
         Some(MetadataApiEndpoint {
             host: "127.0.0.1".into(),
             port: 4321,
@@ -172,7 +172,7 @@ impl DaemonMetadataTextRuntime for FixtureMetadataRuntime<'_> {
         body: Value,
     ) -> ProjectServiceJsonResult {
         push_call(
-            &self.calls,
+            self.calls,
             "postProjectServiceJson",
             json!([route_path, body]),
         );
@@ -279,7 +279,7 @@ impl DaemonSystemTextRuntime for FixtureLogsRuntime<'_> {
 
     fn read_last_log_lines(&self, path: &Path, lines: usize) -> Result<String, String> {
         push_call(
-            &self.calls,
+            self.calls,
             "readLastLogLines",
             json!([path.to_string_lossy().to_string(), lines]),
         );
@@ -288,7 +288,7 @@ impl DaemonSystemTextRuntime for FixtureLogsRuntime<'_> {
 
     fn clear_log_file(&mut self, path: &Path) -> Result<(), String> {
         push_call(
-            &self.calls,
+            self.calls,
             "clearLogFile",
             json!([path.to_string_lossy().to_string()]),
         );
@@ -386,7 +386,7 @@ impl DaemonProjectContentTextRuntime for FixtureProjectContentRuntime<'_> {
         route_path: &str,
     ) -> ProjectServiceJsonResult {
         push_call(
-            &self.calls,
+            self.calls,
             "getProjectServiceJson",
             json!([route_path, { "projectRoot": project }]),
         );
@@ -405,7 +405,7 @@ impl DaemonProjectContentTextRuntime for FixtureProjectContentRuntime<'_> {
         _timeout_ms: Option<u64>,
     ) -> ProjectServiceJsonResult {
         push_call(
-            &self.calls,
+            self.calls,
             "postProjectServiceJson",
             json!([route_path, body, { "projectRoot": project }]),
         );

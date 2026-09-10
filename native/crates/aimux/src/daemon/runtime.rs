@@ -4455,7 +4455,7 @@ mod tests {
                 None,
                 &mut restart_test_dashboard,
                 |_runtime, project_roots| {
-                    assert_eq!(project_roots, &[project.clone()]);
+                    assert_eq!(project_roots, std::slice::from_ref(&project));
                     json!({
                         "processPids": [],
                         "tmuxSessions": [],
@@ -4738,7 +4738,7 @@ mod tests {
                 None,
                 restart_test_dashboard,
                 |_runtime, project_roots| {
-                    assert_eq!(project_roots, &[project.clone()]);
+                    assert_eq!(project_roots, std::slice::from_ref(&project));
                     json!({
                         "processPids": [],
                         "tmuxSessions": [],
@@ -4809,7 +4809,7 @@ mod tests {
                 None,
                 restart_test_dashboard,
                 |_runtime, project_roots| {
-                    assert_eq!(project_roots, &[project.clone()]);
+                    assert_eq!(project_roots, std::slice::from_ref(&project));
                     json!({
                         "processPids": [],
                         "tmuxSessions": [],
