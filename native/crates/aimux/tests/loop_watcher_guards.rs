@@ -120,6 +120,61 @@ fn a_loop_candidate_must_remain_stopped_for_the_dwell_window() {
 }
 
 #[test]
+fn retasking_resets_the_stopped_dwell_window_for_the_new_assignment() {
+    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    boss_meta["overseer"] = json!(true);
+    let (worker, mut worker_meta) = looping_session("worker", "idle");
+    let mut input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta.clone() } }),
+        json!({ "nudgeCooldownMs": 0, "stoppedDwellMs": 30_000 }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    let mut ok = |_: &LoopSend| true;
+    assert!(watcher.scan(&input, NOW, &mut ok).is_empty());
+
+    worker_meta["loop"]["since"] = json!("2026-09-09T00:00:20.000Z");
+    worker_meta["loop"]["goal"] = json!("new goal");
+    worker_meta["loop"]["source"] = json!("task");
+    input["metadata"]["sessions"]["worker"] = worker_meta;
+
+    assert!(watcher.scan(&input, NOW + 20_000, &mut ok).is_empty());
+    assert!(
+        watcher.scan(&input, NOW + 49_999, &mut ok).is_empty(),
+        "the new assignment must receive its own continuous dwell window"
+    );
+    assert_eq!(watcher.scan(&input, NOW + 50_000, &mut ok).len(), 1);
+}
+
+#[test]
+fn same_assignment_bookkeeping_does_not_reset_the_stopped_dwell_window() {
+    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    boss_meta["overseer"] = json!(true);
+    let (worker, mut worker_meta) = looping_session("worker", "idle");
+    let mut input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta.clone() } }),
+        json!({ "nudgeCooldownMs": 0, "stoppedDwellMs": 30_000 }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    let mut ok = |_: &LoopSend| true;
+    assert!(watcher.scan(&input, NOW, &mut ok).is_empty());
+
+    worker_meta["loop"]["updatedBy"] = json!("overseer");
+    worker_meta["loop"]["updatedBySessionId"] = json!("boss");
+    input["metadata"]["sessions"]["worker"] = worker_meta;
+
+    assert!(watcher.scan(&input, NOW + 29_999, &mut ok).is_empty());
+    assert_eq!(
+        watcher.scan(&input, NOW + 30_000, &mut ok).len(),
+        1,
+        "bookkeeping on the same assignment must not mask a genuinely stuck agent"
+    );
+}
+
+#[test]
 fn running_resets_the_stopped_dwell_window() {
     let (boss, mut boss_meta) = looping_session("boss", "idle");
     boss_meta["overseer"] = json!(true);

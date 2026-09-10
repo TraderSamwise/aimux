@@ -21,10 +21,18 @@ pub struct LoopSend {
 pub struct LoopWatcher {
     last_nudge_at: BTreeMap<String, i64>,
     last_overseer_wake_at: i64,
-    stopped_since: BTreeMap<String, i64>,
+    stopped_since: BTreeMap<LoopDwellKey, i64>,
     last_candidate_signature: Option<String>,
     last_overseer_reported_signature: Option<String>,
     unchanged_candidate_ticks: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct LoopDwellKey {
+    session_id: String,
+    loop_since: String,
+    goal: String,
+    loop_source: String,
 }
 
 impl LoopWatcher {
@@ -132,18 +140,21 @@ impl LoopWatcher {
         dwell_ms: i64,
     ) -> Vec<Value> {
         let dwell_ms = dwell_ms.max(0);
-        let current_ids = candidates
+        let keyed_candidates = candidates
+            .into_iter()
+            .filter_map(|candidate| dwell_key(&candidate).map(|key| (key, candidate)))
+            .collect::<Vec<_>>();
+        let current_keys = keyed_candidates
             .iter()
-            .filter_map(|candidate| optional_str(candidate, "id").map(str::to_owned))
+            .map(|(key, _)| key.clone())
             .collect::<BTreeSet<_>>();
         self.stopped_since
-            .retain(|id, _| current_ids.contains(id.as_str()));
-        candidates
+            .retain(|key, _| current_keys.contains(key));
+        keyed_candidates
             .into_iter()
-            .filter(|candidate| {
-                let id = str_field(candidate, "id");
-                let first_seen = self.stopped_since.entry(id.to_owned()).or_insert(now_ms);
-                now_ms.saturating_sub(*first_seen) >= dwell_ms
+            .filter_map(|(key, candidate)| {
+                let first_seen = self.stopped_since.entry(key).or_insert(now_ms);
+                (now_ms.saturating_sub(*first_seen) >= dwell_ms).then_some(candidate)
             })
             .collect()
     }
@@ -404,6 +415,19 @@ fn candidate_signature(candidates: &[Value]) -> String {
         .collect::<Vec<_>>();
     ids.sort();
     ids.join("\u{1e}")
+}
+
+fn dwell_key(candidate: &Value) -> Option<LoopDwellKey> {
+    optional_str(candidate, "id").map(|session_id| LoopDwellKey {
+        session_id: session_id.to_owned(),
+        loop_since: str_field(candidate, "loopSince").to_owned(),
+        goal: optional_str(candidate, "goal")
+            .unwrap_or_default()
+            .to_owned(),
+        loop_source: optional_str(candidate, "loopSource")
+            .unwrap_or_default()
+            .to_owned(),
+    })
 }
 
 fn config_i64(input: &Value, field: &str, fallback: i64) -> i64 {
