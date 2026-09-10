@@ -82,8 +82,8 @@ use crate::install_cleanup::{
 };
 use crate::install_config::{is_primary_install_lane_with_home, normalize_installs_config};
 use crate::lifecycle_orphans::{
-    CleanupLifecycleOrphansOptions, SystemLifecycleOrphanRuntime,
-    cleanup_lifecycle_validation_orphans, plan_lifecycle_validation_orphans,
+    CleanupLifecycleOrphansOptions, ProjectServiceOrphanScope, SystemLifecycleOrphanRuntime,
+    cleanup_lifecycle_validation_orphans, plan_lifecycle_validation_orphans_with_scope,
 };
 use crate::logs::{LogSelectionOptions, clear_log_file, read_last_log_lines, selected_log_path};
 use crate::paths::{PathResolver, compute_project_id};
@@ -1025,10 +1025,22 @@ impl RealDaemonRuntime {
     }
 
     fn cleanup_lifecycle_validation_orphans_for_restart(&self, project_roots: &[String]) -> Value {
+        let recognized_project_roots = restart_all_project_roots(&self.daemon_state());
+        let project_service_scope = ProjectServiceOrphanScope {
+            aimux_home: self
+                .resolver
+                .global_aimux_dir()
+                .to_string_lossy()
+                .into_owned(),
+            recognized_project_roots: recognized_project_roots
+                .into_iter()
+                .collect::<BTreeSet<_>>(),
+        };
         let mut plan_runtime = SystemLifecycleOrphanRuntime::new();
-        let plan = plan_lifecycle_validation_orphans(
+        let plan = plan_lifecycle_validation_orphans_with_scope(
             &mut plan_runtime,
             std::process::id().try_into().unwrap_or(i32::MAX),
+            Some(&project_service_scope),
         );
         let plan_value = serde_json::to_value(&plan).unwrap_or(Value::Null);
         for project_root in project_roots {
@@ -1045,7 +1057,10 @@ impl RealDaemonRuntime {
         let mut cleanup_runtime = SystemLifecycleOrphanRuntime::new();
         let result = cleanup_lifecycle_validation_orphans(
             &mut cleanup_runtime,
-            CleanupLifecycleOrphansOptions::default(),
+            CleanupLifecycleOrphansOptions {
+                project_service_scope: Some(project_service_scope),
+                ..Default::default()
+            },
         );
         let status = if !result.failed_process_pids.is_empty()
             || !result.failed_tmux_sessions.is_empty()

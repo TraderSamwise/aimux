@@ -48,6 +48,17 @@ pub fn command_arg_value_matches(args: &str, flag: &str, expected: &str) -> bool
     false
 }
 
+pub fn process_env_value(args: &str, key: &str) -> Option<String> {
+    let prefix = format!("{key}=");
+    args.split_whitespace().find_map(|token| {
+        token
+            .strip_prefix(&prefix)
+            .map(trim_shell_quotes)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+    })
+}
+
 fn find_flag(input: &str, flag: &str) -> Option<usize> {
     let mut offset = 0;
     while let Some(index) = input[offset..].find(flag) {
@@ -74,6 +85,17 @@ pub fn read_process_args(pid: i32) -> Option<String> {
         return None;
     }
     Some(String::from_utf8_lossy(&output.stdout).trim().to_owned()).filter(|args| !args.is_empty())
+}
+
+pub fn read_process_args_with_env(pid: i32) -> Option<String> {
+    let output = Command::new("ps")
+        .args(["eww", "-p", &pid.to_string(), "-o", "command="])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    read_process_args_from_ps_output(&String::from_utf8_lossy(&output.stdout))
 }
 
 pub fn read_process_args_from_ps_output(stdout: &str) -> Option<String> {
@@ -437,5 +459,16 @@ mod tests {
 
         assert!(matched);
         assert_eq!(cwd_calls.get(), 1);
+    }
+
+    #[test]
+    fn process_env_value_reads_ps_eww_env_tokens() {
+        let args = "/Users/sam/.aimux/native/current/native/darwin-arm64/aimux __project-service-internal --project-root /Users/sam AIMUX_HOME=/Users/sam/.aimux PATH=/bin";
+
+        assert_eq!(
+            process_env_value(args, "AIMUX_HOME"),
+            Some("/Users/sam/.aimux".to_owned())
+        );
+        assert_eq!(process_env_value(args, "MISSING"), None);
     }
 }

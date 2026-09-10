@@ -1,10 +1,13 @@
 use crate::dashboard_processes::{DashboardProcess, is_dashboard_process_args};
+use crate::debug_logging::{LogLevel, log_at};
 use crate::process_inspector::{
-    ProcessArgsEntry, is_pid_alive, list_process_args, list_process_parents, read_process_args,
+    ProcessArgsEntry, is_aimux_project_service_process_args, is_pid_alive, list_process_args,
+    list_process_parents, process_env_value, read_process_args, read_process_args_with_env,
 };
 use crate::tmux::{TmuxRuntimeManager, tmux_command_from_env};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -31,10 +34,17 @@ pub struct LifecycleOrphanPlan {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectServiceOrphanScope {
+    pub aimux_home: String,
+    pub recognized_project_roots: BTreeSet<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CleanupLifecycleOrphansOptions {
     pub process_exit_timeout_ms: u64,
     pub process_kill_grace_ms: u64,
     pub current_pid: i32,
+    pub project_service_scope: Option<ProjectServiceOrphanScope>,
 }
 
 impl Default for CleanupLifecycleOrphansOptions {
@@ -43,6 +53,7 @@ impl Default for CleanupLifecycleOrphansOptions {
             process_exit_timeout_ms: DEFAULT_PROCESS_EXIT_TIMEOUT_MS,
             process_kill_grace_ms: DEFAULT_PROCESS_KILL_GRACE_MS,
             current_pid: std::process::id() as i32,
+            project_service_scope: None,
         }
     }
 }
@@ -51,6 +62,9 @@ pub trait LifecycleOrphanRuntime {
     fn list_processes(&mut self) -> Vec<ProcessArgsEntry>;
     fn list_process_parents(&mut self) -> BTreeMap<i32, i32>;
     fn read_process_args(&mut self, pid: i32) -> Option<String>;
+    fn read_process_args_with_env(&mut self, pid: i32) -> Option<String> {
+        self.read_process_args(pid)
+    }
     fn is_pid_alive(&mut self, pid: i32) -> bool;
     fn kill_pid(&mut self, pid: i32, signal: &str) -> Result<(), String>;
     fn sleep_ms(&mut self, ms: u64);
@@ -90,6 +104,10 @@ impl LifecycleOrphanRuntime for SystemLifecycleOrphanRuntime {
 
     fn read_process_args(&mut self, pid: i32) -> Option<String> {
         read_process_args(pid)
+    }
+
+    fn read_process_args_with_env(&mut self, pid: i32) -> Option<String> {
+        read_process_args_with_env(pid)
     }
 
     fn is_pid_alive(&mut self, pid: i32) -> bool {
@@ -150,6 +168,14 @@ pub fn plan_lifecycle_validation_orphans(
     runtime: &mut impl LifecycleOrphanRuntime,
     current_pid: i32,
 ) -> LifecycleOrphanPlan {
+    plan_lifecycle_validation_orphans_with_scope(runtime, current_pid, None)
+}
+
+pub fn plan_lifecycle_validation_orphans_with_scope(
+    runtime: &mut impl LifecycleOrphanRuntime,
+    current_pid: i32,
+    project_service_scope: Option<&ProjectServiceOrphanScope>,
+) -> LifecycleOrphanPlan {
     let tmux_available = runtime.tmux_is_available();
     let tmux_sessions = if tmux_available {
         unique_strings(
@@ -168,7 +194,14 @@ pub fn plan_lifecycle_validation_orphans(
     } else {
         BTreeSet::new()
     };
-    let process_pids = candidate_process_pids(&processes, &parents, current_pid, &live_pane_pids);
+    let process_pids = candidate_process_pids(
+        runtime,
+        &processes,
+        &parents,
+        current_pid,
+        &live_pane_pids,
+        project_service_scope,
+    );
     LifecycleOrphanPlan {
         process_pids,
         tmux_sessions,
@@ -213,8 +246,14 @@ pub fn cleanup_lifecycle_validation_orphans(
     } else {
         BTreeSet::new()
     };
-    let candidate_pids =
-        candidate_process_pids(&processes, &parents, options.current_pid, &live_pane_pids);
+    let candidate_pids = candidate_process_pids(
+        runtime,
+        &processes,
+        &parents,
+        options.current_pid,
+        &live_pane_pids,
+        options.project_service_scope.as_ref(),
+    );
     let orphaned_dashboard_pids =
         orphaned_dashboard_pids(&processes, &parents, options.current_pid, &live_pane_pids);
 
@@ -228,6 +267,7 @@ pub fn cleanup_lifecycle_validation_orphans(
                 &parents,
                 options.current_pid,
                 &live_pane_pids,
+                options.project_service_scope.as_ref(),
             )
         }) {
             continue;
@@ -256,6 +296,7 @@ pub fn cleanup_lifecycle_validation_orphans(
                 &parents,
                 options.current_pid,
                 &live_pane_pids,
+                options.project_service_scope.as_ref(),
             )
         }) {
             result.failed_process_pids.push(pid);
@@ -368,10 +409,12 @@ fn is_validation_option(value: &str) -> bool {
 }
 
 fn candidate_process_pids(
+    runtime: &mut impl LifecycleOrphanRuntime,
     processes: &[ProcessArgsEntry],
     parents: &BTreeMap<i32, i32>,
     current_pid: i32,
     live_pane_pids: &BTreeSet<i32>,
+    project_service_scope: Option<&ProjectServiceOrphanScope>,
 ) -> Vec<i32> {
     let orphaned_dashboard_pids =
         orphaned_dashboard_pids(processes, parents, current_pid, live_pane_pids);
@@ -383,6 +426,17 @@ fn candidate_process_pids(
                     None
                 } else if is_lifecycle_validation_process_args(&entry.args)
                     || orphaned_dashboard_pids.contains(&entry.pid)
+                    || project_service_scope.is_some_and(|scope| {
+                        let args_with_env = runtime
+                            .read_process_args_with_env(entry.pid)
+                            .unwrap_or_else(|| entry.args.clone());
+                        let reapable =
+                            is_unrecognized_same_home_project_service(&args_with_env, scope);
+                        if reapable {
+                            log_project_service_orphan_candidate(entry.pid, &args_with_env);
+                        }
+                        reapable
+                    })
                 {
                     Some(entry.pid)
                 } else {
@@ -424,8 +478,11 @@ fn is_reapable(
     parents: &BTreeMap<i32, i32>,
     current_pid: i32,
     live_pane_pids: &BTreeSet<i32>,
+    project_service_scope: Option<&ProjectServiceOrphanScope>,
 ) -> bool {
     is_lifecycle_validation_process_args(args)
+        || project_service_scope
+            .is_some_and(|scope| is_unrecognized_same_home_project_service(args, scope))
         || (is_dashboard_process_args(args)
             && orphaned_dashboard_pids.contains(&pid)
             && !crate::dashboard_processes::select_orphaned_dashboards(
@@ -438,6 +495,97 @@ fn is_reapable(
                 live_pane_pids,
             )
             .is_empty())
+}
+
+fn is_unrecognized_same_home_project_service(
+    args: &str,
+    scope: &ProjectServiceOrphanScope,
+) -> bool {
+    if !is_aimux_project_service_process_args(args, None, &Default::default()) {
+        return false;
+    }
+    let Some(process_home) = process_env_value(args, "AIMUX_HOME") else {
+        return false;
+    };
+    if normalize_path(&process_home) != normalize_path(&scope.aimux_home) {
+        return false;
+    }
+    let Some(project_root) = project_service_project_root(args) else {
+        return false;
+    };
+    let project_root = normalize_path(&project_root);
+    !scope
+        .recognized_project_roots
+        .iter()
+        .any(|root| normalize_path(root) == project_root)
+}
+
+fn log_project_service_orphan_candidate(pid: i32, args: &str) {
+    log_at(
+        LogLevel::Debug,
+        "project service orphan cleanup candidate",
+        "lifecycle",
+        Some(serde_json::json!({
+            "pid": pid,
+            "projectRoot": project_service_project_root(args),
+            "reason": "same aimux home project service not recognized by daemon state",
+        })),
+    );
+}
+
+fn project_service_project_root(args: &str) -> Option<String> {
+    let mut tokens = args.split_whitespace();
+    while let Some(token) = tokens.next() {
+        if token == "--project-root" {
+            let mut value = Vec::new();
+            for candidate in tokens.by_ref() {
+                if candidate.starts_with("--") || looks_like_env_assignment(candidate) {
+                    break;
+                }
+                value.push(candidate);
+            }
+            return Some(trim_shell_quotes(&value.join(" ")).to_owned())
+                .filter(|value| !value.is_empty());
+        }
+    }
+    None
+}
+
+fn looks_like_env_assignment(token: &str) -> bool {
+    let Some((key, _)) = token.split_once('=') else {
+        return false;
+    };
+    !key.is_empty()
+        && key
+            .chars()
+            .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '_')
+}
+
+fn trim_shell_quotes(value: &str) -> &str {
+    if value.len() >= 2
+        && ((value.starts_with('"') && value.ends_with('"'))
+            || (value.starts_with('\'') && value.ends_with('\'')))
+    {
+        &value[1..value.len() - 1]
+    } else {
+        value
+    }
+}
+
+fn normalize_path(path: &str) -> String {
+    std::fs::canonicalize(path)
+        .unwrap_or_else(|_| {
+            let path = Path::new(path);
+            if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                std::env::current_dir()
+                    .unwrap_or_else(|_| PathBuf::from("."))
+                    .join(path)
+            }
+        })
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn wait_for_pid_exit(
@@ -657,6 +805,7 @@ mod tests {
                 current_pid: 999,
                 process_exit_timeout_ms: 0,
                 process_kill_grace_ms: 0,
+                project_service_scope: None,
             },
         );
 
@@ -704,6 +853,7 @@ mod tests {
                 current_pid: 999,
                 process_exit_timeout_ms: 0,
                 process_kill_grace_ms: 0,
+                project_service_scope: None,
             },
         );
 
@@ -735,6 +885,7 @@ mod tests {
                 current_pid: 999,
                 process_exit_timeout_ms: 0,
                 process_kill_grace_ms: 0,
+                project_service_scope: None,
             },
         );
 
@@ -761,6 +912,7 @@ mod tests {
                 current_pid: 999,
                 process_exit_timeout_ms: 0,
                 process_kill_grace_ms: 0,
+                project_service_scope: None,
             },
         );
 
@@ -805,6 +957,7 @@ mod tests {
                 current_pid: 999,
                 process_exit_timeout_ms: 0,
                 process_kill_grace_ms: 0,
+                project_service_scope: None,
             },
         );
 
@@ -840,6 +993,7 @@ mod tests {
                 current_pid: 999,
                 process_exit_timeout_ms: 0,
                 process_kill_grace_ms: 0,
+                project_service_scope: None,
             },
         );
 
@@ -851,5 +1005,124 @@ mod tests {
             vec!["pid 101: command changed before SIGKILL"]
         );
         assert_eq!(runtime.killed_pids, vec![(101, "SIGTERM".into())]);
+    }
+
+    #[test]
+    fn lifecycle_cleanup_reaps_same_home_unrecognized_project_service() {
+        let mut runtime = FakeLifecycleRuntime {
+            processes: vec![ProcessArgsEntry {
+                pid: 404,
+                args: "AIMUX_HOME=/Users/sam/.aimux /Users/sam/.aimux/native/local-47a40168/native/darwin-arm64/aimux __project-service-internal --project-id sam-5e9c1a8e1d4e --project-root /Users/sam".into(),
+            }],
+            alive_pids: HashSet::from([404]),
+            ..Default::default()
+        }
+        .with_kill_removing_alive();
+
+        let result = cleanup_lifecycle_validation_orphans(
+            &mut runtime,
+            CleanupLifecycleOrphansOptions {
+                current_pid: 999,
+                process_exit_timeout_ms: 0,
+                process_kill_grace_ms: 0,
+                project_service_scope: Some(ProjectServiceOrphanScope {
+                    aimux_home: "/Users/sam/.aimux".into(),
+                    recognized_project_roots: BTreeSet::from(["/Users/sam/cs/aimux".into()]),
+                }),
+            },
+        );
+
+        assert_eq!(result.attempted_process_pids, vec![404]);
+        assert_eq!(result.process_pids, vec![404]);
+        assert_eq!(runtime.killed_pids, vec![(404, "SIGTERM".into())]);
+    }
+
+    #[test]
+    fn lifecycle_cleanup_does_not_reap_foreign_home_project_service() {
+        let mut runtime = FakeLifecycleRuntime {
+            processes: vec![ProcessArgsEntry {
+                pid: 404,
+                args: "AIMUX_HOME=/tmp/aimux-home-isolated /Users/sam/.aimux/native/local-47a40168/native/darwin-arm64/aimux __project-service-internal --project-id sam-5e9c1a8e1d4e --project-root /Users/sam".into(),
+            }],
+            alive_pids: HashSet::from([404]),
+            ..Default::default()
+        }
+        .with_kill_removing_alive();
+
+        let result = cleanup_lifecycle_validation_orphans(
+            &mut runtime,
+            CleanupLifecycleOrphansOptions {
+                current_pid: 999,
+                process_exit_timeout_ms: 0,
+                process_kill_grace_ms: 0,
+                project_service_scope: Some(ProjectServiceOrphanScope {
+                    aimux_home: "/Users/sam/.aimux".into(),
+                    recognized_project_roots: BTreeSet::new(),
+                }),
+            },
+        );
+
+        assert!(result.attempted_process_pids.is_empty());
+        assert!(runtime.killed_pids.is_empty());
+    }
+
+    #[test]
+    fn lifecycle_cleanup_does_not_reap_recognized_project_service() {
+        let mut runtime = FakeLifecycleRuntime {
+            processes: vec![ProcessArgsEntry {
+                pid: 404,
+                args: "AIMUX_HOME=/Users/sam/.aimux /Users/sam/.aimux/native/local-current/native/darwin-arm64/aimux __project-service-internal --project-id aimux-123 --project-root /Users/sam/cs/aimux".into(),
+            }],
+            alive_pids: HashSet::from([404]),
+            ..Default::default()
+        }
+        .with_kill_removing_alive();
+
+        let result = cleanup_lifecycle_validation_orphans(
+            &mut runtime,
+            CleanupLifecycleOrphansOptions {
+                current_pid: 999,
+                process_exit_timeout_ms: 0,
+                process_kill_grace_ms: 0,
+                project_service_scope: Some(ProjectServiceOrphanScope {
+                    aimux_home: "/Users/sam/.aimux".into(),
+                    recognized_project_roots: BTreeSet::from(["/Users/sam/cs/aimux".into()]),
+                }),
+            },
+        );
+
+        assert!(result.attempted_process_pids.is_empty());
+        assert!(runtime.killed_pids.is_empty());
+    }
+
+    #[test]
+    fn lifecycle_cleanup_does_not_reap_recognized_project_service_with_spaced_root() {
+        let mut runtime = FakeLifecycleRuntime {
+            processes: vec![ProcessArgsEntry {
+                pid: 404,
+                args: "/Users/sam/.aimux/native/local-current/native/darwin-arm64/aimux __project-service-internal --project-id spaced-123 --project-root /Users/sam/cs/Spaced Project AIMUX_HOME=/Users/sam/.aimux PATH=/bin".into(),
+            }],
+            alive_pids: HashSet::from([404]),
+            ..Default::default()
+        }
+        .with_kill_removing_alive();
+
+        let result = cleanup_lifecycle_validation_orphans(
+            &mut runtime,
+            CleanupLifecycleOrphansOptions {
+                current_pid: 999,
+                process_exit_timeout_ms: 0,
+                process_kill_grace_ms: 0,
+                project_service_scope: Some(ProjectServiceOrphanScope {
+                    aimux_home: "/Users/sam/.aimux".into(),
+                    recognized_project_roots: BTreeSet::from([
+                        "/Users/sam/cs/Spaced Project".into()
+                    ]),
+                }),
+            },
+        );
+
+        assert!(result.attempted_process_pids.is_empty());
+        assert!(runtime.killed_pids.is_empty());
     }
 }
