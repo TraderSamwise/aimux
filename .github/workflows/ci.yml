@@ -10,7 +10,7 @@ env:
   CARGO_INCREMENTAL: "0"
   CARGO_TARGET_DIR: /tmp/aimux-cargo-target-ci
   AIMUX_HOME: ${{ runner.temp }}/aimux-home
-  AIMUX_DAEMON_PORT: "43190"
+  AIMUX_DAEMON_PORT: "47390"
 
 jobs:
   rust-format-advisory:
@@ -31,6 +31,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Cache cargo artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/git
+            ~/.cargo/registry
+            /tmp/aimux-cargo-target-ci
+          key: ${{ runner.os }}-${{ github.job }}-cargo-${{ hashFiles('native/Cargo.lock') }}-${{ hashFiles('native/crates/**/*.rs') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ github.job }}-cargo-${{ hashFiles('native/Cargo.lock') }}-
+            ${{ runner.os }}-${{ github.job }}-cargo-
+
       - run: rustup component add clippy
 
       - name: cargo clippy --all-targets
@@ -41,6 +53,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Cache cargo artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/git
+            ~/.cargo/registry
+            /tmp/aimux-cargo-target-ci
+          key: ${{ runner.os }}-${{ github.job }}-cargo-${{ hashFiles('native/Cargo.lock') }}-${{ hashFiles('native/crates/**/*.rs') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ github.job }}-cargo-${{ hashFiles('native/Cargo.lock') }}-
+            ${{ runner.os }}-${{ github.job }}-cargo-
+
+      - name: Prepare isolated Aimux home
+        run: |
+          mkdir -p "$AIMUX_HOME"
+          printf '{"kind":"github-actions","ownerPid":%s}\n' "$$" > "$AIMUX_HOME/test-isolation.json"
 
       - name: Install tmux
         run: |
