@@ -34,6 +34,26 @@ pub const DAEMON_HEALTH_PROBE_TIMEOUT_MS: u64 = 2_500;
 pub const DAEMON_HEALTH_KIND: &str = "aimux-daemon";
 pub const DAEMON_START_LOCK_STALE_MS: u64 = 30_000;
 pub const DAEMON_PORT_TERMINATION_TIMEOUT_MS: u64 = 7_000;
+pub const RUNTIME_RESTART_LOCK_STALE_MS: u64 = 120_000;
+pub const RUNTIME_RESTART_BUSY_MESSAGE: &str = "aimux restart is already running";
+
+#[derive(Debug)]
+pub struct RuntimeRestartLockGuard {
+    path: PathBuf,
+    owner_pid: i32,
+}
+
+impl RuntimeRestartLockGuard {
+    pub fn owner_pid(&self) -> i32 {
+        self.owner_pid
+    }
+}
+
+impl Drop for RuntimeRestartLockGuard {
+    fn drop(&mut self) {
+        let _ = release_lock_if_owner(&self.path, self.owner_pid);
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StaleClientBuildError {
@@ -138,6 +158,17 @@ pub fn daemon_start_lock_path(resolver: &PathResolver) -> PathBuf {
         .join("daemon-start")
 }
 
+pub fn runtime_restart_lock_path(resolver: &PathResolver) -> PathBuf {
+    resolver.global_aimux_dir().join("locks").join("restart")
+}
+
+pub fn runtime_restart_steal_lock_path(resolver: &PathResolver) -> PathBuf {
+    resolver
+        .global_aimux_dir()
+        .join("locks")
+        .join("restart.steal")
+}
+
 pub fn read_lock_pid(lock_path: impl AsRef<Path>) -> Option<i32> {
     let value: Value =
         serde_json::from_slice(&fs::read(lock_path.as_ref().join("owner.json")).ok()?).ok()?;
@@ -206,6 +237,104 @@ pub fn try_acquire_daemon_start_lock_with(
     Ok(acquire()?)
 }
 
+pub fn try_acquire_runtime_restart_lock(
+    resolver: &PathResolver,
+) -> Result<Option<RuntimeRestartLockGuard>, DaemonSupervisorError> {
+    let owner_pid = std::process::id() as i32;
+    try_acquire_runtime_restart_lock_with(
+        runtime_restart_lock_path(resolver),
+        runtime_restart_steal_lock_path(resolver),
+        owner_pid,
+        current_unix_millis(),
+        is_pid_alive,
+    )
+    .map(|path| path.map(|path| RuntimeRestartLockGuard { path, owner_pid }))
+}
+
+pub fn acquire_runtime_restart_permit(
+    resolver: &PathResolver,
+    request_owner_pid: Option<i32>,
+) -> Result<Option<RuntimeRestartLockGuard>, DaemonSupervisorError> {
+    if request_owner_pid.is_some_and(|owner_pid| {
+        runtime_restart_lock_is_owned_by(resolver, owner_pid, current_unix_millis(), is_pid_alive)
+    }) {
+        return Ok(None);
+    }
+    try_acquire_runtime_restart_lock(resolver)?
+        .ok_or_else(|| DaemonSupervisorError::Message(RUNTIME_RESTART_BUSY_MESSAGE.to_owned()))
+        .map(Some)
+}
+
+pub fn runtime_restart_lock_is_owned_by(
+    resolver: &PathResolver,
+    owner_pid: i32,
+    now_ms: u128,
+    is_alive: impl Fn(i32) -> bool,
+) -> bool {
+    let lock_path = runtime_restart_lock_path(resolver);
+    read_lock_pid(&lock_path) == Some(owner_pid)
+        && is_alive(owner_pid)
+        && !is_lock_stale(lock_path, RUNTIME_RESTART_LOCK_STALE_MS, now_ms)
+}
+
+pub fn try_acquire_runtime_restart_lock_with(
+    lock_path: impl AsRef<Path>,
+    steal_path: impl AsRef<Path>,
+    owner_pid: i32,
+    now_ms: u128,
+    is_alive: impl Fn(i32) -> bool + Copy,
+) -> Result<Option<PathBuf>, DaemonSupervisorError> {
+    let lock_path = lock_path.as_ref();
+    let steal_path = steal_path.as_ref();
+    if let Some(acquired) = acquire_lock_dir(lock_path, owner_pid)? {
+        return Ok(Some(acquired));
+    }
+
+    let owner = read_lock_pid(lock_path);
+    let lock_is_stale = is_lock_stale(lock_path, RUNTIME_RESTART_LOCK_STALE_MS, now_ms);
+    let owner_is_dead = owner.is_some_and(|pid| !is_alive(pid));
+    if !lock_is_stale && !owner_is_dead {
+        return Ok(None);
+    }
+
+    let Some(steal_lock) = try_acquire_runtime_restart_steal_lock(steal_path, owner_pid, now_ms)?
+    else {
+        return Ok(None);
+    };
+    let reclaim_result = (|| {
+        let current_owner = read_lock_pid(lock_path);
+        let current_lock_is_stale = is_lock_stale(lock_path, RUNTIME_RESTART_LOCK_STALE_MS, now_ms);
+        let current_owner_is_dead = current_owner.is_some_and(|pid| !is_alive(pid));
+        if !current_lock_is_stale && !current_owner_is_dead {
+            return Ok(None);
+        }
+        release_dashboard_repair_lock_if_owner(lock_path, current_owner)?;
+        remove_lock_dir_if_present(lock_path)?;
+        acquire_lock_dir(lock_path, owner_pid)
+    })();
+    let release_result = remove_lock_dir_if_present(&steal_lock);
+    match (reclaim_result, release_result) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Err(error), _) => Err(error),
+        (Ok(_), Err(error)) => Err(error),
+    }
+}
+
+fn try_acquire_runtime_restart_steal_lock(
+    steal_path: &Path,
+    owner_pid: i32,
+    now_ms: u128,
+) -> Result<Option<PathBuf>, DaemonSupervisorError> {
+    if let Some(acquired) = acquire_lock_dir(steal_path, owner_pid)? {
+        return Ok(Some(acquired));
+    }
+    if !is_lock_stale(steal_path, RUNTIME_RESTART_LOCK_STALE_MS, now_ms) {
+        return Ok(None);
+    }
+    remove_lock_dir_if_present(steal_path)?;
+    acquire_lock_dir(steal_path, owner_pid)
+}
+
 fn is_daemon_start_lock_reclaim_race(error: &io::Error) -> bool {
     error.kind() == io::ErrorKind::NotFound || error.raw_os_error() == Some(66)
 }
@@ -222,6 +351,63 @@ pub fn release_daemon_start_lock(
     }
     fs::remove_dir_all(lock_path)?;
     Ok(())
+}
+
+fn acquire_lock_dir(
+    lock_path: &Path,
+    owner_pid: i32,
+) -> Result<Option<PathBuf>, DaemonSupervisorError> {
+    fs::create_dir_all(lock_path.parent().unwrap_or_else(|| Path::new(".")))?;
+    match fs::create_dir(lock_path) {
+        Ok(()) => {
+            if let Err(error) = write_lock_owner(lock_path, owner_pid) {
+                let _ = fs::remove_dir_all(lock_path);
+                return Err(error.into());
+            }
+            Ok(Some(lock_path.to_path_buf()))
+        }
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn write_lock_owner(lock_path: &Path, owner_pid: i32) -> io::Result<()> {
+    fs::write(
+        lock_path.join("owner.json"),
+        format!(
+            "{{\"pid\":{owner_pid},\"acquiredAt\":{}}}\n",
+            current_unix_millis()
+        ),
+    )
+}
+
+fn release_lock_if_owner(lock_path: &Path, owner_pid: i32) -> Result<(), DaemonSupervisorError> {
+    if read_lock_pid(lock_path) != Some(owner_pid) {
+        return Ok(());
+    }
+    remove_lock_dir_if_present(lock_path)
+}
+
+fn release_dashboard_repair_lock_if_owner(
+    restart_lock_path: &Path,
+    owner_pid: Option<i32>,
+) -> Result<(), DaemonSupervisorError> {
+    let Some(owner_pid) = owner_pid else {
+        return Ok(());
+    };
+    let Some(locks_dir) = restart_lock_path.parent() else {
+        return Ok(());
+    };
+    let repair_lock_path = locks_dir.join("dashboard-control-plane-repair");
+    release_lock_if_owner(&repair_lock_path, owner_pid)
+}
+
+fn remove_lock_dir_if_present(lock_path: &Path) -> Result<(), DaemonSupervisorError> {
+    match fs::remove_dir_all(lock_path) {
+        Ok(()) => Ok(()),
+        Err(error) if is_daemon_start_lock_reclaim_race(&error) => Ok(()),
+        Err(error) => Err(error.into()),
+    }
 }
 
 pub fn ensure_daemon_running(

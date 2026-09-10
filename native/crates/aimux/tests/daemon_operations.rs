@@ -6,9 +6,14 @@ use aimux::daemon::text::operations::{
     route_operations_text_request,
 };
 use aimux::daemon::text::params::ProjectServiceJsonResult;
+use aimux::daemon_supervisor::try_acquire_runtime_restart_lock;
+use aimux::paths::PathResolver;
 use aimux::project_api_contract::routes as project_routes;
 use aimux::runtime_coherence::render_runtime_coherence_report;
 use serde_json::{Value, json};
+
+mod support;
+use support::TestIsolation;
 
 #[derive(Debug, Clone, PartialEq)]
 struct Call {
@@ -702,6 +707,7 @@ fn repair_exchange_route_compacts_project_service_exchange_and_renders_diagnosti
 
 #[test]
 fn restart_text_sets_failure_status_and_preserves_raw_errors() {
+    let _isolation = TestIsolation::new("daemon-operations-restart-failure");
     let mut runtime = FakeOperationsRuntime {
         restart_failures: 1,
         ..FakeOperationsRuntime::default()
@@ -728,6 +734,7 @@ fn restart_text_sets_failure_status_and_preserves_raw_errors() {
 
 #[test]
 fn restart_text_accepts_dashboard_repair_project_body() {
+    let _isolation = TestIsolation::new("daemon-operations-restart-body");
     let mut runtime = FakeOperationsRuntime::default();
     let response = route_operations_text_request(
         &mut runtime,
@@ -745,6 +752,24 @@ fn restart_text_accepts_dashboard_repair_project_body() {
     assert_eq!(runtime.calls.len(), 1);
     assert_eq!(runtime.calls[0].name, "restart");
     assert_eq!(runtime.calls[0].project_root.as_deref(), Some("/repo"));
+}
+
+#[test]
+fn restart_text_refuses_concurrent_restart_before_runtime_call() {
+    let _isolation = TestIsolation::new("daemon-operations-restart-busy");
+    let resolver = PathResolver::from_env();
+    let _lock = try_acquire_runtime_restart_lock(&resolver)
+        .expect("acquire restart lock")
+        .expect("restart lock");
+    let mut runtime = FakeOperationsRuntime::default();
+
+    let response =
+        route_operations_text_request(&mut runtime, "POST", CORE_API_ROUTES.restart_text, None)
+            .expect("restart route");
+
+    assert_eq!(response.status, 500);
+    assert_eq!(text_body(response), "aimux restart is already running\n");
+    assert!(runtime.calls.is_empty());
 }
 
 #[test]

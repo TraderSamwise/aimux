@@ -3,10 +3,12 @@ use aimux::daemon_state::{
     save_daemon_info, save_daemon_state,
 };
 use aimux::daemon_supervisor::{
-    DAEMON_HEALTH_KIND, DAEMON_START_LOCK_STALE_MS, assert_not_stale_against_daemon_with,
-    daemon_start_lock_path, is_aimux_daemon_health, is_lock_stale, is_matching_daemon_health,
-    read_lock_pid, release_daemon_start_lock, signal_number, signal_to_number,
-    stop_daemon_info_with, stop_daemon_process_info_with, try_acquire_daemon_start_lock_with,
+    DAEMON_HEALTH_KIND, DAEMON_START_LOCK_STALE_MS, RUNTIME_RESTART_LOCK_STALE_MS,
+    assert_not_stale_against_daemon_with, daemon_start_lock_path, is_aimux_daemon_health,
+    is_lock_stale, is_matching_daemon_health, read_lock_pid, release_daemon_start_lock,
+    runtime_restart_lock_is_owned_by, runtime_restart_lock_path, runtime_restart_steal_lock_path,
+    signal_number, signal_to_number, stop_daemon_info_with, stop_daemon_process_info_with,
+    try_acquire_daemon_start_lock_with, try_acquire_runtime_restart_lock_with,
 };
 use aimux::paths::PathResolver;
 use aimux::project_service_manifest::{
@@ -173,6 +175,83 @@ fn stale_or_dead_lock_is_reclaimed_and_owner_file_must_be_integer_pid() {
         .expect("acquired after reclaim");
     assert_eq!(acquired, lock_path);
     assert_eq!(read_lock_pid(&lock_path), Some(222));
+}
+
+#[test]
+fn runtime_restart_lock_matches_node_busy_and_reclaim_rules() {
+    let test_dir = TestDir::new();
+    let resolver = test_dir.resolver();
+    let lock_path = runtime_restart_lock_path(&resolver);
+    let steal_path = runtime_restart_steal_lock_path(&resolver);
+    let owner_pid = 111;
+    let acquired =
+        try_acquire_runtime_restart_lock_with(&lock_path, &steal_path, owner_pid, 1, |_| false)
+            .expect("acquire restart lock")
+            .expect("new restart lock");
+    assert_eq!(acquired, lock_path);
+    assert_eq!(read_lock_pid(&lock_path), Some(owner_pid));
+    assert!(runtime_restart_lock_is_owned_by(
+        &resolver,
+        owner_pid,
+        current_millis(),
+        |pid| pid == owner_pid
+    ));
+
+    assert!(
+        try_acquire_runtime_restart_lock_with(
+            &lock_path,
+            &steal_path,
+            222,
+            current_millis(),
+            |pid| { pid == owner_pid }
+        )
+        .expect("contended restart lock")
+        .is_none()
+    );
+    assert!(lock_path.exists());
+    assert!(!steal_path.exists());
+
+    fs::remove_dir_all(&lock_path).expect("remove held lock");
+    fs::create_dir_all(&lock_path).expect("create stale lock");
+    fs::write(lock_path.join("owner.json"), "{\"pid\":111}\n").expect("write stale owner");
+    let repair_lock = resolver
+        .global_aimux_dir()
+        .join("locks")
+        .join("dashboard-control-plane-repair");
+    fs::create_dir_all(&repair_lock).expect("create repair lock");
+    fs::write(repair_lock.join("owner.json"), "{\"pid\":111}\n").expect("write repair owner");
+
+    let reclaimed = try_acquire_runtime_restart_lock_with(
+        &lock_path,
+        &steal_path,
+        222,
+        current_millis() + u128::from(RUNTIME_RESTART_LOCK_STALE_MS) + 1,
+        |pid| pid == 222,
+    )
+    .expect("reclaim restart lock")
+    .expect("reclaimed restart lock");
+    assert_eq!(reclaimed, lock_path);
+    assert_eq!(read_lock_pid(&lock_path), Some(222));
+    assert!(!repair_lock.exists());
+    assert!(!steal_path.exists());
+
+    fs::remove_dir_all(&lock_path).expect("remove reclaimed lock");
+    fs::create_dir_all(&lock_path).expect("create second stale lock");
+    fs::write(lock_path.join("owner.json"), "{\"pid\":333}\n").expect("write second owner");
+    fs::create_dir_all(&steal_path).expect("create stale steal lock");
+    fs::write(steal_path.join("owner.json"), "{\"pid\":333}\n").expect("write steal owner");
+    let reclaimed_after_stale_steal = try_acquire_runtime_restart_lock_with(
+        &lock_path,
+        &steal_path,
+        444,
+        current_millis() + u128::from(RUNTIME_RESTART_LOCK_STALE_MS) + 1,
+        |pid| pid == 444,
+    )
+    .expect("reclaim restart lock after stale steal")
+    .expect("reclaimed restart lock after stale steal");
+    assert_eq!(reclaimed_after_stale_steal, lock_path);
+    assert_eq!(read_lock_pid(&lock_path), Some(444));
+    assert!(!steal_path.exists());
 }
 
 #[test]

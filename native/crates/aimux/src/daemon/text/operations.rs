@@ -5,6 +5,8 @@ use crate::daemon::routing::{
     text_or_json_lines,
 };
 use crate::daemon::text::params::ProjectServiceJsonResult;
+use crate::daemon_supervisor::acquire_runtime_restart_permit;
+use crate::paths::PathResolver;
 use crate::project_api_contract::routes as project_routes;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -395,6 +397,12 @@ pub fn restart_text_route(
         .or_else(|| string_param(route_url, body, "projectRoot"))
         .or_else(|| string_param(route_url, body, "project"))
         .map(|project| runtime.resolve_project_root(&project));
+    let resolver = PathResolver::from_env();
+    let _restart_lock =
+        match acquire_runtime_restart_permit(&resolver, restart_lock_owner_pid(body)) {
+            Ok(permit) => permit,
+            Err(error) => return DaemonRouteResponse::text(500, format!("{error}\n")),
+        };
     match runtime.restart_control_plane(&issued_at, project_root.as_deref()) {
         Ok(result) => {
             let mut response = text_or_json_lines(
@@ -409,6 +417,13 @@ pub fn restart_text_route(
         }
         Err(error) => DaemonRouteResponse::text(500, format!("{error}\n")),
     }
+}
+
+fn restart_lock_owner_pid(body: Option<&Value>) -> Option<i32> {
+    body.and_then(|body| body.get("restartLockOwnerPid"))
+        .and_then(Value::as_i64)
+        .and_then(|pid| i32::try_from(pid).ok())
+        .filter(|pid| *pid > 0)
 }
 
 pub fn dashboard_reload_text_route(

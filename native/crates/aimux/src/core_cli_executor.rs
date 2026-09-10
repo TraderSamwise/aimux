@@ -30,7 +30,8 @@ use crate::daemon_state::{
     load_daemon_state,
 };
 use crate::daemon_supervisor::{
-    assert_not_stopping_newer_daemon, ensure_daemon_running, stop_daemon, stop_daemon_process_info,
+    acquire_runtime_restart_permit, assert_not_stopping_newer_daemon, ensure_daemon_running,
+    stop_daemon, stop_daemon_process_info,
 };
 use crate::debug_state::{build_debug_state_report, render_debug_state_report};
 use crate::desktop_notifier::{
@@ -480,11 +481,16 @@ fn restart_control_plane_from_cli(
 ) -> Result<RestartControlPlaneTextResult, String> {
     let _ = get_daemon_port()?;
     let resolver = PathResolver::from_env();
+    let restart_lock = acquire_runtime_restart_permit(&resolver, None)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "aimux restart lock was not acquired".to_owned())?;
+    let restart_lock_owner_pid = restart_lock.owner_pid();
     let daemon_info = load_daemon_info(resolver.daemon_info_path());
     let should_stop_daemon = daemon_info.is_some();
 
-    restart_control_plane_from_cli_with(
+    restart_control_plane_from_cli_with_lock_owner(
         project_root,
+        Some(restart_lock_owner_pid),
         RestartControlPlaneCliDeps {
             should_stop_daemon,
             assert_not_stopping_newer_daemon: || {
@@ -536,6 +542,30 @@ where
         CoreCommandRequestOptions,
     ) -> Result<CoreCommandOk, String>,
 {
+    restart_control_plane_from_cli_with_lock_owner(project_root, None, deps)
+}
+
+#[doc(hidden)]
+pub fn restart_control_plane_from_cli_with_lock_owner<
+    AssertNewer,
+    StopDaemon,
+    EnsureDaemon,
+    RequestRestart,
+>(
+    project_root: Option<&str>,
+    restart_lock_owner_pid: Option<i32>,
+    deps: RestartControlPlaneCliDeps<AssertNewer, StopDaemon, EnsureDaemon, RequestRestart>,
+) -> Result<RestartControlPlaneTextResult, String>
+where
+    AssertNewer: FnMut() -> Result<(), String>,
+    StopDaemon: FnMut() -> Result<(), String>,
+    EnsureDaemon: FnMut() -> Result<(), String>,
+    RequestRestart: FnMut(
+        &'static str,
+        Option<Value>,
+        CoreCommandRequestOptions,
+    ) -> Result<CoreCommandOk, String>,
+{
     let RestartControlPlaneCliDeps {
         should_stop_daemon,
         mut assert_not_stopping_newer_daemon,
@@ -549,9 +579,16 @@ where
         stop_daemon_process()?;
     }
     ensure_daemon_running()?;
+    let mut payload = Map::new();
+    if let Some(project_root) = project_root {
+        payload.insert("projectRoot".into(), json!(project_root));
+    }
+    if let Some(owner_pid) = restart_lock_owner_pid {
+        payload.insert("restartLockOwnerPid".into(), json!(owner_pid));
+    }
     let response = request_core_command(
         CORE_COMMAND_NAMES.restart,
-        project_root.map(|project_root| json!({ "projectRoot": project_root })),
+        (!payload.is_empty()).then_some(Value::Object(payload)),
         CoreCommandRequestOptions {
             ensure_daemon: false,
             timeout_ms: None,
@@ -1438,8 +1475,9 @@ mod tests {
     fn cli_restart_delegates_project_work_to_daemon_restart_command() {
         let calls = RefCell::new(Vec::<String>::new());
 
-        let result = restart_control_plane_from_cli_with(
+        let result = restart_control_plane_from_cli_with_lock_owner(
             None,
+            Some(12_345),
             RestartControlPlaneCliDeps {
                 should_stop_daemon: true,
                 assert_not_stopping_newer_daemon: || {
@@ -1489,7 +1527,7 @@ mod tests {
                 "assert-not-stale",
                 "stop-daemon-process",
                 "ensure-daemon fresh",
-                "request command=core.restart payload=null ensure_daemon=false timeout=none",
+                "request command=core.restart payload={\"restartLockOwnerPid\":12345} ensure_daemon=false timeout=none",
             ]
         );
     }

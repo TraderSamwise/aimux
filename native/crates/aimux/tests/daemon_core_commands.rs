@@ -7,7 +7,12 @@ use aimux::daemon::http::DaemonResponseBody;
 use aimux::daemon::status::DaemonStatusRuntime;
 use aimux::daemon_projects::ProjectsRouteProject;
 use aimux::daemon_state::{AimuxDaemonInfo, DaemonState};
+use aimux::daemon_supervisor::try_acquire_runtime_restart_lock;
+use aimux::paths::PathResolver;
 use serde_json::{Map, Value, json};
+
+mod support;
+use support::TestIsolation;
 
 #[derive(Debug, Clone)]
 struct FakeCoreRuntime {
@@ -327,6 +332,7 @@ fn overseer_watch_trims_inputs_and_propagates_domain_failures() {
 
 #[test]
 fn restart_and_relay_commands_match_daemon_bus_contracts() {
+    let _isolation = TestIsolation::new("daemon-core-restart");
     let mut runtime = FakeCoreRuntime::default();
     let restart = json_body(route_core_command(
         &mut runtime,
@@ -359,6 +365,26 @@ fn restart_and_relay_commands_match_daemon_bus_contracts() {
         "issued",
     ));
     assert_eq!(relay_disable["result"]["relay"]["status"], "off");
+}
+
+#[test]
+fn restart_core_command_refuses_concurrent_restart_before_runtime_call() {
+    let _isolation = TestIsolation::new("daemon-core-restart-busy");
+    let resolver = PathResolver::from_env();
+    let _lock = try_acquire_runtime_restart_lock(&resolver)
+        .expect("acquire restart lock")
+        .expect("restart lock");
+    let mut runtime = FakeCoreRuntime::default();
+    let response = json_body(route_core_command(
+        &mut runtime,
+        Some(&json!({ "id": "r", "command": CORE_COMMAND_NAMES.restart })),
+        "issued",
+    ));
+    assert_eq!(
+        response,
+        json!({ "ok": false, "id": "r", "command": CORE_COMMAND_NAMES.restart, "error": "aimux restart is already running" })
+    );
+    assert!(runtime.calls.is_empty());
 }
 
 #[test]

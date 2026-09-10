@@ -1,6 +1,8 @@
 use crate::core_command_contract::{CORE_COMMAND_NAMES, is_core_command_name};
 use crate::daemon::routing::DaemonRouteResponse;
 use crate::daemon::status::{DaemonStatusRuntime, project_service_fleet_json};
+use crate::daemon_supervisor::acquire_runtime_restart_permit;
+use crate::paths::PathResolver;
 use serde_json::{Map, Value, json};
 use std::path::PathBuf;
 
@@ -156,6 +158,17 @@ pub fn route_core_command(
                 Ok(project_root) => project_root,
                 Err(response) => return response,
             };
+            let resolver = PathResolver::from_env();
+            let _restart_lock =
+                match acquire_runtime_restart_permit(&resolver, restart_lock_owner_pid(payload)) {
+                    Ok(permit) => permit,
+                    Err(error) => {
+                        return DaemonRouteResponse::json(
+                            500,
+                            command_error(&id, Some(command), error.to_string()),
+                        );
+                    }
+                };
             runtime.restart_control_plane(issued_at, project_root.as_deref())
         }
         command if command == CORE_COMMAND_NAMES.relay_status => {
@@ -189,6 +202,14 @@ pub fn route_core_command(
         Ok(result) => DaemonRouteResponse::json(200, command_ok(&id, command, issued_at, result)),
         Err(error) => DaemonRouteResponse::json(500, command_error(&id, Some(command), error)),
     }
+}
+
+fn restart_lock_owner_pid(payload: Option<&Value>) -> Option<i32> {
+    payload
+        .and_then(|payload| payload.get("restartLockOwnerPid"))
+        .and_then(Value::as_i64)
+        .and_then(|pid| i32::try_from(pid).ok())
+        .filter(|pid| *pid > 0)
 }
 
 pub fn require_project_root(
