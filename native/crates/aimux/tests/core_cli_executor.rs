@@ -13,7 +13,9 @@ use aimux::native_cli_dispatch::{
 };
 use serde_json::{Value, json};
 use std::cell::{Cell, RefCell};
+use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 #[derive(Debug)]
 struct FakeRuntime {
@@ -37,6 +39,7 @@ struct FakeRuntime {
     security_updates: RefCell<Vec<(String, String, Option<String>)>>,
     fail_commands: bool,
     git_project_root: bool,
+    real_git_paths: bool,
     restart_failures: i64,
     log_path: PathBuf,
     log_output: String,
@@ -72,6 +75,7 @@ impl Default for FakeRuntime {
             security_updates: RefCell::new(Vec::new()),
             fail_commands: false,
             git_project_root: true,
+            real_git_paths: false,
             restart_failures: 0,
             log_path: PathBuf::from("/tmp/aimux.log"),
             log_output: String::new(),
@@ -89,6 +93,14 @@ impl CoreCliRuntime for FakeRuntime {
     }
 
     fn resolve_project_root(&self, path: &str) -> String {
+        if self.real_git_paths {
+            let home_dir = PathBuf::from("/tmp/aimux-test-home");
+            let mut resolver = aimux::paths::PathResolver::new(&self.cwd, home_dir, None);
+            return resolver
+                .resolve_repo_root(path)
+                .to_string_lossy()
+                .into_owned();
+        }
         if path == "." || path == self.cwd {
             "/repo".into()
         } else {
@@ -303,6 +315,9 @@ impl CoreCliRuntime for FakeRuntime {
     }
 
     fn is_git_project_root(&self, _project_root: &str) -> bool {
+        if self.real_git_paths {
+            return aimux::paths::is_git_project_root(_project_root);
+        }
         self.git_project_root
     }
 
@@ -437,6 +452,34 @@ fn daemon_info() -> AimuxDaemonInfo {
         started_at: "then".into(),
         updated_at: "now".into(),
     }
+}
+
+fn run_git(cwd: &Path, args: &[&str]) {
+    let output = Command::new("git")
+        .current_dir(cwd)
+        .args(args)
+        .output()
+        .expect("run git command");
+    assert!(
+        output.status.success(),
+        "git {:?} failed\nstdout:\n{}\nstderr:\n{}",
+        args,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn encode_query_component(value: &str) -> String {
+    let mut encoded = String::new();
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                encoded.push(byte as char);
+            }
+            _ => encoded.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    encoded
 }
 
 fn command_ok(command: &str, result: Value) -> CoreCommandOk {
@@ -603,6 +646,69 @@ fn non_git_projects_gate_materializing_project_commands_before_daemon_requests()
     }
     assert_eq!(runtime.commands.len(), before_commands);
     assert_eq!(runtime.text_routes.len(), before_text_routes);
+}
+
+#[test]
+fn materializing_cli_commands_succeed_from_real_git_worktree() {
+    let fixture_root = std::env::temp_dir().join(format!(
+        "aimux-rust-core-cli-worktree-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos()
+    ));
+    let main_repo = fixture_root.join("main");
+    let worktree = fixture_root.join("feature");
+    let _ = fs::remove_dir_all(&fixture_root);
+    fs::create_dir_all(&fixture_root).expect("create fixture root");
+
+    run_git(&fixture_root, &["init", "-q", "main"]);
+    run_git(&main_repo, &["config", "user.email", "test@example.com"]);
+    run_git(&main_repo, &["config", "user.name", "Aimux Test"]);
+    fs::write(main_repo.join("README.md"), "initial\n").expect("write README");
+    run_git(&main_repo, &["add", "README.md"]);
+    run_git(&main_repo, &["commit", "-q", "-m", "initial"]);
+    run_git(
+        &main_repo,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            worktree.to_str().expect("utf8 worktree path"),
+            "-b",
+            "feature",
+        ],
+    );
+    assert!(worktree.join(".git").is_file());
+
+    let cwd = worktree.to_string_lossy().into_owned();
+    let mut expected_resolver =
+        aimux::paths::PathResolver::new(&cwd, PathBuf::from("/tmp/aimux-test-home"), None);
+    let expected_root = expected_resolver.resolve_repo_root(&cwd);
+    let mut runtime = FakeRuntime {
+        cwd,
+        real_git_paths: true,
+        ..FakeRuntime::default()
+    };
+
+    let execution = run_core_cli_with(&args(&["ps", "--json"]), &mut runtime);
+
+    assert_eq!(execution.code, 0, "{:?}", execution.stderr);
+    assert_eq!(execution.stdout, ["claude-1  [claude]  ready"]);
+    assert_eq!(
+        runtime.text_routes,
+        [(
+            format!(
+                "/core/agents/ps-text?project={}&json=1",
+                encode_query_component(&expected_root.to_string_lossy())
+            ),
+            None,
+        )]
+    );
+    assert!(runtime.commands.is_empty());
+
+    fs::remove_dir_all(&fixture_root).expect("remove fixture root");
 }
 
 #[test]
