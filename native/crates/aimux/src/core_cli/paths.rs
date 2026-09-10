@@ -286,6 +286,19 @@ pub(super) fn project_text_path(base: &str, project: &str, json: bool) -> String
     path
 }
 
+pub(super) fn project_remove_text_path(
+    base: &str,
+    project: &str,
+    force: bool,
+    json: bool,
+) -> String {
+    let mut path = project_text_path(base, project, json);
+    if force {
+        path.push_str("&force=1");
+    }
+    path
+}
+
 pub(super) fn text_route_path(path: &str, json: bool) -> String {
     if json {
         format!("{path}?json=1")

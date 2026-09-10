@@ -1665,6 +1665,24 @@ fn lifecycle_commands_plan_native_text_routes() {
         }
     );
 
+    let projects_remove_force = classify_core_cli_with_project_resolver(
+        &["projects", "unregister", "../old", "--force", "--json"],
+        &context(true, true),
+        |project| format!("/resolved/{project}"),
+    )
+    .expect("projects unregister force plan");
+    assert_eq!(
+        projects_remove_force.operation,
+        CoreCliOperation::ProjectsRemove
+    );
+    assert_eq!(
+        projects_remove_force.action,
+        CoreCliAction::TextRoute {
+            path: "/core/projects-remove-text?project=%2Fresolved%2F..%2Fold&json=1&force=1".into(),
+            body: None,
+        }
+    );
+
     let kill = classify_core_cli(&["kill", "claude-1", "--json"], &context(true, true))
         .expect("kill plan");
     assert_eq!(kill.operation, CoreCliOperation::LifecycleKill);

@@ -1840,19 +1840,21 @@ impl TmuxControl {
     }
 
     fn curl_post(&mut self, url: &str, body: &str, timeout: &str) -> Option<String> {
-        command_output(
-            "curl",
-            [
-                "-fsS",
-                "--max-time",
-                timeout,
-                "-H",
-                "content-type: application/json",
-                "--data-binary",
-                body,
-                url,
-            ],
-        )
+        let mut args = vec![
+            "-fsS".to_owned(),
+            "--max-time".to_owned(),
+            timeout.to_owned(),
+            "-H".to_owned(),
+            "content-type: application/json".to_owned(),
+        ];
+        if let Some((name, value)) =
+            crate::runtime_safety_guard::default_daemon_test_harness_header_for_url(url)
+        {
+            args.push("-H".to_owned());
+            args.push(format!("{name}: {value}"));
+        }
+        args.extend(["--data-binary".to_owned(), body.to_owned(), url.to_owned()]);
+        command_output("curl", args)
     }
 
     fn tmux_output(&mut self, args: &[&str]) -> Option<String> {

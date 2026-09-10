@@ -95,6 +95,7 @@ fn load_registry_filters_invalid_roots_and_keeps_last_duplicate_value() {
     let repo_b = git_root(test_dir.0.join("repo-b"));
     let non_git = test_dir.0.join("not-git");
     fs::create_dir_all(&non_git).expect("create non-git directory");
+    let unavailable = test_dir.0.join("unmounted").join("repo");
     let ephemeral = git_root(std::env::temp_dir().join(format!(
         "aimux-registry-ephemeral-{}-{}",
         std::process::id(),
@@ -109,6 +110,7 @@ fn load_registry_filters_invalid_roots_and_keeps_last_duplicate_value() {
             { "id": "missing-root", "name": "missing", "lastSeen": "old" },
             { "id": "blank", "name": "blank", "repoRoot": "  ", "lastSeen": "old" },
             { "id": "non-git", "name": "plain", "repoRoot": non_git, "lastSeen": "old" },
+            { "id": "unavailable", "name": "slow-volume", "repoRoot": unavailable, "lastSeen": "old" },
             { "id": "temporary", "name": "temporary", "repoRoot": ephemeral, "lastSeen": "old" },
             { "id": "same", "name": "first", "repoRoot": repo_a, "lastSeen": "first" },
             { "id": "other", "name": "other", "repoRoot": repo_b, "lastSeen": "other" },
@@ -120,8 +122,9 @@ fn load_registry_filters_invalid_roots_and_keeps_last_duplicate_value() {
     let loaded = resolver.load_registry().expect("load registry");
     assert_eq!(loaded.version, 1);
     assert_eq!(loaded.projects.len(), 3);
-    assert_eq!(loaded.projects[0].id, "non-git");
-    assert_eq!(loaded.projects[0].name, "plain");
+    assert_eq!(loaded.projects[0].id, "unavailable");
+    assert_eq!(loaded.projects[0].name, "slow-volume");
+    assert_eq!(loaded.projects[0].repo_root, unavailable.to_string_lossy());
     assert_eq!(loaded.projects[1].id, "same");
     assert_eq!(loaded.projects[1].name, "last");
     assert_eq!(loaded.projects[1].last_seen, "last");
@@ -217,7 +220,7 @@ fn registry_cap_is_applied_after_filtering() {
             json!({
                 "id": format!("invalid-{index}"),
                 "name": "invalid",
-                "repoRoot": test_dir.0.join(format!("missing-{index}")),
+                "repoRoot": std::env::temp_dir().join(format!("aimux-invalid-{index}")),
                 "lastSeen": "now"
             })
         })
@@ -256,12 +259,10 @@ fn register_project_skips_ineligible_roots_and_updates_existing_entry() {
     )));
     let mut resolver = resolver(&test_dir);
 
-    let plain = resolver
-        .register_project(&non_git)
-        .expect("register non-git")
-        .expect("non-git project");
-    assert_eq!(plain.name, "plain-directory");
-    assert_eq!(plain.repo_root, non_git.to_string_lossy());
+    assert_eq!(
+        resolver.register_project(&non_git).expect("skip non-git"),
+        None
+    );
     assert_eq!(
         resolver.register_project(&ephemeral).expect("skip temp"),
         None
@@ -285,7 +286,7 @@ fn register_project_skips_ineligible_roots_and_updates_existing_entry() {
         .expect("eligible project");
     assert_eq!(second.id, first.id);
     let projects = resolver.list_projects().expect("list projects");
-    assert_eq!(projects.len(), 2);
+    assert_eq!(projects.len(), 1);
 
     let serialized = fs::read_to_string(resolver.projects_registry_path()).expect("read registry");
     assert!(serialized.ends_with("\n"));
@@ -296,17 +297,34 @@ fn register_project_skips_ineligible_roots_and_updates_existing_entry() {
 }
 
 #[test]
-fn register_project_skips_nested_temp_fixture_repos() {
+fn register_project_allows_legitimate_temp_checkouts() {
     let test_dir = TestDir::new();
-    let leaked_shape = git_root(
-        PathBuf::from("/private/tmp")
-            .join(format!(
-                "aimux-expose-dashboard-cmd.{}-{}",
-                std::process::id(),
-                TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
-            ))
-            .join("repo"),
-    );
+    let temp_checkout = git_root(std::env::temp_dir().join(format!(
+        "legit-temp-checkout-{}-{}",
+        std::process::id(),
+        TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    )));
+    let mut resolver = resolver(&test_dir);
+
+    let registered = resolver
+        .register_project(&temp_checkout)
+        .expect("register legitimate temp checkout")
+        .expect("eligible temp checkout");
+
+    assert_eq!(registered.repo_root, temp_checkout.to_string_lossy());
+    assert_eq!(resolver.list_projects().expect("list projects").len(), 1);
+
+    fs::remove_dir_all(temp_checkout).expect("remove temp checkout");
+}
+
+#[test]
+fn register_project_skips_ephemeral_temp_roots_by_name() {
+    let test_dir = TestDir::new();
+    let leaked_shape = git_root(PathBuf::from("/private/tmp").join(format!(
+        "aimux-expose-dashboard-cmd.{}-{}",
+        std::process::id(),
+        TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    )));
     let mut resolver = resolver(&test_dir);
 
     assert_eq!(
@@ -317,8 +335,7 @@ fn register_project_skips_nested_temp_fixture_repos() {
     );
     assert!(resolver.list_projects().expect("list projects").is_empty());
 
-    fs::remove_dir_all(leaked_shape.parent().expect("fixture parent should exist"))
-        .expect("remove nested temp fixture repo");
+    fs::remove_dir_all(leaked_shape).expect("remove temp fixture repo");
 }
 
 #[test]

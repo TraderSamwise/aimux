@@ -260,7 +260,7 @@ impl DaemonSystemTextRuntime for FakeRuntime {
         Ok(json!({ "projectRoot": project_root }))
     }
 
-    fn remove_project(&mut self, project_root: &str) -> Result<Value, String> {
+    fn remove_project(&mut self, project_root: &str, _force: bool) -> Result<Value, String> {
         Ok(json!({
             "projectId": "repo-id",
             "projectRoot": project_root,

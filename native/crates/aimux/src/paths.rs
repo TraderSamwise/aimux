@@ -1,4 +1,5 @@
 use crate::atomic_write::{quarantine_corrupt_file, write_json_atomic};
+use crate::debug_logging::{LogLevel, log_at};
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -12,6 +13,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const PROJECTS_REGISTRY_VERSION: u8 = 1;
 pub const MAX_PROJECT_REGISTRY_ENTRIES: usize = 500;
+const EPHEMERAL_TEMP_PROJECT_PREFIX: &str = "aimux-";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -27,6 +29,13 @@ pub struct ProjectEntry {
 pub struct ProjectsRegistry {
     pub version: u8,
     pub projects: Vec<ProjectEntry>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProjectRootStatus {
+    GitCheckout,
+    NotCheckout,
+    Unreachable,
 }
 
 impl Default for ProjectsRegistry {
@@ -255,10 +264,31 @@ impl PathResolver {
     pub fn register_project(&mut self, cwd: impl AsRef<Path>) -> Result<Option<ProjectEntry>> {
         let repo_root = self.resolve_repo_root(cwd);
         if is_ephemeral_temp_project_root_from(&repo_root, &self.process_cwd) {
+            log_registry_skip(
+                "ephemeral temporary project",
+                &repo_root,
+                &self.projects_registry_path(),
+            );
             return Ok(None);
         }
-        if !repo_root.is_dir() {
-            return Ok(None);
+        match project_root_status_from(&repo_root, &self.process_cwd) {
+            ProjectRootStatus::GitCheckout => {}
+            ProjectRootStatus::NotCheckout => {
+                log_registry_skip(
+                    "not a git checkout",
+                    &repo_root,
+                    &self.projects_registry_path(),
+                );
+                return Ok(None);
+            }
+            ProjectRootStatus::Unreachable => {
+                log_registry_skip(
+                    "project root unavailable",
+                    &repo_root,
+                    &self.projects_registry_path(),
+                );
+                return Ok(None);
+            }
         }
 
         let project_id = compute_project_id(&repo_root);
@@ -367,6 +397,11 @@ pub fn is_ephemeral_temp_project_root(repo_root: impl AsRef<Path>) -> bool {
     is_ephemeral_temp_project_root_from(repo_root.as_ref(), &cwd)
 }
 
+pub fn project_root_status(repo_root: impl AsRef<Path>) -> ProjectRootStatus {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    project_root_status_from(repo_root.as_ref(), &cwd)
+}
+
 fn normalize_registry(
     entries: Vec<ProjectEntry>,
     process_cwd: &Path,
@@ -375,11 +410,33 @@ fn normalize_registry(
     let mut projects = Vec::new();
     let mut indexes = HashMap::new();
     for project in entries {
-        if project.repo_root.trim().is_empty()
-            || is_ephemeral_temp_project_root_from(Path::new(&project.repo_root), process_cwd)
-            || !Path::new(&project.repo_root).exists()
-        {
+        if project.repo_root.trim().is_empty() {
             continue;
+        }
+        let repo_root = Path::new(&project.repo_root);
+        if is_ephemeral_temp_project_root_from(repo_root, process_cwd) {
+            log_registry_skip("ephemeral temporary project", repo_root, registry_path);
+            continue;
+        }
+        match project_root_status_from(repo_root, process_cwd) {
+            ProjectRootStatus::GitCheckout => {}
+            ProjectRootStatus::NotCheckout => {
+                log_registry_skip("not a git checkout", repo_root, registry_path);
+                continue;
+            }
+            ProjectRootStatus::Unreachable => {
+                log_at(
+                    LogLevel::Debug,
+                    "project registry retained unavailable root",
+                    "project-registry",
+                    Some(serde_json::json!({
+                        "projectId": project.id.clone(),
+                        "projectRoot": project.repo_root.clone(),
+                        "registryPath": registry_path.to_string_lossy(),
+                        "reason": "project root unavailable",
+                    })),
+                );
+            }
         }
         if let Some(index) = indexes.get(&project.id).copied() {
             projects[index] = project;
@@ -423,11 +480,43 @@ fn is_git_project_root_from(repo_root: &Path, process_cwd: &Path) -> bool {
         .exists()
 }
 
+fn project_root_status_from(repo_root: &Path, process_cwd: &Path) -> ProjectRootStatus {
+    let resolved = lexical_resolve(process_cwd, repo_root);
+    let Ok(metadata) = fs::metadata(&resolved) else {
+        return ProjectRootStatus::Unreachable;
+    };
+    if !metadata.is_dir() {
+        return ProjectRootStatus::NotCheckout;
+    }
+    if is_git_project_root_from(&resolved, process_cwd) {
+        ProjectRootStatus::GitCheckout
+    } else {
+        ProjectRootStatus::NotCheckout
+    }
+}
+
 fn is_ephemeral_temp_project_root_from(repo_root: &Path, process_cwd: &Path) -> bool {
     let resolved = lexical_resolve(process_cwd, repo_root);
-    temp_dirs(process_cwd)
-        .iter()
-        .any(|directory| resolved == *directory || resolved.starts_with(directory))
+    resolved
+        .file_name()
+        .and_then(OsStr::to_str)
+        .is_some_and(|name| name.starts_with(EPHEMERAL_TEMP_PROJECT_PREFIX))
+        && temp_dirs(process_cwd)
+            .iter()
+            .any(|directory| resolved == *directory || resolved.starts_with(directory))
+}
+
+fn log_registry_skip(reason: &str, repo_root: &Path, registry_path: &Path) {
+    log_at(
+        LogLevel::Debug,
+        "project registry skipped project",
+        "project-registry",
+        Some(serde_json::json!({
+            "projectRoot": repo_root.to_string_lossy(),
+            "registryPath": registry_path.to_string_lossy(),
+            "reason": reason,
+        })),
+    );
 }
 
 fn temp_dirs(process_cwd: &Path) -> Vec<PathBuf> {

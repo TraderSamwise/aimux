@@ -27,10 +27,16 @@ use aimux::daemon::text::team::DaemonTeamTextRuntime;
 use aimux::daemon::text::worktrees::DaemonWorktreeTextRuntime;
 use aimux::daemon_projects::ProjectsRouteProject;
 use aimux::daemon_state::{AimuxDaemonInfo, DaemonState, MetadataApiEndpoint};
+use aimux::debug_logging::{
+    LogLevel, LoggingRuntimeConfig, configure_logging, reset_logging_for_tests,
+};
 use aimux::project_api_contract::routes as project_routes;
-use aimux::runtime_safety_guard::TEST_HARNESS_HEADER;
+use aimux::runtime_safety_guard::{
+    TEST_HARNESS_HEADER, default_daemon_test_harness_header_for_url,
+};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
+use std::fs::{read_to_string, remove_file};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Default)]
@@ -401,8 +407,8 @@ impl DaemonSystemTextRuntime for FakeRouterRuntime {
         <Self as DaemonCoreCommandRuntime>::stop_project(self, project_root, force)
     }
 
-    fn remove_project(&mut self, project_root: &str) -> Result<Value, String> {
-        self.calls.push(format!("remove:{project_root}"));
+    fn remove_project(&mut self, project_root: &str, force: bool) -> Result<Value, String> {
+        self.calls.push(format!("remove:{project_root}:{force}"));
         Ok(json!({
             "projectId": "repo-id",
             "projectRoot": project_root,
@@ -831,6 +837,18 @@ fn unified_router_refuses_test_harness_side_effects_before_dispatch() {
 }
 
 #[test]
+fn test_harness_header_marks_raw_default_daemon_urls_only() {
+    assert_eq!(
+        default_daemon_test_harness_header_for_url("http://127.0.0.1:43190/projects"),
+        Some((TEST_HARNESS_HEADER, "cargo-test"))
+    );
+    assert_eq!(
+        default_daemon_test_harness_header_for_url("http://127.0.0.1:43191/projects"),
+        None
+    );
+}
+
+#[test]
 fn unified_router_refuses_temp_project_root_before_dispatch() {
     let mut runtime = FakeRouterRuntime::default();
     let context = DaemonRouteRequestContext::default();
@@ -855,7 +873,71 @@ fn unified_router_refuses_temp_project_root_before_dispatch() {
 }
 
 #[test]
-fn unified_router_refuses_missing_project_root_before_dispatch() {
+fn unified_router_logs_materialization_refusals() {
+    let log_path = std::env::temp_dir().join(format!(
+        "aimux-daemon-router-refusal-{}.jsonl",
+        std::process::id()
+    ));
+    let _ = remove_file(&log_path);
+    configure_logging(LoggingRuntimeConfig {
+        enabled: true,
+        level: LogLevel::Debug,
+        categories: vec!["runtime-safety".to_owned()],
+        path: log_path.clone(),
+        process_kind: "test".to_owned(),
+        project_id: None,
+        project_root: None,
+        ..LoggingRuntimeConfig::default()
+    });
+    let mut runtime = FakeRouterRuntime::default();
+    let context = DaemonRouteRequestContext::default();
+
+    let response = route_daemon_request(
+        &mut runtime,
+        "POST",
+        "/projects/ensure",
+        Some(&json!({
+            "projectRoot": "/private/tmp/aimux-expose-dashboard-cmd.0VRgam/repo"
+        })),
+        "issued",
+        &context,
+    );
+    reset_logging_for_tests();
+
+    assert_eq!(response.status, 403);
+    let raw = read_to_string(&log_path).expect("debug log written");
+    assert!(raw.contains("daemon request refused"));
+    assert!(raw.contains("\"category\":\"materialization\""));
+    assert!(raw.contains("\"reason\":\"temporary project\""));
+    assert!(raw.contains("/private/tmp/aimux-expose-dashboard-cmd.0VRgam/repo"));
+    let _ = remove_file(log_path);
+}
+
+#[test]
+fn unified_router_allows_legitimate_temp_project_root() {
+    let temp_project =
+        std::env::temp_dir().join(format!("legit-router-project-{}", std::process::id()));
+    std::fs::create_dir_all(temp_project.join(".git")).expect("create temp git project");
+    let temp_project = temp_project.to_string_lossy().into_owned();
+    let mut runtime = FakeRouterRuntime::default();
+    let context = DaemonRouteRequestContext::default();
+
+    let response = route_daemon_request(
+        &mut runtime,
+        "POST",
+        "/projects/ensure",
+        Some(&json!({ "projectRoot": temp_project })),
+        "issued",
+        &context,
+    );
+
+    assert_eq!(response.status, 200);
+    assert_eq!(runtime.calls, [format!("ensure:{temp_project}")]);
+    std::fs::remove_dir_all(Path::new(&temp_project)).ok();
+}
+
+#[test]
+fn unified_router_refuses_unreachable_project_root_before_dispatch() {
     assert!(
         !std::path::Path::new("/other-repo").exists(),
         "/other-repo must remain a nonexistent fixture path for this regression"
@@ -875,9 +957,36 @@ fn unified_router_refuses_missing_project_root_before_dispatch() {
     assert_eq!(response.status, 403);
     assert_eq!(
         json_body(response),
-        json!({ "ok": false, "error": "refusing to materialize missing project" })
+        json!({ "ok": false, "error": "refusing to materialize unreachable project" })
     );
     assert!(runtime.calls.is_empty());
+}
+
+#[test]
+fn unified_router_refuses_non_checkout_project_root_before_dispatch() {
+    let non_checkout =
+        std::env::temp_dir().join(format!("plain-router-directory-{}", std::process::id()));
+    std::fs::create_dir_all(&non_checkout).expect("create non-checkout directory");
+    let non_checkout = non_checkout.to_string_lossy().into_owned();
+    let mut runtime = FakeRouterRuntime::default();
+    let context = DaemonRouteRequestContext::default();
+
+    let response = route_daemon_request(
+        &mut runtime,
+        "POST",
+        "/projects/ensure",
+        Some(&json!({ "projectRoot": non_checkout.clone() })),
+        "issued",
+        &context,
+    );
+
+    assert_eq!(response.status, 403);
+    assert_eq!(
+        json_body(response),
+        json!({ "ok": false, "error": "refusing to materialize non-checkout project" })
+    );
+    assert!(runtime.calls.is_empty());
+    std::fs::remove_dir_all(Path::new(&non_checkout)).ok();
 }
 
 #[test]

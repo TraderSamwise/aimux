@@ -19,6 +19,7 @@ pub struct CoreAgentPsArgs {
 #[serde(rename_all = "camelCase")]
 pub struct CoreProjectRemoveArgs {
     pub project: String,
+    pub force: bool,
     pub json: bool,
 }
 

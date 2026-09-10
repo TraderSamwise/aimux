@@ -163,12 +163,18 @@ pub fn parse_core_projects_remove_args<S: AsRef<str>>(args: &[S]) -> Option<Core
         return None;
     }
     let mut project = None;
+    let mut force = false;
     let mut json = false;
     let mut index = 2;
     while index < args.len() {
         let arg = args[index].as_ref();
         if arg == "--json" {
             json = true;
+            index += 1;
+            continue;
+        }
+        if arg == "--force" {
+            force = true;
             index += 1;
             continue;
         }
@@ -181,6 +187,7 @@ pub fn parse_core_projects_remove_args<S: AsRef<str>>(args: &[S]) -> Option<Core
     }
     Some(CoreProjectRemoveArgs {
         project: project?,
+        force,
         json,
     })
 }

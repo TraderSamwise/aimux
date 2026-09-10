@@ -2133,9 +2133,10 @@ where
             (
                 CoreCliOperation::ProjectsRemove,
                 CoreCliAction::TextRoute {
-                    path: project_text_path(
+                    path: project_remove_text_path(
                         CORE_API_ROUTES.projects_remove_text,
                         &project_root,
+                        parsed.force,
                         parsed.json,
                     ),
                     body: None,

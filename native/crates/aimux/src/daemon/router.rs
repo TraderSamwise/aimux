@@ -24,6 +24,7 @@ use crate::daemon::text::scribe::{DaemonScribeTextRuntime, route_scribe_text_req
 use crate::daemon::text::system::{DaemonSystemTextRuntime, route_system_text_request};
 use crate::daemon::text::team::{DaemonTeamTextRuntime, route_team_text_request};
 use crate::daemon::text::worktrees::{DaemonWorktreeTextRuntime, route_worktree_text_request};
+use crate::debug_logging::{LogLevel, log_at};
 use crate::remote_access::RemoteAccessDecision;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -97,6 +98,7 @@ pub fn route_daemon_request(
     if method != "GET"
         && let Some(reason) = crate::runtime_safety_guard::request_refusal_reason(&context.headers)
     {
+        log_daemon_refusal(pathname, "side-effect", reason, body);
         return DaemonRouteResponse::json(
             403,
             json!({ "ok": false, "error": format!("refusing daemon side effects from {reason}") }),
@@ -107,6 +109,7 @@ pub fn route_daemon_request(
         && let Some(reason) =
             crate::runtime_safety_guard::request_project_refusal_reason(&route_url, body)
     {
+        log_daemon_refusal(pathname, "materialization", reason, body);
         return DaemonRouteResponse::json(
             403,
             json!({ "ok": false, "error": format!("refusing to materialize {reason}") }),
@@ -118,6 +121,7 @@ pub fn route_daemon_request(
         && let Some(reason) =
             crate::runtime_safety_guard::request_missing_project_refusal_reason(&route_url, body)
     {
+        log_daemon_refusal(pathname, "materialization", reason, body);
         return DaemonRouteResponse::json(
             403,
             json!({ "ok": false, "error": format!("refusing to materialize {reason}") }),
@@ -191,6 +195,37 @@ pub fn route_daemon_request(
     }
 
     DaemonRouteResponse::json(404, json!({ "ok": false, "error": "not found" }))
+}
+
+fn log_daemon_refusal(pathname: &str, category: &str, reason: &str, body: Option<&Value>) {
+    log_at(
+        LogLevel::Debug,
+        "daemon request refused",
+        "runtime-safety",
+        Some(json!({
+            "route": pathname,
+            "category": category,
+            "reason": reason,
+            "projectRoot": body.and_then(project_root_field),
+        })),
+    );
+}
+
+fn project_root_field(body: &Value) -> Option<&str> {
+    for key in [
+        "cwd",
+        "project",
+        "projectPath",
+        "projectRoot",
+        "repoRoot",
+        "root",
+        "worktreePath",
+    ] {
+        if let Some(value) = body.get(key).and_then(Value::as_str) {
+            return Some(value);
+        }
+    }
+    None
 }
 
 fn has_origin_header(headers: &BTreeMap<String, String>) -> bool {

@@ -26,7 +26,7 @@ pub trait DaemonSystemTextRuntime {
     fn resolve_project_root(&self, value: &str) -> String;
     fn ensure_project(&mut self, project_root: &str) -> Result<Value, String>;
     fn stop_project(&mut self, project_root: &str, force: bool) -> Result<Value, String>;
-    fn remove_project(&mut self, project_root: &str) -> Result<Value, String>;
+    fn remove_project(&mut self, project_root: &str, force: bool) -> Result<Value, String>;
     fn restart_project_service(
         &mut self,
         project_root: &str,
@@ -186,7 +186,8 @@ pub fn projects_remove_text_route(
         Ok(project_root) => project_root,
         Err(response) => return response,
     };
-    match runtime.remove_project(&project_root) {
+    let force = boolean_param(route_url, body, "force", false);
+    match runtime.remove_project(&project_root, force) {
         Ok(project) => {
             let payload = json!({
                 "projectRoot": project_root,

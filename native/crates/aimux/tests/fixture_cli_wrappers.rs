@@ -307,7 +307,7 @@ impl DaemonSystemTextRuntime for FixtureLogsRuntime<'_> {
         unreachable!("logs fixture does not exercise project service routes")
     }
 
-    fn remove_project(&mut self, _project_root: &str) -> Result<Value, String> {
+    fn remove_project(&mut self, _project_root: &str, _force: bool) -> Result<Value, String> {
         unreachable!("logs fixture does not exercise project service routes")
     }
 

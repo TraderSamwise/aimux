@@ -120,6 +120,7 @@ use crate::tmux::{
     is_tmux_client_session_for_host,
 };
 use crate::tmux_exec_metrics::get_tmux_exec_metrics;
+use crate::tmux_runtime_stop::list_managed_project_session_names;
 use anyhow::{Context, Result};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -437,6 +438,22 @@ impl RealDaemonRuntime {
     fn remove_project_with_tmux_stop(
         &mut self,
         project_root: &str,
+        force: bool,
+        stop_tmux_runtime: impl FnOnce(&Path, &Path) -> Result<Vec<String>, String>,
+    ) -> Result<Value, String> {
+        self.remove_project_with_tmux_stop_and_agent_check(
+            project_root,
+            force,
+            |runtime, project_root| runtime.read_project_agents(project_root),
+            stop_tmux_runtime,
+        )
+    }
+
+    fn remove_project_with_tmux_stop_and_agent_check(
+        &mut self,
+        project_root: &str,
+        force: bool,
+        read_agents: impl FnOnce(&mut Self, &str) -> Result<Vec<Value>, CoreCommandFailure>,
         stop_tmux_runtime: impl FnOnce(&Path, &Path) -> Result<Vec<String>, String>,
     ) -> Result<Value, String> {
         let mut resolver = self.resolver.clone();
@@ -444,6 +461,7 @@ impl RealDaemonRuntime {
         let project_root = project_root_path.to_string_lossy().into_owned();
         let project_id = compute_project_id(&project_root_path);
         let project_state_dir = resolver.project_state_dir_for(&project_root_path);
+        self.ensure_project_remove_allowed(&project_root, force, read_agents)?;
         let project = <Self as DaemonCoreCommandRuntime>::stop_project(self, &project_root, false)?;
         let tmux_sessions_killed = stop_tmux_runtime(&project_root_path, &project_state_dir)?;
         let removed_registry_entry = resolver
@@ -467,6 +485,51 @@ impl RealDaemonRuntime {
             "unregistered": removed_registry_entry.is_some(),
             "removedDaemonState": removed_state.is_some(),
         }))
+    }
+
+    fn ensure_project_remove_allowed(
+        &mut self,
+        project_root: &str,
+        force: bool,
+        read_agents: impl FnOnce(&mut Self, &str) -> Result<Vec<Value>, CoreCommandFailure>,
+    ) -> Result<(), String> {
+        if force {
+            return Ok(());
+        }
+        match read_agents(self, project_root) {
+            Ok(agents) => {
+                let live_agent_ids = agents
+                    .iter()
+                    .filter(|agent| is_agent_live(agent))
+                    .filter_map(agent_id)
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>();
+                if live_agent_ids.is_empty() {
+                    return Ok(());
+                }
+                Err(format!(
+                    "refusing to remove project {project_root}: {} live agent(s) would lose tmux context ({}). Re-run with --force to stop the service, kill managed tmux sessions, and unregister it.",
+                    live_agent_ids.len(),
+                    live_agent_ids.join(", ")
+                ))
+            }
+            Err(error) => {
+                let mut tmux = TmuxRuntimeManager::new();
+                let sessions = if tmux.is_available() {
+                    list_managed_project_session_names(&mut tmux, project_root)
+                } else {
+                    Vec::new()
+                };
+                if sessions.is_empty() {
+                    return Ok(());
+                }
+                Err(format!(
+                    "refusing to remove project {project_root}: could not verify live agents before killing {} managed tmux session(s): {}. Re-run with --force to stop the service, kill managed tmux sessions, and unregister it.",
+                    sessions.len(),
+                    error.error
+                ))
+            }
+        }
     }
 
     fn request_project_service_json(
@@ -1637,6 +1700,17 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
         if let Some(reason) =
             crate::runtime_safety_guard::project_materialization_refusal_reason(&project_root_path)
         {
+            log_at(
+                LogLevel::Debug,
+                "project materialization refused",
+                "runtime-safety",
+                Some(json!({
+                    "projectId": project_id,
+                    "projectRoot": project_root_path.to_string_lossy(),
+                    "reason": reason,
+                    "source": "ensure-project",
+                })),
+            );
             return Err(format!(
                 "refusing to materialize {reason}: {}",
                 project_root_path.display()
@@ -2280,10 +2354,14 @@ impl DaemonSystemTextRuntime for RealDaemonRuntime {
         <Self as DaemonCoreCommandRuntime>::stop_project(self, project_root, force)
     }
 
-    fn remove_project(&mut self, project_root: &str) -> Result<Value, String> {
-        self.remove_project_with_tmux_stop(project_root, |project_root, project_state_dir| {
-            stop_project_tmux_runtime_with_service_snapshots(project_root, project_state_dir)
-        })
+    fn remove_project(&mut self, project_root: &str, force: bool) -> Result<Value, String> {
+        self.remove_project_with_tmux_stop(
+            project_root,
+            force,
+            |project_root, project_state_dir| {
+                stop_project_tmux_runtime_with_service_snapshots(project_root, project_state_dir)
+            },
+        )
     }
 
     fn restart_project_service(
@@ -3550,13 +3628,13 @@ mod tests {
         )
         .expect_err("missing fixture root should be refused");
 
-        assert!(error.contains("refusing to materialize missing project"));
+        assert!(error.contains("refusing to materialize unreachable project"));
         assert!(launcher.calls().is_empty());
         fixture.cleanup();
     }
 
     #[test]
-    fn remove_project_stops_service_kills_tmux_and_unregisters_project() {
+    fn remove_project_stops_service_kills_tmux_and_unregisters_project_with_force() {
         let fixture = restart_service_fixture("remove-project");
         let project = fixture.project_root.clone();
         let project_id = fixture.register_project();
@@ -3566,7 +3644,7 @@ mod tests {
         let mut runtime = fixture.runtime(launcher.clone(), verifier);
 
         let removed = runtime
-            .remove_project_with_tmux_stop(&project, |_project_root, _project_state_dir| {
+            .remove_project_with_tmux_stop(&project, true, |_project_root, _project_state_dir| {
                 Ok(vec!["aimux-repo-id".into()])
             })
             .expect("remove project");
@@ -3588,6 +3666,55 @@ mod tests {
                 .projects
                 .get(&project_id)
                 .is_none()
+        );
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn remove_project_refuses_live_agents_without_force_before_destroying_state() {
+        let fixture = restart_service_fixture("remove-project-live-agent");
+        let project = fixture.project_root.clone();
+        let project_id = fixture.register_project();
+        fixture.persist_service(&project_id, 91_006, ProjectServiceStatus::Running);
+        let launcher = Arc::new(RestartTestLauncher::new(91_407));
+        let verifier = Arc::new(RestartTestProcessVerifier::current_native([91_006]));
+        let mut runtime = fixture.runtime(launcher.clone(), verifier);
+
+        let error = runtime
+            .remove_project_with_tmux_stop_and_agent_check(
+                &project,
+                false,
+                |_runtime, _project_root| {
+                    Ok(vec![json!({
+                        "id": "claude-live",
+                        "status": "running",
+                        "projectControl": true
+                    })])
+                },
+                |_project_root, _project_state_dir| {
+                    panic!("tmux sessions must not be killed while live agents are present")
+                },
+            )
+            .expect_err("live agents should block removal");
+
+        assert!(error.contains("refusing to remove project"));
+        assert!(error.contains("claude-live"));
+        assert!(launcher.terminations().is_empty());
+        assert_eq!(
+            fixture
+                .resolver
+                .list_projects()
+                .expect("projects")
+                .iter()
+                .map(|project| project.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![project_id.as_str()]
+        );
+        assert!(
+            load_daemon_state(fixture.resolver.daemon_state_path())
+                .projects
+                .get(&project_id)
+                .is_some()
         );
         fixture.cleanup();
     }

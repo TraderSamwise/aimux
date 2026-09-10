@@ -1,7 +1,7 @@
 use crate::daemon::routing::DaemonRouteUrl;
 use serde_json::Value;
 use std::collections::BTreeMap;
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 
 pub const TEST_HARNESS_HEADER: &str = "x-aimux-test-harness";
 const CARGO_TEST_HEADER_VALUE: &str = "cargo-test";
@@ -33,6 +33,13 @@ pub fn mark_default_daemon_test_harness_request(
             CARGO_TEST_HEADER_VALUE.to_owned(),
         );
     }
+}
+
+pub fn default_daemon_test_harness_header_for_url(
+    url: &str,
+) -> Option<(&'static str, &'static str)> {
+    (is_default_daemon_url(url) && is_cargo_test_process_context())
+        .then_some((TEST_HARNESS_HEADER, CARGO_TEST_HEADER_VALUE))
 }
 
 pub fn request_refusal_reason(headers: &BTreeMap<String, String>) -> Option<&'static str> {
@@ -72,14 +79,13 @@ pub fn request_missing_project_refusal_reason(
 }
 
 pub fn project_materialization_refusal_reason(project_root: &Path) -> Option<&'static str> {
-    if crate::paths::is_ephemeral_temp_project_root(project_root) {
+    if is_ephemeral_or_fixture_temp_project_root(project_root) {
         return Some("temporary project");
     }
-    if path_has_test_fixture_component(project_root) {
-        return Some("test fixture project");
-    }
-    if !project_root.is_dir() {
-        return Some("missing project");
+    match crate::paths::project_root_status(project_root) {
+        crate::paths::ProjectRootStatus::GitCheckout => {}
+        crate::paths::ProjectRootStatus::NotCheckout => return Some("non-checkout project"),
+        crate::paths::ProjectRootStatus::Unreachable => return Some("unreachable project"),
     }
     if is_cargo_test_harness_binary() {
         return Some("cargo test harness");
@@ -142,7 +148,7 @@ pub fn is_cargo_test_harness_binary() -> bool {
 }
 
 pub fn is_cargo_test_process_context() -> bool {
-    is_cargo_test_harness_binary()
+    is_any_cargo_test_harness_binary_path()
         || std::env::vars_os().any(|(key, _)| {
             key.to_str()
                 .is_some_and(|key| key.starts_with("CARGO_BIN_EXE_"))
@@ -174,6 +180,24 @@ fn is_cargo_test_harness_binary_path() -> Option<()> {
                     || name.starts_with("daemon_"))
         })
         .then_some(())
+}
+
+fn is_any_cargo_test_harness_binary_path() -> bool {
+    let Ok(exe) = std::env::current_exe() else {
+        return false;
+    };
+    let Some(parent) = exe
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str())
+    else {
+        return false;
+    };
+    parent == "deps"
+        && exe
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.contains('-'))
 }
 
 fn path_has_test_fixture_component(path: &Path) -> bool {
@@ -241,7 +265,14 @@ fn missing_project_root_text_refusal_reason(value: &str) -> Option<&'static str>
         return None;
     }
     let path = Path::new(trimmed);
-    (path.is_absolute() && !path.is_dir()).then_some("missing project")
+    if !path.is_absolute() {
+        return None;
+    }
+    match crate::paths::project_root_status(path) {
+        crate::paths::ProjectRootStatus::GitCheckout => None,
+        crate::paths::ProjectRootStatus::NotCheckout => Some("non-checkout project"),
+        crate::paths::ProjectRootStatus::Unreachable => Some("unreachable project"),
+    }
 }
 
 fn project_root_text_refusal_reason(value: &str) -> Option<&'static str> {
@@ -250,10 +281,10 @@ fn project_root_text_refusal_reason(value: &str) -> Option<&'static str> {
         return None;
     }
     let path = Path::new(trimmed);
-    if crate::paths::is_ephemeral_temp_project_root(path) {
+    if is_ephemeral_or_fixture_temp_project_root(path) {
         return Some("temporary project");
     }
-    if path_has_test_fixture_component(path) || string_has_test_fixture_component(trimmed) {
+    if is_temp_path_text(trimmed) && string_has_test_fixture_component(trimmed) {
         return Some("test fixture project");
     }
     None
@@ -270,6 +301,67 @@ fn has_test_fixture_prefix(value: &str) -> bool {
     TEST_PROJECT_PREFIXES
         .iter()
         .any(|prefix| trimmed.starts_with(prefix))
+}
+
+fn is_ephemeral_or_fixture_temp_project_root(path: &Path) -> bool {
+    crate::paths::is_ephemeral_temp_project_root(path)
+        || (is_temp_path(path) && path_has_test_fixture_component(path))
+}
+
+fn is_temp_path_text(value: &str) -> bool {
+    is_temp_path(Path::new(value))
+}
+
+fn is_temp_path(path: &Path) -> bool {
+    let resolved = lexical_resolve(
+        &std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+        path,
+    );
+    temp_dirs()
+        .into_iter()
+        .any(|directory| resolved == directory || resolved.starts_with(directory))
+}
+
+fn temp_dirs() -> Vec<PathBuf> {
+    let mut directories = Vec::new();
+    for candidate in [
+        std::env::temp_dir(),
+        PathBuf::from("/tmp"),
+        PathBuf::from("/private/tmp"),
+        PathBuf::from("/var/tmp"),
+    ] {
+        let resolved = lexical_resolve(&PathBuf::from("/"), &candidate);
+        if !directories.contains(&resolved) {
+            directories.push(resolved.clone());
+        }
+        if let Ok(canonical) = std::fs::canonicalize(&resolved)
+            && !directories.contains(&canonical)
+        {
+            directories.push(canonical);
+        }
+    }
+    directories
+}
+
+fn lexical_resolve(base: &Path, path: &Path) -> PathBuf {
+    let joined = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        base.join(path)
+    };
+    let mut out = PathBuf::new();
+    for component in joined.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            Component::RootDir | Component::Prefix(_) | Component::Normal(_) => {
+                out.push(component);
+            }
+        }
+    }
+    out
 }
 
 fn header_value<'a>(headers: &'a BTreeMap<String, String>, name: &str) -> Option<&'a str> {
@@ -290,4 +382,17 @@ fn canonical_header_name(name: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join("-")
+}
+
+fn is_default_daemon_url(url: &str) -> bool {
+    let Some(rest) = url.strip_prefix("http://") else {
+        return false;
+    };
+    let Some(authority) = rest.split('/').next() else {
+        return false;
+    };
+    matches!(
+        authority,
+        "127.0.0.1:43190" | "localhost:43190" | "[::1]:43190"
+    )
 }
