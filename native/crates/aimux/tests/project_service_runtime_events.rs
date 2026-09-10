@@ -7,7 +7,10 @@ use aimux::project_service::notification_context::{
 };
 use aimux::project_service::notifications::{NotificationQuery, list_notification_snapshot};
 use aimux::project_service::router::ProjectServiceRequestContext;
-use aimux::project_service::runtime_events::route_runtime_event;
+use aimux::project_service::runtime_events::{
+    route_runtime_event, route_runtime_set_attention_with_context,
+};
+use aimux::runtime_topology::{runtime_topology_path, write_runtime_topology};
 use serde_json::Value;
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -763,6 +766,64 @@ fn runtime_event_alerts_include_project_and_worktree_display_context() {
 }
 
 #[test]
+fn runtime_set_attention_resolves_stale_backend_duplicate_to_live_session() {
+    let project = temp_project("attention-live-duplicate");
+    let state_dir = project.join("state");
+    write_duplicate_runtime_topology(&project, &state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let response = route_runtime_set_attention_with_context(
+        &context,
+        &state_dir,
+        "claude-pd1hl2",
+        "needs_input".to_owned(),
+    )
+    .expect("set attention route");
+    assert_eq!(response.status, 200);
+
+    let state = load_metadata_state(&state_dir);
+    assert!(state.sessions.contains_key("claude-gqaapg"));
+    assert!(!state.sessions.contains_key("claude-pd1hl2"));
+    assert_eq!(
+        state.sessions["claude-gqaapg"]["derived"]["attention"],
+        "needs_input"
+    );
+
+    let snapshot = list_notification_snapshot(
+        &state_dir,
+        NotificationQuery {
+            unread_only: false,
+            include_cleared: false,
+            session_id: None,
+            limit: Some(10),
+        },
+    );
+    assert_eq!(snapshot.total, 1);
+    assert_eq!(snapshot.notifications[0]["sessionId"], "claude-gqaapg");
+    assert_eq!(
+        snapshot.notifications[0]["dedupeKey"],
+        "needs_input:claude-gqaapg"
+    );
+    assert_eq!(
+        snapshot.notifications[0]["title"],
+        format!(
+            "{} / Main Checkout (master)",
+            project.file_name().unwrap().to_str().unwrap()
+        )
+    );
+    assert_eq!(
+        snapshot.notifications[0]["body"],
+        "Needs input: claude @ Main Checkout - Agent is waiting for input."
+    );
+
+    let events = context.project_events.events_since(0, None);
+    assert_eq!(events[0].event["sessionId"], "claude-gqaapg");
+    assert_eq!(events[0].event["worktreeName"], "Main Checkout");
+    assert_eq!(events[0].event["branch"], "master");
+    cleanup(project);
+}
+
+#[test]
 fn runtime_event_notify_records_custom_alert_without_derived_state_change() {
     let project = temp_project("notify-alert");
     let state_dir = project.join("state");
@@ -832,6 +893,106 @@ fn temp_project(label: &str) -> PathBuf {
 
 fn cleanup(path: PathBuf) {
     let _ = remove_dir_all(path);
+}
+
+fn write_duplicate_runtime_topology(project: &std::path::Path, state_dir: &std::path::Path) {
+    std::fs::create_dir_all(state_dir).expect("create state dir");
+    let project_root = project.to_string_lossy().into_owned();
+    let backend_id = "94760225-52eb-4f6d-973d-e1393fea8885";
+    let topology = json!({
+        "version": 1,
+        "generatedAt": "2026-09-08T00:00:00.000Z",
+        "rigs": [{
+            "id": "rig-1",
+            "name": "aimux",
+            "projectRoot": project_root.clone(),
+            "createdAt": "2026-09-08T00:00:00.000Z",
+            "updatedAt": "2026-09-08T00:00:00.000Z"
+        }],
+        "nodes": [
+            {
+                "id": "agent-node-stale",
+                "rigId": "rig-1",
+                "logicalId": "claude-pd1hl2",
+                "toolConfigKey": "claude",
+                "cwd": project_root.clone(),
+                "createdAt": "2026-09-08T00:00:00.000Z"
+            },
+            {
+                "id": "agent-node-live",
+                "rigId": "rig-1",
+                "logicalId": "claude-gqaapg",
+                "toolConfigKey": "claude",
+                "cwd": project_root.clone(),
+                "createdAt": "2026-09-08T00:00:01.000Z"
+            }
+        ],
+        "edges": [],
+        "bindings": [
+            {
+                "id": "tmux:stale",
+                "nodeId": "agent-node-stale",
+                "tmuxSession": "aimux-test",
+                "tmuxWindowId": "@1",
+                "tmuxWindowIndex": 1,
+                "tmuxWindowName": "claude",
+                "updatedAt": "2026-09-08T00:00:00.000Z"
+            },
+            {
+                "id": "tmux:live",
+                "nodeId": "agent-node-live",
+                "tmuxSession": "aimux-test",
+                "tmuxWindowId": "@2",
+                "tmuxWindowIndex": 2,
+                "tmuxWindowName": "claude",
+                "updatedAt": "2026-09-08T00:00:01.000Z"
+            }
+        ],
+        "sessions": [
+            {
+                "id": "claude-pd1hl2",
+                "nodeId": "agent-node-stale",
+                "status": "running",
+                "tool": "claude",
+                "toolConfigKey": "claude",
+                "command": "claude",
+                "backendSessionId": backend_id,
+                "worktreePath": project_root.clone(),
+                "createdAt": "2026-09-08T00:00:00.000Z",
+                "updatedAt": "2026-09-10T05:01:03.747Z",
+                "lastSeenAt": "2026-09-08T00:00:00.000Z"
+            },
+            {
+                "id": "claude-gqaapg",
+                "nodeId": "agent-node-live",
+                "status": "running",
+                "tool": "claude",
+                "toolConfigKey": "claude",
+                "command": "claude",
+                "worktreePath": project_root.clone(),
+                "createdAt": "2026-09-08T00:00:01.000Z",
+                "updatedAt": "2026-09-10T05:01:01.585Z",
+                "lastSeenAt": "2026-09-08T00:00:01.000Z"
+            }
+        ],
+        "services": [],
+        "worktrees": [{
+            "id": "main",
+            "rigId": "rig-1",
+            "path": project_root,
+            "name": "Main Checkout",
+            "status": "active",
+            "branch": "master",
+            "createdAt": "2026-09-08T00:00:00.000Z",
+            "updatedAt": "2026-09-08T00:00:00.000Z"
+        }],
+        "worktreeGraveyard": [],
+        "teamRoles": [],
+        "remoteClients": [],
+        "lifecycleOperations": [],
+        "exchangeRefs": []
+    });
+    write_runtime_topology(runtime_topology_path(state_dir), &topology).expect("write topology");
 }
 
 fn notifications_by_session(notifications: Vec<Value>) -> BTreeMap<String, Value> {

@@ -3,10 +3,7 @@ use std::collections::BTreeMap;
 
 use crate::backend_session_ids::record_topology_backend_session_id;
 use crate::project_api_contract::routes;
-use crate::runtime_topology::{
-    list_topology_session_states, read_runtime_topology, runtime_topology_path,
-    update_runtime_topology,
-};
+use crate::runtime_topology::{runtime_topology_path, update_runtime_topology};
 
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::metadata::{route_runtime_metadata_request, update_session_metadata};
@@ -14,6 +11,7 @@ use super::notifications::{
     NotificationMutation, NotificationWriteInput, add_notification, clear_notifications,
 };
 use super::router::ProjectServiceRequestContext;
+use super::session_identity::resolve_live_duplicate_session_id;
 
 pub fn route_hook_request(
     context: &ProjectServiceRequestContext,
@@ -142,164 +140,7 @@ fn resolve_hook_session_id(
     explicit_session_id: &str,
     backend_session_id: Option<&str>,
 ) -> String {
-    let Some(backend_session_id) = backend_session_id
-        .map(str::trim)
-        .filter(|backend_session_id| !backend_session_id.is_empty())
-    else {
-        return explicit_session_id.to_owned();
-    };
-    let topology = match read_runtime_topology(runtime_topology_path(context.project_state_dir())) {
-        Ok(topology) => topology,
-        Err(_) => return explicit_session_id.to_owned(),
-    };
-    let sessions = list_topology_session_states(&topology, None);
-    if let Some(explicit) = sessions.iter().find(|session| {
-        session.get("id").and_then(Value::as_str) == Some(explicit_session_id)
-            && backend_matches_or_missing(session, backend_session_id)
-    }) && let Some(live) = live_replacement_for_stale_session(context, &sessions, explicit)
-        && let Some(id) = live.get("id").and_then(Value::as_str)
-    {
-        return id.to_owned();
-    }
-    let best_backend_match = sessions
-        .iter()
-        .filter(|session| {
-            session.get("backendSessionId").and_then(Value::as_str) == Some(backend_session_id)
-        })
-        .max_by_key(|session| {
-            (
-                session_match_score(context, session),
-                session_freshness_key(session),
-            )
-        })
-        .cloned();
-    if let Some(session) = best_backend_match.as_ref()
-        && session_is_live_for_hook(context, session)
-    {
-        if let Some(id) = session.get("id").and_then(Value::as_str) {
-            return id.to_owned();
-        }
-    }
-    if let Some(explicit) = sessions.iter().find(|session| {
-        session.get("id").and_then(Value::as_str) == Some(explicit_session_id)
-            && backend_matches_or_missing(session, backend_session_id)
-            && session_is_live_for_hook(context, session)
-    }) {
-        if let Some(id) = explicit.get("id").and_then(Value::as_str) {
-            return id.to_owned();
-        }
-    }
-    best_backend_match
-        .and_then(|session| session.get("id").and_then(Value::as_str).map(str::to_owned))
-        .unwrap_or_else(|| explicit_session_id.to_owned())
-}
-
-fn backend_matches_or_missing(session: &Value, backend_session_id: &str) -> bool {
-    session
-        .get("backendSessionId")
-        .and_then(Value::as_str)
-        .is_none_or(|existing| existing.trim().is_empty() || existing == backend_session_id)
-}
-
-fn session_match_score(context: &ProjectServiceRequestContext, session: &Value) -> i32 {
-    if session_is_live_for_hook(context, session) {
-        2
-    } else if !matches!(
-        session.get("status").and_then(Value::as_str),
-        Some("offline" | "exited")
-    ) {
-        1
-    } else {
-        0
-    }
-}
-
-fn session_freshness_key(session: &Value) -> (&str, &str, &str) {
-    (
-        session
-            .get("lastSeenAt")
-            .and_then(Value::as_str)
-            .unwrap_or(""),
-        session
-            .get("createdAt")
-            .and_then(Value::as_str)
-            .unwrap_or(""),
-        session
-            .get("updatedAt")
-            .and_then(Value::as_str)
-            .unwrap_or(""),
-    )
-}
-
-fn session_is_live_for_hook(context: &ProjectServiceRequestContext, session: &Value) -> bool {
-    if matches!(
-        session.get("status").and_then(Value::as_str),
-        Some("offline" | "exited")
-    ) {
-        return false;
-    }
-    let Some(live_window_ids) = context.live_window_ids() else {
-        return true;
-    };
-    session
-        .get("tmuxTarget")
-        .and_then(|target| target.get("windowId"))
-        .and_then(Value::as_str)
-        .is_some_and(|window_id| live_window_ids.contains(window_id))
-}
-
-fn live_replacement_for_stale_session<'a>(
-    context: &ProjectServiceRequestContext,
-    sessions: &'a [Value],
-    stale: &Value,
-) -> Option<&'a Value> {
-    let stale_id = stale.get("id").and_then(Value::as_str);
-    sessions
-        .iter()
-        .filter(|session| session.get("id").and_then(Value::as_str) != stale_id)
-        .filter(|session| session_is_live_for_hook(context, session))
-        .filter(|session| same_hook_identity(session, stale))
-        .max_by_key(|session| session_freshness_key(session))
-}
-
-fn same_hook_identity(candidate: &Value, stale: &Value) -> bool {
-    same_non_empty_field(candidate, stale, "tool")
-        && same_optional_field(candidate, stale, "toolConfigKey")
-        && same_optional_field(candidate, stale, "command")
-        && compatible_optional_field(candidate, stale, "worktreePath")
-        && same_nested_optional_field(candidate, stale, &["team", "role"])
-}
-
-fn same_non_empty_field(left: &Value, right: &Value, key: &str) -> bool {
-    let left = trimmed_value(left.get(key).and_then(Value::as_str));
-    !left.is_empty() && left == trimmed_value(right.get(key).and_then(Value::as_str))
-}
-
-fn same_optional_field(left: &Value, right: &Value, key: &str) -> bool {
-    trimmed_value(left.get(key).and_then(Value::as_str))
-        == trimmed_value(right.get(key).and_then(Value::as_str))
-}
-
-fn compatible_optional_field(left: &Value, right: &Value, key: &str) -> bool {
-    let left = trimmed_value(left.get(key).and_then(Value::as_str));
-    let right = trimmed_value(right.get(key).and_then(Value::as_str));
-    left.is_empty() || right.is_empty() || left == right
-}
-
-fn same_nested_optional_field(left: &Value, right: &Value, path: &[&str]) -> bool {
-    trimmed_value(nested_string(left, path)) == trimmed_value(nested_string(right, path))
-}
-
-fn nested_string<'a>(value: &'a Value, path: &[&str]) -> Option<&'a str> {
-    let mut current = value;
-    for key in path {
-        current = current.get(*key)?;
-    }
-    current.as_str()
-}
-
-fn trimmed_value(value: Option<&str>) -> &str {
-    value.map(str::trim).unwrap_or_default()
+    resolve_live_duplicate_session_id(context, explicit_session_id, backend_session_id)
 }
 
 fn record_hook_backend_session_id(

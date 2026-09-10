@@ -48,6 +48,7 @@ pub mod runtime_exchange;
 pub mod scheduler;
 pub mod scribe_watcher_task;
 pub mod server;
+pub mod session_identity;
 pub mod session_semantics;
 pub mod shell_state;
 pub mod statusline;

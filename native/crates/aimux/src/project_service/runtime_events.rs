@@ -12,6 +12,7 @@ use super::project_events::ProjectEventBus;
 use super::router::ProjectServiceRequestContext;
 use super::runtime_event_notifications::{notification_for_attention, notification_for_event};
 use super::runtime_event_state::{apply_agent_event, normalize_agent_event, set_derived_attention};
+use super::session_identity::resolve_live_duplicate_session_id;
 use crate::runtime_topology_state_save::reconcile_runtime_topology_sessions_on_state_save_event;
 
 pub fn route_runtime_event(
@@ -61,6 +62,8 @@ fn route_runtime_event_inner(
     ) {
         return Some(json_response(500, json!({ "ok": false, "error": error })));
     }
+    let resolved_session_id = resolve_runtime_session_id(context, session_id, &normalized);
+    let session_id = resolved_session_id.as_str();
     let focused = is_session_notification_focused(project_state_dir, session_id);
     if let Err(error) = update_session_metadata(project_state_dir, session_id, |current| {
         apply_agent_event(current, normalized.clone(), focused)
@@ -132,6 +135,8 @@ fn route_runtime_set_attention_inner(
     session_id: &str,
     attention: String,
 ) -> Option<ProjectServiceDispatchResponse> {
+    let resolved_session_id = resolve_runtime_session_id(context, session_id, &Value::Null);
+    let session_id = resolved_session_id.as_str();
     if let Err(error) = update_session_metadata(project_state_dir, session_id, |current| {
         set_derived_attention(current, attention.clone())
     }) {
@@ -158,6 +163,29 @@ fn route_runtime_set_attention_inner(
         }
     }
     Some(ok())
+}
+
+fn resolve_runtime_session_id(
+    context: Option<&ProjectServiceRequestContext>,
+    session_id: &str,
+    event: &Value,
+) -> String {
+    let Some(context) = context else {
+        return session_id.to_owned();
+    };
+    resolve_live_duplicate_session_id(context, session_id, backend_session_id_for_event(event))
+}
+
+fn backend_session_id_for_event(event: &Value) -> Option<&str> {
+    ["backendSessionId", "backend_session_id", "session_id"]
+        .into_iter()
+        .find_map(|key| {
+            event
+                .get(key)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        })
 }
 
 fn ok() -> ProjectServiceDispatchResponse {
