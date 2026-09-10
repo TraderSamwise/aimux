@@ -64,7 +64,6 @@ Binding statuses: PROVEN-FAILS 325, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
 | `fixture_cli_wrappers` | PROVEN-FAILS | `testdata/contracts/v1/cli/metadata-command.json` | 4 | mutated fixture output failed owning Rust suite |
 | `fixture_cli_wrappers` | PROVEN-FAILS | `testdata/contracts/v1/cli/logs-command.json` | 4 | mutated fixture output failed owning Rust suite |
 | `fixture_cli_wrappers` | PROVEN-FAILS | `testdata/contracts/v1/cli/work-outline-command.json` | 4 | mutated fixture output failed owning Rust suite |
-| `fixture_composer_protocol` | PROVEN-FAILS | `testdata/contracts/v1/composer/protocol.json` | 29 | mutated fixture output failed owning Rust suite |
 | `fixture_config_behavior` | PROVEN-FAILS | `testdata/contracts/v1/config/behavior.json` | 28 | mutated fixture output failed owning Rust suite |
 | `fixture_config_behavior` | PROVEN-FAILS | `testdata/contracts/v1/install-config/config.json` | 27 | mutated fixture output failed owning Rust suite |
 | `fixture_connection_targets` | PROVEN-FAILS | `testdata/contracts/v1/connection-targets/targets.json` | 16 | mutated fixture output failed owning Rust suite |
