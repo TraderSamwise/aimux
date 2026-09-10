@@ -104,13 +104,36 @@ pub fn project_service_build_stamp_with_release_root(
     release_root: Option<&Path>,
     native_candidates: &[PathBuf],
 ) -> io::Result<String> {
-    if let Some(stamp) = release_root.and_then(read_release_build_stamp) {
-        return Ok(stamp);
+    let release_stamp = release_root.and_then(read_release_build_stamp);
+    if let Some(binary_stamp) = embedded_release_build_stamp() {
+        if let Some(release_stamp) = release_stamp
+            && release_stamp != binary_stamp
+        {
+            return Err(io::Error::other(format!(
+                "release build stamp mismatch: release root {release_stamp}, binary {binary_stamp}"
+            )));
+        }
+        return Ok(binary_stamp.to_owned());
+    }
+    if let Some(release_stamp) = release_stamp {
+        return Ok(release_stamp);
     }
     compute_build_stamp(&project_service_artifact_paths_with_native_candidates(
         module_dir,
         native_candidates,
     )?)
+}
+
+#[used]
+static AIMUX_EMBEDDED_BUILD_STAMP_MARKER: &str = concat!(
+    "AIMUX_EMBEDDED_BUILD_STAMP=",
+    env!("AIMUX_EMBEDDED_BUILD_STAMP"),
+    "\0"
+);
+
+fn embedded_release_build_stamp() -> Option<&'static str> {
+    let stamp = env!("AIMUX_EMBEDDED_BUILD_STAMP").trim();
+    (!stamp.is_empty()).then_some(stamp)
 }
 
 fn read_release_build_stamp(release_root: &Path) -> Option<String> {

@@ -37,8 +37,15 @@ detect_arch() {
   esac
 }
 
-PLATFORM="${AIMUX_RELEASE_PLATFORM:-$(detect_platform)}"
-ARCH="${AIMUX_RELEASE_ARCH:-$(detect_arch)}"
+HOST_PLATFORM="$(detect_platform)"
+HOST_ARCH="$(detect_arch)"
+PLATFORM="${AIMUX_RELEASE_PLATFORM:-$HOST_PLATFORM}"
+ARCH="${AIMUX_RELEASE_ARCH:-$HOST_ARCH}"
+if [ "$PLATFORM" != "$HOST_PLATFORM" ] || [ "$ARCH" != "$HOST_ARCH" ]; then
+  printf 'Cross-architecture release assets are not supported by this script: host is %s-%s, requested %s-%s\n' \
+    "$HOST_PLATFORM" "$HOST_ARCH" "$PLATFORM" "$ARCH" >&2
+  exit 1
+fi
 ASSET="aimux-${PLATFORM}-${ARCH}.tar.gz"
 OUT_DIR="${AIMUX_RELEASE_DIR:-"$ROOT_DIR/release"}"
 TMP_DIR="$(mktemp -d)"
@@ -52,6 +59,37 @@ cd "$ROOT_DIR"
 if [ "$BUILD_PROFILE" = "full" ]; then
   yarn build:ui:local
 fi
+
+release_source_hash() {
+  if git -C "$ROOT_DIR" rev-parse --verify HEAD >/dev/null 2>&1; then
+    {
+      git -C "$ROOT_DIR" rev-parse --verify HEAD
+      git -C "$ROOT_DIR" diff --binary HEAD -- package.json yarn.lock scripts native app docs || true
+    } | shasum -a 1 | awk '{ print substr($1, 1, 12) }'
+  else
+    find package.json yarn.lock scripts native app docs -maxdepth 8 -type f 2>/dev/null \
+      | LC_ALL=C sort \
+      | xargs shasum -a 1 \
+      | shasum -a 1 \
+      | awk '{ print substr($1, 1, 12) }'
+  fi
+}
+
+release_build_stamp() {
+  local generation source_hash suffix
+  generation="$(printf '%s000' "$(date +%s)")"
+  source_hash="$(release_source_hash)"
+  suffix="$(
+    printf '%s:%s:%s:%s:%s\n' "$generation" "$$" "$RANDOM" "$BUILD_PROFILE" "$source_hash" \
+      | shasum -a 1 \
+      | awk '{ print substr($1, 1, 12) }'
+  )"
+  printf '%s-%s\n' "$generation" "$suffix"
+}
+
+BUILD_STAMP="$(release_build_stamp)"
+export AIMUX_RELEASE_BUILD_STAMP="$BUILD_STAMP"
+
 cargo build --manifest-path native/Cargo.toml -p aimux --release
 NATIVE_BUILD_ARTIFACT="$CARGO_TARGET_ROOT/release/aimux"
 
@@ -71,12 +109,7 @@ cp scripts/tmux-control.sh scripts/tmux-open-hyperlink.sh scripts/tmux-statuslin
 printf '%s\n' "$VERSION" > "$PKG_DIR/VERSION"
 printf '%s\n' "$BUILD_PROFILE" > "$PKG_DIR/BUILD_PROFILE"
 
-release_mtime_ms() {
-  printf '%s000' "$(date +%s)"
-}
-
 NATIVE_ARTIFACT="$PKG_DIR/native/$PLATFORM-$ARCH/aimux"
-BUILD_STAMP="${AIMUX_RELEASE_BUILD_STAMP:-$(release_mtime_ms)-$(shasum -a 1 "$NATIVE_ARTIFACT" | awk '{ print substr($1, 1, 12) }')}"
 printf '%s\n' "$BUILD_STAMP" > "$PKG_DIR/BUILD_STAMP"
 
 if [ "$PLATFORM" = "darwin" ]; then
@@ -88,25 +121,12 @@ chmod +x "$PKG_DIR/bin/aimux"
 chmod +x "$PKG_DIR/native/$PLATFORM-$ARCH/aimux"
 chmod +x "$PKG_DIR/scripts/"*.sh 2>/dev/null || true
 
-verify_release_build_stamp() {
-  actual="$(
-    AIMUX_ROOT="$PKG_DIR" AIMUX_NATIVE_BIN="$NATIVE_ARTIFACT" "$NATIVE_ARTIFACT" \
-      __project-service-manifest-internal --json \
-      | awk -F'"' '/"buildStamp"/ { print $4; exit }'
-  )"
-  if [ "$actual" != "$BUILD_STAMP" ]; then
-    printf 'Release build stamp mismatch: expected %s, packaged runtime reported %s\n' "$BUILD_STAMP" "${actual:-<missing>}" >&2
-    exit 1
-  fi
-}
-
-verify_release_build_stamp
-
 find "$PKG_DIR" -name '*.map' -type f -delete
 
 mkdir -p "$OUT_DIR"
 rm -f "$OUT_DIR/$ASSET" "$OUT_DIR/$ASSET.sha256"
 tar -czf "$OUT_DIR/$ASSET" -C "$TMP_DIR" aimux
+bash "$ROOT_DIR/scripts/verify-release-asset.sh" "$OUT_DIR/$ASSET" "$PLATFORM-$ARCH"
 (
   cd "$OUT_DIR"
   shasum -a 256 "$ASSET" > "$ASSET.sha256"

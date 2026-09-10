@@ -24,13 +24,13 @@ jobs:
             runner: ubuntu-latest
           - platform: linux
             arch: arm64
-            runner: ubuntu-latest
+            runner: ubuntu-24.04-arm
           - platform: darwin
             arch: x64
-            runner: macos-latest
+            runner: macos-15-intel
           - platform: darwin
             arch: arm64
-            runner: macos-latest
+            runner: macos-14
 
     steps:
       - uses: actions/checkout@v4

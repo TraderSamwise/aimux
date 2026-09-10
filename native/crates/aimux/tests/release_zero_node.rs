@@ -155,12 +155,114 @@ fn release_asset_compiles_native_binary_with_selected_build_profile() {
         "release asset must package the freshly built native artifact"
     );
     assert!(
-        script.contains("verify_release_build_stamp"),
-        "release asset must fail if the packaged runtime reports a different build stamp"
+        script.contains("BUILD_STAMP=\"$(release_build_stamp)\""),
+        "release asset must generate one release stamp before compiling the native binary"
+    );
+    let stamp_generation = script
+        .find("BUILD_STAMP=\"$(release_build_stamp)\"")
+        .expect("build stamp generation");
+    let stamp_export = script
+        .find("export AIMUX_RELEASE_BUILD_STAMP=\"$BUILD_STAMP\"")
+        .expect("build stamp export");
+    assert!(
+        stamp_generation < stamp_export && stamp_export < cargo_build,
+        "release asset must embed the generated release stamp into the native binary compile"
     );
     assert!(
-        script.contains("\nverify_release_build_stamp\n"),
-        "release asset must call the packaged runtime build-stamp gate before archiving"
+        !script.contains("AIMUX_RELEASE_BUILD_STAMP:-"),
+        "release asset must not accept a caller-supplied stamp as proof"
+    );
+    assert!(
+        script.contains("scripts/verify-release-asset.sh"),
+        "release asset must verify the archived runtime against an independent binary witness"
+    );
+    assert!(
+        script.contains("Cross-architecture release assets are not supported by this script"),
+        "release asset must reject cross-arch relabeling instead of renaming the host binary"
+    );
+    assert!(
+        build_script.contains("cargo:rerun-if-env-changed=AIMUX_RELEASE_BUILD_STAMP"),
+        "Cargo must rebuild aimux when the release stamp changes"
+    );
+}
+
+#[test]
+fn release_asset_verifier_rejects_mismatched_archive_build_stamp() {
+    let repo = repo_root();
+    let temp = TempDir::new("release-stamp-mismatch");
+    create_witness_archive(&temp.0, "stamp-from-archive", "stamp-from-binary");
+    let archive = tar_package(&temp.0);
+
+    let output = Command::new("/bin/sh")
+        .arg(repo.join("scripts/verify-release-asset.sh"))
+        .arg(&archive)
+        .output()
+        .expect("run release verifier");
+
+    assert!(
+        !output.status.success(),
+        "mismatched archive passed verifier\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains(
+            "Release build stamp mismatch: archive stamp-from-archive, binary stamp-from-binary"
+        ),
+        "verifier did not name both stamps\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn release_asset_verifier_accepts_matching_archive_build_stamp() {
+    let repo = repo_root();
+    let temp = TempDir::new("release-stamp-match");
+    create_witness_archive(&temp.0, "matching-stamp", "matching-stamp");
+    let archive = tar_package(&temp.0);
+
+    let output = Command::new("/bin/sh")
+        .arg(repo.join("scripts/verify-release-asset.sh"))
+        .arg(&archive)
+        .output()
+        .expect("run release verifier");
+
+    assert!(
+        output.status.success(),
+        "matching archive failed verifier\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn release_asset_builder_rejects_cross_arch_labeling_before_build() {
+    let repo = repo_root();
+    let current = platform_arch();
+    let (platform, arch) = current
+        .split_once('-')
+        .expect("platform arch fixture contains dash");
+    let requested_arch = if arch == "arm64" { "x64" } else { "arm64" };
+
+    let output = Command::new("/bin/sh")
+        .arg(repo.join("scripts/build-release-asset.sh"))
+        .env("AIMUX_RELEASE_PLATFORM", platform)
+        .env("AIMUX_RELEASE_ARCH", requested_arch)
+        .env("AIMUX_BUILD_PROFILE", "local")
+        .output()
+        .expect("run release builder");
+
+    assert!(
+        !output.status.success(),
+        "cross-arch relabeling was accepted\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("Cross-architecture release assets are not supported by this script"),
+        "cross-arch refusal did not explain the requested and host arches\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
     );
 }
 
@@ -191,6 +293,29 @@ fn create_release_archive(root: &Path) -> PathBuf {
     permissions.set_mode(0o755);
     fs::set_permissions(&native_bin, permissions).expect("chmod native bin");
     tar_package(root)
+}
+
+fn create_witness_archive(root: &Path, archive_stamp: &str, binary_stamp: &str) {
+    let package_root = root.join("pkg/aimux");
+    fs::create_dir_all(package_root.join(format!("native/{}/", platform_arch())))
+        .expect("create native dir");
+    fs::write(package_root.join("VERSION"), "local-witness\n").expect("write version");
+    fs::write(
+        package_root.join("BUILD_STAMP"),
+        format!("{archive_stamp}\n"),
+    )
+    .expect("write build stamp");
+    let native_bin = package_root.join(format!("native/{}/aimux", platform_arch()));
+    fs::write(
+        &native_bin,
+        format!("#!/bin/sh\nAIMUX_EMBEDDED_BUILD_STAMP={binary_stamp}\nexit 0\n"),
+    )
+    .expect("write native witness");
+    let mut permissions = fs::metadata(&native_bin)
+        .expect("native metadata")
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&native_bin, permissions).expect("chmod native witness");
 }
 
 fn tar_package(root: &Path) -> PathBuf {

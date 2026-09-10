@@ -174,10 +174,11 @@ pub fn runtime_guard_overlay_copy(
     active_ms: i64,
     repair_failed: bool,
 ) -> RuntimeGuardOverlayCopy {
-    if let RuntimeGuardState::Stale {
-        reason: RuntimeGuardStaleReason::ServiceMismatch,
-        details: Some(details),
-    } = state
+    if (repair_failed || active_ms >= RUNTIME_GUARD_ESCALATION_MS)
+        && let RuntimeGuardState::Stale {
+            reason: RuntimeGuardStaleReason::ServiceMismatch,
+            details: Some(details),
+        } = state
     {
         return RuntimeGuardOverlayCopy {
             title: "Aimux build mismatch",
@@ -499,7 +500,7 @@ mod tests {
     }
 
     #[test]
-    fn overlay_names_build_stamp_mismatch_without_waiting() {
+    fn overlay_waits_on_build_stamp_mismatch_until_escalation() {
         let expected = manifest("expected-stamp");
         let state = evaluate_runtime_guard_against(
             &input(RuntimeGuardServiceManifest::Value(json!({
@@ -510,6 +511,42 @@ mod tests {
             Some(&expected),
         );
         let copy = runtime_guard_overlay_copy(&state, 1, false);
+
+        assert_eq!(copy.title, "Aimux is syncing");
+        assert_eq!(
+            copy.lines,
+            vec![
+                "Aimux is syncing the dashboard with the project service.".to_owned(),
+                "Actions resume automatically.".to_owned(),
+            ]
+        );
+        assert!(copy.waiting);
+
+        let copy = runtime_guard_overlay_copy(&state, RUNTIME_GUARD_ESCALATION_MS, false);
+        assert_eq!(copy.title, "Aimux build mismatch");
+        assert_eq!(
+            copy.lines,
+            vec![
+                "Expected build: expected-stamp".to_owned(),
+                "Running service: running-stamp".to_owned(),
+                "Run this in any terminal: aimux restart".to_owned(),
+            ]
+        );
+        assert!(!copy.waiting);
+    }
+
+    #[test]
+    fn overlay_names_build_stamp_mismatch_when_repair_fails() {
+        let expected = manifest("expected-stamp");
+        let state = evaluate_runtime_guard_against(
+            &input(RuntimeGuardServiceManifest::Value(json!({
+                "apiVersion": 5,
+                "buildStamp": "running-stamp",
+                "capabilities": expected.capabilities,
+            }))),
+            Some(&expected),
+        );
+        let copy = runtime_guard_overlay_copy(&state, 1, true);
 
         assert_eq!(copy.title, "Aimux build mismatch");
         assert_eq!(
