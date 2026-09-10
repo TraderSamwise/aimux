@@ -145,7 +145,6 @@ pub mod session_bootstrap;
 pub mod session_launch;
 pub mod session_recency;
 pub mod session_runtime;
-pub mod session_runtime_agent_controls_contract;
 pub mod session_runtime_headline_contract;
 pub mod session_runtime_label_update_contract;
 pub mod session_runtime_metadata_contract;
