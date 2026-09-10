@@ -215,14 +215,22 @@ fn route_agents_reads_topology_metadata_and_exchange_tasks() {
             "codex-offline",
             "codex-fresh",
             "codex-error",
-            "unknown-tool"
+            "unknown-tool",
+            "aider-offline",
         ]
     );
+    assert_eq!(find(agents, "codex-live")["status"], "running");
     let codex = find(agents, "codex-offline");
     assert_eq!(codex["restoreState"], "ready");
     assert_eq!(codex["attention"], "needs_response");
     assert_eq!(codex["scribe"], true);
     assert_eq!(codex["task"]["id"], "task-1");
+    let aider = find(agents, "aider-offline");
+    assert_eq!(aider["restoreState"], "blocked");
+    assert_eq!(
+        aider["restoreBlockedReason"],
+        "agent tool \"aider\" does not support exact backend resume"
+    );
     cleanup(project);
 }
 
@@ -535,7 +543,9 @@ fn topology_fixture() -> Value {
             { "id": "node-aider", "rigId": "rig-1", "logicalId": "aider-offline", "toolConfigKey": "aider", "createdAt": "2026-01-01T00:00:00.000Z" }
         ],
         "edges": [],
-        "bindings": [],
+        "bindings": [
+            { "id": "binding-live", "nodeId": "node-live", "tmuxSession": "aimux-repo", "tmuxWindowId": "@1", "tmuxWindowIndex": 1, "tmuxWindowName": "codex", "updatedAt": "2026-01-01T00:00:00.000Z" }
+        ],
         "sessions": [
             { "id": "codex-live", "nodeId": "node-live", "status": "running", "command": "codex", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" },
             { "id": "codex-offline", "nodeId": "node-offline", "status": "offline", "command": "codex", "backendSessionId": "backend-1", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" },

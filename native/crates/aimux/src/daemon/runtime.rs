@@ -112,7 +112,7 @@ use crate::repair_events::{
 };
 use crate::runtime_coherence::{
     RuntimeCoherenceHealth, RuntimeCoherenceHealthProbe, RuntimeCoherenceInput,
-    RuntimeCoherenceTmux, RuntimeCoherenceTmuxWindow, build_runtime_coherence_report,
+    RuntimeCoherenceTmux, RuntimeCoherenceTmuxWindow, build_runtime_coherence_report_with_resolver,
     render_runtime_coherence_report,
 };
 use crate::runtime_guard::read_runtime_rebuild_required;
@@ -1263,6 +1263,7 @@ impl RealDaemonRuntime {
                 .global_aimux_dir()
                 .to_string_lossy()
                 .into_owned(),
+            runtime_owner: get_runtime_owner_id(),
             recognized_project_roots,
         };
         let mut plan_runtime = SystemLifecycleOrphanRuntime::new();
@@ -1293,10 +1294,14 @@ impl RealDaemonRuntime {
         );
         let status = if !result.failed_process_pids.is_empty()
             || !result.failed_tmux_sessions.is_empty()
+            || !result.failed_tmux_windows.is_empty()
             || !result.errors.is_empty()
         {
             STATUS_FAILED
-        } else if result.process_pids.is_empty() && result.tmux_sessions.is_empty() {
+        } else if result.process_pids.is_empty()
+            && result.tmux_sessions.is_empty()
+            && result.tmux_windows.is_empty()
+        {
             STATUS_SKIPPED
         } else {
             STATUS_REPAIRED
@@ -1667,6 +1672,17 @@ fn endpoint_key(endpoint: &Value) -> Option<String> {
         endpoint.get("host")?.as_str()?,
         endpoint.get("port")?.as_u64()?
     ))
+}
+
+fn dashboard_expected_build_stamps(projects: &[ProjectsRouteProject]) -> BTreeMap<String, String> {
+    projects
+        .iter()
+        .filter_map(|project| {
+            DashboardTargetContext::for_project(&project.path)
+                .ok()
+                .map(|context| (project.path.clone(), context.dashboard_build_stamp))
+        })
+        .collect()
 }
 
 fn runtime_coherence_tmux() -> RuntimeCoherenceTmux {
@@ -2583,33 +2599,36 @@ impl DaemonOperationsTextRuntime for RealDaemonRuntime {
         let process_list = list_process_args();
         let expected_project_service = self.project_service_info();
         let mut resolver = self.resolver.clone();
-        let mut report = build_runtime_coherence_report(RuntimeCoherenceInput {
-            generated_at: generated_at.clone(),
-            cli_version: read_aimux_runtime_version(),
-            build_profile: read_aimux_build_profile_from_package_root(package_root()),
-            cli_launch: aimux_cli_launch_json(cli_launch),
-            expected_project_service: expected_project_service.clone(),
-            expected_runtime_owner: get_runtime_owner_id(),
-            daemon_info: Some(
-                serde_json::to_value(self.current_daemon_info(&generated_at))
-                    .unwrap_or(Value::Null),
-            ),
-            daemon_projects: state
-                .projects
-                .iter()
-                .map(|(key, value)| (key.clone(), value.clone()))
-                .collect(),
-            endpoints: project_endpoints_by_root(&projects),
-            health: project_service_health_by_endpoint(
-                &projects,
-                &expected_project_service,
-                &mut resolver,
-            ),
-            tmux: (self.runtime_coherence_tmux_provider)(),
-            dashboard_build_stamps: BTreeMap::new(),
-            process_args: process_args_by_pid(&process_list),
-            process_list: process_list_json(process_list),
-        });
+        let mut report = build_runtime_coherence_report_with_resolver(
+            RuntimeCoherenceInput {
+                generated_at: generated_at.clone(),
+                cli_version: read_aimux_runtime_version(),
+                build_profile: read_aimux_build_profile_from_package_root(package_root()),
+                cli_launch: aimux_cli_launch_json(cli_launch),
+                expected_project_service: expected_project_service.clone(),
+                expected_runtime_owner: get_runtime_owner_id(),
+                daemon_info: Some(
+                    serde_json::to_value(self.current_daemon_info(&generated_at))
+                        .unwrap_or(Value::Null),
+                ),
+                daemon_projects: state
+                    .projects
+                    .iter()
+                    .map(|(key, value)| (key.clone(), value.clone()))
+                    .collect(),
+                endpoints: project_endpoints_by_root(&projects),
+                health: project_service_health_by_endpoint(
+                    &projects,
+                    &expected_project_service,
+                    &mut resolver,
+                ),
+                tmux: (self.runtime_coherence_tmux_provider)(),
+                dashboard_build_stamps: dashboard_expected_build_stamps(&projects),
+                process_args: process_args_by_pid(&process_list),
+                process_list: process_list_json(process_list),
+            },
+            &mut resolver,
+        );
         if let Value::Object(object) = &mut report {
             object.insert("expectedServiceManifest".into(), expected_project_service);
             object.insert("projectCount".into(), json!(projects.len()));
@@ -3823,6 +3842,11 @@ fn restart_summary(projects: &[Value], orphan_cleanup: &Value) -> Value {
             .unwrap_or(0),
         "orphanTmuxSessionsCleaned": orphan_cleanup
             .get("tmuxSessions")
+            .and_then(Value::as_array)
+            .map(Vec::len)
+            .unwrap_or(0),
+        "orphanTmuxWindowsCleaned": orphan_cleanup
+            .get("tmuxWindows")
             .and_then(Value::as_array)
             .map(Vec::len)
             .unwrap_or(0),

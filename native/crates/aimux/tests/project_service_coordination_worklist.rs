@@ -12,6 +12,8 @@ use std::fs::{create_dir_all, remove_dir_all, write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+mod support;
+
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[test]
@@ -131,7 +133,8 @@ fn route_keeps_live_cold_teammate_service_and_missing_targets_visible() {
     .unwrap();
     write_runtime_exchange(runtime_exchange_path(&state_dir), &exchange_fixture()).unwrap();
 
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids(support::live_window_ids(&["@1", "@2"]));
     let response = route_project_service_request(
         &context,
         "GET",
@@ -171,7 +174,10 @@ fn topology_fixture() -> Value {
             { "id": "node-service", "rigId": "rig-1", "logicalId": "service", "toolConfigKey": "shell", "cwd": "/repo", "createdAt": "2026-01-01T00:00:00.000Z" }
         ],
         "edges": [],
-        "bindings": [],
+        "bindings": [
+            { "id": "binding-live", "nodeId": "node-live", "tmuxSession": "aimux-repo", "tmuxWindowId": "@1", "tmuxWindowIndex": 1, "tmuxWindowName": "codex", "updatedAt": "2026-01-01T00:00:00.000Z" },
+            { "id": "binding-teammate", "nodeId": "node-teammate", "tmuxSession": "aimux-repo", "tmuxWindowId": "@2", "tmuxWindowIndex": 2, "tmuxWindowName": "codex", "updatedAt": "2026-01-01T00:00:00.000Z" }
+        ],
         "sessions": [
             { "id": "live", "nodeId": "node-live", "status": "running", "command": "codex", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" },
             { "id": "cold", "nodeId": "node-cold", "status": "offline", "command": "codex", "backendSessionId": "backend-cold", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" },

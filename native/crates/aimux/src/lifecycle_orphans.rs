@@ -4,7 +4,10 @@ use crate::process_inspector::{
     ProcessArgsEntry, is_aimux_project_service_process_args, is_pid_alive, list_process_args,
     list_process_parents, process_env_value, read_process_args, read_process_args_with_env,
 };
-use crate::tmux::{TmuxRuntimeManager, tmux_command_from_env};
+use crate::tmux::{
+    TMUX_RUNTIME_OWNER_OPTION, TmuxRuntimeManager, TmuxTarget, TmuxWindowInfo,
+    is_dashboard_window_name, tmux_command_from_env,
+};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -23,6 +26,9 @@ pub struct LifecycleOrphanCleanupResult {
     pub attempted_tmux_sessions: Vec<String>,
     pub tmux_sessions: Vec<String>,
     pub failed_tmux_sessions: Vec<String>,
+    pub attempted_tmux_windows: Vec<String>,
+    pub tmux_windows: Vec<String>,
+    pub failed_tmux_windows: Vec<String>,
     pub errors: Vec<String>,
 }
 
@@ -31,11 +37,13 @@ pub struct LifecycleOrphanCleanupResult {
 pub struct LifecycleOrphanPlan {
     pub process_pids: Vec<i32>,
     pub tmux_sessions: Vec<String>,
+    pub tmux_windows: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectServiceOrphanScope {
     pub aimux_home: String,
+    pub runtime_owner: String,
     pub recognized_project_roots: BTreeSet<String>,
 }
 
@@ -71,6 +79,8 @@ pub trait LifecycleOrphanRuntime {
     fn tmux_is_available(&mut self) -> bool;
     fn list_tmux_session_names(&mut self) -> Vec<String>;
     fn get_tmux_session_option(&mut self, session_name: &str, key: &str) -> Option<String>;
+    fn list_tmux_windows(&mut self, session_name: &str) -> Vec<TmuxWindowInfo>;
+    fn kill_tmux_window(&mut self, target: &TmuxTarget) -> Result<(), String>;
     fn kill_tmux_session(&mut self, session_name: &str) -> Result<(), String>;
     fn list_live_tmux_pane_pids(&mut self) -> BTreeSet<i32>;
 }
@@ -134,6 +144,14 @@ impl LifecycleOrphanRuntime for SystemLifecycleOrphanRuntime {
         self.tmux.get_session_option(session_name, key)
     }
 
+    fn list_tmux_windows(&mut self, session_name: &str) -> Vec<TmuxWindowInfo> {
+        self.tmux.list_windows(session_name)
+    }
+
+    fn kill_tmux_window(&mut self, target: &TmuxTarget) -> Result<(), String> {
+        self.tmux.kill_window(target)
+    }
+
     fn kill_tmux_session(&mut self, session_name: &str) -> Result<(), String> {
         self.tmux.kill_session(session_name)
     }
@@ -177,16 +195,19 @@ pub fn plan_lifecycle_validation_orphans_with_scope(
     project_service_scope: Option<&ProjectServiceOrphanScope>,
 ) -> LifecycleOrphanPlan {
     let tmux_available = runtime.tmux_is_available();
-    let tmux_sessions = if tmux_available {
-        unique_strings(
-            runtime
-                .list_tmux_session_names()
-                .into_iter()
-                .filter(|session_name| is_lifecycle_validation_tmux_session(session_name, runtime)),
-        )
-    } else {
-        Vec::new()
-    };
+    let (tmux_sessions, tmux_windows) =
+        if tmux_available {
+            let tmux_sessions =
+                unique_strings(runtime.list_tmux_session_names().into_iter().filter(
+                    |session_name| is_lifecycle_validation_tmux_session(session_name, runtime),
+                ));
+            let tmux_windows = project_service_scope
+                .map(|scope| unrecognized_same_owner_dashboard_windows(runtime, scope))
+                .unwrap_or_default();
+            (tmux_sessions, tmux_windows)
+        } else {
+            (Vec::new(), Vec::new())
+        };
     let processes = runtime.list_processes();
     let parents = runtime.list_process_parents();
     let live_pane_pids = if tmux_available {
@@ -205,6 +226,7 @@ pub fn plan_lifecycle_validation_orphans_with_scope(
     LifecycleOrphanPlan {
         process_pids,
         tmux_sessions,
+        tmux_windows,
     }
 }
 
@@ -219,21 +241,46 @@ pub fn cleanup_lifecycle_validation_orphans(
         attempted_tmux_sessions: Vec::new(),
         tmux_sessions: Vec::new(),
         failed_tmux_sessions: Vec::new(),
+        attempted_tmux_windows: Vec::new(),
+        tmux_windows: Vec::new(),
+        failed_tmux_windows: Vec::new(),
         errors: Vec::new(),
     };
 
     let tmux_available = runtime.tmux_is_available();
     if tmux_available {
+        let mut killed_sessions = BTreeSet::new();
         for session_name in unique_strings(runtime.list_tmux_session_names()) {
             if !is_lifecycle_validation_tmux_session(&session_name, runtime) {
                 continue;
             }
             result.attempted_tmux_sessions.push(session_name.clone());
             match runtime.kill_tmux_session(&session_name) {
-                Ok(()) => result.tmux_sessions.push(session_name),
+                Ok(()) => {
+                    killed_sessions.insert(session_name.clone());
+                    result.tmux_sessions.push(session_name);
+                }
                 Err(error) => {
                     result.failed_tmux_sessions.push(session_name.clone());
                     result.errors.push(format!("{session_name}: {error}"));
+                }
+            }
+        }
+        if let Some(scope) = options.project_service_scope.as_ref() {
+            let mut seen_windows = BTreeSet::new();
+            for orphan in unrecognized_same_owner_dashboard_window_targets(runtime, scope) {
+                if killed_sessions.contains(&orphan.target.session_name)
+                    || !seen_windows.insert(orphan.target.window_id.clone())
+                {
+                    continue;
+                }
+                result.attempted_tmux_windows.push(orphan.label.clone());
+                match runtime.kill_tmux_window(&orphan.target) {
+                    Ok(()) => result.tmux_windows.push(orphan.label),
+                    Err(error) => {
+                        result.failed_tmux_windows.push(orphan.label.clone());
+                        result.errors.push(format!("{}: {error}", orphan.label));
+                    }
                 }
             }
         }
@@ -341,6 +388,9 @@ pub fn cleanup_lifecycle_validation_orphans(
     result.attempted_tmux_sessions = unique_strings(result.attempted_tmux_sessions);
     result.tmux_sessions = unique_strings(result.tmux_sessions);
     result.failed_tmux_sessions = unique_strings(result.failed_tmux_sessions);
+    result.attempted_tmux_windows = unique_strings(result.attempted_tmux_windows);
+    result.tmux_windows = unique_strings(result.tmux_windows);
+    result.failed_tmux_windows = unique_strings(result.failed_tmux_windows);
     result
 }
 
@@ -406,6 +456,71 @@ fn is_validation_option(value: &str) -> bool {
         || value.contains("/tmp/aimux-lifecycle")
         || value.contains("/tmp/aimux-home-validate")
         || value.contains("/tmp/aimux-home-lifecycle")
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OrphanDashboardWindow {
+    target: TmuxTarget,
+    label: String,
+}
+
+fn unrecognized_same_owner_dashboard_windows(
+    runtime: &mut impl LifecycleOrphanRuntime,
+    scope: &ProjectServiceOrphanScope,
+) -> Vec<String> {
+    unrecognized_same_owner_dashboard_window_targets(runtime, scope)
+        .into_iter()
+        .map(|window| window.label)
+        .collect()
+}
+
+fn unrecognized_same_owner_dashboard_window_targets(
+    runtime: &mut impl LifecycleOrphanRuntime,
+    scope: &ProjectServiceOrphanScope,
+) -> Vec<OrphanDashboardWindow> {
+    let mut windows = Vec::new();
+    let mut seen = BTreeSet::new();
+    for session_name in unique_strings(runtime.list_tmux_session_names()) {
+        let Some(project_root) =
+            runtime.get_tmux_session_option(&session_name, "@aimux-project-root")
+        else {
+            continue;
+        };
+        if !is_unrecognized_project_root(&project_root, &scope.recognized_project_roots) {
+            continue;
+        }
+        if runtime
+            .get_tmux_session_option(&session_name, TMUX_RUNTIME_OWNER_OPTION)
+            .as_deref()
+            != Some(scope.runtime_owner.as_str())
+        {
+            continue;
+        }
+        for window in runtime.list_tmux_windows(&session_name) {
+            if !is_dashboard_window_name(&window.name) || !seen.insert(window.id.clone()) {
+                continue;
+            }
+            let label = format!("{}:{}", session_name, window.id);
+            windows.push(OrphanDashboardWindow {
+                target: TmuxTarget {
+                    session_name: session_name.clone(),
+                    window_id: window.id,
+                    window_index: window.index,
+                    window_name: window.name,
+                    pane_dead: window.pane_dead,
+                },
+                label,
+            });
+        }
+    }
+    windows
+}
+
+fn is_unrecognized_project_root(root: &str, recognized_roots: &BTreeSet<String>) -> bool {
+    let root = normalize_path(root);
+    !recognized_roots
+        .iter()
+        .any(|recognized| normalize_path(recognized) == root)
 }
 
 fn candidate_process_pids(
@@ -718,9 +833,11 @@ mod tests {
         tmux_available: bool,
         tmux_sessions: Vec<String>,
         tmux_options: HashMap<(String, String), String>,
+        tmux_windows: HashMap<String, Vec<TmuxWindowInfo>>,
         live_pane_pids: BTreeSet<i32>,
         killed_pids: Vec<(i32, String)>,
         killed_sessions: Vec<String>,
+        killed_windows: Vec<String>,
         kill_removes_alive: bool,
     }
 
@@ -733,6 +850,21 @@ mod tests {
         fn option(mut self, session_name: &str, key: &str, value: &str) -> Self {
             self.tmux_options
                 .insert((session_name.to_owned(), key.to_owned()), value.to_owned());
+            self
+        }
+
+        fn dashboard_window(mut self, session_name: &str, window_id: &str) -> Self {
+            self.tmux_windows
+                .entry(session_name.to_owned())
+                .or_default()
+                .push(TmuxWindowInfo {
+                    id: window_id.to_owned(),
+                    index: 0,
+                    name: "dashboard".to_owned(),
+                    active: true,
+                    activity: None,
+                    pane_dead: None,
+                });
             self
         }
 
@@ -805,6 +937,19 @@ mod tests {
             self.tmux_options
                 .get(&(session_name.to_owned(), key.to_owned()))
                 .cloned()
+        }
+
+        fn list_tmux_windows(&mut self, session_name: &str) -> Vec<TmuxWindowInfo> {
+            self.tmux_windows
+                .get(session_name)
+                .cloned()
+                .unwrap_or_default()
+        }
+
+        fn kill_tmux_window(&mut self, target: &TmuxTarget) -> Result<(), String> {
+            self.killed_windows
+                .push(format!("{}:{}", target.session_name, target.window_id));
+            Ok(())
         }
 
         fn kill_tmux_session(&mut self, session_name: &str) -> Result<(), String> {
@@ -1086,6 +1231,7 @@ mod tests {
                 process_kill_grace_ms: 0,
                 project_service_scope: Some(ProjectServiceOrphanScope {
                     aimux_home: "/Users/sam/.aimux".into(),
+                    runtime_owner: "owner-new".into(),
                     recognized_project_roots: BTreeSet::from(["/Users/sam/cs/aimux".into()]),
                 }),
             },
@@ -1117,6 +1263,7 @@ mod tests {
                 process_kill_grace_ms: 0,
                 project_service_scope: Some(ProjectServiceOrphanScope {
                     aimux_home: "/Users/sam/.aimux".into(),
+                    runtime_owner: "owner-new".into(),
                     recognized_project_roots: BTreeSet::from(["/Users/sam/cs/aimux".into()]),
                 }),
             },
@@ -1147,6 +1294,7 @@ mod tests {
                 process_kill_grace_ms: 0,
                 project_service_scope: Some(ProjectServiceOrphanScope {
                     aimux_home: "/Users/sam/.aimux".into(),
+                    runtime_owner: "owner-new".into(),
                     recognized_project_roots: BTreeSet::new(),
                 }),
             },
@@ -1176,6 +1324,7 @@ mod tests {
                 process_kill_grace_ms: 0,
                 project_service_scope: Some(ProjectServiceOrphanScope {
                     aimux_home: "/Users/sam/.aimux".into(),
+                    runtime_owner: "owner-new".into(),
                     recognized_project_roots: BTreeSet::from(["/Users/sam/cs/aimux".into()]),
                 }),
             },
@@ -1205,6 +1354,7 @@ mod tests {
                 process_kill_grace_ms: 0,
                 project_service_scope: Some(ProjectServiceOrphanScope {
                     aimux_home: "/Users/sam/.aimux".into(),
+                    runtime_owner: "owner-new".into(),
                     recognized_project_roots: BTreeSet::from([
                         "/Users/sam/cs/Spaced Project".into()
                     ]),
@@ -1214,5 +1364,85 @@ mod tests {
 
         assert!(result.attempted_process_pids.is_empty());
         assert!(runtime.killed_pids.is_empty());
+    }
+
+    #[test]
+    fn lifecycle_cleanup_reaps_same_owner_dashboard_window_for_unrecognized_project_root() {
+        let mut runtime = FakeLifecycleRuntime {
+            tmux_available: true,
+            tmux_sessions: vec!["aimux-sam-5e9c1a8e1d4e".into()],
+            ..Default::default()
+        }
+        .option(
+            "aimux-sam-5e9c1a8e1d4e",
+            "@aimux-project-root",
+            "/Users/sam",
+        )
+        .option(
+            "aimux-sam-5e9c1a8e1d4e",
+            TMUX_RUNTIME_OWNER_OPTION,
+            "owner-new",
+        )
+        .dashboard_window("aimux-sam-5e9c1a8e1d4e", "@1190");
+
+        let result = cleanup_lifecycle_validation_orphans(
+            &mut runtime,
+            CleanupLifecycleOrphansOptions {
+                current_pid: 999,
+                process_exit_timeout_ms: 0,
+                process_kill_grace_ms: 0,
+                project_service_scope: Some(ProjectServiceOrphanScope {
+                    aimux_home: "/Users/sam/.aimux".into(),
+                    runtime_owner: "owner-new".into(),
+                    recognized_project_roots: BTreeSet::from(["/Users/sam/cs/aimux".into()]),
+                }),
+            },
+        );
+
+        assert_eq!(
+            result.attempted_tmux_windows,
+            vec!["aimux-sam-5e9c1a8e1d4e:@1190"]
+        );
+        assert_eq!(result.tmux_windows, vec!["aimux-sam-5e9c1a8e1d4e:@1190"]);
+        assert_eq!(runtime.killed_windows, vec!["aimux-sam-5e9c1a8e1d4e:@1190"]);
+        assert!(runtime.killed_sessions.is_empty());
+    }
+
+    #[test]
+    fn lifecycle_cleanup_does_not_reap_foreign_owner_dashboard_window() {
+        let mut runtime = FakeLifecycleRuntime {
+            tmux_available: true,
+            tmux_sessions: vec!["aimux-sam-5e9c1a8e1d4e".into()],
+            ..Default::default()
+        }
+        .option(
+            "aimux-sam-5e9c1a8e1d4e",
+            "@aimux-project-root",
+            "/Users/sam",
+        )
+        .option(
+            "aimux-sam-5e9c1a8e1d4e",
+            TMUX_RUNTIME_OWNER_OPTION,
+            "owner-foreign",
+        )
+        .dashboard_window("aimux-sam-5e9c1a8e1d4e", "@1190");
+
+        let result = cleanup_lifecycle_validation_orphans(
+            &mut runtime,
+            CleanupLifecycleOrphansOptions {
+                current_pid: 999,
+                process_exit_timeout_ms: 0,
+                process_kill_grace_ms: 0,
+                project_service_scope: Some(ProjectServiceOrphanScope {
+                    aimux_home: "/Users/sam/.aimux".into(),
+                    runtime_owner: "owner-new".into(),
+                    recognized_project_roots: BTreeSet::from(["/Users/sam/cs/aimux".into()]),
+                }),
+            },
+        );
+
+        assert!(result.attempted_tmux_windows.is_empty());
+        assert!(result.tmux_windows.is_empty());
+        assert!(runtime.killed_windows.is_empty());
     }
 }

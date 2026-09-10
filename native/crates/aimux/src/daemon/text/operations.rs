@@ -110,9 +110,10 @@ pub fn render_runtime_restart_result(result: &Value) -> String {
             summary_number(summary, "dashboardsReloaded")
         ),
         format!(
-            "  validation orphans: {} processes, {} tmux sessions",
+            "  validation orphans: {} processes, {} tmux sessions, {} tmux windows",
             summary_number(summary, "orphanProcessesCleaned"),
-            summary_number(summary, "orphanTmuxSessionsCleaned")
+            summary_number(summary, "orphanTmuxSessionsCleaned"),
+            summary_number(summary, "orphanTmuxWindowsCleaned")
         ),
         format!("  failures: {}", summary_number(summary, "failures")),
     ];

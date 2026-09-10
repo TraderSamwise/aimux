@@ -1539,7 +1539,7 @@ mod tests {
 
     #[test]
     fn cli_restart_delegates_project_work_to_daemon_restart_command() {
-        let calls = RefCell::new(Vec::<String>::new());
+        let calls = RefCell::new(Vec::<Value>::new());
 
         let result = restart_control_plane_from_cli_with_lock_owner(
             None,
@@ -1548,30 +1548,32 @@ mod tests {
             RestartControlPlaneCliDeps {
                 should_stop_daemon: true,
                 assert_not_stopping_newer_daemon: || {
-                    calls.borrow_mut().push("assert-not-stale".into());
+                    calls.borrow_mut().push(json!({ "fn": "assert-not-stale" }));
                     Ok(())
                 },
                 stop_daemon_process: || {
-                    calls.borrow_mut().push("stop-daemon-process".into());
+                    calls
+                        .borrow_mut()
+                        .push(json!({ "fn": "stop-daemon-process" }));
                     Ok(())
                 },
                 ensure_daemon_running: || {
-                    calls.borrow_mut().push("ensure-daemon fresh".into());
+                    calls
+                        .borrow_mut()
+                        .push(json!({ "fn": "ensure-daemon fresh" }));
                     Ok(())
                 },
                 request_core_command:
                     |command: &'static str,
                      payload: Option<Value>,
                      options: CoreCommandRequestOptions| {
-                        calls.borrow_mut().push(format!(
-                            "request command={command} payload={} ensure_daemon={} timeout={}",
-                            payload.unwrap_or(Value::Null),
-                            options.ensure_daemon,
-                            options
-                                .timeout_ms
-                                .map(|value| value.to_string())
-                                .unwrap_or_else(|| "none".into())
-                        ));
+                        calls.borrow_mut().push(json!({
+                            "fn": "request",
+                            "command": command,
+                            "payload": payload.unwrap_or(Value::Null),
+                            "ensureDaemon": options.ensure_daemon,
+                            "timeoutMs": options.timeout_ms,
+                        }));
                         Ok(CoreCommandOk {
                             ok: true,
                             id: "test".into(),
@@ -1591,10 +1593,20 @@ mod tests {
         assert_eq!(
             calls.into_inner(),
             vec![
-                "assert-not-stale",
-                "stop-daemon-process",
-                "ensure-daemon fresh",
-                "request command=core.restart payload={\"backendIdCapturePrechecked\":true,\"force\":true,\"restartLockOwnerPid\":12345} ensure_daemon=false timeout=none",
+                json!({ "fn": "assert-not-stale" }),
+                json!({ "fn": "stop-daemon-process" }),
+                json!({ "fn": "ensure-daemon fresh" }),
+                json!({
+                    "fn": "request",
+                    "command": "core.restart",
+                    "payload": {
+                        "force": true,
+                        "backendIdCapturePrechecked": true,
+                        "restartLockOwnerPid": 12345,
+                    },
+                    "ensureDaemon": false,
+                    "timeoutMs": Value::Null,
+                }),
             ]
         );
     }

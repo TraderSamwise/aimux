@@ -12,6 +12,8 @@ use std::fs::{create_dir_all, remove_dir_all, write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+mod support;
+
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Default)]
@@ -36,7 +38,8 @@ fn advertised_gui_capabilities_have_backing_http_contracts() {
     let project = temp_project("capabilities");
     let state_dir = project.join("state");
     seed_gui_project(&project, &state_dir);
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids(support::live_window_ids(&["@1", "@2"]));
 
     let health = route_project_service_request(&context, "GET", routes::HEALTH, None);
     assert_eq!(health.status, 200);
@@ -148,7 +151,8 @@ fn desktop_state_route_matches_app_contract_shape() {
     let project = temp_project("desktop-state");
     let state_dir = project.join("state");
     seed_gui_project(&project, &state_dir);
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids(support::live_window_ids(&["@1", "@2"]));
 
     let response = route_project_service_request(&context, "GET", routes::DESKTOP_STATE, None);
 

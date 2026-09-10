@@ -71,8 +71,14 @@ fn restart_contract_reaches_production_cli_restart_sequence() {
                  payload: Option<Value>,
                  options: CoreCommandRequestOptions| {
                     calls.borrow_mut().push("request");
-                assert_eq!(command, "core.restart");
-                    assert_eq!(payload, Some(json!({ "projectRoot": "/repo" })));
+                    assert_eq!(command, "core.restart");
+                    assert_eq!(
+                        payload,
+                        Some(json!({
+                            "projectRoot": "/repo",
+                            "backendIdCapturePrechecked": true,
+                        }))
+                    );
                     assert_eq!(
                         options,
                         CoreCommandRequestOptions {
@@ -259,10 +265,7 @@ fn restart_control_plane_from_cli(input: &Value) -> Value {
                  payload: Option<Value>,
                  options: CoreCommandRequestOptions| {
                     assert_eq!(command, "core.restart");
-                    assert_eq!(
-                        payload,
-                        project_root.map(|project_root| json!({ "projectRoot": project_root }))
-                    );
+                    assert_eq!(payload, Some(restart_payload(project_root)));
                     assert_eq!(
                         options,
                         CoreCommandRequestOptions {
@@ -301,6 +304,15 @@ fn restart_control_plane_from_cli(input: &Value) -> Value {
             "calls": calls.into_inner(),
         },
     })
+}
+
+fn restart_payload(project_root: Option<&str>) -> Value {
+    let mut payload = Map::new();
+    if let Some(project_root) = project_root {
+        payload.insert("projectRoot".into(), json!(project_root));
+    }
+    payload.insert("backendIdCapturePrechecked".into(), json!(true));
+    Value::Object(payload)
 }
 
 fn daemon_request_init(init: Option<&Value>) -> DaemonRequestInit {

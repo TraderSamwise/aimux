@@ -8,8 +8,8 @@ use aimux::tmux_expose::{
     LoadExposeScopeDeps, RELAUNCH_ON_RESIZE_EXIT, focus_expose_item_with, initial_expose_scope,
     load_expose_scope_items_with, load_overseer_expose_item_with, next_expose_scope,
     parse_expose_args, read_expose_ui_state, run_tmux_expose_with_client_and_capture,
-    run_tmux_expose_with_drivers, run_tmux_expose_with_input_source,
-    tmux_expose_options_from_socket_header, write_expose_ui_state, write_selected_window,
+    run_tmux_expose_with_drivers, tmux_expose_options_from_socket_header, write_expose_ui_state,
+    write_selected_window,
 };
 use aimux::tmux_expose_hot_snapshot::{
     HotExposeScopeKey, read_hot_expose_scope_view, write_hot_expose_scope_view,
@@ -136,6 +136,17 @@ impl FakeHttp {
             requests: Vec::new(),
         }
     }
+}
+
+fn run_tmux_expose_with_stable_size(
+    options: aimux::tmux_expose::TmuxExposeOptions,
+    input: &mut impl ExposeInputSource,
+    output: &mut impl std::io::Write,
+    client: &mut impl ExposeHttpClient,
+    capture: &mut impl ExposeTmuxCapture,
+) -> i32 {
+    let mut size_probe = FakeSizeProbe::default();
+    run_tmux_expose_with_drivers(options, input, output, client, capture, &mut size_probe)
 }
 
 impl ExposeHttpClient for FakeHttp {
@@ -495,7 +506,8 @@ fn socket_header_mapping_matches_metadata_server_contract() {
 #[test]
 fn runner_closes_opens_dashboard_and_focuses_numbered_global_tile() {
     let state_dir = temp_dir("runner-global");
-    let options = parsed_options(&state_dir);
+    let mut options = parsed_options(&state_dir);
+    options.client_tty = None;
 
     let mut close_client = FakeHttp::with_responses([json!({ "ok": true, "items": [] })]);
     let mut close_capture = FakeCapture::default();
@@ -549,7 +561,7 @@ fn runner_closes_opens_dashboard_and_focuses_numbered_global_tile() {
     ]);
     let mut focus_output = Vec::new();
     assert_eq!(
-        run_tmux_expose_with_input_source(
+        run_tmux_expose_with_stable_size(
             options.clone(),
             &mut focus_input,
             &mut focus_output,
@@ -588,7 +600,7 @@ fn runner_moves_selection_with_n_before_closing() {
     let mut output = Vec::new();
 
     assert_eq!(
-        run_tmux_expose_with_input_source(
+        run_tmux_expose_with_stable_size(
             options,
             &mut input,
             &mut output,
@@ -631,7 +643,7 @@ fn runner_reloads_scope_toggles_sort_and_uses_same_project_selection_file() {
     let mut output = Vec::new();
 
     assert_eq!(
-        run_tmux_expose_with_input_source(
+        run_tmux_expose_with_stable_size(
             options,
             &mut input,
             &mut output,
@@ -684,7 +696,7 @@ fn runner_renders_hot_snapshot_without_blocking_on_item_discovery() {
     let mut output = Vec::new();
 
     assert_eq!(
-        run_tmux_expose_with_input_source(
+        run_tmux_expose_with_stable_size(
             options,
             &mut input,
             &mut output,
@@ -718,7 +730,7 @@ fn runner_renders_loading_frame_before_initial_item_discovery() {
     let mut output = Vec::new();
 
     assert_eq!(
-        run_tmux_expose_with_input_source(
+        run_tmux_expose_with_stable_size(
             options,
             &mut input,
             &mut output,
@@ -767,7 +779,7 @@ fn runner_applies_pending_navigation_after_initial_item_discovery() {
     let mut output = Vec::new();
 
     assert_eq!(
-        run_tmux_expose_with_input_source(
+        run_tmux_expose_with_stable_size(
             options,
             &mut input,
             &mut output,
@@ -869,7 +881,7 @@ fn runner_matches_node_generated_whole_expose_frame() {
     )]);
     let mut output = Vec::new();
 
-    let exit_code = run_tmux_expose_with_input_source(
+    let exit_code = run_tmux_expose_with_stable_size(
         options,
         &mut input,
         &mut output,
@@ -912,6 +924,7 @@ fn runner_validates_stale_hot_selection_before_writing_selection_file() {
     options.current_window = Some("codex".into());
     options.expose_config.initial_scope = Some(ExposeScope::Project);
     options.selection_file = Some(selection_file.clone());
+    options.client_tty = None;
     let mut client = FakeHttp::with_responses([json!({ "ok": true })]);
     let mut capture = FakeCapture::with_responses([Err("tmux unavailable".into())]);
     let mut input: &[u8] = b"\r";
@@ -954,7 +967,7 @@ fn runner_replaces_preview_snapshot_with_live_capture_output() {
     let mut output = Vec::new();
 
     assert_eq!(
-        run_tmux_expose_with_input_source(
+        run_tmux_expose_with_stable_size(
             options,
             &mut input,
             &mut output,
@@ -988,7 +1001,7 @@ fn runner_writes_loaded_items_to_hot_snapshot_cache() {
     let mut output = Vec::new();
 
     assert_eq!(
-        run_tmux_expose_with_input_source(
+        run_tmux_expose_with_stable_size(
             options,
             &mut input,
             &mut output,
@@ -1047,7 +1060,7 @@ fn runner_writes_zoomed_project_items_to_hot_snapshot_cache() {
     let mut output = Vec::new();
 
     assert_eq!(
-        run_tmux_expose_with_input_source(
+        run_tmux_expose_with_stable_size(
             options,
             &mut input,
             &mut output,
@@ -1095,7 +1108,7 @@ fn runner_refreshes_live_captures_on_timeout_tick() {
     let mut output = Vec::new();
 
     assert_eq!(
-        run_tmux_expose_with_input_source(
+        run_tmux_expose_with_stable_size(
             options,
             &mut input,
             &mut output,
@@ -1149,7 +1162,7 @@ fn runner_reloads_items_every_fifth_timeout_tick() {
     let mut output = Vec::new();
 
     assert_eq!(
-        run_tmux_expose_with_input_source(
+        run_tmux_expose_with_stable_size(
             options,
             &mut input,
             &mut output,
