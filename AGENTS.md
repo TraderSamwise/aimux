@@ -64,6 +64,14 @@ Background work belongs on the shared periodic rail, never a bare
 from when it fell due. If an event already reports the change, drive the work
 from that event and keep any periodic scan as a slow backstop only.
 
+For Rust project-service background tasks, the shared rail is
+`native/crates/aimux/src/project_service/scheduler.rs`: implement
+`PeriodicTask`, wire it from `project_service/process.rs`, and keep the
+schedule-from-finish invariant. A reviewer's one-line test is: "if this work
+reads or mutates shared project state repeatedly after startup, why is it not a
+`PeriodicTask`, and if an event already reports the change, why is it polling at
+all?"
+
 ## App (`app/`)
 
 The browser and native clients live in `app/`. It is one Expo Router app for
