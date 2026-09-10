@@ -6,7 +6,9 @@ use aimux::project_service::agents::{
     select_direct_teammates, teammate_api_record,
     topology_desktop_session_list_with_live_window_ids,
 };
-use aimux::project_service::lifecycle::{ProjectLifecycleRuntime, route_lifecycle_request_with_runtime};
+use aimux::project_service::lifecycle::{
+    ProjectLifecycleRuntime, route_lifecycle_request_with_runtime,
+};
 use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
 use aimux::project_service::runtime_exchange::{runtime_exchange_path, write_runtime_exchange};
 use aimux::runtime_topology::{
@@ -80,8 +82,8 @@ fn builds_agent_list_from_sessions_metadata_and_active_tasks() {
         json!({ "id": "task-1", "description": "Do it", "status": "in_progress" })
     );
     assert_eq!(agents[1]["restoreState"], "ready");
-    assert_eq!(agents[1]["overseer"], false);
-    assert_eq!(agents[1]["scribe"], false);
+    assert!(agents[1].get("overseer").is_none());
+    assert!(agents[1].get("scribe").is_none());
     assert!(agents[1]["task"].is_null());
 }
 
@@ -402,10 +404,11 @@ fn route_agent_spawn_composes_launch_and_records_topology_without_real_tmux() {
     assert!(argv.contains(&json!("resume")));
     assert!(argv.contains(&json!("backend-123")));
     assert_eq!(create["detached"], false);
-    assert!(runtime.calls.iter().any(|call| call == &json!({
-        "method": "clear_history",
-        "windowId": "@spawn"
-    })));
+    assert!(runtime.calls.iter().any(|call| call
+        == &json!({
+            "method": "clear_history",
+            "windowId": "@spawn"
+        })));
     let metadata = runtime
         .calls
         .iter()
@@ -413,7 +416,10 @@ fn route_agent_spawn_composes_launch_and_records_topology_without_real_tmux() {
         .expect("metadata call");
     assert_eq!(metadata["metadata"]["sessionId"], "codex-create");
     assert_eq!(metadata["metadata"]["backendSessionId"], "backend-123");
-    assert_eq!(metadata["metadata"]["args"], json!(["resume", "backend-123"]));
+    assert_eq!(
+        metadata["metadata"]["args"],
+        json!(["resume", "backend-123"])
+    );
     assert!(
         runtime
             .calls
@@ -438,8 +444,11 @@ fn route_agent_spawn_rejects_duplicate_live_session_before_tmux_launch() {
     let state_dir = project.join("state");
     create_dir_all(&state_dir).unwrap();
     write_project_config(&project, session_launch_config());
-    write_runtime_topology(runtime_topology_path(&state_dir), &duplicate_session_topology())
-        .unwrap();
+    write_runtime_topology(
+        runtime_topology_path(&state_dir),
+        &duplicate_session_topology(),
+    )
+    .unwrap();
 
     let context = isolation.project_context(&project, &state_dir);
     let mut runtime = FakeLifecycleRuntime::default();
@@ -457,7 +466,10 @@ fn route_agent_spawn_rejects_duplicate_live_session_before_tmux_launch() {
 
     assert_eq!(response.status, 500);
     assert_eq!(response.body["ok"], false);
-    assert_eq!(response.body["error"], "Session \"claude-dup123\" already exists");
+    assert_eq!(
+        response.body["error"],
+        "Session \"claude-dup123\" already exists"
+    );
     assert!(runtime.calls.is_empty());
     cleanup(project);
 }
@@ -492,10 +504,11 @@ fn route_agent_spawn_kills_window_when_metadata_write_fails() {
     assert_eq!(response.status, 500);
     assert_eq!(response.body["ok"], false);
     assert_eq!(response.body["error"], "metadata write failed");
-    assert!(runtime.calls.iter().any(|call| call == &json!({
-        "method": "kill_window",
-        "windowId": "@spawn"
-    })));
+    assert!(runtime.calls.iter().any(|call| call
+        == &json!({
+            "method": "kill_window",
+            "windowId": "@spawn"
+        })));
     let topology = read_runtime_topology(runtime_topology_path(&state_dir)).unwrap();
     assert!(topology["sessions"].as_array().unwrap().is_empty());
     cleanup(project);
@@ -663,7 +676,8 @@ impl ProjectLifecycleRuntime for FakeLifecycleRuntime {
     }
 
     fn find_main_repo(&mut self, cwd: &str) -> Result<String, String> {
-        self.calls.push(json!({ "method": "find_main_repo", "cwd": cwd }));
+        self.calls
+            .push(json!({ "method": "find_main_repo", "cwd": cwd }));
         Ok(cwd.to_owned())
     }
 

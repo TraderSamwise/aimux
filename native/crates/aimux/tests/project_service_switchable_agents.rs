@@ -6,6 +6,7 @@ use aimux::project_service::switchable_agents::{
     AgentListScope, ManagedWindowEntry, SwitchableContext, SwitchableListOptions,
     agent_status_chip, list_switchable_agent_items, resolve_next_agent, resolve_prev_agent,
     route_switchable_agent_request_with_runtime, serialize_fast_control_item,
+    topology_switchable_entries,
 };
 use aimux::runtime_topology::runtime_topology_path;
 use aimux::tmux::CapturePaneOptions;
@@ -93,6 +94,84 @@ fn filters_project_control_and_keeps_services_in_worktree_scope() {
         ids(&items),
         vec!["coder".to_owned(), "boss".to_owned(), "shell-1".to_owned()]
     );
+}
+
+#[test]
+fn topology_entries_apply_stored_control_demotion_over_stale_tmux_metadata() {
+    let topology = json!({
+        "version": 1,
+        "nodes": [{
+            "id": "node-worker",
+            "toolConfigKey": "claude",
+            "cwd": "/repo",
+            "label": "worker"
+        }],
+        "bindings": [{
+            "nodeId": "node-worker",
+            "tmuxSession": "aimux-repo",
+            "tmuxWindowId": "@7",
+            "tmuxWindowIndex": 7,
+            "tmuxWindowName": "claude"
+        }],
+        "sessions": [{
+            "id": "worker",
+            "nodeId": "node-worker",
+            "status": "running",
+            "tool": "claude",
+            "toolConfigKey": "claude",
+            "command": "claude",
+            "team": { "role": "scribe" },
+            "projectControl": true
+        }],
+        "services": []
+    });
+    let metadata = BTreeMap::from([("worker".into(), json!({ "scribe": false }))]);
+    let context = context("@1", "/repo");
+
+    let entries = topology_switchable_entries(&topology, &metadata);
+
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].metadata.get("role"), None);
+    assert_eq!(
+        entries[0].metadata.get("scribe").and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        entries[0]
+            .metadata
+            .get("projectControl")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+
+    let items = list_switchable_agent_items(
+        &[ManagedWindowEntry {
+            metadata: json!({
+                "kind": "agent",
+                "sessionId": "worker",
+                "command": "claude",
+                "toolConfigKey": "claude",
+                "worktreePath": "/repo",
+                "label": "worker",
+                "team": { "role": "scribe" },
+                "projectControl": true
+            }),
+            target: json!({
+                "sessionName": "aimux-repo",
+                "windowId": "@7",
+                "windowIndex": 7,
+                "windowName": "claude"
+            }),
+            alive: true,
+            activity: 7,
+        }],
+        &metadata,
+        &context,
+        &SwitchableListOptions::default(),
+        &json!({}),
+    );
+
+    assert_eq!(ids(&items), vec!["worker".to_owned()]);
 }
 
 #[test]

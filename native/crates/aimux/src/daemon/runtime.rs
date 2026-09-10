@@ -114,6 +114,7 @@ use crate::runtime_coherence::{
 };
 use crate::runtime_guard::read_runtime_rebuild_required;
 use crate::service_state_snapshot::stop_project_tmux_runtime_with_service_snapshots;
+use crate::team_contract::{is_overseer_session, is_project_control_session};
 use crate::tmux::{
     TMUX_DASHBOARD_BUILD_OPTION, TmuxRuntimeManager, TmuxTarget, is_dashboard_window_name,
     is_tmux_client_session_for_host,
@@ -2848,26 +2849,11 @@ fn is_agent_input_ready(agent: &Value) -> bool {
 }
 
 fn is_project_control_agent(agent: &Value) -> bool {
-    agent.get("projectControl").and_then(Value::as_bool) == Some(true)
-        || is_overseer_agent(agent)
-        || is_scribe_agent(agent)
+    is_project_control_session(Some(agent))
 }
 
 fn is_overseer_agent(agent: &Value) -> bool {
-    agent.get("overseer").and_then(Value::as_bool) == Some(true)
-        || team_role(agent) == Some("overseer")
-}
-
-fn is_scribe_agent(agent: &Value) -> bool {
-    if agent.get("scribe").and_then(Value::as_bool) == Some(false) {
-        return false;
-    }
-    agent.get("scribe").and_then(Value::as_bool) == Some(true) || team_role(agent) == Some("scribe")
-}
-
-fn team_role(agent: &Value) -> Option<&str> {
-    trimmed_value_string(agent.pointer("/team/role"))
-        .or_else(|| trimmed_value_string(agent.get("role")))
+    is_overseer_session(Some(agent))
 }
 
 fn agent_watch_label(agent: &Value) -> &str {
@@ -3450,6 +3436,21 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn watch_classifier_respects_explicit_control_demotion() {
+        let worker = json!({
+            "id": "claude-worker",
+            "status": "idle",
+            "tool": "claude",
+            "team": { "role": "overseer" },
+            "overseer": false,
+            "projectControl": false
+        });
+
+        assert!(!is_project_control_agent(&worker));
+        assert!(!is_overseer_agent(&worker));
+    }
 
     #[test]
     fn control_plane_restart_keeps_current_live_project_service() {

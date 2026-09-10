@@ -137,12 +137,13 @@ pub fn clear_project_flag_at(
     let project_state_dir = project_state_dir.as_ref();
     update_session_metadata_at(project_state_dir, session_id, now, |current| {
         let mut current = object_value(current);
-        if key == "scribe" {
+        if key == "overseer" || key == "scribe" {
             current.insert(key.into(), Value::Bool(false));
         } else {
             current.remove(key);
         }
         clear_matching_control_role_metadata(&mut current, key);
+        mark_project_control_false_if_no_control_role(&mut current);
         Value::Object(current)
     })
     .map(|_| ())?;
@@ -167,6 +168,20 @@ fn clear_matching_control_role_metadata(current: &mut Map<String, Value>, key: &
     }
     if team.is_empty() {
         current.remove("team");
+    }
+}
+
+fn mark_project_control_false_if_no_control_role(current: &mut Map<String, Value>) {
+    let has_control_role = current
+        .get("overseer")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        || current
+            .get("scribe")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+    if !has_control_role {
+        current.insert("projectControl".into(), Value::Bool(false));
     }
 }
 
@@ -208,6 +223,7 @@ fn clear_runtime_topology_control_role(
                 }
                 let before = session.clone();
                 clear_matching_control_role_metadata(session, key);
+                mark_project_control_false_if_no_control_role(session);
                 if *session != before {
                     session.insert("updatedAt".into(), Value::String(now.to_owned()));
                     changed = true;
@@ -550,6 +566,10 @@ mod tests {
         let state = load_metadata_state_at_unix_millis(&state_dir, 0);
         let session = state.sessions.get("worker").expect("worker session");
         assert_eq!(session.get("scribe").and_then(Value::as_bool), Some(false));
+        assert_eq!(
+            session.get("projectControl").and_then(Value::as_bool),
+            Some(false)
+        );
         assert_eq!(session.get("role"), None);
         assert_eq!(
             session.pointer("/team/label").and_then(Value::as_str),

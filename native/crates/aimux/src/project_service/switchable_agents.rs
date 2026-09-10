@@ -12,7 +12,7 @@ use crate::runtime_topology::{
 };
 use crate::team_contract::{
     is_overseer_session, is_project_control_session as team_is_project_control_session,
-    is_scribe_session, project_control_display_role,
+    is_scribe_session, project_control_display_role, session_with_stored_control_flags,
 };
 use crate::tmux::TmuxTarget;
 
@@ -374,14 +374,21 @@ fn build_switchable_agent_items(
     last_used: &Value,
 ) -> Vec<SwitchableAgentItem> {
     let current_managed_window = resolve_current_managed_window(entries, context);
+    let current_metadata = current_managed_window
+        .map(|entry| metadata_with_stored_control_flags(&entry.metadata, metadata_sessions));
     let teammate_parent_session_id = current_managed_window
-        .and_then(|entry| team_string_field(&entry.metadata, "parentSessionId"))
+        .and_then(|_| {
+            current_metadata
+                .as_ref()
+                .and_then(|metadata| team_string_field(metadata, "parentSessionId"))
+        })
         .map(str::to_owned);
     let scoped_worktree_path = resolve_context_worktree_path(context, current_managed_window);
     let mut managed = entries
         .iter()
         .enumerate()
         .filter(|(_, entry)| {
+            let metadata = metadata_with_stored_control_flags(&entry.metadata, metadata_sessions);
             if target_string_field(&entry.target, "windowName")
                 .is_some_and(is_dashboard_window_name)
             {
@@ -392,10 +399,10 @@ fn build_switchable_agent_items(
             if !entry.alive && target_string_field(&entry.target, "windowId") != current_window_id {
                 return false;
             }
-            if is_scribe_window(metadata_sessions, &entry.metadata) {
+            if is_scribe_session(Some(&metadata)) {
                 return false;
             }
-            let overseer = is_overseer_window(metadata_sessions, &entry.metadata);
+            let overseer = is_overseer_session(Some(&metadata));
             if !options.include_overseer && overseer {
                 return false;
             }
@@ -410,18 +417,18 @@ fn build_switchable_agent_items(
             if let Some(teammate_parent_session_id) = teammate_parent_session_id.as_deref()
                 && options.scope != AgentListScope::All
             {
-                return string_field(&entry.metadata, "kind") != Some("service")
-                    && team_string_field(&entry.metadata, "parentSessionId")
+                return string_field(&metadata, "kind") != Some("service")
+                    && team_string_field(&metadata, "parentSessionId")
                         == Some(teammate_parent_session_id);
             }
-            if entry.metadata.get("team").is_some() {
+            if team_string_field(&metadata, "parentSessionId").is_some_and(|id| !id.is_empty()) {
                 return false;
             }
             if options.scope == AgentListScope::All {
                 return true;
             }
             clean_path_string(
-                string_field(&entry.metadata, "worktreePath").unwrap_or(&context.project_root),
+                string_field(&metadata, "worktreePath").unwrap_or(&context.project_root),
             ) == scoped_worktree_path
         })
         .collect::<Vec<_>>();
@@ -446,17 +453,18 @@ pub fn managed_window_item(
         .to_owned();
     let last_used_at = last_used_at(last_used, &id).map(str::to_owned);
     let recent_rank = recent_rank(last_used, context.current_client_session.as_deref(), &id);
+    let metadata = metadata_with_stored_control_flags(&entry.metadata, metadata_sessions);
     SwitchableAgentItem {
         id: id.clone(),
         target: entry.target.clone(),
-        metadata: entry.metadata.clone(),
-        label: compact_session_title(&entry.metadata),
+        metadata: metadata.clone(),
+        label: compact_session_title(&metadata),
         urgency: urgency_for(metadata_sessions, &id),
         activity: entry.activity,
         last_used_at,
         recent_rank,
-        overseer: is_overseer_window(metadata_sessions, &entry.metadata),
-        scribe: is_scribe_window(metadata_sessions, &entry.metadata),
+        overseer: is_overseer_session(Some(&metadata)),
+        scribe: is_scribe_session(Some(&metadata)),
         alive: entry.alive,
         project_id: None,
         project_root: None,
@@ -534,7 +542,26 @@ fn session_switchable_entry(
             }
         }
     }
-    if let Some(role) = project_control_display_role(Some(&Value::Object(metadata.clone()))) {
+    let control_probe = session_with_stored_control_flags(
+        &Value::Object(metadata.clone()),
+        metadata_sessions.get(id),
+    );
+    for key in ["role", "team"] {
+        if !control_probe.get(key).is_some_and(|value| !value.is_null()) {
+            metadata.remove(key);
+        }
+    }
+    for key in ["overseer", "scribe", "projectControl"] {
+        insert_value(
+            &mut metadata,
+            key,
+            control_probe
+                .get(key)
+                .filter(|value| value.is_boolean())
+                .cloned(),
+        );
+    }
+    if let Some(role) = project_control_display_role(Some(&control_probe)) {
         insert_string(&mut metadata, "role", role);
     }
     Some(ManagedWindowEntry {
@@ -789,32 +816,12 @@ fn is_project_control_window(
     )))
 }
 
-fn is_overseer_window(metadata_sessions: &BTreeMap<String, Value>, metadata: &Value) -> bool {
-    is_overseer_session(Some(&metadata_with_stored_control_flags(
-        metadata,
-        metadata_sessions,
-    )))
-}
-
-fn is_scribe_window(metadata_sessions: &BTreeMap<String, Value>, metadata: &Value) -> bool {
-    is_scribe_session(Some(&metadata_with_stored_control_flags(
-        metadata,
-        metadata_sessions,
-    )))
-}
-
 fn metadata_with_stored_control_flags(
     metadata: &Value,
     metadata_sessions: &BTreeMap<String, Value>,
 ) -> Value {
-    let mut probe = metadata.as_object().cloned().unwrap_or_default();
     let session_id = string_field(metadata, "sessionId").unwrap_or("");
-    if let Some(session_metadata) = metadata_sessions.get(session_id) {
-        for key in ["overseer", "scribe", "projectControl"] {
-            insert_value(&mut probe, key, session_metadata.get(key).cloned());
-        }
-    }
-    Value::Object(probe)
+    session_with_stored_control_flags(metadata, metadata_sessions.get(session_id))
 }
 
 fn compact_session_title(metadata: &Value) -> String {

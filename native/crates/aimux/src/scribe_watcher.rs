@@ -379,19 +379,19 @@ pub fn find_scribe_session_id(input: &Value) -> Option<String> {
 /// The `projectControl`-as-object form is kept from the recovered corpus: some
 /// sessions carry `{ enabled: bool }` there rather than a bare boolean.
 fn is_project_control_session(session: &Value, meta: Option<&Value>) -> bool {
+    let mut base = session.as_object().cloned().unwrap_or_default();
     if session.get("projectControl").is_some_and(|value| {
         value.as_object().is_some_and(|object| {
             !object.is_empty() && object.get("enabled") != Some(&json!(false))
         })
     }) {
-        return true;
+        base.insert("projectControl".to_owned(), Value::Bool(true));
     }
-    let mut probe = session.as_object().cloned().unwrap_or_default();
-    for flag in ["overseer", "scribe", "projectControl"] {
-        if let Some(value) = meta.and_then(|meta| meta.get(flag)) {
-            probe.insert(flag.to_owned(), value.clone());
-        }
-    }
+    let mut probe =
+        crate::team_contract::session_with_stored_control_flags(&Value::Object(base), meta)
+            .as_object()
+            .cloned()
+            .unwrap_or_default();
     if let Some(team) = meta.and_then(|meta| meta.get("team")) {
         probe.entry("team".to_owned()).or_insert(team.clone());
     }

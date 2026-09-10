@@ -989,19 +989,33 @@ def control_role(team):
     if not isinstance(team, dict):
         return ""
     role = team.get("role")
-    return role if isinstance(role, str) else ""
+    return role.strip() if isinstance(role, str) else ""
+
+def bool_field(meta, key):
+    value = meta.get(key)
+    return value if isinstance(value, bool) else None
+
+def is_overseer_meta(meta, team):
+    explicit = bool_field(meta, "overseer")
+    if explicit is not None:
+        return explicit
+    if bool_field(meta, "projectControl") is False:
+        return False
+    return control_role(team) == "overseer"
+
+def is_scribe_meta(meta, team):
+    explicit = bool_field(meta, "scribe")
+    if explicit is not None:
+        return explicit
+    if bool_field(meta, "projectControl") is False:
+        return False
+    return control_role(team) == "scribe"
 
 def is_project_control_meta(meta, team):
-    explicit = meta.get("projectControl")
-    if isinstance(explicit, bool):
+    explicit = bool_field(meta, "projectControl")
+    if explicit is not None:
         return explicit
-    role = control_role(team)
-    return (
-        bool(meta.get("overseer"))
-        or bool(meta.get("scribe"))
-        or role == "overseer"
-        or role == "scribe"
-    )
+    return is_overseer_meta(meta, team) or is_scribe_meta(meta, team)
 
 if explicit_window_id:
     log(f"explicit target {explicit_window_id}")
@@ -1038,8 +1052,8 @@ for line in windows:
         "kind": kind,
         "sessionId": meta.get("sessionId", ""),
         "worktreePath": worktree,
-        "overseer": bool(meta.get("overseer")) or control_role(team) == "overseer",
-        "scribe": bool(meta.get("scribe")) or control_role(team) == "scribe",
+        "overseer": is_overseer_meta(meta, team),
+        "scribe": is_scribe_meta(meta, team),
         "projectControl": is_control,
         "attention": meta.get("attention", ""),
         "unseenCount": int(meta.get("unseenCount") or 0),

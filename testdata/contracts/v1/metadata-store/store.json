@@ -110,7 +110,11 @@
                   "updatedBySessionId": "boss"
                 }
               },
-              "boss": { "updatedAt": "2026-06-13T01:00:05.000Z" }
+              "boss": {
+                "updatedAt": "2026-06-13T01:00:05.000Z",
+                "overseer": false,
+                "projectControl": false
+              }
             }
           },
           "overseer": null
@@ -180,7 +184,13 @@
       "output": {
         "state": {
           "version": 1,
-          "sessions": { "scribe-1": { "updatedAt": "2026-02-03T04:05:06.000Z", "scribe": false } }
+          "sessions": {
+            "scribe-1": {
+              "updatedAt": "2026-02-03T04:05:06.000Z",
+              "scribe": false,
+              "projectControl": false
+            }
+          }
         },
         "scribe": null
       },

@@ -62,6 +62,7 @@ export interface DesktopSession {
   pendingAction?: string;
   pendingStartedAt?: string;
   loop?: { active?: boolean; goal?: string; since?: string } | null;
+  projectControl?: boolean;
   overseer?: boolean;
   scribe?: boolean;
   team?: { role?: string };
@@ -160,12 +161,25 @@ export function filterWorktreeBucketToActiveEntries(bucket: WorktreeBucket): Wor
 }
 
 function isDashboardHiddenSession(session: DesktopSession): boolean {
-  return (
-    session.overseer === true ||
-    session.scribe === true ||
-    session.team?.role === "overseer" ||
-    (session.scribe !== false && session.team?.role === "scribe")
-  );
+  return isDesktopProjectControlSession(session);
+}
+
+function isDesktopProjectControlSession(session: DesktopSession): boolean {
+  if (session.projectControl === true) return true;
+  if (session.projectControl === false) return false;
+  return isDesktopOverseerSession(session) || isDesktopScribeSession(session);
+}
+
+function isDesktopOverseerSession(session: DesktopSession): boolean {
+  if (session.overseer === true) return true;
+  if (session.overseer === false || session.projectControl === false) return false;
+  return session.team?.role === "overseer";
+}
+
+function isDesktopScribeSession(session: DesktopSession): boolean {
+  if (session.scribe === true) return true;
+  if (session.scribe === false || session.projectControl === false) return false;
+  return session.team?.role === "scribe";
 }
 
 function bucketFromServerGroup(group: DesktopWorktreeGroup): WorktreeBucket {

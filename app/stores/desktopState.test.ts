@@ -68,6 +68,32 @@ describe("desktop state resource lifecycle", () => {
     expect(groups[0]?.sessions.map((session) => session.id)).toEqual(["agent"]);
   });
 
+  it("uses explicit project-control flags before legacy team roles", () => {
+    const groups = groupByWorktree(
+      desktopState({
+        sessions: [
+          {
+            id: "stale-role",
+            status: "running",
+            toolConfigKey: "claude",
+            projectControl: false,
+            overseer: false,
+            team: { role: "overseer" },
+          },
+          {
+            id: "legacy-scribe",
+            status: "running",
+            toolConfigKey: "claude",
+            team: { role: "scribe" },
+          },
+          { id: "agent", status: "running", toolConfigKey: "codex" },
+        ],
+      }),
+    );
+
+    expect(groups[0]?.sessions.map((session) => session.id)).toEqual(["stale-role", "agent"]);
+  });
+
   it("preserves pending worktree flags through worktree grouping", () => {
     const groups = groupByWorktree(
       desktopState({

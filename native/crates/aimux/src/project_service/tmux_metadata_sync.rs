@@ -6,7 +6,7 @@ use std::sync::{Mutex, OnceLock};
 use crate::runtime_topology::list_topology_session_states;
 use crate::session_recency::session_recency_anchor;
 use crate::team_contract::{
-    is_project_control_session, project_control_display_role,
+    is_project_control_session, project_control_display_role, session_with_stored_control_flags,
 };
 use crate::tmux::{TmuxRuntimeManager, TmuxTarget};
 
@@ -184,23 +184,24 @@ pub fn build_tmux_window_metadata(
         "backendSessionId",
         session.get("backendSessionId").cloned(),
     );
-    for key in ["team", "worktreePath", "label", "headline"] {
+    let classifier_probe = session_with_stored_control_flags(session, stored_session);
+    insert_optional_value(&mut out, "team", classifier_probe.get("team").cloned());
+    for key in ["worktreePath", "label", "headline"] {
         insert_optional_value(&mut out, key, session.get(key).cloned());
     }
-    let classifier_probe = session_with_stored_control_flags(session, stored_session);
     if let Some(role) = project_control_display_role(Some(&classifier_probe)) {
         out.insert("role".into(), Value::String(role.to_owned()));
     }
-    let overseer = stored_session
-        .and_then(|value| value.get("overseer"))
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let scribe = stored_session
-        .and_then(|value| value.get("scribe"))
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    out.insert("overseer".into(), Value::Bool(overseer));
-    out.insert("scribe".into(), Value::Bool(scribe));
+    for key in ["overseer", "scribe"] {
+        insert_optional_value(
+            &mut out,
+            key,
+            classifier_probe
+                .get(key)
+                .filter(|value| value.is_boolean())
+                .cloned(),
+        );
+    }
     out.insert(
         "projectControl".into(),
         Value::Bool(is_project_control_session(Some(&classifier_probe))),
@@ -305,16 +306,6 @@ fn should_apply_policy(window_id: &str) -> bool {
     applied.insert(window_id.to_owned())
 }
 
-fn session_with_stored_control_flags(session: &Value, stored_session: Option<&Value>) -> Value {
-    let mut probe = session.as_object().cloned().unwrap_or_default();
-    if let Some(stored_session) = stored_session {
-        for key in ["overseer", "scribe", "projectControl"] {
-            insert_optional_value(&mut probe, key, stored_session.get(key).cloned());
-        }
-    }
-    Value::Object(probe)
-}
-
 fn is_agent_output_event_kind(kind: &str) -> bool {
     matches!(
         kind,
@@ -368,4 +359,47 @@ fn string_array_field(value: &Value, key: &str) -> Vec<String> {
         .filter_map(Value::as_str)
         .map(str::to_owned)
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::daemon_state::{MetadataState, save_metadata_state};
+    use std::collections::BTreeMap;
+    use std::fs::remove_dir_all;
+
+    #[test]
+    fn stored_scribe_demotion_overwrites_stale_tmux_project_control() {
+        let state_dir = std::env::temp_dir().join(format!(
+            "aimux-tmux-metadata-sync-role-{}",
+            std::process::id()
+        ));
+        let _ = remove_dir_all(&state_dir);
+        save_metadata_state(
+            &state_dir,
+            &MetadataState {
+                version: 1,
+                sessions: BTreeMap::from([("worker".into(), json!({ "scribe": false }))]),
+            },
+        )
+        .expect("save metadata");
+        let session = json!({
+            "id": "worker",
+            "command": "claude",
+            "toolConfigKey": "claude",
+            "status": "running",
+            "team": { "role": "scribe" },
+            "projectControl": true
+        });
+
+        let metadata = build_tmux_window_metadata(&state_dir, &session, None);
+
+        assert_eq!(metadata.get("role"), None);
+        assert_eq!(metadata.get("scribe").and_then(Value::as_bool), Some(false));
+        assert_eq!(
+            metadata.get("projectControl").and_then(Value::as_bool),
+            Some(false)
+        );
+        let _ = remove_dir_all(&state_dir);
+    }
 }

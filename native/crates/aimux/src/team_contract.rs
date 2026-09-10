@@ -1,4 +1,4 @@
-use serde_json::Value;
+use serde_json::{Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub fn select_orphan_teammate_ids(sessions: &[Value], known_parent_ids: &[String]) -> Vec<String> {
@@ -39,6 +39,45 @@ pub fn is_project_control_session(session: Option<&Value>) -> bool {
         None => {}
     }
     is_overseer_session(Some(session)) || is_scribe_session(Some(session))
+}
+
+pub fn session_with_stored_control_flags(session: &Value, stored_session: Option<&Value>) -> Value {
+    let mut probe = session.as_object().cloned().unwrap_or_default();
+    if let Some(stored_session) = stored_session {
+        let had_explicit_demote = stored_session
+            .get("overseer")
+            .and_then(Value::as_bool)
+            .is_some_and(|value| !value)
+            || stored_session
+                .get("scribe")
+                .and_then(Value::as_bool)
+                .is_some_and(|value| !value)
+            || stored_session
+                .get("projectControl")
+                .and_then(Value::as_bool)
+                .is_some_and(|value| !value);
+        let stored_overseer = stored_session.get("overseer").and_then(Value::as_bool);
+        let stored_scribe = stored_session.get("scribe").and_then(Value::as_bool);
+        let stored_project_control = stored_session
+            .get("projectControl")
+            .and_then(Value::as_bool);
+        let has_explicit_control = stored_overseer.unwrap_or(false)
+            || stored_scribe.unwrap_or(false)
+            || stored_project_control.unwrap_or(false);
+        for key in ["overseer", "scribe", "projectControl"] {
+            insert_value(&mut probe, key, stored_session.get(key).cloned());
+        }
+        if stored_project_control.is_none()
+            && (stored_overseer == Some(true) || stored_scribe == Some(true))
+        {
+            probe.remove("projectControl");
+        }
+        if had_explicit_demote && !has_explicit_control {
+            probe.insert("projectControl".into(), Value::Bool(false));
+            remove_stale_project_control_role(&mut probe);
+        }
+    }
+    Value::Object(probe)
 }
 
 pub fn is_overseer_session(session: Option<&Value>) -> bool {
@@ -83,6 +122,42 @@ fn bool_field(session: &Value, key: &str) -> Option<bool> {
     session.get(key).and_then(Value::as_bool)
 }
 
+fn insert_value(map: &mut Map<String, Value>, key: &str, value: Option<Value>) {
+    if let Some(value) = value {
+        map.insert(key.to_owned(), value);
+    }
+}
+
+fn remove_stale_project_control_role(map: &mut Map<String, Value>) {
+    if map
+        .get("role")
+        .and_then(Value::as_str)
+        .is_some_and(is_project_control_role)
+    {
+        map.remove("role");
+    }
+    let Some(Value::Object(team)) = map.get_mut("team") else {
+        return;
+    };
+    if team
+        .get("role")
+        .and_then(Value::as_str)
+        .is_some_and(is_project_control_role)
+    {
+        if team
+            .get("teamId")
+            .and_then(Value::as_str)
+            .is_some_and(is_project_control_role)
+        {
+            team.remove("teamId");
+        }
+        team.remove("role");
+    }
+    if team.is_empty() {
+        map.remove("team");
+    }
+}
+
 fn legacy_role(session: &Value) -> Option<&str> {
     string_field(session, "role").or_else(|| {
         session
@@ -92,6 +167,10 @@ fn legacy_role(session: &Value) -> Option<&str> {
             .map(str::trim)
             .filter(|role| !role.is_empty())
     })
+}
+
+fn is_project_control_role(role: &str) -> bool {
+    matches!(role.trim(), "overseer" | "scribe")
 }
 
 fn string_field<'a>(session: &'a Value, key: &str) -> Option<&'a str> {
@@ -188,5 +267,35 @@ mod tests {
             project_control_display_role(Some(&overseer)),
             Some("overseer")
         );
+    }
+
+    #[test]
+    fn stored_demotion_clears_stale_project_control_metadata() {
+        let session = json!({
+            "team": { "role": "scribe" },
+            "projectControl": true
+        });
+        let stored = json!({ "scribe": false });
+
+        let probe = session_with_stored_control_flags(&session, Some(&stored));
+
+        assert!(!is_scribe_session(Some(&probe)));
+        assert!(!is_project_control_session(Some(&probe)));
+        assert_eq!(project_control_display_role(Some(&probe)), None);
+    }
+
+    #[test]
+    fn stored_control_flag_beats_stale_project_control_false() {
+        let session = json!({
+            "team": { "role": "scribe" },
+            "projectControl": false
+        });
+        let stored = json!({ "scribe": true });
+
+        let probe = session_with_stored_control_flags(&session, Some(&stored));
+
+        assert!(is_scribe_session(Some(&probe)));
+        assert!(is_project_control_session(Some(&probe)));
+        assert_eq!(probe.get("projectControl"), None);
     }
 }

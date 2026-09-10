@@ -7,7 +7,7 @@ use crate::project_api_contract::routes;
 use crate::runtime_topology::{
     list_topology_session_states, read_runtime_topology, runtime_topology_path,
 };
-use crate::team_contract::project_control_display_role;
+use crate::team_contract::{project_control_display_role, session_with_stored_control_flags};
 
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::http::{query_params, trimmed_query};
@@ -345,24 +345,17 @@ pub fn build_agent_list(
                     metadata.and_then(|metadata| metadata.get(key)).cloned(),
                 );
             }
-            agent.insert(
-                "overseer".into(),
-                Value::Bool(
-                    metadata
-                        .and_then(|metadata| metadata.get("overseer"))
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false),
-                ),
-            );
-            agent.insert(
-                "scribe".into(),
-                Value::Bool(
-                    metadata
-                        .and_then(|metadata| metadata.get("scribe"))
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false),
-                ),
-            );
+            let control_probe = session_with_stored_control_flags(session, metadata);
+            for key in ["overseer", "scribe", "projectControl"] {
+                insert_value(
+                    &mut agent,
+                    key,
+                    control_probe
+                        .get(key)
+                        .filter(|value| value.is_boolean())
+                        .cloned(),
+                );
+            }
             if let Some(task) = task {
                 agent.insert(
                     "task".into(),
@@ -379,29 +372,8 @@ pub fn build_agent_list(
 }
 
 fn active_display_role(session: &Value, metadata: Option<&Value>) -> Option<String> {
-    let mut probe = Map::new();
-    if let Some(role) = string_field(session, "role").or_else(|| team_string_field(session, "role"))
-    {
-        probe.insert("role".into(), Value::String(role.to_owned()));
-    }
-    if let Some(team) = session
-        .get("team")
-        .cloned()
-        .filter(|value| !value.is_null())
-    {
-        probe.insert("team".into(), team);
-    }
-    if let Some(metadata) = metadata {
-        for key in ["overseer", "scribe", "projectControl"] {
-            insert_value(&mut probe, key, metadata.get(key).cloned());
-        }
-    }
-    for key in ["overseer", "scribe"] {
-        if !probe.contains_key(key) {
-            probe.insert(key.into(), Value::Bool(false));
-        }
-    }
-    project_control_display_role(Some(&Value::Object(probe))).map(str::to_owned)
+    let probe = session_with_stored_control_flags(session, metadata);
+    project_control_display_role(Some(&probe)).map(str::to_owned)
 }
 
 pub fn describe_session_restorability(
@@ -596,6 +568,8 @@ mod tests {
 
     #[test]
     fn agent_list_role_uses_same_effective_scribe_flag_as_response() {
+        let mut metadata = BTreeMap::new();
+        metadata.insert("claude-7owt0o".into(), json!({ "scribe": false }));
         let agents = build_agent_list(
             &[json!({
                 "id": "claude-7owt0o",
@@ -604,12 +578,59 @@ mod tests {
                 "team": { "role": "scribe" },
                 "status": "running"
             })],
-            &BTreeMap::new(),
+            &metadata,
             &[],
         );
 
         assert_eq!(agents.len(), 1);
         assert_eq!(agents[0].get("role"), None);
-        assert_eq!(agents[0].get("scribe").and_then(Value::as_bool), Some(false));
+        assert_eq!(
+            agents[0].get("scribe").and_then(Value::as_bool),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn legacy_team_role_remains_a_display_fallback_without_explicit_flags() {
+        let agents = build_agent_list(
+            &[json!({
+                "id": "legacy-scribe",
+                "team": { "role": "scribe" },
+                "status": "running"
+            })],
+            &BTreeMap::new(),
+            &[],
+        );
+
+        assert_eq!(agents.len(), 1);
+        assert_eq!(agents[0]["role"], "scribe");
+        assert_eq!(agents[0].get("scribe"), None);
+    }
+
+    #[test]
+    fn explicit_scribe_false_still_demotes_a_stale_legacy_role() {
+        let mut metadata = BTreeMap::new();
+        metadata.insert("worker".into(), json!({ "scribe": false }));
+        let agents = build_agent_list(
+            &[json!({
+                "id": "worker",
+                "team": { "role": "scribe" },
+                "projectControl": true,
+                "status": "running"
+            })],
+            &metadata,
+            &[],
+        );
+
+        assert_eq!(agents.len(), 1);
+        assert_eq!(agents[0].get("role"), None);
+        assert_eq!(
+            agents[0].get("scribe").and_then(Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            agents[0].get("projectControl").and_then(Value::as_bool),
+            Some(false)
+        );
     }
 }

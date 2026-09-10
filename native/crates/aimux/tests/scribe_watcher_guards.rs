@@ -228,6 +228,32 @@ fn an_overseer_is_still_control_even_when_scribe_is_explicitly_false() {
 }
 
 #[test]
+fn stored_scribe_false_beats_stale_project_control_object_for_scribe_candidates() {
+    let input = json!({
+        "sessions": [
+            { "id": "scribe", "status": "running" },
+            {
+                "id": "worker",
+                "status": "running",
+                "team": { "role": "scribe" },
+                "projectControl": { "enabled": true }
+            }
+        ],
+        "metadata": { "sessions": {
+            "scribe": { "scribe": true, "derived": { "activity": "idle", "attention": "normal" } },
+            "worker": { "scribe": false, "derived": { "activity": "idle", "attention": "normal" } }
+        }}
+    });
+
+    let ids = find_scribe_candidates_with_scribe(&input, Some("scribe"))
+        .iter()
+        .map(|candidate| candidate["id"].as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+
+    assert_eq!(ids, ["worker"]);
+}
+
+#[test]
 fn a_wide_character_pane_still_produces_a_briefing() {
     // measured in bytes, a trimmed box-drawing tail is ~3x its character count,
     // so the fit re-check failed and the candidate was dropped on the floor
