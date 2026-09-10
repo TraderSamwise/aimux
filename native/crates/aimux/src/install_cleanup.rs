@@ -1,11 +1,12 @@
 use crate::cli_launcher::get_aimux_stable_shim_path;
 use crate::process_inspector::list_process_args;
+use crate::tmux::tmux_command_from_env;
 use serde::{Serialize, Serializer};
 use std::collections::BTreeSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const DEFAULT_INSTALL_RETENTION_DAYS: u64 = 30;
@@ -683,7 +684,7 @@ where
 }
 
 fn tmux_success(args: &[&str]) -> bool {
-    Command::new("tmux")
+    tmux_command_from_env()
         .args(args)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -692,7 +693,7 @@ fn tmux_success(args: &[&str]) -> bool {
 }
 
 fn tmux_output(args: &[&str]) -> Option<String> {
-    let output = Command::new("tmux").args(args).output().ok()?;
+    let output = tmux_command_from_env().args(args).output().ok()?;
     if !output.status.success() {
         return None;
     }

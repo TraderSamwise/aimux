@@ -1,6 +1,6 @@
 use crate::config::load_config_for_project;
 use crate::paths::{PathResolver, ReadOnlyProjectPaths};
-use crate::tmux::{is_tmux_client_session_for_host, project_session};
+use crate::tmux::{is_tmux_client_session_for_host, project_session, tmux_command_from_env};
 use helpers::{
     add_match, array, matches_string, normalize_path_like, object, read_json_source,
     read_yaml_source, service_canonical, session_canonical, source_roles, source_status,
@@ -757,7 +757,7 @@ fn session_prefix_for_project(project_root: &str) -> String {
 }
 
 fn list_session_names() -> Result<Vec<String>, String> {
-    let output = Command::new("tmux")
+    let output = tmux_command_from_env()
         .args(["list-sessions", "-F", "#{session_name}"])
         .output()
         .map_err(|error| error.to_string())?;
@@ -773,7 +773,7 @@ fn list_session_names() -> Result<Vec<String>, String> {
 }
 
 fn session_option(session_name: &str, key: &str) -> Option<String> {
-    let output = Command::new("tmux")
+    let output = tmux_command_from_env()
         .args(["show-options", "-v", "-t", session_name, key])
         .output()
         .ok()?;
@@ -785,7 +785,7 @@ fn session_option(session_name: &str, key: &str) -> Option<String> {
 }
 
 fn list_managed_windows(session_name: &str) -> Vec<Value> {
-    let output = Command::new("tmux")
+    let output = tmux_command_from_env()
         .args([
             "list-windows",
             "-t",

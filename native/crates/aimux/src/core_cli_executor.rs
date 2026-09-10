@@ -56,13 +56,12 @@ use crate::runtime_migration::{
     render_runtime_migration_rollback_result, rollback_runtime_migration,
 };
 use crate::runtime_topology::{read_runtime_topology, runtime_topology_path};
-use crate::tmux::{attach_session_argv, switch_client_argv};
+use crate::tmux::{attach_session_argv, switch_client_argv, tmux_command_from_env};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoreCliExecution {
@@ -314,7 +313,7 @@ impl CoreCliRuntime for RealCoreCliRuntime {
         } else {
             attach_session_argv(session_name, Some(window_index))
         };
-        match Command::new("tmux").args(argv).status() {
+        match tmux_command_from_env().args(argv).status() {
             Ok(status) if status.success() => Ok(()),
             Ok(status) => Err(format!("tmux open dashboard exited with {status}")),
             Err(error) => Err(format!("tmux open dashboard failed: {error}")),

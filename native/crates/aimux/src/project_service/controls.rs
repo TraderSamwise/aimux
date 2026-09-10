@@ -1,6 +1,5 @@
 use serde_json::{Map, Value, json};
 use std::path::Path;
-use std::process::Command;
 
 use crate::daemon_state::load_metadata_state;
 use crate::project_api_contract::routes;
@@ -8,7 +7,7 @@ use crate::runtime_topology::{
     list_topology_service_states, list_topology_session_states, read_runtime_topology,
     runtime_topology_path,
 };
-use crate::tmux::{select_window_argv, switch_client_to_target_argv};
+use crate::tmux::{select_window_argv, switch_client_to_target_argv, tmux_command_from_env};
 
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::http::{query_params, trimmed_query};
@@ -625,7 +624,7 @@ fn object_value(value: Value) -> Map<String, Value> {
 }
 
 fn run_tmux_argv(argv: Vec<String>, fallback_error: String) -> Result<(), String> {
-    match Command::new("tmux").args(argv).output() {
+    match tmux_command_from_env().args(argv).output() {
         Ok(output) if output.status.success() => Ok(()),
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();

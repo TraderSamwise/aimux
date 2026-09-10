@@ -2,10 +2,9 @@ use crate::dashboard_processes::{DashboardProcess, is_dashboard_process_args};
 use crate::process_inspector::{
     ProcessArgsEntry, is_pid_alive, list_process_args, list_process_parents, read_process_args,
 };
-use crate::tmux::TmuxRuntimeManager;
+use crate::tmux::{TmuxRuntimeManager, tmux_command_from_env};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
-use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -457,7 +456,7 @@ fn wait_for_pid_exit(
 }
 
 fn list_live_tmux_pane_pids() -> BTreeSet<i32> {
-    let Ok(output) = Command::new("tmux")
+    let Ok(output) = tmux_command_from_env()
         .args(["list-panes", "-a", "-F", "#{pane_pid}"])
         .env_remove("TMUX")
         .env_remove("TMUX_PANE")
@@ -491,7 +490,7 @@ fn kill_pid(pid: i32, signal: &str) -> Result<(), String> {
     }
     #[cfg(not(unix))]
     {
-        let status = Command::new("kill")
+        let status = std::process::Command::new("kill")
             .args(["-s", signal, &pid.to_string()])
             .status()
             .map_err(|error| error.to_string())?;

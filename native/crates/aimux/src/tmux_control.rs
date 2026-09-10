@@ -1,3 +1,7 @@
+use crate::cli_launcher::{
+    AimuxCliLaunchOptions, get_aimux_current_cli_identity, is_cargo_test_aimux_binary,
+};
+use crate::tmux::tmux_command_from_env;
 use anyhow::Result;
 use serde_json::Value;
 use std::ffi::OsStr;
@@ -1758,10 +1762,10 @@ impl TmuxControl {
         {
             return command;
         }
-        std::env::current_exe()
-            .ok()
-            .map(|path| format!("{} __tmux-control-internal", shell_quote_path(&path)))
-            .unwrap_or_else(|| "aimux __tmux-control-internal".to_owned())
+        format!(
+            "{} __tmux-control-internal",
+            shell_quote(&persistent_aimux_executable())
+        )
     }
 
     fn curl_get(&mut self, url: &str, timeout: &str) -> Option<String> {
@@ -1879,11 +1883,12 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    let output = Command::new(program)
-        .args(args)
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
+    let mut command = if program == "tmux" {
+        tmux_command_from_env()
+    } else {
+        Command::new(program)
+    };
+    let output = command.args(args).stderr(Stdio::null()).output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -1895,7 +1900,12 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
-    Command::new(program)
+    let mut command = if program == "tmux" {
+        tmux_command_from_env()
+    } else {
+        Command::new(program)
+    };
+    command
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -1904,6 +1914,24 @@ where
         .ok()
         .and_then(|status| status.code())
         .unwrap_or(1)
+}
+
+fn persistent_aimux_executable() -> String {
+    let current_exe = std::env::current_exe()
+        .ok()
+        .map(|path| path.to_string_lossy().into_owned());
+    let launch = get_aimux_current_cli_identity(AimuxCliLaunchOptions {
+        env: std::env::vars().collect(),
+        current_argv_entry: std::env::args().next(),
+        current_entry_path: current_exe.clone(),
+        process_exec_path: current_exe,
+        home_dir: None,
+    });
+    if is_cargo_test_aimux_binary(&launch.command) {
+        "aimux".to_owned()
+    } else {
+        launch.command
+    }
 }
 
 fn strip_client_suffix(session: &str) -> &str {
@@ -2038,10 +2066,6 @@ fn shlex_quote(value: &str) -> String {
         return value.to_owned();
     }
     shell_quote(value)
-}
-
-fn shell_quote_path(path: &Path) -> String {
-    shell_quote(&path.to_string_lossy())
 }
 
 fn shell_quote(value: &str) -> String {

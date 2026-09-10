@@ -32,7 +32,7 @@ use aimux::release_version_contract::read_aimux_runtime_version;
 use aimux::root_session_launch::{
     RootResumeRequest, parse_root_resume_args, resume_saved_sessions,
 };
-use aimux::tmux::{OpenTargetOptions, TmuxRuntimeManager, TmuxTarget};
+use aimux::tmux::{OpenTargetOptions, TmuxRuntimeManager, TmuxTarget, tmux_command_from_env};
 use aimux::tmux_control::{parse_tmux_control_args, run_tmux_control};
 use aimux::tmux_expose::{parse_expose_args, run_tmux_expose};
 use aimux::tmux_open_hyperlink::run_tmux_open_hyperlink_from_env;
@@ -804,7 +804,7 @@ fn tmux_env_socket_path() -> Option<String> {
 }
 
 fn tmux_display_message(format: &str) -> Option<String> {
-    let mut command = std::process::Command::new("tmux");
+    let mut command = tmux_command_from_env();
     command.args(["display-message", "-p"]);
     if let Some(pane_id) = std::env::var("TMUX_PANE")
         .ok()

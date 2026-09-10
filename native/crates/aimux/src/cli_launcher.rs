@@ -91,6 +91,34 @@ pub fn get_aimux_current_cli_identity(options: AimuxCliLaunchOptions) -> AimuxCl
     resolve_aimux_cli_launch_command_with_native_preference(Vec::new(), options, true)
 }
 
+pub fn is_cargo_test_aimux_binary(path: impl AsRef<Path>) -> bool {
+    let path = path.as_ref();
+    path.file_name()
+        .and_then(|value| value.to_str())
+        .is_some_and(|name| {
+            name.strip_prefix("aimux-")
+                .is_some_and(|suffix| suffix.chars().all(|ch| ch.is_ascii_hexdigit()))
+        })
+        && path
+            .parent()
+            .and_then(|parent| parent.file_name())
+            .and_then(|value| value.to_str())
+            == Some("deps")
+        && path
+            .parent()
+            .and_then(Path::parent)
+            .and_then(|parent| parent.file_name())
+            .and_then(|value| value.to_str())
+            == Some("debug")
+        && path
+            .parent()
+            .and_then(Path::parent)
+            .and_then(Path::parent)
+            .and_then(|parent| parent.file_name())
+            .and_then(|value| value.to_str())
+            == Some("target")
+}
+
 pub fn resolve_aimux_cli_launch_command(
     args: Vec<String>,
     options: AimuxCliLaunchOptions,
@@ -213,7 +241,9 @@ fn resolve_installed_native_binary(input: &ResolveInstalledNativeInput<'_>) -> O
         .env
         .get("AIMUX_NATIVE_BIN")
         .map(|value| value.trim())
-        .filter(|value| !value.is_empty() && file_exists(value))
+        .filter(|value| {
+            !value.is_empty() && file_exists(value) && !is_cargo_test_aimux_binary(value)
+        })
     {
         return Some(canonical_path(explicit));
     }

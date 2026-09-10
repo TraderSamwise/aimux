@@ -70,7 +70,7 @@ use crate::runtime_guard_repair_history::{
     load_attempts as load_runtime_guard_repair_attempts,
     record_attempt as record_runtime_guard_repair_attempt,
 };
-use crate::tmux::TmuxRuntimeManager;
+use crate::tmux::{TmuxRuntimeManager, tmux_command_from_env};
 use crate::tui_render::theme::{Tone, recede, style};
 use crate::tui_render::{OverlayBoxSpec, OverlayVariant, render_overlay_box};
 use crate::tui_screen_renderers::{
@@ -1097,7 +1097,7 @@ fn dashboard_tmux_pane_target() -> Option<String> {
 }
 
 fn read_tmux_dashboard_pane_size(tmux_pane: &str) -> Option<DashboardViewport> {
-    let mut command = Command::new("tmux");
+    let mut command = tmux_command_from_env();
     command.args(["display-message", "-p", "-t", tmux_pane]);
     command.arg("#{pane_width}x#{pane_height}");
     let output = command_output_with_timeout(&mut command, Duration::from_millis(500)).ok()?;
@@ -1112,7 +1112,7 @@ fn read_tmux_dashboard_pane_size(tmux_pane: &str) -> Option<DashboardViewport> {
 }
 
 fn current_process_tmux_pane_id() -> Option<String> {
-    let mut command = Command::new("tmux");
+    let mut command = tmux_command_from_env();
     command.args([
         "list-panes",
         "-a",

@@ -4,12 +4,12 @@ use crate::dashboard_model::{DashboardSession, DesktopStateSnapshot};
 use crate::dashboard_navigation::{DashboardEntryRef, DashboardNavigationState};
 use crate::dashboard_renderer::DashboardNavLevel;
 use crate::paths::PathResolver;
+use crate::tmux::tmux_command_from_env;
 use anyhow::{Context, Result, anyhow};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 #[derive(Debug, Clone)]
 pub struct DashboardUiStatePersistence {
@@ -502,7 +502,7 @@ fn is_project_control_session(session: &DashboardSession) -> bool {
 }
 
 fn current_tmux_session() -> Option<String> {
-    let output = Command::new("tmux")
+    let output = tmux_command_from_env()
         .args(["display-message", "-p", "#{session_name}"])
         .output()
         .ok()?;

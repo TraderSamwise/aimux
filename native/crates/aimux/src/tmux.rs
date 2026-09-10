@@ -1,3 +1,6 @@
+use crate::cli_launcher::{
+    AimuxCliLaunchOptions, get_aimux_current_cli_identity, is_cargo_test_aimux_binary,
+};
 use crate::paths::{PathResolver, basename_like_node_posix, compute_project_id};
 use crate::tmux_exec_metrics::{TmuxExecMode, record_tmux_exec};
 use crate::tmux_query_memo::{
@@ -31,6 +34,7 @@ pub const TMUX_DASHBOARD_BUILD_OPTION: &str = "@aimux-dashboard-build";
 pub const TMUX_RUNTIME_CONTRACT_OPTION: &str = "@aimux-runtime-contract";
 pub const TMUX_RUNTIME_REBUILD_REQUIRED_OPTION: &str = "@aimux-runtime-rebuild-required";
 pub const AIMUX_TMUX_RUNTIME_CONTRACT_VERSION: &str = "2";
+pub const AIMUX_TMUX_SOCKET_PATH_ENV: &str = "AIMUX_TMUX_SOCKET_PATH";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ManagedTmuxSessionOptions {
@@ -160,7 +164,7 @@ impl TmuxRuntimeManager {
     pub fn new() -> Self {
         Self::with_exec(|args, options| {
             let started_at = Instant::now();
-            let mut command = Command::new("tmux");
+            let mut command = tmux_command_from_env();
             command.args(args);
             command.env_remove("TMUX");
             command.env_remove("TMUX_PANE");
@@ -889,6 +893,7 @@ impl TmuxRuntimeManager {
         project_root: &str,
         config: TmuxRuntimeConfig,
     ) -> Result<(), String> {
+        let config = sanitize_persistent_runtime_config(config);
         let control_context_args = [
             "--current-client-session #{q:client_session}",
             "--client-tty #{q:client_tty}",
@@ -2794,23 +2799,13 @@ fn default_runtime_config(project_root: &Path, project_root_text: &str) -> TmuxR
         .project_state_dir_for(project_root)
         .to_string_lossy()
         .into_owned();
+    let executable = persistent_aimux_executable();
     TmuxRuntimeConfig {
         project_state_dir,
-        control_script_command: std::env::current_exe()
-            .ok()
-            .map(|path| {
-                format!(
-                    "{} __tmux-control-internal",
-                    shell_quote(&path.to_string_lossy())
-                )
-            })
-            .unwrap_or_else(|| "aimux __tmux-control-internal".to_owned()),
+        control_script_command: persistent_aimux_control_script_command_from(&executable),
         statusline_command: TmuxCommandSpec {
             cwd: project_root_text.to_owned(),
-            command: std::env::current_exe()
-                .ok()
-                .map(|path| path.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "aimux".to_owned()),
+            command: executable,
             args: vec!["__tmux-statusline-internal".to_owned()],
         },
         runtime_owner_id: runtime_owner_id(&mut resolver),
@@ -2829,15 +2824,34 @@ fn repo_script_path(name: &str) -> String {
 }
 
 fn default_open_hyperlink_command() -> String {
-    std::env::current_exe()
-        .ok()
-        .map(|path| {
-            format!(
-                "{} __tmux-open-hyperlink-internal",
-                shell_quote(&path.to_string_lossy())
-            )
-        })
-        .unwrap_or_else(|| "aimux __tmux-open-hyperlink-internal".to_owned())
+    format!(
+        "{} __tmux-open-hyperlink-internal",
+        shell_quote(&persistent_aimux_executable())
+    )
+}
+
+fn sanitize_persistent_runtime_config(mut config: TmuxRuntimeConfig) -> TmuxRuntimeConfig {
+    if contains_cargo_test_aimux_binary_text(&config.control_script_command) {
+        config.control_script_command = persistent_aimux_control_script_command();
+    }
+    if is_cargo_test_aimux_binary(&config.statusline_command.command) {
+        config.statusline_command.command = persistent_aimux_executable();
+    }
+    config
+}
+
+fn contains_cargo_test_aimux_binary_text(value: &str) -> bool {
+    value
+        .split(|ch: char| ch.is_whitespace() || ch == '\'' || ch == '"')
+        .any(is_cargo_test_aimux_binary)
+}
+
+fn persistent_aimux_control_script_command() -> String {
+    persistent_aimux_control_script_command_from(&persistent_aimux_executable())
+}
+
+fn persistent_aimux_control_script_command_from(executable: &str) -> String {
+    format!("{} __tmux-control-internal", shell_quote(executable))
 }
 
 fn runtime_owner_id(resolver: &mut PathResolver) -> String {
@@ -2945,7 +2959,12 @@ fn has_interactive_terminal() -> bool {
 }
 
 fn command_output(program: &str, args: &[&str]) -> Result<String, String> {
-    let output = Command::new(program)
+    let mut command = if program == "tmux" {
+        tmux_command_from_env()
+    } else {
+        Command::new(program)
+    };
+    let output = command
         .args(args)
         .output()
         .map_err(|error| format!("failed to run {program}: {error}"))?;
@@ -2964,7 +2983,7 @@ fn default_interactive_exec(
     args: &[String],
     options: Option<&TmuxExecOptions>,
 ) -> Result<(), String> {
-    let mut command = Command::new("tmux");
+    let mut command = tmux_command_from_env();
     command.args(args);
     if args.first().map(String::as_str) == Some("attach-session") {
         command.env_remove("TMUX");
@@ -2983,6 +3002,50 @@ fn default_interactive_exec(
     }
 }
 
+pub fn tmux_command_from_env() -> Command {
+    let mut command = Command::new("tmux");
+    if let Some(socket_path) =
+        std::env::var_os(AIMUX_TMUX_SOCKET_PATH_ENV).filter(|value| !value.is_empty())
+    {
+        command.arg("-S").arg(socket_path);
+    }
+    command
+}
+
+fn persistent_aimux_executable() -> String {
+    let current_exe = std::env::current_exe()
+        .ok()
+        .map(|path| path.to_string_lossy().into_owned());
+    persistent_aimux_executable_from(
+        current_exe.clone(),
+        std::env::args().next(),
+        current_exe,
+        std::env::vars().collect(),
+        None,
+    )
+}
+
+fn persistent_aimux_executable_from(
+    current_entry_path: Option<String>,
+    current_argv_entry: Option<String>,
+    process_exec_path: Option<String>,
+    env: std::collections::BTreeMap<String, String>,
+    home_dir: Option<std::path::PathBuf>,
+) -> String {
+    let launch = get_aimux_current_cli_identity(AimuxCliLaunchOptions {
+        env,
+        current_argv_entry,
+        current_entry_path,
+        process_exec_path,
+        home_dir,
+    });
+    if is_cargo_test_aimux_binary(&launch.command) {
+        "aimux".to_owned()
+    } else {
+        launch.command
+    }
+}
+
 fn slugify_project_name(name: &str) -> String {
     let mut slug = String::new();
     let mut in_replacement = false;
@@ -2996,4 +3059,62 @@ fn slugify_project_name(name: &str) -> String {
         }
     }
     slug
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    #[test]
+    fn configure_managed_session_never_writes_cargo_test_harness_binary() {
+        let bad_executable =
+            "/tmp/aimux/native/target/debug/deps/aimux-cd3121d0832153b2".to_owned();
+        let calls = Rc::new(RefCell::new(Vec::<Vec<String>>::new()));
+        let captured = Rc::clone(&calls);
+        let mut runtime = TmuxRuntimeManager::with_exec(move |args, _options| {
+            captured.borrow_mut().push(args.to_owned());
+            Ok(String::new())
+        });
+
+        runtime
+            .configure_managed_session(
+                "aimux-test",
+                "/tmp/aimux",
+                TmuxRuntimeConfig {
+                    project_state_dir: "/tmp/aimux/.aimux".to_owned(),
+                    control_script_command: format!(
+                        "{} __tmux-control-internal",
+                        shell_quote(&bad_executable)
+                    ),
+                    statusline_command: TmuxCommandSpec {
+                        cwd: "/tmp/aimux".to_owned(),
+                        command: bad_executable.clone(),
+                        args: vec!["__tmux-statusline-internal".to_owned()],
+                    },
+                    runtime_owner_id: "test-owner".to_owned(),
+                },
+            )
+            .expect("configure managed session");
+
+        let persisted_commands = calls
+            .borrow()
+            .iter()
+            .map(|args| args.join(" "))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            !persisted_commands.contains("target/debug/deps"),
+            "{persisted_commands}"
+        );
+        assert!(
+            !persisted_commands.contains("aimux-cd3121d0832153b2"),
+            "{persisted_commands}"
+        );
+        assert!(
+            persisted_commands.contains("__tmux-control-internal"),
+            "{persisted_commands}"
+        );
+    }
 }

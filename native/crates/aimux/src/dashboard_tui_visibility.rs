@@ -5,6 +5,8 @@ use std::process::{Command, Output, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crate::tmux::tmux_command_from_env;
+
 pub const DASHBOARD_TUI_VISIBILITY_CACHE_MS: i64 = 250;
 pub const DASHBOARD_VISIBLE_VISIBILITY_RECHECK_MS: i64 = 1_000;
 pub const DASHBOARD_HIDDEN_VISIBILITY_RECHECK_MS: i64 = 10_000;
@@ -432,7 +434,7 @@ fn read_tmux_tui_visibility_from_process_rows(
 }
 
 fn tmux_output(args: &[&str]) -> Result<String, ()> {
-    let mut command = Command::new("tmux");
+    let mut command = tmux_command_from_env();
     command.args(args);
     let output =
         command_output_with_timeout(&mut command, Duration::from_millis(500)).map_err(|_| ())?;

@@ -3,11 +3,10 @@ use crate::launcher_env::DEFAULT_DAEMON_PORT;
 use crate::paths::PathResolver;
 use crate::tmux::{
     TMUX_DASHBOARD_BUILD_OPTION, TMUX_DASHBOARD_OWNER_OPTION, TMUX_DASHBOARD_READY_OPTION,
-    set_window_option_argv,
+    set_window_option_argv, tmux_command_from_env,
 };
 use serde_json::json;
 use std::path::Path;
-use std::process::Command;
 
 pub fn mark_native_dashboard_ready(project_root: impl AsRef<Path>) -> Result<bool, String> {
     let pane_id = std::env::var("TMUX_PANE")
@@ -23,7 +22,7 @@ pub fn mark_native_dashboard_ready(project_root: impl AsRef<Path>) -> Result<boo
         .dashboard_build_stamp;
     let owner_id = get_runtime_owner_id();
     for argv in dashboard_ready_option_commands(&pane_id, &build_stamp, &owner_id) {
-        let status = Command::new("tmux")
+        let status = tmux_command_from_env()
             .args(&argv)
             .status()
             .map_err(|error| error.to_string())?;

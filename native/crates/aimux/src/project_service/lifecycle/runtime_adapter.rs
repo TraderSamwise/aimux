@@ -6,7 +6,7 @@ use serde_json::Value;
 use crate::paths::{is_git_project_root, project_checkout_required_message};
 use crate::tmux::{
     TmuxRuntimeManager, TmuxTarget, clear_history_argv, kill_window_argv, new_window_argv,
-    rename_window_argv, set_window_option_argv,
+    rename_window_argv, set_window_option_argv, tmux_command_from_env,
 };
 
 pub trait ProjectLifecycleRuntime {
@@ -161,7 +161,7 @@ fn run_tmux_argv(argv: Vec<String>, fallback_error: String) -> Result<(), String
 }
 
 fn run_tmux_argv_output(argv: Vec<String>, fallback_error: String) -> Result<String, String> {
-    match Command::new("tmux").args(argv).output() {
+    match tmux_command_from_env().args(argv).output() {
         Ok(output) if output.status.success() => {
             Ok(String::from_utf8_lossy(&output.stdout).into_owned())
         }

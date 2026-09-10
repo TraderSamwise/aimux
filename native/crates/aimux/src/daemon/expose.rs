@@ -18,7 +18,7 @@ use crate::runtime_topology::{read_runtime_topology, runtime_topology_path};
 use crate::tmux::{
     TmuxTarget, attach_session_argv, is_dashboard_window_name, is_tmux_client_session_for_host,
     list_clients_argv, list_windows_argv, refresh_status_argv, send_focus_in_argv,
-    switch_client_argv, switch_client_to_target_argv,
+    switch_client_argv, switch_client_to_target_argv, tmux_command_from_env,
 };
 use crate::tmux_expose::{ExposeScope, ExposeScopeView};
 use crate::tmux_expose_hot_snapshot::{HotExposeScopeKey, read_hot_expose_scope_view};
@@ -30,7 +30,6 @@ use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::io::IsTerminal;
 use std::path::{Component, Path, PathBuf};
-use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -788,7 +787,7 @@ fn run_tmux_argv(argv: Vec<String>, fallback_error: String) -> Result<(), String
 }
 
 fn run_tmux_argv_output(argv: Vec<String>, fallback_error: String) -> Result<String, String> {
-    let output = Command::new("tmux").args(argv).output();
+    let output = tmux_command_from_env().args(argv).output();
     match output {
         Ok(output) if output.status.success() => {
             Ok(String::from_utf8_lossy(&output.stdout).into_owned())

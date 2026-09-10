@@ -980,6 +980,7 @@ struct NativeEntrypointFixture {
     root: PathBuf,
     home: PathBuf,
     aimux_home: PathBuf,
+    tmux_socket: PathBuf,
     log: PathBuf,
     node: PathBuf,
     port: u16,
@@ -990,6 +991,7 @@ impl NativeEntrypointFixture {
         let root = temp_root(label);
         let home = root.join("home");
         let aimux_home = root.join("aimux-home");
+        let tmux_socket = root.join("tmux.sock");
         fs::create_dir_all(&home).expect("create home");
         fs::create_dir_all(&aimux_home).expect("create aimux home");
         let log = root.join("node.log");
@@ -1000,6 +1002,7 @@ impl NativeEntrypointFixture {
             root,
             home,
             aimux_home,
+            tmux_socket,
             log,
             node,
             port: base_port + offset,
@@ -1013,6 +1016,7 @@ impl NativeEntrypointFixture {
             .env("AIMUX_NODE_BIN", &self.node)
             .env("HOME", &self.home)
             .env("AIMUX_HOME", &self.aimux_home)
+            .env("AIMUX_TMUX_SOCKET_PATH", &self.tmux_socket)
             .env("AIMUX_DAEMON_PORT", self.port.to_string());
         command
     }

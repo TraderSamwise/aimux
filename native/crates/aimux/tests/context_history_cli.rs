@@ -139,6 +139,7 @@ struct CliFixture {
     root: PathBuf,
     home: PathBuf,
     aimux_home: PathBuf,
+    tmux_socket: PathBuf,
     node_log: PathBuf,
     node: PathBuf,
     port: u16,
@@ -149,6 +150,7 @@ impl CliFixture {
         let root = temp_root(label);
         let home = root.join("home");
         let aimux_home = root.join("aimux-home");
+        let tmux_socket = root.join("tmux.sock");
         fs::create_dir_all(&home).expect("create home");
         fs::create_dir_all(&aimux_home).expect("create aimux home");
         let node_log = root.join("node.log");
@@ -159,6 +161,7 @@ impl CliFixture {
             root,
             home,
             aimux_home,
+            tmux_socket,
             node_log,
             node,
             port: base_port + offset,
@@ -172,6 +175,7 @@ impl CliFixture {
             .env("AIMUX_NODE_BIN", &self.node)
             .env("HOME", &self.home)
             .env("AIMUX_HOME", &self.aimux_home)
+            .env("AIMUX_TMUX_SOCKET_PATH", &self.tmux_socket)
             .env("AIMUX_DAEMON_PORT", self.port.to_string());
         command
     }

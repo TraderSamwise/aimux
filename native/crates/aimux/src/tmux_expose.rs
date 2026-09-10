@@ -8,7 +8,7 @@ use crate::expose_socket::parse_positive_header_integer;
 use crate::project_api_contract::routes;
 use crate::project_service::switchable_agents::agent_status_chip;
 use crate::project_service::usage::parse_recency_timestamp;
-use crate::tmux::{CapturePaneOptions, TmuxRuntimeManager, TmuxTarget};
+use crate::tmux::{CapturePaneOptions, TmuxRuntimeManager, TmuxTarget, tmux_command_from_env};
 use crate::tmux_expose_hot_snapshot::{
     HotExposeScopeKey, read_hot_expose_scope_view, write_hot_expose_scope_view,
 };
@@ -21,7 +21,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub const EXPOSE_HTTP_TIMEOUT_MS: u64 = 4_000;
@@ -1646,7 +1646,7 @@ fn should_relaunch_for_resize(
 }
 
 fn tmux_list_clients_with_timeout() -> Option<String> {
-    let mut child = Command::new("tmux")
+    let mut child = tmux_command_from_env()
         .args([
             "list-clients",
             "-F",

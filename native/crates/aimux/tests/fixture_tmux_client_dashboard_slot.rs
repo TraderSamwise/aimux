@@ -61,6 +61,10 @@ fn run_case(case: &Value) -> Value {
         .as_str()
         .unwrap_or_default()
         .to_owned();
+    let client_tty = case["input"]["options"]["clientTty"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
     let target_pane_in_mode = input["targetPaneInMode"].as_str().unwrap_or("0").to_owned();
     let link_error = input["linkError"].as_str().map(str::to_owned);
     let move_error = input["moveError"].as_str().map(str::to_owned);
@@ -137,6 +141,23 @@ fn run_case(case: &Value) -> Value {
             }
             if joined == "display-message -p #{client_session}" {
                 return Ok(current_client_session.clone());
+            }
+            if joined
+                == "list-clients -F #{client_tty}\t#{session_name}\t#{window_id}\t#{client_name}"
+            {
+                if client_tty.is_empty() {
+                    return Ok(String::new());
+                }
+                return Ok(format!(
+                    "{}\t{}\t{}\ttest-client",
+                    client_tty,
+                    if current_client_session.is_empty() {
+                        CLIENT
+                    } else {
+                        &current_client_session
+                    },
+                    window_id
+                ));
             }
             if joined == format!("display-message -p -t {window_id} #{{pane_in_mode}}") {
                 return Ok(target_pane_in_mode.clone());
