@@ -6,13 +6,18 @@ use aimux::project_service::agents::{
     select_direct_teammates, teammate_api_record,
     topology_desktop_session_list_with_live_window_ids,
 };
+use aimux::project_service::lifecycle::{ProjectLifecycleRuntime, route_lifecycle_request_with_runtime};
 use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
 use aimux::project_service::runtime_exchange::{runtime_exchange_path, write_runtime_exchange};
-use aimux::runtime_topology::{coerce_runtime_topology, runtime_topology_path};
+use aimux::runtime_topology::{
+    coerce_runtime_topology, empty_runtime_topology, read_runtime_topology, runtime_topology_path,
+    write_runtime_topology,
+};
+use aimux::tmux::TmuxTarget;
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use std::fs::{create_dir_all, remove_dir_all, write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 mod support;
@@ -350,6 +355,152 @@ fn route_teammates_reads_runtime_topology() {
     cleanup(project);
 }
 
+#[test]
+fn route_agent_spawn_composes_launch_and_records_topology_without_real_tmux() {
+    let isolation = support::TestIsolation::new("agent-spawn-create");
+    let project = temp_project("spawn-create");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).unwrap();
+    write_project_config(&project, session_launch_config());
+    write_runtime_topology(runtime_topology_path(&state_dir), &empty_runtime_topology()).unwrap();
+
+    let context = isolation.project_context(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::SPAWN,
+        Some(&json!({
+            "tool": "codex",
+            "sessionId": "codex-create",
+            "extraArgs": ["resume", "backend-123"],
+            "open": true
+        })),
+        &mut runtime,
+    )
+    .expect("spawn route handles request");
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["ok"], true);
+    assert_eq!(response.body["sessionId"], "codex-create");
+    assert_eq!(
+        runtime.calls[0],
+        json!({ "method": "ensure_project_session", "projectRoot": project.display().to_string() })
+    );
+    let create = runtime
+        .calls
+        .iter()
+        .find(|call| call["method"] == "create_window")
+        .expect("create window call");
+    assert_eq!(create["name"], "codex");
+    assert_eq!(create["cwd"], project.display().to_string());
+    assert_eq!(create["command"], "env");
+    let argv = create["args"].as_array().expect("create argv");
+    assert!(argv.contains(&json!("AIMUX_SESSION_ID=codex-create")));
+    assert!(argv.contains(&json!("AIMUX_TOOL=codex")));
+    assert!(argv.contains(&json!("codex")));
+    assert!(argv.contains(&json!("resume")));
+    assert!(argv.contains(&json!("backend-123")));
+    assert_eq!(create["detached"], false);
+    assert!(runtime.calls.iter().any(|call| call == &json!({
+        "method": "clear_history",
+        "windowId": "@spawn"
+    })));
+    let metadata = runtime
+        .calls
+        .iter()
+        .find(|call| call["method"] == "set_window_metadata")
+        .expect("metadata call");
+    assert_eq!(metadata["metadata"]["sessionId"], "codex-create");
+    assert_eq!(metadata["metadata"]["backendSessionId"], "backend-123");
+    assert_eq!(metadata["metadata"]["args"], json!(["resume", "backend-123"]));
+    assert!(
+        runtime
+            .calls
+            .iter()
+            .any(|call| call["method"] == "set_window_option"
+                && call["key"] == "@aimux-tool"
+                && call["value"] == "codex")
+    );
+
+    let topology = read_runtime_topology(runtime_topology_path(&state_dir)).unwrap();
+    let session = find(topology["sessions"].as_array().unwrap(), "codex-create");
+    assert_eq!(session["status"], "running");
+    assert_eq!(session["toolConfigKey"], "codex");
+    assert_eq!(session["backendSessionId"], "backend-123");
+    cleanup(project);
+}
+
+#[test]
+fn route_agent_spawn_rejects_duplicate_live_session_before_tmux_launch() {
+    let isolation = support::TestIsolation::new("agent-spawn-duplicate");
+    let project = temp_project("spawn-duplicate");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).unwrap();
+    write_project_config(&project, session_launch_config());
+    write_runtime_topology(runtime_topology_path(&state_dir), &duplicate_session_topology())
+        .unwrap();
+
+    let context = isolation.project_context(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::SPAWN,
+        Some(&json!({
+            "tool": "claude",
+            "sessionId": "claude-dup123"
+        })),
+        &mut runtime,
+    )
+    .expect("spawn route handles request");
+
+    assert_eq!(response.status, 500);
+    assert_eq!(response.body["ok"], false);
+    assert_eq!(response.body["error"], "Session \"claude-dup123\" already exists");
+    assert!(runtime.calls.is_empty());
+    cleanup(project);
+}
+
+#[test]
+fn route_agent_spawn_kills_window_when_metadata_write_fails() {
+    let isolation = support::TestIsolation::new("agent-spawn-metadata-fail");
+    let project = temp_project("spawn-metadata-fail");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).unwrap();
+    write_project_config(&project, session_launch_config());
+    write_runtime_topology(runtime_topology_path(&state_dir), &empty_runtime_topology()).unwrap();
+
+    let context = isolation.project_context(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime {
+        fail_metadata_write: true,
+        ..FakeLifecycleRuntime::default()
+    };
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::SPAWN,
+        Some(&json!({
+            "tool": "codex",
+            "sessionId": "codex-rollback",
+            "open": true
+        })),
+        &mut runtime,
+    )
+    .expect("spawn route handles request");
+
+    assert_eq!(response.status, 500);
+    assert_eq!(response.body["ok"], false);
+    assert_eq!(response.body["error"], "metadata write failed");
+    assert!(runtime.calls.iter().any(|call| call == &json!({
+        "method": "kill_window",
+        "windowId": "@spawn"
+    })));
+    let topology = read_runtime_topology(runtime_topology_path(&state_dir)).unwrap();
+    assert!(topology["sessions"].as_array().unwrap().is_empty());
+    cleanup(project);
+}
+
 fn topology_fixture() -> Value {
     coerce_runtime_topology(&json!({
         "version": 1,
@@ -417,6 +568,202 @@ fn teammate_topology_fixture() -> Value {
 
 fn tools() -> Map<String, Value> {
     default_config()["tools"].as_object().unwrap().clone()
+}
+
+fn write_project_config(project: &Path, config: Value) {
+    let aimux_dir = project.join(".aimux");
+    create_dir_all(&aimux_dir).unwrap();
+    write(
+        aimux_dir.join("config.json"),
+        serde_json::to_string_pretty(&config).unwrap(),
+    )
+    .unwrap();
+}
+
+fn session_launch_config() -> Value {
+    json!({
+        "defaultTool": "codex",
+        "runtime": {
+            "agentPreambleEnabled": true
+        },
+        "tools": {
+            "codex": {
+                "command": "codex",
+                "args": [],
+                "enabled": true,
+                "developerInstructionsConfigKey": "developer_instructions"
+            },
+            "claude": {
+                "command": "claude",
+                "args": [],
+                "enabled": true,
+                "preambleFlag": ["--append-system-prompt"],
+                "sessionIdFlag": ["--session-id", "{sessionId}"]
+            },
+            "shell": {
+                "command": "bash",
+                "args": [],
+                "enabled": true,
+                "wrapperEnabled": false
+            }
+        },
+        "scribe": {
+            "defaultAgent": null
+        }
+    })
+}
+
+fn duplicate_session_topology() -> Value {
+    coerce_runtime_topology(&json!({
+        "version": 1,
+        "generatedAt": "2026-01-01T00:00:00.000Z",
+        "rigs": [
+            { "id": "rig-1", "name": "aimux", "projectRoot": "/repo", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" }
+        ],
+        "nodes": [
+            { "id": "agent:claude-dup123", "rigId": "rig-1", "logicalId": "claude-dup123", "toolConfigKey": "claude", "createdAt": "2026-01-01T00:00:00.000Z" }
+        ],
+        "edges": [],
+        "bindings": [],
+        "sessions": [
+            { "id": "claude-dup123", "nodeId": "agent:claude-dup123", "status": "running", "command": "claude", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" }
+        ],
+        "services": [],
+        "worktrees": [],
+        "worktreeGraveyard": [],
+        "teamRoles": [],
+        "remoteClients": [],
+        "lifecycleOperations": [],
+        "exchangeRefs": []
+    }))
+    .unwrap()
+}
+
+#[derive(Default)]
+struct FakeLifecycleRuntime {
+    calls: Vec<Value>,
+    fail_metadata_write: bool,
+}
+
+impl ProjectLifecycleRuntime for FakeLifecycleRuntime {
+    fn repair_legacy_project_session_names(&mut self, project_root: &Path) -> Result<(), String> {
+        self.calls.push(json!({
+            "method": "repair_legacy_project_session_names",
+            "projectRoot": project_root.display().to_string()
+        }));
+        Ok(())
+    }
+
+    fn ensure_project_session(&mut self, project_root: &Path) -> Result<(), String> {
+        self.calls.push(json!({
+            "method": "ensure_project_session",
+            "projectRoot": project_root.display().to_string()
+        }));
+        Ok(())
+    }
+
+    fn find_main_repo(&mut self, cwd: &str) -> Result<String, String> {
+        self.calls.push(json!({ "method": "find_main_repo", "cwd": cwd }));
+        Ok(cwd.to_owned())
+    }
+
+    fn create_worktree(
+        &mut self,
+        main_repo: &str,
+        name: &str,
+        target_path: &str,
+    ) -> Result<(), String> {
+        self.calls.push(json!({
+            "method": "create_worktree",
+            "mainRepo": main_repo,
+            "name": name,
+            "targetPath": target_path
+        }));
+        Ok(())
+    }
+
+    fn create_window(
+        &mut self,
+        session_name: &str,
+        name: &str,
+        cwd: &str,
+        command: &str,
+        args: &[String],
+        detached: bool,
+    ) -> Result<TmuxTarget, String> {
+        self.calls.push(json!({
+            "method": "create_window",
+            "sessionName": session_name,
+            "name": name,
+            "cwd": cwd,
+            "command": command,
+            "args": args,
+            "detached": detached
+        }));
+        Ok(TmuxTarget {
+            session_name: session_name.to_owned(),
+            window_id: "@spawn".into(),
+            window_index: 1,
+            window_name: name.to_owned(),
+            pane_dead: None,
+        })
+    }
+
+    fn set_window_metadata(&mut self, window_id: &str, metadata: &Value) -> Result<(), String> {
+        self.calls.push(json!({
+            "method": "set_window_metadata",
+            "windowId": window_id,
+            "metadata": metadata
+        }));
+        if self.fail_metadata_write {
+            Err("metadata write failed".into())
+        } else {
+            Ok(())
+        }
+    }
+
+    fn set_window_option(&mut self, window_id: &str, key: &str, value: &str) -> Result<(), String> {
+        self.calls.push(json!({
+            "method": "set_window_option",
+            "windowId": window_id,
+            "key": key,
+            "value": value
+        }));
+        Ok(())
+    }
+
+    fn clear_history(&mut self, window_id: &str) -> Result<(), String> {
+        self.calls.push(json!({
+            "method": "clear_history",
+            "windowId": window_id
+        }));
+        Ok(())
+    }
+
+    fn has_window(&mut self, target: &TmuxTarget) -> bool {
+        self.calls.push(json!({
+            "method": "has_window",
+            "windowId": target.window_id
+        }));
+        true
+    }
+
+    fn kill_window(&mut self, window_id: &str) -> Result<(), String> {
+        self.calls.push(json!({
+            "method": "kill_window",
+            "windowId": window_id
+        }));
+        Ok(())
+    }
+
+    fn rename_window(&mut self, window_id: &str, name: &str) -> Result<(), String> {
+        self.calls.push(json!({
+            "method": "rename_window",
+            "windowId": window_id,
+            "name": name
+        }));
+        Ok(())
+    }
 }
 
 fn find<'a>(sessions: &'a [Value], id: &str) -> &'a Value {
