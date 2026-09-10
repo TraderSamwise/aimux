@@ -188,6 +188,7 @@ if [ "$HAD_EXISTING_INSTALL" = "1" ]; then
       printf 'Aimux control plane repaired.\n'
     else
       printf 'Installed aimux, but post-install restart failed. Run: %s/aimux restart\n' "$BIN_DIR" >&2
+      exit 75
     fi
   fi
 fi

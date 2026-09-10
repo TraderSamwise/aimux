@@ -66,10 +66,15 @@ fi
 
 release_source_hash() {
   if git -C "$ROOT_DIR" rev-parse --verify HEAD >/dev/null 2>&1; then
-    {
-      git -C "$ROOT_DIR" rev-parse --verify HEAD
-      git -C "$ROOT_DIR" diff --binary HEAD -- package.json yarn.lock scripts native app docs || true
-    } | shasum -a 1 | awk '{ print substr($1, 1, 12) }'
+    local head_file diff_file
+    head_file="$TMP_DIR/release-source.head"
+    diff_file="$TMP_DIR/release-source.diff"
+    git -C "$ROOT_DIR" rev-parse --verify HEAD > "$head_file"
+    if ! git -C "$ROOT_DIR" diff --binary HEAD -- package.json yarn.lock scripts native app docs > "$diff_file"; then
+      printf 'Failed to diff release source against HEAD\n' >&2
+      return 1
+    fi
+    cat "$head_file" "$diff_file" | shasum -a 1 | awk '{ print substr($1, 1, 12) }'
   else
     find package.json yarn.lock scripts native app docs -type f 2>/dev/null \
       -exec shasum -a 1 {} + \
@@ -82,7 +87,9 @@ release_source_hash() {
 release_build_stamp() {
   local generation source_hash suffix
   generation="$(printf '%s000' "$(date +%s)")"
-  source_hash="$(release_source_hash)"
+  if ! source_hash="$(release_source_hash)"; then
+    exit 1
+  fi
   suffix="$(
     printf '%s:%s:%s:%s:%s\n' "$generation" "$$" "$RANDOM" "$BUILD_PROFILE" "$source_hash" \
       | shasum -a 1 \

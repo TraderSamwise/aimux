@@ -14,6 +14,7 @@ import {
 } from "@/lib/browser-notifications";
 import { env } from "@/lib/env";
 import type { NotificationSettings } from "@/lib/notification-settings";
+import { resolvePushChannelDisable } from "@/lib/push-channel-settings";
 import { registerSecurityPushToken, sendSecurityTestPush } from "@/lib/push-registration";
 import { getErrorMessage } from "@/lib/request-errors";
 import {
@@ -112,20 +113,22 @@ export default function SettingsScreen() {
     if (pushBusy) return;
     const relayUrl = env.AIMUX_RELAY_URL;
     if (!value) {
-      updateNotifications({
-        ...notificationSettings,
-        channels: {
-          ...notificationSettings.channels,
-          push: false,
-        },
-      });
-      setPushStatus("Off");
-      if (relayUrl) {
-        void registerSecurityPushToken(relayUrl, getToken, {
+      setPushBusy(true);
+      setPushStatus("Turning off");
+      try {
+        const result = await resolvePushChannelDisable({
+          notificationSettings,
+          relayUrl,
+          getToken,
           ownerUserId: activeShare?.ownerUserId,
           shareId: activeShare?.shareId,
-          agentAlerts: false,
-        }).catch(() => {});
+        });
+        if (result.status === "disabled") {
+          updateNotifications(result.notificationSettings);
+        }
+        setPushStatus(result.message);
+      } finally {
+        setPushBusy(false);
       }
       return;
     }
