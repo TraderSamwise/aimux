@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { deliverNotificationPush, deliverSecurityAlert } from "./security-delivery";
-import type { SecurityPushTokenRecord } from "./security";
+import type { SecurityEventRecord, SecurityPushTokenRecord } from "./security";
 
 function token(overrides: Partial<SecurityPushTokenRecord>): SecurityPushTokenRecord {
   return {
@@ -14,13 +14,37 @@ function token(overrides: Partial<SecurityPushTokenRecord>): SecurityPushTokenRe
   };
 }
 
+function securityEvent(overrides: Partial<SecurityEventRecord> = {}): SecurityEventRecord {
+  return {
+    id: "evt_1",
+    kind: "shared_client_connected",
+    title: "Shared chat participant connected",
+    body: "Alex connected to claude-abc from SG.",
+    createdAt: "2026-06-01T00:00:00.000Z",
+    shareId: "share_123",
+    sessionId: "claude-abc",
+    actorUserId: "user_guest",
+    actorName: "Alex",
+    ...overrides,
+  };
+}
+
+function expoOk(count: number): Response {
+  return new Response(
+    JSON.stringify({
+      data: Array.from({ length: count }, () => ({ status: "ok" })),
+    }),
+    { status: 200 },
+  );
+}
+
 describe("deliverNotificationPush", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
   it("pushes only to the owner's mobile tokens", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
+    const fetchMock = vi.fn().mockResolvedValue(expoOk(2));
     vi.stubGlobal("fetch", fetchMock);
 
     const result = await deliverNotificationPush({
@@ -68,7 +92,7 @@ describe("deliverNotificationPush", () => {
   });
 
   it("does not call the push API when no owner mobile tokens exist", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
+    const fetchMock = vi.fn().mockResolvedValue(expoOk(0));
     vi.stubGlobal("fetch", fetchMock);
 
     const result = await deliverNotificationPush({
@@ -83,7 +107,7 @@ describe("deliverNotificationPush", () => {
   });
 
   it("skips owner mobile tokens that muted agent alerts", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
+    const fetchMock = vi.fn().mockResolvedValue(expoOk(1));
     vi.stubGlobal("fetch", fetchMock);
 
     await deliverNotificationPush({
@@ -140,6 +164,34 @@ describe("deliverNotificationPush", () => {
       }),
     ).rejects.toThrow(/Expo push rejected a token: DeviceNotRegistered/);
   });
+
+  it("throws when Expo accepts the request but returns unreadable tickets", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response("{", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      deliverNotificationPush({
+        userId: "user_owner",
+        title: "Agent needs input",
+        body: "waiting",
+        pushTokens: [token({ platform: "ios", token: "ExponentPushToken[owner-ios]" })],
+      }),
+    ).rejects.toThrow(/Expo push returned unreadable success response/);
+  });
+
+  it("throws when Expo accepts the request but omits ticket data", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      deliverNotificationPush({
+        userId: "user_owner",
+        title: "Agent needs input",
+        body: "waiting",
+        pushTokens: [token({ platform: "ios", token: "ExponentPushToken[owner-ios]" })],
+      }),
+    ).rejects.toThrow(/Expo push returned invalid success response: missing data tickets/);
+  });
 });
 
 describe("deliverSecurityAlert", () => {
@@ -148,23 +200,13 @@ describe("deliverSecurityAlert", () => {
   });
 
   it("does not push shared client security alerts to sharee tokens", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
+    const fetchMock = vi.fn().mockResolvedValue(expoOk(1));
     vi.stubGlobal("fetch", fetchMock);
 
-    await deliverSecurityAlert({
+    const result = await deliverSecurityAlert({
       env: {} as any,
       userId: "user_owner",
-      event: {
-        id: "evt_1",
-        kind: "shared_client_connected",
-        title: "Shared chat participant connected",
-        body: "Alex connected to claude-abc from SG.",
-        createdAt: "2026-06-01T00:00:00.000Z",
-        shareId: "share_123",
-        sessionId: "claude-abc",
-        actorUserId: "user_guest",
-        actorName: "Alex",
-      },
+      event: securityEvent(),
       pushTokens: [
         token({ userId: "user_owner", deviceId: "owner", token: "ExponentPushToken[owner]", platform: "android" }),
         token({ userId: "user_guest", deviceId: "guest", token: "ExponentPushToken[guest]" }),
@@ -184,6 +226,13 @@ describe("deliverSecurityAlert", () => {
       kind: "shared_client_connected",
       shareId: "share_123",
       sessionId: "claude-abc",
+    });
+    expect(result).toMatchObject({
+      delivered: true,
+      channels: [
+        { channel: "email", status: "skipped", sent: 0, reason: "security email not configured" },
+        { channel: "push", status: "delivered", sent: 1 },
+      ],
     });
   });
 
@@ -210,24 +259,14 @@ describe("deliverSecurityAlert", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    await deliverSecurityAlert({
+    const result = await deliverSecurityAlert({
       env: {
         CLERK_SECRET_KEY: "clerk_secret",
         RESEND_API_KEY: "resend_secret",
         SECURITY_EMAIL_FROM: "security@example.com",
       } as any,
       userId: "user_owner",
-      event: {
-        id: "evt_1",
-        kind: "shared_client_connected",
-        title: "Shared chat participant connected",
-        body: "Alex connected to claude-abc from SG.",
-        createdAt: "2026-06-01T00:00:00.000Z",
-        shareId: "share_123",
-        sessionId: "claude-abc",
-        actorUserId: "user_guest",
-        actorName: "Alex",
-      },
+      event: securityEvent(),
       pushTokens: [],
     });
 
@@ -235,5 +274,127 @@ describe("deliverSecurityAlert", () => {
     expect(urls).toContain("https://api.clerk.com/v1/users/user_owner");
     expect(urls).toContain("https://api.resend.com/emails");
     expect(urls).not.toContain("https://api.clerk.com/v1/users/user_guest");
+    expect(result).toMatchObject({
+      delivered: true,
+      channels: [
+        { channel: "email", status: "delivered", sent: 1 },
+        { channel: "push", status: "skipped", sent: 0, reason: "no eligible push tokens" },
+      ],
+    });
+  });
+
+  it("reports degraded delivery when email fails but push succeeds", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === "https://api.clerk.com/v1/users/user_owner") {
+        return new Response(
+          JSON.stringify({
+            primary_email_address_id: "email_owner",
+            email_addresses: [{ id: "email_owner", email_address: "owner@example.com" }],
+          }),
+          { status: 200 },
+        );
+      }
+      if (url === "https://api.resend.com/emails") {
+        return new Response("rate limited", { status: 429 });
+      }
+      if (url === "https://exp.host/--/api/v2/push/send") {
+        return expoOk(1);
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await deliverSecurityAlert({
+      env: {
+        CLERK_SECRET_KEY: "clerk_secret",
+        RESEND_API_KEY: "resend_secret",
+        SECURITY_EMAIL_FROM: "security@example.com",
+      } as any,
+      userId: "user_owner",
+      event: securityEvent(),
+      pushTokens: [token({ userId: "user_owner", deviceId: "owner", token: "ExponentPushToken[owner]" })],
+    });
+
+    expect(result.delivered).toBe(true);
+    expect(result.channels).toMatchObject([
+      { channel: "email", status: "failed", reason: expect.stringContaining("Resend email failed (429)") },
+      { channel: "push", status: "delivered", sent: 1 },
+    ]);
+    expect(warn).toHaveBeenCalledWith("security alert delivery degraded", expect.stringContaining("email=failed"));
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it("reports total delivery failure visibly when every attempted channel fails", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === "https://api.clerk.com/v1/users/user_owner") {
+        return new Response(
+          JSON.stringify({
+            primary_email_address_id: "email_owner",
+            email_addresses: [{ id: "email_owner", email_address: "owner@example.com" }],
+          }),
+          { status: 200 },
+        );
+      }
+      if (url === "https://api.resend.com/emails") {
+        return new Response("invalid key", { status: 401 });
+      }
+      if (url === "https://exp.host/--/api/v2/push/send") {
+        return new Response("rate limited", { status: 429 });
+      }
+      return new Response("unexpected", { status: 500 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await deliverSecurityAlert({
+      env: {
+        CLERK_SECRET_KEY: "clerk_secret",
+        RESEND_API_KEY: "resend_secret",
+        SECURITY_EMAIL_FROM: "security@example.com",
+      } as any,
+      userId: "user_owner",
+      event: securityEvent(),
+      pushTokens: [token({ userId: "user_owner", deviceId: "owner", token: "ExponentPushToken[owner]" })],
+    });
+
+    expect(result.delivered).toBe(false);
+    expect(result.channels).toMatchObject([
+      { channel: "email", status: "failed", reason: expect.stringContaining("Resend email failed (401)") },
+      { channel: "push", status: "failed", reason: expect.stringContaining("Expo push failed (429)") },
+    ]);
+    expect(error).toHaveBeenCalledWith(
+      "security alert delivery failed: no channel delivered",
+      expect.stringContaining("push=failed"),
+    );
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("reports total delivery failure when no channel is configured or eligible", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const fetchMock = vi.fn().mockResolvedValue(expoOk(0));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await deliverSecurityAlert({
+      env: {} as any,
+      userId: "user_owner",
+      event: securityEvent(),
+      pushTokens: [],
+    });
+
+    expect(result).toMatchObject({
+      delivered: false,
+      channels: [
+        { channel: "email", status: "skipped", reason: "security email not configured" },
+        { channel: "push", status: "skipped", reason: "no eligible push tokens" },
+      ],
+    });
+    expect(error).toHaveBeenCalledWith(
+      "security alert delivery failed: no channel delivered",
+      expect.stringContaining("email=skipped"),
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

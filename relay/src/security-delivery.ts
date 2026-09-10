@@ -16,8 +16,37 @@ interface ClerkUserResponse {
   email_addresses?: Array<{ id: string; email_address: string }>;
 }
 
-export async function deliverSecurityAlert(input: DeliveryInput): Promise<void> {
-  await Promise.allSettled([sendSecurityEmail(input), sendSecurityPush(input)]);
+export type SecurityDeliveryChannel = "email" | "push";
+export type SecurityDeliveryStatus = "delivered" | "skipped" | "failed";
+
+export interface SecurityDeliveryChannelResult {
+  channel: SecurityDeliveryChannel;
+  status: SecurityDeliveryStatus;
+  sent: number;
+  reason?: string;
+}
+
+export interface SecurityDeliveryResult {
+  delivered: boolean;
+  channels: SecurityDeliveryChannelResult[];
+}
+
+export async function deliverSecurityAlert(input: DeliveryInput): Promise<SecurityDeliveryResult> {
+  const channels = await Promise.all([
+    settleDelivery("email", () => sendSecurityEmail(input)),
+    settleDelivery("push", () => sendSecurityPush(input)),
+  ]);
+  const result = {
+    delivered: channels.some((channel) => channel.status === "delivered"),
+    channels,
+  };
+  const failed = channels.filter((channel) => channel.status === "failed");
+  if (!result.delivered) {
+    console.error("security alert delivery failed: no channel delivered", deliverySummary(channels));
+  } else if (failed.length > 0) {
+    console.warn("security alert delivery degraded", deliverySummary(channels));
+  }
+  return result;
 }
 
 export interface NotificationPushInput {
@@ -71,10 +100,21 @@ async function sendExpoPush(messages: unknown[]): Promise<{ sent: number }> {
     const detail = await response.text().catch(() => "");
     throw new Error(`Expo push failed (${response.status}): ${detail.slice(0, 300)}`);
   }
-  const body = (await response.json().catch(() => null)) as {
+  let body: {
     data?: Array<{ status?: string; message?: string; details?: unknown }>;
-  } | null;
-  const failedTicket = body?.data?.find((ticket) => ticket.status === "error");
+  };
+  try {
+    body = (await response.json()) as typeof body;
+  } catch (error) {
+    throw new Error(`Expo push returned unreadable success response: ${errorMessage(error)}`, { cause: error });
+  }
+  if (!Array.isArray(body.data)) {
+    throw new Error("Expo push returned invalid success response: missing data tickets");
+  }
+  if (body.data.length !== messages.length) {
+    throw new Error(`Expo push returned ${body.data.length} tickets for ${messages.length} messages`);
+  }
+  const failedTicket = body.data.find((ticket) => ticket.status === "error");
   if (failedTicket) {
     const detail = failedTicket.message || (failedTicket.details ? JSON.stringify(failedTicket.details) : "");
     throw new Error(`Expo push rejected a token${detail ? `: ${detail}` : ""}`);
@@ -82,12 +122,14 @@ async function sendExpoPush(messages: unknown[]): Promise<{ sent: number }> {
   return { sent: messages.length };
 }
 
-async function sendSecurityEmail(input: DeliveryInput): Promise<void> {
-  if (!input.env.RESEND_API_KEY || !input.env.SECURITY_EMAIL_FROM || !input.env.CLERK_SECRET_KEY) return;
+async function sendSecurityEmail(input: DeliveryInput): Promise<{ sent: number; skippedReason?: string }> {
+  if (!input.env.RESEND_API_KEY || !input.env.SECURITY_EMAIL_FROM || !input.env.CLERK_SECRET_KEY) {
+    return { sent: 0, skippedReason: "security email not configured" };
+  }
   const email = await fetchPrimaryEmail(input.env, input.userId);
-  if (!email) return;
+  if (!email) return { sent: 0, skippedReason: "owner email not found" };
   const html = renderSecurityEmail(input.event, input.device, input.emergencyUrl);
-  await fetch("https://api.resend.com/emails", {
+  const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${input.env.RESEND_API_KEY}`,
@@ -101,19 +143,27 @@ async function sendSecurityEmail(input: DeliveryInput): Promise<void> {
       text: securityEmailText(input.event, input.emergencyUrl),
     }),
   });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(`Resend email failed (${response.status}): ${detail.slice(0, 300)}`);
+  }
+  return { sent: 1 };
 }
 
 async function fetchPrimaryEmail(env: Env, userId: string): Promise<string | null> {
   const res = await fetch(`https://api.clerk.com/v1/users/${encodeURIComponent(userId)}`, {
     headers: { Authorization: `Bearer ${env.CLERK_SECRET_KEY}` },
   });
-  if (!res.ok) return null;
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`Clerk user lookup failed (${res.status}): ${detail.slice(0, 300)}`);
+  }
   const user = (await res.json()) as ClerkUserResponse;
   const primary = user.email_addresses?.find((email) => email.id === user.primary_email_address_id);
   return primary?.email_address ?? user.email_addresses?.[0]?.email_address ?? null;
 }
 
-async function sendSecurityPush(input: DeliveryInput): Promise<void> {
+async function sendSecurityPush(input: DeliveryInput): Promise<{ sent: number; skippedReason?: string }> {
   const excludeDeviceId = input.excludeDeviceId ?? input.device?.id;
   const messages = input.pushTokens
     .filter((record) => !record.userId || record.userId === input.userId)
@@ -132,7 +182,41 @@ async function sendSecurityPush(input: DeliveryInput): Promise<void> {
         emergencyUrl: input.emergencyUrl,
       },
     }));
-  await sendExpoPush(messages);
+  if (messages.length === 0) return { sent: 0, skippedReason: "no eligible push tokens" };
+  return sendExpoPush(messages);
+}
+
+async function settleDelivery(
+  channel: SecurityDeliveryChannel,
+  run: () => Promise<{ sent: number; skippedReason?: string }>,
+): Promise<SecurityDeliveryChannelResult> {
+  try {
+    const result = await run();
+    if (result.sent > 0) {
+      return { channel, status: "delivered", sent: result.sent };
+    }
+    return {
+      channel,
+      status: "skipped",
+      sent: 0,
+      reason: result.skippedReason ?? "no delivery attempted",
+    };
+  } catch (error) {
+    return { channel, status: "failed", sent: 0, reason: errorMessage(error) };
+  }
+}
+
+function deliverySummary(channels: SecurityDeliveryChannelResult[]): string {
+  return channels
+    .map((channel) => {
+      const reason = channel.reason ? `: ${channel.reason}` : "";
+      return `${channel.channel}=${channel.status}${channel.sent ? `(${channel.sent})` : ""}${reason}`;
+    })
+    .join(", ");
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function renderSecurityEmail(
