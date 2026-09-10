@@ -1,6 +1,8 @@
 use crate::cli_launcher::{AimuxCliLaunchOptions, get_aimux_project_service_launch_command};
 use crate::daemon_state::{ProjectServiceState, is_pid_alive};
 use crate::process_inspector::{ProjectServiceProcessIdentity, is_aimux_project_service_process};
+use std::fs::{self, File, OpenOptions};
+use std::io;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
@@ -19,12 +21,18 @@ pub trait ProjectServiceLauncher: Send + Sync {
 #[derive(Debug, Default)]
 pub struct SystemProjectServiceLauncher;
 
+pub fn project_service_stdio_log_path(project_state_dir: &Path) -> std::path::PathBuf {
+    project_state_dir
+        .join("logs")
+        .join("project-service-stdio.log")
+}
+
 impl ProjectServiceLauncher for SystemProjectServiceLauncher {
     fn launch(
         &self,
         project_id: &str,
         project_root: &Path,
-        _project_state_dir: &Path,
+        project_state_dir: &Path,
     ) -> Result<i32, String> {
         let project_root_text = project_root.to_string_lossy().into_owned();
         let current_exe = std::env::current_exe()
@@ -50,9 +58,13 @@ impl ProjectServiceLauncher for SystemProjectServiceLauncher {
             .args(&launch.args)
             .env("AIMUX_NATIVE_BIN", &launch.command)
             .current_dir(project_root)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
+            .stdin(Stdio::null());
+        let (stdout, stderr) = project_service_child_stdio(project_state_dir).map_err(|error| {
+            format!("failed to open project service stdout/stderr log: {error}")
+        })?;
+        command
+            .stdout(Stdio::from(stdout))
+            .stderr(Stdio::from(stderr));
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;
@@ -91,6 +103,21 @@ impl ProjectServiceLauncher for SystemProjectServiceLauncher {
     }
 }
 
+fn project_service_child_stdio(project_state_dir: &Path) -> io::Result<(File, File)> {
+    let path = project_service_stdio_log_path(project_state_dir);
+    open_append_log_pair(&path)
+        .map_err(|error| io::Error::new(error.kind(), format!("{} ({})", error, path.display())))
+}
+
+fn open_append_log_pair(path: &Path) -> io::Result<(File, File)> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let stdout = OpenOptions::new().create(true).append(true).open(path)?;
+    let stderr = stdout.try_clone()?;
+    Ok((stdout, stderr))
+}
+
 #[cfg(unix)]
 fn signal_pid(pid: i32, signal: i32) -> std::io::Result<()> {
     unsafe {
@@ -105,4 +132,32 @@ fn signal_pid(pid: i32, signal: i32) -> std::io::Result<()> {
 #[cfg(not(unix))]
 fn signal_pid(_pid: i32, _signal: i32) -> std::io::Result<()> {
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::project_service_child_stdio;
+    use std::io::Write;
+
+    #[test]
+    fn project_service_child_stdio_captures_stdout_and_stderr() {
+        let root = std::env::temp_dir().join(format!(
+            "aimux-project-service-stdio-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let state_dir = root.join("state");
+
+        let (mut stdout, mut stderr) = project_service_child_stdio(&state_dir).expect("stdio logs");
+        writeln!(stdout, "startup stdout").expect("write stdout");
+        writeln!(stderr, "startup stderr").expect("write stderr");
+        drop(stdout);
+        drop(stderr);
+
+        let log = std::fs::read_to_string(state_dir.join("logs/project-service-stdio.log"))
+            .expect("stdio log");
+        assert!(log.contains("startup stdout"));
+        assert!(log.contains("startup stderr"));
+        let _ = std::fs::remove_dir_all(root);
+    }
 }

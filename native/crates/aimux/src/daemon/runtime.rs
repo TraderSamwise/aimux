@@ -2,6 +2,7 @@ mod project_services;
 
 pub use project_services::{
     PROJECT_SERVICE_STARTUP_TIMEOUT_MS, ProjectServiceLauncher, SystemProjectServiceLauncher,
+    project_service_stdio_log_path,
 };
 
 use crate::cli_launcher::{
@@ -229,6 +230,10 @@ pub trait ProjectServiceProcessVerifier: Send + Sync {
     fn is_live(&self, pid: i32) -> bool;
     fn is_live_native_project_service(&self, service: &ProjectServiceState) -> bool;
     fn live_project_service_pids(&self, project_id: &str, project_root: &str) -> Vec<i32>;
+    fn exit_status_detail(&self, pid: i32) -> Option<String> {
+        let _ = pid;
+        None
+    }
     fn live_project_service_pids_by_project(
         &self,
         projects: &[(String, String)],
@@ -249,10 +254,10 @@ pub trait ProjectServiceHealthProbe: Send + Sync {
     fn is_ready(&self, endpoint: &MetadataApiEndpoint, pid: i32) -> bool;
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum ProjectServiceHealthWaitFailure {
     TimedOut,
-    ProcessExited,
+    ProcessExited { exit_status: Option<String> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -356,6 +361,39 @@ impl ProjectServiceProcessVerifier for SystemProjectServiceProcessVerifier {
         }
         by_project
     }
+
+    fn exit_status_detail(&self, pid: i32) -> Option<String> {
+        nonblocking_child_exit_status_detail(pid)
+    }
+}
+
+#[cfg(unix)]
+fn nonblocking_child_exit_status_detail(pid: i32) -> Option<String> {
+    if pid <= 0 {
+        return None;
+    }
+    let mut status = 0;
+    let result = unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
+    if result != pid {
+        return None;
+    }
+    Some(format_wait_status(status))
+}
+
+#[cfg(unix)]
+fn format_wait_status(status: i32) -> String {
+    if libc::WIFEXITED(status) {
+        format!("exit code {}", libc::WEXITSTATUS(status))
+    } else if libc::WIFSIGNALED(status) {
+        format!("signal {}", libc::WTERMSIG(status))
+    } else {
+        format!("wait status {status}")
+    }
+}
+
+#[cfg(not(unix))]
+fn nonblocking_child_exit_status_detail(_pid: i32) -> Option<String> {
+    None
 }
 
 impl fmt::Debug for RealDaemonRuntime {
@@ -946,8 +984,11 @@ impl RealDaemonRuntime {
                 return ProjectServiceHealthWait::Ready(endpoint);
             }
             if !self.project_service_process_verifier.is_live(pid) {
+                let exit_status = self
+                    .project_service_process_verifier
+                    .exit_status_detail(pid);
                 return ProjectServiceHealthWait::NotReady(
-                    ProjectServiceHealthWaitFailure::ProcessExited,
+                    ProjectServiceHealthWaitFailure::ProcessExited { exit_status },
                 );
             }
             if self.project_service_startup_timeout_ms == 0 || current_unix_millis() >= deadline {
@@ -971,9 +1012,21 @@ impl RealDaemonRuntime {
                 "project service health wait timed out after {}ms for {project_root} (projectId {project_id}, pid {pid})",
                 self.project_service_startup_timeout_ms
             ),
-            ProjectServiceHealthWaitFailure::ProcessExited => format!(
-                "project service process exited before /health became ready for {project_root} (projectId {project_id}, pid {pid})"
-            ),
+            ProjectServiceHealthWaitFailure::ProcessExited { exit_status } => {
+                let mut resolver = self.resolver.clone();
+                let project_state_dir = resolver.project_state_dir_for(project_root);
+                let structured_log = resolver.project_log_path_for(project_root);
+                let stdio_log = project_service_stdio_log_path(&project_state_dir);
+                let exit_status = exit_status.unwrap_or_else(|| {
+                    "unavailable (process was not waitable by this daemon or was already reaped)"
+                        .to_owned()
+                });
+                format!(
+                    "project service process exited before /health became ready for {project_root} (projectId {project_id}, pid {pid}); exit status: {exit_status}; logs: structured {}; stdout/stderr {}",
+                    structured_log.display(),
+                    stdio_log.display()
+                )
+            }
         }
     }
 
@@ -5122,7 +5175,9 @@ mod tests {
         let project = fixture.project_root.clone();
         let project_id = compute_project_id(Path::new(&project));
         let launcher = Arc::new(RestartTestLauncher::new(91_025).with_endpoint(45_905));
-        let verifier = Arc::new(RestartTestProcessVerifier::current_native([]));
+        let verifier = Arc::new(
+            RestartTestProcessVerifier::current_native([]).with_exit_detail(91_025, "exit code 1"),
+        );
         let health = Arc::new(RestartTestHealthProbe::not_ready());
         let mut runtime = RealDaemonRuntime::with_project_service_launcher_and_process_verifier(
             fixture.resolver.clone(),
@@ -5142,6 +5197,13 @@ mod tests {
         assert!(error.contains(&project));
         assert!(error.contains(&format!("projectId {project_id}")));
         assert!(error.contains("pid 91025"));
+        assert!(error.contains("exit status: exit code 1"));
+        let mut resolver = fixture.resolver.clone();
+        let project_state_dir = resolver.project_state_dir_for(&project);
+        let structured_log = resolver.project_log_path_for(&project);
+        let stdio_log = project_service_stdio_log_path(&project_state_dir);
+        assert!(error.contains(&structured_log.display().to_string()));
+        assert!(error.contains(&stdio_log.display().to_string()));
         assert_eq!(launcher.calls(), vec![project]);
         assert_eq!(health.calls(), vec![91_025]);
         fixture.cleanup();
@@ -5225,7 +5287,10 @@ mod tests {
         fixture.persist_service(&project_id, 91_026, ProjectServiceStatus::Running);
         fixture.persist_endpoint(91_026);
         let launcher = Arc::new(RestartTestLauncher::new(91_126).with_endpoint(45_906));
-        let verifier = Arc::new(RestartTestProcessVerifier::previous_build([91_026]));
+        let verifier = Arc::new(
+            RestartTestProcessVerifier::previous_build([91_026])
+                .with_exit_detail(91_126, "signal 9"),
+        );
         let health = Arc::new(RestartTestHealthProbe::not_ready());
         let mut runtime = RealDaemonRuntime::with_project_service_launcher_and_process_verifier(
             fixture.resolver.clone(),
@@ -5252,6 +5317,13 @@ mod tests {
         assert!(error.contains(&project));
         assert!(error.contains(&format!("projectId {project_id}")));
         assert!(error.contains("pid 91126"));
+        assert!(error.contains("exit status: signal 9"));
+        let mut resolver = fixture.resolver.clone();
+        let project_state_dir = resolver.project_state_dir_for(&project);
+        let structured_log = resolver.project_log_path_for(&project);
+        let stdio_log = project_service_stdio_log_path(&project_state_dir);
+        assert!(error.contains(&structured_log.display().to_string()));
+        assert!(error.contains(&stdio_log.display().to_string()));
         assert_eq!(result["dashboard"]["status"], json!("skipped"));
         assert_eq!(
             result["dashboard"]["reason"],
@@ -5263,6 +5335,27 @@ mod tests {
         assert_eq!(launcher.terminations(), vec![(91_026, false)]);
         assert_eq!(health.calls(), vec![91_126]);
         fixture.cleanup();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn nonblocking_child_exit_status_reports_exit_code() {
+        let mut child = std::process::Command::new("sh")
+            .args(["-c", "exit 7"])
+            .spawn()
+            .expect("spawn exiting child");
+        let pid = i32::try_from(child.id()).expect("pid fits i32");
+        let mut detail = None;
+        for _ in 0..20 {
+            detail = nonblocking_child_exit_status_detail(pid);
+            if detail.is_some() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+
+        assert_eq!(detail.as_deref(), Some("exit code 7"));
+        let _ = child.wait();
     }
 
     #[test]
@@ -6368,6 +6461,7 @@ mod tests {
         live: BTreeSet<i32>,
         current_native: BTreeSet<i32>,
         project_service_pids: BTreeMap<String, Vec<i32>>,
+        exit_details: BTreeMap<i32, String>,
         batch_project_counts: Mutex<Vec<usize>>,
         single_project_scan_count: Mutex<usize>,
     }
@@ -6379,6 +6473,7 @@ mod tests {
                 live: current_native.clone(),
                 current_native,
                 project_service_pids: BTreeMap::new(),
+                exit_details: BTreeMap::new(),
                 batch_project_counts: Mutex::new(Vec::new()),
                 single_project_scan_count: Mutex::new(0),
             }
@@ -6389,9 +6484,15 @@ mod tests {
                 live: pids.into_iter().collect(),
                 current_native: BTreeSet::new(),
                 project_service_pids: BTreeMap::new(),
+                exit_details: BTreeMap::new(),
                 batch_project_counts: Mutex::new(Vec::new()),
                 single_project_scan_count: Mutex::new(0),
             }
+        }
+
+        fn with_exit_detail(mut self, pid: i32, detail: impl Into<String>) -> Self {
+            self.exit_details.insert(pid, detail.into());
+            self
         }
 
         fn with_project_service_pids(
@@ -6434,6 +6535,10 @@ mod tests {
                 .lock()
                 .expect("single project scan count") += 1;
             Vec::new()
+        }
+
+        fn exit_status_detail(&self, pid: i32) -> Option<String> {
+            self.exit_details.get(&pid).cloned()
         }
 
         fn live_project_service_pids_by_project(
