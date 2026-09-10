@@ -151,6 +151,7 @@ pub struct RealDaemonRuntime {
     next_command: AtomicU64,
     project_service_launcher: Arc<dyn ProjectServiceLauncher>,
     project_service_process_verifier: Arc<dyn ProjectServiceProcessVerifier>,
+    project_service_health_probe: Arc<dyn ProjectServiceHealthProbe>,
     project_service_startup_timeout_ms: u64,
     auth_flows: Mutex<HashMap<String, LoginFlowWaiter>>,
     global_expose_hot_snapshots: GlobalExposeHotSnapshotCoordinator,
@@ -228,6 +229,35 @@ pub trait ProjectServiceProcessVerifier: Send + Sync {
                 )
             })
             .collect()
+    }
+}
+
+pub trait ProjectServiceHealthProbe: Send + Sync {
+    fn is_ready(&self, endpoint: &MetadataApiEndpoint, pid: i32) -> bool;
+}
+
+struct SystemProjectServiceHealthProbe;
+
+impl ProjectServiceHealthProbe for SystemProjectServiceHealthProbe {
+    fn is_ready(&self, endpoint: &MetadataApiEndpoint, pid: i32) -> bool {
+        let request = DaemonJsonRequest {
+            url: format!(
+                "http://{}:{}{}",
+                endpoint.host,
+                endpoint.port,
+                project_routes::HEALTH
+            ),
+            method: DaemonHttpMethod::Get,
+            headers: BTreeMap::from([("accept".to_owned(), "application/json".to_owned())]),
+            body: None,
+            timeout_ms: Some(500),
+        };
+        let Ok(response) = execute_loopback_json_request(&request) else {
+            return false;
+        };
+        (200..300).contains(&response.status)
+            && response.json.get("ok").and_then(Value::as_bool) == Some(true)
+            && response.json.get("pid").and_then(Value::as_i64) == Some(i64::from(pid))
     }
 }
 
@@ -376,6 +406,7 @@ impl RealDaemonRuntime {
             next_command: AtomicU64::new(0),
             project_service_launcher,
             project_service_process_verifier: Arc::new(SystemProjectServiceProcessVerifier),
+            project_service_health_probe: Arc::new(SystemProjectServiceHealthProbe),
             project_service_startup_timeout_ms,
             auth_flows: Mutex::new(HashMap::new()),
             global_expose_hot_snapshots: GlobalExposeHotSnapshotCoordinator::default(),
@@ -406,6 +437,7 @@ impl RealDaemonRuntime {
             next_command: AtomicU64::new(0),
             project_service_launcher,
             project_service_process_verifier,
+            project_service_health_probe: Arc::new(SystemProjectServiceHealthProbe),
             project_service_startup_timeout_ms,
             auth_flows: Mutex::new(HashMap::new()),
             global_expose_hot_snapshots: GlobalExposeHotSnapshotCoordinator::default(),
@@ -420,6 +452,14 @@ impl RealDaemonRuntime {
             started_instant: Instant::now(),
             relay: Arc::new(crate::daemon::relay::RelaySupervisor::default()),
         }
+    }
+
+    pub fn with_project_service_health_probe(
+        mut self,
+        probe: Arc<dyn ProjectServiceHealthProbe>,
+    ) -> Self {
+        self.project_service_health_probe = probe;
+        self
     }
 
     pub fn with_global_expose_hot_snapshot_background_refresh(mut self) -> Self {
@@ -864,6 +904,7 @@ impl RealDaemonRuntime {
         loop {
             if let Some(endpoint) =
                 load_metadata_endpoint(project_state_dir).filter(|endpoint| endpoint.pid == pid)
+                && self.project_service_health_probe.is_ready(&endpoint, pid)
             {
                 return Some(endpoint);
             }
@@ -4187,6 +4228,70 @@ mod tests {
     }
 
     #[test]
+    fn wait_for_live_project_service_requires_serving_health_endpoint() {
+        let fixture = restart_service_fixture("wait-health-not-ready");
+        let mut resolver = fixture.resolver.clone();
+        let state_dir = resolver.project_state_dir_for(&fixture.project_root);
+        save_metadata_endpoint(
+            &state_dir,
+            &MetadataApiEndpoint {
+                host: "127.0.0.1".to_owned(),
+                port: 45_901,
+                pid: 91_020,
+                updated_at: "now".to_owned(),
+            },
+        )
+        .expect("endpoint");
+        let health = Arc::new(RestartTestHealthProbe::not_ready());
+        let runtime = RealDaemonRuntime::with_project_service_launcher_and_process_verifier(
+            fixture.resolver.clone(),
+            fixture.daemon_info.clone(),
+            Arc::new(RestartTestLauncher::new(91_120)),
+            Arc::new(RestartTestProcessVerifier::current_native([91_020])),
+            0,
+        )
+        .with_project_service_health_probe(health.clone());
+
+        let ready = runtime.wait_for_live_project_service(&state_dir, 91_020);
+
+        assert!(ready.is_none());
+        assert_eq!(health.calls(), vec![91_020]);
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn wait_for_live_project_service_accepts_matching_health_endpoint() {
+        let fixture = restart_service_fixture("wait-health-ready");
+        let mut resolver = fixture.resolver.clone();
+        let state_dir = resolver.project_state_dir_for(&fixture.project_root);
+        save_metadata_endpoint(
+            &state_dir,
+            &MetadataApiEndpoint {
+                host: "127.0.0.1".to_owned(),
+                port: 45_902,
+                pid: 91_021,
+                updated_at: "now".to_owned(),
+            },
+        )
+        .expect("endpoint");
+        let health = Arc::new(RestartTestHealthProbe::ready());
+        let runtime = RealDaemonRuntime::with_project_service_launcher_and_process_verifier(
+            fixture.resolver.clone(),
+            fixture.daemon_info.clone(),
+            Arc::new(RestartTestLauncher::new(91_121)),
+            Arc::new(RestartTestProcessVerifier::current_native([91_021])),
+            0,
+        )
+        .with_project_service_health_probe(health.clone());
+
+        let ready = runtime.wait_for_live_project_service(&state_dir, 91_021);
+
+        assert_eq!(ready.map(|endpoint| endpoint.pid), Some(91_021));
+        assert_eq!(health.calls(), vec![91_021]);
+        fixture.cleanup();
+    }
+
+    #[test]
     fn restart_dashboard_fast_path_retains_usable_live_dashboard() {
         let project_root = "/repo/live-dashboard";
         let context = DashboardTargetContext::for_project(project_root).expect("context");
@@ -4914,6 +5019,7 @@ mod tests {
                 verifier,
                 0,
             )
+            .with_project_service_health_probe(Arc::new(RestartTestHealthProbe::ready()))
         }
 
         fn repair_events(&self) -> Vec<Value> {
@@ -5196,6 +5302,38 @@ mod tests {
                 .expect("terminations")
                 .push((service.pid, force));
             Ok(())
+        }
+    }
+
+    struct RestartTestHealthProbe {
+        ready: bool,
+        calls: Mutex<Vec<i32>>,
+    }
+
+    impl RestartTestHealthProbe {
+        fn ready() -> Self {
+            Self {
+                ready: true,
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn not_ready() -> Self {
+            Self {
+                ready: false,
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn calls(&self) -> Vec<i32> {
+            self.calls.lock().expect("health calls").clone()
+        }
+    }
+
+    impl ProjectServiceHealthProbe for RestartTestHealthProbe {
+        fn is_ready(&self, _endpoint: &MetadataApiEndpoint, pid: i32) -> bool {
+            self.calls.lock().expect("health calls").push(pid);
+            self.ready
         }
     }
 
