@@ -376,6 +376,36 @@ fn daemon_restart_stays_native_even_when_node_fallback_is_configured() {
 }
 
 #[test]
+fn debug_daemon_run_refuses_default_port_before_writing_daemon_info() {
+    let root = temp_root("native-debug-daemon-run-default-port");
+    let aimux_home = root.join("aimux-home");
+    fs::create_dir_all(root.join("home")).expect("create home");
+    fs::create_dir_all(&aimux_home).expect("create aimux home");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_aimux"))
+        .env("AIMUX_ROOT", &root)
+        .env("HOME", root.join("home"))
+        .env("AIMUX_HOME", &aimux_home)
+        .env("AIMUX_TMUX_SOCKET_PATH", root.join("tmux.sock"))
+        .env_remove("AIMUX_DAEMON_PORT")
+        .args(["daemon", "run"])
+        .output()
+        .expect("run native daemon");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("refusing to run aimux daemon from a cargo target binary on default port"),
+        "stderr should report default-port debug daemon refusal"
+    );
+    assert!(
+        !aimux_home.join("daemon/daemon.json").exists(),
+        "refusal must happen before daemon info is written"
+    );
+    cleanup(root);
+}
+
+#[test]
 fn configured_tool_launch_stays_native_with_original_tool_args() {
     let root = temp_root("native-tool-launch");
     fs::create_dir_all(root.join(".git")).expect("create repo marker");

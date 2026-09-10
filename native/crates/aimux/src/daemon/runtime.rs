@@ -62,9 +62,9 @@ use crate::daemon_projects::{
     ProjectsRouteProject, build_projects_route_projects, count_online_desktop_agents,
 };
 use crate::daemon_state::{
-    AimuxDaemonInfo, DaemonState, MetadataApiEndpoint, ProjectServiceState, clear_daemon_info,
-    get_daemon_host, get_daemon_port, is_pid_alive, load_daemon_state, load_metadata_endpoint,
-    remove_metadata_endpoint, save_daemon_info, save_daemon_state,
+    AimuxDaemonInfo, DaemonState, MetadataApiEndpoint, ProjectServiceState,
+    clear_daemon_info_if_owned, get_daemon_host, get_daemon_port, is_pid_alive, load_daemon_state,
+    load_metadata_endpoint, remove_metadata_endpoint, save_daemon_info, save_daemon_state,
 };
 use crate::dashboard_readiness::get_runtime_owner_id;
 use crate::dashboard_targets::{
@@ -1436,6 +1436,19 @@ pub fn run_daemon_internal() -> Result<()> {
     let resolver = PathResolver::from_env();
     let host = get_daemon_host().map_err(anyhow::Error::msg)?;
     let port = get_daemon_port().map_err(anyhow::Error::msg)?;
+    if let Some(reason) = crate::runtime_safety_guard::default_daemon_run_refusal_reason(port) {
+        log_lifecycle_always(
+            "daemon startup refused",
+            "daemon",
+            Some(json!({
+                "reason": reason,
+                "port": port,
+            })),
+        );
+        anyhow::bail!(
+            "refusing to run aimux daemon from a cargo target binary on default port {port}; set AIMUX_DAEMON_PORT for isolated tests"
+        );
+    }
     let now = now_iso();
     let info = AimuxDaemonInfo {
         pid: std::process::id() as i32,
@@ -1455,6 +1468,7 @@ pub fn run_daemon_internal() -> Result<()> {
     save_daemon_info(resolver.daemon_info_path(), &info).context("save daemon info")?;
     let _guard = DaemonInfoGuard {
         path: resolver.daemon_info_path(),
+        pid: info.pid,
     };
     start_daemon_disk_maintenance_background(resolver.clone());
     let runtime = Arc::new(Mutex::new(
@@ -3011,11 +3025,12 @@ fn js_truthy(value: Option<&Value>) -> bool {
 
 struct DaemonInfoGuard {
     path: PathBuf,
+    pid: i32,
 }
 
 impl Drop for DaemonInfoGuard {
     fn drop(&mut self) {
-        let _ = clear_daemon_info(&self.path);
+        let _ = clear_daemon_info_if_owned(&self.path, self.pid);
     }
 }
 

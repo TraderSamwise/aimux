@@ -236,6 +236,21 @@ pub fn clear_daemon_info(path: impl AsRef<Path>) -> io::Result<()> {
     clear_file(path)
 }
 
+pub fn clear_daemon_info_if_owned(path: impl AsRef<Path>, owner_pid: i32) -> io::Result<bool> {
+    let path = path.as_ref();
+    let Ok(contents) = fs::read(path) else {
+        return Ok(false);
+    };
+    let Ok(info) = serde_json::from_slice::<AimuxDaemonInfo>(&contents) else {
+        return Ok(false);
+    };
+    if info.pid != owner_pid {
+        return Ok(false);
+    }
+    clear_file(path)?;
+    Ok(true)
+}
+
 pub fn load_daemon_state(path: impl AsRef<Path>) -> DaemonState {
     load_daemon_state_with(path, |_| true)
 }

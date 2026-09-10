@@ -1,10 +1,11 @@
 use aimux::daemon_state::{
-    AimuxDaemonInfo, DaemonState, MetadataApiEndpoint, MetadataState, get_daemon_base_url,
-    get_daemon_host_from, get_daemon_port_from, load_daemon_info_with, load_daemon_state_with,
-    load_metadata_endpoint, load_metadata_endpoint_by_project_id, load_metadata_state,
-    metadata_endpoint_path, metadata_endpoint_path_by_project_id, metadata_endpoint_text_path,
-    metadata_state_path, remove_metadata_endpoint, resolve_project_service_endpoint,
-    save_daemon_info, save_daemon_state, save_metadata_endpoint, save_metadata_state,
+    AimuxDaemonInfo, DaemonState, MetadataApiEndpoint, MetadataState, clear_daemon_info_if_owned,
+    get_daemon_base_url, get_daemon_host_from, get_daemon_port_from, load_daemon_info_with,
+    load_daemon_state_with, load_metadata_endpoint, load_metadata_endpoint_by_project_id,
+    load_metadata_state, metadata_endpoint_path, metadata_endpoint_path_by_project_id,
+    metadata_endpoint_text_path, metadata_state_path, remove_metadata_endpoint,
+    resolve_project_service_endpoint, save_daemon_info, save_daemon_state, save_metadata_endpoint,
+    save_metadata_state,
 };
 use serde_json::json;
 use std::fs;
@@ -76,6 +77,34 @@ fn daemon_info_load_checks_liveness_and_save_is_pretty_json() {
     assert!(saved.ends_with('\n'));
     assert_eq!(load_daemon_info_with(&path, |pid| pid == 123), Some(info));
     assert_eq!(load_daemon_info_with(&path, |_| false), None);
+}
+
+#[test]
+fn daemon_info_clear_only_truncates_when_pid_matches_owner() {
+    let test_dir = TestDir::new();
+    let path = test_dir.0.join("daemon/daemon.json");
+    let info = AimuxDaemonInfo {
+        pid: 123,
+        port: 43190,
+        started_at: "then".into(),
+        updated_at: "now".into(),
+    };
+    save_daemon_info(&path, &info).expect("save info");
+
+    assert!(
+        !clear_daemon_info_if_owned(&path, 456).expect("skip different owner"),
+        "different daemon pid must not clear daemon info"
+    );
+    assert_eq!(load_daemon_info_with(&path, |pid| pid == 123), Some(info));
+
+    assert!(
+        clear_daemon_info_if_owned(&path, 123).expect("clear owner"),
+        "matching daemon pid should clear daemon info"
+    );
+    assert_eq!(
+        fs::read(&path).expect("read cleared info"),
+        Vec::<u8>::new()
+    );
 }
 
 #[test]
