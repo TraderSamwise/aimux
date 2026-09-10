@@ -847,9 +847,6 @@ level/category gating, secret redaction, rotation, and lifecycle records.
 - `runtime-state/session-semantics.json`: session semantic labels, attention
   scores, compact hints, notification projection, and display-label precedence
   captured by running TypeScript `session-semantics`.
-- `runtime-state/session-viewed.json`: session-viewed metadata attention,
-  activity, notification read-state, explicit-project, and config override
-  behavior captured by running TypeScript `session-viewed`.
 - `runtime-state/tool-output-watchers.json`: tool pane prompt, active error,
   interrupted, and update-prompt classification captured by running TypeScript
   `classifyToolPane`.

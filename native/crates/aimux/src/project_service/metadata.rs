@@ -7,6 +7,7 @@ use crate::daemon_state::{
     save_metadata_state,
 };
 use crate::project_api_contract::routes;
+use crate::session_viewed::mark_session_viewed;
 
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::notification_context::is_session_notification_focused;
@@ -160,11 +161,19 @@ pub fn route_runtime_metadata_request(
         }
         routes::runtime::MARK_SEEN => {
             let session = string_field(body, "session");
-            metadata_update_response(update_session_metadata(
-                &project_state_dir,
-                &session,
-                mark_seen,
-            ))
+            Some(
+                match mark_session_viewed(context.project_root(), &project_state_dir, &session) {
+                    Ok(result) => json_response(
+                        200,
+                        json!({
+                            "ok": true,
+                            "notificationsRead": result.notifications_read,
+                            "attentionCleared": result.attention_cleared,
+                        }),
+                    ),
+                    Err(error) => json_response(500, json!({ "ok": false, "error": error })),
+                },
+            )
         }
         routes::runtime::EVENT => {
             let session = string_field(body, "session");
@@ -361,16 +370,6 @@ fn set_derived_activity(current: Value, activity: String) -> Value {
         derived.insert("becameIdleAt".to_owned(), Value::String(now_iso()));
     }
     derived.insert("activity".to_owned(), Value::String(activity));
-    object_insert(current, "derived", Value::Object(derived))
-}
-
-fn mark_seen(current: Value) -> Value {
-    let mut derived = current
-        .get("derived")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
-    derived.insert("unseenCount".to_owned(), Value::Number(0.into()));
     object_insert(current, "derived", Value::Object(derived))
 }
 

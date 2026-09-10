@@ -1,78 +1,69 @@
-use serde_json::{Value, json};
+use serde_json::Value;
+use std::path::Path;
 
-pub fn mark_session_viewed_contract(case: &Value) -> Value {
-    let input = &case["input"];
-    let config = input.get("config").unwrap_or(&Value::Null);
-    let notifications_config = config.get("notifications").unwrap_or(&Value::Null);
-    let mark_read_on_view = notifications_config
-        .get("markReadOnView")
-        .and_then(Value::as_bool)
-        .unwrap_or(true);
-    let clear_needs_input = notifications_config
-        .get("clearNeedsInputOnView")
-        .and_then(Value::as_bool)
-        .unwrap_or(true);
-    let clear_formal = notifications_config
-        .get("clearFormalInteractionsOnView")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let session_id = input
-        .get("sessionId")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let mut derived = input.get("derived").cloned().unwrap_or_else(|| json!({}));
-    let attention = derived.get("attention").and_then(Value::as_str);
-    let clear_attention = (clear_needs_input && attention == Some("needs_input"))
-        || (clear_formal && attention == Some("needs_response"));
-    derived["unseenCount"] = Value::from(0);
-    if clear_attention {
-        derived["attention"] = Value::String("normal".into());
-        if derived.get("activity").and_then(Value::as_str) == Some("waiting") {
-            derived["activity"] = Value::String("idle".into());
-        }
-    }
-    let notification_count = input["notifications"]
-        .as_array()
-        .map(Vec::len)
-        .unwrap_or_default();
+use crate::config::load_config_for_project;
+use crate::project_service::metadata::update_session_metadata;
+use crate::project_service::notifications::{NotificationMutation, mark_notifications_read};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MarkSessionViewedResult {
+    pub notifications_read: usize,
+    pub attention_cleared: bool,
+}
+
+pub fn mark_session_viewed(
+    project_root: impl AsRef<Path>,
+    project_state_dir: impl AsRef<Path>,
+    session_id: &str,
+) -> Result<MarkSessionViewedResult, String> {
+    let project_state_dir = project_state_dir.as_ref();
+    let config = load_config_for_project(project_root);
+    let notifications = config.get("notifications").unwrap_or(&Value::Null);
+    let mark_read_on_view = bool_field(notifications, "markReadOnView", true);
+    let clear_needs_input = bool_field(notifications, "clearNeedsInputOnView", true);
+    let clear_formal = bool_field(notifications, "clearFormalInteractionsOnView", false);
     let notifications_read = if mark_read_on_view {
-        notification_count
+        mark_notifications_read(
+            project_state_dir,
+            NotificationMutation {
+                session_id: Some(session_id.to_owned()),
+                ..NotificationMutation::default()
+            },
+        )
     } else {
         0
     };
-    let unread = input["notifications"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .map(|_| !mark_read_on_view)
-        .collect::<Vec<_>>();
-    let mut output = json!({
-        "result": {
-            "notificationsRead": notifications_read,
-            "attentionCleared": clear_attention,
-        },
-        "derived": derived,
-        "semanticLabel": semantic_label(&derived),
-        "notificationUnread": unread,
-        "notificationCount": notification_count,
-    });
-    if input
-        .get("explicitProjectRoot")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
-        output["defaultProjectNotificationCount"] = Value::from(0);
-    }
-    let _ = session_id;
-    output
+    let mut attention_cleared = false;
+    update_session_metadata(project_state_dir, session_id, |current| {
+        let mut object = current.as_object().cloned().unwrap_or_default();
+        let mut derived = object
+            .get("derived")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        let attention = derived.get("attention").and_then(Value::as_str);
+        let clear_attention = (clear_needs_input && attention == Some("needs_input"))
+            || (clear_formal && attention == Some("needs_response"));
+        attention_cleared = clear_attention;
+        derived.insert("unseenCount".to_owned(), Value::Number(0.into()));
+        if clear_attention {
+            derived.insert("attention".to_owned(), Value::String("normal".to_owned()));
+            if derived.get("activity").and_then(Value::as_str) == Some("waiting") {
+                derived.insert("activity".to_owned(), Value::String("idle".to_owned()));
+            }
+        }
+        object.insert("derived".to_owned(), Value::Object(derived));
+        Value::Object(object)
+    })?;
+    Ok(MarkSessionViewedResult {
+        notifications_read,
+        attention_cleared,
+    })
 }
 
-fn semantic_label(derived: &Value) -> &'static str {
-    match derived.get("attention").and_then(Value::as_str) {
-        Some("needs_input") => "needs_input",
-        Some("needs_response") => "needs_response",
-        Some("blocked") => "blocked",
-        _ if derived.get("activity").and_then(Value::as_str) == Some("running") => "working",
-        _ => "ready",
-    }
+fn bool_field(value: &Value, field: &str, default_value: bool) -> bool {
+    value
+        .get(field)
+        .and_then(Value::as_bool)
+        .unwrap_or(default_value)
 }

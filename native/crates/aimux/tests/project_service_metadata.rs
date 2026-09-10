@@ -4,12 +4,17 @@ use aimux::project_service::metadata::{route_runtime_metadata_request, update_se
 use aimux::project_service::notification_context::{
     NotificationContextPatch, NotificationContextSource, update_notification_context,
 };
-use aimux::project_service::notifications::{NotificationQuery, list_notification_snapshot};
+use aimux::project_service::notifications::{
+    NotificationQuery, NotificationWriteInput, add_notification, list_notification_snapshot,
+};
 use aimux::project_service::router::ProjectServiceRequestContext;
 use serde_json::json;
-use std::fs::{read_to_string, remove_dir_all};
+use std::fs::{create_dir_all, read_to_string, remove_dir_all, write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
+
+mod support;
+use support::TestIsolation;
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -472,7 +477,8 @@ fn runtime_set_attention_suppresses_unread_when_session_is_focused() {
 }
 
 #[test]
-fn runtime_mark_seen_only_zeros_unseen_count() {
+fn runtime_mark_seen_applies_session_viewed_defaults() {
+    let _isolation = TestIsolation::new("session-viewed-defaults");
     let project = temp_project("mark-seen");
     let state_dir = project.join("state");
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
@@ -490,6 +496,17 @@ fn runtime_mark_seen_only_zeros_unseen_count() {
         json!(object)
     })
     .expect("seed metadata");
+    add_notification(
+        &state_dir,
+        NotificationWriteInput {
+            title: "Needs input".into(),
+            body: "Agent is waiting".into(),
+            session_id: Some("codex-1".into()),
+            kind: Some("needs_input".into()),
+            ..NotificationWriteInput::default()
+        },
+    )
+    .expect("seed notification");
 
     let response = route_runtime_metadata_request(
         &context,
@@ -499,13 +516,102 @@ fn runtime_mark_seen_only_zeros_unseen_count() {
     )
     .expect("mark seen");
     assert_eq!(response.status, 200);
+    assert_eq!(response.body["notificationsRead"], 1);
+    assert_eq!(response.body["attentionCleared"], true);
 
     let state = load_metadata_state(&state_dir);
     let derived = &state.sessions["codex-1"]["derived"];
     assert_eq!(derived["unseenCount"], 0);
-    assert_eq!(derived["attention"], "needs_input");
-    assert_eq!(derived["activity"], "waiting");
+    assert_eq!(derived["attention"], "normal");
+    assert_eq!(derived["activity"], "idle");
     assert_eq!(derived["services"], json!([{ "label": "web" }]));
+    let snapshot = list_notification_snapshot(
+        &state_dir,
+        NotificationQuery {
+            unread_only: false,
+            include_cleared: false,
+            session_id: Some("codex-1".into()),
+            limit: Some(10),
+        },
+    );
+    assert_eq!(snapshot.total, 1);
+    assert_eq!(snapshot.unread_count, 0);
+    assert_eq!(snapshot.notifications[0]["unread"], false);
+    cleanup(project);
+}
+
+#[test]
+fn runtime_mark_seen_honors_session_viewed_config_overrides() {
+    let _isolation = TestIsolation::new("session-viewed-config");
+    let project = temp_project("mark-seen-config");
+    let state_dir = project.join("state");
+    create_dir_all(project.join(".aimux")).unwrap();
+    write(
+        project.join(".aimux/config.json"),
+        serde_json::to_string_pretty(&json!({
+            "notifications": {
+                "markReadOnView": false,
+                "clearNeedsInputOnView": false,
+                "clearFormalInteractionsOnView": true
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    update_session_metadata(&state_dir, "codex-ask", |current| {
+        let mut object = current.as_object().cloned().unwrap_or_default();
+        object.insert(
+            "derived".into(),
+            json!({
+                "unseenCount": 3,
+                "attention": "needs_response",
+                "activity": "waiting"
+            }),
+        );
+        json!(object)
+    })
+    .expect("seed metadata");
+    add_notification(
+        &state_dir,
+        NotificationWriteInput {
+            title: "Question".into(),
+            body: "Pick an option".into(),
+            session_id: Some("codex-ask".into()),
+            kind: Some("interaction_request".into()),
+            ..NotificationWriteInput::default()
+        },
+    )
+    .expect("seed notification");
+
+    let response = route_runtime_metadata_request(
+        &context,
+        "POST",
+        routes::runtime::MARK_SEEN,
+        Some(&json!({ "session": "codex-ask" })),
+    )
+    .expect("mark seen");
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["notificationsRead"], 0);
+    assert_eq!(response.body["attentionCleared"], true);
+
+    let state = load_metadata_state(&state_dir);
+    let derived = &state.sessions["codex-ask"]["derived"];
+    assert_eq!(derived["unseenCount"], 0);
+    assert_eq!(derived["attention"], "normal");
+    assert_eq!(derived["activity"], "idle");
+    let snapshot = list_notification_snapshot(
+        &state_dir,
+        NotificationQuery {
+            unread_only: false,
+            include_cleared: false,
+            session_id: Some("codex-ask".into()),
+            limit: Some(10),
+        },
+    );
+    assert_eq!(snapshot.total, 1);
+    assert_eq!(snapshot.unread_count, 1);
+    assert_eq!(snapshot.notifications[0]["unread"], true);
     cleanup(project);
 }
 
