@@ -1400,6 +1400,44 @@ fn stop_project_marks_service_stopped_and_removes_endpoint() {
     fixture.cleanup();
 }
 
+#[cfg(unix)]
+#[test]
+fn stop_project_matches_service_state_by_canonical_project_root() {
+    use std::os::unix::fs::symlink;
+
+    let fixture = RuntimeFixture::new("stop-canonical");
+    let project = fixture.project("repo");
+    let alias = fixture.root.join("alias-repo");
+    symlink(&project, &alias).expect("symlink project alias");
+    let mut resolver = fixture.resolver();
+    let entry = resolver
+        .register_project(&project)
+        .expect("register project")
+        .expect("entry");
+    persist_service(
+        &resolver,
+        &entry.id,
+        &project,
+        std::process::id() as i32,
+        ProjectServiceStatus::Running,
+    );
+    let launcher = Arc::new(FakeLauncher::new(87_661));
+    let mut runtime = fixture.runtime_with_launcher(launcher.clone(), 0);
+
+    let stopped = runtime
+        .stop_project(alias.to_str().expect("alias path"), false)
+        .expect("stop project by alias");
+
+    assert_eq!(
+        launcher.terminations(),
+        vec![(std::process::id() as i32, false)]
+    );
+    assert_eq!(stopped["projectId"], entry.id);
+    assert_eq!(stopped["projectRoot"], json!(project.to_string_lossy()));
+    assert_eq!(stopped["status"], "stopped");
+    fixture.cleanup();
+}
+
 #[test]
 fn restart_project_stops_then_launches_fresh_service() {
     let fixture = RuntimeFixture::new("restart");
@@ -1522,8 +1560,13 @@ struct RuntimeFixture {
 
 impl RuntimeFixture {
     fn new(label: &str) -> Self {
-        let root = std::env::temp_dir().join(format!(
-            "aimux-rust-daemon-runtime-{label}-{}-{}",
+        let scratch_root = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".aimux-test-scratch")
+            .join("rust-daemon-runtime");
+        let root = scratch_root.join(format!(
+            "{label}-{}-{}",
             std::process::id(),
             TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));

@@ -74,6 +74,24 @@ impl TestIsolation {
             .env("AIMUX_DAEMON_PORT", self.daemon_port.to_string())
     }
 
+    pub fn project_service_pids(&self) -> Vec<u32> {
+        let state_path = self.aimux_home.join("daemon/state.json");
+        let Ok(raw) = fs::read_to_string(state_path) else {
+            return Vec::new();
+        };
+        let Ok(state) = serde_json::from_str::<serde_json::Value>(&raw) else {
+            return Vec::new();
+        };
+        state
+            .get("projects")
+            .and_then(serde_json::Value::as_object)
+            .into_iter()
+            .flat_map(|projects| projects.values())
+            .filter_map(|project| project.get("pid").and_then(serde_json::Value::as_u64))
+            .filter_map(|pid| u32::try_from(pid).ok())
+            .collect()
+    }
+
     fn set_process_env(&self) {
         // SAFETY: Tests that use this helper hold ENV_LOCK until drop, so env
         // mutation is serialized within the test process.
@@ -99,6 +117,9 @@ impl TestIsolation {
 
 impl Drop for TestIsolation {
     fn drop(&mut self) {
+        for pid in self.project_service_pids() {
+            terminate_pid(pid);
+        }
         // SAFETY: The same ENV_LOCK held during setup is still held here.
         unsafe {
             for (key, previous) in &self.previous_env {
@@ -110,6 +131,31 @@ impl Drop for TestIsolation {
         }
         let _ = fs::remove_dir_all(&self.root);
     }
+}
+
+#[cfg(unix)]
+fn terminate_pid(pid: u32) {
+    let pid = pid.to_string();
+    let _ = Command::new("kill").arg("-TERM").arg(&pid).status();
+    for _ in 0..30 {
+        if !pid_alive(&pid) {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let _ = Command::new("kill").arg("-KILL").arg(pid).status();
+}
+
+#[cfg(not(unix))]
+fn terminate_pid(_pid: u32) {}
+
+#[cfg(unix)]
+fn pid_alive(pid: &str) -> bool {
+    Command::new("kill")
+        .arg("-0")
+        .arg(pid)
+        .status()
+        .is_ok_and(|status| status.success())
 }
 
 pub fn live_window_ids(ids: &[&str]) -> BTreeSet<String> {

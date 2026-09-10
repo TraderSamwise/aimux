@@ -238,12 +238,43 @@ def default_daemon_listener_snapshot() -> str:
     return "\t".join([fields[0], fields[1], fields[-1]])
 
 
+def default_daemon_temp_project_services_snapshot() -> str:
+    result = subprocess.run(
+        ["ps", "-axo", "pid=,ppid=,args="],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if result.returncode != 0:
+        return f"ps failed: {result.stderr.strip()}"
+    rows = []
+    for line in result.stdout.splitlines():
+        if "__project-service-internal" not in line:
+            continue
+        if "/private/tmp/" not in line and "/tmp/" not in line:
+            continue
+        if "aimux-" not in line and "amx-test-" not in line:
+            continue
+        rows.append(line.strip())
+    return "\n".join(sorted(rows))
+
+
 def assert_default_daemon_listener_unchanged(before: str) -> None:
     after = default_daemon_listener_snapshot()
     if after != before:
         raise LiveResidualFailure(
             f"default daemon port {DEFAULT_DAEMON_PORT} listener changed during residual run\n"
             f"before:\n{before}\n\nafter:\n{after}"
+        )
+
+
+def assert_default_daemon_temp_project_services_unchanged(before: str) -> None:
+    after = default_daemon_temp_project_services_snapshot()
+    if after != before:
+        raise LiveResidualFailure(
+            "default daemon gained or lost temp-root project-service processes during residual run\n"
+            f"before:\n{before or '<none>'}\n\nafter:\n{after or '<none>'}"
         )
 
 
@@ -4275,8 +4306,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
     default_listener = None
+    default_temp_project_services = None
     try:
         default_listener = default_daemon_listener_snapshot()
+        default_temp_project_services = default_daemon_temp_project_services_snapshot()
         aimux_bin = build_aimux(args)
         suites = [
             "tmux",
@@ -4314,6 +4347,8 @@ def main(argv: list[str]) -> int:
     finally:
         if default_listener is not None:
             assert_default_daemon_listener_unchanged(default_listener)
+        if default_temp_project_services is not None:
+            assert_default_daemon_temp_project_services_unchanged(default_temp_project_services)
 
 
 if __name__ == "__main__":

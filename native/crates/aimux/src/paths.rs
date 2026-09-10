@@ -385,13 +385,9 @@ fn is_git_project_root_from(repo_root: &Path, process_cwd: &Path) -> bool {
 
 fn is_ephemeral_temp_project_root_from(repo_root: &Path, process_cwd: &Path) -> bool {
     let resolved = lexical_resolve(process_cwd, repo_root);
-    let Some(name) = resolved.file_name().and_then(OsStr::to_str) else {
-        return false;
-    };
-    name.starts_with("aimux-")
-        && temp_dirs(process_cwd)
-            .iter()
-            .any(|directory| resolved == *directory || resolved.starts_with(directory))
+    temp_dirs(process_cwd)
+        .iter()
+        .any(|directory| resolved == *directory || resolved.starts_with(directory))
 }
 
 fn temp_dirs(process_cwd: &Path) -> Vec<PathBuf> {

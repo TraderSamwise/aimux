@@ -28,6 +28,7 @@ use aimux::daemon::text::worktrees::DaemonWorktreeTextRuntime;
 use aimux::daemon_projects::ProjectsRouteProject;
 use aimux::daemon_state::{AimuxDaemonInfo, DaemonState, MetadataApiEndpoint};
 use aimux::project_api_contract::routes as project_routes;
+use aimux::runtime_safety_guard::TEST_HARNESS_HEADER;
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -791,6 +792,77 @@ fn unified_router_preserves_local_cli_and_auth_guards() {
     );
     assert_eq!(cli.status, 403);
     assert_eq!(text_body(cli), "core text routes are cli-only\n");
+}
+
+#[test]
+fn unified_router_refuses_test_harness_side_effects_before_dispatch() {
+    let mut runtime = FakeRouterRuntime::default();
+    let context = DaemonRouteRequestContext {
+        actor_present: false,
+        headers: BTreeMap::from([(TEST_HARNESS_HEADER.into(), "cargo-test".into())]),
+        access_decision: None,
+    };
+
+    let response = route_daemon_request(
+        &mut runtime,
+        "POST",
+        "/projects/ensure",
+        Some(&json!({ "projectRoot": "/repo" })),
+        "issued",
+        &context,
+    );
+
+    assert_eq!(response.status, 403);
+    assert_eq!(
+        json_body(response),
+        json!({ "ok": false, "error": "refusing daemon side effects from cargo test harness" })
+    );
+    assert!(runtime.calls.is_empty());
+}
+
+#[test]
+fn unified_router_refuses_temp_project_root_before_dispatch() {
+    let mut runtime = FakeRouterRuntime::default();
+    let context = DaemonRouteRequestContext::default();
+
+    let response = route_daemon_request(
+        &mut runtime,
+        "POST",
+        "/projects/ensure",
+        Some(&json!({
+            "projectRoot": "/private/tmp/aimux-expose-dashboard-cmd.0VRgam/repo"
+        })),
+        "issued",
+        &context,
+    );
+
+    assert_eq!(response.status, 403);
+    assert_eq!(
+        json_body(response),
+        json!({ "ok": false, "error": "refusing to materialize temporary project" })
+    );
+    assert!(runtime.calls.is_empty());
+}
+
+#[test]
+fn unified_router_allows_temp_project_stop_for_cleanup() {
+    let mut runtime = FakeRouterRuntime::default();
+    let context = DaemonRouteRequestContext::default();
+
+    let response = route_daemon_request(
+        &mut runtime,
+        "POST",
+        "/core/project-stop-text?project=%2Fprivate%2Ftmp%2Faimux-expose-dashboard-cmd.0VRgam%2Frepo&json=1",
+        None,
+        "issued",
+        &context,
+    );
+
+    assert_eq!(response.status, 200);
+    assert_eq!(
+        runtime.calls,
+        vec!["stop:/private/tmp/aimux-expose-dashboard-cmd.0VRgam/repo:false"]
+    );
 }
 
 #[test]

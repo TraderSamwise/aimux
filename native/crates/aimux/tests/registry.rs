@@ -12,7 +12,11 @@ struct TestDir(PathBuf);
 impl TestDir {
     fn new() -> Self {
         let sequence = TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir()
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .expect("HOME should be set for registry tests");
+        let path = home
+            .join(".aimux-test-scratch")
             .join("rust-registry-tests")
             .join(format!("{}-{sequence}", std::process::id()));
         fs::create_dir_all(&path).expect("create test directory");
@@ -289,4 +293,30 @@ fn register_project_skips_ineligible_roots_and_updates_existing_entry() {
     assert_eq!(value["version"], 1);
 
     fs::remove_dir_all(ephemeral).expect("remove ephemeral repo");
+}
+
+#[test]
+fn register_project_skips_nested_temp_fixture_repos() {
+    let test_dir = TestDir::new();
+    let leaked_shape = git_root(
+        PathBuf::from("/private/tmp")
+            .join(format!(
+                "aimux-expose-dashboard-cmd.{}-{}",
+                std::process::id(),
+                TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+            ))
+            .join("repo"),
+    );
+    let mut resolver = resolver(&test_dir);
+
+    assert_eq!(
+        resolver
+            .register_project(&leaked_shape)
+            .expect("skip nested temp fixture repo"),
+        None
+    );
+    assert!(resolver.list_projects().expect("list projects").is_empty());
+
+    fs::remove_dir_all(leaked_shape.parent().expect("fixture parent should exist"))
+        .expect("remove nested temp fixture repo");
 }

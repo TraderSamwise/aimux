@@ -129,6 +129,7 @@ pub fn build_daemon_json_request(
 ) -> Result<DaemonJsonRequest, CoreCommandTransportError> {
     let mut headers = BTreeMap::from([("accept".to_owned(), "application/json".to_owned())]);
     headers.extend(init.headers);
+    crate::runtime_safety_guard::mark_default_daemon_test_harness_request(&mut headers, info.port);
     if let Some(body) = init.body.as_ref() {
         headers
             .entry("content-type".to_owned())

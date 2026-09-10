@@ -94,6 +94,24 @@ pub fn route_daemon_request(
             json!({ "ok": false, "error": access.error.as_deref().unwrap_or("remote access denied") }),
         );
     }
+    if method != "GET"
+        && let Some(reason) = crate::runtime_safety_guard::request_refusal_reason(&context.headers)
+    {
+        return DaemonRouteResponse::json(
+            403,
+            json!({ "ok": false, "error": format!("refusing daemon side effects from {reason}") }),
+        );
+    }
+    if method != "GET"
+        && !allows_project_cleanup_side_effect(pathname, body)
+        && let Some(reason) =
+            crate::runtime_safety_guard::request_project_refusal_reason(&route_url, body)
+    {
+        return DaemonRouteResponse::json(
+            403,
+            json!({ "ok": false, "error": format!("refusing to materialize {reason}") }),
+        );
+    }
 
     if method == "POST" && local_auth_routes().contains(&pathname) && context.actor_present {
         return DaemonRouteResponse::text(403, "auth routes are loopback-only\n");
@@ -166,4 +184,20 @@ pub fn route_daemon_request(
 
 fn has_origin_header(headers: &BTreeMap<String, String>) -> bool {
     headers.contains_key("origin") || headers.contains_key("Origin")
+}
+
+fn allows_project_cleanup_side_effect(pathname: &str, body: Option<&Value>) -> bool {
+    if pathname == CORE_API_ROUTES.project_stop_text
+        || pathname == CORE_API_ROUTES.project_kill_text
+    {
+        return true;
+    }
+    pathname == CORE_API_ROUTES.commands
+        && body
+            .and_then(|body| body.get("command"))
+            .and_then(Value::as_str)
+            .is_some_and(|command| {
+                command == crate::core_command_contract::CORE_COMMAND_NAMES.project_stop
+                    || command == crate::core_command_contract::CORE_COMMAND_NAMES.project_kill
+            })
 }

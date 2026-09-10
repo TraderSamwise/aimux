@@ -644,6 +644,26 @@ impl RealDaemonRuntime {
         serde_json::from_value::<ProjectServiceState>(service.clone()).ok()
     }
 
+    fn stored_project_service_state_for_root(
+        &self,
+        project_id: &str,
+        project_root: &Path,
+    ) -> Option<ProjectServiceState> {
+        if let Some(service) = self.stored_project_service_state(project_id) {
+            return Some(service);
+        }
+        let state = load_daemon_state(self.resolver.daemon_state_path());
+        state
+            .projects
+            .values()
+            .filter_map(|service| {
+                serde_json::from_value::<ProjectServiceState>(service.clone()).ok()
+            })
+            .find(|service| {
+                project_roots_equivalent(Path::new(&service.project_root), project_root)
+            })
+    }
+
     fn terminate_extra_project_services(
         &self,
         project_id: &str,
@@ -1549,6 +1569,14 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
         let project_root_path = resolver.resolve_repo_root(project_root);
         let project_root = project_root_path.to_string_lossy().into_owned();
         let project_id = compute_project_id(&project_root_path);
+        if let Some(reason) =
+            crate::runtime_safety_guard::project_materialization_refusal_reason(&project_root_path)
+        {
+            return Err(format!(
+                "refusing to materialize {reason}: {}",
+                project_root_path.display()
+            ));
+        }
         record_repair_event_for_project(
             &self.resolver,
             &project_root,
@@ -1782,7 +1810,9 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
         let project_root_path = resolver.resolve_repo_root(project_root);
         let project_root = project_root_path.to_string_lossy().into_owned();
         let project_id = compute_project_id(&project_root_path);
-        let Some(mut service) = self.stored_project_service_state(&project_id) else {
+        let Some(mut service) =
+            self.stored_project_service_state_for_root(&project_id, &project_root_path)
+        else {
             return Ok(json!({
                 "projectId": project_id,
                 "projectRoot": project_root,
@@ -1791,7 +1821,7 @@ impl DaemonCoreCommandRuntime for RealDaemonRuntime {
             }));
         };
         self.project_service_launcher.terminate(&service, force)?;
-        remove_metadata_endpoint(resolver.project_state_dir_for(&project_root));
+        remove_metadata_endpoint(resolver.project_state_dir_for(&service.project_root));
         service.status = Some(crate::daemon_state::ProjectServiceStatus::Stopped);
         service.updated_at = now_iso();
         service.last_exit = Some(crate::daemon_state::ProjectServiceExit {
@@ -3323,6 +3353,16 @@ fn current_unix_millis() -> u128 {
         .as_millis()
 }
 
+fn project_roots_equivalent(left: &Path, right: &Path) -> bool {
+    if left == right {
+        return true;
+    }
+    match (fs::canonicalize(left), fs::canonicalize(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3388,6 +3428,37 @@ mod tests {
         assert_eq!(result["service"]["state"]["pid"], json!(91_202));
         assert_eq!(launcher.calls(), vec![project]);
         assert_eq!(launcher.terminations(), vec![(91_002, false)]);
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn ensure_project_refuses_nested_temp_fixture_repo_before_launch() {
+        let fixture = restart_service_fixture("ensure-refuse-temp");
+        let project = PathBuf::from("/private/tmp")
+            .join(format!(
+                "aimux-expose-dashboard-cmd.{}-{}",
+                std::process::id(),
+                TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+            ))
+            .join("repo");
+        fs::create_dir_all(project.join(".git")).expect("project git");
+        let project = project.to_string_lossy().into_owned();
+        let launcher = Arc::new(RestartTestLauncher::new(91_404));
+        let verifier = Arc::new(RestartTestProcessVerifier::current_native([]));
+        let mut runtime = fixture.runtime(launcher.clone(), verifier);
+
+        let error =
+            <RealDaemonRuntime as DaemonCoreCommandRuntime>::ensure_project(&mut runtime, &project)
+                .expect_err("temp fixture repo should be refused");
+
+        assert!(error.contains("refusing to materialize temporary project"));
+        assert!(launcher.calls().is_empty());
+        fs::remove_dir_all(
+            Path::new(&project)
+                .parent()
+                .expect("fixture parent should exist"),
+        )
+        .expect("remove temp fixture repo");
         fixture.cleanup();
     }
 
@@ -4462,7 +4533,10 @@ mod tests {
     }
 
     fn temp_root(label: &str) -> PathBuf {
-        std::env::temp_dir().join(format!(
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .expect("HOME should be set for daemon runtime tests");
+        home.join(".aimux-test-scratch").join(format!(
             "aimux-daemon-runtime-{label}-{}-{}",
             std::process::id(),
             TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
