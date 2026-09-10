@@ -172,8 +172,6 @@ Binding statuses: PROVEN-FAILS 325, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 0.
 | `fixture_metadata_server_runtime` | PROVEN-FAILS | `testdata/contracts/v1/metadata-server/library-documents.json` | 1 | mutated fixture output failed owning Rust suite |
 | `fixture_metadata_server_runtime` | PROVEN-FAILS | `testdata/contracts/v1/metadata-server/lifecycle-mutation-queue.json` | 7 | mutated fixture output failed owning Rust suite |
 | `fixture_metadata_store` | PROVEN-FAILS | `testdata/contracts/v1/metadata-store/store.json` | 21 | mutated fixture output failed owning Rust suite |
-| `fixture_monitor_capture` | PROVEN-FAILS | `testdata/contracts/v1/monitor/capture.json` | 11 | mutated fixture output failed owning Rust suite |
-| `fixture_monitor_targets` | PROVEN-FAILS | `testdata/contracts/v1/monitor/targets.json` | 12 | mutated fixture output failed owning Rust suite |
 | `fixture_multiplexer_dashboard_state_helpers` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/dashboard-state-helpers.json` | 10 | mutated fixture output failed owning Rust suite |
 | `fixture_multiplexer_index_helpers` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/index-helpers.json` | 11 | mutated fixture output failed owning Rust suite |
 | `fixture_multiplexer_notifications` | PROVEN-FAILS | `testdata/contracts/v1/multiplexer/notifications.json` | 5 | mutated fixture output failed owning Rust suite |

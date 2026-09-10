@@ -445,16 +445,6 @@ Priority fixture groups:
   timeout behavior captured by running TypeScript `InteractionRegistry` with
   generated IDs and timestamps normalized.
 
-## Monitor
-
-- `monitor/capture.json`: app monitor capture filename, base64 stripping,
-  decoded-size estimation, and sample text formatting behavior captured by
-  running TypeScript `app/lib/monitor-capture` helpers.
-- `monitor/targets.json`: app monitor project/shared target filtering,
-  generated-label presentation, persisted settings matching, target labels, and
-  stable target id behavior captured by running TypeScript
-  `app/lib/monitor-targets` helpers.
-
 ## Expose
 
 - `expose/control.json`: global expose-control project/session flattening,
