@@ -328,6 +328,7 @@ def build_aimux(args: argparse.Namespace) -> Path:
         return aimux_bin
     target_dir = Path(os.environ.get("CARGO_TARGET_DIR", DEFAULT_TARGET_DIR))
     env = os.environ.copy()
+    env.setdefault("CARGO_INCREMENTAL", "0")
     env["CARGO_TARGET_DIR"] = str(target_dir)
     if not args.skip_build:
         run(

@@ -12,6 +12,7 @@ case "$BUILD_PROFILE" in
   *) printf 'Unsupported AIMUX_BUILD_PROFILE: %s\n' "$BUILD_PROFILE" >&2; exit 1 ;;
 esac
 export AIMUX_BUILD_PROFILE="$BUILD_PROFILE"
+export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
 
 detect_platform() {
   case "$(uname -s)" in

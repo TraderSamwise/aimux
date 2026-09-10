@@ -143,6 +143,27 @@ Source checks do not prove that the live installed runtime changed. Before
 asking someone to manually verify CLI or runtime behavior, install a local
 release asset as shown above.
 
+Agent Cargo runs must not share the repository `native/target` directory. Use a
+per-agent target directory under `/tmp`, named with the Aimux session id, for
+example:
+
+```bash
+CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=/tmp/aimux-cargo-target-$AIMUX_SESSION_ID \
+  cargo test --manifest-path native/Cargo.toml -p aimux --test <scoped-test>
+```
+
+Keep incremental compilation disabled for agent and CI test runs
+(`CARGO_INCREMENTAL=0`). Incremental artifacts are tuned for one developer
+iterating in one checkout; with multiple long-running agents they create large
+fragment trees and target-lock contention.
+
+Prune stale Cargo artifacts with cargo-sweep instead of `cargo clean`, so the
+warm dependency cache survives. A daily local schedule should run:
+
+```bash
+scripts/cargo-sweep-stale-targets.sh --apply
+```
+
 Common checks:
 
 ```bash
