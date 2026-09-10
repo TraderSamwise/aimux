@@ -1,7 +1,13 @@
 # Unported Node Subsystems
 
-Scope: runtime behavior Node had wired before the Rust cutover, but the Rust
-binary either still does not perform or only preserves as an uncalled contract.
+Scope: historical audit of runtime behavior Node had wired before the Rust
+cutover, but the Rust binary either did not perform or only preserved as an
+uncalled contract.
+
+Current status: no active unported Rust rewrite subsystem is tracked here.
+`yarn audit:rust-orphans` should report exactly two tracked fixture dispatcher
+modules, both deliberate keeps: `plugin_runtime_contract.rs` and
+`transport_security_contract.rs`.
 
 ## Why The Gates Missed These
 
@@ -10,22 +16,18 @@ binary either still does not perform or only preserves as an uncalled contract.
 - Twins are not always named `*_contract.rs`, so filename-only sweeps miss some
   of them.
 - The compiler does not warn for an unreferenced `pub fn` inside a `pub mod`.
+- The `session_viewed` corpus stayed green while production only zeroed
+  `unseenCount` instead of doing Node's full mark-seen update, because the twin
+  answered the fixtures itself.
+- The notification composer proved the inverse failure mode: production
+  composition was correct, but a second composer at the delivery boundary
+  discarded it. The durable rule is still the same: fixtures must reach the live
+  production path.
 
 ## Still Outstanding
 
-Ranked by cost of absence, not by implementation size.
-
-1. **Attachment text recovery.** Live Rust transcript projection has a simpler
-   attached-files parser than Node's shared helper for tmux-wrapped attachment
-   paths, multiple/bare references, and filename/mime recovery. Cost: wrapped
-   or multi-attachment transcript blocks can render as plain text or lose labels
-   in GUI chat/transcript views. Size: hours, promotion into the projection path.
-
-2. **OSC terminal notifications.** Routing parity was duplicate and removed, but
-   OSC 9/777/99 parsing is not wired to production terminal output. The parser
-   and corpus remain as the tracked spec. Cost: terminal-emitted notifications
-   do not become Aimux notifications; low frequency but real if tools depend on
-   OSC notify. Size: hours, promotion into the output/event pipeline.
+None. Attachment text recovery and OSC terminal notifications were promoted to
+production and are no longer outstanding.
 
 ## Deleted As Duplicate Or Dead
 
@@ -61,6 +63,9 @@ Ranked by cost of absence, not by implementation size.
 
 ## Tracked But Not Rust Rewrite Ports
 
+These two modules account for the remaining tracked count of 2. They are
+deliberate keeps, not Rust rewrite debt.
+
 - **Transport security contract.** Shared-chat actor resolution and browser
   device-proof encoding are live in the TypeScript app and relay. Keep the
   invariant tracked there; no native Rust port is needed.
@@ -70,6 +75,20 @@ Ranked by cost of absence, not by implementation size.
   plugins remain a supported product surface.
 
 ## Fixed Since The Original Audit
+
+Attachment text recovery now runs in production transcript projection through
+`project_service/agent_output_projection.rs`: `parts_from_flattened()` detects
+legacy "Attached files" / "Attached image files" transcript blocks and
+`recover_wrapped_attachments()` recovers tmux-wrapped attachment paths,
+multiple/bare references, filename metadata, and MIME metadata before
+`messages_from_blocks()` emits structured message parts. The live agent output
+routes call this path through `project_service/agent_output.rs`.
+
+OSC terminal notifications now run in production live-output capture.
+`project_service/agent_output.rs` checks captured pane payloads for OSC starts,
+strips OSC bytes from returned output, and writes untrusted terminal
+notifications through the live output route. `project_service/process.rs`
+constructs the live project-service context with the OSC output tap.
 
 The original 2026-09-09 audit entries for hosted mode, relay client, mobile
 push bridge, attachment hosting, tool-output watchers, service-state snapshots,
