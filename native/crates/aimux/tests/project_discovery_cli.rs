@@ -10,7 +10,7 @@ use std::os::unix::fs::PermissionsExt;
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[test]
-fn project_scoped_cli_activates_non_git_cwd_like_typescript() {
+fn project_scoped_cli_refuses_non_git_cwd_before_daemon_io() {
     let fixture = CliFixture::new("non-git", 46520);
     let plain = fixture.root.join("plain");
     fs::create_dir_all(&plain).expect("create plain dir");
@@ -39,6 +39,38 @@ fn project_scoped_cli_activates_non_git_cwd_like_typescript() {
         .expect("run aimux ps");
 
     assert!(
+        !output.status.success(),
+        "non-git ps should fail before daemon IO\nstdout:\n{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("is not a git repository. Run `git init` first, or cd into a repo."),
+        "{stderr}"
+    );
+    assert!(
+        !fixture.node_log.exists(),
+        "non-git project activation should not invoke node fallback"
+    );
+    assert!(
+        !fixture.aimux_home.join("daemon/daemon.json").exists(),
+        "non-git project activation should fail before starting the isolated daemon"
+    );
+}
+
+#[test]
+fn project_scoped_cli_activates_git_cwd_through_isolated_daemon() {
+    let fixture = CliFixture::new("git-cwd", 46530);
+    let repo = git_repo(fixture.root.join("repo"));
+
+    let output = fixture
+        .command()
+        .current_dir(&repo)
+        .args(["ps", "--json"])
+        .output()
+        .expect("run aimux ps");
+
+    assert!(
         output.status.success(),
         "{}",
         String::from_utf8_lossy(&output.stderr)
@@ -47,11 +79,11 @@ fn project_scoped_cli_activates_non_git_cwd_like_typescript() {
     assert_eq!(body.as_array().expect("agent list").len(), 0);
     assert!(
         !fixture.node_log.exists(),
-        "non-git project activation should not invoke node fallback"
+        "git project activation should not invoke node fallback"
     );
     assert!(
         fixture.aimux_home.join("daemon/daemon.json").exists(),
-        "non-git project activation should start the isolated daemon"
+        "git project activation should start the isolated daemon"
     );
 }
 

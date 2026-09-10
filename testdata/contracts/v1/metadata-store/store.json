@@ -149,7 +149,7 @@
         "state": {
           "version": 1,
           "sessions": {
-            "boss-1": { "updatedAt": "2026-02-03T04:05:06.000Z" },
+            "boss-1": { "updatedAt": "2026-02-03T04:05:06.000Z", "projectControl": false },
             "boss-2": { "updatedAt": "2026-02-03T04:05:06.000Z", "overseer": true }
           }
         },
@@ -167,7 +167,7 @@
         "state": {
           "version": 1,
           "sessions": {
-            "scribe-1": { "updatedAt": "2026-02-03T04:05:06.000Z" },
+            "scribe-1": { "updatedAt": "2026-02-03T04:05:06.000Z", "projectControl": false },
             "scribe-2": { "updatedAt": "2026-02-03T04:05:06.000Z", "scribe": true }
           }
         },
