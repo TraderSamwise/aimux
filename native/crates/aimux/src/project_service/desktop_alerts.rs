@@ -2,6 +2,7 @@ use serde_json::Value;
 use std::path::Path;
 
 use crate::config::load_config_for_project;
+use crate::daemon_state::load_metadata_state;
 use crate::desktop_notifier::{
     DesktopNotificationPayload, external_notifications_disabled, send_desktop_notification_and_wait,
 };
@@ -9,6 +10,10 @@ use crate::notification_deep_link::{
     AimuxNotificationDeepLinkTarget, build_aimux_notification_deep_link,
 };
 use crate::notification_delivery_guard::external_notification_refusal_reason_for_event;
+use crate::runtime_topology::{
+    list_topology_session_states, read_runtime_topology, runtime_topology_path,
+};
+use crate::team_contract::{is_overseer_session, is_scribe_session};
 
 use super::notification_context::should_suppress_notification;
 
@@ -81,10 +86,24 @@ pub fn should_deliver_desktop_alert(
     }
     let config = load_config_for_project(project_root);
     let notifications = config.get("notifications").unwrap_or(&Value::Null);
-    should_deliver_desktop_alert_with_config(project_state_dir, event, notifications, false)
+    should_deliver_external_alert_with_config(project_state_dir, event, notifications, false)
 }
 
 pub fn should_deliver_desktop_alert_with_config(
+    project_state_dir: &Path,
+    event: &Value,
+    notifications: &Value,
+    external_disabled: bool,
+) -> bool {
+    should_deliver_external_alert_with_config(
+        project_state_dir,
+        event,
+        notifications,
+        external_disabled,
+    )
+}
+
+pub fn should_deliver_external_alert_with_config(
     project_state_dir: &Path,
     event: &Value,
     notifications: &Value,
@@ -118,7 +137,71 @@ pub fn should_deliver_desktop_alert_with_config(
     if matches!(kind, "task_failed" | "blocked") && !bool_field(notifications, "onError", true) {
         return false;
     }
+    if !should_deliver_for_session_role(project_state_dir, event, notifications) {
+        return false;
+    }
     true
+}
+
+fn should_deliver_for_session_role(
+    project_state_dir: &Path,
+    event: &Value,
+    notifications: &Value,
+) -> bool {
+    match notification_target_role(project_state_dir, event) {
+        NotificationTargetRole::Scribe => role_delivery_field(notifications, "scribe", false),
+        NotificationTargetRole::Overseer if string_field(event, "kind") == "needs_input" => {
+            role_delivery_field(notifications, "overseerNeedsInput", true)
+        }
+        NotificationTargetRole::Overseer => {
+            role_delivery_field(notifications, "overseerOther", false)
+        }
+        NotificationTargetRole::Ordinary => role_delivery_field(notifications, "ordinary", true),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NotificationTargetRole {
+    Ordinary,
+    Overseer,
+    Scribe,
+}
+
+fn notification_target_role(project_state_dir: &Path, event: &Value) -> NotificationTargetRole {
+    let Some(session_id) = non_empty(string_field(event, "sessionId")) else {
+        return NotificationTargetRole::Ordinary;
+    };
+    let metadata = load_metadata_state(project_state_dir);
+    if let Some(session) = metadata.sessions.get(session_id) {
+        return notification_target_role_for_session(session);
+    }
+    if let Ok(topology) = read_runtime_topology(runtime_topology_path(project_state_dir)) {
+        if let Some(session) = list_topology_session_states(&topology, None)
+            .into_iter()
+            .find(|session| session.get("id").and_then(Value::as_str) == Some(session_id))
+        {
+            return notification_target_role_for_session(&session);
+        }
+    }
+    NotificationTargetRole::Ordinary
+}
+
+fn notification_target_role_for_session(session: &Value) -> NotificationTargetRole {
+    if is_scribe_session(Some(session)) {
+        NotificationTargetRole::Scribe
+    } else if is_overseer_session(Some(session)) {
+        NotificationTargetRole::Overseer
+    } else {
+        NotificationTargetRole::Ordinary
+    }
+}
+
+fn role_delivery_field(notifications: &Value, key: &str, fallback: bool) -> bool {
+    notifications
+        .get("deliveryRoles")
+        .and_then(|roles| roles.get(key))
+        .and_then(Value::as_bool)
+        .unwrap_or(fallback)
 }
 
 fn is_prompt_kind(kind: &str) -> bool {

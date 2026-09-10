@@ -2,9 +2,18 @@
 //! a push that leaks a session id into a title is a privacy problem, so the
 //! payload shape is worth pinning.
 
-use aimux::mobile_push_bridge::{build_push_payload, relay_notification};
+use aimux::daemon_state::{MetadataState, save_metadata_state};
+use aimux::mobile_push_bridge::{
+    build_push_payload, push_payload_for_alert_with_config, relay_notification,
+};
 use aimux::notification_delivery_guard::fixture_notification_refusal_reason_for_payload;
 use serde_json::json;
+use std::collections::BTreeMap;
+use std::fs::remove_dir_all;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[test]
 fn an_alert_becomes_a_push_with_its_title_and_message() {
@@ -87,6 +96,113 @@ fn the_relay_frame_carries_the_fields_the_phone_renders() {
 }
 
 #[test]
+fn mobile_push_role_gate_matches_desktop_delivery_policy() {
+    let project = temp_project("role-gate");
+    let state_dir = project.join("state");
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([
+                (
+                    "scribe-1".into(),
+                    json!({
+                        "id": "scribe-1",
+                        "scribe": true,
+                        "projectControl": true,
+                        "team": { "role": "scribe" }
+                    }),
+                ),
+                (
+                    "overseer-1".into(),
+                    json!({
+                        "id": "overseer-1",
+                        "overseer": true,
+                        "projectControl": true,
+                        "team": { "role": "overseer" }
+                    }),
+                ),
+                (
+                    "worker-1".into(),
+                    json!({ "id": "worker-1", "tool": "codex" }),
+                ),
+            ]),
+        },
+    )
+    .expect("save metadata");
+
+    let enabled = json!({
+        "enabled": true,
+        "onPrompt": true
+    });
+    assert!(
+        push_payload_for_alert_with_config(
+            Some(&project),
+            Some(&state_dir),
+            &json!({
+                "title": "aimux / Main Checkout (master)",
+                "message": "Needs input: claude @ Main Checkout - Claude is waiting for your input",
+                "kind": "needs_input",
+                "sessionId": "scribe-1",
+                "projectRoot": project.to_string_lossy()
+            }),
+            &enabled,
+            false
+        )
+        .is_none()
+    );
+    assert!(
+        push_payload_for_alert_with_config(
+            Some(&project),
+            Some(&state_dir),
+            &json!({
+                "title": "aimux / Main Checkout (master)",
+                "message": "Needs input: claude @ Main Checkout - Claude is waiting for your input",
+                "kind": "needs_input",
+                "sessionId": "overseer-1",
+                "projectRoot": project.to_string_lossy()
+            }),
+            &enabled,
+            false
+        )
+        .is_some()
+    );
+    assert!(
+        push_payload_for_alert_with_config(
+            Some(&project),
+            Some(&state_dir),
+            &json!({
+                "title": "[Next step] aimux / Main Checkout (master)",
+                "message": "Agent stopped after a turn: claude @ Main Checkout",
+                "kind": "next_step",
+                "sessionId": "overseer-1",
+                "projectRoot": project.to_string_lossy()
+            }),
+            &enabled,
+            false
+        )
+        .is_none()
+    );
+    assert!(
+        push_payload_for_alert_with_config(
+            Some(&project),
+            Some(&state_dir),
+            &json!({
+                "title": "[Next step] aimux / Main Checkout (master)",
+                "message": "Agent stopped after a turn: codex @ Main Checkout",
+                "kind": "next_step",
+                "sessionId": "worker-1",
+                "projectRoot": project.to_string_lossy()
+            }),
+            &enabled,
+            false
+        )
+        .is_some()
+    );
+    cleanup(project);
+}
+
+#[test]
 fn fixture_push_payload_is_refused_at_delivery_boundary() {
     let payload = build_push_payload(
         &json!({
@@ -103,4 +219,18 @@ fn fixture_push_payload_is_refused_at_delivery_boundary() {
         fixture_notification_refusal_reason_for_payload(&payload),
         Some("test fixture project")
     );
+}
+
+fn temp_project(label: &str) -> PathBuf {
+    let path = std::env::temp_dir().join(format!(
+        "aimux-mobile-push-{label}-{}-{}",
+        std::process::id(),
+        TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    ));
+    cleanup(path.clone());
+    path
+}
+
+fn cleanup(path: PathBuf) {
+    let _ = remove_dir_all(path);
 }

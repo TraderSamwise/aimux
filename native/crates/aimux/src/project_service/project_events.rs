@@ -222,7 +222,11 @@ impl ProjectEventBus {
         let event = alert_event_from_notification(project_root, input, record);
         forward_alert_to_desktop_notification(project_root, project_state_dir, &event);
         // Hand off to the daemon's push route. Nothing here waits on it.
-        crate::mobile_push_bridge::forward_alert_to_mobile_push(&event);
+        crate::mobile_push_bridge::forward_alert_to_mobile_push_with_context(
+            Some(project_root),
+            Some(project_state_dir),
+            &event,
+        );
         self.publish(event);
         self.publish_project_update(
             project_root,

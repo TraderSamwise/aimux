@@ -58,7 +58,13 @@ pub fn default_config() -> Value {
             "onComplete": true,
             "markReadOnView": true,
             "clearNeedsInputOnView": true,
-            "clearFormalInteractionsOnView": false
+            "clearFormalInteractionsOnView": false,
+            "deliveryRoles": {
+                "ordinary": true,
+                "overseerNeedsInput": true,
+                "overseerOther": false,
+                "scribe": false
+            }
         },
         "statusline": {
             "defaultPlugins": {

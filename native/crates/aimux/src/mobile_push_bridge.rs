@@ -10,10 +10,15 @@ use std::net::TcpStream;
 use std::time::Duration;
 
 use serde_json::{Map, Value, json};
+use std::path::Path;
 
+use crate::config::load_config_for_project;
 use crate::desktop_notifier::external_notifications_disabled;
 use crate::launcher_env::DEFAULT_DAEMON_PORT;
-use crate::notification_delivery_guard::external_notification_refusal_reason_for_event;
+use crate::notification_delivery_guard::{
+    external_notification_refusal_reason_for_event, fixture_notification_refusal_reason_for_event,
+};
+use crate::project_service::desktop_alerts::should_deliver_external_alert_with_config;
 
 const PUSH_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -68,21 +73,79 @@ pub fn build_push_payload(event: &Value, project_root_fallback: &str) -> Value {
 
 /// Hand an alert to the daemon's push route. Never blocks the caller.
 pub fn forward_alert_to_mobile_push(event: &Value) {
-    if external_notifications_disabled() {
+    forward_alert_to_mobile_push_with_context(None, None, event);
+}
+
+/// Hand an alert to the daemon's push route with project context for delivery policy.
+pub fn forward_alert_to_mobile_push_with_context(
+    project_root: Option<&Path>,
+    project_state_dir: Option<&Path>,
+    event: &Value,
+) {
+    let Some(payload) = push_payload_for_alert(project_root, project_state_dir, event) else {
         return;
-    }
-    if external_notification_refusal_reason_for_event(None, None, event).is_some() {
-        return;
-    }
-    let project_root_fallback = std::env::current_dir()
-        .map(|path| path.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let payload = build_push_payload(event, &project_root_fallback);
+    };
     let _ = std::thread::Builder::new()
         .name("aimux-mobile-push".into())
         .spawn(move || {
             let _ = post_internal_push(&payload);
         });
+}
+
+pub fn push_payload_for_alert(
+    project_root: Option<&Path>,
+    project_state_dir: Option<&Path>,
+    event: &Value,
+) -> Option<Value> {
+    if external_notifications_disabled() {
+        return None;
+    }
+    if external_notification_refusal_reason_for_event(project_root, project_state_dir, event)
+        .is_some()
+    {
+        return None;
+    }
+    let notifications = project_root
+        .map(load_config_for_project)
+        .and_then(|config| config.get("notifications").cloned());
+    push_payload_for_alert_with_config(
+        project_root,
+        project_state_dir,
+        event,
+        notifications.as_ref().unwrap_or(&Value::Null),
+        false,
+    )
+}
+
+pub fn push_payload_for_alert_with_config(
+    project_root: Option<&Path>,
+    project_state_dir: Option<&Path>,
+    event: &Value,
+    notifications: &Value,
+    external_disabled: bool,
+) -> Option<Value> {
+    if external_disabled {
+        return None;
+    }
+    if fixture_notification_refusal_reason_for_event(project_root, project_state_dir, event)
+        .is_some()
+    {
+        return None;
+    }
+    let project_root_fallback = std::env::current_dir()
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    if let Some(project_state_dir) = project_state_dir {
+        if !should_deliver_external_alert_with_config(
+            project_state_dir,
+            event,
+            notifications,
+            false,
+        ) {
+            return None;
+        }
+    }
+    Some(build_push_payload(event, &project_root_fallback))
 }
 
 fn post_internal_push(payload: &Value) -> Result<(), String> {

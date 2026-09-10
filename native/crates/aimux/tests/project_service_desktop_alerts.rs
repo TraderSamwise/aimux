@@ -1,3 +1,4 @@
+use aimux::daemon_state::{MetadataState, save_metadata_state};
 use aimux::project_service::desktop_alerts::{
     build_desktop_notification_payload, desktop_notification_payload_for_alert,
     should_deliver_desktop_alert_with_config,
@@ -6,6 +7,7 @@ use aimux::project_service::notification_context::{
     NotificationContextPatch, NotificationContextSource, update_notification_context,
 };
 use serde_json::json;
+use std::collections::BTreeMap;
 use std::fs::remove_dir_all;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -85,6 +87,114 @@ fn desktop_alert_gate_matches_node_focus_and_notification_config() {
     ));
     assert!(!should_deliver_desktop_alert_with_config(
         &state_dir, &forced, &enabled, true
+    ));
+    cleanup(project);
+}
+
+#[test]
+fn desktop_alert_role_gate_applies_project_control_defaults_and_overrides() {
+    let project = temp_project("role-gate");
+    let state_dir = project.join("state");
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([
+                (
+                    "scribe-1".into(),
+                    json!({
+                        "id": "scribe-1",
+                        "scribe": true,
+                        "projectControl": true,
+                        "team": { "role": "scribe" }
+                    }),
+                ),
+                (
+                    "overseer-1".into(),
+                    json!({
+                        "id": "overseer-1",
+                        "overseer": true,
+                        "projectControl": true,
+                        "team": { "role": "overseer" }
+                    }),
+                ),
+                (
+                    "worker-1".into(),
+                    json!({ "id": "worker-1", "tool": "codex" }),
+                ),
+            ]),
+        },
+    )
+    .expect("save metadata");
+    let enabled = json!({
+        "enabled": true,
+        "onPrompt": true,
+        "onError": true,
+        "onComplete": true
+    });
+    let scribe_needs_input = json!({ "kind": "needs_input", "sessionId": "scribe-1" });
+    let overseer_needs_input = json!({ "kind": "needs_input", "sessionId": "overseer-1" });
+    let overseer_next_step = json!({ "kind": "next_step", "sessionId": "overseer-1" });
+    let worker_next_step = json!({ "kind": "next_step", "sessionId": "worker-1" });
+
+    assert!(!should_deliver_desktop_alert_with_config(
+        &state_dir,
+        &scribe_needs_input,
+        &enabled,
+        false
+    ));
+    assert!(should_deliver_desktop_alert_with_config(
+        &state_dir,
+        &overseer_needs_input,
+        &enabled,
+        false
+    ));
+    assert!(!should_deliver_desktop_alert_with_config(
+        &state_dir,
+        &overseer_next_step,
+        &enabled,
+        false
+    ));
+    assert!(should_deliver_desktop_alert_with_config(
+        &state_dir,
+        &worker_next_step,
+        &enabled,
+        false
+    ));
+
+    let overrides = json!({
+        "enabled": true,
+        "onPrompt": true,
+        "deliveryRoles": {
+            "ordinary": false,
+            "overseerNeedsInput": false,
+            "overseerOther": true,
+            "scribe": true
+        }
+    });
+    assert!(should_deliver_desktop_alert_with_config(
+        &state_dir,
+        &scribe_needs_input,
+        &overrides,
+        false
+    ));
+    assert!(!should_deliver_desktop_alert_with_config(
+        &state_dir,
+        &overseer_needs_input,
+        &overrides,
+        false
+    ));
+    assert!(should_deliver_desktop_alert_with_config(
+        &state_dir,
+        &overseer_next_step,
+        &overrides,
+        false
+    ));
+    assert!(!should_deliver_desktop_alert_with_config(
+        &state_dir,
+        &worker_next_step,
+        &overrides,
+        false
     ));
     cleanup(project);
 }
