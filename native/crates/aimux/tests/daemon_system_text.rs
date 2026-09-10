@@ -69,6 +69,16 @@ impl DaemonSystemTextRuntime for FakeSystemRuntime {
         Ok(json!({ "projectRoot": project_root, "pid": 9200 }))
     }
 
+    fn remove_project(&mut self, project_root: &str) -> Result<Value, String> {
+        self.calls.push(format!("remove:{project_root}"));
+        Ok(json!({
+            "projectId": "repo-id",
+            "projectRoot": project_root,
+            "project": { "projectRoot": project_root, "pid": 9200, "status": "stopped" },
+            "tmuxSessionsKilled": ["aimux-repo-id"]
+        }))
+    }
+
     fn restart_project_service(
         &mut self,
         project_root: &str,
@@ -208,6 +218,25 @@ fn project_lifecycle_text_routes_resolve_project_and_render_text() {
             "stop:/resolved/abc:true"
         ]
     );
+}
+
+#[test]
+fn projects_remove_text_route_resolves_project_and_renders_text() {
+    let mut runtime = FakeSystemRuntime::default();
+
+    let response = route_system_text_request(
+        &mut runtime,
+        "POST",
+        &format!("{}?project=abc", CORE_API_ROUTES.projects_remove_text),
+        None,
+    )
+    .expect("projects remove");
+
+    assert_eq!(
+        text_body(response),
+        "Removed project /resolved/abc (stopped service pid 9200, killed 1 tmux session)\n"
+    );
+    assert_eq!(runtime.calls, ["remove:/resolved/abc"]);
 }
 
 #[test]

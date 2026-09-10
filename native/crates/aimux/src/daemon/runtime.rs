@@ -433,6 +433,41 @@ impl RealDaemonRuntime {
         })
     }
 
+    fn remove_project_with_tmux_stop(
+        &mut self,
+        project_root: &str,
+        stop_tmux_runtime: impl FnOnce(&Path, &Path) -> Result<Vec<String>, String>,
+    ) -> Result<Value, String> {
+        let mut resolver = self.resolver.clone();
+        let project_root_path = resolver.resolve_repo_root(project_root);
+        let project_root = project_root_path.to_string_lossy().into_owned();
+        let project_id = compute_project_id(&project_root_path);
+        let project_state_dir = resolver.project_state_dir_for(&project_root_path);
+        let project = <Self as DaemonCoreCommandRuntime>::stop_project(self, &project_root, false)?;
+        let tmux_sessions_killed = stop_tmux_runtime(&project_root_path, &project_state_dir)?;
+        let removed_registry_entry = resolver
+            .remove_project_by_root(&project_root_path)
+            .map_err(|error| error.to_string())?;
+        let removed_state = self.remove_project_service_state(&project_id, &project_root_path)?;
+        remove_metadata_endpoint(&project_state_dir);
+        Ok(json!({
+            "projectId": removed_state
+                .as_ref()
+                .map(|service| service.project_id.clone())
+                .or_else(|| removed_registry_entry.as_ref().map(|entry| entry.id.clone()))
+                .unwrap_or(project_id),
+            "projectRoot": removed_state
+                .as_ref()
+                .map(|service| service.project_root.clone())
+                .or_else(|| removed_registry_entry.as_ref().map(|entry| entry.repo_root.clone()))
+                .unwrap_or(project_root),
+            "project": project,
+            "tmuxSessionsKilled": tmux_sessions_killed,
+            "unregistered": removed_registry_entry.is_some(),
+            "removedDaemonState": removed_state.is_some(),
+        }))
+    }
+
     fn request_project_service_json(
         &mut self,
         project: &str,
@@ -636,6 +671,35 @@ impl RealDaemonRuntime {
         );
         save_daemon_state(self.resolver.daemon_state_path(), &state)
             .map_err(|error| error.to_string())
+    }
+
+    fn remove_project_service_state(
+        &self,
+        project_id: &str,
+        project_root: &Path,
+    ) -> Result<Option<ProjectServiceState>, String> {
+        let mut state = load_daemon_state(self.resolver.daemon_state_path());
+        let key = if state.projects.contains_key(project_id) {
+            Some(project_id.to_owned())
+        } else {
+            state.projects.iter().find_map(|(key, service)| {
+                serde_json::from_value::<ProjectServiceState>(service.clone())
+                    .ok()
+                    .filter(|service| {
+                        project_roots_equivalent(Path::new(&service.project_root), project_root)
+                    })
+                    .map(|_| key.clone())
+            })
+        };
+        let removed = key
+            .and_then(|key| state.projects.remove(&key))
+            .and_then(|value| serde_json::from_value::<ProjectServiceState>(value).ok());
+        if removed.is_some() {
+            state.updated_at = Some(Value::String(now_iso()));
+            save_daemon_state(self.resolver.daemon_state_path(), &state)
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(removed)
     }
 
     fn stored_project_service_state(&self, project_id: &str) -> Option<ProjectServiceState> {
@@ -2215,6 +2279,12 @@ impl DaemonSystemTextRuntime for RealDaemonRuntime {
         <Self as DaemonCoreCommandRuntime>::stop_project(self, project_root, force)
     }
 
+    fn remove_project(&mut self, project_root: &str) -> Result<Value, String> {
+        self.remove_project_with_tmux_stop(project_root, |project_root, project_state_dir| {
+            stop_project_tmux_runtime_with_service_snapshots(project_root, project_state_dir)
+        })
+    }
+
     fn restart_project_service(
         &mut self,
         project_root: &str,
@@ -3481,6 +3551,43 @@ mod tests {
 
         assert!(error.contains("refusing to materialize missing project"));
         assert!(launcher.calls().is_empty());
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn remove_project_stops_service_kills_tmux_and_unregisters_project() {
+        let fixture = restart_service_fixture("remove-project");
+        let project = fixture.project_root.clone();
+        let project_id = fixture.register_project();
+        fixture.persist_service(&project_id, 91_006, ProjectServiceStatus::Running);
+        let launcher = Arc::new(RestartTestLauncher::new(91_406));
+        let verifier = Arc::new(RestartTestProcessVerifier::current_native([91_006]));
+        let mut runtime = fixture.runtime(launcher.clone(), verifier);
+
+        let removed = runtime
+            .remove_project_with_tmux_stop(&project, |_project_root, _project_state_dir| {
+                Ok(vec!["aimux-repo-id".into()])
+            })
+            .expect("remove project");
+
+        assert_eq!(removed["projectId"], project_id);
+        assert_eq!(removed["projectRoot"], project);
+        assert_eq!(removed["project"]["status"], "stopped");
+        assert_eq!(removed["tmuxSessionsKilled"], json!(["aimux-repo-id"]));
+        assert_eq!(launcher.terminations(), vec![(91_006, false)]);
+        assert!(
+            fixture
+                .resolver
+                .list_projects()
+                .expect("projects")
+                .is_empty()
+        );
+        assert!(
+            load_daemon_state(fixture.resolver.daemon_state_path())
+                .projects
+                .get(&project_id)
+                .is_none()
+        );
         fixture.cleanup();
     }
 

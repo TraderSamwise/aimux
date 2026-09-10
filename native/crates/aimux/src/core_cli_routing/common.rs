@@ -1,4 +1,4 @@
-use super::{CoreAgentPsArgs, CoreRestartArgs};
+use super::{CoreAgentPsArgs, CoreProjectRemoveArgs, CoreRestartArgs};
 
 fn is_process_argv<S: AsRef<str>>(args: &[S]) -> bool {
     if args.len() < 2 {
@@ -151,4 +151,36 @@ pub(super) fn parse_project_json_flags<S: AsRef<str>>(args: &[S]) -> Option<Core
         return None;
     }
     Some(parsed)
+}
+
+pub fn parse_core_projects_remove_args<S: AsRef<str>>(args: &[S]) -> Option<CoreProjectRemoveArgs> {
+    if args.first().map(AsRef::as_ref) != Some("projects")
+        || !matches!(
+            args.get(1).map(AsRef::as_ref),
+            Some("remove" | "unregister")
+        )
+    {
+        return None;
+    }
+    let mut project = None;
+    let mut json = false;
+    let mut index = 2;
+    while index < args.len() {
+        let arg = args[index].as_ref();
+        if arg == "--json" {
+            json = true;
+            index += 1;
+            continue;
+        }
+        if project.is_none() && !arg.starts_with('-') {
+            project = Some(arg.to_owned());
+            index += 1;
+            continue;
+        }
+        return None;
+    }
+    Some(CoreProjectRemoveArgs {
+        project: project?,
+        json,
+    })
 }

@@ -29,6 +29,15 @@ pub fn parse_core_project_stop_args<S: AsRef<str>>(args: &[S]) -> Option<CoreAge
     parse_project_json_flags(&args[1..])
 }
 
+pub fn parse_core_host_project_stop_args<S: AsRef<str>>(args: &[S]) -> Option<CoreAgentPsArgs> {
+    if args.first().map(AsRef::as_ref) != Some("host")
+        || !matches!(args.get(1).map(AsRef::as_ref), Some("stop" | "kill"))
+    {
+        return None;
+    }
+    parse_project_json_flags(&args[2..])
+}
+
 pub fn parse_core_agent_identity_args<S: AsRef<str>>(args: &[S]) -> Option<CoreAgentIdentityArgs> {
     if args.first().map(AsRef::as_ref) != Some("id") {
         return None;

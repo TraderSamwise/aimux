@@ -13,11 +13,13 @@ mod worktrees;
 pub use agents::{
     parse_core_agent_identity_args, parse_core_agent_input_args, parse_core_agent_list_args,
     parse_core_agent_migrate_args, parse_core_agent_ps_args, parse_core_agent_rename_args,
-    parse_core_project_stop_args,
+    parse_core_host_project_stop_args, parse_core_project_stop_args,
 };
 pub use args::*;
 pub use collaboration::parse_core_collaboration_args;
-pub use common::{core_command_args, has_core_global_logging_args};
+pub use common::{
+    core_command_args, has_core_global_logging_args, parse_core_projects_remove_args,
+};
 pub use lifecycle::{
     parse_core_lifecycle_fork_args, parse_core_lifecycle_spawn_args,
     parse_core_lifecycle_status_args, parse_core_migration_args, parse_core_service_create_args,
@@ -743,7 +745,7 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
         (Some("attachment"), Some("publish")) => parse_core_attachment_publish_args(args).is_some(),
         (Some("serve"), _) => args.len() == 1,
         (Some("host"), Some("status")) => has_only_allowed_flags(&args[2..], &["--json"]),
-        (Some("host"), Some("stop" | "kill")) => args.len() == 2,
+        (Some("host"), Some("stop" | "kill")) => parse_core_host_project_stop_args(args).is_some(),
         (Some("host"), Some("restart")) => parse_core_host_restart_args(args).is_some(),
         (Some("host"), Some("topology")) => parse_core_host_topology_args(args).is_some(),
         (Some("host"), Some("agent-read")) => true,
@@ -765,6 +767,9 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
         (Some("logs"), _) => parse_core_logs_args(args).is_some(),
         (Some("projects"), None) => true,
         (Some("projects"), Some("list")) => has_only_allowed_flags(&args[2..], &["--json"]),
+        (Some("projects"), Some("remove" | "unregister")) => {
+            parse_core_projects_remove_args(args).is_some()
+        }
         (Some("remote"), Some("status")) => has_only_allowed_flags(&args[2..], &["--json"]),
         (Some("remote"), Some("enable" | "disable")) => args.len() == 2,
         (Some("whoami"), _) => has_only_allowed_flags(&args[1..], &["--json"]),

@@ -401,6 +401,16 @@ impl DaemonSystemTextRuntime for FakeRouterRuntime {
         <Self as DaemonCoreCommandRuntime>::stop_project(self, project_root, force)
     }
 
+    fn remove_project(&mut self, project_root: &str) -> Result<Value, String> {
+        self.calls.push(format!("remove:{project_root}"));
+        Ok(json!({
+            "projectId": "repo-id",
+            "projectRoot": project_root,
+            "project": { "projectRoot": project_root, "pid": 9100 },
+            "tmuxSessionsKilled": ["aimux-repo-id"]
+        }))
+    }
+
     fn restart_project_service(
         &mut self,
         project_root: &str,

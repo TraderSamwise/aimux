@@ -337,3 +337,43 @@ fn register_project_skips_missing_absolute_project_roots() {
     assert_eq!(entry, None);
     assert!(resolver.list_projects().expect("list projects").is_empty());
 }
+
+#[test]
+fn remove_project_by_root_removes_missing_raw_registry_entries() {
+    assert!(
+        !std::path::Path::new("/other-repo").exists(),
+        "/other-repo must remain a nonexistent fixture path for this regression"
+    );
+    let test_dir = TestDir::new();
+    let mut resolver = resolver(&test_dir);
+    fs::create_dir_all(resolver.global_aimux_dir()).expect("create global directory");
+    write_json_atomic(
+        resolver.projects_registry_path(),
+        &json!({
+            "version": 1,
+            "projects": [
+                {
+                    "id": "orphan",
+                    "name": "other-repo",
+                    "repoRoot": "/other-repo",
+                    "lastSeen": "old"
+                }
+            ]
+        }),
+    )
+    .expect("write orphan registry");
+
+    let removed = resolver
+        .remove_project_by_root("/other-repo")
+        .expect("remove orphan")
+        .expect("removed orphan");
+
+    assert_eq!(removed.id, "orphan");
+    let persisted: Value =
+        serde_json::from_str(&fs::read_to_string(resolver.projects_registry_path()).unwrap())
+            .expect("persisted registry");
+    assert_eq!(
+        persisted.get("projects").and_then(Value::as_array).unwrap(),
+        &Vec::<Value>::new()
+    );
+}

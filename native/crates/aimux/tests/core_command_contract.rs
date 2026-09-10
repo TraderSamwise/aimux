@@ -65,6 +65,7 @@ fn core_api_routes_match_the_typescript_contract() {
         ("projectServeText", "/core/project-serve-text"),
         ("projectStopText", "/core/project-stop-text"),
         ("projectsListText", "/core/projects-list-text"),
+        ("projectsRemoveText", "/core/projects-remove-text"),
         ("remoteDisableText", "/core/remote-disable-text"),
         ("remoteEnableText", "/core/remote-enable-text"),
         ("remoteStatusText", "/core/remote-status-text"),

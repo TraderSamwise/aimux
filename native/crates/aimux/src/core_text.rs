@@ -224,6 +224,23 @@ pub fn render_core_project_kill_lines(payload: &Value) -> Vec<String> {
     )]
 }
 
+pub fn render_core_projects_remove_lines(payload: &Value) -> Vec<String> {
+    let project_root = js_string(field(payload, "projectRoot"));
+    let service_pid = field(payload, "project")
+        .and_then(|project| project.get("pid"))
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    let tmux_count = array(payload, "tmuxSessionsKilled").len();
+    let tmux_label = if tmux_count == 1 {
+        "tmux session"
+    } else {
+        "tmux sessions"
+    };
+    vec![format!(
+        "Removed project {project_root} (stopped service pid {service_pid}, killed {tmux_count} {tmux_label})"
+    )]
+}
+
 pub fn render_core_project_restart_lines(payload: &Value) -> Vec<String> {
     if let Some(session) = field(payload, "dashboardSessionName").and_then(Value::as_str) {
         vec![format!("Restarted project service for {session}")]

@@ -321,6 +321,7 @@ const LOCAL_CLI_TEXT_ROUTES: &[&str] = &[
     crate::core_command_contract::CORE_API_ROUTES.project_restart_text,
     crate::core_command_contract::CORE_API_ROUTES.project_serve_text,
     crate::core_command_contract::CORE_API_ROUTES.project_stop_text,
+    crate::core_command_contract::CORE_API_ROUTES.projects_remove_text,
     crate::core_command_contract::CORE_API_ROUTES.repair_exchange_text,
     crate::core_command_contract::CORE_API_ROUTES.repair_text,
     crate::core_command_contract::CORE_API_ROUTES.restart_text,

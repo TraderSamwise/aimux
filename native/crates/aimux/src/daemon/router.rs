@@ -200,6 +200,7 @@ fn has_origin_header(headers: &BTreeMap<String, String>) -> bool {
 fn allows_project_cleanup_side_effect(pathname: &str, body: Option<&Value>) -> bool {
     if pathname == CORE_API_ROUTES.project_stop_text
         || pathname == CORE_API_ROUTES.project_kill_text
+        || pathname == CORE_API_ROUTES.projects_remove_text
     {
         return true;
     }

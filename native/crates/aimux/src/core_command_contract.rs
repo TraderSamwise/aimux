@@ -28,7 +28,7 @@ macro_rules! define_string_contract {
 define_string_contract!(
     CoreApiRoutes,
     CORE_API_ROUTES,
-    101,
+    102,
     {
         commands => ("commands", "/core/commands"),
         daemon_ensure_text => ("daemonEnsureText", "/core/daemon-ensure-text"),
@@ -92,6 +92,7 @@ define_string_contract!(
         project_serve_text => ("projectServeText", "/core/project-serve-text"),
         project_stop_text => ("projectStopText", "/core/project-stop-text"),
         projects_list_text => ("projectsListText", "/core/projects-list-text"),
+        projects_remove_text => ("projectsRemoveText", "/core/projects-remove-text"),
         remote_disable_text => ("remoteDisableText", "/core/remote-disable-text"),
         remote_enable_text => ("remoteEnableText", "/core/remote-enable-text"),
         remote_status_text => ("remoteStatusText", "/core/remote-status-text"),

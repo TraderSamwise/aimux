@@ -5,15 +5,16 @@ use crate::core_cli_routing::{
     parse_core_agent_ps_args, parse_core_agent_rename_args, parse_core_attachment_publish_args,
     parse_core_collaboration_args, parse_core_daemon_restart_args, parse_core_doctor_args,
     parse_core_graveyard_args, parse_core_host_agent_read_args_result,
-    parse_core_host_agent_stream_args_result, parse_core_host_restart_args,
-    parse_core_host_topology_args, parse_core_lifecycle_fork_args, parse_core_lifecycle_spawn_args,
-    parse_core_lifecycle_status_args, parse_core_logs_args, parse_core_loop_exit_args,
-    parse_core_loop_mutation_args, parse_core_metadata_args, parse_core_migration_args,
-    parse_core_notification_args, parse_core_notification_test_args, parse_core_outline_args,
-    parse_core_overseer_clear_args, parse_core_overseer_start_args, parse_core_project_ensure_args,
-    parse_core_project_stop_args, parse_core_repair_args, parse_core_restart_args,
-    parse_core_scribe_clear_args, parse_core_scribe_start_args, parse_core_service_create_args,
-    parse_core_task_args, parse_core_team_args, parse_core_thread_args, parse_core_worktree_args,
+    parse_core_host_agent_stream_args_result, parse_core_host_project_stop_args,
+    parse_core_host_restart_args, parse_core_host_topology_args, parse_core_lifecycle_fork_args,
+    parse_core_lifecycle_spawn_args, parse_core_lifecycle_status_args, parse_core_logs_args,
+    parse_core_loop_exit_args, parse_core_loop_mutation_args, parse_core_metadata_args,
+    parse_core_migration_args, parse_core_notification_args, parse_core_notification_test_args,
+    parse_core_outline_args, parse_core_overseer_clear_args, parse_core_overseer_start_args,
+    parse_core_project_ensure_args, parse_core_project_stop_args, parse_core_projects_remove_args,
+    parse_core_repair_args, parse_core_restart_args, parse_core_scribe_clear_args,
+    parse_core_scribe_start_args, parse_core_service_create_args, parse_core_task_args,
+    parse_core_team_args, parse_core_thread_args, parse_core_worktree_args,
 };
 use crate::core_command_contract::{CORE_API_ROUTES, CORE_COMMAND_NAMES};
 use crate::native_cli_dispatch::{
@@ -150,6 +151,7 @@ pub enum CoreCliOperation {
     DoctorVersions,
     Logs,
     ProjectsList,
+    ProjectsRemove,
     Restart,
     RemoteStatus,
     RemoteEnable,
@@ -1760,22 +1762,70 @@ where
             )),
             CoreCliFallback::None,
         ),
-        ("host", "stop") => (
-            CoreCliOperation::HostStop,
-            command_action(default_call(
-                CORE_COMMAND_NAMES.project_stop,
-                Some(project_payload(context.current_project_root.clone())),
-            )),
-            CoreCliFallback::None,
-        ),
-        ("host", "kill") => (
-            CoreCliOperation::HostKill,
-            command_action(default_call(
-                CORE_COMMAND_NAMES.project_kill,
-                Some(project_payload(context.current_project_root.clone())),
-            )),
-            CoreCliFallback::None,
-        ),
+        ("host", "stop") => {
+            let parsed =
+                parse_core_host_project_stop_args(&args).expect("eligible host stop must parse");
+            if parsed.project.is_none() && !parsed.json {
+                (
+                    CoreCliOperation::HostStop,
+                    command_action(default_call(
+                        CORE_COMMAND_NAMES.project_stop,
+                        Some(project_payload(context.current_project_root.clone())),
+                    )),
+                    CoreCliFallback::None,
+                )
+            } else {
+                let project_root = parsed
+                    .project
+                    .as_deref()
+                    .map(&resolve_project_root)
+                    .unwrap_or_else(|| context.current_project_root.clone());
+                (
+                    CoreCliOperation::HostStop,
+                    CoreCliAction::TextRoute {
+                        path: project_text_path(
+                            CORE_API_ROUTES.project_stop_text,
+                            &project_root,
+                            parsed.json,
+                        ),
+                        body: None,
+                    },
+                    CoreCliFallback::None,
+                )
+            }
+        }
+        ("host", "kill") => {
+            let parsed =
+                parse_core_host_project_stop_args(&args).expect("eligible host kill must parse");
+            if parsed.project.is_none() && !parsed.json {
+                (
+                    CoreCliOperation::HostKill,
+                    command_action(default_call(
+                        CORE_COMMAND_NAMES.project_kill,
+                        Some(project_payload(context.current_project_root.clone())),
+                    )),
+                    CoreCliFallback::None,
+                )
+            } else {
+                let project_root = parsed
+                    .project
+                    .as_deref()
+                    .map(&resolve_project_root)
+                    .unwrap_or_else(|| context.current_project_root.clone());
+                (
+                    CoreCliOperation::HostKill,
+                    CoreCliAction::TextRoute {
+                        path: project_text_path(
+                            CORE_API_ROUTES.project_kill_text,
+                            &project_root,
+                            parsed.json,
+                        ),
+                        body: None,
+                    },
+                    CoreCliFallback::None,
+                )
+            }
+        }
         ("host", "restart") => {
             let parsed =
                 parse_core_host_restart_args(&args).expect("eligible host restart must parse");
@@ -2076,6 +2126,23 @@ where
             command_action(default_call(CORE_COMMAND_NAMES.projects_list, None)),
             CoreCliFallback::None,
         ),
+        ("projects", "remove" | "unregister") => {
+            let parsed = parse_core_projects_remove_args(&args)
+                .expect("eligible projects remove must parse");
+            let project_root = resolve_project_root(&parsed.project);
+            (
+                CoreCliOperation::ProjectsRemove,
+                CoreCliAction::TextRoute {
+                    path: project_text_path(
+                        CORE_API_ROUTES.projects_remove_text,
+                        &project_root,
+                        parsed.json,
+                    ),
+                    body: None,
+                },
+                CoreCliFallback::None,
+            )
+        }
         ("remote", "status") => {
             let relay_request = (context.has_credentials && context.daemon_running)
                 .then(|| existing_daemon_call(CORE_COMMAND_NAMES.relay_status));

@@ -17,6 +17,13 @@ pub struct CoreAgentPsArgs {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CoreProjectRemoveArgs {
+    pub project: String,
+    pub json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CoreAgentListArgs {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project: Option<String>,

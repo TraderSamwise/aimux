@@ -215,26 +215,31 @@ impl PathResolver {
 
     pub fn load_registry(&self) -> Result<ProjectsRegistry> {
         let path = self.projects_registry_path();
+        let entries = self.load_registry_entries_raw()?;
+        normalize_registry(entries, &self.process_cwd, &path)
+    }
+
+    fn load_registry_entries_raw(&self) -> Result<Vec<ProjectEntry>> {
+        let path = self.projects_registry_path();
         if !path.exists() {
-            return Ok(ProjectsRegistry::default());
+            return Ok(Vec::new());
         }
         let Ok(contents) = fs::read_to_string(&path) else {
             quarantine_corrupt_file(&path);
-            return Ok(ProjectsRegistry::default());
+            return Ok(Vec::new());
         };
         let Ok(value) = serde_json::from_str::<Value>(&contents) else {
             quarantine_corrupt_file(&path);
-            return Ok(ProjectsRegistry::default());
+            return Ok(Vec::new());
         };
         let Some(projects) = value.get("projects").and_then(Value::as_array) else {
             bail!("aimux project registry projects must be an array");
         };
 
-        let entries = projects
+        Ok(projects
             .iter()
             .filter_map(|project| serde_json::from_value::<ProjectEntry>(project.clone()).ok())
-            .collect();
-        normalize_registry(entries, &self.process_cwd, &path)
+            .collect())
     }
 
     pub fn save_registry(&self, registry: &ProjectsRegistry) -> Result<()> {
@@ -289,6 +294,28 @@ impl PathResolver {
         let mut registry = self.load_registry()?;
         registry.projects.retain(|project| project.id != id);
         self.save_registry(&registry)
+    }
+
+    pub fn remove_project_by_root(
+        &mut self,
+        cwd: impl AsRef<Path>,
+    ) -> Result<Option<ProjectEntry>> {
+        let repo_root = self.resolve_repo_root(cwd);
+        let project_id = compute_project_id(&repo_root);
+        let mut projects = self.load_registry_entries_raw()?;
+        let removed = projects
+            .iter()
+            .position(|project| {
+                project.id == project_id
+                    || project_roots_equivalent(Path::new(&project.repo_root), &repo_root)
+            })
+            .map(|index| projects.remove(index));
+        if removed.is_some() {
+            let registry =
+                normalize_registry(projects, &self.process_cwd, &self.projects_registry_path())?;
+            self.save_registry(&registry)?;
+        }
+        Ok(removed)
     }
 
     pub fn read_only_project_paths_for(&mut self, cwd: impl AsRef<Path>) -> ReadOnlyProjectPaths {
@@ -378,6 +405,16 @@ fn assert_registry_within_cap(projects: &[ProjectEntry], registry_path: &Path) -
         );
     }
     Ok(())
+}
+
+fn project_roots_equivalent(left: &Path, right: &Path) -> bool {
+    if left == right {
+        return true;
+    }
+    match (fs::canonicalize(left), fs::canonicalize(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
 }
 
 fn is_git_project_root_from(repo_root: &Path, process_cwd: &Path) -> bool {

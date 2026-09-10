@@ -1621,6 +1621,49 @@ fn lifecycle_commands_plan_native_text_routes() {
             body: None,
         }
     );
+    let explicit_project_stop = classify_core_cli_with_project_resolver(
+        &["stop", "--project", "../other", "--json"],
+        &context(true, true),
+        |project| format!("/resolved/{project}"),
+    )
+    .expect("explicit project stop plan");
+    assert_eq!(explicit_project_stop.operation, CoreCliOperation::HostStop);
+    assert_eq!(
+        explicit_project_stop.action,
+        CoreCliAction::TextRoute {
+            path: "/core/project-stop-text?project=%2Fresolved%2F..%2Fother&json=1".into(),
+            body: None,
+        }
+    );
+    let explicit_host_stop = classify_core_cli_with_project_resolver(
+        &["host", "stop", "--project", "../other", "--json"],
+        &context(true, true),
+        |project| format!("/resolved/{project}"),
+    )
+    .expect("explicit host stop plan");
+    assert_eq!(explicit_host_stop.operation, CoreCliOperation::HostStop);
+    assert_eq!(
+        explicit_host_stop.action,
+        CoreCliAction::TextRoute {
+            path: "/core/project-stop-text?project=%2Fresolved%2F..%2Fother&json=1".into(),
+            body: None,
+        }
+    );
+
+    let projects_remove = classify_core_cli_with_project_resolver(
+        &["projects", "remove", "../old", "--json"],
+        &context(true, true),
+        |project| format!("/resolved/{project}"),
+    )
+    .expect("projects remove plan");
+    assert_eq!(projects_remove.operation, CoreCliOperation::ProjectsRemove);
+    assert_eq!(
+        projects_remove.action,
+        CoreCliAction::TextRoute {
+            path: "/core/projects-remove-text?project=%2Fresolved%2F..%2Fold&json=1".into(),
+            body: None,
+        }
+    );
 
     let kill = classify_core_cli(&["kill", "claude-1", "--json"], &context(true, true))
         .expect("kill plan");

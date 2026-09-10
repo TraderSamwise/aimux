@@ -2,6 +2,7 @@ use crate::core_command_contract::CORE_API_ROUTES;
 use crate::core_text::{
     render_core_project_kill_lines, render_core_project_restart_lines,
     render_core_project_serve_lines, render_core_project_stop_lines,
+    render_core_projects_remove_lines,
 };
 use crate::daemon::routing::{
     DaemonRouteResponse, DaemonRouteUrl, boolean_param, string_param, text_error,
@@ -25,6 +26,7 @@ pub trait DaemonSystemTextRuntime {
     fn resolve_project_root(&self, value: &str) -> String;
     fn ensure_project(&mut self, project_root: &str) -> Result<Value, String>;
     fn stop_project(&mut self, project_root: &str, force: bool) -> Result<Value, String>;
+    fn remove_project(&mut self, project_root: &str) -> Result<Value, String>;
     fn restart_project_service(
         &mut self,
         project_root: &str,
@@ -65,6 +67,9 @@ pub fn route_system_text_request(
     }
     if method == "POST" && pathname == CORE_API_ROUTES.project_restart_text {
         return Some(project_restart_text_route(runtime, &route_url, body));
+    }
+    if method == "POST" && pathname == CORE_API_ROUTES.projects_remove_text {
+        return Some(projects_remove_text_route(runtime, &route_url, body));
     }
 
     None
@@ -170,6 +175,36 @@ pub fn project_kill_text_route(
     body: Option<&Value>,
 ) -> DaemonRouteResponse {
     project_stop_like_text_route(runtime, route_url, body, true)
+}
+
+pub fn projects_remove_text_route(
+    runtime: &mut impl DaemonSystemTextRuntime,
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+) -> DaemonRouteResponse {
+    let project_root = match project_root_text_param(runtime, route_url, body) {
+        Ok(project_root) => project_root,
+        Err(response) => return response,
+    };
+    match runtime.remove_project(&project_root) {
+        Ok(project) => {
+            let payload = json!({
+                "projectRoot": project_root,
+                "project": project.get("project").cloned().unwrap_or(Value::Null),
+                "projectId": project.get("projectId").cloned().unwrap_or(Value::Null),
+                "tmuxSessionsKilled": project
+                    .get("tmuxSessionsKilled")
+                    .cloned()
+                    .unwrap_or_else(|| json!([])),
+            });
+            text_or_json_lines(
+                route_url,
+                payload.clone(),
+                &render_core_projects_remove_lines(&payload),
+            )
+        }
+        Err(error) => text_error(500, format!("Error: {error}")),
+    }
 }
 
 pub fn project_restart_text_route(
