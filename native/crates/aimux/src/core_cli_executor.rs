@@ -10,8 +10,8 @@ use crate::core_cli::{
     classify_core_cli_with_project_resolver,
 };
 use crate::core_command_client::request_core_command;
-use crate::core_command_contract::CORE_COMMAND_NAMES;
-use crate::core_command_transport::{DaemonRequestInit, request_daemon_text};
+use crate::core_command_contract::{CORE_API_ROUTES, CORE_COMMAND_NAMES};
+use crate::core_command_transport::{DaemonHttpMethod, DaemonRequestInit, request_daemon_text};
 use crate::core_text::{
     core_whoami_json, render_core_daemon_projects_lines, render_core_daemon_status_lines,
     render_core_host_status_lines, render_core_login_lines, render_core_logout_lines,
@@ -248,9 +248,11 @@ impl CoreCliRuntime for RealCoreCliRuntime {
     fn request_daemon_text(&mut self, path: &str, body: Option<Value>) -> Result<String, String> {
         ensure_daemon_running(EnsureDaemonRunningOptions::default())
             .map_err(|error| error.to_string())?;
+        let method = daemon_text_route_method(path, body.as_ref());
         request_daemon_text(
             path,
             DaemonRequestInit {
+                method: Some(method),
                 body: body.map(|value| value.to_string()),
                 ..DaemonRequestInit::default()
             },
@@ -386,6 +388,92 @@ impl CoreCliRuntime for RealCoreCliRuntime {
         Ok(notification_test_json(&attempt))
     }
 }
+
+fn daemon_text_route_method(path: &str, body: Option<&Value>) -> DaemonHttpMethod {
+    if body.is_some() {
+        return DaemonHttpMethod::Post;
+    }
+    let pathname = path.split('?').next().unwrap_or(path);
+    if POST_TEXT_ROUTES.contains(&pathname) {
+        DaemonHttpMethod::Post
+    } else {
+        DaemonHttpMethod::Get
+    }
+}
+
+const POST_TEXT_ROUTES: &[&str] = &[
+    CORE_API_ROUTES.agent_input_text,
+    CORE_API_ROUTES.agent_migrate_text,
+    CORE_API_ROUTES.agent_rename_text,
+    CORE_API_ROUTES.attachment_publish_text,
+    CORE_API_ROUTES.dashboard_reload_text,
+    CORE_API_ROUTES.graveyard_cleanup_text,
+    CORE_API_ROUTES.graveyard_resurrect_text,
+    CORE_API_ROUTES.graveyard_send_text,
+    CORE_API_ROUTES.handoff_accept_text,
+    CORE_API_ROUTES.handoff_complete_text,
+    CORE_API_ROUTES.handoff_send_text,
+    CORE_API_ROUTES.lifecycle_fork_text,
+    CORE_API_ROUTES.lifecycle_kill_text,
+    CORE_API_ROUTES.lifecycle_spawn_text,
+    CORE_API_ROUTES.lifecycle_stop_text,
+    CORE_API_ROUTES.login_start_text,
+    CORE_API_ROUTES.login_text,
+    CORE_API_ROUTES.login_wait_text,
+    CORE_API_ROUTES.logout_text,
+    CORE_API_ROUTES.logs_clear_text,
+    CORE_API_ROUTES.loop_add_text,
+    CORE_API_ROUTES.loop_block_text,
+    CORE_API_ROUTES.loop_done_text,
+    CORE_API_ROUTES.loop_remove_text,
+    CORE_API_ROUTES.message_send_text,
+    CORE_API_ROUTES.notification_clear_text,
+    CORE_API_ROUTES.notification_read_text,
+    CORE_API_ROUTES.notification_send_text,
+    CORE_API_ROUTES.outline_update_text,
+    CORE_API_ROUTES.overseer_clear_text,
+    CORE_API_ROUTES.overseer_start_text,
+    CORE_API_ROUTES.project_ensure_text,
+    CORE_API_ROUTES.project_kill_text,
+    CORE_API_ROUTES.project_restart_text,
+    CORE_API_ROUTES.project_serve_text,
+    CORE_API_ROUTES.project_stop_text,
+    CORE_API_ROUTES.projects_remove_text,
+    CORE_API_ROUTES.remote_disable_text,
+    CORE_API_ROUTES.remote_enable_text,
+    CORE_API_ROUTES.repair_exchange_text,
+    CORE_API_ROUTES.repair_text,
+    CORE_API_ROUTES.restart_text,
+    CORE_API_ROUTES.review_approve_text,
+    CORE_API_ROUTES.review_request_changes_text,
+    CORE_API_ROUTES.runtime_restart_text,
+    CORE_API_ROUTES.scribe_clear_text,
+    CORE_API_ROUTES.scribe_start_text,
+    CORE_API_ROUTES.security_unlock_start_text,
+    CORE_API_ROUTES.security_unlock_text,
+    CORE_API_ROUTES.security_unlock_wait_text,
+    CORE_API_ROUTES.task_accept_text,
+    CORE_API_ROUTES.task_assign_text,
+    CORE_API_ROUTES.task_block_text,
+    CORE_API_ROUTES.task_cancel_text,
+    CORE_API_ROUTES.task_complete_text,
+    CORE_API_ROUTES.task_reopen_text,
+    CORE_API_ROUTES.team_add_text,
+    CORE_API_ROUTES.team_default_text,
+    CORE_API_ROUTES.team_init_text,
+    CORE_API_ROUTES.team_remove_text,
+    CORE_API_ROUTES.thread_mark_seen_text,
+    CORE_API_ROUTES.thread_open_text,
+    CORE_API_ROUTES.thread_send_text,
+    CORE_API_ROUTES.thread_status_text,
+    CORE_API_ROUTES.worktree_cache_cleanup_text,
+    CORE_API_ROUTES.worktree_create_text,
+    CORE_API_ROUTES.worktree_delete_graveyard_text,
+    CORE_API_ROUTES.worktree_graveyard_text,
+    CORE_API_ROUTES.worktree_remove_text,
+    CORE_API_ROUTES.worktree_resurrect_text,
+    crate::native_cli_dispatch::CORE_SERVICE_CREATE_TEXT_ROUTE,
+];
 
 fn restart_control_plane_from_cli(
     project_root: Option<&str>,
@@ -1403,6 +1491,33 @@ mod tests {
                 "ensure-daemon fresh",
                 "request command=core.restart payload=null ensure_daemon=false timeout=none",
             ]
+        );
+    }
+
+    #[test]
+    fn daemon_text_route_method_matches_route_handlers() {
+        assert_eq!(
+            daemon_text_route_method("/core/project-stop-text?project=%2Frepo&json=1", None),
+            DaemonHttpMethod::Post
+        );
+        assert_eq!(
+            daemon_text_route_method("/core/projects-remove-text?project=%2Frepo&json=1", None),
+            DaemonHttpMethod::Post
+        );
+        assert_eq!(
+            daemon_text_route_method("/core/projects-list-text?json=1", None),
+            DaemonHttpMethod::Get
+        );
+        assert_eq!(
+            daemon_text_route_method("/core/host-agent-read-text?sessionId=one", None),
+            DaemonHttpMethod::Get
+        );
+        assert_eq!(
+            daemon_text_route_method(
+                "/core/agents/input-text",
+                Some(&json!({ "sessionId": "one", "text": "hi" })),
+            ),
+            DaemonHttpMethod::Post
         );
     }
 }
