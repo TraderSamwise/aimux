@@ -117,6 +117,17 @@ fn homebrew_formula_does_not_require_node_runtime() {
 }
 
 #[test]
+fn release_workflow_runs_inline_steps_with_bash() {
+    let workflow = fs::read_to_string(repo_root().join(".github/workflows/release.yml"))
+        .expect("read release workflow");
+
+    assert!(
+        workflow.contains("defaults:\n  run:\n    shell: bash"),
+        "release workflow inline steps use pipefail and must run under bash explicitly"
+    );
+}
+
+#[test]
 fn release_asset_compiles_native_binary_with_selected_build_profile() {
     let repo = repo_root();
     let script =
