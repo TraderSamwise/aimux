@@ -34,7 +34,7 @@
       "output": {
         "status": 127,
         "stdout": "",
-        "stderr": "aimux: native binary not found or not executable: <tmp>/native/darwin-arm64/aimux\n"
+        "stderr": "aimux: native binary not found or not executable: <tmp>/native/<platform-arch>/aimux\n"
       },
       "inputSha256": "ccb7403e56a01ba07d3b9192d20762f3196f8cf2a9fb5eebc3cbd8fe5b7c499d"
     }

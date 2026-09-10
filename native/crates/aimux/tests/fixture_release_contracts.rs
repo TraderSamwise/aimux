@@ -54,8 +54,10 @@ pub fn run_installed_shim_contract_case(repo_root: &Path, input: &Value) -> Valu
     json!({
         "status": output.status.code().unwrap_or(128),
         "stdout": String::from_utf8_lossy(&output.stdout).into_owned(),
-        "stderr": String::from_utf8_lossy(&output.stderr)
-            .replace(&temp.path().to_string_lossy().to_string(), "<tmp>"),
+        "stderr": normalize_installed_shim_stderr(
+            &String::from_utf8_lossy(&output.stderr),
+            temp.path(),
+        ),
     })
 }
 
@@ -136,6 +138,15 @@ fn write_native_bin(root: &Path, label: &str) -> PathBuf {
 
 fn platform_arch() -> String {
     format!("{}-{}", platform(), arch())
+}
+
+fn normalize_installed_shim_stderr(stderr: &str, temp: &Path) -> String {
+    stderr
+        .replace(&temp.to_string_lossy().to_string(), "<tmp>")
+        .replace(
+            &format!("<tmp>/native/{}/aimux", platform_arch()),
+            "<tmp>/native/<platform-arch>/aimux",
+        )
 }
 
 fn platform() -> &'static str {
