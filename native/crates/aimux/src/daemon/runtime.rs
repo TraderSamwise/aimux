@@ -5122,6 +5122,13 @@ mod tests {
         let fixture = restart_service_fixture("ensure-refuse-temp");
         let project = unique_temp_fixture_project_root("ensure-refuse-temp");
         fs::create_dir_all(project.join(".git")).expect("project git");
+        fs::remove_file(
+            fixture
+                .resolver
+                .global_aimux_dir()
+                .join(crate::runtime_safety_guard::TEST_ISOLATION_MARKER),
+        )
+        .expect("remove isolated marker to model a real daemon home");
         let project = project.to_string_lossy().into_owned();
         let launcher = Arc::new(RestartTestLauncher::new(91_404));
         let verifier = Arc::new(RestartTestProcessVerifier::current_native([]));
@@ -6491,6 +6498,17 @@ mod tests {
             &home,
             Some(home.join(".aimux").to_string_lossy().into_owned()),
         );
+        fs::create_dir_all(resolver.global_aimux_dir()).expect("aimux home");
+        fs::write(
+            resolver
+                .global_aimux_dir()
+                .join(crate::runtime_safety_guard::TEST_ISOLATION_MARKER),
+            format!(
+                r#"{{"ownerPid":{},"kind":"cargo-test"}}"#,
+                std::process::id()
+            ),
+        )
+        .expect("write isolated aimux home marker");
         RestartServiceFixture {
             root,
             project_root: project.to_string_lossy().into_owned(),
