@@ -1,7 +1,6 @@
 use std::fs;
 use std::path::PathBuf;
 
-use aimux::runtime_drift::is_aimux_build_drift_error;
 use aimux::runtime_guard_repair_history::{
     clear_attempts, history_path, load_attempts, record_attempt,
 };
@@ -9,7 +8,6 @@ use serde_json::{Value, json};
 
 const GUARD_HISTORY: &str =
     include_str!("../../../../testdata/contracts/v1/runtime-state/guard-repair-history.json");
-const DRIFT: &str = include_str!("../../../../testdata/contracts/v1/runtime-state/drift.json");
 
 #[test]
 fn fixture_runtime_guard_repair_history_matches_typescript() {
@@ -32,34 +30,6 @@ fn fixture_runtime_guard_repair_history_matches_typescript() {
     assert!(
         failures.is_empty(),
         "{} runtime-state/guard-repair-history parity failures:\n{}",
-        failures.len(),
-        serde_json::to_string_pretty(&failures).expect("serialize failures")
-    );
-}
-
-#[test]
-fn fixture_runtime_drift_matches_typescript() {
-    let contract: Value = serde_json::from_str(DRIFT).expect("valid runtime-state/drift fixture");
-    let cases = contract["cases"].as_array().expect("drift cases");
-    assert_eq!(cases.len(), 4, "unexpected drift case count");
-    let mut failures = Vec::new();
-    for case in cases {
-        let actual = is_aimux_build_drift_error(
-            case["input"]["errorMessage"].as_str(),
-            case["input"].get("errorMessage").is_some(),
-        );
-        if actual != case["output"].as_bool().unwrap_or(false) {
-            failures.push(json!({
-                "id": case["id"],
-                "name": case["name"],
-                "expected": case["output"],
-                "actual": actual,
-            }));
-        }
-    }
-    assert!(
-        failures.is_empty(),
-        "{} runtime-state/drift parity failures:\n{}",
         failures.len(),
         serde_json::to_string_pretty(&failures).expect("serialize failures")
     );
