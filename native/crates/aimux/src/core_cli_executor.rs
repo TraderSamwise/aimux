@@ -428,6 +428,7 @@ const POST_TEXT_ROUTES: &[&str] = &[
     CORE_API_ROUTES.login_wait_text,
     CORE_API_ROUTES.logout_text,
     CORE_API_ROUTES.logs_clear_text,
+    CORE_API_ROUTES.metadata_text,
     CORE_API_ROUTES.loop_add_text,
     CORE_API_ROUTES.loop_block_text,
     CORE_API_ROUTES.loop_done_text,
@@ -1688,6 +1689,13 @@ mod tests {
         );
         assert_eq!(
             daemon_text_route_method("/core/projects-remove-text?project=%2Frepo&json=1", None),
+            DaemonHttpMethod::Post
+        );
+        assert_eq!(
+            daemon_text_route_method(
+                "/core/metadata-text?project=%2Frepo&arg=metadata&arg=endpoint",
+                None
+            ),
             DaemonHttpMethod::Post
         );
         assert_eq!(

@@ -588,7 +588,7 @@ fn known_auxiliary_command_help_stays_native_even_when_node_fallback_is_configur
         ("logs", "Usage: aimux logs [options] [command]"),
         ("team", "Usage: aimux team [options] [command]"),
         ("outline", "Usage: aimux outline [options] [command]"),
-        ("attachment", "Native CLI agent multiplexer"),
+        ("attachment", "Usage: aimux attachment [options] [command]"),
     ] {
         let root = temp_root(&format!("native-{command}-help"));
         fs::create_dir_all(root.join("dist")).expect("create dist");
@@ -702,6 +702,190 @@ fn domain11_cli_command_help_is_command_scoped() {
         assert!(stderr.is_empty(), "{stderr}");
         cleanup(root);
     }
+}
+
+#[test]
+fn advertised_command_groups_render_command_scoped_help() {
+    for (index, (args, expected)) in [
+        (vec!["restart", "--help"], "Usage: aimux restart [options]"),
+        (
+            vec!["daemon", "--help"],
+            "Usage: aimux daemon [options] [command]",
+        ),
+        (
+            vec!["projects", "--help"],
+            "Usage: aimux projects [options] [command]",
+        ),
+        (vec!["compact", "--help"], "Usage: aimux compact"),
+        (
+            vec!["worktree", "--help"],
+            "Usage: aimux worktree [options] [command]",
+        ),
+        (
+            vec!["thread", "--help"],
+            "Usage: aimux thread [options] [command]",
+        ),
+        (vec!["threads", "--help"], "Usage: aimux threads [options]"),
+        (
+            vec!["input", "--help"],
+            "Usage: aimux input <sessionId> <text...> [options]",
+        ),
+        (
+            vec!["attachment", "--help"],
+            "Usage: aimux attachment [options] [command]",
+        ),
+        (vec!["ps", "--help"], "Usage: aimux ps [options]"),
+        (vec!["list", "--help"], "Usage: aimux list [options]"),
+        (
+            vec!["message", "--help"],
+            "Usage: aimux message [options] [command]",
+        ),
+        (
+            vec!["handoff", "--help"],
+            "Usage: aimux handoff [options] [command]",
+        ),
+        (
+            vec!["task", "--help"],
+            "Usage: aimux task [options] [command]",
+        ),
+        (
+            vec!["review", "--help"],
+            "Usage: aimux review [options] [command]",
+        ),
+        (
+            vec!["graveyard", "--help"],
+            "Usage: aimux graveyard [options] [command]",
+        ),
+        (
+            vec!["debug-state", "--help"],
+            "Usage: aimux debug-state <sessionId>",
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let root = temp_root(&format!("native-advertised-help-{index}"));
+        fs::create_dir_all(root.join("home")).expect("create home");
+        fs::create_dir_all(root.join("aimux-home")).expect("create aimux home");
+
+        let output = Command::new(env!("CARGO_BIN_EXE_aimux"))
+            .env("HOME", root.join("home"))
+            .env("AIMUX_HOME", root.join("aimux-home"))
+            .env("AIMUX_DAEMON_PORT", format!("{}", 46480 + index))
+            .args(args)
+            .output()
+            .expect("run advertised command help");
+
+        assert!(output.status.success(), "{index} help should succeed");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stdout.contains(expected), "{stdout}");
+        assert!(
+            !stdout.contains("Usage: aimux [options] [command] [tool]"),
+            "{stdout}"
+        );
+        assert!(stderr.is_empty(), "{stderr}");
+        cleanup(root);
+    }
+}
+
+#[test]
+fn bare_default_command_groups_execute_instead_of_printing_help() {
+    let fixture = NativeEntrypointFixture::new("native-bare-defaults", 46580);
+    let repo = fixture.root.join("repo");
+    fs::create_dir_all(repo.join(".git")).expect("create repo");
+
+    for (args, forbidden) in [
+        (
+            vec!["projects"],
+            "Usage: aimux projects [options] [command]",
+        ),
+        (
+            vec!["worktree"],
+            "Usage: aimux worktree [options] [command]",
+        ),
+        (
+            vec!["graveyard"],
+            "Usage: aimux graveyard [options] [command]",
+        ),
+    ] {
+        let output = fixture
+            .command()
+            .current_dir(&repo)
+            .args(args)
+            .output()
+            .expect("run bare default command");
+
+        assert!(output.status.success(), "{output:?}");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            !stdout.contains(forbidden),
+            "bare command should execute its existing default, not print help: {stdout}"
+        );
+    }
+
+    let no_default = fixture
+        .command()
+        .current_dir(&repo)
+        .arg("task")
+        .output()
+        .expect("run bare parent command");
+    assert!(no_default.status.success(), "{no_default:?}");
+    let stdout = String::from_utf8_lossy(&no_default.stdout);
+    assert!(stdout.contains("Usage: aimux task [options] [command]"));
+    assert!(
+        !fixture.log.exists(),
+        "native default/help routing should not invoke node fallback"
+    );
+}
+
+#[test]
+fn invalid_known_commands_name_the_argument_problem_while_unknown_commands_stay_unknown() {
+    let root = temp_root("native-known-command-invalid");
+    fs::create_dir_all(root.join("dist")).expect("create dist");
+    fs::create_dir_all(root.join("home")).expect("create home");
+    fs::create_dir_all(root.join("aimux-home")).expect("create aimux home");
+    fs::write(root.join("dist/launcher-bin.js"), "").expect("write launcher");
+    let log = root.join("node.log");
+    let node = fake_node(&root, &log, 9);
+
+    let invalid = Command::new(env!("CARGO_BIN_EXE_aimux"))
+        .env("AIMUX_ROOT", &root)
+        .env("AIMUX_NODE_BIN", &node)
+        .env("HOME", root.join("home"))
+        .env("AIMUX_HOME", root.join("aimux-home"))
+        .env("AIMUX_DAEMON_PORT", "46496")
+        .args(["projects", "remove", "--project", "/repo"])
+        .output()
+        .expect("run invalid known command");
+    assert_eq!(invalid.status.code(), Some(2));
+    let invalid_stderr = String::from_utf8_lossy(&invalid.stderr);
+    assert!(
+        invalid_stderr.contains("projects remove requires <path> as a positional argument"),
+        "{invalid_stderr}"
+    );
+    assert!(
+        invalid_stderr.contains("Usage: aimux projects <remove|unregister> <path>"),
+        "{invalid_stderr}"
+    );
+    assert!(
+        !invalid_stderr.contains("unsupported or invalid aimux command"),
+        "{invalid_stderr}"
+    );
+
+    let unknown = Command::new(env!("CARGO_BIN_EXE_aimux"))
+        .env("AIMUX_ROOT", &root)
+        .env("AIMUX_NODE_BIN", node)
+        .env("HOME", root.join("home"))
+        .env("AIMUX_HOME", root.join("aimux-home"))
+        .env("AIMUX_DAEMON_PORT", "46497")
+        .args(["unknown-command", "--json"])
+        .output()
+        .expect("run unknown command");
+    assert_eq!(unknown.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&unknown.stderr).contains("unrecognized subcommand"));
+    assert!(!log.exists(), "native fallback should not invoke node");
+    cleanup(root);
 }
 
 #[test]
