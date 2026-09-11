@@ -150,7 +150,19 @@ pub fn prepare_project_service_startup(
 
 fn prepare_project_service_startup_with_resolver(
     options: ProjectServiceInternalOptions,
+    resolver: PathResolver,
+) -> Result<ProjectServiceStartup> {
+    prepare_project_service_startup_with_resolver_and_process_context(
+        options,
+        resolver,
+        crate::runtime_safety_guard::is_cargo_test_process_context(),
+    )
+}
+
+fn prepare_project_service_startup_with_resolver_and_process_context(
+    options: ProjectServiceInternalOptions,
     mut resolver: PathResolver,
+    is_cargo_test_process: bool,
 ) -> Result<ProjectServiceStartup> {
     let requested_root = options
         .project_root
@@ -161,10 +173,13 @@ fn prepare_project_service_startup_with_resolver(
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| compute_project_id(&project_root));
     let aimux_home = resolver.global_aimux_dir();
-    if let Some(reason) = crate::runtime_safety_guard::project_materialization_refusal_reason(
-        &project_root,
-        &aimux_home,
-    ) {
+    if let Some(reason) =
+        crate::runtime_safety_guard::project_materialization_refusal_reason_for_process(
+            &project_root,
+            &aimux_home,
+            is_cargo_test_process,
+        )
+    {
         log_at(
             LogLevel::Debug,
             "project service startup refused",
@@ -679,12 +694,40 @@ mod tests {
         .expect_err("fixture temp project should not start against real aimux home");
 
         assert!(
-            format!("{error:#}").contains("refusing to materialize temporary project"),
+            format!("{error:#}").contains("refusing to materialize cargo test harness"),
             "unexpected error: {error:#}"
         );
         assert!(
             !aimux_home.join("projects").exists(),
             "refused startup must not create a real-home project state dir"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn project_service_startup_allows_temp_aimux_named_checkout_for_non_test_process() {
+        let root = unique_test_root("allow-temp-aimux-checkout");
+        let project_root = root.join("aimux-real-temp-checkout");
+        create_git_checkout(&project_root);
+        let aimux_home = root.join("real-aimux-home");
+        fs::create_dir_all(&aimux_home).expect("create aimux home");
+        let resolver = resolver_for(&root, &aimux_home);
+
+        let startup = prepare_project_service_startup_with_resolver_and_process_context(
+            ProjectServiceInternalOptions {
+                project_root: Some(project_root.clone()),
+                project_id: None,
+            },
+            resolver,
+            false,
+        )
+        .expect("real temp git checkout should start for a non-test process");
+
+        assert_eq!(startup.project_root, project_root);
+        assert!(
+            startup
+                .project_state_dir
+                .starts_with(aimux_home.join("projects"))
         );
         let _ = fs::remove_dir_all(root);
     }

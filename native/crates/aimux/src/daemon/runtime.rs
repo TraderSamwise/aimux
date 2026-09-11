@@ -5082,7 +5082,7 @@ mod tests {
             <RealDaemonRuntime as DaemonCoreCommandRuntime>::ensure_project(&mut runtime, &project)
                 .expect_err("temp fixture repo should be refused");
 
-        assert!(error.contains("refusing to materialize temporary project"));
+        assert!(error.contains("refusing to materialize cargo test harness"));
         assert!(launcher.calls().is_empty());
         fs::remove_dir_all(
             Path::new(&project)

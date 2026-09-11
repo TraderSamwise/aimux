@@ -101,17 +101,24 @@ pub fn project_materialization_refusal_reason(
     project_root: &Path,
     daemon_home: &Path,
 ) -> Option<&'static str> {
-    if is_ephemeral_or_fixture_temp_project_root(project_root)
-        && !is_isolated_test_aimux_home(daemon_home)
-    {
-        return Some("temporary project");
-    }
+    project_materialization_refusal_reason_for_process(
+        project_root,
+        daemon_home,
+        is_cargo_test_process_context(),
+    )
+}
+
+pub(crate) fn project_materialization_refusal_reason_for_process(
+    project_root: &Path,
+    daemon_home: &Path,
+    is_cargo_test_process: bool,
+) -> Option<&'static str> {
     match crate::paths::project_root_status(project_root) {
         crate::paths::ProjectRootStatus::GitCheckout => {}
         crate::paths::ProjectRootStatus::NotCheckout => return Some("non-checkout project"),
         crate::paths::ProjectRootStatus::Unreachable => return Some("unreachable project"),
     }
-    if is_cargo_test_harness_binary() && !is_isolated_test_aimux_home(daemon_home) {
+    if is_cargo_test_process && !is_isolated_test_aimux_home(daemon_home) {
         return Some("cargo test harness");
     }
     None
@@ -281,6 +288,12 @@ fn project_root_text_refusal_reason(value: &str) -> Option<&'static str> {
         return None;
     }
     let path = Path::new(trimmed);
+    if matches!(
+        crate::paths::project_root_status(path),
+        crate::paths::ProjectRootStatus::GitCheckout
+    ) {
+        return None;
+    }
     if is_ephemeral_or_fixture_temp_project_root(path) {
         return Some("temporary project");
     }
