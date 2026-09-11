@@ -1,4 +1,4 @@
-use aimux::error_display_contract::user_facing_error_display;
+use aimux::user_facing_errors::user_facing_error_display;
 use serde_json::{Value, json};
 
 const ERROR_DISPLAY: &str =

@@ -22,6 +22,7 @@ use crate::session_bootstrap::{
 use crate::team_contract::{is_overseer_session, is_scribe_session};
 use crate::tmux::project_session;
 use crate::tool_capabilities::restart_restore_warning;
+use crate::user_facing_errors::user_facing_error_message;
 
 use super::LIVE_STATUSES;
 use super::agent_launch_helpers::*;
@@ -155,7 +156,7 @@ pub(super) fn route_agent_migrate(
             "agent",
             Some(&session_id),
         ),
-        Err(error) => json_error(500, error),
+        Err(error) => json_user_facing_error(500, &error),
     }
 }
 
@@ -268,14 +269,15 @@ pub(super) fn route_agent_spawn(
             Some(&result.session_id),
         ),
         Err(error) => {
+            let message = user_facing_error_message(&error);
             record_agent_create_operation_failure(
                 context.project_state_dir(),
                 &tool_key,
                 &session_id,
                 worktree_path.as_deref(),
-                &error,
+                &message,
             );
-            json_error(500, error)
+            json_error(500, message)
         }
     }
 }
@@ -468,7 +470,7 @@ pub(super) fn route_agent_fork(
             "agent",
             Some(&result.session_id),
         ),
-        Err(error) => json_error(500, error),
+        Err(error) => json_user_facing_error(500, &error),
     }
 }
 
@@ -577,7 +579,7 @@ pub(super) fn route_agent_switch_tool(
             "agent",
             Some(&result.session_id),
         ),
-        Err(error) => json_error(500, error),
+        Err(error) => json_user_facing_error(500, &error),
     }
 }
 
@@ -688,11 +690,11 @@ pub(super) fn resume_agent_session(
         launch_env: Vec::new(),
     }) {
         Ok(wrapped) => wrapped,
-        Err(error) => return json_error(500, error),
+        Err(error) => return json_user_facing_error(500, &error),
     };
     let session_name = project_session(&project_root, "aimux").session_name;
     if let Err(error) = runtime.ensure_project_session(context.project_root()) {
-        return json_error(500, error);
+        return json_user_facing_error(500, &error);
     }
     let target = match runtime.create_window(
         &session_name,
@@ -703,7 +705,7 @@ pub(super) fn resume_agent_session(
         true,
     ) {
         Ok(target) => target,
-        Err(error) => return json_error(500, error),
+        Err(error) => return json_user_facing_error(500, &error),
     };
     let _ = runtime.clear_history(&target.window_id);
     let metadata = agent_window_metadata(
@@ -716,10 +718,10 @@ pub(super) fn resume_agent_session(
     );
     if let Err(error) = runtime.set_window_metadata(&target.window_id, &metadata) {
         let _ = runtime.kill_window(&target.window_id);
-        return json_error(500, error);
+        return json_user_facing_error(500, &error);
     }
     if let Err(error) = apply_agent_window_policy(runtime, &target.window_id, &tool_key) {
-        return json_error(500, error);
+        return json_user_facing_error(500, &error);
     }
     if let Err(error) =
         update_runtime_topology(runtime_topology_path(&project_state_dir), |topology| {
@@ -741,6 +743,10 @@ pub(super) fn resume_agent_session(
         "agent",
         Some(&session_id),
     )
+}
+
+fn json_user_facing_error(status: u16, error: &str) -> ProjectServiceDispatchResponse {
+    json_error(status, user_facing_error_message(error))
 }
 
 fn inherited_launch_team(source_session: &Value) -> Option<Value> {

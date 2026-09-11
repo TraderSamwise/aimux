@@ -416,6 +416,101 @@ fn agent_spawn_failure_records_dashboard_operation_failure() {
 }
 
 #[test]
+fn agent_spawn_tmux_command_failure_records_user_facing_redacted_error() {
+    let project = temp_project("agent-spawn-tmux-redacted");
+    write_project_tool_config(&project);
+    let state_dir = project.join("state");
+    let worktree = project.join("wt");
+    let worktree_path = worktree.to_string_lossy().into_owned();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let raw_error = "Command failed: tmux new-window env -i OPENAI_API_KEY=fake-openai-token SECRET_TOKEN=fake-secret-token mock\nstderr detail";
+    let expected = "tmux failed while updating the managed runtime.\nRun aimux restart if it does not recover automatically.";
+    let mut runtime = FakeLifecycleRuntime {
+        create_window_error: Some(raw_error.into()),
+        ..Default::default()
+    };
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::SPAWN,
+        Some(&json!({
+            "tool": "mock",
+            "sessionId": "mock-failed-redacted",
+            "worktreePath": worktree_path.clone(),
+            "open": false
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 500);
+    assert_eq!(response.body["error"], expected);
+    assert!(
+        !response.body["error"]
+            .as_str()
+            .unwrap()
+            .contains("fake-openai-token")
+    );
+    assert!(
+        !response.body["error"]
+            .as_str()
+            .unwrap()
+            .contains("fake-secret-token")
+    );
+    let failures = list_dashboard_operation_failures(&state_dir);
+    assert_eq!(failures.len(), 1);
+    assert_eq!(failures[0]["message"], expected);
+    assert!(
+        !failures[0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("fake-openai-token")
+    );
+    assert!(
+        !failures[0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("fake-secret-token")
+    );
+    cleanup(project);
+}
+
+#[test]
+fn agent_spawn_ordinary_failure_keeps_bounded_diagnostic_lines() {
+    let project = temp_project("agent-spawn-ordinary-diagnostic");
+    write_project_tool_config(&project);
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let raw_error = "\n failed to create pseudo terminal \n\n retry refused \n";
+    let expected = "failed to create pseudo terminal\nretry refused";
+    let mut runtime = FakeLifecycleRuntime {
+        create_window_error: Some(raw_error.into()),
+        ..Default::default()
+    };
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::SPAWN,
+        Some(&json!({
+            "tool": "mock",
+            "sessionId": "mock-ordinary-failed",
+            "open": false
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 500);
+    assert_eq!(response.body["error"], expected);
+    let failures = list_dashboard_operation_failures(&state_dir);
+    assert_eq!(failures.len(), 1);
+    assert_eq!(failures[0]["message"], expected);
+    cleanup(project);
+}
+
+#[test]
 fn default_scribe_startup_launches_configured_agent_and_marks_project_control() {
     let project = temp_project("default-scribe-create");
     write_project_scribe_config(&project);
