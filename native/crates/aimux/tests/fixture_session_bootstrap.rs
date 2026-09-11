@@ -2,7 +2,7 @@ use aimux::session_bootstrap::{
     ForkSourceSnapshot, LAUNCH_PREAMBLE_ARGV_BUDGET_BYTES, build_aimux_agent_instructions,
     build_codex_migration_continuity_preamble, build_fork_preamble,
     build_tool_switch_continuity_preamble, can_resume_with_backend_session_id,
-    cap_launch_preamble_for_argv, compose_tool_launch, get_tool_resume_args,
+    cap_launch_preamble_for_argv, compose_tool_launch, get_tool_resume_args, seed_fork_artifacts,
     strip_tool_action_args, summarize_fork_source_activity,
 };
 use serde_json::{Map, Value, json};
@@ -65,6 +65,57 @@ fn fixture_session_bootstrap_preamble_matches_typescript() {
         failures.len(),
         serde_json::to_string_pretty(&failures).expect("serialize failures")
     );
+}
+
+#[test]
+fn seed_fork_artifacts_does_not_copy_source_live_snapshot_as_target_live_context() {
+    let root = temp_path("session-bootstrap-fork-artifacts");
+    fs::create_dir_all(root.join(".git")).expect("project root");
+    let source_context = root.join(".aimux/context/claude-source");
+    fs::create_dir_all(&source_context).expect("source context");
+    fs::write(
+        source_context.join("live.md"),
+        "# claude-source Live Snapshot\n\nsix-month-old source transcript\n",
+    )
+    .expect("source live");
+
+    let snapshot = ForkSourceSnapshot {
+        history_text: None,
+        live_text: Some("# claude-source Live Snapshot\n\nsix-month-old source transcript".into()),
+        plan_text: None,
+        status_text: None,
+    };
+    seed_fork_artifacts(
+        &root,
+        "claude-source",
+        "claude-target",
+        "claude",
+        Some("/repo/worktree"),
+        &snapshot,
+    );
+
+    let target_context = root.join(".aimux/context/claude-target");
+    assert!(
+        !target_context.join("live.md").exists(),
+        "forked sessions must not receive source live.md as their own live context"
+    );
+    let summary = fs::read_to_string(target_context.join("summary.md")).expect("target summary");
+    assert!(
+        summary.contains("Treat this file as carried-over prior context from the source session.")
+    );
+    assert!(summary.contains("## Live Terminal Snapshot"));
+    assert!(summary.contains("six-month-old source transcript"));
+    let plan = fs::read_to_string(root.join(".aimux/plans/claude-target.md")).expect("target plan");
+    assert!(
+        plan.contains("Review .aimux/context/claude-target/summary.md"),
+        "forked plan should point at the inherited summary"
+    );
+    assert!(
+        !plan.contains("summary.md and live.md"),
+        "forked plan must not present source live.md as target live context"
+    );
+
+    fs::remove_dir_all(root).expect("cleanup");
 }
 
 fn preamble_output_matches(case: &Value, actual: &Value) -> bool {
