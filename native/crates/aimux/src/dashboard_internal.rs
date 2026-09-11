@@ -445,19 +445,19 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                                         &id,
                                         &kind,
                                         None,
-                                        pending_action_now_ms(),
+                                        pending_action_now_ms(clock_start),
                                     ),
                                     PendingTarget::Service => pending_actions.set_service_action(
                                         &id,
                                         &kind,
                                         None,
-                                        pending_action_now_ms(),
+                                        pending_action_now_ms(clock_start),
                                     ),
                                     PendingTarget::Worktree => pending_actions.set_worktree_action(
                                         Some(id.as_str()),
                                         &kind,
                                         None,
-                                        pending_action_now_ms(),
+                                        pending_action_now_ms(clock_start),
                                     ),
                                 };
                                 (target, id, token)
@@ -691,7 +691,7 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
                 if let Some(ui_state) = ui_state.as_ref() {
                     ui_state.apply_order_to_snapshot(&mut loaded.snapshot);
                 }
-                pending_actions.reconcile(&loaded.snapshot, pending_action_now_ms());
+                pending_actions.reconcile(&loaded.snapshot, pending_action_now_ms(clock_start));
                 pending_actions.apply(&mut loaded.snapshot);
                 let hide_offline_agents = controller
                     .as_ref()
@@ -2076,12 +2076,9 @@ fn restore_dashboard_navigation_for_render(
     ui_state.restore_navigation(&mut controller.navigation, snapshot);
 }
 
-/// Wall-clock milliseconds, used only to age pending-action overlays.
-fn pending_action_now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis() as i64)
-        .unwrap_or_default()
+/// Dashboard-loop elapsed milliseconds, used only to age pending-action overlays.
+fn pending_action_now_ms(clock_start: Instant) -> i64 {
+    elapsed_millis(clock_start)
 }
 
 /// A mutation held back until its optimistic frame has been written, paired with
@@ -2210,6 +2207,17 @@ mod tests {
 
         assert!(!pending_action_reconcile_due(&pending_actions, 399));
         assert!(pending_action_reconcile_due(&pending_actions, 400));
+    }
+
+    #[test]
+    fn pending_action_clock_matches_dashboard_loop_elapsed_time() {
+        let clock_start = Instant::now() - Duration::from_millis(450);
+        let pending_now = pending_action_now_ms(clock_start);
+
+        assert!(
+            (400..10_000).contains(&pending_now),
+            "pending action clock must stay on the dashboard loop elapsed scale, got {pending_now}"
+        );
     }
 
     #[test]
