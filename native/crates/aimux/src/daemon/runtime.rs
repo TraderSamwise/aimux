@@ -5665,7 +5665,7 @@ mod tests {
         let restart = json!({
             "daemon": { "current": { "pid": 9002 } },
             "projects": [result.clone()],
-            "summary": restart_summary(&[result.clone()], &json!({})),
+            "summary": restart_summary(std::slice::from_ref(&result), &json!({})),
         });
         let text = render_runtime_restart_result(&restart);
 
