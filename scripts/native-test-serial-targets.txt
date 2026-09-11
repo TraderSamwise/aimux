@@ -1,0 +1,56 @@
+# Integration test targets that stay serial. Format:
+# target<TAB>reason
+context_history_cli	real aimux subprocess with project cwd and isolated daemon state
+core_cli	command classification route with resolver/env edge cases
+core_cli_executor	real subprocess/git and daemon text execution helpers
+core_cli_routing	command routing target constructs CLI request paths and env-sensitive defaults
+core_command_contract	command contract covers env/daemon transport fallback boundaries
+core_command_transport	loopback socket transport timing and failure-path tests
+daemon_agents	daemon text/runtime routes with process and project-service state
+daemon_coordination_http	local HTTP server/socket routing
+daemon_core_commands	daemon command routes with runtime/process state
+daemon_listener	raw listener/socket handling
+daemon_operations	operation routes with runtime/process state
+daemon_process	daemon process lifecycle and registration state
+daemon_relay_bridge	relay bridge socket/runtime path
+daemon_runtime	real daemon runtime, local sockets, project services, and process state
+daemon_signal_shutdown	real daemon process, signal handling, and child project-service cleanup
+daemon_stream	streaming socket route tests
+daemon_supervisor	daemon supervisor lock, process info, and signal escalation state
+daemon_system_text	system text route invokes environment-sensitive status helpers
+daemon_tmux_doctor	tmux/runtime doctor paths
+dashboard_command_spec	command spec includes native launcher/runtime details
+dashboard_event_stream	event stream/socket timing
+dashboard_renderer	renderer contains process/runtime-derived dashboard rows
+debug_state	debug-state report reads git/runtime/tmux-shaped state
+desktop_notifier	mutates notification-related process environment
+local_ui_server	local HTTP server and socket binding
+native_entrypoint	real aimux subprocesses, cwd-sensitive routing, and isolated daemon ports
+notification_delivery_guard	mutates notification guard environment
+paths	path resolver tests mutate cwd and inspect home/env fallbacks
+project_catalog	mutates process cwd
+project_discovery_cli	real aimux subprocesses and isolated daemon/project-service activation
+project_service_agents	runtime liveness projection and tmux-window inventory boundaries
+project_service_agents_liveness	tmux liveness failure/success projection boundaries
+project_service_controls	project-control route mutations over runtime state
+project_service_coordination_mutations	coordination mutation state with temp stores
+project_service_coordination_worklist	coordination worklist state with temp stores
+project_service_desktop_state	desktop-state projection with runtime/tmux-shaped liveness
+project_service_event_streams	SSE/event-stream timing
+project_service_gui_contract	GUI route contract covers live service/runtime state
+project_service_interactions	interaction route mutation state
+project_service_lifecycle	session lifecycle mutation state
+project_service_metadata	metadata route state and filesystem mutation
+project_service_process	project-service process bootstrap and environment boundaries
+project_service_router	router auth/isolation and local socket behavior
+project_service_signal_shutdown	real project-service process, endpoint/socket cleanup, and signal handling
+project_service_statusline	statusline route with tmux/runtime-shaped state
+project_service_switchable_agents	switchable-agent projection over tmux/runtime state
+release_zero_node	release/shim scripts and shell subprocess portability
+root_session_launch	session launch command construction with environment/runtime edges
+runtime_migration	mutates AIMUX_HOME process environment
+service_state_snapshot	tmux runtime stop/snapshot sequencing
+tmux	real tmux manager behavior and runtime command boundaries
+tmux_expose_signal_shutdown	real expose subprocess signal/cursor teardown
+tmux_open_hyperlink	shell script subprocess and tmux hyperlink command behavior
+tmux_runtime_manager	real tmux runtime manager and socket/session operations

@@ -1,5 +1,6 @@
 use serde_json::Value;
 use std::fs;
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -11,7 +12,7 @@ static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[test]
 fn project_scoped_cli_refuses_non_git_cwd_before_daemon_io() {
-    let fixture = CliFixture::new("non-git", 46520);
+    let fixture = CliFixture::new("non-git");
     let plain = fixture.root.join("plain");
     fs::create_dir_all(&plain).expect("create plain dir");
 
@@ -60,7 +61,7 @@ fn project_scoped_cli_refuses_non_git_cwd_before_daemon_io() {
 
 #[test]
 fn project_scoped_cli_activates_git_cwd_through_isolated_daemon() {
-    let fixture = CliFixture::new("git-cwd", 46530);
+    let fixture = CliFixture::new("git-cwd");
     let repo = git_repo(fixture.root.join("repo"));
 
     let output = fixture
@@ -89,7 +90,7 @@ fn project_scoped_cli_activates_git_cwd_through_isolated_daemon() {
 
 #[test]
 fn projects_list_round_trips_multiple_git_projects_through_isolated_daemon() {
-    let fixture = CliFixture::new("multi-project", 46540);
+    let fixture = CliFixture::new("multi-project");
     let alpha = git_repo(fixture.root.join("alpha"));
     let beta = git_repo(fixture.root.join("beta"));
 
@@ -210,7 +211,7 @@ struct CliFixture {
 }
 
 impl CliFixture {
-    fn new(label: &str, base_port: u16) -> Self {
+    fn new(label: &str) -> Self {
         let root = temp_root(label);
         let home = root.join("home");
         let aimux_home = root.join("aimux-home");
@@ -219,8 +220,6 @@ impl CliFixture {
         fs::create_dir_all(&aimux_home).expect("create aimux home");
         let node_log = root.join("node.log");
         let node = fake_node(&root, &node_log, 9);
-        let offset = u16::try_from(TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed) % 400)
-            .expect("port offset");
         Self {
             root,
             home,
@@ -228,7 +227,7 @@ impl CliFixture {
             tmux_socket,
             node_log,
             node,
-            port: base_port + offset,
+            port: allocate_daemon_port(),
         }
     }
 
@@ -250,6 +249,17 @@ impl Drop for CliFixture {
         let _ = self.command().args(["daemon", "stop"]).output();
         let _ = fs::remove_dir_all(&self.root);
     }
+}
+
+fn allocate_daemon_port() -> u16 {
+    for _ in 0..100 {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("allocate daemon port");
+        let port = listener.local_addr().expect("daemon address").port();
+        if port != aimux::daemon_state::DEFAULT_DAEMON_PORT {
+            return port;
+        }
+    }
+    panic!("failed to allocate non-default daemon port");
 }
 
 fn temp_root(label: &str) -> PathBuf {

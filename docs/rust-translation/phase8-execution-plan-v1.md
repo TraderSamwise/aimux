@@ -1,6 +1,9 @@
 # Phase 8 Execution Plan v1
 
-Status: prepared only. Do not execute until codex-7w90r9's lane audit is closed and the overseer explicitly clears the gate.
+Status: historical. Phase 8 has completed, the retired TypeScript runtime graph
+has been cut, and this file records the plan that was used rather than current
+development or release commands. Current verification is `yarn verify` for the
+fast developer lane and `yarn verify:full` for release and CI.
 
 ## Preconditions
 

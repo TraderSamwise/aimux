@@ -2,6 +2,7 @@ use aimux::release_version_contract::read_aimux_version_from_package_root;
 use aimux::tui_render::text::strip_ansi;
 use serde_json::Value;
 use std::fs;
+use std::net::TcpListener;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -102,7 +103,7 @@ fn core_subcommand_help_and_bare_parent_usage_stay_command_scoped() {
     fs::create_dir_all(root.join("home")).expect("create home");
     fs::create_dir_all(root.join("aimux-home")).expect("create aimux home");
 
-    for (index, (args, expected, forbidden)) in [
+    for (args, expected, forbidden) in [
         (
             vec!["overseer", "--help"],
             "Usage: aimux overseer [options] [command]",
@@ -125,14 +126,13 @@ fn core_subcommand_help_and_bare_parent_usage_stay_command_scoped() {
         ),
     ]
     .into_iter()
-    .enumerate()
     {
         let output = Command::new(env!("CARGO_BIN_EXE_aimux"))
             .env("AIMUX_ROOT", &root)
             .env("AIMUX_NODE_BIN", &node)
             .env("HOME", root.join("home"))
             .env("AIMUX_HOME", root.join("aimux-home"))
-            .env("AIMUX_DAEMON_PORT", format!("{}", 46270 + index))
+            .env("AIMUX_DAEMON_PORT", allocate_daemon_port().to_string())
             .args(args)
             .output()
             .expect("run native aimux help");
@@ -153,7 +153,7 @@ fn core_subcommand_help_and_bare_parent_usage_stay_command_scoped() {
 
 #[test]
 fn loop_list_entrypoint_reaches_core_cli_instead_of_known_command_fallback() {
-    let fixture = NativeEntrypointFixture::new("native-loop-list", 46320);
+    let fixture = NativeEntrypointFixture::new("native-loop-list");
     let repo = fixture.root.join("repo");
     fs::create_dir_all(repo.join(".git")).expect("create repo");
 
@@ -686,7 +686,7 @@ fn domain11_cli_command_help_is_command_scoped() {
         let output = Command::new(env!("CARGO_BIN_EXE_aimux"))
             .env("HOME", root.join("home"))
             .env("AIMUX_HOME", root.join("aimux-home"))
-            .env("AIMUX_DAEMON_PORT", format!("{}", 46320 + index))
+            .env("AIMUX_DAEMON_PORT", allocate_daemon_port().to_string())
             .args(args)
             .output()
             .expect("run native aimux command help");
@@ -771,7 +771,7 @@ fn advertised_command_groups_render_command_scoped_help() {
         let output = Command::new(env!("CARGO_BIN_EXE_aimux"))
             .env("HOME", root.join("home"))
             .env("AIMUX_HOME", root.join("aimux-home"))
-            .env("AIMUX_DAEMON_PORT", format!("{}", 46480 + index))
+            .env("AIMUX_DAEMON_PORT", allocate_daemon_port().to_string())
             .args(args)
             .output()
             .expect("run advertised command help");
@@ -791,7 +791,7 @@ fn advertised_command_groups_render_command_scoped_help() {
 
 #[test]
 fn bare_default_command_groups_execute_instead_of_printing_help() {
-    let fixture = NativeEntrypointFixture::new("native-bare-defaults", 46580);
+    let fixture = NativeEntrypointFixture::new("native-bare-defaults");
     let repo = fixture.root.join("repo");
     fs::create_dir_all(repo.join(".git")).expect("create repo");
 
@@ -854,7 +854,7 @@ fn invalid_known_commands_name_the_argument_problem_while_unknown_commands_stay_
         .env("AIMUX_NODE_BIN", &node)
         .env("HOME", root.join("home"))
         .env("AIMUX_HOME", root.join("aimux-home"))
-        .env("AIMUX_DAEMON_PORT", "46496")
+        .env("AIMUX_DAEMON_PORT", allocate_daemon_port().to_string())
         .args(["projects", "remove", "--project", "/repo"])
         .output()
         .expect("run invalid known command");
@@ -878,7 +878,7 @@ fn invalid_known_commands_name_the_argument_problem_while_unknown_commands_stay_
         .env("AIMUX_NODE_BIN", node)
         .env("HOME", root.join("home"))
         .env("AIMUX_HOME", root.join("aimux-home"))
-        .env("AIMUX_DAEMON_PORT", "46497")
+        .env("AIMUX_DAEMON_PORT", allocate_daemon_port().to_string())
         .args(["unknown-command", "--json"])
         .output()
         .expect("run unknown command");
@@ -921,7 +921,7 @@ fn malformed_known_auxiliary_commands_fail_native_without_node_fallback() {
 
 #[test]
 fn hosted_status_entrypoint_matches_node_shape_without_node_fallback() {
-    let fixture = NativeEntrypointFixture::new("native-hosted-status", 46440);
+    let fixture = NativeEntrypointFixture::new("native-hosted-status");
     fs::write(
         fixture.aimux_home.join("config.json"),
         r#"{
@@ -975,7 +975,7 @@ fn hosted_status_entrypoint_matches_node_shape_without_node_fallback() {
 
 #[test]
 fn hosted_token_grant_lockdown_and_audit_entrypoints_mutate_native_store() {
-    let fixture = NativeEntrypointFixture::new("native-hosted-roundtrip", 46470);
+    let fixture = NativeEntrypointFixture::new("native-hosted-roundtrip");
     let create = fixture
         .command()
         .args(["hosted", "token", "create", "--label", "sam"])
@@ -1201,7 +1201,7 @@ struct NativeEntrypointFixture {
 }
 
 impl NativeEntrypointFixture {
-    fn new(label: &str, base_port: u16) -> Self {
+    fn new(label: &str) -> Self {
         let root = temp_root(label);
         let home = root.join("home");
         let aimux_home = root.join("aimux-home");
@@ -1210,8 +1210,6 @@ impl NativeEntrypointFixture {
         fs::create_dir_all(&aimux_home).expect("create aimux home");
         let log = root.join("node.log");
         let node = fake_node(&root, &log, 9);
-        let offset = u16::try_from(TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed) % 600)
-            .expect("port offset");
         Self {
             root,
             home,
@@ -1219,7 +1217,7 @@ impl NativeEntrypointFixture {
             tmux_socket,
             log,
             node,
-            port: base_port + offset,
+            port: allocate_daemon_port(),
         }
     }
 
@@ -1241,4 +1239,15 @@ impl Drop for NativeEntrypointFixture {
         let _ = self.command().args(["daemon", "stop"]).output();
         cleanup(self.root.clone());
     }
+}
+
+fn allocate_daemon_port() -> u16 {
+    for _ in 0..100 {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("allocate daemon port");
+        let port = listener.local_addr().expect("daemon address").port();
+        if port != aimux::daemon_state::DEFAULT_DAEMON_PORT {
+            return port;
+        }
+    }
+    panic!("failed to allocate non-default daemon port");
 }

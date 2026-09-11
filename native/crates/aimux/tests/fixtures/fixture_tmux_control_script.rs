@@ -975,159 +975,202 @@ fn percent_encode_component(value: &str) -> String {
     output
 }
 
-const FAKE_TMUX: &str = r####"#!/usr/bin/env node
-const fs = require("node:fs");
-const { spawnSync } = require("node:child_process");
-const statePath = process.env.TMUX_FAKE_STATE;
-const logPath = process.env.TMUX_FAKE_LOG;
-const rawArgs = process.argv.slice(2);
-const args = rawArgs[0] === "-S" ? rawArgs.slice(2) : rawArgs;
-const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
-fs.appendFileSync(logPath, JSON.stringify(rawArgs) + "\n");
-function fail() { process.exit(1); }
-function out(value) { process.stdout.write(String(value)); }
-function listClients() {
-  const format = args[2] || "";
-  const rows = (state.clients || []).map((client) =>
-    format
-      .replace("#{client_tty}", client.tty)
-      .replace("#{session_name}", client.sessionName)
-      .replace("#{window_id}", client.windowId)
-      .replace("#{client_width}", String(client.width ?? 200))
-      .replace("#{client_height}", String(client.height ?? 60)),
-  );
-  out(rows.join("\n"));
-}
-function listWindows() {
-  const all = args.includes("-a");
-  const formatIndex = args.indexOf("-F");
-  const format = formatIndex >= 0 ? args[formatIndex + 1] : "";
-  const targetIndex = args.indexOf("-t");
-  const sessionName = targetIndex >= 0 ? args[targetIndex + 1] : "";
-  const sessions = all ? Object.entries(state.windows || {}) : [[sessionName, state.windows?.[sessionName] || []]];
-  const rows = [];
-  for (const [session, windows] of sessions) {
-    for (const window of windows || []) {
-      rows.push(
-        format
-          .replace("#{session_name}", session)
-          .replace("#{window_index}", String(window.index))
-          .replace("#{window_name}", window.name)
-          .replace("#{window_id}", window.id)
-          .replace("#{pane_dead}", state.deadWindows?.includes(window.id) ? "1" : "0"),
-      );
-    }
-  }
-  out(rows.join("\n"));
-}
-function displayMessage() {
-  const targetIndex = args.indexOf("-t");
-  const target = targetIndex >= 0 ? args[targetIndex + 1] : "";
-  const format = args.at(-1) || "";
-  if (format === "#{pane_dead}") {
-    const exists = Object.values(state.windows || {}).some((windows) =>
-      (windows || []).some((window) => window.id === target),
-    );
-    if (!exists) fail();
-    out(state.deadWindows?.includes(target) ? "1" : "0");
-    return;
-  }
-  const pane = (state.panes || {})[target];
-  if (!pane) fail();
-  out(
-    format
-      .replace("#{pane_in_mode}", pane.inMode ? "1" : "0")
-      .replace("#{pane_current_command}", pane.currentCommand || "")
-      .replace("#{session_name}", pane.sessionName || "")
-      .replace("#{window_id}", pane.windowId || "")
-      .replace("#{window_name}", pane.windowName || "")
-      .replace("#{client_tty}", pane.clientTty || "")
-      .replace("#{pane_current_path}", pane.currentPath || ""),
-  );
-}
-function capturePane() {
-  const targetIndex = args.indexOf("-t");
-  const target = targetIndex >= 0 ? args[targetIndex + 1] : "";
-  const content = (state.capturedPanes || {})[target];
-  out(content == null ? "" : content);
-}
-function showOptions() {
-  const targetIndex = args.indexOf("-t");
-  const session = targetIndex >= 0 ? args[targetIndex + 1] : "";
-  const key = args.at(-1);
-  const value = state.sessionOptions?.[session]?.[key];
-  if (value == null) fail();
-  out(value);
-}
-function showWindowOptions() {
-  const targetIndex = args.indexOf("-t");
-  const windowId = targetIndex >= 0 ? args[targetIndex + 1] : "";
-  const key = args.at(-1);
-  const value =
-    key === "@aimux-meta" ? state.windowMetadata?.[windowId] && JSON.stringify(state.windowMetadata[windowId]) : state.windowOptions?.[windowId]?.[key];
-  if (value == null) fail();
-  out(value);
-}
-function linkWindow() {
-  const source = args[args.indexOf("-s") + 1];
-  const targetSession = args[args.indexOf("-t") + 1];
-  let sourceWindow = null;
-  for (const windows of Object.values(state.windows || {})) {
-    const match = (windows || []).find((window) => window.id === source);
-    if (match) {
-      sourceWindow = { ...match };
-      break;
-    }
-  }
-  if (!sourceWindow) fail();
-  state.windows[targetSession] ||= [];
-  const windows = state.windows[targetSession];
-  if (!windows.find((window) => window.id === sourceWindow.id)) {
-    const nextIndex = windows.length ? Math.max(...windows.map((window) => window.index)) + 1 : 0;
-    windows.push({ ...sourceWindow, index: nextIndex });
-    fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
-  }
-}
-function switchClient() {
-  const ttyIndex = args.indexOf("-c");
-  const tty = ttyIndex >= 0 ? args[ttyIndex + 1] : "";
-  const target = args[args.indexOf("-t") + 1];
-  const parts = target.split(":");
-  const sessionName = parts[0];
-  const indexText = parts[1];
-  const window = (state.windows?.[sessionName] || []).find((entry) => String(entry.index) === indexText);
-  if (!window) fail();
-  const client = (state.clients || []).find((entry) => entry.tty === tty);
-  if (!client) fail();
-  client.sessionName = sessionName;
-  client.windowId = window.id;
-  fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
-}
-switch (args[0]) {
-  case "list-clients": listClients(); break;
-  case "list-windows": listWindows(); break;
-  case "display-message": displayMessage(); break;
-  case "capture-pane": capturePane(); break;
-  case "display-menu":
-    if (process.env.TMUX_FAKE_DISPLAY_MENU_EXIT === "1") fail();
-    break;
-  case "display-popup":
-    if (process.env.TMUX_FAKE_DISPLAY_POPUP_EXIT) process.exit(Number(process.env.TMUX_FAKE_DISPLAY_POPUP_EXIT));
-    if (process.env.TMUX_FAKE_DISPLAY_POPUP_RUN_COMMAND === "1") {
-      const command = args.at(-1) || "";
-      const result = spawnSync("sh", ["-c", command], { env: process.env, stdio: "inherit" });
-      process.exit(result.status ?? 1);
-    }
-    break;
-  case "new-window": break;
-  case "show-options": showOptions(); break;
-  case "show-window-options": showWindowOptions(); break;
-  case "link-window": linkWindow(); break;
-  case "switch-client": switchClient(); break;
-  case "refresh-client": break;
-  case "send-keys": break;
-  default: fail();
-}
+const FAKE_TMUX: &str = r####"#!/usr/bin/env python3
+import copy
+import json
+import os
+import subprocess
+import sys
+
+state_path = os.environ["TMUX_FAKE_STATE"]
+log_path = os.environ["TMUX_FAKE_LOG"]
+raw_args = sys.argv[1:]
+args = raw_args[2:] if raw_args[:1] == ["-S"] else raw_args
+with open(state_path, "r", encoding="utf-8") as handle:
+    state = json.load(handle)
+with open(log_path, "a", encoding="utf-8") as handle:
+    handle.write(json.dumps(raw_args, separators=(",", ":")) + "\n")
+
+def fail():
+    sys.exit(1)
+
+def out(value):
+    sys.stdout.write(str(value))
+
+def arg_after(flag):
+    try:
+        return args[args.index(flag) + 1]
+    except (ValueError, IndexError):
+        return ""
+
+def last_arg():
+    return args[-1] if args else ""
+
+def option(mapping, key, default=None):
+    if not isinstance(mapping, dict):
+        return default
+    return mapping.get(key, default)
+
+def render_format(fmt, values):
+    rendered = fmt
+    for key, value in values.items():
+        rendered = rendered.replace("#{" + key + "}", str(value))
+    return rendered
+
+def list_clients():
+    fmt = args[2] if len(args) > 2 else ""
+    rows = [
+        render_format(fmt, {
+            "client_tty": client.get("tty", ""),
+            "session_name": client.get("sessionName", ""),
+            "window_id": client.get("windowId", ""),
+            "client_width": client.get("width", 200),
+            "client_height": client.get("height", 60),
+        })
+        for client in state.get("clients", [])
+    ]
+    out("\n".join(rows))
+
+def list_windows():
+    fmt_index = args.index("-F") if "-F" in args else -1
+    fmt = args[fmt_index + 1] if fmt_index >= 0 and fmt_index + 1 < len(args) else ""
+    session_name = arg_after("-t")
+    sessions = state.get("windows", {}).items() if "-a" in args else [(session_name, state.get("windows", {}).get(session_name, []))]
+    dead = set(state.get("deadWindows", []))
+    rows = []
+    for session, windows in sessions:
+        for window in windows or []:
+            rows.append(render_format(fmt, {
+                "session_name": session,
+                "window_index": window.get("index", ""),
+                "window_name": window.get("name", ""),
+                "window_id": window.get("id", ""),
+                "pane_dead": "1" if window.get("id") in dead else "0",
+            }))
+    out("\n".join(rows))
+
+def display_message():
+    target = arg_after("-t")
+    fmt = last_arg()
+    dead = set(state.get("deadWindows", []))
+    if fmt == "#{pane_dead}":
+        exists = any(
+            any(window.get("id") == target for window in windows or [])
+            for windows in state.get("windows", {}).values()
+        )
+        if not exists:
+            fail()
+        out("1" if target in dead else "0")
+        return
+    pane = state.get("panes", {}).get(target)
+    if pane is None:
+        fail()
+    out(render_format(fmt, {
+        "pane_in_mode": "1" if pane.get("inMode") else "0",
+        "pane_current_command": pane.get("currentCommand", ""),
+        "session_name": pane.get("sessionName", ""),
+        "window_id": pane.get("windowId", ""),
+        "window_name": pane.get("windowName", ""),
+        "client_tty": pane.get("clientTty", ""),
+        "pane_current_path": pane.get("currentPath", ""),
+    }))
+
+def capture_pane():
+    out(option(state.get("capturedPanes", {}), arg_after("-t"), ""))
+
+def show_options():
+    value = option(option(state.get("sessionOptions", {}), arg_after("-t"), {}), last_arg())
+    if value is None:
+        fail()
+    out(value)
+
+def show_window_options():
+    window_id = arg_after("-t")
+    key = last_arg()
+    if key == "@aimux-meta":
+        value = option(state.get("windowMetadata", {}), window_id)
+        if value is not None:
+            value = json.dumps(value, separators=(",", ":"))
+    else:
+        value = option(option(state.get("windowOptions", {}), window_id, {}), key)
+    if value is None:
+        fail()
+    out(value)
+
+def save_state():
+    with open(state_path, "w", encoding="utf-8") as handle:
+        json.dump(state, handle, indent=2)
+
+def link_window():
+    source = arg_after("-s")
+    target_session = arg_after("-t")
+    source_window = None
+    for windows in state.get("windows", {}).values():
+        for window in windows or []:
+            if window.get("id") == source:
+                source_window = copy.deepcopy(window)
+                break
+        if source_window is not None:
+            break
+    if source_window is None:
+        fail()
+    windows = state.setdefault("windows", {}).setdefault(target_session, [])
+    if not any(window.get("id") == source_window.get("id") for window in windows):
+        source_window["index"] = max([window.get("index", -1) for window in windows] or [-1]) + 1
+        windows.append(source_window)
+        save_state()
+
+def switch_client():
+    tty = arg_after("-c")
+    target = arg_after("-t")
+    session_name, _, index_text = target.partition(":")
+    window = next(
+        (entry for entry in state.get("windows", {}).get(session_name, []) if str(entry.get("index")) == index_text),
+        None,
+    )
+    if window is None:
+        fail()
+    client = next((entry for entry in state.get("clients", []) if entry.get("tty") == tty), None)
+    if client is None:
+        fail()
+    client["sessionName"] = session_name
+    client["windowId"] = window.get("id", "")
+    save_state()
+
+command = args[0] if args else ""
+if command == "list-clients":
+    list_clients()
+elif command == "list-windows":
+    list_windows()
+elif command == "display-message":
+    display_message()
+elif command == "capture-pane":
+    capture_pane()
+elif command == "display-menu":
+    if os.environ.get("TMUX_FAKE_DISPLAY_MENU_EXIT") == "1":
+        fail()
+elif command == "display-popup":
+    if os.environ.get("TMUX_FAKE_DISPLAY_POPUP_EXIT"):
+        sys.exit(int(os.environ["TMUX_FAKE_DISPLAY_POPUP_EXIT"]))
+    if os.environ.get("TMUX_FAKE_DISPLAY_POPUP_RUN_COMMAND") == "1":
+        result = subprocess.run(["sh", "-c", last_arg()], env=os.environ)
+        sys.exit(result.returncode)
+elif command == "new-window":
+    pass
+elif command == "show-options":
+    show_options()
+elif command == "show-window-options":
+    show_window_options()
+elif command == "link-window":
+    link_window()
+elif command == "switch-client":
+    switch_client()
+elif command == "refresh-client":
+    pass
+elif command == "send-keys":
+    pass
+else:
+    fail()
 "####;
 
 const FAKE_CURL: &str = r####"#!/bin/sh
@@ -1172,36 +1215,31 @@ done
 exit "${TMUX_FAKE_CURL_EXIT:-0}"
 "####;
 
-const FAKE_NC: &str = r####"#!/usr/bin/env node
-const fs = require("node:fs");
-const chunks = [];
-let done = false;
-function maybeFinish() {
-  if (done) return;
-  const header = Buffer.concat(chunks).toString("utf8").split("\n");
-  if (header.length < 16) return;
-  done = true;
-  const statusPath = header[10] || "";
-  const selectionPath = header[14] || "";
-  const sequencePath = process.env.TMUX_FAKE_NC_STATUS_SEQUENCE_FILE || "";
-  let status = process.env.TMUX_FAKE_NC_STATUS || "0";
-  if (sequencePath) {
-    const values = fs.readFileSync(sequencePath, "utf8").trim().split(/\s*,\s*/).filter(Boolean);
-    status = values.shift() || status;
-    fs.writeFileSync(sequencePath, values.join(","));
-  }
-  if (statusPath) fs.writeFileSync(statusPath, status + "\n");
-  if (selectionPath && process.env.TMUX_FAKE_NC_SELECTION) {
-    fs.writeFileSync(selectionPath, process.env.TMUX_FAKE_NC_SELECTION + "\n");
-  }
-  process.exit(Number(process.env.TMUX_FAKE_NC_EXIT || "0"));
-}
-process.stdin.on("data", (chunk) => {
-  chunks.push(chunk);
-  maybeFinish();
-});
-process.stdin.on("end", maybeFinish);
-process.stdin.resume();
+const FAKE_NC: &str = r####"#!/usr/bin/env python3
+import os
+import re
+import sys
+
+header = sys.stdin.buffer.read().decode("utf-8", errors="replace").split("\n")
+status_path = header[10] if len(header) > 10 else ""
+selection_path = header[14] if len(header) > 14 else ""
+status = os.environ.get("TMUX_FAKE_NC_STATUS", "0")
+sequence_path = os.environ.get("TMUX_FAKE_NC_STATUS_SEQUENCE_FILE", "")
+if sequence_path:
+    with open(sequence_path, "r", encoding="utf-8") as handle:
+        values = [value for value in re.split(r"\s*,\s*", handle.read().strip()) if value]
+    if values:
+        status = values.pop(0)
+    with open(sequence_path, "w", encoding="utf-8") as handle:
+        handle.write(",".join(values))
+if status_path:
+    with open(status_path, "w", encoding="utf-8") as handle:
+        handle.write(status + "\n")
+selection = os.environ.get("TMUX_FAKE_NC_SELECTION")
+if selection_path and selection:
+    with open(selection_path, "w", encoding="utf-8") as handle:
+        handle.write(selection + "\n")
+sys.exit(int(os.environ.get("TMUX_FAKE_NC_EXIT", "0")))
 "####;
 
 const FAKE_AIMUX: &str = r####"#!/bin/sh
