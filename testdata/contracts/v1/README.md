@@ -493,8 +493,6 @@ level/category gating, secret redaction, rotation, and lifecycle records.
 
 ## Session
 
-- `session/runtime.json`: SessionRuntime transport data and exit event
-  forwarding captured by running TypeScript `session-runtime`.
 - `session-bootstrap/action-args.json`: launch action argument stripping and
   launch/persist argument composition captured by running TypeScript
   `session-bootstrap-action-args`.
