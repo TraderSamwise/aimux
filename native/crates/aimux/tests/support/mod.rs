@@ -66,6 +66,14 @@ impl TestIsolation {
         &self.root
     }
 
+    pub fn aimux_home(&self) -> &Path {
+        &self.aimux_home
+    }
+
+    pub fn daemon_port(&self) -> u16 {
+        self.daemon_port
+    }
+
     pub fn apply_to_command<'a>(&self, command: &'a mut Command) -> &'a mut Command {
         command
             .env("HOME", &self.home)

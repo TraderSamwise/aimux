@@ -100,6 +100,7 @@ pub mod plugin_registry;
 pub mod plugin_runtime_contract;
 pub mod process_args;
 pub mod process_inspector;
+pub mod process_signals;
 pub mod project_api_contract;
 pub mod project_catalog;
 pub mod project_service;

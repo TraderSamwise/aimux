@@ -30,7 +30,7 @@ use crate::daemon::json::{
     DaemonJsonRouteRuntime, ExposeFocusRequest, ProxyBinaryResponse, ProxyJsonResponse,
 };
 use crate::daemon::listener::{
-    DaemonListenConfig, serve_daemon_http_with_metadata_and_interceptor,
+    DaemonListenConfig, serve_daemon_http_with_metadata_and_interceptor_until,
 };
 use crate::daemon::process::handle_daemon_runtime_request;
 use crate::daemon::routing::{DaemonRouteResponse, DaemonRouteUrl};
@@ -446,6 +446,43 @@ impl RealDaemonRuntime {
         if let Some(credentials) = remote_credentials::load_credentials(&self.resolver) {
             self.start_relay(&credentials, false);
         }
+    }
+
+    fn stop_project_services_for_signal_shutdown(&mut self, signal_name: &str) {
+        let state = load_daemon_state(self.resolver.daemon_state_path());
+        let project_roots = state
+            .projects
+            .values()
+            .filter_map(|service| {
+                serde_json::from_value::<ProjectServiceState>(service.clone()).ok()
+            })
+            .filter(|service| service.pid > 0)
+            .map(|service| service.project_root)
+            .collect::<BTreeSet<_>>();
+        log_lifecycle_always(
+            "daemon signal shutdown stopping project services",
+            "daemon",
+            Some(json!({
+                "signal": signal_name,
+                "projectCount": project_roots.len(),
+            })),
+        );
+        for project_root in project_roots {
+            if let Err(error) =
+                <Self as DaemonCoreCommandRuntime>::stop_project(self, &project_root, false)
+            {
+                log_lifecycle_always(
+                    "daemon signal shutdown failed to stop project service",
+                    "daemon",
+                    Some(json!({
+                        "signal": signal_name,
+                        "projectRoot": project_root,
+                        "error": error,
+                    })),
+                );
+            }
+        }
+        self.relay.disconnect();
     }
 
     pub fn new(resolver: PathResolver, info: AimuxDaemonInfo) -> Self {
@@ -1934,13 +1971,19 @@ pub fn run_daemon_internal() -> Result<()> {
     if let Ok(runtime) = runtime.lock() {
         runtime.connect_relay_on_startup();
     }
+    let _signal_guard = crate::process_signals::install_shutdown_signal_flag(
+        crate::process_signals::DAEMON_TERMINATION_SIGNALS,
+    )
+    .context("install daemon shutdown signal handlers")?;
+    let route_runtime = Arc::clone(&runtime);
     let stream_runtime = Arc::clone(&runtime);
-    serve_daemon_http_with_metadata_and_interceptor(
+    let shutdown_runtime = Arc::clone(&runtime);
+    let serve_result = serve_daemon_http_with_metadata_and_interceptor_until(
         DaemonListenConfig { host, port },
-        move |request| handle_daemon_runtime_request_with_mutex(&runtime, request),
+        move |request| handle_daemon_runtime_request_with_mutex(&route_runtime, request),
         || crate::daemon::listener::DaemonRequestMetadata {
             issued_at: now_iso(),
-            stopping: false,
+            stopping: crate::process_signals::received_shutdown_signal().is_some(),
         },
         move |request, writer| {
             if maybe_handle_project_event_stream_request(request, writer).map_err(|error| {
@@ -1961,8 +2004,14 @@ pub fn run_daemon_internal() -> Result<()> {
                 ))
             })
         },
-    )
-    .map_err(anyhow::Error::new)
+        || crate::process_signals::received_shutdown_signal().is_some(),
+    );
+    if let Some(signal_name) = crate::process_signals::received_shutdown_signal_name()
+        && let Ok(mut runtime) = shutdown_runtime.lock()
+    {
+        runtime.stop_project_services_for_signal_shutdown(signal_name);
+    }
+    serve_result.map_err(anyhow::Error::new)
 }
 
 fn start_daemon_disk_maintenance_background(resolver: PathResolver) {
