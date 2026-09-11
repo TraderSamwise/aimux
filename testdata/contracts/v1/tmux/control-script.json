@@ -9591,6 +9591,7 @@
       "name": "opens expose as the rich popup surface",
       "source": "src/tmux/control-script.test.ts",
       "api": "scripts/tmux-control.sh",
+      "nativeProjectControlProbe": true,
       "execCalls": [
         {
           "command": "sh",
@@ -9867,6 +9868,7 @@
       "name": "relaunches expose when the sidecar reports a resize exit",
       "source": "src/tmux/control-script.test.ts",
       "api": "scripts/tmux-control.sh",
+      "nativeProjectControlProbe": true,
       "execCalls": [
         {
           "command": "sh",
@@ -10090,6 +10092,7 @@
       "name": "falls back to the default expose socket when the socket path file is empty",
       "source": "src/tmux/control-script.test.ts",
       "api": "scripts/tmux-control.sh",
+      "nativeProjectControlProbe": true,
       "execCalls": [
         {
           "command": "sh",
@@ -10287,6 +10290,7 @@
       "name": "reports expose socket popup failure instead of failing silently",
       "source": "src/tmux/control-script.test.ts",
       "api": "scripts/tmux-control.sh",
+      "nativeProjectControlProbe": true,
       "execCalls": [
         {
           "command": "sh",

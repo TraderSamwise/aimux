@@ -50,9 +50,9 @@ fn assert_tmux_control_contract(runner: TmuxControlRunner) {
 
     let mut failures = Vec::new();
     for case in cases {
-        let expected = &case["output"];
+        let expected = expected_output(case, runner);
         let actual = run_case(case, runner);
-        if &actual != expected {
+        if actual != expected {
             failures.push(json!({
                 "id": case["id"],
                 "name": case["name"],
@@ -254,12 +254,61 @@ fn dashboard_reload_tmux_state() -> Value {
     })
 }
 
+fn expected_output(case: &Value, runner: TmuxControlRunner) -> Value {
+    let mut expected = case["output"].clone();
+    if runner == TmuxControlRunner::Native
+        && case["nativeProjectControlProbe"].as_bool().unwrap_or(false)
+        && let Some(window_id) = case_arg(case, "--current-window-id")
+    {
+        insert_native_project_control_probe(&mut expected, window_id);
+    }
+    expected
+}
+
+fn case_arg<'a>(case: &'a Value, name: &str) -> Option<&'a str> {
+    case["input"]["execCalls"]
+        .as_array()?
+        .first()?
+        .get("args")?
+        .as_array()?
+        .windows(2)
+        .find_map(|pair| {
+            (pair[0].as_str() == Some(name))
+                .then(|| pair[1].as_str())
+                .flatten()
+        })
+}
+
+fn insert_native_project_control_probe(expected: &mut Value, window_id: &str) {
+    let probe = json!(["show-window-options", "-v", "-t", window_id, "@aimux-meta"]);
+    for root in expected["roots"].as_array_mut().into_iter().flatten() {
+        let Some(tmux_log) = root["tmuxLog"].as_array_mut() else {
+            continue;
+        };
+        if tmux_log.contains(&probe) {
+            continue;
+        }
+        let Some(insert_at) = tmux_log.iter().position(|call| {
+            call.as_array().is_some_and(|args| {
+                args.len() == 3
+                    && args[0] == json!("list-clients")
+                    && args[1] == json!("-F")
+                    && args[2] == json!("#{client_tty}|#{session_name}|#{window_id}")
+            })
+        }) else {
+            continue;
+        };
+        tmux_log.insert(insert_at + 1, probe.clone());
+    }
+}
+
 fn run_case(case: &Value, runner: TmuxControlRunner) -> Value {
     let repo = repo_root();
     let mut roots = BTreeMap::<String, TempRoot>::new();
     let exec_calls = case["input"]["execCalls"].as_array().expect("exec calls");
+    let expected = expected_output(case, runner);
 
-    for root in case["output"]["roots"].as_array().into_iter().flatten() {
+    for root in expected["roots"].as_array().into_iter().flatten() {
         let placeholder = root["root"].as_str().expect("output root placeholder");
         roots
             .entry(placeholder.to_owned())
@@ -294,7 +343,7 @@ fn run_case(case: &Value, runner: TmuxControlRunner) -> Value {
             break;
         }
     }
-    wait_for_expected_logs(&roots, &case["output"], &repo);
+    wait_for_expected_logs(&roots, &expected, &repo);
 
     let replacements = placeholder_map(&roots);
     let normalization = FixtureNormalization::from_case(case);
