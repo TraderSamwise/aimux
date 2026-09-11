@@ -790,6 +790,56 @@ fn advertised_command_groups_render_command_scoped_help() {
 }
 
 #[test]
+fn bare_default_command_groups_execute_instead_of_printing_help() {
+    let fixture = NativeEntrypointFixture::new("native-bare-defaults", 46580);
+    let repo = fixture.root.join("repo");
+    fs::create_dir_all(repo.join(".git")).expect("create repo");
+
+    for (args, forbidden) in [
+        (
+            vec!["projects"],
+            "Usage: aimux projects [options] [command]",
+        ),
+        (
+            vec!["worktree"],
+            "Usage: aimux worktree [options] [command]",
+        ),
+        (
+            vec!["graveyard"],
+            "Usage: aimux graveyard [options] [command]",
+        ),
+    ] {
+        let output = fixture
+            .command()
+            .current_dir(&repo)
+            .args(args)
+            .output()
+            .expect("run bare default command");
+
+        assert!(output.status.success(), "{output:?}");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            !stdout.contains(forbidden),
+            "bare command should execute its existing default, not print help: {stdout}"
+        );
+    }
+
+    let no_default = fixture
+        .command()
+        .current_dir(&repo)
+        .arg("task")
+        .output()
+        .expect("run bare parent command");
+    assert!(no_default.status.success(), "{no_default:?}");
+    let stdout = String::from_utf8_lossy(&no_default.stdout);
+    assert!(stdout.contains("Usage: aimux task [options] [command]"));
+    assert!(
+        !fixture.log.exists(),
+        "native default/help routing should not invoke node fallback"
+    );
+}
+
+#[test]
 fn invalid_known_commands_name_the_argument_problem_while_unknown_commands_stay_unknown() {
     let root = temp_root("native-known-command-invalid");
     fs::create_dir_all(root.join("dist")).expect("create dist");
