@@ -47,6 +47,7 @@ pub struct CoreAgentInputArgs {
     pub text: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project: Option<String>,
+    pub force: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

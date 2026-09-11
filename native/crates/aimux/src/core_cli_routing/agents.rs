@@ -59,6 +59,7 @@ pub fn parse_core_agent_input_args<S: AsRef<str>>(args: &[S]) -> Option<CoreAgen
         return None;
     }
     let mut project = None;
+    let mut force = false;
     let mut positional = Vec::new();
     let mut literal_text = false;
     let mut index = 1;
@@ -71,6 +72,11 @@ pub fn parse_core_agent_input_args<S: AsRef<str>>(args: &[S]) -> Option<CoreAgen
         }
         if arg == "--" {
             literal_text = true;
+            index += 1;
+            continue;
+        }
+        if arg == "--force" {
+            force = true;
             index += 1;
             continue;
         }
@@ -100,6 +106,7 @@ pub fn parse_core_agent_input_args<S: AsRef<str>>(args: &[S]) -> Option<CoreAgen
         session_id: session_id.clone(),
         text,
         project,
+        force,
     })
 }
 

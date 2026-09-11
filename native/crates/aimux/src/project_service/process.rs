@@ -27,6 +27,7 @@ use crate::plugin_api::NativePluginStatus;
 use crate::plugin_project_service_host::{
     builtin_plugin_tick_tasks, native_plugin_statuses_for_context,
 };
+use crate::project_service::agent_input_delivery::agent_input_delivery_task;
 use crate::project_service::builtin_metadata_task::builtin_metadata_task;
 use crate::project_service::loop_watcher_task::loop_watcher_task;
 use crate::project_service::scheduler::{ProjectSchedulerHandle, spawn_project_service_scheduler};
@@ -588,6 +589,7 @@ fn serve_project_service_listener_until<Stop>(
     // watchers only, whose events it wants to read after, not settle over.
     periodic_tasks.push(builtin_metadata_task(&context));
     periodic_tasks.push(transcript_reconciler_task(&context));
+    periodic_tasks.push(agent_input_delivery_task(&context));
     periodic_tasks.push(loop_watcher_task(&context));
     periodic_tasks.push(scribe_watcher_task(&context));
     log_lifecycle_always(

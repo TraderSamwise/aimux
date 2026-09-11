@@ -1,6 +1,10 @@
 use aimux::daemon_state::{MetadataState, load_metadata_state, save_metadata_state};
 use aimux::osc_notifications::OscNotificationParser;
 use aimux::project_api_contract::routes;
+use aimux::project_service::agent_input_delivery::{
+    ACTIVE_CLIENT_DWELL_MS, AgentInputWindowActivity, agent_input_delivery_queue_path,
+    run_pending_agent_input_deliveries_with_runtime,
+};
 use aimux::project_service::agent_output::{
     AgentOutputCaptureRuntime, AgentOutputResponseMode, MAX_AGENT_OUTPUT_CAPTURE_LINES,
     agent_output_capture_window, bounded_agent_output_end_line, bounded_agent_output_start_line,
@@ -12,6 +16,7 @@ use aimux::project_service::agent_output_projection::{
 };
 use aimux::project_service::metadata::update_session_metadata;
 use aimux::project_service::notifications::{NotificationQuery, list_notification_snapshot};
+use aimux::project_service::operation_failures::list_dashboard_operation_failures;
 use aimux::project_service::router::{
     OscOutputTap, ProjectServiceRequestContext, route_project_service_request,
 };
@@ -19,6 +24,7 @@ use aimux::runtime_topology::{coerce_runtime_topology, runtime_topology_path};
 use aimux::tmux::{CapturePaneOptions, TmuxTarget};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
+use std::collections::VecDeque;
 use std::fs::{create_dir_all, remove_dir_all, write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -104,6 +110,51 @@ impl AgentOutputCaptureRuntime for FakeCaptureRuntime {
         self.actions
             .push(FakeRuntimeAction::Escape(window_id.to_owned()));
         Ok(())
+    }
+}
+
+#[derive(Default)]
+struct FakeActivityRuntime {
+    inner: FakeCaptureRuntime,
+    input_activity: VecDeque<Result<AgentInputWindowActivity, String>>,
+}
+
+impl AgentOutputCaptureRuntime for FakeActivityRuntime {
+    fn capture_pane(
+        &mut self,
+        window_id: &str,
+        options: CapturePaneOptions,
+    ) -> Result<String, String> {
+        self.inner.capture_pane(window_id, options)
+    }
+
+    fn resize_window(&mut self, window_id: &str, cols: i64, rows: i64) -> Result<(), String> {
+        self.inner.resize_window(window_id, cols, rows)
+    }
+
+    fn send_text(&mut self, window_id: &str, text: &str) -> Result<(), String> {
+        self.inner.send_text(window_id, text)
+    }
+
+    fn send_key(&mut self, window_id: &str, key: &str) -> Result<(), String> {
+        self.inner.send_key(window_id, key)
+    }
+
+    fn send_carriage_return(&mut self, window_id: &str) -> Result<(), String> {
+        self.inner.send_carriage_return(window_id)
+    }
+
+    fn send_escape(&mut self, window_id: &str) -> Result<(), String> {
+        self.inner.send_escape(window_id)
+    }
+
+    fn agent_input_window_activity(
+        &mut self,
+        _window_id: &str,
+    ) -> Result<AgentInputWindowActivity, String> {
+        self.input_activity
+            .pop_front()
+            .unwrap_or(Ok(AgentInputWindowActivity::Unattended))
     }
 }
 
@@ -1444,6 +1495,166 @@ fn agent_input_prepends_prompt_context_for_both_input_routes() {
             ),
             FakeRuntimeAction::CarriageReturn("@1".into()),
         ]
+    );
+    cleanup(project);
+}
+
+#[test]
+fn agent_input_holds_for_recent_active_client_then_flushes_from_queue() {
+    let project = temp_project("active-client-hold");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let now_ms = aimux::project_service::scheduler::scheduler_now_ms();
+    let mut runtime = FakeActivityRuntime {
+        input_activity: VecDeque::from([Ok(AgentInputWindowActivity::Attended {
+            active_clients: 1,
+            latest_activity_ms: now_ms,
+        })]),
+        ..Default::default()
+    };
+
+    let held = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::INPUT,
+        Some(&json!({ "sessionId": "codex-1", "text": "queued input" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(held.status, 200);
+    assert_eq!(held.body["accepted"], true);
+    assert_eq!(held.body["delivery"]["state"], "held");
+    assert_eq!(
+        held.body["delivery"]["reason"],
+        "active-client-recent-input"
+    );
+    assert!(runtime.inner.actions.is_empty());
+    assert!(agent_input_delivery_queue_path(&state_dir).exists());
+
+    runtime
+        .input_activity
+        .push_back(Ok(AgentInputWindowActivity::Unattended));
+    run_pending_agent_input_deliveries_with_runtime(
+        &context,
+        &mut runtime,
+        now_ms + ACTIVE_CLIENT_DWELL_MS + 1,
+    );
+
+    assert_eq!(
+        runtime.inner.actions,
+        vec![
+            FakeRuntimeAction::Text("@1".into(), "queued input".into()),
+            FakeRuntimeAction::CarriageReturn("@1".into()),
+        ]
+    );
+    assert!(!agent_input_delivery_queue_path(&state_dir).exists());
+    cleanup(project);
+}
+
+#[test]
+fn agent_input_to_unattended_window_delivers_without_queue_delay() {
+    let project = temp_project("unattended-immediate");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeActivityRuntime {
+        input_activity: VecDeque::from([Ok(AgentInputWindowActivity::Unattended)]),
+        ..Default::default()
+    };
+
+    let response = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::INPUT,
+        Some(&json!({ "sessionId": "codex-1", "text": "deliver now" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert!(response.body.get("delivery").is_none());
+    assert_eq!(
+        runtime.inner.actions,
+        vec![
+            FakeRuntimeAction::Text("@1".into(), "deliver now".into()),
+            FakeRuntimeAction::CarriageReturn("@1".into()),
+        ]
+    );
+    assert!(!agent_input_delivery_queue_path(&state_dir).exists());
+    cleanup(project);
+}
+
+#[test]
+fn agent_input_force_bypasses_active_client_probe() {
+    let project = temp_project("force-input");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeActivityRuntime {
+        input_activity: VecDeque::from([Err("tmux should not be probed".into())]),
+        ..Default::default()
+    };
+
+    let response = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::INPUT,
+        Some(&json!({ "sessionId": "codex-1", "text": "urgent", "force": true })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(runtime.input_activity.len(), 1);
+    assert_eq!(
+        runtime.inner.actions,
+        vec![
+            FakeRuntimeAction::Text("@1".into(), "urgent".into()),
+            FakeRuntimeAction::CarriageReturn("@1".into()),
+        ]
+    );
+    assert!(!agent_input_delivery_queue_path(&state_dir).exists());
+    cleanup(project);
+}
+
+#[test]
+fn agent_input_probe_failure_holds_and_surfaces_reason() {
+    let project = temp_project("probe-failure-hold");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeActivityRuntime {
+        input_activity: VecDeque::from([Err("tmux socket busy".into())]),
+        ..Default::default()
+    };
+
+    let response = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::INPUT,
+        Some(&json!({ "sessionId": "codex-1", "text": "hold safely" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["delivery"]["state"], "held");
+    assert_eq!(
+        response.body["delivery"]["reason"],
+        "tmux client activity probe failed: tmux socket busy"
+    );
+    assert!(runtime.inner.actions.is_empty());
+    assert!(agent_input_delivery_queue_path(&state_dir).exists());
+    let failures = list_dashboard_operation_failures(&state_dir);
+    assert_eq!(failures.len(), 1);
+    assert_eq!(failures[0]["operation"], "input.delivery");
+    assert!(
+        failures[0]["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("tmux socket busy")
     );
     cleanup(project);
 }

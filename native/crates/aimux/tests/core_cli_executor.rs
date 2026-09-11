@@ -1122,6 +1122,7 @@ fn agent_input_executes_native_text_route_without_core_command_fallback() {
                 "project": "/repo",
                 "sessionId": "claude-1",
                 "text": "hello",
+                "force": false,
             })),
         )]
     );

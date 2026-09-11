@@ -28,6 +28,11 @@ use super::agent_input::{
     format_agent_input_with_attachments, shared_chat_body_actor_prompt,
     shared_chat_remote_actor_prompt,
 };
+use super::agent_input_delivery::{
+    AGENT_INPUT_DELIVERY_TASK_NAME, AgentInputDeliveryDecision, AgentInputWindowActivity,
+    active_client_count_for_window, decide_agent_input_delivery, enqueue_agent_input_delivery,
+    parse_agent_input_window_activity, record_agent_input_delivery_probe_failure,
+};
 use super::agent_output_projection::insert_projection_fields;
 use super::attachments::get_attachment_record;
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
@@ -134,6 +139,13 @@ pub trait AgentOutputCaptureRuntime {
         _tool_config_key: &str,
     ) -> Result<(), String> {
         Err("tmux metadata sync not supported by this service".into())
+    }
+
+    fn agent_input_window_activity(
+        &mut self,
+        _window_id: &str,
+    ) -> Result<AgentInputWindowActivity, String> {
+        Ok(AgentInputWindowActivity::Unattended)
     }
 }
 
@@ -246,6 +258,13 @@ impl AgentOutputCaptureRuntime for SystemAgentOutputCaptureRuntime {
         tool_config_key: &str,
     ) -> Result<(), String> {
         TmuxRuntimeManager::new().apply_managed_agent_window_policy(window_id, tool_config_key)
+    }
+
+    fn agent_input_window_activity(
+        &mut self,
+        window_id: &str,
+    ) -> Result<AgentInputWindowActivity, String> {
+        tmux_agent_input_window_activity(window_id, TMUX_COMMAND_TIMEOUT)
     }
 }
 
@@ -368,6 +387,13 @@ impl AgentOutputCaptureRuntime for BoundedAgentOutputCaptureRuntime {
         tool_config_key: &str,
     ) -> Result<(), String> {
         TmuxRuntimeManager::new().apply_managed_agent_window_policy(window_id, tool_config_key)
+    }
+
+    fn agent_input_window_activity(
+        &mut self,
+        window_id: &str,
+    ) -> Result<AgentInputWindowActivity, String> {
+        tmux_agent_input_window_activity(window_id, self.remaining()?)
     }
 }
 
@@ -1075,10 +1101,55 @@ fn input_live_pane_route(
     let contextualized_text =
         compose_with_prompt_context(&formatted_text, prompt_context.as_deref());
     let prompt = normalize_submitted_prompt(&contextualized_text);
-    if let Err(error) = send_prompt_to_tmux(runtime, &window_id, &prompt) {
-        return json_error(500, error);
+    let force = body.get("force").and_then(Value::as_bool) == Some(true);
+    let now_ms = super::scheduler::scheduler_now_ms();
+    let activity = if force {
+        Ok(AgentInputWindowActivity::Unattended)
+    } else {
+        runtime.agent_input_window_activity(&window_id)
+    };
+    let decision = decide_agent_input_delivery(force, activity, now_ms, now_ms);
+    if let AgentInputDeliveryDecision::Hold {
+        reason,
+        quiet_for_ms,
+        retry_after_ms,
+    } = decision
+    {
+        let pending = match enqueue_agent_input_delivery(
+            context,
+            &session_id,
+            &window_id,
+            &prompt,
+            &reason,
+            now_ms,
+        ) {
+            Ok(pending) => pending,
+            Err(error) => return json_error(500, error),
+        };
+        if reason.starts_with("tmux client activity probe failed") {
+            record_agent_input_delivery_probe_failure(context, &session_id, &reason);
+        }
+        context
+            .scheduler
+            .force_task_next_tick(AGENT_INPUT_DELIVERY_TASK_NAME);
+        return ProjectServiceDispatchResponse::json(
+            200,
+            json!({
+                "ok": true,
+                "sessionId": session_id,
+                "accepted": true,
+                "delivery": {
+                    "state": "held",
+                    "id": pending.id,
+                    "reason": reason,
+                    "quietForMs": quiet_for_ms,
+                    "retryAfterMs": retry_after_ms,
+                    "maxDeliverAtMs": pending.max_deliver_at_ms,
+                }
+            }),
+        );
     }
-    if let Err(error) = runtime.submit_prompt(&window_id, &prompt) {
+    if let Err(error) = deliver_prompt_to_tmux(runtime, &window_id, &prompt) {
         return json_error(500, error);
     }
     ProjectServiceDispatchResponse::json(
@@ -1172,6 +1243,15 @@ pub(super) fn send_prompt_to_tmux(
     flush_tmux_text(runtime, window_id, &mut pending)
 }
 
+pub(super) fn deliver_prompt_to_tmux(
+    runtime: &mut impl AgentOutputCaptureRuntime,
+    window_id: &str,
+    prompt: &str,
+) -> Result<(), String> {
+    send_prompt_to_tmux(runtime, window_id, prompt)?;
+    runtime.submit_prompt(window_id, prompt)
+}
+
 fn flush_tmux_text(
     runtime: &mut impl AgentOutputCaptureRuntime,
     window_id: &str,
@@ -1195,6 +1275,40 @@ fn remote_actor_from_headers(
 
 fn run_tmux_argv(argv: Vec<String>, fallback_error: String) -> Result<Output, String> {
     run_tmux_argv_with_timeout(argv, fallback_error, TMUX_COMMAND_TIMEOUT)
+}
+
+fn tmux_agent_input_window_activity(
+    window_id: &str,
+    timeout: Duration,
+) -> Result<AgentInputWindowActivity, String> {
+    let panes = run_tmux_argv_with_timeout(
+        vec![
+            "list-panes".into(),
+            "-a".into(),
+            "-F".into(),
+            "#{window_id}\t#{window_active_clients}".into(),
+        ],
+        format!("tmux list-panes failed while checking active clients for {window_id}"),
+        timeout,
+    )?;
+    let panes_text = String::from_utf8_lossy(&panes.stdout);
+    if active_client_count_for_window(window_id, &panes_text)? == 0 {
+        return Ok(AgentInputWindowActivity::Unattended);
+    }
+    let clients = run_tmux_argv_with_timeout(
+        vec![
+            "list-clients".into(),
+            "-F".into(),
+            "#{client_name}\t#{client_activity}\t#{window_id}".into(),
+        ],
+        format!("tmux list-clients failed while checking client activity for {window_id}"),
+        timeout,
+    )?;
+    parse_agent_input_window_activity(
+        window_id,
+        &panes_text,
+        &String::from_utf8_lossy(&clients.stdout),
+    )
 }
 
 fn run_tmux_argv_with_timeout(

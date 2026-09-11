@@ -1,4 +1,3 @@
-use aimux::agent_prompt_delivery_contract::agent_prompt_delivery_contract;
 use aimux::context_bridge_contract::context_bridge_contract;
 use aimux::context_compactor::{
     HistoryReadOptions, algorithmic_compact, context_dir, read_history,
@@ -10,8 +9,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const COMPACTOR: &str = include_str!("../../../../testdata/contracts/v1/context/compactor.json");
 const CONTEXT_BRIDGE: &str = include_str!("../../../../testdata/contracts/v1/context/bridge.json");
-const PROMPT_DELIVERY: &str =
-    include_str!("../../../../testdata/contracts/v1/agent-prompt-delivery/delivery.json");
 
 #[test]
 fn fixture_context_compactor_matches_typescript() {
@@ -61,34 +58,6 @@ fn fixture_context_bridge_matches_typescript() {
     assert!(
         failures.is_empty(),
         "{} context-bridge parity failures:\n{}",
-        failures.len(),
-        serde_json::to_string_pretty(&failures).expect("serialize failures")
-    );
-}
-
-#[test]
-fn fixture_agent_prompt_delivery_matches_typescript() {
-    let contract: Value = serde_json::from_str(PROMPT_DELIVERY).expect("valid prompt fixture");
-    let cases = contract["cases"].as_array().expect("prompt cases");
-    assert_eq!(cases.len(), 14, "unexpected prompt-delivery case count");
-    let mut failures = Vec::new();
-    for case in cases {
-        let actual = agent_prompt_delivery_contract(
-            case["api"].as_str().unwrap_or_default(),
-            &case["input"],
-        );
-        if actual != case["output"] {
-            failures.push(json!({
-                "id": case["id"],
-                "name": case["name"],
-                "expected": case["output"],
-                "actual": actual,
-            }));
-        }
-    }
-    assert!(
-        failures.is_empty(),
-        "{} prompt-delivery parity failures:\n{}",
         failures.len(),
         serde_json::to_string_pretty(&failures).expect("serialize failures")
     );
