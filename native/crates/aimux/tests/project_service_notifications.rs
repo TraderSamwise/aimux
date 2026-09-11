@@ -142,7 +142,7 @@ fn mutation_routes_validate_ids_shape() {
         &context,
         "POST",
         routes::notifications::READ,
-        Some(&json!({ "ids": ["record-2"] })),
+        Some(&json!({ "id": "record-2" })),
     );
     assert_eq!(read.status, 200);
     assert_eq!(read.body, json!({ "ok": true, "updated": 1 }));
@@ -151,7 +151,7 @@ fn mutation_routes_validate_ids_shape() {
         &context,
         "POST",
         routes::notifications::CLEAR,
-        Some(&json!({ "sessionId": "codex-1" })),
+        Some(&json!({ "id": "record-1" })),
     );
     assert_eq!(clear.status, 200);
     assert_eq!(clear.body, json!({ "ok": true, "cleared": 1 }));

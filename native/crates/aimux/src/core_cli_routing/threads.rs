@@ -124,6 +124,24 @@ pub fn parse_core_thread_args<S: AsRef<str>>(args: &[S]) -> Option<CoreThreadArg
             index += 1;
             continue;
         }
+        if subcommand == "send" && arg == "--body" {
+            if parsed.body.is_some() {
+                return None;
+            }
+            parsed.body = Some(required_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if subcommand == "send"
+            && let Some(value) = arg.strip_prefix("--body=")
+        {
+            if parsed.body.is_some() {
+                return None;
+            }
+            parsed.body = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
         if subcommand == "status" && arg == "--status" {
             parsed.status = Some(required_value(args, index)?.to_owned());
             index += 2;

@@ -494,6 +494,7 @@ pub struct CoreDaemonRestartArgs {
 pub struct CoreHostRestartArgs {
     pub open: bool,
     pub serve: bool,
+    pub json: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -510,6 +511,7 @@ pub struct CoreHostAgentReadArgs {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project: Option<String>,
     pub start_line: i64,
+    pub json: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

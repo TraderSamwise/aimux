@@ -193,6 +193,7 @@ fn host_restart_always_sends_serve_and_preserves_open_as_a_local_followup() {
         (vec!["host", "restart", "--serve"], true, false),
         (vec!["host", "restart", "--open"], false, true),
         (vec!["host", "restart", "--serve", "--open"], true, true),
+        (vec!["host", "restart", "--json"], false, false),
     ] {
         let plan = classify_core_cli(&args, &context(true, true)).expect("host restart plan");
         let request = command_from(&plan.action);
@@ -208,6 +209,14 @@ fn host_restart_always_sends_serve_and_preserves_open_as_a_local_followup() {
                 CoreCliFallback::MissingDashboardTarget
             } else {
                 CoreCliFallback::None
+            }
+        );
+        assert_eq!(
+            plan.output_mode,
+            if args.contains(&"--json") {
+                CoreCliOutputMode::Json
+            } else {
+                CoreCliOutputMode::Text
             }
         );
     }
@@ -247,6 +256,22 @@ fn host_agent_read_plans_native_text_route_with_resolved_project_and_tail_math()
         CoreCliAction::TextRoute {
             path: "/core/host-agent-read-text?project=%2Frepo&sessionId=codex-1&startLine=-120"
                 .into(),
+            body: None,
+        }
+    );
+
+    let json = classify_core_cli(
+        &["host", "agent-read", "codex-1", "--json"],
+        &context(true, true),
+    )
+    .expect("json host agent-read plan");
+    assert_eq!(json.output_mode, CoreCliOutputMode::Json);
+    assert_eq!(
+        json.action,
+        CoreCliAction::TextRoute {
+            path:
+                "/core/host-agent-read-text?project=%2Frepo&sessionId=codex-1&startLine=-120&json=1"
+                    .into(),
             body: None,
         }
     );
@@ -417,7 +442,7 @@ fn notification_aliases_plan_native_text_routes_with_resolved_project() {
     );
 
     let clear = classify_core_cli(
-        &["clear-notifications", "--ids=note-4,note-5"],
+        &["clear-notifications", "--id=note-4"],
         &context(true, true),
     )
     .expect("clear notifications plan");
@@ -428,8 +453,8 @@ fn notification_aliases_plan_native_text_routes_with_resolved_project() {
             path: "/core/notifications/clear-text".into(),
             body: Some(json!({
                 "project": "/repo",
-                "id": null,
-                "ids": ["note-4", "note-5"],
+                "id": "note-4",
+                "ids": [],
                 "sessionId": null,
             })),
         }

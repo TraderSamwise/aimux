@@ -234,11 +234,13 @@ pub fn parse_core_host_restart_args<S: AsRef<str>>(args: &[S]) -> Option<CoreHos
     let mut parsed = CoreHostRestartArgs {
         open: false,
         serve: false,
+        json: false,
     };
     for arg in &args[2..] {
         match arg.as_ref() {
             "--open" => parsed.open = true,
             "--serve" => parsed.serve = true,
+            "--json" => parsed.json = true,
             _ => return None,
         }
     }
@@ -280,9 +282,15 @@ pub fn parse_core_host_agent_read_args_result<S: AsRef<str>>(
     let mut session_id = None;
     let mut start_line_value = Some("-120".to_owned());
     let mut lines_value = None;
+    let mut json = false;
     let mut index = 2;
     while index < args.len() {
         let arg = args[index].as_ref();
+        if arg == "--json" {
+            json = true;
+            index += 1;
+            continue;
+        }
         if arg == "--project" {
             let value =
                 required_value(args, index).ok_or(CoreHostAgentReadArgsError::InvalidArguments)?;
@@ -349,6 +357,7 @@ pub fn parse_core_host_agent_read_args_result<S: AsRef<str>>(
         session_id,
         project,
         start_line,
+        json,
     })
 }
 
@@ -718,7 +727,7 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
         (Some("thread"), Some("show" | "mark-seen" | "status")) => {
             thread_positional_count(args) >= 1
         }
-        (Some("thread"), Some("send")) => thread_positional_count(args) >= 2,
+        (Some("thread"), Some("send")) => parse_core_thread_args(args).is_some(),
         (Some("thread"), Some("open")) => parse_core_thread_args(args).is_some(),
         (Some("threads"), _) => parse_core_threads_alias_args(args).is_some(),
         (Some("worktree"), None) | (Some("worktree"), Some("list" | "cleanup-caches")) => true,
