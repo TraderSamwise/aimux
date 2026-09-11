@@ -636,12 +636,27 @@ function enforcementRows() {
   return rows;
 }
 
+function rustSourceTree(file, seen = new Set()) {
+  if (seen.has(file) || !existsSync(file)) {
+    return '';
+  }
+  seen.add(file);
+  const source = readFileSync(file, 'utf8');
+  const parts = [source];
+  const pathModPattern = /#\s*\[\s*path\s*=\s*"([^"]+)"\s*\]\s*mod\s+\w+\s*;/g;
+  let match;
+  while ((match = pathModPattern.exec(source))) {
+    parts.push(rustSourceTree(join(dirname(file), match[1]), seen));
+  }
+  return parts.join('\n');
+}
+
 const staleEnforcementBindings = enforcementRows()
   .map((row) => {
     const suiteFile = join(repoRoot, row.suitePath);
     const missingSuite = !existsSync(suiteFile);
     const missingCorpus = !existsSync(join(repoRoot, row.corpus));
-    const missingBinding = !missingSuite && !missingCorpus && !readFileSync(suiteFile, 'utf8').includes(row.corpus);
+    const missingBinding = !missingSuite && !missingCorpus && !rustSourceTree(suiteFile).includes(row.corpus);
     return {
       ...row,
       missingSuite,
