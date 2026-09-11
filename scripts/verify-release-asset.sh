@@ -5,10 +5,39 @@ if [ -z "${BASH_VERSION:-}" ]; then
 fi
 set -euo pipefail
 
+append_standard_path_dirs() {
+  local current_path
+  current_path="${PATH:-}"
+  for dir in /usr/local/bin /opt/homebrew/bin /usr/bin /bin /usr/sbin /sbin; do
+    [ -d "$dir" ] || continue
+    case ":$current_path:" in
+      *":$dir:"*) ;;
+      *) current_path="${current_path:+$current_path:}$dir" ;;
+    esac
+  done
+  PATH="$current_path"
+  export PATH
+}
+
+fail() {
+  printf 'aimux release asset verification failed: %s\n' "$*" >&2
+  exit 1
+}
+
+need() {
+  command -v "$1" >/dev/null 2>&1 || fail "missing required command: $1"
+}
+
+append_standard_path_dirs
+
 if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
   printf 'Usage: %s <asset.tar.gz> [platform-arch]\n' "$0" >&2
   exit 2
 fi
+
+for command in uname mktemp rm tar gzip sed strings awk; do
+  need "$command"
+done
 
 ARCHIVE="$1"
 

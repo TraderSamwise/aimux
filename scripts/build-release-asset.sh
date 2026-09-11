@@ -5,6 +5,35 @@ if [ -z "${BASH_VERSION:-}" ]; then
 fi
 set -euo pipefail
 
+append_standard_path_dirs() {
+  local current_path
+  current_path="${PATH:-}"
+  for dir in /usr/local/bin /opt/homebrew/bin /usr/bin /bin /usr/sbin /sbin; do
+    [ -d "$dir" ] || continue
+    case ":$current_path:" in
+      *":$dir:"*) ;;
+      *) current_path="${current_path:+$current_path:}$dir" ;;
+    esac
+  done
+  PATH="$current_path"
+  export PATH
+}
+
+fail() {
+  printf 'aimux release asset build failed: %s\n' "$*" >&2
+  exit 1
+}
+
+need() {
+  command -v "$1" >/dev/null 2>&1 || fail "missing required command: $1"
+}
+
+append_standard_path_dirs
+
+for command in dirname awk grep uname mktemp date cat shasum find sort cargo mkdir cp tar gzip bash chmod rm; do
+  need "$command"
+done
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PACKAGE_VERSION="$(awk -F'"' '/"version"[[:space:]]*:/ { print $4; exit }' "$ROOT_DIR/package.json")"
 printf '%s\n' "$PACKAGE_VERSION" | grep -Eq '^[0-9]+[.][0-9]+[.][0-9]+([.-][0-9A-Za-z.-]+)?$' \
@@ -18,6 +47,9 @@ esac
 export AIMUX_BUILD_PROFILE="$BUILD_PROFILE"
 export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
 CARGO_TARGET_ROOT="${CARGO_TARGET_DIR:-"$ROOT_DIR/native/target"}"
+if [ "$BUILD_PROFILE" = "full" ]; then
+  need yarn
+fi
 
 detect_platform() {
   case "$(uname -s)" in

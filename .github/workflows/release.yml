@@ -64,6 +64,23 @@ jobs:
       - name: Verify release asset has no source maps
         run: |
           set -euo pipefail
+          append_standard_path_dirs() {
+            local current_path="${PATH:-}"
+            for dir in /usr/local/bin /opt/homebrew/bin /usr/bin /bin /usr/sbin /sbin; do
+              [ -d "$dir" ] || continue
+              case ":$current_path:" in
+                *":$dir:"*) ;;
+                *) current_path="${current_path:+$current_path:}$dir" ;;
+              esac
+            done
+            PATH="$current_path"
+            export PATH
+          }
+          append_standard_path_dirs
+          need() {
+            command -v "$1" >/dev/null 2>&1 || { echo "missing required command: $1" >&2; exit 1; }
+          }
+          for command in tar gzip grep; do need "$command"; done
           ASSET="release/aimux-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz"
           if tar -tzf "$ASSET" | grep -E '(^|/)[^/]+\.map$'; then
             echo "Release asset contains source maps." >&2
@@ -74,6 +91,23 @@ jobs:
         if: matrix.platform == 'darwin'
         run: |
           set -euo pipefail
+          append_standard_path_dirs() {
+            local current_path="${PATH:-}"
+            for dir in /usr/local/bin /opt/homebrew/bin /usr/bin /bin /usr/sbin /sbin; do
+              [ -d "$dir" ] || continue
+              case ":$current_path:" in
+                *":$dir:"*) ;;
+                *) current_path="${current_path:+$current_path:}$dir" ;;
+              esac
+            done
+            PATH="$current_path"
+            export PATH
+          }
+          append_standard_path_dirs
+          need() {
+            command -v "$1" >/dev/null 2>&1 || { echo "missing required command: $1" >&2; exit 1; }
+          }
+          for command in tar gzip mktemp rm lipo; do need "$command"; done
           ASSET="release/aimux-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz"
           TMP_DIR="$(mktemp -d)"
           trap 'rm -rf "$TMP_DIR"' EXIT
@@ -146,6 +180,23 @@ jobs:
           OWNER_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
+          append_standard_path_dirs() {
+            local current_path="${PATH:-}"
+            for dir in /usr/local/bin /opt/homebrew/bin /usr/bin /bin /usr/sbin /sbin; do
+              [ -d "$dir" ] || continue
+              case ":$current_path:" in
+                *":$dir:"*) ;;
+                *) current_path="${current_path:+$current_path:}$dir" ;;
+              esac
+            done
+            PATH="$current_path"
+            export PATH
+          }
+          append_standard_path_dirs
+          need() {
+            command -v "$1" >/dev/null 2>&1 || { echo "missing required command: $1" >&2; exit 1; }
+          }
+          for command in gh mkdir tar gzip rm mv; do need "$command"; done
           TMP_DIR="$(mktemp -d)"
           trap 'rm -rf "$TMP_DIR"' EXIT
           for arch in arm64 x64; do
