@@ -258,8 +258,9 @@ Verification:
 - CI run `34586601917` on commit `1e2ed765` passed every blocking job:
   Rust format, Rust clippy all targets, Rust tests (macOS), JavaScript tests
   (root/relay), JavaScript tests (app), and Phase 8 live residuals.
-- The same CI run kept Rust tests (Linux advisory) non-blocking while the
-  desktop notification transport platform decision was unresolved.
+- CI run `34591673808` on commit `cf33d2d5` proved Rust tests (Linux) green end
+  to end once desktop notifications reported the macOS-only
+  platform-unsupported contract off macOS.
 - The blocking `Phase 8 live residuals` job passed in 4m48s after running the
   tmux, command-resolution, agent-shell, graveyard, SSE, and process lanes
   serially against isolated temp roots and a private tmux server.
@@ -271,7 +272,5 @@ Evidence:
 - `scripts/phase8-live-residuals.py`
 
 Open gaps:
-- Rust tests (Linux advisory) remain non-blocking until the macOS-only desktop
-  notification contract proves the whole Linux suite green on GitHub. Desktop
-  notifications are macOS-only; Linux and Windows use mobile push for
+- Desktop notifications are macOS-only; Linux and Windows use mobile push for
   cross-platform alerts instead of a local desktop notification transport.

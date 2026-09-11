@@ -28,11 +28,10 @@ Retired TypeScript gates:
 Acceptance commands:
 - `yarn verify:full`
 - blocking CI: Rust format, Rust clippy all targets, Rust tests (macOS),
-  JavaScript tests (root/relay), JavaScript tests (app), and Phase 8 live
-  residuals.
-- advisory CI: Rust tests (Linux), until the macOS-only desktop notification
-  contract proves the whole Linux suite green on GitHub. Desktop notifications
-  should report platform-unsupported off macOS.
+  Rust tests (Linux), JavaScript tests (root/relay), JavaScript tests (app),
+  and Phase 8 live residuals.
+- desktop notifications are macOS-only and report platform-unsupported off
+  macOS; mobile push remains the cross-platform notification path.
 - native release asset inspection: no runtime `node`, `AIMUX_NODE_BIN`,
   `dist/launcher-bin.js`, or runtime `node_modules` dependency.
 - installed smoke: `aimux doctor versions`, `aimux daemon status --json`,

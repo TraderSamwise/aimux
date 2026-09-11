@@ -109,13 +109,13 @@ jobs:
         run: yarn native:clippy:all-targets
 
   rust-tests:
-    name: Rust tests (Linux advisory)
+    name: Rust tests (Linux)
     runs-on: ubuntu-latest
-    # Advisory until the macOS-only desktop notification contract proves the
-    # whole Linux suite green on GitHub. cargo test uses --no-fail-fast so a red
+    # Blocking shipped-platform coverage. Desktop notifications are
+    # macOS-only, so Linux asserts the platform-unsupported contract instead of
+    # pretending a helper exists. cargo test uses --no-fail-fast so a red
     # library target cannot hide the integration binaries that carry most
     # fixture and contract coverage.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
