@@ -587,77 +587,126 @@ def run_dashboard_render_smoke(aimux_bin: Path, mutation: str | None) -> dict[st
             assert_frame_reaches_width(frame, cols, f"dashboard resize {cols}x{rows}")
         terminate_process(_client_proc)
 
+        def attached_dashboard_client_rows() -> list[dict[str, str]]:
+            result = tmux_cmd_for_socket(
+                tmux,
+                socket_name,
+                [
+                    "list-clients",
+                    "-F",
+                    "#{client_tty}\t#{session_name}\t#{window_id}\t#{window_name}\t#{client_name}\t#{client_pid}",
+                ],
+                check=False,
+            )
+            if result.returncode != 0:
+                return []
+            rows = []
+            for line in result.stdout.splitlines():
+                fields = line.split("\t")
+                if len(fields) == 6:
+                    rows.append({
+                        "tty": fields[0],
+                        "session": fields[1],
+                        "windowId": fields[2],
+                        "windowName": fields[3],
+                        "name": fields[4],
+                        "pid": fields[5],
+                    })
+            return rows
+
+        def capture_dashboard_window(window_id: str) -> str:
+            result = tmux_cmd_for_socket(
+                tmux,
+                socket_name,
+                ["capture-pane", "-p", "-J", "-t", window_id],
+                check=False,
+            )
+            return result.stdout if result.returncode == 0 else ""
+
+        def dashboard_shared_ui_state() -> Any:
+            state_files = sorted(scope.aimux_home.glob("state/projects/*/dashboard/shared.json"))
+            return [
+                {
+                    "path": str(path),
+                    "state": json.loads(path.read_text()),
+                }
+                for path in state_files
+            ]
+
         def exercise_key(
             key_session: str,
             key: str,
             label: str,
             anchor: str | None,
             reset_key: str = "Escape",
+            after_absent: str | None = None,
+            reset_anchor: str | None = None,
         ) -> None:
-            key_command = (
-                f"cd {shlex.quote(str(project_root))} && {shlex.quote(str(aimux_bin))}; code=$?; "
-                f"printf '\\n__AIMUX_DASHBOARD_{key_session}_EXIT:%s\\n' \"$code\"; sleep 30"
+            existing_client_pids = {row["pid"] for row in attached_dashboard_client_rows()}
+            proc, client_fd = start_process_capture_client(
+                scope,
+                [str(aimux_bin)],
+                cwd=project_root,
+                cols=100,
+                rows=30,
             )
-            proc = subprocess.Popen(
-                [
-                    "script",
-                    "-q",
-                    "/dev/null",
-                    tmux,
-                    "-L",
-                    socket_name,
-                    "-f",
-                    "/dev/null",
-                    "new-session",
-                    "-s",
-                    key_session,
-                    "-x",
-                    "100",
-                    "-y",
-                    "30",
-                    "sh",
-                    "-lc",
-                    key_command,
-                ],
-                cwd=str(project_root),
-                env=scope.env,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
+            dashboard_client = wait_until(
+                lambda: next(
+                    (
+                        row
+                        for row in attached_dashboard_client_rows()
+                        if row["windowName"] == "dashboard"
+                        and row["pid"] not in existing_client_pids
+                    ),
+                    None,
+                ),
+                timeout=45,
+                label=f"{label} managed dashboard client",
             )
-            scope.procs.append(proc)
+            window_id = dashboard_client["windowId"]
             before = wait_until(
-                lambda: capture_tmux(scope, key_session)
-                if required in capture_tmux(scope, key_session)
-                else None,
+                lambda: (
+                    frame
+                    if required in (frame := capture_dashboard_window(window_id))
+                    else None
+                ),
                 timeout=10,
                 label=f"{label} dashboard frame",
             )
             time.sleep(1.0)
             if mutation != "dashboard-input-dead":
-                tmux_cmd(scope, ["send-keys", "-t", f"{key_session}:0", key])
+                tmux_cmd_for_socket(tmux, socket_name, ["send-keys", "-t", window_id, key])
             after = ""
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:
-                after = capture_tmux(scope, key_session)
-                if after != before and (anchor is None or anchor in after) and after.strip():
+                after = capture_dashboard_window(window_id)
+                if (
+                    after != before
+                    and (anchor is None or anchor in after)
+                    and (after_absent is None or after_absent not in after)
+                    and after.strip()
+                ):
                     break
                 time.sleep(0.05)
             else:
-                pane_state = tmux_cmd(scope, [
+                pane_state = tmux_cmd_for_socket(tmux, socket_name, [
                     "display-message",
                     "-p",
                     "-t",
-                    f"{key_session}:0",
+                    window_id,
                     "#{pane_width}x#{pane_height}\t#{session_attached}\t#{window_active}\t#{pane_current_command}\t#{pane_dead}",
-                ]).stdout.strip()
+                ], check=False).stdout.strip()
                 raise LiveResidualFailure(
                     f"{label} key did not change dashboard frame:\n"
                     + json.dumps({
                         "key": key,
                         "anchor": anchor,
+                        "afterAbsent": after_absent,
                         "paneState": pane_state,
+                        "client": dashboard_client,
+                        "clients": attached_dashboard_client_rows(),
+                        "uiState": dashboard_shared_ui_state(),
+                        "clientOutput": drain_fd_now(client_fd)[-2000:],
                         "before": before[-2000:],
                         "after": after[-2000:],
                     }, indent=2)
@@ -666,44 +715,87 @@ def run_dashboard_render_smoke(aimux_bin: Path, mutation: str | None) -> dict[st
                 raise LiveResidualFailure(
                     f"{label} key changed frame without expected anchor {anchor!r}:\n{after}"
                 )
-            tmux_cmd(scope, ["send-keys", "-t", f"{key_session}:0", reset_key])
-            wait_until(
-                lambda: (
-                    current
-                    if required in (current := capture_tmux(scope, key_session))
-                    and current != after
-                    else None
-                ),
-                timeout=5,
-                label=f"{label} key returned to dashboard before quit",
-            )
-            tmux_cmd(scope, ["send-keys", "-t", f"{key_session}:0", "q"])
-            final_output = ""
+            tmux_cmd_for_socket(tmux, socket_name, ["send-keys", "-t", window_id, reset_key])
+            reset_frame = ""
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:
-                final_output = capture_tmux(scope, key_session)
-                if f"__AIMUX_DASHBOARD_{key_session}_EXIT:0" in final_output:
+                reset_frame = capture_dashboard_window(window_id)
+                if (
+                    required in reset_frame
+                    and reset_frame != after
+                    and (reset_anchor is None or reset_anchor in reset_frame)
+                ):
+                    break
+                time.sleep(0.05)
+            else:
+                pane_state = tmux_cmd_for_socket(tmux, socket_name, [
+                    "display-message",
+                    "-p",
+                    "-t",
+                    window_id,
+                    "#{pane_width}x#{pane_height}\t#{session_attached}\t#{window_active}\t#{pane_current_command}\t#{pane_dead}",
+                ], check=False).stdout.strip()
+                raise LiveResidualFailure(
+                    f"{label} key did not return to dashboard before quit:\n"
+                    + json.dumps({
+                        "key": key,
+                        "resetKey": reset_key,
+                        "resetAnchor": reset_anchor,
+                        "paneState": pane_state,
+                        "client": dashboard_client,
+                        "clients": attached_dashboard_client_rows(),
+                        "uiState": dashboard_shared_ui_state(),
+                        "clientOutput": drain_fd_now(client_fd)[-2000:],
+                        "before": before[-2000:],
+                        "after": after[-2000:],
+                        "reset": reset_frame[-2000:],
+                    }, indent=2)
+                )
+            tmux_cmd_for_socket(tmux, socket_name, ["send-keys", "-t", window_id, "q"], check=False)
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                if proc.poll() is not None or not any(
+                    row["tty"] == dashboard_client["tty"]
+                    for row in attached_dashboard_client_rows()
+                ):
                     return
                 time.sleep(0.05)
-            raise LiveResidualFailure(f"{label} dashboard did not accept q after input:\n{final_output}")
+            raise LiveResidualFailure(
+                f"{label} dashboard did not accept q after input:\n"
+                + json.dumps({
+                    "client": dashboard_client,
+                    "clients": attached_dashboard_client_rows(),
+                    "process": proc.poll(),
+                    "clientOutput": drain_fd_now(client_fd)[-2000:],
+                    "frame": capture_dashboard_window(window_id)[-2000:],
+                }, indent=2)
+            )
 
         key_specs = [
-            ("?", "help", "— help", "Escape"),
-            ("n", "new-agent", "SELECT TOOL", "Escape"),
-            ("w", "worktree-create", "CREATE WORKTREE", "Escape"),
-            ("v", "service-create", "CREATE SERVICE", "Escape"),
-            ("Tab", "details-toggle", None, "Tab"),
-            ("c", "coordination-screen", "— coordination", "Escape"),
-            ("p", "project-screen", "— project", "Escape"),
-            ("L", "library-screen", "— library", "Escape"),
-            ("t", "topology-screen", "— topology", "Escape"),
-            ("g", "graveyard-screen", "— graveyard", "Escape"),
-            ("a", "hide-offline-toggle", "Offline agents hidden", "a"),
+            ("?", "help", "— help", "Escape", None, None),
+            ("n", "new-agent", "SELECT TOOL", "Escape", None, None),
+            ("w", "worktree-create", "CREATE WORKTREE", "Escape", None, None),
+            ("v", "service-create", "CREATE SERVICE", "Escape", None, None),
+            ("Tab", "details-toggle", None, "Tab", "WORKTREE", "WORKTREE"),
+            ("c", "coordination-screen", "— coordination", "Escape", None, None),
+            ("p", "project-screen", "— project", "Escape", None, None),
+            ("L", "library-screen", "— library", "Escape", None, None),
+            ("t", "topology-screen", "— topology", "Escape", None, None),
+            ("g", "graveyard-screen", "— graveyard", "Escape", None, None),
+            ("a", "hide-offline-toggle", "Offline agents hidden", "a", None, None),
         ]
         if mutation == "dashboard-input-dead":
             key_specs = key_specs[:1]
-        for index, (key, label, anchor, reset_key) in enumerate(key_specs, start=1):
-            exercise_key(f"phase8-dashboard-key-{index}", key, label, anchor, reset_key)
+        for index, (key, label, anchor, reset_key, after_absent, reset_anchor) in enumerate(key_specs, start=1):
+            exercise_key(
+                f"phase8-dashboard-key-{index}",
+                key,
+                label,
+                anchor,
+                reset_key,
+                after_absent,
+                reset_anchor,
+            )
         return {
             "name": "phase8-live-dashboard-render-smoke",
             "privateSocket": socket_name,
