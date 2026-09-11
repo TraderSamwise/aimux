@@ -247,16 +247,16 @@ fn attachment_publish_text_route(
         Err(response) => return response,
     };
     let mut json = json;
-    if let AttachmentHostingResult::LocalOnly { warning } = &hosting {
-        if let Some(object) = json.as_object_mut() {
-            object.insert(
-                "hosting".to_owned(),
-                json!({
-                    "status": "localOnly",
-                    "warning": warning,
-                }),
-            );
-        }
+    if let AttachmentHostingResult::LocalOnly { warning } = &hosting
+        && let Some(object) = json.as_object_mut()
+    {
+        object.insert(
+            "hosting".to_owned(),
+            json!({
+                "status": "localOnly",
+                "warning": warning,
+            }),
+        );
     }
     let reference_text =
         match required_project_service_string(&json, "attachment publish", "referenceText") {
