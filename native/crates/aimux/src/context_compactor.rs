@@ -50,6 +50,47 @@ pub trait CompactCommandRunner {
     fn run(&mut self, command: &str, input: &str) -> Result<String, String>;
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompactReport {
+    pub sessions: Vec<CompactSessionReport>,
+}
+
+impl CompactReport {
+    pub fn compacted_count(&self) -> usize {
+        self.sessions
+            .iter()
+            .filter(|session| matches!(session.status, CompactSessionStatus::Compacted { .. }))
+            .count()
+    }
+
+    pub fn skipped_count(&self) -> usize {
+        self.sessions
+            .iter()
+            .filter(|session| matches!(session.status, CompactSessionStatus::Skipped { .. }))
+            .count()
+    }
+
+    pub fn failed_count(&self) -> usize {
+        self.sessions
+            .iter()
+            .filter(|session| matches!(session.status, CompactSessionStatus::Failed { .. }))
+            .count()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompactSessionReport {
+    pub session_id: String,
+    pub status: CompactSessionStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CompactSessionStatus {
+    Compacted { mode: String, turns: usize },
+    Skipped { reason: String },
+    Failed { reason: String },
+}
+
 #[derive(Debug, Default)]
 pub struct ShellCompactCommandRunner;
 
@@ -78,12 +119,12 @@ pub fn list_history_session_ids(project_root: impl AsRef<Path>) -> Result<Vec<St
     Ok(session_ids)
 }
 
-pub fn llm_compact(project_root: impl AsRef<Path>, session_ids: &[String]) {
+pub fn llm_compact(project_root: impl AsRef<Path>, session_ids: &[String]) -> CompactReport {
     let project_root = project_root.as_ref();
     let mut runner = ShellCompactCommandRunner;
     let config = load_config_for_project(project_root);
     let compact_command = compact_command_from_config(&config);
-    llm_compact_with_runner(project_root, session_ids, &compact_command, &mut runner);
+    llm_compact_with_runner(project_root, session_ids, &compact_command, &mut runner)
 }
 
 pub fn llm_compact_with_runner(
@@ -91,147 +132,315 @@ pub fn llm_compact_with_runner(
     session_ids: &[String],
     compact_command: &str,
     runner: &mut impl CompactCommandRunner,
-) {
+) -> CompactReport {
     let project_root = project_root.as_ref();
     let base_dir = context_dir(project_root);
-    let _ = fs::create_dir_all(&base_dir);
+    let base_dir_error = fs::create_dir_all(&base_dir).err().map(|error| {
+        format!(
+            "failed to create context directory {}: {error}",
+            base_dir.display()
+        )
+    });
+    let mut sessions = Vec::new();
 
     for session_id in session_ids {
-        let turns = read_history(
+        if let Some(error) = base_dir_error.as_ref() {
+            sessions.push(CompactSessionReport {
+                session_id: session_id.clone(),
+                status: CompactSessionStatus::Failed {
+                    reason: error.clone(),
+                },
+            });
+            continue;
+        }
+        let turns = match read_history_for_compaction(
             project_root,
             session_id,
             HistoryReadOptions {
                 last_n: Some(LLM_HISTORY_TURNS),
                 ..HistoryReadOptions::default()
             },
-        );
+        ) {
+            Ok(turns) => turns,
+            Err(error) => {
+                sessions.push(CompactSessionReport {
+                    session_id: session_id.clone(),
+                    status: CompactSessionStatus::Failed {
+                        reason: format!("failed to read history: {error}"),
+                    },
+                });
+                continue;
+            }
+        };
         if turns.is_empty() {
+            sessions.push(CompactSessionReport {
+                session_id: session_id.clone(),
+                status: CompactSessionStatus::Skipped {
+                    reason: "no readable history turns".into(),
+                },
+            });
             continue;
         }
         let session_dir = base_dir.join(session_id);
-        let _ = fs::create_dir_all(&session_dir);
+        if let Err(error) = fs::create_dir_all(&session_dir) {
+            sessions.push(CompactSessionReport {
+                session_id: session_id.clone(),
+                status: CompactSessionStatus::Failed {
+                    reason: format!(
+                        "failed to create session context directory {}: {error}",
+                        session_dir.display()
+                    ),
+                },
+            });
+            continue;
+        }
 
         let history = llm_history_text(session_id, &turns);
         if history.trim().is_empty() {
+            sessions.push(CompactSessionReport {
+                session_id: session_id.clone(),
+                status: CompactSessionStatus::Skipped {
+                    reason: "history contained no compactable turns".into(),
+                },
+            });
             continue;
         }
         let prompt = format!(
             "Summarize the following agent session history. List: key tasks completed, files modified, important decisions made, and any errors or blockers encountered. Be concise but thorough. Output markdown.\n\n{history}"
         );
-        match runner.run(compact_command, &prompt) {
+        let status = match runner.run(compact_command, &prompt) {
             Ok(output) => {
                 let summary = truncate_bytes_lossy(&output, MAX_SUMMARY_BYTES);
-                let _ = write_summary_artifacts(&session_dir, session_id, "llm", &turns, &summary);
+                match write_summary_artifacts(&session_dir, session_id, "llm", &turns, &summary) {
+                    Ok(()) => CompactSessionStatus::Compacted {
+                        mode: "llm".into(),
+                        turns: turns.len(),
+                    },
+                    Err(error) => CompactSessionStatus::Failed {
+                        reason: format!("failed to write summary artifacts: {error}"),
+                    },
+                }
             }
-            Err(_) => algorithmic_compact(project_root, std::slice::from_ref(session_id)),
-        }
+            Err(error) => {
+                let fallback_turns = match read_history_for_compaction(
+                    project_root,
+                    session_id,
+                    HistoryReadOptions::default(),
+                ) {
+                    Ok(turns) if !turns.is_empty() => turns,
+                    Ok(_) => {
+                        sessions.push(CompactSessionReport {
+                            session_id: session_id.clone(),
+                            status: CompactSessionStatus::Skipped {
+                                reason: "no readable history turns".into(),
+                            },
+                        });
+                        continue;
+                    }
+                    Err(fallback_error) => {
+                        sessions.push(CompactSessionReport {
+                            session_id: session_id.clone(),
+                            status: CompactSessionStatus::Failed {
+                                reason: format!(
+                                    "compact command failed ({}); fallback history read failed: {fallback_error}",
+                                    one_line_error(&error)
+                                ),
+                            },
+                        });
+                        continue;
+                    }
+                };
+                match write_algorithmic_summary(&session_dir, session_id, &fallback_turns) {
+                    Ok(()) => CompactSessionStatus::Compacted {
+                        mode: "algorithmic".into(),
+                        turns: fallback_turns.len(),
+                    },
+                    Err(fallback_error) => CompactSessionStatus::Failed {
+                        reason: format!(
+                            "compact command failed ({}); fallback failed: {fallback_error}",
+                            one_line_error(&error)
+                        ),
+                    },
+                }
+            }
+        };
+        sessions.push(CompactSessionReport {
+            session_id: session_id.clone(),
+            status,
+        });
     }
+    CompactReport { sessions }
 }
 
-pub fn algorithmic_compact(project_root: impl AsRef<Path>, session_ids: &[String]) {
+pub fn algorithmic_compact(
+    project_root: impl AsRef<Path>,
+    session_ids: &[String],
+) -> CompactReport {
     let project_root = project_root.as_ref();
     let base_dir = context_dir(project_root);
-    let _ = fs::create_dir_all(&base_dir);
+    let base_dir_error = fs::create_dir_all(&base_dir).err().map(|error| {
+        format!(
+            "failed to create context directory {}: {error}",
+            base_dir.display()
+        )
+    });
+    let mut sessions = Vec::new();
 
     for session_id in session_ids {
-        let turns = read_history(project_root, session_id, HistoryReadOptions::default());
+        if let Some(error) = base_dir_error.as_ref() {
+            sessions.push(CompactSessionReport {
+                session_id: session_id.clone(),
+                status: CompactSessionStatus::Failed {
+                    reason: error.clone(),
+                },
+            });
+            continue;
+        }
+        let turns = match read_history_for_compaction(
+            project_root,
+            session_id,
+            HistoryReadOptions::default(),
+        ) {
+            Ok(turns) => turns,
+            Err(error) => {
+                sessions.push(CompactSessionReport {
+                    session_id: session_id.clone(),
+                    status: CompactSessionStatus::Failed {
+                        reason: format!("failed to read history: {error}"),
+                    },
+                });
+                continue;
+            }
+        };
         if turns.is_empty() {
+            sessions.push(CompactSessionReport {
+                session_id: session_id.clone(),
+                status: CompactSessionStatus::Skipped {
+                    reason: "no readable history turns".into(),
+                },
+            });
             continue;
         }
         let session_dir = base_dir.join(session_id);
-        let _ = fs::create_dir_all(&session_dir);
+        let status = match fs::create_dir_all(&session_dir)
+            .map_err(|error| {
+                format!(
+                    "failed to create session context directory {}: {error}",
+                    session_dir.display()
+                )
+            })
+            .and_then(|()| write_algorithmic_summary(&session_dir, session_id, &turns))
+        {
+            Ok(()) => CompactSessionStatus::Compacted {
+                mode: "algorithmic".into(),
+                turns: turns.len(),
+            },
+            Err(error) => CompactSessionStatus::Failed { reason: error },
+        };
+        sessions.push(CompactSessionReport {
+            session_id: session_id.clone(),
+            status,
+        });
+    }
+    CompactReport { sessions }
+}
 
-        let mut sections = Vec::new();
-        let mut tasks = Vec::new();
-        let mut file_counts: BTreeMap<String, usize> = BTreeMap::new();
-        let mut decisions = Vec::new();
-        let mut errors = Vec::new();
+fn write_algorithmic_summary(
+    session_dir: &Path,
+    session_id: &str,
+    turns: &[HistoryTurn],
+) -> Result<(), String> {
+    let mut sections = Vec::new();
+    let mut tasks = Vec::new();
+    let mut file_counts: BTreeMap<String, usize> = BTreeMap::new();
+    let mut decisions = Vec::new();
+    let mut errors = Vec::new();
 
-        for turn in &turns {
-            if turn.kind == "prompt" {
-                tasks.push(turn.content.clone());
-            }
-            if turn.kind == "response" {
-                for line in turn.content.split('\n') {
-                    let trimmed = line.trim();
-                    if trimmed.is_empty() {
-                        continue;
-                    }
-                    if has_decision_keyword(trimmed) {
-                        decisions.push(trimmed.to_owned());
-                    }
-                    if has_error_keyword(trimmed) {
-                        errors.push(trimmed.to_owned());
-                    }
+    for turn in turns {
+        if turn.kind == "prompt" {
+            tasks.push(turn.content.clone());
+        }
+        if turn.kind == "response" {
+            for line in turn.content.split('\n') {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                if has_decision_keyword(trimmed) {
+                    decisions.push(trimmed.to_owned());
+                }
+                if has_error_keyword(trimmed) {
+                    errors.push(trimmed.to_owned());
                 }
             }
-            for file in &turn.files {
-                *file_counts.entry(file.clone()).or_insert(0) += 1;
-            }
         }
-
-        sections.push(format!("{} turns", turns.len()));
-        sections.push(String::new());
-
-        if !tasks.is_empty() {
-            sections.push("### Key tasks".into());
-            for task in unique_preserve_order(&tasks)
-                .into_iter()
-                .rev()
-                .take(20)
-                .collect::<Vec<_>>()
-                .into_iter()
-                .rev()
-            {
-                sections.push(format!("- {}", truncate_chars(task, 150)));
-            }
-            sections.push(String::new());
+        for file in &turn.files {
+            *file_counts.entry(file.clone()).or_insert(0) += 1;
         }
-
-        if !file_counts.is_empty() {
-            sections.push("### Files modified".into());
-            let mut sorted = file_counts.into_iter().collect::<Vec<_>>();
-            sorted.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
-            for (file, count) in sorted {
-                let plural = if count > 1 { "s" } else { "" };
-                sections.push(format!("- {file} ({count} time{plural})"));
-            }
-            sections.push(String::new());
-        }
-
-        if !decisions.is_empty() {
-            sections.push("### Key decisions".into());
-            for decision in decisions
-                .iter()
-                .rev()
-                .take(10)
-                .collect::<Vec<_>>()
-                .into_iter()
-                .rev()
-            {
-                sections.push(format!("- {}", truncate_chars(decision, 200)));
-            }
-            sections.push(String::new());
-        }
-
-        if !errors.is_empty() {
-            sections.push("### Errors & blockers".into());
-            for error in errors
-                .iter()
-                .rev()
-                .take(10)
-                .collect::<Vec<_>>()
-                .into_iter()
-                .rev()
-            {
-                sections.push(format!("- {}", truncate_chars(error, 200)));
-            }
-            sections.push(String::new());
-        }
-
-        let content = truncate_bytes_lossy(&sections.join("\n"), MAX_SUMMARY_BYTES);
-        let _ = write_summary_artifacts(&session_dir, session_id, "algorithmic", &turns, &content);
     }
+
+    sections.push(format!("{} turns", turns.len()));
+    sections.push(String::new());
+
+    if !tasks.is_empty() {
+        sections.push("### Key tasks".into());
+        for task in unique_preserve_order(&tasks)
+            .into_iter()
+            .rev()
+            .take(20)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+        {
+            sections.push(format!("- {}", truncate_chars(task, 150)));
+        }
+        sections.push(String::new());
+    }
+
+    if !file_counts.is_empty() {
+        sections.push("### Files modified".into());
+        let mut sorted = file_counts.into_iter().collect::<Vec<_>>();
+        sorted.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+        for (file, count) in sorted {
+            let plural = if count > 1 { "s" } else { "" };
+            sections.push(format!("- {file} ({count} time{plural})"));
+        }
+        sections.push(String::new());
+    }
+
+    if !decisions.is_empty() {
+        sections.push("### Key decisions".into());
+        for decision in decisions
+            .iter()
+            .rev()
+            .take(10)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+        {
+            sections.push(format!("- {}", truncate_chars(decision, 200)));
+        }
+        sections.push(String::new());
+    }
+
+    if !errors.is_empty() {
+        sections.push("### Errors & blockers".into());
+        for error in errors
+            .iter()
+            .rev()
+            .take(10)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+        {
+            sections.push(format!("- {}", truncate_chars(error, 200)));
+        }
+        sections.push(String::new());
+    }
+
+    let content = truncate_bytes_lossy(&sections.join("\n"), MAX_SUMMARY_BYTES);
+    write_summary_artifacts(session_dir, session_id, "algorithmic", turns, &content)
+        .map_err(|error| format!("failed to write summary artifacts: {error}"))
 }
 
 pub fn read_history(
@@ -275,6 +484,46 @@ pub fn read_history(
         turns = turns.split_off(turns.len() - last_n);
     }
     turns
+}
+
+fn read_history_for_compaction(
+    project_root: impl AsRef<Path>,
+    session_id: &str,
+    options: HistoryReadOptions<'_>,
+) -> Result<Vec<HistoryTurn>, String> {
+    let path = history_dir(project_root).join(format!("{session_id}.jsonl"));
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let max_bytes = options.max_bytes.unwrap_or(DEFAULT_HISTORY_MAX_BYTES);
+    let mut raw = read_history_text(&path, max_bytes)?;
+    if fs::metadata(&path)
+        .ok()
+        .is_some_and(|meta| meta.len() as usize > max_bytes)
+        && let Some(index) = raw.find('\n')
+    {
+        raw = raw[index + 1..].to_owned();
+    }
+    let mut turns = Vec::new();
+    for line in raw.split('\n') {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<Value>(trimmed) else {
+            continue;
+        };
+        turns.push(history_turn_from_value(&value));
+    }
+    if let Some(since) = options.since {
+        turns.retain(|turn| turn.ts.as_str() >= since);
+    }
+    if let Some(last_n) = options.last_n
+        && turns.len() > last_n
+    {
+        turns = turns.split_off(turns.len() - last_n);
+    }
+    Ok(turns)
 }
 
 pub fn context_dir(project_root: impl AsRef<Path>) -> PathBuf {
@@ -503,6 +752,14 @@ fn run_shell_command(command: &str, input: &str) -> Result<String, String> {
         }
         std::thread::sleep(Duration::from_millis(10));
     }
+}
+
+fn one_line_error(error: &str) -> String {
+    let trimmed = error.trim();
+    if trimmed.is_empty() {
+        return "no error output".into();
+    }
+    trimmed.lines().next().unwrap_or(trimmed).to_owned()
 }
 
 fn truncate_chars(text: &str, max: usize) -> String {
