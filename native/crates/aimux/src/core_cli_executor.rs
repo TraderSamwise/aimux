@@ -639,7 +639,7 @@ pub fn run_core_cli_with(
         has_credentials: runtime.has_remote_credentials(),
         loop_actor: runtime.loop_actor_context(),
     };
-    let plan = match classify_core_cli_with_project_resolver(raw_args, &context, |project| {
+    let mut plan = match classify_core_cli_with_project_resolver(raw_args, &context, |project| {
         runtime.resolve_project_root(project)
     }) {
         Ok(plan) => plan,
@@ -658,10 +658,28 @@ pub fn run_core_cli_with(
     {
         return CoreCliExecution::error(project_checkout_required_message(project_root), 1);
     }
+    scope_bare_restart_to_current_project(&mut plan, &context, runtime);
     match run_plan(plan.operation, plan.output_mode, plan.action, runtime) {
         Ok(execution) => execution,
         Err(message) => CoreCliExecution::error(format!("Error: {message}"), 1),
     }
+}
+
+fn scope_bare_restart_to_current_project(
+    plan: &mut crate::core_cli::CoreCliPlan,
+    context: &CoreCliContext,
+    runtime: &impl CoreCliRuntime,
+) {
+    if plan.operation != CoreCliOperation::Restart {
+        return;
+    }
+    let CoreCliAction::RestartControlPlane { project_root, .. } = &mut plan.action else {
+        return;
+    };
+    if project_root.is_some() || !runtime.is_git_project_root(&context.current_project_root) {
+        return;
+    }
+    *project_root = Some(context.current_project_root.clone());
 }
 
 fn operation_requires_current_git_project(operation: CoreCliOperation) -> bool {
