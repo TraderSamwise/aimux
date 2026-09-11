@@ -577,6 +577,7 @@ fn runner_closes_opens_dashboard_and_focuses_numbered_global_tile() {
         ),
         0
     );
+    assert_cursor_hidden_then_restored(&close_output);
 
     let mut dashboard_client = FakeHttp::with_responses([json!({ "ok": true, "items": [] })]);
     let mut dashboard_capture = FakeCapture::default();
@@ -592,6 +593,7 @@ fn runner_closes_opens_dashboard_and_focuses_numbered_global_tile() {
         ),
         76
     );
+    assert_cursor_hidden_then_restored(&dashboard_output);
 
     let mut focus_client = FakeHttp::with_responses([
         json!({
@@ -624,6 +626,7 @@ fn runner_closes_opens_dashboard_and_focuses_numbered_global_tile() {
         ),
         0
     );
+    assert_cursor_hidden_then_restored(&focus_output);
     assert_eq!(
         focus_client.requests[1].0,
         format!("http://127.0.0.1:43190{}", CORE_API_ROUTES.expose_focus)
@@ -1383,6 +1386,7 @@ fn runner_returns_relaunch_code_when_client_size_changes() {
     assert_eq!(size_probe.calls, vec![Some("/dev/ttys001".to_owned())]);
     assert!(client.requests.is_empty());
     assert!(capture.calls.is_empty());
+    assert_cursor_hidden_then_restored(&output);
     cleanup(state_dir);
 }
 
@@ -1479,6 +1483,20 @@ fn synchronized_frames(output: &str) -> Vec<&str> {
         cursor = end;
     }
     frames
+}
+
+fn assert_cursor_hidden_then_restored(output: &[u8]) {
+    let rendered = String::from_utf8_lossy(output);
+    let hide_at = rendered
+        .find("\x1b[?25l")
+        .unwrap_or_else(|| panic!("expected expose setup to hide cursor:\n{rendered}"));
+    let show_at = rendered
+        .rfind("\x1b[?25h")
+        .unwrap_or_else(|| panic!("expected expose exit to restore cursor:\n{rendered}"));
+    assert!(
+        hide_at < show_at,
+        "expected expose to hide cursor before restoring it:\n{rendered}"
+    );
 }
 
 fn temp_dir(label: &str) -> PathBuf {
