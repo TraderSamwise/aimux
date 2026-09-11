@@ -1,8 +1,11 @@
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
+use std::fs::{OpenOptions, create_dir_all};
+use std::io::Write;
 use std::path::Path;
 use std::time::Duration;
 
 use crate::config::load_config_for_project;
+use crate::debug_logging::{LogLevel, log_always_at};
 use crate::managed_launch_env::wrap_command_with_managed_launch_env_extra;
 use crate::project_service::router::ProjectServiceRequestContext;
 use crate::runtime_topology::{
@@ -25,7 +28,7 @@ use super::agent_launch_helpers::{
 use super::agent_topology::{
     agent_window_metadata, apply_agent_window_policy, upsert_agent_topology,
 };
-use super::ids::pseudo_uuid_v4;
+use super::ids::{now_iso, pseudo_uuid_v4};
 use super::json_helpers::{find_by_id, string_array_field, string_field, trimmed_string};
 use super::runtime_adapter::ProjectLifecycleRuntime;
 use super::session_state::{clear_session_transcript_path, set_session_control_flags};
@@ -87,6 +90,7 @@ pub(super) fn launch_agent_session(
         .filter(|flag| !flag.is_empty());
     let backend_session_id = input
         .backend_session_id_override
+        .clone()
         .or_else(|| {
             is_configured_claude
                 .then(|| extract_claude_backend_session_id_from_args(&input.args))
@@ -98,12 +102,34 @@ pub(super) fn launch_agent_session(
                 .flatten()
         })
         .or_else(|| effective_session_id_flag.as_ref().map(|_| pseudo_uuid_v4()));
-    let topology = read_runtime_topology(runtime_topology_path(&project_state_dir))?;
+    let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
+        Ok(topology) => topology,
+        Err(error) => {
+            record_launch_failure(
+                &project_state_dir,
+                &input,
+                "read-topology",
+                &error,
+                None,
+                None,
+            );
+            return Err(error);
+        }
+    };
     if !input.allow_replace_session
         && let Some(existing) = find_by_id(&topology, "sessions", &input.session_id)
         && LIVE_STATUSES.contains(&string_field(&existing, "status").as_str())
     {
-        return Err(format!("Session \"{}\" already exists", input.session_id));
+        let error = format!("Session \"{}\" already exists", input.session_id);
+        record_launch_failure(
+            &project_state_dir,
+            &input,
+            "duplicate-live-session",
+            &error,
+            None,
+            None,
+        );
+        return Err(error);
     }
     let automatic_preamble_enabled = config
         .get("runtime")
@@ -160,7 +186,7 @@ pub(super) fn launch_agent_session(
         );
     }
     clear_session_transcript_path(&project_state_dir, &input.session_id);
-    let (launch_command, final_args) = wrap_agent_launch(AgentLaunchWrapInput {
+    let (launch_command, final_args) = match wrap_agent_launch(AgentLaunchWrapInput {
         project_state_dir: &project_state_dir,
         session_id: &input.session_id,
         tool_key: &input.tool_key,
@@ -170,22 +196,70 @@ pub(super) fn launch_agent_session(
         tool_config: &tool_config,
         project_root: &project_root,
         launch_env: input.launch_env.clone(),
-    })?;
+    }) {
+        Ok(wrapped) => wrapped,
+        Err(error) => {
+            record_launch_failure(
+                &project_state_dir,
+                &input,
+                "wrap-launch",
+                &error,
+                None,
+                None,
+            );
+            return Err(error);
+        }
+    };
     let launch_cwd = input
         .worktree_path
         .clone()
         .unwrap_or_else(|| project_root.clone());
     let label = input.label.clone().unwrap_or_else(|| input.command.clone());
     let session_name = project_session(&project_root, "aimux").session_name;
-    runtime.ensure_project_session(context.project_root())?;
-    let target = runtime.create_window(
+    if let Err(error) = runtime.ensure_project_session(context.project_root()) {
+        record_launch_failure(
+            &project_state_dir,
+            &input,
+            "ensure-project-session",
+            &error,
+            None,
+            None,
+        );
+        return Err(error);
+    }
+    let target = match runtime.create_window(
         &session_name,
         &label,
         &launch_cwd,
         &launch_command,
         &final_args,
         input.detached,
-    )?;
+    ) {
+        Ok(target) => {
+            record_launch_outcome(LaunchOutcome {
+                project_state_dir: &project_state_dir,
+                input: &input,
+                stage: "create-window",
+                status: "created",
+                error: None,
+                target: Some(&target),
+                visible: None,
+                first_pane_capture: None,
+            });
+            target
+        }
+        Err(error) => {
+            record_launch_failure(
+                &project_state_dir,
+                &input,
+                "create-window",
+                &error,
+                None,
+                None,
+            );
+            return Err(error);
+        }
+    };
     let _ = runtime.clear_history(&target.window_id);
     let mut metadata_seed = Map::new();
     metadata_seed.insert("label".into(), Value::String(label));
@@ -206,7 +280,10 @@ pub(super) fn launch_agent_session(
         &input.session_id,
         &input.tool_key,
         &input.command,
-        input.persist_args.unwrap_or(input.args),
+        input
+            .persist_args
+            .clone()
+            .unwrap_or_else(|| input.args.clone()),
         backend_session_id.as_deref(),
     );
     if let Value::Object(map) = &mut metadata {
@@ -220,29 +297,83 @@ pub(super) fn launch_agent_session(
         }
     }
     if let Err(error) = runtime.set_window_metadata(&target.window_id, &metadata) {
+        let first_pane_capture = runtime.capture_window(&target);
         let _ = runtime.kill_window(&target.window_id);
+        record_launch_failure(
+            &project_state_dir,
+            &input,
+            "set-window-metadata",
+            &error,
+            Some(&target),
+            first_pane_capture,
+        );
         return Err(error);
     }
     if let Err(error) = apply_agent_window_policy(runtime, &target.window_id, &input.tool_key) {
+        let first_pane_capture = runtime.capture_window(&target);
         let _ = runtime.kill_window(&target.window_id);
+        record_launch_failure(
+            &project_state_dir,
+            &input,
+            "apply-window-policy",
+            &error,
+            Some(&target),
+            first_pane_capture,
+        );
         return Err(error);
     }
-    if !runtime.wait_for_window_after_launch(&target, AGENT_LAUNCH_WINDOW_VISIBLE_TIMEOUT) {
-        return Err(format!(
+    let visible =
+        runtime.wait_for_window_after_launch(&target, AGENT_LAUNCH_WINDOW_VISIBLE_TIMEOUT);
+    if !visible {
+        let error = format!(
             "agent launch failed: tmux window {} for session {} disappeared before startup completed",
             target.window_id, input.session_id
-        ));
+        );
+        let first_pane_capture = runtime.capture_window(&target);
+        record_launch_failure(
+            &project_state_dir,
+            &input,
+            "wait-window-visible",
+            &error,
+            Some(&target),
+            first_pane_capture,
+        );
+        return Err(error);
     }
-    update_runtime_topology(runtime_topology_path(&project_state_dir), |topology| {
-        upsert_agent_topology(
-            topology,
-            &metadata,
-            input.worktree_path.as_deref(),
-            &target,
-            "running",
-            &project_root,
-        )
-    })?;
+    if let Err(error) =
+        update_runtime_topology(runtime_topology_path(&project_state_dir), |topology| {
+            upsert_agent_topology(
+                topology,
+                &metadata,
+                input.worktree_path.as_deref(),
+                &target,
+                "running",
+                &project_root,
+            )
+        })
+    {
+        let first_pane_capture = runtime.capture_window(&target);
+        record_launch_failure(
+            &project_state_dir,
+            &input,
+            "persist-topology",
+            &error,
+            Some(&target),
+            first_pane_capture,
+        );
+        return Err(error);
+    }
+    let first_pane_capture = runtime.capture_window(&target);
+    record_launch_outcome(LaunchOutcome {
+        project_state_dir: &project_state_dir,
+        input: &input,
+        stage: "persist-topology",
+        status: "running",
+        error: None,
+        target: Some(&target),
+        visible: Some(true),
+        first_pane_capture,
+    });
     set_session_control_flags(
         &project_state_dir,
         &input.session_id,
@@ -253,6 +384,93 @@ pub(super) fn launch_agent_session(
         session_id: input.session_id,
         target,
     })
+}
+
+struct LaunchOutcome<'a> {
+    project_state_dir: &'a Path,
+    input: &'a AgentSessionLaunchInput,
+    stage: &'a str,
+    status: &'a str,
+    error: Option<&'a str>,
+    target: Option<&'a crate::tmux::TmuxTarget>,
+    visible: Option<bool>,
+    first_pane_capture: Option<String>,
+}
+
+fn record_launch_failure(
+    project_state_dir: &Path,
+    input: &AgentSessionLaunchInput,
+    stage: &'static str,
+    error: &str,
+    target: Option<&crate::tmux::TmuxTarget>,
+    first_pane_capture: Option<String>,
+) {
+    log_always_at(
+        LogLevel::Warn,
+        "agent launch failed",
+        "lifecycle",
+        Some(json!({
+            "stage": stage,
+            "sessionId": input.session_id,
+            "tool": input.tool_key,
+            "command": input.command,
+            "worktreePath": input.worktree_path,
+            "error": error,
+        })),
+    );
+    record_launch_outcome(LaunchOutcome {
+        project_state_dir,
+        input,
+        stage,
+        status: "failed",
+        error: Some(error),
+        target,
+        visible: (stage == "wait-window-visible").then_some(false),
+        first_pane_capture,
+    });
+}
+
+fn record_launch_outcome(outcome: LaunchOutcome<'_>) {
+    let path = outcome
+        .project_state_dir
+        .join("agent-launch-outcomes.jsonl");
+    let _ = create_dir_all(outcome.project_state_dir);
+    let mut record = json!({
+        "ts": now_iso(),
+        "operation": "agent.spawn",
+        "stage": outcome.stage,
+        "status": outcome.status,
+        "sessionId": outcome.input.session_id,
+        "tool": outcome.input.tool_key,
+        "command": outcome.input.command,
+        "worktreePath": outcome.input.worktree_path,
+        "detached": outcome.input.detached,
+    });
+    if let Some(error) = outcome.error {
+        record["error"] = Value::String(error.to_owned());
+    }
+    if let Some(target) = outcome.target {
+        record["tmuxTarget"] = json!({
+            "sessionName": target.session_name,
+            "windowId": target.window_id,
+            "windowIndex": target.window_index,
+            "windowName": target.window_name,
+        });
+    }
+    if let Some(visible) = outcome.visible {
+        record["visibleAfterLaunch"] = Value::Bool(visible);
+    }
+    if let Some(capture) = outcome
+        .first_pane_capture
+        .filter(|capture| !capture.is_empty())
+    {
+        record["firstPaneCapture"] = Value::String(capture);
+    }
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path)
+        && let Ok(line) = serde_json::to_string(&record)
+    {
+        let _ = writeln!(file, "{line}");
+    }
 }
 
 pub(super) struct AgentLaunchWrapInput<'a> {

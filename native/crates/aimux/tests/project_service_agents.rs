@@ -451,6 +451,17 @@ fn route_agent_spawn_composes_launch_and_records_topology_without_real_tmux() {
     assert_eq!(session["status"], "running");
     assert_eq!(session["toolConfigKey"], "codex");
     assert_eq!(session["backendSessionId"], "backend-123");
+    let outcomes = agent_launch_outcomes(&state_dir);
+    assert!(
+        outcomes
+            .iter()
+            .any(|record| record["stage"] == "persist-topology"
+                && record["status"] == "running"
+                && record["sessionId"] == "codex-create"
+                && record["tmuxTarget"]["windowId"] == "@spawn"
+                && record["visibleAfterLaunch"] == true),
+        "successful launch must leave a durable launch outcome: {outcomes:#?}"
+    );
     cleanup(project);
 }
 
@@ -459,6 +470,7 @@ fn route_agent_spawn_rejects_duplicate_live_session_before_tmux_launch() {
     let isolation = support::TestIsolation::new("agent-spawn-duplicate");
     let project = temp_project("spawn-duplicate");
     let state_dir = project.join("state");
+    let log_path = isolation.root().join("project.log");
     create_dir_all(&state_dir).unwrap();
     write_project_config(&project, session_launch_config());
     write_runtime_topology(
@@ -466,6 +478,13 @@ fn route_agent_spawn_rejects_duplicate_live_session_before_tmux_launch() {
         &duplicate_session_topology(),
     )
     .unwrap();
+    configure_logging(LoggingRuntimeConfig {
+        path: log_path.clone(),
+        process_kind: "project-service".into(),
+        project_root: Some(project.display().to_string()),
+        level: LogLevel::Debug,
+        ..LoggingRuntimeConfig::default()
+    });
 
     let context = isolation.project_context(&project, &state_dir);
     let mut runtime = FakeLifecycleRuntime::default();
@@ -488,6 +507,14 @@ fn route_agent_spawn_rejects_duplicate_live_session_before_tmux_launch() {
         "Session \"claude-dup123\" already exists"
     );
     assert!(runtime.calls.is_empty());
+    let log = std::fs::read_to_string(&log_path).expect("agent spawn route failure log");
+    assert!(
+        log.contains("\"message\":\"agent spawn route failed\"")
+            && log.contains("\"stage\":\"duplicate-live-session\"")
+            && log.contains("Session \\\"claude-dup123\\\" already exists"),
+        "route-level spawn failure must be logged with the cause: {log}"
+    );
+    reset_logging_for_tests();
     cleanup(project);
 }
 
@@ -551,6 +578,7 @@ fn route_agent_spawn_reports_window_disappearing_before_topology_success() {
     let context = isolation.project_context(&project, &state_dir);
     let mut runtime = FakeLifecycleRuntime {
         window_visible_after_launch: false,
+        capture: Some("pane exited before startup".into()),
         ..FakeLifecycleRuntime::default()
     };
     let response = route_lifecycle_request_with_runtime(
@@ -584,14 +612,38 @@ fn route_agent_spawn_reports_window_disappearing_before_topology_success() {
     assert_eq!(failures.len(), 1);
     assert_eq!(failures[0]["title"], "Failed to create codex agent");
     assert_eq!(failures[0]["message"], expected);
+    let outcomes = agent_launch_outcomes(&state_dir);
+    assert!(
+        outcomes
+            .iter()
+            .any(|record| record["stage"] == "wait-window-visible"
+                && record["status"] == "failed"
+                && record["sessionId"] == "codex-window-gone"
+                && record["tmuxTarget"]["windowId"] == "@spawn"
+                && record["visibleAfterLaunch"] == false
+                && record["firstPaneCapture"] == "pane exited before startup"
+                && record["error"] == expected),
+        "vanished launch must leave a durable outcome with pane evidence: {outcomes:#?}"
+    );
     let log = std::fs::read_to_string(&log_path).expect("agent launch failure log");
     assert!(
-        log.contains("\"message\":\"agent create failed\"") && log.contains(expected),
+        log.contains("\"message\":\"agent launch failed\"")
+            && log.contains("\"stage\":\"wait-window-visible\"")
+            && log.contains(expected)
+            && log.contains("\"message\":\"agent create failed\""),
         "agent launch failure must be logged with the cause: {log}"
     );
 
     reset_logging_for_tests();
     cleanup(project);
+}
+
+fn agent_launch_outcomes(state_dir: &Path) -> Vec<Value> {
+    std::fs::read_to_string(state_dir.join("agent-launch-outcomes.jsonl"))
+        .expect("agent launch outcomes")
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("launch outcome json"))
+        .collect()
 }
 
 fn topology_fixture() -> Value {
@@ -740,6 +792,7 @@ struct FakeLifecycleRuntime {
     calls: Vec<Value>,
     fail_metadata_write: bool,
     window_visible_after_launch: bool,
+    capture: Option<String>,
 }
 
 impl Default for FakeLifecycleRuntime {
@@ -748,6 +801,7 @@ impl Default for FakeLifecycleRuntime {
             calls: Vec::new(),
             fail_metadata_write: false,
             window_visible_after_launch: true,
+            capture: None,
         }
     }
 }
@@ -854,6 +908,14 @@ impl ProjectLifecycleRuntime for FakeLifecycleRuntime {
             "windowId": target.window_id
         }));
         self.window_visible_after_launch
+    }
+
+    fn capture_window(&mut self, target: &TmuxTarget) -> Option<String> {
+        self.calls.push(json!({
+            "method": "capture_window",
+            "windowId": target.window_id
+        }));
+        self.capture.clone()
     }
 
     fn kill_window(&mut self, window_id: &str) -> Result<(), String> {

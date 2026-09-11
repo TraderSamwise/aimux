@@ -167,6 +167,14 @@ pub(super) fn route_agent_spawn(
     runtime: &mut impl ProjectLifecycleRuntime,
 ) -> ProjectServiceDispatchResponse {
     let Some(tool_key) = trimmed_string(body.get("tool")) else {
+        log_agent_spawn_route_failure(
+            context,
+            "missing-tool",
+            None,
+            None,
+            None,
+            "tool is required",
+        );
         return json_error(400, "tool is required");
     };
     let config = load_config_for_project(context.project_root());
@@ -175,7 +183,16 @@ pub(super) fn route_agent_spawn(
         .and_then(Value::as_object)
         .and_then(|tools| tools.get(&tool_key))
     else {
-        return json_error(500, format!("Unknown tool config: {tool_key}"));
+        let error = format!("Unknown tool config: {tool_key}");
+        log_agent_spawn_route_failure(
+            context,
+            "unknown-tool-config",
+            Some(&tool_key),
+            None,
+            None,
+            &error,
+        );
+        return json_error(500, error);
     };
     let launch_override = launch_override(body.get("launchOverride"));
     let command = launch_override
@@ -203,7 +220,17 @@ pub(super) fn route_agent_spawn(
     };
     let topology = match read_runtime_topology(runtime_topology_path(context.project_state_dir())) {
         Ok(topology) => topology,
-        Err(error) => return json_error(500, error),
+        Err(error) => {
+            log_agent_spawn_route_failure(
+                context,
+                "read-topology",
+                Some(&tool_key),
+                None,
+                trimmed_string(body.get("worktreePath")).as_deref(),
+                &error,
+            );
+            return json_error(500, error);
+        }
     };
     let backend_session_id = launch_backend_session_id(tool_config, &command, &args);
     let restore_warning = restart_restore_warning(&tool_key, Some(tool_config));
@@ -213,7 +240,16 @@ pub(super) fn route_agent_spawn(
     if let Some(existing) = find_by_id(&topology, "sessions", &session_id)
         && LIVE_STATUSES.contains(&string_field(&existing, "status").as_str())
     {
-        return json_error(500, format!("Session \"{session_id}\" already exists"));
+        let error = format!("Session \"{session_id}\" already exists");
+        log_agent_spawn_route_failure(
+            context,
+            "duplicate-live-session",
+            Some(&tool_key),
+            Some(&session_id),
+            trimmed_string(body.get("worktreePath")).as_deref(),
+            &error,
+        );
+        return json_error(500, error);
     }
     let worktree_path = trimmed_string(body.get("worktreePath"));
     clear_agent_create_operation_failure(context.project_state_dir(), worktree_path.as_deref());
@@ -281,6 +317,29 @@ pub(super) fn route_agent_spawn(
             json_error(500, message)
         }
     }
+}
+
+fn log_agent_spawn_route_failure(
+    context: &ProjectServiceRequestContext,
+    stage: &str,
+    tool_key: Option<&str>,
+    session_id: Option<&str>,
+    worktree_path: Option<&str>,
+    error: &str,
+) {
+    log_always_at(
+        LogLevel::Warn,
+        "agent spawn route failed",
+        "lifecycle",
+        Some(json!({
+            "stage": stage,
+            "tool": tool_key,
+            "sessionId": session_id,
+            "worktreePath": worktree_path,
+            "projectRoot": context.project_root().display().to_string(),
+            "error": error,
+        })),
+    );
 }
 
 fn record_agent_create_operation_failure(

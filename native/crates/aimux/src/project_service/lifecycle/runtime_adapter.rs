@@ -6,8 +6,8 @@ use serde_json::Value;
 
 use crate::paths::{is_git_project_root, project_checkout_required_message};
 use crate::tmux::{
-    TmuxRuntimeManager, TmuxTarget, clear_history_argv, kill_window_argv, new_window_argv,
-    rename_window_argv, set_window_option_argv, tmux_command_from_env,
+    CapturePaneOptions, TmuxRuntimeManager, TmuxTarget, clear_history_argv, kill_window_argv,
+    new_window_argv, rename_window_argv, set_window_option_argv, tmux_command_from_env,
 };
 
 pub trait ProjectLifecycleRuntime {
@@ -33,6 +33,10 @@ pub trait ProjectLifecycleRuntime {
     fn set_window_option(&mut self, window_id: &str, key: &str, value: &str) -> Result<(), String>;
     fn clear_history(&mut self, window_id: &str) -> Result<(), String>;
     fn has_window(&mut self, target: &TmuxTarget) -> bool;
+    fn capture_window(&mut self, target: &TmuxTarget) -> Option<String> {
+        let _ = target;
+        None
+    }
     fn wait_for_window_after_launch(&mut self, target: &TmuxTarget, timeout: Duration) -> bool {
         let deadline = Instant::now() + timeout;
         loop {
@@ -113,6 +117,18 @@ impl ProjectLifecycleRuntime for SystemProjectLifecycleRuntime {
 
     fn has_window(&mut self, target: &TmuxTarget) -> bool {
         TmuxRuntimeManager::new().has_window(target)
+    }
+
+    fn capture_window(&mut self, target: &TmuxTarget) -> Option<String> {
+        TmuxRuntimeManager::new()
+            .capture_target(
+                target,
+                CapturePaneOptions {
+                    start_line: Some(-40),
+                    ..CapturePaneOptions::default()
+                },
+            )
+            .ok()
     }
 
     fn kill_window(&mut self, window_id: &str) -> Result<(), String> {
