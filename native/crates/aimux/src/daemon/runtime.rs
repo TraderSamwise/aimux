@@ -173,6 +173,7 @@ pub struct RealDaemonRuntime {
     restart_backend_id_capture_timeout: Duration,
     restart_backend_id_capture_poll: Duration,
     restart_backend_id_live_window_ids: Option<Result<BTreeSet<String>, String>>,
+    restart_managed_tmux_project_roots: Option<Result<Vec<String>, String>>,
     runtime_coherence_tmux_provider: Arc<dyn Fn() -> RuntimeCoherenceTmux + Send + Sync>,
     started_instant: Instant,
     relay: Arc<crate::daemon::relay::RelaySupervisor>,
@@ -565,6 +566,7 @@ impl RealDaemonRuntime {
                 RESTART_BACKEND_ID_CAPTURE_POLL_MS,
             ),
             restart_backend_id_live_window_ids: None,
+            restart_managed_tmux_project_roots: None,
             runtime_coherence_tmux_provider: Arc::new(runtime_coherence_tmux),
             started_instant: Instant::now(),
             relay: Arc::new(crate::daemon::relay::RelaySupervisor::default()),
@@ -598,6 +600,7 @@ impl RealDaemonRuntime {
                 RESTART_BACKEND_ID_CAPTURE_POLL_MS,
             ),
             restart_backend_id_live_window_ids: None,
+            restart_managed_tmux_project_roots: None,
             runtime_coherence_tmux_provider: Arc::new(runtime_coherence_tmux),
             started_instant: Instant::now(),
             relay: Arc::new(crate::daemon::relay::RelaySupervisor::default()),
@@ -1227,7 +1230,7 @@ impl RealDaemonRuntime {
             })),
         );
         let before = restart_before_report(self, issued_at);
-        let project_roots = self.restart_project_roots(project_root);
+        let project_roots = self.restart_project_roots(project_root)?;
         let restart_live_project_service_pids =
             self.live_project_service_pids_for_restart_projects(&project_roots);
         log_at(
@@ -1291,7 +1294,7 @@ impl RealDaemonRuntime {
         force: bool,
         wait_for_capture: bool,
     ) -> Result<Option<RestartBackendIdGuardNotice>, String> {
-        let project_roots = self.restart_project_roots(project_root);
+        let project_roots = self.restart_project_roots(project_root)?;
         self.wait_for_restart_backend_id_capture_with_options(
             &project_roots,
             force,
@@ -1480,11 +1483,21 @@ impl RealDaemonRuntime {
         result_value
     }
 
-    fn restart_project_roots(&self, project_root: Option<&str>) -> Vec<String> {
+    fn restart_project_roots(&self, project_root: Option<&str>) -> Result<Vec<String>, String> {
         match project_root {
-            Some(project_root) => vec![self.resolve_project_root_value(project_root)],
-            None => restart_project_roots_from_sources(None, &self.daemon_state()),
+            Some(project_root) => Ok(vec![self.resolve_project_root_value(project_root)]),
+            None => Ok(restart_project_roots_from_sources(
+                None,
+                &self.daemon_state(),
+                self.restart_managed_tmux_project_roots()?,
+            )),
         }
+    }
+
+    fn restart_managed_tmux_project_roots(&self) -> Result<Vec<String>, String> {
+        self.restart_managed_tmux_project_roots
+            .clone()
+            .unwrap_or_else(restart_managed_tmux_project_roots)
     }
 
     fn live_project_service_pids_for_restart_projects(
@@ -4157,11 +4170,53 @@ fn recognized_project_roots_for_orphan_cleanup(
 fn restart_project_roots_from_sources(
     project_root: Option<&str>,
     state: &DaemonState,
+    tmux_project_roots: impl IntoIterator<Item = String>,
 ) -> Vec<String> {
     if let Some(project_root) = project_root {
         return vec![project_root.to_owned()];
     }
     restart_all_project_roots(state)
+        .into_iter()
+        .chain(tmux_project_roots)
+        .map(|root| root.trim().to_owned())
+        .filter(|root| !root.is_empty())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+fn restart_managed_tmux_project_roots() -> Result<Vec<String>, String> {
+    let mut tmux = TmuxRuntimeManager::new();
+    restart_managed_tmux_project_roots_from_manager(&mut tmux)
+}
+
+fn restart_managed_tmux_project_roots_from_manager(
+    tmux: &mut TmuxRuntimeManager,
+) -> Result<Vec<String>, String> {
+    if !tmux.is_available() {
+        return Ok(Vec::new());
+    }
+    let expected_owner = get_runtime_owner_id();
+    let mut roots = BTreeSet::new();
+    for session_name in tmux.list_session_names()? {
+        if !tmux.is_managed_session_name(&session_name) {
+            continue;
+        }
+        let runtime_owner = tmux.get_session_option(&session_name, TMUX_RUNTIME_OWNER_OPTION);
+        if runtime_owner
+            .as_deref()
+            .is_some_and(|owner| owner != expected_owner)
+        {
+            continue;
+        }
+        if let Some(root) = tmux.get_session_option(&session_name, "@aimux-project-root") {
+            let root = root.trim();
+            if !root.is_empty() {
+                roots.insert(root.to_owned());
+            }
+        }
+    }
+    Ok(roots.into_iter().collect())
 }
 
 fn project_service_state_is_restart_active(project: &Value) -> bool {
@@ -4181,7 +4236,7 @@ pub fn preflight_restart_backend_id_capture(
     project_root: Option<&str>,
     force: bool,
 ) -> Result<Option<RestartBackendIdGuardNotice>, String> {
-    let project_roots = restart_backend_id_guard_project_roots(resolver, project_root);
+    let project_roots = restart_backend_id_guard_project_roots(resolver, project_root)?;
     if force {
         return match restart_backend_id_at_risk_sessions(resolver, &project_roots) {
             Ok(at_risk) => Ok(Some(RestartBackendIdGuardNotice {
@@ -4207,12 +4262,16 @@ pub fn preflight_restart_backend_id_capture(
 fn restart_backend_id_guard_project_roots(
     resolver: &PathResolver,
     project_root: Option<&str>,
-) -> Vec<String> {
+) -> Result<Vec<String>, String> {
     if let Some(project_root) = project_root {
-        return vec![project_root.to_owned()];
+        return Ok(vec![project_root.to_owned()]);
     }
     let state = load_daemon_state(resolver.daemon_state_path());
-    restart_all_project_roots(&state)
+    Ok(restart_project_roots_from_sources(
+        None,
+        &state,
+        restart_managed_tmux_project_roots()?,
+    ))
 }
 
 fn restart_backend_id_at_risk_sessions(
@@ -6053,12 +6112,55 @@ mod tests {
         };
 
         assert_eq!(
-            restart_project_roots_from_sources(None, &state),
+            restart_project_roots_from_sources(None, &state, Vec::new()),
             vec!["/repo/alpha".to_owned(), "/repo/beta".to_owned()]
         );
         assert_eq!(
-            restart_project_roots_from_sources(Some("/repo/only"), &state),
+            restart_project_roots_from_sources(Some("/repo/only"), &state, Vec::new()),
             vec!["/repo/only".to_owned()]
+        );
+        assert_eq!(
+            restart_project_roots_from_sources(
+                None,
+                &state,
+                vec![
+                    "/repo/stopped".to_owned(),
+                    "/repo/tmux".to_owned(),
+                    " ".to_owned()
+                ],
+            ),
+            vec![
+                "/repo/alpha".to_owned(),
+                "/repo/beta".to_owned(),
+                "/repo/stopped".to_owned(),
+                "/repo/tmux".to_owned()
+            ]
+        );
+    }
+
+    #[test]
+    fn restart_tmux_roots_include_current_owner_managed_sessions_only() {
+        let current_owner = get_runtime_owner_id();
+        let state = Rc::new(RefCell::new(
+            FakeTmuxState::new(
+                vec![
+                    "aimux-current".to_owned(),
+                    "aimux-foreign".to_owned(),
+                    "plain".to_owned(),
+                ],
+                Vec::new(),
+            )
+            .with_session_option("aimux-current", "@aimux-project-root", "/repo/current")
+            .with_session_option("aimux-current", TMUX_RUNTIME_OWNER_OPTION, &current_owner)
+            .with_session_option("aimux-foreign", "@aimux-project-root", "/repo/foreign")
+            .with_session_option("aimux-foreign", TMUX_RUNTIME_OWNER_OPTION, "foreign-owner")
+            .with_session_option("plain", "@aimux-project-root", "/repo/plain"),
+        ));
+        let mut tmux = fake_tmux_manager(state);
+
+        assert_eq!(
+            restart_managed_tmux_project_roots_from_manager(&mut tmux).expect("tmux roots"),
+            vec!["/repo/current".to_owned()]
         );
     }
 
@@ -6572,14 +6674,17 @@ mod tests {
             launcher: Arc<dyn ProjectServiceLauncher>,
             verifier: Arc<dyn ProjectServiceProcessVerifier>,
         ) -> RealDaemonRuntime {
-            RealDaemonRuntime::with_project_service_launcher_and_process_verifier(
-                self.resolver.clone(),
-                self.daemon_info.clone(),
-                launcher,
-                verifier,
-                0,
-            )
-            .with_project_service_health_probe(Arc::new(RestartTestHealthProbe::ready()))
+            let mut runtime =
+                RealDaemonRuntime::with_project_service_launcher_and_process_verifier(
+                    self.resolver.clone(),
+                    self.daemon_info.clone(),
+                    launcher,
+                    verifier,
+                    0,
+                )
+                .with_project_service_health_probe(Arc::new(RestartTestHealthProbe::ready()));
+            runtime.restart_managed_tmux_project_roots = Some(Ok(Vec::new()));
+            runtime
         }
 
         fn repair_events(&self) -> Vec<Value> {
