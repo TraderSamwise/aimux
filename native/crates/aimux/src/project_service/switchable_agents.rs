@@ -17,7 +17,11 @@ use crate::team_contract::{
 use crate::tmux::TmuxTarget;
 
 use super::agent_output::{AgentOutputCaptureRuntime, SystemAgentOutputCaptureRuntime};
-use super::agents::{topology_desktop_session_list, topology_desktop_session_list_for_context};
+use super::agents::{
+    LiveWindowIdsProjection, topology_desktop_session_list,
+    topology_desktop_session_list_for_context,
+    topology_desktop_session_list_with_live_window_projection,
+};
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::expose_ordering::{
     ExposeOrderingOptions, ExposeSublabel, assign_worktree_tones, dashboard_worktree_order_paths,
@@ -248,6 +252,21 @@ pub fn topology_switchable_entries_with_live_window_normalization(
 ) -> Vec<ManagedWindowEntry> {
     let tools = default_tools_config();
     let sessions = topology_desktop_session_list(topology, metadata_sessions, &tools);
+    topology_switchable_entries_from_sessions(sessions, topology, metadata_sessions)
+}
+
+pub fn topology_switchable_entries_with_live_window_projection(
+    topology: &Value,
+    metadata_sessions: &BTreeMap<String, Value>,
+    live_window_ids: LiveWindowIdsProjection<'_>,
+) -> Vec<ManagedWindowEntry> {
+    let tools = default_tools_config();
+    let sessions = topology_desktop_session_list_with_live_window_projection(
+        topology,
+        metadata_sessions,
+        &tools,
+        live_window_ids,
+    );
     topology_switchable_entries_from_sessions(sessions, topology, metadata_sessions)
 }
 

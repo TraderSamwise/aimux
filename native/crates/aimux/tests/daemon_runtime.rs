@@ -512,6 +512,7 @@ fn native_daemon_expose_focus_resolves_global_item_and_delegates_tmux_focus() {
     )
     .expect("write topology");
     let mut fake = FakeExposeFocusRuntime {
+        live_window_ids: ["@7".to_owned()].into(),
         clients: vec![TmuxClientInfo {
             tty: "/dev/ttys123".into(),
             session_name: "client-session".into(),
@@ -676,12 +677,17 @@ fn native_text_reads_lazy_start_cold_project_service_before_proxying_get() {
 
 #[derive(Debug, Default)]
 struct FakeExposeFocusRuntime {
+    live_window_ids: BTreeSet<String>,
     clients: Vec<TmuxClientInfo>,
     linked_targets: Vec<TmuxTarget>,
     calls: Vec<Value>,
 }
 
 impl DaemonExposeFocusRuntime for FakeExposeFocusRuntime {
+    fn live_window_ids(&mut self) -> Result<BTreeSet<String>, String> {
+        Ok(self.live_window_ids.clone())
+    }
+
     fn list_clients(&mut self) -> Result<Vec<TmuxClientInfo>, String> {
         Ok(self.clients.clone())
     }

@@ -385,6 +385,25 @@ def find_tmux(*, required: bool = True) -> str | None:
     return None
 
 
+def script_pty_argv(command: list[str]) -> list[str]:
+    script = shutil.which("script") or "script"
+    try:
+        result = subprocess.run(
+            [script, "--version"],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=5,
+            check=False,
+        )
+        output = f"{result.stdout}\n{result.stderr}".lower()
+    except (OSError, subprocess.TimeoutExpired):
+        output = ""
+    if "util-linux" in output:
+        return [script, "-q", "-c", shlex.join(command), "/dev/null"]
+    return [script, "-q", "/dev/null", *command]
+
+
 def wait_until(predicate: Any, *, timeout: float, interval: float = 0.05, label: str) -> Any:
     deadline = time.monotonic() + timeout
     last_error: Exception | None = None
@@ -2832,10 +2851,7 @@ def run_top_level_tool_restore(
         f"code=$?; printf '\\n__AIMUX_RESTORE_{tool}_EXIT:%s\\n' \"$code\"; sleep 30"
     )
     proc = subprocess.Popen(
-        [
-            "script",
-            "-q",
-            "/dev/null",
+        script_pty_argv([
             tmux,
             "-L",
             socket_name,
@@ -2851,7 +2867,7 @@ def run_top_level_tool_restore(
             "sh",
             "-lc",
             command,
-        ],
+        ]),
         cwd=str(project_root),
         env=scope.env,
         stdin=subprocess.DEVNULL,
@@ -3046,10 +3062,7 @@ def run_top_level_agent_tool_smoke(aimux_bin: Path, mutation: str | None) -> dic
                 f"code=$?; printf '\\n__AIMUX_TOP_LEVEL_AGENT_{label}_EXIT:%s\\n' \"$code\"; sleep 30"
             )
             proc = subprocess.Popen(
-                [
-                    "script",
-                    "-q",
-                    "/dev/null",
+                script_pty_argv([
                     tmux,
                     "-L",
                     socket_name,
@@ -3065,7 +3078,7 @@ def run_top_level_agent_tool_smoke(aimux_bin: Path, mutation: str | None) -> dic
                     "sh",
                     "-lc",
                     command,
-                ],
+                ]),
                 cwd=str(project_root),
                 env=scope.env,
                 stdin=subprocess.DEVNULL,
@@ -3134,10 +3147,7 @@ def run_top_level_agent_tool_smoke(aimux_bin: Path, mutation: str | None) -> dic
                 f"code=$?; printf '\\n__AIMUX_TOP_LEVEL_AGENT_{label}_EXIT:%s\\n' \"$code\"; sleep 30"
             )
             proc = subprocess.Popen(
-                [
-                    "script",
-                    "-q",
-                    "/dev/null",
+                script_pty_argv([
                     tmux,
                     "-L",
                     socket_name,
@@ -3153,7 +3163,7 @@ def run_top_level_agent_tool_smoke(aimux_bin: Path, mutation: str | None) -> dic
                     "sh",
                     "-lc",
                     command,
-                ],
+                ]),
                 cwd=str(project_root),
                 env=scope.env,
                 stdin=subprocess.DEVNULL,
