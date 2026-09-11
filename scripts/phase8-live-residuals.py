@@ -2921,15 +2921,31 @@ def run_top_level_tool_restore(
             f"timed out waiting for restored {tool} session {session_id}:\n"
             f"{output}\nstdout:\n{read_pipe(proc.stdout)}\nstderr:\n{read_pipe(proc.stderr)}"
         )
+    wait_until(
+        lambda: (
+            frame
+            if "agent multiplexer" in (frame := capture_tmux(scope, launcher_session)) and "q quit" in frame
+            else None
+        ),
+        timeout=10,
+        label=f"{tool} restore dashboard rendered before quit",
+    )
     tmux_cmd(scope, ["send-keys", "-t", f"{launcher_session}:0", "q"])
     deadline = time.monotonic() + 5
+    restore_output = ""
     while time.monotonic() < deadline:
-        output = capture_all_tmux(scope)
-        if f"__AIMUX_RESTORE_{tool}_EXIT:0" in output:
+        try:
+            restore_output = capture_tmux(scope, launcher_session)
+        except LiveResidualFailure:
+            restore_output = ""
+        if f"__AIMUX_RESTORE_{tool}_EXIT:0" in restore_output:
             break
         time.sleep(0.05)
     else:
-        raise LiveResidualFailure(f"{tool} restore dashboard did not quit:\n{output}")
+        raise LiveResidualFailure(
+            f"{tool} restore dashboard did not quit:\n"
+            f"restore session:\n{restore_output}\nall sessions:\n{capture_all_tmux(scope)}"
+        )
     return session_id
 
 

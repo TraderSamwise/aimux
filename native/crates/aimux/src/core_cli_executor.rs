@@ -13,7 +13,9 @@ use crate::core_cli::{
 };
 use crate::core_command_client::request_core_command;
 use crate::core_command_contract::{CORE_API_ROUTES, CORE_COMMAND_NAMES};
-use crate::core_command_transport::{DaemonHttpMethod, DaemonRequestInit, request_daemon_text};
+use crate::core_command_transport::{
+    CoreCommandTransportError, DaemonHttpMethod, DaemonRequestInit, request_daemon_text,
+};
 use crate::core_text::{
     core_whoami_json, render_core_daemon_projects_lines, render_core_daemon_status_lines,
     render_core_host_status_lines, render_core_login_lines, render_core_logout_lines,
@@ -251,18 +253,21 @@ impl CoreCliRuntime for RealCoreCliRuntime {
     }
 
     fn request_daemon_text(&mut self, path: &str, body: Option<Value>) -> Result<String, String> {
-        ensure_daemon_running(EnsureDaemonRunningOptions::default())
-            .map_err(|error| error.to_string())?;
         let method = daemon_text_route_method(path, body.as_ref());
-        request_daemon_text(
+        request_daemon_text_with_lazy_ensure(
             path,
             DaemonRequestInit {
                 method: Some(method),
                 body: body.map(|value| value.to_string()),
                 ..DaemonRequestInit::default()
             },
+            || {
+                ensure_daemon_running(EnsureDaemonRunningOptions::default())
+                    .map(|_| ())
+                    .map_err(|error| error.to_string())
+            },
+            request_daemon_text,
         )
-        .map_err(|error| error.to_string())
     }
 
     fn selected_log_path(&self, options: &crate::core_cli_routing::CoreLogsArgs) -> PathBuf {
@@ -393,6 +398,48 @@ impl CoreCliRuntime for RealCoreCliRuntime {
         });
         Ok(notification_test_json(&attempt))
     }
+}
+
+fn request_daemon_text_with_lazy_ensure(
+    path: &str,
+    init: DaemonRequestInit,
+    mut ensure_daemon_running: impl FnMut() -> Result<(), String>,
+    mut request_daemon_text: impl FnMut(
+        &str,
+        DaemonRequestInit,
+    ) -> Result<String, CoreCommandTransportError>,
+) -> Result<String, String> {
+    if daemon_request_init_method(&init) != DaemonHttpMethod::Get {
+        ensure_daemon_running()?;
+        return request_daemon_text(path, init).map_err(|error| error.to_string());
+    }
+    match request_daemon_text(path, init.clone()) {
+        Ok(text) => Ok(text),
+        Err(error) if should_retry_text_request_after_ensure(&error) => {
+            ensure_daemon_running()?;
+            request_daemon_text(path, init).map_err(|error| error.to_string())
+        }
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+fn daemon_request_init_method(init: &DaemonRequestInit) -> DaemonHttpMethod {
+    init.method.unwrap_or_else(|| {
+        if init.body.is_some() {
+            DaemonHttpMethod::Post
+        } else {
+            DaemonHttpMethod::Get
+        }
+    })
+}
+
+fn should_retry_text_request_after_ensure(error: &CoreCommandTransportError) -> bool {
+    matches!(
+        error,
+        CoreCommandTransportError::DaemonNotRunning
+            | CoreCommandTransportError::Io(_)
+            | CoreCommandTransportError::TransientIoExhausted { .. }
+    )
 }
 
 fn daemon_text_route_method(path: &str, body: Option<&Value>) -> DaemonHttpMethod {
@@ -1613,6 +1660,170 @@ fn js_string(value: &Value) -> String {
 mod tests {
     use super::*;
     use std::cell::RefCell;
+    use std::io;
+
+    #[test]
+    fn daemon_text_request_skips_ensure_when_daemon_answers() {
+        let ensure_calls = RefCell::new(0);
+        let requests = RefCell::new(Vec::<(String, Option<String>)>::new());
+
+        let result = request_daemon_text_with_lazy_ensure(
+            "/core/agents/ps-text?json=1",
+            DaemonRequestInit {
+                method: Some(DaemonHttpMethod::Get),
+                body: None,
+                ..DaemonRequestInit::default()
+            },
+            || {
+                *ensure_calls.borrow_mut() += 1;
+                Ok(())
+            },
+            |path, init| {
+                requests.borrow_mut().push((path.to_owned(), init.body));
+                Ok("[]\n".to_owned())
+            },
+        )
+        .expect("text request");
+
+        assert_eq!(result, "[]\n");
+        assert_eq!(*ensure_calls.borrow(), 0);
+        assert_eq!(
+            requests.into_inner(),
+            vec![("/core/agents/ps-text?json=1".to_owned(), None)]
+        );
+    }
+
+    #[test]
+    fn daemon_text_request_ensures_before_mutation_routes() {
+        let ensure_calls = RefCell::new(0);
+        let request_order = RefCell::new(Vec::<&'static str>::new());
+
+        let result = request_daemon_text_with_lazy_ensure(
+            "/core/project-stop-text?json=1",
+            DaemonRequestInit {
+                method: Some(DaemonHttpMethod::Post),
+                body: None,
+                ..DaemonRequestInit::default()
+            },
+            || {
+                *ensure_calls.borrow_mut() += 1;
+                request_order.borrow_mut().push("ensure");
+                Ok(())
+            },
+            |_path, _init| {
+                request_order.borrow_mut().push("request");
+                Ok("{\"ok\":true}\n".to_owned())
+            },
+        )
+        .expect("mutation text request");
+
+        assert_eq!(result, "{\"ok\":true}\n");
+        assert_eq!(*ensure_calls.borrow(), 1);
+        assert_eq!(request_order.into_inner(), vec!["ensure", "request"]);
+    }
+
+    #[test]
+    fn daemon_text_request_ensures_and_retries_when_daemon_is_missing() {
+        let ensure_calls = RefCell::new(0);
+        let requests = RefCell::new(Vec::<String>::new());
+
+        let result = request_daemon_text_with_lazy_ensure(
+            "/core/agents/ps-text?json=1",
+            DaemonRequestInit {
+                method: Some(DaemonHttpMethod::Get),
+                body: None,
+                ..DaemonRequestInit::default()
+            },
+            || {
+                *ensure_calls.borrow_mut() += 1;
+                Ok(())
+            },
+            |path, _init| {
+                let mut requests = requests.borrow_mut();
+                requests.push(path.to_owned());
+                if requests.len() == 1 {
+                    Err(CoreCommandTransportError::DaemonNotRunning)
+                } else {
+                    Ok("[]\n".to_owned())
+                }
+            },
+        )
+        .expect("retried text request");
+
+        assert_eq!(result, "[]\n");
+        assert_eq!(*ensure_calls.borrow(), 1);
+        assert_eq!(
+            requests.into_inner(),
+            vec![
+                "/core/agents/ps-text?json=1".to_owned(),
+                "/core/agents/ps-text?json=1".to_owned()
+            ]
+        );
+    }
+
+    #[test]
+    fn daemon_text_request_does_not_retry_daemon_route_errors() {
+        let ensure_calls = RefCell::new(0);
+
+        let error = request_daemon_text_with_lazy_ensure(
+            "/core/agents/ps-text?json=1",
+            DaemonRequestInit {
+                method: Some(DaemonHttpMethod::Get),
+                body: None,
+                ..DaemonRequestInit::default()
+            },
+            || {
+                *ensure_calls.borrow_mut() += 1;
+                Ok(())
+            },
+            |_path, _init| {
+                Err(CoreCommandTransportError::DaemonRequest {
+                    status: 500,
+                    message: "route failed".to_owned(),
+                })
+            },
+        )
+        .expect_err("route error should not retry");
+
+        assert_eq!(error, "route failed");
+        assert_eq!(*ensure_calls.borrow(), 0);
+    }
+
+    #[test]
+    fn daemon_text_request_retries_loopback_io_after_ensure() {
+        let ensure_calls = RefCell::new(0);
+        let attempts = RefCell::new(0);
+
+        let result = request_daemon_text_with_lazy_ensure(
+            "/core/agents/ps-text?json=1",
+            DaemonRequestInit {
+                method: Some(DaemonHttpMethod::Get),
+                body: None,
+                ..DaemonRequestInit::default()
+            },
+            || {
+                *ensure_calls.borrow_mut() += 1;
+                Ok(())
+            },
+            |_path, _init| {
+                let mut attempts = attempts.borrow_mut();
+                *attempts += 1;
+                if *attempts == 1 {
+                    Err(CoreCommandTransportError::Io(io::Error::new(
+                        io::ErrorKind::ConnectionRefused,
+                        "connection refused",
+                    )))
+                } else {
+                    Ok("[]\n".to_owned())
+                }
+            },
+        )
+        .expect("retried text request");
+
+        assert_eq!(result, "[]\n");
+        assert_eq!(*ensure_calls.borrow(), 1);
+        assert_eq!(*attempts.borrow(), 2);
+    }
 
     #[test]
     fn cli_restart_delegates_project_work_to_daemon_restart_command() {
