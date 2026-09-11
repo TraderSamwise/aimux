@@ -281,9 +281,8 @@ scripts/cargo-sweep-stale-targets.sh --apply
 Common checks:
 
 ```bash
-yarn typecheck
-yarn lint
-yarn vitest
+yarn verify       # fast lane for normal development
+yarn verify:full  # release and CI lane
 ```
 
 Use `aimux doctor versions` to inspect daemon, project-service, dashboard, and

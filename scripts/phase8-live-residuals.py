@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Phase 8 live residual smoke/stress checks.
 
-This is intentionally not part of the default unit test lane. It starts live
-processes and a private tmux server, but every side effect is scoped to temp
-HOME/AIMUX_HOME roots, random loopback ports, and a unique tmux -L socket.
-Run lanes serially. Parallel residual lanes can observe each other's live
-daemon/process snapshots and report confusing false residuals.
+This is intentionally not part of the default unit test lane. It is a blocking
+CI residual job because it starts live processes and a private tmux server, but
+every side effect is scoped to temp HOME/AIMUX_HOME roots, random loopback
+ports, and a unique tmux -L socket. Run lanes serially. Parallel residual lanes
+can observe each other's live daemon/process snapshots and report confusing
+false residuals.
 """
 
 from __future__ import annotations

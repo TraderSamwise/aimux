@@ -244,3 +244,32 @@ Parity evidence:
 Open gaps:
 - Host terminal emulator behavior outside tmux remains outside deterministic
   temp-root residuals.
+
+## 2026-09-11 Post-Port CI And Residual Gates
+
+Status: complete for current master
+Scope: Rust-owned runtime verification after Phase 8 and the fixture/test
+target consolidation.
+
+Verification:
+- `yarn verify` is the fast developer lane.
+- `yarn verify:full` is the release lane and includes Rust tests, root
+  JavaScript tests, and app JavaScript tests.
+- CI run `34586601917` on commit `1e2ed765` passed every blocking job:
+  Rust format, Rust clippy all targets, Rust tests (macOS), JavaScript tests
+  (root/relay), JavaScript tests (app), and Phase 8 live residuals.
+- The same CI run kept Rust tests (Linux advisory) non-blocking; that job still
+  fails on the desktop notification transport platform decision.
+- The blocking `Phase 8 live residuals` job passed in 4m48s after running the
+  tmux, command-resolution, agent-shell, graveyard, SSE, and process lanes
+  serially against isolated temp roots and a private tmux server.
+
+Evidence:
+- `.github/workflows/ci.yml`
+- `package.json`
+- `scripts/native-test-runner.py`
+- `scripts/phase8-live-residuals.py`
+
+Open gaps:
+- Linux Rust tests remain advisory until the desktop notification transport
+  behavior is decided for shipped Linux builds.

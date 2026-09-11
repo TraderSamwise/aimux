@@ -4,8 +4,11 @@
 
 Date: 2026-09-05
 
-TypeScript behavior is the spec until full parity is reached. Rust should copy
-the current file/function/loop shape first, including awkward behavior.
+TypeScript behavior was the spec until full parity was reached. Rust initially
+copied the current file/function/loop shape first, including awkward behavior.
+After Phase 8, the Rust runtime is the product source of truth; Node remains a
+recoverable reference for intentional compatibility questions, not a backlog of
+features to preserve.
 
 ## Decision 2: Zero Node End State
 
