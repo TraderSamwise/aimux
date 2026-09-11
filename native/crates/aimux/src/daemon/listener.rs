@@ -7,6 +7,7 @@ use std::io::{self, Read, Write};
 use std::net::TcpListener;
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 const MAX_HEADER_BYTES: usize = 64 * 1024;
 
@@ -113,27 +114,67 @@ where
         + Sync
         + 'static,
 {
+    serve_daemon_http_with_metadata_and_interceptor_until(
+        config,
+        handle,
+        metadata,
+        intercept,
+        || false,
+    )
+}
+
+pub fn serve_daemon_http_with_metadata_and_interceptor_until<Handle, Metadata, Intercept, Stop>(
+    config: DaemonListenConfig,
+    handle: Handle,
+    metadata: Metadata,
+    intercept: Intercept,
+    should_stop: Stop,
+) -> Result<(), DaemonListenerError>
+where
+    Handle: Fn(DaemonHttpRequest) -> PreparedDaemonResponse + Send + Sync + 'static,
+    Metadata: Fn() -> DaemonRequestMetadata + Send + Sync + 'static,
+    Intercept: Fn(&DaemonHttpRequest, &mut std::net::TcpStream) -> Result<bool, DaemonListenerError>
+        + Send
+        + Sync
+        + 'static,
+    Stop: Fn() -> bool,
+{
     let listener = TcpListener::bind((config.host.as_str(), config.port))?;
+    listener.set_nonblocking(true)?;
     let handle = Arc::new(handle);
     let metadata = Arc::new(metadata);
     let intercept = Arc::new(intercept);
-    for stream in listener.incoming() {
-        let Ok(mut stream) = stream else {
-            continue;
-        };
-        let handle = Arc::clone(&handle);
-        let intercept = Arc::clone(&intercept);
-        let metadata = metadata();
-        thread::spawn(move || {
-            let _ = handle_daemon_stream_with_metadata_and_interceptor(
-                &mut stream,
-                metadata,
-                &mut |request, stream| intercept(request, stream),
-                &mut |request| handle(request),
-            );
-        });
+    loop {
+        if should_stop() {
+            return Ok(());
+        }
+        match listener.accept() {
+            Ok((mut stream, _)) => {
+                let handle = Arc::clone(&handle);
+                let intercept = Arc::clone(&intercept);
+                let metadata = metadata();
+                thread::spawn(move || {
+                    let _ = handle_daemon_stream_with_metadata_and_interceptor(
+                        &mut stream,
+                        metadata,
+                        &mut |request, stream| intercept(request, stream),
+                        &mut |request| handle(request),
+                    );
+                });
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+                ) =>
+            {
+                thread::sleep(Duration::from_millis(25));
+            }
+            Err(_) => {
+                thread::sleep(Duration::from_millis(25));
+            }
+        }
     }
-    Ok(())
 }
 
 pub fn spawn_daemon_connection<Stream, Handle>(
