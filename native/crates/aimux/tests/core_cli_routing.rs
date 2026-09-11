@@ -255,12 +255,12 @@ fn agent_input_parser_preserves_variadic_text_and_project_option() {
         })
     );
     assert_eq!(
-        parse_core_agent_input_args(&["input", "claude-1", "--", "--flag"]),
+        parse_core_agent_input_args(&["input", "claude-1", "--force", "--", "--flag"]),
         Some(CoreAgentInputArgs {
             session_id: "claude-1".into(),
             text: "--flag".into(),
             project: None,
-            force: false,
+            force: true,
         })
     );
     assert_eq!(parse_core_agent_input_args(&["input", "claude-1"]), None);
