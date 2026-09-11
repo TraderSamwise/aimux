@@ -206,3 +206,86 @@ jobs:
           # that compare home-derived paths must normalize those paths instead.
           SHELL: /bin/zsh
         run: yarn native:test
+
+  phase8-live-residuals:
+    name: Phase 8 live residuals
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Node from .nvmrc
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Cache node_modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-${{ github.job }}-node-${{ hashFiles('.nvmrc', 'yarn.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ github.job }}-node-
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install --profile minimal
+
+      - name: Install tmux and process probes
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lsof tmux
+          tmux -V
+          lsof -v >/dev/null
+
+      - name: Build native binary
+        run: cargo build --manifest-path native/Cargo.toml -p aimux --bin aimux
+
+      - name: Run live tmux residual
+        env:
+          AIMUX_HOME: ${{ runner.temp }}/aimux-home-phase8-tmux
+        run: |
+          yarn audit:phase8-live-residuals:tmux \
+            --skip-build \
+            --aimux-bin "$CARGO_TARGET_DIR/debug/aimux"
+
+      - name: Run live command-resolution residual
+        env:
+          AIMUX_HOME: ${{ runner.temp }}/aimux-home-phase8-command-resolution
+        run: |
+          yarn audit:phase8-live-residuals:command-resolution \
+            --skip-build \
+            --aimux-bin "$CARGO_TARGET_DIR/debug/aimux"
+
+      - name: Run live agent-shell residual
+        env:
+          AIMUX_HOME: ${{ runner.temp }}/aimux-home-phase8-agent-shell
+        run: |
+          yarn audit:phase8-live-residuals:agent-shell \
+            --skip-build \
+            --aimux-bin "$CARGO_TARGET_DIR/debug/aimux"
+
+      - name: Run live graveyard residual
+        env:
+          AIMUX_HOME: ${{ runner.temp }}/aimux-home-phase8-graveyard
+        run: |
+          yarn audit:phase8-live-residuals:graveyard \
+            --skip-build \
+            --aimux-bin "$CARGO_TARGET_DIR/debug/aimux"
+
+      - name: Run live SSE residual
+        env:
+          AIMUX_HOME: ${{ runner.temp }}/aimux-home-phase8-sse
+        run: |
+          yarn audit:phase8-live-residuals:sse \
+            --skip-build \
+            --aimux-bin "$CARGO_TARGET_DIR/debug/aimux"
+
+      - name: Run live process residual
+        env:
+          AIMUX_HOME: ${{ runner.temp }}/aimux-home-phase8-process
+        run: |
+          yarn audit:phase8-live-residuals:process \
+            --skip-build \
+            --aimux-bin "$CARGO_TARGET_DIR/debug/aimux"

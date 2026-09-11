@@ -255,7 +255,10 @@ fn main() -> Result<ExitCode> {
         }
         Command::Contracts {
             command: ContractsCommand::List { json },
-        } => print_value(aimux::contract_manifest(), json),
+        } => {
+            let repo_root = aimux::find_contract_repo_root(std::env::current_dir()?);
+            print_value(aimux::contract_manifest_report(repo_root), json)
+        }
         Command::Rewrite {
             command: RewriteCommand::Status { json },
         } => print_value(aimux::rewrite_status(), json),

@@ -175,5 +175,8 @@ pub mod visual_client_leases_contract;
 pub mod websocket;
 
 pub use build_info::{BuildInfo, build_info};
-pub use contracts::{ContractArea, ContractManifest, contract_manifest};
+pub use contracts::{
+    ContractArea, ContractManifest, contract_manifest, contract_manifest_report,
+    find_contract_repo_root, missing_contract_manifest_sources,
+};
 pub use translation_plan::{PhaseStatus, RewritePhase, RewriteStatus, rewrite_status};

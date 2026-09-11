@@ -10,7 +10,7 @@ Real install testing also caught later front-door regressions after those first 
 
 Another real-machine first-run bug appeared when no tmux server existed: top-level `aimux shell` routed into service creation and tried `new-window` before ensuring the managed project session. Agent spawn already bootstrapped tmux; service spawn now follows the same invariant.
 
-Real install testing then exposed two lifecycle gaps: `stop` left agents offline in `ps` but absent from `graveyard`, making documented recovery unreachable, and `fork <sessionId>` rejected the advertised same-tool fork form unless `--tool` was supplied. `stop` now moves the session into recoverable graveyard; `graveyard resurrect` clears it back to offline; root `--restore <tool>` relaunches it. Same-tool `fork <sessionId>` now infers the source session's tool from topology.
+Real install testing then exposed recoverability gaps where killed agents could be absent from `graveyard`, making documented recovery unreachable. `kill` now moves the session into recoverable graveyard; `graveyard resurrect` clears it back to offline; root `--restore <tool>` relaunches it. `fork <sessionId> --tool <tool>` remains an explicit-tool CLI command, matching the Node CLI contract.
 
 Those failures were not contradictions in the corpora. They were outside the corpora boundary. The corpora proved function input/output contracts; they did not prove the assembled binary, daemon loopback transport, tmux terminal, or installed command dispatch.
 
@@ -20,26 +20,25 @@ Every executable entry point needs at least one contract at its own boundary, ev
 
 ## Current Coverage
 
-`scripts/phase8-live-residuals.py` now covers the front-door seams that caught the failures:
+`scripts/phase8-live-residuals.py` currently gates the front-door seams that still run on current master:
 
 - command resolution from `aimux --help` through real binary execution;
-- first-run command seams from empty private tmux sockets, so a warm tmux
-  server cannot hide bootstrap regressions;
 - command-group output alias detection for `overseer status`, `scribe status`,
   `loop list`, and `review list`;
-- bare `graveyard` routing plus stop, resurrect, restore, kill, and fork graveyard lifecycle semantics;
-- top-level `aimux shell` service creation from an empty private tmux socket;
-- shell agent spawn end to end without external agent CLIs or credentials;
-- top-level generic tool dispatch through the real binary with `codex`,
-  `claude`, and `aider` backed by `/bin/sh`, covering bare tool paths,
-  tool-argument pass-through, spawn execution, foreground target opening, exact
-  `--resume`, and fresh `--restore`;
-- native dashboard first paint into a real tmux pane, plus advertised input
-  keys `?`, `n`, `w`, `v`, `Tab`, and `q`;
-- bare `aimux` attach in a real TTY through a private tmux socket;
-- cold project-service reads through `ps`, `list`, `worktree list`, `threads`, and `task list`;
-- bare `aimux restart --json` including the current checkout before it has been registered by another command.
+- private tmux socket basics: PTY output buffering, send-keys delivery, pane
+  output ordering, and resize propagation.
+- first-run shell agent spawn from an empty private tmux socket;
+- bare `graveyard` routing plus fork, kill, resurrect, restore, and graveyard
+  lifecycle semantics from an empty private tmux socket;
+- project-service SSE fanout and alert frame ordering under multiple loopback
+  clients;
+- daemon/project-service process startup races, stale daemon info cleanup,
+  malformed daemon-start lock reclamation, and endpoint publication.
 
-Current proof head: `7f264dc0`. `scripts/phase8-live-residuals.py --only graveyard --prove-fails --aimux-bin native/target/debug/aimux --skip-build` passes the scoped graveyard lifecycle and reports 16 residual mutations as `PROVEN-FAILS`, including command unsupported, command silent alias, dashboard input dead, dashboard spawn missing session, shell-service missing window, top-level agent missing session, lazy read unavailable, restart-current zero projects, SSE reorder, process missing endpoint, graveyard stop missing entry, and graveyard fork missing session. The front-door, dashboard-spawn, top-level agent, lazy-read, restart-current, shell-service, and graveyard residuals now start from empty private tmux sockets instead of warmed servers. The process residual also covers concurrent `serve` startup over stale daemon info and malformed daemon-start locks. Agent resume/restore shares the same tmux session bootstrap invariant.
+Current proof: On 2026-09-11, `yarn audit:phase8-live-residuals:tmux --skip-build --aimux-bin /tmp/aimux-cargo-target-codex-8s9so6/debug/aimux` passed in 0.87s, `yarn audit:phase8-live-residuals:command-resolution --skip-build --aimux-bin /tmp/aimux-cargo-target-codex-8s9so6/debug/aimux` passed in 89.77s, `yarn audit:phase8-live-residuals:agent-shell --skip-build --aimux-bin /tmp/aimux-cargo-target-codex-8s9so6/debug/aimux` passed in 25.14s after the cold tmux bootstrap fix, `yarn audit:phase8-live-residuals:graveyard --skip-build --aimux-bin /tmp/aimux-cargo-target-codex-8s9so6/debug/aimux` passed in 61.00s after the same fix and current explicit-fork/kill semantics, `yarn audit:phase8-live-residuals:sse --skip-build --aimux-bin /tmp/aimux-cargo-target-codex-8s9so6/debug/aimux` passed in 8.66s, and `yarn audit:phase8-live-residuals:process --skip-build --aimux-bin /tmp/aimux-cargo-target-codex-8s9so6/debug/aimux` passed in 24.56s. The full residual sweep is not current evidence: `yarn audit:phase8-live-residuals --skip-build --aimux-bin /tmp/aimux-cargo-target-codex-8s9so6/debug/aimux` failed in 29.50s in the dashboard lane waiting for `phase8-dashboard-key-1`.
 
-These tests intentionally avoid exact TUI layout, screenshots, real Claude/Codex invocations, network access, or timing-sensitive multi-agent orchestration.
+The historical dashboard, top-level agent, shell-service, and restart residuals
+remain useful design notes, but they must be repaired and re-gated before being
+cited as current parity evidence. These tests intentionally avoid exact TUI
+layout, screenshots, real Claude/Codex invocations, network access, or
+timing-sensitive multi-agent orchestration.

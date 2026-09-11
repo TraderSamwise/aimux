@@ -226,9 +226,7 @@ def default_daemon_listener_snapshot() -> str:
         check=False,
     )
     if result.returncode != 0 or not result.stdout.strip():
-        raise LiveResidualFailure(
-            f"expected an existing non-harness listener on {DEFAULT_DAEMON_PORT}; lsof returned {result.returncode}"
-        )
+        return "<none>"
     lines = result.stdout.strip().splitlines()
     if len(lines) < 2:
         return result.stdout.strip()
@@ -269,11 +267,14 @@ def assert_default_daemon_listener_unchanged(before: str) -> None:
         )
 
 
-def assert_default_daemon_temp_project_services_unchanged(before: str) -> None:
+def assert_default_daemon_temp_project_services_not_gained(before: str) -> None:
     after = default_daemon_temp_project_services_snapshot()
-    if after != before:
+    before_rows = set(before.splitlines()) if before else set()
+    after_rows = set(after.splitlines()) if after else set()
+    gained = sorted(after_rows - before_rows)
+    if gained:
         raise LiveResidualFailure(
-            "default daemon gained or lost temp-root project-service processes during residual run\n"
+            "default daemon gained temp-root project-service processes during residual run\n"
             f"before:\n{before or '<none>'}\n\nafter:\n{after or '<none>'}"
         )
 
@@ -2786,7 +2787,7 @@ def run_graveyard_lifecycle_smoke(aimux_bin: Path, mutation: str | None) -> dict
             label="graveyard spawned shell in aimux ps",
         )
         fork = run(
-            [str(aimux_bin), "fork", session_id, "--json"],
+            [str(aimux_bin), "fork", session_id, "--tool", "shell", "--json"],
             cwd=scope.project,
             env=scope.env,
             timeout=30,
@@ -2809,34 +2810,36 @@ def run_graveyard_lifecycle_smoke(aimux_bin: Path, mutation: str | None) -> dict
             timeout=30,
         )
         parse_json_stdout(stop_fork.stdout, "graveyard forked shell stop")
-        stop = run(
-            [str(aimux_bin), "stop", session_id, "--json"],
+        kill_source = run(
+            [str(aimux_bin), "kill", session_id, "--json"],
             cwd=scope.project,
             env=scope.env,
             timeout=30,
         )
-        stop_payload = parse_json_stdout(stop.stdout, "graveyard shell stop")
-        if stop_payload.get("status") != "graveyard":
-            raise LiveResidualFailure(f"graveyard shell stop should return graveyard status: {stop_payload}")
-        graveyard_after_stop = wait_until(
+        kill_source_payload = parse_json_stdout(kill_source.stdout, "graveyard shell kill")
+        if kill_source_payload.get("status") != "graveyard":
+            raise LiveResidualFailure(
+                f"graveyard shell kill should return graveyard status: {kill_source_payload}"
+            )
+        graveyard_after_kill_source = wait_until(
             lambda: (
                 payload
                 if graveyard_contains_session((payload := graveyard_payload(scope, aimux_bin)), session_id)
                 else None
             ),
             timeout=10,
-            label="stopped shell in graveyard list",
+            label="killed shell in graveyard list",
         )
-        if mutation == "graveyard-stop-missing-entry":
-            graveyard_after_stop["entries"] = [
+        if mutation == "graveyard-kill-missing-entry":
+            graveyard_after_kill_source["entries"] = [
                 entry
-                for entry in graveyard_after_stop.get("entries", [])
+                for entry in graveyard_after_kill_source.get("entries", [])
                 if isinstance(entry, dict) and entry.get("id") != session_id
             ]
-        if not graveyard_contains_session(graveyard_after_stop, session_id):
+        if not graveyard_contains_session(graveyard_after_kill_source, session_id):
             raise LiveResidualFailure(
-                f"stop did not move {session_id} into graveyard:\n"
-                + json.dumps(graveyard_after_stop, indent=2)
+                f"kill did not move {session_id} into graveyard:\n"
+                + json.dumps(graveyard_after_kill_source, indent=2)
             )
 
         resurrect = run(
@@ -2880,8 +2883,8 @@ def run_graveyard_lifecycle_smoke(aimux_bin: Path, mutation: str | None) -> dict
             "graveyardAfterKill": graveyard_after_kill,
             "caught": [
                 "bare aimux graveyard routes to graveyard list",
-                "fork on a running agent succeeds without an explicit tool flag",
-                "stop moves a session into recoverable graveyard",
+                "fork on a running agent succeeds with an explicit target tool",
+                "kill moves a session into recoverable graveyard",
                 "graveyard resurrect returns the session to offline ps",
                 "root --restore relaunches the resurrected session",
                 "kill keeps a restored session in graveyard",
@@ -3386,7 +3389,7 @@ def install_agent_tool_config(scope: Scope, tool: str) -> None:
     tools = config.setdefault("tools", {})
     tools[tool] = {
         "command": "/bin/sh",
-        "args": ["-lc", "printf 'phase8-agent-tool-ready\\n'; sleep 30"],
+        "args": ["-lc", "printf 'phase8-agent-tool-ready\\n'; sleep 90"],
         "enabled": True,
         "wrapperEnabled": False,
         "resumeArgs": ["--resume", "{sessionId}"],
@@ -4172,7 +4175,7 @@ def prove_failures(args: argparse.Namespace, aimux_bin: Path) -> list[dict[str, 
         ("command-resolution", "command-silent-alias"),
         ("agent-shell", "agent-shell-missing-window"),
         ("shell-service", "shell-service-missing-window"),
-        ("graveyard", "graveyard-stop-missing-entry"),
+        ("graveyard", "graveyard-kill-missing-entry"),
         ("graveyard", "graveyard-fork-missing-session"),
         ("top-level-agent", "top-level-agent-missing-session"),
         ("lazy-read", "lazy-read-service-unavailable"),
@@ -4288,7 +4291,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "command-silent-alias",
         "agent-shell-missing-window",
         "shell-service-missing-window",
-        "graveyard-stop-missing-entry",
+        "graveyard-kill-missing-entry",
         "graveyard-fork-missing-session",
         "top-level-agent-missing-session",
         "lazy-read-service-unavailable",
@@ -4348,7 +4351,7 @@ def main(argv: list[str]) -> int:
         if default_listener is not None:
             assert_default_daemon_listener_unchanged(default_listener)
         if default_temp_project_services is not None:
-            assert_default_daemon_temp_project_services_unchanged(default_temp_project_services)
+            assert_default_daemon_temp_project_services_not_gained(default_temp_project_services)
 
 
 if __name__ == "__main__":

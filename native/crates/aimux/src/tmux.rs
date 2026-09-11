@@ -316,7 +316,11 @@ impl TmuxRuntimeManager {
         for attempt in 0..2 {
             let mut exists = self.has_session(&session.session_name);
             if !exists {
-                let before = self.list_session_names()?;
+                let before = match self.list_session_names() {
+                    Ok(names) => names,
+                    Err(error) if tmux_list_sessions_failed_because_no_server(&error) => Vec::new(),
+                    Err(error) => return Err(error),
+                };
                 self.repair_legacy_project_session_names(project_root, Some(before));
                 exists = self.has_session(&session.session_name);
             }
@@ -2956,6 +2960,14 @@ fn env_control_arg(env_name: &str, flag: &str) -> Option<String> {
 fn is_no_such_session_error(error: &str) -> bool {
     let normalized = error.to_lowercase();
     normalized.contains("no such session") || normalized.contains("can't find session")
+}
+
+fn tmux_list_sessions_failed_because_no_server(error: &str) -> bool {
+    let error = error.to_ascii_lowercase();
+    error.contains("no server running")
+        || (error.contains("error connecting to")
+            && (error.contains("no such file or directory")
+                || error.contains("connection refused")))
 }
 
 fn is_unsupported_tmux_option_error(error: &str) -> bool {
