@@ -73,7 +73,6 @@ Binding statuses: PROVEN-FAILS 207, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 3.
 | `fixture_error_display` | PROVEN-FAILS | `testdata/contracts/v1/error-display/display.json` | 6 | mutated fixture output failed owning Rust suite |
 | `fixture_event_loop` | PROVEN-FAILS | `testdata/contracts/v1/event-loop/budget.json` | 8 | mutated fixture output failed owning Rust suite |
 | `fixture_event_loop` | PROVEN-FAILS | `testdata/contracts/v1/event-loop/metrics.json` | 3 | mutated fixture output failed owning Rust suite |
-| `fixture_exchange_alert_routing` | PROVEN-FAILS | `testdata/contracts/v1/runtime-exchange/alert-routing.json` | 14 | mutated fixture output failed owning Rust suite |
 | `fixture_expose_hot_snapshot` | PROVEN-FAILS | `testdata/contracts/v1/tmux/expose-hot-snapshot.json` | 13 | mutated fixture output failed owning Rust suite |
 | `fixture_expose_hot_snapshot_worker` | PROVEN-FAILS | `testdata/contracts/v1/tmux/expose-hot-snapshot-worker.json` | 5 | mutated fixture output failed owning Rust suite |
 | `fixture_expose_ordering` | PROVEN-FAILS | `testdata/contracts/v1/tmux/expose-ordering.json` | 14 | mutated fixture output failed owning Rust suite |
@@ -136,7 +135,6 @@ Binding statuses: PROVEN-FAILS 207, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 3.
 | `fixture_runtime_coherence` | PROVEN-FAILS | `testdata/contracts/v1/runtime-coherence/report.json` | 15 | mutated fixture output failed owning Rust suite |
 | `fixture_runtime_exchange_import` | PROVEN-FAILS | `testdata/contracts/v1/runtime-exchange/import.json` | 3 | mutated fixture output failed owning Rust suite |
 | `fixture_runtime_exchange_store` | PROVEN-FAILS | `testdata/contracts/v1/runtime-exchange/store.json` | 19 | mutated fixture output failed owning Rust suite |
-| `fixture_runtime_guard_repair` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/drift.json` | 4 | mutated fixture output failed owning Rust suite |
 | `fixture_runtime_guard_repair` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/guard-repair-history.json` | 9 | mutated fixture output failed owning Rust suite |
 | `fixture_runtime_guard_sync` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/runtime-guard.json` | 17 | mutated fixture output failed owning Rust suite |
 | `fixture_runtime_guard_sync` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/runtime-sync.json` | 3 | mutated fixture output failed owning Rust suite |
