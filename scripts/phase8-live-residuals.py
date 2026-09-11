@@ -3463,13 +3463,32 @@ def run_non_git_project_smoke(aimux_bin: Path, mutation: str | None) -> dict[str
             f"{scope.project.resolve()} is not a git repository. "
             "Run `git init` first, or cd into a repo."
         )
+        init = run([str(aimux_bin), "init"], cwd=scope.project, env=scope.env, timeout=15, check=False)
         probes = [
-            ("init", ["init"]),
             ("ps", ["ps"]),
             ("dashboard", []),
         ]
         messages: dict[str, str] = {}
         failures = []
+        init_message = (init.stdout or init.stderr).strip()
+        messages["init"] = init_message
+        if mutation == "non-git-init-missing-aimux":
+            shutil.rmtree(scope.project / ".aimux", ignore_errors=True)
+        if init.returncode != 0 or "Initialized .aimux/" not in init_message:
+            failures.append({
+                "name": "init",
+                "args": ["init"],
+                "code": init.returncode,
+                "message": init_message,
+                "expected": "Initialized .aimux/ with config.json and .gitignore",
+            })
+        if not (scope.project / ".aimux" / "config.json").exists():
+            failures.append({
+                "name": "init",
+                "code": init.returncode,
+                "message": "aimux init did not create .aimux/config.json in a non-git directory",
+                "expected": ".aimux/config.json exists",
+            })
         for name, args in probes:
             result = run([str(aimux_bin), *args], cwd=scope.project, env=scope.env, timeout=15, check=False)
             combined = (result.stderr or result.stdout).strip()
@@ -3484,22 +3503,13 @@ def run_non_git_project_smoke(aimux_bin: Path, mutation: str | None) -> dict[str
                     "message": combined,
                     "expected": expected,
                 })
-        if mutation == "non-git-init-created-aimux":
-            (scope.project / ".aimux").mkdir(exist_ok=True)
-        if (scope.project / ".aimux").exists():
-            failures.append({
-                "name": "init",
-                "code": 0,
-                "message": "aimux init created .aimux in a non-git directory",
-                "expected": "no .aimux directory",
-            })
         if failures:
             raise LiveResidualFailure("non-git project front-door regressions:\n" + json.dumps(failures, indent=2))
         return {
             "name": "phase8-non-git-project-smoke",
             "messages": messages,
             "caught": [
-                "aimux init refusing non-git directories before creating .aimux",
+                "aimux init preserving Node's non-git local setup behavior",
                 "aimux ps matching dashboard project eligibility",
                 "bare aimux returning the same actionable non-git message",
             ],
@@ -4321,7 +4331,7 @@ def prove_failures(args: argparse.Namespace, aimux_bin: Path) -> list[dict[str, 
         ("restart-missing-dashboard", "restart-missing-dashboard-target-mismatch"),
         ("restart-missing-dashboard", "restart-missing-dashboard-window-missing"),
         ("non-git", "non-git-message-mismatch"),
-        ("non-git", "non-git-init-created-aimux"),
+        ("non-git", "non-git-init-missing-aimux"),
         ("sse", "sse-reorder"),
         ("process", "process-delete-endpoint"),
     ]
@@ -4437,7 +4447,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "restart-missing-dashboard-target-mismatch",
         "restart-missing-dashboard-window-missing",
         "non-git-message-mismatch",
-        "non-git-init-created-aimux",
+        "non-git-init-missing-aimux",
         "sse-reorder",
         "process-delete-endpoint",
     ])
