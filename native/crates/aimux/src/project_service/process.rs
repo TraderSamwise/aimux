@@ -124,7 +124,22 @@ pub fn run_project_service_internal(options: ProjectServiceInternalOptions) -> R
             "pluginCount": plugin_statuses.len(),
         })),
     );
-    serve_project_service_listener(listener, startup, plugin_statuses);
+    let _signal_guard = crate::process_signals::install_shutdown_signal_flag(
+        crate::process_signals::DAEMON_TERMINATION_SIGNALS,
+    )
+    .context("install project-service shutdown signal handlers")?;
+    serve_project_service_listener_until(listener, startup, plugin_statuses, || {
+        crate::process_signals::received_shutdown_signal().is_some()
+    });
+    if let Some(signal_name) = crate::process_signals::received_shutdown_signal_name() {
+        log_lifecycle_always(
+            "project service signal shutdown returning through guards",
+            "project-service",
+            Some(json!({
+                "signal": signal_name,
+            })),
+        );
+    }
     Ok(())
 }
 
@@ -547,11 +562,14 @@ fn agent_output_stream_fingerprint(payload: &serde_json::Value) -> String {
     .unwrap_or_default()
 }
 
-fn serve_project_service_listener(
+fn serve_project_service_listener_until<Stop>(
     listener: TcpListener,
     startup: ProjectServiceStartup,
     plugin_statuses: Vec<NativePluginStatus>,
-) {
+    should_stop: Stop,
+) where
+    Stop: Fn() -> bool,
+{
     let scheduler = ProjectSchedulerHandle::default();
     let context = Arc::new(
         ProjectServiceRequestContext::with_project_state_dir(
@@ -590,14 +608,38 @@ fn serve_project_service_listener(
             "projectStateDir": context.project_state_dir().to_string_lossy(),
         })),
     );
-    for stream in listener.incoming() {
-        let Ok(mut stream) = stream else {
-            continue;
-        };
-        let context = Arc::clone(&context);
-        thread::spawn(move || {
-            let _ = handle_project_service_tcp_connection(&mut stream, &context);
-        });
+    if listener.set_nonblocking(true).is_err() {
+        log_lifecycle_always(
+            "project service listener could not enter signal-aware mode",
+            "project-service",
+            Some(json!({
+                "projectRoot": context.project_root().to_string_lossy(),
+            })),
+        );
+    }
+    loop {
+        if should_stop() {
+            return;
+        }
+        match listener.accept() {
+            Ok((mut stream, _)) => {
+                let context = Arc::clone(&context);
+                thread::spawn(move || {
+                    let _ = handle_project_service_tcp_connection(&mut stream, &context);
+                });
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+                ) =>
+            {
+                thread::sleep(Duration::from_millis(25));
+            }
+            Err(_) => {
+                thread::sleep(Duration::from_millis(25));
+            }
+        }
     }
 }
 
