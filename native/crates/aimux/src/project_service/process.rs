@@ -86,6 +86,10 @@ pub fn run_project_service_internal(options: ProjectServiceInternalOptions) -> R
         std::env::set_current_dir(&startup.project_root)
             .with_context(|| format!("chdir {}", startup.project_root.display()))?;
     }
+    let _signal_guard = crate::process_signals::install_shutdown_signal_flag(
+        crate::process_signals::DAEMON_TERMINATION_SIGNALS,
+    )
+    .context("install project-service shutdown signal handlers")?;
     let listener = bind_project_service_listener(startup.desired_port)?;
     let port = listener
         .local_addr()
@@ -124,10 +128,6 @@ pub fn run_project_service_internal(options: ProjectServiceInternalOptions) -> R
             "pluginCount": plugin_statuses.len(),
         })),
     );
-    let _signal_guard = crate::process_signals::install_shutdown_signal_flag(
-        crate::process_signals::DAEMON_TERMINATION_SIGNALS,
-    )
-    .context("install project-service shutdown signal handlers")?;
     serve_project_service_listener_until(listener, startup, plugin_statuses, || {
         crate::process_signals::received_shutdown_signal().is_some()
     });
@@ -623,6 +623,7 @@ fn serve_project_service_listener_until<Stop>(
         }
         match listener.accept() {
             Ok((mut stream, _)) => {
+                let _ = stream.set_nonblocking(false);
                 let context = Arc::clone(&context);
                 thread::spawn(move || {
                     let _ = handle_project_service_tcp_connection(&mut stream, &context);

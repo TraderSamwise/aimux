@@ -1934,6 +1934,10 @@ pub fn run_daemon_internal() -> Result<()> {
             "refusing to run aimux daemon from a cargo target binary on default port {port}; set AIMUX_DAEMON_PORT for isolated tests"
         );
     }
+    let _signal_guard = crate::process_signals::install_shutdown_signal_flag(
+        crate::process_signals::DAEMON_TERMINATION_SIGNALS,
+    )
+    .context("install daemon shutdown signal handlers")?;
     let now = now_iso();
     let info = AimuxDaemonInfo {
         pid: std::process::id() as i32,
@@ -1971,10 +1975,6 @@ pub fn run_daemon_internal() -> Result<()> {
     if let Ok(runtime) = runtime.lock() {
         runtime.connect_relay_on_startup();
     }
-    let _signal_guard = crate::process_signals::install_shutdown_signal_flag(
-        crate::process_signals::DAEMON_TERMINATION_SIGNALS,
-    )
-    .context("install daemon shutdown signal handlers")?;
     let route_runtime = Arc::clone(&runtime);
     let stream_runtime = Arc::clone(&runtime);
     let shutdown_runtime = Arc::clone(&runtime);
