@@ -73,6 +73,14 @@ fn an_ok_response_with_no_url_is_a_failure_not_a_success() {
         .is_err(),
         "a blank url is not a url"
     );
+    assert!(
+        parse_hosted_response(
+            200,
+            &json!({ "ok": true, "hostedAttachment": { "contentUrl": "https://relay.aimux.app/a/abc" } })
+        )
+        .is_err(),
+        "missing expiry would make the project-service publish fail"
+    );
 }
 
 #[test]
@@ -115,7 +123,8 @@ fn base64_matches_the_standard_alphabet_and_padding() {
 }
 
 use aimux::attachment_hosting::{
-    AttachmentUploader, PublishedAttachmentHostInput, maybe_host_published_attachment,
+    AttachmentHostingResult, AttachmentUploader, PublishedAttachmentHostInput,
+    maybe_host_published_attachment,
 };
 use serde_json::Value;
 use std::sync::Mutex;
@@ -157,7 +166,7 @@ fn host_with(
     uploader: &FakeUploader,
     remote_enabled: bool,
     token: &str,
-) -> Option<aimux::attachment_hosting::HostedAttachment> {
+) -> AttachmentHostingResult {
     let path = temp_file(b"hello");
     let result = maybe_host_published_attachment(
         &PublishedAttachmentHostInput {
@@ -179,7 +188,10 @@ fn host_with(
 fn remote_switched_off_uploads_nothing_at_all() {
     // Not just "returns None" — the file's bytes must never leave the machine.
     let uploader = FakeUploader::default();
-    assert!(host_with(&uploader, false, "tok").is_none());
+    assert_eq!(
+        host_with(&uploader, false, "tok"),
+        AttachmentHostingResult::Skipped
+    );
     assert!(
         uploader.calls.lock().unwrap().is_empty(),
         "it contacted the relay with remote disabled"
@@ -189,7 +201,10 @@ fn remote_switched_off_uploads_nothing_at_all() {
 #[test]
 fn an_empty_token_uploads_nothing() {
     let uploader = FakeUploader::default();
-    assert!(host_with(&uploader, true, "").is_none());
+    assert_eq!(
+        host_with(&uploader, true, ""),
+        AttachmentHostingResult::Skipped
+    );
     assert!(uploader.calls.lock().unwrap().is_empty());
 }
 
@@ -202,7 +217,9 @@ fn a_successful_host_posts_to_the_relay_with_the_bearer_token() {
         )),
         ..Default::default()
     };
-    let hosted = host_with(&uploader, true, "tok-123").expect("hosted");
+    let AttachmentHostingResult::Hosted(hosted) = host_with(&uploader, true, "tok-123") else {
+        panic!("expected hosted result");
+    };
     assert_eq!(hosted.content_url, "https://r/a/1");
 
     let calls = uploader.calls.lock().unwrap();
@@ -221,12 +238,19 @@ fn a_relay_failure_leaves_the_attachment_local_rather_than_failing_the_publish()
         answer: Some((500, json!({ "error": "boom" }))),
         ..Default::default()
     };
-    assert!(host_with(&refused, true, "tok").is_none());
+    let AttachmentHostingResult::LocalOnly { warning } = host_with(&refused, true, "tok") else {
+        panic!("expected local-only warning");
+    };
+    assert!(warning.contains("boom"));
 
     let unreachable = FakeUploader {
         transport_error: Some("connection refused".to_owned()),
         ..Default::default()
     };
-    assert!(host_with(&unreachable, true, "tok").is_none());
+    let AttachmentHostingResult::LocalOnly { warning } = host_with(&unreachable, true, "tok")
+    else {
+        panic!("expected local-only warning");
+    };
+    assert!(warning.contains("connection refused"));
     assert_eq!(unreachable.calls.lock().unwrap().len(), 1);
 }

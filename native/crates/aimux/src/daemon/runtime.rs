@@ -5,6 +5,10 @@ pub use project_services::{
     project_service_stdio_log_path,
 };
 
+use crate::attachment_hosting::{
+    AttachmentHostingResult, HttpAttachmentUploader, PublishedAttachmentHostInput,
+    maybe_host_published_attachment,
+};
 use crate::cli_launcher::{
     AimuxCliLaunchCommand, AimuxCliLaunchOptions, AimuxCliLaunchSource,
     get_aimux_current_cli_identity,
@@ -3226,6 +3230,22 @@ impl DaemonProjectContentTextRuntime for RealDaemonRuntime {
         timeout_ms: Option<u64>,
     ) -> ProjectServiceJsonResult {
         self.post_ensured_project_service_json(project, route_path, body, timeout_ms)
+    }
+
+    fn host_published_attachment(
+        &mut self,
+        input: &PublishedAttachmentHostInput<'_>,
+    ) -> AttachmentHostingResult {
+        let Some(credentials) = remote_credentials::load_credentials(&self.resolver) else {
+            return AttachmentHostingResult::Skipped;
+        };
+        maybe_host_published_attachment(
+            input,
+            &credentials.relay_url,
+            &credentials.token,
+            credentials.remote_enabled,
+            &HttpAttachmentUploader,
+        )
     }
 }
 

@@ -22,17 +22,17 @@ function loadAllowlist() {
 }
 
 describe("audit-rust-orphans fixture dispatcher gate", () => {
-  it("tracks real contract modules whose only production reference is their module declaration", () => {
+  it("tracks protected contract modules whose only production reference is their module declaration", () => {
     const audit = runAudit();
     const stranded = audit.fixtureDispatcherGate.stranded;
 
     expect(stranded).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          file: "native/crates/aimux/src/alert_display_contract.rs",
-          module: "alert_display_contract",
+          file: "native/crates/aimux/src/plugin_runtime_contract.rs",
+          module: "plugin_runtime_contract",
           productionReferences: 0,
-          reason: expect.stringMatching(/^DEAD TWIN:/),
+          reason: expect.stringMatching(/^Tracked plugin parity fixture/),
         }),
       ]),
     );
@@ -41,26 +41,26 @@ describe("audit-rust-orphans fixture dispatcher gate", () => {
 
   it("separates production, twin, and test references for stranded dispatcher modules", () => {
     const audit = runAudit();
-    const cliProjectService = audit.fixtureDispatcherGate.stranded.find(
-      (entry) => entry.file === "native/crates/aimux/src/cli_project_service_contract.rs",
+    const attachmentStore = audit.fixtureDispatcherGate.stranded.find(
+      (entry) => entry.file === "native/crates/aimux/src/attachment_store_contract.rs",
     );
     const siblingReferencedHelper = audit.actionable.find(
       (entry) =>
-        entry.file === "native/crates/aimux/src/cli_project_service_contract.rs" &&
-        entry.name === "core_project_service_pid",
+        entry.file === "native/crates/aimux/src/attachment_store_contract.rs" &&
+        entry.name === "attachment_store_contract_is_supported",
     );
 
-    expect(cliProjectService).toEqual(
+    expect(attachmentStore).toEqual(
       expect.objectContaining({
         productionReferences: 0,
         twinReferences: 0,
       }),
     );
-    expect(cliProjectService.testReferences).toBeGreaterThan(0);
+    expect(attachmentStore.testReferences).toBeGreaterThan(0);
     expect(siblingReferencedHelper).toEqual(
       expect.objectContaining({
         productionReferences: 0,
-        twinReferences: 1,
+        twinReferences: 0,
       }),
     );
   });
@@ -70,15 +70,15 @@ describe("audit-rust-orphans fixture dispatcher gate", () => {
     const allowlist = loadAllowlist();
     const allowlistFiles = Object.keys(allowlist).sort();
     const trackedDebt = audit.fixtureDispatcherGate.stranded.filter((entry) => entry.reason);
-    const newlyTracked = trackedDebt.filter((entry) =>
-      ![
-        "native/crates/aimux/src/plugin_runtime_contract.rs",
-        "native/crates/aimux/src/transport_security_contract.rs",
-      ].includes(entry.file),
-    );
 
     expect(trackedDebt.map((entry) => entry.file).sort()).toEqual(allowlistFiles);
-    expect(newlyTracked.every((entry) => /^(DEAD|LIVE) TWIN:/.test(entry.reason))).toBe(true);
+    expect(allowlistFiles).toEqual([
+      "native/crates/aimux/src/agent_restore_state_contract.rs",
+      "native/crates/aimux/src/attachment_store_contract.rs",
+      "native/crates/aimux/src/cli_attachment_contract.rs",
+      "native/crates/aimux/src/plugin_runtime_contract.rs",
+      "native/crates/aimux/src/transport_security_contract.rs",
+    ]);
   });
 
   it("passes the enforced fixture-twin gate when tracked debt is registered", () => {

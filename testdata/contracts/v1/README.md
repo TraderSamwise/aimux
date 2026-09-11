@@ -26,9 +26,6 @@ Priority fixture groups:
 
 ## Alerts
 
-- `alerts/display.json`: notification title/body/category/reason
-  contextualization cases captured by running TypeScript `alert-display`
-  helpers against `src/alert-display.test.ts` scenarios.
 
 ## Dashboard
 
@@ -60,13 +57,8 @@ Priority fixture groups:
 
 - `cli/agent-id.json`: CLI agent identity payload and text renderer behavior
   captured by running TypeScript `cli/agent-id` helpers.
-- `cli/agent-list.json`: CLI agent inventory flat and worktree-grouped text
-  renderer behavior captured by running TypeScript `cli/agent-list` helpers.
 - `cli/attachment.json`: CLI attachment MIME and relay URL helper behavior
   captured by running TypeScript `cli/attachment` helpers.
-- `cli/project-service.json`: CLI project-service resolved-path matching,
-  pid extraction, and stale-build help text captured by running TypeScript
-  `cli/project-service` helpers.
 - `cli/team.json`: CLI team payload and text renderer behavior captured by
   running TypeScript `cli/team` helpers.
 
@@ -78,9 +70,6 @@ Priority fixture groups:
 - `agent-output/activity-text.json`: first-priority progress-line extraction
   cases captured by running TypeScript `activityTextFromParsedAgentOutput`
   against `src/agent-output-activity-text.test.ts` inputs.
-- `agent-output/liveness.json`: `readAgentOutput` output/activity/attention
-  projections captured by running the TypeScript multiplexer helper with mocked
-  pane capture and persisted derived metadata.
 - `agent-output/parser-adversarial.json`: golden `{ input, output }` cases
   captured by running the TypeScript `parseAgentOutput` implementation against
   the exported adversarial fixtures, parser fixture tests, compact parser
@@ -115,8 +104,6 @@ Priority fixture groups:
 
 ## Agent Status
 
-- `agent-status/chip.json`: status chip mapping and ANSI rendering contracts
-  captured by running TypeScript `tui/render/agent-status` helpers.
 
 ## Attachments
 
@@ -130,18 +117,10 @@ Priority fixture groups:
 
 ## Backend Session Discovery
 
-- `backend-id-reconcile/reconcile.json`: offline topology backend-session-id
-  backfill, transcript ambiguity, existing-id preservation, main-checkout
-  fallback, and idempotence behavior captured by running TypeScript
-  `reconcileOfflineBackendSessionIds`.
 - `backend-session-discovery/discovery.json`: Claude/Codex transcript
   discovery, ambiguity handling, transcript relocation, and moved-session argv
   cases captured by running the TypeScript backend discovery helpers against
   temporary transcript stores.
-- `backend-session-ids/identity.json`: strict topology backend-session-id
-  latching, topology side effects, full identity resolution, disk-discovery
-  fallback, and refusal reasons captured by running TypeScript
-  `runtime-core/backend-session-ids`.
 
 ## Coordination
 
@@ -160,10 +139,6 @@ Priority fixture groups:
   gates, bounded output reads, briefing construction, fingerprint cooldown,
   stopped-scan delivery suppression, and active-candidate pruning captured by
   running TypeScript `scribe-watcher` helpers.
-- `coordination/tasks-threads.json`: task compatibility filters, review-status
-  normalization, thread summaries, latest-message selection, message grouping,
-  and bounded message snapshots captured by running TypeScript `tasks` and
-  `threads` helpers.
 
 ## Daemon State
 
@@ -227,9 +202,6 @@ Priority fixture groups:
 
 ## Request Errors
 
-- `request-errors/classification.json`: app request-error message extraction and
-  transient disconnect classification captured by running TypeScript
-  `app/lib/request-errors` helpers.
 
 ## Release
 
@@ -255,17 +227,12 @@ Priority fixture groups:
 
 ## Project Topology
 
-- `project-topology/topology.json`: project topology health, rollup, worktree
-  view, flattened-row, and count contracts captured by running TypeScript
-  `project-topology` helpers.
 
 ## Context
 
 - `context/compactor.json`: algorithmic summary provenance, metadata, checkpoint
   append behavior, and raw-history preservation captured by running TypeScript
   `context/compactor`.
-- `context/bridge.json`: tmux pane live snapshot, bounding, UI-chrome filtering,
-  and response-mining behavior captured by running TypeScript `ContextWatcher`.
 
 ## Debug State
 
@@ -288,10 +255,6 @@ Priority fixture groups:
 
 ## Hooks
 
-- `hooks/tool-hooks.json`: Claude and Codex hook command construction,
-  merge/install behavior, permission summaries, argument parsing, and payload
-  parsing captured by running TypeScript `claude-hooks` and `codex-hooks`
-  helpers.
 
 ## Hosted
 
@@ -331,10 +294,6 @@ Priority fixture groups:
 
 ## Interaction Requests
 
-- `interaction-requests/registry.json`: in-memory interaction request
-  registration, dedupe, pending filters, resolve/cancel, immediate wait, and
-  timeout behavior captured by running TypeScript `InteractionRegistry` with
-  generated IDs and timestamps normalized.
 
 ## Expose
 
@@ -437,15 +396,9 @@ Priority fixture groups:
 
 ## Runtime Restart
 
-- `runtime-restart/render.json`: user-facing runtime restart summary rendering
-  captured by running TypeScript `renderRuntimeRestartResult`.
 
 ## Visual Client Leases
 
-- `visual-client-leases/leases.json`: visual client lease kind parsing,
-  identity sanitization, TTL clamping, renewal, pruning, preview counts, and
-  snapshot ordering captured by running TypeScript `visual-client-leases`
-  helpers.
 
 ## Worktrees
 
@@ -493,8 +446,6 @@ level/category gating, secret redaction, rotation, and lifecycle records.
 
 ## Session
 
-- `session/runtime.json`: SessionRuntime transport data and exit event
-  forwarding captured by running TypeScript `session-runtime`.
 - `session-bootstrap/action-args.json`: launch action argument stripping and
   launch/persist argument composition captured by running TypeScript
   `session-bootstrap-action-args`.
@@ -690,13 +641,6 @@ level/category gating, secret redaction, rotation, and lifecycle records.
 
 ## Runtime Topology
 
-- `runtime-topology/store.json`: topology store clone/isolation, raw-file
-  invalidation, YAML read/write, validation error, lock, and reference-pruning
-  behavior captured by running TypeScript `RuntimeTopologyStore`.
-- `runtime-topology/sessions.json`: session upsert, graveyard/resurrection,
-  replacement save, runtime reconciliation, service preservation, and topology
-  reference-pruning behavior captured by running TypeScript
-  `runtime-core/topology-sessions`.
 - `runtime-topology/services.json`: service upsert, batch update, live tmux
   binding, stopped-service cleanup, and worktree-scoped removal behavior
   captured by running TypeScript `runtime-core/topology-services`.
@@ -706,15 +650,9 @@ level/category gating, secret redaction, rotation, and lifecycle records.
 
 ## Connection Targets
 
-- `connection-targets/targets.json`: CLI and app connection mode, daemon URL,
-  relay URL, override, and invalid-mode behavior captured by running TypeScript
-  connection-target resolver helpers.
 
 ## Statusline
 
-- `statusline/model.json`: statusline helper, scoped-session, teammate,
-  focused-control-session, metadata projection, and semantic badge cases
-  captured by running TypeScript `statusline-model` exports.
 
 ## Source Boundary
 

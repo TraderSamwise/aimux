@@ -1,3 +1,6 @@
+use aimux::attachment_hosting::{
+    AttachmentHostingResult, HostedAttachment, PublishedAttachmentHostInput,
+};
 use aimux::core_command_contract::{CORE_API_ROUTES, CORE_COMMAND_NAMES};
 use aimux::daemon::core_commands::{CoreCommandFailure, DaemonCoreCommandRuntime};
 use aimux::daemon::http::DaemonResponseBody;
@@ -39,9 +42,19 @@ use std::collections::BTreeMap;
 use std::fs::{self, read_to_string, remove_file};
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct FakeRouterRuntime {
     calls: Vec<String>,
+    attachment_hosting: AttachmentHostingResult,
+}
+
+impl Default for FakeRouterRuntime {
+    fn default() -> Self {
+        Self {
+            calls: Vec::new(),
+            attachment_hosting: AttachmentHostingResult::Skipped,
+        }
+    }
 }
 
 impl FakeRouterRuntime {
@@ -157,7 +170,15 @@ impl FakeRouterRuntime {
                 json!({
                     "ok": true,
                     "referenceText": "Attached files:\n- notes.txt (text/plain, 5 bytes): /tmp/notes.txt",
-                    "attachment": { "id": "att_1" }
+                    "attachment": {
+                        "id": "att_1",
+                        "hostedAttachment": body.get("hostedAttachment").cloned().unwrap_or(Value::Null),
+                        "hostedContentUrl": body
+                            .get("hostedAttachment")
+                            .and_then(|hosted| hosted.get("contentUrl"))
+                            .cloned()
+                            .unwrap_or(Value::Null)
+                    }
                 }),
             ),
             project_routes::agents::SCRIBE => ProjectServiceJsonResult::ok(
@@ -646,6 +667,20 @@ impl DaemonProjectContentTextRuntime for FakeRouterRuntime {
         _timeout_ms: Option<u64>,
     ) -> ProjectServiceJsonResult {
         self.project_post_result(project, route_path, body)
+    }
+
+    fn host_published_attachment(
+        &mut self,
+        input: &PublishedAttachmentHostInput<'_>,
+    ) -> AttachmentHostingResult {
+        self.calls.push(format!(
+            "host-attachment:{}:{}:{}:{}",
+            input.source_path.display(),
+            input.filename,
+            input.mime_type,
+            input.session_id
+        ));
+        self.attachment_hosting.clone()
     }
 }
 
@@ -1158,6 +1193,104 @@ fn unified_router_dispatches_status_command_and_split_text_modules() {
             && call.contains("\"filename\":\"Notes.txt\"")
             && call.contains("\"mimeType\":\"text/plain\"")
     }));
+}
+
+#[test]
+fn attachment_publish_hosts_before_calling_project_service() {
+    let mut runtime = FakeRouterRuntime {
+        attachment_hosting: AttachmentHostingResult::Hosted(HostedAttachment {
+            content_url: "https://relay.test/attachments/att_1".to_owned(),
+            expires_at: "2026-09-12T00:00:00.000Z".to_owned(),
+            sha256: Some("abc123".to_owned()),
+            size_bytes: Some(5),
+        }),
+        ..Default::default()
+    };
+    let context = DaemonRouteRequestContext::default();
+
+    let response = route_daemon_request(
+        &mut runtime,
+        "POST",
+        &format!("{}?json=1", CORE_API_ROUTES.attachment_publish_text),
+        Some(&json!({
+            "project": "/repo",
+            "path": "/repo/notes.txt",
+            "sessionId": "codex-1"
+        })),
+        "issued",
+        &context,
+    );
+    let payload: Value = serde_json::from_str(&text_body(response)).expect("json payload");
+    assert_eq!(
+        payload["attachment"]["hostedContentUrl"],
+        "https://relay.test/attachments/att_1"
+    );
+    assert!(
+        runtime
+            .calls
+            .iter()
+            .any(|call| { call == "host-attachment:/repo/notes.txt:notes.txt:text/plain:codex-1" })
+    );
+    assert!(runtime.calls.iter().any(|call| {
+        call.starts_with("post:/repo:/attachments/publish:")
+            && call.contains("\"hostedAttachment\"")
+            && call.contains("\"contentUrl\":\"https://relay.test/attachments/att_1\"")
+    }));
+}
+
+#[test]
+fn attachment_publish_reports_local_only_when_hosting_fails_but_still_publishes() {
+    let mut runtime = FakeRouterRuntime {
+        attachment_hosting: AttachmentHostingResult::LocalOnly {
+            warning: "relay attachment hosting failed: connection refused".to_owned(),
+        },
+        ..Default::default()
+    };
+    let context = DaemonRouteRequestContext::default();
+
+    let text_response = route_daemon_request(
+        &mut runtime,
+        "POST",
+        CORE_API_ROUTES.attachment_publish_text,
+        Some(&json!({
+            "project": "/repo",
+            "path": "/repo/notes.txt",
+            "sessionId": "codex-1"
+        })),
+        "issued",
+        &context,
+    );
+    let text = text_body(text_response);
+    assert!(text.contains("Attached files:"));
+    assert!(
+        text.contains(
+            "aimux: warning: attachment published local-only: relay attachment hosting failed: connection refused"
+        ),
+        "{text}"
+    );
+    assert!(runtime.calls.iter().any(|call| {
+        call.starts_with("post:/repo:/attachments/publish:")
+            && !call.contains("\"hostedAttachment\"")
+    }));
+
+    let json_response = route_daemon_request(
+        &mut runtime,
+        "POST",
+        &format!("{}?json=1", CORE_API_ROUTES.attachment_publish_text),
+        Some(&json!({
+            "project": "/repo",
+            "path": "/repo/notes.txt",
+            "sessionId": "codex-1"
+        })),
+        "issued",
+        &context,
+    );
+    let payload: Value = serde_json::from_str(&text_body(json_response)).expect("json payload");
+    assert_eq!(payload["hosting"]["status"], "localOnly");
+    assert_eq!(
+        payload["hosting"]["warning"],
+        "relay attachment hosting failed: connection refused"
+    );
 }
 
 #[test]
