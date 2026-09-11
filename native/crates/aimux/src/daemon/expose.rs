@@ -5,6 +5,7 @@ use crate::daemon_projects::ProjectsRouteProject;
 use crate::daemon_state::load_metadata_state;
 use crate::paths::PathResolver;
 use crate::project_catalog::{hidden_project_tmp_dirs, list_registered_desktop_projects};
+use crate::project_service::agents::LiveWindowIdsProjection;
 use crate::project_service::expose_ordering::{
     ExposeOrderingOptions, ExposeSublabel, assign_worktree_tones, dashboard_worktree_order_paths,
     expose_tile_context_for_item, order_expose_items,
@@ -13,6 +14,7 @@ use crate::project_service::switchable_agents::{
     AgentListScope, SwitchableContext, SwitchableListOptions, agent_status_chip,
     list_switchable_agent_items, serialize_fast_control_item,
     topology_switchable_entries_with_live_window_normalization,
+    topology_switchable_entries_with_live_window_projection,
 };
 use crate::project_service::usage::load_last_used_state;
 use crate::runtime_topology::{read_runtime_topology, runtime_topology_path};
@@ -28,7 +30,7 @@ use crate::tmux_expose_hot_snapshot_worker::{
 };
 use crate::visual_client_leases::{VisualClientLeaseRegistry, parse_visual_client_kind};
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::IsTerminal;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -210,6 +212,7 @@ impl GlobalExposeHotSnapshotCoordinator {
 }
 
 pub trait DaemonExposeFocusRuntime {
+    fn live_window_ids(&mut self) -> Result<BTreeSet<String>, String>;
     fn list_clients(&mut self) -> Result<Vec<TmuxClientInfo>, String>;
     fn target_by_window_id(
         &mut self,
@@ -230,6 +233,12 @@ pub trait DaemonExposeFocusRuntime {
 pub struct SystemDaemonExposeFocusRuntime;
 
 impl DaemonExposeFocusRuntime for SystemDaemonExposeFocusRuntime {
+    fn live_window_ids(&mut self) -> Result<BTreeSet<String>, String> {
+        crate::project_service::agents::try_live_window_ids_for_session_projection(
+            "daemon-expose-focus",
+        )
+    }
+
     fn list_clients(&mut self) -> Result<Vec<TmuxClientInfo>, String> {
         let raw = run_tmux_argv_output(list_clients_argv(), "tmux list-clients failed".to_owned())?;
         Ok(parse_tmux_clients(&raw))
@@ -358,7 +367,19 @@ pub fn expose_focus_route_with_runtime<R: DaemonExposeFocusRuntime>(
     request: ExposeFocusRequest,
     runtime: &mut R,
 ) -> Result<Value, String> {
-    let items = list_all_projects_expose_items(resolver, session_prefix_for_project)?;
+    let live_window_ids = runtime.live_window_ids();
+    let items = match &live_window_ids {
+        Ok(live_window_ids) => list_all_projects_expose_items_with_live_window_projection(
+            resolver,
+            session_prefix_for_project,
+            LiveWindowIdsProjection::Known(live_window_ids),
+        )?,
+        Err(error) => list_all_projects_expose_items_with_live_window_projection(
+            resolver,
+            session_prefix_for_project,
+            LiveWindowIdsProjection::Unavailable(error),
+        )?,
+    };
     let project_root = request.project_root.as_deref().map(normalize_path_string);
     let Some(item) = items.iter().find(|candidate| {
         target_string_field(&candidate.target, "windowId") == Some(request.window_id.as_str())
@@ -478,6 +499,31 @@ pub fn list_all_projects_expose_items(
     resolver: &mut PathResolver,
     session_prefix_for_project: impl Fn(&str) -> String,
 ) -> Result<Vec<crate::project_service::switchable_agents::SwitchableAgentItem>, String> {
+    let live_window_ids =
+        match crate::project_service::agents::try_live_window_ids_for_session_projection(
+            "daemon-global-expose-items",
+        ) {
+            Ok(live_window_ids) => live_window_ids,
+            Err(error) => {
+                return list_all_projects_expose_items_with_live_window_projection(
+                    resolver,
+                    session_prefix_for_project,
+                    LiveWindowIdsProjection::Unavailable(&error),
+                );
+            }
+        };
+    list_all_projects_expose_items_with_live_window_projection(
+        resolver,
+        session_prefix_for_project,
+        LiveWindowIdsProjection::Known(&live_window_ids),
+    )
+}
+
+fn list_all_projects_expose_items_with_live_window_projection(
+    resolver: &mut PathResolver,
+    session_prefix_for_project: impl Fn(&str) -> String,
+    live_window_ids: LiveWindowIdsProjection<'_>,
+) -> Result<Vec<crate::project_service::switchable_agents::SwitchableAgentItem>, String> {
     let entries = resolver
         .list_projects()
         .map_err(|error| format!("failed to list projects: {error}"))?;
@@ -501,9 +547,10 @@ pub fn list_all_projects_expose_items(
             continue;
         }
         let metadata = load_metadata_state(&project_state_dir);
-        let entries = topology_switchable_entries_with_live_window_normalization(
+        let entries = topology_switchable_entries_with_live_window_projection(
             &topology,
             &metadata.sessions,
+            live_window_ids,
         );
         if entries.is_empty() {
             continue;

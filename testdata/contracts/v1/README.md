@@ -383,9 +383,6 @@ Priority fixture groups:
 
 ## Runtime Exchange
 
-- `runtime-exchange/alert-routing.json`: message, task assignment, task
-  outcome, and review outcome alert recipient routing captured by running
-  TypeScript `runtime-core/exchange-alert-routing`.
 - `runtime-exchange/import.json`: legacy thread/message/task/file attachment
   conversion, derived handoff/review/wait/inbox references, and absent optional
   directory behavior captured by running TypeScript `runtime-core/exchange-import`.
@@ -609,8 +606,6 @@ level/category gating, secret redaction, rotation, and lifecycle records.
 - `runtime-state/tool-output-watchers.json`: tool pane prompt, active error,
   interrupted, and update-prompt classification captured by running TypeScript
   `classifyToolPane`.
-- `runtime-state/drift.json`: local-build drift error classification captured
-  by running TypeScript `runtime-drift`.
 - `runtime-migration/migration.json`: report, explicit import, rollback,
   corrupt legacy file, global agent-dir copy avoidance, and blocked existing
   exchange behavior captured by running TypeScript `runtime-migration` helpers
