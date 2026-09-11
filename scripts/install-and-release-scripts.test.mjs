@@ -51,6 +51,20 @@ exit 0
   return archive;
 }
 
+function createReleaseArchive(root, stamp = "test-release-stamp") {
+  const archiveRoot = join(root, "archive");
+  const packageRoot = join(archiveRoot, "aimux");
+  const nativeDir = join(packageRoot, "native", platformArch());
+  mkdirSync(nativeDir, { recursive: true });
+  writeFileSync(join(packageRoot, "BUILD_STAMP"), `${stamp}\n`);
+  const nativeBinary = join(nativeDir, "aimux");
+  writeFileSync(nativeBinary, `#!/usr/bin/env sh\nAIMUX_EMBEDDED_BUILD_STAMP=${stamp}\nexit 0\n`);
+  chmodSync(nativeBinary, 0o755);
+  const archive = join(root, "aimux-release.tar.gz");
+  runOk("tar", ["-czf", archive, "-C", archiveRoot, "aimux"]);
+  return archive;
+}
+
 function installEnv(root, restartStatus) {
   return {
     HOME: join(root, "home"),
@@ -75,6 +89,7 @@ function writeExecutable(path, body) {
 function releaseScriptEnv(root, extra = {}) {
   const bin = join(root, "bin");
   mkdirSync(bin, { recursive: true });
+  const realTar = runOk("bash", ["-lc", "command -v tar"]).stdout.trim();
   const realCommands = {
     awk: runOk("bash", ["-lc", "command -v awk"]).stdout.trim(),
     bash: runOk("bash", ["-lc", "command -v bash"]).stdout.trim(),
@@ -91,12 +106,22 @@ function releaseScriptEnv(root, extra = {}) {
     sed: runOk("bash", ["-lc", "command -v sed"]).stdout.trim(),
     shasum: runOk("bash", ["-lc", "command -v shasum"]).stdout.trim(),
     strings: runOk("bash", ["-lc", "command -v strings"]).stdout.trim(),
-    tar: runOk("bash", ["-lc", "command -v tar"]).stdout.trim(),
   };
 
   for (const [name, commandPath] of Object.entries(realCommands)) {
     writeExecutable(join(bin, name), `#!/bin/sh\nexec ${commandPath} "$@"\n`);
   }
+  writeExecutable(
+    join(bin, "tar"),
+    `#!/bin/sh
+case " $* " in
+  *" -czf "*|*" -xzf "*|*" -tzf "*)
+    command -v gzip >/dev/null 2>&1 || { printf 'tar (child): gzip: Cannot exec\\n' >&2; exit 127; }
+    ;;
+esac
+exec ${realTar} "$@"
+`,
+  );
   writeExecutable(
     join(bin, "uname"),
     `#!/bin/sh
@@ -210,7 +235,7 @@ describe("build-release-asset.sh", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
-  });
+  }, 30000);
 
   it("builds a release asset when the clean-tree diff is readable", () => {
     const root = mkdtempSync(join(tmpdir(), "aimux-release-script-"));
@@ -225,6 +250,47 @@ describe("build-release-asset.sh", () => {
       expect(stamp).toContain("aimux-linux-x64.tar.gz");
     } finally {
       rmSync(root, { recursive: true, force: true });
+    }
+  }, 30000);
+});
+
+describe("verify-release-asset.sh", () => {
+  it("verifies a release asset when gzip is outside the caller path", () => {
+    const root = mkdtempSync(join(tmpdir(), "aimux-verify-script-"));
+    try {
+      const archive = createReleaseArchive(root);
+      const result = run("bash", [join(repoRoot, "scripts/verify-release-asset.sh"), archive, platformArch()], {
+        env: releaseScriptEnv(root),
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stderr).not.toContain("gzip: Cannot exec");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 30000);
+});
+
+describe("release workflow", () => {
+  it("repairs PATH before inline archive checks use tar gzip mode", () => {
+    const workflow = readFileSync(join(repoRoot, ".github/workflows/release.yml"), "utf8");
+
+    for (const step of [
+      "Verify release asset has no source maps",
+      "Verify Darwin notifier helper",
+      "Stage macOS native assets for npm package",
+    ]) {
+      const stepStart = workflow.indexOf(`- name: ${step}`);
+      expect(stepStart, `${step} missing`).toBeGreaterThanOrEqual(0);
+      const nextStep = workflow.indexOf("\n      - name:", stepStart + 1);
+      const body = workflow.slice(stepStart, nextStep === -1 ? undefined : nextStep);
+      expect(body).toContain("append_standard_path_dirs");
+      const pathRepairCall = body.search(/^\s+append_standard_path_dirs$/m);
+      const firstArchiveProbe = body.search(/^\s+(?:if )?tar\s+-[tx]zf/m);
+      expect(pathRepairCall, `${step} does not call append_standard_path_dirs`).toBeGreaterThanOrEqual(0);
+      expect(firstArchiveProbe, `${step} does not use tar gzip mode`).toBeGreaterThanOrEqual(0);
+      expect(pathRepairCall, `${step} must repair PATH before tar gzip mode`).toBeLessThan(firstArchiveProbe);
+      expect(body).toMatch(/for command in .*tar.*gzip/);
     }
   });
 });
