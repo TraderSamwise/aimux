@@ -1,9 +1,11 @@
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const allowlistPath = resolve(repoRoot, "scripts/rust-fixture-dispatcher-allowlist.json");
 
 function runAudit(args = ["--json"]) {
   const result = spawnSync("node", ["scripts/audit-rust-orphans.mjs", ...args], {
@@ -13,6 +15,10 @@ function runAudit(args = ["--json"]) {
   });
   expect(result.status, result.stderr).toBe(0);
   return JSON.parse(result.stdout);
+}
+
+function loadAllowlist() {
+  return JSON.parse(readFileSync(allowlistPath, "utf8"));
 }
 
 describe("audit-rust-orphans fixture dispatcher gate", () => {
@@ -30,7 +36,6 @@ describe("audit-rust-orphans fixture dispatcher gate", () => {
         }),
       ]),
     );
-    expect(stranded).toHaveLength(26);
     expect(audit.fixtureDispatcherGate.untracked).toHaveLength(0);
   });
 
@@ -62,6 +67,8 @@ describe("audit-rust-orphans fixture dispatcher gate", () => {
 
   it("uses the allowlist as a typed debt register", () => {
     const audit = runAudit();
+    const allowlist = loadAllowlist();
+    const allowlistFiles = Object.keys(allowlist).sort();
     const trackedDebt = audit.fixtureDispatcherGate.stranded.filter((entry) => entry.reason);
     const newlyTracked = trackedDebt.filter((entry) =>
       ![
@@ -70,8 +77,7 @@ describe("audit-rust-orphans fixture dispatcher gate", () => {
       ].includes(entry.file),
     );
 
-    expect(trackedDebt).toHaveLength(26);
-    expect(newlyTracked).toHaveLength(24);
+    expect(trackedDebt.map((entry) => entry.file).sort()).toEqual(allowlistFiles);
     expect(newlyTracked.every((entry) => /^(DEAD|LIVE) TWIN:/.test(entry.reason))).toBe(true);
   });
 
