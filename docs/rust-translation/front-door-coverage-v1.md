@@ -20,26 +20,18 @@ Every executable entry point needs at least one contract at its own boundary, ev
 
 ## Current Coverage
 
-`scripts/phase8-live-residuals.py` now covers the front-door seams that caught the failures:
+`scripts/phase8-live-residuals.py` currently gates the front-door seams that still run on current master:
 
 - command resolution from `aimux --help` through real binary execution;
-- first-run command seams from empty private tmux sockets, so a warm tmux
-  server cannot hide bootstrap regressions;
 - command-group output alias detection for `overseer status`, `scribe status`,
   `loop list`, and `review list`;
-- bare `graveyard` routing plus stop, resurrect, restore, kill, and fork graveyard lifecycle semantics;
-- top-level `aimux shell` service creation from an empty private tmux socket;
-- shell agent spawn end to end without external agent CLIs or credentials;
-- top-level generic tool dispatch through the real binary with `codex`,
-  `claude`, and `aider` backed by `/bin/sh`, covering bare tool paths,
-  tool-argument pass-through, spawn execution, foreground target opening, exact
-  `--resume`, and fresh `--restore`;
-- native dashboard first paint into a real tmux pane, plus advertised input
-  keys `?`, `n`, `w`, `v`, `Tab`, and `q`;
-- bare `aimux` attach in a real TTY through a private tmux socket;
-- cold project-service reads through `ps`, `list`, `worktree list`, `threads`, and `task list`;
-- bare `aimux restart --json` including the current checkout before it has been registered by another command.
+- private tmux socket basics: PTY output buffering, send-keys delivery, pane
+  output ordering, and resize propagation.
 
-Current proof head: `7f264dc0`. `scripts/phase8-live-residuals.py --only graveyard --prove-fails --aimux-bin native/target/debug/aimux --skip-build` passes the scoped graveyard lifecycle and reports 16 residual mutations as `PROVEN-FAILS`, including command unsupported, command silent alias, dashboard input dead, dashboard spawn missing session, shell-service missing window, top-level agent missing session, lazy read unavailable, restart-current zero projects, SSE reorder, process missing endpoint, graveyard stop missing entry, and graveyard fork missing session. The front-door, dashboard-spawn, top-level agent, lazy-read, restart-current, shell-service, and graveyard residuals now start from empty private tmux sockets instead of warmed servers. The process residual also covers concurrent `serve` startup over stale daemon info and malformed daemon-start locks. Agent resume/restore shares the same tmux session bootstrap invariant.
+Current proof head: `a84c1274`. On 2026-09-11, `yarn audit:phase8-live-residuals:tmux --skip-build --aimux-bin /tmp/aimux-cargo-target-codex-8s9so6/debug/aimux` passed in 0.87s, and `yarn audit:phase8-live-residuals:command-resolution --skip-build --aimux-bin /tmp/aimux-cargo-target-codex-8s9so6/debug/aimux` passed in 89.77s. The full residual sweep is not current evidence: `yarn audit:phase8-live-residuals --skip-build --aimux-bin /tmp/aimux-cargo-target-codex-8s9so6/debug/aimux` failed in 29.50s in the dashboard lane waiting for `phase8-dashboard-key-1`.
 
-These tests intentionally avoid exact TUI layout, screenshots, real Claude/Codex invocations, network access, or timing-sensitive multi-agent orchestration.
+The historical dashboard, graveyard, top-level agent, shell-service, restart,
+SSE, and process residuals remain useful design notes, but they must be repaired
+and re-gated before being cited as current parity evidence. These tests
+intentionally avoid exact TUI layout, screenshots, real Claude/Codex invocations,
+network access, or timing-sensitive multi-agent orchestration.

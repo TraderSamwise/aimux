@@ -45,6 +45,7 @@
     "audit:contract-secrets": "./scripts/audit-contract-secrets.mjs",
     "audit:phase8-live-residuals": "python3 scripts/phase8-live-residuals.py",
     "audit:phase8-live-residuals:command-resolution": "python3 scripts/phase8-live-residuals.py --only command-resolution",
+    "audit:phase8-live-residuals:tmux": "python3 scripts/phase8-live-residuals.py --only tmux",
     "audit:rust-orphans": "./scripts/audit-rust-orphans.mjs --enforce-fixture-twins",
     "format": "prettier --write src/ relay/src/",
     "format:check": "prettier --check src/ relay/src/",

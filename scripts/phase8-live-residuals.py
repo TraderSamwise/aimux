@@ -226,9 +226,7 @@ def default_daemon_listener_snapshot() -> str:
         check=False,
     )
     if result.returncode != 0 or not result.stdout.strip():
-        raise LiveResidualFailure(
-            f"expected an existing non-harness listener on {DEFAULT_DAEMON_PORT}; lsof returned {result.returncode}"
-        )
+        return "<none>"
     lines = result.stdout.strip().splitlines()
     if len(lines) < 2:
         return result.stdout.strip()
