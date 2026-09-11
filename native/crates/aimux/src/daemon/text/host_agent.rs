@@ -1,11 +1,12 @@
 use crate::core_command_contract::CORE_API_ROUTES;
 use crate::daemon::routing::{
     DaemonRouteResponse, DaemonRouteUrl, integer_param, required_param, text_error,
+    text_or_json_lines,
 };
 use crate::daemon::text::params::ProjectServiceJsonResult;
 use crate::daemon_state::MetadataApiEndpoint;
 use crate::project_api_contract::routes as project_routes;
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::fmt::{self, Display, Formatter};
 
 const DEFAULT_AGENT_OUTPUT_START_LINE: i64 = -120;
@@ -73,6 +74,9 @@ pub fn host_agent_read_text_route(
     match runtime.get_project_service_json(&project, &route_path) {
         ProjectServiceJsonResult::Ok { json, .. } => {
             let output = json.get("output").and_then(Value::as_str).unwrap_or("");
+            if route_url.search_param("json") == Some("1") {
+                return text_or_json_lines(route_url, json!({ "ok": true, "output": output }), &[]);
+            }
             let body = if !output.is_empty() && !output.ends_with('\n') {
                 format!("{output}\n")
             } else {

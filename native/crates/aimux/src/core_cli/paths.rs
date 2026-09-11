@@ -96,14 +96,19 @@ pub(super) fn host_agent_read_text_path(
     project: &str,
     session_id: &str,
     start_line: i64,
+    json: bool,
 ) -> String {
-    format!(
+    let mut path = format!(
         "{}?project={}&sessionId={}&startLine={}",
         CORE_API_ROUTES.host_agent_read_text,
         encode_query_component(project),
         encode_query_component(session_id),
         start_line
-    )
+    );
+    if json {
+        path.push_str("&json=1");
+    }
+    path
 }
 
 pub(super) fn host_agent_stream_text_path(

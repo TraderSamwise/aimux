@@ -115,6 +115,33 @@ fn host_agent_read_routes_to_live_pane_output_and_adds_trailing_newline() {
 }
 
 #[test]
+fn host_agent_read_json_returns_payload_without_losing_plain_text_route() {
+    let mut runtime = FakeHostAgentRuntime::default();
+    let response = route_host_agent_text_request(
+        &mut runtime,
+        "GET",
+        "/core/host-agent-read-text?project=.&sessionId=claude-1&json=1",
+        None,
+    )
+    .expect("host agent read");
+
+    assert_eq!(response.status, 200);
+    let payload: Value = serde_json::from_str(&text_body(response)).expect("agent read json");
+    assert_eq!(payload, json!({ "ok": true, "output": "pane output" }));
+    assert_eq!(
+        runtime.calls,
+        [Call {
+            kind: "get",
+            project: ".".into(),
+            route_path: Some(format!(
+                "{}?sessionId=claude-1&startLine=-120",
+                project_routes::live_pane::OUTPUT
+            )),
+        }]
+    );
+}
+
+#[test]
 fn host_agent_read_preserves_empty_and_existing_newline_output() {
     let mut runtime = FakeHostAgentRuntime {
         output: json!({ "ok": true, "output": "" }),

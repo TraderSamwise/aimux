@@ -1714,6 +1714,7 @@ where
                         &project_root,
                         &parsed.session_id,
                         parsed.start_line,
+                        parsed.json,
                     ),
                     body: None,
                 },

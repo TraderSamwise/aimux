@@ -1210,16 +1210,27 @@ fn logs_parser_preserves_values_that_start_with_hyphens() {
 }
 
 #[test]
-fn host_restart_parser_accepts_only_open_and_serve() {
+fn host_restart_parser_accepts_open_serve_and_advertised_json() {
     assert_eq!(
-        parse_core_host_restart_args(&["host", "restart", "--serve", "--open", "--serve"]),
+        parse_core_host_restart_args(&[
+            "host", "restart", "--serve", "--open", "--json", "--serve"
+        ]),
         Some(CoreHostRestartArgs {
             open: true,
             serve: true,
+            json: true,
         })
     );
     assert_eq!(
-        parse_core_host_restart_args(&["host", "restart", "--json"]),
+        parse_core_host_restart_args(&["host", "restart"]),
+        Some(CoreHostRestartArgs {
+            open: false,
+            serve: false,
+            json: false,
+        })
+    );
+    assert_eq!(
+        parse_core_host_restart_args(&["host", "restart", "--bad"]),
         None
     );
 }
@@ -1232,6 +1243,7 @@ fn host_agent_read_parser_matches_commander_flag_math() {
             session_id: "claude-1".into(),
             project: None,
             start_line: -120,
+            json: false,
         })
     );
     assert_eq!(
@@ -1247,6 +1259,7 @@ fn host_agent_read_parser_matches_commander_flag_math() {
             session_id: "claude-1".into(),
             project: Some("/repo space".into()),
             start_line: -80,
+            json: false,
         })
     );
     assert_eq!(
@@ -1262,6 +1275,7 @@ fn host_agent_read_parser_matches_commander_flag_math() {
             session_id: "claude-1".into(),
             project: Some("/repo".into()),
             start_line: -160,
+            json: false,
         })
     );
     assert_eq!(
@@ -1278,6 +1292,16 @@ fn host_agent_read_parser_matches_commander_flag_math() {
             session_id: "claude-1".into(),
             project: None,
             start_line: -42,
+            json: false,
+        })
+    );
+    assert_eq!(
+        parse_core_host_agent_read_args(&["host", "agent-read", "claude-1", "--json"]),
+        Some(CoreHostAgentReadArgs {
+            session_id: "claude-1".into(),
+            project: None,
+            start_line: -120,
+            json: true,
         })
     );
     assert_eq!(
@@ -1407,6 +1431,8 @@ fn core_cli_eligibility_matches_the_typescript_dispatch_boundary() {
         vec!["host", "stop"],
         vec!["host", "kill"],
         vec!["host", "restart", "--serve", "--open"],
+        vec!["host", "restart", "--json"],
+        vec!["host", "agent-read", "claude-1", "--json"],
         vec!["daemon", "ensure", "--json"],
         vec!["daemon", "status"],
         vec!["daemon", "projects"],
@@ -1426,7 +1452,7 @@ fn core_cli_eligibility_matches_the_typescript_dispatch_boundary() {
         vec!["notify", "--title", "Heads up"],
         vec!["notify", "--body", "Ready"],
         vec!["list-notifications", "--unread"],
-        vec!["read-notifications", "--ids", "note-1,note-2"],
+        vec!["read-notifications", "--id", "note-1"],
         vec!["clear-notifications", "--bad"],
         vec!["message", "send", "please", "--to", "claude-1"],
         vec!["message", "send", "please"],
@@ -1442,6 +1468,9 @@ fn core_cli_eligibility_matches_the_typescript_dispatch_boundary() {
         vec!["thread", "list", "--json"],
         vec!["thread", "show", "thread-1"],
         vec!["thread", "send", "thread-1", "body", "--from", "user"],
+        vec![
+            "thread", "send", "thread-1", "--body", "body", "--from", "user",
+        ],
         vec!["thread", "mark-seen", "thread-1", "--session"],
         vec!["thread", "status", "thread-1", "--status=waiting"],
         vec!["threads", "--json"],

@@ -1044,6 +1044,27 @@ fn host_agent_read_executes_native_text_route_without_core_command_fallback() {
         )]
     );
     assert!(runtime.commands.is_empty());
+
+    let json = run_core_cli_with(
+        &args(&[
+            "host",
+            "agent-read",
+            "claude-1",
+            "--project=/repo",
+            "--json",
+        ]),
+        &mut runtime,
+    );
+    assert_eq!(json.code, 0);
+    assert_eq!(json.stdout, ["pane output"]);
+    assert_eq!(
+        runtime.text_routes.last(),
+        Some(&(
+            "/core/host-agent-read-text?project=%2Frepo&sessionId=claude-1&startLine=-120&json=1"
+                .into(),
+            None,
+        ))
+    );
 }
 
 #[test]
@@ -1559,19 +1580,13 @@ fn notification_commands_execute_native_text_routes_without_core_command_fallbac
             "--project",
             "/repo",
             "--id=note-1",
-            "--ids",
-            "note-2,note-3",
             "--session=claude-1",
             "--json",
         ]),
         &mut runtime,
     );
     let clear = run_core_cli_with(
-        &args(&[
-            "clear-notifications",
-            "--project=/repo",
-            "--ids=note-4,note-5",
-        ]),
+        &args(&["clear-notifications", "--project=/repo", "--id=note-4"]),
         &mut runtime,
     );
 
@@ -1602,7 +1617,7 @@ fn notification_commands_execute_native_text_routes_without_core_command_fallbac
                 Some(json!({
                     "project": "/repo",
                     "id": "note-1",
-                    "ids": ["note-2", "note-3"],
+                    "ids": [],
                     "sessionId": "claude-1",
                 })),
             ),
@@ -1610,8 +1625,8 @@ fn notification_commands_execute_native_text_routes_without_core_command_fallbac
                 "/core/notifications/clear-text".into(),
                 Some(json!({
                     "project": "/repo",
-                    "id": null,
-                    "ids": ["note-4", "note-5"],
+                    "id": "note-4",
+                    "ids": [],
                     "sessionId": null,
                 })),
             ),
@@ -2125,6 +2140,7 @@ fn thread_commands_execute_native_text_routes_without_core_command_fallback() {
             "thread",
             "send",
             "thread-1",
+            "--body",
             "body",
             "--from=user",
             "--to=claude-1",
@@ -2769,4 +2785,22 @@ fn host_restart_open_restarts_project_then_opens_dashboard_target() {
         runtime.open_targets,
         [json!({ "sessionName": "aimux-repo", "windowIndex": 1 })]
     );
+}
+
+#[test]
+fn host_restart_json_uses_existing_restart_command_renderer() {
+    let mut runtime = FakeRuntime::default();
+
+    let execution = run_core_cli_with(&args(&["host", "restart", "--json"]), &mut runtime);
+
+    assert_eq!(execution.code, 0);
+    assert!(execution.stderr.is_empty());
+    let payload: Value = serde_json::from_str(&execution.stdout[0]).expect("restart json");
+    assert_eq!(payload["projectRoot"], "/repo");
+    assert_eq!(runtime.commands.len(), 1);
+    assert_eq!(
+        runtime.commands[0].command,
+        CORE_COMMAND_NAMES.project_restart
+    );
+    assert!(runtime.open_targets.is_empty());
 }
