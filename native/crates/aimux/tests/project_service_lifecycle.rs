@@ -105,13 +105,15 @@ impl ProjectLifecycleRuntime for FakeLifecycleRuntime {
         if let Some(error) = &self.create_window_error {
             return Err(error.clone());
         }
-        Ok(TmuxTarget {
+        let target = TmuxTarget {
             session_name: session_name.to_owned(),
             window_id: format!("@{}", self.created.len() + 10),
             window_index: self.created.len() as i64 + 10,
             window_name: name.to_owned(),
             pane_dead: None,
-        })
+        };
+        self.existing_windows.push(target.window_id.clone());
+        Ok(target)
     }
 
     fn set_window_metadata(&mut self, window_id: &str, metadata: &Value) -> Result<(), String> {
