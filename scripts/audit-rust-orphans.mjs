@@ -6,6 +6,7 @@ const repoRoot = process.cwd();
 const crateRoot = join(repoRoot, 'native/crates/aimux');
 const srcRoot = join(crateRoot, 'src');
 const testsRoot = join(crateRoot, 'tests');
+const libPath = join(srcRoot, 'lib.rs');
 const contractCorpusRoot = join(repoRoot, 'testdata/contracts/v1');
 const fixtureDispatcherAllowlistPath = join(repoRoot, 'scripts/rust-fixture-dispatcher-allowlist.json');
 const enforceFixtureDispatchers = process.argv.includes('--enforce-fixture-twins');
@@ -251,6 +252,10 @@ function isContractFile(file) {
   return /_contract\.rs$/.test(file) || /(^|\/)contracts\.rs$/.test(file);
 }
 
+function isTwinFile(file) {
+  return /_contract\.rs$/.test(file);
+}
+
 function isTuiOwned(file) {
   return tuiOwnedPatterns.some((pattern) => pattern.test(file));
 }
@@ -295,10 +300,6 @@ function loadFixtureDispatcherAllowlist() {
   return parsed;
 }
 
-function isFixtureDispatcherName(name) {
-  return /^(?:run_.*_case|.*_contract)$/.test(name);
-}
-
 const sourceFiles = [...walk(srcRoot), ...walk(testsRoot)];
 const productionSourceFiles = sourceFiles.filter((file) => relative(repoRoot, file).startsWith('native/crates/aimux/src/'));
 const testSourceFiles = sourceFiles.filter((file) => relative(repoRoot, file).startsWith('native/crates/aimux/tests/'));
@@ -340,33 +341,54 @@ for (const def of defs.filter((def) => def.productionFile)) {
   definitionNameRanges.get(key).push([def.nameStart, def.nameEnd]);
 }
 
-function productionReferenceCountOutsideDefinitions(name) {
+function isModuleDeclarationLine(line, name) {
+  return new RegExp(`\\bpub\\s+mod\\s+${name}\\s*;`).test(line);
+}
+
+function referenceCountsOutsideDefinitions(name) {
   const needle = new RegExp(`\\b${name}\\b`, 'g');
-  let count = 0;
+  const counts = {
+    production: 0,
+    twin: 0,
+  };
   for (const [file, source] of sourceCache) {
     let match;
     while ((match = needle.exec(source)) !== null) {
       const ranges = definitionNameRanges.get(`${file}\0${name}`) ?? [];
       const isDefinitionName = ranges.some(([start, end]) => match.index >= start && match.index < end);
+      const lineStart = source.lastIndexOf('\n', match.index) + 1;
+      const lineEnd = source.indexOf('\n', match.index);
+      const line = source.slice(lineStart, lineEnd < 0 ? source.length : lineEnd);
       if (!isDefinitionName) {
-        count += 1;
+        if (isModuleDeclarationLine(line, name)) {
+          continue;
+        }
+        if (isTwinFile(file)) {
+          counts.twin += 1;
+        } else {
+          counts.production += 1;
+        }
       }
     }
   }
-  return count;
+  return counts;
 }
 
 const graphUnreachableCandidates = defs
   .filter((def) => def.productionFile && def.public && !def.file.startsWith('native/crates/aimux/src/bin/'))
   .filter((def) => !productionReachable.has(def.id))
-  .map((def) => ({
-    file: def.file,
-    line: def.line,
-    name: def.name,
-    productionReferences: productionReferenceCountOutsideDefinitions(def.name),
-    reachableFromTests: testReachable.has(def.id),
-    triage: triage(def, testReachable),
-  }))
+  .map((def) => {
+    const references = referenceCountsOutsideDefinitions(def.name);
+    return {
+      file: def.file,
+      line: def.line,
+      name: def.name,
+      productionReferences: references.production,
+      twinReferences: references.twin,
+      reachableFromTests: testReachable.has(def.id),
+      triage: triage(def, testReachable),
+    };
+  })
   .sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line);
 const candidates = graphUnreachableCandidates.filter((candidate) => candidate.productionReferences === 0);
 
@@ -376,26 +398,45 @@ for (const candidate of actionable) {
   countsByTriage[candidate.triage] = (countsByTriage[candidate.triage] ?? 0) + 1;
 }
 const fixtureDispatcherAllowlist = loadFixtureDispatcherAllowlist();
-const fixtureDispatcherFiles = new Map();
-for (const def of defs.filter((def) => def.productionFile && def.public && isFixtureDispatcherName(def.name))) {
-  if (!fixtureDispatcherFiles.has(def.file)) {
-    fixtureDispatcherFiles.set(def.file, []);
+const fixtureDispatcherFiles = new Map(
+  publicLibModules()
+    .filter((module) => isTwinFile(module.file))
+    .map((module) => [module.file, module]),
+);
+for (const file of productionSourceFiles.map((file) => relative(repoRoot, file)).filter(isTwinFile)) {
+  if (!fixtureDispatcherFiles.has(file)) {
+    fixtureDispatcherFiles.set(file, {
+      name: basename(file, '.rs'),
+      file,
+      line: 1,
+    });
   }
-  fixtureDispatcherFiles.get(def.file).push(def);
 }
-const strandedFixtureDispatchers = [...fixtureDispatcherFiles.entries()]
-  .filter(([file, dispatchers]) => {
-    const publicFileDefinitions = defs.filter((def) => def.file === file && def.public);
-    return (
-      !publicFileDefinitions.some((def) => productionReachable.has(def.id)) &&
-      !dispatchers.some((def) => productionReferenceCountOutsideDefinitions(def.name) > 0)
-    );
+const strandedFixtureDispatchers = [...fixtureDispatcherFiles.values()]
+  .map((module) => {
+    const publicFileDefinitions = defs.filter((def) => def.file === module.file && def.public);
+    const moduleReferences = referenceCountsForModule(module.name, module.file);
+    const dispatchers = publicFileDefinitions
+      .filter((def) => testReachable.has(def.id))
+      .map((def) => def.name)
+      .sort();
+    return {
+      file: module.file,
+      module: module.name,
+      line: module.line,
+      dispatchers,
+      productionReferences: moduleReferences.production,
+      twinReferences: moduleReferences.twin,
+      testReferences: moduleReferences.test,
+      reason: fixtureDispatcherAllowlist[module.file] ?? null,
+      stranded: (
+        publicFileDefinitions.length > 0 &&
+        moduleReferences.production === 0
+      ),
+    };
   })
-  .map(([file, dispatchers]) => ({
-    file,
-    dispatchers: dispatchers.map((def) => def.name).sort(),
-    reason: fixtureDispatcherAllowlist[file] ?? null,
-  }))
+  .filter((entry) => entry.stranded)
+  .map(({ stranded: _stranded, ...entry }) => entry)
   .sort((a, b) => a.file.localeCompare(b.file));
 const strandedFixtureDispatcherFiles = new Set(strandedFixtureDispatchers.map((entry) => entry.file));
 const untrackedFixtureDispatchers = strandedFixtureDispatchers.filter((entry) => !entry.reason);
@@ -408,8 +449,6 @@ const fixtureDispatcherGate = {
   untracked: untrackedFixtureDispatchers,
   stale: staleFixtureDispatcherAllowlist,
 };
-
-const libPath = join(srcRoot, 'lib.rs');
 
 function moduleSourceFile(moduleName) {
   const flat = join(srcRoot, `${moduleName}.rs`);
@@ -438,34 +477,48 @@ function publicLibModules() {
   return modules;
 }
 
-function referenceCountForModule(moduleName, moduleFile) {
+function referenceCountsForModule(moduleName, moduleFile) {
   const needle = new RegExp(`\\b${moduleName}\\b`, 'g');
-  let count = 0;
+  const counts = {
+    production: 0,
+    twin: 0,
+    test: 0,
+  };
   for (const [file, source] of [...sourceCache, ...testSourceCache]) {
     if (file === moduleFile) {
       continue;
     }
     let match;
     while ((match = needle.exec(source)) !== null) {
-      if (file === relative(repoRoot, libPath)) {
-        const lineStart = source.lastIndexOf('\n', match.index) + 1;
-        const lineEnd = source.indexOf('\n', match.index);
-        const line = source.slice(lineStart, lineEnd < 0 ? source.length : lineEnd);
-        if (new RegExp(`\\bpub\\s+mod\\s+${moduleName}\\s*;`).test(line)) {
-          continue;
-        }
+      const lineStart = source.lastIndexOf('\n', match.index) + 1;
+      const lineEnd = source.indexOf('\n', match.index);
+      const line = source.slice(lineStart, lineEnd < 0 ? source.length : lineEnd);
+      if (isModuleDeclarationLine(line, moduleName)) {
+        continue;
       }
-      count += 1;
+      if (file.startsWith('native/crates/aimux/tests/')) {
+        counts.test += 1;
+      } else if (isTwinFile(file)) {
+        counts.twin += 1;
+      } else {
+        counts.production += 1;
+      }
     }
   }
-  return count;
+  return counts;
 }
 
 const unreferencedExportedModules = publicLibModules()
-  .map((module) => ({
-    ...module,
-    references: referenceCountForModule(module.name, module.file),
-  }))
+  .map((module) => {
+    const references = referenceCountsForModule(module.name, module.file);
+    return {
+      ...module,
+      references: references.production + references.twin + references.test,
+      productionReferences: references.production,
+      twinReferences: references.twin,
+      testReferences: references.test,
+    };
+  })
   .filter((module) => module.references === 0)
   .sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line);
 
