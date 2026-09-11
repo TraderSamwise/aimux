@@ -103,13 +103,13 @@
           {
             "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:hyperlinks"]
           },
-          { "args": ["unbind-key", "-T", "root", "C-j"] },
-          { "args": ["unbind-key", "-T", "root", "S-Enter"] },
           { "args": ["unbind-key", "-T", "root", "MouseDown1Pane"] },
           { "args": ["unbind-key", "-T", "root", "MouseDrag1Pane"] },
           { "args": ["unbind-key", "-T", "root", "WheelUpPane"] },
           { "args": ["unbind-key", "-T", "root", "WheelDownPane"] },
           { "args": ["source-file", "<mouse-bindings.conf>"] },
+          { "args": ["list-keys", "-T", "root", "C-j"] },
+          { "args": ["unbind-key", "-T", "root", "C-j"] },
           {
             "args": [
               "bind-key",
@@ -123,6 +123,8 @@
               "send-keys C-j"
             ]
           },
+          { "args": ["list-keys", "-T", "root", "S-Enter"] },
+          { "args": ["unbind-key", "-T", "root", "S-Enter"] },
           {
             "args": [
               "bind-key",
@@ -519,13 +521,13 @@
           {
             "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:hyperlinks"]
           },
-          { "args": ["unbind-key", "-T", "root", "C-j"] },
-          { "args": ["unbind-key", "-T", "root", "S-Enter"] },
           { "args": ["unbind-key", "-T", "root", "MouseDown1Pane"] },
           { "args": ["unbind-key", "-T", "root", "MouseDrag1Pane"] },
           { "args": ["unbind-key", "-T", "root", "WheelUpPane"] },
           { "args": ["unbind-key", "-T", "root", "WheelDownPane"] },
           { "args": ["source-file", "<mouse-bindings.conf>"] },
+          { "args": ["list-keys", "-T", "root", "C-j"] },
+          { "args": ["unbind-key", "-T", "root", "C-j"] },
           {
             "args": [
               "bind-key",
@@ -539,6 +541,8 @@
               "send-keys C-j"
             ]
           },
+          { "args": ["list-keys", "-T", "root", "S-Enter"] },
+          { "args": ["unbind-key", "-T", "root", "S-Enter"] },
           {
             "args": [
               "bind-key",
@@ -890,13 +894,13 @@
           { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
           { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
           { "args": ["show-options", "-v", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features"] },
-          { "args": ["unbind-key", "-T", "root", "C-j"] },
-          { "args": ["unbind-key", "-T", "root", "S-Enter"] },
           { "args": ["unbind-key", "-T", "root", "MouseDown1Pane"] },
           { "args": ["unbind-key", "-T", "root", "MouseDrag1Pane"] },
           { "args": ["unbind-key", "-T", "root", "WheelUpPane"] },
           { "args": ["unbind-key", "-T", "root", "WheelDownPane"] },
           { "args": ["source-file", "<mouse-bindings.conf>"] },
+          { "args": ["list-keys", "-T", "root", "C-j"] },
+          { "args": ["unbind-key", "-T", "root", "C-j"] },
           {
             "args": [
               "bind-key",
@@ -910,6 +914,8 @@
               "send-keys C-j"
             ]
           },
+          { "args": ["list-keys", "-T", "root", "S-Enter"] },
+          { "args": ["unbind-key", "-T", "root", "S-Enter"] },
           {
             "args": [
               "bind-key",
@@ -1291,13 +1297,13 @@
           {
             "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:hyperlinks"]
           },
-          { "args": ["unbind-key", "-T", "root", "C-j"] },
-          { "args": ["unbind-key", "-T", "root", "S-Enter"] },
           { "args": ["unbind-key", "-T", "root", "MouseDown1Pane"] },
           { "args": ["unbind-key", "-T", "root", "MouseDrag1Pane"] },
           { "args": ["unbind-key", "-T", "root", "WheelUpPane"] },
           { "args": ["unbind-key", "-T", "root", "WheelDownPane"] },
           { "args": ["source-file", "<mouse-bindings.conf>"] },
+          { "args": ["list-keys", "-T", "root", "C-j"] },
+          { "args": ["unbind-key", "-T", "root", "C-j"] },
           {
             "args": [
               "bind-key",
@@ -1311,6 +1317,8 @@
               "send-keys C-j"
             ]
           },
+          { "args": ["list-keys", "-T", "root", "S-Enter"] },
+          { "args": ["unbind-key", "-T", "root", "S-Enter"] },
           {
             "args": [
               "bind-key",
@@ -1693,13 +1701,13 @@
           {
             "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:hyperlinks"]
           },
-          { "args": ["unbind-key", "-T", "root", "C-j"] },
-          { "args": ["unbind-key", "-T", "root", "S-Enter"] },
           { "args": ["unbind-key", "-T", "root", "MouseDown1Pane"] },
           { "args": ["unbind-key", "-T", "root", "MouseDrag1Pane"] },
           { "args": ["unbind-key", "-T", "root", "WheelUpPane"] },
           { "args": ["unbind-key", "-T", "root", "WheelDownPane"] },
           { "args": ["source-file", "<mouse-bindings.conf>"] },
+          { "args": ["list-keys", "-T", "root", "C-j"] },
+          { "args": ["unbind-key", "-T", "root", "C-j"] },
           {
             "args": [
               "bind-key",
@@ -1713,6 +1721,8 @@
               "send-keys C-j"
             ]
           },
+          { "args": ["list-keys", "-T", "root", "S-Enter"] },
+          { "args": ["unbind-key", "-T", "root", "S-Enter"] },
           {
             "args": [
               "bind-key",
@@ -2133,13 +2143,13 @@
           {
             "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:hyperlinks"]
           },
-          { "args": ["unbind-key", "-T", "root", "C-j"] },
-          { "args": ["unbind-key", "-T", "root", "S-Enter"] },
           { "args": ["unbind-key", "-T", "root", "MouseDown1Pane"] },
           { "args": ["unbind-key", "-T", "root", "MouseDrag1Pane"] },
           { "args": ["unbind-key", "-T", "root", "WheelUpPane"] },
           { "args": ["unbind-key", "-T", "root", "WheelDownPane"] },
           { "args": ["source-file", "<mouse-bindings.conf>"] },
+          { "args": ["list-keys", "-T", "root", "C-j"] },
+          { "args": ["unbind-key", "-T", "root", "C-j"] },
           {
             "args": [
               "bind-key",
@@ -2153,6 +2163,8 @@
               "send-keys C-j"
             ]
           },
+          { "args": ["list-keys", "-T", "root", "S-Enter"] },
+          { "args": ["unbind-key", "-T", "root", "S-Enter"] },
           {
             "args": [
               "bind-key",
@@ -2575,13 +2587,13 @@
           {
             "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:hyperlinks"]
           },
-          { "args": ["unbind-key", "-T", "root", "C-j"] },
-          { "args": ["unbind-key", "-T", "root", "S-Enter"] },
           { "args": ["unbind-key", "-T", "root", "MouseDown1Pane"] },
           { "args": ["unbind-key", "-T", "root", "MouseDrag1Pane"] },
           { "args": ["unbind-key", "-T", "root", "WheelUpPane"] },
           { "args": ["unbind-key", "-T", "root", "WheelDownPane"] },
           { "args": ["source-file", "<mouse-bindings.conf>"] },
+          { "args": ["list-keys", "-T", "root", "C-j"] },
+          { "args": ["unbind-key", "-T", "root", "C-j"] },
           {
             "args": [
               "bind-key",
@@ -2595,6 +2607,8 @@
               "send-keys C-j"
             ]
           },
+          { "args": ["list-keys", "-T", "root", "S-Enter"] },
+          { "args": ["unbind-key", "-T", "root", "S-Enter"] },
           {
             "args": [
               "bind-key",
@@ -2995,13 +3009,13 @@
           {
             "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:hyperlinks"]
           },
-          { "args": ["unbind-key", "-T", "root", "C-j"] },
-          { "args": ["unbind-key", "-T", "root", "S-Enter"] },
           { "args": ["unbind-key", "-T", "root", "MouseDown1Pane"] },
           { "args": ["unbind-key", "-T", "root", "MouseDrag1Pane"] },
           { "args": ["unbind-key", "-T", "root", "WheelUpPane"] },
           { "args": ["unbind-key", "-T", "root", "WheelDownPane"] },
           { "args": ["source-file", "<mouse-bindings.conf>"] },
+          { "args": ["list-keys", "-T", "root", "C-j"] },
+          { "args": ["unbind-key", "-T", "root", "C-j"] },
           {
             "args": [
               "bind-key",
@@ -3015,6 +3029,8 @@
               "send-keys C-j"
             ]
           },
+          { "args": ["list-keys", "-T", "root", "S-Enter"] },
+          { "args": ["unbind-key", "-T", "root", "S-Enter"] },
           {
             "args": [
               "bind-key",
@@ -3493,13 +3509,13 @@
           {
             "args": ["set-option", "-as", "-t", "aimux-mobile-078d0ecd20ec", "terminal-features", ",xterm*:hyperlinks"]
           },
-          { "args": ["unbind-key", "-T", "root", "C-j"] },
-          { "args": ["unbind-key", "-T", "root", "S-Enter"] },
           { "args": ["unbind-key", "-T", "root", "MouseDown1Pane"] },
           { "args": ["unbind-key", "-T", "root", "MouseDrag1Pane"] },
           { "args": ["unbind-key", "-T", "root", "WheelUpPane"] },
           { "args": ["unbind-key", "-T", "root", "WheelDownPane"] },
           { "args": ["source-file", "<mouse-bindings.conf>"] },
+          { "args": ["list-keys", "-T", "root", "C-j"] },
+          { "args": ["unbind-key", "-T", "root", "C-j"] },
           {
             "args": [
               "bind-key",
@@ -3513,6 +3529,8 @@
               "send-keys C-j"
             ]
           },
+          { "args": ["list-keys", "-T", "root", "S-Enter"] },
+          { "args": ["unbind-key", "-T", "root", "S-Enter"] },
           {
             "args": [
               "bind-key",

@@ -14,9 +14,10 @@ use crate::tmux::{
     TMUX_RUNTIME_OWNER_OPTION, TMUX_RUNTIME_REBUILD_REQUIRED_OPTION, TmuxCommandSpec,
     WINDOW_LIST_FORMAT, append_session_option_argv,
     build_default_root_mouse_bindings_install_config_for_command, is_dashboard_window_name,
-    is_tmux_client_session_for_host, legacy_project_session_name, new_dashboard_window_argv,
-    new_session_argv, project_session, refresh_status_argv, rename_session_argv,
-    respawn_window_argv, set_session_option_argv, set_window_option_argv, switch_client_argv,
+    is_tmux_client_session_for_host, legacy_project_session_name, modified_enter_binding_argv,
+    new_dashboard_window_argv, new_session_argv, project_session, refresh_status_argv,
+    rename_session_argv, respawn_window_argv, set_session_option_argv, set_window_option_argv,
+    should_install_modified_enter_binding, switch_client_argv,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -661,8 +662,6 @@ fn configure_managed_key_bindings(
     project_state_dir: &str,
 ) -> Result<(), String> {
     for key in [
-        "C-j",
-        "S-Enter",
         "MouseDown1Pane",
         "MouseDrag1Pane",
         "WheelUpPane",
@@ -811,20 +810,26 @@ fn bind_root_modified_enter(
     key: &str,
     fallback: &str,
 ) -> Result<(), String> {
-    run_tmux_owned(
+    let existing = run_command_owned(
         runner,
+        "tmux",
         &[
-            "bind-key".into(),
-            "-T".into(),
-            "root".into(),
-            key.into(),
-            "if-shell".into(),
-            "-F".into(),
-            "#{m/r:^(claude|codex)$,#{@aimux-tool}}".into(),
-            "send-keys -H 1b5b32373b3575".into(),
-            fallback.into(),
+            "list-keys".to_owned(),
+            "-T".to_owned(),
+            "root".to_owned(),
+            key.to_owned(),
         ],
     )
+    .ok()
+    .filter(|value| !value.trim().is_empty());
+    if !should_install_modified_enter_binding(existing.as_deref()) {
+        return Ok(());
+    }
+    let _ = run_tmux_owned(
+        runner,
+        &["unbind-key".into(), "-T".into(), "root".into(), key.into()],
+    );
+    run_tmux_owned(runner, &modified_enter_binding_argv(key, fallback))
 }
 
 fn prefix_binding_commands(input: &TmuxRepairInput, session_name: &str) -> Vec<Vec<String>> {

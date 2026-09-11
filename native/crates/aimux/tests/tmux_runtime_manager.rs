@@ -1,4 +1,5 @@
 use aimux::tmux::{
+    AIMUX_MODIFIED_ENTER_COMMAND, AIMUX_STALE_MODIFIED_ENTER_COMMAND,
     AIMUX_TMUX_RUNTIME_CONTRACT_VERSION, CapturePaneOptions, OpenTargetOptions,
     TMUX_RUNTIME_CONTRACT_OPTION, TmuxClientInfo, TmuxCommandSpec, TmuxRuntimeConfig,
     TmuxRuntimeManager, TmuxTarget, TmuxWindowInfo, project_session,
@@ -960,6 +961,95 @@ fn configure_managed_session_ignores_unsupported_extended_key_options() {
             "terminal-features".to_owned(),
             ",xterm*:RGB".to_owned(),
         ]));
+}
+
+#[test]
+fn configure_managed_session_preserves_user_modified_enter_bindings() {
+    let calls = Rc::new(RefCell::new(Vec::<Vec<String>>::new()));
+    let calls_for_exec = calls.clone();
+    let mut manager = TmuxRuntimeManager::with_exec(move |args, _options| {
+        calls_for_exec.borrow_mut().push(args.to_vec());
+        match args.join(" ").as_str() {
+            "show-options -v -t aimux-mobile-078d0ecd20ec terminal-features" => Ok(String::new()),
+            "list-keys -T root C-j" => Ok("bind-key -T root C-j send-keys C-j".to_owned()),
+            "list-keys -T root S-Enter" => {
+                Ok("bind-key -T root S-Enter send-keys Escape".to_owned())
+            }
+            _ => Ok(String::new()),
+        }
+    });
+
+    manager
+        .configure_managed_session(
+            "aimux-mobile-078d0ecd20ec",
+            "/repo/mobile",
+            test_runtime_config(),
+        )
+        .expect("configure");
+
+    let calls = calls.borrow();
+    assert!(!calls.iter().any(|args| args
+        == &vec![
+            "unbind-key".to_owned(),
+            "-T".to_owned(),
+            "root".to_owned(),
+            "C-j".to_owned(),
+        ]));
+    assert!(!calls.iter().any(|args| args
+        == &vec![
+            "unbind-key".to_owned(),
+            "-T".to_owned(),
+            "root".to_owned(),
+            "S-Enter".to_owned(),
+        ]));
+    assert!(!calls.iter().any(|args| {
+        args.first().map(String::as_str) == Some("bind-key")
+            && matches!(args.get(3).map(String::as_str), Some("C-j" | "S-Enter"))
+    }));
+}
+
+#[test]
+fn configure_managed_session_replaces_stale_aimux_modified_enter_binding() {
+    let calls = Rc::new(RefCell::new(Vec::<Vec<String>>::new()));
+    let calls_for_exec = calls.clone();
+    let mut manager = TmuxRuntimeManager::with_exec(move |args, _options| {
+        calls_for_exec.borrow_mut().push(args.to_vec());
+        match args.join(" ").as_str() {
+            "show-options -v -t aimux-mobile-078d0ecd20ec terminal-features" => Ok(String::new()),
+            "list-keys -T root C-j" => Ok(String::new()),
+            "list-keys -T root S-Enter" => Ok(format!(
+                "bind-key -T root S-Enter if-shell -F \"#{{m/r:^(claude|codex)$,#{{@aimux-tool}}}}\" \"send-keys -H {AIMUX_STALE_MODIFIED_ENTER_COMMAND}\" \"send-keys S-Enter\""
+            )),
+            _ => Ok(String::new()),
+        }
+    });
+
+    manager
+        .configure_managed_session(
+            "aimux-mobile-078d0ecd20ec",
+            "/repo/mobile",
+            test_runtime_config(),
+        )
+        .expect("configure");
+
+    let calls = calls.borrow();
+    let s_enter_bind = calls
+        .iter()
+        .find(|args| {
+            args.first().map(String::as_str) == Some("bind-key")
+                && args.get(3).map(String::as_str) == Some("S-Enter")
+        })
+        .expect("S-Enter re-bound");
+    assert!(
+        s_enter_bind
+            .iter()
+            .any(|arg| arg == AIMUX_MODIFIED_ENTER_COMMAND)
+    );
+    assert!(
+        !s_enter_bind
+            .iter()
+            .any(|arg| arg.contains(AIMUX_STALE_MODIFIED_ENTER_COMMAND))
+    );
 }
 
 #[test]

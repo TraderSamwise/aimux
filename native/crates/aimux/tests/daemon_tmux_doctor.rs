@@ -3,6 +3,7 @@ use aimux::daemon::tmux_doctor::{
     render_tmux_doctor_report, render_tmux_repair_result, repair_tmux_runtime,
 };
 use aimux::tmux::{
+    AIMUX_MODIFIED_ENTER_COMMAND, AIMUX_STALE_MODIFIED_ENTER_COMMAND,
     AIMUX_TMUX_RUNTIME_CONTRACT_VERSION, TMUX_RUNTIME_CONTRACT_OPTION,
     TMUX_RUNTIME_REBUILD_REQUIRED_OPTION, TmuxCommandSpec, project_session,
 };
@@ -613,6 +614,8 @@ fn repairs_managed_sessions_dashboard_and_agent_window_policy() {
     assert!(repaired_commands.contains("__tmux-control-internal"));
     assert!(repaired_commands.contains("__tmux-statusline-internal"));
     assert!(repaired_commands.contains("__tmux-open-hyperlink-internal"));
+    assert!(repaired_commands.contains(AIMUX_MODIFIED_ENTER_COMMAND));
+    assert!(!repaired_commands.contains(AIMUX_STALE_MODIFIED_ENTER_COMMAND));
     assert!(!repaired_commands.contains("tmux-control.sh"));
     assert!(!repaired_commands.contains("tmux-statusline.sh"));
     assert!(!repaired_commands.contains("tmux-open-hyperlink.sh"));
@@ -629,6 +632,116 @@ fn repairs_managed_sessions_dashboard_and_agent_window_policy() {
     assert!(rendered.contains("Tmux Repair"));
     assert!(rendered.contains("repaired sessions: 3"));
     assert!(rendered.contains("dashboard target:"));
+    fixture.cleanup();
+}
+
+#[test]
+fn repair_preserves_user_modified_enter_bindings() {
+    let fixture = Fixture::new("repair-user-enter");
+    let project_root = fixture.root.join("repo");
+    fs::create_dir_all(&project_root).expect("project root");
+    fs::create_dir_all(fixture.script.parent().expect("script parent")).expect("script dir");
+    fs::write(&fixture.script, "#!/bin/sh\n").expect("statusline script");
+    let control_script = fixture.root.join("scripts/tmux-control.sh");
+    fs::write(&control_script, "#!/bin/sh\n").expect("control script");
+    let canonical_project_root = fs::canonicalize(&project_root).expect("canonical project root");
+    let session_name = project_session(&canonical_project_root, "aimux").session_name;
+
+    let mut runner = FakeRunner {
+        pass_mutations: true,
+        ..FakeRunner::default()
+    };
+    runner.respond("tmux", &["-V"], "tmux 3.5a\n");
+    runner.respond(
+        "tmux",
+        &["list-sessions", "-F", "#{session_name}"],
+        &session_name,
+    );
+    runner.respond("tmux", &["has-session", "-t", &session_name], "");
+    runner.respond(
+        "tmux",
+        &[
+            "show-options",
+            "-v",
+            "-t",
+            &session_name,
+            "terminal-features",
+        ],
+        "",
+    );
+    runner.respond(
+        "tmux",
+        &[
+            "show-options",
+            "-v",
+            "-t",
+            &session_name,
+            "@aimux-runtime-contract",
+        ],
+        "",
+    );
+    runner.respond(
+        "tmux",
+        &[
+            "list-windows",
+            "-t",
+            &session_name,
+            "-F",
+            "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}\t#{pane_dead}",
+        ],
+        "@0\t0\tdashboard\t1\t0\t0\n",
+    );
+    runner.respond(
+        "tmux",
+        &[
+            "list-windows",
+            "-t",
+            &session_name,
+            "-F",
+            "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}\t#{pane_dead}\t#{@aimux-meta}",
+        ],
+        "",
+    );
+    runner.respond(
+        "tmux",
+        &["list-keys", "-T", "root", "C-j"],
+        "bind-key -T root C-j send-keys C-j",
+    );
+    runner.respond(
+        "tmux",
+        &["list-keys", "-T", "root", "S-Enter"],
+        "bind-key -T root S-Enter send-keys Escape",
+    );
+
+    repair_tmux_runtime(
+        &mut runner,
+        &TmuxRepairInput {
+            project_root,
+            aimux_home: fixture.aimux_home.clone(),
+            session_prefix: "aimux".into(),
+            dashboard_command: Some(TmuxCommandSpec {
+                cwd: canonical_project_root.to_string_lossy().into_owned(),
+                command: "aimux".into(),
+                args: vec!["--tmux-dashboard-internal".into()],
+            }),
+            statusline_script_path: fixture.script.clone(),
+            tmux_control_script_path: control_script,
+            tmux_env: None,
+            open: false,
+        },
+    )
+    .expect("repair result");
+
+    assert!(!runner.calls.iter().any(|(_, args)| {
+        args.first().map(String::as_str) == Some("unbind-key")
+            && args.get(2).map(String::as_str) == Some("root")
+            && matches!(args.get(3).map(String::as_str), Some("C-j" | "S-Enter"))
+    }));
+    assert!(!runner.calls.iter().any(|(_, args)| {
+        args.first().map(String::as_str) == Some("bind-key")
+            && args.get(2).map(String::as_str) == Some("root")
+            && matches!(args.get(3).map(String::as_str), Some("C-j" | "S-Enter"))
+    }));
     fixture.cleanup();
 }
 

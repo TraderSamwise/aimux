@@ -36,6 +36,9 @@ pub const TMUX_RUNTIME_CONTRACT_OPTION: &str = "@aimux-runtime-contract";
 pub const TMUX_RUNTIME_REBUILD_REQUIRED_OPTION: &str = "@aimux-runtime-rebuild-required";
 pub const AIMUX_TMUX_RUNTIME_CONTRACT_VERSION: &str = "2";
 pub const AIMUX_TMUX_SOCKET_PATH_ENV: &str = "AIMUX_TMUX_SOCKET_PATH";
+pub const AIMUX_MODIFIED_ENTER_FILTER: &str = "#{m/r:^(claude|codex)$,#{@aimux-tool}}";
+pub const AIMUX_MODIFIED_ENTER_COMMAND: &str = "send-keys -H 1b 5b 31 33 3b 32 75";
+pub const AIMUX_STALE_MODIFIED_ENTER_COMMAND: &str = "send-keys -H 1b5b32373b3575";
 static TMUX_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1034,8 +1037,6 @@ impl TmuxRuntimeManager {
         }
 
         for key in [
-            "C-j",
-            "S-Enter",
             "MouseDown1Pane",
             "MouseDrag1Pane",
             "WheelUpPane",
@@ -1044,8 +1045,8 @@ impl TmuxRuntimeManager {
             self.unbind_key("root", key)?;
         }
         self.apply_default_root_mouse_bindings(&config)?;
-        self.bind_modified_enter(session_name, "C-j", "send-keys C-j")?;
-        self.bind_modified_enter(session_name, "S-Enter", "send-keys S-Enter")?;
+        self.bind_modified_enter("C-j", "send-keys C-j")?;
+        self.bind_modified_enter("S-Enter", "send-keys S-Enter")?;
 
         for key in ["s", "n", "p", "d", "u", "e", "g", "m", "O", "K"] {
             self.unbind_key("prefix", key)?;
@@ -2057,28 +2058,17 @@ impl TmuxRuntimeManager {
         .map(|_| ())
     }
 
-    fn bind_modified_enter(
-        &mut self,
-        session_name: &str,
-        key: &str,
-        fallback: &str,
-    ) -> Result<(), String> {
-        let _ = session_name;
-        self.exec_owned(
-            vec![
-                "bind-key".to_owned(),
-                "-T".to_owned(),
-                "root".to_owned(),
-                key.to_owned(),
-                "if-shell".to_owned(),
-                "-F".to_owned(),
-                "#{m/r:^(claude|codex)$,#{@aimux-tool}}".to_owned(),
-                "send-keys -H 1b 5b 31 33 3b 32 75".to_owned(),
-                fallback.to_owned(),
-            ],
-            None,
-        )
-        .map(|_| ())
+    fn bind_modified_enter(&mut self, key: &str, fallback: &str) -> Result<(), String> {
+        let existing = self
+            .exec_tmux(&["list-keys", "-T", "root", key])
+            .ok()
+            .filter(|value| !value.trim().is_empty());
+        if !should_install_modified_enter_binding(existing.as_deref()) {
+            return Ok(());
+        }
+        let _ = self.unbind_key("root", key);
+        self.exec_owned(modified_enter_binding_argv(key, fallback), None)
+            .map(|_| ())
     }
 
     fn bind_control_command(
@@ -2535,6 +2525,29 @@ pub fn send_modified_enter_argv(window_id: &str) -> Vec<String> {
     .into_iter()
     .map(str::to_owned)
     .collect()
+}
+
+pub fn modified_enter_binding_argv(key: &str, fallback: &str) -> Vec<String> {
+    vec![
+        "bind-key".to_owned(),
+        "-T".to_owned(),
+        "root".to_owned(),
+        key.to_owned(),
+        "if-shell".to_owned(),
+        "-F".to_owned(),
+        AIMUX_MODIFIED_ENTER_FILTER.to_owned(),
+        AIMUX_MODIFIED_ENTER_COMMAND.to_owned(),
+        fallback.to_owned(),
+    ]
+}
+
+pub fn should_install_modified_enter_binding(existing: Option<&str>) -> bool {
+    let Some(existing) = existing.map(str::trim).filter(|value| !value.is_empty()) else {
+        return true;
+    };
+    existing.contains(AIMUX_MODIFIED_ENTER_FILTER)
+        || existing.contains(AIMUX_STALE_MODIFIED_ENTER_COMMAND)
+        || existing.contains("1b 5b 32 37 3b 35 75")
 }
 
 pub fn send_key_argv(window_id: &str, key: &str) -> Vec<String> {
