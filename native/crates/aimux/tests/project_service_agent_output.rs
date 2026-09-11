@@ -20,6 +20,9 @@ use aimux::project_service::operation_failures::list_dashboard_operation_failure
 use aimux::project_service::router::{
     OscOutputTap, ProjectServiceRequestContext, route_project_service_request,
 };
+use aimux::project_service::watcher_delivery::{
+    WatcherDeliveryResult, deliver_agent_input_with_runtime,
+};
 use aimux::runtime_topology::{coerce_runtime_topology, runtime_topology_path};
 use aimux::tmux::{CapturePaneOptions, TmuxTarget};
 use serde_json::{Value, json};
@@ -1673,6 +1676,80 @@ fn agent_input_to_unattended_window_delivers_without_queue_delay() {
 
     assert_eq!(response.status, 200);
     assert!(response.body.get("delivery").is_none());
+    assert_eq!(
+        runtime.inner.actions,
+        vec![
+            FakeRuntimeAction::Text("@1".into(), "deliver now".into()),
+            FakeRuntimeAction::CarriageReturn("@1".into()),
+        ]
+    );
+    assert!(!agent_input_delivery_queue_path(&state_dir).exists());
+    cleanup(project);
+}
+
+#[test]
+fn watcher_delivery_queues_recent_active_client_without_waiting_for_hold_budget() {
+    let project = temp_project("watcher-active-client-queued");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let now_ms = aimux::project_service::scheduler::scheduler_now_ms();
+    let mut runtime = FakeActivityRuntime {
+        input_activity: VecDeque::from([Ok(AgentInputWindowActivity::Attended {
+            active_clients: 1,
+            latest_activity_ms: now_ms,
+        })]),
+        ..Default::default()
+    };
+
+    let started = std::time::Instant::now();
+    let result =
+        deliver_agent_input_with_runtime(&context, "codex-1", "queued loop check", &mut runtime);
+
+    assert_eq!(result, WatcherDeliveryResult::Queued);
+    assert!(result.consumes_cooldown());
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "watcher delivery should hand off to the queue instead of waiting for the hold budget"
+    );
+    assert!(runtime.inner.actions.is_empty());
+    assert!(agent_input_delivery_queue_path(&state_dir).exists());
+
+    runtime
+        .input_activity
+        .push_back(Ok(AgentInputWindowActivity::Unattended));
+    run_pending_agent_input_deliveries_with_runtime(
+        &context,
+        &mut runtime,
+        now_ms + ACTIVE_CLIENT_DWELL_MS + 1,
+    );
+
+    assert_eq!(
+        runtime.inner.actions,
+        vec![
+            FakeRuntimeAction::Text("@1".into(), "queued loop check".into()),
+            FakeRuntimeAction::CarriageReturn("@1".into()),
+        ]
+    );
+    assert!(!agent_input_delivery_queue_path(&state_dir).exists());
+    cleanup(project);
+}
+
+#[test]
+fn watcher_delivery_sends_unattended_input_immediately() {
+    let project = temp_project("watcher-unattended-immediate");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeActivityRuntime {
+        input_activity: VecDeque::from([Ok(AgentInputWindowActivity::Unattended)]),
+        ..Default::default()
+    };
+
+    let result = deliver_agent_input_with_runtime(&context, "codex-1", "deliver now", &mut runtime);
+
+    assert_eq!(result, WatcherDeliveryResult::Delivered);
+    assert!(result.consumes_cooldown());
     assert_eq!(
         runtime.inner.actions,
         vec![

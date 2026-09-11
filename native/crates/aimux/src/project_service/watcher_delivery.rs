@@ -3,8 +3,9 @@
 //! One send is roughly a tmux spawn per line, and tmux has no timeout of its
 //! own, so a wedged server would block the single scheduler thread forever and
 //! silence every other task. Every watcher therefore delivers off the rail with
-//! a bounded wait; a timeout reads as a failed send, which leaves the caller's
-//! cooldown unconsumed so the next scan tries again.
+//! a bounded wait. A held delivery is a successful handoff to the queued input
+//! rail, not a failed send; otherwise loop checks burn ten seconds waiting for a
+//! fifteen second human-input dwell window they are not responsible for owning.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -12,7 +13,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::project_api_contract::routes;
 
@@ -24,34 +25,71 @@ use super::router::ProjectServiceRequestContext;
 /// How long a single delivery may take before the rail gives up on it.
 pub const DELIVERY_TIMEOUT: Duration = Duration::from_secs(10);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WatcherDeliveryResult {
+    Delivered,
+    Queued,
+    Failed,
+}
+
+impl WatcherDeliveryResult {
+    pub fn consumes_cooldown(self) -> bool {
+        matches!(self, Self::Delivered | Self::Queued)
+    }
+}
+
 pub fn deliver_agent_input(
     context: Arc<ProjectServiceRequestContext>,
     session_id: &str,
     text: &str,
 ) -> bool {
-    let body = json!({ "sessionId": session_id, "text": text });
     let (tx, rx) = mpsc::channel();
     let cancelled = Arc::new(AtomicBool::new(false));
     let deadline = Instant::now() + DELIVERY_TIMEOUT;
     let worker_cancelled = Arc::clone(&cancelled);
+    let session_id = session_id.to_owned();
+    let text = text.to_owned();
     thread::spawn(move || {
         let mut runtime = BoundedAgentOutputCaptureRuntime::new(deadline, worker_cancelled);
-        let delivered = route_agent_output_request_with_runtime(
-            &context,
-            "POST",
-            routes::agents::INPUT,
-            Some(&body),
-            &mut runtime,
-        )
-        .is_some_and(|response| response.status == 200);
-        let _ = tx.send(delivered);
+        let result = deliver_agent_input_with_runtime(&context, &session_id, &text, &mut runtime);
+        let _ = tx.send(result);
     });
     match rx.recv_timeout(DELIVERY_TIMEOUT) {
-        Ok(delivered) => delivered,
+        Ok(result) => result.consumes_cooldown(),
         Err(_) => {
             cancelled.store(true, Ordering::SeqCst);
             false
         }
+    }
+}
+
+pub fn deliver_agent_input_with_runtime(
+    context: &ProjectServiceRequestContext,
+    session_id: &str,
+    text: &str,
+    runtime: &mut impl super::agent_output::AgentOutputCaptureRuntime,
+) -> WatcherDeliveryResult {
+    let body = json!({ "sessionId": session_id, "text": text });
+    let Some(response) = route_agent_output_request_with_runtime(
+        context,
+        "POST",
+        routes::agents::INPUT,
+        Some(&body),
+        runtime,
+    ) else {
+        return WatcherDeliveryResult::Failed;
+    };
+    if response.status != 200 {
+        return WatcherDeliveryResult::Failed;
+    }
+    match response
+        .body
+        .get("delivery")
+        .and_then(|delivery| delivery.get("state"))
+        .and_then(Value::as_str)
+    {
+        Some("held") => WatcherDeliveryResult::Queued,
+        _ => WatcherDeliveryResult::Delivered,
     }
 }
 
