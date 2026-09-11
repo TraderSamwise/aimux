@@ -6,6 +6,7 @@
 //! a no-op — publishing still works, the attachment is just local-only.
 
 use serde_json::{Value, json};
+use std::path::Path;
 
 /// Longest we wait for the relay to take an upload. Publishing is interactive,
 /// so a stalled relay must fail the hosting rather than the publish.
@@ -17,6 +18,42 @@ pub struct HostedAttachment {
     pub expires_at: String,
     pub sha256: Option<String>,
     pub size_bytes: Option<u64>,
+}
+
+impl HostedAttachment {
+    pub fn to_publish_json(&self) -> Value {
+        let mut hosted = serde_json::Map::new();
+        hosted.insert(
+            "contentUrl".to_owned(),
+            Value::String(self.content_url.clone()),
+        );
+        hosted.insert(
+            "expiresAt".to_owned(),
+            Value::String(self.expires_at.clone()),
+        );
+        if let Some(sha256) = &self.sha256 {
+            hosted.insert("sha256".to_owned(), Value::String(sha256.clone()));
+        }
+        if let Some(size_bytes) = self.size_bytes {
+            hosted.insert("sizeBytes".to_owned(), Value::Number(size_bytes.into()));
+        }
+        Value::Object(hosted)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum AttachmentHostingResult {
+    Hosted(HostedAttachment),
+    LocalOnly { warning: String },
+    Skipped,
+}
+
+impl AttachmentHostingResult {
+    fn local_only(reason: impl Into<String>) -> Self {
+        Self::LocalOnly {
+            warning: format!("relay attachment hosting failed: {}", reason.into()),
+        }
+    }
 }
 
 /// The relay's websocket URL as an HTTP one.
@@ -75,7 +112,9 @@ pub fn parse_hosted_response(status: u16, body: &Value) -> Result<HostedAttachme
         expires_at: hosted
             .get("expiresAt")
             .and_then(Value::as_str)
-            .unwrap_or_default()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| "relay returned no hosted attachment expiry".to_owned())?
             .to_owned(),
         sha256: hosted
             .get("sha256")
@@ -166,6 +205,44 @@ pub fn base64_encode(bytes: &[u8]) -> String {
     out
 }
 
+pub fn filename_for_published_attachment(source_path: &Path) -> String {
+    source_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or("attachment")
+        .to_owned()
+}
+
+pub fn mime_type_for_published_attachment(file_path: &Path) -> &'static str {
+    let extension = file_path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+    match extension.as_str() {
+        "aac" => "audio/aac",
+        "csv" => "text/csv",
+        "flac" => "audio/flac",
+        "gif" => "image/gif",
+        "jpeg" | "jpg" => "image/jpeg",
+        "json" => "application/json",
+        "m4a" => "audio/m4a",
+        "md" => "text/markdown",
+        "mov" => "video/quicktime",
+        "mp3" => "audio/mpeg",
+        "mp4" => "video/mp4",
+        "ogg" => "audio/ogg",
+        "pdf" => "application/pdf",
+        "png" => "image/png",
+        "txt" => "text/plain",
+        "wav" => "audio/wav",
+        "webm" => "video/webm",
+        "webp" => "image/webp",
+        _ => "application/octet-stream",
+    }
+}
+
 /// What the uploader needs, so the decision logic can be tested without a relay.
 pub trait AttachmentUploader {
     fn post_json(&self, url: &str, token: &str, body: &Value) -> Result<(u16, Value), String>;
@@ -215,12 +292,17 @@ pub fn maybe_host_published_attachment(
     token: &str,
     remote_enabled: bool,
     uploader: &dyn AttachmentUploader,
-) -> Option<HostedAttachment> {
+) -> AttachmentHostingResult {
     if !remote_enabled || token.is_empty() {
-        return None;
+        return AttachmentHostingResult::Skipped;
     }
-    let base = relay_http_url(relay_url)?;
-    let bytes = std::fs::read(input.source_path).ok()?;
+    let Some(base) = relay_http_url(relay_url) else {
+        return AttachmentHostingResult::local_only("invalid relay URL");
+    };
+    let bytes = match std::fs::read(input.source_path) {
+        Ok(bytes) => bytes,
+        Err(error) => return AttachmentHostingResult::local_only(error.to_string()),
+    };
     let body = upload_body(
         input.filename,
         input.mime_type,
@@ -230,15 +312,15 @@ pub fn maybe_host_published_attachment(
     let url = format!("{base}/attachments/hosted");
     match uploader.post_json(&url, token, &body) {
         Ok((status, response)) => match parse_hosted_response(status, &response) {
-            Ok(hosted) => Some(hosted),
+            Ok(hosted) => AttachmentHostingResult::Hosted(hosted),
             Err(error) => {
                 eprintln!("aimux: warning: relay attachment hosting failed: {error}");
-                None
+                AttachmentHostingResult::local_only(error)
             }
         },
         Err(error) => {
             eprintln!("aimux: warning: relay attachment hosting failed: {error}");
-            None
+            AttachmentHostingResult::local_only(error)
         }
     }
 }

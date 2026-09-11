@@ -1,3 +1,7 @@
+use crate::attachment_hosting::{
+    AttachmentHostingResult, PublishedAttachmentHostInput, filename_for_published_attachment,
+    mime_type_for_published_attachment,
+};
 use crate::core_command_contract::CORE_API_ROUTES;
 use crate::core_text::render_core_work_outline_entries_lines;
 use crate::daemon::routing::{
@@ -24,6 +28,12 @@ pub trait DaemonProjectContentTextRuntime {
         body: Value,
         timeout_ms: Option<u64>,
     ) -> ProjectServiceJsonResult;
+    fn host_published_attachment(
+        &mut self,
+        _input: &PublishedAttachmentHostInput<'_>,
+    ) -> AttachmentHostingResult {
+        AttachmentHostingResult::Skipped
+    }
 }
 
 pub fn route_project_content_text_request(
@@ -208,19 +218,25 @@ fn attachment_publish_text_route(
         Ok(session_id) => session_id,
         Err(response) => return response,
     };
+    let source_path = std::path::Path::new(&path);
+    let filename = trimmed_string(route_url, body, "filename")
+        .unwrap_or_else(|| filename_for_published_attachment(source_path));
+    let mime_type = trimmed_string(route_url, body, "mimeType")
+        .unwrap_or_else(|| mime_type_for_published_attachment(source_path).to_owned());
+    let hosting = runtime.host_published_attachment(&PublishedAttachmentHostInput {
+        source_path,
+        filename: &filename,
+        mime_type: &mime_type,
+        session_id: &session_id,
+    });
     let mut request = Map::new();
     request.insert("path".into(), Value::String(path));
     request.insert("sessionId".into(), Value::String(session_id));
-    insert_string_if_some(
-        &mut request,
-        "filename",
-        trimmed_string(route_url, body, "filename"),
-    );
-    insert_string_if_some(
-        &mut request,
-        "mimeType",
-        trimmed_string(route_url, body, "mimeType"),
-    );
+    insert_string_if_some(&mut request, "filename", Some(filename));
+    insert_string_if_some(&mut request, "mimeType", Some(mime_type));
+    if let AttachmentHostingResult::Hosted(hosted) = &hosting {
+        request.insert("hostedAttachment".into(), hosted.to_publish_json());
+    }
     let (json, _) = match unwrap_project_result(runtime.post_project_service_json(
         &project,
         project_routes::ATTACHMENTS_PUBLISH,
@@ -230,12 +246,30 @@ fn attachment_publish_text_route(
         Ok(result) => result,
         Err(response) => return response,
     };
+    let mut json = json;
+    if let AttachmentHostingResult::LocalOnly { warning } = &hosting {
+        if let Some(object) = json.as_object_mut() {
+            object.insert(
+                "hosting".to_owned(),
+                json!({
+                    "status": "localOnly",
+                    "warning": warning,
+                }),
+            );
+        }
+    }
     let reference_text =
         match required_project_service_string(&json, "attachment publish", "referenceText") {
             Ok(reference_text) => reference_text,
             Err(response) => return response,
         };
-    text_or_json_lines(route_url, json, &[reference_text])
+    let mut lines = vec![reference_text];
+    if let AttachmentHostingResult::LocalOnly { warning } = hosting {
+        lines.push(format!(
+            "aimux: warning: attachment published local-only: {warning}"
+        ));
+    }
+    text_or_json_lines(route_url, json, &lines)
 }
 
 fn push_project_query(path: &mut String, name: &str, value: Option<String>) {
