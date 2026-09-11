@@ -619,6 +619,31 @@ fn collaboration_commands_plan_native_text_routes_with_resolved_project() {
         }
     );
 
+    let message_json = classify_core_cli(
+        &["message", "send", "please", "--to=claude-1", "--json"],
+        &context(true, true),
+    )
+    .expect("message send json plan");
+    assert_eq!(message_json.operation, CoreCliOperation::MessageSend);
+    assert_eq!(
+        message_json.action,
+        CoreCliAction::TextRoute {
+            path: "/core/message/send-text?json=1".into(),
+            body: Some(json!({
+                "project": "/repo",
+                "thread": null,
+                "from": null,
+                "to": "claude-1",
+                "assignee": null,
+                "tool": null,
+                "worktree": null,
+                "kind": null,
+                "body": "please",
+                "title": null,
+            })),
+        }
+    );
+
     let handoff = classify_core_cli(
         &[
             "handoff",

@@ -1800,6 +1800,10 @@ fn collaboration_commands_execute_native_text_routes_without_core_command_fallba
         ]),
         &mut runtime,
     );
+    let message_json = run_core_cli_with(
+        &args(&["message", "send", "please", "--to=claude-1", "--json"]),
+        &mut runtime,
+    );
     let handoff = run_core_cli_with(
         &args(&[
             "handoff",
@@ -1835,6 +1839,7 @@ fn collaboration_commands_execute_native_text_routes_without_core_command_fallba
     );
 
     assert_eq!(message.stdout, ["task task-1\nthread thread-1"]);
+    assert_eq!(message_json.stdout, ["task task-1\nthread thread-1"]);
     assert_eq!(handoff.stdout, ["task task-1\nthread thread-1"]);
     assert_eq!(accept.stdout, ["task task-1\nthread thread-1"]);
     assert_eq!(complete.stdout, ["task task-1\nthread thread-1"]);
@@ -1854,6 +1859,21 @@ fn collaboration_commands_execute_native_text_routes_without_core_command_fallba
                     "kind": "decision",
                     "body": "please",
                     "title": "Ask",
+                })),
+            ),
+            (
+                "/core/message/send-text?json=1".into(),
+                Some(json!({
+                    "project": "/repo",
+                    "thread": null,
+                    "from": null,
+                    "to": "claude-1",
+                    "assignee": null,
+                    "tool": null,
+                    "worktree": null,
+                    "kind": null,
+                    "body": "please",
+                    "title": null,
                 })),
             ),
             (

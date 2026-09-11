@@ -790,6 +790,166 @@ fn advertised_command_groups_render_command_scoped_help() {
 }
 
 #[test]
+fn advertised_subcommands_without_specific_help_render_group_scoped_help() {
+    for (index, (args, expected)) in [
+        (
+            vec!["daemon", "ensure", "--help"],
+            "Usage: aimux daemon [options] [command]",
+        ),
+        (
+            vec!["daemon", "status", "--help"],
+            "Usage: aimux daemon [options] [command]",
+        ),
+        (
+            vec!["daemon", "projects", "--help"],
+            "Usage: aimux daemon [options] [command]",
+        ),
+        (
+            vec!["daemon", "project-ensure", "--help"],
+            "Usage: aimux daemon [options] [command]",
+        ),
+        (
+            vec!["daemon", "restart", "--help"],
+            "Usage: aimux daemon [options] [command]",
+        ),
+        (
+            vec!["daemon", "stop", "--help"],
+            "Usage: aimux daemon [options] [command]",
+        ),
+        (
+            vec!["daemon", "kill", "--help"],
+            "Usage: aimux daemon [options] [command]",
+        ),
+        (
+            vec!["projects", "list", "--help"],
+            "Usage: aimux projects [options] [command]",
+        ),
+        (
+            vec!["worktree", "list", "--help"],
+            "Usage: aimux worktree [options] [command]",
+        ),
+        (
+            vec!["thread", "list", "--help"],
+            "Usage: aimux thread [options] [command]",
+        ),
+        (
+            vec!["thread", "show", "--help"],
+            "Usage: aimux thread [options] [command]",
+        ),
+        (
+            vec!["thread", "open", "--help"],
+            "Usage: aimux thread [options] [command]",
+        ),
+        (
+            vec!["thread", "send", "--help"],
+            "Usage: aimux thread [options] [command]",
+        ),
+        (
+            vec!["thread", "mark-seen", "--help"],
+            "Usage: aimux thread [options] [command]",
+        ),
+        (
+            vec!["thread", "status", "--help"],
+            "Usage: aimux thread [options] [command]",
+        ),
+        (
+            vec!["attachment", "publish", "--help"],
+            "Usage: aimux attachment [options] [command]",
+        ),
+        (
+            vec!["message", "send", "--help"],
+            "Usage: aimux message [options] [command]",
+        ),
+        (
+            vec!["handoff", "send", "--help"],
+            "Usage: aimux handoff [options] [command]",
+        ),
+        (
+            vec!["handoff", "accept", "--help"],
+            "Usage: aimux handoff [options] [command]",
+        ),
+        (
+            vec!["handoff", "complete", "--help"],
+            "Usage: aimux handoff [options] [command]",
+        ),
+        (
+            vec!["task", "list", "--help"],
+            "Usage: aimux task [options] [command]",
+        ),
+        (
+            vec!["task", "show", "--help"],
+            "Usage: aimux task [options] [command]",
+        ),
+        (
+            vec!["task", "assign", "--help"],
+            "Usage: aimux task [options] [command]",
+        ),
+        (
+            vec!["task", "accept", "--help"],
+            "Usage: aimux task [options] [command]",
+        ),
+        (
+            vec!["task", "block", "--help"],
+            "Usage: aimux task [options] [command]",
+        ),
+        (
+            vec!["task", "cancel", "--help"],
+            "Usage: aimux task [options] [command]",
+        ),
+        (
+            vec!["task", "complete", "--help"],
+            "Usage: aimux task [options] [command]",
+        ),
+        (
+            vec!["task", "reopen", "--help"],
+            "Usage: aimux task [options] [command]",
+        ),
+        (
+            vec!["review", "list", "--help"],
+            "Usage: aimux review [options] [command]",
+        ),
+        (
+            vec!["review", "approve", "--help"],
+            "Usage: aimux review [options] [command]",
+        ),
+        (
+            vec!["review", "request-changes", "--help"],
+            "Usage: aimux review [options] [command]",
+        ),
+        (
+            vec!["graveyard", "list", "--help"],
+            "Usage: aimux graveyard [options] [command]",
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let root = temp_root(&format!("native-advertised-subcommand-help-{index}"));
+        fs::create_dir_all(root.join("home")).expect("create home");
+        fs::create_dir_all(root.join("aimux-home")).expect("create aimux home");
+
+        let output = Command::new(env!("CARGO_BIN_EXE_aimux"))
+            .env("HOME", root.join("home"))
+            .env("AIMUX_HOME", root.join("aimux-home"))
+            .env("AIMUX_DAEMON_PORT", allocate_daemon_port().to_string())
+            .args(args)
+            .output()
+            .expect("run advertised subcommand help");
+
+        assert!(output.status.success(), "{index} help should succeed");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stdout.contains(expected), "{stdout}");
+        assert!(
+            !stdout.contains("Usage: aimux [options] [command] [tool]"),
+            "{stdout}"
+        );
+        assert!(stderr.is_empty(), "{stderr}");
+        cleanup(root);
+    }
+}
+
+#[test]
 fn bare_default_command_groups_execute_instead_of_printing_help() {
     let fixture = NativeEntrypointFixture::new("native-bare-defaults");
     let repo = fixture.root.join("repo");

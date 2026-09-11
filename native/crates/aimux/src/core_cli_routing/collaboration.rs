@@ -28,7 +28,7 @@ pub fn parse_core_collaboration_args<S: AsRef<str>>(args: &[S]) -> Option<CoreCo
     let mut index = 2;
     while index < args.len() {
         let arg = args[index].as_ref();
-        if arg == "--json" && command == "handoff" {
+        if arg == "--json" {
             parsed.json = true;
             index += 1;
             continue;

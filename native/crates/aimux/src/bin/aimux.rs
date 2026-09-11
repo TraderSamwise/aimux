@@ -509,6 +509,30 @@ fn core_command_help(args: &[String]) -> Option<&'static str> {
         ("hosted", Some("lockdown"), true) => Some(HOSTED_LOCKDOWN_HELP),
         ("hosted", Some("token"), _) => Some(HOSTED_TOKEN_HELP),
         ("hosted", Some("audit"), _) => Some(HOSTED_AUDIT_HELP),
+        _ if help_requested => known_subcommand_group_help(command, subcommand),
+        _ => None,
+    }
+}
+
+fn known_subcommand_group_help(command: &str, subcommand: Option<&str>) -> Option<&'static str> {
+    let subcommand = subcommand?;
+    match (command, subcommand) {
+        (
+            "daemon",
+            "ensure" | "status" | "projects" | "project-ensure" | "restart" | "stop" | "kill",
+        ) => Some(DAEMON_HELP),
+        ("projects", "list") => Some(PROJECTS_HELP),
+        ("worktree", "list") => Some(WORKTREE_HELP),
+        ("thread", "list" | "show" | "open" | "send" | "mark-seen" | "status") => Some(THREAD_HELP),
+        ("attachment", "publish") => Some(ATTACHMENT_HELP),
+        ("message", "send") => Some(MESSAGE_HELP),
+        ("handoff", "send" | "accept" | "complete") => Some(HANDOFF_HELP),
+        (
+            "task",
+            "list" | "show" | "assign" | "accept" | "block" | "cancel" | "complete" | "reopen",
+        ) => Some(TASK_HELP),
+        ("review", "list" | "approve" | "request-changes") => Some(REVIEW_HELP),
+        ("graveyard", "list") => Some(GRAVEYARD_HELP),
         _ => None,
     }
 }
