@@ -1,5 +1,6 @@
 use std::path::Path;
 use std::process::Command;
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -32,6 +33,18 @@ pub trait ProjectLifecycleRuntime {
     fn set_window_option(&mut self, window_id: &str, key: &str, value: &str) -> Result<(), String>;
     fn clear_history(&mut self, window_id: &str) -> Result<(), String>;
     fn has_window(&mut self, target: &TmuxTarget) -> bool;
+    fn wait_for_window_after_launch(&mut self, target: &TmuxTarget, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if self.has_window(target) {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
     fn kill_window(&mut self, window_id: &str) -> Result<(), String>;
     fn rename_window(&mut self, window_id: &str, name: &str) -> Result<(), String>;
 }
