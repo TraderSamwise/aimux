@@ -1915,8 +1915,27 @@ def run_daily_loop_smoke(aimux_bin: Path, mutation: str | None) -> dict[str, Any
             timeout=30,
         )
         stop_payload = parse_json_stdout(stop.stdout, "daily loop agent stop")
-        if stop_payload.get("status") != "graveyard":
-            raise LiveResidualFailure(f"daily loop stop did not graveyard the agent: {stop_payload}")
+        if stop_payload.get("status") != "offline":
+            raise LiveResidualFailure(f"daily loop stop did not leave the agent offline: {stop_payload}")
+        wait_until(
+            lambda: (
+                session
+                if (session := ps_session_by_id(scope, aimux_bin, session_id))
+                and session.get("status") == "offline"
+                else None
+            ),
+            timeout=10,
+            label="daily loop stopped agent appears offline",
+        )
+        kill = run(
+            [str(aimux_bin), "kill", session_id, "--json"],
+            cwd=scope.project,
+            env=scope.env,
+            timeout=30,
+        )
+        kill_payload = parse_json_stdout(kill.stdout, "daily loop agent kill")
+        if kill_payload.get("status") != "graveyard":
+            raise LiveResidualFailure(f"daily loop kill did not graveyard the agent: {kill_payload}")
         wait_until(
             lambda: (
                 payload
@@ -1924,7 +1943,7 @@ def run_daily_loop_smoke(aimux_bin: Path, mutation: str | None) -> dict[str, Any
                 else None
             ),
             timeout=10,
-            label="daily loop stopped agent appears in graveyard",
+            label="daily loop killed agent appears in graveyard",
         )
         resurrect = run(
             [str(aimux_bin), "graveyard", "resurrect", session_id, "--json"],
@@ -2089,7 +2108,7 @@ def run_daily_loop_smoke(aimux_bin: Path, mutation: str | None) -> dict[str, Any
                 "Enter focuses the selected agent and prefix+d returns to dashboard",
                 "worktree add appears in the dashboard loop",
                 "coordination/project/modified-Shift-L-library/topology/graveyard screens open and return",
-                "stop moves an agent into graveyard and restore makes it running again",
+                "stop leaves an agent offline, kill moves it into graveyard, and restore makes it running again",
                 "dashboard reload relinks the attached client to a live dashboard target",
                 "dashboard repaints after resize without another input key",
                 "dashboard quits cleanly",

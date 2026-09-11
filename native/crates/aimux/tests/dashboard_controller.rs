@@ -534,6 +534,53 @@ fn tool_picker_enter_dispatches_agent_spawn_request() {
 }
 
 #[test]
+fn tool_picker_escape_closes_and_restores_dashboard_quit() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.open_tool_picker(
+        vec![DashboardToolEntry {
+            key: "codex".into(),
+            command: "codex".into(),
+            args: vec![],
+            default_args: vec![],
+            default_env: Default::default(),
+        }],
+        DashboardToolPickerMode::Create,
+    );
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Back),
+        DashboardControllerEffect::Render
+    );
+    assert!(controller.tool_picker.is_none());
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Quit),
+        DashboardControllerEffect::Quit
+    );
+}
+
+#[test]
+fn tool_picker_quit_key_quits_instead_of_trapping_input() {
+    let snapshot = snapshot();
+    let mut controller = DashboardController::new(&snapshot);
+    controller.open_tool_picker(
+        vec![DashboardToolEntry {
+            key: "codex".into(),
+            command: "codex".into(),
+            args: vec![],
+            default_args: vec![],
+            default_env: Default::default(),
+        }],
+        DashboardToolPickerMode::Create,
+    );
+
+    assert_eq!(
+        controller.handle_key(&snapshot, DashboardKey::Quit),
+        DashboardControllerEffect::Quit
+    );
+}
+
+#[test]
 fn tool_picker_options_create_launch_override_request() {
     let snapshot = snapshot();
     let mut controller = DashboardController::new(&snapshot);

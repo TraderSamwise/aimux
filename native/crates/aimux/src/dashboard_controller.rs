@@ -1250,6 +1250,7 @@ impl DashboardController {
             return DashboardControllerEffect::Ignored;
         };
         let effect = match key {
+            DashboardKey::Quit => return DashboardControllerEffect::Quit,
             DashboardKey::Back => DashboardToolPickerEffect::Close,
             DashboardKey::LaunchOptions | DashboardKey::Printable('o') => {
                 if let Some(tool) = tool_picker.selected_tool() {
@@ -1271,8 +1272,7 @@ impl DashboardController {
                 tool_picker.select_digit(digit, worktree_path)
             }
             DashboardKey::Enter => tool_picker.create_selected(worktree_path),
-            DashboardKey::Quit
-            | DashboardKey::Stop
+            DashboardKey::Stop
             | DashboardKey::NewAgent
             | DashboardKey::NewService
             | DashboardKey::ForkAgent
