@@ -138,11 +138,12 @@ fn launch_command_uses_stable_shim_for_native_install_root_entry() {
             ),
         ]),
         Some(native_entry.to_string_lossy().into_owned()),
-    ));
+    ))
+    .expect("dashboard launch command");
 
     assert_eq!(command.source, AimuxCliLaunchSource::StableShim);
     assert_eq!(command.command, stable.to_string_lossy());
-    assert_eq!(command.args, vec!["--tmux-dashboard-internal"]);
+    assert_eq!(command.args, vec!["__dashboard-internal-native"]);
 }
 
 #[test]
@@ -172,39 +173,37 @@ fn daemon_launch_uses_explicit_native_binary_when_available() {
 }
 
 #[test]
-fn dashboard_launch_uses_legacy_default_unless_native_is_requested() {
+fn dashboard_launch_defaults_to_native_and_rejects_unknown_selector() {
     let test_dir = TestDir::new();
     let default_command = get_aimux_dashboard_launch_command(options(
         &test_dir,
         BTreeMap::new(),
         Some(test_dir.0.join("dev/aimux").to_string_lossy().into_owned()),
-    ));
+    ))
+    .expect("default dashboard launch command");
     assert_eq!(
         default_command.args,
         vec![
             test_dir.0.join("current/aimux").to_string_lossy(),
-            "--tmux-dashboard-internal".into()
+            "__dashboard-internal-native".into()
         ]
     );
 
-    let node_command = get_aimux_dashboard_launch_command(options(
+    let error = get_aimux_dashboard_launch_command(options(
         &test_dir,
         BTreeMap::from([("AIMUX_DASHBOARD_IMPLEMENTATION".into(), "node".into())]),
         Some(test_dir.0.join("dev/aimux").to_string_lossy().into_owned()),
-    ));
-    assert_eq!(
-        node_command.args,
-        vec![
-            test_dir.0.join("current/aimux").to_string_lossy(),
-            "--tmux-dashboard-internal".into()
-        ]
-    );
+    ))
+    .expect_err("unknown dashboard implementation should fail");
+    assert!(error.contains("AIMUX_DASHBOARD_IMPLEMENTATION"));
+    assert!(error.contains("\"node\""));
 
     let native_command = get_aimux_dashboard_launch_command(options(
         &test_dir,
         BTreeMap::from([("AIMUX_DASHBOARD_IMPLEMENTATION".into(), " native ".into())]),
         Some(test_dir.0.join("dev/aimux").to_string_lossy().into_owned()),
-    ));
+    ))
+    .expect("native dashboard launch command");
     assert_eq!(
         native_command.args,
         vec![
@@ -317,7 +316,8 @@ fn native_launch_prefers_current_entry_root_over_stale_native_bin_env() {
             ),
         ]),
         Some(current_binary.to_string_lossy().into_owned()),
-    ));
+    ))
+    .expect("native dashboard launch command");
 
     assert_eq!(command.source, AimuxCliLaunchSource::NativeBinary);
     assert_eq!(
@@ -382,7 +382,7 @@ fn daemon_and_identity_launch_use_native_binary_from_stable_shim_symlink() {
 }
 
 #[test]
-fn dashboard_native_selector_prefers_native_binary_but_default_uses_legacy_entrypoint() {
+fn dashboard_launch_uses_native_binary_by_default_and_for_native_selector() {
     let test_dir = TestDir::new();
     let stable = test_dir.0.join("bin/aimux");
     let install_root = test_dir.0.join("native/old-build");
@@ -410,10 +410,14 @@ fn dashboard_native_selector_prefers_native_binary_but_default_uses_legacy_entry
         &test_dir,
         env.clone(),
         Some(native_entry.to_string_lossy().into_owned()),
-    ));
-    assert_eq!(default_dashboard.source, AimuxCliLaunchSource::StableShim);
-    assert_eq!(default_dashboard.command, stable.to_string_lossy());
-    assert_eq!(default_dashboard.args, vec!["--tmux-dashboard-internal"]);
+    ))
+    .expect("default dashboard launch command");
+    assert_eq!(default_dashboard.source, AimuxCliLaunchSource::NativeBinary);
+    assert_eq!(
+        default_dashboard.command,
+        native_binary.canonicalize().unwrap().to_string_lossy()
+    );
+    assert_eq!(default_dashboard.args, vec!["__dashboard-internal-native"]);
 
     let native_dashboard = get_aimux_dashboard_launch_command(options(
         &test_dir,
@@ -423,7 +427,8 @@ fn dashboard_native_selector_prefers_native_binary_but_default_uses_legacy_entry
             native_env
         },
         Some(native_entry.to_string_lossy().into_owned()),
-    ));
+    ))
+    .expect("native dashboard launch command");
     assert_eq!(native_dashboard.source, AimuxCliLaunchSource::NativeBinary);
     assert_eq!(
         native_dashboard.command,
@@ -431,16 +436,15 @@ fn dashboard_native_selector_prefers_native_binary_but_default_uses_legacy_entry
     );
     assert_eq!(native_dashboard.args, vec!["__dashboard-internal-native"]);
 
-    let mut node_env = env;
-    node_env.insert("AIMUX_DASHBOARD_IMPLEMENTATION".into(), "node".into());
-    let node_dashboard = get_aimux_dashboard_launch_command(options(
+    let mut invalid_env = env;
+    invalid_env.insert("AIMUX_DASHBOARD_IMPLEMENTATION".into(), "Native".into());
+    let error = get_aimux_dashboard_launch_command(options(
         &test_dir,
-        node_env,
+        invalid_env,
         Some(native_entry.to_string_lossy().into_owned()),
-    ));
-    assert_eq!(node_dashboard.source, AimuxCliLaunchSource::StableShim);
-    assert_eq!(node_dashboard.command, stable.to_string_lossy());
-    assert_eq!(node_dashboard.args, vec!["--tmux-dashboard-internal"]);
+    ))
+    .expect_err("unknown dashboard implementation should fail");
+    assert!(error.contains("\"Native\""));
 }
 
 fn platform_native_binary_path(install_root: &std::path::Path) -> PathBuf {

@@ -55,17 +55,20 @@ fn run_cli_launcher_contract_case(input: &Value) -> Value {
     with_fixture_paths(input, |paths| {
         let options = launch_options(input, paths);
         let command = match string_field(input, "api") {
-            "getAimuxDaemonLaunchCommand" => get_aimux_daemon_launch_command(options),
+            "getAimuxDaemonLaunchCommand" => Ok(get_aimux_daemon_launch_command(options)),
             "getAimuxDashboardLaunchCommand" => get_aimux_dashboard_launch_command(options),
-            "getAimuxProjectServiceLaunchCommand" => get_aimux_project_service_launch_command(
+            "getAimuxProjectServiceLaunchCommand" => Ok(get_aimux_project_service_launch_command(
                 string_field(input, "projectId"),
                 string_field(input, "projectRoot"),
                 options,
-            ),
-            "getAimuxCurrentCliIdentity" => get_aimux_current_cli_identity(options),
+            )),
+            "getAimuxCurrentCliIdentity" => Ok(get_aimux_current_cli_identity(options)),
             api => panic!("unknown cli-launcher api: {api}"),
         };
-        normalize_command(command, paths)
+        match command {
+            Ok(command) => normalize_command(command, paths),
+            Err(error) => json!({ "error": error }),
+        }
     })
 }
 

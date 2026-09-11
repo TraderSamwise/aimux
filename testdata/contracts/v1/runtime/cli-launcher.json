@@ -66,10 +66,10 @@
         }
       },
       "output": {
-        "command": "<tmp>/bin/aimux",
-        "args": ["--tmux-dashboard-internal"],
-        "source": "stable-shim",
-        "currentEntryPath": "<repo>/dist/launcher-bin.js",
+        "command": "<tmp>/native/old-build/native/<platform-arch>/aimux",
+        "args": ["__dashboard-internal-native"],
+        "source": "native-binary",
+        "currentEntryPath": "<tmp>/native/old-build/native/<platform-arch>/aimux",
         "stableShimPath": "<tmp>/bin/aimux"
       },
       "inputSha256": "c07d033edbb49ec2b9950513536685014c6a5f84bb07502bce728b6f2cd9fa6f"

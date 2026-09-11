@@ -86,7 +86,8 @@ pub fn get_dashboard_command_spec_with_options(
         current_entry_path: Some(script_path.clone()),
         process_exec_path: Some(options.process_exec_path.clone()),
         home_dir: Some(options.home_dir.clone()),
-    });
+    })
+    .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
     let artifact_paths = match launch.source {
         AimuxCliLaunchSource::NativeBinary => vec![PathBuf::from(&launch.command)],
         AimuxCliLaunchSource::StableShim => resolve_stable_shim_artifact_paths(

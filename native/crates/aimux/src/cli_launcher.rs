@@ -54,25 +54,25 @@ pub fn get_aimux_daemon_launch_command(options: AimuxCliLaunchOptions) -> AimuxC
     )
 }
 
-pub fn get_aimux_dashboard_launch_command(options: AimuxCliLaunchOptions) -> AimuxCliLaunchCommand {
-    let use_native_dashboard = options
+pub fn get_aimux_dashboard_launch_command(
+    options: AimuxCliLaunchOptions,
+) -> Result<AimuxCliLaunchCommand, String> {
+    if let Some(value) = options
         .env
         .get("AIMUX_DASHBOARD_IMPLEMENTATION")
         .map(|value| value.trim())
-        == Some("native");
-    if use_native_dashboard {
-        resolve_aimux_cli_launch_command_with_native_preference(
-            native_dashboard_launch_args(),
-            options,
-            true,
-        )
-    } else {
-        resolve_aimux_cli_launch_command_with_native_preference(
-            legacy_dashboard_launch_args(),
-            options,
-            false,
-        )
+        .filter(|value| !value.is_empty())
+        && value != "native"
+    {
+        return Err(format!(
+            "unrecognized AIMUX_DASHBOARD_IMPLEMENTATION value {value:?}; expected \"native\""
+        ));
     }
+    Ok(resolve_aimux_cli_launch_command_with_native_preference(
+        native_dashboard_launch_args(),
+        options,
+        true,
+    ))
 }
 
 pub fn get_aimux_project_service_launch_command(
@@ -196,10 +196,6 @@ fn project_service_launch_args(project_id: &str, project_root: &str) -> Vec<Stri
 
 fn native_dashboard_launch_args() -> Vec<String> {
     vec!["__dashboard-internal-native".into()]
-}
-
-fn legacy_dashboard_launch_args() -> Vec<String> {
-    vec!["--tmux-dashboard-internal".into()]
 }
 
 struct ResolveInstalledNativeInput<'a> {
