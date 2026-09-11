@@ -10,6 +10,11 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
+
+const EXPOSE_RESIZE_RELAUNCH_DEADLINE: Duration = Duration::from_secs(5);
+const EXPOSE_RESIZE_RELAUNCH_SLEEP: Duration = Duration::from_millis(50);
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TmuxControlOptions {
@@ -115,8 +120,16 @@ pub fn run_tmux_control(options: TmuxControlOptions) -> i32 {
     if control.fallback_local_control() {
         return 0;
     }
-    control.report_control_failure("no local tmux target available");
-    0
+    let reason = control
+        .control_failure_reason
+        .clone()
+        .unwrap_or_else(|| "no local tmux target available".to_owned());
+    control.report_control_failure(&reason);
+    if control.control_failure_exits_nonzero {
+        1
+    } else {
+        0
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -156,6 +169,8 @@ struct TmuxControl {
     dashboard_session: String,
     dashboard_index: String,
     dashboard_window_id: String,
+    control_failure_reason: Option<String>,
+    control_failure_exits_nonzero: bool,
     debug_log: PathBuf,
 }
 
@@ -170,6 +185,8 @@ impl TmuxControl {
             dashboard_session: String::new(),
             dashboard_index: String::new(),
             dashboard_window_id: String::new(),
+            control_failure_reason: None,
+            control_failure_exits_nonzero: false,
             debug_log: debug_root.join("aimux-debug.log"),
         }
     }
@@ -842,7 +859,7 @@ impl TmuxControl {
                 )
             };
         let current_project_control = self.current_window_project_control();
-        let mut popup_retry_count = 0;
+        let resize_relaunch_started_at = Instant::now();
         let mut selected_expose_window = String::new();
         let popup_status = loop {
             let Some(expose_status) = create_temp_file() else {
@@ -916,8 +933,10 @@ impl TmuxControl {
             let _ = fs::remove_file(&expose_context);
             let _ = fs::remove_file(&expose_status);
             let _ = fs::remove_file(&expose_selection);
-            if status == 75 && popup_retry_count < 3 {
-                popup_retry_count += 1;
+            if status == 75
+                && resize_relaunch_started_at.elapsed() < EXPOSE_RESIZE_RELAUNCH_DEADLINE
+            {
+                thread::sleep(EXPOSE_RESIZE_RELAUNCH_SLEEP);
                 continue;
             }
             break status;
@@ -928,6 +947,13 @@ impl TmuxControl {
             return false;
         }
         if popup_status != 0 {
+            if popup_status == 75 {
+                self.control_failure_reason =
+                    Some("expose did not settle after terminal resize".to_owned());
+                self.control_failure_exits_nonzero = true;
+            } else {
+                self.control_failure_reason = Some("no local tmux target available".to_owned());
+            }
             return false;
         }
         if !selected_expose_window.is_empty() {

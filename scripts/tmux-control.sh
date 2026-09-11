@@ -821,7 +821,7 @@ show_local_expose() {
       selected_expose_window=$(head -n 1 "$expose_selection" 2>/dev/null || true)
     fi
     rm -f "$expose_context" "$expose_status" "$expose_selection"
-    if [ "$popup_status" = 75 ] && [ "$popup_retry_count" -lt 3 ]; then
+    if [ "$popup_status" = 75 ] && [ "$popup_retry_count" -lt 100 ]; then
       popup_retry_count=$((popup_retry_count + 1))
       continue
     fi
@@ -831,7 +831,15 @@ show_local_expose() {
     switch_local_dashboard || { dashboard_candidate_needs_reload && reload_local_dashboard && return 0; }
     return 1
   fi
-  [ "$popup_status" = 0 ] || return 1
+  if [ "$popup_status" != 0 ]; then
+    if [ "$popup_status" = 75 ]; then
+      control_failure_reason="expose did not settle after terminal resize"
+      control_failure_exits_nonzero=1
+    else
+      control_failure_reason="no local tmux target available"
+    fi
+    return 1
+  fi
   if [ -n "$selected_expose_window" ]; then
     switch_local_window "$selected_expose_window"
   fi
@@ -1264,8 +1272,8 @@ fallback_local_control() {
 case "$action" in
   next|prev|attention|dashboard|coordination|overseer|menu|expose|meta|window|active|team)
     fallback_local_control && exit 0
-    report_control_failure "no local tmux target available"
-    exit 0
+    report_control_failure "${control_failure_reason:-no local tmux target available}"
+    exit "${control_failure_exits_nonzero:-0}"
     ;;
   *) exit 1 ;;
 esac

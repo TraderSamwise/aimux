@@ -2391,11 +2391,19 @@ def run_expose_interaction_smoke(aimux_bin: Path, mutation: str | None) -> dict[
         open_expose("managed expose opens before resize")
         drain_fd_now(client_fd)
         if mutation != "expose-resize-stale":
-            set_pty_size(client_fd, 100, 26)
-            os.kill(proc.pid, signal.SIGWINCH)
-            tmux_cmd_for_socket(tmux, socket_name, ["resize-window", "-t", focused_agent["windowId"], "-x", "100", "-y", "26"])
-            tmux_cmd_for_socket(tmux, socket_name, ["resize-pane", "-t", focused_agent["windowId"], "-x", "100", "-y", "26"])
-            tmux_cmd_for_socket(tmux, socket_name, ["refresh-client", "-t", client_tty, "-S"], check=False)
+            resize_steps = [
+                (118, 30), (116, 29), (114, 29), (112, 28),
+                (110, 28), (108, 27), (106, 27), (104, 26),
+                (102, 26), (100, 26), (102, 26), (104, 26),
+                (102, 26), (100, 26),
+            ]
+            for cols, rows in resize_steps:
+                set_pty_size(client_fd, cols, rows)
+                os.kill(proc.pid, signal.SIGWINCH)
+                tmux_cmd_for_socket(tmux, socket_name, ["resize-window", "-t", focused_agent["windowId"], "-x", str(cols), "-y", str(rows)])
+                tmux_cmd_for_socket(tmux, socket_name, ["resize-pane", "-t", focused_agent["windowId"], "-x", str(cols), "-y", str(rows)])
+                tmux_cmd_for_socket(tmux, socket_name, ["refresh-client", "-t", client_tty, "-S"], check=False)
+                time.sleep(0.08)
         wait_until(
             lambda: attached_client_size() == "100x26",
             timeout=5,
