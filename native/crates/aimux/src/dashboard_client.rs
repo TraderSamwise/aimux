@@ -126,9 +126,21 @@ pub fn execute_dashboard_action(
     if !(200..300).contains(&response.status)
         || response.json.get("ok").and_then(Value::as_bool) == Some(false)
     {
-        return Err(anyhow!("dashboard action failed: {}", response.status));
+        return Err(anyhow!(
+            "{}",
+            dashboard_response_error("dashboard action failed", response.status, &response.json)
+        ));
     }
     Ok(response.json)
+}
+
+fn dashboard_response_error(prefix: &str, status: u16, body: &Value) -> String {
+    body.get("error")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|message| !message.is_empty())
+        .map(|message| format!("{prefix}: {message}"))
+        .unwrap_or_else(|| format!("{prefix}: {status}"))
 }
 
 pub fn refresh_dashboard_statusline(
@@ -217,4 +229,30 @@ fn string_field(value: &Value, field: &str) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_owned)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn dashboard_response_error_includes_project_service_reason() {
+        assert_eq!(
+            dashboard_response_error(
+                "dashboard action failed",
+                500,
+                &json!({ "ok": false, "error": "tmux failed to create window" })
+            ),
+            "dashboard action failed: tmux failed to create window"
+        );
+    }
+
+    #[test]
+    fn dashboard_response_error_falls_back_to_status_without_reason() {
+        assert_eq!(
+            dashboard_response_error("dashboard action failed", 503, &json!({ "ok": false })),
+            "dashboard action failed: 503"
+        );
+    }
 }

@@ -1,5 +1,6 @@
 use serde_json::{Map, Value};
 use std::path::Path;
+use std::time::Duration;
 
 use crate::config::load_config_for_project;
 use crate::managed_launch_env::wrap_command_with_managed_launch_env_extra;
@@ -28,6 +29,8 @@ use super::ids::pseudo_uuid_v4;
 use super::json_helpers::{find_by_id, string_array_field, string_field, trimmed_string};
 use super::runtime_adapter::ProjectLifecycleRuntime;
 use super::session_state::{clear_session_transcript_path, set_session_control_flags};
+
+const AGENT_LAUNCH_WINDOW_VISIBLE_TIMEOUT: Duration = Duration::from_millis(500);
 
 #[derive(Debug)]
 pub(super) struct AgentSessionLaunchInput {
@@ -220,7 +223,16 @@ pub(super) fn launch_agent_session(
         let _ = runtime.kill_window(&target.window_id);
         return Err(error);
     }
-    apply_agent_window_policy(runtime, &target.window_id, &input.tool_key)?;
+    if let Err(error) = apply_agent_window_policy(runtime, &target.window_id, &input.tool_key) {
+        let _ = runtime.kill_window(&target.window_id);
+        return Err(error);
+    }
+    if !runtime.wait_for_window_after_launch(&target, AGENT_LAUNCH_WINDOW_VISIBLE_TIMEOUT) {
+        return Err(format!(
+            "agent launch failed: tmux window {} for session {} disappeared before startup completed",
+            target.window_id, input.session_id
+        ));
+    }
     update_runtime_topology(runtime_topology_path(&project_state_dir), |topology| {
         upsert_agent_topology(
             topology,
