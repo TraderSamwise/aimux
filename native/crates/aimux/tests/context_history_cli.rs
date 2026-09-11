@@ -59,7 +59,7 @@ fn compact_entrypoint_matches_node_cli_contract_without_node_fallback() {
     assert!(stdout.contains("Compacting history for 2 session(s)..."));
     let canonical_repo = repo.canonicalize().expect("canonical repo");
     assert!(stdout.contains(&format!(
-        "Done. Summary written to {}/summary.md",
+        "Done. Summaries written for 2 of 2 session(s) under {}.",
         canonical_repo.join(".aimux/context").display()
     )));
     assert!(
@@ -79,6 +79,89 @@ fn compact_entrypoint_matches_node_cli_contract_without_node_fallback() {
     assert!(claude_summary.contains("## CLI summary"));
 }
 
+#[test]
+fn compact_reports_skipped_history_without_claiming_summary_written() {
+    let fixture = CliFixture::new("compact-skipped", 46470);
+    let repo = fixture.root.join("repo");
+    fs::create_dir_all(repo.join(".git")).expect("create repo marker");
+    let history_dir = repo.join(".aimux/history");
+    fs::create_dir_all(&history_dir).expect("create history dir");
+    fs::write(history_dir.join("codex-empty.jsonl"), "not-json\n")
+        .expect("write malformed history");
+    let compact_log = fixture.root.join("compact-input.txt");
+    let compact_command = fake_compact_command(&fixture.root, &compact_log);
+    write_compact_config(&repo, &compact_command);
+
+    let output = fixture
+        .command()
+        .current_dir(&repo)
+        .arg("compact")
+        .output()
+        .expect("run aimux compact");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.contains("Compacting history for 1 session(s)..."));
+    assert!(stdout.contains(
+        "No summaries written. Found 1 history session(s), compacted 0, skipped 1, failed 0."
+    ));
+    assert!(stdout.contains("- codex-empty: no readable history turns"));
+    assert!(
+        !stdout.contains("Summary written"),
+        "skipped compaction must not claim a summary was written"
+    );
+    assert!(stderr.contains("No compactable history turns were found."));
+    assert!(
+        !compact_log.exists(),
+        "compact command should not run without readable turns"
+    );
+    assert!(!repo.join(".aimux/context/codex-empty/summary.md").exists());
+}
+
+#[test]
+fn compact_surfaces_summary_write_failure_without_claiming_success() {
+    let fixture = CliFixture::new("compact-write-failure", 46480);
+    let repo = fixture.root.join("repo");
+    fs::create_dir_all(repo.join(".git")).expect("create repo marker");
+    let history_dir = repo.join(".aimux/history");
+    fs::create_dir_all(&history_dir).expect("create history dir");
+    write_history(
+        &history_dir,
+        "codex-1",
+        &[json!({ "ts": "2026-09-09T01:00:00.000Z", "type": "prompt", "content": "summarize me" })],
+    );
+    let blocking_summary_path = repo.join(".aimux/context/codex-1/summary.md");
+    fs::create_dir_all(&blocking_summary_path).expect("create summary directory");
+    let compact_log = fixture.root.join("compact-input.txt");
+    let compact_command = fake_compact_command(&fixture.root, &compact_log);
+    write_compact_config(&repo, &compact_command);
+
+    let output = fixture
+        .command()
+        .current_dir(&repo)
+        .arg("compact")
+        .output()
+        .expect("run aimux compact");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.contains(
+        "No summaries written. Found 1 history session(s), compacted 0, skipped 0, failed 1."
+    ));
+    assert!(
+        !stdout.contains("Summary written"),
+        "failed writes must not claim a summary was written"
+    );
+    assert!(stderr.contains("Compaction failed for 1 session(s):"));
+    assert!(stderr.contains("- codex-1: failed to write summary artifacts:"));
+    assert!(
+        compact_log.exists(),
+        "compact command should have run before the artifact write failed"
+    );
+}
+
 fn write_history(history_dir: &Path, session_id: &str, turns: &[serde_json::Value]) {
     let body = turns
         .iter()
@@ -90,6 +173,21 @@ fn write_history(history_dir: &Path, session_id: &str, turns: &[serde_json::Valu
         format!("{body}\n"),
     )
     .expect("write history");
+}
+
+fn write_compact_config(repo: &Path, compact_command: &Path) {
+    fs::write(
+        repo.join(".aimux/config.json"),
+        serde_json::to_string(&json!({
+            "tools": {
+                "claude": {
+                    "compactCommand": compact_command.to_string_lossy()
+                }
+            }
+        }))
+        .expect("config json"),
+    )
+    .expect("write config");
 }
 
 fn fake_compact_command(root: &Path, log: &Path) -> PathBuf {

@@ -3,7 +3,9 @@ use crate::backend_session_ids::{
     resolve_agent_identity,
 };
 use crate::config::init_project;
-use crate::context_compactor::{context_dir, list_history_session_ids, llm_compact};
+use crate::context_compactor::{
+    CompactReport, CompactSessionStatus, context_dir, list_history_session_ids, llm_compact,
+};
 use crate::core_cli::{
     CoreCliAction, CoreCliContext, CoreCliOperation, CoreCliOutputMode, CoreCommandCall,
     CoreCommandOk, CoreCommandRequestOptions, CoreLoopActorContext,
@@ -1227,14 +1229,63 @@ fn run_compact(project_root: &str) -> Result<CoreCliExecution, String> {
         Ok(session_ids) => session_ids,
         Err(message) => return Ok(CoreCliExecution::error(message, 1)),
     };
-    llm_compact(project_root, &session_ids);
-    Ok(CoreCliExecution::ok(vec![
-        format!("Compacting history for {} session(s)...", session_ids.len()),
-        format!(
-            "Done. Summary written to {}/summary.md",
+    let report = llm_compact(project_root, &session_ids);
+    Ok(render_compact_report(
+        project_root,
+        session_ids.len(),
+        &report,
+    ))
+}
+
+fn render_compact_report(
+    project_root: &str,
+    requested_sessions: usize,
+    report: &CompactReport,
+) -> CoreCliExecution {
+    let mut stdout = vec![format!(
+        "Compacting history for {requested_sessions} session(s)..."
+    )];
+    let compacted = report.compacted_count();
+    let skipped = report.skipped_count();
+    let failed = report.failed_count();
+    if compacted > 0 {
+        stdout.push(format!(
+            "Done. Summaries written for {compacted} of {requested_sessions} session(s) under {}.",
             context_dir(project_root).display()
-        ),
-    ]))
+        ));
+    } else {
+        stdout.push(format!(
+            "No summaries written. Found {requested_sessions} history session(s), compacted 0, skipped {skipped}, failed {failed}."
+        ));
+    }
+    if skipped > 0 {
+        stdout.push(format!("Skipped {skipped} session(s):"));
+        for session in &report.sessions {
+            if let CompactSessionStatus::Skipped { reason } = &session.status {
+                stdout.push(format!("- {}: {reason}", session.session_id));
+            }
+        }
+    }
+    if failed == 0 && compacted > 0 {
+        return CoreCliExecution::ok(stdout);
+    }
+
+    let mut stderr = Vec::new();
+    if failed > 0 {
+        stderr.push(format!("Compaction failed for {failed} session(s):"));
+        for session in &report.sessions {
+            if let CompactSessionStatus::Failed { reason } = &session.status {
+                stderr.push(format!("- {}: {reason}", session.session_id));
+            }
+        }
+    } else {
+        stderr.push("No compactable history turns were found.".into());
+    }
+    CoreCliExecution {
+        code: 1,
+        stdout,
+        stderr,
+    }
 }
 
 fn run_command_action(
