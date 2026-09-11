@@ -101,7 +101,9 @@ pub fn project_materialization_refusal_reason(
     project_root: &Path,
     daemon_home: &Path,
 ) -> Option<&'static str> {
-    if is_ephemeral_or_fixture_temp_project_root(project_root) {
+    if is_ephemeral_or_fixture_temp_project_root(project_root)
+        && !is_isolated_test_aimux_home(daemon_home)
+    {
         return Some("temporary project");
     }
     match crate::paths::project_root_status(project_root) {

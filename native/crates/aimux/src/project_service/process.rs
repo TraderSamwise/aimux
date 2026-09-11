@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use serde_json::json;
 use sha1::{Digest, Sha1};
 use std::fs;
@@ -144,15 +144,43 @@ pub fn run_project_service_startup_tasks(
 pub fn prepare_project_service_startup(
     options: ProjectServiceInternalOptions,
 ) -> Result<ProjectServiceStartup> {
+    let resolver = PathResolver::from_env();
+    prepare_project_service_startup_with_resolver(options, resolver)
+}
+
+fn prepare_project_service_startup_with_resolver(
+    options: ProjectServiceInternalOptions,
+    mut resolver: PathResolver,
+) -> Result<ProjectServiceStartup> {
     let requested_root = options
         .project_root
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-    let mut resolver = PathResolver::from_env();
     let project_root = resolver.resolve_repo_root(requested_root);
     let project_id = options
         .project_id
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| compute_project_id(&project_root));
+    let aimux_home = resolver.global_aimux_dir();
+    if let Some(reason) = crate::runtime_safety_guard::project_materialization_refusal_reason(
+        &project_root,
+        &aimux_home,
+    ) {
+        log_at(
+            LogLevel::Debug,
+            "project service startup refused",
+            "runtime-safety",
+            Some(json!({
+                "projectId": project_id.clone(),
+                "projectRoot": project_root.to_string_lossy(),
+                "reason": reason,
+                "source": "project-service-internal",
+            })),
+        );
+        bail!(
+            "refusing to materialize {reason}: {}",
+            project_root.display()
+        );
+    }
     let project_state_dir = resolver.project_state_dir_for(&project_root);
     Ok(ProjectServiceStartup {
         desired_port: desired_project_service_port(&project_id),
@@ -606,6 +634,92 @@ impl Drop for ProjectExposeSocketGuard {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static TEST_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
+
+    fn unique_test_root(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "aimux-project-service-startup-{label}-{}-{}",
+            std::process::id(),
+            TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
+
+    fn resolver_for(root: &Path, aimux_home: &Path) -> PathResolver {
+        PathResolver::new(
+            root,
+            root.join("home"),
+            Some(aimux_home.to_string_lossy().into_owned()),
+        )
+    }
+
+    fn create_git_checkout(path: &Path) {
+        fs::create_dir_all(path.join(".git")).expect("create git checkout");
+    }
+
+    #[test]
+    fn project_service_startup_refuses_temp_fixture_root_with_real_home_before_state_dir() {
+        let root = unique_test_root("refuse-real-home");
+        let project_root = root
+            .join("aimux-rust-project-service-notifications-leak")
+            .join("repo");
+        create_git_checkout(&project_root);
+        let aimux_home = root.join("real-aimux-home");
+        fs::create_dir_all(&aimux_home).expect("create aimux home");
+        let resolver = resolver_for(&root, &aimux_home);
+
+        let error = prepare_project_service_startup_with_resolver(
+            ProjectServiceInternalOptions {
+                project_root: Some(project_root.clone()),
+                project_id: None,
+            },
+            resolver,
+        )
+        .expect_err("fixture temp project should not start against real aimux home");
+
+        assert!(
+            format!("{error:#}").contains("refusing to materialize temporary project"),
+            "unexpected error: {error:#}"
+        );
+        assert!(
+            !aimux_home.join("projects").exists(),
+            "refused startup must not create a real-home project state dir"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn project_service_startup_allows_temp_git_checkout_with_isolated_home() {
+        let root = unique_test_root("allow-isolated-home");
+        let project_root = root.join("aimux-legitimate-temp-checkout");
+        create_git_checkout(&project_root);
+        let aimux_home = root.join("isolated-aimux-home");
+        fs::create_dir_all(&aimux_home).expect("create aimux home");
+        fs::write(
+            aimux_home.join(crate::runtime_safety_guard::TEST_ISOLATION_MARKER),
+            r#"{"ownerPid":1,"kind":"cargo-test"}"#,
+        )
+        .expect("write isolation marker");
+        let resolver = resolver_for(&root, &aimux_home);
+
+        let startup = prepare_project_service_startup_with_resolver(
+            ProjectServiceInternalOptions {
+                project_root: Some(project_root.clone()),
+                project_id: None,
+            },
+            resolver,
+        )
+        .expect("isolated temp git checkout should start");
+
+        assert_eq!(startup.project_root, project_root);
+        assert!(
+            startup
+                .project_state_dir
+                .starts_with(aimux_home.join("projects"))
+        );
+        let _ = fs::remove_dir_all(root);
+    }
 
     #[test]
     fn expose_socket_startup_failure_is_returned_with_context() {
