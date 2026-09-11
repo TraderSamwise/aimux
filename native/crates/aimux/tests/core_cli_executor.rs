@@ -2644,7 +2644,7 @@ fn restart_control_plane_runs_native_restart_and_preserves_project_scope() {
     assert!(current.stdout[0].contains("Aimux Restart"));
     assert!(current.stdout[0].contains("failures: 0"));
     assert!(current.stderr.is_empty());
-    assert_eq!(runtime.restart_calls, [(None, false)]);
+    assert_eq!(runtime.restart_calls, [(Some("/repo".into()), false)]);
     assert!(runtime.commands.is_empty());
 
     let execution = run_core_cli_with(
@@ -2658,7 +2658,10 @@ fn restart_control_plane_runs_native_restart_and_preserves_project_scope() {
     assert!(execution.stderr.is_empty());
     assert_eq!(
         runtime.restart_calls,
-        [(None, false), (Some("/resolved/child".into()), true)]
+        [
+            (Some("/repo".into()), false),
+            (Some("/resolved/child".into()), true)
+        ]
     );
     assert!(runtime.commands.is_empty());
 }
@@ -2688,7 +2691,7 @@ fn restart_control_plane_text_emits_progress_before_route_returns() {
     let execution = run_core_cli_with(&args(&["restart"]), &mut runtime);
 
     assert_eq!(execution.code, 0);
-    assert_eq!(runtime.restart_calls, [(None, false)]);
+    assert_eq!(runtime.restart_calls, [(Some("/repo".into()), false)]);
     assert_eq!(
         runtime.restart_progress,
         ["Restarting Aimux control plane..."]
@@ -2702,7 +2705,7 @@ fn restart_control_plane_json_does_not_emit_text_progress() {
     let execution = run_core_cli_with(&args(&["restart", "--json"]), &mut runtime);
 
     assert_eq!(execution.code, 0);
-    assert_eq!(runtime.restart_calls, [(None, false)]);
+    assert_eq!(runtime.restart_calls, [(Some("/repo".into()), false)]);
     assert!(runtime.restart_progress.is_empty());
 }
 
