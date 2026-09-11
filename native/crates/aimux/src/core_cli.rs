@@ -230,6 +230,7 @@ pub enum CoreCliAction {
     RestartControlPlane {
         project_root: Option<String>,
         force: bool,
+        all: bool,
     },
     StopDaemon {
         signal: &'static str,
@@ -463,12 +464,17 @@ where
         ),
         ("restart", _) => {
             let parsed = parse_core_restart_args(&args).expect("eligible restart must parse");
-            let project_root = parsed.project.as_deref().map(&resolve_project_root);
+            let project_root = if parsed.all {
+                None
+            } else {
+                parsed.project.as_deref().map(&resolve_project_root)
+            };
             (
                 CoreCliOperation::Restart,
                 CoreCliAction::RestartControlPlane {
                     project_root,
                     force: parsed.force,
+                    all: parsed.all,
                 },
                 CoreCliFallback::None,
             )
@@ -1894,6 +1900,7 @@ where
                 CoreCliAction::RestartControlPlane {
                     project_root: None,
                     force: parsed.force,
+                    all: true,
                 },
                 CoreCliFallback::None,
             )

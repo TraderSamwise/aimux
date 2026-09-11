@@ -184,10 +184,10 @@ if [ "$HAD_EXISTING_INSTALL" = "1" ]; then
     printf 'Skipped post-install aimux restart because AIMUX_SKIP_POST_INSTALL_RESTART=1\n'
   else
     printf 'Repairing running aimux control plane...\n'
-    if "$BIN_DIR/aimux" restart; then
+    if "$BIN_DIR/aimux" restart --all; then
       printf 'Aimux control plane repaired.\n'
     else
-      printf 'Installed aimux, but post-install restart failed. Run: %s/aimux restart\n' "$BIN_DIR" >&2
+      printf 'Installed aimux, but post-install restart failed. Run: %s/aimux restart --all\n' "$BIN_DIR" >&2
       exit 75
     fi
   fi

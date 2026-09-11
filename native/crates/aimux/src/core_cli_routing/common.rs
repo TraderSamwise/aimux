@@ -87,6 +87,7 @@ pub(super) fn parse_restart_flags<S: AsRef<str>>(args: &[S]) -> Option<CoreResta
     let mut parsed = CoreRestartArgs {
         json: false,
         force: false,
+        all: false,
         project: None,
     };
     let mut index = 0;
@@ -99,6 +100,11 @@ pub(super) fn parse_restart_flags<S: AsRef<str>>(args: &[S]) -> Option<CoreResta
         }
         if arg == "--force" {
             parsed.force = true;
+            index += 1;
+            continue;
+        }
+        if arg == "--all" {
+            parsed.all = true;
             index += 1;
             continue;
         }
@@ -121,7 +127,7 @@ pub(super) fn parse_restart_flags<S: AsRef<str>>(args: &[S]) -> Option<CoreResta
         }
         return None;
     }
-    Some(parsed)
+    (!parsed.all || parsed.project.is_none()).then_some(parsed)
 }
 
 pub(super) fn parse_project_json_flags<S: AsRef<str>>(args: &[S]) -> Option<CoreAgentPsArgs> {

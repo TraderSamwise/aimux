@@ -120,7 +120,17 @@ fn restart_parsers_keep_global_and_daemon_forms_distinct() {
         Some(CoreRestartArgs {
             json: true,
             force: true,
+            all: false,
             project: Some("/repo".into()),
+        })
+    );
+    assert_eq!(
+        parse_core_restart_args(&["restart", "--all", "--json"]),
+        Some(CoreRestartArgs {
+            json: true,
+            force: false,
+            all: true,
+            project: None,
         })
     );
     assert_eq!(
@@ -136,6 +146,10 @@ fn restart_parsers_keep_global_and_daemon_forms_distinct() {
     );
     assert_eq!(
         parse_core_restart_args(&["restart", "--project", "-repo"]),
+        None
+    );
+    assert_eq!(
+        parse_core_restart_args(&["restart", "--all", "--project", "/repo"]),
         None
     );
 }

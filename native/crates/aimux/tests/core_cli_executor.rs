@@ -2680,6 +2680,19 @@ fn restart_control_plane_runs_native_restart_and_preserves_project_scope() {
         ]
     );
     assert!(runtime.commands.is_empty());
+
+    let all = run_core_cli_with(&args(&["restart", "--all"]), &mut runtime);
+
+    assert_eq!(all.code, 0);
+    assert_eq!(
+        runtime.restart_calls,
+        [
+            (Some("/repo".into()), false),
+            (Some("/resolved/child".into()), true),
+            (None, false)
+        ]
+    );
+    assert!(runtime.commands.is_empty());
 }
 
 #[test]

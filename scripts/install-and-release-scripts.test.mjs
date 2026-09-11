@@ -40,6 +40,9 @@ function createInstallArchive(root) {
     nativeBinary,
     `#!/usr/bin/env sh
 if [ "$1" = "restart" ]; then
+  if [ -n "\${AIMUX_FAKE_RESTART_ARGS_FILE:-}" ]; then
+    printf '%s\\n' "$*" > "$AIMUX_FAKE_RESTART_ARGS_FILE"
+  fi
   exit "\${AIMUX_FAKE_RESTART_STATUS:-0}"
 fi
 exit 0
@@ -71,6 +74,7 @@ function installEnv(root, restartStatus) {
     AIMUX_INSTALL_ROOT: join(root, "native"),
     AIMUX_BIN_DIR: join(root, "bin"),
     AIMUX_FAKE_RESTART_STATUS: String(restartStatus),
+    AIMUX_FAKE_RESTART_ARGS_FILE: join(root, "restart-args.txt"),
   };
 }
 
@@ -197,6 +201,7 @@ describe("install.sh", () => {
 
       expect(result.status, result.stderr).toBe(0);
       expect(result.stdout).toContain("Aimux control plane repaired.");
+      expect(readFileSync(join(root, "restart-args.txt"), "utf8").trim()).toBe("restart --all");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -214,7 +219,7 @@ describe("install.sh", () => {
 
       expect(result.status).toBe(75);
       expect(result.stderr).toContain("post-install restart failed");
-      expect(result.stderr).toContain(`${join(root, "bin")}/aimux restart`);
+      expect(result.stderr).toContain(`${join(root, "bin")}/aimux restart --all`);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
