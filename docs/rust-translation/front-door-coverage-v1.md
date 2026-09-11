@@ -10,7 +10,7 @@ Real install testing also caught later front-door regressions after those first 
 
 Another real-machine first-run bug appeared when no tmux server existed: top-level `aimux shell` routed into service creation and tried `new-window` before ensuring the managed project session. Agent spawn already bootstrapped tmux; service spawn now follows the same invariant.
 
-Real install testing then exposed two lifecycle gaps: `stop` left agents offline in `ps` but absent from `graveyard`, making documented recovery unreachable, and `fork <sessionId>` rejected the advertised same-tool fork form unless `--tool` was supplied. `stop` now moves the session into recoverable graveyard; `graveyard resurrect` clears it back to offline; root `--restore <tool>` relaunches it. Same-tool `fork <sessionId>` now infers the source session's tool from topology.
+Real install testing then exposed recoverability gaps where killed agents could be absent from `graveyard`, making documented recovery unreachable. `kill` now moves the session into recoverable graveyard; `graveyard resurrect` clears it back to offline; root `--restore <tool>` relaunches it. `fork <sessionId> --tool <tool>` remains an explicit-tool CLI command, matching the Node CLI contract.
 
 Those failures were not contradictions in the corpora. They were outside the corpora boundary. The corpora proved function input/output contracts; they did not prove the assembled binary, daemon loopback transport, tmux terminal, or installed command dispatch.
 
@@ -27,11 +27,18 @@ Every executable entry point needs at least one contract at its own boundary, ev
   `loop list`, and `review list`;
 - private tmux socket basics: PTY output buffering, send-keys delivery, pane
   output ordering, and resize propagation.
+- first-run shell agent spawn from an empty private tmux socket;
+- bare `graveyard` routing plus fork, kill, resurrect, restore, and graveyard
+  lifecycle semantics from an empty private tmux socket;
+- project-service SSE fanout and alert frame ordering under multiple loopback
+  clients;
+- daemon/project-service process startup races, stale daemon info cleanup,
+  malformed daemon-start lock reclamation, and endpoint publication.
 
-Current proof head: `a84c1274`. On 2026-09-11, `yarn audit:phase8-live-residuals:tmux --skip-build --aimux-bin /tmp/aimux-cargo-target-codex-8s9so6/debug/aimux` passed in 0.87s, and `yarn audit:phase8-live-residuals:command-resolution --skip-build --aimux-bin /tmp/aimux-cargo-target-codex-8s9so6/debug/aimux` passed in 89.77s. The full residual sweep is not current evidence: `yarn audit:phase8-live-residuals --skip-build --aimux-bin /tmp/aimux-cargo-target-codex-8s9so6/debug/aimux` failed in 29.50s in the dashboard lane waiting for `phase8-dashboard-key-1`.
+Current proof: On 2026-09-11, `yarn audit:phase8-live-residuals:tmux --skip-build --aimux-bin /tmp/aimux-cargo-target-codex-8s9so6/debug/aimux` passed in 0.87s, `yarn audit:phase8-live-residuals:command-resolution --skip-build --aimux-bin /tmp/aimux-cargo-target-codex-8s9so6/debug/aimux` passed in 89.77s, `yarn audit:phase8-live-residuals:agent-shell --skip-build --aimux-bin /tmp/aimux-cargo-target-codex-8s9so6/debug/aimux` passed in 25.14s after the cold tmux bootstrap fix, `yarn audit:phase8-live-residuals:graveyard --skip-build --aimux-bin /tmp/aimux-cargo-target-codex-8s9so6/debug/aimux` passed in 61.00s after the same fix and current explicit-fork/kill semantics, `yarn audit:phase8-live-residuals:sse --skip-build --aimux-bin /tmp/aimux-cargo-target-codex-8s9so6/debug/aimux` passed in 8.66s, and `yarn audit:phase8-live-residuals:process --skip-build --aimux-bin /tmp/aimux-cargo-target-codex-8s9so6/debug/aimux` passed in 24.56s. The full residual sweep is not current evidence: `yarn audit:phase8-live-residuals --skip-build --aimux-bin /tmp/aimux-cargo-target-codex-8s9so6/debug/aimux` failed in 29.50s in the dashboard lane waiting for `phase8-dashboard-key-1`.
 
-The historical dashboard, graveyard, top-level agent, shell-service, restart,
-SSE, and process residuals remain useful design notes, but they must be repaired
-and re-gated before being cited as current parity evidence. These tests
-intentionally avoid exact TUI layout, screenshots, real Claude/Codex invocations,
-network access, or timing-sensitive multi-agent orchestration.
+The historical dashboard, top-level agent, shell-service, and restart residuals
+remain useful design notes, but they must be repaired and re-gated before being
+cited as current parity evidence. These tests intentionally avoid exact TUI
+layout, screenshots, real Claude/Codex invocations, network access, or
+timing-sensitive multi-agent orchestration.

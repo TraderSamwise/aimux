@@ -758,6 +758,50 @@ fn ensure_project_session_creates_and_configures_missing_session() {
 }
 
 #[test]
+fn ensure_project_session_bootstraps_empty_tmux_server() {
+    let calls = Rc::new(RefCell::new(Vec::<Vec<String>>::new()));
+    let created = Rc::new(RefCell::new(false));
+    let calls_for_exec = calls.clone();
+    let created_for_exec = created.clone();
+    let mut manager = TmuxRuntimeManager::with_exec(move |args, _options| {
+        calls_for_exec.borrow_mut().push(args.to_vec());
+        let joined = args.join(" ");
+        if joined.starts_with("has-session") {
+            return if *created_for_exec.borrow() {
+                Ok(String::new())
+            } else {
+                Err("error connecting to /private/tmp/tmux-501/aimux-test (No such file or directory)".to_owned())
+            };
+        }
+        if joined == "list-sessions -F #{session_name}" {
+            return Err(
+                "error connecting to /private/tmp/tmux-501/aimux-test (No such file or directory)"
+                    .to_owned(),
+            );
+        }
+        if joined.starts_with("new-session") {
+            *created_for_exec.borrow_mut() = true;
+            return Ok(String::new());
+        }
+        if joined == "show-options -v -t aimux-mobile-078d0ecd20ec terminal-features" {
+            return Ok(String::new());
+        }
+        Ok(String::new())
+    });
+
+    manager
+        .ensure_project_session("/repo/mobile", None, Some(test_runtime_config()))
+        .expect("empty tmux server should be bootstrapped");
+
+    let calls = calls.borrow();
+    assert!(
+        calls
+            .iter()
+            .any(|args| args.first().map(String::as_str) == Some("new-session"))
+    );
+}
+
+#[test]
 fn ensure_project_session_uses_dashboard_command_and_skips_create_when_repaired() {
     let repaired = Rc::new(RefCell::new(false));
     let calls = Rc::new(RefCell::new(Vec::<Vec<String>>::new()));

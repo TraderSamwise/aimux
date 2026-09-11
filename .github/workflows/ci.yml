@@ -257,3 +257,35 @@ jobs:
           yarn audit:phase8-live-residuals:command-resolution \
             --skip-build \
             --aimux-bin "$CARGO_TARGET_DIR/debug/aimux"
+
+      - name: Run live agent-shell residual
+        env:
+          AIMUX_HOME: ${{ runner.temp }}/aimux-home-phase8-agent-shell
+        run: |
+          yarn audit:phase8-live-residuals:agent-shell \
+            --skip-build \
+            --aimux-bin "$CARGO_TARGET_DIR/debug/aimux"
+
+      - name: Run live graveyard residual
+        env:
+          AIMUX_HOME: ${{ runner.temp }}/aimux-home-phase8-graveyard
+        run: |
+          yarn audit:phase8-live-residuals:graveyard \
+            --skip-build \
+            --aimux-bin "$CARGO_TARGET_DIR/debug/aimux"
+
+      - name: Run live SSE residual
+        env:
+          AIMUX_HOME: ${{ runner.temp }}/aimux-home-phase8-sse
+        run: |
+          yarn audit:phase8-live-residuals:sse \
+            --skip-build \
+            --aimux-bin "$CARGO_TARGET_DIR/debug/aimux"
+
+      - name: Run live process residual
+        env:
+          AIMUX_HOME: ${{ runner.temp }}/aimux-home-phase8-process
+        run: |
+          yarn audit:phase8-live-residuals:process \
+            --skip-build \
+            --aimux-bin "$CARGO_TARGET_DIR/debug/aimux"
