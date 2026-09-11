@@ -5,6 +5,7 @@ use super::ids::{sha256_hex, short_id};
 use super::json_helpers::{
     array_field, string_array_field, string_field, string_field_value, trimmed_string,
 };
+use super::runtime_adapter::ProjectLifecycleRuntime;
 use crate::tool_capabilities::supports_exact_backend_resume;
 
 pub(super) fn tool_config_key_for_session(session: &Value) -> Option<String> {
@@ -21,6 +22,49 @@ pub(super) fn should_relaunch_agent_fresh(session: &Value, derived: Option<&Valu
     }
     trimmed_string(session.get("backendSessionId")).is_none()
         && session.get("freshRelaunchAllowed").and_then(Value::as_bool) == Some(true)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum MissingBackendSessionDisposition {
+    Unchanged,
+    RecordBackendSession(String),
+    AllowFreshRelaunch,
+    Blocked(String),
+}
+
+pub(super) fn missing_backend_session_disposition(
+    runtime: &mut impl ProjectLifecycleRuntime,
+    session: &Value,
+    project_root: &str,
+) -> MissingBackendSessionDisposition {
+    if trimmed_string(session.get("backendSessionId")).is_some() {
+        return MissingBackendSessionDisposition::Unchanged;
+    }
+    let Some(tool_key) = tool_config_key_for_session(session) else {
+        return MissingBackendSessionDisposition::Unchanged;
+    };
+    if tool_key != "codex" {
+        return MissingBackendSessionDisposition::Unchanged;
+    }
+    let cwd =
+        trimmed_string(session.get("worktreePath")).unwrap_or_else(|| project_root.to_owned());
+    let mut ids = match runtime.codex_backend_session_ids_for_cwd(&cwd) {
+        Ok(ids) => ids,
+        Err(error) => {
+            return MissingBackendSessionDisposition::Blocked(format!(
+                "Codex session history for {cwd} could not be inspected: {error}"
+            ));
+        }
+    };
+    match ids.len() {
+        0 => MissingBackendSessionDisposition::AllowFreshRelaunch,
+        1 => MissingBackendSessionDisposition::RecordBackendSession(
+            ids.pop_first().unwrap_or_default(),
+        ),
+        count => MissingBackendSessionDisposition::Blocked(format!(
+            "Codex has {count} possible resumable sessions for {cwd}; choose one before restarting"
+        )),
+    }
 }
 
 pub(super) fn can_resume_with_backend_session_id(
