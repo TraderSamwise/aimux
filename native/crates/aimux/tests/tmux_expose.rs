@@ -8,11 +8,11 @@ use aimux::tmux_expose::{
     EXPOSE_HTTP_TIMEOUT_MS, ExposeClientSizeProbe, ExposeConfig, ExposeHttpClient,
     ExposeHttpRequest, ExposeInputEvent, ExposeInputSource, ExposeScope, ExposeScopeView,
     ExposeSortMode, ExposeSublabel, ExposeTmuxCapture, ExposeUiState, FastControlContext,
-    LoadExposeScopeDeps, RELAUNCH_ON_RESIZE_EXIT, focus_expose_item_with, initial_expose_scope,
-    load_expose_scope_items_with, load_overseer_expose_item_with, next_expose_scope,
-    parse_expose_args, read_expose_ui_state, run_tmux_expose_with_client_and_capture,
-    run_tmux_expose_with_drivers, tmux_expose_options_from_socket_header, write_expose_ui_state,
-    write_selected_window,
+    LoadExposeScopeDeps, RELAUNCH_ON_RESIZE_EXIT, expose_project_control_flag_from_metadata,
+    focus_expose_item_with, initial_expose_scope, load_expose_scope_items_with,
+    load_overseer_expose_item_with, next_expose_scope, parse_expose_args, read_expose_ui_state,
+    run_tmux_expose_with_client_and_capture, run_tmux_expose_with_drivers,
+    tmux_expose_options_from_socket_header, write_expose_ui_state, write_selected_window,
 };
 use aimux::tmux_expose_hot_snapshot::{
     HotExposeScopeKey, read_hot_expose_scope_view, write_hot_expose_scope_view,
@@ -168,6 +168,7 @@ fn context() -> FastControlContext {
         current_path: Some("/repo/worktree".into()),
         current_window: Some("codex".into()),
         current_window_id: Some("@1".into()),
+        current_project_control: Some(false),
         current_client_session: Some("aimux-test-client-12345678".into()),
         client_tty: Some("/dev/aimux-test-tty".into()),
     }
@@ -193,21 +194,67 @@ fn initial_scope_matches_launch_context_and_config() {
 
     let mut dashboard = context();
     dashboard.current_window = Some("meta-dashboard".into());
+    dashboard.current_project_control = Some(false);
     assert_eq!(
         initial_expose_scope(false, &dashboard, &ExposeConfig::default()),
         ExposeScope::Project
     );
 
+    let mut project_control = context();
+    project_control.current_project_control = Some(true);
+    assert_eq!(
+        initial_expose_scope(false, &project_control, &ExposeConfig::default()),
+        ExposeScope::Project
+    );
+
+    let ordinary_agent = context();
+    assert_eq!(
+        initial_expose_scope(false, &ordinary_agent, &ExposeConfig::default()),
+        ExposeScope::Worktree
+    );
+
     assert_eq!(
         initial_expose_scope(
             false,
-            &context(),
+            &project_control,
             &ExposeConfig {
-                initial_scope: Some(ExposeScope::Project)
+                initial_scope: Some(ExposeScope::Global)
             }
         ),
-        ExposeScope::Project
+        ExposeScope::Global
     );
+}
+
+#[test]
+fn initial_scope_uses_project_control_identity_from_metadata() {
+    let overseer = json!({
+        "sessionId": "claude-overseer",
+        "projectControl": true,
+        "team": { "role": "overseer" }
+    });
+    let scribe = json!({
+        "sessionId": "claude-scribe",
+        "scribe": true,
+        "team": { "role": "scribe" }
+    });
+    let ordinary = json!({
+        "sessionId": "codex-agent",
+        "projectControl": false,
+        "team": { "role": "worker" }
+    });
+
+    assert!(expose_project_control_flag_from_metadata(&overseer));
+    assert!(expose_project_control_flag_from_metadata(&scribe));
+    assert!(!expose_project_control_flag_from_metadata(&ordinary));
+
+    for metadata in [overseer, scribe] {
+        let mut caller = context();
+        caller.current_project_control = Some(expose_project_control_flag_from_metadata(&metadata));
+        assert_eq!(
+            initial_expose_scope(false, &caller, &ExposeConfig::default()),
+            ExposeScope::Project
+        );
+    }
 }
 
 #[test]
@@ -434,6 +481,8 @@ fn expose_args_require_paths_and_resolve_them_without_touching_optional_values()
         "codex",
         "--current-window-id",
         "@1",
+        "--current-project-control",
+        "true",
         "--current-path",
         "../there",
         "--pane-id",
@@ -452,6 +501,7 @@ fn expose_args_require_paths_and_resolve_them_without_touching_optional_values()
     assert_eq!(parsed.client_tty.as_deref(), Some("/dev/ttys001"));
     assert_eq!(parsed.current_window.as_deref(), Some("codex"));
     assert_eq!(parsed.current_window_id.as_deref(), Some("@1"));
+    assert_eq!(parsed.current_project_control, Some(true));
     assert_eq!(parsed.current_path.as_deref(), Some("../there"));
     assert_eq!(parsed.pane_id.as_deref(), Some("%7"));
     assert_eq!(parsed.aimux_home.as_deref(), Some("/tmp/home"));
@@ -472,7 +522,7 @@ fn socket_header_mapping_matches_metadata_server_contract() {
         "/project/wt".to_owned(),
         "%7".to_owned(),
         "/home/.aimux".to_owned(),
-        "".to_owned(),
+        "1".to_owned(),
         "/tmp/status".to_owned(),
         "120cols".to_owned(),
         "30rows".to_owned(),
@@ -491,6 +541,7 @@ fn socket_header_mapping_matches_metadata_server_contract() {
     assert_eq!(options.client_tty.as_deref(), Some("/dev/ttys001"));
     assert_eq!(options.current_window.as_deref(), Some("codex"));
     assert_eq!(options.current_window_id.as_deref(), Some("@1"));
+    assert_eq!(options.current_project_control, Some(true));
     assert_eq!(options.current_path.as_deref(), Some("/project/wt"));
     assert_eq!(options.pane_id.as_deref(), Some("%7"));
     assert_eq!(options.aimux_home.as_deref(), Some("/home/.aimux"));

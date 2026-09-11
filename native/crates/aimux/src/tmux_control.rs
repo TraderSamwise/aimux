@@ -2,6 +2,7 @@ use crate::cli_launcher::{
     AimuxCliLaunchOptions, get_aimux_current_cli_identity, is_cargo_test_aimux_binary,
 };
 use crate::tmux::tmux_command_from_env;
+use crate::tmux_expose::expose_project_control_flag_from_metadata;
 use anyhow::Result;
 use serde_json::{Map, Value};
 use std::ffi::OsStr;
@@ -840,6 +841,7 @@ impl TmuxControl {
                     self.options.daemon_host, self.options.daemon_port
                 )
             };
+        let current_project_control = self.current_window_project_control();
         let mut popup_retry_count = 0;
         let mut selected_expose_window = String::new();
         let popup_status = loop {
@@ -866,7 +868,9 @@ impl TmuxControl {
                 self.options.current_path.clone(),
                 self.options.pane_id.clone(),
                 self.options.aimux_home.clone(),
-                String::new(),
+                current_project_control
+                    .map(|value| if value { "1" } else { "0" }.to_owned())
+                    .unwrap_or_default(),
                 expose_status.to_string_lossy().into_owned(),
                 client_cols,
                 client_rows,
@@ -930,6 +934,17 @@ impl TmuxControl {
             return self.switch_local_window(&selected_expose_window);
         }
         true
+    }
+
+    fn current_window_project_control(&mut self) -> Option<bool> {
+        let window_id = self.options.current_window_id.trim().to_owned();
+        if window_id.is_empty() {
+            return None;
+        }
+        let raw =
+            self.tmux_output(&["show-window-options", "-v", "-t", &window_id, "@aimux-meta"])?;
+        let metadata = serde_json::from_str::<Value>(&raw).ok()?;
+        Some(expose_project_control_flag_from_metadata(&metadata))
     }
 
     fn resolve_local_target(&mut self) -> TargetResolution {
@@ -2048,7 +2063,7 @@ fn value_as_i64(value: &Value) -> Option<i64> {
 fn is_project_control_meta(meta: &Value, team: &Value) -> bool {
     let mut probe = meta.as_object().cloned().unwrap_or_else(Map::new);
     probe.insert("team".into(), team.clone());
-    crate::team_contract::is_project_control_session(Some(&Value::Object(probe)))
+    expose_project_control_flag_from_metadata(&Value::Object(probe))
 }
 
 fn team_parent_id(team: &Value) -> Option<&str> {

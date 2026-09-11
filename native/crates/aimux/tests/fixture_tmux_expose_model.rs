@@ -237,6 +237,7 @@ fn context() -> FastControlContext {
         current_path: Some("/repo/worktree".to_owned()),
         current_window: Some("codex".to_owned()),
         current_window_id: Some("@2".to_owned()),
+        current_project_control: None,
         current_client_session: Some("aimux-test-client-12345678".to_owned()),
         client_tty: Some("/dev/ttys001".to_owned()),
     }
@@ -257,6 +258,7 @@ fn context_from_value(value: &Value) -> FastControlContext {
             .get("currentWindowId")
             .and_then(Value::as_str)
             .map(str::to_owned),
+        current_project_control: value.get("currentProjectControl").and_then(Value::as_bool),
         current_client_session: value
             .get("currentClientSession")
             .and_then(Value::as_str)

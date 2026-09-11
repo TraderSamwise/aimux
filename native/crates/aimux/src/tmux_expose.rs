@@ -77,6 +77,7 @@ pub struct TmuxExposeOptions {
     pub client_tty: Option<String>,
     pub current_window: Option<String>,
     pub current_window_id: Option<String>,
+    pub current_project_control: Option<bool>,
     pub current_path: Option<String>,
     pub pane_id: Option<String>,
     pub aimux_home: Option<String>,
@@ -94,6 +95,7 @@ pub struct FastControlContext {
     pub current_path: Option<String>,
     pub current_window: Option<String>,
     pub current_window_id: Option<String>,
+    pub current_project_control: Option<bool>,
     pub current_client_session: Option<String>,
     pub client_tty: Option<String>,
 }
@@ -757,6 +759,7 @@ pub fn parse_expose_args<S: AsRef<str>>(raw_args: &[S]) -> Result<TmuxExposeOpti
                 | "--client-tty"
                 | "--current-window"
                 | "--current-window-id"
+                | "--current-project-control"
                 | "--current-path"
                 | "--pane-id"
                 | "--aimux-home" => {
@@ -778,6 +781,9 @@ pub fn parse_expose_args<S: AsRef<str>>(raw_args: &[S]) -> Result<TmuxExposeOpti
             "--client-tty" => options.client_tty = Some(value.to_owned()),
             "--current-window" => options.current_window = Some(value.to_owned()),
             "--current-window-id" => options.current_window_id = Some(value.to_owned()),
+            "--current-project-control" => {
+                options.current_project_control = parse_optional_bool(value)
+            }
             "--current-path" => options.current_path = Some(value.to_owned()),
             "--pane-id" => options.pane_id = Some(value.to_owned()),
             "--aimux-home" => options.aimux_home = Some(value.to_owned()),
@@ -816,6 +822,7 @@ pub fn tmux_expose_options_from_socket_header(
         current_path: value(6),
         pane_id: value(7),
         aimux_home: value(8),
+        current_project_control: value(9).and_then(|value| parse_optional_bool(&value)),
         daemon_endpoint: value(13),
         selection_file: value(14).map(PathBuf::from),
         columns: parse_positive_header_integer(header.get(11).map(String::as_str)),
@@ -885,6 +892,7 @@ pub fn run_tmux_expose_with_drivers(
         current_path: options.current_path.clone(),
         current_window: options.current_window.clone(),
         current_window_id: options.current_window_id.clone(),
+        current_project_control: options.current_project_control,
         current_client_session: options.current_client_session.clone(),
         client_tty: options.client_tty.clone(),
     };
@@ -1360,7 +1368,14 @@ pub fn initial_expose_scope(
     {
         return ExposeScope::Project;
     }
+    if context.current_project_control == Some(true) {
+        return ExposeScope::Project;
+    }
     ExposeScope::Worktree
+}
+
+pub fn expose_project_control_flag_from_metadata(metadata: &Value) -> bool {
+    crate::team_contract::is_project_control_session(Some(metadata))
 }
 
 pub fn load_expose_scope_items(
@@ -2410,6 +2425,14 @@ fn format_relative_recency(value: &str) -> Option<String> {
 
 fn path_basename(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
+}
+
+fn parse_optional_bool(value: &str) -> Option<bool> {
+    match value.trim() {
+        "1" | "true" => Some(true),
+        "0" | "false" => Some(false),
+        _ => None,
+    }
 }
 
 fn expose_ui_state_path(project_state_dir: impl AsRef<Path>) -> PathBuf {
