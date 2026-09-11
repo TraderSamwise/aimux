@@ -176,7 +176,7 @@ the Homebrew tap. Nothing is published by hand.
 ### Cut a release
 
 ```bash
-yarn release:readiness   # yarn verify — typecheck, lint, root tests, app tests
+yarn release:readiness   # yarn verify:full — fast checks plus Rust, root JS, and app JS tests
 yarn release:patch       # or release:minor / release:major
 ```
 

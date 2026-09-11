@@ -2,7 +2,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { basename, join, relative } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
 
 const ROOT = new URL("../", import.meta.url).pathname.replace(/\/$/, "");
 const NATIVE_DIR = join(ROOT, "native");
@@ -46,6 +46,19 @@ function contractTests() {
     .map((entry) => join(TESTS_DIR, entry));
 }
 
+function testSourceBundle(testPath, seen = new Set()) {
+  if (seen.has(testPath) || !existsSync(testPath)) return "";
+  seen.add(testPath);
+  const source = readFileSync(testPath, "utf8");
+  const parts = [source];
+  const pathModPattern = /#\s*\[\s*path\s*=\s*"([^"]+)"\s*\]\s*mod\s+\w+\s*;/g;
+  let match;
+  while ((match = pathModPattern.exec(source))) {
+    parts.push(testSourceBundle(join(dirname(testPath), match[1]), seen));
+  }
+  return parts.join("\n");
+}
+
 function includedContracts(source) {
   const contracts = [];
   const pattern = /include_str!\(\s*"([^"]*testdata\/contracts\/v1\/[^"]+\.json)"\s*\)/g;
@@ -62,7 +75,7 @@ function fixtureOwnedContractPaths() {
   for (const testPath of contractTests()) {
     const suite = basename(testPath, ".rs");
     if (!suite.startsWith("fixture_")) continue;
-    for (const contractPath of includedContracts(readFileSync(testPath, "utf8"))) {
+    for (const contractPath of includedContracts(testSourceBundle(testPath))) {
       owned.add(contractPath);
     }
   }
@@ -161,7 +174,7 @@ function audit() {
   const testPaths = contractTests();
   const fixtureOwnedContracts = fixtureOwnedContractPaths();
   for (const testPath of testPaths) {
-    const source = readFileSync(testPath, "utf8");
+    const source = testSourceBundle(testPath);
     const suite = basename(testPath, ".rs");
     if (suiteFilters.length > 0 && !suiteFilters.includes(suite)) continue;
     const contracts = includedContracts(source).filter(

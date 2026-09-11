@@ -229,6 +229,13 @@ with other agents, so default to the cheapest command that answers the question.
 These are defaults, not prohibitions — when one of them is genuinely the right
 tool, use it.
 
+Two verification lanes exist and they are not interchangeable. `yarn verify` is
+the fast lane an agent runs after making a change: it is seconds, not minutes,
+and it is the default. `yarn verify:full` is the release and CI lane, and
+`release:readiness` calls it. Do not run the full lane after editing three
+lines, and do not reach for `cargo test` across the whole crate to check one
+module — run the scoped target for what you touched, then the fast lane.
+
 - Scope by default: `cargo clippy -p aimux`, `cargo test -p aimux --test <file>`,
   `vitest run <path>`. Save whole-workspace and `--all-targets` runs for the gate
   before a PR, or when asked.

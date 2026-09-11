@@ -3,6 +3,7 @@
 use aimux::project_service::router::ProjectServiceRequestContext;
 use std::collections::BTreeSet;
 use std::fs;
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU16, Ordering};
@@ -35,7 +36,7 @@ impl TestIsolation {
         fs::create_dir_all(&home).expect("create isolated home");
         fs::create_dir_all(&aimux_home).expect("create isolated aimux home");
 
-        let daemon_port = 47_000 + (PORT_SEQUENCE.fetch_add(1, Ordering::Relaxed) % 1_000);
+        let daemon_port = allocate_daemon_port();
         let previous_env = capture_env();
         let isolation = Self {
             _guard: guard,
@@ -210,4 +211,18 @@ fn capture_env() -> Vec<(&'static str, Option<std::ffi::OsString>)> {
     .into_iter()
     .map(|key| (key, std::env::var_os(key)))
     .collect()
+}
+
+fn allocate_daemon_port() -> u16 {
+    for _ in 0..100 {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("allocate isolated daemon port");
+        let port = listener
+            .local_addr()
+            .expect("read isolated daemon port")
+            .port();
+        if port != aimux::daemon_state::DEFAULT_DAEMON_PORT {
+            return port;
+        }
+    }
+    panic!("could not allocate non-default isolated daemon port");
 }
