@@ -675,6 +675,84 @@ fn native_text_reads_lazy_start_cold_project_service_before_proxying_get() {
     fixture.cleanup();
 }
 
+#[test]
+fn native_text_read_uses_hot_project_service_without_supervisory_ensure() {
+    let fixture = RuntimeFixture::new("hot-read");
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    let resolved_project = resolver.resolve_repo_root(&project);
+    let resolved_project_root = resolved_project.to_string_lossy().into_owned();
+    let entry = resolver
+        .register_project(&resolved_project)
+        .expect("register project")
+        .expect("entry");
+    let service = ProjectServiceState {
+        project_id: entry.id.clone(),
+        project_root: resolved_project_root.clone(),
+        pid: std::process::id() as i32,
+        started_at: "then".into(),
+        updated_at: "now".into(),
+        status: Some(ProjectServiceStatus::Running),
+        restart_count: Some(0),
+        last_restart_at: None,
+        last_exit: None,
+    };
+    save_daemon_state(
+        resolver.daemon_state_path(),
+        &DaemonState {
+            version: 1,
+            updated_at: Some(json!("now")),
+            projects: Map::from_iter([(
+                entry.id.clone(),
+                serde_json::to_value(&service).expect("service json"),
+            )]),
+        },
+    )
+    .expect("daemon state");
+    let server = OneShotHttpServer::spawn(
+        b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 13\r\n\r\n{\"agents\":[]}"
+            .to_vec(),
+    );
+    save_metadata_endpoint(
+        resolver.project_state_dir_for(&resolved_project),
+        &MetadataApiEndpoint {
+            host: "127.0.0.1".into(),
+            port: server.port,
+            pid: std::process::id() as i32,
+            updated_at: "now".into(),
+        },
+    )
+    .expect("metadata endpoint");
+    let launcher = Arc::new(FakeLauncher::new(91_902));
+    let mut runtime = fixture.runtime_with_launcher_and_verifier(
+        launcher.clone(),
+        Arc::new(FakeProcessVerifier::native_with_duplicates(
+            [std::process::id() as i32],
+            [std::process::id() as i32, 91_903],
+        )),
+        PROJECT_SERVICE_STARTUP_TIMEOUT_MS,
+    );
+
+    let result = <RealDaemonRuntime as DaemonAgentTextRuntime>::get_project_service_json(
+        &mut runtime,
+        &resolved_project_root,
+        project_routes::agents::LIST,
+    );
+    let ProjectServiceJsonResult::Ok { project_root, json } = result else {
+        panic!("expected hot project-service read, got {result:?}");
+    };
+
+    assert_eq!(project_root, resolved_project_root);
+    assert_eq!(json, json!({ "agents": [] }));
+    assert!(launcher.calls().is_empty());
+    assert!(
+        launcher.terminations().is_empty(),
+        "hot read must not run duplicate-service termination"
+    );
+    assert!(server.join().contains("GET /agents HTTP/1.1"));
+    fixture.cleanup();
+}
+
 #[derive(Debug, Default)]
 struct FakeExposeFocusRuntime {
     live_window_ids: BTreeSet<String>,

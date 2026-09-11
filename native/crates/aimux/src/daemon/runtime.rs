@@ -878,6 +878,23 @@ impl RealDaemonRuntime {
         self.request_project_service_json(&project_root, route_path, None, None)
     }
 
+    fn get_hot_or_ensured_project_service_json(
+        &mut self,
+        project: &str,
+        route_path: &str,
+    ) -> ProjectServiceJsonResult {
+        let project_root = self.resolve_project_root_value(project);
+        let hot_result = self.request_project_service_json(&project_root, route_path, None, None);
+        match hot_result {
+            ProjectServiceJsonResult::Err { response }
+                if response.status == 502 || response.status == 503 =>
+            {
+                self.get_ensured_project_service_json(&project_root, route_path)
+            }
+            result => result,
+        }
+    }
+
     fn post_ensured_project_service_json(
         &mut self,
         project: &str,
@@ -3065,7 +3082,7 @@ impl DaemonAgentTextRuntime for RealDaemonRuntime {
         project: &str,
         route_path: &str,
     ) -> ProjectServiceJsonResult {
-        self.get_ensured_project_service_json(project, route_path)
+        self.get_hot_or_ensured_project_service_json(project, route_path)
     }
 
     fn post_project_service_json(
