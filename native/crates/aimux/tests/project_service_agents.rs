@@ -1,5 +1,8 @@
 use aimux::config::default_config;
 use aimux::daemon_state::{MetadataState, save_metadata_state};
+use aimux::debug_logging::{
+    LogLevel, LoggingRuntimeConfig, configure_logging, reset_logging_for_tests,
+};
 use aimux::project_api_contract::routes;
 use aimux::project_service::agents::{
     build_agent_list, describe_session_restorability, resolve_direct_teammates,
@@ -9,6 +12,7 @@ use aimux::project_service::agents::{
 use aimux::project_service::lifecycle::{
     ProjectLifecycleRuntime, route_lifecycle_request_with_runtime,
 };
+use aimux::project_service::operation_failures::list_dashboard_operation_failures;
 use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
 use aimux::project_service::runtime_exchange::{runtime_exchange_path, write_runtime_exchange};
 use aimux::runtime_topology::{
@@ -527,6 +531,69 @@ fn route_agent_spawn_kills_window_when_metadata_write_fails() {
     cleanup(project);
 }
 
+#[test]
+fn route_agent_spawn_reports_window_disappearing_before_topology_success() {
+    let isolation = support::TestIsolation::new("agent-spawn-window-gone");
+    let project = temp_project("spawn-window-gone");
+    let state_dir = project.join("state");
+    let log_path = isolation.root().join("project.log");
+    create_dir_all(&state_dir).unwrap();
+    write_project_config(&project, session_launch_config());
+    write_runtime_topology(runtime_topology_path(&state_dir), &empty_runtime_topology()).unwrap();
+    configure_logging(LoggingRuntimeConfig {
+        path: log_path.clone(),
+        process_kind: "project-service".into(),
+        project_root: Some(project.display().to_string()),
+        level: LogLevel::Debug,
+        ..LoggingRuntimeConfig::default()
+    });
+
+    let context = isolation.project_context(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime {
+        window_visible_after_launch: false,
+        ..FakeLifecycleRuntime::default()
+    };
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::SPAWN,
+        Some(&json!({
+            "tool": "codex",
+            "sessionId": "codex-window-gone",
+            "open": false
+        })),
+        &mut runtime,
+    )
+    .expect("spawn route handles request");
+
+    let expected = "agent launch failed: tmux window @spawn for session codex-window-gone disappeared before startup completed";
+    assert_eq!(response.status, 500);
+    assert_eq!(response.body["ok"], false);
+    assert_eq!(response.body["error"], expected);
+    assert!(runtime.calls.iter().any(|call| call
+        == &json!({
+            "method": "has_window",
+            "windowId": "@spawn"
+        })));
+    let topology = read_runtime_topology(runtime_topology_path(&state_dir)).unwrap();
+    assert!(
+        topology["sessions"].as_array().unwrap().is_empty(),
+        "a failed launch must not leave a session for restorability to mislabel"
+    );
+    let failures = list_dashboard_operation_failures(&state_dir);
+    assert_eq!(failures.len(), 1);
+    assert_eq!(failures[0]["title"], "Failed to create codex agent");
+    assert_eq!(failures[0]["message"], expected);
+    let log = std::fs::read_to_string(&log_path).expect("agent launch failure log");
+    assert!(
+        log.contains("\"message\":\"agent create failed\"") && log.contains(expected),
+        "agent launch failure must be logged with the cause: {log}"
+    );
+
+    reset_logging_for_tests();
+    cleanup(project);
+}
+
 fn topology_fixture() -> Value {
     coerce_runtime_topology(&json!({
         "version": 1,
@@ -669,10 +736,20 @@ fn duplicate_session_topology() -> Value {
     .unwrap()
 }
 
-#[derive(Default)]
 struct FakeLifecycleRuntime {
     calls: Vec<Value>,
     fail_metadata_write: bool,
+    window_visible_after_launch: bool,
+}
+
+impl Default for FakeLifecycleRuntime {
+    fn default() -> Self {
+        Self {
+            calls: Vec::new(),
+            fail_metadata_write: false,
+            window_visible_after_launch: true,
+        }
+    }
 }
 
 impl ProjectLifecycleRuntime for FakeLifecycleRuntime {
@@ -776,7 +853,7 @@ impl ProjectLifecycleRuntime for FakeLifecycleRuntime {
             "method": "has_window",
             "windowId": target.window_id
         }));
-        true
+        self.window_visible_after_launch
     }
 
     fn kill_window(&mut self, window_id: &str) -> Result<(), String> {

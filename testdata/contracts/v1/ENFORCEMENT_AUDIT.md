@@ -127,7 +127,6 @@ Binding statuses: PROVEN-FAILS 207, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 3.
 | `fixture_plugin_api` | PROVEN-FAILS | `testdata/contracts/v1/default-plugins/gh-pr-context.json` | 4 | moved to current owning Rust suite; original mutation proof preserved for this corpus |
 | `fixture_plugin_api` | PROVEN-FAILS | `testdata/contracts/v1/default-plugins/transcript-length.json` | 4 | moved to current owning Rust suite; original mutation proof preserved for this corpus |
 | `fixture_plugin_runtime` | PROVEN-FAILS | `testdata/contracts/v1/plugin/runtime.json` | 8 | mutated fixture output failed owning Rust suite |
-| `fixture_priority2` | PROVEN-FAILS | `testdata/contracts/v1/agent-prompt-delivery/delivery.json` | 14 | mutated fixture output failed owning Rust suite |
 | `fixture_priority2` | PROVEN-FAILS | `testdata/contracts/v1/context/bridge.json` | 10 | mutated fixture output failed owning Rust suite |
 | `fixture_priority2` | PROVEN-FAILS | `testdata/contracts/v1/context/compactor.json` | 2 | mutated fixture output failed owning Rust suite |
 | `fixture_process_inspector` | PROVEN-FAILS | `testdata/contracts/v1/process/inspector.json` | 12 | mutated fixture output failed owning Rust suite |

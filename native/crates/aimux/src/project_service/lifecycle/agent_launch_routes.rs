@@ -2,6 +2,7 @@ use serde_json::{Value, json};
 
 use crate::config::load_config_for_project;
 use crate::daemon_state::load_metadata_state;
+use crate::debug_logging::{LogLevel, log_always_at};
 use crate::project_service::coordination_mutations::derive_runtime_exchange_indexes;
 use crate::project_service::dispatcher::ProjectServiceDispatchResponse;
 use crate::project_service::operation_failures::{
@@ -289,6 +290,17 @@ fn record_agent_create_operation_failure(
     worktree_path: Option<&str>,
     message: &str,
 ) {
+    log_always_at(
+        LogLevel::Warn,
+        "agent create failed",
+        "lifecycle",
+        Some(json!({
+            "tool": tool_key,
+            "sessionId": session_id,
+            "worktreePath": worktree_path,
+            "error": message,
+        })),
+    );
     let _ = add_dashboard_operation_failure(
         project_state_dir,
         OperationFailureInput {

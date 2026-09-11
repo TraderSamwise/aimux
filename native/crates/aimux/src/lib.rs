@@ -1,7 +1,6 @@
 pub mod agent_display;
 pub mod agent_output_liveness_contract;
 pub mod agent_prompt_delivery;
-pub mod agent_prompt_delivery_contract;
 pub mod agent_restore_state_contract;
 pub mod agent_status_contract;
 pub mod alert_display_contract;

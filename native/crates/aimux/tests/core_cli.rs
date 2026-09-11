@@ -1455,6 +1455,7 @@ fn agent_input_plans_native_text_route_with_variadic_text_body() {
                 "project": "/resolved/./child",
                 "sessionId": "claude-1",
                 "text": "hello there",
+                "force": false,
             })),
         }
     );
@@ -1469,6 +1470,25 @@ fn agent_input_plans_native_text_route_with_variadic_text_body() {
                 "project": "/repo",
                 "sessionId": "claude-1",
                 "text": "--flag",
+                "force": false,
+            })),
+        }
+    );
+
+    let forced = classify_core_cli(
+        &["input", "claude-1", "--force", "interrupt now"],
+        &context(true, true),
+    )
+    .expect("forced input plan");
+    assert_eq!(
+        forced.action,
+        CoreCliAction::TextRoute {
+            path: "/core/agents/input-text".into(),
+            body: Some(json!({
+                "project": "/repo",
+                "sessionId": "claude-1",
+                "text": "interrupt now",
+                "force": true,
             })),
         }
     );

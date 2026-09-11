@@ -454,10 +454,11 @@ pub fn agent_input_text_route(
         Ok(text) => text,
         Err(response) => return response,
     };
+    let force = boolean_param(route_url, body, "force", false);
     let (_, project_root) = match unwrap_project_result(runtime.post_project_service_json(
         &project,
         project_routes::agents::INPUT,
-        json!({ "sessionId": session_id, "text": text }),
+        json!({ "sessionId": session_id, "text": text, "force": force }),
         ProjectServicePostOptions::ensure(),
     )) {
         Ok(result) => result,

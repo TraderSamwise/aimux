@@ -928,6 +928,20 @@ pub fn run_tmux_expose_with_drivers(
         (Some(columns), Some(rows)) => format!("{columns}x{rows}"),
         _ => size_probe.query_client_size(options.client_tty.as_deref()),
     };
+    let signal_guard = match crate::process_signals::install_shutdown_signal_flag(
+        crate::process_signals::TERMINATION_SIGNALS,
+    ) {
+        Ok(guard) => guard,
+        Err(error) => {
+            log_at(
+                LogLevel::Error,
+                "expose failed to install shutdown signal handlers",
+                "tmux-expose",
+                Some(json!({ "error": error.to_string() })),
+            );
+            return 1;
+        }
+    };
     enter_plain_expose(output);
     if should_relaunch_for_resize(size_probe, options.client_tty.as_deref(), &client_baseline) {
         return finish_plain_expose(output, RELAUNCH_ON_RESIZE_EXIT);
@@ -989,13 +1003,20 @@ pub fn run_tmux_expose_with_drivers(
     }
     let mut buffer = [0_u8; 8192];
     loop {
+        if let Some(exit_code) = finish_on_expose_shutdown_signal(&signal_guard, output) {
+            return exit_code;
+        }
         let keys = if !loading && !pending_keys.is_empty() {
             std::mem::take(&mut pending_keys)
         } else {
-            let count = match input.read_timeout(
+            let event = input.read_timeout(
                 &mut buffer,
                 Duration::from_millis(refresh_delay_ms(items.len())),
-            ) {
+            );
+            if let Some(exit_code) = finish_on_expose_shutdown_signal(&signal_guard, output) {
+                return exit_code;
+            }
+            let count = match event {
                 ExposeInputEvent::End => return finish_plain_expose(output, 0),
                 ExposeInputEvent::Error => return finish_plain_expose(output, 1),
                 ExposeInputEvent::Timeout => {
@@ -1772,6 +1793,20 @@ fn hot_snapshot_key_for_scope(
 
 fn enter_plain_expose(output: &mut impl Write) {
     let _ = write!(output, "\x1b[?25l");
+}
+
+fn finish_on_expose_shutdown_signal(
+    signal_guard: &crate::process_signals::SignalFlagGuard,
+    output: &mut impl Write,
+) -> Option<i32> {
+    let signal = signal_guard.received_signal_name()?;
+    log_at(
+        LogLevel::Info,
+        "expose received shutdown signal",
+        "tmux-expose",
+        Some(json!({ "signal": signal })),
+    );
+    Some(finish_plain_expose(output, 0))
 }
 
 fn finish_plain_expose(output: &mut impl Write, code: i32) -> i32 {

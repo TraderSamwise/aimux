@@ -270,6 +270,23 @@ fn agent_read_mutation_routes_match_text_and_json_shapes() {
     )
     .expect("input route");
     assert_eq!(text_body(input), "delivered to claude-1\n");
+    assert_eq!(
+        runtime.calls.last().unwrap().body.as_ref().unwrap(),
+        &json!({ "sessionId": "claude-1", "text": "hello", "force": false })
+    );
+
+    let forced = route_agent_text_request(
+        &mut runtime,
+        "POST",
+        &format!("{}?force=1", CORE_API_ROUTES.agent_input_text),
+        Some(&json!({ "project": "/repo", "sessionId": "claude-1", "text": "now" })),
+    )
+    .expect("forced input route");
+    assert_eq!(text_body(forced), "delivered to claude-1\n");
+    assert_eq!(
+        runtime.calls.last().unwrap().body.as_ref().unwrap(),
+        &json!({ "sessionId": "claude-1", "text": "now", "force": true })
+    );
 
     let ps = route_agent_text_request(
         &mut runtime,

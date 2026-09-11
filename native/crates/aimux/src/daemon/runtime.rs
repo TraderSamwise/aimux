@@ -450,34 +450,79 @@ impl RealDaemonRuntime {
 
     fn stop_project_services_for_signal_shutdown(&mut self, signal_name: &str) {
         let state = load_daemon_state(self.resolver.daemon_state_path());
-        let project_roots = state
+        let project_services = state
             .projects
             .values()
             .filter_map(|service| {
                 serde_json::from_value::<ProjectServiceState>(service.clone()).ok()
             })
             .filter(|service| service.pid > 0)
-            .map(|service| service.project_root)
-            .collect::<BTreeSet<_>>();
+            .collect::<Vec<_>>();
         log_lifecycle_always(
             "daemon signal shutdown stopping project services",
             "daemon",
             Some(json!({
                 "signal": signal_name,
-                "projectCount": project_roots.len(),
+                "projectCount": project_services.len(),
             })),
         );
-        for project_root in project_roots {
+        for service in &project_services {
             if let Err(error) =
-                <Self as DaemonCoreCommandRuntime>::stop_project(self, &project_root, false)
+                <Self as DaemonCoreCommandRuntime>::stop_project(self, &service.project_root, false)
             {
                 log_lifecycle_always(
                     "daemon signal shutdown failed to stop project service",
                     "daemon",
                     Some(json!({
                         "signal": signal_name,
-                        "projectRoot": project_root,
+                        "projectRoot": service.project_root,
+                        "pid": service.pid,
                         "error": error,
+                    })),
+                );
+            }
+        }
+        let remaining =
+            wait_for_project_service_exit(&project_services, Duration::from_millis(1_500));
+        if !remaining.is_empty() {
+            log_lifecycle_always(
+                "daemon signal shutdown forcing remaining project services",
+                "daemon",
+                Some(json!({
+                    "signal": signal_name,
+                    "remaining": remaining,
+                })),
+            );
+            for service in project_services
+                .iter()
+                .filter(|service| remaining.contains(&service.pid))
+            {
+                if let Err(error) = <Self as DaemonCoreCommandRuntime>::stop_project(
+                    self,
+                    &service.project_root,
+                    true,
+                ) {
+                    log_lifecycle_always(
+                        "daemon signal shutdown failed to force project service",
+                        "daemon",
+                        Some(json!({
+                            "signal": signal_name,
+                            "projectRoot": service.project_root,
+                            "pid": service.pid,
+                            "error": error,
+                        })),
+                    );
+                }
+            }
+            let still_alive =
+                wait_for_project_service_exit(&project_services, Duration::from_millis(1_500));
+            if !still_alive.is_empty() {
+                log_lifecycle_always(
+                    "daemon signal shutdown left project services alive after bounded wait",
+                    "daemon",
+                    Some(json!({
+                        "signal": signal_name,
+                        "remaining": still_alive,
                     })),
                 );
             }
@@ -1934,6 +1979,10 @@ pub fn run_daemon_internal() -> Result<()> {
             "refusing to run aimux daemon from a cargo target binary on default port {port}; set AIMUX_DAEMON_PORT for isolated tests"
         );
     }
+    let _signal_guard = crate::process_signals::install_shutdown_signal_flag(
+        crate::process_signals::DAEMON_TERMINATION_SIGNALS,
+    )
+    .context("install daemon shutdown signal handlers")?;
     let now = now_iso();
     let info = AimuxDaemonInfo {
         pid: std::process::id() as i32,
@@ -1971,10 +2020,6 @@ pub fn run_daemon_internal() -> Result<()> {
     if let Ok(runtime) = runtime.lock() {
         runtime.connect_relay_on_startup();
     }
-    let _signal_guard = crate::process_signals::install_shutdown_signal_flag(
-        crate::process_signals::DAEMON_TERMINATION_SIGNALS,
-    )
-    .context("install daemon shutdown signal handlers")?;
     let route_runtime = Arc::clone(&runtime);
     let stream_runtime = Arc::clone(&runtime);
     let shutdown_runtime = Arc::clone(&runtime);
@@ -4416,6 +4461,24 @@ fn current_unix_millis() -> u128 {
         .as_millis()
 }
 
+fn wait_for_project_service_exit(
+    services: &[ProjectServiceState],
+    timeout: Duration,
+) -> BTreeSet<i32> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let remaining = services
+            .iter()
+            .filter(|service| service.pid > 0 && is_pid_alive(service.pid))
+            .map(|service| service.pid)
+            .collect::<BTreeSet<_>>();
+        if remaining.is_empty() || Instant::now() >= deadline {
+            return remaining;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
 fn project_roots_equivalent(left: &Path, right: &Path) -> bool {
     if left == right {
         return true;
@@ -5122,6 +5185,13 @@ mod tests {
         let fixture = restart_service_fixture("ensure-refuse-temp");
         let project = unique_temp_fixture_project_root("ensure-refuse-temp");
         fs::create_dir_all(project.join(".git")).expect("project git");
+        fs::remove_file(
+            fixture
+                .resolver
+                .global_aimux_dir()
+                .join(crate::runtime_safety_guard::TEST_ISOLATION_MARKER),
+        )
+        .expect("remove isolated marker to model a real daemon home");
         let project = project.to_string_lossy().into_owned();
         let launcher = Arc::new(RestartTestLauncher::new(91_404));
         let verifier = Arc::new(RestartTestProcessVerifier::current_native([]));
@@ -5566,6 +5636,53 @@ mod tests {
         assert_eq!(launcher.calls(), vec![project]);
         assert_eq!(launcher.terminations(), vec![(91_026, false)]);
         assert_eq!(health.calls(), vec![91_126]);
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn control_plane_restart_surfaces_materialization_refusal_reason() {
+        let fixture = restart_service_fixture("restart-refuse-materialization");
+        fs::remove_file(
+            fixture
+                .resolver
+                .global_aimux_dir()
+                .join(crate::runtime_safety_guard::TEST_ISOLATION_MARKER),
+        )
+        .expect("remove isolated marker to model a real daemon home");
+        let project = fixture.project_root.clone();
+        let launcher = Arc::new(RestartTestLauncher::new(91_127));
+        let verifier = Arc::new(RestartTestProcessVerifier::current_native([]));
+        let mut runtime = fixture.runtime(launcher.clone(), verifier);
+        let refreshed = RefCell::new(Vec::<String>::new());
+
+        let result = runtime.restart_control_plane_project_with_statusline(
+            &project,
+            |_project| -> Result<RestartDashboardTarget, String> {
+                panic!("dashboard reload must not run after materialization refusal")
+            },
+            |_runtime, project_root| refreshed.borrow_mut().push(project_root.to_owned()),
+        );
+        let restart = json!({
+            "daemon": { "current": { "pid": 9002 } },
+            "projects": [result.clone()],
+            "summary": restart_summary(&[result.clone()], &json!({})),
+        });
+        let text = render_runtime_restart_result(&restart);
+
+        let error = result["service"]["error"].as_str().expect("service error");
+        assert_eq!(result["service"]["status"], json!("failed"));
+        assert!(error.contains("refusing to materialize cargo test harness"));
+        assert!(error.contains(&project));
+        assert_eq!(result["dashboard"]["status"], json!("skipped"));
+        assert_eq!(
+            result["dashboard"]["reason"],
+            json!("project-service-health-unavailable")
+        );
+        assert_eq!(result["dashboard"]["error"], json!(error));
+        assert!(text.contains("service: failed (refusing to materialize cargo test harness"));
+        assert!(text.contains("dashboard: skipped (refusing to materialize cargo test harness"));
+        assert!(refreshed.into_inner().is_empty());
+        assert!(launcher.calls().is_empty());
         fixture.cleanup();
     }
 
@@ -6491,6 +6608,17 @@ mod tests {
             &home,
             Some(home.join(".aimux").to_string_lossy().into_owned()),
         );
+        fs::create_dir_all(resolver.global_aimux_dir()).expect("aimux home");
+        fs::write(
+            resolver
+                .global_aimux_dir()
+                .join(crate::runtime_safety_guard::TEST_ISOLATION_MARKER),
+            format!(
+                r#"{{"ownerPid":{},"kind":"cargo-test"}}"#,
+                std::process::id()
+            ),
+        )
+        .expect("write isolated aimux home marker");
         RestartServiceFixture {
             root,
             project_root: project.to_string_lossy().into_owned(),

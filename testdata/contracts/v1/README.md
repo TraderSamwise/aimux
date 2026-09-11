@@ -118,13 +118,6 @@ Priority fixture groups:
 - `agent-status/chip.json`: status chip mapping and ANSI rendering contracts
   captured by running TypeScript `tui/render/agent-status` helpers.
 
-## Agent Prompt Delivery
-
-- `agent-prompt-delivery/delivery.json`: prompt normalization, visible draft
-  detection, pasted-content checks, idle/force/no-draft polling, and submit
-  delivery contracts captured by running TypeScript `agent-prompt-delivery`
-  helpers.
-
 ## Attachments
 
 - `attachments/text.json`: wrapped attachment text recovery cases captured by

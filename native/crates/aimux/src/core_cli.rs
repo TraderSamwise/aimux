@@ -493,6 +493,7 @@ where
                         "project": project_root,
                         "sessionId": parsed.session_id,
                         "text": parsed.text,
+                        "force": parsed.force,
                     })),
                 },
                 CoreCliFallback::None,

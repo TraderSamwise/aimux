@@ -20,6 +20,7 @@ use super::project_events::ProjectEventBus;
 use super::scheduler::ProjectSchedulerHandle;
 
 use super::agent_controls::route_agent_control_request;
+use super::agent_input_delivery::AgentInputDeliveryQueue;
 use super::agent_output::route_agent_output_request;
 use super::agents::route_agent_read_request;
 use super::attachments::route_attachment_request;
@@ -75,6 +76,7 @@ pub struct ProjectServiceRequestContext {
     pub visual_clients: ProjectHotSnapshotCoordinator,
     pub plugin_statuses: Vec<NativePluginStatus>,
     pub scheduler: ProjectSchedulerHandle,
+    pub agent_input_delivery_queue: AgentInputDeliveryQueue,
 }
 
 impl ProjectServiceRequestContext {
@@ -97,6 +99,7 @@ impl ProjectServiceRequestContext {
             visual_clients: ProjectHotSnapshotCoordinator::default(),
             plugin_statuses: Vec::new(),
             scheduler: ProjectSchedulerHandle::default(),
+            agent_input_delivery_queue: AgentInputDeliveryQueue::default(),
         }
     }
 
@@ -122,6 +125,7 @@ impl ProjectServiceRequestContext {
             visual_clients: ProjectHotSnapshotCoordinator::default(),
             plugin_statuses: Vec::new(),
             scheduler: ProjectSchedulerHandle::default(),
+            agent_input_delivery_queue: AgentInputDeliveryQueue::default(),
         }
     }
 
