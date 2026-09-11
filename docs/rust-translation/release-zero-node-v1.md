@@ -26,10 +26,12 @@ Retired TypeScript gates:
   contracts, and the post-cut no-Node smoke evidence.
 
 Acceptance commands:
-- `yarn native:fmt:check`
-- `yarn native:test`
-- `yarn check:local-build-boundary`
-- `cargo clippy --manifest-path native/Cargo.toml --all-targets -- -D warnings`
+- `yarn verify:full`
+- blocking CI: Rust format, Rust clippy all targets, Rust tests (macOS),
+  JavaScript tests (root/relay), JavaScript tests (app), and Phase 8 live
+  residuals.
+- advisory CI: Rust tests (Linux), pending the desktop notification transport
+  platform decision.
 - native release asset inspection: no runtime `node`, `AIMUX_NODE_BIN`,
   `dist/launcher-bin.js`, or runtime `node_modules` dependency.
 - installed smoke: `aimux doctor versions`, `aimux daemon status --json`,

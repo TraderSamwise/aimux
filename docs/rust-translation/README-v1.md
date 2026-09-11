@@ -2,9 +2,9 @@
 
 ## Objective
 
-Rewrite Aimux into Rust with full feature parity before architecture changes.
-The normal installed CLI, daemon, project-service, tmux runtime, and dashboard
-hot path must end with zero Node processes.
+This directory is the historical record of the Rust rewrite. Phase 8 is
+complete: the normal installed CLI, daemon, project-service, tmux runtime, and
+dashboard hot path are Rust-owned and must start zero Node processes.
 
 JavaScript may remain for the Expo/mobile/web GUI and for build-time tooling
 needed to produce GUI assets. It may not remain in the installed runtime path
@@ -13,13 +13,18 @@ release install shims.
 
 ## Porting Rule
 
-TypeScript behavior is the spec. The first Rust implementation copies file
-boundaries, function names where practical, control flow, loops, data shapes,
-edge cases, and awkward decisions. Improvements wait until parity is proven.
+During the port, TypeScript behavior was the spec. Now that the port is done,
+Node source remains recoverable at `a9220736^` for intentional compatibility
+questions, but Node-only churn is not an automatic backlog.
 
 Trivially proven dead code should be deleted instead of translated. The commit
 must carry the proof: no exported contract, no reachable reference from active
 entrypoints, and the search/test evidence used to make the call.
+
+Current verification uses two lanes: `yarn verify` is the fast developer lane,
+and `yarn verify:full` is the release and CI lane. The Phase 8 live residuals
+are a blocking CI job because they drive the real native binary against a
+private tmux server.
 
 ## Tracked Files
 

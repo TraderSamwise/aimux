@@ -5,9 +5,11 @@ cutover, but the Rust binary either did not perform or only preserved as an
 uncalled contract.
 
 Current status: no active unported Rust rewrite subsystem is tracked here.
-`yarn audit:rust-orphans` should report exactly two tracked fixture dispatcher
-modules, both deliberate keeps: `plugin_runtime_contract.rs` and
-`transport_security_contract.rs`.
+`yarn audit:rust-orphans` should report exactly five tracked fixture dispatcher
+modules. Two are deliberate keeps: `plugin_runtime_contract.rs` and
+`transport_security_contract.rs`. Three are protected until their product
+decisions or production gaps close: `attachment_store_contract.rs`,
+`cli_attachment_contract.rs`, and `agent_restore_state_contract.rs`.
 
 ## Why The Gates Missed These
 
@@ -33,7 +35,8 @@ modules, both deliberate keeps: `plugin_runtime_contract.rs` and
 
 ## Still Outstanding
 
-None.
+- Attachment hosting and restore-previous-agents remain product decisions or
+  production-gap work, not generic Rust rewrite debt.
 
 ## Deleted As Duplicate Or Dead
 
@@ -69,8 +72,8 @@ None.
 
 ## Tracked But Not Rust Rewrite Ports
 
-These two modules account for the remaining tracked count of 2. They are
-deliberate keeps, not Rust rewrite debt.
+These five modules account for the remaining tracked count of 5. They are
+protected entries, not a generic Node backlog.
 
 - **Transport security contract.** Shared-chat actor resolution and browser
   device-proof encoding are live in the TypeScript app and relay. Keep the
@@ -79,6 +82,11 @@ deliberate keeps, not Rust rewrite debt.
   native plugin registry/API/scheduler. The unported part is custom
   `~/.aimux/plugins/*.js` userland plugin loading; port it only if custom JS
   plugins remain a supported product surface.
+- **Attachment contracts.** Keep `attachment_store_contract.rs` and
+  `cli_attachment_contract.rs` until attachment relay hosting is product-complete
+  through production routes.
+- **Agent restore state contract.** Keep `agent_restore_state_contract.rs` until
+  restore-previous-agents is either completed or explicitly retired.
 
 ## Fixed Since The Original Audit
 

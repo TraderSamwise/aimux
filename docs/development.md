@@ -89,9 +89,8 @@ mode.
 Common checks:
 
 ```bash
-yarn typecheck
-yarn lint
-yarn vitest
+yarn verify       # fast lane for normal development
+yarn verify:full  # release and CI lane
 ```
 
 Before asking someone to verify a runtime or CLI behavior change manually,

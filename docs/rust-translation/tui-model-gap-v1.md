@@ -1,8 +1,14 @@
 # TUI Model Gap v1
 
+Status: historical audit. This document records a Node-renderer parity gap
+snapshot from the rewrite; after Phase 8, it is not a current backlog by
+itself. Re-run the model inventory before citing any row as a live product gap.
+
 ## Scope
 
-This is Phase 0 for restoring Node dashboard renderer parity. It answers one question only: does the current Rust dashboard model carry every field consumed by the Node renderer?
+This was Phase 0 for restoring Node dashboard renderer parity. It answered one
+question only: did the Rust dashboard model at the captured commit carry every
+field consumed by the Node renderer?
 
 Sources:
 
@@ -242,7 +248,8 @@ The recovered overlay renderer consumes controller state and dashboard caches. R
 
 ## Findings
 
-The Rust model is not yet a faithful carrier for the Node dashboard renderer.
+At capture time, the Rust model was not yet a faithful carrier for the Node
+dashboard renderer.
 
 Typed coverage is reasonable for the basic dashboard spine: sessions, worktrees, main checkout, semantic counts, thread/workflow counts, and restore-offer identity. The visible mismatch Sam reported comes from the fields Node used for richer row/detail rendering that are either only raw extras or not supplied to the renderer at all.
 

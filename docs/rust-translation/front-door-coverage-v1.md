@@ -20,7 +20,8 @@ Every executable entry point needs at least one contract at its own boundary, ev
 
 ## Current Coverage
 
-`scripts/phase8-live-residuals.py` currently gates the front-door seams that still run on current master:
+`scripts/phase8-live-residuals.py` is a blocking CI job for the front-door seams
+that still run on current master:
 
 - command resolution from `aimux --help` through real binary execution;
 - command-group output alias detection for `overseer status`, `scribe status`,
@@ -35,10 +36,11 @@ Every executable entry point needs at least one contract at its own boundary, ev
 - daemon/project-service process startup races, stale daemon info cleanup,
   malformed daemon-start lock reclamation, and endpoint publication.
 
-Current proof: On 2026-09-11, `yarn audit:phase8-live-residuals:tmux --skip-build --aimux-bin /tmp/aimux-cargo-target-codex-8s9so6/debug/aimux` passed in 0.87s, `yarn audit:phase8-live-residuals:command-resolution --skip-build --aimux-bin /tmp/aimux-cargo-target-codex-8s9so6/debug/aimux` passed in 89.77s, `yarn audit:phase8-live-residuals:agent-shell --skip-build --aimux-bin /tmp/aimux-cargo-target-codex-8s9so6/debug/aimux` passed in 25.14s after the cold tmux bootstrap fix, `yarn audit:phase8-live-residuals:graveyard --skip-build --aimux-bin /tmp/aimux-cargo-target-codex-8s9so6/debug/aimux` passed in 61.00s after the same fix and current explicit-fork/kill semantics, `yarn audit:phase8-live-residuals:sse --skip-build --aimux-bin /tmp/aimux-cargo-target-codex-8s9so6/debug/aimux` passed in 8.66s, and `yarn audit:phase8-live-residuals:process --skip-build --aimux-bin /tmp/aimux-cargo-target-codex-8s9so6/debug/aimux` passed in 24.56s. The full residual sweep is not current evidence: `yarn audit:phase8-live-residuals --skip-build --aimux-bin /tmp/aimux-cargo-target-codex-8s9so6/debug/aimux` failed in 29.50s in the dashboard lane waiting for `phase8-dashboard-key-1`.
+Current proof: CI run `34586601917` on 2026-09-11 passed the blocking
+`Phase 8 live residuals` job in 4m48s. That job built the native binary once
+and then ran the tmux, command-resolution, agent-shell, graveyard, SSE, and
+process lanes serially against isolated roots and a private tmux server.
 
-The historical dashboard, top-level agent, shell-service, and restart residuals
-remain useful design notes, but they must be repaired and re-gated before being
-cited as current parity evidence. These tests intentionally avoid exact TUI
-layout, screenshots, real Claude/Codex invocations, network access, or
-timing-sensitive multi-agent orchestration.
+These tests intentionally avoid exact TUI layout, screenshots, real
+Claude/Codex invocations, network access, or timing-sensitive multi-agent
+orchestration.
