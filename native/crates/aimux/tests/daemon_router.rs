@@ -938,7 +938,7 @@ fn unified_router_logs_materialization_refusals() {
 #[test]
 fn unified_router_allows_legitimate_temp_project_root() {
     let temp_project =
-        std::env::temp_dir().join(format!("legit-router-project-{}", std::process::id()));
+        std::env::temp_dir().join(format!("aimux-legit-router-project-{}", std::process::id()));
     std::fs::create_dir_all(temp_project.join(".git")).expect("create temp git project");
     let temp_project = temp_project.to_string_lossy().into_owned();
     let mut runtime = FakeRouterRuntime::default();
