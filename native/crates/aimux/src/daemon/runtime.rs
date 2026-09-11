@@ -5639,6 +5639,53 @@ mod tests {
         fixture.cleanup();
     }
 
+    #[test]
+    fn control_plane_restart_surfaces_materialization_refusal_reason() {
+        let fixture = restart_service_fixture("restart-refuse-materialization");
+        fs::remove_file(
+            fixture
+                .resolver
+                .global_aimux_dir()
+                .join(crate::runtime_safety_guard::TEST_ISOLATION_MARKER),
+        )
+        .expect("remove isolated marker to model a real daemon home");
+        let project = fixture.project_root.clone();
+        let launcher = Arc::new(RestartTestLauncher::new(91_127));
+        let verifier = Arc::new(RestartTestProcessVerifier::current_native([]));
+        let mut runtime = fixture.runtime(launcher.clone(), verifier);
+        let refreshed = RefCell::new(Vec::<String>::new());
+
+        let result = runtime.restart_control_plane_project_with_statusline(
+            &project,
+            |_project| -> Result<RestartDashboardTarget, String> {
+                panic!("dashboard reload must not run after materialization refusal")
+            },
+            |_runtime, project_root| refreshed.borrow_mut().push(project_root.to_owned()),
+        );
+        let restart = json!({
+            "daemon": { "current": { "pid": 9002 } },
+            "projects": [result.clone()],
+            "summary": restart_summary(&[result.clone()], &json!({})),
+        });
+        let text = render_runtime_restart_result(&restart);
+
+        let error = result["service"]["error"].as_str().expect("service error");
+        assert_eq!(result["service"]["status"], json!("failed"));
+        assert!(error.contains("refusing to materialize cargo test harness"));
+        assert!(error.contains(&project));
+        assert_eq!(result["dashboard"]["status"], json!("skipped"));
+        assert_eq!(
+            result["dashboard"]["reason"],
+            json!("project-service-health-unavailable")
+        );
+        assert_eq!(result["dashboard"]["error"], json!(error));
+        assert!(text.contains("service: failed (refusing to materialize cargo test harness"));
+        assert!(text.contains("dashboard: skipped (refusing to materialize cargo test harness"));
+        assert!(refreshed.into_inner().is_empty());
+        assert!(launcher.calls().is_empty());
+        fixture.cleanup();
+    }
+
     #[cfg(unix)]
     #[test]
     fn nonblocking_child_exit_status_reports_exit_code() {
