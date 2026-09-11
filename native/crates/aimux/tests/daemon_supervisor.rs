@@ -4,11 +4,12 @@ use aimux::daemon_state::{
 };
 use aimux::daemon_supervisor::{
     DAEMON_HEALTH_KIND, DAEMON_START_LOCK_STALE_MS, RUNTIME_RESTART_LOCK_STALE_MS,
-    assert_not_stale_against_daemon_with, daemon_start_lock_path, is_aimux_daemon_health,
-    is_lock_stale, is_matching_daemon_health, read_lock_pid, release_daemon_start_lock,
-    runtime_restart_lock_is_owned_by, runtime_restart_lock_path, runtime_restart_steal_lock_path,
-    signal_number, signal_to_number, stop_daemon_info_with, stop_daemon_process_info_with,
-    try_acquire_daemon_start_lock_with, try_acquire_runtime_restart_lock_with,
+    assert_not_stale_against_daemon_with, daemon_start_lock_path, daemon_start_steal_lock_path,
+    is_aimux_daemon_health, is_lock_stale, is_matching_daemon_health, read_lock_pid,
+    release_daemon_start_lock, runtime_restart_lock_is_owned_by, runtime_restart_lock_path,
+    runtime_restart_steal_lock_path, signal_number, signal_to_number, stop_daemon_info_with,
+    stop_daemon_process_info_with, try_acquire_daemon_start_lock_with,
+    try_acquire_runtime_restart_lock_with,
 };
 use aimux::paths::PathResolver;
 use aimux::project_service_manifest::{
@@ -138,16 +139,19 @@ fn daemon_start_lock_acquire_release_and_stale_rules_match_typescript() {
     let test_dir = TestDir::new();
     let resolver = test_dir.resolver();
     let lock_path = daemon_start_lock_path(&resolver);
+    let steal_path = daemon_start_steal_lock_path(&resolver);
     let owner_pid = 111;
-    let acquired = try_acquire_daemon_start_lock_with(&lock_path, owner_pid, 1, |_| false)
-        .expect("acquire lock")
-        .expect("new lock");
+    let acquired =
+        try_acquire_daemon_start_lock_with(&lock_path, &steal_path, owner_pid, 1, |_| false)
+            .expect("acquire lock")
+            .expect("new lock");
     assert_eq!(acquired, lock_path);
     assert_eq!(read_lock_pid(&lock_path), Some(owner_pid));
 
     assert!(
-        try_acquire_daemon_start_lock_with(&lock_path, 222, current_millis(), |pid| pid
-            == owner_pid)
+        try_acquire_daemon_start_lock_with(&lock_path, &steal_path, 222, current_millis(), |pid| {
+            pid == owner_pid
+        })
         .expect("contended lock")
         .is_none()
     );
@@ -173,15 +177,42 @@ fn stale_or_dead_lock_is_reclaimed_and_owner_file_must_be_integer_pid() {
     let test_dir = TestDir::new();
     let resolver = test_dir.resolver();
     let lock_path = daemon_start_lock_path(&resolver);
+    let steal_path = daemon_start_steal_lock_path(&resolver);
     fs::create_dir_all(&lock_path).expect("create lock");
     fs::write(lock_path.join("owner.json"), "{\"pid\":\"111\"}\n").expect("write malformed owner");
     assert_eq!(read_lock_pid(&lock_path), None);
 
-    let acquired = try_acquire_daemon_start_lock_with(&lock_path, 222, current_millis(), |_| false)
+    let acquired =
+        try_acquire_daemon_start_lock_with(&lock_path, &steal_path, 222, current_millis(), |_| {
+            false
+        })
         .expect("reclaim malformed lock")
         .expect("acquired after reclaim");
     assert_eq!(acquired, lock_path);
     assert_eq!(read_lock_pid(&lock_path), Some(222));
+}
+
+#[test]
+fn daemon_start_lock_reclaim_in_progress_backs_off() {
+    let test_dir = TestDir::new();
+    let resolver = test_dir.resolver();
+    let lock_path = daemon_start_lock_path(&resolver);
+    let steal_path = daemon_start_steal_lock_path(&resolver);
+    fs::create_dir_all(&lock_path).expect("create lock");
+    fs::write(lock_path.join("owner.json"), "{\"pid\":\"not-an-int\"}\n")
+        .expect("write malformed owner");
+    fs::create_dir_all(&steal_path).expect("create steal lock");
+    fs::write(steal_path.join("owner.json"), "{\"pid\":333}\n").expect("write steal owner");
+
+    assert!(
+        try_acquire_daemon_start_lock_with(&lock_path, &steal_path, 222, current_millis(), |_| {
+            false
+        })
+        .expect("contended reclaim should not fail")
+        .is_none()
+    );
+    assert_eq!(read_lock_pid(&lock_path), None);
+    assert_eq!(read_lock_pid(&steal_path), Some(333));
 }
 
 #[cfg(unix)]
@@ -192,12 +223,16 @@ fn unreadable_daemon_start_lock_owner_blocks_reclaim() {
     let test_dir = TestDir::new();
     let resolver = test_dir.resolver();
     let lock_path = daemon_start_lock_path(&resolver);
+    let steal_path = daemon_start_steal_lock_path(&resolver);
     fs::create_dir_all(&lock_path).expect("create lock");
     let owner_path = lock_path.join("owner.json");
     fs::write(&owner_path, "{\"pid\":111}\n").expect("write owner");
     fs::set_permissions(&owner_path, fs::Permissions::from_mode(0o000)).expect("chmod owner");
 
-    let error = try_acquire_daemon_start_lock_with(&lock_path, 222, current_millis(), |_| false)
+    let error =
+        try_acquire_daemon_start_lock_with(&lock_path, &steal_path, 222, current_millis(), |_| {
+            false
+        })
         .expect_err("unreadable owner must block reclaim");
 
     fs::set_permissions(&owner_path, fs::Permissions::from_mode(0o600)).expect("restore owner");

@@ -158,6 +158,13 @@ pub fn daemon_start_lock_path(resolver: &PathResolver) -> PathBuf {
         .join("daemon-start")
 }
 
+pub fn daemon_start_steal_lock_path(resolver: &PathResolver) -> PathBuf {
+    resolver
+        .global_aimux_dir()
+        .join("locks")
+        .join("daemon-start.steal")
+}
+
 pub fn runtime_restart_lock_path(resolver: &PathResolver) -> PathBuf {
     resolver.global_aimux_dir().join("locks").join("restart")
 }
@@ -210,6 +217,7 @@ pub fn try_acquire_daemon_start_lock(
 ) -> Result<Option<PathBuf>, DaemonSupervisorError> {
     try_acquire_daemon_start_lock_with(
         daemon_start_lock_path(resolver),
+        daemon_start_steal_lock_path(resolver),
         std::process::id() as i32,
         current_unix_millis(),
         is_pid_alive,
@@ -218,11 +226,13 @@ pub fn try_acquire_daemon_start_lock(
 
 pub fn try_acquire_daemon_start_lock_with(
     lock_path: impl AsRef<Path>,
+    steal_path: impl AsRef<Path>,
     owner_pid: i32,
     now_ms: u128,
     is_alive: impl Fn(i32) -> bool,
 ) -> Result<Option<PathBuf>, DaemonSupervisorError> {
     let lock_path = lock_path.as_ref();
+    let steal_path = steal_path.as_ref();
     fs::create_dir_all(lock_path.parent().unwrap_or_else(|| Path::new(".")))?;
     let acquire = || -> io::Result<Option<PathBuf>> {
         match fs::create_dir(lock_path) {
@@ -241,16 +251,28 @@ pub fn try_acquire_daemon_start_lock_with(
         return Ok(Some(acquired));
     }
     let pid = try_read_lock_pid(lock_path)?;
-    if pid.is_some_and(is_alive) && !is_lock_stale(lock_path, DAEMON_START_LOCK_STALE_MS, now_ms) {
+    if pid.is_some_and(&is_alive) && !is_lock_stale(lock_path, DAEMON_START_LOCK_STALE_MS, now_ms) {
         return Ok(None);
     }
-    if let Err(error) = fs::remove_dir_all(lock_path) {
-        if is_daemon_start_lock_reclaim_race(&error) {
+    let Some(steal_lock) = try_acquire_daemon_start_steal_lock(steal_path, owner_pid, now_ms)?
+    else {
+        return Ok(None);
+    };
+    let reclaim_result: Result<Option<PathBuf>, DaemonSupervisorError> = (|| {
+        let current_pid = try_read_lock_pid(lock_path)?;
+        let current_lock_is_stale = is_lock_stale(lock_path, DAEMON_START_LOCK_STALE_MS, now_ms);
+        if current_pid.is_some_and(&is_alive) && !current_lock_is_stale {
             return Ok(None);
         }
-        return Err(error.into());
+        remove_lock_dir_if_present(lock_path)?;
+        acquire().map_err(DaemonSupervisorError::from)
+    })();
+    let release_result = remove_lock_dir_if_present(&steal_lock);
+    match (reclaim_result, release_result) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Err(error), _) => Err(error),
+        (Ok(_), Err(error)) => Err(error),
     }
-    Ok(acquire()?)
 }
 
 pub fn try_acquire_runtime_restart_lock(
@@ -345,6 +367,21 @@ fn try_acquire_runtime_restart_steal_lock(
         return Ok(Some(acquired));
     }
     if !is_lock_stale(steal_path, RUNTIME_RESTART_LOCK_STALE_MS, now_ms) {
+        return Ok(None);
+    }
+    remove_lock_dir_if_present(steal_path)?;
+    acquire_lock_dir(steal_path, owner_pid)
+}
+
+fn try_acquire_daemon_start_steal_lock(
+    steal_path: &Path,
+    owner_pid: i32,
+    now_ms: u128,
+) -> Result<Option<PathBuf>, DaemonSupervisorError> {
+    if let Some(acquired) = acquire_lock_dir(steal_path, owner_pid)? {
+        return Ok(Some(acquired));
+    }
+    if !is_lock_stale(steal_path, DAEMON_START_LOCK_STALE_MS, now_ms) {
         return Ok(None);
     }
     remove_lock_dir_if_present(steal_path)?;

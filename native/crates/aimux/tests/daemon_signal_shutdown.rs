@@ -59,16 +59,18 @@ fn daemon_sigterm_cleans_registration_and_project_service_children() {
         !service_pids.is_empty(),
         "daemon should materialize a project service before signal shutdown"
     );
+    for pid in &service_pids {
+        signal_pid(*pid, libc::SIGSTOP);
+    }
 
     signal_pid(daemon.id(), libc::SIGTERM);
     wait_for_child_exit(&mut daemon, "daemon");
 
     assert_daemon_info_cleared(isolation.aimux_home().join("daemon/daemon.json"));
     for pid in service_pids {
-        wait_for_pid_dead(pid);
         assert!(
             !pid_alive(pid),
-            "daemon SIGTERM should terminate child project service pid {pid}"
+            "daemon SIGTERM should wait for child project service pid {pid} before exiting"
         );
     }
 }
@@ -121,13 +123,6 @@ fn wait_for_child_exit(child: &mut Child, label: &str) {
             return;
         }
         assert!(Instant::now() < deadline, "{label} did not exit");
-        std::thread::sleep(Duration::from_millis(50));
-    }
-}
-
-fn wait_for_pid_dead(pid: u32) {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while pid_alive(pid) && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(50));
     }
 }

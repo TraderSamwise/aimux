@@ -150,6 +150,7 @@ where
         }
         match listener.accept() {
             Ok((mut stream, _)) => {
+                let _ = stream.set_nonblocking(false);
                 let handle = Arc::clone(&handle);
                 let intercept = Arc::clone(&intercept);
                 let metadata = metadata();
