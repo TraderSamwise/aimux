@@ -39,6 +39,8 @@ struct PendingEntry {
     token: u64,
     started_at_ms: i64,
     started_at_iso: String,
+    visible_floor_reconciled: bool,
+    starting_settle_reconciled: bool,
     session_seed: Option<DashboardSession>,
     service_seed: Option<DashboardService>,
     worktree_seed: Option<WorktreeGroup>,
@@ -67,6 +69,13 @@ impl DashboardPendingActions {
 
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
+    }
+
+    pub fn next_reconcile_at_ms(&self, _now_ms: i64) -> Option<i64> {
+        self.entries
+            .values()
+            .map(pending_entry_next_reconcile_at_ms)
+            .min()
     }
 
     pub fn set_session_action(
@@ -137,6 +146,8 @@ impl DashboardPendingActions {
             token,
             started_at_ms: now_ms,
             started_at_iso: iso_from_unix_ms(now_ms),
+            visible_floor_reconciled: false,
+            starting_settle_reconciled: false,
             session_seed: None,
             service_seed: None,
             worktree_seed: None,
@@ -171,6 +182,10 @@ impl DashboardPendingActions {
             }
             if age_ms < MIN_VISIBLE_MS {
                 return true;
+            }
+            entry.visible_floor_reconciled = true;
+            if entry.kind == "starting" && age_ms >= STARTING_SETTLE_AGE_MS {
+                entry.starting_settle_reconciled = true;
             }
             let settled = match target {
                 PendingTarget::Session => session_settled(&entry.kind, id, &sessions, age_ms),
@@ -315,6 +330,7 @@ fn session_settled(kind: &str, id: &str, sessions: &[DashboardSession], age_ms: 
         "creating" | "forking" | "migrating" | "switching" => {
             session.is_some_and(|session| session.status == SessionStatus::Running)
         }
+        "renaming" => session.is_some(),
         "starting" => session.is_some_and(|session| {
             session.status == SessionStatus::Running || age_ms >= STARTING_SETTLE_AGE_MS
         }),
@@ -401,6 +417,22 @@ pub fn pending_action_for_request(
         _ => return None,
     };
     Some((target, id, kind.to_owned()))
+}
+
+fn pending_entry_next_reconcile_at_ms(entry: &PendingEntry) -> i64 {
+    let min_visible_at = entry.started_at_ms.saturating_add(MIN_VISIBLE_MS);
+    if !entry.visible_floor_reconciled {
+        return min_visible_at;
+    }
+    if entry.kind == "starting" {
+        let settle_at = entry.started_at_ms.saturating_add(STARTING_SETTLE_AGE_MS);
+        if !entry.starting_settle_reconciled {
+            return settle_at;
+        }
+    }
+    entry
+        .started_at_ms
+        .saturating_add(PENDING_ACTION_TIMEOUT_MS)
 }
 
 /// Render a unix-millis instant the way every other timestamp in the model reads.

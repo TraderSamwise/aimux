@@ -9,6 +9,9 @@ use crate::runtime_topology::{
 };
 
 use super::LIVE_STATUSES;
+use super::agent_launch_helpers::{
+    MissingBackendSessionDisposition, missing_backend_session_disposition,
+};
 use super::ids::now_iso;
 use super::json_helpers::{
     array_field, find_by_id, object_insert_mut, string_field, trimmed_string,
@@ -43,6 +46,12 @@ pub(super) fn route_agent_stop(
     }
     clear_prompt_context(&project_state_dir, &session_id);
     let window_id = live_window_id_for_session(&topology, &session);
+    let session_state = topology_session_to_session_state(&session, &topology);
+    let missing_backend_disposition = missing_backend_session_disposition(
+        runtime,
+        &session_state,
+        &context.project_root().to_string_lossy(),
+    );
     // Stop takes a session offline and keeps the record; only kill and the
     // graveyard routes remove it from the list.
     let result = update_runtime_topology(runtime_topology_path(&project_state_dir), |topology| {
@@ -52,6 +61,27 @@ pub(super) fn route_agent_stop(
                 object_insert_mut(&mut current, "status", Value::String("offline".into()));
                 object_insert_mut(&mut current, "updatedAt", Value::String(now.clone()));
                 object_insert_mut(&mut current, "restoreBlockedReason", Value::Null);
+                match &missing_backend_disposition {
+                    MissingBackendSessionDisposition::RecordBackendSession(backend_session_id) => {
+                        object_insert_mut(
+                            &mut current,
+                            "backendSessionId",
+                            Value::String(backend_session_id.clone()),
+                        );
+                        object_insert_mut(&mut current, "freshRelaunchAllowed", Value::Bool(false));
+                    }
+                    MissingBackendSessionDisposition::AllowFreshRelaunch => {
+                        object_insert_mut(&mut current, "freshRelaunchAllowed", Value::Bool(true));
+                    }
+                    MissingBackendSessionDisposition::Blocked(reason) => {
+                        object_insert_mut(
+                            &mut current,
+                            "restoreBlockedReason",
+                            Value::String(reason.clone()),
+                        );
+                    }
+                    MissingBackendSessionDisposition::Unchanged => {}
+                }
             }
             current
         })

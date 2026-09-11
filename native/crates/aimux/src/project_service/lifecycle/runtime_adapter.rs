@@ -3,7 +3,11 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
+use std::collections::BTreeSet;
 
+use crate::backend_session_ids::{
+    BackendSessionDiscoveryOptions, codex_backend_session_ids_for_cwd,
+};
 use crate::paths::{is_git_project_root, project_checkout_required_message};
 use crate::tmux::{
     CapturePaneOptions, TmuxRuntimeManager, TmuxTarget, clear_history_argv, kill_window_argv,
@@ -36,6 +40,9 @@ pub trait ProjectLifecycleRuntime {
     fn capture_window(&mut self, target: &TmuxTarget) -> Option<String> {
         let _ = target;
         None
+    }
+    fn codex_backend_session_ids_for_cwd(&mut self, cwd: &str) -> Result<BTreeSet<String>, String> {
+        codex_backend_session_ids_for_cwd(cwd, &BackendSessionDiscoveryOptions::default())
     }
     fn wait_for_window_after_launch(&mut self, target: &TmuxTarget, timeout: Duration) -> bool {
         let deadline = Instant::now() + timeout;

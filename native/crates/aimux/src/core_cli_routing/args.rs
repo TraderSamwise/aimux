@@ -478,6 +478,7 @@ pub struct CoreLogsArgs {
 pub struct CoreRestartArgs {
     pub json: bool,
     pub force: bool,
+    pub all: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project: Option<String>,
 }

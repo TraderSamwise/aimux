@@ -171,6 +171,7 @@ fn project_ensure_and_restart_use_the_supplied_project_resolver() {
         CoreCliAction::RestartControlPlane {
             project_root: Some("/resolved/./child".into()),
             force: false,
+            all: false,
         }
     );
 
@@ -182,6 +183,17 @@ fn project_ensure_and_restart_use_the_supplied_project_resolver() {
         CoreCliAction::RestartControlPlane {
             project_root: None,
             force: false,
+            all: false,
+        }
+    );
+    let all_restart =
+        classify_core_cli(&["restart", "--all"], &context(true, true)).expect("all restart plan");
+    assert_eq!(
+        all_restart.action,
+        CoreCliAction::RestartControlPlane {
+            project_root: None,
+            force: false,
+            all: true,
         }
     );
 }
@@ -2146,6 +2158,7 @@ fn local_diagnostics_and_restart_do_not_become_command_requests() {
         CoreCliAction::RestartControlPlane {
             project_root: None,
             force: false,
+            all: true,
         }
     );
 

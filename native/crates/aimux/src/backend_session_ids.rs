@@ -366,12 +366,9 @@ pub fn discover_codex_backend_session_id(
     cwd: &str,
     options: &BackendSessionDiscoveryOptions,
 ) -> Option<String> {
-    let sessions_dir = codex_sessions_dir(options.codex_sessions_dir.as_deref());
-    if !sessions_dir.exists() {
+    let Ok(ids) = codex_backend_session_ids_for_cwd(cwd, options) else {
         return None;
-    }
-    let mut ids = BTreeSet::new();
-    collect_codex_session_ids_for_cwd(&sessions_dir, cwd, &mut ids, options);
+    };
     if ids.len() == 1 {
         ids.into_iter().next()
     } else {
@@ -379,22 +376,44 @@ pub fn discover_codex_backend_session_id(
     }
 }
 
+pub fn codex_backend_session_ids_for_cwd(
+    cwd: &str,
+    options: &BackendSessionDiscoveryOptions,
+) -> Result<BTreeSet<String>, String> {
+    let sessions_dir = codex_sessions_dir(options.codex_sessions_dir.as_deref());
+    if !sessions_dir.exists() {
+        return Ok(BTreeSet::new());
+    }
+    let mut ids = BTreeSet::new();
+    collect_codex_session_ids_for_cwd(&sessions_dir, cwd, &mut ids, options)?;
+    Ok(ids)
+}
+
 fn collect_codex_session_ids_for_cwd(
     dir: &Path,
     cwd: &str,
     ids: &mut BTreeSet<String>,
     options: &BackendSessionDiscoveryOptions,
-) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
+) -> Result<(), String> {
+    let entries = fs::read_dir(dir).map_err(|error| {
+        format!(
+            "failed to read Codex sessions dir {}: {error}",
+            dir.display()
+        )
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            format!(
+                "failed to read Codex sessions dir entry under {}: {error}",
+                dir.display()
+            )
+        })?;
         let path = entry.path();
-        let Ok(file_type) = entry.file_type() else {
-            continue;
-        };
+        let file_type = entry
+            .file_type()
+            .map_err(|error| format!("failed to inspect {}: {error}", path.display()))?;
         if file_type.is_dir() {
-            collect_codex_session_ids_for_cwd(&path, cwd, ids, options);
+            collect_codex_session_ids_for_cwd(&path, cwd, ids, options)?;
             continue;
         }
         if !file_type.is_file()
@@ -407,7 +426,7 @@ fn collect_codex_session_ids_for_cwd(
         {
             continue;
         }
-        let Some(line) = read_first_line(&path) else {
+        let Some(line) = read_first_line(&path)? else {
             continue;
         };
         let Ok(record) = serde_json::from_str::<Value>(&line) else {
@@ -430,6 +449,7 @@ fn collect_codex_session_ids_for_cwd(
         }
         ids.insert(id);
     }
+    Ok(())
 }
 
 fn identity_from_session(
@@ -469,26 +489,33 @@ fn string_field(value: &Value, key: &str) -> Option<String> {
     value.get(key).and_then(Value::as_str).map(str::to_owned)
 }
 
-fn read_first_line(path: &Path) -> Option<String> {
-    let mut file = File::open(path).ok()?;
+fn read_first_line(path: &Path) -> Result<Option<String>, String> {
+    let mut file =
+        File::open(path).map_err(|error| format!("failed to read {}: {error}", path.display()))?;
     let mut bytes = Vec::new();
     let mut buffer = [0_u8; 16 * 1024];
     while bytes.len() < MAX_FIRST_LINE_BYTES {
         let limit = buffer.len().min(MAX_FIRST_LINE_BYTES - bytes.len());
-        let read = file.read(&mut buffer[..limit]).ok()?;
+        let read = file
+            .read(&mut buffer[..limit])
+            .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
         if read == 0 {
             break;
         }
         if let Some(newline_index) = buffer[..read].iter().position(|byte| *byte == b'\n') {
             bytes.extend_from_slice(&buffer[..newline_index]);
-            return String::from_utf8(bytes).ok();
+            return String::from_utf8(bytes)
+                .map(Some)
+                .map_err(|error| format!("failed to decode {}: {error}", path.display()));
         }
         bytes.extend_from_slice(&buffer[..read]);
     }
     if bytes.is_empty() || bytes.len() >= MAX_FIRST_LINE_BYTES {
-        None
+        Ok(None)
     } else {
-        String::from_utf8(bytes).ok()
+        String::from_utf8(bytes)
+            .map(Some)
+            .map_err(|error| format!("failed to decode {}: {error}", path.display()))
     }
 }
 

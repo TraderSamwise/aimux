@@ -721,9 +721,15 @@ fn scope_bare_restart_to_current_project(
     if plan.operation != CoreCliOperation::Restart {
         return;
     }
-    let CoreCliAction::RestartControlPlane { project_root, .. } = &mut plan.action else {
+    let CoreCliAction::RestartControlPlane {
+        project_root, all, ..
+    } = &mut plan.action
+    else {
         return;
     };
+    if *all {
+        return;
+    }
     if project_root.is_some() || !runtime.is_git_project_root(&context.current_project_root) {
         return;
     }
@@ -934,6 +940,7 @@ fn run_plan(
         CoreCliAction::RestartControlPlane {
             project_root,
             force,
+            ..
         } => run_restart_control_plane(project_root.as_deref(), force, output_mode, runtime),
         CoreCliAction::StopDaemon { signal } => run_stop_daemon(output_mode, signal, runtime),
         CoreCliAction::DebugState { target } => {
