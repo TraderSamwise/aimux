@@ -1,6 +1,7 @@
 use serde_json::{Map, Value, json};
 use sha1::{Digest, Sha1};
 use std::fs;
+use std::path::Path;
 use std::process::{Command, Output, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -9,6 +10,7 @@ use std::time::{Duration, Instant};
 pub use crate::agent_prompt_delivery::normalize_submitted_prompt;
 use crate::agent_prompt_delivery::{PromptSubmitRuntime, wait_for_prompt_submit};
 use crate::daemon_state::load_metadata_state;
+use crate::dashboard_readiness::get_runtime_owner_id;
 use crate::expose_pane_output_tap::EXPOSE_PANE_TAP_MAX_BYTES;
 use crate::osc_notifications::{OscNotificationOutput, has_osc_start};
 use crate::project_api_contract::routes;
@@ -18,9 +20,9 @@ use crate::runtime_topology::{
 };
 use crate::tmux::TmuxRuntimeManager;
 use crate::tmux::{
-    CapturePaneOptions, TMUX_SEND_TEXT_CHUNK_BYTES, TmuxTarget, capture_pane_argv,
-    resize_window_argv, send_carriage_return_argv, send_escape_argv, send_key_argv, send_text_argv,
-    split_text_for_tmux_send_keys,
+    CapturePaneOptions, TMUX_RUNTIME_OWNER_OPTION, TMUX_SEND_TEXT_CHUNK_BYTES, TmuxTarget,
+    capture_pane_argv, resize_window_argv, send_carriage_return_argv, send_escape_argv,
+    send_key_argv, send_text_argv, split_text_for_tmux_send_keys,
 };
 use crate::tool_output_watchers::{classify_tool_pane, reconcile_agent_activity};
 
@@ -129,6 +131,14 @@ pub trait AgentOutputCaptureRuntime {
         None
     }
 
+    fn verify_target_runtime(
+        &mut self,
+        _target: &TmuxTarget,
+        _expected_project_root: &Path,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
     fn set_window_metadata(&mut self, _window_id: &str, _metadata: &Value) -> Result<(), String> {
         Err("tmux metadata sync not supported by this service".into())
     }
@@ -182,6 +192,47 @@ impl<T: AgentOutputCaptureRuntime> TmuxMetadataSyncRuntime for T {
 pub struct SystemAgentOutputCaptureRuntime;
 
 impl AgentOutputCaptureRuntime for SystemAgentOutputCaptureRuntime {
+    fn verify_target_runtime(
+        &mut self,
+        target: &TmuxTarget,
+        expected_project_root: &Path,
+    ) -> Result<(), String> {
+        let mut tmux = TmuxRuntimeManager::new();
+        let Some(actual_target) =
+            tmux.get_target_by_window_id(&target.session_name, &target.window_id)
+        else {
+            return Err(format!(
+                "refusing to read pane {}: window is not present in addressed tmux runtime {}",
+                target.window_id, target.session_name
+            ));
+        };
+        if actual_target.window_id != target.window_id {
+            return Err(format!(
+                "refusing to read pane {}: tmux resolved unexpected window {}",
+                target.window_id, actual_target.window_id
+            ));
+        }
+        let expected_project_root = canonicalize_project_root(expected_project_root);
+        let actual_project_root = tmux
+            .get_session_option(&target.session_name, "@aimux-project-root")
+            .map(canonicalize_project_root);
+        if actual_project_root.as_deref() != Some(expected_project_root.as_str()) {
+            return Err(format!(
+                "refusing to read pane {}: tmux session {} belongs to project {:?}, expected {}",
+                target.window_id, target.session_name, actual_project_root, expected_project_root
+            ));
+        }
+        let expected_owner = get_runtime_owner_id();
+        let actual_owner = tmux.get_session_option(&target.session_name, TMUX_RUNTIME_OWNER_OPTION);
+        if actual_owner.as_deref() != Some(expected_owner.as_str()) {
+            return Err(format!(
+                "refusing to read pane {}: tmux session {} belongs to runtime owner {:?}, expected {}",
+                target.window_id, target.session_name, actual_owner, expected_owner
+            ));
+        }
+        Ok(())
+    }
+
     fn capture_pane(
         &mut self,
         window_id: &str,
@@ -266,6 +317,13 @@ impl AgentOutputCaptureRuntime for SystemAgentOutputCaptureRuntime {
     ) -> Result<AgentInputWindowActivity, String> {
         tmux_agent_input_window_activity(window_id, TMUX_COMMAND_TIMEOUT)
     }
+}
+
+fn canonicalize_project_root(path: impl AsRef<Path>) -> String {
+    fs::canonicalize(path.as_ref())
+        .unwrap_or_else(|_| path.as_ref().to_path_buf())
+        .to_string_lossy()
+        .into_owned()
 }
 
 pub struct BoundedAgentOutputCaptureRuntime {
@@ -643,6 +701,9 @@ pub(super) fn read_agent_output_payload(
             format!("Session \"{session_id}\" is not running"),
         )));
     };
+    if let Err(error) = runtime.verify_target_runtime(&target, context.project_root()) {
+        return Err(Box::new(json_error(403, error)));
+    }
     let window_id = target.window_id.clone();
     let capture_options = CapturePaneOptions {
         start_line: Some(capture_window.start_line),

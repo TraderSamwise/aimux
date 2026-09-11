@@ -59,6 +59,13 @@ struct FakeMetadataSyncRuntime {
     actions: Vec<FakeMetadataSyncAction>,
 }
 
+struct CheckedCaptureRuntime {
+    output: String,
+    verify_result: Result<(), String>,
+    verified: Vec<(String, String, PathBuf)>,
+    captures: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 enum FakeMetadataSyncAction {
     Capture(String),
@@ -155,6 +162,30 @@ impl AgentOutputCaptureRuntime for FakeActivityRuntime {
         self.input_activity
             .pop_front()
             .unwrap_or(Ok(AgentInputWindowActivity::Unattended))
+    }
+}
+
+impl AgentOutputCaptureRuntime for CheckedCaptureRuntime {
+    fn verify_target_runtime(
+        &mut self,
+        target: &TmuxTarget,
+        expected_project_root: &std::path::Path,
+    ) -> Result<(), String> {
+        self.verified.push((
+            target.session_name.clone(),
+            target.window_id.clone(),
+            expected_project_root.to_path_buf(),
+        ));
+        self.verify_result.clone()
+    }
+
+    fn capture_pane(
+        &mut self,
+        window_id: &str,
+        _options: CapturePaneOptions,
+    ) -> Result<String, String> {
+        self.captures.push(window_id.to_owned());
+        Ok(self.output.clone())
     }
 }
 
@@ -905,6 +936,73 @@ fn output_route_classifies_live_pane_state_and_reconciles_activity() {
     assert_eq!(interrupted.body["paneState"]["interruptedVisible"], true);
     assert_eq!(interrupted.body["activityText"], "");
     assert_eq!(interrupted.body["activity"], "interrupted");
+    cleanup(project);
+}
+
+#[test]
+fn output_route_refuses_foreign_runtime_target_before_capture() {
+    let project = temp_project("foreign-runtime");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = CheckedCaptureRuntime {
+        output: "foreign pane contents".into(),
+        verify_result: Err("refusing to read pane @1: runtime owner mismatch".into()),
+        verified: Vec::new(),
+        captures: Vec::new(),
+    };
+
+    let response = route_agent_output_request_with_runtime(
+        &context,
+        "GET",
+        "/live-pane/output?sessionId=codex-1&purpose=terminal",
+        None,
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 403);
+    assert_eq!(
+        response.body["error"],
+        "refusing to read pane @1: runtime owner mismatch"
+    );
+    assert_eq!(
+        runtime.verified,
+        vec![("aimux-repo".into(), "@1".into(), project.clone())]
+    );
+    assert!(runtime.captures.is_empty());
+    cleanup(project);
+}
+
+#[test]
+fn output_route_reads_same_runtime_target_after_ownership_check() {
+    let project = temp_project("same-runtime");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = CheckedCaptureRuntime {
+        output: "same runtime pane\n".into(),
+        verify_result: Ok(()),
+        verified: Vec::new(),
+        captures: Vec::new(),
+    };
+
+    let response = route_agent_output_request_with_runtime(
+        &context,
+        "GET",
+        "/live-pane/output?sessionId=codex-1&purpose=terminal",
+        None,
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["output"], "same runtime pane\n");
+    assert_eq!(
+        runtime.verified,
+        vec![("aimux-repo".into(), "@1".into(), project.clone())]
+    );
+    assert_eq!(runtime.captures, vec!["@1".to_owned()]);
     cleanup(project);
 }
 
