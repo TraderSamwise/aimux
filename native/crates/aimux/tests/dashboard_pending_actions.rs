@@ -74,6 +74,112 @@ fn an_overlay_survives_a_refresh_that_already_reports_the_new_state() {
 }
 
 #[test]
+fn settled_stop_requests_a_second_reconcile_after_the_visible_floor() {
+    let mut pending = DashboardPendingActions::new();
+    pending.set_session_action("claude-a1", "stopping", None, 0);
+    let mut settled = snapshot_with("offline");
+
+    pending.reconcile(&settled, 10);
+    pending.apply(&mut settled);
+
+    assert_eq!(pending.next_reconcile_at_ms(10), Some(400));
+    assert_eq!(
+        settled.sessions[0].pending_action.as_deref(),
+        Some("stopping")
+    );
+
+    let mut refreshed = snapshot_with("offline");
+    pending.reconcile(&refreshed, 400);
+    pending.apply(&mut refreshed);
+
+    assert!(pending.is_empty());
+    assert!(refreshed.sessions[0].pending_action.is_none());
+}
+
+#[test]
+fn graveyarding_session_clears_after_the_removed_row_reaches_the_visible_floor() {
+    let mut pending = DashboardPendingActions::new();
+    pending.set_session_action("claude-a1", "graveyarding", None, 0);
+    let snapshot = snapshot_with("running");
+
+    pending.reconcile(&snapshot, 10);
+
+    assert_eq!(pending.next_reconcile_at_ms(10), Some(400));
+
+    let removed: DesktopStateSnapshot = serde_json::from_value(json!({
+        "sessions": [],
+        "teammates": [],
+        "services": [],
+        "worktrees": [],
+        "worktreeGroups": [],
+        "mainCheckoutInfo": { "name": "main", "branch": "master" },
+        "agentRestoreOffer": null
+    }))
+    .expect("snapshot");
+    pending.reconcile(&removed, 400);
+
+    assert!(pending.is_empty());
+}
+
+#[test]
+fn graveyarding_worktree_clears_after_the_removed_group_reaches_the_visible_floor() {
+    let mut pending = DashboardPendingActions::new();
+    pending.set_worktree_action(Some("/repo/wt"), "graveyarding", None, 0);
+    let present: DesktopStateSnapshot = serde_json::from_value(json!({
+        "sessions": [],
+        "teammates": [],
+        "services": [],
+        "worktrees": [],
+        "worktreeGroups": [{ "id": "wt", "name": "wt", "branch": "feature", "path": "/repo/wt", "status": "active", "sessions": [], "services": [] }],
+        "mainCheckoutInfo": { "name": "main", "branch": "master" },
+        "agentRestoreOffer": null
+    }))
+    .expect("snapshot");
+
+    pending.reconcile(&present, 10);
+
+    assert_eq!(pending.next_reconcile_at_ms(10), Some(400));
+
+    let removed: DesktopStateSnapshot = serde_json::from_value(json!({
+        "sessions": [],
+        "teammates": [],
+        "services": [],
+        "worktrees": [],
+        "worktreeGroups": [],
+        "mainCheckoutInfo": { "name": "main", "branch": "master" },
+        "agentRestoreOffer": null
+    }))
+    .expect("snapshot");
+    pending.reconcile(&removed, 400);
+
+    assert!(pending.is_empty());
+}
+
+#[test]
+fn stuck_stop_backs_off_until_the_timeout_after_the_visible_floor() {
+    let mut pending = DashboardPendingActions::new();
+    pending.set_session_action("claude-a1", "stopping", None, 0);
+    let running = snapshot_with("running");
+
+    pending.reconcile(&running, 400);
+
+    assert!(!pending.is_empty());
+    assert_eq!(pending.next_reconcile_at_ms(400), Some(15_000));
+}
+
+#[test]
+fn starting_overlay_requests_its_settle_deadline_after_the_visible_floor() {
+    let mut pending = DashboardPendingActions::new();
+    pending.set_session_action("claude-a1", "starting", None, 0);
+    let offline = snapshot_with("offline");
+
+    pending.reconcile(&offline, 400);
+
+    assert!(!pending.is_empty());
+    assert_eq!(pending.next_reconcile_at_ms(400), Some(5_000));
+}
+
+#[test]
 fn resume_paints_starting_and_shows_the_row_as_running() {
     let mut pending = DashboardPendingActions::new();
     pending.set_session_action("claude-a1", "starting", None, 0);
@@ -87,6 +193,19 @@ fn resume_paints_starting_and_shows_the_row_as_running() {
         Some("starting")
     );
     assert_eq!(snapshot.sessions[0].status, SessionStatus::Running);
+}
+
+#[test]
+fn rename_overlay_clears_after_a_refreshed_model_reaches_the_visible_floor() {
+    let mut pending = DashboardPendingActions::new();
+    pending.set_session_action("claude-a1", "renaming", None, 0);
+    let mut snapshot = snapshot_with("running");
+
+    pending.reconcile(&snapshot, 400);
+    pending.apply(&mut snapshot);
+
+    assert!(pending.is_empty());
+    assert!(snapshot.sessions[0].pending_action.is_none());
 }
 
 #[test]
