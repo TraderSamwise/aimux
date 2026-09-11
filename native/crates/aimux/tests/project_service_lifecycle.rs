@@ -13,6 +13,7 @@ use aimux::runtime_topology::{
 };
 use aimux::tmux::TmuxTarget;
 use serde_json::{Value, json};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, remove_dir_all};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -30,6 +31,7 @@ struct FakeLifecycleRuntime {
     killed: Vec<String>,
     existing_windows: Vec<String>,
     renamed: Vec<(String, String)>,
+    codex_backend_ids_by_cwd: BTreeMap<String, Result<BTreeSet<String>, String>>,
     main_repo: Option<String>,
     worktrees_created: Vec<FakeCreateWorktree>,
     create_worktree_error: Option<String>,
@@ -136,6 +138,13 @@ impl ProjectLifecycleRuntime for FakeLifecycleRuntime {
         self.existing_windows.contains(&target.window_id)
     }
 
+    fn codex_backend_session_ids_for_cwd(&mut self, cwd: &str) -> Result<BTreeSet<String>, String> {
+        self.codex_backend_ids_by_cwd
+            .get(cwd)
+            .cloned()
+            .unwrap_or_else(|| Ok(BTreeSet::new()))
+    }
+
     fn kill_window(&mut self, window_id: &str) -> Result<(), String> {
         self.killed.push(window_id.to_owned());
         Ok(())
@@ -183,6 +192,105 @@ fn agent_stop_takes_session_offline_and_kills_window() {
             .unwrap()
             .iter()
             .all(|binding| binding["nodeId"] != "node-agent")
+    );
+    cleanup(project);
+}
+
+#[test]
+fn agent_stop_marks_codex_without_backend_history_fresh_relaunchable() {
+    let project = temp_project("agent-stop-codex-fresh");
+    let state_dir = project.join("state");
+    write_lifecycle_topology(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::STOP,
+        Some(&json!({ "sessionId": "codex-live" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    let topology = read_topology(&state_dir);
+    let session = session(&topology, "codex-live");
+    assert_eq!(session["status"], "offline");
+    assert_eq!(session["freshRelaunchAllowed"], true);
+    assert!(session.get("backendSessionId").is_none());
+    cleanup(project);
+}
+
+#[test]
+fn agent_stop_records_discovered_codex_backend_before_taking_offline() {
+    let project = temp_project("agent-stop-codex-discovered");
+    let state_dir = project.join("state");
+    write_lifecycle_topology(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+    let project_cwd = project.to_string_lossy().into_owned();
+    runtime.codex_backend_ids_by_cwd.insert(
+        project_cwd,
+        Ok(BTreeSet::from([
+            "0710a963-a473-430f-9f9a-e27dd4546328".into()
+        ])),
+    );
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::STOP,
+        Some(&json!({ "sessionId": "codex-live" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    let topology = read_topology(&state_dir);
+    let session = session(&topology, "codex-live");
+    assert_eq!(
+        session["backendSessionId"],
+        "0710a963-a473-430f-9f9a-e27dd4546328"
+    );
+    assert_eq!(session["freshRelaunchAllowed"], false);
+    cleanup(project);
+}
+
+#[test]
+fn agent_stop_keeps_restore_blocked_when_codex_history_is_ambiguous() {
+    let project = temp_project("agent-stop-codex-ambiguous");
+    let state_dir = project.join("state");
+    write_lifecycle_topology(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+    let project_cwd = project.to_string_lossy().into_owned();
+    runtime.codex_backend_ids_by_cwd.insert(
+        project_cwd,
+        Ok(BTreeSet::from([
+            "0710a963-a473-430f-9f9a-e27dd4546328".into(),
+            "11111111-2222-3333-4444-555555555555".into(),
+        ])),
+    );
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::STOP,
+        Some(&json!({ "sessionId": "codex-live" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    let topology = read_topology(&state_dir);
+    let session = session(&topology, "codex-live");
+    assert_eq!(session["freshRelaunchAllowed"], Value::Null);
+    assert!(
+        session["restoreBlockedReason"]
+            .as_str()
+            .unwrap()
+            .contains("2 possible resumable sessions")
     );
     cleanup(project);
 }

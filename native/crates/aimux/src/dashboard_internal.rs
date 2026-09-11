@@ -369,6 +369,9 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
         ) {
             render_now = true;
         }
+        if pending_action_reconcile_due(&pending_actions, now) {
+            render_now = true;
+        }
         reconcile_dashboard_event_stream(
             &mut event_stream,
             &mut event_stream_retry_at,
@@ -946,6 +949,12 @@ fn reconcile_dashboard_event_stream(
 
 fn elapsed_millis(start: Instant) -> i64 {
     start.elapsed().as_millis().min(i64::MAX as u128) as i64
+}
+
+fn pending_action_reconcile_due(pending_actions: &DashboardPendingActions, now_ms: i64) -> bool {
+    pending_actions
+        .next_reconcile_at_ms(now_ms)
+        .is_some_and(|due_at| now_ms >= due_at)
 }
 
 fn should_probe_dashboard_runtime_guard(
@@ -2192,6 +2201,15 @@ mod tests {
         );
         assert!(deferred.is_empty());
         drop(accepted);
+    }
+
+    #[test]
+    fn pending_action_deadline_requests_a_render_without_input() {
+        let mut pending_actions = DashboardPendingActions::new();
+        pending_actions.set_session_action("claude-a1", "stopping", None, 0);
+
+        assert!(!pending_action_reconcile_due(&pending_actions, 399));
+        assert!(pending_action_reconcile_due(&pending_actions, 400));
     }
 
     #[test]
