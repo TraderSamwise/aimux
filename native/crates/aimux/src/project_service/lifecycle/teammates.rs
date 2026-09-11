@@ -12,6 +12,7 @@ use crate::project_service::router::ProjectServiceRequestContext;
 use crate::runtime_topology::{
     list_topology_session_states, read_runtime_topology, runtime_topology_path,
 };
+use crate::user_facing_errors::user_facing_error_message;
 
 use super::json_helpers::*;
 use super::runtime_adapter::ProjectLifecycleRuntime;
@@ -107,7 +108,7 @@ pub(super) fn route_agent_create_teammate(
         },
     ) {
         Ok(result) => result,
-        Err(error) => return json_error(500, error),
+        Err(error) => return json_error(500, user_facing_error_message(&error)),
     };
     let mut response = json!({
         "sessionId": result.session_id,

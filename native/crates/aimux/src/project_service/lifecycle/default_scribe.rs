@@ -14,6 +14,7 @@ use crate::runtime_topology::{
 };
 use crate::session_bootstrap::scribe_team;
 use crate::session_launch::resolve_default_scribe_launch;
+use crate::user_facing_errors::user_facing_error_message;
 
 use super::json_helpers::*;
 use super::runtime_adapter::ProjectLifecycleRuntime;
@@ -104,7 +105,7 @@ pub fn ensure_default_scribe_agent(
         Err(error) => json!({
             "created": false,
             "reason": "launch-error",
-            "error": error,
+            "error": user_facing_error_message(&error),
         }),
     }
 }
