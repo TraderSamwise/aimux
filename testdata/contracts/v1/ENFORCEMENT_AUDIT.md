@@ -150,7 +150,6 @@ Binding statuses: PROVEN-FAILS 207, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 3.
 | `fixture_service_state_snapshot` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/service-state-snapshot.json` | 5 | mutated fixture output failed owning Rust suite |
 | `fixture_session_bootstrap` | PROVEN-FAILS | `testdata/contracts/v1/session-bootstrap/action-args.json` | 9 | mutated fixture output failed owning Rust suite |
 | `fixture_session_bootstrap` | PROVEN-FAILS | `testdata/contracts/v1/session-bootstrap/preamble.json` | 14 | mutated fixture output failed owning Rust suite |
-| `fixture_session_runtime` | PROVEN-FAILS | `testdata/contracts/v1/session/runtime.json` | 2 | mutated fixture output failed owning Rust suite |
 | `fixture_session_semantics` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/session-recency.json` | 13 | mutated fixture output failed owning Rust suite |
 | `fixture_session_semantics` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/session-restorability.json` | 5 | mutated fixture output failed owning Rust suite |
 | `fixture_session_semantics` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/session-semantics.json` | 13 | mutated fixture output failed owning Rust suite |
@@ -176,7 +175,6 @@ Binding statuses: PROVEN-FAILS 207, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 3.
 | `fixture_tmux_runtime_open_target` | PROVEN-FAILS | `testdata/contracts/v1/tmux/runtime-open-target.json` | 3 | mutated fixture output failed owning Rust suite |
 | `fixture_tmux_runtime_session_lifecycle` | PROVEN-FAILS | `testdata/contracts/v1/tmux/runtime-session-lifecycle.json` | 9 | mutated fixture output failed owning Rust suite |
 | `fixture_tmux_runtime_stop` | PROVEN-FAILS | `testdata/contracts/v1/tmux/runtime-stop.json` | 4 | mutated fixture output failed owning Rust suite |
-| `fixture_tmux_session_transport` | PROVEN-FAILS | `testdata/contracts/v1/tmux/session-transport.json` | 8 | mutated fixture output failed owning Rust suite |
 | `fixture_tmux_startup_interstitials` | PROVEN-FAILS | `testdata/contracts/v1/tmux/startup-interstitials.json` | 8 | mutated fixture output failed owning Rust suite |
 | `fixture_tmux_statusline_render` | STATIC | `testdata/contracts/v1/tmux/statusline-node-frame-v1.json` | 7 | current active include observed; dynamic mutation proof not recorded in this audit |
 | `fixture_tmux_statusline_render` | PROVEN-FAILS | `testdata/contracts/v1/tmux/statusline-render.json` | 7 | mutated fixture output failed owning Rust suite |
