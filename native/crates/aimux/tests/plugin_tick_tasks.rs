@@ -1,9 +1,12 @@
 use aimux::plugin_project_service_host::builtin_plugin_tick_tasks;
-use aimux::plugin_registry::{NativePluginRegistry, builtin_native_plugins};
+use aimux::plugin_registry::builtin_native_plugins;
 
 #[test]
 fn every_builtin_plugin_gets_a_tick_task() {
-    let registered = NativePluginRegistry::builtins().plugin_names();
+    let registered = builtin_native_plugins()
+        .into_iter()
+        .map(|(_, plugin)| plugin.manifest().name)
+        .collect::<Vec<_>>();
     let mut ticked = builtin_plugin_tick_tasks()
         .iter()
         .map(|task| task.name().to_owned())

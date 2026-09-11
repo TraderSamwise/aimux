@@ -7,15 +7,6 @@ use std::path::{Path, PathBuf};
 pub const MIN_INSTALL_CLEANUP_INTERVAL_MS: i64 = 3_600_000;
 pub const MIN_INSTALL_RETENTION_DAYS: i64 = 1;
 
-pub fn default_installs_config() -> Value {
-    json!({
-        "cleanupEnabled": true,
-        "retentionDays": DEFAULT_INSTALL_RETENTION_DAYS,
-        "keepRecent": DEFAULT_INSTALL_KEEP_RECENT,
-        "cleanupIntervalMs": 86_400_000
-    })
-}
-
 pub fn normalize_installs_config(raw: &Value) -> Value {
     let value = raw.as_object();
     json!({

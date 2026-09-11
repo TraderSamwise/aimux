@@ -1,6 +1,5 @@
 use aimux::session_launch::{
     derive_aimux_session_id_from_backend_session_id, inject_codex_developer_instructions,
-    summarize_launch_args,
 };
 
 #[test]
@@ -78,34 +77,6 @@ fn inserts_codex_developer_instructions_before_subcommands() {
             "developer_instructions=\"stand\"",
             "--",
             "Explain",
-        ]
-        .map(str::to_owned)
-    );
-}
-
-#[test]
-fn redacts_sensitive_launch_arg_values_in_debug_summaries() {
-    assert_eq!(
-        summarize_launch_args(
-            &[
-                "--api-key",
-                "sk-real-secret",
-                "--model",
-                "gpt-5",
-                "--auth-token=real-token",
-                "OPENAI_API_KEY=real-key",
-                "PATH=/usr/bin",
-            ]
-            .map(str::to_owned)
-        ),
-        [
-            "--api-key",
-            "<redacted>",
-            "--model",
-            "gpt-5",
-            "--auth-token=<redacted>",
-            "OPENAI_API_KEY=<redacted>",
-            "PATH=/usr/bin",
         ]
         .map(str::to_owned)
     );

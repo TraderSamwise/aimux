@@ -33,13 +33,6 @@ impl NativePluginRegistry {
         Self { plugins }
     }
 
-    pub fn plugin_names(&self) -> Vec<String> {
-        self.plugins
-            .iter()
-            .map(|plugin| plugin.manifest().name)
-            .collect()
-    }
-
     pub fn start(&mut self, host: &mut dyn NativePluginHost) -> Vec<NativePluginStatus> {
         self.plugins
             .iter_mut()

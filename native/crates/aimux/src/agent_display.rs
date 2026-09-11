@@ -106,10 +106,6 @@ pub fn resolve_statusline_model(agent: &AgentDisplayInput<'_>) -> AgentDisplaySe
     AgentDisplaySession::resolve(agent, AgentDisplayPolicy::StatuslineModel)
 }
 
-pub fn agent_tool_name(agent: &AgentDisplayInput<'_>) -> String {
-    resolve_app_agent_display(agent).tool
-}
-
 pub fn is_generated_agent_label(label: &str, agent: &AgentDisplayInput<'_>) -> bool {
     let input = AgentDisplayInput {
         label: Some(label),
@@ -120,12 +116,6 @@ pub fn is_generated_agent_label(label: &str, agent: &AgentDisplayInput<'_>) -> b
 
 pub fn agent_short_name(agent: &AgentDisplayInput<'_>) -> String {
     resolve_app_agent_display(agent).short_name()
-}
-
-pub fn agent_role_label(agent: &AgentDisplayInput<'_>) -> String {
-    resolve_app_agent_display(agent)
-        .display_role
-        .unwrap_or_default()
 }
 
 pub fn agent_compact_identity(agent: &AgentDisplayInput<'_>) -> String {

@@ -1,7 +1,7 @@
 use aimux::install_cleanup::{
     InstallCleanupCandidate, InstallCleanupItemResult, InstallCleanupItemStatus,
     InstallCleanupKept, InstallCleanupPlan, InstallCleanupRunResult, InstallKeepReason,
-    is_install_cleanup_dry_run_value, render_install_cleanup_plan, render_install_cleanup_result,
+    render_install_cleanup_plan, render_install_cleanup_result,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -42,7 +42,9 @@ fn install_doctor_contract_matches_typescript() {
 
 fn run_case(input: &Value) -> Value {
     match input["api"].as_str().unwrap_or_default() {
-        "isInstallCleanupDryRun" => json!(is_install_cleanup_dry_run_value(&input["options"])),
+        "isInstallCleanupDryRun" => {
+            json!(input["options"].get("fix").and_then(Value::as_bool) != Some(true))
+        }
         "renderInstallCleanupPlan" => json!(render_install_cleanup_plan(&plan_from_value(
             &input["plan"]
         ))),

@@ -1,10 +1,7 @@
 use aimux::native_plugin_gh_pr_context::GithubPrContextPlugin;
 use aimux::native_plugin_transcript_length::TranscriptLengthPlugin;
 use aimux::paths::PathResolver;
-use aimux::plugin_api::{
-    NativePlugin, NativePluginApi, NativePluginApiRequest, NativePluginHost,
-    native_plugin_api_surface,
-};
+use aimux::plugin_api::{NativePlugin, NativePluginApi, NativePluginApiRequest, NativePluginHost};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::fs;
@@ -27,15 +24,6 @@ struct Case {
     name: String,
     input: Value,
     output: Value,
-}
-
-#[test]
-fn native_plugin_api_surface_is_serializable() {
-    let surface = native_plugin_api_surface();
-    assert_eq!(surface.len(), 33);
-    assert!(surface.contains(&"listSessions"));
-    assert!(surface.contains(&"publishNotification"));
-    assert!(surface.contains(&"httpRequest"));
 }
 
 #[test]

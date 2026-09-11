@@ -1,6 +1,6 @@
 use aimux::agent_display::{
-    AgentDisplayInput, agent_compact_identity, agent_role_label, agent_short_name, agent_tool_name,
-    is_generated_agent_label,
+    AgentDisplayInput, agent_compact_identity, agent_short_name, is_generated_agent_label,
+    resolve_app_agent_display,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -46,7 +46,7 @@ fn run_agent_display_contract_case(input: &Value) -> Value {
     let default_agent = Value::Null;
     let agent = AgentDisplayInput::from_value(input.get("agent").unwrap_or(&default_agent));
     match api {
-        "agentToolName" => json!(agent_tool_name(&agent)),
+        "agentToolName" => json!(resolve_app_agent_display(&agent).tool),
         "isGeneratedAgentLabel" => json!(is_generated_agent_label(
             input
                 .get("label")
@@ -55,7 +55,11 @@ fn run_agent_display_contract_case(input: &Value) -> Value {
             &agent
         )),
         "agentShortName" => json!(agent_short_name(&agent)),
-        "agentRoleLabel" => json!(agent_role_label(&agent)),
+        "agentRoleLabel" => json!(
+            resolve_app_agent_display(&agent)
+                .display_role
+                .unwrap_or_default()
+        ),
         "agentCompactIdentity" => json!(agent_compact_identity(&agent)),
         _ => panic!("unknown agent display contract api: {api}"),
     }

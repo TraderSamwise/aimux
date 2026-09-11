@@ -1,7 +1,6 @@
 use aimux::config::merge_config_layers;
 use aimux::install_config::{
-    default_installs_config, is_primary_install_lane_with_home, load_installs_config_from_path,
-    normalize_installs_config,
+    is_primary_install_lane_with_home, load_installs_config_from_path, normalize_installs_config,
 };
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
@@ -84,7 +83,7 @@ fn config_actual(case: &Value) -> Value {
 
 fn install_actual(case: &Value) -> Value {
     match case["api"].as_str().unwrap_or_default() {
-        "defaultInstallsConfig" => default_installs_config(),
+        "defaultInstallsConfig" => normalize_installs_config(&Value::Null),
         "normalizeInstallsConfig" => normalize_installs_config(&case["input"]["raw"]),
         "isPrimaryInstallLane" => {
             let env = env_map(&case["input"]["env"]);

@@ -135,21 +135,6 @@ pub fn inject_codex_developer_instructions(
     result
 }
 
-pub fn summarize_launch_args(args: &[String]) -> Vec<String> {
-    let mut redact_next = false;
-    args.iter()
-        .map(|arg| {
-            if redact_next {
-                redact_next = false;
-                return "<redacted>".to_owned();
-            }
-            let summarized = summarize_launch_arg(arg);
-            redact_next = is_sensitive_option_arg(arg) && !arg.contains('=');
-            summarized
-        })
-        .collect()
-}
-
 fn command_executable(command: &str) -> String {
     let basename = basename_like_node_posix(command);
     if basename.is_empty() {
@@ -206,68 +191,6 @@ fn codex_config_arg(key: &str, value: &str) -> String {
         "{key}={}",
         serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_owned())
     )
-}
-
-fn summarize_launch_arg(arg: &str) -> String {
-    if let Some((name, _value)) = sensitive_option_assignment(arg) {
-        return format!("{name}=<redacted>");
-    }
-    if is_sensitive_env_assignment(arg)
-        && let Some((name, _value)) = arg.split_once('=')
-    {
-        return format!("{name}=<redacted>");
-    }
-    if arg.len() > 100 {
-        format!("{}...", &arg[..100])
-    } else {
-        arg.to_owned()
-    }
-}
-
-fn sensitive_option_assignment(arg: &str) -> Option<(&str, &str)> {
-    let (name, value) = arg.split_once('=')?;
-    is_option_name_sensitive(name).then_some((name, value))
-}
-
-fn is_sensitive_option_arg(arg: &str) -> bool {
-    let name = arg.split_once('=').map_or(arg, |(name, _)| name);
-    is_option_name_sensitive(name)
-}
-
-fn is_option_name_sensitive(name: &str) -> bool {
-    (name.starts_with("--") || name.starts_with('-'))
-        && contains_sensitive_word(name.trim_start_matches('-'))
-}
-
-fn is_sensitive_env_assignment(arg: &str) -> bool {
-    let Some((name, _value)) = arg.split_once('=') else {
-        return false;
-    };
-    is_valid_env_name(name) && contains_sensitive_word(name)
-}
-
-fn contains_sensitive_word(value: &str) -> bool {
-    let value = value.to_ascii_lowercase();
-    [
-        "token",
-        "secret",
-        "password",
-        "pass",
-        "key",
-        "credential",
-        "auth",
-    ]
-    .into_iter()
-    .any(|word| value.contains(word))
-}
-
-fn is_valid_env_name(value: &str) -> bool {
-    let mut chars = value.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-    (first == '_' || first.is_ascii_alphabetic())
-        && chars.all(|character| character == '_' || character.is_ascii_alphanumeric())
 }
 
 fn split_option_assignment(arg: &str) -> (&str, bool) {
