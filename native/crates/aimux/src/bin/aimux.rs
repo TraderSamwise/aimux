@@ -448,6 +448,23 @@ fn core_command_help(args: &[String]) -> Option<&'static str> {
         ("team", Some("init"), true) => Some(TEAM_INIT_HELP),
         ("notifications", None, _) => Some(NOTIFICATIONS_HELP),
         ("notifications", Some("test"), true) => Some(NOTIFICATIONS_TEST_HELP),
+        ("restart", None, true) => Some(RESTART_HELP),
+        ("daemon", None, _) => Some(DAEMON_HELP),
+        ("projects", None, _) => Some(PROJECTS_HELP),
+        ("compact", None, true) => Some(COMPACT_HELP),
+        ("worktree", None, _) => Some(WORKTREE_HELP),
+        ("thread", None, _) => Some(THREAD_HELP),
+        ("threads", None, true) => Some(THREADS_HELP),
+        ("input", None, true) => Some(INPUT_HELP),
+        ("attachment", None, _) => Some(ATTACHMENT_HELP),
+        ("ps", None, true) => Some(PS_HELP),
+        ("list", None, true) => Some(LIST_HELP),
+        ("message", None, _) => Some(MESSAGE_HELP),
+        ("handoff", None, _) => Some(HANDOFF_HELP),
+        ("task", None, _) => Some(TASK_HELP),
+        ("review", None, _) => Some(REVIEW_HELP),
+        ("graveyard", None, _) => Some(GRAVEYARD_HELP),
+        ("debug-state", None, true) => Some(DEBUG_STATE_HELP),
         ("worktree", Some("create" | "add"), true) => Some(WORKTREE_CREATE_HELP),
         ("worktree", Some("remove"), true) => Some(WORKTREE_REMOVE_HELP),
         ("worktree", Some("graveyard"), true) => Some(WORKTREE_GRAVEYARD_HELP),
@@ -551,6 +568,24 @@ const METADATA_SET_SERVICES_HELP: &str = "Usage: aimux metadata set-services <se
 const METADATA_LOG_HELP: &str = "Usage: aimux metadata log <session> <message> [options]\n\nAppend a session log line\n\nOptions:\n  --source <source>           Log source\n  --tone <tone>               Log tone";
 const METADATA_CLEAR_LOG_HELP: &str =
     "Usage: aimux metadata clear-log <session>\n\nClear session logs";
+const RESTART_HELP: &str = "Usage: aimux restart [options]\n\nRestart the Aimux control plane\n\nOptions:\n  --project <path>            Restart one project instead of every known project\n  --force                     Restart even when exact-resume sessions have not recorded a backend id\n  --json                      Emit JSON";
+const DAEMON_HELP: &str = "Usage: aimux daemon [options] [command]\n\nAdvanced: manage the global aimux control-plane daemon\n\nCommands:\n  ensure                      Ensure the daemon is running\n  status                      Print daemon status\n  projects                    List known projects\n  project-ensure              Ensure one project service is running\n  restart                     Restart the daemon\n  stop                        Stop the daemon\n  kill                        Kill the daemon";
+const PROJECTS_HELP: &str = "Usage: aimux projects [options] [command]\n\nInspect known aimux projects\n\nCommands:\n  list                        List known projects\n  remove <path>               Remove a registered project\n  unregister <path>           Alias for remove";
+const COMPACT_HELP: &str =
+    "Usage: aimux compact\n\nCompact session history using LLM summarization";
+const WORKTREE_HELP: &str = "Usage: aimux worktree [options] [command]\n\nManage git worktrees\n\nCommands:\n  list                        List git worktrees\n  create <name>               Create a git worktree\n  remove <path>               Remove a git worktree\n  graveyard <path>            Move a worktree to the graveyard\n  resurrect <path>            Restore a graveyarded worktree\n  cleanup-caches              Remove generated worktree cache directories";
+const THREAD_HELP: &str = "Usage: aimux thread [options] [command]\n\nInspect and manage orchestration threads\n\nCommands:\n  list                        List orchestration threads\n  show <threadId>             Show one thread\n  open <threadId>             Open or create a thread\n  send <threadId> <body>      Send a thread message\n  mark-seen <threadId>        Mark a thread seen\n  status <threadId>           Change a thread status";
+const THREADS_HELP: &str = "Usage: aimux threads [options]\n\nList orchestration threads\n\nOptions:\n  --project <path>            Project path\n  --json                      Emit JSON";
+const INPUT_HELP: &str = "Usage: aimux input <sessionId> <text...> [options]\n\nSend input to a running agent\n\nOptions:\n  --project <path>            Project path\n  --force                     Send even when the target is not waiting";
+const ATTACHMENT_HELP: &str = "Usage: aimux attachment [options] [command]\n\nManage session attachments\n\nCommands:\n  publish <path>              Publish a local file as a session attachment";
+const PS_HELP: &str = "Usage: aimux ps [options]\n\nList running agent sessions\n\nOptions:\n  --project <path>            Project path\n  --json                      Emit JSON";
+const LIST_HELP: &str = "Usage: aimux list [options]\n\nList agents grouped by worktree\n\nOptions:\n  --project <path>            Project path\n  --json                      Emit JSON";
+const MESSAGE_HELP: &str = "Usage: aimux message [options] [command]\n\nSend directed orchestration messages\n\nCommands:\n  send <message>              Send a message to an agent";
+const HANDOFF_HELP: &str = "Usage: aimux handoff [options] [command]\n\nSend explicit orchestration handoffs\n\nCommands:\n  send <context>              Send a handoff to an agent\n  accept <threadId>           Accept a handoff\n  complete <threadId>         Complete a handoff";
+const TASK_HELP: &str = "Usage: aimux task [options] [command]\n\nCreate and manage orchestrated tasks\n\nCommands:\n  list                        List tasks\n  show <taskId>               Show one task\n  assign <description>        Assign a task\n  accept <taskId>             Accept a task\n  block <taskId>              Mark a task blocked\n  cancel <taskId>             Cancel a task\n  complete <taskId>           Complete a task\n  reopen <taskId>             Reopen a task";
+const REVIEW_HELP: &str = "Usage: aimux review [options] [command]\n\nManage review workflow tasks\n\nCommands:\n  list                        List review tasks\n  approve <taskId>            Approve a review\n  request-changes <taskId>    Request changes on a review";
+const GRAVEYARD_HELP: &str = "Usage: aimux graveyard [options] [command]\n\nManage killed agents\n\nCommands:\n  list                        List graveyard entries\n  send <id>                   Send an agent to the graveyard\n  resurrect <id>              Resurrect an agent\n  cleanup                     Remove expired graveyard entries";
+const DEBUG_STATE_HELP: &str = "Usage: aimux debug-state <sessionId>\n\nRead a debug snapshot";
 const OUTLINE_HELP: &str = "Usage: aimux outline [options] [command]\n\nManage project scribe notes\n\nCommands:\n  list                        List scribe notes\n  show <entryId>              Show one scribe note\n  update                      Create or update a scribe note";
 const OUTLINE_LIST_HELP: &str = "Usage: aimux outline list [options]\n\nList scribe notes\n\nOptions:\n  --project <path>            Project path\n  --session <sessionId>       Filter by Aimux session id\n  --worktree <path>           Filter by worktree path\n  --status <status>           Filter by status: active, done, superseded, stale\n  --search <query>            Search title, summary, topic key, worktree, and sessions\n  --limit <count>             Maximum entries to print\n  --json                      Emit JSON";
 const OUTLINE_SHOW_HELP: &str = "Usage: aimux outline show <entryId> [options]\n\nShow one scribe note\n\nOptions:\n  --project <path>            Project path\n  --json                      Emit JSON";
@@ -902,11 +937,69 @@ fn handle_known_native_command_fallback(args: &[String]) -> Option<ExitCode> {
         print_root_help();
         return Some(ExitCode::SUCCESS);
     }
+    if let Some((message, help)) = invalid_known_command_help(args) {
+        eprintln!("{message}");
+        if let Some(help) = help {
+            eprintln!();
+            eprintln!("{help}");
+        }
+        return Some(ExitCode::from(2));
+    }
     eprintln!(
         "error: unsupported or invalid aimux command: {}",
         args.join(" ")
     );
     Some(ExitCode::from(2))
+}
+
+fn invalid_known_command_help(args: &[String]) -> Option<(&'static str, Option<&'static str>)> {
+    match args {
+        [command] if command == "task" => {
+            Some(("error: aimux task requires a subcommand", Some(TASK_HELP)))
+        }
+        [command] if command == "projects" => Some((
+            "error: aimux projects requires a subcommand",
+            Some(PROJECTS_HELP),
+        )),
+        [command, subcommand, rest @ ..]
+            if command == "projects"
+                && matches!(subcommand.as_str(), "remove" | "unregister")
+                && rest
+                    .iter()
+                    .any(|arg| arg == "--project" || arg.starts_with("--project=")) =>
+        {
+            Some((
+                "error: aimux projects remove requires <path> as a positional argument; --project is not accepted here",
+                Some(PROJECTS_REMOVE_HELP),
+            ))
+        }
+        [command, subcommand, ..]
+            if command == "projects" && matches!(subcommand.as_str(), "remove" | "unregister") =>
+        {
+            Some((
+                "error: aimux projects remove requires <path>",
+                Some(PROJECTS_REMOVE_HELP),
+            ))
+        }
+        [command, ..] if command == "metadata" => Some((
+            "error: invalid aimux metadata arguments",
+            Some(METADATA_HELP),
+        )),
+        [command, ..] if command == "logs" => {
+            Some(("error: invalid aimux logs arguments", Some(LOGS_HELP)))
+        }
+        [command, ..] if command == "team" => {
+            Some(("error: invalid aimux team arguments", Some(TEAM_HELP)))
+        }
+        [command, ..] if command == "outline" => {
+            Some(("error: invalid aimux outline arguments", Some(OUTLINE_HELP)))
+        }
+        [command, ..] if command == "attachment" => Some((
+            "error: invalid aimux attachment arguments",
+            Some(ATTACHMENT_HELP),
+        )),
+        _ => None,
+    }
 }
 
 fn run_local_ui_command(
