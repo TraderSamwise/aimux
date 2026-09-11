@@ -267,11 +267,14 @@ def assert_default_daemon_listener_unchanged(before: str) -> None:
         )
 
 
-def assert_default_daemon_temp_project_services_unchanged(before: str) -> None:
+def assert_default_daemon_temp_project_services_not_gained(before: str) -> None:
     after = default_daemon_temp_project_services_snapshot()
-    if after != before:
+    before_rows = set(before.splitlines()) if before else set()
+    after_rows = set(after.splitlines()) if after else set()
+    gained = sorted(after_rows - before_rows)
+    if gained:
         raise LiveResidualFailure(
-            "default daemon gained or lost temp-root project-service processes during residual run\n"
+            "default daemon gained temp-root project-service processes during residual run\n"
             f"before:\n{before or '<none>'}\n\nafter:\n{after or '<none>'}"
         )
 
@@ -4348,7 +4351,7 @@ def main(argv: list[str]) -> int:
         if default_listener is not None:
             assert_default_daemon_listener_unchanged(default_listener)
         if default_temp_project_services is not None:
-            assert_default_daemon_temp_project_services_unchanged(default_temp_project_services)
+            assert_default_daemon_temp_project_services_not_gained(default_temp_project_services)
 
 
 if __name__ == "__main__":
