@@ -62,7 +62,7 @@ pub fn current_process_external_notification_refusal_reason() -> Option<&'static
 }
 
 pub fn is_cargo_test_harness_binary() -> bool {
-    crate::runtime_safety_guard::is_cargo_test_harness_binary()
+    crate::runtime_safety_guard::is_cargo_test_process_context()
 }
 
 pub fn notification_payload_identity_refusal_reason(payload: &Value) -> Option<&'static str> {

@@ -5,6 +5,7 @@ use aimux::debug_logging::{
 };
 use aimux::notification_delivery_guard::{
     TEST_NOTIFICATION_SOURCE_FIELD, TEST_NOTIFICATION_SOURCE_VALUE,
+    external_notification_refusal_reason_for_event,
     external_notification_refusal_reason_for_payload,
     fixture_notification_refusal_reason_for_event, fixture_notification_refusal_reason_for_payload,
 };
@@ -81,6 +82,21 @@ fn isolated_aimux_home_state_dir_refuses_event_delivery() {
             &event,
         ),
         Some("isolated aimux home")
+    );
+}
+
+#[test]
+fn cargo_test_process_refuses_external_event_delivery_without_fixture_marker() {
+    let event = json!({
+        "kind": "needs_input",
+        "sessionId": "claude-1",
+        "title": "claude-1 needs input",
+        "message": "from hook"
+    });
+
+    assert_eq!(
+        external_notification_refusal_reason_for_event(None, None, &event),
+        Some("cargo test harness")
     );
 }
 
