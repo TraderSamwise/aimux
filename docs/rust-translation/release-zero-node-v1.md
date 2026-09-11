@@ -30,8 +30,9 @@ Acceptance commands:
 - blocking CI: Rust format, Rust clippy all targets, Rust tests (macOS),
   JavaScript tests (root/relay), JavaScript tests (app), and Phase 8 live
   residuals.
-- advisory CI: Rust tests (Linux), pending the desktop notification transport
-  platform decision.
+- advisory CI: Rust tests (Linux), until the macOS-only desktop notification
+  contract proves the whole Linux suite green on GitHub. Desktop notifications
+  should report platform-unsupported off macOS.
 - native release asset inspection: no runtime `node`, `AIMUX_NODE_BIN`,
   `dist/launcher-bin.js`, or runtime `node_modules` dependency.
 - installed smoke: `aimux doctor versions`, `aimux daemon status --json`,

@@ -117,6 +117,16 @@ fn macos_missing_helper_fails_closed_instead_of_osascript() {
         assert_eq!(report.transport, DesktopNotificationTransport::Disabled);
         assert_eq!(report.helper_path, None);
         assert!(!render_desktop_notifier_doctor_report(&report).contains("osascript"));
+    } else {
+        assert_eq!(
+            report.transport,
+            DesktopNotificationTransport::PlatformUnsupported
+        );
+        assert_eq!(report.helper_path, None);
+        assert_eq!(report.helper_check, None);
+        let rendered = render_desktop_notifier_doctor_report(&report);
+        assert!(rendered.contains("desktop notifications are macOS-only"));
+        assert!(rendered.contains("mobile push notifications"));
     }
 }
 
@@ -187,13 +197,25 @@ fn builds_doctor_report_with_helper_check_output() {
 
     let report = build_desktop_notifier_doctor_report();
 
-    assert_eq!(report.transport, DesktopNotificationTransport::MacHelper);
-    assert_eq!(
-        report.helper_path.as_deref(),
-        Some(path_string(&helper).as_str())
-    );
-    assert!(report.helper_check.as_ref().is_some_and(|check| check.ok));
-    assert!(render_desktop_notifier_doctor_report(&report).contains("Helper check: ok"));
+    if report.platform == "macos" {
+        assert_eq!(report.transport, DesktopNotificationTransport::MacHelper);
+        assert_eq!(
+            report.helper_path.as_deref(),
+            Some(path_string(&helper).as_str())
+        );
+        assert!(report.helper_check.as_ref().is_some_and(|check| check.ok));
+        assert!(render_desktop_notifier_doctor_report(&report).contains("Helper check: ok"));
+    } else {
+        assert_eq!(
+            report.transport,
+            DesktopNotificationTransport::PlatformUnsupported
+        );
+        assert_eq!(report.helper_path, None);
+        assert_eq!(report.helper_check, None);
+        let rendered = render_desktop_notifier_doctor_report(&report);
+        assert!(rendered.contains("desktop notifications are macOS-only"));
+        assert!(rendered.contains("mobile push notifications"));
+    }
 }
 
 fn restore(key: &str, value: &Option<String>) {

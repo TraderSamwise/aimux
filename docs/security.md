@@ -107,6 +107,11 @@ guests are not owner devices and do not use owner device proof.
 
 ## Desktop Notification Click Routing
 
+Local desktop notifications are macOS-only. Linux and Windows builds should
+report desktop notifications as unavailable on this platform rather than as a
+user-fixable disabled setting; mobile push remains the cross-platform alert
+path for approved owner devices.
+
 There are two notification owners on macOS:
 
 - CLI/local daemon desktop alerts are local macOS notifications emitted by the

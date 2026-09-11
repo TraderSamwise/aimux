@@ -20,6 +20,7 @@ pub struct DesktopNotificationPayload {
 pub enum DesktopNotificationTransport {
     MacHelper,
     OsaScript,
+    PlatformUnsupported,
     Disabled,
 }
 
@@ -61,6 +62,9 @@ pub struct DesktopNotifierDoctorReport {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub helper_check: Option<MacNotifierHelperCheck>,
 }
+
+const DESKTOP_NOTIFICATIONS_MACOS_ONLY: &str =
+    "desktop notifications are macOS-only; use mobile push notifications for cross-platform alerts";
 
 pub fn external_notifications_disabled() -> bool {
     matches!(
@@ -122,6 +126,9 @@ pub fn send_desktop_notification_and_wait(
     if let Some(reason) = current_process_external_notification_refusal_reason() {
         return disabled_delivery(reason);
     }
+    if std::env::consts::OS != "macos" {
+        return platform_unsupported_delivery();
+    }
     if std::env::consts::OS == "macos"
         && let Some(helper_path) = find_mac_notifier_helper()
     {
@@ -148,13 +155,11 @@ pub fn build_desktop_notifier_doctor_report() -> DesktopNotifierDoctorReport {
         None
     };
     let helper_check = helper_path.as_deref().map(check_mac_notifier_helper);
-    let transport = if external_notifications_disabled() {
-        DesktopNotificationTransport::Disabled
-    } else if platform == "macos" && helper_path.is_some() {
-        DesktopNotificationTransport::MacHelper
-    } else {
-        DesktopNotificationTransport::Disabled
-    };
+    let transport = desktop_notification_transport_for(
+        &platform,
+        helper_path.as_deref(),
+        external_notifications_disabled(),
+    );
     DesktopNotifierDoctorReport {
         platform,
         transport,
@@ -171,6 +176,7 @@ pub fn render_desktop_notifier_doctor_report(report: &DesktopNotifierDoctorRepor
         format!("Transport: {}", transport_name(&report.transport)),
     ];
     if report.platform != "macos" {
+        lines.push(format!("Status: {DESKTOP_NOTIFICATIONS_MACOS_ONLY}"));
         lines.push("macOS helper: not used on this platform".into());
         return lines.join("\n");
     }
@@ -336,6 +342,7 @@ fn transport_name(transport: &DesktopNotificationTransport) -> &'static str {
     match transport {
         DesktopNotificationTransport::MacHelper => "mac-helper",
         DesktopNotificationTransport::OsaScript => "osascript",
+        DesktopNotificationTransport::PlatformUnsupported => "platform-unsupported",
         DesktopNotificationTransport::Disabled => "disabled",
     }
 }
@@ -352,6 +359,59 @@ fn disabled_delivery(reason: &str) -> DesktopNotificationDeliveryResult {
     }
 }
 
+fn platform_unsupported_delivery() -> DesktopNotificationDeliveryResult {
+    DesktopNotificationDeliveryResult {
+        transport: DesktopNotificationTransport::PlatformUnsupported,
+        helper_path: None,
+        ok: false,
+        exit_code: None,
+        stdout: None,
+        stderr: None,
+        error: Some(DESKTOP_NOTIFICATIONS_MACOS_ONLY.to_owned()),
+    }
+}
+
+fn desktop_notification_transport_for(
+    platform: &str,
+    helper_path: Option<&str>,
+    disabled: bool,
+) -> DesktopNotificationTransport {
+    if disabled {
+        DesktopNotificationTransport::Disabled
+    } else if platform != "macos" {
+        DesktopNotificationTransport::PlatformUnsupported
+    } else if helper_path.is_some() {
+        DesktopNotificationTransport::MacHelper
+    } else {
+        DesktopNotificationTransport::Disabled
+    }
+}
+
 fn trim_output(bytes: Vec<u8>) -> String {
     String::from_utf8_lossy(&bytes).trim().to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DesktopNotificationTransport, desktop_notification_transport_for};
+
+    #[test]
+    fn off_macos_reports_platform_unsupported_when_desktop_notifications_are_enabled() {
+        assert_eq!(
+            desktop_notification_transport_for("linux", None, false),
+            DesktopNotificationTransport::PlatformUnsupported
+        );
+    }
+
+    #[test]
+    fn macos_helper_still_reports_mac_helper() {
+        assert_eq!(
+            desktop_notification_transport_for(
+                "macos",
+                Some("/tmp/aimux-notifier.app/Contents/MacOS/aimux-notifier"),
+                false,
+            ),
+            DesktopNotificationTransport::MacHelper
+        );
+    }
 }
