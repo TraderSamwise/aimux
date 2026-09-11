@@ -316,11 +316,7 @@ impl TmuxRuntimeManager {
         for attempt in 0..2 {
             let mut exists = self.has_session(&session.session_name);
             if !exists {
-                let before = match self.list_session_names() {
-                    Ok(names) => names,
-                    Err(error) if tmux_list_sessions_failed_because_no_server(&error) => Vec::new(),
-                    Err(error) => return Err(error),
-                };
+                let before = self.list_session_names()?;
                 self.repair_legacy_project_session_names(project_root, Some(before));
                 exists = self.has_session(&session.session_name);
             }
@@ -388,7 +384,13 @@ impl TmuxRuntimeManager {
     }
 
     pub fn list_session_names(&mut self) -> Result<Vec<String>, String> {
-        let raw = self.exec_tmux(&["list-sessions", "-F", "#{session_name}"])?;
+        let raw = match self.exec_tmux(&["list-sessions", "-F", "#{session_name}"]) {
+            Ok(raw) => raw,
+            Err(error) if tmux_list_sessions_failed_because_no_server(&error) => {
+                return Ok(Vec::new());
+            }
+            Err(error) => return Err(error),
+        };
         Ok(raw
             .lines()
             .map(str::trim)
@@ -424,7 +426,13 @@ impl TmuxRuntimeManager {
     /// Window ids that currently exist across every tmux session on this server.
     /// One call, so a caller validating many sessions does not spawn tmux per session.
     pub fn try_live_window_ids(&mut self) -> Result<std::collections::BTreeSet<String>, String> {
-        let raw = self.exec_owned(list_all_window_ids_argv(), None)?;
+        let raw = match self.exec_owned(list_all_window_ids_argv(), None) {
+            Ok(raw) => raw,
+            Err(error) if tmux_list_sessions_failed_because_no_server(&error) => {
+                return Ok(Default::default());
+            }
+            Err(error) => return Err(error),
+        };
         Ok(raw
             .lines()
             .map(str::trim)

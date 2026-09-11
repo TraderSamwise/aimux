@@ -2422,57 +2422,81 @@ def run_dashboard_spawn_smoke(aimux_bin: Path, mutation: str | None) -> dict[str
         install_agent_tool_config(scope, "codex")
         install_agent_tool_config(scope, "aider")
 
-        dashboard_session = "phase8-dashboard-spawn"
         project_root = scope.project.resolve()
-        command = (
-            f"cd {shlex.quote(str(project_root))} && "
-            f"{shlex.quote(str(aimux_bin))}; "
-            "code=$?; printf '\\n__AIMUX_DASHBOARD_SPAWN_EXIT:%s\\n' \"$code\"; sleep 30"
-        )
-        proc = subprocess.Popen(
-            [
-                "script",
-                "-q",
-                "/dev/null",
+
+        def attached_dashboard_client_rows() -> list[dict[str, str]]:
+            result = tmux_cmd_for_socket(
                 tmux,
-                "-L",
                 socket_name,
-                "-f",
-                "/dev/null",
-                "new-session",
-                "-s",
-                dashboard_session,
-                "-x",
-                "100",
-                "-y",
-                "30",
-                "sh",
-                "-lc",
-                command,
-            ],
-            cwd=str(project_root),
-            env=scope.env,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
+                [
+                    "list-clients",
+                    "-F",
+                    "#{client_tty}\t#{session_name}\t#{window_id}\t#{window_name}\t#{client_name}\t#{client_pid}",
+                ],
+                check=False,
+            )
+            if result.returncode != 0:
+                return []
+            rows = []
+            for line in result.stdout.splitlines():
+                fields = line.split("\t")
+                if len(fields) == 6:
+                    rows.append({
+                        "tty": fields[0],
+                        "session": fields[1],
+                        "windowId": fields[2],
+                        "windowName": fields[3],
+                        "name": fields[4],
+                        "pid": fields[5],
+                    })
+            return rows
+
+        def capture_dashboard_window(window_id: str) -> str:
+            result = tmux_cmd_for_socket(
+                tmux,
+                socket_name,
+                ["capture-pane", "-p", "-J", "-t", window_id],
+                check=False,
+            )
+            return result.stdout if result.returncode == 0 else ""
+
+        existing_client_pids = {row["pid"] for row in attached_dashboard_client_rows()}
+        proc, client_fd = start_process_capture_client(
+            scope,
+            [str(aimux_bin)],
+            cwd=project_root,
+            cols=100,
+            rows=30,
         )
-        scope.procs.append(proc)
+        dashboard_client = wait_until(
+            lambda: next(
+                (
+                    row
+                    for row in attached_dashboard_client_rows()
+                    if row["windowName"] == "dashboard"
+                    and row["pid"] not in existing_client_pids
+                ),
+                None,
+            ),
+            timeout=45,
+            label="dashboard-spawn managed dashboard client",
+        )
+        window_id = dashboard_client["windowId"]
         required = "agent multiplexer"
         wait_until(
             lambda: (
                 current
-                if required in (current := capture_tmux(scope, dashboard_session))
+                if required in (current := capture_dashboard_window(window_id))
                 else None
             ),
             timeout=10,
             label="dashboard spawn first frame",
         )
-        tmux_cmd(scope, ["send-keys", "-t", f"{dashboard_session}:0", "n"])
+        tmux_cmd_for_socket(tmux, socket_name, ["send-keys", "-t", window_id, "n"])
         picker_output = wait_until(
             lambda: (
                 current
-                if "SELECT TOOL" in (current := capture_tmux(scope, dashboard_session))
+                if "SELECT TOOL" in (current := capture_dashboard_window(window_id))
                 else None
             ),
             timeout=5,
@@ -2480,7 +2504,7 @@ def run_dashboard_spawn_smoke(aimux_bin: Path, mutation: str | None) -> dict[str
         )
         if "claude" not in picker_output:
             raise LiveResidualFailure(f"dashboard spawn picker did not include claude:\n{picker_output}")
-        tmux_cmd(scope, ["send-keys", "-t", f"{dashboard_session}:0", "Enter"])
+        tmux_cmd_for_socket(tmux, socket_name, ["send-keys", "-t", window_id, "Enter"])
 
         lookup_tool = "claude"
         if mutation == "dashboard-spawn-missing-session":
@@ -2513,16 +2537,26 @@ def run_dashboard_spawn_smoke(aimux_bin: Path, mutation: str | None) -> dict[str
             timeout=10,
             label="dashboard-spawn session removed from aimux ps",
         )
-        tmux_cmd(scope, ["send-keys", "-t", f"{dashboard_session}:0", "q"])
-        final_output = ""
+        tmux_cmd_for_socket(tmux, socket_name, ["send-keys", "-t", window_id, "q"], check=False)
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
-            final_output = capture_all_tmux(scope)
-            if "__AIMUX_DASHBOARD_SPAWN_EXIT:0" in final_output:
+            if proc.poll() is not None or not any(
+                row["tty"] == dashboard_client["tty"]
+                for row in attached_dashboard_client_rows()
+            ):
                 break
             time.sleep(0.05)
         else:
-            raise LiveResidualFailure(f"dashboard-spawn dashboard did not quit:\n{final_output}")
+            raise LiveResidualFailure(
+                "dashboard-spawn dashboard did not quit:\n"
+                + json.dumps({
+                    "client": dashboard_client,
+                    "clients": attached_dashboard_client_rows(),
+                    "process": proc.poll(),
+                    "clientOutput": drain_fd_now(client_fd)[-2000:],
+                    "frame": capture_dashboard_window(window_id)[-2000:],
+                }, indent=2)
+            )
         return {
             "name": "phase8-dashboard-spawn-smoke",
             "sessionId": session_id,

@@ -11,16 +11,17 @@ use std::sync::Arc;
 use std::task::{Context, Poll, Wake, Waker};
 
 #[test]
-fn reports_missing_tmux_server_state_as_inventory_errors() {
+fn treats_missing_tmux_server_as_empty_session_inventory() {
     let calls = Rc::new(RefCell::new(Vec::<Vec<String>>::new()));
     let calls_for_exec = calls.clone();
     let mut manager = TmuxRuntimeManager::with_exec(move |args, _options| {
         calls_for_exec.borrow_mut().push(args.to_vec());
         match args.join(" ").as_str() {
             "-V" => Ok("tmux 3.5a".to_owned()),
-            "list-sessions -F #{session_name}" => {
-                Err("error connecting to /private/tmp/tmux-501/default".to_owned())
-            }
+            "list-sessions -F #{session_name}" => Err(
+                "error connecting to /private/tmp/tmux-501/default (No such file or directory)"
+                    .to_owned(),
+            ),
             command if command.starts_with("list-windows -t aimux-mobile-abc ") => {
                 Err("error connecting to /private/tmp/tmux-501/default".to_owned())
             }
@@ -29,11 +30,9 @@ fn reports_missing_tmux_server_state_as_inventory_errors() {
     });
 
     assert!(manager.is_available());
-    assert!(
-        manager
-            .list_session_names()
-            .expect_err("session inventory error")
-            .contains("error connecting")
+    assert_eq!(
+        manager.list_session_names().expect("session inventory"),
+        Vec::<String>::new()
     );
     assert!(
         manager
@@ -42,6 +41,25 @@ fn reports_missing_tmux_server_state_as_inventory_errors() {
             .contains("error connecting")
     );
     assert_eq!(calls.borrow()[0], vec!["-V"]);
+}
+
+#[test]
+fn treats_missing_tmux_server_as_empty_live_window_inventory() {
+    let mut manager =
+        TmuxRuntimeManager::with_exec(|args, _options| match args.join(" ").as_str() {
+            "list-windows -a -F #{window_id}" => Err(
+                "error connecting to /private/tmp/tmux-501/default (No such file or directory)"
+                    .to_owned(),
+            ),
+            _ => Ok(String::new()),
+        });
+
+    assert_eq!(
+        manager
+            .try_live_window_ids()
+            .expect("live window inventory"),
+        Default::default()
+    );
 }
 
 #[test]
