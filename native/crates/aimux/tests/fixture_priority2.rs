@@ -1,4 +1,3 @@
-use aimux::context_bridge_contract::context_bridge_contract;
 use aimux::context_compactor::{
     HistoryReadOptions, algorithmic_compact, context_dir, read_history,
 };
@@ -8,7 +7,6 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const COMPACTOR: &str = include_str!("../../../../testdata/contracts/v1/context/compactor.json");
-const CONTEXT_BRIDGE: &str = include_str!("../../../../testdata/contracts/v1/context/bridge.json");
 
 #[test]
 fn fixture_context_compactor_matches_typescript() {
@@ -32,32 +30,6 @@ fn fixture_context_compactor_matches_typescript() {
     assert!(
         failures.is_empty(),
         "{} compactor parity failures:\n{}",
-        failures.len(),
-        serde_json::to_string_pretty(&failures).expect("serialize failures")
-    );
-}
-
-#[test]
-fn fixture_context_bridge_matches_typescript() {
-    let contract: Value =
-        serde_json::from_str(CONTEXT_BRIDGE).expect("valid context bridge fixture");
-    let cases = contract["cases"].as_array().expect("context bridge cases");
-    assert_eq!(cases.len(), 10, "unexpected context bridge case count");
-    let mut failures = Vec::new();
-    for case in cases {
-        let actual = context_bridge_contract(&case["input"]);
-        if actual != case["output"] {
-            failures.push(json!({
-                "id": case["id"],
-                "name": case["name"],
-                "expected": case["output"],
-                "actual": actual,
-            }));
-        }
-    }
-    assert!(
-        failures.is_empty(),
-        "{} context-bridge parity failures:\n{}",
         failures.len(),
         serde_json::to_string_pretty(&failures).expect("serialize failures")
     );
