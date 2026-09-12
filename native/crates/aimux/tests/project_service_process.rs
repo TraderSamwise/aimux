@@ -1,3 +1,6 @@
+use aimux::backlog_metrics::{
+    BacklogMetricSnapshot, SSE_AGENT_INTERACTION_BACKLOG, backlog_metric,
+};
 use aimux::daemon_state::{MetadataState, load_metadata_endpoint, save_metadata_state};
 #[cfg(unix)]
 use aimux::expose_socket::{expose_socket_path, expose_socket_path_file};
@@ -317,6 +320,7 @@ fn interaction_stream_registers_watcher_for_request_lifetime() {
     let project = temp_project("interaction-stream-watch");
     let state_dir = project.join("state");
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let baseline_subscribers = current_depth(SSE_AGENT_INTERACTION_BACKLOG);
     let response_context = context.clone();
     let mut response = handle_project_service_http_request(
         ProjectServiceHttpRequest {
@@ -349,6 +353,10 @@ fn interaction_stream_registers_watcher_for_request_lifetime() {
     opened_rx
         .recv_timeout(Duration::from_secs(2))
         .expect("interaction stream should write ready frame");
+    wait_for_backlog_depth(SSE_AGENT_INTERACTION_BACKLOG, |depth| {
+        depth > baseline_subscribers
+    })
+    .expect("interaction SSE subscriber count should increment");
 
     let request_context = context.clone();
     let waiting = thread::spawn(move || {
@@ -411,6 +419,16 @@ fn interaction_stream_registers_watcher_for_request_lifetime() {
     ));
     let output = String::from_utf8(output).expect("stream output");
     assert!(output.contains("event: ready\ndata: {\"pending\":[]}\n\n"));
+    wait_for_backlog_depth(SSE_AGENT_INTERACTION_BACKLOG, |depth| {
+        depth <= baseline_subscribers
+    })
+    .expect("interaction SSE subscriber count should decrement");
+    let snapshot = backlog_metric(SSE_AGENT_INTERACTION_BACKLOG, None).snapshot();
+    assert!(
+        snapshot
+            .high_water_mark
+            .is_some_and(|high| high > baseline_subscribers)
+    );
     cleanup(project);
 }
 
@@ -571,6 +589,28 @@ fn response_json(output: &[u8]) -> Value {
     let response = std::str::from_utf8(output).expect("utf8 http response");
     let body = response.split("\r\n\r\n").nth(1).expect("response body");
     serde_json::from_str(body).expect("json response body")
+}
+
+fn current_depth(name: &str) -> usize {
+    backlog_metric(name, None)
+        .snapshot()
+        .current_depth
+        .unwrap_or_default()
+}
+
+fn wait_for_backlog_depth(
+    name: &str,
+    mut predicate: impl FnMut(usize) -> bool,
+) -> Option<BacklogMetricSnapshot> {
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_secs(2) {
+        let snapshot = backlog_metric(name, None).snapshot();
+        if predicate(snapshot.current_depth.unwrap_or_default()) {
+            return Some(snapshot);
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    None
 }
 
 fn write_hook_header_state(

@@ -7,6 +7,7 @@ pub mod atomic_write;
 pub mod attachment_hosting;
 pub mod attachment_store_contract;
 pub mod backend_session_ids;
+pub mod backlog_metrics;
 pub mod build_info;
 pub mod builtin_metadata_watchers;
 pub mod cli_attachment_contract;

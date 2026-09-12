@@ -13,6 +13,10 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener as TokioTcpListener, TcpStream as TokioTcpStream};
 
 use crate::backend_session_ids::reconcile_offline_backend_session_ids;
+use crate::backlog_metrics::{
+    BacklogMetric, SSE_AGENT_INTERACTION_BACKLOG, SSE_AGENT_OUTPUT_BACKLOG,
+    SSE_PROJECT_EVENTS_BACKLOG, backlog_metric,
+};
 use crate::config::load_config_for_project;
 use crate::daemon::http::PreparedDaemonResponse;
 use crate::daemon::listener::{
@@ -949,6 +953,7 @@ pub fn write_project_service_response_with_runtime(
     ))?;
     writer.flush()?;
     if let Some(stream) = response.stream.as_ref() {
+        let _subscriber_guard = enter_sse_subscriber(stream.kind);
         let interval_ms = u64::try_from(stream.interval_ms).unwrap_or(500).max(100);
         let mut last_output_fingerprint = None;
         let mut last_project_event_sequence = stream.event_cursor.unwrap_or_default();
@@ -1037,6 +1042,7 @@ where
     let Some(stream) = response.stream else {
         return Ok(());
     };
+    let _subscriber_guard = enter_sse_subscriber(stream.kind);
     let interval_ms = u64::try_from(stream.interval_ms).unwrap_or(500).max(100);
     let mut state = ProjectServiceStreamState {
         last_output_fingerprint: None,
@@ -1063,6 +1069,30 @@ where
         if stream.kind != ProjectServiceStreamKind::AgentOutput {
             state.last_stream_write = Instant::now();
         }
+    }
+}
+
+struct SseSubscriberGuard {
+    metric: BacklogMetric,
+}
+
+impl Drop for SseSubscriberGuard {
+    fn drop(&mut self) {
+        self.metric.decrement();
+    }
+}
+
+fn enter_sse_subscriber(kind: ProjectServiceStreamKind) -> SseSubscriberGuard {
+    let metric = backlog_metric(sse_subscriber_metric_name(kind), None);
+    metric.increment();
+    SseSubscriberGuard { metric }
+}
+
+fn sse_subscriber_metric_name(kind: ProjectServiceStreamKind) -> &'static str {
+    match kind {
+        ProjectServiceStreamKind::ProjectEvents => SSE_PROJECT_EVENTS_BACKLOG,
+        ProjectServiceStreamKind::AgentOutput => SSE_AGENT_OUTPUT_BACKLOG,
+        ProjectServiceStreamKind::AgentInteraction => SSE_AGENT_INTERACTION_BACKLOG,
     }
 }
 
