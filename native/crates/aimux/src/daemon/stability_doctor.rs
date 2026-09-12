@@ -493,12 +493,8 @@ fn growth_window<'a>(
     metric_name: &str,
     reasons: &mut Vec<StabilityReason>,
 ) -> Option<GrowthWindow<'a>> {
-    let Some((oldest_ms, _)) = timed_samples.first() else {
-        return None;
-    };
-    let Some((last_ms, last)) = timed_samples.last() else {
-        return None;
-    };
+    let (oldest_ms, _) = timed_samples.first()?;
+    let (last_ms, last) = timed_samples.last()?;
     let window_start_ms = last_ms.saturating_sub(GROWTH_WINDOW_MS);
     if *oldest_ms > window_start_ms {
         reasons.push(unknown(
