@@ -14,6 +14,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::Notify;
 
+use crate::backlog_metrics::{BacklogMetric, RELAY_OUTBOX_BACKLOG, backlog_metric};
 use crate::relay_client::{
     CloseDecision, RelayAction, RelayStatus, RelayStatusSnapshot, decide_close,
     decide_connect_error, handle_frame, project_events_error_frame,
@@ -124,6 +125,7 @@ pub struct RelayRunner {
     handle: RelayHandle,
     outbox: Arc<Mutex<VecDeque<String>>>,
     outbox_ready: Arc<Notify>,
+    outbox_metric: BacklogMetric,
 }
 
 impl RelayRunner {
@@ -145,6 +147,7 @@ impl RelayRunner {
             bridge,
             outbox: Arc::new(Mutex::new(VecDeque::new())),
             outbox_ready: Arc::new(Notify::new()),
+            outbox_metric: backlog_metric(RELAY_OUTBOX_BACKLOG, Some(MAX_RELAY_OUTBOX_FRAMES)),
         })
     }
 
@@ -477,9 +480,24 @@ impl RelayRunner {
             .lock()
             .map_err(|_| "relay_outbox_unavailable".to_owned())?;
         push_outbox_frame(&mut outbox, frame)?;
+        self.outbox_metric.set_depth(outbox.len());
         drop(outbox);
         self.outbox_ready.notify_one();
         Ok(())
+    }
+
+    pub fn outbox_backlog_snapshot(&self) -> crate::backlog_metrics::BacklogMetricSnapshot {
+        match self.outbox.lock() {
+            Ok(outbox) => {
+                self.outbox_metric.set_depth(outbox.len());
+                self.outbox_metric.snapshot()
+            }
+            Err(_) => {
+                self.outbox_metric
+                    .set_error("relay outbox lock is unavailable".to_owned());
+                self.outbox_metric.snapshot()
+            }
+        }
     }
 
     async fn send_next_outbox_frame(
@@ -508,6 +526,7 @@ impl RelayRunner {
             && outbox.front().is_some_and(|queued| queued == frame)
         {
             outbox.pop_front();
+            self.outbox_metric.set_depth(outbox.len());
         }
     }
 
