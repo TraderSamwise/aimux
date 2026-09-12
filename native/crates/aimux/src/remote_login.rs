@@ -86,8 +86,20 @@ pub fn start_login_flow(
     crate::async_runtime::spawn_named(
         crate::async_runtime::task_name("remote-login", "callback"),
         async move {
-            let flow_result = wait_for_login_callback(prepared);
-            let _ = sender.send(flow_result.await);
+            let flow_result = match TcpListener::from_std(prepared.listener) {
+                Ok(listener) => {
+                    wait_for_login_callback(
+                        listener,
+                        prepared.state,
+                        prepared.relay_url,
+                        prepared.auth_path,
+                        prepared.messages,
+                    )
+                    .await
+                }
+                Err(error) => Err(error.to_string()),
+            };
+            let _ = sender.send(flow_result);
         },
     );
     Ok((messages, LoginFlowWaiter { receiver }))
@@ -134,8 +146,13 @@ fn prepare_login_flow(
     })
 }
 
-async fn wait_for_login_callback(prepared: PreparedLoginFlow) -> Result<LoginFlowResult, String> {
-    let listener = TcpListener::from_std(prepared.listener).map_err(|error| error.to_string())?;
+async fn wait_for_login_callback(
+    listener: TcpListener,
+    state: String,
+    relay_url: String,
+    auth_path: std::path::PathBuf,
+    messages: Vec<String>,
+) -> Result<LoginFlowResult, String> {
     let accept = tokio::time::timeout(
         Duration::from_millis(LOGIN_TIMEOUT_MS as u64),
         listener.accept(),
@@ -143,20 +160,11 @@ async fn wait_for_login_callback(prepared: PreparedLoginFlow) -> Result<LoginFlo
     .await
     .map_err(|_| "Login timed out after 5 minutes".to_owned())?;
     let (stream, _) = accept.map_err(|error| error.to_string())?;
-    let response = handle_login_stream(
-        stream,
-        &prepared.state,
-        &prepared.relay_url,
-        &prepared.auth_path,
-        now_iso(),
-    )
-    .await
-    .map_err(|error| error.to_string())?;
+    let response = handle_login_stream(stream, &state, &relay_url, &auth_path, now_iso())
+        .await
+        .map_err(|error| error.to_string())?;
     if let Some(user_id) = response.user_id {
-        return Ok(LoginFlowResult {
-            user_id,
-            messages: prepared.messages,
-        });
+        return Ok(LoginFlowResult { user_id, messages });
     }
     Err(response.error.unwrap_or_else(|| "Login failed".to_owned()))
 }
