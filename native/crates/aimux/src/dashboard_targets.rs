@@ -269,6 +269,23 @@ pub fn find_live_dashboard_target_with_context(
     tmux: &mut impl DashboardTargetTmux,
     context: &DashboardTargetContext,
 ) -> Result<Option<DashboardTargetRef>, String> {
+    find_dashboard_target_with_context(project_root, tmux, context, true)
+}
+
+pub fn find_recoverable_dashboard_target_with_context(
+    project_root: &str,
+    tmux: &mut impl DashboardTargetTmux,
+    context: &DashboardTargetContext,
+) -> Result<Option<DashboardTargetRef>, String> {
+    find_dashboard_target_with_context(project_root, tmux, context, false)
+}
+
+fn find_dashboard_target_with_context(
+    project_root: &str,
+    tmux: &mut impl DashboardTargetTmux,
+    context: &DashboardTargetContext,
+    require_current_build: bool,
+) -> Result<Option<DashboardTargetRef>, String> {
     let dashboard_session = tmux.get_project_session(project_root);
     let inside_tmux = tmux.is_inside_tmux();
     let preferred_open_session =
@@ -316,7 +333,13 @@ pub fn find_live_dashboard_target_with_context(
                 window_name: window.name,
                 pane_dead: window.pane_dead,
             };
-            if !is_usable_dashboard_target(project_root, tmux, context, &dashboard_target)? {
+            if !is_usable_dashboard_target_with_context(
+                project_root,
+                tmux,
+                context,
+                &dashboard_target,
+                require_current_build,
+            )? {
                 continue;
             }
             return Ok(Some(DashboardTargetRef {
@@ -407,7 +430,7 @@ pub fn resolve_dashboard_target_with_context(
 fn wait_for_dashboard_target_ready(
     tmux: &mut impl DashboardTargetTmux,
     target: &TmuxTarget,
-    _readiness_value: &str,
+    readiness_value: &str,
     timeout_ms: u64,
 ) -> Result<(), String> {
     let deadline = Instant::now() + Duration::from_millis(timeout_ms);
@@ -428,8 +451,8 @@ fn wait_for_dashboard_target_ready(
         std::thread::sleep(Duration::from_millis(50));
     }
     Err(format!(
-        "Timed out waiting for tmux window {} to become ready",
-        target.window_id
+        "Timed out waiting {}ms for tmux window {} readiness option {}={}",
+        timeout_ms, target.window_id, TMUX_DASHBOARD_READY_OPTION, readiness_value
     ))
 }
 
@@ -438,6 +461,16 @@ pub fn is_usable_dashboard_target(
     tmux: &mut impl DashboardTargetTmux,
     context: &DashboardTargetContext,
     dashboard_target: &TmuxTarget,
+) -> Result<bool, String> {
+    is_usable_dashboard_target_with_context(project_root, tmux, context, dashboard_target, true)
+}
+
+fn is_usable_dashboard_target_with_context(
+    project_root: &str,
+    tmux: &mut impl DashboardTargetTmux,
+    context: &DashboardTargetContext,
+    dashboard_target: &TmuxTarget,
+    require_current_build: bool,
 ) -> Result<bool, String> {
     let current_build_stamp = tmux.get_window_option(dashboard_target, TMUX_DASHBOARD_BUILD_OPTION);
     let current_ready_stamp = tmux.get_window_option(dashboard_target, TMUX_DASHBOARD_READY_OPTION);
@@ -474,8 +507,7 @@ pub fn is_usable_dashboard_target(
         && project_root_matches
         && runtime_owner_matches
         && dashboard_owner_matches
-        && build_matches
-        && ready_matches
+        && (!require_current_build || (build_matches && ready_matches))
         && command_ok
         && tail_ok)
 }

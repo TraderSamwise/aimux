@@ -8,9 +8,9 @@ use aimux::daemon::stream::{
     host_agent_stream_failure_bytes, host_agent_stream_failure_response,
     maybe_handle_host_agent_stream_request,
     maybe_handle_host_agent_stream_request_with_runtime_mutex,
-    maybe_handle_project_event_stream_request, pipe_host_agent_stream_from_url,
-    pipe_project_event_stream_from_url, pipe_project_event_stream_from_url_async,
-    write_host_agent_stream_text,
+    maybe_handle_project_event_stream_request, maybe_handle_project_event_stream_request_async,
+    pipe_host_agent_stream_from_url, pipe_project_event_stream_from_url,
+    pipe_project_event_stream_from_url_async, write_host_agent_stream_text,
 };
 use aimux::daemon::text::host_agent::DaemonHostAgentTextRuntime;
 use aimux::daemon::text::params::ProjectServiceJsonResult;
@@ -24,7 +24,7 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use std::thread;
 use std::time::Duration;
-use tokio::io::AsyncWrite;
+use tokio::io::{AsyncReadExt, AsyncWrite};
 
 #[test]
 fn upstream_failure_maps_to_plain_text_response_before_stream_headers() {
@@ -248,6 +248,7 @@ fn async_project_event_stream_proxy_drops_upstream_when_downstream_disconnects()
     });
     let mut writer = FailAfterWrites::new(1);
 
+    // aimux-async-seam: test - daemon stream test drives async stream helper
     let error = aimux::async_runtime::block_on_named(
         "daemon-stream-test:disconnect",
         pipe_project_event_stream_from_url_async(
@@ -267,6 +268,64 @@ fn async_project_event_stream_proxy_drops_upstream_when_downstream_disconnects()
         matches!(error, HostAgentStreamError::Io(ref message) if message.contains("broken pipe")),
         "unexpected error: {error:?}"
     );
+    assert!(
+        observed_rx
+            .recv_timeout(Duration::from_secs(3))
+            .expect("upstream close observed")
+    );
+    join.join().expect("upstream thread");
+}
+
+#[test]
+fn async_project_event_stream_interceptor_drops_idle_upstream_when_downstream_disconnects() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("upstream listener");
+    let address = listener.local_addr().expect("upstream address");
+    let (observed_tx, observed_rx) = mpsc::channel();
+    let join = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept upstream");
+        let _request = read_request_text(&mut stream);
+        stream
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\nevent: ready\ndata: {}\n\n",
+            )
+            .expect("write upstream response");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("read timeout");
+        let mut byte = [0_u8; 1];
+        observed_tx
+            .send(stream.read(&mut byte).expect("read upstream close") == 0)
+            .expect("send close observation");
+    });
+    let request = request(
+        "GET",
+        &format!("/proxy/127.0.0.1/{}/events", address.port()),
+    );
+
+    aimux::async_runtime::block_on_named("daemon-stream-test:idle-downstream-close", async {
+        let (mut client, mut server) = tokio::io::duplex(4096);
+        let proxy = tokio::spawn(async move {
+            maybe_handle_project_event_stream_request_async(&request, &mut server).await
+        });
+        let mut response = Vec::new();
+        let mut buffer = [0_u8; 1024];
+        while !response
+            .windows(b"event: ready".len())
+            .any(|window| window == b"event: ready")
+        {
+            let count = client.read(&mut buffer).await.expect("read proxy response");
+            assert_ne!(count, 0, "proxy closed before ready event");
+            response.extend_from_slice(&buffer[..count]);
+        }
+        drop(client);
+        let handled = tokio::time::timeout(Duration::from_secs(3), proxy)
+            .await
+            .expect("proxy task exits after downstream close")
+            .expect("proxy task join")
+            .expect("proxy result");
+        assert!(handled);
+    });
+
     assert!(
         observed_rx
             .recv_timeout(Duration::from_secs(3))

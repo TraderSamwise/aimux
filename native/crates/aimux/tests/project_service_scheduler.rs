@@ -92,6 +92,7 @@ fn run_due_with_clock(
     clock: &mut dyn FnMut() -> i64,
 ) -> Vec<String> {
     init_process_runtime().expect("runtime initialized");
+    // aimux-async-seam: test - scheduler test drives async PeriodicTask method
     aimux::async_runtime::block_on_named(
         "project-service-scheduler-test:run-due",
         scheduler.run_due_async(context, clock),

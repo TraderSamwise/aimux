@@ -29,6 +29,7 @@ use crate::hosted_rate_limit::{HostedLimitOutcome, HostedRateLimitOptions, Hoste
 use crate::paths::PathResolver;
 use crate::project_api_contract::routes as project_routes;
 use crate::proxy_project_binding::{is_binary_project_route, parse_proxy_target};
+use crate::remote_access::{RemoteAccessDecision, RemoteActor};
 use anyhow::{Context, Result, anyhow};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -454,7 +455,7 @@ where
                                 peer_address.as_deref().unwrap_or("unknown"),
                             ),
                             async move {
-                                let _ = handle_hosted_daemon_stream_async(
+                                if let Err(error) = handle_hosted_daemon_stream_async(
                                     &handle_runtime,
                                     &handle_state,
                                     &intercept_runtime,
@@ -466,7 +467,17 @@ where
                                     },
                                     peer_address.as_deref(),
                                 )
-                                .await;
+                                .await
+                                {
+                                    crate::debug_logging::log_lifecycle_always(
+                                        "hosted connection handler failed",
+                                        "hosted",
+                                        Some(json!({
+                                            "peer": peer_address.as_deref().unwrap_or("unknown"),
+                                            "error": error.to_string(),
+                                        })),
+                                    );
+                                }
                                 let _ = stream.shutdown().await;
                             },
                         );
@@ -555,10 +566,14 @@ where
     let stream_runtime = Arc::clone(intercept_runtime);
     let stream_state = Arc::clone(intercept_state);
     let stream_peer_address = peer_address.map(str::to_owned);
+    let route_runtime = Arc::clone(handle_runtime);
+    let route_state = Arc::clone(handle_state);
+    let route_peer_address = peer_address.map(str::to_owned);
+    let body_limit_state = Arc::clone(handle_state);
     handle_daemon_stream_with_metadata_and_interceptor_and_body_limit(
         stream,
         metadata,
-        &mut |head| hosted_body_limit_for_head(&handle_state.config, head),
+        &mut |head| hosted_body_limit_for_head(&body_limit_state.config, head),
         &mut move |request, writer| {
             let intercept_runtime = Arc::clone(&stream_runtime);
             let intercept_state = Arc::clone(&stream_state);
@@ -579,16 +594,32 @@ where
                 })
             })
         },
-        &mut |request| {
-            let mut runtime = handle_runtime
-                .lock()
-                .expect("hosted daemon runtime mutex poisoned");
-            handle_hosted_daemon_request_from_peer(
-                &mut *runtime,
-                handle_state,
-                request,
-                peer_address,
-            )
+        &mut move |request| {
+            let handle_runtime = Arc::clone(&route_runtime);
+            let handle_state = Arc::clone(&route_state);
+            let peer_address = route_peer_address.clone();
+            Box::pin(async move {
+                crate::async_runtime::spawn_blocking_named(
+                    crate::async_runtime::task_name("hosted", "route"),
+                    move || {
+                        let mut runtime = handle_runtime
+                            .lock()
+                            .expect("hosted daemon runtime mutex poisoned");
+                        handle_hosted_daemon_request_from_peer(
+                            &mut *runtime,
+                            &handle_state,
+                            request,
+                            peer_address.as_deref(),
+                        )
+                    },
+                )
+                .await
+                .map_err(|error| {
+                    crate::daemon::listener::DaemonListenerError::Io(std::io::Error::other(
+                        error.to_string(),
+                    ))
+                })
+            })
         },
     )
     .await
@@ -836,13 +867,7 @@ where
     };
     open_slot.release();
 
-    let resolved = {
-        let runtime = runtime
-            .lock()
-            .expect("hosted daemon runtime mutex poisoned");
-        let projects = runtime.list_projects_for_route();
-        resolve_hosted_operator_stream(&actor, "GET", &request.path, &projects)
-    };
+    let resolved = resolve_hosted_operator_stream_async(runtime, actor, request.path.clone()).await;
     let target = match resolved {
         Ok(target) => target,
         Err(decision) => {
@@ -888,6 +913,29 @@ where
     .await;
     state.release_stream(&principal.id);
     Ok(true)
+}
+
+async fn resolve_hosted_operator_stream_async<Runtime>(
+    runtime: &Arc<Mutex<Runtime>>,
+    actor: RemoteActor,
+    path: String,
+) -> Result<crate::daemon::access::HostedOperatorStreamTarget, RemoteAccessDecision>
+where
+    Runtime: DaemonRouteRuntime + Send + 'static,
+{
+    let runtime = Arc::clone(runtime);
+    crate::async_runtime::spawn_blocking_named(
+        crate::async_runtime::task_name("hosted", "stream-route"),
+        move || {
+            let runtime = runtime
+                .lock()
+                .expect("hosted daemon runtime mutex poisoned");
+            let projects = runtime.list_projects_for_route();
+            resolve_hosted_operator_stream(&actor, "GET", &path, &projects)
+        },
+    )
+    .await
+    .map_err(|error| RemoteAccessDecision::deny(500, error.to_string()))?
 }
 
 fn pipe_hosted_project_event_stream(

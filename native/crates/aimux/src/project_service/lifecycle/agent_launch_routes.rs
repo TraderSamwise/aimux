@@ -1197,12 +1197,10 @@ mod tests {
                 .expect("spawn lifecycle progress");
         let mut runtime = FakeAsyncLifecycleRuntime;
 
-        let response = crate::async_runtime::process_runtime().block_on(route_agent_spawn_async(
-            &context,
-            &body,
-            &mut runtime,
-            &progress,
-        ));
+        let response = crate::async_runtime::block_on_named(
+            "test:agent-spawn-known-root",
+            route_agent_spawn_async(&context, &body, &mut runtime, &progress),
+        );
 
         assert_eq!(response.status, 200);
         assert_eq!(

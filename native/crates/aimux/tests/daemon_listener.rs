@@ -1,10 +1,10 @@
 use aimux::daemon::http::{DaemonResponseBody, prepare_daemon_response};
 use aimux::daemon::listener::{
-    DaemonRequestBodyLimit, DaemonRequestMetadata, handle_daemon_stream,
+    DaemonListenConfig, DaemonRequestBodyLimit, DaemonRequestMetadata, handle_daemon_stream,
     handle_daemon_stream_with_metadata, handle_daemon_stream_with_metadata_and_interceptor,
     handle_daemon_stream_with_metadata_and_interceptor_and_body_limit_blocking,
     parse_daemon_http_request, parse_daemon_http_request_with_metadata, prepared_response_bytes,
-    spawn_daemon_connection,
+    serve_daemon_http_with_metadata_and_interceptor_until, spawn_daemon_connection,
 };
 use aimux::daemon::routing::DaemonRouteResponse;
 use aimux::daemon::server::handle_daemon_http_request;
@@ -12,7 +12,11 @@ use aimux::remote_access::RemoteAccessDecision;
 use serde_json::json;
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::Arc;
+use std::process::Command;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use std::thread;
 use std::time::Duration;
 
@@ -238,6 +242,7 @@ fn spawned_connections_do_not_serialize_slow_streams() {
             let (stream, _) = listener.accept().expect("accept");
             streams.push(stream);
         }
+        // aimux-async-seam: test - listener test joins async client and server tasks
         aimux::async_runtime::block_on_named("daemon-listener-test:joins", async move {
             let mut joins = Vec::new();
             for stream in streams {
@@ -271,6 +276,75 @@ fn spawned_connections_do_not_serialize_slow_streams() {
 
     let _ = read_socket_text(&mut slow);
     acceptor.join().expect("acceptor");
+}
+
+#[test]
+fn accepted_daemon_connections_close_after_peer_can_read_response() {
+    let port = unused_loopback_port();
+    let stopped = Arc::new(AtomicBool::new(false));
+    let serve_stopped = Arc::clone(&stopped);
+    let server = thread::spawn(move || {
+        serve_daemon_http_with_metadata_and_interceptor_until(
+            DaemonListenConfig {
+                host: "127.0.0.1".into(),
+                port,
+            },
+            |request| {
+                assert_eq!(request.path, "/large");
+                prepare_daemon_response(
+                    200,
+                    DaemonResponseBody::Bytes(vec![b'x'; 512 * 1024]),
+                    Some("application/octet-stream"),
+                )
+            },
+            DaemonRequestMetadata::default,
+            |_, _| Box::pin(async { Ok(false) }),
+            move || serve_stopped.load(Ordering::SeqCst),
+        )
+        .expect("serve daemon listener");
+    });
+
+    wait_for_loopback_port(port);
+    let script = format!(
+        r#"
+const response = await fetch("http://127.0.0.1:{port}/large");
+const body = await response.arrayBuffer();
+console.log(JSON.stringify({{ status: response.status, bytes: body.byteLength }}));
+"#
+    );
+    let output = Command::new("node")
+        .arg("--input-type=module")
+        .arg("-e")
+        .arg(script)
+        .output()
+        .expect("run node fetch");
+    stopped.store(true, Ordering::SeqCst);
+    server.join().expect("server thread");
+
+    assert!(
+        output.status.success(),
+        "node fetch failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("node stdout utf8");
+    assert!(
+        stdout.contains(r#""status":200"#),
+        "unexpected fetch result: {stdout}"
+    );
+    assert!(
+        stdout.contains(r#""bytes":524288"#),
+        "unexpected fetch body length: {stdout}"
+    );
+}
+
+#[test]
+fn accepted_daemon_listener_does_not_hard_shutdown_peer_socket() {
+    let source = include_str!("../src/daemon/listener.rs");
+    assert!(
+        !source.contains("Shutdown::Both"),
+        "accepted daemon sockets must close through AsyncWriteExt::shutdown so peers see EOF"
+    );
 }
 
 struct MemoryStream {
@@ -316,4 +390,28 @@ fn read_socket_text(stream: &mut TcpStream) -> String {
     let mut bytes = Vec::new();
     stream.read_to_end(&mut bytes).expect("read socket");
     String::from_utf8(bytes).expect("utf8")
+}
+
+fn unused_loopback_port() -> u16 {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind unused port");
+    listener.local_addr().expect("unused port").port()
+}
+
+fn connect_loopback_port(port: u16) -> TcpStream {
+    let address = ("127.0.0.1", port);
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        match TcpStream::connect(address) {
+            Ok(stream) => return stream,
+            Err(error) if std::time::Instant::now() < deadline => {
+                let _ = error;
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => panic!("connect to daemon listener on {port}: {error}"),
+        }
+    }
+}
+
+fn wait_for_loopback_port(port: u16) {
+    drop(connect_loopback_port(port));
 }
