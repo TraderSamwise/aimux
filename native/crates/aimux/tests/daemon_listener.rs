@@ -5,6 +5,7 @@ use aimux::daemon::listener::{
     handle_daemon_stream_with_metadata, handle_daemon_stream_with_metadata_and_interceptor,
     handle_daemon_stream_with_metadata_and_interceptor_and_body_limit_blocking,
     handle_daemon_stream_with_metadata_and_interceptor_and_body_limit_with_read_timeout,
+    handle_daemon_stream_with_metadata_and_interceptor_and_body_limit_with_timeouts,
     parse_daemon_http_request, parse_daemon_http_request_with_metadata, prepared_response_bytes,
     serve_daemon_http_with_metadata_and_interceptor_until, spawn_daemon_connection,
 };
@@ -351,6 +352,110 @@ fn accepted_daemon_listener_does_not_hard_shutdown_peer_socket() {
         !source.contains("Shutdown::Both"),
         "accepted daemon sockets must close through AsyncWriteExt::shutdown so peers see EOF"
     );
+}
+
+#[test]
+fn async_response_write_times_out_when_peer_stops_reading() {
+    let (mut client_stream, mut server_stream) = tokio::io::duplex(64);
+    block_on_named("daemon-listener-test:write-timeout", async {
+        tokio::io::AsyncWriteExt::write_all(
+            &mut client_stream,
+            b"GET /large HTTP/1.1\r\nHost: local\r\n\r\n",
+        )
+        .await
+        .expect("client writes request");
+        let result = tokio::time::timeout(
+            Duration::from_millis(250),
+            handle_daemon_stream_with_metadata_and_interceptor_and_body_limit_with_timeouts(
+                &mut server_stream,
+                DaemonRequestMetadata::default(),
+                &mut |_| None,
+                &mut |_, _| Box::pin(async { Ok(false) }),
+                &mut |_| {
+                    Box::pin(async {
+                        Ok(prepare_daemon_response(
+                            200,
+                            DaemonResponseBody::Bytes(vec![b'x'; 1024]),
+                            Some("application/octet-stream"),
+                        ))
+                    })
+                },
+                None,
+                Some(Duration::from_millis(25)),
+            ),
+        )
+        .await
+        .expect("handler should return its own write timeout");
+        drop(client_stream);
+
+        let error = result.expect_err("stalled peer should time out response write");
+        let aimux::daemon::listener::DaemonListenerError::Io(error) = error else {
+            panic!("unexpected listener error: {error}");
+        };
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert_eq!(error.to_string(), "timed out writing HTTP response");
+    });
+}
+
+#[test]
+fn async_response_write_allows_slow_progressing_reader() {
+    let (mut client_stream, mut server_stream) = tokio::io::duplex(64);
+    block_on_named("daemon-listener-test:slow-progressing-write", async {
+        tokio::io::AsyncWriteExt::write_all(
+            &mut client_stream,
+            b"GET /large HTTP/1.1\r\nHost: local\r\n\r\n",
+        )
+        .await
+        .expect("client writes request");
+        let server = aimux::async_runtime::spawn_named(
+            "daemon-listener-test:slow-progressing-write-server",
+            async move {
+                handle_daemon_stream_with_metadata_and_interceptor_and_body_limit_with_timeouts(
+                    &mut server_stream,
+                    DaemonRequestMetadata::default(),
+                    &mut |_| None,
+                    &mut |_, _| Box::pin(async { Ok(false) }),
+                    &mut |_| {
+                        Box::pin(async {
+                            Ok(prepare_daemon_response(
+                                200,
+                                DaemonResponseBody::Bytes(vec![b'x'; 256]),
+                                Some("application/octet-stream"),
+                            ))
+                        })
+                    },
+                    None,
+                    Some(Duration::from_millis(50)),
+                )
+                .await
+            },
+        );
+
+        let mut output = Vec::new();
+        let mut buffer = [0_u8; 16];
+        loop {
+            let count = tokio::time::timeout(
+                Duration::from_secs(2),
+                tokio::io::AsyncReadExt::read(&mut client_stream, &mut buffer),
+            )
+            .await
+            .expect("client read should not stall")
+            .expect("client read");
+            if count == 0 {
+                break;
+            }
+            output.extend_from_slice(&buffer[..count]);
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+
+        server
+            .await
+            .expect("server task")
+            .expect("slow progressing reader should receive response");
+        let response = String::from_utf8_lossy(&output);
+        assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
+        assert!(output.ends_with(&vec![b'x'; 256]));
+    });
 }
 
 #[test]

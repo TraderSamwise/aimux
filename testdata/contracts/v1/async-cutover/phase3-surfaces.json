@@ -118,6 +118,70 @@
           }
         ]
       }
+    },
+    {
+      "name": "project-lifecycle-kill-failure-is-error",
+      "surface": "project-service-lifecycle",
+      "catches": "Recording current corrected behavior: a tmux kill-window failure must return an explicit error and leave the session out of the graveyard.",
+      "observed": {
+        "status": 500,
+        "body": {
+          "ok": false,
+          "error": "tmux kill-window failed for session \"codex-live\": tmux kill-window failed for @agent"
+        },
+        "killedWindows": [
+          "@agent"
+        ],
+        "sessionStatusAfterFailure": "running",
+        "operationFailures": [
+          {
+            "createdAt": "<created-at>",
+            "id": "<operation-failure-id>",
+            "message": "tmux kill-window failed for session \"codex-live\": tmux kill-window failed for @agent",
+            "operation": "agent.kill",
+            "targetId": "codex-live",
+            "targetKind": "agent",
+            "title": "Failed to kill agent"
+          }
+        ]
+      }
+    },
+    {
+      "name": "project-agent-input-half-delivery-is-error",
+      "surface": "project-service-agent-input",
+      "catches": "Recording current corrected behavior: a prompt whose submit carriage return was dropped must return an explicit error instead of accepted:true.",
+      "observed": {
+        "status": 500,
+        "body": {
+          "ok": false,
+          "error": "agent input submit did not land: carriage return dropped"
+        },
+        "actions": [
+          {
+            "type": "text",
+            "text": "deliver now",
+            "window_id": "@1"
+          },
+          {
+            "type": "carriageReturn",
+            "window_id": "@1"
+          },
+          {
+            "type": "submitDropped",
+            "window_id": "@1"
+          }
+        ]
+      }
+    },
+    {
+      "name": "hosted-non-stream-proxy-client-reset-is-close",
+      "surface": "hosted-non-stream-proxy",
+      "catches": "Asserting intended behavior pending the production fix: a downstream client reset during a non-stream hosted proxy response is handled as connection close after the response begins, not as a proxy success lie or handler crash.",
+      "observed": {
+        "handlerResult": "ok",
+        "partialResponse": "HTTP/1.1 200 OK"
+      },
+      "pending_intended": true
     }
   ]
 }

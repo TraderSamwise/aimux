@@ -15,8 +15,9 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::Notify;
 
 use crate::relay_client::{
-    CloseDecision, RelayAction, RelayStatus, RelayStatusSnapshot, decide_close, handle_frame,
-    project_events_error_frame, project_events_subscribed_frame, response_frame,
+    CloseDecision, RelayAction, RelayStatus, RelayStatusSnapshot, decide_close,
+    decide_connect_error, handle_frame, project_events_error_frame,
+    project_events_subscribed_frame, response_frame,
 };
 use crate::websocket::{
     BoxFuture, INITIAL_RETRY_MS, MAX_HANDSHAKE_FAILURES, WebSocketConnectionParts,
@@ -177,7 +178,6 @@ impl RelayRunner {
         sleep: &mut (dyn FnMut(Duration) -> BoxFuture<'static, ()> + Send),
     ) {
         let mut retry_ms = INITIAL_RETRY_MS;
-        let mut handshake_failures = 0u32;
         let url = format!("{}/daemon/connect", self.relay_url);
         let subprotocols = relay_subprotocols(&self.token);
 
@@ -205,12 +205,11 @@ impl RelayRunner {
             match connect_result {
                 Ok(connection) => {
                     retry_ms = INITIAL_RETRY_MS;
-                    handshake_failures = 0;
                     self.set_status(RelayStatus::Connected, None);
                     let close = self.pump(connection).await;
                     match decide_close(
                         close.code,
-                        handshake_failures,
+                        0,
                         self.handle.is_stopped(),
                         MAX_HANDSHAKE_FAILURES,
                     ) {
@@ -222,28 +221,33 @@ impl RelayRunner {
                             self.set_status(RelayStatus::Disconnected, None);
                             return;
                         }
+                        CloseDecision::Refused(message) => {
+                            self.set_status(RelayStatus::Disconnected, Some(message));
+                            return;
+                        }
                         CloseDecision::Reconnect => {}
                     }
                 }
                 Err(error) => {
-                    // Only a REFUSED HANDSHAKE counts toward giving up. Node
-                    // could not tell the two apart — a browser surfaces a
-                    // rejected upgrade as a plain abnormal close — but we can,
-                    // and five flaky seconds of network should never be
-                    // mistaken for a dead token.
-                    if error.is_handshake() {
-                        handshake_failures += 1;
-                        if let CloseDecision::AuthFailed(message) = decide_close(
-                            Some(1006),
-                            handshake_failures - 1,
-                            self.handle.is_stopped(),
-                            MAX_HANDSHAKE_FAILURES,
-                        ) {
+                    match decide_connect_error(&error, self.handle.is_stopped()) {
+                        CloseDecision::AuthFailed(message) => {
                             self.fail_auth(&message).await;
                             return;
                         }
+                        CloseDecision::Refused(message) => {
+                            self.set_status(RelayStatus::Disconnected, Some(message));
+                            return;
+                        }
+                        CloseDecision::Stop => {
+                            self.set_status(RelayStatus::Disconnected, None);
+                            return;
+                        }
+                        CloseDecision::Reconnect => {}
                     }
-                    self.set_status(RelayStatus::Reconnecting, Some(error.message().to_owned()));
+                    self.set_status(
+                        RelayStatus::Reconnecting,
+                        Some(error.message().into_owned()),
+                    );
                 }
             }
 
@@ -373,10 +377,11 @@ impl RelayRunner {
                 });
             }
             Err(error) => {
-                self.set_status(RelayStatus::Reconnecting, Some(error.message().to_owned()));
+                let message = error.message().into_owned();
+                self.set_status(RelayStatus::Reconnecting, Some(message.clone()));
                 return Some(CloseInfo {
                     code: None,
-                    reason: Some(error.message().to_owned()),
+                    reason: Some(message),
                 });
             }
         }
@@ -507,10 +512,11 @@ impl RelayRunner {
     }
 
     fn write_failed(&self, error: crate::websocket::WebSocketError) -> CloseInfo {
-        self.set_status(RelayStatus::Reconnecting, Some(error.message().to_owned()));
+        let message = error.message().into_owned();
+        self.set_status(RelayStatus::Reconnecting, Some(message.clone()));
         CloseInfo {
             code: None,
-            reason: Some(error.message().to_owned()),
+            reason: Some(message),
         }
     }
 

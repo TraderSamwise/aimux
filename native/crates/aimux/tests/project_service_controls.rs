@@ -472,6 +472,95 @@ fn focus_window_reaches_a_scribe_window_hidden_from_switch_cycling() {
     cleanup(project);
 }
 
+#[test]
+fn async_attention_switch_preserves_tmux_query_error_when_no_target_resolves() {
+    let project = temp_project("attention-no-target-tmux-unavailable");
+    let state_dir = project.join("state");
+    write_topology(&state_dir, topology_fixture());
+    let body = json!({ "currentPath": "/repo/wt", "currentWindowId": "@1" });
+    let mut runtime = FakeAsyncControlRuntime::default();
+
+    let unavailable_context =
+        ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+            .with_live_window_ids_error("tmux list-windows timed out");
+    // aimux-async-seam: test - control route test drives async handler
+    let unavailable = aimux::async_runtime::block_on_named(
+        "test:control-switch-tmux-unavailable",
+        route_control_request_async_with_runtime(
+            &unavailable_context,
+            "POST",
+            routes::controls::SWITCH_ATTENTION,
+            Some(&body),
+            &mut runtime,
+        ),
+    )
+    .expect("switch route with unavailable tmux inventory");
+
+    assert_eq!(unavailable.status, 404);
+    assert_eq!(unavailable.body["error"], "no attention target found");
+    assert_eq!(unavailable.body["tmuxLiveWindowQuery"]["ok"], false);
+    assert_eq!(
+        unavailable.body["tmuxLiveWindowQuery"]["error"],
+        "tmux list-windows timed out"
+    );
+
+    let empty_context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids(support::live_window_ids(&[]));
+    let mut empty_runtime = FakeAsyncControlRuntime::default();
+    // aimux-async-seam: test - control route test drives async handler
+    let empty = aimux::async_runtime::block_on_named(
+        "test:control-switch-empty-inventory",
+        route_control_request_async_with_runtime(
+            &empty_context,
+            "POST",
+            routes::controls::SWITCH_ATTENTION,
+            Some(&body),
+            &mut empty_runtime,
+        ),
+    )
+    .expect("switch route with empty tmux inventory");
+
+    assert_eq!(empty.status, 404);
+    assert_eq!(empty.body["error"], "no attention target found");
+    assert!(
+        empty.body.get("tmuxLiveWindowQuery").is_none(),
+        "a successful empty inventory must not be reported as tmux unavailable"
+    );
+    cleanup(project);
+}
+
+#[test]
+fn async_focus_window_preserves_tmux_query_error_when_window_is_not_found() {
+    let project = temp_project("focus-window-tmux-unavailable");
+    let state_dir = project.join("state");
+    write_topology(&state_dir, topology_fixture());
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids_error("tmux socket busy");
+    let mut runtime = FakeAsyncControlRuntime::default();
+
+    // aimux-async-seam: test - control route test drives async handler
+    let response = aimux::async_runtime::block_on_named(
+        "test:control-focus-tmux-unavailable",
+        route_control_request_async_with_runtime(
+            &context,
+            "POST",
+            routes::controls::FOCUS_WINDOW,
+            Some(&json!({ "windowId": "@missing", "focus": true })),
+            &mut runtime,
+        ),
+    )
+    .expect("focus route with unavailable tmux inventory");
+
+    assert_eq!(response.status, 404);
+    assert_eq!(response.body["error"], "window not found");
+    assert_eq!(response.body["tmuxLiveWindowQuery"]["ok"], false);
+    assert_eq!(
+        response.body["tmuxLiveWindowQuery"]["error"],
+        "tmux socket busy"
+    );
+    cleanup(project);
+}
+
 fn write_topology(state_dir: &PathBuf, topology: Value) {
     create_dir_all(state_dir).unwrap();
     write(

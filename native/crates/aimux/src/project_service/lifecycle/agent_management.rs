@@ -1,7 +1,11 @@
 use serde_json::{Map, Value, json};
 use std::path::Path;
 
+use crate::debug_logging::{LogLevel, log_always_at};
 use crate::project_service::dispatcher::ProjectServiceDispatchResponse;
+use crate::project_service::operation_failures::{
+    OperationFailureInput, try_add_dashboard_operation_failure,
+};
 use crate::project_service::router::ProjectServiceRequestContext;
 use crate::runtime_topology::{
     read_runtime_topology, runtime_topology_path, topology_session_to_session_state,
@@ -47,7 +51,6 @@ pub(super) fn route_agent_stop(
             format!("Session \"{session_id}\" is already in graveyard"),
         );
     }
-    clear_prompt_context(&project_state_dir, &session_id);
     let window_id = live_window_id_for_session(&topology, &session);
     let session_state = topology_session_to_session_state(&session, &topology);
     let missing_backend_disposition = missing_backend_session_disposition(
@@ -55,6 +58,22 @@ pub(super) fn route_agent_stop(
         &session_state,
         &context.project_root().to_string_lossy(),
     );
+    if let Some(window_id) = &window_id
+        && let Err(error) = runtime.kill_window(window_id)
+    {
+        let message = format!("tmux kill-window failed for session \"{session_id}\": {error}");
+        return json_error(
+            500,
+            record_agent_destructive_operation_failure(
+                &project_state_dir,
+                "agent.stop",
+                "Failed to stop agent",
+                &session_id,
+                &message,
+            ),
+        );
+    }
+    clear_prompt_context(&project_state_dir, &session_id);
     // Stop takes a session offline and keeps the record; only kill and the
     // graveyard routes remove it from the list.
     let result = update_runtime_topology(runtime_topology_path(&project_state_dir), |topology| {
@@ -96,9 +115,6 @@ pub(super) fn route_agent_stop(
     // exactly what separates a clean exit from a crash. Forget it here or the
     // next boot offers to bring back something nobody lost.
     prune_restore_eligibility(&project_state_dir, &session_id);
-    if let Some(window_id) = window_id {
-        let _ = runtime.kill_window(&window_id);
-    }
     lifecycle_response(
         json!({ "sessionId": session_id, "status": "offline" }),
         "agent.stop",
@@ -137,9 +153,23 @@ pub(super) async fn route_agent_stop_async(
         &session_state,
         &context.project_root().to_string_lossy(),
     );
-    progress.mark_irreversible();
     if let Some(window_id) = window_id {
-        let _ = runtime.kill_window(&window_id).await;
+        progress.mark_irreversible();
+        if let Err(error) = runtime.kill_window(&window_id).await {
+            let message = format!("tmux kill-window failed for session \"{session_id}\": {error}");
+            return json_error(
+                500,
+                record_agent_destructive_operation_failure(
+                    &project_state_dir,
+                    "agent.stop",
+                    "Failed to stop agent",
+                    &session_id,
+                    &message,
+                ),
+            );
+        }
+    } else {
+        progress.mark_irreversible();
     }
     clear_prompt_context(&project_state_dir, &session_id);
     let result = update_runtime_topology(runtime_topology_path(&project_state_dir), |topology| {
@@ -196,7 +226,6 @@ pub(super) fn route_agent_kill(
     };
     let reason = trimmed_string(body.get("reason"));
     let project_state_dir = context.project_state_dir();
-    clear_prompt_context(&project_state_dir, &session_id);
     let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
         Ok(topology) => topology,
         Err(error) => return json_error(500, error),
@@ -210,6 +239,22 @@ pub(super) fn route_agent_kill(
         "offline"
     };
     let window_id = live_window_id_for_session(&topology, &session);
+    if let Some(window_id) = &window_id
+        && let Err(error) = runtime.kill_window(window_id)
+    {
+        let message = format!("tmux kill-window failed for session \"{session_id}\": {error}");
+        return json_error(
+            500,
+            record_agent_destructive_operation_failure(
+                &project_state_dir,
+                "agent.kill",
+                "Failed to kill agent",
+                &session_id,
+                &message,
+            ),
+        );
+    }
+    clear_prompt_context(&project_state_dir, &session_id);
     let result = update_runtime_topology(runtime_topology_path(&project_state_dir), |topology| {
         let now = now_iso();
         map_topology_array(topology, "sessions", |mut current| {
@@ -231,9 +276,6 @@ pub(super) fn route_agent_kill(
         return json_error(500, error);
     }
     prune_restore_eligibility(&project_state_dir, &session_id);
-    if let Some(window_id) = window_id {
-        let _ = runtime.kill_window(&window_id);
-    }
     lifecycle_response(
         json!({ "sessionId": session_id, "status": "graveyard", "previousStatus": previous_status }),
         "agent.kill",
@@ -265,9 +307,23 @@ pub(super) async fn route_agent_kill_async(
     } else {
         "offline"
     };
-    progress.mark_irreversible();
     if let Some(window_id) = live_window_id_for_session(&topology, &session) {
-        let _ = runtime.kill_window(&window_id).await;
+        progress.mark_irreversible();
+        if let Err(error) = runtime.kill_window(&window_id).await {
+            let message = format!("tmux kill-window failed for session \"{session_id}\": {error}");
+            return json_error(
+                500,
+                record_agent_destructive_operation_failure(
+                    &project_state_dir,
+                    "agent.kill",
+                    "Failed to kill agent",
+                    &session_id,
+                    &message,
+                ),
+            );
+        }
+    } else {
+        progress.mark_irreversible();
     }
     clear_prompt_context(&project_state_dir, &session_id);
     let result = update_runtime_topology(runtime_topology_path(&project_state_dir), |topology| {
@@ -297,6 +353,53 @@ pub(super) async fn route_agent_kill_async(
         "agent",
         Some(&session_id),
     )
+}
+
+fn record_agent_destructive_operation_failure(
+    project_state_dir: &Path,
+    operation: &str,
+    title: &str,
+    session_id: &str,
+    message: &str,
+) -> String {
+    log_always_at(
+        LogLevel::Warn,
+        "agent destructive lifecycle operation failed",
+        "lifecycle",
+        Some(json!({
+            "operation": operation,
+            "sessionId": session_id,
+            "error": message,
+        })),
+    );
+    match try_add_dashboard_operation_failure(
+        project_state_dir,
+        OperationFailureInput {
+            target_kind: "agent".into(),
+            operation: operation.into(),
+            title: title.into(),
+            message: message.into(),
+            target_id: Some(session_id.into()),
+            worktree_path: None,
+            worktree_name: None,
+            created_at: None,
+        },
+    ) {
+        Ok(_) => message.to_owned(),
+        Err((error, _failure)) => {
+            log_always_at(
+                LogLevel::Error,
+                "failed to record agent destructive lifecycle operation failure",
+                "lifecycle",
+                Some(json!({
+                    "operation": operation,
+                    "sessionId": session_id,
+                    "error": error.to_string(),
+                })),
+            );
+            format!("{message}; additionally failed to record dashboard operation failure: {error}")
+        }
+    }
 }
 
 pub(super) fn route_agent_rename(

@@ -29,7 +29,9 @@ use aimux::daemon::text::system::{DaemonSystemTextRuntime, OpenFocusRequest};
 use aimux::daemon::text::team::DaemonTeamTextRuntime;
 use aimux::daemon::text::worktrees::DaemonWorktreeTextRuntime;
 use aimux::daemon_projects::ProjectsRouteProject;
-use aimux::daemon_state::{AimuxDaemonInfo, DaemonState, MetadataApiEndpoint};
+use aimux::daemon_state::{
+    AimuxDaemonInfo, DaemonState, MetadataApiEndpoint, MetadataState, save_metadata_state,
+};
 use aimux::hosted_audit::HostedAuditStore;
 use aimux::hosted_config::HostedConfig;
 use aimux::hosted_principals::{HostedGrant, HostedPrincipalsStore};
@@ -37,16 +39,30 @@ use aimux::hosted_server::{
     HostedServerState, HostedStreamLimits, handle_hosted_daemon_stream_async,
 };
 use aimux::paths::PathResolver;
+use aimux::project_api_contract::routes;
+use aimux::project_service::agent_input_delivery::AgentInputWindowActivity;
+use aimux::project_service::agent_output::{
+    AgentOutputCaptureRuntime, route_agent_output_request_with_runtime,
+};
+use aimux::project_service::lifecycle::{
+    ProjectLifecycleRuntime, route_lifecycle_request_with_runtime,
+};
+use aimux::project_service::operation_failures::list_dashboard_operation_failures;
+use aimux::project_service::router::ProjectServiceRequestContext;
 use aimux::relay_runner::{
     DaemonRelayBridge, DaemonRouteResponse, ProjectEventStream, ProjectEventStreamItem, RelayRunner,
 };
+use aimux::runtime_topology::{
+    coerce_runtime_topology, read_runtime_topology, runtime_topology_path, write_runtime_topology,
+};
+use aimux::tmux::{CapturePaneOptions, TmuxTarget};
 use aimux::websocket::{
     BoxFuture, WebSocketConnectionParts, WebSocketConnector, WebSocketError, WebSocketEvent,
     WebSocketReader, WebSocketWriter,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -56,7 +72,7 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::task::{Context, Poll};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::io::AsyncWrite;
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 const FIXTURE_PATH: &str = "../../../testdata/contracts/v1/async-cutover/phase3-surfaces.json";
 const RECORD_ENV: &str = "AIMUX_RECORD_ASYNC_CUTOVER_PHASE3_FIXTURES";
@@ -112,6 +128,8 @@ struct CharacterizationCase {
     surface: String,
     catches: String,
     observed: Value,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pending_intended: bool,
 }
 
 fn observe_phase3_surfaces() -> Vec<CharacterizationCase> {
@@ -121,6 +139,9 @@ fn observe_phase3_surfaces() -> Vec<CharacterizationCase> {
         project_event_stream_downstream_disconnect_case(),
         relay_project_events_subscription_case(),
         hosted_operator_stream_revocation_case(),
+        project_lifecycle_kill_failure_case(),
+        project_agent_input_half_delivery_case(),
+        hosted_non_stream_proxy_client_reset_case(),
     ]
 }
 
@@ -155,6 +176,7 @@ fn host_agent_text_transform_case() -> CharacterizationCase {
             "upstreamRequest": normalize_upstream_port(&request),
             "response": normalize_response_bytes(&output),
         }),
+        pending_intended: false,
     }
 }
 
@@ -197,6 +219,7 @@ fn project_event_stream_proxy_case() -> CharacterizationCase {
             "upstreamRequest": normalize_upstream_port(&request),
             "response": normalize_response_bytes(&output),
         }),
+        pending_intended: false,
     }
 }
 
@@ -253,6 +276,7 @@ fn project_event_stream_downstream_disconnect_case() -> CharacterizationCase {
             "error": normalize_stream_error(&error),
             "upstreamObservedEof": upstream_eof,
         }),
+        pending_intended: false,
     }
 }
 
@@ -305,6 +329,7 @@ fn relay_project_events_subscription_case() -> CharacterizationCase {
                 "lastError": status.last_error,
             },
         }),
+        pending_intended: false,
     }
 }
 
@@ -425,6 +450,142 @@ fn hosted_operator_stream_revocation_case() -> CharacterizationCase {
             "containsFirstEvent": response.contains("data: first\n\n"),
             "streamAudit": stream_audit,
         }),
+        pending_intended: false,
+    }
+}
+
+fn project_lifecycle_kill_failure_case() -> CharacterizationCase {
+    let fixture = RouteFixture::new("lifecycle-kill-failure");
+    let state_dir = fixture.root.join("state");
+    write_lifecycle_topology(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&fixture.root, &state_dir);
+    let mut runtime = FixtureLifecycleRuntime {
+        kill_window_result: Some(Err("tmux kill-window failed for @agent".into())),
+        ..Default::default()
+    };
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::KILL,
+        Some(&json!({ "sessionId": "codex-live", "reason": "done" })),
+        &mut runtime,
+    )
+    .expect("kill route");
+    let topology = read_runtime_topology(runtime_topology_path(&state_dir))
+        .expect("topology after kill failure");
+    let session_status = topology["sessions"]
+        .as_array()
+        .and_then(|sessions| {
+            sessions
+                .iter()
+                .find(|session| session["id"] == "codex-live")
+        })
+        .and_then(|session| session["status"].as_str())
+        .unwrap_or("<missing>")
+        .to_owned();
+    let operation_failures = list_dashboard_operation_failures(&state_dir)
+        .into_iter()
+        .map(normalize_operation_failure_record)
+        .collect::<Vec<_>>();
+
+    CharacterizationCase {
+        name: "project-lifecycle-kill-failure-is-error".into(),
+        surface: "project-service-lifecycle".into(),
+        catches: "Recording current corrected behavior: a tmux kill-window failure must return an explicit error and leave the session out of the graveyard.".into(),
+        observed: json!({
+            "status": response.status,
+            "body": response.body,
+            "killedWindows": runtime.killed,
+            "sessionStatusAfterFailure": session_status,
+            "operationFailures": operation_failures,
+        }),
+        pending_intended: false,
+    }
+}
+
+fn project_agent_input_half_delivery_case() -> CharacterizationCase {
+    let fixture = RouteFixture::new("agent-input-half-delivery");
+    let state_dir = fixture.root.join("state");
+    write_agent_input_topology(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&fixture.root, &state_dir);
+    let mut runtime = FixtureAgentInputRuntime {
+        submit_outcome: FixtureSubmitOutcome::Dropped,
+        input_activity: VecDeque::from([Ok(AgentInputWindowActivity::Unattended)]),
+        ..Default::default()
+    };
+
+    let response = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::INPUT,
+        Some(&json!({ "sessionId": "codex-1", "text": "deliver now" })),
+        &mut runtime,
+    )
+    .expect("input route");
+
+    CharacterizationCase {
+        name: "project-agent-input-half-delivery-is-error".into(),
+        surface: "project-service-agent-input".into(),
+        catches: "Recording current corrected behavior: a prompt whose submit carriage return was dropped must return an explicit error instead of accepted:true.".into(),
+        observed: json!({
+            "status": response.status,
+            "body": response.body,
+            "actions": runtime.actions,
+        }),
+        pending_intended: false,
+    }
+}
+
+fn hosted_non_stream_proxy_client_reset_case() -> CharacterizationCase {
+    let fixture = HostedFixture::new("phase3-hosted-non-stream-reset");
+    let token = grant_hosted_operator(&fixture.resolver, "grand", "/repo", "s");
+    let mut runtime = FakeRuntime::empty();
+    runtime.projects = vec![hosted_project("/repo", 43210, true)];
+    runtime.proxy_json = ProxyJsonResponse {
+        status: 200,
+        json: json!({ "ok": true, "value": "response that will be truncated" }),
+    };
+    let runtime = Arc::new(Mutex::new(runtime));
+    let state = Arc::new(HostedServerState::with_resolver(
+        HostedConfig {
+            enabled: true,
+            ..HostedConfig::default()
+        },
+        fixture.resolver.clone(),
+    ));
+    let request = format!(
+        "GET /proxy/127.0.0.1/43210/agents/output?sessionId=s HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {token}\r\n\r\n"
+    );
+    let mut stream = ResettingAsyncHttpStream::new(request.as_bytes(), "HTTP/1.1 200 OK".len());
+
+    let result = aimux::async_runtime::process_runtime()
+        // aimux-async-seam: fixture - hosted reset characterization drives async stream handler directly
+        .block_on(handle_hosted_daemon_stream_async(
+            &runtime,
+            &state,
+            &runtime,
+            &state,
+            &mut stream,
+            aimux::daemon::listener::DaemonRequestMetadata {
+                issued_at: "issued".into(),
+                stopping: false,
+            },
+            None,
+        ));
+
+    CharacterizationCase {
+        name: "hosted-non-stream-proxy-client-reset-is-close".into(),
+        surface: "hosted-non-stream-proxy".into(),
+        catches: "Asserting intended behavior pending the production fix: a downstream client reset during a non-stream hosted proxy response is handled as connection close after the response begins, not as a proxy success lie or handler crash.".into(),
+        observed: json!({
+            "handlerResult": match result {
+                Ok(()) => "ok".to_owned(),
+                Err(error) => format!("error: {error}"),
+            },
+            "partialResponse": normalize_hosted_response(&String::from_utf8_lossy(&stream.output)),
+        }),
+        pending_intended: false,
     }
 }
 
@@ -443,6 +604,27 @@ fn assert_characterization_cases_match(
     }
 
     for (index, (observed_case, expected_case)) in observed.iter().zip(expected).enumerate() {
+        if expected_case.pending_intended {
+            if observed_case.name != expected_case.name
+                || observed_case.surface != expected_case.surface
+                || observed_case.catches != expected_case.catches
+            {
+                panic!(
+                    "phase3 pending fixture metadata mismatch at case #{index}: observed '{}', expected '{}'\nobserved:\n{}\nexpected:\n{}",
+                    observed_case.name,
+                    expected_case.name,
+                    pretty_case(observed_case),
+                    pretty_case(expected_case)
+                );
+            }
+            if observed_case.observed == expected_case.observed {
+                panic!(
+                    "phase3 pending intended fixture now matches current behavior at case #{index} ('{}'); remove pending_intended and record it as current corrected behavior",
+                    expected_case.name
+                );
+            }
+            continue;
+        }
         if observed_case != expected_case {
             panic!(
                 "phase3 fixture mismatch at case #{index}: observed '{}', expected '{}'\nobserved:\n{}\nexpected:\n{}",
@@ -465,6 +647,10 @@ fn case_names(cases: &[CharacterizationCase]) -> String {
 
 fn pretty_case(case: &CharacterizationCase) -> String {
     serde_json::to_string_pretty(case).expect("serialize characterization case")
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Default)]
@@ -1230,6 +1416,263 @@ impl DaemonAuthTextRuntime for FakeRuntime {
     }
 }
 
+struct RouteFixture {
+    root: PathBuf,
+}
+
+impl RouteFixture {
+    fn new(name: &str) -> Self {
+        let root = std::env::temp_dir().join(format!(
+            "aimux-phase3-route-{name}-{}-{}",
+            std::process::id(),
+            unix_millis(SystemTime::now())
+        ));
+        fs::create_dir_all(&root).expect("route fixture root");
+        Self { root }
+    }
+}
+
+impl Drop for RouteFixture {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+#[derive(Default)]
+struct FixtureLifecycleRuntime {
+    killed: Vec<String>,
+    kill_window_result: Option<Result<(), String>>,
+}
+
+impl ProjectLifecycleRuntime for FixtureLifecycleRuntime {
+    fn repair_legacy_project_session_names(&mut self, _project_root: &Path) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn ensure_project_session(&mut self, _project_root: &Path) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn find_main_repo(&mut self, cwd: &str) -> Result<String, String> {
+        Ok(cwd.to_owned())
+    }
+
+    fn create_worktree(
+        &mut self,
+        _main_repo: &str,
+        _name: &str,
+        _target_path: &str,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn create_window(
+        &mut self,
+        session_name: &str,
+        name: &str,
+        _cwd: &str,
+        _command: &str,
+        _args: &[String],
+        _detached: bool,
+    ) -> Result<TmuxTarget, String> {
+        Ok(TmuxTarget {
+            session_name: session_name.to_owned(),
+            window_id: format!("@{name}"),
+            window_index: 1,
+            window_name: name.to_owned(),
+            pane_dead: None,
+        })
+    }
+
+    fn set_window_metadata(&mut self, _window_id: &str, _metadata: &Value) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn set_window_option(
+        &mut self,
+        _window_id: &str,
+        _key: &str,
+        _value: &str,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn clear_history(&mut self, _window_id: &str) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn has_window(&mut self, _target: &TmuxTarget) -> bool {
+        true
+    }
+
+    fn codex_backend_session_ids_for_cwd(
+        &mut self,
+        _cwd: &str,
+    ) -> Result<BTreeSet<String>, String> {
+        Ok(BTreeSet::new())
+    }
+
+    fn kill_window(&mut self, window_id: &str) -> Result<(), String> {
+        self.killed.push(window_id.to_owned());
+        self.kill_window_result.clone().unwrap_or(Ok(()))
+    }
+
+    fn rename_window(&mut self, _window_id: &str, _name: &str) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+#[derive(Default)]
+struct FixtureAgentInputRuntime {
+    submit_outcome: FixtureSubmitOutcome,
+    input_activity: VecDeque<Result<AgentInputWindowActivity, String>>,
+    actions: Vec<FixtureInputAction>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum FixtureSubmitOutcome {
+    #[default]
+    Landed,
+    Dropped,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+enum FixtureInputAction {
+    Text { window_id: String, text: String },
+    Key { window_id: String, key: String },
+    CarriageReturn { window_id: String },
+    SubmitDropped { window_id: String },
+}
+
+impl AgentOutputCaptureRuntime for FixtureAgentInputRuntime {
+    fn capture_pane(
+        &mut self,
+        _window_id: &str,
+        _options: CapturePaneOptions,
+    ) -> Result<String, String> {
+        Ok(String::new())
+    }
+
+    fn send_text(&mut self, window_id: &str, text: &str) -> Result<(), String> {
+        self.actions.push(FixtureInputAction::Text {
+            window_id: window_id.to_owned(),
+            text: text.to_owned(),
+        });
+        Ok(())
+    }
+
+    fn send_key(&mut self, window_id: &str, key: &str) -> Result<(), String> {
+        self.actions.push(FixtureInputAction::Key {
+            window_id: window_id.to_owned(),
+            key: key.to_owned(),
+        });
+        Ok(())
+    }
+
+    fn send_carriage_return(&mut self, window_id: &str) -> Result<(), String> {
+        self.actions.push(FixtureInputAction::CarriageReturn {
+            window_id: window_id.to_owned(),
+        });
+        Ok(())
+    }
+
+    fn submit_prompt(&mut self, window_id: &str, _draft: &str) -> Result<(), String> {
+        self.send_carriage_return(window_id)?;
+        match self.submit_outcome {
+            FixtureSubmitOutcome::Landed => Ok(()),
+            FixtureSubmitOutcome::Dropped => {
+                self.actions.push(FixtureInputAction::SubmitDropped {
+                    window_id: window_id.to_owned(),
+                });
+                Err("agent input submit did not land: carriage return dropped".into())
+            }
+        }
+    }
+
+    fn agent_input_window_activity(
+        &mut self,
+        _window_id: &str,
+    ) -> Result<AgentInputWindowActivity, String> {
+        self.input_activity
+            .pop_front()
+            .unwrap_or(Ok(AgentInputWindowActivity::Unattended))
+    }
+}
+
+fn write_lifecycle_topology(state_dir: &Path) {
+    let topology = coerce_runtime_topology(&json!({
+        "version": 1,
+        "generatedAt": "2026-01-01T00:00:00.000Z",
+        "rigs": [{ "id": "rig-1", "name": "aimux", "projectRoot": "/repo", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" }],
+        "nodes": [
+            { "id": "node-agent", "rigId": "rig-1", "logicalId": "codex-live", "toolConfigKey": "codex", "createdAt": "2026-01-01T00:00:00.000Z" }
+        ],
+        "edges": [],
+        "bindings": [
+            { "id": "tmux:codex-live", "nodeId": "node-agent", "tmuxSession": "aimux", "tmuxWindowId": "@agent", "tmuxWindowIndex": 1, "tmuxWindowName": "codex", "updatedAt": "2026-01-01T00:00:00.000Z" }
+        ],
+        "sessions": [{
+            "id": "codex-live",
+            "nodeId": "node-agent",
+            "tool": "codex",
+            "command": "codex",
+            "args": [],
+            "status": "running",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+        }],
+        "services": [],
+        "worktrees": [],
+        "worktreeGraveyard": [],
+        "teamRoles": [],
+        "remoteClients": [],
+        "lifecycleOperations": [],
+        "exchangeRefs": []
+    }))
+    .expect("coerce lifecycle topology");
+    write_runtime_topology(runtime_topology_path(state_dir), &topology)
+        .expect("write lifecycle topology");
+}
+
+fn write_agent_input_topology(state_dir: &Path) {
+    let topology = coerce_runtime_topology(&json!({
+        "version": 1,
+        "generatedAt": "2026-09-05T00:00:00.000Z",
+        "rigs": [
+            { "id": "rig-1", "name": "aimux", "projectRoot": "/repo", "createdAt": "2026-09-05T00:00:00.000Z", "updatedAt": "2026-09-05T00:00:00.000Z" }
+        ],
+        "nodes": [
+            { "id": "node-live", "rigId": "rig-1", "logicalId": "codex-1", "toolConfigKey": "codex", "createdAt": "2026-09-05T00:00:00.000Z" }
+        ],
+        "edges": [],
+        "bindings": [
+            { "id": "binding-live", "nodeId": "node-live", "tmuxSession": "aimux-repo", "tmuxWindowId": "@1", "tmuxWindowIndex": 1, "tmuxWindowName": "codex", "updatedAt": "2026-09-05T00:00:00.000Z" }
+        ],
+        "sessions": [
+            { "id": "codex-1", "nodeId": "node-live", "status": "running", "command": "codex", "args": [], "toolConfigKey": "codex", "createdAt": "2026-09-05T00:00:00.000Z", "updatedAt": "2026-09-05T00:00:00.000Z" }
+        ],
+        "services": [],
+        "worktrees": [],
+        "worktreeGraveyard": [],
+        "teamRoles": [],
+        "remoteClients": [],
+        "lifecycleOperations": [],
+        "exchangeRefs": []
+    }))
+    .expect("coerce input topology");
+    write_runtime_topology(runtime_topology_path(state_dir), &topology)
+        .expect("write input topology");
+    save_metadata_state(
+        state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::new(),
+        },
+    )
+    .expect("write metadata state");
+}
+
 struct HostedFixture {
     root: PathBuf,
     resolver: PathResolver,
@@ -1339,6 +1782,26 @@ fn hosted_project(path: &str, port: u64, live: bool) -> ProjectsRouteProject {
     }
 }
 
+fn grant_hosted_operator(
+    resolver: &PathResolver,
+    label: &str,
+    project_root: &str,
+    session_id: &str,
+) -> String {
+    let store = HostedPrincipalsStore::with_resolver(resolver.clone());
+    let (principal, token) = store.create_principal(label).expect("create principal");
+    store
+        .grant_session(
+            &principal.id,
+            HostedGrant {
+                project_root: project_root.to_owned(),
+                session_id: session_id.to_owned(),
+            },
+        )
+        .expect("grant principal");
+    token
+}
+
 fn unix_millis(time: SystemTime) -> u128 {
     time.duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -1427,6 +1890,82 @@ fn normalize_stream_error(error: &HostAgentStreamError) -> Value {
         HostAgentStreamError::Transform(message) => {
             json!({ "kind": "transform", "message": message })
         }
+    }
+}
+
+fn normalize_operation_failure_record(mut failure: Value) -> Value {
+    if let Some(record) = failure.as_object_mut() {
+        if record.contains_key("id") {
+            record.insert("id".into(), Value::String("<operation-failure-id>".into()));
+        }
+        if record.contains_key("createdAt") {
+            record.insert("createdAt".into(), Value::String("<created-at>".into()));
+        }
+    }
+    failure
+}
+
+struct ResettingAsyncHttpStream {
+    input: Vec<u8>,
+    offset: usize,
+    output: Vec<u8>,
+    reset_after_written: usize,
+}
+
+impl ResettingAsyncHttpStream {
+    fn new(input: &[u8], reset_after_written: usize) -> Self {
+        Self {
+            input: input.to_vec(),
+            offset: 0,
+            output: Vec::new(),
+            reset_after_written,
+        }
+    }
+}
+
+impl AsyncRead for ResettingAsyncHttpStream {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        _context: &mut Context<'_>,
+        buffer: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        if self.offset >= self.input.len() {
+            return Poll::Ready(Ok(()));
+        }
+        let remaining = &self.input[self.offset..];
+        let count = remaining.len().min(buffer.remaining());
+        buffer.put_slice(&remaining[..count]);
+        self.offset += count;
+        Poll::Ready(Ok(()))
+    }
+}
+
+impl AsyncWrite for ResettingAsyncHttpStream {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        _context: &mut Context<'_>,
+        buffer: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        if self.output.len() >= self.reset_after_written {
+            return Poll::Ready(Err(std::io::Error::new(
+                std::io::ErrorKind::ConnectionReset,
+                "injected client reset",
+            )));
+        }
+        let writable = (self.reset_after_written - self.output.len()).min(buffer.len());
+        self.output.extend_from_slice(&buffer[..writable]);
+        Poll::Ready(Ok(writable))
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(
+        self: Pin<&mut Self>,
+        _context: &mut Context<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Poll::Ready(Ok(()))
     }
 }
 
