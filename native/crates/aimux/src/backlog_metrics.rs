@@ -11,6 +11,7 @@ pub const AGENT_INPUT_DELIVERY_BACKLOG: &str = "agent-input-delivery";
 pub const SSE_PROJECT_EVENTS_BACKLOG: &str = "sse-subscribers/project-events";
 pub const SSE_AGENT_OUTPUT_BACKLOG: &str = "sse-subscribers/agent-output";
 pub const SSE_AGENT_INTERACTION_BACKLOG: &str = "sse-subscribers/agent-interaction";
+pub const SSE_SUBSCRIBER_BACKLOG_CAPACITY: usize = 64;
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -128,6 +129,24 @@ impl BacklogMetricInner {
         }
     }
 
+    fn declare_capacity(&self, capacity: Option<usize>) {
+        let Some(capacity) = capacity else {
+            return;
+        };
+        let mut current = self.capacity.load(Ordering::Relaxed);
+        while current == NO_CAPACITY {
+            match self.capacity.compare_exchange_weak(
+                current,
+                capacity,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return,
+                Err(actual) => current = actual,
+            }
+        }
+    }
+
     fn snapshot(&self) -> BacklogMetricSnapshot {
         let error = match self.error.lock() {
             Ok(error) => error.clone(),
@@ -169,12 +188,14 @@ impl BacklogMetricRegistry {
             .metrics
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        metrics
+        let metric = metrics
             .entry(name.to_owned())
             .or_insert_with(|| BacklogMetric {
                 inner: Arc::new(BacklogMetricInner::new(name, capacity)),
             })
-            .clone()
+            .clone();
+        metric.inner.declare_capacity(capacity);
+        metric
     }
 
     fn snapshots(&self) -> Vec<BacklogMetricSnapshot> {
@@ -233,5 +254,20 @@ mod tests {
         assert_eq!(snapshot.current_depth, None);
         assert_eq!(snapshot.high_water_mark, Some(3));
         assert_eq!(snapshot.error.as_deref(), Some("probe failed"));
+    }
+
+    #[test]
+    fn backlog_metric_late_capacity_declaration_is_not_lost() {
+        let name = "test/backlog-late-capacity";
+        let uncapped = backlog_metric(name, None);
+        uncapped.set_depth(2);
+
+        let capped = backlog_metric(name, Some(8));
+        capped.set_depth(3);
+
+        let snapshot = capped.snapshot();
+        assert_eq!(snapshot.current_depth, Some(3));
+        assert_eq!(snapshot.high_water_mark, Some(3));
+        assert_eq!(snapshot.capacity, Some(8));
     }
 }

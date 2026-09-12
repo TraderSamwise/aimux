@@ -112,6 +112,7 @@ remote_access
 remote_credentials
 remote_login
 rewrite_contract
+runtime_health_composition
 runtime_topology
 runtime_topology_state_save
 scribe_watcher_guards

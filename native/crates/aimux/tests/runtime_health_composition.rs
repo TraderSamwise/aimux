@@ -3,31 +3,19 @@ use aimux::backlog_metrics::record_backlog_depth;
 use aimux::daemon::stability_doctor::{
     StabilityVerdict, build_stability_doctor_report, render_stability_doctor_report,
 };
-use aimux::project_service::router::ProjectServiceRequestContext;
-use aimux::project_service::runtime_health_history::record_runtime_health_sample_with_limits_for_tests;
-use aimux::project_service::scheduler::{
-    PeriodicScheduler, PeriodicTask, PeriodicTaskFuture, ProjectSchedulerHandle,
+use aimux::project_service::process::{
+    STABILITY_DOCTOR_TEST_WEDGE_ENV, project_service_periodic_tasks_for_context,
 };
+use aimux::project_service::router::ProjectServiceRequestContext;
+use aimux::project_service::runtime_health_history::{
+    RUNTIME_HEALTH_HISTORY_INTERVAL_MS, record_runtime_health_sample_with_limits_for_tests,
+};
+use aimux::project_service::scheduler::{PeriodicScheduler, ProjectSchedulerHandle};
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex, MutexGuard};
 use time::OffsetDateTime;
 
-struct FailingTask;
-
-impl PeriodicTask for FailingTask {
-    fn name(&self) -> &str {
-        "composition-failing-task"
-    }
-
-    fn interval_ms(&self) -> i64 {
-        250
-    }
-
-    fn run<'a>(&'a mut self, _context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
-        Box::pin(async move {
-            panic!("composition probe failure");
-        })
-    }
-}
+static TEST_ENV_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
 fn real_task_and_buffer_metrics_reach_history_and_stability_doctor() {
@@ -40,19 +28,24 @@ fn real_task_and_buffer_metrics_reach_history_and_stability_doctor() {
         std::process::id(),
         OffsetDateTime::now_utc().unix_timestamp_nanos()
     );
+    let base_ms = 1_000_000_i64;
+    let _env = TestEnvGuard::set(STABILITY_DOCTOR_TEST_WEDGE_ENV, "panic");
     let scheduler = ProjectSchedulerHandle::default();
-    let context = ProjectServiceRequestContext::with_project_state_dir(&root, &state_dir)
-        .with_scheduler(scheduler.clone());
-    let mut periodic = PeriodicScheduler::with_handle(
-        vec![Box::new(FailingTask) as Box<dyn PeriodicTask>],
-        1_000_000,
-        scheduler,
+    let context = Arc::new(
+        ProjectServiceRequestContext::with_project_state_dir(&root, &state_dir)
+            .with_scheduler(scheduler.clone()),
     );
+    let wedge_tasks = project_service_periodic_tasks_for_context(&context)
+        .into_iter()
+        .filter(|task| task.name() == "stability-doctor-test-wedge")
+        .collect::<Vec<_>>();
+    assert_eq!(wedge_tasks.len(), 1);
+    let mut periodic = PeriodicScheduler::with_handle(wedge_tasks, base_ms, scheduler);
 
     record_backlog_depth(&backlog_name, 1, Some(10));
     record_runtime_health_sample_with_limits_for_tests(
-        &context,
-        1_800_000_000_000,
+        context.as_ref(),
+        base_ms,
         &history_path,
         10_000_000,
         5,
@@ -60,15 +53,15 @@ fn real_task_and_buffer_metrics_reach_history_and_stability_doctor() {
 
     // aimux-async-seam: test - sync test drives async handler
     let ran = block_on_named(
-        "runtime-health-composition-test:run-failing-task",
-        periodic.run_due_at(&context, 1_000_250),
+        "runtime-health-composition-test:run-wedge-task",
+        periodic.run_due_at(context.as_ref(), base_ms),
     );
-    assert_eq!(ran, ["composition-failing-task"]);
+    assert_eq!(ran, ["stability-doctor-test-wedge"]);
 
     record_backlog_depth(&backlog_name, 9, Some(10));
     record_runtime_health_sample_with_limits_for_tests(
-        &context,
-        1_800_000_000_000 + 24 * 60 * 60 * 1000,
+        context.as_ref(),
+        base_ms + RUNTIME_HEALTH_HISTORY_INTERVAL_MS,
         &history_path,
         10_000_000,
         5,
@@ -102,8 +95,31 @@ fn real_task_and_buffer_metrics_reach_history_and_stability_doctor() {
         report.reasons
     );
     assert!(rendered.contains("verdict: not stable"));
-    assert!(rendered.contains("composition-failing-task has 1 consecutive failure(s)"));
+    assert!(rendered.contains("stability-doctor-test-wedge has 1 consecutive failure(s)"));
     assert!(rendered.contains(&format!("{backlog_name} depth 9 of 10")));
+}
+
+struct TestEnvGuard {
+    key: &'static str,
+    _guard: MutexGuard<'static, ()>,
+}
+
+impl TestEnvGuard {
+    fn set(key: &'static str, value: &str) -> Self {
+        let guard = TEST_ENV_LOCK.lock().expect("test env lock");
+        unsafe {
+            std::env::set_var(key, value);
+        }
+        Self { key, _guard: guard }
+    }
+}
+
+impl Drop for TestEnvGuard {
+    fn drop(&mut self) {
+        unsafe {
+            std::env::remove_var(self.key);
+        }
+    }
 }
 
 fn unique_temp_dir(name: &str) -> PathBuf {
