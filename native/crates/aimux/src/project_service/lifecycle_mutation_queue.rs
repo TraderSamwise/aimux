@@ -383,7 +383,9 @@ pub fn lifecycle_transition_for_route(
         .or_else(|| trimmed_string(body.get("targetPath")))
         .or_else(|| trimmed_string(body.get("name")));
     match pathname {
-        routes::agents::SPAWN => Some(LifecycleTransitionInput::new("agent.spawn", "agent")),
+        routes::agents::SPAWN => {
+            Some(LifecycleTransitionInput::new("agent.spawn", "agent").with_target_id(session_id))
+        }
         routes::agents::FORK => {
             Some(LifecycleTransitionInput::new("agent.fork", "agent").with_target_id(session_id))
         }
