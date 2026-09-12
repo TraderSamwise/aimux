@@ -100,6 +100,16 @@ using the code you changed.
 Use `aimux doctor versions` to inspect daemon, project-service, dashboard, and
 installed build coherence.
 
+## Remote Clipboard
+
+Aimux managed tmux sessions copy mouse selections with tmux `copy-pipe` and the
+session `copy-command`, which is `pbcopy` on macOS. When you connect to that Mac
+from another machine over mosh, the copy lands on the host Mac clipboard, not on
+the mosh client clipboard. mosh also drops tmux's empty-selector OSC 52 clipboard
+sequence, so Aimux cannot reliably turn that tmux copy action into a local client
+clipboard update over mosh. Use ssh in a terminal that permits OSC 52, or use the
+terminal's native selection, when the clipboard must land on the client machine.
+
 ## Explicit Sandboxes
 
 Use explicit overrides only when isolated state is required:

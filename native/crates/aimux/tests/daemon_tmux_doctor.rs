@@ -7,6 +7,7 @@ use aimux::tmux::{
     AIMUX_TMUX_RUNTIME_CONTRACT_VERSION, TMUX_DASHBOARD_BUILD_OPTION, TMUX_DASHBOARD_OWNER_OPTION,
     TMUX_DASHBOARD_READY_OPTION, TMUX_RUNTIME_CONTRACT_OPTION,
     TMUX_RUNTIME_REBUILD_REQUIRED_OPTION, TmuxCommandSpec, project_session,
+    MOSH_CLIPBOARD_WARNING_MESSAGE,
 };
 use serde_json::{Value, json};
 use std::collections::{HashMap, VecDeque};
@@ -1055,6 +1056,8 @@ fn repairs_managed_sessions_dashboard_and_agent_window_policy() {
     assert!(repaired_commands.contains("__tmux-control-internal"));
     assert!(repaired_commands.contains("__tmux-statusline-internal"));
     assert!(repaired_commands.contains("__tmux-open-hyperlink-internal"));
+    assert!(repaired_commands.contains("__tmux-client-is-mosh-internal"));
+    assert!(repaired_commands.contains(MOSH_CLIPBOARD_WARNING_MESSAGE));
     assert!(repaired_commands.contains(AIMUX_MODIFIED_ENTER_COMMAND));
     assert!(!repaired_commands.contains(AIMUX_STALE_MODIFIED_ENTER_COMMAND));
     assert!(!repaired_commands.contains("tmux-control.sh"));

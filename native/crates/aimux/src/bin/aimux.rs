@@ -26,6 +26,7 @@ use aimux::native_cli_dispatch::{
     normalize_root_dispatch_args,
 };
 use aimux::paths::PathResolver;
+use aimux::process_inspector::is_process_descended_from_executable;
 use aimux::project_service::process::{
     ProjectServiceInternalOptions, run_project_service_internal,
 };
@@ -122,6 +123,11 @@ enum Command {
     },
     #[command(name = "__tmux-open-hyperlink-internal", hide = true)]
     TmuxOpenHyperlinkInternal,
+    #[command(name = "__tmux-client-is-mosh-internal", hide = true)]
+    TmuxClientIsMoshInternal {
+        #[arg(long)]
+        pid: i32,
+    },
 }
 
 #[derive(Debug, Clone, Subcommand)]
@@ -245,6 +251,15 @@ fn main() -> Result<ExitCode> {
     if let Command::TmuxOpenHyperlinkInternal = cli.command.clone() {
         return Ok(ExitCode::from(run_tmux_open_hyperlink_from_env() as u8));
     }
+    if let Command::TmuxClientIsMoshInternal { pid } = cli.command.clone() {
+        return Ok(
+            if is_process_descended_from_executable(pid, "mosh-server") {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::from(1)
+            },
+        );
+    }
     match cli.command {
         Command::BuildInfo { json } => print_value(aimux::build_info(), json),
         Command::Daemon {
@@ -322,6 +337,9 @@ fn main() -> Result<ExitCode> {
             unreachable!("handled before native command match")
         }
         Command::TmuxOpenHyperlinkInternal => unreachable!("handled before native command match"),
+        Command::TmuxClientIsMoshInternal { .. } => {
+            unreachable!("handled before native command match")
+        }
     }?;
     Ok(ExitCode::SUCCESS)
 }
@@ -340,6 +358,7 @@ fn is_native_main_command(args: &[String]) -> bool {
         [command, ..] if command == "__tmux-control-internal" => true,
         [command, ..] if command == "__tmux-statusline-internal" => true,
         [command, ..] if command == "__tmux-open-hyperlink-internal" => true,
+        [command, ..] if command == "__tmux-client-is-mosh-internal" => true,
         _ => false,
     }
 }

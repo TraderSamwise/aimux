@@ -1,4 +1,5 @@
 use crate::async_subprocess::AsyncCommand;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,6 +58,58 @@ pub fn process_env_value(args: &str, key: &str) -> Option<String> {
             .filter(|value| !value.is_empty())
             .map(str::to_owned)
     })
+}
+
+pub fn process_ancestry_contains_executable(
+    pid: i32,
+    executable_name: &str,
+    process_args: &[ProcessArgsEntry],
+    process_parents: &[(i32, i32)],
+) -> bool {
+    if pid <= 0 || executable_name.is_empty() {
+        return false;
+    }
+    let args_by_pid = process_args
+        .iter()
+        .map(|entry| (entry.pid, entry.args.as_str()))
+        .collect::<BTreeMap<_, _>>();
+    let parent_by_pid = process_parents.iter().copied().collect::<BTreeMap<_, _>>();
+    let mut seen = BTreeSet::new();
+    let mut current = pid;
+    while current > 0 && seen.insert(current) {
+        if args_by_pid
+            .get(&current)
+            .and_then(|args| process_executable_name(args))
+            .is_some_and(|name| name == executable_name)
+        {
+            return true;
+        }
+        let Some(parent) = parent_by_pid.get(&current).copied() else {
+            break;
+        };
+        if parent == current {
+            break;
+        }
+        current = parent;
+    }
+    false
+}
+
+pub fn is_process_descended_from_executable(pid: i32, executable_name: &str) -> bool {
+    process_ancestry_contains_executable(
+        pid,
+        executable_name,
+        &list_process_args(),
+        &list_process_parents(),
+    )
+}
+
+fn process_executable_name(args: &str) -> Option<&str> {
+    let first = args.split_whitespace().next()?;
+    Path::new(trim_shell_quotes(first))
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
 }
 
 fn find_flag(input: &str, flag: &str) -> Option<usize> {
