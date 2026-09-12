@@ -2196,6 +2196,7 @@ def run_expose_interaction_smoke(aimux_bin: Path, mutation: str | None) -> dict[
         host_session_name = str(first_target.get("sessionName") or "")
         if len(shell_window_ids) < 2 or not host_session_name:
             raise LiveResidualFailure(f"expose spawn returned incomplete targets: {first} {second}")
+        seed_tmux_socket_environment(tmux, socket_name, scope)
         wait_for_project_service_endpoint(scope)
 
         def expose_socket_ready() -> Path | None:
@@ -2220,8 +2221,25 @@ def run_expose_interaction_smoke(aimux_bin: Path, mutation: str | None) -> dict[
             label="project-service expose socket",
         )
 
-        run([str(aimux_bin), "dashboard-reload"], cwd=scope.project, env=scope.env, timeout=30)
         project_root = scope.project.resolve()
+        dashboard_command = (
+            f"cd {shlex.quote(str(project_root))} && "
+            f"{shlex.quote(str(aimux_bin))} __dashboard-internal-native "
+            f"--project-root {shlex.quote(str(project_root))}"
+        )
+        command = f"{dashboard_command}; code=$?; printf '\\n__AIMUX_DASHBOARD_EXIT:%s\\n' \"$code\"; sleep 30"
+        tmux_cmd(
+            scope,
+            [
+                "respawn-pane",
+                "-k",
+                "-t",
+                f"{host_session_name}:0",
+                "-c",
+                str(project_root),
+                command,
+            ],
+        )
         proc, client_fd = start_tmux_capture_client(
             scope,
             tmux,
@@ -2374,7 +2392,8 @@ def run_expose_interaction_smoke(aimux_bin: Path, mutation: str | None) -> dict[
             current_agent,
         )
 
-        write_client_keys(b"\x01", b"d")
+        tmux_cmd_for_socket(tmux, socket_name, ["select-window", "-t", f"{host_session_name}:0"])
+        tmux_cmd_for_socket(tmux, socket_name, ["refresh-client", "-t", client_tty, "-S"], check=False)
         wait_until(
             lambda: next(
                 (
