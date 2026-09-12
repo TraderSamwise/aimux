@@ -685,6 +685,412 @@ def check_wedge(phase8: Any, aimux_bin: Path) -> dict[str, Any]:
         }
 
 
+def daemon_endpoint(scope: Any) -> str:
+    return f"http://{scope.env.get('AIMUX_DAEMON_HOST', '127.0.0.1')}:{scope.env['AIMUX_DAEMON_PORT']}"
+
+
+def init_shell_project(phase8: Any, scope: Any, aimux_bin: Path, tmux: str, socket_name: str) -> None:
+    scope.tmux_socket_name = socket_name
+    phase8.install_tmux_socket_wrapper(scope, tmux, socket_name)
+    phase8.run([tmux, "-L", socket_name, "kill-server"], env=phase8.without_tmux(os.environ.copy()), timeout=10, check=False)
+    scope.init_git_project()
+    phase8.run([str(aimux_bin), "init"], cwd=scope.project, env=scope.env, timeout=30)
+    phase8.install_shell_tool_config(scope)
+
+
+def spawn_shell_session(phase8: Any, scope: Any, aimux_bin: Path, label: str) -> dict[str, Any]:
+    payload = phase8.parse_json_stdout(
+        phase8.run([str(aimux_bin), "spawn", "--tool", "shell", "--no-open", "--json"], cwd=scope.project, env=scope.env, timeout=30).stdout,
+        label,
+    )
+    session_id = str(payload.get("sessionId") or "")
+    if not session_id:
+        raise LiveDriveFailure(f"{label} returned no sessionId: {payload}")
+    phase8.wait_until(
+        lambda: phase8.ps_session_by_id(scope, aimux_bin, session_id),
+        timeout=10,
+        label=f"{label} session {session_id} in aimux ps",
+    )
+    return payload
+
+
+def project_service_log_tail(phase8: Any, scope: Any) -> dict[str, str]:
+    try:
+        state_dir = phase8.project_service_state_dir(scope)
+    except Exception as error:
+        return {"stateDirError": str(error)}
+    logs = {}
+    for path in [
+        state_dir / "logs" / "aimux.jsonl",
+        state_dir / "logs" / "project-service-stdio.log",
+        scope.aimux_home / "daemon" / "logs" / "daemon.jsonl",
+        scope.aimux_home / "daemon" / "logs" / "daemon-stdio.log",
+    ]:
+        try:
+            logs[str(path)] = path.read_text(errors="replace")[-2000:] if path.exists() else "<missing>"
+        except Exception as error:
+            logs[str(path)] = f"<read failed: {error}>"
+    return logs
+
+
+def check_expose_unreadable_topology_reports_unavailable(phase8: Any, aimux_bin: Path) -> dict[str, Any]:
+    tmux = phase8.find_tmux()
+    with phase8.Scope("live-drive-unreadable-topology", aimux_bin) as scope:
+        socket_name = f"aimux-live-topology-{os.getpid()}-{time.time_ns()}"
+        init_shell_project(phase8, scope, aimux_bin, tmux, socket_name)
+        spawn = spawn_shell_session(phase8, scope, aimux_bin, "unreadable topology spawn")
+        phase8.wait_for_project_service_endpoint(scope)
+        state_dir = phase8.project_service_state_dir(scope)
+        topology_path = state_dir / "runtime-topology.yaml"
+        if not topology_path.exists():
+            raise LiveDriveFailure(f"cannot make topology unreadable because it does not exist: {topology_path}")
+        original_mode = topology_path.stat().st_mode & 0o777
+        topology_path.chmod(0)
+        try:
+            status, body, raw = http_request_json(
+                f"{daemon_endpoint(scope)}/core/expose/items?includePreview=1",
+                timeout=6,
+            )
+        finally:
+            topology_path.chmod(original_mode)
+        items = body.get("items") if isinstance(body, dict) else None
+        has_error = bool(body.get("error") or body.get("projectReadErrors")) if isinstance(body, dict) else False
+        collapsed_empty = status == 200 and isinstance(items, list) and len(items) == 0 and not has_error
+        if collapsed_empty:
+            raise LiveDriveFailure(
+                "global Expose collapsed unreadable runtime topology to empty items instead of reporting unavailable\n"
+                + json.dumps(
+                    {
+                        "sessionId": spawn.get("sessionId"),
+                        "topologyPath": str(topology_path),
+                        "status": status,
+                        "body": body,
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+        if status < 400 and not has_error:
+            raise LiveDriveFailure(
+                "global Expose did not mark unreadable runtime topology as unavailable\n"
+                + json.dumps(
+                    {
+                        "sessionId": spawn.get("sessionId"),
+                        "topologyPath": str(topology_path),
+                        "status": status,
+                        "body": body or raw[:500],
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+        return {
+            "sessionId": spawn.get("sessionId"),
+            "topologyPath": str(topology_path),
+            "status": status,
+            "error": body.get("error") if isinstance(body, dict) else None,
+            "projectReadErrors": body.get("projectReadErrors") if isinstance(body, dict) else None,
+        }
+
+
+def check_sigstop_preview_capture_reports_unavailable(phase8: Any, aimux_bin: Path) -> dict[str, Any]:
+    def run_once() -> dict[str, Any]:
+        return check_sigstop_preview_capture_reports_unavailable_once(phase8, aimux_bin)
+
+    last_error: Exception | None = None
+    for attempt in range(1, 3):
+        try:
+            result = run_once()
+            if attempt > 1:
+                result["attempt"] = attempt
+            return result
+        except Exception as error:
+            last_error = error
+            if "project service process exited before /health became ready" not in str(error):
+                raise
+            if attempt < 2:
+                time.sleep(1.0)
+                continue
+    assert last_error is not None
+    raise last_error
+
+
+def check_sigstop_preview_capture_reports_unavailable_once(phase8: Any, aimux_bin: Path) -> dict[str, Any]:
+    tmux = phase8.find_tmux()
+    with phase8.Scope("preview-honesty", aimux_bin) as scope:
+        socket_name = f"aimux-live-preview-{os.getpid()}-{time.time_ns()}"
+        init_shell_project(phase8, scope, aimux_bin, tmux, socket_name)
+        spawn = spawn_shell_session(phase8, scope, aimux_bin, "preview capture spawn")
+        session_id = str(spawn.get("sessionId") or "")
+        phase8.wait_for_project_service_endpoint(scope)
+        pids = phase8.wait_until(
+            lambda: tmux_server_pids(socket_name),
+            timeout=10,
+            label=f"tmux server pid for preview capture socket {socket_name}",
+        )
+        try:
+            for pid in pids:
+                os.kill(pid, signal.SIGSTOP)
+            try:
+                status, body, raw = http_request_json(
+                    f"{daemon_endpoint(scope)}/core/expose/items?includePreview=1",
+                    timeout=8,
+                )
+            except Exception as error:
+                raise LiveDriveFailure(
+                    "SIGSTOPed tmux closed Expose preview request instead of returning previewCapture error\n"
+                    + json.dumps(
+                        {
+                            "sessionId": session_id,
+                            "tmuxPids": pids,
+                            "error": str(error),
+                            "logs": project_service_log_tail(phase8, scope),
+                        },
+                        indent=2,
+                        sort_keys=True,
+                    )
+                ) from error
+        finally:
+            for pid in pids:
+                try:
+                    os.kill(pid, signal.SIGCONT)
+                except OSError:
+                    pass
+        items = body.get("items") if isinstance(body, dict) else None
+        preview_failures = [
+            item
+            for item in (items if isinstance(items, list) else [])
+            if isinstance(item, dict)
+            and isinstance(item.get("previewCapture"), dict)
+            and item["previewCapture"].get("ok") is False
+            and item["previewCapture"].get("error")
+        ]
+        if status != 200 or not preview_failures:
+            raise LiveDriveFailure(
+                "SIGSTOPed tmux made Expose preview blank or unavailable without previewCapture error\n"
+                + json.dumps(
+                    {
+                        "sessionId": session_id,
+                        "tmuxPids": pids,
+                        "status": status,
+                        "body": body or raw[:800],
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+        return {
+            "sessionId": session_id,
+            "tmuxPids": pids,
+            "previewCapture": preview_failures[0].get("previewCapture"),
+            "itemCount": len(items) if isinstance(items, list) else None,
+        }
+
+
+def install_tmux_kill_window_failure_wrapper(scope: Any, real_tmux: str, socket_name: str) -> None:
+    wrapper = scope.root / "bin" / "tmux"
+    wrapper.write_text(
+        "#!/bin/sh\n"
+        "for arg in \"$@\"; do\n"
+        "  case \"$arg\" in\n"
+        "    kill-window) echo 'live-drive forced tmux kill-window failure' >&2; exit 42 ;;\n"
+        "  esac\n"
+        "done\n"
+        f"case \"$TMUX\" in\n"
+        f"  {shlex.quote('/private/tmp/tmux-' + str(os.getuid()) + '/' + socket_name)},*) exec {shlex.quote(real_tmux)} \"$@\" ;;\n"
+        f"  {shlex.quote('/tmp/tmux-' + str(os.getuid()) + '/' + socket_name)},*) exec {shlex.quote(real_tmux)} \"$@\" ;;\n"
+        f"  *) unset TMUX TMUX_PANE; exec {shlex.quote(real_tmux)} -L {shlex.quote(socket_name)} \"$@\" ;;\n"
+        "esac\n"
+    )
+    wrapper.chmod(0o755)
+
+
+def check_kill_failure_surfaces_operation_failure(phase8: Any, aimux_bin: Path) -> dict[str, Any]:
+    tmux = phase8.find_tmux()
+    with phase8.Scope("live-drive-kill-failure-honesty", aimux_bin) as scope:
+        socket_name = f"aimux-live-kill-failure-{os.getpid()}-{time.time_ns()}"
+        init_shell_project(phase8, scope, aimux_bin, tmux, socket_name)
+        spawn = spawn_shell_session(phase8, scope, aimux_bin, "kill failure spawn")
+        session_id = str(spawn.get("sessionId") or "")
+        endpoint = phase8.wait_for_project_service_endpoint(scope)
+        install_tmux_kill_window_failure_wrapper(scope, tmux, socket_name)
+        kill = phase8.run([str(aimux_bin), "kill", session_id, "--json"], cwd=scope.project, env=scope.env, timeout=20, check=False)
+
+        def desktop_with_failure() -> tuple[int, dict[str, Any], str] | None:
+            desktop_status, desktop, raw = http_request_json(f"{endpoint}/desktop-state", timeout=5)
+            failures = desktop.get("operationFailures") if isinstance(desktop, dict) else None
+            if failures:
+                return desktop_status, desktop, raw
+            return None
+
+        if kill.returncode != 0:
+            try:
+                observed = phase8.wait_until(
+                    desktop_with_failure,
+                    timeout=8,
+                    interval=0.25,
+                    label=f"operation failure for forced kill-window failure on {session_id}",
+                )
+            except Exception as error:
+                desktop_status, desktop, raw = http_request_json(f"{endpoint}/desktop-state", timeout=5)
+                failures = desktop.get("operationFailures") if isinstance(desktop, dict) else None
+                sessions = desktop.get("sessions") if isinstance(desktop, dict) else None
+                session = next(
+                    (
+                        item
+                        for item in (sessions if isinstance(sessions, list) else [])
+                        if isinstance(item, dict) and item.get("id") == session_id
+                    ),
+                    None,
+                )
+                raise LiveDriveFailure(
+                    "forced tmux kill-window failure returned to the caller but did not surface in desktop-state operationFailures\n"
+                    + json.dumps(
+                        {
+                            "sessionId": session_id,
+                            "waitError": str(error),
+                            "killReturncode": kill.returncode,
+                            "killStdout": kill.stdout,
+                            "killStderr": kill.stderr,
+                            "desktopStatus": desktop_status,
+                            "desktopOperationFailures": failures,
+                            "desktopSession": {
+                                "id": session.get("id"),
+                                "status": session.get("status"),
+                                "active": session.get("active"),
+                                "tmuxWindowId": session.get("tmuxWindowId"),
+                            }
+                            if isinstance(session, dict)
+                            else None,
+                            "desktopBodyPrefix": raw[:800] if not isinstance(desktop, dict) else None,
+                        },
+                        indent=2,
+                        sort_keys=True,
+                    )
+                ) from error
+        else:
+            observed = http_request_json(f"{endpoint}/desktop-state", timeout=5)
+        desktop_status, desktop, raw = observed
+        failures = desktop.get("operationFailures") if isinstance(desktop, dict) else None
+        sessions = desktop.get("sessions") if isinstance(desktop, dict) else None
+        session = next(
+            (
+                item
+                for item in (sessions if isinstance(sessions, list) else [])
+                if isinstance(item, dict) and item.get("id") == session_id
+            ),
+            None,
+        )
+        failure_text = json.dumps(failures or [])
+        if kill.returncode == 0:
+            raise LiveDriveFailure(
+                "aimux kill reported success even though tmux kill-window was forced to fail\n"
+                + json.dumps(
+                    {
+                        "sessionId": session_id,
+                        "killStdout": kill.stdout,
+                        "killStderr": kill.stderr,
+                        "desktopState": desktop,
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+        if not failures or "kill" not in failure_text.lower():
+            raise LiveDriveFailure(
+                "failed kill did not surface operationFailures in desktop-state\n"
+                + json.dumps(
+                    {
+                        "sessionId": session_id,
+                        "killReturncode": kill.returncode,
+                        "killStdout": kill.stdout,
+                        "killStderr": kill.stderr,
+                        "desktopStatus": desktop_status,
+                        "desktop": desktop or raw[:800],
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+        if isinstance(session, dict) and session.get("status") in ("offline", "graveyard"):
+            raise LiveDriveFailure(
+                "failed kill produced a clean offline/graveyard session state\n"
+                + json.dumps(
+                    {
+                        "sessionId": session_id,
+                        "session": session,
+                        "operationFailures": failures,
+                        "killStdout": kill.stdout,
+                        "killStderr": kill.stderr,
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+        return {
+            "sessionId": session_id,
+            "killReturncode": kill.returncode,
+            "killStderr": kill.stderr.strip()[-400:],
+            "operationFailures": failures,
+            "sessionStatus": session.get("status") if isinstance(session, dict) else None,
+        }
+
+
+def check_corrupt_endpoint_reports_project_read_errors(phase8: Any, aimux_bin: Path) -> dict[str, Any]:
+    tmux = phase8.find_tmux()
+    with phase8.Scope("live-drive-project-read-errors", aimux_bin) as scope:
+        socket_name = f"aimux-live-project-errors-{os.getpid()}-{time.time_ns()}"
+        init_shell_project(phase8, scope, aimux_bin, tmux, socket_name)
+        spawn = spawn_shell_session(phase8, scope, aimux_bin, "project read errors spawn")
+        phase8.wait_for_project_service_endpoint(scope)
+        state_dir = phase8.project_service_state_dir(scope)
+        endpoint_path = state_dir / "metadata-api.json"
+        original = endpoint_path.read_text(errors="replace") if endpoint_path.exists() else None
+        endpoint_path.write_text("{\n")
+        try:
+            status, body, raw = http_request_json(f"{daemon_endpoint(scope)}/projects", timeout=6)
+        finally:
+            if original is None:
+                endpoint_path.unlink(missing_ok=True)
+            else:
+                endpoint_path.write_text(original)
+        projects = body.get("projects") if isinstance(body, dict) else None
+        errors = body.get("projectReadErrors") if isinstance(body, dict) else None
+        error_text = json.dumps(errors or [])
+        if status != 200 or not isinstance(projects, list) or not errors:
+            raise LiveDriveFailure(
+                "corrupt project endpoint did not surface projectReadErrors on /projects\n"
+                + json.dumps(
+                    {
+                        "sessionId": spawn.get("sessionId"),
+                        "endpointPath": str(endpoint_path),
+                        "status": status,
+                        "body": body or raw[:800],
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+        if str(endpoint_path) not in error_text and "metadata-api" not in error_text:
+            raise LiveDriveFailure(
+                "projectReadErrors did not name the corrupt endpoint file\n"
+                + json.dumps(
+                    {
+                        "endpointPath": str(endpoint_path),
+                        "projectReadErrors": errors,
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+        return {
+            "sessionId": spawn.get("sessionId"),
+            "endpointPath": str(endpoint_path),
+            "projectCount": len(projects),
+            "projectReadErrors": errors,
+        }
+
+
 def compact_value(value: Any, *, string_limit: int = 1600, list_limit: int = 12, dict_limit: int = 24) -> Any:
     if isinstance(value, str):
         if len(value) <= string_limit:
@@ -727,6 +1133,12 @@ def main() -> int:
     parser.add_argument("--expected-build-stamp", required=True)
     parser.add_argument("--dashboard-deadline-seconds", type=float, default=6.0)
     parser.add_argument("--hosted-attempts", type=int, default=10)
+    parser.add_argument(
+        "--only",
+        action="append",
+        default=[],
+        help="Run only checks with these names. May be passed more than once.",
+    )
     args = parser.parse_args()
 
     aimux_bin = Path(args.aimux_bin).expanduser()
@@ -745,7 +1157,19 @@ def main() -> int:
         ("expose-tile-population", lambda: check_expose(phase8, aimux_bin)),
         ("hosted-proxy-ab", lambda: check_hosted_proxy(phase8, aimux_bin, args.hosted_attempts)),
         ("tmux-sigstop-wedge", lambda: check_wedge(phase8, aimux_bin)),
+        ("honesty-expose-unreadable-topology", lambda: check_expose_unreadable_topology_reports_unavailable(phase8, aimux_bin)),
+        ("honesty-preview-capture-sigstop", lambda: check_sigstop_preview_capture_reports_unavailable(phase8, aimux_bin)),
+        ("honesty-kill-failure-operation", lambda: check_kill_failure_surfaces_operation_failure(phase8, aimux_bin)),
+        ("honesty-project-read-errors", lambda: check_corrupt_endpoint_reports_project_read_errors(phase8, aimux_bin)),
     ]
+    only = set(args.only)
+    if only:
+        known = {name for name, _ in checks}
+        unknown = sorted(only - known)
+        if unknown:
+            print("[FAIL] check-selection " + json.dumps({"status": "fail", "unknown": unknown, "known": sorted(known)}, sort_keys=True), flush=True)
+            return 1
+        checks = [(name, fn) for name, fn in checks if name in only]
     results = [run_check(name, fn) for name, fn in checks]
     failures = [result for result in results if result["status"] != "pass"]
     print("LIVE_DRIVE_SUMMARY " + json.dumps(compact_value({"failures": failures, "results": results}), sort_keys=True), flush=True)
@@ -779,6 +1203,11 @@ def parse_args() -> argparse.Namespace:
         help="Expected BUILD_STAMP. Defaults to aimux/BUILD_STAMP inside the asset.",
     )
     parser.add_argument(
+        "--platform-arch",
+        default=None,
+        help="Native platform/arch directory inside the asset. Defaults to the asset's native/*/aimux entry.",
+    )
+    parser.add_argument(
         "--remote-dir",
         default=None,
         help="Remote temp directory. Defaults to /tmp/aimux-live-drive-<timestamp>.",
@@ -787,6 +1216,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--retries", type=int, default=3)
     parser.add_argument("--dashboard-deadline-seconds", type=float, default=6.0)
     parser.add_argument("--hosted-attempts", type=int, default=10)
+    parser.add_argument(
+        "--only",
+        action="append",
+        default=[],
+        help="Run only a named remote check. May be passed more than once.",
+    )
     parser.add_argument(
         "--skip-install",
         action="store_true",
@@ -826,6 +1261,19 @@ def version_from_asset(asset: Path) -> str:
 
 def build_stamp_from_asset(asset: Path) -> str:
     return text_from_asset(asset, "aimux/BUILD_STAMP")
+
+
+def platform_arch_from_asset(asset: Path) -> str:
+    with tarfile.open(asset, "r:gz") as archive:
+        matches = [
+            name.split("/")[2]
+            for name in archive.getnames()
+            if name.startswith("aimux/native/") and name.endswith("/aimux")
+        ]
+    unique = sorted(set(matches))
+    if len(unique) != 1:
+        raise SystemExit(f"could not determine unique native platform/arch from {asset}: {unique}")
+    return unique[0]
 
 
 def ssh_base(args: argparse.Namespace) -> list[str]:
@@ -897,12 +1345,15 @@ def main() -> int:
         raise SystemExit(
             "--expected-build-stamp is required when --skip-install is used without an asset"
         )
+    platform_arch = args.platform_arch or (
+        platform_arch_from_asset(asset) if asset is not None else "darwin-arm64"
+    )
     remote_dir = args.remote_dir or f"/tmp/aimux-live-drive-{int(time.time())}"
     remote_asset = f"{remote_dir}/{asset.name}" if asset is not None else None
     remote_install = f"{remote_dir}/install.sh"
     remote_phase8 = f"{remote_dir}/phase8-live-residuals.py"
     remote_driver_path = f"{remote_dir}/live-drive-remote-side.py"
-    remote_aimux = f"~/.aimux/native/{version}/bin/aimux"
+    remote_aimux = f"~/.aimux/native/{version}/native/{platform_arch}/aimux"
     local_driver = write_remote_driver()
 
     try:
@@ -910,6 +1361,7 @@ def main() -> int:
         print(f"asset: {asset}", flush=True)
         print(f"version: {version}", flush=True)
         print(f"expected build stamp: {expected_build_stamp}", flush=True)
+        print(f"platform arch: {platform_arch}", flush=True)
         print(f"remote versioned binary: {remote_aimux}", flush=True)
         run_with_retries(
             "remote mkdir",
@@ -971,6 +1423,8 @@ def main() -> int:
             "--hosted-attempts",
             str(args.hosted_attempts),
         ]
+        for name in args.only:
+            remote_command.extend(["--only", shlex.quote(name)])
         result = subprocess.run(
             [*ssh_base(args), " ".join(remote_command)],
             text=True,
