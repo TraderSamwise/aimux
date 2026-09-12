@@ -121,7 +121,7 @@ pub fn route_switchable_agent_request_with_runtime(
         return None;
     }
     let project_state_dir = context.project_state_dir();
-    let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
+    let topology = match read_required_runtime_topology(&project_state_dir) {
         Ok(topology) => topology,
         Err(error) => {
             return Some(ProjectServiceDispatchResponse::json(
@@ -247,7 +247,7 @@ pub async fn route_switchable_agent_request_async(
         return None;
     }
     let project_state_dir = context.project_state_dir();
-    let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
+    let topology = match read_required_runtime_topology(&project_state_dir) {
         Ok(topology) => topology,
         Err(error) => {
             return Some(ProjectServiceDispatchResponse::json(
@@ -450,6 +450,17 @@ fn topology_switchable_entries_from_sessions(
         }
     }
     entries
+}
+
+fn read_required_runtime_topology(project_state_dir: &Path) -> Result<Value, String> {
+    let path = runtime_topology_path(project_state_dir);
+    if !path.exists() {
+        return Err(format!(
+            "runtime topology unavailable at {}",
+            path.display()
+        ));
+    }
+    read_runtime_topology(path)
 }
 
 fn default_tools_config() -> Map<String, Value> {
@@ -932,18 +943,10 @@ async fn attach_expose_preview_snapshot_async(
     else {
         return;
     };
-    let target = item.get("target").and_then(tmux_target_from_value);
-    let tap_snapshot = target.and_then(|target| {
-        context.osc_output_tap.track_and_read_snapshot(
-            string_field(item, "id").unwrap_or_default(),
-            target,
-            DEFAULT_PREVIEW_MAX_CHARS,
-        )
-    });
     let preview = match capture_preview_snapshot_with_tap_async(
         context,
         &window_id,
-        tap_snapshot.as_ref(),
+        None,
         DEFAULT_PREVIEW_CAPTURE_LINES,
         DEFAULT_PREVIEW_MAX_CHARS,
     )

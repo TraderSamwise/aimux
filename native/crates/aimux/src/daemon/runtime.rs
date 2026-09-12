@@ -39,6 +39,7 @@ use crate::daemon::listener::{
 use crate::daemon::process::handle_daemon_runtime_request;
 use crate::daemon::routing::{DaemonRouteResponse, DaemonRouteUrl};
 use crate::daemon::server::{DaemonHttpRequest, handle_daemon_http_request};
+use crate::daemon::stability_doctor::{StabilityDoctorReport, build_stability_doctor_report};
 use crate::daemon::status::{DAEMON_HEALTH_KIND, DaemonStatusRuntime};
 use crate::daemon::stream::{
     maybe_handle_host_agent_stream_request_with_runtime_mutex_async,
@@ -3143,6 +3144,18 @@ impl DaemonOperationsTextRuntime for RealDaemonRuntime {
         window_id: Option<&str>,
     ) -> Result<(Value, String), String> {
         system_tmux_doctor_report(&mut self.resolver, project_root, session_name, window_id)
+    }
+
+    fn doctor_stability_report(
+        &mut self,
+        project_root: &str,
+    ) -> Result<StabilityDoctorReport, String> {
+        let mut resolver = self.resolver.clone();
+        let project_state_dir = resolver.project_state_dir_for(project_root);
+        Ok(build_stability_doctor_report(
+            project_root,
+            project_state_dir,
+        ))
     }
 
     fn repair_tmux_runtime(

@@ -919,6 +919,13 @@ fn doctor_versions_executes_daemon_text_route() {
     assert_eq!(lifecycle.code, 0);
     assert_eq!(lifecycle.stdout, ["Runtime Coherence\n  ok"]);
 
+    let stability = run_core_cli_with(
+        &args(&["doctor", "stability", "--project=/repo", "--json"]),
+        &mut runtime,
+    );
+    assert_eq!(stability.code, 0);
+    assert_eq!(stability.stdout, ["Runtime Coherence\n  ok"]);
+
     let tmux = run_core_cli_with(
         &args(&[
             "doctor",
@@ -946,6 +953,10 @@ fn doctor_versions_executes_daemon_text_route() {
             ),
             (
                 "/core/doctor/lifecycle-text?projectRoot=%2Frepo".into(),
+                None,
+            ),
+            (
+                "/core/doctor/stability-text?projectRoot=%2Frepo&json=1".into(),
                 None,
             ),
             (

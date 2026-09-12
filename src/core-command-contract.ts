@@ -9,6 +9,7 @@ export const CORE_API_ROUTES = {
   doctorLifecycleText: "/core/doctor/lifecycle-text",
   doctorTmuxText: "/core/doctor/tmux-text",
   doctorTasksText: "/core/doctor/tasks-text",
+  doctorStabilityText: "/core/doctor/stability-text",
   doctorVersionsText: "/core/doctor/versions-text",
   doctorDiskText: "/core/doctor/disk-text",
   dashboardReloadText: "/core/dashboard-reload-text",
