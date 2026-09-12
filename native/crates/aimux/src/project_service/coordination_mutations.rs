@@ -68,8 +68,11 @@ pub fn route_coordination_mutation_request_with_runtime(
         routes::reviews::REQUEST_CHANGES => route_review_request_changes(&project_state_dir, body),
         _ => return None,
     };
-    if pathname == routes::threads::SEND {
-        return Some(deliver_thread_send_response(
+    if matches!(
+        pathname,
+        routes::threads::SEND | routes::tasks::ASSIGN | routes::agents::CREATE_TEAMMATE_TASK
+    ) {
+        return Some(deliver_thread_message_response(
             context, body, response, runtime,
         ));
     }
@@ -1429,7 +1432,7 @@ fn mutation_result(result: &MutationResult, delivered: bool) -> Value {
     Value::Object(body)
 }
 
-fn deliver_thread_send_response(
+fn deliver_thread_message_response(
     context: &ProjectServiceRequestContext,
     request_body: &Value,
     mut response: ProjectServiceDispatchResponse,
