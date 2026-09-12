@@ -35,7 +35,10 @@ pub enum LiveWindowIdsProjection<'a> {
 /// window dropped out on its own. The native service has no such runtime object and
 /// treats topology as durable, so liveness has to be re-derived from tmux on read;
 /// otherwise a killed tmux server leaves every session reading `running` forever.
-fn session_is_backed_by_live_window(session: &Value, live_window_ids: &BTreeSet<String>) -> bool {
+pub fn session_is_backed_by_live_window(
+    session: &Value,
+    live_window_ids: &BTreeSet<String>,
+) -> bool {
     session
         .get("tmuxTarget")
         .and_then(|target| target.get("windowId"))

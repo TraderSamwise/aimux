@@ -6,7 +6,7 @@
 
 use aimux::paths::{PathResolver, compute_project_id};
 use aimux::project_api_contract::routes;
-use aimux::project_service::agent_restore_task::AgentRestoreSnapshotTask;
+use aimux::project_service::agent_restore_task::{AgentRestoreSnapshotTask, LiveWindowSource};
 use aimux::project_service::lifecycle::{
     ProjectLifecycleRuntime, route_lifecycle_request_with_runtime,
     seed_agent_restore_prompt_gates_for_daemon_boot,
@@ -28,6 +28,7 @@ use std::time::Duration;
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 const AGENT_IDS: [&str; 2] = ["claude-one", "codex-two"];
+const AGENT_WINDOW_IDS: [&str; 2] = ["@0", "@1"];
 
 #[test]
 fn unsafe_exit_leaves_a_snapshot_that_becomes_a_restore_offer() {
@@ -50,7 +51,9 @@ fn unsafe_exit_leaves_a_snapshot_that_becomes_a_restore_offer() {
         "the boot gate opens on the snapshot the dead run left behind"
     );
 
-    project.run_task();
+    // The topology still reads `running` — nothing has reconciled it yet — so
+    // only the dead tmux windows say these agents are gone.
+    project.run_task_with_no_live_windows();
 
     let offer = project
         .offer()
@@ -75,7 +78,7 @@ fn clean_exit_leaves_no_snapshot_and_no_restore_offer() {
     );
 
     project.seed_prompt_gates_expecting_none("boot-after-quit");
-    project.run_task();
+    project.run_task_with_no_live_windows();
 
     assert!(
         project.offer().is_none(),
@@ -90,16 +93,40 @@ fn a_snapshot_from_this_same_run_is_never_offered_back() {
     let snapshot = project.snapshot().expect("snapshot recorded");
 
     // Everything the crash case has, except that this run wrote the snapshot.
-    project.mark_all_agents_offline();
     let gate = project.seed_prompt_gates("boot-same-run");
     assert_eq!(gate["snapshotId"], snapshot["id"]);
 
-    project.run_task();
+    project.run_task_with_no_live_windows();
 
     assert!(
         project.offer().is_none(),
         "a live run is never offered the agents it recorded itself"
     );
+}
+
+#[test]
+fn a_tmux_query_that_cannot_be_answered_records_nothing_and_offers_nothing() {
+    let project = TestProject::new("tmux-unavailable");
+    project.run_task_with(FakeLiveWindows::unavailable());
+    assert!(
+        project.snapshot().is_none(),
+        "a failed liveness query is not an empty online set"
+    );
+
+    project.run_task();
+    let snapshot = project.snapshot().expect("snapshot once tmux answers");
+    project.simulate_process_death();
+    project.seed_prompt_gates("boot-after-crash");
+
+    project.run_task_with(FakeLiveWindows::unavailable());
+    assert!(
+        project.offer().is_none(),
+        "a failed liveness query is not proof the agents are gone"
+    );
+
+    project.run_task_with_no_live_windows();
+    let offer = project.offer().expect("offer once tmux answers");
+    assert_eq!(offer["snapshotId"], snapshot["id"]);
 }
 
 struct TestProject {
@@ -141,9 +168,21 @@ impl TestProject {
         ))
     }
 
+    /// A tick with both agent windows alive in tmux.
     fn run_task(&self) {
+        self.run_task_with(FakeLiveWindows::alive());
+    }
+
+    /// A tick after the windows are gone, which is what the service sees when
+    /// it comes back up after a crash.
+    fn run_task_with_no_live_windows(&self) {
+        self.run_task_with(FakeLiveWindows::none());
+    }
+
+    fn run_task_with(&self, live_windows: FakeLiveWindows) {
         let context = self.context();
-        let mut task = AgentRestoreSnapshotTask::new(&context);
+        let mut task =
+            AgentRestoreSnapshotTask::with_live_window_source(&context, Box::new(live_windows));
         task.run(&context);
     }
 
@@ -171,11 +210,6 @@ impl TestProject {
             serde_json::to_string_pretty(&snapshot).expect("serialize snapshot"),
         )
         .expect("write snapshot");
-        self.mark_all_agents_offline();
-    }
-
-    fn mark_all_agents_offline(&self) {
-        self.write_topology("offline");
     }
 
     fn seed_prompt_gates(&self, daemon_boot_id: &str) -> Value {
@@ -336,6 +370,31 @@ fn session_ids(value: &Value) -> Vec<String> {
         .iter()
         .filter_map(|id| id.as_str().map(ToOwned::to_owned))
         .collect()
+}
+
+struct FakeLiveWindows(Result<BTreeSet<String>, String>);
+
+impl FakeLiveWindows {
+    fn alive() -> Self {
+        Self(Ok(AGENT_WINDOW_IDS
+            .iter()
+            .map(|id| (*id).to_owned())
+            .collect()))
+    }
+
+    fn none() -> Self {
+        Self(Ok(BTreeSet::new()))
+    }
+
+    fn unavailable() -> Self {
+        Self(Err("tmux server not running".to_owned()))
+    }
+}
+
+impl LiveWindowSource for FakeLiveWindows {
+    fn live_window_ids(&mut self, _surface: &str) -> Result<BTreeSet<String>, String> {
+        self.0.clone()
+    }
 }
 
 struct StubLifecycleRuntime;

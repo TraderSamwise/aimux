@@ -22,15 +22,16 @@ use crate::runtime_topology::{
 };
 use crate::team_contract::{is_project_control_session, session_with_stored_control_flags};
 
+use super::agents::{session_is_backed_by_live_window, try_live_window_ids_for_session_projection};
 use super::lifecycle::{
     derive_agent_restore_offer, record_last_online_agents, restore_now_iso, restore_project_id,
 };
 use super::router::ProjectServiceRequestContext;
 use super::scheduler::PeriodicTask;
 
-/// An agent has to be backed by a live window to be worth recording. An offline
-/// or graveyarded session is already restorable by other means and has nothing
-/// to do with what was lost.
+/// A candidate for being online. The topology status alone is not enough — see
+/// `online_sessions` — but a session that is not even claiming to be live can
+/// be skipped without asking tmux anything.
 const ONLINE_SESSION_STATUSES: &[&str] = &["starting", "running", "idle"];
 /// Two seconds. The rail ticks every 250ms; one tick is more often than the
 /// snapshot ever changes, and the cost of the cadence is how stale the snapshot
@@ -38,9 +39,26 @@ const ONLINE_SESSION_STATUSES: &[&str] = &["starting", "running", "idle"];
 const DEFAULT_SCAN_EVERY_TICKS: u64 = 8;
 const DEFAULT_SCAN_INTERVAL_MS: i64 = 2_000;
 
+/// Which tmux windows exist right now.
+///
+/// Behind a trait so the snapshot's liveness rule can be tested without a tmux
+/// server, including the case where tmux cannot be asked at all.
+pub trait LiveWindowSource: Send {
+    fn live_window_ids(&mut self, surface: &str) -> Result<BTreeSet<String>, String>;
+}
+
+pub struct TmuxLiveWindowSource;
+
+impl LiveWindowSource for TmuxLiveWindowSource {
+    fn live_window_ids(&mut self, surface: &str) -> Result<BTreeSet<String>, String> {
+        try_live_window_ids_for_session_projection(surface)
+    }
+}
+
 pub struct AgentRestoreSnapshotTask {
     project_root: String,
     project_id: String,
+    live_windows: Box<dyn LiveWindowSource>,
     /// Skips the write when the online set has not changed, so an idle machine
     /// is not rewriting the same JSON every couple of seconds.
     last_recorded_key: Option<String>,
@@ -48,9 +66,17 @@ pub struct AgentRestoreSnapshotTask {
 
 impl AgentRestoreSnapshotTask {
     pub fn new(context: &Arc<ProjectServiceRequestContext>) -> Self {
+        Self::with_live_window_source(context, Box::new(TmuxLiveWindowSource))
+    }
+
+    pub fn with_live_window_source(
+        context: &Arc<ProjectServiceRequestContext>,
+        live_windows: Box<dyn LiveWindowSource>,
+    ) -> Self {
         Self {
             project_root: context.project_root().to_string_lossy().into_owned(),
             project_id: restore_project_id(context.project_root()),
+            live_windows,
             last_recorded_key: None,
         }
     }
@@ -104,12 +130,33 @@ impl PeriodicTask for AgentRestoreSnapshotTask {
                 return;
             }
         };
+        // Topology status is durable, not live: a session whose window died
+        // with the service still reads `running` until something reconciles it.
+        // Recording that would stamp a dead run's agents with this run's writer
+        // id and destroy the only evidence that they were lost.
+        let live_window_ids = match self.live_windows.live_window_ids("agent-restore-snapshot") {
+            Ok(live_window_ids) => live_window_ids,
+            // A tmux query that could not be answered says nothing about which
+            // agents are alive. Recording an empty set or offering every
+            // session back would both be inventions.
+            Err(error) => {
+                log_lifecycle_always(
+                    "agent restore snapshot skipped",
+                    "agent-restore",
+                    Some(json!({ "reason": "tmux live windows unavailable", "error": error })),
+                );
+                return;
+            }
+        };
         let metadata = load_metadata_state(&project_state_dir);
-        let online = list_topology_session_states(&topology, Some(ONLINE_SESSION_STATUSES));
-        let sessions = online
-            .iter()
+        let sessions = list_topology_session_states(&topology, Some(ONLINE_SESSION_STATUSES))
+            .into_iter()
+            .filter(|session| session_is_backed_by_live_window(session, &live_window_ids))
             .map(|session| {
-                restore_session(session, metadata.sessions.get(&string_field(session, "id")))
+                restore_session(
+                    &session,
+                    metadata.sessions.get(&string_field(&session, "id")),
+                )
             })
             .collect::<Vec<_>>();
         let live_session_ids = sessions
