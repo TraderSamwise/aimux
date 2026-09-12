@@ -176,22 +176,30 @@ def numeric_descendants(value: Any) -> list[float]:
 
 def has_per_task_health_counters(payloads: list[tuple[str, Any]]) -> list[str]:
     matches: list[str] = []
-    wanted = {
-        "healthcounters",
-        "health_counters",
-        "pertaskhealthcounters",
-        "taskhealthcounters",
-        "periodictaskhealthcounters",
-    }
 
     def predicate(path: str, value: Any) -> bool:
         if not isinstance(value, dict):
             return False
-        lower_keys = {str(key).replace("-", "").replace("_", "").lower() for key in value.keys()}
-        if not (lower_keys & wanted):
+        periodic_tasks = value.get("periodicTasks")
+        if not isinstance(periodic_tasks, list) or not periodic_tasks:
             return False
-        numbers = numeric_descendants(value)
-        return bool(numbers) and any(number > 0 for number in numbers)
+        for task in periodic_tasks:
+            if not isinstance(task, dict) or not task.get("name"):
+                continue
+            counters = [
+                task.get("totalRuns"),
+                task.get("consecutiveFailures"),
+                task.get("consecutiveTimeouts"),
+                task.get("totalTimeouts"),
+                task.get("lastDurationMs"),
+                task.get("p95DurationMs"),
+            ]
+            if any(
+                isinstance(counter, (int, float)) and not isinstance(counter, bool)
+                for counter in counters
+            ):
+                return True
+        return False
 
     for label, payload in payloads:
         matches.extend(f"{label}:{path}" for path, _value in find_paths(payload, predicate))
@@ -205,7 +213,7 @@ def has_bounded_buffer_metrics(payloads: list[tuple[str, Any]]) -> list[str]:
         if not isinstance(value, dict):
             return False
         keys = {str(key).replace("-", "").replace("_", "").lower(): key for key in value.keys()}
-        depth_key = keys.get("depth") or keys.get("queued") or keys.get("len")
+        depth_key = keys.get("depth") or keys.get("currentdepth") or keys.get("queued") or keys.get("len")
         high_key = keys.get("highwater") or keys.get("highwatermark") or keys.get("maxdepth")
         if not depth_key or not high_key:
             return False
@@ -231,19 +239,40 @@ def has_stability_verdict(payload: Any) -> bool:
         payload,
         lambda _path, value: isinstance(value, dict)
         and any(key in value for key in ("verdict", "stable", "stability", "status"))
-        and any(key in value for key in ("snapshot", "snapshotPath", "history", "window", "samples")),
+        and any(
+            key in value
+            for key in (
+                "snapshot",
+                "snapshotPath",
+                "history",
+                "historyPath",
+                "historySpanMs",
+                "window",
+                "samples",
+                "sampleCount",
+            )
+        ),
     )
     return bool(paths)
 
 
 def snapshot_candidates(state_dir: Path, since: float) -> list[tuple[Path, Any]]:
     candidates: list[tuple[Path, Any]] = []
-    for path in sorted(state_dir.rglob("*.json")):
+    for path in sorted(
+        [
+            candidate
+            for pattern in ("*.json", "*.jsonl")
+            for candidate in state_dir.rglob(pattern)
+        ]
+    ):
         try:
             if path.stat().st_mtime + 0.001 < since:
                 continue
             text = path.read_text(errors="replace")
-            payload = json.loads(text)
+            if path.suffix == ".jsonl":
+                payload = [json.loads(line) for line in text.splitlines() if line.strip()]
+            else:
+                payload = json.loads(text)
         except Exception:
             continue
         name = path.name.lower()
@@ -284,9 +313,27 @@ def safe_http_json(scope: Any, state_dir: Path, label: str, url: str, evidence: 
 
 
 def snapshot_is_reporting(path: Path, payload: Any) -> bool:
+    if isinstance(payload, list):
+        return any(snapshot_is_reporting(path, item) for item in payload)
     if not isinstance(payload, dict):
         return False
-    has_time = bool(find_paths(payload, lambda _path, value: isinstance(value, dict) and any(key in value for key in ("updatedAt", "savedAt", "capturedAt", "createdAt"))))
+    has_time = bool(
+        find_paths(
+            payload,
+            lambda _path, value: isinstance(value, dict)
+            and any(
+                key in value
+                for key in (
+                    "updatedAt",
+                    "savedAt",
+                    "capturedAt",
+                    "createdAt",
+                    "recordedAtMs",
+                    "generatedAtMs",
+                )
+            ),
+        )
+    )
     has_signal = (
         bool(has_per_task_health_counters([(str(path), payload)]))
         or bool(has_bounded_buffer_metrics([(str(path), payload)]))
