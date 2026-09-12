@@ -277,6 +277,34 @@ async fn handle_project_service_connection_with_remote_async<Stream>(
 where
     Stream: AsyncRead + AsyncWrite + Unpin + Send,
 {
+    handle_project_service_connection_with_remote_async_and_route(
+        stream,
+        context,
+        remote_address,
+        |request, context| {
+            handle_project_service_http_request(request, |method, path, body| {
+                route_project_service_request(&context, method, path, body)
+            })
+        },
+    )
+    .await
+}
+
+async fn handle_project_service_connection_with_remote_async_and_route<Stream, Route>(
+    stream: &mut Stream,
+    context: Arc<ProjectServiceRequestContext>,
+    remote_address: Option<String>,
+    route: Route,
+) -> Result<(), DaemonListenerError>
+where
+    Stream: AsyncRead + AsyncWrite + Unpin + Send,
+    Route: FnOnce(
+            ProjectServiceHttpRequest,
+            Arc<ProjectServiceRequestContext>,
+        ) -> PreparedProjectServiceResponse
+        + Send
+        + 'static,
+{
     let bytes = read_http_request_async(stream).await?;
     let request = parse_daemon_http_request(&bytes)?;
     let request = project_request_from_daemon(request);
@@ -288,28 +316,36 @@ where
     }
     let request_context = Arc::new(request_context);
     let response =
-        route_project_service_request_blocking(request, Arc::clone(&request_context)).await?;
+        route_project_service_request_blocking(request, Arc::clone(&request_context), route)
+            .await?;
     write_project_service_response_async(stream, response, Some(request_context)).await
 }
 
-async fn route_project_service_request_blocking(
+async fn route_project_service_request_blocking<Route>(
     request: ProjectServiceHttpRequest,
     context: Arc<ProjectServiceRequestContext>,
-) -> Result<PreparedProjectServiceResponse, DaemonListenerError> {
+    route: Route,
+) -> Result<PreparedProjectServiceResponse, DaemonListenerError>
+where
+    Route: FnOnce(
+            ProjectServiceHttpRequest,
+            Arc<ProjectServiceRequestContext>,
+        ) -> PreparedProjectServiceResponse
+        + Send
+        + 'static,
+{
     let task_name = crate::async_runtime::scoped_task_name(
         "project-service",
         "route",
         &format!("{} {}", request.method, request.path),
     );
-    crate::async_runtime::spawn_blocking_named(task_name, move || {
-        handle_project_service_http_request(request, |method, path, body| {
-            route_project_service_request(&context, method, path, body)
+    crate::async_runtime::spawn_blocking_named(task_name, move || route(request, context))
+        .await
+        .map_err(|error| {
+            DaemonListenerError::InvalidRequest(format!(
+                "project service route task failed: {error}"
+            ))
         })
-    })
-    .await
-    .map_err(|error| {
-        DaemonListenerError::InvalidRequest(format!("project service route task failed: {error}"))
-    })
 }
 
 fn handle_project_service_connection_with_remote<Stream>(
@@ -780,7 +816,7 @@ async fn serve_project_service_listener_until<Stop>(
     plugin_statuses: Vec<NativePluginStatus>,
     should_stop: Stop,
 ) where
-    Stop: Fn() -> bool,
+    Stop: Fn() -> bool + Send + 'static,
 {
     let scheduler = ProjectSchedulerHandle::default();
     let context = Arc::new(
@@ -822,6 +858,16 @@ async fn serve_project_service_listener_until<Stop>(
             "projectStateDir": context.project_state_dir().to_string_lossy(),
         })),
     );
+    serve_project_service_connections_until(listener, context, should_stop).await;
+}
+
+async fn serve_project_service_connections_until<Stop>(
+    listener: StdTcpListener,
+    context: Arc<ProjectServiceRequestContext>,
+    should_stop: Stop,
+) where
+    Stop: Fn() -> bool + Send + 'static,
+{
     if listener.set_nonblocking(true).is_err() {
         log_lifecycle_always(
             "project service listener could not enter signal-aware mode",
@@ -1072,8 +1118,11 @@ impl Drop for ProjectExposeSocketGuard {
 mod tests {
     use super::*;
     use crate::project_service::dispatcher::ProjectServiceStreamPlan;
-    use crate::project_service::http::prepare_project_service_sse_response;
+    use crate::project_service::http::{
+        prepare_project_service_json_response, prepare_project_service_sse_response,
+    };
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::mpsc;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     static TEST_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
@@ -1250,6 +1299,120 @@ mod tests {
     }
 
     #[test]
+    fn async_listener_serves_complete_request_while_slowloris_waits() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        crate::async_runtime::process_runtime().block_on(async {
+            let root = unique_test_root("async-slowloris");
+            let project_root = root.join("repo");
+            let state_dir = root.join("state");
+            create_git_checkout(&project_root);
+            fs::create_dir_all(&state_dir).expect("create state dir");
+            let listener = StdTcpListener::bind(("127.0.0.1", 0)).expect("bind listener");
+            let port = listener.local_addr().expect("read listener address").port();
+            let should_stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let should_stop_listener = Arc::clone(&should_stop);
+            let context = Arc::new(ProjectServiceRequestContext::with_project_state_dir(
+                &project_root,
+                &state_dir,
+            ));
+            let listener_task = crate::async_runtime::spawn_named(
+                "project-service-test:async-slowloris-listener",
+                async move {
+                    serve_project_service_connections_until(listener, context, move || {
+                        should_stop_listener.load(Ordering::SeqCst)
+                    })
+                    .await;
+                },
+            );
+
+            let mut slow = TokioTcpStream::connect(("127.0.0.1", port))
+                .await
+                .expect("connect slow client");
+            slow.write_all(b"GET /health HTTP/1.1\r\nHost: 127.0.0.1")
+                .await
+                .expect("write partial request");
+            tokio::time::sleep(Duration::from_millis(50)).await;
+
+            let mut fast = TokioTcpStream::connect(("127.0.0.1", port))
+                .await
+                .expect("connect fast client");
+            fast.write_all(b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+                .await
+                .expect("write complete request");
+            let response = read_until_contains(&mut fast, "\"ok\":true").await;
+
+            assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
+            drop(slow);
+            should_stop.store(true, Ordering::SeqCst);
+            tokio::time::timeout(Duration::from_secs(2), listener_task)
+                .await
+                .expect("listener should stop")
+                .expect("listener task should join");
+            let _ = fs::remove_dir_all(root);
+        });
+    }
+
+    #[test]
+    fn async_connection_cancelled_during_blocking_route_writes_no_partial_response() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        crate::async_runtime::process_runtime().block_on(async {
+            let root = unique_test_root("async-cancel-blocking");
+            let project_root = root.join("repo");
+            let state_dir = root.join("state");
+            create_git_checkout(&project_root);
+            let context = Arc::new(ProjectServiceRequestContext::with_project_state_dir(
+                &project_root,
+                &state_dir,
+            ));
+            let (started_tx, started_rx) = mpsc::channel();
+            let (release_tx, release_rx) = mpsc::channel();
+            let (mut client, mut server) = tokio::io::duplex(4096);
+            let task = crate::async_runtime::spawn_named(
+                "project-service-test:async-cancel-blocking-route",
+                async move {
+                    handle_project_service_connection_with_remote_async_and_route(
+                        &mut server,
+                        context,
+                        None,
+                        move |_request, _context| {
+                            started_tx.send(()).expect("signal route started");
+                            release_rx.recv().expect("release blocking route");
+                            prepare_project_service_json_response(
+                                200,
+                                json!({ "ok": true }),
+                                Default::default(),
+                            )
+                        },
+                    )
+                    .await
+                },
+            );
+
+            client
+                .write_all(b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+                .await
+                .expect("write request");
+            wait_for_signal(&started_rx, "route started").await;
+            task.abort();
+            let mut buffer = [0_u8; 64];
+            let read =
+                tokio::time::timeout(Duration::from_millis(150), client.read(&mut buffer)).await;
+            match read {
+                Err(_) => {}
+                Ok(Ok(0)) => {}
+                Ok(Ok(count)) => panic!(
+                    "connection wrote response bytes before the blocking route completed: {:?}",
+                    String::from_utf8_lossy(&buffer[..count])
+                ),
+                Ok(Err(error)) => panic!("read failed before cancellation settled: {error}"),
+            }
+            release_tx.send(()).expect("release blocking route");
+            let _ = task.await;
+            let _ = fs::remove_dir_all(root);
+        });
+    }
+
+    #[test]
     fn async_project_event_stream_wakes_on_publish_before_poll_interval() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
         crate::async_runtime::process_runtime().block_on(async {
@@ -1349,7 +1512,25 @@ mod tests {
         });
     }
 
-    async fn read_until_contains(reader: &mut tokio::io::DuplexStream, needle: &str) -> String {
+    async fn wait_for_signal(receiver: &mpsc::Receiver<()>, label: &str) {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                match receiver.try_recv() {
+                    Ok(()) => return,
+                    Err(mpsc::TryRecvError::Empty) => {
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        panic!("{label} sender disconnected")
+                    }
+                }
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("timed out waiting for {label}"));
+    }
+
+    async fn read_until_contains(reader: &mut (impl AsyncRead + Unpin), needle: &str) -> String {
         let started = Instant::now();
         let mut output = Vec::new();
         loop {
