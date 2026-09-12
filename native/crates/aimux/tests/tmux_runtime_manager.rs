@@ -1,8 +1,8 @@
 use aimux::tmux::{
     AIMUX_MODIFIED_ENTER_COMMAND, AIMUX_STALE_MODIFIED_ENTER_COMMAND,
     AIMUX_TMUX_RUNTIME_CONTRACT_VERSION, CapturePaneOptions, OpenTargetOptions,
-    TMUX_RUNTIME_CONTRACT_OPTION, TmuxClientInfo, TmuxCommandSpec, TmuxRuntimeConfig,
-    TmuxRuntimeManager, TmuxTarget, TmuxWindowInfo, project_session,
+    TMUX_CAPTURE_TARGET_TIMEOUT, TMUX_RUNTIME_CONTRACT_OPTION, TmuxClientInfo, TmuxCommandSpec,
+    TmuxRuntimeConfig, TmuxRuntimeManager, TmuxTarget, TmuxWindowInfo, project_session,
 };
 use serde_json::json;
 use std::cell::RefCell;
@@ -344,12 +344,17 @@ fn creates_window_with_cwd_and_parses_created_target() {
 
 #[test]
 fn wraps_target_mutations_with_existing_argv_builders() {
-    let calls = Rc::new(RefCell::new(Vec::<(Vec<String>, Option<String>)>::new()));
+    let calls = Rc::new(RefCell::new(Vec::<(
+        Vec<String>,
+        Option<String>,
+        Option<std::time::Duration>,
+    )>::new()));
     let calls_for_exec = calls.clone();
     let mut manager = TmuxRuntimeManager::with_exec(move |args, options| {
         calls_for_exec.borrow_mut().push((
             args.to_vec(),
             options.and_then(|options| options.cwd.clone()),
+            options.and_then(|options| options.timeout),
         ));
         Ok("captured output".to_owned())
     });
@@ -415,7 +420,8 @@ fn wraps_target_mutations_with_existing_argv_builders() {
             "-1",
         ]
     );
-    assert!(calls.iter().any(|(args, _)| args
+    assert_eq!(calls[0].2, Some(TMUX_CAPTURE_TARGET_TIMEOUT));
+    assert!(calls.iter().any(|(args, _, _)| args
         == &vec![
             "resize-window".to_owned(),
             "-t".to_owned(),
@@ -425,18 +431,24 @@ fn wraps_target_mutations_with_existing_argv_builders() {
             "-y".to_owned(),
             "40".to_owned(),
         ]));
-    assert!(calls.iter().any(|(args, _)| args
+    assert!(calls.iter().any(|(args, _, _)| args
         == &vec![
             "unlink-window".to_owned(),
             "-t".to_owned(),
             "aimux-mobile-abc:@9".to_owned(),
         ]));
-    assert!(calls.iter().any(|(args, _)| args
+    assert!(calls.iter().any(|(args, _, _)| args
         == &vec![
             "kill-session".to_owned(),
             "-t".to_owned(),
             "aimux-mobile-abc".to_owned(),
         ]));
+    assert!(
+        calls
+            .iter()
+            .skip(1)
+            .all(|(_, _, timeout)| timeout.is_none())
+    );
 }
 
 #[test]
