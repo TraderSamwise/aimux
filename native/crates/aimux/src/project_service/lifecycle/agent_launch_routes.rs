@@ -1099,6 +1099,127 @@ fn create_fork_handoff(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::project_api_contract::routes;
+    use crate::project_service::lifecycle::async_lifecycle_progress_for_request;
+    use crate::project_service::router::ProjectServiceRequestContext;
+    use crate::tmux::TmuxTarget;
+    use std::collections::BTreeSet;
+    use std::fs;
+    use std::path::Path;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    struct FakeAsyncLifecycleRuntime;
+
+    impl AsyncProjectLifecycleRuntime for FakeAsyncLifecycleRuntime {
+        async fn ensure_project_session(&mut self, _project_root: &Path) -> Result<(), String> {
+            Ok(())
+        }
+
+        async fn create_window(
+            &mut self,
+            session_name: &str,
+            name: &str,
+            _cwd: &str,
+            _command: &str,
+            _args: &[String],
+            _detached: bool,
+        ) -> Result<TmuxTarget, String> {
+            Ok(TmuxTarget {
+                session_name: session_name.to_owned(),
+                window_id: "@42".to_owned(),
+                window_index: 1,
+                window_name: name.to_owned(),
+                pane_dead: None,
+            })
+        }
+
+        async fn set_window_metadata(
+            &mut self,
+            _window_id: &str,
+            _metadata: &Value,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        async fn set_window_option(
+            &mut self,
+            _window_id: &str,
+            _key: &str,
+            _value: &str,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        async fn clear_history(&mut self, _window_id: &str) -> Result<(), String> {
+            Ok(())
+        }
+
+        async fn wait_for_window_after_launch(
+            &mut self,
+            _target: &TmuxTarget,
+            _timeout: Duration,
+        ) -> bool {
+            true
+        }
+
+        fn codex_backend_session_ids_for_cwd(
+            &mut self,
+            _cwd: &str,
+        ) -> Result<BTreeSet<String>, String> {
+            Ok(BTreeSet::new())
+        }
+
+        async fn kill_window(&mut self, _window_id: &str) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn async_spawn_uses_known_project_root_without_git_reprobe() {
+        let root = unique_test_dir("aimux-async-spawn-root");
+        let state_dir = unique_test_dir("aimux-async-spawn-state");
+        fs::create_dir_all(root.join(".aimux")).expect("create project .aimux dir");
+        fs::create_dir_all(&state_dir).expect("create project state dir");
+        fs::write(root.join(".aimux/config.json"), "{}\n").expect("write project config");
+        let context = ProjectServiceRequestContext::with_project_state_dir(&root, &state_dir);
+        let body = json!({
+            "tool": "claude",
+            "sessionId": "claude-async-spawn",
+            "open": false,
+            "launchOverride": {
+                "command": "/bin/sh",
+                "args": ["-lc", "sleep 1"],
+                "env": []
+            }
+        });
+        let progress =
+            async_lifecycle_progress_for_request("POST", routes::agents::SPAWN, Some(&body))
+                .expect("spawn lifecycle progress");
+        let mut runtime = FakeAsyncLifecycleRuntime;
+
+        let response = crate::async_runtime::process_runtime().block_on(route_agent_spawn_async(
+            &context,
+            &body,
+            &mut runtime,
+            &progress,
+        ));
+
+        assert_eq!(response.status, 200);
+        assert_eq!(
+            response.body.get("sessionId").and_then(Value::as_str),
+            Some("claude-async-spawn")
+        );
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(state_dir);
+    }
+
+    fn unique_test_dir(prefix: &str) -> std::path::PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        std::env::temp_dir().join(format!("{prefix}-{}-{nanos}", std::process::id()))
+    }
 
     #[test]
     fn inherited_launch_team_drops_stale_scribe_role_when_flag_is_false() {
