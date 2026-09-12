@@ -1,3 +1,4 @@
+use crate::async_subprocess::{AsyncCommand, command_task_name};
 use crate::launcher_env::DEFAULT_WEB_APP_URL;
 use crate::paths::PathResolver;
 use crate::remote_credentials::{AimuxCredentials, save_credentials_at};
@@ -6,7 +7,7 @@ use std::fs::File;
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -307,12 +308,13 @@ fn open_browser(url: &str) {
     }) else {
         return;
     };
-    let _ = Command::new(command)
+    let mut process = AsyncCommand::new(command);
+    process
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::from(null.try_clone().unwrap_or(null)))
-        .stderr(Stdio::null())
-        .spawn();
+        .stderr(Stdio::null());
+    let _ = process.spawn_detached(command_task_name("remote-login", command));
 }
 
 fn random_state() -> io::Result<String> {

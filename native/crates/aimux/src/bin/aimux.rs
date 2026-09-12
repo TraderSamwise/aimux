@@ -1,3 +1,4 @@
+use aimux::async_subprocess::AsyncCommand;
 use aimux::config::load_config_for_project;
 use aimux::core_cli::CoreCommandRequestOptions;
 use aimux::core_cli_executor::run_core_cli;
@@ -871,7 +872,7 @@ fn foreground_tty() -> Option<String> {
     if !std::io::stdin().is_terminal() {
         return None;
     }
-    std::process::Command::new("tty")
+    AsyncCommand::new("tty")
         .output()
         .ok()
         .filter(|output| output.status.success())

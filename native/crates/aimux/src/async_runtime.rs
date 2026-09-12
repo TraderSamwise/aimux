@@ -61,6 +61,7 @@ pub fn init_process_runtime() -> Result<()> {
     let runtime = Builder::new_multi_thread()
         .worker_threads(ASYNC_RUNTIME_WORKER_THREADS)
         .thread_name("aimux-async")
+        .enable_io()
         .enable_time()
         .build()
         .context("build shared aimux async runtime")?;
@@ -70,6 +71,9 @@ pub fn init_process_runtime() -> Result<()> {
 }
 
 pub fn process_runtime() -> &'static Runtime {
+    if PROCESS_RUNTIME.get().is_none() {
+        init_process_runtime().expect("initialize shared aimux async runtime");
+    }
     PROCESS_RUNTIME
         .get()
         .expect("Aimux async runtime must be initialized at process startup")
@@ -94,6 +98,19 @@ where
 {
     let guard = registry().register(name.into(), AsyncTaskKind::Async);
     process_runtime().spawn(async move {
+        let _guard = guard;
+        future.await
+    })
+}
+
+/// Transitional sync/async seam for Phase 1 subprocess callers. Delete these
+/// call sites in Phase 4 when their owners become async.
+pub fn block_on_named<F>(name: impl Into<String>, future: F) -> F::Output
+where
+    F: Future,
+{
+    let guard = registry().register(name.into(), AsyncTaskKind::Async);
+    process_runtime().block_on(async move {
         let _guard = guard;
         future.await
     })

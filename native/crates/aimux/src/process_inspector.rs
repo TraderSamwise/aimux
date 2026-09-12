@@ -1,5 +1,5 @@
+use crate::async_subprocess::AsyncCommand;
 use std::path::Path;
-use std::process::Command;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProcessArgsEntry {
@@ -77,7 +77,7 @@ fn find_flag(input: &str, flag: &str) -> Option<usize> {
 }
 
 pub fn read_process_args(pid: i32) -> Option<String> {
-    let output = Command::new("ps")
+    let output = AsyncCommand::new("ps")
         .args(["-o", "args=", "-p", &pid.to_string()])
         .output()
         .ok()?;
@@ -88,7 +88,7 @@ pub fn read_process_args(pid: i32) -> Option<String> {
 }
 
 pub fn read_process_args_with_env(pid: i32) -> Option<String> {
-    let output = Command::new("ps")
+    let output = AsyncCommand::new("ps")
         .args(["eww", "-p", &pid.to_string(), "-o", "command="])
         .output()
         .ok()?;
@@ -107,7 +107,7 @@ pub fn list_process_args() -> Vec<ProcessArgsEntry> {
 }
 
 pub fn try_list_process_args() -> Result<Vec<ProcessArgsEntry>, String> {
-    let output = Command::new("ps")
+    let output = AsyncCommand::new("ps")
         .args(["-axo", "pid=,args="])
         .output()
         .map_err(|error| format!("failed to run ps process inventory: {error}"))?;
@@ -137,7 +137,10 @@ fn parse_process_args_line(line: &str) -> Option<ProcessArgsEntry> {
 }
 
 pub fn list_process_parents() -> Vec<(i32, i32)> {
-    let Ok(output) = Command::new("ps").args(["-axo", "pid=,ppid="]).output() else {
+    let Ok(output) = AsyncCommand::new("ps")
+        .args(["-axo", "pid=,ppid="])
+        .output()
+    else {
         return Vec::new();
     };
     if !output.status.success() {
@@ -155,7 +158,7 @@ pub fn list_process_parents() -> Vec<(i32, i32)> {
 }
 
 pub fn read_process_cwd(pid: i32) -> Option<String> {
-    let output = Command::new("lsof")
+    let output = AsyncCommand::new("lsof")
         .args(["-a", "-p", &pid.to_string(), "-d", "cwd", "-Fn"])
         .output()
         .ok()?;
@@ -179,7 +182,7 @@ pub fn is_exited_process_state(state: &str) -> bool {
 }
 
 fn read_process_state(pid: i32) -> Option<String> {
-    let output = Command::new("ps")
+    let output = AsyncCommand::new("ps")
         .args(["-o", "stat=", "-p", &pid.to_string()])
         .output()
         .ok()?;
@@ -190,7 +193,7 @@ fn read_process_state(pid: i32) -> Option<String> {
 }
 
 pub fn read_process_start_time(pid: i32) -> Option<String> {
-    let output = Command::new("ps")
+    let output = AsyncCommand::new("ps")
         .args(["-o", "lstart=", "-p", &pid.to_string()])
         .output()
         .ok()?;
@@ -248,7 +251,7 @@ fn errno() -> i32 {
 
 #[cfg(not(unix))]
 fn pid_signal_zero(pid: i32) -> bool {
-    Command::new("kill")
+    AsyncCommand::new("kill")
         .args(["-0", &pid.to_string()])
         .status()
         .is_ok_and(|status| status.success())

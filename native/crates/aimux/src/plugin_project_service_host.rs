@@ -1,3 +1,4 @@
+use crate::async_subprocess::AsyncCommand;
 use crate::plugin_api::{
     NativePlugin, NativePluginApi, NativePluginApiRequest, NativePluginHost, NativePluginStatus,
 };
@@ -8,7 +9,6 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 pub fn native_plugin_statuses_for_context(
     context: &ProjectServiceRequestContext,
@@ -321,7 +321,7 @@ fn run_declared_subprocess(
             "{plugin_name} did not declare subprocess capability {capability}"
         ));
     }
-    let mut process = Command::new(command);
+    let mut process = AsyncCommand::new(command);
     process.args(args);
     if let Some(cwd) = cwd {
         process.current_dir(cwd);

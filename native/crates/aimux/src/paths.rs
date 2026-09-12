@@ -1,3 +1,4 @@
+use crate::async_subprocess::AsyncCommand;
 use crate::atomic_write::{quarantine_corrupt_file, write_json_atomic};
 use crate::debug_logging::{LogLevel, log_at};
 use anyhow::{Result, bail};
@@ -8,7 +9,6 @@ use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const PROJECTS_REGISTRY_VERSION: u8 = 1;
@@ -627,7 +627,7 @@ pub fn aimux_managed_worktree_parent(path: impl AsRef<Path>) -> Option<PathBuf> 
 }
 
 fn resolve_git_repo_root(cwd: &Path) -> Option<PathBuf> {
-    let output = Command::new("git")
+    let output = AsyncCommand::new("git")
         .args(["rev-parse", "--git-common-dir"])
         .current_dir(cwd)
         .env_remove("GIT_DIR")

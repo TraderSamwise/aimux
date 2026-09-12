@@ -1,3 +1,4 @@
+use crate::async_subprocess::AsyncCommand;
 use crate::atomic_write::{atomic_write, quarantine_corrupt_file, write_json_atomic};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -5,7 +6,6 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::thread::sleep;
 use std::time::Duration;
 
@@ -202,7 +202,7 @@ pub fn try_is_pid_alive(pid: i32) -> Result<bool, String> {
     }
     #[cfg(unix)]
     {
-        let status = Command::new("ps")
+        let status = AsyncCommand::new("ps")
             .args(["-o", "stat=", "-p", &pid.to_string()])
             .output()
             .map_err(|error| format!("failed to probe pid {pid} with ps: {error}"))?;

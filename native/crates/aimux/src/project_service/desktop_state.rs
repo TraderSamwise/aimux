@@ -1,8 +1,8 @@
+use crate::async_subprocess::AsyncCommand;
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 
 use crate::config::default_config;
 use crate::daemon_state::{load_daemon_info, load_metadata_state};
@@ -1223,7 +1223,7 @@ fn worktree_branch_or_current(project_root: &str, path: &str, branch: Option<&st
 }
 
 fn current_git_branch(project_root: &str) -> Option<String> {
-    let output = Command::new("git")
+    let output = AsyncCommand::new("git")
         .args(["-C", project_root, "branch", "--show-current"])
         .output()
         .ok()?;

@@ -1,10 +1,4 @@
-use std::path::Path;
-use std::process::Command;
-use std::time::{Duration, Instant};
-
-use serde_json::Value;
-use std::collections::BTreeSet;
-
+use crate::async_subprocess::AsyncCommand;
 use crate::backend_session_ids::{
     BackendSessionDiscoveryOptions, codex_backend_session_ids_for_cwd,
 };
@@ -13,6 +7,10 @@ use crate::tmux::{
     CapturePaneOptions, TmuxRuntimeManager, TmuxTarget, clear_history_argv, kill_window_argv,
     new_window_argv, rename_window_argv, set_window_option_argv, tmux_command_from_env,
 };
+use serde_json::Value;
+use std::collections::BTreeSet;
+use std::path::Path;
+use std::time::{Duration, Instant};
 
 pub trait ProjectLifecycleRuntime {
     fn repair_legacy_project_session_names(&mut self, project_root: &Path) -> Result<(), String>;
@@ -278,8 +276,8 @@ fn run_git_argv_output(cwd: &str, argv: &[&str], fallback_error: String) -> Resu
     }
 }
 
-fn git_command(cwd: &str) -> Command {
-    let mut command = Command::new("git");
+fn git_command(cwd: &str) -> AsyncCommand {
+    let mut command = AsyncCommand::new("git");
     command.current_dir(cwd);
     for key in [
         "GIT_DIR",

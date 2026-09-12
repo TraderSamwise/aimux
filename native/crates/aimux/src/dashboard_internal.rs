@@ -1,3 +1,4 @@
+use crate::async_subprocess::AsyncCommand;
 use crate::config::load_config_for_project;
 use crate::core_command_contract::CORE_COMMAND_NAMES;
 use crate::core_command_transport::send_core_command;
@@ -85,7 +86,7 @@ use std::env;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::Output;
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -1171,32 +1172,13 @@ fn current_process_tmux_pane_id() -> Option<String> {
     .map(|pane| pane.pane_id)
 }
 
-fn command_output_with_timeout(command: &mut Command, timeout: Duration) -> io::Result<Output> {
-    let mut child = command
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
-    let deadline = Instant::now() + timeout;
-    loop {
-        if child.try_wait()?.is_some() {
-            return child.wait_with_output();
-        }
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            let kill_deadline = Instant::now() + Duration::from_millis(100);
-            while Instant::now() < kill_deadline {
-                if child.try_wait().ok().flatten().is_some() {
-                    break;
-                }
-                thread::sleep(Duration::from_millis(5));
-            }
-            return Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                "timed out waiting for command output",
-            ));
-        }
-        thread::sleep(Duration::from_millis(10));
-    }
+fn command_output_with_timeout(
+    command: &mut AsyncCommand,
+    timeout: Duration,
+) -> io::Result<Output> {
+    command
+        .output_timeout("dashboard-internal:subprocess tmux", timeout)
+        .map_err(|error| io::Error::other(error.to_string()))
 }
 
 fn execute_dashboard_controller_action(

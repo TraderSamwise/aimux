@@ -22,7 +22,6 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub const EXPOSE_HTTP_TIMEOUT_MS: u64 = 4_000;
@@ -1747,32 +1746,22 @@ fn should_relaunch_for_resize(
 }
 
 fn tmux_list_clients_with_timeout() -> Option<String> {
-    let mut child = tmux_command_from_env()
-        .args([
-            "list-clients",
-            "-F",
-            "#{client_tty} #{client_width}x#{client_height}",
-        ])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
+    let mut command = tmux_command_from_env();
+    command.args([
+        "list-clients",
+        "-F",
+        "#{client_tty} #{client_width}x#{client_height}",
+    ]);
+    let output = command
+        .output_timeout(
+            "tmux-expose:subprocess list-clients",
+            Duration::from_millis(CLIENT_SIZE_QUERY_TIMEOUT_MS),
+        )
         .ok()?;
-    let started_at = Instant::now();
-    loop {
-        if child.try_wait().ok()?.is_some() {
-            let output = child.wait_with_output().ok()?;
-            if !output.status.success() {
-                return None;
-            }
-            return Some(String::from_utf8_lossy(&output.stdout).into_owned());
-        }
-        if started_at.elapsed() >= Duration::from_millis(CLIENT_SIZE_QUERY_TIMEOUT_MS) {
-            let _ = child.kill();
-            let _ = child.wait();
-            return None;
-        }
-        std::thread::sleep(Duration::from_millis(10));
+    if !output.status.success() {
+        return None;
     }
+    Some(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 fn hot_snapshot_key_for_scope(

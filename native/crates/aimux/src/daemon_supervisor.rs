@@ -1,3 +1,4 @@
+use crate::async_subprocess::{AsyncCommand, command_task_name};
 use crate::cli_launcher::{AimuxCliLaunchOptions, get_aimux_daemon_launch_command};
 use crate::core_command_transport::{
     CoreCommandTransportError, DaemonHttpMethod, DaemonJsonRequest, DaemonJsonResponse,
@@ -25,7 +26,7 @@ use std::fmt::{self, Display, Formatter};
 use std::fs::{self, File};
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -949,7 +950,7 @@ fn spawn_daemon(resolver: &PathResolver) -> Result<(), DaemonSupervisorError> {
     });
     let stdio_log = resolver.daemon_stdio_log_path();
     let stdio = logging_child_stdio(&stdio_log);
-    let mut command = Command::new(&launch.command);
+    let mut command = AsyncCommand::new(&launch.command);
     command.args(&launch.args).stdin(Stdio::null());
     if let Some((stdout, stderr)) = stdio {
         command
@@ -958,19 +959,10 @@ fn spawn_daemon(resolver: &PathResolver) -> Result<(), DaemonSupervisorError> {
     } else {
         command.stdout(Stdio::null()).stderr(Stdio::null());
     }
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        unsafe {
-            command.pre_exec(|| {
-                if libc::setsid() == -1 {
-                    return Err(io::Error::last_os_error());
-                }
-                Ok(())
-            });
-        }
-    }
-    let _child = command.spawn()?;
+    command.setsid();
+    command
+        .spawn_detached(command_task_name("daemon-supervisor", &launch.command))
+        .map_err(|error| io::Error::other(error.to_string()))?;
     Ok(())
 }
 

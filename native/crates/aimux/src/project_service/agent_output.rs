@@ -1,14 +1,6 @@
-use serde_json::{Map, Value, json};
-use sha1::{Digest, Sha1};
-use std::fs;
-use std::path::Path;
-use std::process::{Command, Output, Stdio};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::time::{Duration, Instant};
-
 pub use crate::agent_prompt_delivery::normalize_submitted_prompt;
 use crate::agent_prompt_delivery::{PromptSubmitRuntime, wait_for_prompt_submit};
+use crate::async_subprocess::{AsyncCommand, command_task_name};
 use crate::daemon_state::load_metadata_state;
 use crate::dashboard_readiness::get_runtime_owner_id;
 use crate::expose_pane_output_tap::EXPOSE_PANE_TAP_MAX_BYTES;
@@ -25,6 +17,14 @@ use crate::tmux::{
     send_key_argv, send_text_argv, split_text_for_tmux_send_keys,
 };
 use crate::tool_output_watchers::{classify_tool_pane, reconcile_agent_activity};
+use serde_json::{Map, Value, json};
+use sha1::{Digest, Sha1};
+use std::fs;
+use std::path::Path;
+use std::process::Output;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use super::agent_input::{
     format_agent_input_with_attachments, shared_chat_body_actor_prompt,
@@ -66,8 +66,6 @@ const AGENT_OUTPUT_READ_PURPOSES: &[&str] = &[
     "interrupt",
 ];
 const TMUX_COMMAND_TIMEOUT: Duration = Duration::from_secs(2);
-const TMUX_COMMAND_POLL: Duration = Duration::from_millis(10);
-
 static OPERATION_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1395,55 +1393,11 @@ fn run_command_with_timeout(
     argv: &[String],
     timeout: Duration,
 ) -> Result<Output, String> {
-    let nonce = OPERATION_SEQUENCE.fetch_add(1, Ordering::SeqCst);
-    let temp_prefix = format!("aimux-command-{}-{nonce}", std::process::id());
-    let stdout_path = std::env::temp_dir().join(format!("{temp_prefix}.stdout"));
-    let stderr_path = std::env::temp_dir().join(format!("{temp_prefix}.stderr"));
-    let stdout = fs::File::create(&stdout_path).map_err(|error| error.to_string())?;
-    let stderr = fs::File::create(&stderr_path).map_err(|error| error.to_string())?;
-    let mut child = Command::new(program)
-        .args(argv)
-        .stdout(Stdio::from(stdout))
-        .stderr(Stdio::from(stderr))
-        .spawn()
-        .map_err(|error| {
-            cleanup_command_output_files(&stdout_path, &stderr_path);
-            error.to_string()
-        })?;
-    let deadline = Instant::now() + timeout;
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                let output = Output {
-                    status,
-                    stdout: fs::read(&stdout_path).unwrap_or_default(),
-                    stderr: fs::read(&stderr_path).unwrap_or_default(),
-                };
-                cleanup_command_output_files(&stdout_path, &stderr_path);
-                return Ok(output);
-            }
-            Ok(None) => {}
-            Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                cleanup_command_output_files(&stdout_path, &stderr_path);
-                return Err(error.to_string());
-            }
-        }
-        let now = Instant::now();
-        if now >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            cleanup_command_output_files(&stdout_path, &stderr_path);
-            return Err(format!("timed out after {timeout:?}"));
-        }
-        std::thread::sleep(TMUX_COMMAND_POLL.min(deadline.saturating_duration_since(now)));
-    }
-}
-
-fn cleanup_command_output_files(stdout_path: &std::path::Path, stderr_path: &std::path::Path) {
-    let _ = fs::remove_file(stdout_path);
-    let _ = fs::remove_file(stderr_path);
+    let mut command = AsyncCommand::new(program);
+    command.args(argv);
+    command
+        .output_timeout(command_task_name("agent-output", program), timeout)
+        .map_err(|error| error.to_string())
 }
 
 /// Newest submit generation per window.
@@ -1732,10 +1686,10 @@ mod tests {
     }
 
     fn process_is_alive(pid: &str) -> bool {
-        Command::new("/bin/kill")
+        AsyncCommand::new("/bin/kill")
             .args(["-0", pid])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
             .status()
             .is_ok_and(|status| status.success())
     }

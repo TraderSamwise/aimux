@@ -2,6 +2,7 @@ pub mod agent_display;
 pub mod agent_prompt_delivery;
 pub mod ansi_sgr_spans;
 pub mod async_runtime;
+pub mod async_subprocess;
 pub mod atomic_write;
 pub mod attachment_hosting;
 pub mod attachment_store_contract;

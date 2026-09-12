@@ -1,3 +1,4 @@
+use crate::async_subprocess::AsyncCommand;
 use crate::cli_launcher::{
     AimuxCliLaunchOptions, get_aimux_current_cli_identity, is_cargo_test_aimux_binary,
 };
@@ -13,7 +14,6 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::io::IsTerminal;
 use std::path::Path;
-use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -3028,7 +3028,7 @@ fn command_output(program: &str, args: &[&str]) -> Result<String, String> {
     let mut command = if program == "tmux" {
         tmux_command_from_env()
     } else {
-        Command::new(program)
+        AsyncCommand::new(program)
     };
     let output = command
         .args(args)
@@ -3068,8 +3068,8 @@ fn default_interactive_exec(
     }
 }
 
-pub fn tmux_command_from_env() -> Command {
-    let mut command = Command::new("tmux");
+pub fn tmux_command_from_env() -> AsyncCommand {
+    let mut command = AsyncCommand::new("tmux");
     if let Some(socket_path) =
         std::env::var_os(AIMUX_TMUX_SOCKET_PATH_ENV).filter(|value| !value.is_empty())
     {

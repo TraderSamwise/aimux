@@ -1,10 +1,11 @@
+use crate::async_subprocess::{AsyncCommand, command_task_name};
 use crate::cli_launcher::{AimuxCliLaunchOptions, get_aimux_project_service_launch_command};
 use crate::daemon_state::{ProjectServiceState, try_is_pid_alive};
 use crate::process_inspector::{ProjectServiceProcessIdentity, is_aimux_project_service_process};
 use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 pub const PROJECT_SERVICE_STARTUP_TIMEOUT_MS: u64 = 10_000;
 
@@ -53,7 +54,7 @@ impl ProjectServiceLauncher for SystemProjectServiceLauncher {
                 home_dir: None,
             },
         );
-        let mut command = Command::new(&launch.command);
+        let mut command = AsyncCommand::new(&launch.command);
         command
             .args(&launch.args)
             .env("AIMUX_NATIVE_BIN", &launch.command)
@@ -65,20 +66,11 @@ impl ProjectServiceLauncher for SystemProjectServiceLauncher {
         command
             .stdout(Stdio::from(stdout))
             .stderr(Stdio::from(stderr));
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::CommandExt;
-            unsafe {
-                command.pre_exec(|| {
-                    if libc::setsid() == -1 {
-                        return Err(std::io::Error::last_os_error());
-                    }
-                    Ok(())
-                });
-            }
-        }
-        let child = command.spawn().map_err(|error| error.to_string())?;
-        i32::try_from(child.id()).map_err(|_| "project service pid overflow".to_owned())
+        command.setsid();
+        let child_id = command
+            .spawn_detached(command_task_name("project-service", &launch.command))
+            .map_err(|error| error.to_string())?;
+        i32::try_from(child_id).map_err(|_| "project service pid overflow".to_owned())
     }
 
     fn terminate(&self, service: &ProjectServiceState, force: bool) -> Result<(), String> {

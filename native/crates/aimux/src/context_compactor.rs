@@ -1,4 +1,6 @@
+use crate::async_subprocess::{AsyncCommand, AsyncCommandError, command_task_name};
 use crate::config::load_config_for_project;
+use crate::shell_hooks::shell_quote;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha1::{Digest, Sha1};
@@ -6,8 +8,7 @@ use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use time::OffsetDateTime;
 
 const MAX_SUMMARY_BYTES: usize = 30 * 1024;
@@ -717,41 +718,41 @@ fn read_history_text(path: &Path, max_bytes: usize) -> Result<String, String> {
 }
 
 fn run_shell_command(command: &str, input: &str) -> Result<String, String> {
-    let mut child = Command::new("/bin/sh")
-        .arg("-c")
-        .arg(command)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| error.to_string())?;
-    if let Some(stdin) = child.stdin.as_mut() {
-        stdin
-            .write_all(input.as_bytes())
-            .map_err(|error| error.to_string())?;
+    let input_path = temp_compact_input_path();
+    fs::write(&input_path, input).map_err(|error| error.to_string())?;
+    let shell_command = format!(
+        "{} < {}",
+        command,
+        shell_quote(&input_path.to_string_lossy())
+    );
+    let mut child = AsyncCommand::new("/bin/sh");
+    child.args(["-c", &shell_command]);
+    let output = child
+        .output_timeout(command_task_name("context-compact", "sh"), COMPACT_TIMEOUT)
+        .map_err(|error| match error {
+            AsyncCommandError::Timeout { .. } => "compact command timed out".to_owned(),
+            other => other.to_string(),
+        });
+    let _ = fs::remove_file(&input_path);
+    let output = output?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).into_owned());
     }
-    drop(child.stdin.take());
+    if output.stdout.len() > COMPACT_MAX_BUFFER_BYTES {
+        return Err("compact command output exceeded maxBuffer".into());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
 
-    let start = Instant::now();
-    loop {
-        if let Some(status) = child.try_wait().map_err(|error| error.to_string())? {
-            let output = child
-                .wait_with_output()
-                .map_err(|error| error.to_string())?;
-            if !status.success() {
-                return Err(String::from_utf8_lossy(&output.stderr).into_owned());
-            }
-            if output.stdout.len() > COMPACT_MAX_BUFFER_BYTES {
-                return Err("compact command output exceeded maxBuffer".into());
-            }
-            return Ok(String::from_utf8_lossy(&output.stdout).into_owned());
-        }
-        if start.elapsed() >= COMPACT_TIMEOUT {
-            let _ = child.kill();
-            return Err("compact command timed out".into());
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
+fn temp_compact_input_path() -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    std::env::temp_dir().join(format!(
+        "aimux-compact-input-{}-{nanos}",
+        std::process::id()
+    ))
 }
 
 fn one_line_error(error: &str) -> String {

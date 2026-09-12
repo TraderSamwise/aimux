@@ -1,10 +1,10 @@
+use crate::async_subprocess::AsyncCommand;
 use serde::Serialize;
 use std::env;
 use std::fs;
 use std::io::{self, BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Component, Path, PathBuf};
-use std::process::Command;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -136,12 +136,18 @@ pub fn open_url_in_browser(url: &str) -> io::Result<()> {
         "windows" => ("cmd", vec!["/c", "start", "", url]),
         _ => ("xdg-open", vec![url]),
     };
-    Command::new(command)
+    let mut process = AsyncCommand::new(command);
+    process
         .args(args)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
+        .stderr(std::process::Stdio::null());
+    process
+        .spawn_detached(crate::async_subprocess::command_task_name(
+            "local-ui-server",
+            command,
+        ))
+        .map_err(|error| io::Error::other(error.to_string()))
         .map(|_| ())
 }
 

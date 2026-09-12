@@ -1,3 +1,4 @@
+use crate::async_subprocess::AsyncCommand;
 use crate::config::load_config_for_project;
 use crate::paths::{PathResolver, ReadOnlyProjectPaths};
 use crate::tmux::{is_tmux_client_session_for_host, project_session, tmux_command_from_env};
@@ -11,7 +12,6 @@ use serde_json::{Map, Value, json};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 
 mod helpers;
 
@@ -597,7 +597,7 @@ fn resolve_status(matches: &[Value]) -> (&'static str, usize) {
 }
 
 fn list_git_worktrees(repo_root: &str) -> Result<Vec<Value>, String> {
-    let output = Command::new("git")
+    let output = AsyncCommand::new("git")
         .args(["worktree", "list", "--porcelain"])
         .current_dir(repo_root)
         .env_remove("GIT_DIR")

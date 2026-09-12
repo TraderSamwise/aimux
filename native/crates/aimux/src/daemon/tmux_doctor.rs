@@ -1,3 +1,4 @@
+use crate::async_subprocess::AsyncCommand;
 use crate::config::load_config_for_project;
 use crate::daemon_state::DEFAULT_DAEMON_PORT;
 use crate::dashboard_command_spec::get_dashboard_command_spec;
@@ -24,7 +25,6 @@ use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const MANAGED_WINDOWS_FORMAT: &str = "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}\t#{pane_dead}\t#{@aimux-meta}";
 
@@ -191,7 +191,7 @@ pub struct SystemTmuxDoctorCommandRunner;
 
 impl TmuxDoctorCommandRunner for SystemTmuxDoctorCommandRunner {
     fn run(&mut self, program: &str, args: &[String]) -> Result<String, String> {
-        let output = Command::new(program)
+        let output = AsyncCommand::new(program)
             .args(args)
             .output()
             .map_err(|error| error.to_string())?;

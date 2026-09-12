@@ -812,7 +812,7 @@ fn kill_pid(pid: i32, signal: &str) -> Result<(), String> {
     }
     #[cfg(not(unix))]
     {
-        let status = std::process::Command::new("kill")
+        let status = crate::async_subprocess::AsyncCommand::new("kill")
             .args(["-s", signal, &pid.to_string()])
             .status()
             .map_err(|error| error.to_string())?;
