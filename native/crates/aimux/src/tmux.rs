@@ -2496,6 +2496,7 @@ pub fn send_text_argv(window_id: &str, text: &str) -> Vec<String> {
         "-t".to_owned(),
         window_id.to_owned(),
         "-l".to_owned(),
+        "--".to_owned(),
         text.to_owned(),
     ]
 }
