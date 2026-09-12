@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, bail};
-use serde_json::json;
+use serde_json::{Value, json};
 use sha1::{Digest, Sha1};
 use std::fs;
 use std::io::{self, Read};
@@ -47,16 +47,25 @@ use super::agent_output::{
     AgentOutputCaptureRuntime, AgentOutputResponseMode, SystemAgentOutputCaptureRuntime,
     read_agent_output_payload,
 };
-use super::dispatcher::ProjectServiceStreamKind;
+use super::dispatcher::{ProjectServiceDispatchResponse, ProjectServiceStreamKind};
 use super::event_streams::{encode_sse_event, encode_sse_keepalive};
-use super::http::PreparedProjectServiceResponse;
+use super::http::{
+    MAX_BODY_BYTES, PreparedProjectServiceResponse, ProjectServiceBodyError,
+    prepare_project_service_empty_response, prepare_project_service_json_response,
+    project_service_cors_headers, read_json_body_limited, reject_project_service_cors_response,
+};
 use super::interactions::register_interaction_watcher;
 use super::lifecycle::{
-    ProjectLifecycleRuntime, SystemProjectLifecycleRuntime, ensure_default_scribe_agent,
+    LifecycleMutationProgress, ProjectLifecycleRuntime, SystemProjectLifecycleRuntime,
+    async_lifecycle_progress_for_request, ensure_default_scribe_agent,
+    route_lifecycle_request_async,
 };
 use super::output_metrics::AgentOutputReadRecord;
 use super::router::{ProjectServiceRequestContext, route_project_service_request};
-use super::server::{ProjectServiceHttpRequest, handle_project_service_http_request};
+use super::server::{
+    ProjectServiceHttpRequest, handle_project_service_http_request, method_reads_json_body,
+    prepare_dispatch_response,
+};
 
 #[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -277,19 +286,38 @@ async fn handle_project_service_connection_with_remote_async<Stream>(
 where
     Stream: AsyncRead + AsyncWrite + Unpin + Send,
 {
-    handle_project_service_connection_with_remote_async_and_route(
-        stream,
-        context,
-        remote_address,
-        |request, context| {
-            handle_project_service_http_request(request, |method, path, body| {
-                route_project_service_request(&context, method, path, body)
-            })
-        },
+    let (mut reader, mut writer) = tokio::io::split(stream);
+    let bytes = read_http_request_async(&mut reader).await?;
+    let request = parse_daemon_http_request(&bytes)?;
+    let request = project_request_from_daemon(request);
+    let mut request_context = (*context)
+        .clone()
+        .with_request_headers(request.headers.clone());
+    if let Some(remote_address) = remote_address {
+        request_context = request_context.with_remote_address(remote_address);
+    }
+    let request_context = Arc::new(request_context);
+    let response = handle_project_service_http_request_transport_async(
+        request,
+        Arc::clone(&request_context),
+        &mut reader,
+    )
+    .await?;
+    write_project_service_response_async(
+        &mut writer,
+        response.response,
+        Some(request_context),
+        response.lifecycle_progress,
     )
     .await
 }
 
+struct ProjectServiceTransportResponse {
+    response: PreparedProjectServiceResponse,
+    lifecycle_progress: Option<LifecycleMutationProgress>,
+}
+
+#[cfg(test)]
 async fn handle_project_service_connection_with_remote_async_and_route<Stream, Route>(
     stream: &mut Stream,
     context: Arc<ProjectServiceRequestContext>,
@@ -318,9 +346,10 @@ where
     let response =
         route_project_service_request_blocking(request, Arc::clone(&request_context), route)
             .await?;
-    write_project_service_response_async(stream, response, Some(request_context)).await
+    write_project_service_response_async(stream, response, Some(request_context), None).await
 }
 
+#[cfg(test)]
 async fn route_project_service_request_blocking<Route>(
     request: ProjectServiceHttpRequest,
     context: Arc<ProjectServiceRequestContext>,
@@ -346,6 +375,254 @@ where
                 "project service route task failed: {error}"
             ))
         })
+}
+
+async fn handle_project_service_http_request_transport_async<Reader>(
+    request: ProjectServiceHttpRequest,
+    context: Arc<ProjectServiceRequestContext>,
+    reader: &mut Reader,
+) -> Result<ProjectServiceTransportResponse, DaemonListenerError>
+where
+    Reader: AsyncRead + Unpin,
+{
+    let cors = match project_service_cors_headers(&request.headers) {
+        Some(headers) => headers,
+        None => {
+            return Ok(ProjectServiceTransportResponse {
+                response: reject_project_service_cors_response(),
+                lifecycle_progress: None,
+            });
+        }
+    };
+
+    if request.method.eq_ignore_ascii_case("OPTIONS") {
+        return Ok(ProjectServiceTransportResponse {
+            response: prepare_project_service_empty_response(204, cors),
+            lifecycle_progress: None,
+        });
+    }
+
+    let body = if method_reads_json_body(&request.method) {
+        match read_json_body_limited(
+            request.body_chunks.iter().map(Vec::as_slice),
+            MAX_BODY_BYTES,
+        ) {
+            Ok(value) => Some(value),
+            Err(ProjectServiceBodyError::TooLarge(error)) => {
+                return Ok(ProjectServiceTransportResponse {
+                    response: prepare_project_service_json_response(
+                        413,
+                        json!({ "ok": false, "error": error.to_string() }),
+                        cors,
+                    ),
+                    lifecycle_progress: None,
+                });
+            }
+            Err(_) => {
+                return Ok(ProjectServiceTransportResponse {
+                    response: prepare_project_service_json_response(
+                        400,
+                        json!({ "ok": false, "error": "body is not JSON" }),
+                        cors,
+                    ),
+                    lifecycle_progress: None,
+                });
+            }
+        }
+    } else {
+        None
+    };
+
+    if let Some(progress) =
+        async_lifecycle_progress_for_request(&request.method, &request.path, body.as_ref())
+    {
+        let response = route_async_lifecycle_with_disconnect(
+            Arc::clone(&context),
+            request.method,
+            request.path,
+            body,
+            progress.clone(),
+            reader,
+        )
+        .await?;
+        return Ok(ProjectServiceTransportResponse {
+            response: prepare_dispatch_response(response, cors),
+            lifecycle_progress: Some(progress),
+        });
+    }
+
+    let method = request.method;
+    let path = request.path;
+    let response = route_project_service_dispatch_blocking(
+        method,
+        path,
+        body,
+        Arc::clone(&context),
+        |method, path, body, context| {
+            route_project_service_request(&context, &method, &path, body.as_ref())
+        },
+    )
+    .await?;
+    Ok(ProjectServiceTransportResponse {
+        response: prepare_dispatch_response(response, cors),
+        lifecycle_progress: None,
+    })
+}
+
+async fn route_project_service_dispatch_blocking<Route>(
+    method: String,
+    path: String,
+    body: Option<Value>,
+    context: Arc<ProjectServiceRequestContext>,
+    route: Route,
+) -> Result<ProjectServiceDispatchResponse, DaemonListenerError>
+where
+    Route: FnOnce(
+            String,
+            String,
+            Option<Value>,
+            Arc<ProjectServiceRequestContext>,
+        ) -> ProjectServiceDispatchResponse
+        + Send
+        + 'static,
+{
+    let task_name = crate::async_runtime::scoped_task_name(
+        "project-service",
+        "route",
+        &format!("{method} {path}"),
+    );
+    crate::async_runtime::spawn_blocking_named(task_name, move || {
+        route(method, path, body, context)
+    })
+    .await
+    .map_err(|error| {
+        DaemonListenerError::InvalidRequest(format!("project service route task failed: {error}"))
+    })
+}
+
+async fn route_async_lifecycle_with_disconnect<Reader>(
+    context: Arc<ProjectServiceRequestContext>,
+    method: String,
+    path: String,
+    body: Option<Value>,
+    progress: LifecycleMutationProgress,
+    reader: &mut Reader,
+) -> Result<ProjectServiceDispatchResponse, DaemonListenerError>
+where
+    Reader: AsyncRead + Unpin,
+{
+    route_async_lifecycle_with_disconnect_and_route(
+        context,
+        method,
+        path,
+        body,
+        progress,
+        reader,
+        |context, method, path, body, progress| async move {
+            route_lifecycle_request_async(&context, &method, &path, body.as_ref(), &progress).await
+        },
+    )
+    .await
+}
+
+async fn route_async_lifecycle_with_disconnect_and_route<Reader, Route, Fut>(
+    context: Arc<ProjectServiceRequestContext>,
+    method: String,
+    path: String,
+    body: Option<Value>,
+    progress: LifecycleMutationProgress,
+    reader: &mut Reader,
+    route: Route,
+) -> Result<ProjectServiceDispatchResponse, DaemonListenerError>
+where
+    Reader: AsyncRead + Unpin,
+    Route: FnOnce(
+        Arc<ProjectServiceRequestContext>,
+        String,
+        String,
+        Option<Value>,
+        LifecycleMutationProgress,
+    ) -> Fut,
+    Fut: std::future::Future<Output = Option<ProjectServiceDispatchResponse>>,
+{
+    let route_context = Arc::clone(&context);
+    let route_progress = progress.clone();
+    let route = route(
+        route_context,
+        method.clone(),
+        path.clone(),
+        body.clone(),
+        route_progress,
+    );
+    tokio::pin!(route);
+    tokio::select! {
+        response = &mut route => Ok(response.unwrap_or_else(|| {
+            route_project_service_request(&context, &method, &path, body.as_ref())
+        })),
+        disconnect = wait_for_client_disconnect(reader) => {
+            disconnect?;
+            if progress.is_irreversible() {
+                record_lifecycle_response_abandoned(&context, &progress);
+                let response = route.await.unwrap_or_else(|| {
+                    route_project_service_request(&context, &method, &path, body.as_ref())
+                });
+                Ok(response)
+            } else {
+                Err(DaemonListenerError::InvalidRequest(format!(
+                    "client disconnected before {} mutation completed",
+                    progress.operation()
+                )))
+            }
+        }
+    }
+}
+
+async fn wait_for_client_disconnect(
+    reader: &mut (impl AsyncRead + Unpin),
+) -> Result<(), DaemonListenerError> {
+    let mut buffer = [0_u8; 1];
+    loop {
+        match reader.read(&mut buffer).await {
+            Ok(0) => return Ok(()),
+            Ok(_) => continue,
+            Err(error) => return Err(DaemonListenerError::Io(error)),
+        }
+    }
+}
+
+fn record_lifecycle_response_abandoned(
+    context: &ProjectServiceRequestContext,
+    progress: &LifecycleMutationProgress,
+) {
+    if !progress.mark_abandoned_recorded() {
+        return;
+    }
+    log_lifecycle_always(
+        "lifecycle mutation completed after caller disconnected",
+        "project-service",
+        Some(json!({
+            "operation": progress.operation(),
+            "targetKind": progress.target_kind(),
+            "targetId": progress.target_id(),
+            "projectRoot": context.project_root().display().to_string(),
+        })),
+    );
+    let _ = crate::project_service::operation_failures::add_dashboard_operation_failure(
+        context.project_state_dir(),
+        crate::project_service::operation_failures::OperationFailureInput {
+            target_kind: progress.target_kind().to_owned(),
+            operation: progress.operation().to_owned(),
+            title: "Lifecycle response was not delivered".into(),
+            message: format!(
+                "{} completed after the caller disconnected; refresh before retrying.",
+                progress.operation()
+            ),
+            target_id: progress.target_id().map(str::to_owned),
+            worktree_path: None,
+            worktree_name: None,
+            created_at: None,
+        },
+    );
 }
 
 fn handle_project_service_connection_with_remote<Stream>(
@@ -461,6 +738,7 @@ async fn write_project_service_response_async<Writer>(
     writer: &mut Writer,
     response: PreparedProjectServiceResponse,
     context: Option<Arc<ProjectServiceRequestContext>>,
+    lifecycle_progress: Option<LifecycleMutationProgress>,
 ) -> Result<(), DaemonListenerError>
 where
     Writer: AsyncWrite + Unpin + Send,
@@ -474,12 +752,19 @@ where
                 .as_ref()
                 .map(|context| register_interaction_watcher(context.project_state_dir()))
         });
-    writer
+    if let Err(error) = writer
         .write_all(&prepared_response_bytes(
             &prepared_project_response_to_daemon(&response),
         ))
-        .await?;
-    writer.flush().await?;
+        .await
+    {
+        record_abandoned_lifecycle_response_on_write_error(&context, &lifecycle_progress);
+        return Err(DaemonListenerError::Io(error));
+    }
+    if let Err(error) = writer.flush().await {
+        record_abandoned_lifecycle_response_on_write_error(&context, &lifecycle_progress);
+        return Err(DaemonListenerError::Io(error));
+    }
     let Some(stream) = response.stream else {
         return Ok(());
     };
@@ -509,6 +794,18 @@ where
         if stream.kind != ProjectServiceStreamKind::AgentOutput {
             state.last_stream_write = Instant::now();
         }
+    }
+}
+
+fn record_abandoned_lifecycle_response_on_write_error(
+    context: &Option<Arc<ProjectServiceRequestContext>>,
+    progress: &Option<LifecycleMutationProgress>,
+) {
+    let (Some(context), Some(progress)) = (context.as_ref(), progress.as_ref()) else {
+        return;
+    };
+    if progress.is_irreversible() {
+        record_lifecycle_response_abandoned(context, progress);
     }
 }
 
@@ -1117,13 +1414,24 @@ impl Drop for ProjectExposeSocketGuard {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    use crate::project_api_contract::routes;
     use crate::project_service::dispatcher::ProjectServiceStreamPlan;
     use crate::project_service::http::{
         prepare_project_service_json_response, prepare_project_service_sse_response,
     };
+    use crate::project_service::lifecycle::{
+        AsyncProjectLifecycleRuntime, route_lifecycle_request_async_with_runtime,
+    };
+    use crate::runtime_topology::{
+        read_runtime_topology, runtime_topology_path, write_runtime_topology,
+    };
+    use crate::tmux::TmuxTarget;
+    use std::collections::BTreeSet;
+    use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::mpsc;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::sync::oneshot;
 
     static TEST_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 
@@ -1145,6 +1453,150 @@ mod tests {
 
     fn create_git_checkout(path: &Path) {
         fs::create_dir_all(path.join(".git")).expect("create git checkout");
+    }
+
+    fn write_running_agent_topology(state_dir: &Path, project_root: &Path) {
+        let project_root = project_root.to_string_lossy();
+        write_runtime_topology(
+            runtime_topology_path(state_dir),
+            &json!({
+                "version": 1,
+                "generatedAt": "2026-01-01T00:00:00.000Z",
+                "rigs": [{
+                    "id": "rig",
+                    "name": "repo",
+                    "projectRoot": project_root,
+                    "createdAt": "2026-01-01T00:00:00.000Z",
+                    "updatedAt": "2026-01-01T00:00:00.000Z",
+                }],
+                "nodes": [{
+                    "id": "node-agent",
+                    "rigId": "rig",
+                    "logicalId": "codex-live",
+                    "runtime": "codex",
+                    "toolConfigKey": "codex",
+                    "createdAt": "2026-01-01T00:00:00.000Z",
+                    "updatedAt": "2026-01-01T00:00:00.000Z",
+                }],
+                "bindings": [{
+                    "id": "binding-agent",
+                    "nodeId": "node-agent",
+                    "tmuxWindowId": "@agent",
+                    "createdAt": "2026-01-01T00:00:00.000Z",
+                    "updatedAt": "2026-01-01T00:00:00.000Z",
+                }],
+                "sessions": [{
+                    "id": "codex-live",
+                    "nodeId": "node-agent",
+                    "status": "running",
+                    "command": "codex",
+                    "toolConfigKey": "codex",
+                    "args": [],
+                    "createdAt": "2026-01-01T00:00:00.000Z",
+                    "updatedAt": "2026-01-01T00:00:00.000Z",
+                }],
+                "services": [],
+                "worktrees": [],
+                "worktreeGraveyard": [],
+                "teamRoles": [],
+                "remoteClients": [],
+                "lifecycleOperations": [],
+                "exchangeRefs": [],
+            }),
+        )
+        .expect("write topology");
+    }
+
+    struct PendingKillLifecycleRuntime {
+        killed: Arc<Mutex<Vec<String>>>,
+        kill_started: mpsc::Sender<()>,
+        kill_release: Option<oneshot::Receiver<()>>,
+    }
+
+    impl PendingKillLifecycleRuntime {
+        fn new(
+            killed: Arc<Mutex<Vec<String>>>,
+            kill_started: mpsc::Sender<()>,
+            kill_release: oneshot::Receiver<()>,
+        ) -> Self {
+            Self {
+                killed,
+                kill_started,
+                kill_release: Some(kill_release),
+            }
+        }
+    }
+
+    impl AsyncProjectLifecycleRuntime for PendingKillLifecycleRuntime {
+        async fn ensure_project_session(&mut self, _project_root: &Path) -> Result<(), String> {
+            Ok(())
+        }
+
+        async fn create_window(
+            &mut self,
+            session_name: &str,
+            name: &str,
+            _cwd: &str,
+            _command: &str,
+            _args: &[String],
+            _detached: bool,
+        ) -> Result<TmuxTarget, String> {
+            Ok(TmuxTarget {
+                session_name: session_name.to_owned(),
+                window_id: format!("@{name}"),
+                window_index: 1,
+                window_name: name.to_owned(),
+                pane_dead: None,
+            })
+        }
+
+        async fn set_window_metadata(
+            &mut self,
+            _window_id: &str,
+            _metadata: &Value,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        async fn set_window_option(
+            &mut self,
+            _window_id: &str,
+            _key: &str,
+            _value: &str,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        async fn clear_history(&mut self, _window_id: &str) -> Result<(), String> {
+            Ok(())
+        }
+
+        async fn wait_for_window_after_launch(
+            &mut self,
+            _target: &TmuxTarget,
+            _timeout: Duration,
+        ) -> bool {
+            true
+        }
+
+        fn codex_backend_session_ids_for_cwd(
+            &mut self,
+            _cwd: &str,
+        ) -> Result<BTreeSet<String>, String> {
+            Ok(BTreeSet::new())
+        }
+
+        async fn kill_window(&mut self, window_id: &str) -> Result<(), String> {
+            self.kill_started.send(()).expect("signal kill started");
+            if let Some(release) = self.kill_release.take() {
+                let _ = release.await;
+            }
+            self.killed
+                .lock()
+                .expect("killed lock")
+                .push(window_id.to_owned());
+            Ok(())
+        }
     }
 
     #[test]
@@ -1413,6 +1865,160 @@ mod tests {
     }
 
     #[test]
+    fn async_lifecycle_transport_covers_destructive_agent_routes_only() {
+        let body = json!({ "sessionId": "codex-live", "tool": "codex" });
+        for path in [
+            routes::agents::SPAWN,
+            routes::agents::STOP,
+            routes::agents::KILL,
+        ] {
+            assert!(
+                async_lifecycle_progress_for_request("POST", path, Some(&body)).is_some(),
+                "{path} should use the cancellable lifecycle transport"
+            );
+        }
+        for path in [
+            routes::agents::FORK,
+            routes::agents::RENAME,
+            routes::agents::RESUME,
+        ] {
+            assert!(
+                async_lifecycle_progress_for_request("POST", path, Some(&body)).is_none(),
+                "{path} should stay on the sync dispatcher in this phase"
+            );
+        }
+    }
+
+    #[test]
+    fn async_lifecycle_stop_disconnect_before_tmux_kill_cancels_mutation() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        crate::async_runtime::process_runtime().block_on(async {
+            let root = unique_test_root("async-lifecycle-stop-disconnect");
+            let project_root = root.join("repo");
+            let state_dir = root.join("state");
+            create_git_checkout(&project_root);
+            write_running_agent_topology(&state_dir, &project_root);
+            let context = Arc::new(ProjectServiceRequestContext::with_project_state_dir(
+                &project_root,
+                &state_dir,
+            ));
+            let body = json!({ "sessionId": "codex-live" });
+            let progress =
+                async_lifecycle_progress_for_request("POST", routes::agents::STOP, Some(&body))
+                    .expect("async lifecycle progress");
+            let killed = Arc::new(Mutex::new(Vec::new()));
+            let (started_tx, started_rx) = mpsc::channel();
+            let (release_tx, release_rx) = oneshot::channel();
+            let (client, mut server) = tokio::io::duplex(4096);
+            let runtime =
+                PendingKillLifecycleRuntime::new(Arc::clone(&killed), started_tx, release_rx);
+            let task = crate::async_runtime::spawn_named(
+                "project-service-test:async-lifecycle-stop-disconnect",
+                async move {
+                    route_async_lifecycle_with_disconnect_and_route(
+                        context,
+                        "POST".to_owned(),
+                        routes::agents::STOP.to_owned(),
+                        Some(body),
+                        progress,
+                        &mut server,
+                        move |context, method, path, body, progress| async move {
+                            let mut runtime = runtime;
+                            route_lifecycle_request_async_with_runtime(
+                                &context,
+                                &method,
+                                &path,
+                                body.as_ref(),
+                                &progress,
+                                &mut runtime,
+                            )
+                            .await
+                        },
+                    )
+                    .await
+                },
+            );
+            wait_for_signal(&started_rx, "kill started").await;
+            drop(client);
+            let error = tokio::time::timeout(Duration::from_secs(2), task)
+                .await
+                .expect("route cancellation should finish")
+                .expect("route task should join")
+                .expect_err("disconnect before kill completes should cancel route");
+            assert!(
+                error
+                    .to_string()
+                    .contains("client disconnected before agent.stop mutation completed"),
+                "unexpected error: {error}"
+            );
+            assert!(
+                release_tx.send(()).is_err(),
+                "kill future should have been dropped before release"
+            );
+            assert!(killed.lock().expect("killed lock").is_empty());
+            let topology =
+                read_runtime_topology(runtime_topology_path(&state_dir)).expect("read topology");
+            assert_eq!(topology["sessions"][0]["status"], "running");
+            assert!(
+                crate::project_service::operation_failures::list_dashboard_operation_failures(
+                    &state_dir
+                )
+                .is_empty()
+            );
+            let _ = fs::remove_dir_all(root);
+        });
+    }
+
+    #[test]
+    fn async_lifecycle_write_failure_after_irreversible_step_records_abandoned_response() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        crate::async_runtime::process_runtime().block_on(async {
+            let root = unique_test_root("async-lifecycle-abandoned-response");
+            let project_root = root.join("repo");
+            let state_dir = root.join("state");
+            create_git_checkout(&project_root);
+            let context = Arc::new(ProjectServiceRequestContext::with_project_state_dir(
+                &project_root,
+                &state_dir,
+            ));
+            let body = json!({ "sessionId": "codex-live" });
+            let progress =
+                async_lifecycle_progress_for_request("POST", routes::agents::STOP, Some(&body))
+                    .expect("async lifecycle progress");
+            progress.mark_irreversible();
+            let response = prepare_dispatch_response(
+                ProjectServiceDispatchResponse::json(200, json!({ "ok": true })),
+                Default::default(),
+            );
+            let (client, mut server) = tokio::io::duplex(4096);
+            drop(client);
+            let error = tokio::time::timeout(
+                Duration::from_secs(2),
+                write_project_service_response_async(
+                    &mut server,
+                    response,
+                    Some(Arc::clone(&context)),
+                    Some(progress),
+                ),
+            )
+            .await
+            .expect("write should finish")
+            .expect_err("closed client should reject lifecycle response");
+            assert!(matches!(error, DaemonListenerError::Io(_)));
+            let failures =
+                crate::project_service::operation_failures::list_dashboard_operation_failures(
+                    &state_dir,
+                );
+            assert_eq!(failures.len(), 1);
+            assert_eq!(failures[0]["operation"], "agent.stop");
+            assert_eq!(failures[0]["targetKind"], "agent");
+            assert_eq!(failures[0]["targetId"], "codex-live");
+            assert_eq!(failures[0]["title"], "Lifecycle response was not delivered");
+            let _ = fs::remove_dir_all(root);
+        });
+    }
+
+    #[test]
     fn async_project_event_stream_wakes_on_publish_before_poll_interval() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
         crate::async_runtime::process_runtime().block_on(async {
@@ -1447,6 +2053,7 @@ mod tests {
                         &mut server,
                         response,
                         Some(writer_context),
+                        None,
                     )
                     .await
                 },
@@ -1496,7 +2103,9 @@ mod tests {
             let (mut client, mut server) = tokio::io::duplex(4096);
             let task = crate::async_runtime::spawn_named(
                 "project-service-test:async-sse-disconnect",
-                async move { write_project_service_response_async(&mut server, response, None).await },
+                async move {
+                    write_project_service_response_async(&mut server, response, None, None).await
+                },
             );
 
             let output = read_until_contains(&mut client, "event: ready\n").await;

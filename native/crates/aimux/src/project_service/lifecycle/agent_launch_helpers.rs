@@ -5,7 +5,7 @@ use super::ids::{sha256_hex, short_id};
 use super::json_helpers::{
     array_field, string_array_field, string_field, string_field_value, trimmed_string,
 };
-use super::runtime_adapter::ProjectLifecycleRuntime;
+use super::runtime_adapter::{AsyncProjectLifecycleRuntime, ProjectLifecycleRuntime};
 use crate::tool_capabilities::supports_exact_backend_resume;
 
 pub(super) fn tool_config_key_for_session(session: &Value) -> Option<String> {
@@ -37,6 +37,26 @@ pub(super) fn missing_backend_session_disposition(
     session: &Value,
     project_root: &str,
 ) -> MissingBackendSessionDisposition {
+    missing_backend_session_disposition_from_ids(session, project_root, |cwd| {
+        runtime.codex_backend_session_ids_for_cwd(cwd)
+    })
+}
+
+pub(super) fn missing_backend_session_disposition_async_runtime(
+    runtime: &mut impl AsyncProjectLifecycleRuntime,
+    session: &Value,
+    project_root: &str,
+) -> MissingBackendSessionDisposition {
+    missing_backend_session_disposition_from_ids(session, project_root, |cwd| {
+        runtime.codex_backend_session_ids_for_cwd(cwd)
+    })
+}
+
+fn missing_backend_session_disposition_from_ids(
+    session: &Value,
+    project_root: &str,
+    mut ids_for_cwd: impl FnMut(&str) -> Result<std::collections::BTreeSet<String>, String>,
+) -> MissingBackendSessionDisposition {
     if trimmed_string(session.get("backendSessionId")).is_some() {
         return MissingBackendSessionDisposition::Unchanged;
     }
@@ -48,7 +68,7 @@ pub(super) fn missing_backend_session_disposition(
     }
     let cwd =
         trimmed_string(session.get("worktreePath")).unwrap_or_else(|| project_root.to_owned());
-    let mut ids = match runtime.codex_backend_session_ids_for_cwd(&cwd) {
+    let mut ids = match ids_for_cwd(&cwd) {
         Ok(ids) => ids,
         Err(error) => {
             return MissingBackendSessionDisposition::Blocked(format!(

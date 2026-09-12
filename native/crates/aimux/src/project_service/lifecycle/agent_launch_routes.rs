@@ -26,9 +26,11 @@ use crate::tool_capabilities::restart_restore_warning;
 use crate::user_facing_errors::user_facing_error_message;
 
 use super::LIVE_STATUSES;
+use super::LifecycleMutationProgress;
 use super::agent_launch_helpers::*;
 use super::agent_session_launch::{
-    AgentLaunchWrapInput, AgentSessionLaunchInput, launch_agent_session, wrap_agent_launch,
+    AgentLaunchWrapInput, AgentSessionLaunchInput, launch_agent_session,
+    launch_agent_session_async, wrap_agent_launch,
 };
 use super::agent_topology::{
     agent_window_metadata, apply_agent_window_policy, clear_session_derived_metadata,
@@ -37,7 +39,7 @@ use super::agent_topology::{
 use super::ids::{now_iso, random_id};
 use super::json_helpers::*;
 use super::response_helpers::{json_error, lifecycle_response};
-use super::runtime_adapter::ProjectLifecycleRuntime;
+use super::runtime_adapter::{AsyncProjectLifecycleRuntime, ProjectLifecycleRuntime};
 use super::session_liveness::LiveWindows;
 use super::session_state::relocate_claude_transcript;
 use super::topology_helpers::{live_window_id_for_session, object_value, upsert_array_item};
@@ -276,6 +278,167 @@ pub(super) fn route_agent_spawn(
             mark_scribe: body.get("scribe").and_then(Value::as_bool) == Some(true),
         },
     );
+    match result {
+        Ok(result) => lifecycle_response(
+            {
+                clear_agent_create_operation_failure(
+                    context.project_state_dir(),
+                    worktree_path.as_deref(),
+                );
+                let mut payload = json!({
+                    "sessionId": result.session_id,
+                    "tmuxTarget": {
+                        "sessionName": result.target.session_name,
+                        "windowId": result.target.window_id,
+                        "windowIndex": result.target.window_index,
+                        "windowName": result.target.window_name,
+                    }
+                });
+                if let Some(warning) = restore_warning {
+                    object_insert_mut(&mut payload, "warning", Value::String(warning.clone()));
+                    object_insert_mut(
+                        &mut payload,
+                        "warnings",
+                        json!([{ "kind": "restartRestore", "message": warning }]),
+                    );
+                }
+                payload
+            },
+            "agent.spawn",
+            "agent",
+            Some(&result.session_id),
+        ),
+        Err(error) => {
+            let message = user_facing_error_message(&error);
+            record_agent_create_operation_failure(
+                context.project_state_dir(),
+                &tool_key,
+                &session_id,
+                worktree_path.as_deref(),
+                &message,
+            );
+            json_error(500, message)
+        }
+    }
+}
+
+pub(super) async fn route_agent_spawn_async(
+    context: &ProjectServiceRequestContext,
+    body: &Value,
+    runtime: &mut impl AsyncProjectLifecycleRuntime,
+    progress: &LifecycleMutationProgress,
+) -> ProjectServiceDispatchResponse {
+    let Some(tool_key) = trimmed_string(body.get("tool")) else {
+        log_agent_spawn_route_failure(
+            context,
+            "missing-tool",
+            None,
+            None,
+            None,
+            "tool is required",
+        );
+        return json_error(400, "tool is required");
+    };
+    let config = load_config_for_project(context.project_root());
+    let Some(tool_config) = config
+        .get("tools")
+        .and_then(Value::as_object)
+        .and_then(|tools| tools.get(&tool_key))
+    else {
+        let error = format!("Unknown tool config: {tool_key}");
+        log_agent_spawn_route_failure(
+            context,
+            "unknown-tool-config",
+            Some(&tool_key),
+            None,
+            None,
+            &error,
+        );
+        return json_error(500, error);
+    };
+    let launch_override = launch_override(body.get("launchOverride"));
+    let command = launch_override
+        .as_ref()
+        .map(|launch| launch.command.clone())
+        .or_else(|| trimmed_string(tool_config.get("command")))
+        .unwrap_or_else(|| tool_key.clone());
+    let mut args = launch_override
+        .as_ref()
+        .map(|launch| launch.args.clone())
+        .unwrap_or_else(|| string_array_field(tool_config.get("args")));
+    args.extend(string_array_field(body.get("extraArgs")));
+    let mut env = launch_override
+        .as_ref()
+        .map(|launch| launch.env.clone())
+        .unwrap_or_default();
+    let team = if body.get("overseer").and_then(Value::as_bool) == Some(true) {
+        env.push(("AIMUX_OVERSEER".into(), "1".into()));
+        Some(overseer_team())
+    } else if body.get("scribe").and_then(Value::as_bool) == Some(true) {
+        env.push(("AIMUX_SCRIBE".into(), "1".into()));
+        Some(scribe_team())
+    } else {
+        None
+    };
+    let topology = match read_runtime_topology(runtime_topology_path(context.project_state_dir())) {
+        Ok(topology) => topology,
+        Err(error) => {
+            log_agent_spawn_route_failure(
+                context,
+                "read-topology",
+                Some(&tool_key),
+                None,
+                trimmed_string(body.get("worktreePath")).as_deref(),
+                &error,
+            );
+            return json_error(500, error);
+        }
+    };
+    let backend_session_id = launch_backend_session_id(tool_config, &command, &args);
+    let restore_warning = restart_restore_warning(&tool_key, Some(tool_config));
+    let session_id = trimmed_string(body.get("sessionId")).unwrap_or_else(|| {
+        generated_session_id_for_launch(&topology, &command, backend_session_id.as_deref())
+    });
+    if let Some(existing) = find_by_id(&topology, "sessions", &session_id)
+        && LIVE_STATUSES.contains(&string_field(&existing, "status").as_str())
+    {
+        let error = format!("Session \"{session_id}\" already exists");
+        log_agent_spawn_route_failure(
+            context,
+            "duplicate-live-session",
+            Some(&tool_key),
+            Some(&session_id),
+            trimmed_string(body.get("worktreePath")).as_deref(),
+            &error,
+        );
+        return json_error(500, error);
+    }
+    let worktree_path = trimmed_string(body.get("worktreePath"));
+    clear_agent_create_operation_failure(context.project_state_dir(), worktree_path.as_deref());
+    let result = launch_agent_session_async(
+        context,
+        runtime,
+        AgentSessionLaunchInput {
+            session_id: session_id.clone(),
+            tool_key: tool_key.clone(),
+            command,
+            args,
+            worktree_path: worktree_path.clone(),
+            label: None,
+            team,
+            extra_preamble: None,
+            launch_env: env,
+            backend_session_id_override: backend_session_id,
+            detached: body.get("open").and_then(Value::as_bool) != Some(true),
+            suppress_startup_preamble: false,
+            persist_args: None,
+            allow_replace_session: false,
+            mark_overseer: body.get("overseer").and_then(Value::as_bool) == Some(true),
+            mark_scribe: body.get("scribe").and_then(Value::as_bool) == Some(true),
+        },
+        progress,
+    )
+    .await;
     match result {
         Ok(result) => lifecycle_response(
             {

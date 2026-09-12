@@ -6,7 +6,7 @@ use crate::team_contract::project_control_display_role;
 use crate::tmux::{MANAGED_TMUX_AGENT_WINDOW_OPTIONS, TmuxTarget};
 
 use super::json_helpers::*;
-use super::runtime_adapter::ProjectLifecycleRuntime;
+use super::runtime_adapter::{AsyncProjectLifecycleRuntime, ProjectLifecycleRuntime};
 use super::{ensure_rig, existing_node_created_at, now_iso, upsert_array_item};
 
 pub(super) fn clear_session_derived_metadata(project_state_dir: &Path, session_id: &str) {
@@ -87,6 +87,30 @@ pub(super) fn apply_agent_window_policy(
         "aggressive-resize",
         MANAGED_TMUX_AGENT_WINDOW_OPTIONS.aggressive_resize,
     )
+}
+
+pub(super) async fn apply_agent_window_policy_async(
+    runtime: &mut impl AsyncProjectLifecycleRuntime,
+    window_id: &str,
+    tool_key: &str,
+) -> Result<(), String> {
+    runtime
+        .set_window_option(window_id, "@aimux-tool", tool_key)
+        .await?;
+    runtime
+        .set_window_option(
+            window_id,
+            "allow-passthrough",
+            MANAGED_TMUX_AGENT_WINDOW_OPTIONS.allow_passthrough,
+        )
+        .await?;
+    runtime
+        .set_window_option(
+            window_id,
+            "aggressive-resize",
+            MANAGED_TMUX_AGENT_WINDOW_OPTIONS.aggressive_resize,
+        )
+        .await
 }
 
 pub(super) fn upsert_agent_topology(
