@@ -14,7 +14,8 @@ use crate::core_cli::{
 use crate::core_command_client::request_core_command;
 use crate::core_command_contract::{CORE_API_ROUTES, CORE_COMMAND_NAMES};
 use crate::core_command_transport::{
-    CoreCommandTransportError, DaemonHttpMethod, DaemonRequestInit, request_daemon_text,
+    CoreCommandTransportError, DaemonHttpMethod, DaemonRequestInit, request_daemon_json,
+    request_daemon_text,
 };
 use crate::core_text::{
     core_whoami_json, render_core_daemon_projects_lines, render_core_daemon_status_lines,
@@ -35,7 +36,8 @@ use crate::daemon_state::{
     load_daemon_state,
 };
 use crate::daemon_supervisor::{
-    acquire_runtime_restart_permit, assert_not_stopping_newer_daemon, ensure_daemon_running,
+    DAEMON_HEALTH_PROBE_TIMEOUT_MS, acquire_runtime_restart_permit,
+    assert_not_stopping_newer_daemon, ensure_daemon_running, is_matching_daemon_health,
     stop_daemon, stop_daemon_process_info,
 };
 use crate::debug_state::{build_debug_state_report, render_debug_state_report};
@@ -53,6 +55,7 @@ use crate::logs::{
     LogSelectionOptions, clear_log_file, parse_line_count, read_last_log_lines, selected_log_path,
 };
 use crate::paths::{PathResolver, is_git_project_root, project_checkout_required_message};
+use crate::project_service_manifest::get_project_service_manifest;
 use crate::remote_credentials::{clear_credentials, load_credentials, set_remote_enabled};
 use crate::remote_login::{LoginAction, run_login_flow};
 use crate::remote_security_devices::{list_remote_security_devices, update_remote_security_device};
@@ -570,23 +573,43 @@ fn restart_control_plane_from_cli(
             request_core_command: |command, payload, options| {
                 request_core_command(command, payload, options).map_err(|error| error.to_string())
             },
+            verify_restarted_daemon: verify_restarted_daemon_matches_cli_manifest,
         },
     )
 }
 
 #[doc(hidden)]
-pub struct RestartControlPlaneCliDeps<AssertNewer, StopDaemon, EnsureDaemon, RequestRestart> {
+pub struct RestartControlPlaneCliDeps<
+    AssertNewer,
+    StopDaemon,
+    EnsureDaemon,
+    RequestRestart,
+    VerifyRestartedDaemon,
+> {
     pub should_stop_daemon: bool,
     pub assert_not_stopping_newer_daemon: AssertNewer,
     pub stop_daemon_process: StopDaemon,
     pub ensure_daemon_running: EnsureDaemon,
     pub request_core_command: RequestRestart,
+    pub verify_restarted_daemon: VerifyRestartedDaemon,
 }
 
 #[doc(hidden)]
-pub fn restart_control_plane_from_cli_with<AssertNewer, StopDaemon, EnsureDaemon, RequestRestart>(
+pub fn restart_control_plane_from_cli_with<
+    AssertNewer,
+    StopDaemon,
+    EnsureDaemon,
+    RequestRestart,
+    VerifyRestartedDaemon,
+>(
     project_root: Option<&str>,
-    deps: RestartControlPlaneCliDeps<AssertNewer, StopDaemon, EnsureDaemon, RequestRestart>,
+    deps: RestartControlPlaneCliDeps<
+        AssertNewer,
+        StopDaemon,
+        EnsureDaemon,
+        RequestRestart,
+        VerifyRestartedDaemon,
+    >,
 ) -> Result<RestartControlPlaneTextResult, String>
 where
     AssertNewer: FnMut() -> Result<(), String>,
@@ -597,6 +620,7 @@ where
         Option<Value>,
         CoreCommandRequestOptions,
     ) -> Result<CoreCommandOk, String>,
+    VerifyRestartedDaemon: FnMut() -> Result<(), String>,
 {
     restart_control_plane_from_cli_with_lock_owner(project_root, false, None, deps)
 }
@@ -607,11 +631,18 @@ pub fn restart_control_plane_from_cli_with_lock_owner<
     StopDaemon,
     EnsureDaemon,
     RequestRestart,
+    VerifyRestartedDaemon,
 >(
     project_root: Option<&str>,
     force: bool,
     restart_lock_owner_pid: Option<i32>,
-    deps: RestartControlPlaneCliDeps<AssertNewer, StopDaemon, EnsureDaemon, RequestRestart>,
+    deps: RestartControlPlaneCliDeps<
+        AssertNewer,
+        StopDaemon,
+        EnsureDaemon,
+        RequestRestart,
+        VerifyRestartedDaemon,
+    >,
 ) -> Result<RestartControlPlaneTextResult, String>
 where
     AssertNewer: FnMut() -> Result<(), String>,
@@ -622,6 +653,7 @@ where
         Option<Value>,
         CoreCommandRequestOptions,
     ) -> Result<CoreCommandOk, String>,
+    VerifyRestartedDaemon: FnMut() -> Result<(), String>,
 {
     let RestartControlPlaneCliDeps {
         should_stop_daemon,
@@ -629,6 +661,7 @@ where
         mut stop_daemon_process,
         mut ensure_daemon_running,
         mut request_core_command,
+        mut verify_restarted_daemon,
     } = deps;
 
     if should_stop_daemon {
@@ -655,6 +688,7 @@ where
             timeout_ms: None,
         },
     )?;
+    verify_restarted_daemon()?;
     let restart = response
         .result
         .get("restart")
@@ -667,6 +701,67 @@ where
         .map(str::to_owned)
         .unwrap_or_else(|| "Aimux Restart\n  failures: 0".into());
     Ok(RestartControlPlaneTextResult { restart, text })
+}
+
+fn verify_restarted_daemon_matches_cli_manifest() -> Result<(), String> {
+    let expected = get_project_service_manifest()
+        .map_err(|error| format!("post-restart daemon verification failed: {error}"))?;
+    let health = request_daemon_json(
+        "/health",
+        DaemonRequestInit {
+            timeout_ms: Some(DAEMON_HEALTH_PROBE_TIMEOUT_MS),
+            ..DaemonRequestInit::default()
+        },
+    )
+    .map_err(|error| format!("post-restart daemon verification failed: {error}"))?;
+    if !is_matching_daemon_health(&health, &expected) {
+        return Err(format!(
+            "post-restart daemon build mismatch: expected buildStamp {} apiVersion {}, got buildStamp {} apiVersion {} (pid {})",
+            expected.build_stamp,
+            expected.api_version,
+            daemon_health_build_stamp(&health),
+            daemon_health_api_version(&health),
+            daemon_health_pid(&health),
+        ));
+    }
+    let resolver = PathResolver::from_env();
+    let Some(info) = load_daemon_info(resolver.daemon_info_path()) else {
+        return Err("post-restart daemon registration missing: daemon.json was not written".into());
+    };
+    let health_pid = health
+        .get("pid")
+        .and_then(Value::as_u64)
+        .and_then(|pid| i32::try_from(pid).ok());
+    if health_pid != Some(info.pid) {
+        return Err(format!(
+            "post-restart daemon registration mismatch: daemon.json pid {} but /health pid {}",
+            info.pid,
+            daemon_health_pid(&health),
+        ));
+    }
+    Ok(())
+}
+
+fn daemon_health_build_stamp(health: &Value) -> String {
+    health
+        .pointer("/serviceInfo/buildStamp")
+        .and_then(Value::as_str)
+        .unwrap_or("undefined")
+        .to_owned()
+}
+
+fn daemon_health_api_version(health: &Value) -> String {
+    health
+        .pointer("/serviceInfo/apiVersion")
+        .map(js_string)
+        .unwrap_or_else(|| "undefined".to_owned())
+}
+
+fn daemon_health_pid(health: &Value) -> String {
+    health
+        .get("pid")
+        .map(js_string)
+        .unwrap_or_else(|| "undefined".to_owned())
 }
 
 pub fn run_core_cli(raw_args: &[String]) -> CoreCliExecution {
@@ -1873,6 +1968,12 @@ mod tests {
                             }),
                         })
                     },
+                verify_restarted_daemon: || {
+                    calls
+                        .borrow_mut()
+                        .push(json!({ "fn": "verify-restarted-daemon" }));
+                    Ok(())
+                },
             },
         )
         .expect("restart bootstrap succeeds");
@@ -1895,8 +1996,60 @@ mod tests {
                     "ensureDaemon": false,
                     "timeoutMs": Value::Null,
                 }),
+                json!({ "fn": "verify-restarted-daemon" }),
             ]
         );
+    }
+
+    #[test]
+    fn cli_restart_fails_when_post_restart_daemon_verification_fails() {
+        let calls = RefCell::new(Vec::<&'static str>::new());
+
+        let error = restart_control_plane_from_cli_with_lock_owner(
+            None,
+            false,
+            Some(12_346),
+            RestartControlPlaneCliDeps {
+                should_stop_daemon: false,
+                assert_not_stopping_newer_daemon: || {
+                    calls.borrow_mut().push("assert");
+                    Ok(())
+                },
+                stop_daemon_process: || {
+                    calls.borrow_mut().push("stop");
+                    Ok(())
+                },
+                ensure_daemon_running: || {
+                    calls.borrow_mut().push("ensure");
+                    Ok(())
+                },
+                request_core_command:
+                    |command: &'static str,
+                     _payload: Option<Value>,
+                     _options: CoreCommandRequestOptions| {
+                        calls.borrow_mut().push("request");
+                        Ok(CoreCommandOk {
+                            ok: true,
+                            id: "test".into(),
+                            command: command.into(),
+                            issued_at: "2026-01-01T00:00:00.000Z".into(),
+                            result: json!({
+                                "restart": { "summary": { "failures": 0 } },
+                                "text": "restart text",
+                            }),
+                        })
+                    },
+                verify_restarted_daemon: || {
+                    calls.borrow_mut().push("verify");
+                    Err("post-restart daemon build mismatch: expected buildStamp new, got buildStamp old (pid 99)".to_owned())
+                },
+            },
+        )
+        .expect_err("old daemon must not be reported as a successful restart");
+
+        assert!(error.contains("post-restart daemon build mismatch"));
+        assert!(error.contains("expected buildStamp new"));
+        assert_eq!(calls.into_inner(), vec!["ensure", "request", "verify"]);
     }
 
     #[test]

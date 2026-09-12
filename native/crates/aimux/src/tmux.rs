@@ -695,8 +695,8 @@ impl TmuxRuntimeManager {
         }
         let _ = self.kill_window(&replacement);
         Err(format!(
-            "Timed out waiting for replacement tmux window {} to become ready",
-            replacement.window_id
+            "Timed out waiting {}ms for replacement tmux window {} readiness option {}={}",
+            timeout_ms, replacement.window_id, readiness_option, readiness_value
         ))
     }
 
