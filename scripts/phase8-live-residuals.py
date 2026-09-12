@@ -2871,6 +2871,7 @@ def run_top_level_tool_restore(
     project_root: Path,
     session_id: str,
     tool: str,
+    mutation: str | None,
 ) -> str:
     launcher_session = f"phase8-restore-{tool}-{int(time.time() * 1000)}"
     command = (
@@ -2930,23 +2931,55 @@ def run_top_level_tool_restore(
         timeout=10,
         label=f"{tool} restore dashboard rendered before quit",
     )
-    tmux_cmd(scope, ["send-keys", "-t", f"{launcher_session}:0", "q"])
-    deadline = time.monotonic() + 5
+    quit_key = "x" if mutation == "graveyard-restore-dashboard-no-quit" else "q"
+    tmux_cmd(scope, ["send-keys", "-t", f"{launcher_session}:0", quit_key])
+    wait_for_restore_exit_marker(
+        scope,
+        launcher_session,
+        tool,
+        proc,
+        sent_key=quit_key,
+        timeout=20,
+    )
+    return session_id
+
+
+def wait_for_restore_exit_marker(
+    scope: Scope,
+    launcher_session: str,
+    tool: str,
+    proc: subprocess.Popen[Any],
+    *,
+    sent_key: str,
+    timeout: float,
+) -> None:
+    marker = f"__AIMUX_RESTORE_{tool}_EXIT:0"
+    started = time.monotonic()
     restore_output = ""
-    while time.monotonic() < deadline:
+    while time.monotonic() - started < timeout:
         try:
             restore_output = capture_tmux(scope, launcher_session)
-        except LiveResidualFailure:
-            restore_output = ""
-        if f"__AIMUX_RESTORE_{tool}_EXIT:0" in restore_output:
-            break
+        except LiveResidualFailure as error:
+            restore_output = f"<restore session unavailable: {error}>"
+        if marker in restore_output:
+            return
         time.sleep(0.05)
-    else:
-        raise LiveResidualFailure(
-            f"{tool} restore dashboard did not quit:\n"
-            f"restore session:\n{restore_output}\nall sessions:\n{capture_all_tmux(scope)}"
+    waited = time.monotonic() - started
+    raise LiveResidualFailure(
+        f"{tool} restore dashboard quit marker absent after {waited:.1f}s:\n"
+        + json.dumps(
+            {
+                "dashboardRendered": True,
+                "quitSent": sent_key == "q",
+                "sentKey": sent_key,
+                "expectedMarker": marker,
+                "processReturncode": proc.poll(),
+                "restoreSession": restore_output,
+                "allSessions": capture_all_tmux(scope),
+            },
+            indent=2,
         )
-    return session_id
+    )
 
 
 def run_graveyard_lifecycle_smoke(aimux_bin: Path, mutation: str | None) -> dict[str, Any]:
@@ -3047,7 +3080,16 @@ def run_graveyard_lifecycle_smoke(aimux_bin: Path, mutation: str | None) -> dict
         if resurrected_session.get("status") != "offline":
             raise LiveResidualFailure(f"resurrected shell should be offline, got: {resurrected_session}")
         stamp_backend_session(scope, session_id, "backend-phase8-shell")
-        restored = run_top_level_tool_restore(scope, aimux_bin, tmux, socket_name, project_root, session_id, "shell")
+        restored = run_top_level_tool_restore(
+            scope,
+            aimux_bin,
+            tmux,
+            socket_name,
+            project_root,
+            session_id,
+            "shell",
+            mutation,
+        )
         kill = run(
             [str(aimux_bin), "kill", restored, "--json"],
             cwd=scope.project,
@@ -4432,6 +4474,7 @@ def prove_failures(args: argparse.Namespace, aimux_bin: Path) -> list[dict[str, 
         ("shell-service", "shell-service-missing-window"),
         ("graveyard", "graveyard-kill-missing-entry"),
         ("graveyard", "graveyard-fork-missing-session"),
+        ("graveyard", "graveyard-restore-dashboard-no-quit"),
         ("top-level-agent", "top-level-agent-missing-session"),
         ("lazy-read", "lazy-read-service-unavailable"),
         ("restart-current", "restart-current-zero-projects"),
@@ -4548,6 +4591,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "shell-service-missing-window",
         "graveyard-kill-missing-entry",
         "graveyard-fork-missing-session",
+        "graveyard-restore-dashboard-no-quit",
         "top-level-agent-missing-session",
         "lazy-read-service-unavailable",
         "restart-current-zero-projects",
