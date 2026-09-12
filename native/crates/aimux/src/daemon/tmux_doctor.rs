@@ -1052,12 +1052,48 @@ fn wait_for_repaired_dashboard_ready(
         {
             return Ok(());
         }
+        if tmux_value(
+            runner,
+            &["display-message", "-p", "-t", window_id, "#{pane_dead}"],
+        )
+        .as_deref()
+            == Some("1")
+        {
+            return Err(repaired_dashboard_crash_error(
+                runner,
+                window_id,
+                build_stamp,
+            ));
+        }
         if Instant::now() >= deadline {
             return Err(format!(
                 "Timed out waiting {timeout_ms}ms for repaired dashboard window {window_id} readiness option {TMUX_DASHBOARD_READY_OPTION}={build_stamp}"
             ));
         }
         std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+fn repaired_dashboard_crash_error(
+    runner: &mut impl TmuxDoctorCommandRunner,
+    window_id: &str,
+    build_stamp: &str,
+) -> String {
+    let output = run_command(
+        runner,
+        "tmux",
+        &["capture-pane", "-p", "-J", "-t", window_id, "-S", "-80"],
+    )
+    .unwrap_or_default();
+    let output = output.trim();
+    if output.is_empty() {
+        format!(
+            "Repaired dashboard window {window_id} exited before setting readiness option {TMUX_DASHBOARD_READY_OPTION}={build_stamp}"
+        )
+    } else {
+        format!(
+            "Repaired dashboard window {window_id} exited before setting readiness option {TMUX_DASHBOARD_READY_OPTION}={build_stamp}:\n{output}"
+        )
     }
 }
 
