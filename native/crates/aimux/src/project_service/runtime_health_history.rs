@@ -5,7 +5,11 @@ use std::time::Duration;
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use crate::backlog_metrics::{BacklogMetricSnapshot, BacklogMetricStatus, backlog_snapshots};
+use crate::backlog_metrics::{
+    BacklogMetricSnapshot, BacklogMetricStatus, SSE_AGENT_INTERACTION_BACKLOG,
+    SSE_AGENT_OUTPUT_BACKLOG, SSE_PROJECT_EVENTS_BACKLOG, SSE_SUBSCRIBER_BACKLOG_CAPACITY,
+    backlog_metric, backlog_snapshots,
+};
 use crate::debug_logging::{
     DEFAULT_MAX_BYTES, DEFAULT_MAX_FILES, append_rotating_jsonl, append_rotating_jsonl_with_limits,
     log_lifecycle_always,
@@ -81,6 +85,10 @@ impl PeriodicTask for RuntimeHealthRecorderTask {
         Duration::from_secs(5)
     }
 
+    fn run_immediately(&self) -> bool {
+        true
+    }
+
     fn run<'a>(&'a mut self, context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
         Box::pin(async move {
             record_runtime_health_sample_at(context, scheduler_now_ms());
@@ -106,7 +114,7 @@ pub fn runtime_health_sample(context: &ProjectServiceRequestContext, now_ms: i64
         };
     let scheduler_task_count = periodic_tasks.len();
     let process_task_count = crate::async_runtime::doctor_tasks_report().totals.live;
-    let backlog = runtime_backlog_health_snapshots();
+    let backlog = runtime_backlog_health_snapshots(context);
     let backlog_read_error_present = backlog.iter().any(|snapshot| snapshot.error_present);
     json!({
         "v": 1,
@@ -126,10 +134,29 @@ pub fn runtime_health_sample(context: &ProjectServiceRequestContext, now_ms: i64
     })
 }
 
-fn runtime_backlog_health_snapshots() -> Vec<BacklogHealthSnapshot> {
+fn runtime_backlog_health_snapshots(
+    context: &ProjectServiceRequestContext,
+) -> Vec<BacklogHealthSnapshot> {
     let mut snapshots = BTreeMap::new();
     for snapshot in backlog_snapshots() {
         let snapshot: BacklogHealthSnapshot = snapshot.into();
+        snapshots.insert(snapshot.name.clone(), snapshot);
+    }
+    let agent_input_snapshot: BacklogHealthSnapshot =
+        super::agent_input_delivery::agent_input_delivery_backlog_snapshot(
+            context.project_state_dir(),
+        )
+        .into();
+    snapshots.insert(agent_input_snapshot.name.clone(), agent_input_snapshot);
+    for name in [
+        SSE_PROJECT_EVENTS_BACKLOG,
+        SSE_AGENT_OUTPUT_BACKLOG,
+        SSE_AGENT_INTERACTION_BACKLOG,
+    ] {
+        let snapshot: BacklogHealthSnapshot =
+            backlog_metric(name, Some(SSE_SUBSCRIBER_BACKLOG_CAPACITY))
+                .snapshot()
+                .into();
         snapshots.insert(snapshot.name.clone(), snapshot);
     }
     let hosted_snapshot: BacklogHealthSnapshot =
@@ -215,6 +242,7 @@ mod tests {
     #[test]
     fn runtime_health_sample_records_scheduler_and_backlog_metrics() {
         let root = unique_temp_dir("runtime-health-sample");
+        let state_dir = root.join(".aimux");
         let backlog_name = format!(
             "test/runtime-health-sample-{}-{}",
             std::process::id(),
@@ -235,9 +263,8 @@ mod tests {
             total_timeouts: 2,
             last_error: Some("timed out after 30000ms".to_owned()),
         }]);
-        let context =
-            ProjectServiceRequestContext::with_project_state_dir(&root, root.join(".aimux"))
-                .with_scheduler(scheduler);
+        let context = ProjectServiceRequestContext::with_project_state_dir(&root, &state_dir)
+            .with_scheduler(scheduler);
 
         let sample = runtime_health_sample(&context, 1_800_000_000_000);
 
@@ -257,9 +284,39 @@ mod tests {
         assert_eq!(injected["currentDepth"], 2);
         assert_eq!(injected["highWaterMark"], 5);
         assert_eq!(injected["capacity"], 64);
+        let agent_input = backlog
+            .iter()
+            .find(|snapshot| {
+                snapshot["name"] == crate::backlog_metrics::AGENT_INPUT_DELIVERY_BACKLOG
+            })
+            .expect("agent input delivery backlog snapshot");
+        assert_eq!(agent_input["status"], "ok");
+        assert_eq!(agent_input["currentDepth"], 0);
+        assert_eq!(
+            agent_input["capacity"],
+            json!(
+                crate::project_service::agent_input_delivery::AGENT_INPUT_DELIVERY_BACKLOG_CAPACITY
+            )
+        );
+        let project_events = backlog
+            .iter()
+            .find(|snapshot| snapshot["name"] == crate::backlog_metrics::SSE_PROJECT_EVENTS_BACKLOG)
+            .expect("project events subscriber backlog snapshot");
+        assert_eq!(project_events["status"], "ok");
+        assert_eq!(project_events["currentDepth"], 0);
+        assert_eq!(
+            project_events["capacity"],
+            json!(crate::backlog_metrics::SSE_SUBSCRIBER_BACKLOG_CAPACITY)
+        );
         assert!(
             serde_json::to_string(&sample).unwrap().len() < RUNTIME_HEALTH_HISTORY_MAX_SAMPLE_BYTES
         );
+    }
+
+    #[test]
+    fn runtime_health_recorder_runs_immediately_for_fresh_readiness_probe() {
+        let task = runtime_health_recorder_task();
+        assert!(task.run_immediately());
     }
 
     #[test]

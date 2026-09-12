@@ -4,6 +4,9 @@ use aimux::debug_logging::{
     LogLevel, LoggingRuntimeConfig, configure_logging, reset_logging_for_tests,
 };
 use aimux::project_api_contract::routes;
+use aimux::project_service::router::ProjectServiceRequestContext;
+use aimux::project_service::switchable_agents::route_switchable_agent_request_async;
+use aimux::runtime_topology::runtime_topology_path;
 use aimux::tmux_expose::{
     EXPOSE_HTTP_TIMEOUT_MS, ExposeClientSizeProbe, ExposeConfig, ExposeHttpClient,
     ExposeHttpRequest, ExposeInputEvent, ExposeInputSource, ExposeScope, ExposeScopeView,
@@ -690,6 +693,86 @@ fn runner_moves_selection_with_n_before_closing() {
     assert!(
         last_frame.contains("▸\u{1b}[0m \u{1b}[1;33m2"),
         "expected n to move selection to tile 2:\n{rendered}"
+    );
+    cleanup(state_dir);
+}
+
+#[test]
+fn runner_renders_topology_backed_tiles_when_live_window_projection_erases_expose_items() {
+    let state_dir = temp_dir("runner-projection-erased-items");
+    fs::write(
+        runtime_topology_path(&state_dir),
+        serde_yaml::to_string(&expose_projection_topology()).expect("topology yaml"),
+    )
+    .expect("write topology");
+    let request_context =
+        ProjectServiceRequestContext::with_project_state_dir(Path::new("/repo"), &state_dir)
+            .with_live_window_ids(Vec::<String>::new());
+    // aimux-async-seam: test - Expose regression drives the async switchable-agents route
+    let route_response = aimux::async_runtime::block_on_named(
+        "test:expose-projection-erased-items",
+        route_switchable_agent_request_async(
+            &request_context,
+            "GET",
+            "/control/switchable-agents?scope=all&currentPath=/repo/wt&currentWindowId=%401&labelFormat=raw&expose=1",
+        ),
+    )
+    .expect("switchable-agents route");
+
+    assert_eq!(route_response.status, 200);
+    assert_eq!(route_response.body["tmuxLiveWindowQuery"]["ok"], false);
+    assert_eq!(
+        route_response.body["items"]
+            .as_array()
+            .expect("items")
+            .len(),
+        2,
+        "the route must not collapse topology-backed Expose sessions into an empty list"
+    );
+
+    let mut options = parsed_options(&state_dir);
+    options.current_window = Some("dashboard".into());
+    options.current_window_id = Some("@dashboard".into());
+    options.current_path = Some("/repo/wt".into());
+    options.columns = Some(120);
+    options.rows = Some(30);
+    options.expose_config.initial_scope = Some(ExposeScope::Project);
+    let mut client = FakeHttp::with_responses([route_response.body]);
+    let mut capture =
+        FakeCapture::with_responses([Ok("first live\n".into()), Ok("second live\n".into())]);
+    let mut input = ScriptedInput::new([
+        ScriptedInputEvent::Timeout,
+        ScriptedInputEvent::Bytes(b"q".to_vec()),
+    ]);
+    let mut output = Vec::new();
+
+    assert_eq!(
+        run_tmux_expose_with_stable_size(
+            options,
+            &mut input,
+            &mut output,
+            &mut client,
+            &mut capture,
+        ),
+        0
+    );
+
+    let rendered = String::from_utf8(output).expect("utf8 output");
+    let populated_frame = synchronized_frames(&rendered)
+        .into_iter()
+        .find(|frame| frame.contains("all worktrees (2)"))
+        .unwrap_or_else(|| {
+            panic!("expected Expose to eventually render two topology-backed tiles:\n{rendered}")
+        });
+    assert!(
+        !populated_frame.contains("all worktrees (0)"),
+        "projection-erased sessions must not render as authoritative empty Expose:\n{populated_frame}"
+    );
+    assert!(
+        capture.calls.iter().any(|window_id| window_id == "@1")
+            && capture.calls.iter().any(|window_id| window_id == "@2"),
+        "expected Expose to capture both rendered tiles, got {:?}",
+        capture.calls
     );
     cleanup(state_dir);
 }
@@ -1496,6 +1579,36 @@ fn hot_item(window_id: &str, output: &str) -> Value {
             "toolConfigKey": "codex",
             "worktreePath": "/repo"
         }
+    })
+}
+
+fn expose_projection_topology() -> Value {
+    json!({
+        "version": 1,
+        "generatedAt": "2026-09-12T00:00:00.000Z",
+        "rigs": [
+            { "id": "rig-1", "name": "local", "projectRoot": "/repo", "createdAt": "2026-09-12T00:00:00.000Z", "updatedAt": "2026-09-12T00:00:00.000Z" }
+        ],
+        "nodes": [
+            { "id": "node-one", "rigId": "rig-1", "logicalId": "one", "toolConfigKey": "shell", "cwd": "/repo/wt", "label": "shell-one", "createdAt": "2026-09-12T00:00:00.000Z" },
+            { "id": "node-two", "rigId": "rig-1", "logicalId": "two", "toolConfigKey": "shell", "cwd": "/repo/wt", "label": "shell-two", "createdAt": "2026-09-12T00:00:00.000Z" }
+        ],
+        "edges": [],
+        "bindings": [
+            { "id": "binding-one", "nodeId": "node-one", "tmuxSession": "aimux-repo", "tmuxWindowId": "@1", "tmuxWindowIndex": 1, "tmuxWindowName": "shell-one", "updatedAt": "2026-09-12T00:00:00.000Z" },
+            { "id": "binding-two", "nodeId": "node-two", "tmuxSession": "aimux-repo", "tmuxWindowId": "@2", "tmuxWindowIndex": 2, "tmuxWindowName": "shell-two", "updatedAt": "2026-09-12T00:00:00.000Z" }
+        ],
+        "sessions": [
+            { "id": "session-one", "nodeId": "node-one", "status": "running", "tool": "shell", "command": "shell", "worktreePath": "/repo/wt", "label": "shell-one", "createdAt": "2026-09-12T00:00:00.000Z", "updatedAt": "2026-09-12T00:00:00.000Z" },
+            { "id": "session-two", "nodeId": "node-two", "status": "running", "tool": "shell", "command": "shell", "worktreePath": "/repo/wt", "label": "shell-two", "createdAt": "2026-09-12T00:00:00.000Z", "updatedAt": "2026-09-12T00:00:00.000Z" }
+        ],
+        "services": [],
+        "worktrees": [],
+        "worktreeGraveyard": [],
+        "teamRoles": [],
+        "remoteClients": [],
+        "lifecycleOperations": [],
+        "exchangeRefs": []
     })
 }
 

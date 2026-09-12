@@ -15,7 +15,7 @@ use tokio::net::{TcpListener as TokioTcpListener, TcpStream as TokioTcpStream};
 use crate::backend_session_ids::reconcile_offline_backend_session_ids;
 use crate::backlog_metrics::{
     BacklogMetric, SSE_AGENT_INTERACTION_BACKLOG, SSE_AGENT_OUTPUT_BACKLOG,
-    SSE_PROJECT_EVENTS_BACKLOG, backlog_metric,
+    SSE_PROJECT_EVENTS_BACKLOG, SSE_SUBSCRIBER_BACKLOG_CAPACITY, backlog_metric,
 };
 use crate::config::load_config_for_project;
 use crate::daemon::http::PreparedDaemonResponse;
@@ -40,7 +40,9 @@ use crate::project_service::agent_restore_task::agent_restore_snapshot_task;
 use crate::project_service::builtin_metadata_task::builtin_metadata_task;
 use crate::project_service::loop_watcher_task::loop_watcher_task;
 use crate::project_service::runtime_health_history::runtime_health_recorder_task;
-use crate::project_service::scheduler::{ProjectSchedulerHandle, spawn_project_service_scheduler};
+use crate::project_service::scheduler::{
+    PeriodicTask, PeriodicTaskFuture, ProjectSchedulerHandle, spawn_project_service_scheduler,
+};
 use crate::project_service::scribe_watcher_task::scribe_watcher_task;
 use crate::project_service::transcript_reconciler_task::transcript_reconciler_task;
 use crate::runtime_lifecycle_methods::write_instruction_files;
@@ -85,6 +87,8 @@ use super::switchable_agents::route_switchable_agent_request_async;
 
 #[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
+
+pub const STABILITY_DOCTOR_TEST_WEDGE_ENV: &str = "AIMUX_TEST_STABILITY_DOCTOR_WEDGE_TASK";
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ProjectServiceInternalOptions {
@@ -1077,9 +1081,16 @@ impl Drop for SseSubscriberGuard {
 }
 
 fn enter_sse_subscriber(kind: ProjectServiceStreamKind) -> SseSubscriberGuard {
-    let metric = backlog_metric(sse_subscriber_metric_name(kind), None);
+    let metric = backlog_metric(
+        sse_subscriber_metric_name(kind),
+        Some(sse_subscriber_capacity(kind)),
+    );
     metric.increment();
     SseSubscriberGuard { metric }
+}
+
+fn sse_subscriber_capacity(_kind: ProjectServiceStreamKind) -> usize {
+    SSE_SUBSCRIBER_BACKLOG_CAPACITY
 }
 
 fn sse_subscriber_metric_name(kind: ProjectServiceStreamKind) -> &'static str {
@@ -1529,18 +1540,7 @@ async fn serve_project_service_listener_until<Stop>(
         .with_plugin_statuses(plugin_statuses)
         .with_hot_snapshot_background_refresh(),
     );
-    let mut periodic_tasks = builtin_plugin_tick_tasks();
-    // Order matters: the tick loop runs co-due tasks in sequence, and the two
-    // watchers below may each hold it for 20s. The reconciler's 4s cadence is
-    // the tightest on the tick loop, so it goes ahead of them — behind the metadata
-    // watchers only, whose events it wants to read after, not settle over.
-    periodic_tasks.push(builtin_metadata_task(&context));
-    periodic_tasks.push(agent_restore_snapshot_task(&context));
-    periodic_tasks.push(transcript_reconciler_task(&context));
-    periodic_tasks.push(agent_input_delivery_task(&context));
-    periodic_tasks.push(runtime_health_recorder_task());
-    periodic_tasks.push(loop_watcher_task(&context));
-    periodic_tasks.push(scribe_watcher_task(&context));
+    let periodic_tasks = project_service_periodic_tasks_for_context(&context);
     log_lifecycle_always(
         "project service watcher tick loop starting",
         "watcher",
@@ -1560,6 +1560,91 @@ async fn serve_project_service_listener_until<Stop>(
         })),
     );
     serve_project_service_connections_until(listener, context, should_stop).await;
+}
+
+#[doc(hidden)]
+pub fn project_service_periodic_tasks_for_context(
+    context: &Arc<ProjectServiceRequestContext>,
+) -> Vec<Box<dyn PeriodicTask>> {
+    let mut periodic_tasks = builtin_plugin_tick_tasks();
+    // Order matters: the tick loop runs co-due tasks in sequence, and the two
+    // watchers below may each hold it for 20s. The reconciler's 4s cadence is
+    // the tightest on the tick loop, so it goes ahead of them behind the metadata
+    // watchers only, whose events it wants to read after, not settle over.
+    periodic_tasks.push(builtin_metadata_task(context));
+    periodic_tasks.push(agent_restore_snapshot_task(context));
+    periodic_tasks.push(transcript_reconciler_task(context));
+    periodic_tasks.push(agent_input_delivery_task(context));
+    periodic_tasks.push(runtime_health_recorder_task());
+    periodic_tasks.push(loop_watcher_task(context));
+    periodic_tasks.push(scribe_watcher_task(context));
+    append_stability_doctor_test_wedge_task(&mut periodic_tasks);
+    periodic_tasks
+}
+
+fn append_stability_doctor_test_wedge_task(tasks: &mut Vec<Box<dyn PeriodicTask>>) {
+    if !crate::runtime_safety_guard::is_cargo_test_process_context() {
+        return;
+    }
+    let Some(mode) = std::env::var_os(STABILITY_DOCTOR_TEST_WEDGE_ENV) else {
+        return;
+    };
+    let mode = mode.to_string_lossy();
+    let Some(mode) = StabilityDoctorTestWedgeMode::parse(&mode) else {
+        return;
+    };
+    tasks.push(Box::new(StabilityDoctorTestWedgeTask { mode }));
+}
+
+#[derive(Debug, Clone, Copy)]
+enum StabilityDoctorTestWedgeMode {
+    Panic,
+    Timeout,
+}
+
+impl StabilityDoctorTestWedgeMode {
+    fn parse(raw: &str) -> Option<Self> {
+        match raw {
+            "panic" => Some(Self::Panic),
+            "timeout" | "block" => Some(Self::Timeout),
+            _ => None,
+        }
+    }
+}
+
+struct StabilityDoctorTestWedgeTask {
+    mode: StabilityDoctorTestWedgeMode,
+}
+
+impl PeriodicTask for StabilityDoctorTestWedgeTask {
+    fn name(&self) -> &str {
+        "stability-doctor-test-wedge"
+    }
+
+    fn interval_ms(&self) -> i64 {
+        250
+    }
+
+    fn timeout(&self) -> Duration {
+        Duration::from_millis(50)
+    }
+
+    fn run_immediately(&self) -> bool {
+        true
+    }
+
+    fn run<'a>(&'a mut self, _context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
+        Box::pin(async move {
+            match self.mode {
+                StabilityDoctorTestWedgeMode::Panic => {
+                    panic!("stability doctor test wedge requested panic");
+                }
+                StabilityDoctorTestWedgeMode::Timeout => {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+            }
+        })
+    }
 }
 
 async fn serve_project_service_connections_until<Stop>(
