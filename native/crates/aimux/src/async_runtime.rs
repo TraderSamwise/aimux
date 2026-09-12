@@ -110,10 +110,14 @@ where
     F: Future,
 {
     let guard = registry().register(name.into(), AsyncTaskKind::Async);
-    process_runtime().block_on(async move {
+    let future = async move {
         let _guard = guard;
         future.await
-    })
+    };
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => handle.block_on(future),
+        Err(_) => process_runtime().block_on(future),
+    }
 }
 
 /// Use only for blocking OS/process/filesystem seams during the async cutover.
@@ -288,6 +292,39 @@ mod tests {
         assert_eq!(live.kind, AsyncTaskKind::Blocking);
         release_tx.send(()).expect("release task");
         wait_for_task_to_finish(&name).expect("blocking task is unregistered");
+    }
+
+    #[test]
+    fn block_on_named_runs_from_plain_sync_thread() {
+        init_process_runtime().expect("runtime initialized");
+        assert_eq!(
+            block_on_named(task_name("phase1", "plain-sync"), async { 7 }),
+            7
+        );
+    }
+
+    #[test]
+    fn block_on_named_runs_from_blocking_pool_thread() {
+        init_process_runtime().expect("runtime initialized");
+        let handle = spawn_blocking_named(task_name("phase1", "blocking-seam"), || {
+            block_on_named(task_name("phase1", "nested-from-blocking"), async { 11 })
+        });
+        let result = process_runtime()
+            .block_on(handle)
+            .expect("blocking task should finish");
+        assert_eq!(result, 11);
+    }
+
+    #[test]
+    fn block_on_named_panics_from_async_worker_thread() {
+        init_process_runtime().expect("runtime initialized");
+        let handle = spawn_named(task_name("phase1", "async-seam"), async {
+            block_on_named(task_name("phase1", "nested-from-async"), async { 13 })
+        });
+        let error = process_runtime()
+            .block_on(handle)
+            .expect_err("async task must not block_on nested work");
+        assert!(error.is_panic());
     }
 
     #[test]

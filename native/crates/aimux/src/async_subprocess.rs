@@ -309,6 +309,55 @@ mod tests {
     }
 
     #[test]
+    fn sync_subprocess_call_runs_from_blocking_pool_route() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        let route_runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_io()
+            .enable_time()
+            .build()
+            .expect("route runtime");
+        let handle = route_runtime.spawn_blocking(|| {
+            crate::async_runtime::block_on_named(
+                command_task_name("async-subprocess-test", "blocking-route-wrapper"),
+                async {
+                    let blocking = crate::async_runtime::spawn_blocking_named(
+                        command_task_name("async-subprocess-test", "blocking-route"),
+                        || {
+                            let mut command = AsyncCommand::new("/bin/sh");
+                            command.args(["-c", "printf route-ok"]);
+                            command.output().expect("subprocess should run")
+                        },
+                    );
+                    blocking.await.expect("blocking route should finish")
+                },
+            )
+        });
+        let output = route_runtime
+            .block_on(handle)
+            .expect("blocking route should not panic");
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "route-ok");
+    }
+
+    #[test]
+    fn shared_runtime_blocking_subprocess_call_still_runs() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        let handle = crate::async_runtime::spawn_blocking_named(
+            command_task_name("async-subprocess-test", "shared-blocking-route"),
+            || {
+                let mut command = AsyncCommand::new("/bin/sh");
+                command.args(["-c", "printf shared-ok"]);
+                command.output().expect("subprocess should run")
+            },
+        );
+        let output = crate::async_runtime::process_runtime()
+            .block_on(handle)
+            .expect("blocking route should not panic");
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "shared-ok");
+    }
+
+    #[test]
     fn detached_spawn_survives_helper_returning() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
         let root =
