@@ -35,6 +35,7 @@ use crate::project_service::agent_input_delivery::agent_input_delivery_task;
 use crate::project_service::agent_restore_task::agent_restore_snapshot_task;
 use crate::project_service::builtin_metadata_task::builtin_metadata_task;
 use crate::project_service::loop_watcher_task::loop_watcher_task;
+use crate::project_service::runtime_health_history::runtime_health_recorder_task;
 use crate::project_service::scheduler::{ProjectSchedulerHandle, spawn_project_service_scheduler};
 use crate::project_service::scribe_watcher_task::scribe_watcher_task;
 use crate::project_service::transcript_reconciler_task::transcript_reconciler_task;
@@ -1507,6 +1508,7 @@ async fn serve_project_service_listener_until<Stop>(
     periodic_tasks.push(agent_restore_snapshot_task(&context));
     periodic_tasks.push(transcript_reconciler_task(&context));
     periodic_tasks.push(agent_input_delivery_task(&context));
+    periodic_tasks.push(runtime_health_recorder_task());
     periodic_tasks.push(loop_watcher_task(&context));
     periodic_tasks.push(scribe_watcher_task(&context));
     log_lifecycle_always(

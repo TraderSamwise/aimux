@@ -6,7 +6,7 @@
 //! one loop per task; a task is a small object that says how often it wants to
 //! run.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::future::Future;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -27,6 +27,7 @@ use crate::debug_logging::{LogLevel, log_at, log_lifecycle_always};
 use crate::paths::PathResolver;
 
 use super::router::ProjectServiceRequestContext;
+use super::runtime_health_history::SchedulerTaskHealthSnapshot;
 
 /// How long the tick loop sleeps when nothing is scheduled.
 const IDLE_SLEEP: Duration = Duration::from_millis(1_000);
@@ -43,6 +44,7 @@ pub struct ProjectSchedulerHandle {
 #[derive(Debug, Default)]
 struct ProjectSchedulerSignal {
     forced_tasks: Mutex<BTreeSet<String>>,
+    task_health: Mutex<BTreeMap<String, SchedulerTaskHealthSnapshot>>,
 }
 
 impl ProjectSchedulerHandle {
@@ -70,6 +72,71 @@ impl ProjectSchedulerHandle {
             .lock()
             .map(|mut forced_tasks| forced_tasks.remove(name))
             .unwrap_or(false)
+    }
+
+    pub fn periodic_task_health_snapshot(&self) -> Result<Vec<SchedulerTaskHealthSnapshot>, ()> {
+        self.inner
+            .task_health
+            .lock()
+            .map(|task_health| task_health.values().cloned().collect())
+            .map_err(|_| ())
+    }
+
+    pub fn replace_periodic_task_health_snapshot(
+        &self,
+        snapshots: Vec<SchedulerTaskHealthSnapshot>,
+    ) {
+        if let Ok(mut task_health) = self.inner.task_health.lock() {
+            *task_health = snapshots
+                .into_iter()
+                .map(|snapshot| (snapshot.name.clone(), snapshot))
+                .collect();
+        }
+    }
+
+    fn seed_periodic_task_health(&self, tasks: &[Box<dyn PeriodicTask>]) {
+        if let Ok(mut task_health) = self.inner.task_health.lock() {
+            for task in tasks {
+                task_health
+                    .entry(task.name().to_owned())
+                    .or_insert_with(|| {
+                        SchedulerTaskHealthSnapshot::new(task.name(), interval_of(task.as_ref()))
+                    });
+            }
+        }
+    }
+
+    fn record_periodic_task_run(
+        &self,
+        name: &str,
+        interval_ms: i64,
+        elapsed_ms: i64,
+        finished_ms: i64,
+        panicked: bool,
+        timed_out: bool,
+    ) {
+        let Ok(mut task_health) = self.inner.task_health.lock() else {
+            return;
+        };
+        let snapshot = task_health
+            .entry(name.to_owned())
+            .or_insert_with(|| SchedulerTaskHealthSnapshot::new(name, interval_ms));
+        snapshot.interval_ms = interval_ms;
+        snapshot.runs = snapshot.runs.saturating_add(1);
+        snapshot.last_duration_ms = Some(elapsed_ms);
+        snapshot.last_error_present = panicked || timed_out;
+        if timed_out {
+            snapshot.total_timeouts = snapshot.total_timeouts.saturating_add(1);
+            snapshot.consecutive_timeouts = snapshot.consecutive_timeouts.saturating_add(1);
+        } else {
+            snapshot.consecutive_timeouts = 0;
+        }
+        if panicked || timed_out {
+            snapshot.consecutive_failures = snapshot.consecutive_failures.saturating_add(1);
+        } else {
+            snapshot.consecutive_failures = 0;
+            snapshot.last_completed_at_ms = Some(finished_ms);
+        }
     }
 }
 
@@ -206,6 +273,7 @@ impl PeriodicScheduler {
         now_ms: i64,
         handle: ProjectSchedulerHandle,
     ) -> Self {
+        handle.seed_periodic_task_health(&tasks);
         let tasks = tasks
             .into_iter()
             .map(|task| {
@@ -244,6 +312,14 @@ impl PeriodicScheduler {
             let elapsed_ms = started.elapsed().as_millis().min(i64::MAX as u128) as i64;
             let finished_ms = clock();
             let interval_ms = interval_of(scheduled.task.as_ref());
+            self.handle.record_periodic_task_run(
+                &name,
+                interval_ms,
+                elapsed_ms,
+                finished_ms,
+                panicked,
+                false,
+            );
             scheduled.next_due_ms = finished_ms.saturating_add(interval_ms);
             log_at(
                 LogLevel::Debug,
@@ -322,6 +398,7 @@ pub fn spawn_project_service_scheduler(
     if tasks.is_empty() {
         return;
     }
+    handle.seed_periodic_task_health(&tasks);
     let supervisor_name = task_name("project-service", "scheduler");
     spawn_named(supervisor_name, async move {
         let mut loops: JoinSet<()> = JoinSet::new();
@@ -358,7 +435,7 @@ async fn run_periodic_task_loop(
 ) {
     let name = task.name().to_owned();
     if task.run_immediately() {
-        task = run_task_once(Arc::clone(&context), task, false).await;
+        task = run_task_once(Arc::clone(&context), task, handle.clone(), false).await;
     }
     let mut ticks_until_due = task.tick_multiple().max(1);
     let mut ticker = task_interval();
@@ -372,7 +449,7 @@ async fn run_periodic_task_loop(
                 continue;
             }
         }
-        task = run_task_once(Arc::clone(&context), task, forced).await;
+        task = run_task_once(Arc::clone(&context), task, handle.clone(), forced).await;
         ticks_until_due = task.tick_multiple().max(1);
         ticker = task_interval();
         ticker.tick().await;
@@ -388,6 +465,7 @@ fn task_interval() -> tokio::time::Interval {
 async fn run_task_once(
     context: Arc<ProjectServiceRequestContext>,
     mut task: Box<dyn PeriodicTask>,
+    handle: ProjectSchedulerHandle,
     forced: bool,
 ) -> Box<dyn PeriodicTask> {
     let name = task.name().to_owned();
@@ -410,6 +488,14 @@ async fn run_task_once(
             }
         };
     let elapsed_ms = started.elapsed().as_millis().min(i64::MAX as u128) as i64;
+    handle.record_periodic_task_run(
+        &name,
+        interval_ms,
+        elapsed_ms,
+        scheduler_now_ms(),
+        panicked,
+        timed_out,
+    );
     log_at(
         LogLevel::Debug,
         "watcher tick loop task ran",
