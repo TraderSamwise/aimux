@@ -38,6 +38,7 @@ use super::ids::{now_iso, random_id};
 use super::json_helpers::*;
 use super::response_helpers::{json_error, lifecycle_response};
 use super::runtime_adapter::ProjectLifecycleRuntime;
+use super::session_liveness::LiveWindows;
 use super::session_state::relocate_claude_transcript;
 use super::topology_helpers::{live_window_id_for_session, object_value, upsert_array_item};
 
@@ -687,7 +688,10 @@ pub(super) fn resume_agent_session(
     let Some(topology_session) = find_by_id(&topology, "sessions", &session_id) else {
         return json_error(404, format!("Session \"{session_id}\" not found"));
     };
-    if LIVE_STATUSES.contains(&string_field(&topology_session, "status").as_str()) {
+    // A row still reading `running` after its window died is the whole reason
+    // resume exists; answering "already running" there is a silent failure.
+    let live_windows = LiveWindows::for_context(context, operation);
+    if live_windows.session_is_live(&topology_session, &topology) {
         return lifecycle_response(
             json!({ "sessionId": session_id, "status": "running" }),
             "agent.resume",
@@ -695,7 +699,7 @@ pub(super) fn resume_agent_session(
             Some(&session_id),
         );
     }
-    if string_field(&topology_session, "status") != "offline" {
+    if !live_windows.session_is_restorable(&topology_session, &topology) {
         return json_error(404, format!("Session \"{session_id}\" not found"));
     }
 

@@ -105,6 +105,23 @@ fn a_snapshot_from_this_same_run_is_never_offered_back() {
 }
 
 #[test]
+fn a_crashed_agent_whose_row_still_reads_running_can_still_be_restored() {
+    let project = TestProject::new("restore-stale-row");
+    project.run_task();
+    project.simulate_process_death();
+    project.seed_prompt_gates("boot-after-crash");
+    project.run_task_with_no_live_windows();
+    assert!(project.offer().is_some(), "offer derived");
+
+    // The topology still reads `running` for both agents. Refusing them here is
+    // what made the offer undismissable and unrestorable in the live drive.
+    let accepted = project.accept_restore_offer();
+
+    assert_eq!(accepted["accepted"], true);
+    assert_eq!(accepted["total"], AGENT_IDS.len());
+}
+
+#[test]
 fn a_tmux_query_that_cannot_be_answered_records_nothing_and_offers_nothing() {
     let project = TestProject::new("tmux-unavailable");
     project.run_task_with(FakeLiveWindows::unavailable());
@@ -184,6 +201,24 @@ impl TestProject {
         let mut task =
             AgentRestoreSnapshotTask::with_live_window_source(&context, Box::new(live_windows));
         task.run(&context);
+    }
+
+    fn accept_restore_offer(&self) -> Value {
+        let context = ProjectServiceRequestContext::with_project_state_dir(
+            &self.project_root,
+            &self.state_dir,
+        )
+        .with_live_window_ids(Vec::<String>::new());
+        let mut runtime = StubLifecycleRuntime;
+        route_lifecycle_request_with_runtime(
+            &context,
+            "POST",
+            routes::agents::RESTORE_PREVIOUS,
+            Some(&json!({})),
+            &mut runtime,
+        )
+        .expect("restore route handled")
+        .body
     }
 
     fn stop_agent(&self, session_id: &str) {

@@ -2529,7 +2529,8 @@ fn agent_restore_previous_without_offer_returns_not_accepted() {
     let project = temp_project("restore-previous-none");
     let state_dir = project.join("state");
     write_restore_previous_topology(&state_dir, &project);
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids(["@stale"]);
     let mut runtime = FakeLifecycleRuntime::default();
 
     let response = route_lifecycle_request_with_runtime(
@@ -2558,7 +2559,10 @@ fn agent_restore_previous_reconciles_offer_restores_ready_sessions_and_writes_re
         .join(aimux::paths::compute_project_id(&project));
     write_restore_previous_topology(&state_dir, &project);
     write_restore_previous_offer_and_gate(&aimux_home, &state_dir, &project);
-    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    // codex-stale still holds a live window, so it is genuinely running and
+    // must not be offered back; the other two are restorable.
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids(["@stale"]);
     let mut runtime = FakeLifecycleRuntime::default();
 
     let response = route_lifecycle_request_with_runtime(
@@ -3179,7 +3183,9 @@ fn write_restore_previous_topology(state_dir: &PathBuf, project: &Path) {
             { "id": "node-stale", "rigId": "rig-1", "logicalId": "codex-stale", "toolConfigKey": "codex", "createdAt": "2026-01-01T00:00:00.000Z" }
         ],
         "edges": [],
-        "bindings": [],
+        "bindings": [
+            { "id": "tmux:codex-stale", "nodeId": "node-stale", "tmuxSession": "aimux", "tmuxWindowId": "@stale", "tmuxWindowIndex": 1, "tmuxWindowName": "codex", "updatedAt": "2026-01-01T00:00:00.000Z" }
+        ],
         "sessions": [
             { "id": "codex-ready", "nodeId": "node-ready", "tool": "codex", "toolConfigKey": "codex", "command": "codex", "args": [], "backendSessionId": "backend-ready", "status": "offline", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" },
             { "id": "codex-blocked", "nodeId": "node-blocked", "tool": "codex", "toolConfigKey": "codex", "command": "codex", "args": [], "status": "offline", "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z" },

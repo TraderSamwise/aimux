@@ -8,6 +8,7 @@ use crate::project_service::router::ProjectServiceRequestContext;
 use crate::runtime_topology::{read_runtime_topology, runtime_topology_path};
 
 use super::runtime_adapter::ProjectLifecycleRuntime;
+use super::session_liveness::LiveWindows;
 use super::{
     array_field, json_error, lifecycle_transition_with_phase, now_iso, object_insert_mut,
     read_json_object, resume_agent_session, string_array_field, string_field, trimmed_string,
@@ -37,9 +38,10 @@ pub(super) fn route_agent_restore_previous(
             Ok(topology) => topology,
             Err(error) => return json_error(500, error),
         };
+        let live_windows = LiveWindows::for_context(context, "agent.restore");
         let restorable_ids = array_field(&topology, "sessions")
             .into_iter()
-            .filter(|session| string_field(session, "status") == "offline")
+            .filter(|session| live_windows.session_is_restorable(session, &topology))
             .map(|session| string_field(&session, "id"))
             .filter(|id| !id.is_empty())
             .collect::<Vec<_>>();

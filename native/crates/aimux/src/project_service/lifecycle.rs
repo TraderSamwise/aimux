@@ -20,6 +20,7 @@ mod restore_offer;
 mod restore_snapshot;
 mod runtime_adapter;
 mod services;
+mod session_liveness;
 mod session_state;
 mod teammates;
 mod topology_helpers;
