@@ -53,6 +53,7 @@
     "audit:phase8-live-residuals:process": "python3 scripts/phase8-live-residuals.py --only process",
     "audit:phase8-live-residuals:sse": "python3 scripts/phase8-live-residuals.py --only sse",
     "audit:phase8-live-residuals:tmux": "python3 scripts/phase8-live-residuals.py --only tmux",
+    "audit:live-drive-remote": "python3 scripts/live-drive-remote.py",
     "audit:rust-orphans": "./scripts/audit-rust-orphans.mjs --enforce-fixture-twins",
     "format": "prettier --write src/ relay/src/",
     "format:check": "prettier --check src/ relay/src/",
