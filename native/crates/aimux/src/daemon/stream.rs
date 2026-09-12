@@ -78,6 +78,12 @@ pub struct OpenProjectEventStream {
     body: UpstreamBody,
 }
 
+#[derive(Debug)]
+pub struct OpenProjectEventStreamAsync {
+    status: u16,
+    body: AsyncUpstreamBody,
+}
+
 impl OpenProjectEventStream {
     pub fn status(&self) -> u16 {
         self.status
@@ -93,6 +99,25 @@ impl OpenProjectEventStream {
 
     pub fn next_chunk(&mut self) -> Result<ProjectEventStreamChunk, HostAgentStreamError> {
         self.body.next_chunk_event()
+    }
+}
+
+impl OpenProjectEventStreamAsync {
+    pub fn status(&self) -> u16 {
+        self.status
+    }
+
+    pub async fn body_text(self) -> String {
+        AsyncUpstreamResponse {
+            status: self.status,
+            body: self.body,
+        }
+        .body_text()
+        .await
+    }
+
+    pub async fn next_chunk(&mut self) -> Result<ProjectEventStreamChunk, HostAgentStreamError> {
+        self.body.next_chunk_event().await
     }
 }
 
@@ -320,6 +345,24 @@ pub fn open_project_event_stream_from_url(
 
     let opened = read_upstream_response(stream)?;
     Ok(OpenProjectEventStream {
+        status: opened.status,
+        body: opened.body,
+    })
+}
+
+pub async fn open_project_event_stream_from_url_async(
+    target: &ProjectEventStreamTarget,
+    options: HostAgentStreamRequestOptions,
+) -> Result<OpenProjectEventStreamAsync, HostAgentStreamError> {
+    let endpoint = parse_upstream_url(&target.url)?;
+    let mut stream = connect_upstream_async(&endpoint, options.timeout_ms).await?;
+    stream
+        .write_all(project_event_stream_request(&endpoint, &target.headers).as_bytes())
+        .await
+        .map_err(map_io_error)?;
+
+    let opened = read_upstream_response_async(stream, options.timeout_ms).await?;
+    Ok(OpenProjectEventStreamAsync {
         status: opened.status,
         body: opened.body,
     })
@@ -943,6 +986,54 @@ impl AsyncUpstreamBody {
         Ok(Some(data))
     }
 
+    async fn next_chunk_event(&mut self) -> Result<ProjectEventStreamChunk, HostAgentStreamError> {
+        if self.done {
+            return Ok(ProjectEventStreamChunk::Eof);
+        }
+        if self.chunked {
+            return self.next_http_chunk_event().await;
+        }
+        if !self.buffer.is_empty() {
+            return Ok(ProjectEventStreamChunk::Data(std::mem::take(
+                &mut self.buffer,
+            )));
+        }
+        let mut buffer = [0_u8; 8192];
+        match self.read_with_timeout(&mut buffer).await {
+            Ok(0) => {
+                self.done = true;
+                Ok(ProjectEventStreamChunk::Eof)
+            }
+            Ok(count) => Ok(ProjectEventStreamChunk::Data(buffer[..count].to_vec())),
+            Err(error) if is_timeout(&error) => Ok(ProjectEventStreamChunk::Timeout),
+            Err(error) => Err(map_io_error(error)),
+        }
+    }
+
+    async fn next_http_chunk_event(
+        &mut self,
+    ) -> Result<ProjectEventStreamChunk, HostAgentStreamError> {
+        let Some(line) = self.read_chunk_line_event().await? else {
+            return Ok(ProjectEventStreamChunk::Timeout);
+        };
+        let size = chunk_size(&line)?;
+        if size == 0 {
+            self.done = true;
+            return Ok(ProjectEventStreamChunk::Eof);
+        }
+        if !self.read_exact_buffered_event(size + 2).await? {
+            return Ok(ProjectEventStreamChunk::Timeout);
+        }
+        let data = self.buffer[..size].to_vec();
+        if &self.buffer[size..size + 2] != b"\r\n" {
+            return Err(HostAgentStreamError::InvalidResponse(
+                "invalid chunk terminator".into(),
+            ));
+        }
+        self.buffer.drain(..size + 2);
+        Ok(ProjectEventStreamChunk::Data(data))
+    }
+
     async fn read_chunk_line(&mut self) -> Result<String, HostAgentStreamError> {
         loop {
             if let Some(end) = find_bytes(&self.buffer, b"\r\n") {
@@ -956,11 +1047,38 @@ impl AsyncUpstreamBody {
         }
     }
 
+    async fn read_chunk_line_event(&mut self) -> Result<Option<String>, HostAgentStreamError> {
+        loop {
+            if let Some(end) = find_bytes(&self.buffer, b"\r\n") {
+                let line = self.buffer[..end].to_vec();
+                self.buffer.drain(..end + 2);
+                return String::from_utf8(line).map(Some).map_err(|error| {
+                    HostAgentStreamError::InvalidResponse(format!("invalid chunk header: {error}"))
+                });
+            }
+            if !self.read_more_event().await? {
+                return Ok(None);
+            }
+        }
+    }
+
     async fn read_exact_buffered(&mut self, len: usize) -> Result<(), HostAgentStreamError> {
         while self.buffer.len() < len {
             self.read_more().await?;
         }
         Ok(())
+    }
+
+    async fn read_exact_buffered_event(
+        &mut self,
+        len: usize,
+    ) -> Result<bool, HostAgentStreamError> {
+        while self.buffer.len() < len {
+            if !self.read_more_event().await? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     async fn read_more(&mut self) -> Result<(), HostAgentStreamError> {
@@ -976,6 +1094,21 @@ impl AsyncUpstreamBody {
         }
         self.buffer.extend_from_slice(&buffer[..count]);
         Ok(())
+    }
+
+    async fn read_more_event(&mut self) -> Result<bool, HostAgentStreamError> {
+        let mut buffer = [0_u8; 8192];
+        match self.read_with_timeout(&mut buffer).await {
+            Ok(0) => Err(HostAgentStreamError::InvalidResponse(
+                "upstream closed before stream ended".into(),
+            )),
+            Ok(count) => {
+                self.buffer.extend_from_slice(&buffer[..count]);
+                Ok(true)
+            }
+            Err(error) if is_timeout(&error) => Ok(false),
+            Err(error) => Err(map_io_error(error)),
+        }
     }
 
     async fn read_with_timeout(&mut self, buffer: &mut [u8]) -> io::Result<usize> {

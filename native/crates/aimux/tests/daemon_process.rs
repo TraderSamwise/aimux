@@ -1,3 +1,4 @@
+use aimux::async_runtime::{AsyncTaskKind, doctor_tasks_report, process_runtime, spawn_named};
 use aimux::daemon::core_commands::{CoreCommandFailure, DaemonCoreCommandRuntime};
 use aimux::daemon::json::{
     DaemonJsonRouteRuntime, ExposeFocusRequest, ProxyBinaryResponse, ProxyJsonResponse,
@@ -32,7 +33,7 @@ use aimux::hosted_principals::{HostedGrant, HostedPrincipalsStore};
 use aimux::hosted_server::{
     HostedServerState, HostedStreamLimits, handle_hosted_daemon_request,
     handle_hosted_daemon_request_from_peer, handle_hosted_daemon_stream,
-    start_hosted_server_background,
+    handle_hosted_daemon_stream_async, start_hosted_server_background,
 };
 use aimux::paths::PathResolver;
 use serde_json::{Map, Value, json};
@@ -47,7 +48,7 @@ use std::sync::{
     mpsc,
 };
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone)]
 struct FakeRuntime {
@@ -1013,6 +1014,46 @@ fn unix_millis(time: SystemTime) -> u128 {
         .as_millis()
 }
 
+fn unused_loopback_port() -> u16 {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind unused port");
+    listener.local_addr().expect("unused port addr").port()
+}
+
+fn connect_loopback_port(port: u16) -> TcpStream {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        match TcpStream::connect(("127.0.0.1", port)) {
+            Ok(stream) => return stream,
+            Err(error) if Instant::now() < deadline => {
+                assert!(
+                    matches!(
+                        error.kind(),
+                        std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::TimedOut
+                    ),
+                    "unexpected hosted connect error: {error}"
+                );
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => panic!("connect hosted listener on {port}: {error}"),
+        }
+    }
+}
+
+fn wait_for_async_task(name: &str) -> Option<aimux::async_runtime::AsyncTaskSnapshot> {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
+        if let Some(task) = doctor_tasks_report()
+            .tasks
+            .into_iter()
+            .find(|task| task.name == name)
+        {
+            return Some(task);
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    None
+}
+
 #[test]
 fn runtime_processor_routes_health_through_status_contract() {
     let mut runtime = FakeRuntime::empty();
@@ -1099,6 +1140,36 @@ fn hosted_server_startup_is_default_off() {
     .expect("hosted startup decision");
 
     assert!(handle.is_none());
+}
+
+#[test]
+fn hosted_server_accept_loop_and_connections_are_async_tasks() {
+    let fixture = HostedFixture::new("async-listener");
+    let runtime = Arc::new(Mutex::new(FakeRuntime::empty()));
+    let port = unused_loopback_port();
+
+    let handle = start_hosted_server_background(
+        HostedConfig {
+            enabled: true,
+            port,
+            ..HostedConfig::default()
+        },
+        fixture.resolver.clone(),
+        Arc::clone(&runtime),
+    )
+    .expect("hosted startup")
+    .expect("hosted server starts");
+
+    let listener_task = wait_for_async_task("hosted:listener").expect("hosted listener task");
+    assert_eq!(listener_task.kind, AsyncTaskKind::Async);
+
+    let client = connect_loopback_port(port);
+    let connection_task =
+        wait_for_async_task("hosted:connection 127.0.0.1").expect("hosted connection task");
+    assert_eq!(connection_task.kind, AsyncTaskKind::Async);
+
+    drop(client);
+    handle.abort();
 }
 
 #[test]
@@ -1402,6 +1473,107 @@ fn hosted_peer_limiter_uses_separate_client_buckets() {
         Some("198.51.100.2"),
     );
     assert_eq!(other_peer.status, 401);
+}
+
+#[test]
+fn async_hosted_operator_stream_stops_after_principal_revocation() {
+    let fixture = HostedFixture::new("async-stream-revoked");
+    let upstream = HeldSseServer::spawn();
+    let store = HostedPrincipalsStore::with_resolver(fixture.resolver.clone());
+    let (principal, token) = store.create_principal("grand").expect("create principal");
+    store
+        .grant_session(
+            &principal.id,
+            HostedGrant {
+                project_root: "/repo".into(),
+                session_id: "s".into(),
+            },
+        )
+        .expect("grant principal");
+    let mut runtime = FakeRuntime::empty();
+    runtime.projects = vec![hosted_project("/repo", upstream.port as u64, true)];
+    let runtime = Arc::new(Mutex::new(runtime));
+    let state = Arc::new(HostedServerState::with_resolver_and_stream_limits(
+        HostedConfig {
+            enabled: true,
+            ..HostedConfig::default()
+        },
+        fixture.resolver.clone(),
+        HostedStreamLimits {
+            max_per_principal: 2,
+            max_lifetime_ms: 10_000,
+            idle_timeout_ms: 10_000,
+            max_bytes: 1024 * 1024,
+            reauth_interval_ms: 250,
+        },
+    ));
+    let request = format!(
+        "GET /proxy/127.0.0.1/{}/agents/output/stream?sessionId=s HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {token}\r\n\r\n",
+        upstream.port
+    );
+    let (done_tx, done_rx) = mpsc::channel();
+    let (mut client_stream, mut server_stream) = tokio::io::duplex(16 * 1024);
+    let client = spawn_named("hosted-test:async-client", async move {
+        tokio::io::AsyncWriteExt::write_all(&mut client_stream, request.as_bytes())
+            .await
+            .expect("write request");
+        let mut output = Vec::new();
+        tokio::io::AsyncReadExt::read_to_end(&mut client_stream, &mut output)
+            .await
+            .expect("read response");
+        done_tx.send(output).expect("send output");
+    });
+    let handle_runtime = Arc::clone(&runtime);
+    let handle_state = Arc::clone(&state);
+    let intercept_runtime = Arc::clone(&runtime);
+    let intercept_state = Arc::clone(&state);
+    let hosted = spawn_named("hosted-test:async-stream", async move {
+        handle_hosted_daemon_stream_async(
+            &handle_runtime,
+            &handle_state,
+            &intercept_runtime,
+            &intercept_state,
+            &mut server_stream,
+            aimux::daemon::listener::DaemonRequestMetadata {
+                issued_at: "issued".into(),
+                stopping: false,
+            },
+            None,
+        )
+        .await
+        .expect("hosted stream handled");
+    });
+
+    upstream.wait_until_open();
+    store
+        .revoke_principal(&principal.id)
+        .expect("revoke principal");
+    let output = match done_rx.recv_timeout(Duration::from_secs(2)) {
+        Ok(output) => output,
+        Err(error) => {
+            upstream.stop();
+            panic!("async stream did not stop after revocation: {error}");
+        }
+    };
+    upstream.stop();
+    process_runtime()
+        .block_on(hosted)
+        .expect("hosted async task");
+    process_runtime()
+        .block_on(client)
+        .expect("client async task");
+
+    let response = String::from_utf8(output).expect("stream response");
+    assert!(
+        response.starts_with("HTTP/1.1 200 OK\r\n"),
+        "unexpected response: {response}"
+    );
+    assert!(response.contains("content-type: text/event-stream\r\n"));
+    let audit = HostedAuditStore::with_resolver(fixture.resolver.clone()).tail_audit(10);
+    assert!(audit.iter().any(|entry| {
+        entry.event.as_deref() == Some("hosted_stream_closed:revoked")
+            && entry.session_id.as_deref() == Some("s")
+    }));
 }
 
 #[test]
