@@ -55,6 +55,7 @@ pub fn route_read_request(
                 "plugins": context.plugin_statuses_json(),
                 "previews": context.visual_clients.diagnostics(context.project_root()),
                 "agentOutputReads": context.output_metrics.snapshot(),
+                "scheduler": context.scheduler.diagnostics_json(),
                 "runtimeExchange": inspect_runtime_exchange_store(runtime_exchange_path(context.project_state_dir())),
             }),
         ));
