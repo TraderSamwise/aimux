@@ -48,6 +48,7 @@
     "audit:contract-secrets": "./scripts/audit-contract-secrets.mjs",
     "audit:live-residual-isolation": "python3 scripts/audit-live-residual-isolation.py",
     "audit:phase8-live-residuals": "python3 scripts/phase8-live-residuals.py",
+    "audit:phase8-live-residuals:expose-interaction": "python3 scripts/phase8-live-residuals.py --only expose-interaction",
     "audit:phase8-live-residuals:command-resolution": "python3 scripts/phase8-live-residuals.py --only command-resolution",
     "audit:phase8-live-residuals:agent-shell": "python3 scripts/phase8-live-residuals.py --only agent-shell",
     "audit:phase8-live-residuals:graveyard": "python3 scripts/phase8-live-residuals.py --only graveyard",
