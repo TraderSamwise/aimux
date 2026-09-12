@@ -20,6 +20,7 @@ static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 #[derive(Default)]
 struct FakeDeliveryRuntime {
     actions: Vec<FakeRuntimeAction>,
+    fail_text_for_window: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,6 +51,11 @@ impl AgentOutputCaptureRuntime for FakeDeliveryRuntime {
     }
 
     fn send_text(&mut self, window_id: &str, text: &str) -> Result<(), String> {
+        if self.fail_text_for_window.as_deref() == Some(window_id) {
+            return Err(format!(
+                "tmux send-keys text failed for {window_id}: injected failure"
+            ));
+        }
         self.actions.push(FakeRuntimeAction::Text(
             window_id.to_owned(),
             text.to_owned(),
@@ -530,8 +536,25 @@ fn thread_send_delivers_to_each_live_recipient_with_recipient_reply_actions() {
     )
     .unwrap();
     assert_eq!(sent.status, 200);
-    assert_eq!(sent.body["deliveredTo"], json!([]));
-    assert!(runtime.actions.is_empty());
+    assert_eq!(sent.body["deliveredTo"], json!(["codex-one", "codex-two"]));
+
+    let one_text = text_sent_to(&runtime, "@one");
+    let two_text = text_sent_to(&runtime, "@two");
+    assert!(one_text.contains("[aimux message]"));
+    assert!(one_text.contains("Please inspect this."));
+    assert!(one_text.contains("--from codex-one"));
+    assert!(two_text.contains("[aimux message]"));
+    assert!(two_text.contains("--from codex-two"));
+    assert!(
+        runtime
+            .actions
+            .contains(&FakeRuntimeAction::CarriageReturn("@one".into()))
+    );
+    assert!(
+        runtime
+            .actions
+            .contains(&FakeRuntimeAction::CarriageReturn("@two".into()))
+    );
 
     let exchange = read_exchange(&state_dir);
     let message_id = sent.body["message"]["id"].as_str().unwrap();
@@ -541,7 +564,115 @@ fn thread_send_delivers_to_each_live_recipient_with_recipient_reply_actions() {
         .iter()
         .find(|message| message["id"] == message_id)
         .unwrap();
-    assert_eq!(message.get("deliveredTo"), None);
+    assert_eq!(message["deliveredTo"], json!(["codex-one", "codex-two"]));
+    assert!(message["deliveredAt"].as_str().is_some());
+    cleanup(project);
+}
+
+#[test]
+fn thread_send_fails_loudly_when_live_recipient_cannot_be_resolved() {
+    let project = temp_project("thread-delivery-missing");
+    let state_dir = project.join("state");
+    write_delivery_topology(&state_dir, &[("codex-one", "@one")]);
+    let isolation = support::TestIsolation::new("coordination");
+    let context = isolation.project_context(&project, &state_dir);
+    let opened = route_project_service_request(
+        &context,
+        "POST",
+        routes::threads::OPEN,
+        Some(&json!({
+            "from": "claude-lead",
+            "title": "Coordination",
+            "participants": ["codex-missing"]
+        })),
+    );
+    assert_eq!(opened.status, 200);
+    let thread_id = opened.body["thread"]["id"].as_str().unwrap().to_owned();
+    let mut runtime = FakeDeliveryRuntime::default();
+
+    let sent = route_coordination_mutation_request_with_runtime(
+        &context,
+        "POST",
+        routes::threads::SEND,
+        Some(&json!({
+            "threadId": thread_id,
+            "from": "claude-lead",
+            "to": ["codex-missing"],
+            "kind": "request",
+            "body": "Please inspect this."
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(sent.status, 424);
+    assert_eq!(sent.body["ok"], false);
+    assert_eq!(sent.body["deliveredTo"], json!([]));
+    let error = sent.body["error"].as_str().unwrap();
+    assert!(error.contains("not delivered"));
+    assert!(error.contains("codex-missing"));
+    assert!(error.contains("no live tmux window"));
+    assert!(error.contains("message"));
+    assert!(error.contains("thread"));
+    assert!(runtime.actions.is_empty());
+    cleanup(project);
+}
+
+#[test]
+fn thread_send_reports_child_tmux_delivery_error() {
+    let project = temp_project("thread-delivery-child-error");
+    let state_dir = project.join("state");
+    write_delivery_topology(&state_dir, &[("codex-one", "@one"), ("codex-two", "@two")]);
+    let isolation = support::TestIsolation::new("coordination");
+    let context = isolation.project_context(&project, &state_dir);
+    let opened = route_project_service_request(
+        &context,
+        "POST",
+        routes::threads::OPEN,
+        Some(&json!({
+            "from": "claude-lead",
+            "title": "Coordination",
+            "participants": ["codex-one", "codex-two"]
+        })),
+    );
+    assert_eq!(opened.status, 200);
+    let thread_id = opened.body["thread"]["id"].as_str().unwrap().to_owned();
+    let mut runtime = FakeDeliveryRuntime {
+        fail_text_for_window: Some("@two".into()),
+        ..FakeDeliveryRuntime::default()
+    };
+
+    let sent = route_coordination_mutation_request_with_runtime(
+        &context,
+        "POST",
+        routes::threads::SEND,
+        Some(&json!({
+            "threadId": thread_id,
+            "from": "claude-lead",
+            "to": ["codex-one", "codex-two"],
+            "kind": "request",
+            "body": "Please inspect this."
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(sent.status, 424);
+    assert_eq!(sent.body["ok"], false);
+    assert_eq!(sent.body["deliveredTo"], json!(["codex-one"]));
+    let error = sent.body["error"].as_str().unwrap();
+    assert!(error.contains("codex-two"));
+    assert!(error.contains("@two"));
+    assert!(error.contains("tmux send-keys text failed for @two: injected failure"));
+    assert!(text_sent_to(&runtime, "@one").contains("Please inspect this."));
+    let exchange = read_exchange(&state_dir);
+    let message_id = sent.body["message"]["id"].as_str().unwrap();
+    let message = exchange["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|message| message["id"] == message_id)
+        .unwrap();
+    assert_eq!(message["deliveredTo"], json!(["codex-one"]));
+    assert!(message["deliveredAt"].as_str().is_some());
     cleanup(project);
 }
 
@@ -902,6 +1033,21 @@ fn thread_routes_send_mark_seen_and_set_status() {
 
 fn read_exchange(state_dir: &PathBuf) -> Value {
     read_runtime_exchange(runtime_exchange_path(state_dir))
+}
+
+fn text_sent_to(runtime: &FakeDeliveryRuntime, window_id: &str) -> String {
+    runtime
+        .actions
+        .iter()
+        .filter_map(|action| match action {
+            FakeRuntimeAction::Text(target, text) if target == window_id => Some(text.as_str()),
+            FakeRuntimeAction::Key(target, key) if target == window_id && key == "C-j" => {
+                Some("\n")
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("")
 }
 
 fn write_delivery_topology(state_dir: &PathBuf, sessions: &[(&str, &str)]) {

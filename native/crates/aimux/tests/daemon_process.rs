@@ -1104,11 +1104,11 @@ fn wait_for_async_task(name: &str) -> Option<aimux::async_runtime::AsyncTaskSnap
 
 fn join_hosted_exchange(hosted: tokio::task::JoinHandle<()>, client: tokio::task::JoinHandle<()>) {
     process_runtime()
-        // aimux-async-seam: test - hosted stream tests await paired async exchanges
+        // aimux-async-seam: test - hosted stream test awaits paired async exchange
         .block_on(hosted)
         .expect("hosted async task");
     process_runtime()
-        // aimux-async-seam: test - hosted stream tests await paired async exchanges
+        // aimux-async-seam: test - hosted stream test awaits paired async exchange
         .block_on(client)
         .expect("client async task");
 }

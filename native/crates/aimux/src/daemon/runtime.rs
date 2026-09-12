@@ -70,7 +70,8 @@ use crate::daemon_projects::{
 use crate::daemon_state::{
     AimuxDaemonInfo, DaemonState, MetadataApiEndpoint, ProjectServiceState,
     clear_daemon_info_if_owned, get_daemon_host, get_daemon_port, is_pid_alive, load_daemon_state,
-    load_metadata_endpoint, remove_metadata_endpoint, save_daemon_info, save_daemon_state,
+    load_metadata_endpoint, metadata_endpoint_path, remove_metadata_endpoint, save_daemon_info,
+    save_daemon_state,
 };
 use crate::daemon_supervisor::RUNTIME_RESTART_LOCK_STALE_MS;
 use crate::dashboard_readiness::get_runtime_owner_id;
@@ -1191,11 +1192,22 @@ impl RealDaemonRuntime {
         project_root: &str,
         open: Option<DashboardOpenRequest>,
     ) -> Result<Value, String> {
-        let _ = <Self as DaemonCoreCommandRuntime>::stop_project(self, project_root, false);
-        let project_state_dir = self.resolver.project_state_dir_for(project_root);
-        let tmux_sessions_killed =
-            stop_project_tmux_runtime_with_service_snapshots(project_root, &project_state_dir)
-                .unwrap_or_default();
+        self.restart_project_runtime_with_tmux_stop(
+            project_root,
+            open,
+            |project_root, state_dir| {
+                stop_project_tmux_runtime_with_service_snapshots(project_root, state_dir)
+            },
+        )
+    }
+
+    fn restart_project_runtime_with_tmux_stop(
+        &mut self,
+        project_root: &str,
+        open: Option<DashboardOpenRequest>,
+        stop_tmux: impl FnOnce(&str, &Path) -> Result<Vec<String>, String>,
+    ) -> Result<Value, String> {
+        let tmux_sessions_killed = self.stop_project_for_restart(project_root, stop_tmux)?;
         let project = <Self as DaemonCoreCommandRuntime>::ensure_project(self, project_root)?;
         let mut tmux = TmuxRuntimeManager::new();
         let target = resolve_dashboard_target(
@@ -1221,6 +1233,18 @@ impl RealDaemonRuntime {
             );
         }
         Ok(payload)
+    }
+
+    fn stop_project_for_restart(
+        &mut self,
+        project_root: &str,
+        stop_tmux: impl FnOnce(&str, &Path) -> Result<Vec<String>, String>,
+    ) -> Result<Vec<String>, String> {
+        <Self as DaemonCoreCommandRuntime>::stop_project(self, project_root, false)
+            .map_err(|error| format!("failed to stop project before restart: {error}"))?;
+        let project_state_dir = self.resolver.project_state_dir_for(project_root);
+        stop_tmux(project_root, &project_state_dir)
+            .map_err(|error| format!("failed to stop project tmux runtime before restart: {error}"))
     }
 
     fn restart_control_plane_runtime(
@@ -1669,10 +1693,20 @@ fn daemon_project_read_snapshot(
     }
 }
 
-fn list_projects_for_route_from_snapshot(
+#[derive(Debug)]
+struct ProjectsRouteRead {
+    projects: Vec<ProjectsRouteProject>,
+    read_errors: Vec<String>,
+}
+
+fn read_projects_for_route_from_snapshot(
     snapshot: &DaemonProjectReadSnapshot,
-) -> Vec<ProjectsRouteProject> {
-    let entries = snapshot.resolver.list_projects().unwrap_or_default();
+) -> Result<ProjectsRouteRead, String> {
+    validate_project_registry_for_route(&snapshot.resolver)?;
+    let entries = snapshot
+        .resolver
+        .list_projects()
+        .map_err(|error| format!("failed to load project registry: {error}"))?;
     let tmp_dirs = hidden_project_tmp_dirs(std::env::temp_dir());
     let mut session_prefix_by_root = HashMap::<String, String>::new();
     for entry in &entries {
@@ -1687,12 +1721,12 @@ fn list_projects_for_route_from_snapshot(
             .unwrap_or_else(|| "aimux".to_owned())
     });
     let services_by_id = project_service_state_by_id_from_resolver(&snapshot.resolver);
-    let endpoints_by_id = service_endpoints_by_id_from_resolver(&snapshot.resolver);
-    build_projects_route_projects(
+    let endpoint_read = service_endpoints_by_id_from_resolver(&snapshot.resolver, &entries);
+    let projects = build_projects_route_projects(
         &projects,
         &services_by_id,
         &services_by_id,
-        &endpoints_by_id,
+        &endpoint_read.endpoints_by_id,
         |service| {
             serde_json::from_value::<ProjectServiceState>(service.clone())
                 .ok()
@@ -1703,7 +1737,11 @@ fn list_projects_for_route_from_snapshot(
                             .is_live_native_project_service(&service)
                 })
         },
-    )
+    );
+    Ok(ProjectsRouteRead {
+        projects,
+        read_errors: endpoint_read.read_errors,
+    })
 }
 
 fn project_service_state_by_id_from_resolver(resolver: &PathResolver) -> HashMap<String, Value> {
@@ -1713,22 +1751,94 @@ fn project_service_state_by_id_from_resolver(resolver: &PathResolver) -> HashMap
         .collect()
 }
 
-fn service_endpoints_by_id_from_resolver(resolver: &PathResolver) -> HashMap<String, Value> {
-    let Ok(registry) = resolver.load_registry() else {
-        return HashMap::new();
-    };
-    registry
-        .projects
-        .into_iter()
-        .filter_map(|entry| {
-            let endpoint = load_metadata_endpoint(
-                resolver.global_aimux_dir().join("projects").join(&entry.id),
-            )?;
-            serde_json::to_value(endpoint)
-                .ok()
-                .map(|endpoint| (entry.id, endpoint))
-        })
-        .collect()
+#[derive(Debug)]
+struct ServiceEndpointRead {
+    endpoints_by_id: HashMap<String, Value>,
+    read_errors: Vec<String>,
+}
+
+fn service_endpoints_by_id_from_resolver(
+    resolver: &PathResolver,
+    entries: &[ProjectEntry],
+) -> ServiceEndpointRead {
+    let mut endpoints_by_id = HashMap::new();
+    let mut read_errors = Vec::new();
+    for entry in entries {
+        match read_metadata_endpoint_value_for_project_id(resolver, &entry.id) {
+            Ok(Some(endpoint)) => {
+                endpoints_by_id.insert(entry.id.clone(), endpoint);
+            }
+            Ok(None) => {}
+            Err(error) => read_errors.push(error),
+        }
+    }
+    ServiceEndpointRead {
+        endpoints_by_id,
+        read_errors,
+    }
+}
+
+fn validate_project_registry_for_route(resolver: &PathResolver) -> Result<(), String> {
+    let path = resolver.projects_registry_path();
+    if !path.exists() {
+        return Ok(());
+    }
+    let raw = fs::read_to_string(&path).map_err(|error| {
+        format!(
+            "failed to read project registry {}: {error}",
+            path.display()
+        )
+    })?;
+    let value = serde_json::from_str::<Value>(&raw).map_err(|error| {
+        format!(
+            "failed to parse project registry {}: {error}",
+            path.display()
+        )
+    })?;
+    let projects = value
+        .get("projects")
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("project registry {} has no projects array", path.display()))?;
+    for (index, project) in projects.iter().enumerate() {
+        serde_json::from_value::<ProjectEntry>(project.clone()).map_err(|error| {
+            format!(
+                "failed to parse project registry {} entry {}: {error}",
+                path.display(),
+                index + 1
+            )
+        })?;
+    }
+    Ok(())
+}
+
+fn read_metadata_endpoint_value_for_project_id(
+    resolver: &PathResolver,
+    project_id: &str,
+) -> Result<Option<Value>, String> {
+    let path = metadata_endpoint_path(
+        resolver
+            .global_aimux_dir()
+            .join("projects")
+            .join(project_id),
+    );
+    if !path.exists() {
+        return Ok(None);
+    }
+    let raw = fs::read_to_string(&path).map_err(|error| {
+        format!(
+            "failed to read project service endpoint {}: {error}",
+            path.display()
+        )
+    })?;
+    let endpoint = serde_json::from_str::<MetadataApiEndpoint>(&raw).map_err(|error| {
+        format!(
+            "failed to parse project service endpoint {}: {error}",
+            path.display()
+        )
+    })?;
+    serde_json::to_value(endpoint)
+        .map(Some)
+        .map_err(|error| format!("failed to serialize project service endpoint: {error}"))
 }
 
 fn project_service_info_value() -> Value {
@@ -1796,15 +1906,27 @@ pub fn handle_daemon_runtime_request_with_mutex(
                         }),
                     );
                 }
-                DaemonRouteResponse::json(
-                    200,
-                    json!({
-                        "ok": true,
-                        "projects": list_projects_for_route_from_snapshot(
-                            &daemon_project_read_snapshot(runtime),
-                        ),
-                    }),
-                )
+                let read = match read_projects_for_route_from_snapshot(
+                    &daemon_project_read_snapshot(runtime),
+                ) {
+                    Ok(read) => read,
+                    Err(error) => {
+                        return DaemonRouteResponse::json(
+                            500,
+                            json!({ "ok": false, "error": error }),
+                        );
+                    }
+                };
+                let mut payload = json!({
+                    "ok": true,
+                    "projects": read.projects,
+                });
+                if !read.read_errors.is_empty()
+                    && let Some(object) = payload.as_object_mut()
+                {
+                    object.insert("projectReadErrors".into(), json!(read.read_errors));
+                }
+                DaemonRouteResponse::json(200, payload)
             },
         );
     }
@@ -2081,40 +2203,43 @@ pub fn run_daemon_internal() -> Result<()> {
     let route_runtime = Arc::clone(&runtime);
     let stream_runtime = Arc::clone(&runtime);
     let shutdown_runtime = Arc::clone(&runtime);
-    let serve_result = serve_daemon_http_with_metadata_and_interceptor_until(
-        DaemonListenConfig { host, port },
-        move |request| handle_daemon_runtime_request_with_mutex(&route_runtime, request),
-        || crate::daemon::listener::DaemonRequestMetadata {
-            issued_at: now_iso(),
-            stopping: crate::process_signals::received_shutdown_signal().is_some(),
-        },
-        move |request, writer| {
-            let stream_runtime = Arc::clone(&stream_runtime);
-            Box::pin(async move {
-                if maybe_handle_project_event_stream_request_async(request, writer)
+    // aimux-async-seam: permanent - daemon process entry point starts the async listener from mainline sync startup
+    let serve_result = crate::async_runtime::process_runtime().block_on(
+        serve_daemon_http_with_metadata_and_interceptor_until(
+            DaemonListenConfig { host, port },
+            move |request| handle_daemon_runtime_request_with_mutex(&route_runtime, request),
+            || crate::daemon::listener::DaemonRequestMetadata {
+                issued_at: now_iso(),
+                stopping: crate::process_signals::received_shutdown_signal().is_some(),
+            },
+            move |request, writer| {
+                let stream_runtime = Arc::clone(&stream_runtime);
+                Box::pin(async move {
+                    if maybe_handle_project_event_stream_request_async(request, writer)
+                        .await
+                        .map_err(|error| {
+                            crate::daemon::listener::DaemonListenerError::Io(std::io::Error::other(
+                                error.to_string(),
+                            ))
+                        })?
+                    {
+                        return Ok(true);
+                    }
+                    maybe_handle_host_agent_stream_request_with_runtime_mutex_async(
+                        &stream_runtime,
+                        request,
+                        writer,
+                    )
                     .await
                     .map_err(|error| {
                         crate::daemon::listener::DaemonListenerError::Io(std::io::Error::other(
                             error.to_string(),
                         ))
-                    })?
-                {
-                    return Ok(true);
-                }
-                maybe_handle_host_agent_stream_request_with_runtime_mutex_async(
-                    &stream_runtime,
-                    request,
-                    writer,
-                )
-                .await
-                .map_err(|error| {
-                    crate::daemon::listener::DaemonListenerError::Io(std::io::Error::other(
-                        error.to_string(),
-                    ))
+                    })
                 })
-            })
-        },
-        || crate::process_signals::received_shutdown_signal().is_some(),
+            },
+            || crate::process_signals::received_shutdown_signal().is_some(),
+        ),
     );
     if let Some(signal_name) = crate::process_signals::received_shutdown_signal_name()
         && let Ok(mut runtime) = shutdown_runtime.lock()
@@ -2327,18 +2452,30 @@ impl DaemonStatusRuntime for RealDaemonRuntime {
     }
 
     fn list_projects_for_route(&self) -> Vec<ProjectsRouteProject> {
-        list_projects_for_route_from_snapshot(&DaemonProjectReadSnapshot {
+        self.try_list_projects_for_route().unwrap_or_default()
+    }
+
+    fn try_list_projects_for_route(&self) -> Result<Vec<ProjectsRouteProject>, String> {
+        read_projects_for_route_from_snapshot(&DaemonProjectReadSnapshot {
             resolver: self.resolver.clone(),
             project_service_process_verifier: Arc::clone(&self.project_service_process_verifier),
         })
+        .map(|read| read.projects)
     }
 
     fn list_projects_with_online_agent_counts_for_route(&mut self) -> Vec<ProjectsRouteProject> {
-        let mut projects = self.list_projects_for_route();
+        self.try_list_projects_with_online_agent_counts_for_route()
+            .unwrap_or_default()
+    }
+
+    fn try_list_projects_with_online_agent_counts_for_route(
+        &mut self,
+    ) -> Result<Vec<ProjectsRouteProject>, String> {
+        let mut projects = self.try_list_projects_for_route()?;
         for project in &mut projects {
             project.online_agent_count = self.read_project_online_agent_count(project);
         }
-        projects
+        Ok(projects)
     }
 
     fn daemon_state(&self) -> DaemonState {
@@ -2913,7 +3050,12 @@ impl DaemonOperationsTextRuntime for RealDaemonRuntime {
 
     fn doctor_versions_report(&mut self) -> Result<(Value, String), String> {
         let generated_at = now_iso();
-        let projects = self.list_projects_for_route();
+        let project_read = read_projects_for_route_from_snapshot(&DaemonProjectReadSnapshot {
+            resolver: self.resolver.clone(),
+            project_service_process_verifier: Arc::clone(&self.project_service_process_verifier),
+        })?;
+        let project_read_errors = project_read.read_errors;
+        let projects = project_read.projects;
         let service_alive = projects
             .iter()
             .filter(|project| project.service_alive)
@@ -2957,6 +3099,9 @@ impl DaemonOperationsTextRuntime for RealDaemonRuntime {
             object.insert("expectedServiceManifest".into(), expected_project_service);
             object.insert("projectCount".into(), json!(projects.len()));
             object.insert("serviceAliveCount".into(), json!(service_alive));
+            if !project_read_errors.is_empty() {
+                object.insert("projectReadErrors".into(), json!(project_read_errors));
+            }
             object.insert(
                 "daemonStateProjectCount".into(),
                 json!(state.projects.len()),
@@ -5602,6 +5747,69 @@ mod tests {
     }
 
     #[test]
+    fn restart_project_stop_failure_is_not_reported_as_empty_tmux_kill_list() {
+        let fixture = restart_service_fixture("restart-stop-failure");
+        let project = fixture.project_root.clone();
+        let project_id = fixture.register_project();
+        fixture.persist_service(&project_id, 91_030, ProjectServiceStatus::Running);
+        let launcher =
+            Arc::new(RestartTestLauncher::new(91_130).with_terminate_error("terminate denied"));
+        let verifier = Arc::new(RestartTestProcessVerifier::current_native([91_030]));
+        let mut runtime = fixture.runtime(launcher.clone(), verifier);
+
+        let error = runtime
+            .stop_project_for_restart(&project, |_project_root, _project_state_dir| {
+                panic!("tmux stop must not run after project stop failure")
+            })
+            .expect_err("project stop failure should abort restart");
+
+        assert!(error.contains("failed to stop project before restart"));
+        assert!(error.contains("terminate denied"));
+        assert_eq!(launcher.terminations(), vec![(91_030, false)]);
+        assert!(launcher.calls().is_empty());
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn restart_project_tmux_stop_failure_is_not_reported_as_empty_kill_list() {
+        let fixture = restart_service_fixture("restart-tmux-stop-failure");
+        let project = fixture.project_root.clone();
+        let launcher = Arc::new(RestartTestLauncher::new(91_131));
+        let verifier = Arc::new(RestartTestProcessVerifier::current_native([]));
+        let mut runtime = fixture.runtime(launcher.clone(), verifier);
+
+        let error = runtime
+            .stop_project_for_restart(&project, |_project_root, _project_state_dir| {
+                Err("tmux kill-session failed".to_owned())
+            })
+            .expect_err("tmux stop failure should abort restart");
+
+        assert!(error.contains("failed to stop project tmux runtime before restart"));
+        assert!(error.contains("tmux kill-session failed"));
+        assert!(launcher.calls().is_empty());
+        assert!(launcher.terminations().is_empty());
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn restart_project_empty_tmux_stop_remains_empty_only_after_successful_stop() {
+        let fixture = restart_service_fixture("restart-tmux-empty-success");
+        let project = fixture.project_root.clone();
+        let launcher = Arc::new(RestartTestLauncher::new(91_132));
+        let verifier = Arc::new(RestartTestProcessVerifier::current_native([]));
+        let mut runtime = fixture.runtime(launcher.clone(), verifier);
+
+        let killed = runtime
+            .stop_project_for_restart(&project, |_project_root, _project_state_dir| Ok(Vec::new()))
+            .expect("empty tmux kill list is valid when tmux stop succeeds");
+
+        assert!(killed.is_empty());
+        assert!(launcher.calls().is_empty());
+        assert!(launcher.terminations().is_empty());
+        fixture.cleanup();
+    }
+
+    #[test]
     fn control_plane_restart_reports_retained_dashboard_without_reload() {
         let fixture = restart_service_fixture("restart-retained-dashboard");
         let project = fixture.project_root.clone();
@@ -7256,6 +7464,7 @@ mod tests {
     struct RestartTestLauncher {
         pid: i32,
         endpoint_port: Option<u16>,
+        terminate_error: Option<String>,
         calls: Mutex<Vec<String>>,
         terminations: Mutex<Vec<(i32, bool)>>,
     }
@@ -7265,6 +7474,7 @@ mod tests {
             Self {
                 pid,
                 endpoint_port: None,
+                terminate_error: None,
                 calls: Mutex::new(Vec::new()),
                 terminations: Mutex::new(Vec::new()),
             }
@@ -7272,6 +7482,11 @@ mod tests {
 
         fn with_endpoint(mut self, port: u16) -> Self {
             self.endpoint_port = Some(port);
+            self
+        }
+
+        fn with_terminate_error(mut self, error: &str) -> Self {
+            self.terminate_error = Some(error.to_owned());
             self
         }
 
@@ -7315,6 +7530,9 @@ mod tests {
                 .lock()
                 .expect("terminations")
                 .push((service.pid, force));
+            if let Some(error) = &self.terminate_error {
+                return Err(error.clone());
+            }
             Ok(())
         }
     }

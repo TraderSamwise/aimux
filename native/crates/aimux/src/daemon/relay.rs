@@ -15,8 +15,11 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use serde_json::{Value, json};
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader, ReadBuf};
+use tokio::io::{
+    AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, ReadBuf,
+};
 use tokio::net::TcpStream;
+use tokio::time::Instant;
 
 use crate::async_runtime::{spawn_blocking_named, task_name};
 use crate::desktop_notifier::{DesktopNotificationPayload, send_desktop_notification_and_wait};
@@ -147,7 +150,7 @@ pub fn build_request_head(
 }
 
 async fn write_request(
-    stream: &mut TcpStream,
+    stream: &mut (impl AsyncRead + AsyncWrite + Unpin),
     method: &str,
     path: &str,
     headers: &Value,
@@ -185,7 +188,9 @@ pub fn read_status_and_body(stream: &mut impl Read) -> Result<(u16, String), Str
     Ok((status, body.to_owned()))
 }
 
-async fn read_status_and_body_async(stream: &mut TcpStream) -> Result<(u16, String), String> {
+async fn read_status_and_body_async(
+    stream: &mut (impl AsyncRead + Unpin),
+) -> Result<(u16, String), String> {
     let mut raw = Vec::new();
     stream
         .take((MAX_RELAY_DAEMON_RESPONSE_BYTES + 1) as u64)
@@ -193,6 +198,44 @@ async fn read_status_and_body_async(stream: &mut TcpStream) -> Result<(u16, Stri
         .await
         .map_err(|error| error.to_string())?;
     read_status_and_body(&mut std::io::Cursor::new(raw))
+}
+
+struct LoopbackRequest<'a> {
+    method: &'a str,
+    path: &'a str,
+    headers: &'a Value,
+    body: Option<&'a str>,
+    port: &'a str,
+}
+
+async fn route_request_over_stream(
+    stream: &mut (impl AsyncRead + AsyncWrite + Unpin),
+    request: LoopbackRequest<'_>,
+    timeout: Duration,
+    deadline: Instant,
+) -> Result<(u16, String), String> {
+    tokio::time::timeout_at(
+        deadline,
+        write_request(
+            stream,
+            request.method,
+            request.path,
+            request.headers,
+            request.body,
+            request.port,
+        ),
+    )
+    .await
+    .map_err(|_| "daemon request timed out before it was fully written".to_owned())??;
+
+    tokio::time::timeout_at(deadline, read_status_and_body_async(stream))
+        .await
+        .map_err(|_| {
+            format!(
+                "daemon request was fully written but no response arrived before {}ms timeout; mutation outcome is unknown",
+                timeout.as_millis()
+            )
+        })?
 }
 
 impl DaemonRelayBridge for LoopbackRelayBridge {
@@ -206,24 +249,30 @@ impl DaemonRelayBridge for LoopbackRelayBridge {
         Box::pin(async move {
             let payload = (!body.is_null()).then(|| body.to_string());
             let port = self.port.clone();
-            let result = tokio::time::timeout(REQUEST_TIMEOUT, async {
-                let mut stream = TcpStream::connect(("127.0.0.1", self.port_number()))
-                    .await
-                    .map_err(|error| error.to_string())?;
-                write_request(
-                    &mut stream,
-                    method,
-                    path,
-                    headers,
-                    payload.as_deref(),
-                    &port,
+            let deadline = Instant::now() + REQUEST_TIMEOUT;
+            let result = async {
+                let mut stream = tokio::time::timeout_at(
+                    deadline,
+                    TcpStream::connect(("127.0.0.1", self.port_number())),
                 )
-                .await?;
-                read_status_and_body_async(&mut stream).await
-            })
-            .await
-            .map_err(|_| "daemon request timed out".to_owned())
-            .and_then(|result| result);
+                .await
+                .map_err(|_| "daemon request timed out before connecting".to_owned())?
+                .map_err(|error| error.to_string())?;
+                route_request_over_stream(
+                    &mut stream,
+                    LoopbackRequest {
+                        method,
+                        path,
+                        headers,
+                        body: payload.as_deref(),
+                        port: &port,
+                    },
+                    REQUEST_TIMEOUT,
+                    deadline,
+                )
+                .await
+            }
+            .await;
             match result {
                 Ok((status, body)) => DaemonRouteResponse {
                     status,
@@ -626,10 +675,17 @@ fn sanitize_request_token(value: &str, fallback: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        LoopbackRelayBridge, MAX_RELAY_DAEMON_RESPONSE_BYTES, MAX_RELAY_EVENT_SUBSCRIPTIONS,
-        MAX_RELAY_SSE_BUFFER_BYTES, append_limited_sse_chunk, read_status_and_body,
+        LoopbackRelayBridge, LoopbackRequest, MAX_RELAY_DAEMON_RESPONSE_BYTES,
+        MAX_RELAY_EVENT_SUBSCRIPTIONS, MAX_RELAY_SSE_BUFFER_BYTES, append_limited_sse_chunk,
+        read_status_and_body, route_request_over_stream,
     };
+    use crate::relay_runner::DaemonRelayBridge;
     use std::io::Cursor;
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant as StdInstant};
+    use tokio::io::AsyncReadExt;
+    use tokio::sync::Notify;
+    use tokio::time::Instant;
 
     #[test]
     fn relay_daemon_response_over_the_cap_is_an_error() {
@@ -695,5 +751,95 @@ mod tests {
 
         drop(permits.pop());
         assert!(bridge.acquire_event_subscription().is_ok());
+    }
+
+    #[test]
+    fn relay_daemon_request_timeout_after_full_write_reports_unknown_commit() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-seam: test - daemon relay unit test drives async loopback bridge
+        crate::async_runtime::block_on_named("daemon-relay:test-committed-timeout", async {
+            let (mut client, mut server) = tokio::io::duplex(4096);
+            let captured = Arc::new(Mutex::new(Vec::new()));
+            let read_started = Arc::new(Notify::new());
+            let captured_for_task = Arc::clone(&captured);
+            let read_started_for_task = Arc::clone(&read_started);
+            tokio::spawn(async move {
+                let mut buf = vec![0; 4096];
+                let len = server.read(&mut buf).await.expect("request read");
+                captured_for_task
+                    .lock()
+                    .unwrap()
+                    .extend_from_slice(&buf[..len]);
+                read_started_for_task.notify_one();
+                std::future::pending::<()>().await;
+            });
+
+            let timeout = Duration::from_millis(25);
+            let error = route_request_over_stream(
+                &mut client,
+                LoopbackRequest {
+                    method: "POST",
+                    path: "/agents/kill",
+                    headers: &serde_json::json!({}),
+                    body: Some("{\"sessionId\":\"agent-1\"}"),
+                    port: "43190",
+                },
+                timeout,
+                Instant::now() + timeout,
+            )
+            .await
+            .expect_err("response should time out after commit");
+
+            tokio::time::timeout(Duration::from_secs(1), read_started.notified())
+                .await
+                .expect("request was fully written");
+            let captured = String::from_utf8(captured.lock().unwrap().clone()).expect("utf8");
+            assert!(
+                captured.contains("POST /agents/kill HTTP/1.1"),
+                "{captured}"
+            );
+            assert!(
+                error.contains("fully written")
+                    && error.contains("mutation outcome is unknown")
+                    && error.contains("25ms"),
+                "{error}"
+            );
+        });
+    }
+
+    #[test]
+    fn relay_daemon_request_connect_failure_is_not_reported_as_committed() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-seam: test - daemon relay unit test drives async loopback bridge
+        crate::async_runtime::block_on_named("daemon-relay:test-connect-failure", async {
+            let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind free port");
+            let port = listener.local_addr().expect("addr").port();
+            drop(listener);
+            let bridge = LoopbackRelayBridge {
+                port: port.to_string(),
+                active_event_subscriptions: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            };
+            let before = StdInstant::now();
+            let response = bridge
+                .route_request(
+                    "POST",
+                    "/agents/kill",
+                    &serde_json::json!({}),
+                    &serde_json::json!({}),
+                )
+                .await;
+
+            assert_eq!(response.status, 502);
+            let error = response.body["error"].as_str().unwrap_or_default();
+            assert!(
+                !error.contains("fully written") && !error.contains("mutation outcome"),
+                "{error}"
+            );
+            assert!(
+                before.elapsed() < Duration::from_secs(1),
+                "connect failure should stay fast, elapsed {:?}",
+                before.elapsed()
+            );
+        });
     }
 }
