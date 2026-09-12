@@ -32,6 +32,7 @@ fn async_cutover_http_and_sse_surface_matches_pre_conversion_fixture() {
             normalization: vec![
                 "temporary roots, project ids, pids, ports, timestamps and build stamps are replaced with stable placeholders".into(),
                 "HTTP status lines, header order, content type, connection mode, JSON error shapes and SSE frame ordering/framing are compared literally after that normalization".into(),
+                "Runtime panic log lines are scanned under the isolated Aimux home and normalized before comparison".into(),
             ],
             cases: observed,
         };
@@ -243,8 +244,16 @@ fn observe_pre_async_surface() -> Vec<CharacterizationCase> {
     cases.push(project_sse_concurrent_clients_case(endpoint.port, &context));
     cases.push(project_sse_keepalive_case(endpoint.port, &context));
     cases.push(project_sse_disconnect_case(endpoint.port, &context));
+    cases.push(project_incomplete_mutation_disconnect_case(
+        endpoint.port,
+        &context,
+    ));
     cases.push(daemon_concurrent_requests_case(
         isolation.daemon_port(),
+        &context,
+    ));
+    cases.push(runtime_log_no_nested_panics_case(
+        isolation.aimux_home(),
         &context,
     ));
 
@@ -378,13 +387,64 @@ fn project_sse_disconnect_case(port: u16, context: &NormalizeContext) -> Charact
     }
 }
 
+fn project_incomplete_mutation_disconnect_case(
+    port: u16,
+    _context: &NormalizeContext,
+) -> CharacterizationCase {
+    let full_body = r#"{"session":"codex-disconnect","activity":"busy"}"#;
+    let partial_body = r#"{"session":"codex-disconnect","activity":"#;
+    let request = format!(
+        "POST /set-activity HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{partial_body}",
+        full_body.len()
+    );
+    let mut stream = connect_harness_stream(
+        port,
+        Duration::from_secs(5),
+        "POST /set-activity truncated body client disconnect",
+    );
+    write_all_ready(
+        &mut stream,
+        request.as_bytes(),
+        Duration::from_secs(5),
+        "write truncated POST /set-activity before client disconnect",
+    );
+    let _ = stream.shutdown(Shutdown::Both);
+    drop(stream);
+
+    let mut samples = Vec::new();
+    for _ in 0..3 {
+        let state = json_exchange(port, "GET", "/desktop-state", None, Duration::from_secs(5));
+        let present = response_body_contains_session(&state, "codex-disconnect");
+        samples.push(present);
+        if present {
+            break;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+
+    CharacterizationCase {
+        name: "project-incomplete-mutation-disconnect-no-side-effect".into(),
+        surface: "project-service-http".into(),
+        catches: "A client that disconnects after sending an incomplete mutation body must not leave the mutation applied.".into(),
+        request: "POST /set-activity with a truncated JSON body, close socket, then sample GET /desktop-state for codex-disconnect".into(),
+        observed: json!({
+            "disconnectedSessionPresent": samples.iter().any(|present| *present),
+            "samples": samples,
+        }),
+    }
+}
+
 fn daemon_concurrent_requests_case(port: u16, context: &NormalizeContext) -> CharacterizationCase {
-    let mut slow = connect_harness_stream(port, Duration::from_secs(5), "slow daemon client");
+    let mut slow = connect_harness_stream(
+        port,
+        Duration::from_secs(5),
+        "slow daemon client for incomplete GET /projects",
+    );
     write_all_ready(
         &mut slow,
         b"GET /projects HTTP/1.1\r\nHost: 127.0.0.1",
         Duration::from_secs(5),
-        "write partial slow request",
+        "write partial slow daemon request GET /projects",
     );
 
     let (tx, rx) = mpsc::channel();
@@ -416,6 +476,26 @@ fn daemon_concurrent_requests_case(port: u16, context: &NormalizeContext) -> Cha
         observed: json!({
             "responseCount": responses.len(),
             "responses": normalize_json(json!(responses), context),
+        }),
+    }
+}
+
+fn runtime_log_no_nested_panics_case(
+    aimux_home: &Path,
+    context: &NormalizeContext,
+) -> CharacterizationCase {
+    let panic_lines = collect_nested_runtime_panic_lines(aimux_home)
+        .into_iter()
+        .map(|line| normalize_text(&line, context))
+        .collect::<Vec<_>>();
+
+    CharacterizationCase {
+        name: "runtime-logs-no-nested-runtime-panics".into(),
+        surface: "daemon-and-project-service-logs".into(),
+        catches: "A route can return HTTP success while background tasks panic; the characterization gate must catch nested Tokio runtime panics in isolated daemon and project-service logs.".into(),
+        request: "scan isolated daemon and project-service logs after exercising HTTP and SSE surfaces".into(),
+        observed: json!({
+            "panicLogLines": panic_lines,
         }),
     }
 }
@@ -563,25 +643,33 @@ fn canonical_http_response(bytes: &[u8]) -> CanonicalHttpResponse {
 struct SseStream {
     stream: TcpStream,
     head: Value,
+    request_label: String,
 }
 
 fn open_sse(port: u16, path: &str, timeout: Duration) -> SseStream {
+    let request_label = format!("GET {path} SSE");
     let request = format!(
         "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAccept: text/event-stream\r\nConnection: close\r\n\r\n"
     );
-    let mut stream = connect_harness_stream(port, timeout, &format!("sse {path}"));
+    let mut stream = connect_harness_stream(port, timeout, &request_label);
     write_all_ready(
         &mut stream,
         request.as_bytes(),
         timeout,
-        &format!("write sse request for {path}"),
+        &format!("write request for {request_label}"),
     );
-    finish_request_write(&stream, &format!("finish sse request for {path}"));
-    let head = read_until(&mut stream, b"\r\n\r\n", timeout, "read sse response head");
+    finish_request_write(&stream, &format!("finish request for {request_label}"));
+    let head = read_until(
+        &mut stream,
+        b"\r\n\r\n",
+        timeout,
+        &format!("read response head for {request_label}"),
+    );
     let response = canonical_http_response(&head);
     assert_eq!(response.status_line, "HTTP/1.1 200 OK");
     SseStream {
         stream,
+        request_label,
         head: json!({
             "statusLine": response.status_line,
             "headers": response.headers,
@@ -594,7 +682,12 @@ impl SseStream {
     fn read_frames(&mut self, count: usize, timeout: Duration) -> Vec<String> {
         let mut frames = Vec::new();
         for _ in 0..count {
-            let bytes = read_until(&mut self.stream, b"\n\n", timeout, "read sse frame");
+            let bytes = read_until(
+                &mut self.stream,
+                b"\n\n",
+                timeout,
+                &format!("read SSE frame for {}", self.request_label),
+            );
             frames.push(String::from_utf8(bytes).expect("sse frame utf8"));
         }
         frames
@@ -787,6 +880,58 @@ fn readiness_label(events: libc::c_short) -> &'static str {
         "writable"
     } else {
         "requested"
+    }
+}
+
+fn response_body_contains_session(exchange: &HttpExchange, session: &str) -> bool {
+    exchange
+        .response
+        .body_json
+        .as_ref()
+        .is_some_and(|body| json_contains_string(body, session))
+}
+
+fn json_contains_string(value: &Value, needle: &str) -> bool {
+    match value {
+        Value::String(text) => text == needle,
+        Value::Array(items) => items.iter().any(|item| json_contains_string(item, needle)),
+        Value::Object(map) => map.values().any(|item| json_contains_string(item, needle)),
+        _ => false,
+    }
+}
+
+fn collect_nested_runtime_panic_lines(aimux_home: &Path) -> Vec<String> {
+    let mut lines = Vec::new();
+    collect_nested_runtime_panic_lines_from_dir(aimux_home, aimux_home, &mut lines);
+    lines.sort();
+    lines
+}
+
+fn collect_nested_runtime_panic_lines_from_dir(root: &Path, dir: &Path, lines: &mut Vec<String>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_nested_runtime_panic_lines_from_dir(root, &path, lines);
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if !(name.ends_with(".log") || name.ends_with(".jsonl")) {
+            continue;
+        }
+        let Ok(contents) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let relative = path.strip_prefix(root).unwrap_or(&path).display();
+        for line in contents.lines() {
+            if line.contains("Cannot start a runtime from within a runtime") {
+                lines.push(format!("{relative}: {line}"));
+            }
+        }
     }
 }
 
