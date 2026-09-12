@@ -262,6 +262,9 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
     } else {
         DashboardUiStatePersistence::for_project(&options.project_root).ok()
     };
+    // The dashboard render loop stays synchronous: it owns the foreground
+    // terminal, key polling, and redraw cadence. The project SSE reader is the
+    // narrow async seam and feeds this loop through a bounded channel.
     let mut event_stream = None;
     let mut event_stream_retry_at = None;
     let mut refresh_state = DashboardProjectRefreshState::default();
