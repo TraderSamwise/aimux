@@ -46,9 +46,9 @@ pub fn parse_core_doctor_args<S: AsRef<str>>(args: &[S]) -> Option<CoreDoctorArg
         return None;
     }
     let subcommand = match args.get(1).map(AsRef::as_ref) {
-        Some("disk" | "exchange" | "lifecycle" | "tmux" | "installs" | "notifications") => {
-            args[1].as_ref().to_owned()
-        }
+        Some(
+            "disk" | "exchange" | "lifecycle" | "tmux" | "tasks" | "installs" | "notifications",
+        ) => args[1].as_ref().to_owned(),
         _ => return None,
     };
     let mut parsed = CoreDoctorArgs {
@@ -769,7 +769,9 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
         (Some("doctor"), Some("versions")) => has_only_allowed_flags(&args[2..], &["--json"]),
         (
             Some("doctor"),
-            Some("disk" | "exchange" | "lifecycle" | "tmux" | "installs" | "notifications"),
+            Some(
+                "disk" | "exchange" | "lifecycle" | "tmux" | "tasks" | "installs" | "notifications",
+            ),
         ) => parse_core_doctor_args(args).is_some(),
         (Some("metadata"), _) => parse_core_metadata_args(args).is_some(),
         (Some("repair"), _) => parse_core_repair_args(args).is_some(),

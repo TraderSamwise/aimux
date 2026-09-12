@@ -1376,6 +1376,18 @@ fn doctor_disk_and_tmux_commands_plan_native_text_routes() {
     );
     assert_eq!(notifications.output_mode, CoreCliOutputMode::Json);
     assert_eq!(notifications.action, CoreCliAction::DoctorNotifications);
+
+    let tasks = classify_core_cli(&["doctor", "tasks", "--json"], &context(true, true))
+        .expect("doctor tasks plan");
+    assert_eq!(tasks.operation, CoreCliOperation::DoctorTasks);
+    assert_eq!(tasks.output_mode, CoreCliOutputMode::Json);
+    assert_eq!(
+        tasks.action,
+        CoreCliAction::TextRoute {
+            path: "/core/doctor/tasks-text?json=1".into(),
+            body: None,
+        }
+    );
 }
 
 #[test]

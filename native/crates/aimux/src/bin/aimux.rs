@@ -146,6 +146,7 @@ enum RewriteCommand {
 
 fn main() -> Result<ExitCode> {
     prepare_stable_process_env();
+    aimux::async_runtime::init_process_runtime()?;
     let raw_args = std::env::args().skip(1).collect::<Vec<_>>();
     let stripped_args = normalize_root_dispatch_args(&core_command_args(&raw_args));
     let logging_cli = parse_logging_cli_options(&raw_args);
@@ -413,6 +414,7 @@ fn core_command_help(args: &[String]) -> Option<&'static str> {
         ("doctor", Some("disk"), true) => Some(DOCTOR_DISK_HELP),
         ("doctor", Some("installs"), true) => Some(DOCTOR_INSTALLS_HELP),
         ("doctor", Some("notifications"), true) => Some(DOCTOR_NOTIFICATIONS_HELP),
+        ("doctor", Some("tasks"), true) => Some(DOCTOR_TASKS_HELP),
         ("doctor", Some("tmux"), true) => Some(DOCTOR_TMUX_HELP),
         ("migration", None, _) => Some(MIGRATION_HELP),
         ("migration", Some("audit"), true) => Some(MIGRATION_AUDIT_HELP),
@@ -559,13 +561,14 @@ const LOOP_REMOVE_HELP: &str =
 const LOOP_LIST_HELP: &str = "Usage: aimux loop list [options]\n\nList agents in the managed loop\n\nOptions:\n  --project <path>            Project path\n  --json                      Emit JSON";
 const LOOP_DONE_HELP: &str = "Usage: aimux loop done [options]\n\nReport the loop goal complete\n\nOptions:\n  --session <id>              Session id\n  --reason <text>             What was completed";
 const LOOP_BLOCK_HELP: &str = "Usage: aimux loop block [options]\n\nReport the loop blocked\n\nOptions:\n  --session <id>              Session id\n  --reason <text>             Why you are blocked";
-const DOCTOR_HELP: &str = "Usage: aimux doctor [options] [command]\n\nInspect aimux runtime state\n\nCommands:\n  versions                    Inspect version coherence\n  lifecycle                   Inspect lifecycle queue diagnostics\n  exchange                    Inspect runtime exchange\n  disk                        Inspect worktree cache disk usage\n  installs                    Report superseded installs\n  notifications               Inspect desktop notification delivery\n  tmux                        Inspect managed tmux runtime state";
+const DOCTOR_HELP: &str = "Usage: aimux doctor [options] [command]\n\nInspect aimux runtime state\n\nCommands:\n  versions                    Inspect version coherence\n  lifecycle                   Inspect lifecycle queue diagnostics\n  exchange                    Inspect runtime exchange\n  disk                        Inspect worktree cache disk usage\n  installs                    Report superseded installs\n  notifications               Inspect desktop notification delivery\n  tasks                       Inspect async runtime task registry\n  tmux                        Inspect managed tmux runtime state";
 const DOCTOR_VERSIONS_HELP: &str = "Usage: aimux doctor versions [options]\n\nInspect local daemon, project service, and dashboard version coherence\n\nOptions:\n  --json                      Emit JSON";
 const DOCTOR_LIFECYCLE_HELP: &str = "Usage: aimux doctor lifecycle [options]\n\nInspect project-service lifecycle queue diagnostics\n\nOptions:\n  --project <path>            Project path\n  --json                      Emit JSON";
 const DOCTOR_EXCHANGE_HELP: &str = "Usage: aimux doctor exchange [options]\n\nInspect runtime exchange size, counts, and retention telemetry\n\nOptions:\n  --project <path>            Project path\n  --json                      Emit JSON";
 const DOCTOR_DISK_HELP: &str = "Usage: aimux doctor disk [options]\n\nInspect Aimux-managed worktree cache disk usage\n\nOptions:\n  --project <path>            Project path\n  --include-active            Measure cache directories in active worktrees\n  --json                      Emit JSON";
 const DOCTOR_INSTALLS_HELP: &str = "Usage: aimux doctor installs [options]\n\nReport superseded installs under the aimux install root; removes nothing without --fix\n\nOptions:\n  --fix                       Remove the reported installs instead of only listing them\n  --retention-days <days>     Keep installs newer than this many days\n  --keep-recent <count>       Always keep this many newest installs\n  --json                      Emit JSON";
 const DOCTOR_NOTIFICATIONS_HELP: &str = "Usage: aimux doctor notifications [options]\n\nInspect desktop notification delivery\n\nOptions:\n  --json                      Emit JSON";
+const DOCTOR_TASKS_HELP: &str = "Usage: aimux doctor tasks [options]\n\nInspect async runtime task registry\n\nOptions:\n  --json                      Emit JSON";
 const DOCTOR_TMUX_HELP: &str = "Usage: aimux doctor tmux [options]\n\nInspect managed tmux runtime state\n\nOptions:\n  --project-root <path>       Project root\n  --session <name>            Managed tmux session name override\n  --window-id <id>            Specific tmux window id to inspect\n  --json                      Emit JSON";
 const MIGRATION_HELP: &str = "Usage: aimux migration [options] [command]\n\nExplicit runtime-core migration audit, import, and rollback tooling\n\nCommands:\n  audit                       Inspect legacy runtime artifacts without mutating project state\n  import                      Import legacy exchange artifacts into runtime-exchange.yaml\n  rollback <manifest>         Restore files recorded by a runtime migration manifest";
 const MIGRATION_AUDIT_HELP: &str = "Usage: aimux migration audit [options]\n\nInspect legacy runtime artifacts without mutating project state\n\nOptions:\n  --project <path>            Project path";

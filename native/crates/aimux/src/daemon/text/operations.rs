@@ -1,3 +1,4 @@
+use crate::async_runtime::{doctor_tasks_report, render_doctor_tasks_report};
 use crate::core_command_contract::CORE_API_ROUTES;
 use crate::core_text::{render_core_dashboard_reload_lines, render_core_runtime_restart_lines};
 use crate::daemon::routing::{
@@ -302,6 +303,9 @@ pub fn route_operations_text_request(
     if method == "GET" && pathname == CORE_API_ROUTES.doctor_lifecycle_text {
         return Some(doctor_lifecycle_text_route(runtime, &route_url, body));
     }
+    if method == "GET" && pathname == CORE_API_ROUTES.doctor_tasks_text {
+        return Some(doctor_tasks_text_route(&route_url));
+    }
     if method == "GET" && pathname == CORE_API_ROUTES.doctor_tmux_text {
         return Some(doctor_tmux_text_route(runtime, &route_url));
     }
@@ -391,6 +395,16 @@ pub fn doctor_tmux_text_route(
         }
         Err(error) => text_error(500, format!("Error: {error}")),
     }
+}
+
+pub fn doctor_tasks_text_route(route_url: &DaemonRouteUrl) -> DaemonRouteResponse {
+    let report = doctor_tasks_report();
+    let text = render_doctor_tasks_report(&report);
+    text_or_json_lines(
+        route_url,
+        json!(report),
+        &split_rendered_report_lines(&text),
+    )
 }
 
 pub fn doctor_exchange_text_route(

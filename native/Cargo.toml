@@ -19,6 +19,7 @@ libc = "0.2"
 sha1 = "0.10"
 sha2 = "0.10"
 time = { version = "0.3", features = ["formatting"] }
+tokio = { version = "1.40", features = ["rt-multi-thread", "time"] }
 # Sync websocket client: this crate is threads-and-blocking-IO throughout, so a
 # tokio-based stack would drag an async runtime in for one subsystem.
 tungstenite = { version = "0.24", default-features = false, features = ["handshake", "rustls-tls-native-roots"] }
