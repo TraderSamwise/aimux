@@ -87,7 +87,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Output;
-use std::sync::mpsc::{self, Receiver};
+use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -117,6 +117,7 @@ struct DashboardRuntimeGuardStatus {
     state: RuntimeGuardState,
     disconnected_probe_count: usize,
     entered_at: Option<Instant>,
+    probe_receiver: Option<Receiver<RuntimeGuardState>>,
     repair_receiver: Option<Receiver<DashboardRuntimeGuardRepairResult>>,
     repair_key: Option<String>,
     repair_failed_key: Option<String>,
@@ -131,6 +132,7 @@ impl Default for DashboardRuntimeGuardStatus {
             state: RuntimeGuardState::Ok,
             disconnected_probe_count: 0,
             entered_at: None,
+            probe_receiver: None,
             repair_receiver: None,
             repair_key: None,
             repair_failed_key: None,
@@ -159,6 +161,10 @@ impl DashboardRuntimeGuardStatus {
 
     fn repairing(&self) -> bool {
         self.repair_receiver.is_some()
+    }
+
+    fn probing(&self) -> bool {
+        self.probe_receiver.is_some()
     }
 
     fn repair_failed_for_current_state(&self) -> bool {
@@ -385,41 +391,20 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
         if poll_dashboard_runtime_guard_repair(&mut runtime_guard, &options.project_root) {
             render_now = true;
         }
+        if poll_dashboard_runtime_guard_probe(
+            &mut runtime_guard,
+            &options.project_root,
+            &mut last_runtime_guard_probe,
+        ) {
+            render_now = true;
+        }
         if should_probe_dashboard_runtime_guard(
             live_dashboard,
             dashboard_ready_since.map(|ready_since| ready_since.elapsed()),
             last_runtime_guard_probe.elapsed(),
+            runtime_guard.probing(),
         ) {
-            last_runtime_guard_probe = Instant::now();
-            let raw_probe = probe_runtime_guard(&options.project_root);
-            let (next_state, disconnected_probe_count) = stabilize_runtime_guard_probe(
-                &runtime_guard.state,
-                raw_probe,
-                runtime_guard.disconnected_probe_count,
-                2,
-            );
-            runtime_guard.disconnected_probe_count = disconnected_probe_count;
-            if runtime_guard.set_state(next_state) {
-                if runtime_guard.state.is_ok() {
-                    if let Err(error) = clear_runtime_guard_repair_attempts(
-                        PathResolver::from_env().global_aimux_dir(),
-                        &options.project_root.to_string_lossy(),
-                    ) {
-                        runtime_guard.repair_error =
-                            Some(format!("Aimux repair history clear failed: {error}"));
-                    } else {
-                        runtime_guard.repair_attempts.clear();
-                        runtime_guard.repair_failed_key = None;
-                        runtime_guard.repair_retry_at_ms = None;
-                        runtime_guard.repair_error = None;
-                    }
-                }
-                render_now = true;
-            }
-            if maybe_start_dashboard_runtime_guard_repair(&mut runtime_guard, &options.project_root)
-            {
-                render_now = true;
-            }
+            start_dashboard_runtime_guard_probe(&mut runtime_guard, &options.project_root);
         }
         if rendered_once && !keys.is_empty() {
             mark_dashboard_tui_visible(&mut visibility_state, elapsed_millis(clock_start), None);
@@ -969,10 +954,82 @@ fn should_probe_dashboard_runtime_guard(
     live_dashboard: bool,
     ready_age: Option<Duration>,
     elapsed_since_last_probe: Duration,
+    probe_in_flight: bool,
 ) -> bool {
     live_dashboard
+        && !probe_in_flight
         && ready_age.is_some_and(|age| age >= DASHBOARD_RUNTIME_GUARD_INTERVAL)
         && elapsed_since_last_probe >= DASHBOARD_RUNTIME_GUARD_INTERVAL
+}
+
+fn start_dashboard_runtime_guard_probe(
+    runtime_guard: &mut DashboardRuntimeGuardStatus,
+    project_root: &Path,
+) {
+    if runtime_guard.probing() {
+        return;
+    }
+    let project_root = project_root.to_path_buf();
+    let (sender, receiver) = mpsc::channel();
+    runtime_guard.probe_receiver = Some(receiver);
+    thread::spawn(move || {
+        let result = probe_runtime_guard(project_root);
+        let _ = sender.send(result);
+    });
+}
+
+fn poll_dashboard_runtime_guard_probe(
+    runtime_guard: &mut DashboardRuntimeGuardStatus,
+    project_root: &Path,
+    last_probe_completed: &mut Instant,
+) -> bool {
+    let Some(receiver) = runtime_guard.probe_receiver.as_ref() else {
+        return false;
+    };
+    let raw_probe = match receiver.try_recv() {
+        Ok(raw_probe) => raw_probe,
+        Err(TryRecvError::Empty) => return false,
+        Err(TryRecvError::Disconnected) => RuntimeGuardState::Disconnected,
+    };
+    runtime_guard.probe_receiver = None;
+    *last_probe_completed = Instant::now();
+    apply_dashboard_runtime_guard_probe_result(runtime_guard, project_root, raw_probe)
+}
+
+fn apply_dashboard_runtime_guard_probe_result(
+    runtime_guard: &mut DashboardRuntimeGuardStatus,
+    project_root: &Path,
+    raw_probe: RuntimeGuardState,
+) -> bool {
+    let (next_state, disconnected_probe_count) = stabilize_runtime_guard_probe(
+        &runtime_guard.state,
+        raw_probe,
+        runtime_guard.disconnected_probe_count,
+        2,
+    );
+    runtime_guard.disconnected_probe_count = disconnected_probe_count;
+    let mut render = false;
+    if runtime_guard.set_state(next_state) {
+        if runtime_guard.state.is_ok() {
+            if let Err(error) = clear_runtime_guard_repair_attempts(
+                PathResolver::from_env().global_aimux_dir(),
+                &project_root.to_string_lossy(),
+            ) {
+                runtime_guard.repair_error =
+                    Some(format!("Aimux repair history clear failed: {error}"));
+            } else {
+                runtime_guard.repair_attempts.clear();
+                runtime_guard.repair_failed_key = None;
+                runtime_guard.repair_retry_at_ms = None;
+                runtime_guard.repair_error = None;
+            }
+        }
+        render = true;
+    }
+    if maybe_start_dashboard_runtime_guard_repair(runtime_guard, project_root) {
+        render = true;
+    }
+    render
 }
 
 fn maybe_start_dashboard_runtime_guard_repair(
@@ -2231,27 +2288,89 @@ mod tests {
         assert!(!should_probe_dashboard_runtime_guard(
             true,
             None,
-            DASHBOARD_RUNTIME_GUARD_INTERVAL
+            DASHBOARD_RUNTIME_GUARD_INTERVAL,
+            false
         ));
         assert!(!should_probe_dashboard_runtime_guard(
             true,
             Some(DASHBOARD_RUNTIME_GUARD_INTERVAL - Duration::from_millis(1)),
-            DASHBOARD_RUNTIME_GUARD_INTERVAL
+            DASHBOARD_RUNTIME_GUARD_INTERVAL,
+            false
         ));
         assert!(should_probe_dashboard_runtime_guard(
             true,
             Some(DASHBOARD_RUNTIME_GUARD_INTERVAL),
-            DASHBOARD_RUNTIME_GUARD_INTERVAL
+            DASHBOARD_RUNTIME_GUARD_INTERVAL,
+            false
         ));
         assert!(!should_probe_dashboard_runtime_guard(
             false,
             Some(DASHBOARD_RUNTIME_GUARD_INTERVAL),
-            DASHBOARD_RUNTIME_GUARD_INTERVAL
+            DASHBOARD_RUNTIME_GUARD_INTERVAL,
+            false
         ));
         assert!(!should_probe_dashboard_runtime_guard(
             true,
             Some(DASHBOARD_RUNTIME_GUARD_INTERVAL),
-            DASHBOARD_RUNTIME_GUARD_INTERVAL - Duration::from_millis(1)
+            DASHBOARD_RUNTIME_GUARD_INTERVAL - Duration::from_millis(1),
+            false
+        ));
+        assert!(!should_probe_dashboard_runtime_guard(
+            true,
+            Some(DASHBOARD_RUNTIME_GUARD_INTERVAL),
+            DASHBOARD_RUNTIME_GUARD_INTERVAL,
+            true
+        ));
+    }
+
+    #[test]
+    fn dashboard_runtime_guard_probe_poll_does_not_block_render_loop() {
+        let mut runtime_guard = DashboardRuntimeGuardStatus::default();
+        let (_sender, receiver) = mpsc::channel::<RuntimeGuardState>();
+        runtime_guard.probe_receiver = Some(receiver);
+        let mut last_probe_completed = Instant::now() - DASHBOARD_RUNTIME_GUARD_INTERVAL;
+
+        let started = Instant::now();
+        let changed = poll_dashboard_runtime_guard_probe(
+            &mut runtime_guard,
+            Path::new("/tmp/aimux-dashboard-runtime-guard-test"),
+            &mut last_probe_completed,
+        );
+
+        assert!(!changed);
+        assert!(runtime_guard.probing());
+        assert!(
+            started.elapsed() < Duration::from_millis(50),
+            "unfinished probe polling blocked render loop for {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn dashboard_runtime_guard_probe_cadence_resets_on_completion() {
+        let mut runtime_guard = DashboardRuntimeGuardStatus::default();
+        let (sender, receiver) = mpsc::channel();
+        runtime_guard.probe_receiver = Some(receiver);
+        sender
+            .send(RuntimeGuardState::Ok)
+            .expect("send probe result");
+        let mut last_probe_completed = Instant::now() - DASHBOARD_RUNTIME_GUARD_INTERVAL;
+        let before_poll = Instant::now();
+
+        let changed = poll_dashboard_runtime_guard_probe(
+            &mut runtime_guard,
+            Path::new("/tmp/aimux-dashboard-runtime-guard-test"),
+            &mut last_probe_completed,
+        );
+
+        assert!(!changed);
+        assert!(!runtime_guard.probing());
+        assert!(last_probe_completed >= before_poll);
+        assert!(!should_probe_dashboard_runtime_guard(
+            true,
+            Some(DASHBOARD_RUNTIME_GUARD_INTERVAL),
+            last_probe_completed.elapsed(),
+            runtime_guard.probing()
         ));
     }
 
