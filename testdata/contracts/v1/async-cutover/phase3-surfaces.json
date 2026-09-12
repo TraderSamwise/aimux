@@ -1,11 +1,13 @@
 {
   "version": 1,
-  "source": "pre-Phase 3a daemon stream proxy Rust behaviour",
-  "recorded_from_commit": "aa82f7b1",
+  "source": "pre-Phase 3 daemon stream proxy, relay client, and hosted stream Rust behaviour",
+  "recorded_from_commit": "stream-proxy+relay=aa82f7b1; hosted=b32b4741",
   "normalization": [
     "loopback ports are replaced with <upstream-port>",
     "stream proxy response bytes and upstream request bytes are compared literally after normalization",
-    "disconnect cases compare whether the upstream socket observes EOF rather than retaining a leaked connection"
+    "disconnect cases compare whether the upstream socket observes EOF rather than retaining a leaked connection",
+    "relay websocket frames are parsed as JSON and sorted to stable key order before comparison",
+    "hosted stream temp roots, tokens, principal ids and audit timestamps are normalized"
   ],
   "cases": [
     {
@@ -37,6 +39,84 @@
           "message": "broken pipe"
         },
         "upstreamObservedEof": true
+      }
+    },
+    {
+      "name": "relay-client-project-event-subscription-delivery",
+      "surface": "relay-client",
+      "catches": "A relay project-event subscription opened from a websocket frame must send the subscribe ack, project event, and upstream-closed error before later socket close handling.",
+      "observed": {
+        "connects": [
+          {
+            "url": "wss://relay.aimux.app/daemon/connect",
+            "subprotocols": [
+              "aimux",
+              "aimux-token.tok"
+            ]
+          }
+        ],
+        "subscriptions": [
+          {
+            "subscriptionId": "sub-1",
+            "path": "/projects/repo/events?intervalMs=100",
+            "headers": {
+              "x-aimux-actor-role": "owner"
+            }
+          }
+        ],
+        "sent": [
+          {
+            "id": "sub-1",
+            "type": "project_events_subscribed"
+          },
+          {
+            "id": "sub-1",
+            "type": "project_event",
+            "event": "message",
+            "data": {
+              "seq": 1
+            }
+          },
+          {
+            "id": "sub-1",
+            "type": "project_events_error",
+            "status": 502,
+            "message": "Project event stream closed"
+          }
+        ],
+        "closedWrites": 0,
+        "authLost": [
+          "Relay rejected credentials (code 1008) — run `aimux login` again"
+        ],
+        "status": {
+          "status": "auth_failed",
+          "relayUrl": "wss://relay.aimux.app",
+          "lastConnectedAt": "<timestamp>",
+          "lastError": "Relay rejected credentials (code 1008) — run `aimux login` again"
+        }
+      }
+    },
+    {
+      "name": "hosted-operator-stream-closes-on-principal-revocation",
+      "surface": "hosted-stream",
+      "catches": "Hosted operator streams must re-authenticate while open and close with a revoked audit event when the principal is revoked mid-stream.",
+      "observed": {
+        "response": "HTTP/1.1 200 OK\ncontent-type: text/event-stream\ncache-control: no-store\nx-accel-buffering: no\nconnection: close\n\ndata: first\n\n",
+        "containsFirstEvent": true,
+        "streamAudit": [
+          {
+            "event": "hosted_stream_open",
+            "sessionId": "s",
+            "path": "/proxy/127.0.0.1/<upstream-port>/agents/output/stream",
+            "status": 200
+          },
+          {
+            "event": "hosted_stream_closed:revoked",
+            "sessionId": "s",
+            "path": "/proxy/127.0.0.1/<upstream-port>/agents/output/stream",
+            "status": 200
+          }
+        ]
       }
     }
   ]
