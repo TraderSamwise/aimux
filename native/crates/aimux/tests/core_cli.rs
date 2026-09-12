@@ -1404,6 +1404,21 @@ fn doctor_disk_and_tmux_commands_plan_native_text_routes() {
             body: None,
         }
     );
+
+    let project_tasks = classify_core_cli_with_project_resolver(
+        &["doctor", "tasks", "--project=./child", "--json"],
+        &context(true, true),
+        |project| format!("/resolved/{project}"),
+    )
+    .expect("doctor project tasks plan");
+    assert_eq!(project_tasks.operation, CoreCliOperation::DoctorTasks);
+    assert_eq!(
+        project_tasks.action,
+        CoreCliAction::TextRoute {
+            path: "/core/doctor/tasks-text?projectRoot=%2Fresolved%2F.%2Fchild&json=1".into(),
+            body: None,
+        }
+    );
 }
 
 #[test]

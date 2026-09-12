@@ -6,7 +6,7 @@
 //! one loop per task; a task is a small object that says how often it wants to
 //! run.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::future::Future;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -16,6 +16,7 @@ use std::sync::{Arc, Mutex};
 use std::task::Poll;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use serde::Serialize;
 use serde_json::Value;
 use serde_json::json;
 use tokio::task::JoinSet;
@@ -27,7 +28,6 @@ use crate::debug_logging::{LogLevel, log_at, log_lifecycle_always};
 use crate::paths::PathResolver;
 
 use super::router::ProjectServiceRequestContext;
-use super::runtime_health_history::SchedulerTaskHealthSnapshot;
 
 /// How long the tick loop sleeps when nothing is scheduled.
 const IDLE_SLEEP: Duration = Duration::from_millis(1_000);
@@ -35,6 +35,8 @@ const IDLE_SLEEP: Duration = Duration::from_millis(1_000);
 const MIN_INTERVAL_MS: i64 = 250;
 const TICK_INTERVAL_MS: i64 = MIN_INTERVAL_MS;
 const SLOW_TASK_WARNING_MS: i64 = 5_000;
+const TASK_DURATION_SAMPLE_LIMIT: usize = 128;
+const MAX_LAST_ERROR_CHARS: usize = 512;
 
 #[derive(Debug, Clone, Default)]
 pub struct ProjectSchedulerHandle {
@@ -44,11 +46,8 @@ pub struct ProjectSchedulerHandle {
 #[derive(Debug, Default)]
 struct ProjectSchedulerSignal {
     forced_tasks: Mutex<BTreeSet<String>>,
-    task_health: Mutex<BTreeMap<String, SchedulerTaskHealthSnapshot>>,
+    health: Mutex<BTreeMap<String, PeriodicTaskHealthRecord>>,
 }
-
-#[derive(Debug, Clone, Copy)]
-pub struct SchedulerHealthReadError;
 
 impl ProjectSchedulerHandle {
     pub fn force_task_next_tick(&self, name: impl AsRef<str>) {
@@ -77,75 +76,176 @@ impl ProjectSchedulerHandle {
             .unwrap_or(false)
     }
 
-    pub fn periodic_task_health_snapshot(
-        &self,
-    ) -> Result<Vec<SchedulerTaskHealthSnapshot>, SchedulerHealthReadError> {
-        self.inner
-            .task_health
-            .lock()
-            .map(|task_health| task_health.values().cloned().collect())
-            .map_err(|_| SchedulerHealthReadError)
-    }
-
-    pub fn replace_periodic_task_health_snapshot(
-        &self,
-        snapshots: Vec<SchedulerTaskHealthSnapshot>,
-    ) {
-        if let Ok(mut task_health) = self.inner.task_health.lock() {
-            *task_health = snapshots
-                .into_iter()
-                .map(|snapshot| (snapshot.name.clone(), snapshot))
-                .collect();
-        }
-    }
-
-    fn seed_periodic_task_health(&self, tasks: &[Box<dyn PeriodicTask>]) {
-        if let Ok(mut task_health) = self.inner.task_health.lock() {
-            for task in tasks {
-                task_health
-                    .entry(task.name().to_owned())
-                    .or_insert_with(|| {
-                        SchedulerTaskHealthSnapshot::new(task.name(), interval_of(task.as_ref()))
-                    });
+    fn register_task(&self, name: &str) {
+        match self.inner.health.lock() {
+            Ok(mut health) => {
+                health.entry(name.to_owned()).or_default();
             }
+            Err(_) => log_scheduler_health_error("register", "scheduler health lock poisoned"),
         }
     }
 
-    fn record_periodic_task_run(
-        &self,
-        name: &str,
-        interval_ms: i64,
-        elapsed_ms: i64,
-        finished_ms: i64,
-        panicked: bool,
-        timed_out: bool,
-    ) {
-        let Ok(mut task_health) = self.inner.task_health.lock() else {
-            return;
-        };
-        let snapshot = task_health
-            .entry(name.to_owned())
-            .or_insert_with(|| SchedulerTaskHealthSnapshot::new(name, interval_ms));
-        snapshot.interval_ms = interval_ms;
-        snapshot.runs = snapshot.runs.saturating_add(1);
-        snapshot.last_duration_ms = Some(elapsed_ms);
-        snapshot.last_error_present = panicked || timed_out;
-        if timed_out {
-            snapshot.total_timeouts = snapshot.total_timeouts.saturating_add(1);
-            snapshot.consecutive_timeouts = snapshot.consecutive_timeouts.saturating_add(1);
-        } else {
-            snapshot.consecutive_timeouts = 0;
+    fn record_run(&self, name: &str, outcome: PeriodicTaskRunOutcome, duration_ms: i64) {
+        match self.inner.health.lock() {
+            Ok(mut health) => {
+                health.entry(name.to_owned()).or_default().record(
+                    outcome,
+                    duration_ms,
+                    scheduler_now_ms(),
+                );
+            }
+            Err(_) => log_scheduler_health_error("record", "scheduler health lock poisoned"),
         }
-        if panicked || timed_out {
-            snapshot.consecutive_failures = snapshot.consecutive_failures.saturating_add(1);
-        } else {
-            snapshot.consecutive_failures = 0;
-            snapshot.last_completed_at_ms = Some(finished_ms);
+    }
+
+    pub fn try_health_snapshot(&self) -> Result<Vec<PeriodicTaskHealthSnapshot>, String> {
+        let health = self
+            .inner
+            .health
+            .lock()
+            .map_err(|_| "scheduler health lock poisoned".to_owned())?;
+        Ok(health
+            .iter()
+            .map(|(name, record)| record.snapshot(name))
+            .collect())
+    }
+
+    pub fn diagnostics_json(&self) -> Value {
+        match self.try_health_snapshot() {
+            Ok(periodic_tasks) => json!({
+                "ok": true,
+                "periodicTasks": periodic_tasks,
+            }),
+            Err(error) => json!({
+                "ok": false,
+                "error": error,
+            }),
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn replace_health_snapshot_for_tests(&self, snapshots: Vec<PeriodicTaskHealthSnapshot>) {
+        match self.inner.health.lock() {
+            Ok(mut health) => {
+                *health = snapshots
+                    .into_iter()
+                    .map(|snapshot| {
+                        (
+                            snapshot.name.clone(),
+                            PeriodicTaskHealthRecord::from_snapshot(snapshot),
+                        )
+                    })
+                    .collect();
+            }
+            Err(_) => log_scheduler_health_error("replace", "scheduler health lock poisoned"),
         }
     }
 }
 
 pub type PeriodicTaskFuture<'a> = Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PeriodicTaskHealthSnapshot {
+    pub name: String,
+    pub total_runs: u64,
+    pub last_completed_at_ms: Option<i64>,
+    pub last_duration_ms: Option<i64>,
+    pub p95_duration_ms: Option<i64>,
+    pub consecutive_failures: u64,
+    pub consecutive_timeouts: u64,
+    pub total_timeouts: u64,
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct PeriodicTaskHealthRecord {
+    total_runs: u64,
+    last_completed_at_ms: Option<i64>,
+    last_duration_ms: Option<i64>,
+    duration_samples_ms: VecDeque<i64>,
+    consecutive_failures: u64,
+    consecutive_timeouts: u64,
+    total_timeouts: u64,
+    last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PeriodicTaskRunOutcome {
+    Completed,
+    Panicked,
+    TimedOut { timeout_ms: i64 },
+}
+
+impl PeriodicTaskHealthRecord {
+    fn from_snapshot(snapshot: PeriodicTaskHealthSnapshot) -> Self {
+        let mut duration_samples_ms = VecDeque::new();
+        if let Some(p95_duration_ms) = snapshot.p95_duration_ms {
+            duration_samples_ms.push_back(p95_duration_ms);
+        } else if let Some(last_duration_ms) = snapshot.last_duration_ms {
+            duration_samples_ms.push_back(last_duration_ms);
+        }
+        Self {
+            total_runs: snapshot.total_runs,
+            last_completed_at_ms: snapshot.last_completed_at_ms,
+            last_duration_ms: snapshot.last_duration_ms,
+            duration_samples_ms,
+            consecutive_failures: snapshot.consecutive_failures,
+            consecutive_timeouts: snapshot.consecutive_timeouts,
+            total_timeouts: snapshot.total_timeouts,
+            last_error: snapshot.last_error,
+        }
+    }
+
+    fn record(&mut self, outcome: PeriodicTaskRunOutcome, duration_ms: i64, completed_at_ms: i64) {
+        self.total_runs = self.total_runs.saturating_add(1);
+        match outcome {
+            PeriodicTaskRunOutcome::Completed => {
+                self.last_completed_at_ms = Some(completed_at_ms);
+                self.last_duration_ms = Some(duration_ms);
+                self.push_duration_sample(duration_ms);
+                self.consecutive_failures = 0;
+                self.consecutive_timeouts = 0;
+            }
+            PeriodicTaskRunOutcome::Panicked => {
+                self.last_completed_at_ms = Some(completed_at_ms);
+                self.last_duration_ms = Some(duration_ms);
+                self.push_duration_sample(duration_ms);
+                self.consecutive_failures = self.consecutive_failures.saturating_add(1);
+                self.consecutive_timeouts = 0;
+                self.last_error = Some("task panicked".to_owned());
+            }
+            PeriodicTaskRunOutcome::TimedOut { timeout_ms } => {
+                self.consecutive_failures = self.consecutive_failures.saturating_add(1);
+                self.consecutive_timeouts = self.consecutive_timeouts.saturating_add(1);
+                self.total_timeouts = self.total_timeouts.saturating_add(1);
+                self.last_error =
+                    Some(limit_last_error(&format!("timed out after {timeout_ms}ms")));
+            }
+        }
+    }
+
+    fn push_duration_sample(&mut self, duration_ms: i64) {
+        if self.duration_samples_ms.len() == TASK_DURATION_SAMPLE_LIMIT {
+            self.duration_samples_ms.pop_front();
+        }
+        self.duration_samples_ms.push_back(duration_ms);
+    }
+
+    fn snapshot(&self, name: &str) -> PeriodicTaskHealthSnapshot {
+        PeriodicTaskHealthSnapshot {
+            name: name.to_owned(),
+            total_runs: self.total_runs,
+            last_completed_at_ms: self.last_completed_at_ms,
+            last_duration_ms: self.last_duration_ms,
+            p95_duration_ms: percentile_95(&self.duration_samples_ms),
+            consecutive_failures: self.consecutive_failures,
+            consecutive_timeouts: self.consecutive_timeouts,
+            total_timeouts: self.total_timeouts,
+            last_error: self.last_error.clone(),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct CachedProjectConfig {
@@ -278,10 +378,10 @@ impl PeriodicScheduler {
         now_ms: i64,
         handle: ProjectSchedulerHandle,
     ) -> Self {
-        handle.seed_periodic_task_health(&tasks);
         let tasks = tasks
             .into_iter()
             .map(|task| {
+                handle.register_task(task.name());
                 let next_due_ms = if task.run_immediately() {
                     now_ms
                 } else {
@@ -317,14 +417,12 @@ impl PeriodicScheduler {
             let elapsed_ms = started.elapsed().as_millis().min(i64::MAX as u128) as i64;
             let finished_ms = clock();
             let interval_ms = interval_of(scheduled.task.as_ref());
-            self.handle.record_periodic_task_run(
-                &name,
-                interval_ms,
-                elapsed_ms,
-                finished_ms,
-                panicked,
-                false,
-            );
+            let outcome = if panicked {
+                PeriodicTaskRunOutcome::Panicked
+            } else {
+                PeriodicTaskRunOutcome::Completed
+            };
+            self.handle.record_run(&name, outcome, elapsed_ms);
             scheduled.next_due_ms = finished_ms.saturating_add(interval_ms);
             log_at(
                 LogLevel::Debug,
@@ -383,6 +481,10 @@ impl PeriodicScheduler {
             .map(|delay| delay.clamp(0, IDLE_SLEEP.as_millis() as i64))
             .unwrap_or(IDLE_SLEEP.as_millis() as i64)
     }
+
+    pub fn try_health_snapshot(&self) -> Result<Vec<PeriodicTaskHealthSnapshot>, String> {
+        self.handle.try_health_snapshot()
+    }
 }
 
 pub fn scheduler_now_ms() -> i64 {
@@ -403,12 +505,12 @@ pub fn spawn_project_service_scheduler(
     if tasks.is_empty() {
         return;
     }
-    handle.seed_periodic_task_health(&tasks);
     let supervisor_name = task_name("project-service", "scheduler");
     spawn_named(supervisor_name, async move {
         let mut loops: JoinSet<()> = JoinSet::new();
         for task in tasks {
             let task_name = task.name().to_owned();
+            handle.register_task(&task_name);
             loops.spawn(run_periodic_task_loop(
                 Arc::clone(&context),
                 task,
@@ -493,14 +595,16 @@ async fn run_task_once(
             }
         };
     let elapsed_ms = started.elapsed().as_millis().min(i64::MAX as u128) as i64;
-    handle.record_periodic_task_run(
-        &name,
-        interval_ms,
-        elapsed_ms,
-        scheduler_now_ms(),
-        panicked,
-        timed_out,
-    );
+    let outcome = if timed_out {
+        PeriodicTaskRunOutcome::TimedOut {
+            timeout_ms: timeout_after.as_millis().min(i64::MAX as u128) as i64,
+        }
+    } else if panicked {
+        PeriodicTaskRunOutcome::Panicked
+    } else {
+        PeriodicTaskRunOutcome::Completed
+    };
+    handle.record_run(&name, outcome, elapsed_ms);
     log_at(
         LogLevel::Debug,
         "watcher tick loop task ran",
@@ -560,4 +664,65 @@ fn interval_ms_to_ticks(interval_ms: i64) -> u64 {
 fn interval_of(task: &dyn PeriodicTask) -> i64 {
     let ticks = i64::try_from(task.tick_multiple()).unwrap_or(i64::MAX);
     ticks.saturating_mul(TICK_INTERVAL_MS).max(MIN_INTERVAL_MS)
+}
+
+fn percentile_95(samples: &VecDeque<i64>) -> Option<i64> {
+    if samples.is_empty() {
+        return None;
+    }
+    let mut sorted = samples.iter().copied().collect::<Vec<_>>();
+    sorted.sort_unstable();
+    let index = (sorted.len() * 95).div_ceil(100).saturating_sub(1);
+    sorted.get(index).copied()
+}
+
+fn limit_last_error(error: &str) -> String {
+    error.chars().take(MAX_LAST_ERROR_CHARS).collect()
+}
+
+fn log_scheduler_health_error(operation: &str, error: &str) {
+    log_lifecycle_always(
+        "scheduler health update failed",
+        "watcher",
+        Some(json!({
+            "operation": operation,
+            "error": error,
+        })),
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unreadable_scheduler_health_reports_failure_not_empty() {
+        let handle = ProjectSchedulerHandle::default();
+        let signal = Arc::clone(&handle.inner);
+        let _ = std::thread::spawn(move || {
+            let _guard = signal.health.lock().expect("health lock");
+            panic!("poison scheduler health lock");
+        })
+        .join();
+
+        let diagnostics = handle.diagnostics_json();
+        assert_eq!(diagnostics["ok"], json!(false));
+        assert_eq!(
+            diagnostics["error"],
+            json!("scheduler health lock poisoned")
+        );
+        assert!(diagnostics.get("periodicTasks").is_none());
+    }
+
+    #[test]
+    fn duration_samples_stay_bounded_while_p95_moves() {
+        let mut record = PeriodicTaskHealthRecord::default();
+        for duration_ms in 0..200 {
+            record.record(PeriodicTaskRunOutcome::Completed, duration_ms, duration_ms);
+        }
+
+        assert_eq!(record.duration_samples_ms.len(), TASK_DURATION_SAMPLE_LIMIT);
+        assert_eq!(record.total_runs, 200);
+        assert_eq!(record.snapshot("sampled").p95_duration_ms, Some(193));
+    }
 }

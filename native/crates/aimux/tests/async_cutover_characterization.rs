@@ -142,6 +142,7 @@ fn observe_pre_async_surface() -> Vec<CharacterizationCase> {
     fs::create_dir_all(&project_root).expect("create project root");
     let git_init = Command::new("git")
         .arg("init")
+        .arg("--initial-branch=main")
         .arg("--quiet")
         .arg(&project_root)
         .output()

@@ -2032,14 +2032,11 @@ where
                     CoreCliFallback::None,
                 )
             } else if parsed.subcommand == "tasks" {
+                let project_root = parsed.project.as_deref().map(&resolve_project_root);
                 (
                     CoreCliOperation::DoctorTasks,
                     CoreCliAction::TextRoute {
-                        path: if parsed.json {
-                            format!("{}?json=1", CORE_API_ROUTES.doctor_tasks_text)
-                        } else {
-                            CORE_API_ROUTES.doctor_tasks_text.to_owned()
-                        },
+                        path: doctor_tasks_text_path(project_root.as_deref(), parsed.json),
                         body: None,
                     },
                     CoreCliFallback::None,

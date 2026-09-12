@@ -312,7 +312,7 @@ pub fn route_operations_text_request(
         return Some(doctor_lifecycle_text_route(runtime, &route_url, body));
     }
     if method == "GET" && pathname == CORE_API_ROUTES.doctor_tasks_text {
-        return Some(doctor_tasks_text_route(&route_url));
+        return Some(doctor_tasks_text_route(runtime, &route_url, body));
     }
     if method == "GET" && pathname == CORE_API_ROUTES.doctor_stability_text {
         return Some(doctor_stability_text_route(runtime, &route_url, body));
@@ -408,7 +408,41 @@ pub fn doctor_tmux_text_route(
     }
 }
 
-pub fn doctor_tasks_text_route(route_url: &DaemonRouteUrl) -> DaemonRouteResponse {
+pub fn doctor_tasks_text_route(
+    runtime: &mut impl DaemonOperationsTextRuntime,
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+) -> DaemonRouteResponse {
+    if has_project_root_param(route_url, body) {
+        let project_root = route_project_root_or_cwd(runtime, route_url, body);
+        return match runtime.get_project_service_json(&project_root, project_routes::DIAGNOSTICS) {
+            ProjectServiceJsonResult::Ok { json, .. } => {
+                match project_scheduler_health_from_diagnostics(&json) {
+                    Ok(scheduler) => text_or_json_lines(
+                        route_url,
+                        json!({
+                            "projectRoot": project_root,
+                            "scheduler": scheduler,
+                        }),
+                        &render_project_scheduler_health_lines(&project_root, &scheduler),
+                    ),
+                    Err(error) => {
+                        let lines = vec![format!("Error: {error}")];
+                        text_or_json_lines(
+                            route_url,
+                            json!({
+                                "ok": false,
+                                "projectRoot": project_root,
+                                "error": error,
+                            }),
+                            &lines,
+                        )
+                    }
+                }
+            }
+            ProjectServiceJsonResult::Err { response } => response,
+        };
+    }
     let report = doctor_tasks_report();
     let text = render_doctor_tasks_report(&report);
     text_or_json_lines(
@@ -435,6 +469,74 @@ pub fn doctor_stability_text_route(
         }
         Err(error) => text_error(500, format!("Error: {error}")),
     }
+}
+
+fn has_project_root_param(route_url: &DaemonRouteUrl, body: Option<&Value>) -> bool {
+    string_param(route_url, body, "projectRoot")
+        .or_else(|| string_param(route_url, body, "project"))
+        .is_some()
+}
+
+fn project_scheduler_health_from_diagnostics(diagnostics: &Value) -> Result<Value, String> {
+    let Some(scheduler) = diagnostics.get("scheduler") else {
+        return Err("project diagnostics did not include scheduler health".to_owned());
+    };
+    if scheduler.get("ok").and_then(Value::as_bool) == Some(false) {
+        let error = scheduler
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or("scheduler health unavailable");
+        return Err(error.to_owned());
+    }
+    if !scheduler
+        .get("periodicTasks")
+        .is_some_and(|tasks| tasks.is_array())
+    {
+        return Err("project diagnostics scheduler health is unreadable".to_owned());
+    }
+    Ok(scheduler.clone())
+}
+
+fn render_project_scheduler_health_lines(project_root: &str, scheduler: &Value) -> Vec<String> {
+    let tasks = scheduler
+        .get("periodicTasks")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut lines = vec![
+        "Project Scheduler Tasks".to_owned(),
+        format!("  project: {project_root}"),
+        format!("  periodic tasks: {}", tasks.len()),
+    ];
+    for task in tasks {
+        let name = display_string(&task, "name", "unknown");
+        let last_completed = task
+            .get("lastCompletedAtMs")
+            .map(|value| display_jsonish(value, "never"))
+            .unwrap_or_else(|| "never".to_owned());
+        let last_duration = task
+            .get("lastDurationMs")
+            .map(|value| display_jsonish(value, "n/a"))
+            .unwrap_or_else(|| "n/a".to_owned());
+        let p95 = task
+            .get("p95DurationMs")
+            .map(|value| display_jsonish(value, "n/a"))
+            .unwrap_or_else(|| "n/a".to_owned());
+        lines.push(format!(
+            "  {name}: runs={} lastCompleted={} lastDuration={}ms p95={}ms failures={} timeouts={}/{}",
+            display_i64(&task, "totalRuns", 0),
+            last_completed,
+            last_duration,
+            p95,
+            display_i64(&task, "consecutiveFailures", 0),
+            display_i64(&task, "consecutiveTimeouts", 0),
+            display_i64(&task, "totalTimeouts", 0),
+        ));
+        if let Some(error) = task.get("lastError").and_then(Value::as_str) {
+            lines.push(format!("    last error: {error}"));
+        }
+    }
+    lines
 }
 
 pub fn doctor_exchange_text_route(

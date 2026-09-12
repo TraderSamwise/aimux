@@ -20,38 +20,6 @@ pub const RUNTIME_HEALTH_HISTORY_MAX_SAMPLE_BYTES: usize = 8 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SchedulerTaskHealthSnapshot {
-    pub name: String,
-    pub interval_ms: i64,
-    pub runs: u64,
-    pub last_completed_at_ms: Option<i64>,
-    pub last_duration_ms: Option<i64>,
-    pub p95_duration_ms: Option<i64>,
-    pub consecutive_failures: u64,
-    pub consecutive_timeouts: u64,
-    pub total_timeouts: u64,
-    pub last_error_present: bool,
-}
-
-impl SchedulerTaskHealthSnapshot {
-    pub fn new(name: impl Into<String>, interval_ms: i64) -> Self {
-        Self {
-            name: name.into(),
-            interval_ms,
-            runs: 0,
-            last_completed_at_ms: None,
-            last_duration_ms: None,
-            p95_duration_ms: None,
-            consecutive_failures: 0,
-            consecutive_timeouts: 0,
-            total_timeouts: 0,
-            last_error_present: false,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct BacklogHealthSnapshot {
     pub name: String,
     pub status: BacklogHealthStatus,
@@ -132,7 +100,7 @@ pub fn runtime_health_history_path(context: &ProjectServiceRequestContext) -> Pa
 
 pub fn runtime_health_sample(context: &ProjectServiceRequestContext, now_ms: i64) -> Value {
     let (periodic_tasks, scheduler_read_error_present) =
-        match context.scheduler.periodic_task_health_snapshot() {
+        match context.scheduler.try_health_snapshot() {
             Ok(snapshot) => (snapshot, false),
             Err(_) => (Vec::new(), true),
         };
@@ -241,7 +209,7 @@ pub fn runtime_health_history_retention_days_at_max_sample() -> f64 {
 mod tests {
     use super::*;
     use crate::project_service::router::ProjectServiceRequestContext;
-    use crate::project_service::scheduler::ProjectSchedulerHandle;
+    use crate::project_service::scheduler::{PeriodicTaskHealthSnapshot, ProjectSchedulerHandle};
     use time::OffsetDateTime;
 
     #[test]
@@ -256,17 +224,16 @@ mod tests {
         backlog_metric.set_depth(5);
         backlog_metric.set_depth(2);
         let scheduler = ProjectSchedulerHandle::default();
-        scheduler.replace_periodic_task_health_snapshot(vec![SchedulerTaskHealthSnapshot {
+        scheduler.replace_health_snapshot_for_tests(vec![PeriodicTaskHealthSnapshot {
             name: "loop-watcher".to_owned(),
-            interval_ms: 30_000,
-            runs: 3,
+            total_runs: 3,
             last_completed_at_ms: Some(1_700_000_000_000),
             last_duration_ms: Some(42),
             p95_duration_ms: None,
             consecutive_failures: 1,
             consecutive_timeouts: 1,
             total_timeouts: 2,
-            last_error_present: true,
+            last_error: Some("timed out after 30000ms".to_owned()),
         }]);
         let context =
             ProjectServiceRequestContext::with_project_state_dir(&root, root.join(".aimux"))

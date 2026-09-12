@@ -231,6 +231,20 @@ impl DaemonOperationsTextRuntime for FakeOperationsRuntime {
                 json!({
                     "ok": true,
                     "projectRoot": project_root,
+                    "scheduler": {
+                        "ok": true,
+                        "periodicTasks": [{
+                            "name": "loop-watcher",
+                            "totalRuns": 3,
+                            "lastCompletedAtMs": 1234,
+                            "lastDurationMs": 45,
+                            "p95DurationMs": 67,
+                            "consecutiveFailures": 0,
+                            "consecutiveTimeouts": 1,
+                            "totalTimeouts": 2,
+                            "lastError": "timed out after 30000ms"
+                        }]
+                    },
                     "runtimeExchange": {
                         "path": "/repo/.aimux/runtime-exchange.yaml",
                         "bytes": 600,
@@ -726,6 +740,43 @@ fn doctor_stability_text_and_json_routes_render_history_verdict() {
     assert_eq!(
         report["reasons"][0]["message"],
         json!("loop-watcher has not completed in 2h")
+    );
+}
+
+#[test]
+fn doctor_tasks_project_route_renders_project_scheduler_health() {
+    let mut runtime = FakeOperationsRuntime::default();
+
+    let text = route_operations_text_request(
+        &mut runtime,
+        "GET",
+        &format!("{}?projectRoot=/repo", CORE_API_ROUTES.doctor_tasks_text),
+        None,
+    )
+    .expect("tasks project route");
+    assert_eq!(text.status, 200);
+    let body = text_body(text);
+    assert!(body.contains("Project Scheduler Tasks\n"));
+    assert!(body.contains("project: /repo"));
+    assert!(body.contains("loop-watcher: runs=3"));
+    assert!(body.contains("timeouts=1/2"));
+    assert!(body.contains("last error: timed out after 30000ms"));
+
+    let json = route_operations_text_request(
+        &mut runtime,
+        "GET",
+        &format!(
+            "{}?projectRoot=/repo&json=1",
+            CORE_API_ROUTES.doctor_tasks_text
+        ),
+        None,
+    )
+    .expect("tasks project json route");
+    let report = json_text(json);
+    assert_eq!(report["projectRoot"], json!("/repo"));
+    assert_eq!(
+        report["scheduler"]["periodicTasks"][0]["name"],
+        json!("loop-watcher")
     );
 }
 

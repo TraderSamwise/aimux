@@ -4,8 +4,8 @@ use aimux::project_service::loop_watcher_task::LoopWatcherTask;
 use aimux::project_service::router::ProjectServiceRequestContext;
 use aimux::project_service::router::route_project_service_request;
 use aimux::project_service::scheduler::{
-    PeriodicScheduler, PeriodicTask, PeriodicTaskFuture, ProjectSchedulerHandle,
-    spawn_project_service_scheduler,
+    PeriodicScheduler, PeriodicTask, PeriodicTaskFuture, PeriodicTaskHealthSnapshot,
+    ProjectSchedulerHandle, spawn_project_service_scheduler,
 };
 use serde_json::json;
 use std::fs;
@@ -299,6 +299,70 @@ fn a_panicking_task_does_not_stop_its_neighbour() {
 }
 
 #[test]
+fn scheduler_health_records_success_and_failure_counters() {
+    let ok_runs = Arc::new(AtomicUsize::new(0));
+    let bad_runs = Arc::new(AtomicUsize::new(0));
+    let mut scheduler = PeriodicScheduler::new(
+        vec![
+            task("ok", 1_000, &ok_runs, false),
+            task("bad", 1_000, &bad_runs, true),
+        ],
+        0,
+    );
+    let ctx = context();
+
+    run_due_at(&mut scheduler, &ctx, 1_000);
+    run_due_at(&mut scheduler, &ctx, 2_000);
+
+    let health = scheduler
+        .try_health_snapshot()
+        .expect("scheduler health is readable");
+    let ok = health
+        .iter()
+        .find(|task| task.name == "ok")
+        .expect("ok task");
+    assert_eq!(ok.total_runs, 2);
+    assert!(ok.last_completed_at_ms.is_some());
+    assert!(ok.last_duration_ms.is_some());
+    assert!(ok.p95_duration_ms.is_some());
+    assert_eq!(ok.consecutive_failures, 0);
+    assert_eq!(ok.consecutive_timeouts, 0);
+    assert_eq!(ok.total_timeouts, 0);
+    assert_eq!(ok.last_error, None);
+
+    let bad = health
+        .iter()
+        .find(|task| task.name == "bad")
+        .expect("bad task");
+    assert_eq!(bad.total_runs, 2);
+    assert!(bad.last_completed_at_ms.is_some());
+    assert!(bad.last_duration_ms.is_some());
+    assert!(bad.p95_duration_ms.is_some());
+    assert_eq!(bad.consecutive_failures, 2);
+    assert_eq!(bad.consecutive_timeouts, 0);
+    assert_eq!(bad.total_timeouts, 0);
+    assert_eq!(bad.last_error.as_deref(), Some("task panicked"));
+}
+
+#[test]
+fn project_diagnostics_expose_scheduler_health() {
+    let runs = Arc::new(AtomicUsize::new(0));
+    let handle = ProjectSchedulerHandle::default();
+    let ctx = context_with_scheduler(handle.clone());
+    let mut scheduler =
+        PeriodicScheduler::with_handle(vec![task("visible", 1_000, &runs, false)], 0, handle);
+
+    run_due_at(&mut scheduler, &ctx, 1_000);
+
+    let response = route_project_service_request(&ctx, "GET", routes::DIAGNOSTICS, None);
+    assert_eq!(response.status, 200);
+    let scheduler = response.body.get("scheduler").expect("scheduler health");
+    assert_eq!(scheduler["ok"], json!(true));
+    assert_eq!(scheduler["periodicTasks"][0]["name"], json!("visible"));
+    assert_eq!(scheduler["periodicTasks"][0]["totalRuns"], json!(1));
+}
+
+#[test]
 fn sleep_never_exceeds_the_idle_ceiling_or_goes_negative() {
     let runs = Arc::new(AtomicUsize::new(0));
     let scheduler = PeriodicScheduler::new(vec![task("hour", 3_600_000, &runs, false)], 0);
@@ -498,6 +562,35 @@ fn a_timed_out_task_future_is_cancelled_not_abandoned() {
 }
 
 #[test]
+fn scheduler_health_records_timeouts_without_marking_completion() {
+    init_process_runtime().expect("runtime initialized");
+    let started = Arc::new(AtomicUsize::new(0));
+    let dropped = Arc::new(AtomicUsize::new(0));
+    let completed = Arc::new(AtomicUsize::new(0));
+    let handle = ProjectSchedulerHandle::default();
+    let tasks = vec![Box::new(WedgeTask {
+        started: Arc::clone(&started),
+        dropped,
+        completed,
+    }) as Box<dyn PeriodicTask>];
+    let ctx = Arc::new(context_with_scheduler(handle.clone()));
+
+    spawn_project_service_scheduler(ctx, tasks, handle.clone());
+
+    let health = wait_for_scheduler_health(&handle, "wedged", |task| task.total_timeouts == 1)
+        .expect("timeout health recorded");
+    assert_eq!(started.load(Ordering::SeqCst), 1);
+    assert_eq!(health.total_runs, 1);
+    assert_eq!(health.last_completed_at_ms, None);
+    assert_eq!(health.last_duration_ms, None);
+    assert_eq!(health.p95_duration_ms, None);
+    assert_eq!(health.consecutive_failures, 1);
+    assert_eq!(health.consecutive_timeouts, 1);
+    assert_eq!(health.total_timeouts, 1);
+    assert_eq!(health.last_error.as_deref(), Some("timed out after 25ms"));
+}
+
+#[test]
 fn scheduler_test_helper_is_for_instant_return_tasks() {
     let runs = Arc::new(AtomicUsize::new(0));
     let mut scheduler = PeriodicScheduler::new(vec![task("instant", 1_000, &runs, false)], 0);
@@ -644,4 +737,23 @@ fn unique_temp_dir(prefix: &str) -> std::path::PathBuf {
 
 fn shell_quote(path: &Path) -> String {
     format!("'{}'", path.to_string_lossy().replace('\'', "'\"'\"'"))
+}
+
+fn wait_for_scheduler_health(
+    handle: &ProjectSchedulerHandle,
+    name: &str,
+    predicate: impl Fn(&PeriodicTaskHealthSnapshot) -> bool,
+) -> Option<PeriodicTaskHealthSnapshot> {
+    let started = std::time::Instant::now();
+    while started.elapsed() < Duration::from_secs(1) {
+        let health = handle.try_health_snapshot().ok()?;
+        if let Some(task) = health
+            .into_iter()
+            .find(|task| task.name == name && predicate(task))
+        {
+            return Some(task);
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    None
 }
