@@ -3,7 +3,7 @@ use aimux::local_ui_server::{
     start_local_ui_server,
 };
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::net::TcpStream;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -91,9 +91,20 @@ fn local_ui_server_serves_static_files_config_and_spa_fallback() {
 fn request(port: u16, request: &str) -> String {
     let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect server");
     stream.write_all(request.as_bytes()).expect("write request");
-    let mut response = String::new();
-    stream.read_to_string(&mut response).expect("read response");
-    response
+    let mut response = Vec::new();
+    let mut buffer = [0_u8; 4096];
+    loop {
+        match stream.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(count) => response.extend_from_slice(&buffer[..count]),
+            Err(error) if error.kind() == ErrorKind::ConnectionReset && !response.is_empty() => {
+                break;
+            }
+            Err(error) => panic!("read response: {error}"),
+        }
+    }
+    assert!(!response.is_empty(), "server returned no response");
+    String::from_utf8(response).expect("response utf8")
 }
 
 fn temp_root(label: &str) -> PathBuf {

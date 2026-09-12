@@ -2,14 +2,16 @@ use crate::async_subprocess::AsyncCommand;
 use serde::Serialize;
 use std::env;
 use std::fs;
-use std::io::{self, BufRead, BufReader, Write};
-use std::net::{TcpListener, TcpStream};
+use std::io;
+use std::net::TcpStream as StdTcpStream;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
-use std::thread::{self, JoinHandle};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
+use tokio::task::JoinHandle;
 
 pub const DEFAULT_LOCAL_UI_HOST: &str = "127.0.0.1";
 pub const DEFAULT_LOCAL_UI_PORT: u16 = 43192;
@@ -41,9 +43,9 @@ pub struct LocalUiServerHandle {
 impl LocalUiServerHandle {
     pub fn close(mut self) -> io::Result<()> {
         self.shutdown.store(true, Ordering::Relaxed);
-        let _ = TcpStream::connect((self.host.as_str(), self.port));
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
+        let _ = StdTcpStream::connect((self.host.as_str(), self.port));
+        if let Some(task) = self.thread.take() {
+            task.abort();
         }
         Ok(())
     }
@@ -52,7 +54,10 @@ impl LocalUiServerHandle {
 impl Drop for LocalUiServerHandle {
     fn drop(&mut self) {
         self.shutdown.store(true, Ordering::Relaxed);
-        let _ = TcpStream::connect((self.host.as_str(), self.port));
+        let _ = StdTcpStream::connect((self.host.as_str(), self.port));
+        if let Some(task) = self.thread.take() {
+            task.abort();
+        }
     }
 }
 
@@ -68,6 +73,8 @@ pub fn resolve_default_local_ui_root() -> PathBuf {
 }
 
 pub fn start_local_ui_server(options: LocalUiServerOptions) -> io::Result<LocalUiServerHandle> {
+    crate::async_runtime::init_process_runtime()
+        .map_err(|error| io::Error::other(error.to_string()))?;
     if !is_loopback_host(&options.host) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -88,26 +95,46 @@ pub fn start_local_ui_server(options: LocalUiServerOptions) -> io::Result<LocalU
         ));
     }
     let ui_root = ui_root.canonicalize()?;
-    let listener = TcpListener::bind((options.host.as_str(), options.port))?;
+    let listener = std::net::TcpListener::bind((options.host.as_str(), options.port))?;
+    listener.set_nonblocking(true)?;
     let port = listener.local_addr()?.port();
     let shutdown = Arc::new(AtomicBool::new(false));
     let thread_shutdown = Arc::clone(&shutdown);
     let thread_ui_root = ui_root.clone();
     let thread_config = options.config.clone();
-    let thread = thread::spawn(move || {
-        for stream in listener.incoming() {
-            if thread_shutdown.load(Ordering::Relaxed) {
-                break;
-            }
-            let Ok(stream) = stream else {
-                continue;
+    let thread = crate::async_runtime::spawn_named(
+        crate::async_runtime::task_name("local-ui", "listener"),
+        async move {
+            let listener = match TcpListener::from_std(listener) {
+                Ok(listener) => listener,
+                Err(error) => {
+                    eprintln!("aimux local UI listener failed to enter tokio runtime: {error}");
+                    return;
+                }
             };
-            if thread_shutdown.load(Ordering::Relaxed) {
-                break;
+            loop {
+                if thread_shutdown.load(Ordering::Relaxed) {
+                    break;
+                }
+                let Ok((stream, _)) = listener.accept().await else {
+                    continue;
+                };
+                if thread_shutdown.load(Ordering::Relaxed) {
+                    break;
+                }
+                let ui_root = thread_ui_root.clone();
+                let config = thread_config.clone();
+                crate::async_runtime::spawn_named(
+                    crate::async_runtime::task_name("local-ui", "connection"),
+                    async move {
+                        if let Err(error) = handle_connection(stream, &ui_root, &config).await {
+                            eprintln!("aimux local UI connection failed: {error}");
+                        }
+                    },
+                );
             }
-            let _ = handle_connection(stream, &thread_ui_root, &thread_config);
-        }
-    });
+        },
+    );
     let url = format!("http://{}:{port}", format_host_for_url(&options.host));
     Ok(LocalUiServerHandle {
         host: options.host,
@@ -151,21 +178,18 @@ pub fn open_url_in_browser(url: &str) -> io::Result<()> {
         .map(|_| ())
 }
 
-fn handle_connection(
+async fn handle_connection(
     mut stream: TcpStream,
     ui_root: &Path,
     config: &LocalUiConfig,
 ) -> io::Result<()> {
-    let request_stream = stream.try_clone()?;
-    let mut reader = BufReader::new(request_stream);
-    let mut request_line = String::new();
-    reader.read_line(&mut request_line)?;
+    let request_line = read_request_line(&mut stream).await?;
     let mut parts = request_line.split_whitespace();
     let method = parts.next().unwrap_or_default();
     let uri = parts.next().unwrap_or("/");
     let head = method == "HEAD";
     if method != "GET" && method != "HEAD" {
-        return write_text(&mut stream, 405, "Method not allowed");
+        return write_text(&mut stream, 405, "Method not allowed").await;
     }
     let path = uri_path(uri);
     if path == Some("/aimux-local-config.js") {
@@ -180,21 +204,38 @@ fn handle_connection(
             } else {
                 local_config_javascript(config).into_bytes()
             },
-        );
+        )
+        .await;
     }
     let Some(target) = resolve_request_path(ui_root, uri) else {
-        return write_text(&mut stream, 403, "Forbidden");
+        return write_text(&mut stream, 403, "Forbidden").await;
     };
     if target.is_file() {
-        return serve_file(&mut stream, &target, head);
+        return serve_file(&mut stream, &target, head).await;
     }
     if uri_path(uri).is_some_and(|path| Path::new(path).extension().is_none()) {
         let index_path = ui_root.join("index.html");
         if index_path.is_file() {
-            return serve_file(&mut stream, &index_path, head);
+            return serve_file(&mut stream, &index_path, head).await;
         }
     }
-    write_text(&mut stream, 404, "Not found")
+    write_text(&mut stream, 404, "Not found").await
+}
+
+async fn read_request_line(stream: &mut TcpStream) -> io::Result<String> {
+    let mut bytes = Vec::new();
+    let mut buffer = [0_u8; 1];
+    while bytes.len() < 8192 {
+        let count = stream.read(&mut buffer).await?;
+        if count == 0 {
+            break;
+        }
+        bytes.push(buffer[0]);
+        if buffer[0] == b'\n' {
+            break;
+        }
+    }
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 fn resolve_request_path(ui_root: &Path, uri: &str) -> Option<PathBuf> {
@@ -267,7 +308,7 @@ fn absolute_path(path: PathBuf) -> io::Result<PathBuf> {
     }
 }
 
-fn serve_file(stream: &mut TcpStream, path: &Path, head: bool) -> io::Result<()> {
+async fn serve_file(stream: &mut TcpStream, path: &Path, head: bool) -> io::Result<()> {
     let body = if head { Vec::new() } else { fs::read(path)? };
     let extension = path
         .extension()
@@ -280,10 +321,10 @@ fn serve_file(stream: &mut TcpStream, path: &Path, head: bool) -> io::Result<()>
     } else {
         "public, max-age=31536000, immutable"
     };
-    write_response(stream, 200, "OK", content_type, cache_control, body)
+    write_response(stream, 200, "OK", content_type, cache_control, body).await
 }
 
-fn write_text(stream: &mut TcpStream, status: u16, body: &str) -> io::Result<()> {
+async fn write_text(stream: &mut TcpStream, status: u16, body: &str) -> io::Result<()> {
     write_response(
         stream,
         status,
@@ -292,9 +333,10 @@ fn write_text(stream: &mut TcpStream, status: u16, body: &str) -> io::Result<()>
         "no-store",
         body.as_bytes().to_vec(),
     )
+    .await
 }
 
-fn write_response(
+async fn write_response(
     stream: &mut TcpStream,
     status: u16,
     reason: &str,
@@ -302,12 +344,13 @@ fn write_response(
     cache_control: &str,
     body: Vec<u8>,
 ) -> io::Result<()> {
-    write!(
-        stream,
+    let header = format!(
         "HTTP/1.1 {status} {reason}\r\nContent-Type: {content_type}\r\nCache-Control: {cache_control}\r\nX-Content-Type-Options: nosniff\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         body.len()
-    )?;
-    stream.write_all(&body)
+    );
+    stream.write_all(header.as_bytes()).await?;
+    stream.write_all(&body).await?;
+    stream.shutdown().await
 }
 
 fn reason_phrase(status: u16) -> &'static str {

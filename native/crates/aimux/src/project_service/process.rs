@@ -49,6 +49,7 @@ use super::agent_output::{
     AgentOutputCaptureRuntime, AgentOutputResponseMode, SystemAgentOutputCaptureRuntime,
     read_agent_output_payload, read_agent_output_payload_async, route_agent_output_request_async,
 };
+use super::attachments::{is_attachment_route, route_attachment_request_async};
 use super::dispatcher::{ProjectServiceDispatchResponse, ProjectServiceStreamKind};
 use super::event_streams::{encode_sse_event, encode_sse_keepalive};
 use super::http::{
@@ -464,6 +465,23 @@ where
             reader,
         )
         .await?;
+        return Ok(ProjectServiceTransportResponse {
+            response: prepare_dispatch_response(response, cors),
+            lifecycle_progress: None,
+        });
+    }
+
+    if is_attachment_route(&request.method, &request.path) {
+        let method = request.method;
+        let path = request.path;
+        let response = route_attachment_request_async(
+            Arc::clone(&context),
+            method.clone(),
+            path.clone(),
+            body,
+        )
+        .await
+        .unwrap_or_else(|| route_project_service_request(&context, &method, &path, None));
         return Ok(ProjectServiceTransportResponse {
             response: prepare_dispatch_response(response, cors),
             lifecycle_progress: None,
