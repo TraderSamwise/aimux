@@ -52,6 +52,7 @@ impl AgentInputDeliveryQueue {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentInputWindowActivity {
     Unattended,
+    UnsubmittedInputVisible,
     Attended {
         active_clients: usize,
         latest_activity_ms: i64,
@@ -150,14 +151,21 @@ pub fn decide_agent_input_delivery(
         };
     }
     let max_deliver_at_ms = created_at_ms.saturating_add(MAX_AGENT_INPUT_HOLD_MS);
-    if now_ms >= max_deliver_at_ms {
-        return AgentInputDeliveryDecision::DeliverNow {
-            reason: "max-hold-elapsed".into(),
-        };
-    }
     match activity {
-        Ok(AgentInputWindowActivity::Unattended) => AgentInputDeliveryDecision::DeliverNow {
-            reason: "unattended-window".into(),
+        Ok(AgentInputWindowActivity::Unattended) => {
+            let reason = if now_ms >= max_deliver_at_ms {
+                "max-hold-elapsed"
+            } else {
+                "unattended-window"
+            };
+            AgentInputDeliveryDecision::DeliverNow {
+                reason: reason.into(),
+            }
+        }
+        Ok(AgentInputWindowActivity::UnsubmittedInputVisible) => AgentInputDeliveryDecision::Hold {
+            reason: "visible-unsubmitted-input".into(),
+            quiet_for_ms: None,
+            retry_after_ms: DELIVERY_TASK_INTERVAL_MS,
         },
         Ok(AgentInputWindowActivity::Attended {
             latest_activity_ms, ..
@@ -278,13 +286,8 @@ pub fn run_pending_agent_input_deliveries_with_runtime(
         let window_id = resolve_live_window_id(context, &pending.session_id)
             .unwrap_or_else(|| pending.window_id.clone());
         let force_due_to_max = now_ms >= pending.max_deliver_at_ms;
-        let activity = if force_due_to_max {
-            Ok(AgentInputWindowActivity::Unattended)
-        } else {
-            runtime.agent_input_window_activity(&window_id)
-        };
-        let decision =
-            decide_agent_input_delivery(force_due_to_max, activity, now_ms, pending.created_at_ms);
+        let activity = runtime.agent_input_window_activity(&window_id);
+        let decision = decide_agent_input_delivery(false, activity, now_ms, pending.created_at_ms);
         match decision {
             AgentInputDeliveryDecision::Hold { reason, .. } => {
                 if reason.starts_with("tmux client activity probe failed") {
@@ -424,13 +427,9 @@ pub async fn run_pending_agent_input_deliveries_async(
         let window_id = resolve_live_window_id(context, &pending.session_id)
             .unwrap_or_else(|| pending.window_id.clone());
         let force_due_to_max = now_ms >= pending.max_deliver_at_ms;
-        let activity = if force_due_to_max {
-            Ok(AgentInputWindowActivity::Unattended)
-        } else {
-            tmux_agent_input_window_activity_async(&window_id, DELIVERY_TASK_TIMEOUT).await
-        };
-        let decision =
-            decide_agent_input_delivery(force_due_to_max, activity, now_ms, pending.created_at_ms);
+        let activity =
+            tmux_agent_input_window_activity_async(&window_id, DELIVERY_TASK_TIMEOUT).await;
+        let decision = decide_agent_input_delivery(false, activity, now_ms, pending.created_at_ms);
         match decision {
             AgentInputDeliveryDecision::Hold { reason, .. } => {
                 if reason.starts_with("tmux client activity probe failed") {
@@ -600,6 +599,45 @@ pub fn active_client_count_for_window(
         });
     }
     Ok(0)
+}
+
+pub fn pane_has_unsubmitted_agent_input(pane: &str) -> bool {
+    let visible_lines = pane
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !looks_like_agent_bottom_chrome(line))
+        .collect::<Vec<_>>();
+    for (index, trimmed) in visible_lines.iter().enumerate().rev() {
+        if trimmed.is_empty() || looks_like_agent_bottom_chrome(trimmed) {
+            continue;
+        }
+        let Some(rest) = strip_agent_prompt_marker(trimmed) else {
+            if index > 0
+                && strip_agent_prompt_marker(visible_lines[index - 1])
+                    .is_some_and(|rest| rest.trim().is_empty())
+            {
+                return true;
+            }
+            return false;
+        };
+        return !rest.trim().is_empty();
+    }
+    false
+}
+
+fn strip_agent_prompt_marker(line: &str) -> Option<&str> {
+    let mut chars = line.chars();
+    let first = chars.next()?;
+    if matches!(first, '›' | '>' | '❯') {
+        Some(chars.as_str())
+    } else {
+        None
+    }
+}
+
+fn looks_like_agent_bottom_chrome(line: &str) -> bool {
+    (line.starts_with("gpt-") || line.starts_with("claude-"))
+        && (line.contains(" · ~/") || line.contains(" · /"))
 }
 
 fn load_delivery_state(path: &Path) -> Result<AgentInputDeliveryState, String> {
