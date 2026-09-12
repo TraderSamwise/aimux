@@ -47,6 +47,9 @@ struct ProjectSchedulerSignal {
     task_health: Mutex<BTreeMap<String, SchedulerTaskHealthSnapshot>>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct SchedulerHealthReadError;
+
 impl ProjectSchedulerHandle {
     pub fn force_task_next_tick(&self, name: impl AsRef<str>) {
         let name = name.as_ref().trim();
@@ -74,12 +77,14 @@ impl ProjectSchedulerHandle {
             .unwrap_or(false)
     }
 
-    pub fn periodic_task_health_snapshot(&self) -> Result<Vec<SchedulerTaskHealthSnapshot>, ()> {
+    pub fn periodic_task_health_snapshot(
+        &self,
+    ) -> Result<Vec<SchedulerTaskHealthSnapshot>, SchedulerHealthReadError> {
         self.inner
             .task_health
             .lock()
             .map(|task_health| task_health.values().cloned().collect())
-            .map_err(|_| ())
+            .map_err(|_| SchedulerHealthReadError)
     }
 
     pub fn replace_periodic_task_health_snapshot(

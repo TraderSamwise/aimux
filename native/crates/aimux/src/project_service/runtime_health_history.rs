@@ -1,10 +1,11 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::Serialize;
 use serde_json::{Value, json};
 
+use crate::backlog_metrics::{BacklogMetricSnapshot, BacklogMetricStatus, backlog_snapshots};
 use crate::debug_logging::{
     DEFAULT_MAX_BYTES, DEFAULT_MAX_FILES, append_rotating_jsonl, append_rotating_jsonl_with_limits,
     log_lifecycle_always,
@@ -67,22 +68,25 @@ pub enum BacklogHealthStatus {
     Unavailable,
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct RuntimeBacklogHealthRegistry {
-    snapshots: Arc<Mutex<Vec<BacklogHealthSnapshot>>>,
+impl From<BacklogMetricStatus> for BacklogHealthStatus {
+    fn from(status: BacklogMetricStatus) -> Self {
+        match status {
+            BacklogMetricStatus::Ok => Self::Ok,
+            BacklogMetricStatus::Unavailable => Self::Unavailable,
+        }
+    }
 }
 
-impl RuntimeBacklogHealthRegistry {
-    pub fn snapshot(&self) -> Result<Vec<BacklogHealthSnapshot>, ()> {
-        self.snapshots
-            .lock()
-            .map(|snapshots| snapshots.clone())
-            .map_err(|_| ())
-    }
-
-    pub fn replace(&self, snapshots: Vec<BacklogHealthSnapshot>) {
-        if let Ok(mut current) = self.snapshots.lock() {
-            *current = snapshots;
+impl From<BacklogMetricSnapshot> for BacklogHealthSnapshot {
+    fn from(snapshot: BacklogMetricSnapshot) -> Self {
+        Self {
+            name: snapshot.name,
+            status: snapshot.status.into(),
+            current_depth: snapshot.current_depth.map(|value| value as u64),
+            high_water_mark: snapshot.high_water_mark.map(|value| value as u64),
+            capacity: snapshot.capacity.map(|value| value as u64),
+            error_present: snapshot.error.is_some()
+                || snapshot.status == BacklogMetricStatus::Unavailable,
         }
     }
 }
@@ -130,34 +134,40 @@ pub fn runtime_health_sample(context: &ProjectServiceRequestContext, now_ms: i64
     let (periodic_tasks, scheduler_read_error_present) =
         match context.scheduler.periodic_task_health_snapshot() {
             Ok(snapshot) => (snapshot, false),
-            Err(()) => (Vec::new(), true),
+            Err(_) => (Vec::new(), true),
         };
-    let (backlog, backlog_read_error_present) = match context.runtime_backlog_health.snapshot() {
-        Ok(snapshot) => (snapshot, false),
-        Err(()) => (
-            vec![BacklogHealthSnapshot {
-                name: "backlog-metrics".to_owned(),
-                status: BacklogHealthStatus::Unavailable,
-                current_depth: None,
-                high_water_mark: None,
-                capacity: None,
-                error_present: true,
-            }],
-            true,
-        ),
-    };
+    let scheduler_task_count = periodic_tasks.len();
+    let process_task_count = crate::async_runtime::doctor_tasks_report().totals.live;
+    let backlog = runtime_backlog_health_snapshots();
+    let backlog_read_error_present = backlog.iter().any(|snapshot| snapshot.error_present);
     json!({
         "v": 1,
         "recordedAtMs": now_ms,
         "pid": std::process::id(),
+        "process": {
+            "taskCount": process_task_count,
+        },
         "scheduler": {
             "readErrorPresent": scheduler_read_error_present,
             "errorPresent": scheduler_read_error_present,
+            "taskCount": scheduler_task_count,
             "periodicTasks": periodic_tasks,
         },
         "backlogReadErrorPresent": backlog_read_error_present,
         "backlog": backlog,
     })
+}
+
+fn runtime_backlog_health_snapshots() -> Vec<BacklogHealthSnapshot> {
+    let mut snapshots = BTreeMap::new();
+    for snapshot in backlog_snapshots() {
+        let snapshot: BacklogHealthSnapshot = snapshot.into();
+        snapshots.insert(snapshot.name.clone(), snapshot);
+    }
+    let hosted_snapshot: BacklogHealthSnapshot =
+        crate::hosted_outbox::hosted_outbox_backlog_snapshot_from_env().into();
+    snapshots.insert(hosted_snapshot.name.clone(), hosted_snapshot);
+    snapshots.into_values().collect()
 }
 
 pub fn record_runtime_health_sample_at(context: &ProjectServiceRequestContext, now_ms: i64) {
@@ -237,6 +247,14 @@ mod tests {
     #[test]
     fn runtime_health_sample_records_scheduler_and_backlog_metrics() {
         let root = unique_temp_dir("runtime-health-sample");
+        let backlog_name = format!(
+            "test/runtime-health-sample-{}-{}",
+            std::process::id(),
+            OffsetDateTime::now_utc().unix_timestamp_nanos()
+        );
+        let backlog_metric = crate::backlog_metrics::backlog_metric(&backlog_name, Some(64));
+        backlog_metric.set_depth(5);
+        backlog_metric.set_depth(2);
         let scheduler = ProjectSchedulerHandle::default();
         scheduler.replace_periodic_task_health_snapshot(vec![SchedulerTaskHealthSnapshot {
             name: "loop-watcher".to_owned(),
@@ -253,30 +271,50 @@ mod tests {
         let context =
             ProjectServiceRequestContext::with_project_state_dir(&root, root.join(".aimux"))
                 .with_scheduler(scheduler);
-        context
-            .runtime_backlog_health
-            .replace(vec![BacklogHealthSnapshot {
-                name: "agent-input-delivery".to_owned(),
-                status: BacklogHealthStatus::Ok,
-                current_depth: Some(2),
-                high_water_mark: Some(5),
-                capacity: Some(64),
-                error_present: false,
-            }]);
 
         let sample = runtime_health_sample(&context, 1_800_000_000_000);
 
         assert_eq!(sample["v"], 1);
         assert_eq!(sample["recordedAtMs"], 1_800_000_000_000_i64);
+        assert!(sample["process"]["taskCount"].is_number());
         assert_eq!(sample["scheduler"]["readErrorPresent"], false);
         assert_eq!(sample["scheduler"]["errorPresent"], false);
+        assert_eq!(sample["scheduler"]["taskCount"], 1);
         assert_eq!(sample["scheduler"]["periodicTasks"][0]["totalTimeouts"], 2);
-        assert_eq!(sample["backlogReadErrorPresent"], false);
-        assert_eq!(sample["backlog"][0]["status"], "ok");
-        assert_eq!(sample["backlog"][0]["currentDepth"], 2);
+        let backlog = sample["backlog"].as_array().expect("backlog array");
+        let injected = backlog
+            .iter()
+            .find(|snapshot| snapshot["name"] == backlog_name)
+            .expect("injected backlog snapshot");
+        assert_eq!(injected["status"], "ok");
+        assert_eq!(injected["currentDepth"], 2);
+        assert_eq!(injected["highWaterMark"], 5);
+        assert_eq!(injected["capacity"], 64);
         assert!(
             serde_json::to_string(&sample).unwrap().len() < RUNTIME_HEALTH_HISTORY_MAX_SAMPLE_BYTES
         );
+    }
+
+    #[test]
+    fn runtime_health_sample_reads_global_backlog_metric_registry() {
+        let root = unique_temp_dir("runtime-health-global-backlog");
+        let metric_name = format!("test/runtime-health-backlog-{}", std::process::id());
+        crate::backlog_metrics::record_backlog_depth(&metric_name, 3, Some(8));
+        crate::backlog_metrics::record_backlog_depth(&metric_name, 1, Some(8));
+        let context =
+            ProjectServiceRequestContext::with_project_state_dir(&root, root.join(".aimux"));
+
+        let sample = runtime_health_sample(&context, 1_800_000_000_000);
+
+        let backlog = sample["backlog"].as_array().expect("backlog array");
+        let recorded = backlog
+            .iter()
+            .find(|snapshot| snapshot["name"] == metric_name)
+            .expect("global backlog metric");
+        assert_eq!(recorded["status"], "ok");
+        assert_eq!(recorded["currentDepth"], 1);
+        assert_eq!(recorded["highWaterMark"], 3);
+        assert_eq!(recorded["capacity"], 8);
     }
 
     #[test]

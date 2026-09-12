@@ -17,7 +17,6 @@ use super::agent_output_projection::AgentOutputProjectionCache;
 use super::output_cache::AgentOutputCaptureCache;
 use super::output_metrics::AgentOutputReadMetrics;
 use super::project_events::ProjectEventBus;
-use super::runtime_health_history::RuntimeBacklogHealthRegistry;
 use super::scheduler::ProjectSchedulerHandle;
 
 use super::agent_controls::route_agent_control_request;
@@ -78,7 +77,6 @@ pub struct ProjectServiceRequestContext {
     pub plugin_statuses: Vec<NativePluginStatus>,
     pub scheduler: ProjectSchedulerHandle,
     pub agent_input_delivery_queue: AgentInputDeliveryQueue,
-    pub runtime_backlog_health: RuntimeBacklogHealthRegistry,
 }
 
 impl ProjectServiceRequestContext {
@@ -102,7 +100,6 @@ impl ProjectServiceRequestContext {
             plugin_statuses: Vec::new(),
             scheduler: ProjectSchedulerHandle::default(),
             agent_input_delivery_queue: AgentInputDeliveryQueue::default(),
-            runtime_backlog_health: RuntimeBacklogHealthRegistry::default(),
         }
     }
 
@@ -129,7 +126,6 @@ impl ProjectServiceRequestContext {
             plugin_statuses: Vec::new(),
             scheduler: ProjectSchedulerHandle::default(),
             agent_input_delivery_queue: AgentInputDeliveryQueue::default(),
-            runtime_backlog_health: RuntimeBacklogHealthRegistry::default(),
         }
     }
 
