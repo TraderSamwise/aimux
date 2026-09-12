@@ -244,6 +244,7 @@
               "options": { "reason": "cli", "hasStopDaemon": false, "hasEnsureDaemonRunning": true }
             },
             { "fn": "ensureDaemonRunning", "options": { "adoptExisting": false } },
+            { "fn": "verifyRestartedDaemon" },
             {
               "fn": "renderRuntimeRestartResult",
               "restart": {
@@ -332,6 +333,7 @@
               }
             },
             { "fn": "ensureDaemonRunning", "options": { "adoptExisting": false } },
+            { "fn": "verifyRestartedDaemon" },
             {
               "fn": "renderRuntimeRestartResult",
               "restart": {
@@ -463,6 +465,7 @@
                 }
               }
             },
+            { "fn": "verifyRestartedDaemon" },
             {
               "fn": "renderRuntimeRestartResult",
               "restart": {

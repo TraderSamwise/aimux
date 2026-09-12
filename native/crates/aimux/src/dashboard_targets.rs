@@ -407,7 +407,7 @@ pub fn resolve_dashboard_target_with_context(
 fn wait_for_dashboard_target_ready(
     tmux: &mut impl DashboardTargetTmux,
     target: &TmuxTarget,
-    _readiness_value: &str,
+    readiness_value: &str,
     timeout_ms: u64,
 ) -> Result<(), String> {
     let deadline = Instant::now() + Duration::from_millis(timeout_ms);
@@ -428,8 +428,8 @@ fn wait_for_dashboard_target_ready(
         std::thread::sleep(Duration::from_millis(50));
     }
     Err(format!(
-        "Timed out waiting for tmux window {} to become ready",
-        target.window_id
+        "Timed out waiting {}ms for tmux window {} readiness option {}={}",
+        timeout_ms, target.window_id, TMUX_DASHBOARD_READY_OPTION, readiness_value
     ))
 }
 

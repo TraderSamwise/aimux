@@ -207,6 +207,8 @@ struct ProjectOnlineAgentCountCacheEntry {
 struct RestartDashboardTarget {
     target: DashboardTargetRef,
     retained: bool,
+    status: &'static str,
+    warning: Option<String>,
 }
 
 impl RestartDashboardTarget {
@@ -214,6 +216,8 @@ impl RestartDashboardTarget {
         Self {
             target,
             retained: false,
+            status: "reloaded",
+            warning: None,
         }
     }
 
@@ -221,6 +225,17 @@ impl RestartDashboardTarget {
         Self {
             target,
             retained: true,
+            status: "retained",
+            warning: None,
+        }
+    }
+
+    fn verified_after_timeout(target: DashboardTargetRef, warning: String) -> Self {
+        Self {
+            target,
+            retained: false,
+            status: "verified-after-timeout",
+            warning: Some(warning),
         }
     }
 
@@ -228,7 +243,7 @@ impl RestartDashboardTarget {
         if self.retained {
             "retained"
         } else {
-            "reloaded"
+            self.status
         }
     }
 }
@@ -1594,12 +1609,19 @@ impl RealDaemonRuntime {
                 Ok(restart_dashboard) => {
                     refresh_statusline(self, project_root);
                     let status = restart_dashboard.status();
+                    let warning = restart_dashboard.warning;
                     let target = restart_dashboard.target;
-                    json!({
+                    let mut dashboard = json!({
                         "status": status,
                         "sessionName": target.dashboard_session.session_name,
                         "target": tmux_target_json(&target.dashboard_target),
-                    })
+                    });
+                    if let Some(warning) = warning
+                        && let Value::Object(object) = &mut dashboard
+                    {
+                        object.insert("error".into(), json!(warning));
+                    }
+                    dashboard
                 }
                 Err(error) => json!({ "status": "failed", "error": error }),
             }
@@ -3859,19 +3881,82 @@ fn reload_dashboard_for_restart_with_tmux(
                 Err(error)
             }
         }
-        Err(error) => {
-            record_repair_event_from_env(
-                project_root,
-                ACTION_DASHBOARD_RELOAD,
-                "control-plane-restart",
-                STATUS_FAILED,
-                Some(json!({ "error": error.clone() })),
-            );
-            Err(error)
-        }
+        Err(error) => match verify_dashboard_after_readiness_timeout(project_root, tmux, &error) {
+            Ok(Some(target)) => {
+                let status = target.status();
+                let session_name = target.target.dashboard_session.session_name.clone();
+                let target_json = tmux_target_json(&target.target.dashboard_target);
+                record_repair_event_from_env(
+                    project_root,
+                    ACTION_DASHBOARD_RELOAD,
+                    "control-plane-restart",
+                    STATUS_REPAIRED,
+                    Some(json!({
+                        "status": status,
+                        "error": error.clone(),
+                        "sessionName": session_name,
+                        "target": target_json,
+                    })),
+                );
+                Ok(target)
+            }
+            Ok(None) => {
+                record_repair_event_from_env(
+                    project_root,
+                    ACTION_DASHBOARD_RELOAD,
+                    "control-plane-restart",
+                    STATUS_FAILED,
+                    Some(json!({ "error": error.clone() })),
+                );
+                Err(error)
+            }
+            Err(verification_error) => {
+                let error = format!(
+                    "{error}; post-timeout dashboard verification failed: {verification_error}"
+                );
+                record_repair_event_from_env(
+                    project_root,
+                    ACTION_DASHBOARD_RELOAD,
+                    "control-plane-restart",
+                    STATUS_FAILED,
+                    Some(json!({ "error": error.clone() })),
+                );
+                Err(error)
+            }
+        },
     };
     restore_active_windows(tmux, &active_windows);
     result
+}
+
+fn verify_dashboard_after_readiness_timeout(
+    project_root: &str,
+    tmux: &mut impl DashboardTargetTmux,
+    error: &str,
+) -> Result<Option<RestartDashboardTarget>, String> {
+    if !is_dashboard_readiness_timeout(error) {
+        return Ok(None);
+    }
+    let context = DashboardTargetContext::for_project(project_root)?;
+    let Some(target) = find_live_dashboard_target_with_context(project_root, tmux, &context)?
+    else {
+        return Ok(None);
+    };
+    tmux.set_session_option(
+        &target.dashboard_session.session_name,
+        TMUX_DASHBOARD_BUILD_OPTION,
+        &context.dashboard_build_stamp,
+    )?;
+    Ok(Some(RestartDashboardTarget::verified_after_timeout(
+        target,
+        error.to_owned(),
+    )))
+}
+
+fn is_dashboard_readiness_timeout(error: &str) -> bool {
+    error.contains("Timed out waiting")
+        && error.contains("tmux window")
+        && error.contains("readiness option")
 }
 
 fn retained_dashboard_for_restart(
@@ -5886,6 +5971,96 @@ mod tests {
         assert_eq!(tmux.set_session_option_calls, 1);
         assert_eq!(tmux.ensure_dashboard_window_calls, 0);
         assert_eq!(tmux.replace_window_when_ready_calls, 0);
+    }
+
+    #[test]
+    fn dashboard_readiness_timeout_recovers_when_live_dashboard_is_verified() {
+        let project_root = "/repo/live-dashboard-after-timeout";
+        let context = DashboardTargetContext::for_project(project_root).expect("context");
+        let mut tmux = RestartDashboardFastPathTmux::new(project_root, &context);
+        let timeout = format!(
+            "Timed out waiting 20000ms for tmux window @1 readiness option {}={}",
+            TMUX_DASHBOARD_READY_OPTION, context.dashboard_build_stamp
+        );
+
+        let target = verify_dashboard_after_readiness_timeout(project_root, &mut tmux, &timeout)
+            .expect("timeout recovery check succeeds")
+            .expect("live dashboard recovered");
+
+        assert_eq!(target.status(), "verified-after-timeout");
+        assert_eq!(target.warning.as_deref(), Some(timeout.as_str()));
+        assert_eq!(target.target.dashboard_target.window_id, "@1");
+        assert_eq!(tmux.set_session_option_calls, 1);
+    }
+
+    #[test]
+    fn control_plane_restart_treats_verified_dashboard_timeout_as_nonfatal() {
+        let fixture = restart_service_fixture("restart-dashboard-timeout-verified");
+        let project = fixture.project_root.clone();
+        let project_id = fixture.register_project();
+        fixture.persist_service(&project_id, 91_027, ProjectServiceStatus::Running);
+        fixture.persist_endpoint(91_027);
+        let launcher = Arc::new(RestartTestLauncher::new(91_127));
+        let verifier = Arc::new(RestartTestProcessVerifier::current_native([91_027]));
+        let mut runtime = fixture.runtime(launcher.clone(), verifier);
+        let timeout = "Timed out waiting 20000ms for tmux window @1 readiness option @aimux-dashboard-ready=stamp";
+        let refreshed = RefCell::new(Vec::<String>::new());
+
+        let result = runtime.restart_control_plane_project_with_statusline(
+            &project,
+            |project_root| {
+                Ok(RestartDashboardTarget::verified_after_timeout(
+                    restart_test_dashboard_ref(project_root),
+                    timeout.to_owned(),
+                ))
+            },
+            |_runtime, project_root| refreshed.borrow_mut().push(project_root.to_owned()),
+        );
+        let restart = json!({
+            "daemon": { "current": { "pid": 9002 } },
+            "projects": [result.clone()],
+            "summary": restart_summary(std::slice::from_ref(&result), &json!({})),
+        });
+        let text = render_runtime_restart_result(&restart);
+
+        assert_eq!(result["dashboard"]["status"], "verified-after-timeout");
+        assert_eq!(result["dashboard"]["error"], timeout);
+        assert_eq!(restart["summary"]["failures"], json!(0));
+        assert!(text.contains("dashboard: verified-after-timeout"));
+        assert!(text.contains(timeout));
+        assert_eq!(refreshed.into_inner(), vec![project]);
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn control_plane_restart_keeps_unverified_dashboard_timeout_failed() {
+        let fixture = restart_service_fixture("restart-dashboard-timeout-unverified");
+        let project = fixture.project_root.clone();
+        let project_id = fixture.register_project();
+        fixture.persist_service(&project_id, 91_028, ProjectServiceStatus::Running);
+        fixture.persist_endpoint(91_028);
+        let launcher = Arc::new(RestartTestLauncher::new(91_128));
+        let verifier = Arc::new(RestartTestProcessVerifier::current_native([91_028]));
+        let mut runtime = fixture.runtime(launcher.clone(), verifier);
+        let timeout = "Timed out waiting 20000ms for tmux window @2 readiness option @aimux-dashboard-ready=stamp";
+        let refreshed = RefCell::new(Vec::<String>::new());
+
+        let result = runtime.restart_control_plane_project_with_statusline(
+            &project,
+            |_project_root| Err(timeout.to_owned()),
+            |_runtime, project_root| refreshed.borrow_mut().push(project_root.to_owned()),
+        );
+        let restart = json!({
+            "daemon": { "current": { "pid": 9002 } },
+            "projects": [result.clone()],
+            "summary": restart_summary(std::slice::from_ref(&result), &json!({})),
+        });
+
+        assert_eq!(result["dashboard"]["status"], "failed");
+        assert_eq!(result["dashboard"]["error"], timeout);
+        assert_eq!(restart["summary"]["failures"], json!(1));
+        assert!(refreshed.into_inner().is_empty());
+        fixture.cleanup();
     }
 
     #[test]
