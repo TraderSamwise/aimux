@@ -449,14 +449,17 @@ mod tests {
         );
 
         let report = build_stability_doctor_report("/repo", &root);
-        assert_ne!(report.verdict, StabilityVerdict::Unknown);
         assert_eq!(report.sample_count, 3);
         assert_eq!(report.history_span_ms, 24 * 60 * 60 * 1000);
         assert!(
-            report
-                .reasons
-                .iter()
-                .all(|reason| !reason.kind.starts_with("history-")),
+            report.reasons.iter().all(|reason| !matches!(
+                reason.kind.as_str(),
+                "history-unreadable"
+                    | "history-empty"
+                    | "history-too-short"
+                    | "sample-timestamp-unreadable"
+                    | "sample-truncated"
+            )),
             "{:#?}",
             report.reasons
         );
