@@ -86,6 +86,16 @@ struct NormalizeContext {
 
 fn observe_pre_async_surface() -> Vec<CharacterizationCase> {
     let isolation = TestIsolation::new("async-cutover-characterization");
+    if std::env::var_os("AIMUX_ASYNC_CUTOVER_DIAGNOSTICS").is_some() {
+        eprintln!(
+            "async cutover isolation root: {}",
+            isolation.root().display()
+        );
+        eprintln!(
+            "async cutover AIMUX_HOME: {}",
+            isolation.aimux_home().display()
+        );
+    }
     let project_root = isolation.root().join("repo");
     fs::create_dir_all(&project_root).expect("create project root");
     let git_init = Command::new("git")
@@ -928,7 +938,10 @@ fn collect_nested_runtime_panic_lines_from_dir(root: &Path, dir: &Path, lines: &
         };
         let relative = path.strip_prefix(root).unwrap_or(&path).display();
         for line in contents.lines() {
-            if line.contains("Cannot start a runtime from within a runtime") {
+            if line.contains("Cannot start a runtime from within a runtime")
+                || line.contains("block_on_named was called from an async task")
+                || line.contains("panicked at crates/aimux/src/async_runtime.rs")
+            {
                 lines.push(format!("{relative}: {line}"));
             }
         }

@@ -40,6 +40,8 @@ for run in $(seq 1 "$RUNS"); do
 
   CARGO_INCREMENTAL=0 \
     CARGO_TARGET_DIR="$TARGET_DIR" \
+    AIMUX_ASYNC_CUTOVER_DIAGNOSTICS=1 \
+    AIMUX_KEEP_TEST_ISOLATION=1 \
     RUST_BACKTRACE="${RUST_BACKTRACE:-1}" \
     cargo test \
       --manifest-path native/Cargo.toml \
