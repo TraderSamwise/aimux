@@ -432,9 +432,11 @@ def main() -> int:
             ("doctor-stability", parsed_doctor_stability),
         ]
 
-        health_matches = has_per_task_health_counters(payloads)
-        buffer_matches = has_bounded_buffer_metrics(payloads)
         snapshot_matches = snapshot_candidates(state_dir, started_at)
+        snapshot_payloads = [(str(path), payload) for path, payload in snapshot_matches]
+        searched_payloads = payloads + snapshot_payloads
+        health_matches = has_per_task_health_counters(searched_payloads)
+        buffer_matches = has_bounded_buffer_metrics(searched_payloads)
         reporting_snapshots = [str(path) for path, payload in snapshot_matches if snapshot_is_reporting(path, payload)]
         stability_ok = doctor_stability.returncode == 0 and has_stability_verdict(parsed_doctor_stability)
 
