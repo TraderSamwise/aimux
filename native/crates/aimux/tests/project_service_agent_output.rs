@@ -1896,7 +1896,6 @@ fn queued_visible_draft_releases_after_hold_budget() {
     let state_dir = project.join("state");
     write_state(&state_dir);
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
-    let now_ms = aimux::project_service::scheduler::scheduler_now_ms();
     let mut runtime = FakeActivityRuntime {
         inner: FakeCaptureRuntime {
             output:
@@ -1918,12 +1917,9 @@ fn queued_visible_draft_releases_after_hold_budget() {
     assert_eq!(held.status, 200);
     assert_eq!(held.body["delivery"]["state"], "held");
     assert!(runtime.inner.actions.is_empty());
+    let deliver_at_ms = queued_max_deliver_at_ms(&state_dir);
 
-    run_pending_agent_input_deliveries_with_runtime(
-        &context,
-        &mut runtime,
-        now_ms + MAX_AGENT_INPUT_HOLD_MS + 1,
-    );
+    run_pending_agent_input_deliveries_with_runtime(&context, &mut runtime, deliver_at_ms + 1);
 
     assert_eq!(
         runtime.inner.actions,
@@ -2648,4 +2644,13 @@ fn temp_project(label: &str) -> PathBuf {
 
 fn cleanup(path: PathBuf) {
     let _ = remove_dir_all(path);
+}
+
+fn queued_max_deliver_at_ms(state_dir: &std::path::Path) -> i64 {
+    let text = std::fs::read_to_string(agent_input_delivery_queue_path(state_dir))
+        .expect("queued delivery state");
+    let value: Value = serde_json::from_str(&text).expect("queued delivery json");
+    value["pending"][0]["maxDeliverAtMs"]
+        .as_i64()
+        .expect("queued max deliver time")
 }
