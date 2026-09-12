@@ -1,3 +1,5 @@
+mod support;
+
 use aimux::tmux::{
     AIMUX_MODIFIED_ENTER_COMMAND, AIMUX_STALE_MODIFIED_ENTER_COMMAND,
     AIMUX_TMUX_RUNTIME_CONTRACT_VERSION, CapturePaneOptions, OpenTargetOptions,
@@ -448,6 +450,38 @@ fn wraps_target_mutations_with_existing_argv_builders() {
             .iter()
             .skip(1)
             .all(|(_, _, timeout)| timeout.is_none())
+    );
+}
+
+#[test]
+fn capture_target_async_does_not_enter_sync_bridge() {
+    let _isolation = support::TestIsolation::new("tmux-capture-target-async");
+    let mut manager = TmuxRuntimeManager::new();
+    let target = TmuxTarget {
+        session_name: "aimux-test".to_owned(),
+        window_id: "@1".to_owned(),
+        window_index: 1,
+        window_name: "codex".to_owned(),
+        pane_dead: Some(false),
+    };
+
+    // aimux-async-seam: test - tmux runtime manager test drives async capture from sync harness
+    let error = aimux::async_runtime::block_on_named(
+        "test:tmux-capture-target-async",
+        manager.capture_target_async(
+            &target,
+            CapturePaneOptions {
+                start_line: Some(-40),
+                end_line: None,
+                include_escapes: true,
+            },
+        ),
+    )
+    .expect_err("isolated tmux socket should report unavailable");
+
+    assert!(
+        error.contains("tmux") || error.contains("error connecting") || error.contains("timed out"),
+        "capture_target_async must return the tmux failure instead of panicking: {error}"
     );
 }
 

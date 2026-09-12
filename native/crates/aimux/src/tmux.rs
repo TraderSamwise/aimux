@@ -770,7 +770,25 @@ impl TmuxRuntimeManager {
         target: &TmuxTarget,
         options: CapturePaneOptions,
     ) -> Result<String, String> {
-        self.capture_target(target, options)
+        let started_at = Instant::now();
+        let args = capture_pane_argv(&target.window_id, options);
+        let mut command = tmux_command_from_env();
+        command.args(&args);
+        let result = command
+            .output_timeout_async(TMUX_CAPTURE_TARGET_TIMEOUT)
+            .await
+            .map_err(|error| format!("failed to run tmux: {error}"))?;
+        let elapsed_ms = started_at.elapsed().as_secs_f64() * 1000.0;
+        record_tmux_exec(&args, elapsed_ms, TmuxExecMode::Async);
+        if result.status.success() {
+            return Ok(String::from_utf8_lossy(&result.stdout).trim().to_owned());
+        }
+        let stderr = String::from_utf8_lossy(&result.stderr).trim().to_owned();
+        Err(if stderr.is_empty() {
+            format!("tmux exited with {}", result.status)
+        } else {
+            stderr
+        })
     }
 
     pub fn start_pane_pipe(
