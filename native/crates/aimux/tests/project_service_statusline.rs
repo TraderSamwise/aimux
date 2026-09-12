@@ -171,6 +171,7 @@ fn async_statusline_refresh_reports_tmux_refresh_failure_after_writing_artifacts
     let isolation = support::TestIsolation::new("statusline-async-refresh-client");
     let context = isolation.project_context(&project, &state_dir);
 
+    // aimux-async-seam: test - statusline route test drives async handler
     let response = aimux::async_runtime::block_on_named(
         "test:statusline-refresh-async",
         route_statusline_refresh_request_async(
@@ -227,6 +228,7 @@ fn async_statusline_refresh_cancellation_leaves_refresh_marked_pending() {
         .project_context(&project, &state_dir)
         .with_desktop_state(desktop_state_fixture());
 
+    // aimux-async-seam: test - statusline cancellation test drives async helper
     let timed_out = aimux::async_runtime::block_on_named("test:statusline-refresh-cancel", async {
         tokio::time::timeout(
             Duration::from_millis(10),
@@ -274,6 +276,7 @@ fn async_statusline_refresh_success_marks_refresh_applied() {
         .project_context(&project, &state_dir)
         .with_desktop_state(desktop_state_fixture());
 
+    // aimux-async-seam: test - statusline success test drives async helper
     let result = aimux::async_runtime::block_on_named(
         "test:statusline-refresh-applied",
         refresh_project_statusline_with_tmux_refresh_async(

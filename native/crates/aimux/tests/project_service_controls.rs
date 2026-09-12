@@ -94,6 +94,7 @@ fn async_open_dashboard_keeps_focus_false_as_success_without_tmux() {
     let isolation = support::TestIsolation::new("control-async-dashboard-no-focus");
     let context = isolation.project_context(&project, &state_dir);
 
+    // aimux-async-seam: test - control route test drives async handler
     let response = aimux::async_runtime::block_on_named(
         "test:control-open-dashboard-async",
         route_control_request_async(
@@ -208,6 +209,7 @@ fn async_focus_window_marks_agent_seen_and_recent_after_focus_completes() {
     let context = fixture_context(&project, &state_dir);
     let mut runtime = FakeAsyncControlRuntime::default();
 
+    // aimux-async-seam: test - control route test drives async handler
     let response = aimux::async_runtime::block_on_named(
         "test:control-focus-window-async-success",
         route_control_request_async_with_runtime(
@@ -258,6 +260,7 @@ fn async_focus_window_cancellation_before_focus_completes_writes_no_seen_metadat
     };
 
     let timed_out =
+        // aimux-async-seam: test - control cancellation test drives async handler
         aimux::async_runtime::block_on_named("test:control-focus-window-cancel", async {
             tokio::time::timeout(
                 Duration::from_millis(10),
@@ -304,6 +307,7 @@ fn async_focus_window_reports_tmux_focus_failure() {
     let isolation = support::TestIsolation::new("control-async-focus-failure");
     let context = isolation.project_context(&project, &state_dir);
 
+    // aimux-async-seam: test - control route test drives async handler
     let response = aimux::async_runtime::block_on_named(
         "test:control-focus-window-async",
         route_control_request_async(
