@@ -83,11 +83,7 @@ fn run_due_at(
     context: &ProjectServiceRequestContext,
     now_ms: i64,
 ) -> Vec<String> {
-    init_process_runtime().expect("runtime initialized");
-    aimux::async_runtime::block_on_named(
-        "project-service-scheduler-test:run-due-at",
-        scheduler.run_due_at(context, now_ms),
-    )
+    run_due_with_clock(scheduler, context, &mut || now_ms)
 }
 
 fn run_due_with_clock(
