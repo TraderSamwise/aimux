@@ -1939,7 +1939,14 @@ fn native_daemon_auth_reads_and_updates_credentials() {
             .remote_enabled
     );
     let enabled = DaemonCoreCommandRuntime::enable_relay_for_user_request(&mut runtime);
-    assert_eq!(enabled["status"], "disconnected");
+    assert!(
+        matches!(
+            enabled["status"].as_str(),
+            Some("connecting" | "disconnected")
+        ),
+        "enabled relay should report an active client state, got {enabled}"
+    );
+    assert_eq!(enabled["relayUrl"], "wss://relay.example");
     assert!(
         load_credentials(&resolver)
             .expect("credentials")

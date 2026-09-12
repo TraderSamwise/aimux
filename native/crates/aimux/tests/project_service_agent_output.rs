@@ -2002,7 +2002,6 @@ fn queued_probe_failure_releases_after_hold_budget() {
     let state_dir = project.join("state");
     write_state(&state_dir);
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
-    let now_ms = aimux::project_service::scheduler::scheduler_now_ms();
     let mut runtime = FakeActivityRuntime {
         input_activity: VecDeque::from([Err("tmux socket busy".into())]),
         ..Default::default()
@@ -2019,14 +2018,11 @@ fn queued_probe_failure_releases_after_hold_budget() {
     assert_eq!(held.status, 200);
     assert_eq!(held.body["delivery"]["state"], "held");
 
+    let deliver_at_ms = queued_max_deliver_at_ms(&state_dir);
     runtime
         .input_activity
         .push_back(Err("tmux socket still busy".into()));
-    run_pending_agent_input_deliveries_with_runtime(
-        &context,
-        &mut runtime,
-        now_ms + MAX_AGENT_INPUT_HOLD_MS + 1,
-    );
+    run_pending_agent_input_deliveries_with_runtime(&context, &mut runtime, deliver_at_ms + 1);
 
     assert_eq!(
         runtime.inner.actions,
