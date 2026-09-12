@@ -6,7 +6,7 @@ use aimux::project_service::runtime_exchange::{
     read_runtime_exchange, runtime_exchange_path, write_runtime_exchange,
 };
 use serde_json::json;
-use std::fs::remove_dir_all;
+use std::fs::{create_dir_all, remove_dir_all, write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -135,6 +135,69 @@ fn routes_match_not_found_invalid_id_and_limit_errors() {
         bad_message_limit.body["error"],
         "messageLimit must be an integer >= 1"
     );
+    cleanup(project);
+}
+
+#[test]
+fn routes_report_invalid_exchange_instead_of_empty_lists_or_not_found() {
+    let project = temp_project("invalid-exchange");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).expect("state dir");
+    write(
+        runtime_exchange_path(&state_dir),
+        "version: 1\nthreads: []\nmessages: []\ntasks: []\n",
+    )
+    .expect("invalid exchange");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let threads = route_project_service_request(&context, "GET", "/threads", None);
+    assert_eq!(threads.status, 500);
+    assert_eq!(threads.body["ok"], false);
+    assert!(
+        threads.body["error"]
+            .as_str()
+            .unwrap()
+            .contains("invalid runtime exchange")
+    );
+
+    let thread_detail = route_project_service_request(&context, "GET", "/threads/thread-1", None);
+    assert_eq!(
+        thread_detail.status, 500,
+        "invalid exchange must not masquerade as a missing thread"
+    );
+    assert!(
+        thread_detail.body["error"]
+            .as_str()
+            .unwrap()
+            .contains("generatedAt")
+    );
+
+    let tasks = route_project_service_request(&context, "GET", "/tasks", None);
+    assert_eq!(tasks.status, 500);
+    assert_eq!(tasks.body["ok"], false);
+    cleanup(project);
+}
+
+#[test]
+fn missing_exchange_file_is_genuine_empty_store() {
+    let project = temp_project("missing-exchange");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).expect("state dir");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let threads = route_project_service_request(&context, "GET", "/threads", None);
+    assert_eq!(threads.status, 200);
+    assert_eq!(threads.body.as_array().unwrap().len(), 0);
+
+    let tasks = route_project_service_request(&context, "GET", "/tasks", None);
+    assert_eq!(tasks.status, 200);
+    assert_eq!(tasks.body["ok"], true);
+    assert_eq!(tasks.body["total"], 0);
+    assert_eq!(tasks.body["tasks"].as_array().unwrap().len(), 0);
+
+    let missing_thread = route_project_service_request(&context, "GET", "/threads/missing", None);
+    assert_eq!(missing_thread.status, 404);
+    assert_eq!(missing_thread.body["error"], "thread not found");
     cleanup(project);
 }
 

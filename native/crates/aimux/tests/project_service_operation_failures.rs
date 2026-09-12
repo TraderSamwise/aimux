@@ -2,7 +2,8 @@ use aimux::project_api_contract::routes;
 use aimux::project_service::operation_failures::{
     OperationFailureInput, OperationFailureMatch, WorktreePathMatch,
     clear_dashboard_operation_failures, dashboard_operation_failures_path,
-    try_add_dashboard_operation_failure,
+    list_dashboard_operation_failures, try_add_dashboard_operation_failure,
+    try_list_dashboard_operation_failures,
 };
 use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
 use serde_json::json;
@@ -27,7 +28,7 @@ fn clears_matching_failures_and_leaves_others_active() {
             worktree_path: WorktreePathMatch::Exact("/repo/.aimux/worktrees/demo".into()),
         },
     );
-    assert_eq!(cleared, 1);
+    assert_eq!(cleared.expect("clear failures"), 1);
 
     let state: serde_json::Value = serde_json::from_str(
         &read_to_string(dashboard_operation_failures_path(&state_dir)).unwrap(),
@@ -54,7 +55,7 @@ fn can_clear_only_main_checkout_failures() {
             worktree_path: WorktreePathMatch::OnlyMissing,
         },
     );
-    assert_eq!(cleared, 1);
+    assert_eq!(cleared.expect("clear failures"), 1);
     let state: serde_json::Value = serde_json::from_str(
         &read_to_string(dashboard_operation_failures_path(&state_dir)).unwrap(),
     )
@@ -116,6 +117,84 @@ fn adding_failure_reports_persist_error() {
         !dashboard_operation_failures_path(&state_dir).exists(),
         "failed persistence must not fabricate a stored failure record"
     );
+    cleanup(project);
+}
+
+#[test]
+fn corrupt_failure_store_is_reported_not_treated_as_empty() {
+    let project = temp_project("corrupt-store");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).expect("state dir");
+    write(dashboard_operation_failures_path(&state_dir), "{").expect("corrupt store");
+
+    let error = try_list_dashboard_operation_failures(&state_dir).expect_err("corrupt store");
+    assert!(
+        error.contains("failed to parse dashboard operation failure store"),
+        "{error}"
+    );
+
+    let failures = list_dashboard_operation_failures(&state_dir);
+    assert_eq!(failures.len(), 1);
+    assert_eq!(
+        failures[0]["operation"], "operation-failures.read",
+        "read failure must be visible in desktop-state rather than []"
+    );
+    assert!(
+        failures[0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("failed to parse")
+    );
+
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let response = route_project_service_request(
+        &context,
+        "POST",
+        routes::OPERATION_FAILURES_CLEAR,
+        Some(&json!({ "targetKind": "agent" })),
+    );
+    assert_eq!(response.status, 500);
+    assert_eq!(response.body["ok"], false);
+    assert!(
+        response.body["error"]
+            .as_str()
+            .unwrap()
+            .contains("failed to parse dashboard operation failure store")
+    );
+    cleanup(project);
+}
+
+#[test]
+fn missing_failure_store_is_genuine_empty_and_clear_reports_zero() {
+    let project = temp_project("missing-store");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).expect("state dir");
+
+    let failures = try_list_dashboard_operation_failures(&state_dir).expect("missing is empty");
+    assert!(failures.is_empty());
+    assert!(list_dashboard_operation_failures(&state_dir).is_empty());
+
+    let cleared = clear_dashboard_operation_failures(
+        &state_dir,
+        OperationFailureMatch {
+            target_kind: Some("agent".into()),
+            operation: Some("create".into()),
+            target_id: None,
+            worktree_path: WorktreePathMatch::Any,
+        },
+    )
+    .expect("missing store clears as empty");
+    assert_eq!(cleared, 0);
+
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let response = route_project_service_request(
+        &context,
+        "POST",
+        routes::OPERATION_FAILURES_CLEAR,
+        Some(&json!({ "targetKind": "agent" })),
+    );
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body, json!({ "ok": true, "cleared": 0 }));
     cleanup(project);
 }
 
