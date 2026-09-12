@@ -2447,6 +2447,7 @@ fn read_http_request(stream: &mut TcpStream) -> String {
             Err(error) if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
                 break;
             }
+            Err(error) if error.kind() == ErrorKind::Interrupted => continue,
             Err(error) => panic!("read request: {error}"),
         }
         if request_is_complete(&buffer) {
