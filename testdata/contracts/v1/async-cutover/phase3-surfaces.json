@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "source": "pre-Phase 3a daemon stream proxy Rust behaviour",
+  "recorded_from_commit": "aa82f7b1",
+  "normalization": [
+    "loopback ports are replaced with <upstream-port>",
+    "stream proxy response bytes and upstream request bytes are compared literally after normalization",
+    "disconnect cases compare whether the upstream socket observes EOF rather than retaining a leaked connection"
+  ],
+  "cases": [
+    {
+      "name": "daemon-stream-proxy-host-agent-text-transform",
+      "surface": "daemon-stream-proxy",
+      "catches": "Host-agent output streams keep the pre-conversion plain-text response contract while preserving upstream SSE request headers.",
+      "observed": {
+        "upstreamRequest": "GET /agents/output/stream?sessionId=claude-1 HTTP/1.1\nHost: 127.0.0.1:<upstream-port>\nAccept: text/event-stream\nConnection: close\n",
+        "response": "HTTP/1.1 200 OK\ncontent-type: text/plain; charset=utf-8\nconnection: close\n\nhello\n world"
+      }
+    },
+    {
+      "name": "daemon-stream-proxy-project-events-raw-sse",
+      "surface": "daemon-stream-proxy",
+      "catches": "Project event stream proxying keeps raw SSE bytes, stream headers, and forwarded authorization headers stable.",
+      "observed": {
+        "upstreamRequest": "GET /events?since=1 HTTP/1.1\nHost: 127.0.0.1:<upstream-port>\nAccept: text/event-stream\nConnection: close\nx-aimux-actor-role: owner\n",
+        "response": "HTTP/1.1 200 OK\ncontent-type: text/event-stream\ncache-control: no-cache, no-transform\nconnection: close\n\nevent: ready\ndata: {\"ok\":true}\n"
+      }
+    },
+    {
+      "name": "daemon-stream-proxy-downstream-disconnect-drops-upstream",
+      "surface": "daemon-stream-proxy",
+      "catches": "A downstream client disconnecting mid-proxy must drop the upstream project-service stream instead of leaking it.",
+      "observed": {
+        "upstreamRequest": "GET /events HTTP/1.1\nHost: 127.0.0.1:<upstream-port>\nAccept: text/event-stream\nConnection: close\n",
+        "error": {
+          "kind": "io",
+          "message": "broken pipe"
+        },
+        "upstreamObservedEof": true
+      }
+    }
+  ]
+}

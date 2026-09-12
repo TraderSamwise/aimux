@@ -264,7 +264,7 @@ impl AsyncProjectLifecycleRuntime for SystemProjectLifecycleRuntime {
     ) -> bool {
         let deadline = Instant::now() + timeout;
         loop {
-            if self.has_window(target) {
+            if has_window_async(target).await {
                 return true;
             }
             if Instant::now() >= deadline {
@@ -286,6 +286,22 @@ impl AsyncProjectLifecycleRuntime for SystemProjectLifecycleRuntime {
         )
         .await
     }
+}
+
+async fn has_window_async(target: &TmuxTarget) -> bool {
+    run_tmux_argv_output_async(
+        vec![
+            "display-message".to_owned(),
+            "-p".to_owned(),
+            "-t".to_owned(),
+            target.window_id.clone(),
+            "#{window_id}".to_owned(),
+        ],
+        format!("tmux failed to inspect window {}", target.window_id),
+        None,
+    )
+    .await
+    .is_ok_and(|output| output.trim() == target.window_id)
 }
 
 pub(super) fn remove_git_worktree_checkout(main_repo: &str, path: &str) -> Result<(), String> {
