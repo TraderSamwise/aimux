@@ -97,8 +97,13 @@ async fn deliver_agent_input_direct_async(
     session_id: &str,
     text: &str,
 ) -> WatcherDeliveryResult {
-    let Some(window_id) = resolve_live_window_id(context, session_id) else {
-        return WatcherDeliveryResult::Failed;
+    let window_id = match resolve_live_window_id(context, session_id) {
+        Ok(Some(window_id)) => window_id,
+        Ok(None) => return WatcherDeliveryResult::Failed,
+        Err(error) => {
+            record_agent_input_delivery_probe_failure(context, session_id, &error);
+            return WatcherDeliveryResult::Failed;
+        }
     };
     let project_state_dir = context.project_state_dir();
     let prompt_context = get_prompt_context_text(&project_state_dir, session_id);

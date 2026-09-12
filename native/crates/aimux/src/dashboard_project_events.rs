@@ -1168,18 +1168,23 @@ impl DashboardProjectEventAdapterContract {
                 "ignored malformed dashboard SSE payload: {message}"
             ));
         }
-        if let Ok(events) = events {
-            for event in events {
-                match event {
-                    DashboardProjectEvent::Ready(payload) => {
-                        self.handle_event(event_names::READY, &Value::Object(payload));
-                    }
-                    DashboardProjectEvent::ProjectUpdate(payload) => {
-                        self.handle_event(event_names::PROJECT_UPDATE, &Value::Object(payload));
-                    }
-                    DashboardProjectEvent::Alert(payload) => {
-                        self.handle_event(event_names::ALERT, &Value::Object(payload));
-                    }
+        let events = match events {
+            Ok(events) => events,
+            Err(error) => {
+                self.handle_stream_decode_failure(generation, label, &error.to_string());
+                return;
+            }
+        };
+        for event in events {
+            match event {
+                DashboardProjectEvent::Ready(payload) => {
+                    self.handle_event(event_names::READY, &Value::Object(payload));
+                }
+                DashboardProjectEvent::ProjectUpdate(payload) => {
+                    self.handle_event(event_names::PROJECT_UPDATE, &Value::Object(payload));
+                }
+                DashboardProjectEvent::Alert(payload) => {
+                    self.handle_event(event_names::ALERT, &Value::Object(payload));
                 }
             }
         }
@@ -1192,6 +1197,28 @@ impl DashboardProjectEventAdapterContract {
             );
             adapter.idle_timer = Some(idle_timer);
         }
+    }
+
+    fn handle_stream_decode_failure(&mut self, generation: i64, label: &str, message: &str) {
+        self.streams.remove(label);
+        self.stream_decoders.remove(label);
+        if let Some(timer_id) = self
+            .adapter
+            .as_mut()
+            .and_then(|adapter| adapter.idle_timer.take())
+        {
+            self.timers.clear(timer_id);
+        }
+        let footer = format!("Dashboard event stream failed: {message}");
+        self.host.footer_flash = Some(footer.clone());
+        self.host.footer_flash_ticks = Some(4);
+        self.render_current_dashboard_view();
+        self.debug(format!(
+            "dashboard project event stream reconnecting: {message}"
+        ));
+        self.invalidate_endpoint_health();
+        self.recover();
+        self.schedule_retry(generation);
     }
 
     fn render_current_dashboard_view(&mut self) {

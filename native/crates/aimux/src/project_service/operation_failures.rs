@@ -54,7 +54,7 @@ pub fn route_operation_failures_request(
         return None;
     }
     let body = body.unwrap_or(&Value::Null);
-    let cleared = clear_dashboard_operation_failures(
+    let cleared = match clear_dashboard_operation_failures(
         context.project_state_dir(),
         OperationFailureMatch {
             target_kind: body
@@ -65,7 +65,15 @@ pub fn route_operation_failures_request(
             target_id: trimmed_string(body.get("targetId")),
             worktree_path: worktree_path_match(body),
         },
-    );
+    ) {
+        Ok(cleared) => cleared,
+        Err(error) => {
+            return Some(ProjectServiceDispatchResponse::json(
+                500,
+                json!({ "ok": false, "error": error }),
+            ));
+        }
+    };
     Some(ProjectServiceDispatchResponse::json(
         200,
         json!({ "ok": true, "cleared": cleared }),
@@ -81,11 +89,11 @@ pub fn dashboard_operation_failures_path(project_state_dir: impl AsRef<Path>) ->
 pub fn clear_dashboard_operation_failures(
     project_state_dir: impl AsRef<Path>,
     matcher: OperationFailureMatch,
-) -> usize {
+) -> Result<usize, String> {
     let path = dashboard_operation_failures_path(project_state_dir);
-    let mut state = load_state(&path);
+    let mut state = load_state(&path)?;
     let Some(failures) = state.get_mut("failures").and_then(Value::as_array_mut) else {
-        return 0;
+        return Ok(0);
     };
     let mut changed = 0;
     for failure in failures.iter_mut() {
@@ -100,30 +108,39 @@ pub fn clear_dashboard_operation_failures(
     if changed > 0
         && let Err(error) = save_state(&path, state)
     {
-        eprintln!(
-            "aimux: failed to persist dashboard operation failure clear at {}: {error}",
+        return Err(format!(
+            "failed to persist dashboard operation failure clear at {}: {error}",
             path.display()
-        );
+        ));
     }
-    changed
+    Ok(changed)
 }
 
 pub fn list_dashboard_operation_failures(project_state_dir: impl AsRef<Path>) -> Vec<Value> {
-    load_state(dashboard_operation_failures_path(project_state_dir))
-        .get("failures")
-        .and_then(Value::as_array)
-        .map_or(&[][..], Vec::as_slice)
-        .iter()
-        .enumerate()
-        .map(|(index, failure)| {
-            normalize_dashboard_operation_failure_record(
-                format!("legacy-operation-failure-{index}"),
-                format!("invalid-operation-failure-{index}"),
-                failure,
-            )
-        })
-        .filter(|failure| is_active_failure(failure, now_epoch_millis()))
-        .collect()
+    try_list_dashboard_operation_failures(project_state_dir)
+        .unwrap_or_else(|error| vec![operation_failure_store_unavailable(error)])
+}
+
+pub fn try_list_dashboard_operation_failures(
+    project_state_dir: impl AsRef<Path>,
+) -> Result<Vec<Value>, String> {
+    Ok(
+        load_state(dashboard_operation_failures_path(project_state_dir))?
+            .get("failures")
+            .and_then(Value::as_array)
+            .map_or(&[][..], Vec::as_slice)
+            .iter()
+            .enumerate()
+            .map(|(index, failure)| {
+                normalize_dashboard_operation_failure_record(
+                    format!("legacy-operation-failure-{index}"),
+                    format!("invalid-operation-failure-{index}"),
+                    failure,
+                )
+            })
+            .filter(|failure| is_active_failure(failure, now_epoch_millis()))
+            .collect(),
+    )
 }
 
 pub fn add_dashboard_operation_failure(
@@ -146,7 +163,13 @@ fn add_dashboard_operation_failure_impl(
     input: OperationFailureInput,
 ) -> Result<Value, (io::Error, Value)> {
     let path = dashboard_operation_failures_path(project_state_dir);
-    let mut state = load_state(&path);
+    let mut state = load_state(&path).unwrap_or_else(|error| {
+        eprintln!(
+            "aimux: preserving dashboard operation failure despite unreadable store at {}: {error}",
+            path.display()
+        );
+        empty_state()
+    });
     let created_at = input
         .created_at
         .and_then(|value| trimmed_owned(Some(&value)))
@@ -192,23 +215,32 @@ fn add_dashboard_operation_failure_impl(
     }
 }
 
-fn load_state(path: impl AsRef<Path>) -> Value {
+fn load_state(path: impl AsRef<Path>) -> Result<Value, String> {
     let path = path.as_ref();
     if !path.exists() {
-        return empty_state();
+        return Ok(empty_state());
     }
-    let Ok(contents) = fs::read_to_string(path) else {
-        return empty_state();
-    };
-    let Ok(value) = serde_json::from_str::<Value>(&contents) else {
-        return empty_state();
-    };
+    let contents = fs::read_to_string(path).map_err(|error| {
+        format!(
+            "failed to read dashboard operation failure store at {}: {error}",
+            path.display()
+        )
+    })?;
+    let value = serde_json::from_str::<Value>(&contents).map_err(|error| {
+        format!(
+            "failed to parse dashboard operation failure store at {}: {error}",
+            path.display()
+        )
+    })?;
     if value.get("version").and_then(Value::as_u64) != Some(1)
         || !value.get("failures").is_some_and(Value::is_array)
     {
-        return empty_state();
+        return Err(format!(
+            "invalid dashboard operation failure store schema at {}",
+            path.display()
+        ));
     }
-    value
+    Ok(value)
 }
 
 fn save_state(path: impl AsRef<Path>, mut state: Value) -> io::Result<()> {
@@ -229,6 +261,16 @@ fn is_active_failure(failure: &Value, now: u128) -> bool {
         return true;
     };
     now.saturating_sub(created_at) < ACTIVE_FAILURE_MAX_AGE_MS
+}
+
+fn operation_failure_store_unavailable(error: String) -> Value {
+    json!({
+        "id": "operation-failure-store-unavailable",
+        "targetKind": "project",
+        "operation": "operation-failures.read",
+        "title": "Operation failure store unavailable",
+        "message": error,
+    })
 }
 
 pub fn normalize_dashboard_operation_failure_record(

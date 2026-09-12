@@ -10,7 +10,7 @@ use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname
 use super::http::parse_bounded_limit;
 use super::router::ProjectServiceRequestContext;
 use super::runtime_exchange::{
-    read_runtime_exchange, runtime_exchange_path, update_runtime_exchange,
+    runtime_exchange_path, try_read_runtime_exchange, update_runtime_exchange,
 };
 
 const NOTIFICATION_TAG: &str = "notification";
@@ -247,8 +247,31 @@ pub fn list_notification_snapshot(
     project_state_dir: impl AsRef<Path>,
     query: NotificationQuery,
 ) -> NotificationSnapshot {
-    let exchange = read_runtime_exchange(runtime_exchange_path(project_state_dir));
-    let all_records = notification_records(&exchange);
+    let limit = query.limit;
+    try_list_notification_snapshot(project_state_dir, query).unwrap_or_else(|_| {
+        NotificationSnapshot {
+            notifications: Vec::new(),
+            total: 0,
+            unread_count: 0,
+            limit,
+            truncated: false,
+        }
+    })
+}
+
+pub fn try_list_notification_snapshot(
+    project_state_dir: impl AsRef<Path>,
+    query: NotificationQuery,
+) -> Result<NotificationSnapshot, String> {
+    let exchange = read_notification_exchange(project_state_dir)?;
+    Ok(notification_snapshot_from_exchange(&exchange, query))
+}
+
+fn notification_snapshot_from_exchange(
+    exchange: &Value,
+    query: NotificationQuery,
+) -> NotificationSnapshot {
+    let all_records = notification_records(exchange);
     let unread_count = all_records
         .iter()
         .filter(|record| {
@@ -296,14 +319,14 @@ pub fn list_notification_snapshot(
 pub fn mark_notifications_read(
     project_state_dir: impl AsRef<Path>,
     mutation: NotificationMutation,
-) -> usize {
+) -> Result<usize, String> {
     mutate_notifications(project_state_dir, mutation, NotificationMutationKind::Read)
 }
 
 pub fn clear_notifications(
     project_state_dir: impl AsRef<Path>,
     mutation: NotificationMutation,
-) -> usize {
+) -> Result<usize, String> {
     mutate_notifications(project_state_dir, mutation, NotificationMutationKind::Clear)
 }
 
@@ -322,7 +345,7 @@ fn route_list(
         Ok(limit) => limit as usize,
         Err(error) => return json_response(400, json!({ "ok": false, "error": error })),
     };
-    let snapshot = list_notification_snapshot(
+    let snapshot = match try_list_notification_snapshot(
         context.project_state_dir(),
         NotificationQuery {
             unread_only: query_params.get("unread").map(String::as_str) == Some("1"),
@@ -334,7 +357,10 @@ fn route_list(
                 .map(str::to_owned),
             limit: Some(limit),
         },
-    );
+    ) {
+        Ok(snapshot) => snapshot,
+        Err(error) => return json_response(500, json!({ "ok": false, "error": error })),
+    };
     json_response(
         200,
         json!({
@@ -356,8 +382,10 @@ fn route_mark_read(
         Ok(mutation) => mutation,
         Err(error) => return json_response(400, json!({ "ok": false, "error": error })),
     };
-    let updated = mark_notifications_read(context.project_state_dir(), mutation);
-    json_response(200, json!({ "ok": true, "updated": updated }))
+    match mark_notifications_read(context.project_state_dir(), mutation) {
+        Ok(updated) => json_response(200, json!({ "ok": true, "updated": updated })),
+        Err(error) => json_response(500, json!({ "ok": false, "error": error })),
+    }
 }
 
 fn route_clear(
@@ -368,8 +396,10 @@ fn route_clear(
         Ok(mutation) => mutation,
         Err(error) => return json_response(400, json!({ "ok": false, "error": error })),
     };
-    let cleared = clear_notifications(context.project_state_dir(), mutation);
-    json_response(200, json!({ "ok": true, "cleared": cleared }))
+    match clear_notifications(context.project_state_dir(), mutation) {
+        Ok(cleared) => json_response(200, json!({ "ok": true, "cleared": cleared })),
+        Err(error) => json_response(500, json!({ "ok": false, "error": error })),
+    }
 }
 
 fn parse_notification_mutation(body: &Value) -> Result<NotificationMutation, String> {
@@ -575,9 +605,9 @@ fn mutate_notifications(
     project_state_dir: impl AsRef<Path>,
     mutation: NotificationMutation,
     kind: NotificationMutationKind,
-) -> usize {
+) -> Result<usize, String> {
     let path = runtime_exchange_path(project_state_dir);
-    let exchange = read_runtime_exchange(&path);
+    let exchange = read_notification_exchange_path(&path)?;
     let records = notification_records(&exchange)
         .into_iter()
         .filter(|record| match kind {
@@ -608,14 +638,14 @@ fn mutate_notifications(
         })
         .collect::<Vec<_>>();
     if records.is_empty() {
-        return 0;
+        return Ok(0);
     }
     let record_ids = records
         .iter()
         .filter_map(|record| string_field(record, "id").map(str::to_owned))
         .collect::<Vec<_>>();
     let updated_count = records.len();
-    let _ = update_runtime_exchange(&path, |mut exchange| {
+    update_runtime_exchange(&path, |mut exchange| {
         let thread_ids = thread_ids_for_record_ids(&exchange, &record_ids);
         if let Some(inbox) = exchange.get_mut("inbox").and_then(Value::as_array_mut) {
             for entry in inbox {
@@ -650,8 +680,18 @@ fn mutate_notifications(
             }
         }
         exchange
-    });
-    updated_count
+    })
+    .map_err(|error| format!("failed to update notification store: {error}"))?;
+    Ok(updated_count)
+}
+
+fn read_notification_exchange(project_state_dir: impl AsRef<Path>) -> Result<Value, String> {
+    read_notification_exchange_path(&runtime_exchange_path(project_state_dir))
+}
+
+fn read_notification_exchange_path(path: &Path) -> Result<Value, String> {
+    try_read_runtime_exchange(path)
+        .map_err(|error| format!("notification store unavailable: {error}"))
 }
 
 fn notification_records(exchange: &Value) -> Vec<Value> {

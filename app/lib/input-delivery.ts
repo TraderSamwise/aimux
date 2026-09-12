@@ -21,3 +21,16 @@ export function formatLivePaneInputResponseRefusal(response: LivePaneInputRespon
     "input was not accepted";
   return `Input not accepted: ${detail}`;
 }
+
+export function formatPostActionTranscriptRefreshFailure(action: string, error: unknown): string {
+  const detail = error instanceof Error ? error.message : String(error);
+  return `${action}, but transcript refresh failed: ${detail}`;
+}
+
+export function formatPostActionTranscriptRefreshResult(
+  action: string,
+  error: unknown | null | undefined,
+): string | null {
+  if (error == null) return null;
+  return formatPostActionTranscriptRefreshFailure(action, error);
+}

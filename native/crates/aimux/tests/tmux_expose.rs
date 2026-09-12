@@ -923,7 +923,7 @@ fn runner_renders_hot_snapshot_without_blocking_on_item_discovery() {
     options.current_window = Some("codex".into());
     options.expose_config.initial_scope = Some(ExposeScope::Project);
     let mut client = FakeHttp::default();
-    let mut capture = FakeCapture::with_responses([Err("tmux unavailable".into())]);
+    let mut capture = FakeCapture::with_responses([Ok("loaded preview line\n".into())]);
     let mut input = ScriptedInput::new([
         ScriptedInputEvent::Timeout,
         ScriptedInputEvent::Bytes(b"q".to_vec()),
@@ -957,7 +957,7 @@ fn runner_renders_loading_frame_before_initial_item_discovery() {
         "ok": true,
         "items": [hot_item("@1", "loaded preview line\n")]
     })]);
-    let mut capture = FakeCapture::with_responses([Err("tmux unavailable".into())]);
+    let mut capture = FakeCapture::with_responses([Ok("loaded preview line\n".into())]);
     let mut input = ScriptedInput::new([
         ScriptedInputEvent::Timeout,
         ScriptedInputEvent::Bytes(b"q".to_vec()),
@@ -1000,7 +1000,7 @@ fn runner_retries_initial_item_discovery_failure_instead_of_rendering_empty() {
             "items": [hot_item("@1", "retry loaded preview line\n")]
         })),
     ]);
-    let mut capture = FakeCapture::with_responses([Err("tmux unavailable".into())]);
+    let mut capture = FakeCapture::with_responses([Ok("retry loaded preview line\n".into())]);
     let mut input = ScriptedInput::new([
         ScriptedInputEvent::Timeout,
         ScriptedInputEvent::Bytes(b"q".to_vec()),
@@ -1510,6 +1510,77 @@ fn runner_refreshes_live_captures_on_timeout_tick() {
 }
 
 #[test]
+fn runner_surfaces_live_capture_failures_in_tile_preview() {
+    let state_dir = temp_dir("runner-refresh-capture-error");
+    let mut options = parsed_options(&state_dir);
+    options.current_window = Some("codex".into());
+    options.expose_config.initial_scope = Some(ExposeScope::Project);
+    let mut client = FakeHttp::with_responses([json!({
+        "ok": true,
+        "items": [hot_item("@1", "warm preview line\n")]
+    })]);
+    let mut capture = FakeCapture::with_responses([Err("tmux capture-pane timed out".into())]);
+    let mut input = ScriptedInput::new([
+        ScriptedInputEvent::Timeout,
+        ScriptedInputEvent::Bytes(b"q".to_vec()),
+    ]);
+    let mut output = Vec::new();
+
+    assert_eq!(
+        run_tmux_expose_with_stable_size(
+            options,
+            &mut input,
+            &mut output,
+            &mut client,
+            &mut capture,
+        ),
+        0
+    );
+
+    let rendered = String::from_utf8(output).expect("utf8 output");
+    let last_frame = last_synchronized_frame(&rendered);
+    assert!(last_frame.contains("Could not read pane: tmux capture-pane timed out"));
+    assert_eq!(capture.calls, vec!["@1"]);
+    cleanup(state_dir);
+}
+
+#[test]
+fn runner_keeps_empty_live_capture_quiet() {
+    let state_dir = temp_dir("runner-refresh-capture-empty");
+    let mut options = parsed_options(&state_dir);
+    options.current_window = Some("codex".into());
+    options.expose_config.initial_scope = Some(ExposeScope::Project);
+    let mut client = FakeHttp::with_responses([json!({
+        "ok": true,
+        "items": [hot_item("@1", "warm preview line\n")]
+    })]);
+    let mut capture = FakeCapture::with_responses([Ok(String::new())]);
+    let mut input = ScriptedInput::new([
+        ScriptedInputEvent::Timeout,
+        ScriptedInputEvent::Bytes(b"q".to_vec()),
+    ]);
+    let mut output = Vec::new();
+
+    assert_eq!(
+        run_tmux_expose_with_stable_size(
+            options,
+            &mut input,
+            &mut output,
+            &mut client,
+            &mut capture,
+        ),
+        0
+    );
+
+    let rendered = String::from_utf8(output).expect("utf8 output");
+    let last_frame = last_synchronized_frame(&rendered);
+    assert!(!last_frame.contains("Could not read pane"));
+    assert!(!last_frame.contains("warm preview line"));
+    assert_eq!(capture.calls, vec!["@1"]);
+    cleanup(state_dir);
+}
+
+#[test]
 fn runner_reloads_items_every_fifth_timeout_tick() {
     let state_dir = temp_dir("runner-refresh-reload");
     let mut options = parsed_options(&state_dir);
@@ -1527,12 +1598,12 @@ fn runner_reloads_items_every_fifth_timeout_tick() {
         }),
     ]);
     let mut capture = FakeCapture::with_responses([
-        Err("tmux unavailable".into()),
-        Err("tmux unavailable".into()),
-        Err("tmux unavailable".into()),
-        Err("tmux unavailable".into()),
-        Err("tmux unavailable".into()),
-        Err("tmux unavailable".into()),
+        Ok("initial preview line\n".into()),
+        Ok("initial preview line\n".into()),
+        Ok("initial preview line\n".into()),
+        Ok("initial preview line\n".into()),
+        Ok("reloaded preview line\n".into()),
+        Ok("reloaded preview line\n".into()),
     ]);
     let mut input = ScriptedInput::new([
         ScriptedInputEvent::Timeout,

@@ -1679,7 +1679,7 @@ fn refresh_captures(
         };
         let next = capture
             .capture_target(item)
-            .unwrap_or_else(|_| captures.get(window_id).cloned().unwrap_or_default());
+            .unwrap_or_else(|error| expose_capture_error_preview(&error));
         if captures.get(window_id).map(String::as_str) != Some(next.as_str()) {
             changed = true;
         }
@@ -1705,6 +1705,7 @@ fn capture_missing_previews(
                 captures.insert(window_id.to_owned(), output);
             }
             Err(error) => {
+                captures.insert(window_id.to_owned(), expose_capture_error_preview(&error));
                 log_at(
                     LogLevel::Debug,
                     "expose startup preview capture failed",
@@ -1718,6 +1719,10 @@ fn capture_missing_previews(
             }
         }
     }
+}
+
+fn expose_capture_error_preview(error: &str) -> String {
+    format!("Could not read pane: {error}")
 }
 
 fn focus_or_select(

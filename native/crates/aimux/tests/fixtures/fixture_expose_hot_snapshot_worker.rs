@@ -1,3 +1,4 @@
+use aimux::daemon_state::{MetadataState, save_metadata_state};
 use aimux::tmux::{CapturePaneOptions, TmuxManagedWindow, TmuxTarget};
 use aimux::tmux_expose::{ExposeScope, ExposeScopeView, ExposeSublabel};
 use aimux::tmux_expose_hot_snapshot::{HotExposeScopeKey, write_hot_expose_scope_view};
@@ -7,6 +8,7 @@ use aimux::tmux_expose_hot_snapshot_worker::{
     refresh_project_expose_hot_snapshots,
 };
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -440,4 +442,100 @@ fn project_hot_snapshot_records_preview_capture_failure() {
         "tmux capture-pane timed out"
     );
     let _ = fs::remove_dir_all(&home);
+}
+
+#[test]
+fn project_hot_snapshot_enriches_recency_from_metadata_state_when_tmux_metadata_is_cold() {
+    let home = temp_root();
+    let project_root = "/repo";
+    let project_state_dir = state_dir(&home, "repo");
+    save_metadata_state(
+        &project_state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([(
+                "agent-a".into(),
+                json!({
+                    "derived": {
+                        "activity": "idle",
+                        "lastOutputAt": "2026-07-20T12:34:56.789Z"
+                    }
+                }),
+            )]),
+        },
+    )
+    .expect("save metadata state");
+    let windows = vec![
+        TmuxManagedWindow {
+            target: TmuxTarget {
+                session_name: "aimux-test".into(),
+                window_id: "@1".into(),
+                window_index: 1,
+                window_name: "agent-a".into(),
+                pane_dead: Some(false),
+            },
+            metadata: json!({
+                "kind": "agent",
+                "sessionId": "agent-a",
+                "command": "codex",
+                "worktreePath": project_root,
+            }),
+        },
+        TmuxManagedWindow {
+            target: TmuxTarget {
+                session_name: "aimux-test".into(),
+                window_id: "@2".into(),
+                window_index: 2,
+                window_name: "agent-b".into(),
+                pane_dead: Some(false),
+            },
+            metadata: json!({
+                "kind": "agent",
+                "sessionId": "agent-b",
+                "command": "codex",
+                "worktreePath": project_root,
+            }),
+        },
+    ];
+    let mut runtime = MockProjectRuntime::new(windows);
+
+    refresh_project_expose_hot_snapshots(project_root, &project_state_dir, &mut runtime);
+
+    let project = raw_project_snapshot(&project_state_dir, project_root);
+    let agent_a = item_by_session(&project, "agent-a");
+    assert_eq!(agent_a["metadata"]["recencyAt"], "2026-07-20T12:34:56.789Z");
+    assert_eq!(agent_a["metadata"]["recencyLabel"], "output");
+    let agent_b = item_by_session(&project, "agent-b");
+    assert!(
+        agent_b["metadata"].get("recencyAt").is_none(),
+        "genuinely unknown recency must remain absent"
+    );
+    assert!(
+        agent_b["metadata"].get("recencyLabel").is_none(),
+        "genuinely unknown recency label must remain absent"
+    );
+    let _ = fs::remove_dir_all(&home);
+}
+
+fn item_by_session<'a>(view: &'a Value, session_id: &str) -> &'a Value {
+    view["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .find(|item| item["metadata"]["sessionId"] == session_id)
+        .expect("item for session")
+}
+
+fn raw_project_snapshot(project_state_dir: &Path, project_root: &str) -> Value {
+    aimux::tmux_expose_hot_snapshot::read_hot_expose_scope_view(
+        project_state_dir,
+        &HotExposeScopeKey {
+            project_root: project_root.into(),
+            scope: ExposeScope::Project,
+            worktree_key: None,
+            launch_window_id: None,
+        },
+    )
+    .map(view_to_value)
+    .expect("project snapshot")
 }

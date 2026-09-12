@@ -34,7 +34,7 @@ use super::preview_snapshots::{
     capture_preview_snapshot_with_tap_async, capture_preview_snapshot_with_tap_result,
 };
 use super::router::ProjectServiceRequestContext;
-use super::runtime_exchange::{read_runtime_exchange, runtime_exchange_path};
+use super::runtime_exchange::{runtime_exchange_path, try_read_runtime_exchange};
 use super::session_semantics::{SessionSemanticsInput, derive_session_semantics};
 use super::usage::parse_recency_timestamp;
 use super::visual_clients::VisualClientLeaseRoute;
@@ -213,7 +213,7 @@ pub fn desktop_state_for_context(context: &ProjectServiceRequestContext) -> Resu
     let project_state_dir = context.project_state_dir();
     let topology = read_runtime_topology(runtime_topology_path(&project_state_dir))?;
     let metadata = load_metadata_state(&project_state_dir);
-    let exchange = read_runtime_exchange(runtime_exchange_path(&project_state_dir));
+    let exchange = try_read_runtime_exchange(runtime_exchange_path(&project_state_dir))?;
     let live_window_ids_owned;
     let mut live_window_query_error = None;
     let live_window_projection = match context.live_window_ids_status() {
@@ -270,7 +270,7 @@ pub async fn desktop_state_for_context_async(
     let project_state_dir = context.project_state_dir();
     let topology = read_runtime_topology(runtime_topology_path(&project_state_dir))?;
     let metadata = load_metadata_state(&project_state_dir);
-    let exchange = read_runtime_exchange(runtime_exchange_path(&project_state_dir));
+    let exchange = try_read_runtime_exchange(runtime_exchange_path(&project_state_dir))?;
     let live_window_ids_owned;
     let mut live_window_query_error = None;
     let live_window_projection = match context.live_window_ids_status() {

@@ -5,8 +5,8 @@ use aimux::project_api_contract::routes;
 use aimux::project_service::agent_input_delivery::{
     ACTIVE_CLIENT_DWELL_MS, AgentInputWindowActivity, MAX_AGENT_INPUT_HOLD_MS,
     agent_input_delivery_backlog_snapshot, agent_input_delivery_queue_path,
-    classify_agent_input_window_activity, pane_has_unsubmitted_agent_input,
-    run_pending_agent_input_deliveries_with_runtime,
+    classify_agent_input_window_activity, enqueue_agent_input_delivery,
+    pane_has_unsubmitted_agent_input, run_pending_agent_input_deliveries_with_runtime,
 };
 use aimux::project_service::agent_output::{
     AgentOutputCaptureRuntime, AgentOutputResponseMode, MAX_AGENT_OUTPUT_CAPTURE_LINES,
@@ -31,7 +31,7 @@ use aimux::tmux::{CapturePaneOptions, TmuxTarget};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
-use std::fs::{create_dir_all, remove_dir_all, write};
+use std::fs::{create_dir_all, read_to_string, remove_dir_all, write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -1234,6 +1234,67 @@ fn output_route_rejects_offline_sessions_without_capture() {
 }
 
 #[test]
+fn pane_routes_report_unreadable_topology_not_absent_session() {
+    let project = temp_project("unreadable-topology");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    write(runtime_topology_path(&state_dir), "{ not yaml").unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let cases = [
+        (
+            "GET",
+            "/agents/output?sessionId=codex-1",
+            None,
+            "agent output",
+        ),
+        (
+            "POST",
+            routes::live_pane::RESIZE,
+            Some(json!({ "sessionId": "codex-1", "cols": 100, "rows": 32 })),
+            "resize",
+        ),
+        (
+            "POST",
+            routes::agents::INTERRUPT,
+            Some(json!({ "sessionId": "codex-1" })),
+            "interrupt",
+        ),
+        (
+            "POST",
+            routes::live_pane::INPUT,
+            Some(json!({ "sessionId": "codex-1", "text": "hello" })),
+            "input",
+        ),
+    ];
+
+    for (method, path, body, label) in cases {
+        let mut runtime = FakeCaptureRuntime::default();
+        let response = route_agent_output_request_with_runtime(
+            &context,
+            method,
+            path,
+            body.as_ref(),
+            &mut runtime,
+        )
+        .unwrap();
+        assert_eq!(response.status, 500, "{label}");
+        let error = response.body["error"].as_str().unwrap();
+        assert!(
+            error.contains("runtime topology could not be read"),
+            "{label}: {error}"
+        );
+        assert!(
+            !error.contains("not running"),
+            "{label} converted topology failure into absent session: {error}"
+        );
+        assert!(runtime.actions.is_empty(), "{label}");
+    }
+
+    cleanup(project);
+}
+
+#[test]
 fn output_route_syncs_live_tmux_metadata_from_project_state() {
     let project = temp_project("metadata-sync");
     let state_dir = project.join("state");
@@ -2042,6 +2103,124 @@ fn queued_probe_failure_releases_after_hold_budget() {
 }
 
 #[test]
+fn queued_agent_input_blocks_when_runtime_topology_is_unreadable() {
+    let project = temp_project("queued-topology-unreadable");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let now_ms = aimux::project_service::scheduler::scheduler_now_ms();
+    enqueue_agent_input_delivery(
+        &context,
+        "codex-1",
+        "@possibly-reused",
+        "do not inject",
+        "active-client-recent-input",
+        now_ms,
+    )
+    .expect("enqueue");
+    write(runtime_topology_path(&state_dir), "{ not yaml").expect("corrupt topology");
+    let mut runtime = FakeActivityRuntime::default();
+
+    run_pending_agent_input_deliveries_with_runtime(
+        &context,
+        &mut runtime,
+        now_ms + MAX_AGENT_INPUT_HOLD_MS + 1,
+    );
+
+    assert!(
+        runtime.inner.actions.is_empty(),
+        "unreadable topology must not fall back to a queued tmux window id"
+    );
+    assert_eq!(queued_delivery_count(&state_dir), 1);
+    let failures = list_dashboard_operation_failures(&state_dir);
+    assert!(
+        failures
+            .iter()
+            .any(|failure| failure["title"] == "Agent input delivery blocked"
+                && failure["message"].as_str().is_some_and(|message| message
+                    .contains("runtime topology could not be read")
+                    && message.contains("@possibly-reused"))),
+        "blocked delivery should be visible with the topology read error"
+    );
+    cleanup(project);
+}
+
+#[test]
+fn queued_agent_input_delivers_when_readable_topology_proves_owned_window() {
+    let project = temp_project("queued-topology-owned");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let now_ms = aimux::project_service::scheduler::scheduler_now_ms();
+    enqueue_agent_input_delivery(
+        &context,
+        "codex-1",
+        "@stale",
+        "deliver to current owner",
+        "active-client-recent-input",
+        now_ms,
+    )
+    .expect("enqueue");
+    let mut runtime = FakeActivityRuntime::default();
+
+    run_pending_agent_input_deliveries_with_runtime(&context, &mut runtime, now_ms);
+
+    assert_eq!(
+        runtime.inner.actions,
+        vec![
+            FakeRuntimeAction::Text("@1".into(), "deliver to current owner".into()),
+            FakeRuntimeAction::CarriageReturn("@1".into()),
+        ],
+        "queued delivery must use the live topology-owned window, not the stale queued id"
+    );
+    assert!(!agent_input_delivery_queue_path(&state_dir).exists());
+    cleanup(project);
+}
+
+#[test]
+fn queued_agent_input_blocks_when_session_is_absent_from_topology() {
+    let project = temp_project("queued-topology-absent-session");
+    let state_dir = project.join("state");
+    write_state_without_sessions(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let now_ms = aimux::project_service::scheduler::scheduler_now_ms();
+    enqueue_agent_input_delivery(
+        &context,
+        "codex-1",
+        "@possibly-reused",
+        "do not inject",
+        "active-client-recent-input",
+        now_ms,
+    )
+    .expect("enqueue");
+    let mut runtime = FakeActivityRuntime::default();
+
+    run_pending_agent_input_deliveries_with_runtime(
+        &context,
+        &mut runtime,
+        now_ms + MAX_AGENT_INPUT_HOLD_MS + 1,
+    );
+
+    assert!(
+        runtime.inner.actions.is_empty(),
+        "absent session is not ownership proof for the queued tmux window id"
+    );
+    assert_eq!(queued_delivery_count(&state_dir), 1);
+    let failures = list_dashboard_operation_failures(&state_dir);
+    assert!(
+        failures
+            .iter()
+            .any(|failure| failure["title"] == "Agent input delivery blocked"
+                && failure["message"]
+                    .as_str()
+                    .is_some_and(|message| message.contains("no live tmux window")
+                        && message.contains("@possibly-reused"))),
+        "blocked delivery should explain the missing live session"
+    );
+    cleanup(project);
+}
+
+#[test]
 fn agent_input_delivery_backlog_read_failure_reports_unavailable_not_zero() {
     let project = temp_project("delivery-backlog-error");
     let state_dir = project.join("state");
@@ -2560,6 +2739,26 @@ fn write_state(state_dir: &PathBuf) {
         },
     )
     .unwrap();
+}
+
+fn write_state_without_sessions(state_dir: &PathBuf) {
+    create_dir_all(state_dir).unwrap();
+    let mut topology = topology_fixture();
+    topology["sessions"] = json!([]);
+    write(
+        runtime_topology_path(state_dir),
+        serde_yaml::to_string(&topology).unwrap(),
+    )
+    .unwrap();
+}
+
+fn queued_delivery_count(state_dir: &PathBuf) -> usize {
+    let contents =
+        read_to_string(agent_input_delivery_queue_path(state_dir)).expect("read delivery queue");
+    serde_json::from_str::<Value>(&contents).expect("delivery queue json")["pending"]
+        .as_array()
+        .expect("pending deliveries")
+        .len()
 }
 
 fn write_attachment(

@@ -26,7 +26,7 @@ use super::desktop_state::{
 };
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::router::ProjectServiceRequestContext;
-use super::runtime_exchange::{read_runtime_exchange, runtime_exchange_path};
+use super::runtime_exchange::{runtime_exchange_path, try_read_runtime_exchange};
 
 const STATUSLINE_STALE_MS: u128 = 8_000;
 const STATUSLINE_REFRESH_STATE_FILE: &str = "statusline-refresh.json";
@@ -213,7 +213,7 @@ pub fn build_statusline_snapshot(context: &ProjectServiceRequestContext) -> Resu
         desktop_state.clone()
     } else {
         let topology = read_runtime_topology(runtime_topology_path(&project_state_dir))?;
-        let exchange = read_runtime_exchange(runtime_exchange_path(&project_state_dir));
+        let exchange = try_read_runtime_exchange(runtime_exchange_path(&project_state_dir))?;
         let input = DesktopStateInput {
             project_root: context.project_root().to_string_lossy().into_owned(),
             topology: &topology,

@@ -104,7 +104,7 @@ fn apply_shell_state_transition(
                     ids: None,
                     session_id: Some(session_id.to_owned()),
                 },
-            );
+            )?;
             update_session_metadata(project_state_dir, session_id, |current| {
                 set_shell_activity(current, "running", "normal", Some(0))
             })?;

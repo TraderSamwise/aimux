@@ -766,6 +766,52 @@ fn thread_send_fails_loudly_when_live_recipient_cannot_be_resolved() {
 }
 
 #[test]
+fn thread_send_reports_unreadable_topology_not_missing_recipient() {
+    let project = temp_project("thread-delivery-corrupt-topology");
+    let state_dir = project.join("state");
+    write_delivery_topology(&state_dir, &[("codex-one", "@one")]);
+    write(runtime_topology_path(&state_dir), "{ not yaml").expect("corrupt topology");
+    let isolation = support::TestIsolation::new("coordination-corrupt-topology");
+    let context = isolation.project_context(&project, &state_dir);
+    let opened = route_project_service_request(
+        &context,
+        "POST",
+        routes::threads::OPEN,
+        Some(&json!({
+            "from": "claude-lead",
+            "title": "Coordination",
+            "participants": ["codex-one"]
+        })),
+    );
+    assert_eq!(opened.status, 200);
+    let thread_id = opened.body["thread"]["id"].as_str().unwrap().to_owned();
+    let mut runtime = FakeDeliveryRuntime::default();
+
+    let sent = route_coordination_mutation_request_with_runtime(
+        &context,
+        "POST",
+        routes::threads::SEND,
+        Some(&json!({
+            "threadId": thread_id,
+            "from": "claude-lead",
+            "to": ["codex-one"],
+            "kind": "request",
+            "body": "Please inspect this."
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(sent.status, 424);
+    assert_eq!(sent.body["deliveredTo"], json!([]));
+    let error = sent.body["error"].as_str().unwrap();
+    assert!(error.contains("runtime topology could not be read"));
+    assert!(!error.contains("no live tmux window"));
+    assert!(runtime.actions.is_empty());
+    cleanup(project);
+}
+
+#[test]
 fn thread_send_reports_child_tmux_delivery_error() {
     let project = temp_project("thread-delivery-child-error");
     let state_dir = project.join("state");

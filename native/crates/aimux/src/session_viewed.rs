@@ -29,7 +29,7 @@ pub fn mark_session_viewed(
                 session_id: Some(session_id.to_owned()),
                 ..NotificationMutation::default()
             },
-        )
+        )?
     } else {
         0
     };

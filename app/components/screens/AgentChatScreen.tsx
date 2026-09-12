@@ -108,6 +108,7 @@ import {
 import {
   formatLivePaneInputDeliveryNotice,
   formatLivePaneInputResponseRefusal,
+  formatPostActionTranscriptRefreshResult,
 } from "@/lib/input-delivery";
 import {
   chatCommandForContentChange,
@@ -1231,7 +1232,9 @@ export default function ChatScreen() {
           setPendingComposerAck(null);
           setSendError(deliveryNotice);
           if (sendComposerDraftKey) composerDraftsByKey.delete(sendComposerDraftKey);
-          void refreshOutputSnapshot().catch(() => {});
+          void refreshOutputSnapshot().catch((error) => {
+            setSendError(formatPostActionTranscriptRefreshResult("Input accepted", error));
+          });
           return;
         }
         setAcceptedComposerMessages((current) =>
@@ -1250,7 +1253,9 @@ export default function ChatScreen() {
         setPendingAttachments([]);
         setPendingComposerAck(null);
         if (sendComposerDraftKey) composerDraftsByKey.delete(sendComposerDraftKey);
-        void refreshOutputSnapshot().catch(() => {});
+        void refreshOutputSnapshot().catch((error) => {
+          setSendError(formatPostActionTranscriptRefreshResult("Input sent", error));
+        });
       } catch (err) {
         if (!sendStillOwnsActiveComposer()) {
           if (sendComposerDraftKey) {
@@ -1425,7 +1430,9 @@ export default function ChatScreen() {
     setSendError(null);
     try {
       await interruptLivePane({ host: endpointHost, port: endpointPort }, sessionId, { token });
-      void refreshOutputSnapshot("interrupt").catch(() => {});
+      void refreshOutputSnapshot("interrupt").catch((error) => {
+        setSendError(formatPostActionTranscriptRefreshResult("Interrupt sent", error));
+      });
     } catch (error) {
       setSendError(error instanceof Error ? error.message : "Could not interrupt the agent.");
     } finally {

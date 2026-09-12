@@ -68,11 +68,11 @@
     },
     {
       "id": "runtime-state-guard-repair-history-007",
-      "name": "treats unreadable history as empty rather than blocking repair",
+      "name": "treats corrupt history as unavailable rather than resetting repair memory",
       "source": "src/runtime-guard-repair-history.test.ts",
       "api": "corruptHistory",
       "input": { "projectRoot": "/p", "windowMs": 120000, "now": 1000, "fileText": "{ not json" },
-      "output": { "before": [], "recordOk": true, "after": [1000] },
+      "output": { "beforeError": true, "recordError": true, "preserved": true },
       "inputSha256": "87fdf14683939966649c54fa8bbca6055ac38acc062c4c72f5ac03dcb20a178d"
     },
     {
