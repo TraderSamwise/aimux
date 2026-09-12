@@ -1,4 +1,4 @@
-//! Producer half of restore-previous-agents, driven through the real rail task.
+//! Producer half of restore-previous-agents, driven through the real tick task.
 //!
 //! The behaviour under test is a difference between two shutdowns that look
 //! identical from inside the process, so every case here runs the same task

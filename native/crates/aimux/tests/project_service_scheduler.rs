@@ -291,7 +291,7 @@ fn a_panicking_task_does_not_stop_its_neighbour() {
     assert_eq!(ran, vec!["bad".to_owned(), "good".to_owned()]);
     assert_eq!(good.load(Ordering::SeqCst), 1);
 
-    // and it stays on the rail rather than being dropped after one failure
+    // and it stays on the tick loop rather than being dropped after one failure
     run_due_at(&mut scheduler, &ctx, 2_000);
     assert_eq!(bad.load(Ordering::SeqCst), 2);
     assert_eq!(good.load(Ordering::SeqCst), 2);
@@ -308,7 +308,7 @@ fn sleep_never_exceeds_the_idle_ceiling_or_goes_negative() {
 }
 
 #[test]
-fn an_absurd_interval_is_floored_so_the_rail_cannot_spin() {
+fn an_absurd_interval_is_floored_so_the_tick_loop_cannot_spin() {
     let runs = Arc::new(AtomicUsize::new(0));
     let mut scheduler = PeriodicScheduler::new(vec![task("hot", 0, &runs, false)], 0);
     let ctx = context();

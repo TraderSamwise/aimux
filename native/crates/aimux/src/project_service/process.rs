@@ -1484,9 +1484,9 @@ async fn serve_project_service_listener_until<Stop>(
         .with_hot_snapshot_background_refresh(),
     );
     let mut periodic_tasks = builtin_plugin_tick_tasks();
-    // Order matters: the rail runs co-due tasks in sequence, and the two
+    // Order matters: the tick loop runs co-due tasks in sequence, and the two
     // watchers below may each hold it for 20s. The reconciler's 4s cadence is
-    // the tightest on the rail, so it goes ahead of them — behind the metadata
+    // the tightest on the tick loop, so it goes ahead of them — behind the metadata
     // watchers only, whose events it wants to read after, not settle over.
     periodic_tasks.push(builtin_metadata_task(&context));
     periodic_tasks.push(agent_restore_snapshot_task(&context));
@@ -1495,7 +1495,7 @@ async fn serve_project_service_listener_until<Stop>(
     periodic_tasks.push(loop_watcher_task(&context));
     periodic_tasks.push(scribe_watcher_task(&context));
     log_lifecycle_always(
-        "project service watcher rail starting",
+        "project service watcher tick loop starting",
         "watcher",
         Some(json!({
             "taskCount": periodic_tasks.len(),

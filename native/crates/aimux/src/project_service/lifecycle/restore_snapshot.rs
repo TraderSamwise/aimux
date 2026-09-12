@@ -4,7 +4,7 @@
 //! it reads, so the prompt could never appear. Three things produce them:
 //!
 //! 1. A snapshot of the agents that are online **right now**, refreshed on the
-//!    watcher rail rather than at shutdown — a `kill -9`, a crash, or a power
+//!    watcher tick loop rather than at shutdown — a `kill -9`, a crash, or a power
 //!    cut still leaves a snapshot at most one cadence stale.
 //! 2. An offer derived from that snapshot, but only when a *different* process
 //!    run wrote it. You are never offered agents your own live run recorded.
