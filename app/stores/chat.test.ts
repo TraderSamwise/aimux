@@ -36,6 +36,27 @@ describe("chat output store", () => {
     expect(store.get(lastErrorFamily("agent-1"))).toBeNull();
   });
 
+  it("surfaces tmux-unavailable snapshots as transcript errors", () => {
+    const store = createStore();
+
+    store.set(applyOutputSnapshotAtom, {
+      sessionId: "agent-1",
+      outputAnsi: undefined,
+      tmuxUnavailable: { ok: false, error: "tmux capture-pane timed out after 2s" },
+    });
+
+    expect(store.get(lastErrorFamily("agent-1"))).toBe("tmux capture-pane timed out after 2s");
+
+    store.set(applyOutputSnapshotAtom, {
+      sessionId: "agent-1",
+      output: "",
+      outputAnsi: undefined,
+      messages: [],
+    });
+
+    expect(store.get(lastErrorFamily("agent-1"))).toBeNull();
+  });
+
   it("keeps a local interrupt visible through stale running snapshots", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-09-04T12:00:00.000Z"));
