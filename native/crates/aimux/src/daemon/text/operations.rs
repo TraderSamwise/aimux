@@ -5,6 +5,7 @@ use crate::daemon::routing::{
     DaemonRouteResponse, DaemonRouteUrl, boolean_param, string_param, text_error,
     text_or_json_lines,
 };
+use crate::daemon::stability_doctor::{StabilityDoctorReport, render_stability_doctor_report};
 use crate::daemon::text::params::ProjectServiceJsonResult;
 use crate::daemon_supervisor::acquire_runtime_restart_permit;
 use crate::paths::PathResolver;
@@ -240,6 +241,13 @@ pub trait DaemonOperationsTextRuntime {
         session_name: Option<&str>,
         window_id: Option<&str>,
     ) -> Result<(Value, String), String>;
+    fn doctor_stability_report(
+        &mut self,
+        project_root: &str,
+    ) -> Result<StabilityDoctorReport, String> {
+        let _ = project_root;
+        Err("stability doctor is unavailable".into())
+    }
     fn repair_tmux_runtime(
         &mut self,
         project_root: &str,
@@ -305,6 +313,9 @@ pub fn route_operations_text_request(
     }
     if method == "GET" && pathname == CORE_API_ROUTES.doctor_tasks_text {
         return Some(doctor_tasks_text_route(&route_url));
+    }
+    if method == "GET" && pathname == CORE_API_ROUTES.doctor_stability_text {
+        return Some(doctor_stability_text_route(runtime, &route_url, body));
     }
     if method == "GET" && pathname == CORE_API_ROUTES.doctor_tmux_text {
         return Some(doctor_tmux_text_route(runtime, &route_url));
@@ -405,6 +416,25 @@ pub fn doctor_tasks_text_route(route_url: &DaemonRouteUrl) -> DaemonRouteRespons
         json!(report),
         &split_rendered_report_lines(&text),
     )
+}
+
+pub fn doctor_stability_text_route(
+    runtime: &mut impl DaemonOperationsTextRuntime,
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+) -> DaemonRouteResponse {
+    let project_root = route_project_root_or_cwd(runtime, route_url, body);
+    match runtime.doctor_stability_report(&project_root) {
+        Ok(report) => {
+            let text = render_stability_doctor_report(&report);
+            text_or_json_lines(
+                route_url,
+                json!(report),
+                &split_rendered_report_lines(&text),
+            )
+        }
+        Err(error) => text_error(500, format!("Error: {error}")),
+    }
 }
 
 pub fn doctor_exchange_text_route(

@@ -129,6 +129,7 @@ pub enum CoreCliOperation {
     DoctorLifecycle,
     DoctorTmux,
     DoctorTasks,
+    DoctorStability,
     DoctorInstalls,
     DoctorNotifications,
     NotificationsTest,
@@ -1996,7 +1997,8 @@ where
         ),
         (
             "doctor",
-            "disk" | "exchange" | "lifecycle" | "tmux" | "tasks" | "installs" | "notifications",
+            "disk" | "exchange" | "lifecycle" | "tmux" | "tasks" | "stability" | "installs"
+            | "notifications",
         ) => {
             let parsed = parse_core_doctor_args(&args).expect("eligible doctor must parse");
             if parsed.subcommand == "disk" {
@@ -2038,6 +2040,24 @@ where
                         } else {
                             CORE_API_ROUTES.doctor_tasks_text.to_owned()
                         },
+                        body: None,
+                    },
+                    CoreCliFallback::None,
+                )
+            } else if parsed.subcommand == "stability" {
+                let project_root = parsed
+                    .project
+                    .as_deref()
+                    .map(&resolve_project_root)
+                    .unwrap_or_else(|| context.current_project_root.clone());
+                (
+                    CoreCliOperation::DoctorStability,
+                    CoreCliAction::TextRoute {
+                        path: doctor_project_text_path(
+                            CORE_API_ROUTES.doctor_stability_text,
+                            &project_root,
+                            parsed.json,
+                        ),
                         body: None,
                     },
                     CoreCliFallback::None,
