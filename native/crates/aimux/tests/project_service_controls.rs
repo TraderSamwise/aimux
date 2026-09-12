@@ -1,7 +1,8 @@
 use aimux::daemon_state::{MetadataState, load_metadata_state, save_metadata_state};
 use aimux::project_api_contract::routes;
 use aimux::project_service::controls::{
-    ProjectControlRuntime, route_control_request_async, route_control_request_with_runtime,
+    AsyncProjectControlRuntime, ProjectControlRuntime, route_control_request_async,
+    route_control_request_async_with_runtime, route_control_request_with_runtime,
 };
 use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
 use aimux::runtime_topology::runtime_topology_path;
@@ -9,8 +10,12 @@ use serde_json::{Value, json};
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::fs::{create_dir_all, remove_dir_all, write};
+use std::future::{Future, pending};
 use std::path::PathBuf;
+use std::pin::Pin;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 mod support;
 
@@ -25,6 +30,37 @@ impl ProjectControlRuntime for FakeControlRuntime {
     fn focus_target(&mut self, target: &Value, _client_tty: Option<&str>) -> Result<(), String> {
         self.focused.borrow_mut().push(target.clone());
         Ok(())
+    }
+}
+
+#[derive(Default)]
+struct FakeAsyncControlRuntime {
+    focused: RefCell<Vec<Value>>,
+}
+
+impl AsyncProjectControlRuntime for FakeAsyncControlRuntime {
+    fn focus_target<'a>(
+        &'a mut self,
+        target: &'a Value,
+        _client_tty: Option<&'a str>,
+    ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
+        self.focused.borrow_mut().push(target.clone());
+        Box::pin(async { Ok(()) })
+    }
+}
+
+struct PendingAsyncControlRuntime {
+    focus_started: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl AsyncProjectControlRuntime for PendingAsyncControlRuntime {
+    fn focus_target<'a>(
+        &'a mut self,
+        _target: &'a Value,
+        _client_tty: Option<&'a str>,
+    ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
+        self.focus_started.store(true, Ordering::SeqCst);
+        Box::pin(pending())
     }
 }
 
@@ -150,6 +186,113 @@ fn focus_window_marks_agent_seen_and_recent_when_focused() {
     let last_used = std::fs::read_to_string(state_dir.join("last-used.json")).unwrap();
     assert!(last_used.contains("codex-live"));
     assert!(last_used.contains("client-1"));
+    cleanup(project);
+}
+
+#[test]
+fn async_focus_window_marks_agent_seen_and_recent_after_focus_completes() {
+    let project = temp_project("async-focus-window-success");
+    let state_dir = project.join("state");
+    write_topology(&state_dir, topology_fixture());
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([(
+                "codex-live".into(),
+                json!({ "derived": { "activity": "waiting", "attention": "needs_input", "unseenCount": 7 } }),
+            )]),
+        },
+    )
+    .unwrap();
+    let context = fixture_context(&project, &state_dir);
+    let mut runtime = FakeAsyncControlRuntime::default();
+
+    let response = aimux::async_runtime::block_on_named(
+        "test:control-focus-window-async-success",
+        route_control_request_async_with_runtime(
+            &context,
+            "POST",
+            routes::controls::FOCUS_WINDOW,
+            Some(&json!({
+                "windowId": "@1",
+                "currentClientSession": "client-1",
+                "focus": true
+            })),
+            &mut runtime,
+        ),
+    )
+    .expect("focus-window route");
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["focused"], true);
+    assert_eq!(runtime.focused.borrow().len(), 1);
+    let state = load_metadata_state(&state_dir);
+    assert_eq!(state.sessions["codex-live"]["derived"]["unseenCount"], 0);
+    let last_used = std::fs::read_to_string(state_dir.join("last-used.json")).unwrap();
+    assert!(last_used.contains("codex-live"));
+    assert!(last_used.contains("client-1"));
+    cleanup(project);
+}
+
+#[test]
+fn async_focus_window_cancellation_before_focus_completes_writes_no_seen_metadata() {
+    let project = temp_project("async-focus-window-cancel");
+    let state_dir = project.join("state");
+    write_topology(&state_dir, topology_fixture());
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([(
+                "codex-live".into(),
+                json!({ "derived": { "activity": "waiting", "attention": "needs_input", "unseenCount": 7 } }),
+            )]),
+        },
+    )
+    .unwrap();
+    let context = fixture_context(&project, &state_dir);
+    let focus_started = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut runtime = PendingAsyncControlRuntime {
+        focus_started: Arc::clone(&focus_started),
+    };
+
+    let timed_out =
+        aimux::async_runtime::block_on_named("test:control-focus-window-cancel", async {
+            tokio::time::timeout(
+                Duration::from_millis(10),
+                route_control_request_async_with_runtime(
+                    &context,
+                    "POST",
+                    routes::controls::FOCUS_WINDOW,
+                    Some(&json!({
+                        "windowId": "@1",
+                        "currentClientSession": "client-1",
+                        "focus": true
+                    })),
+                    &mut runtime,
+                ),
+            )
+            .await
+        });
+
+    assert!(
+        timed_out.is_err(),
+        "test must cancel while async focus is pending"
+    );
+    assert!(
+        focus_started.load(Ordering::SeqCst),
+        "cancellation must happen after focus starts, not before the route reaches it"
+    );
+    let state = load_metadata_state(&state_dir);
+    assert_eq!(
+        state.sessions["codex-live"]["derived"]["unseenCount"], 7,
+        "a dropped focus route must not mark an agent seen before focus completes"
+    );
+    assert!(
+        !state_dir.join("last-used.json").exists(),
+        "a dropped focus route must not mark a target recently used before focus completes"
+    );
     cleanup(project);
 }
 

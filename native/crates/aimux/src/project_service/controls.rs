@@ -1,5 +1,7 @@
 use serde_json::{Map, Value, json};
+use std::future::Future;
 use std::path::Path;
+use std::pin::Pin;
 use std::time::Duration;
 
 use crate::async_subprocess::AsyncCommand;
@@ -42,6 +44,26 @@ impl ProjectControlRuntime for SystemProjectControlRuntime {
             select_window_argv(window_id)
         };
         run_tmux_argv(argv, format!("failed to focus window {window_id}"))
+    }
+}
+
+pub trait AsyncProjectControlRuntime {
+    fn focus_target<'a>(
+        &'a mut self,
+        target: &'a Value,
+        client_tty: Option<&'a str>,
+    ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>>;
+}
+
+pub struct SystemAsyncProjectControlRuntime;
+
+impl AsyncProjectControlRuntime for SystemAsyncProjectControlRuntime {
+    fn focus_target<'a>(
+        &'a mut self,
+        target: &'a Value,
+        client_tty: Option<&'a str>,
+    ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
+        Box::pin(focus_target_async(target, client_tty))
     }
 }
 
@@ -102,27 +124,42 @@ pub async fn route_control_request_async(
     path: &str,
     body: Option<&Value>,
 ) -> Option<ProjectServiceDispatchResponse> {
+    let mut runtime = SystemAsyncProjectControlRuntime;
+    route_control_request_async_with_runtime(context, method, path, body, &mut runtime).await
+}
+
+pub async fn route_control_request_async_with_runtime<R: AsyncProjectControlRuntime>(
+    context: &ProjectServiceRequestContext,
+    method: &str,
+    path: &str,
+    body: Option<&Value>,
+    runtime: &mut R,
+) -> Option<ProjectServiceDispatchResponse> {
     if !method.eq_ignore_ascii_case("GET") && !method.eq_ignore_ascii_case("POST") {
         return None;
     }
     let pathname = project_service_pathname(path);
     let input = ControlInput::from_request(method, path, body.unwrap_or(&Value::Null));
     match pathname {
-        routes::controls::OPEN_DASHBOARD => Some(route_open_dashboard_async(context, &input).await),
-        routes::controls::OPEN_NOTIFICATION_TARGET => {
-            Some(route_open_notification_target_async(context, &input).await)
+        routes::controls::OPEN_DASHBOARD => {
+            Some(route_open_dashboard_async(context, &input, runtime).await)
         }
-        routes::controls::FOCUS_WINDOW => Some(route_focus_window_async(context, &input).await),
+        routes::controls::OPEN_NOTIFICATION_TARGET => {
+            Some(route_open_notification_target_async(context, &input, runtime).await)
+        }
+        routes::controls::FOCUS_WINDOW => {
+            Some(route_focus_window_async(context, &input, runtime).await)
+        }
         routes::controls::ACTIVE_WINDOW => Some(route_active_window_async(context, &input).await),
         routes::controls::SWITCH_NEXT => {
-            Some(route_switch_agent_async(context, &input, SwitchDirection::Next).await)
+            Some(route_switch_agent_async(context, &input, runtime, SwitchDirection::Next).await)
         }
         routes::controls::SWITCH_PREV => {
-            Some(route_switch_agent_async(context, &input, SwitchDirection::Prev).await)
+            Some(route_switch_agent_async(context, &input, runtime, SwitchDirection::Prev).await)
         }
-        routes::controls::SWITCH_ATTENTION => {
-            Some(route_switch_agent_async(context, &input, SwitchDirection::Attention).await)
-        }
+        routes::controls::SWITCH_ATTENTION => Some(
+            route_switch_agent_async(context, &input, runtime, SwitchDirection::Attention).await,
+        ),
         _ => None,
     }
 }
@@ -226,9 +263,10 @@ fn route_open_dashboard<R: ProjectControlRuntime>(
     )
 }
 
-async fn route_open_dashboard_async(
+async fn route_open_dashboard_async<R: AsyncProjectControlRuntime>(
     context: &ProjectServiceRequestContext,
     input: &ControlInput,
+    runtime: &mut R,
 ) -> ProjectServiceDispatchResponse {
     let topology = match load_topology(context) {
         Ok(topology) => topology,
@@ -240,7 +278,7 @@ async fn route_open_dashboard_async(
             json!({ "ok": false, "error": "dashboard window not found" }),
         );
     };
-    let focused = match maybe_focus_target_async(input, &target).await {
+    let focused = match maybe_focus_target_async(runtime, input, &target).await {
         Ok(focused) => focused,
         Err(error) => return json_response(500, json!({ "ok": false, "error": error })),
     };
@@ -302,9 +340,10 @@ fn route_open_notification_target<R: ProjectControlRuntime>(
     )
 }
 
-async fn route_open_notification_target_async(
+async fn route_open_notification_target_async<R: AsyncProjectControlRuntime>(
     context: &ProjectServiceRequestContext,
     input: &ControlInput,
+    runtime: &mut R,
 ) -> ProjectServiceDispatchResponse {
     let Some(session_id) = input.session_id.as_deref() else {
         return json_response(
@@ -319,6 +358,7 @@ async fn route_open_notification_target_async(
     if let Some(item) = item_by_id(&model.items, session_id) {
         return open_control_item_async(
             context.project_state_dir(),
+            runtime,
             input,
             item,
             "open-notification-target",
@@ -371,9 +411,10 @@ fn route_focus_window<R: ProjectControlRuntime>(
     )
 }
 
-async fn route_focus_window_async(
+async fn route_focus_window_async<R: AsyncProjectControlRuntime>(
     context: &ProjectServiceRequestContext,
     input: &ControlInput,
+    runtime: &mut R,
 ) -> ProjectServiceDispatchResponse {
     let Some(window_id) = input.window_id.as_deref() else {
         return json_response(400, json!({ "ok": false, "error": "windowId is required" }));
@@ -385,7 +426,14 @@ async fn route_focus_window_async(
     let Some(item) = model.find_window(context, window_id) else {
         return json_response(404, json!({ "ok": false, "error": "window not found" }));
     };
-    open_control_item_async(context.project_state_dir(), input, &item, "focus-window").await
+    open_control_item_async(
+        context.project_state_dir(),
+        runtime,
+        input,
+        &item,
+        "focus-window",
+    )
+    .await
 }
 
 fn route_active_window(
@@ -531,9 +579,10 @@ fn route_switch_agent<R: ProjectControlRuntime>(
     open_control_item(context.project_state_dir(), runtime, input, &item, action)
 }
 
-async fn route_switch_agent_async(
+async fn route_switch_agent_async<R: AsyncProjectControlRuntime>(
     context: &ProjectServiceRequestContext,
     input: &ControlInput,
+    runtime: &mut R,
     direction: SwitchDirection,
 ) -> ProjectServiceDispatchResponse {
     let model = match load_control_model_async(context).await {
@@ -582,7 +631,7 @@ async fn route_switch_agent_async(
         SwitchDirection::Prev => "switch-prev",
         SwitchDirection::Attention => "switch-attention",
     };
-    open_control_item_async(context.project_state_dir(), input, &item, action).await
+    open_control_item_async(context.project_state_dir(), runtime, input, &item, action).await
 }
 
 struct ControlModel {
@@ -721,14 +770,15 @@ fn open_control_item<R: ProjectControlRuntime>(
     )
 }
 
-async fn open_control_item_async(
+async fn open_control_item_async<R: AsyncProjectControlRuntime>(
     project_state_dir: impl AsRef<Path>,
+    runtime: &mut R,
     input: &ControlInput,
     item: &SwitchableAgentItem,
     action: &str,
 ) -> ProjectServiceDispatchResponse {
     let project_state_dir = project_state_dir.as_ref();
-    let focused = match maybe_focus_target_async(input, &item.target).await {
+    let focused = match maybe_focus_target_async(runtime, input, &item.target).await {
         Ok(focused) => focused,
         Err(error) => return json_response(500, json!({ "ok": false, "error": error })),
     };
@@ -768,11 +818,16 @@ fn maybe_focus_target<R: ProjectControlRuntime>(
         .map(|_| true)
 }
 
-async fn maybe_focus_target_async(input: &ControlInput, target: &Value) -> Result<bool, String> {
+async fn maybe_focus_target_async<R: AsyncProjectControlRuntime>(
+    runtime: &mut R,
+    input: &ControlInput,
+    target: &Value,
+) -> Result<bool, String> {
     if !input.focus {
         return Ok(false);
     }
-    focus_target_async(target, input.client_tty.as_deref())
+    runtime
+        .focus_target(target, input.client_tty.as_deref())
         .await
         .map(|_| true)
 }
