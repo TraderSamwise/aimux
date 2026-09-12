@@ -19,6 +19,8 @@ use crate::native_cli_dispatch::CORE_REVIEW_LIST_TEXT_ROUTE;
 use crate::project_api_contract::routes as project_routes;
 use serde_json::{Map, Value, json};
 
+pub const CLI_MESSAGE_SEND_TIMEOUT_MS: u64 = 15_000;
+
 pub trait DaemonCollaborationTextRuntime {
     fn get_project_service_json(
         &mut self,
@@ -488,7 +490,7 @@ pub fn message_send_text_route(
         &project,
         project_routes::threads::SEND,
         Value::Object(payload),
-        Some(CLI_PROJECT_MUTATION_TIMEOUT_MS),
+        Some(CLI_MESSAGE_SEND_TIMEOUT_MS),
     );
     let (json, _) = match unwrap_project_result(result) {
         Ok(result) => result,

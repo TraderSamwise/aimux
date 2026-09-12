@@ -43,7 +43,7 @@
     "audit:parser": "CARGO_INCREMENTAL=0 cargo test --manifest-path native/Cargo.toml -p aimux --test fixture_agent_contracts fixture_agent_output_parser",
     "audit:parser:strict": "CARGO_INCREMENTAL=0 cargo test --manifest-path native/Cargo.toml -p aimux --test fixture_agent_contracts fixture_agent_output_parser && ./scripts/audit-fixture-enforcement.mjs --suite=fixture_agent_contracts --corpus=testdata/contracts/v1/agent-output/parser-adversarial.json",
     "audit:async-blocking": "./scripts/audit-async-blocking.mjs",
-    "audit:async-seams": "python3 scripts/audit-async-seams.py",
+    "audit:async-seams": "python3 scripts/audit-async-seams.py && python3 scripts/audit-async-seams-self-check.py",
     "audit:async-clippy": "CARGO_INCREMENTAL=0 ./scripts/audit-async-clippy.sh",
     "audit:contract-secrets": "./scripts/audit-contract-secrets.mjs",
     "audit:phase8-live-residuals": "python3 scripts/phase8-live-residuals.py",

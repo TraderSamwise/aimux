@@ -7,7 +7,10 @@ use crate::daemon_state::load_metadata_state;
 use crate::project_api_contract::routes;
 use crate::runtime_topology::{read_runtime_topology, runtime_topology_path};
 
-use super::agent_output::{AgentOutputCaptureRuntime, SystemAgentOutputCaptureRuntime};
+use super::agent_output::{
+    AgentOutputCaptureRuntime, SystemAgentOutputCaptureRuntime, deliver_prompt_to_tmux,
+    resolve_live_window_id,
+};
 use super::agents::{resolve_direct_teammates, topology_desktop_session_list_for_context};
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::router::ProjectServiceRequestContext;
@@ -18,6 +21,7 @@ mod indexes;
 pub(crate) use indexes::derive_runtime_exchange_indexes;
 
 static ID_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+const RECIPIENT_PLACEHOLDER: &str = "__AIMUX_RECIPIENT__";
 
 pub fn route_coordination_mutation_request(
     context: &ProjectServiceRequestContext,
@@ -34,7 +38,7 @@ pub fn route_coordination_mutation_request_with_runtime(
     method: &str,
     path: &str,
     body: Option<&Value>,
-    _runtime: &mut impl AgentOutputCaptureRuntime,
+    runtime: &mut impl AgentOutputCaptureRuntime,
 ) -> Option<ProjectServiceDispatchResponse> {
     if !method.eq_ignore_ascii_case("POST") {
         return None;
@@ -64,6 +68,11 @@ pub fn route_coordination_mutation_request_with_runtime(
         routes::reviews::REQUEST_CHANGES => route_review_request_changes(&project_state_dir, body),
         _ => return None,
     };
+    if pathname == routes::threads::SEND {
+        return Some(deliver_thread_send_response(
+            context, body, response, runtime,
+        ));
+    }
     Some(response)
 }
 
@@ -1418,6 +1427,225 @@ fn mutation_result(result: &MutationResult, delivered: bool) -> Value {
         body.insert("deliveredTo".into(), Value::Array(Vec::new()));
     }
     Value::Object(body)
+}
+
+fn deliver_thread_send_response(
+    context: &ProjectServiceRequestContext,
+    request_body: &Value,
+    mut response: ProjectServiceDispatchResponse,
+    runtime: &mut impl AgentOutputCaptureRuntime,
+) -> ProjectServiceDispatchResponse {
+    if response.status != 200 || response.body.get("ok") != Some(&Value::Bool(true)) {
+        return response;
+    }
+    if !runtime_topology_path(context.project_state_dir()).exists() {
+        return response;
+    }
+    let Some(plan) = thread_message_delivery_plan(
+        &response.body,
+        string_array_field(request_body, "to"),
+        route_recipients(request_body),
+        &string_field_with_default(request_body, "from", "user"),
+    ) else {
+        return response;
+    };
+    let delivery = deliver_prompt_to_recipients(context, &plan, runtime);
+    object_insert_mut(
+        &mut response.body,
+        "deliveredTo",
+        json!(delivery.delivered_to),
+    );
+    let thread_id = response
+        .body
+        .get("thread")
+        .and_then(|thread| trimmed_string(thread.get("id")));
+    let message_id = response
+        .body
+        .get("message")
+        .and_then(|message| trimmed_string(message.get("id")));
+    if let (Some(thread_id), Some(message_id)) = (thread_id.as_ref(), message_id.as_ref())
+        && !delivery.delivered_to.is_empty()
+    {
+        mark_message_delivered(
+            context.project_state_dir(),
+            thread_id,
+            message_id,
+            &delivery.delivered_to,
+        );
+        let delivered_message =
+            mark_message_value_delivered(response.body["message"].clone(), &delivery.delivered_to);
+        object_insert_mut(&mut response.body, "message", delivered_message);
+    }
+    if !delivery.failures.is_empty() {
+        response.status = 424;
+        object_insert_mut(&mut response.body, "ok", Value::Bool(false));
+        object_insert_mut(
+            &mut response.body,
+            "deliveryErrors",
+            json!(delivery.failures),
+        );
+        object_insert_mut(
+            &mut response.body,
+            "error",
+            Value::String(format!(
+                "message {message_id} in thread {thread_id} was recorded but not delivered: {failures}",
+                message_id = message_id.unwrap_or_else(|| "<unknown message>".into()),
+                thread_id = thread_id.unwrap_or_else(|| "<unknown thread>".into()),
+                failures = delivery.failures.join("; ")
+            )),
+        );
+        return response;
+    }
+    response
+}
+
+struct DeliveryPlan {
+    recipients: Vec<String>,
+    prompt: String,
+}
+
+#[derive(Default)]
+struct DeliveryOutcome {
+    delivered_to: Vec<String>,
+    failures: Vec<String>,
+}
+
+fn thread_message_delivery_plan(
+    response: &Value,
+    explicit_recipients: Vec<String>,
+    fallback_recipients: Vec<String>,
+    from: &str,
+) -> Option<DeliveryPlan> {
+    let thread = response.get("thread")?;
+    let message = response.get("message")?;
+    let recipients = message_recipients(
+        thread,
+        message,
+        explicit_recipients,
+        fallback_recipients,
+        from,
+    );
+    if recipients.is_empty() {
+        return None;
+    }
+    Some(DeliveryPlan {
+        prompt: thread_message_prompt(thread, message, RECIPIENT_PLACEHOLDER),
+        recipients,
+    })
+}
+
+fn deliver_prompt_to_recipients(
+    context: &ProjectServiceRequestContext,
+    plan: &DeliveryPlan,
+    runtime: &mut impl AgentOutputCaptureRuntime,
+) -> DeliveryOutcome {
+    let mut outcome = DeliveryOutcome::default();
+    for recipient in &plan.recipients {
+        if matches!(recipient.as_str(), "" | "user" | "aimux") {
+            continue;
+        }
+        let Some(window_id) = resolve_live_window_id(context, recipient) else {
+            outcome.failures.push(format!(
+                "{recipient}: no live tmux window in runtime topology"
+            ));
+            continue;
+        };
+        let prompt = plan.prompt.replace(RECIPIENT_PLACEHOLDER, recipient);
+        if let Err(error) = deliver_prompt_to_tmux(runtime, &window_id, &prompt) {
+            outcome.failures.push(format!(
+                "{recipient}: delivery to tmux window {window_id} failed: {error}"
+            ));
+            continue;
+        }
+        outcome.delivered_to.push(recipient.clone());
+    }
+    outcome
+}
+
+fn mark_message_delivered(
+    project_state_dir: impl AsRef<Path>,
+    thread_id: &str,
+    message_id: &str,
+    delivered_to: &[String],
+) {
+    let thread_id = thread_id.to_owned();
+    let message_id = message_id.to_owned();
+    let delivered_to = delivered_to.to_vec();
+    let _ = update_runtime_exchange(runtime_exchange_path(project_state_dir), |exchange| {
+        let exchange = map_array(exchange, "messages", |message| {
+            if string_field(&message, "id") != message_id
+                || string_field(&message, "threadId") != thread_id
+            {
+                return message;
+            }
+            mark_message_value_delivered(message, &delivered_to)
+        });
+        derive_runtime_exchange_indexes(exchange)
+    });
+}
+
+fn mark_message_value_delivered(mut message: Value, delivered_to: &[String]) -> Value {
+    let mut recipients = string_array_from_value(message.get("deliveredTo"));
+    recipients.extend(delivered_to.iter().cloned());
+    recipients = unique(recipients.into_iter().map(Some).collect());
+    object_insert_mut(&mut message, "deliveredTo", json!(recipients));
+    object_insert_mut(&mut message, "deliveredAt", Value::String(now_iso()));
+    message
+}
+
+fn message_recipients(
+    thread: &Value,
+    message: &Value,
+    explicit_recipients: Vec<String>,
+    fallback_recipients: Vec<String>,
+    from: &str,
+) -> Vec<String> {
+    for candidates in [
+        explicit_recipients,
+        string_array_from_value(message.get("deliveredTo")),
+        string_array_from_value(thread.get("waitingOn")),
+        string_array_from_value(message.get("to")),
+        fallback_recipients,
+    ] {
+        let recipients = unique(
+            candidates
+                .into_iter()
+                .filter(|recipient| recipient != from)
+                .map(Some)
+                .collect(),
+        );
+        if !recipients.is_empty() {
+            return recipients;
+        }
+    }
+    Vec::new()
+}
+
+fn thread_message_prompt(thread: &Value, message: &Value, recipient: &str) -> String {
+    let is_handoff =
+        string_field(thread, "kind") == "handoff" || string_field(message, "kind") == "handoff";
+    let mut lines = vec![
+        format!("[aimux {}]", if is_handoff { "handoff" } else { "message" }),
+        format!("Thread: {}", string_field(thread, "id")),
+        format!("Title: {}", string_field(thread, "title")),
+        format!("From: {}", string_field(message, "from")),
+        format!("Kind: {}", string_field(message, "kind")),
+        String::new(),
+        string_field(message, "body"),
+        String::new(),
+    ];
+    if is_handoff {
+        lines.push(format!(
+            "Accept: aimux handoff accept {} --from {recipient}",
+            string_field(thread, "id")
+        ));
+    } else {
+        lines.push(format!(
+            "Reply: aimux message send \"<reply>\" --thread {} --from {recipient} --kind reply",
+            string_field(thread, "id")
+        ));
+    }
+    lines.join("\n")
 }
 
 fn create_rework_task_from_review(review_task: &Value) -> Option<Value> {
