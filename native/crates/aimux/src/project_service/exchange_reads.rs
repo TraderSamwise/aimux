@@ -6,7 +6,7 @@ use crate::project_api_contract::routes;
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::http::parse_bounded_limit;
 use super::router::ProjectServiceRequestContext;
-use super::runtime_exchange::{read_runtime_exchange, runtime_exchange_path};
+use super::runtime_exchange::{runtime_exchange_path, try_read_runtime_exchange};
 
 const DEFAULT_PROJECT_LIST_LIMIT: i64 = 200;
 const MAX_PROJECT_LIST_LIMIT: i64 = 500;
@@ -147,7 +147,11 @@ fn route_thread_list(
         Ok(limit) => limit as usize,
         Err(error) => return json_response(400, json!({ "ok": false, "error": error })),
     };
-    let exchange = read_runtime_exchange(runtime_exchange_path(context.project_state_dir()));
+    let exchange =
+        match try_read_runtime_exchange(runtime_exchange_path(context.project_state_dir())) {
+            Ok(exchange) => exchange,
+            Err(error) => return json_response(500, json!({ "ok": false, "error": error })),
+        };
     json_response(
         200,
         Value::Array(list_thread_summaries(
@@ -175,7 +179,11 @@ fn route_task_list(
         Ok(limit) => limit as usize,
         Err(error) => return json_response(400, json!({ "ok": false, "error": error })),
     };
-    let exchange = read_runtime_exchange(runtime_exchange_path(context.project_state_dir()));
+    let exchange =
+        match try_read_runtime_exchange(runtime_exchange_path(context.project_state_dir())) {
+            Ok(exchange) => exchange,
+            Err(error) => return json_response(500, json!({ "ok": false, "error": error })),
+        };
     json_response(
         200,
         list_tasks(
@@ -202,7 +210,11 @@ fn route_thread_detail(
         Ok(thread_id) => thread_id,
         Err(_) => return json_response(400, json!({ "ok": false, "error": "invalid threadId" })),
     };
-    let exchange = read_runtime_exchange(runtime_exchange_path(context.project_state_dir()));
+    let exchange =
+        match try_read_runtime_exchange(runtime_exchange_path(context.project_state_dir())) {
+            Ok(exchange) => exchange,
+            Err(error) => return json_response(500, json!({ "ok": false, "error": error })),
+        };
     let Some(thread) = find_by_id(&exchange, "threads", &thread_id) else {
         return json_response(404, json!({ "ok": false, "error": "thread not found" }));
     };
@@ -238,7 +250,11 @@ fn route_task_detail(
         Ok(task_id) => task_id,
         Err(_) => return json_response(400, json!({ "ok": false, "error": "invalid taskId" })),
     };
-    let exchange = read_runtime_exchange(runtime_exchange_path(context.project_state_dir()));
+    let exchange =
+        match try_read_runtime_exchange(runtime_exchange_path(context.project_state_dir())) {
+            Ok(exchange) => exchange,
+            Err(error) => return json_response(500, json!({ "ok": false, "error": error })),
+        };
     let Some(task) = find_by_id(&exchange, "tasks", &task_id) else {
         return json_response(404, json!({ "ok": false, "error": "task not found" }));
     };
