@@ -32,7 +32,7 @@ use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::net::TcpListener;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -79,6 +79,8 @@ pub struct HostedServerState {
     devices: HostedDevicesStore,
     lockdown: HostedLockdownStore,
     outbox: HostedOutboxStore,
+    outbox_drain: Arc<HostedOutboxDrainSignal>,
+    outbox_drain_worker: Mutex<Option<JoinHandle<()>>>,
     limiter: HostedRateLimiter,
     peer_limiter: HostedRateLimiter,
     delivery: Arc<Mutex<HostedEventDelivery>>,
@@ -140,14 +142,25 @@ impl HostedServerState {
             max_concurrent: config.rate_limit.max_concurrent * PEER_BUDGET_MULTIPLIER as i64,
             bytes_per_minute: config.rate_limit.bytes_per_minute as f64 * PEER_BUDGET_MULTIPLIER,
         });
+        let delivery = Arc::new(Mutex::new(delivery));
+        let outbox = HostedOutboxStore::with_resolver(resolver.clone());
+        let outbox_drain = Arc::new(HostedOutboxDrainSignal::default());
+        let outbox_drain_worker = spawn_hosted_outbox_drain_background(
+            outbox.clone(),
+            Arc::clone(&delivery),
+            Arc::clone(&outbox_drain),
+            Duration::from_millis(OUTBOX_INTERVAL_MS),
+        );
         Self {
-            delivery: Arc::new(Mutex::new(delivery)),
+            delivery,
             config,
             principals: HostedPrincipalsStore::with_resolver(resolver.clone()),
             audit: HostedAuditStore::with_resolver(resolver.clone()),
             devices: HostedDevicesStore::with_resolver(resolver.clone()),
             lockdown: HostedLockdownStore::with_resolver(resolver.clone()),
-            outbox: HostedOutboxStore::with_resolver(resolver),
+            outbox,
+            outbox_drain,
+            outbox_drain_worker: Mutex::new(Some(outbox_drain_worker)),
             limiter,
             peer_limiter,
             streams_by_principal: Mutex::new(BTreeMap::new()),
@@ -169,16 +182,9 @@ impl HostedServerState {
             .prune_devices(self.config.retention_days, unix_millis(SystemTime::now()));
     }
 
-    fn drain_outbox(&self) {
-        let events = self.outbox.drain_outbox();
-        if events.is_empty() {
-            return;
-        }
-        if let Ok(mut delivery) = self.delivery.lock() {
-            for event in events {
-                delivery.enqueue(event);
-            }
-        }
+    fn spool_delivery_event(&self, event: &HostedEvent) {
+        self.outbox.spool_event(event);
+        self.outbox_drain.signal();
     }
 
     fn enqueue_delivery_async(&self, event: HostedEvent) {
@@ -225,6 +231,117 @@ impl HostedServerState {
         } else {
             streams.insert(principal_id.to_owned(), open);
         }
+    }
+}
+
+impl Drop for HostedServerState {
+    fn drop(&mut self) {
+        self.outbox_drain.stop();
+        if let Ok(mut worker) = self.outbox_drain_worker.lock()
+            && let Some(worker) = worker.take()
+        {
+            let _ = worker.join();
+        }
+        let _ = drain_hosted_outbox(&self.outbox, &self.delivery);
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HostedOutboxDrainResult {
+    Empty,
+    Delivered(usize),
+    Failed,
+}
+
+#[derive(Debug, Default)]
+struct HostedOutboxDrainSignal {
+    state: Mutex<HostedOutboxDrainState>,
+    changed: Condvar,
+}
+
+#[derive(Debug, Default)]
+struct HostedOutboxDrainState {
+    pending: bool,
+    stopped: bool,
+}
+
+impl HostedOutboxDrainSignal {
+    fn signal(&self) {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        state.pending = true;
+        self.changed.notify_one();
+    }
+
+    fn stop(&self) {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        state.stopped = true;
+        self.changed.notify_all();
+    }
+
+    fn wait_for_next_run(&self, backstop: Duration) -> bool {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        if state.stopped {
+            return false;
+        }
+        if !state.pending {
+            let waited = self
+                .changed
+                .wait_timeout(state, backstop)
+                .unwrap_or_else(|error| error.into_inner());
+            state = waited.0;
+        }
+        if state.stopped {
+            return false;
+        }
+        state.pending = false;
+        true
+    }
+}
+
+fn drain_hosted_outbox(
+    outbox: &HostedOutboxStore,
+    delivery: &Arc<Mutex<HostedEventDelivery>>,
+) -> HostedOutboxDrainResult {
+    let events = match outbox.try_drain_outbox() {
+        Ok(events) => events,
+        Err(error) => {
+            crate::debug_logging::log_lifecycle_always(
+                "hosted outbox drain failed",
+                "hosted-outbox",
+                Some(json!({ "error": error.to_string() })),
+            );
+            return HostedOutboxDrainResult::Failed;
+        }
+    };
+    if events.is_empty() {
+        return HostedOutboxDrainResult::Empty;
+    }
+    let event_count = events.len();
+    match delivery.lock() {
+        Ok(mut delivery) => {
+            for event in events {
+                delivery.enqueue(event);
+            }
+            HostedOutboxDrainResult::Delivered(event_count)
+        }
+        Err(error) => {
+            respool_drained_events(outbox, &events, &error.to_string());
+            HostedOutboxDrainResult::Failed
+        }
+    }
+}
+
+fn respool_drained_events(outbox: &HostedOutboxStore, events: &[HostedEvent], error: &str) {
+    crate::debug_logging::log_lifecycle_always(
+        "hosted outbox delivery handoff failed",
+        "hosted-outbox",
+        Some(json!({
+            "error": error,
+            "eventCount": events.len(),
+        })),
+    );
+    for event in events {
+        outbox.spool_event(event);
     }
 }
 
@@ -291,14 +408,6 @@ where
     let listener = TcpListener::bind((config.bind_address.as_str(), config.port))
         .with_context(|| format!("bind hosted listener on {}", config.bind_address))?;
     let state = Arc::new(HostedServerState::with_resolver(config, resolver));
-    let maintenance_state = Arc::clone(&state);
-    thread::spawn(move || {
-        thread::sleep(Duration::from_millis(OUTBOX_INTERVAL_MS));
-        loop {
-            maintenance_state.drain_outbox();
-            thread::sleep(Duration::from_millis(OUTBOX_INTERVAL_MS));
-        }
-    });
     let prune_state = Arc::clone(&state);
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(PRUNE_INTERVAL_MS));
@@ -340,6 +449,19 @@ where
             });
         }
     })))
+}
+
+fn spawn_hosted_outbox_drain_background(
+    outbox: HostedOutboxStore,
+    delivery: Arc<Mutex<HostedEventDelivery>>,
+    signal: Arc<HostedOutboxDrainSignal>,
+    backstop: Duration,
+) -> JoinHandle<()> {
+    thread::spawn(move || {
+        while signal.wait_for_next_run(backstop) {
+            drain_hosted_outbox(&outbox, &delivery);
+        }
+    })
 }
 
 pub fn handle_hosted_daemon_stream<Runtime, Stream>(
@@ -1048,7 +1170,7 @@ fn record_authenticated_bookkeeping(
             event: Some(sighting.kind.clone()),
             detail: sighting.fingerprint.clone(),
         });
-        state.enqueue_delivery_async(sighting);
+        state.spool_delivery_event(&sighting);
     }
 }
 
@@ -1294,4 +1416,226 @@ fn unix_millis(time: SystemTime) -> u128 {
     time.duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hosted_events::HostedEventDeliveryConfig;
+    use std::io::Read;
+    use std::net::TcpStream;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::mpsc;
+
+    #[test]
+    fn hosted_outbox_signal_drains_without_waiting_for_backstop() {
+        let fixture = HostedServerFixture::new("outbox-signal");
+        let webhook = CountingWebhookServer::spawn();
+        let state = Arc::new(HostedServerState::with_resolver_and_delivery(
+            HostedConfig {
+                enabled: true,
+                webhook_url: Some(format!("http://127.0.0.1:{}/hook", webhook.port)),
+                ..HostedConfig::default()
+            },
+            fixture.resolver.clone(),
+            HostedEventDelivery::new(HostedEventDeliveryConfig {
+                webhook_url: Some(format!("http://127.0.0.1:{}/hook", webhook.port)),
+                webhook_secret: Some("secret".into()),
+            }),
+        ));
+
+        state.spool_delivery_event(&hosted_event("hosted_new_device"));
+
+        webhook.wait_for_count(1, Duration::from_millis(500));
+    }
+
+    #[test]
+    fn hosted_outbox_failed_delivery_handoff_preserves_drained_events() {
+        let fixture = HostedServerFixture::new("outbox-failed-handoff");
+        let state = HostedServerState::with_resolver_and_delivery(
+            HostedConfig {
+                enabled: true,
+                ..HostedConfig::default()
+            },
+            fixture.resolver.clone(),
+            HostedEventDelivery::new(HostedEventDeliveryConfig {
+                webhook_url: Some("http://127.0.0.1:9/hook".into()),
+                webhook_secret: Some("secret".into()),
+            }),
+        );
+        let event = hosted_event("hosted_token_revoked");
+        state.outbox.spool_event(&event);
+        let delivery = Arc::clone(&state.delivery);
+        let _ = std::panic::catch_unwind(move || {
+            let _guard = delivery.lock().expect("delivery lock");
+            panic!("poison delivery lock");
+        });
+
+        assert!(matches!(
+            drain_hosted_outbox(&state.outbox, &state.delivery),
+            HostedOutboxDrainResult::Failed
+        ));
+
+        let preserved = state
+            .outbox
+            .try_drain_outbox()
+            .expect("preserved outbox drains");
+        assert_eq!(preserved, vec![event]);
+    }
+
+    struct HostedServerFixture {
+        root: PathBuf,
+        resolver: PathResolver,
+    }
+
+    impl HostedServerFixture {
+        fn new(name: &str) -> Self {
+            let root = std::env::temp_dir().join(format!(
+                "aimux-hosted-server-unit-{name}-{}-{}",
+                std::process::id(),
+                unix_millis(SystemTime::now())
+            ));
+            std::fs::create_dir_all(&root).expect("fixture root");
+            let resolver = PathResolver::new(
+                "/",
+                &root,
+                Some(root.join(".aimux").to_string_lossy().into_owned()),
+            );
+            Self { root, resolver }
+        }
+    }
+
+    impl Drop for HostedServerFixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    struct CountingWebhookServer {
+        port: u16,
+        count: Arc<AtomicUsize>,
+        stop: mpsc::Sender<()>,
+        worker: Mutex<Option<thread::JoinHandle<()>>>,
+    }
+
+    impl CountingWebhookServer {
+        fn spawn() -> Self {
+            let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind webhook");
+            listener.set_nonblocking(true).expect("nonblocking webhook");
+            let port = listener.local_addr().expect("webhook addr").port();
+            let count = Arc::new(AtomicUsize::new(0));
+            let worker_count = Arc::clone(&count);
+            let (stop_tx, stop_rx) = mpsc::channel();
+            let worker = thread::spawn(move || {
+                loop {
+                    match listener.accept() {
+                        Ok((mut stream, _)) => {
+                            let _ = read_webhook_request(&mut stream);
+                            worker_count.fetch_add(1, Ordering::SeqCst);
+                            let _ =
+                                stream.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n");
+                        }
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            if stop_rx.try_recv().is_ok() {
+                                return;
+                            }
+                            thread::sleep(Duration::from_millis(10));
+                        }
+                        Err(error) => panic!("accept webhook: {error}"),
+                    }
+                }
+            });
+            Self {
+                port,
+                count,
+                stop: stop_tx,
+                worker: Mutex::new(Some(worker)),
+            }
+        }
+
+        fn wait_for_count(&self, expected: usize, timeout: Duration) {
+            let started = Instant::now();
+            while started.elapsed() < timeout {
+                if self.count.load(Ordering::SeqCst) >= expected {
+                    return;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            assert_eq!(self.count.load(Ordering::SeqCst), expected);
+        }
+
+        fn stop(&self) {
+            let _ = self.stop.send(());
+            if let Some(worker) = self.worker.lock().expect("worker lock").take() {
+                worker.join().expect("webhook worker");
+            }
+        }
+    }
+
+    impl Drop for CountingWebhookServer {
+        fn drop(&mut self) {
+            self.stop();
+        }
+    }
+
+    fn read_webhook_request(stream: &mut TcpStream) -> Vec<u8> {
+        stream
+            .set_read_timeout(Some(Duration::from_millis(100)))
+            .expect("webhook read timeout");
+        let mut bytes = Vec::new();
+        let mut buffer = [0_u8; 1024];
+        loop {
+            match stream.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(count) => {
+                    bytes.extend_from_slice(&buffer[..count]);
+                    if webhook_request_complete(&bytes) {
+                        break;
+                    }
+                }
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+                    ) =>
+                {
+                    break;
+                }
+                Err(error) => panic!("read webhook request: {error}"),
+            }
+        }
+        bytes
+    }
+
+    fn webhook_request_complete(bytes: &[u8]) -> bool {
+        let Some(header_end) = bytes.windows(4).position(|window| window == b"\r\n\r\n") else {
+            return false;
+        };
+        let Ok(headers) = std::str::from_utf8(&bytes[..header_end]) else {
+            return false;
+        };
+        let content_length = headers
+            .split("\r\n")
+            .filter_map(|line| line.split_once(':'))
+            .find(|(name, _)| name.trim().eq_ignore_ascii_case("content-length"))
+            .and_then(|(_, value)| value.trim().parse::<usize>().ok())
+            .unwrap_or(0);
+        bytes.len() >= header_end + 4 + content_length
+    }
+
+    fn hosted_event(kind: &str) -> HostedEvent {
+        HostedEvent {
+            id: format!("event-{kind}"),
+            kind: kind.to_owned(),
+            ts: "2026-09-12T00:00:00.000Z".to_owned(),
+            principal_id: Some("principal".into()),
+            label: Some("label".into()),
+            session_id: None,
+            fingerprint: None,
+            address_known: false,
+            user_agent: None,
+            detail: None,
+        }
+    }
 }
