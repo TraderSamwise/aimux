@@ -1,5 +1,9 @@
 pub use crate::agent_prompt_delivery::normalize_submitted_prompt;
-use crate::agent_prompt_delivery::{PromptSubmitRuntime, wait_for_prompt_submit};
+use crate::agent_prompt_delivery::{
+    DRAFT_CAPTURE_START_LINE, FIRST_POLL_MS, MAX_POLL_ATTEMPTS, POLL_MS, PromptSubmitRuntime,
+    SETTLE_BEFORE_SUBMIT_MS, SIGNATURE_CAPTURE_START_LINE, VERIFY_AFTER_SUBMIT_MS,
+    pane_still_contains_prompt_draft, prompt_draft_signature, wait_for_prompt_submit,
+};
 use crate::async_subprocess::{AsyncCommand, command_task_name};
 use crate::daemon_state::load_metadata_state;
 use crate::dashboard_readiness::get_runtime_owner_id;
@@ -13,8 +17,9 @@ use crate::runtime_topology::{
 use crate::tmux::TmuxRuntimeManager;
 use crate::tmux::{
     CapturePaneOptions, TMUX_RUNTIME_OWNER_OPTION, TMUX_SEND_TEXT_CHUNK_BYTES, TmuxTarget,
-    capture_pane_argv, resize_window_argv, send_carriage_return_argv, send_escape_argv,
-    send_key_argv, send_text_argv, split_text_for_tmux_send_keys,
+    WINDOW_TARGET_FORMAT, capture_pane_argv, resize_window_argv, send_carriage_return_argv,
+    send_escape_argv, send_key_argv, send_text_argv, split_text_for_tmux_send_keys,
+    tmux_command_from_env,
 };
 use crate::tool_output_watchers::{classify_tool_pane, reconcile_agent_activity};
 use serde_json::{Map, Value, json};
@@ -816,6 +821,122 @@ pub(super) fn read_agent_output_payload(
     })
 }
 
+pub(super) async fn read_agent_output_payload_async(
+    context: &ProjectServiceRequestContext,
+    session_id: &str,
+    start_line: Option<i64>,
+    mode: AgentOutputResponseMode,
+    timeout: Duration,
+) -> Result<AgentOutputPayloadRead, Box<ProjectServiceDispatchResponse>> {
+    let capture_window = agent_output_capture_window(start_line);
+    let project_state_dir = context.project_state_dir();
+    let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
+        Ok(topology) => topology,
+        Err(error) => return Err(Box::new(json_error(500, error))),
+    };
+    let Some(target) = resolve_session_target(&topology, session_id) else {
+        return Err(Box::new(json_error(
+            500,
+            format!("Session \"{session_id}\" is not running"),
+        )));
+    };
+    if let Err(error) = verify_target_runtime_async(&target, context.project_root(), timeout).await
+    {
+        return Err(Box::new(json_error(403, error)));
+    }
+    let window_id = target.window_id.clone();
+    let capture_options = CapturePaneOptions {
+        start_line: Some(capture_window.start_line),
+        end_line: capture_window.end_line,
+        include_escapes: true,
+    };
+    let output_ansi = match capture_pane_async(&window_id, capture_options, timeout).await {
+        Ok(output) => output,
+        Err(error) => return Err(Box::new(json_error(500, error))),
+    };
+    let output_has_osc = has_osc_start(&output_ansi);
+    let osc_output = context.osc_notifications.process_capture_with_hint(
+        session_id,
+        &output_ansi,
+        output_has_osc,
+    );
+    let output_ansi = osc_output.cleaned_output.as_deref().unwrap_or(&output_ansi);
+    if let Err(error) = write_osc_notifications(context, session_id, &osc_output) {
+        return Err(Box::new(json_error(500, error)));
+    }
+    let output = strip_sgr(output_ansi);
+    let metadata = load_metadata_state(&project_state_dir);
+    let mut result = Map::new();
+    insert_string(&mut result, "sessionId", session_id);
+    insert_string(&mut result, "output", &output);
+    insert_string(&mut result, "outputAnsi", output_ansi);
+    insert_number(&mut result, "startLine", capture_window.start_line);
+    insert_number(
+        &mut result,
+        "requestedStartLine",
+        capture_window.requested_start_line,
+    );
+    if let Some(end_line) = capture_window.end_line {
+        insert_number(&mut result, "endLine", end_line);
+    }
+    insert_number(&mut result, "captureLineLimit", capture_window.max_lines);
+    insert_bool(&mut result, "outputTailOnly", capture_window.tail_only);
+    insert_bool(
+        &mut result,
+        "outputStartLineClamped",
+        capture_window.clamped,
+    );
+    let derived = metadata
+        .sessions
+        .get(session_id)
+        .and_then(|metadata| metadata.get("derived"));
+    if let Some(derived) = derived {
+        for key in ["activity", "activityText", "attention"] {
+            insert_value(&mut result, key, derived.get(key).cloned());
+        }
+    }
+    let tool = resolve_session_tool(&topology, session_id);
+    let pane_state = classify_tool_pane(tool.as_deref().unwrap_or_default(), &output);
+    insert_value(
+        &mut result,
+        "paneState",
+        serde_json::to_value(&pane_state).ok(),
+    );
+    insert_projection_fields(
+        &mut result,
+        &context.output_projection_cache,
+        &output,
+        tool.as_deref(),
+    );
+    if pane_state.interrupted_visible {
+        result.insert("activityText".into(), Value::String(String::new()));
+    }
+    if let Some(activity) = reconcile_agent_activity(
+        derived.and_then(|derived| derived.get("activity").and_then(Value::as_str)),
+        result.get("activityText").and_then(Value::as_str),
+        &pane_state,
+    ) {
+        result.insert("activity".into(), Value::String(activity));
+    }
+    let mut body = Map::new();
+    body.insert("ok".into(), Value::Bool(true));
+    let payload = project_agent_output_payload(
+        &Value::Object(result),
+        capture_window,
+        capture_window.start_line,
+        mode,
+    );
+    if let Value::Object(payload) = payload {
+        for (key, value) in payload {
+            body.insert(key, value);
+        }
+    }
+    Ok(AgentOutputPayloadRead {
+        payload: Value::Object(body),
+        coalesced: false,
+    })
+}
+
 fn write_osc_notifications(
     context: &ProjectServiceRequestContext,
     session_id: &str,
@@ -1370,12 +1491,70 @@ fn tmux_agent_input_window_activity(
     )
 }
 
+pub(super) async fn tmux_agent_input_window_activity_async(
+    window_id: &str,
+    timeout: Duration,
+) -> Result<AgentInputWindowActivity, String> {
+    let panes = run_tmux_argv_with_timeout_async(
+        vec![
+            "list-panes".into(),
+            "-a".into(),
+            "-F".into(),
+            "#{window_id}\t#{window_active_clients}".into(),
+        ],
+        format!("tmux list-panes failed while checking active clients for {window_id}"),
+        timeout,
+    )
+    .await?;
+    let panes_text = String::from_utf8_lossy(&panes.stdout);
+    if active_client_count_for_window(window_id, &panes_text)? == 0 {
+        return Ok(AgentInputWindowActivity::Unattended);
+    }
+    let clients = run_tmux_argv_with_timeout_async(
+        vec![
+            "list-clients".into(),
+            "-F".into(),
+            "#{client_name}\t#{client_activity}\t#{window_id}".into(),
+        ],
+        format!("tmux list-clients failed while checking client activity for {window_id}"),
+        timeout,
+    )
+    .await?;
+    parse_agent_input_window_activity(
+        window_id,
+        &panes_text,
+        &String::from_utf8_lossy(&clients.stdout),
+    )
+}
+
 fn run_tmux_argv_with_timeout(
     argv: Vec<String>,
     fallback_error: String,
     timeout: Duration,
 ) -> Result<Output, String> {
     let output = run_command_with_timeout("tmux", &argv, timeout)
+        .map_err(|error| format!("{fallback_error}: {error}"))?;
+    if !output.status.success() {
+        let error = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return Err(if error.is_empty() {
+            fallback_error
+        } else {
+            error
+        });
+    }
+    Ok(output)
+}
+
+async fn run_tmux_argv_with_timeout_async(
+    argv: Vec<String>,
+    fallback_error: String,
+    timeout: Duration,
+) -> Result<Output, String> {
+    let mut command = tmux_command_from_env();
+    command.args(&argv);
+    let output = command
+        .output_timeout_async(timeout)
+        .await
         .map_err(|error| format!("{fallback_error}: {error}"))?;
     if !output.status.success() {
         let error = String::from_utf8_lossy(&output.stderr).trim().to_owned();
@@ -1398,6 +1577,290 @@ fn run_command_with_timeout(
     command
         .output_timeout(command_task_name("agent-output", program), timeout)
         .map_err(|error| error.to_string())
+}
+
+async fn verify_target_runtime_async(
+    target: &TmuxTarget,
+    expected_project_root: &Path,
+    timeout: Duration,
+) -> Result<(), String> {
+    let Some(actual_target) =
+        tmux_get_target_by_window_id_async(&target.session_name, &target.window_id, timeout).await
+    else {
+        return Err(format!(
+            "refusing to read pane {}: window is not present in addressed tmux runtime {}",
+            target.window_id, target.session_name
+        ));
+    };
+    if actual_target.window_id != target.window_id {
+        return Err(format!(
+            "refusing to read pane {}: tmux resolved unexpected window {}",
+            target.window_id, actual_target.window_id
+        ));
+    }
+    let expected_project_root = canonicalize_project_root(expected_project_root);
+    let actual_project_root =
+        tmux_get_session_option_async(&target.session_name, "@aimux-project-root", timeout)
+            .await
+            .map(canonicalize_project_root);
+    if actual_project_root.as_deref() != Some(expected_project_root.as_str()) {
+        return Err(format!(
+            "refusing to read pane {}: tmux session {} belongs to project {:?}, expected {}",
+            target.window_id, target.session_name, actual_project_root, expected_project_root
+        ));
+    }
+    let expected_owner = get_runtime_owner_id();
+    let actual_owner =
+        tmux_get_session_option_async(&target.session_name, TMUX_RUNTIME_OWNER_OPTION, timeout)
+            .await;
+    if actual_owner.as_deref() != Some(expected_owner.as_str()) {
+        return Err(format!(
+            "refusing to read pane {}: tmux session {} belongs to runtime owner {:?}, expected {}",
+            target.window_id, target.session_name, actual_owner, expected_owner
+        ));
+    }
+    Ok(())
+}
+
+async fn tmux_get_target_by_window_id_async(
+    session_name: &str,
+    window_id: &str,
+    timeout: Duration,
+) -> Option<TmuxTarget> {
+    let output = run_tmux_argv_with_timeout_async(
+        vec![
+            "list-windows".to_owned(),
+            "-t".to_owned(),
+            session_name.to_owned(),
+            "-F".to_owned(),
+            WINDOW_TARGET_FORMAT.to_owned(),
+        ],
+        format!("tmux list-windows failed for {session_name}"),
+        timeout,
+    )
+    .await
+    .ok()?;
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .find_map(|line| {
+            let mut parts = line.splitn(3, '\t');
+            let id = parts.next()?;
+            if id != window_id {
+                return None;
+            }
+            let index = parts.next().unwrap_or("0").parse().unwrap_or(0);
+            let name = parts.next().unwrap_or("").to_owned();
+            Some(TmuxTarget {
+                session_name: session_name.to_owned(),
+                window_id: id.to_owned(),
+                window_index: index,
+                window_name: name,
+                pane_dead: None,
+            })
+        })
+}
+
+async fn tmux_get_session_option_async(
+    session_name: &str,
+    key: &str,
+    timeout: Duration,
+) -> Option<String> {
+    let output = run_tmux_argv_with_timeout_async(
+        vec![
+            "show-options".to_owned(),
+            "-v".to_owned(),
+            "-t".to_owned(),
+            session_name.to_owned(),
+            key.to_owned(),
+        ],
+        format!("tmux show-options failed for {session_name} {key}"),
+        timeout,
+    )
+    .await
+    .ok()?;
+    Some(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        .filter(|value| !value.is_empty())
+}
+
+async fn capture_pane_async(
+    window_id: &str,
+    options: CapturePaneOptions,
+    timeout: Duration,
+) -> Result<String, String> {
+    let output = run_tmux_argv_with_timeout_async(
+        capture_pane_argv(window_id, options),
+        format!("tmux capture-pane failed for {window_id}"),
+        timeout,
+    )
+    .await?;
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+pub(super) async fn deliver_prompt_to_tmux_async(
+    window_id: &str,
+    prompt: &str,
+    timeout: Duration,
+) -> Result<(), String> {
+    let deadline = Instant::now() + timeout;
+    send_prompt_to_tmux_async(window_id, prompt, deadline).await?;
+    wait_for_prompt_submit_async(window_id, prompt, deadline).await;
+    if Instant::now() >= deadline {
+        Err("agent output request timed out".to_owned())
+    } else {
+        Ok(())
+    }
+}
+
+async fn send_prompt_to_tmux_async(
+    window_id: &str,
+    text: &str,
+    deadline: Instant,
+) -> Result<(), String> {
+    let mut pending = String::new();
+    for character in text.chars() {
+        match character {
+            '\r' => {
+                flush_tmux_text_async(window_id, &mut pending, deadline).await?;
+                run_tmux_argv_with_timeout_async(
+                    send_carriage_return_argv(window_id),
+                    format!("tmux send carriage return failed for {window_id}"),
+                    remaining_until(deadline)?,
+                )
+                .await?;
+            }
+            '\n' => {
+                flush_tmux_text_async(window_id, &mut pending, deadline).await?;
+                run_tmux_argv_with_timeout_async(
+                    send_key_argv(window_id, "C-j"),
+                    format!("tmux send-keys C-j failed for {window_id}"),
+                    remaining_until(deadline)?,
+                )
+                .await?;
+            }
+            value => pending.push(value),
+        }
+    }
+    flush_tmux_text_async(window_id, &mut pending, deadline).await
+}
+
+async fn flush_tmux_text_async(
+    window_id: &str,
+    pending: &mut String,
+    deadline: Instant,
+) -> Result<(), String> {
+    if pending.is_empty() {
+        return Ok(());
+    }
+    for chunk in split_text_for_tmux_send_keys(pending, TMUX_SEND_TEXT_CHUNK_BYTES) {
+        run_tmux_argv_with_timeout_async(
+            send_text_argv(window_id, &chunk),
+            format!("tmux send-keys text failed for {window_id}"),
+            remaining_until(deadline)?,
+        )
+        .await?;
+    }
+    pending.clear();
+    Ok(())
+}
+
+async fn wait_for_prompt_submit_async(window_id: &str, draft: &str, deadline: Instant) -> bool {
+    let generation = claim_submit_generation(window_id);
+    let mut visible_count = 0u32;
+    let mut last_signature = String::new();
+
+    for attempt in 1..=MAX_POLL_ATTEMPTS {
+        if !sleep_until_deadline(if attempt == 1 { FIRST_POLL_MS } else { POLL_MS }, deadline).await
+            || !submit_generation_is_current(window_id, generation)
+        {
+            return false;
+        }
+        let pane = capture_prompt_tail_async(window_id, DRAFT_CAPTURE_START_LINE, deadline)
+            .await
+            .unwrap_or_default();
+        let still_draft = pane_still_contains_prompt_draft(&pane, draft);
+        let signature = if still_draft {
+            capture_prompt_tail_async(window_id, SIGNATURE_CAPTURE_START_LINE, deadline)
+                .await
+                .map(|pane| prompt_draft_signature(&pane))
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+        visible_count = if still_draft && !signature.is_empty() && signature == last_signature {
+            visible_count + 1
+        } else if still_draft {
+            1
+        } else {
+            0
+        };
+        last_signature = signature;
+        if visible_count >= 2 {
+            return submit_prompt_async(window_id, draft, generation, deadline).await;
+        }
+    }
+
+    submit_prompt_async(window_id, draft, generation, deadline).await
+}
+
+async fn submit_prompt_async(
+    window_id: &str,
+    draft: &str,
+    generation: u64,
+    deadline: Instant,
+) -> bool {
+    if !sleep_until_deadline(SETTLE_BEFORE_SUBMIT_MS, deadline).await
+        || !submit_generation_is_current(window_id, generation)
+    {
+        return false;
+    }
+    let _ = run_tmux_argv_with_timeout_async(
+        send_carriage_return_argv(window_id),
+        format!("tmux send carriage return failed for {window_id}"),
+        remaining_until(deadline).unwrap_or_default(),
+    )
+    .await;
+    if !sleep_until_deadline(VERIFY_AFTER_SUBMIT_MS, deadline).await {
+        return false;
+    }
+    let pane = capture_prompt_tail_async(window_id, DRAFT_CAPTURE_START_LINE, deadline)
+        .await
+        .unwrap_or_default();
+    !pane_still_contains_prompt_draft(&pane, draft)
+}
+
+async fn capture_prompt_tail_async(
+    window_id: &str,
+    start_line: i64,
+    deadline: Instant,
+) -> Option<String> {
+    capture_pane_async(
+        window_id,
+        CapturePaneOptions {
+            start_line: Some(start_line),
+            end_line: None,
+            include_escapes: false,
+        },
+        remaining_until(deadline).ok()?,
+    )
+    .await
+    .ok()
+}
+
+async fn sleep_until_deadline(millis: u64, deadline: Instant) -> bool {
+    let Ok(remaining) = remaining_until(deadline) else {
+        return false;
+    };
+    tokio::time::sleep(Duration::from_millis(millis).min(remaining)).await;
+    Instant::now() < deadline
+}
+
+fn remaining_until(deadline: Instant) -> Result<Duration, String> {
+    let now = Instant::now();
+    if now >= deadline {
+        Err("agent output request timed out".to_owned())
+    } else {
+        Ok(deadline.saturating_duration_since(now))
+    }
 }
 
 /// Newest submit generation per window.

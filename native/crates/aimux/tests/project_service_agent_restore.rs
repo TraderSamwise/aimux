@@ -197,10 +197,11 @@ impl TestProject {
     }
 
     fn run_task_with(&self, live_windows: FakeLiveWindows) {
+        aimux::async_runtime::init_process_runtime().expect("runtime initialized");
         let context = self.context();
         let mut task =
             AgentRestoreSnapshotTask::with_live_window_source(&context, Box::new(live_windows));
-        task.run(&context);
+        aimux::async_runtime::block_on_named("agent-restore-test", task.run(&context));
     }
 
     fn accept_restore_offer(&self) -> Value {
@@ -427,8 +428,13 @@ impl FakeLiveWindows {
 }
 
 impl LiveWindowSource for FakeLiveWindows {
-    fn live_window_ids(&mut self, _surface: &str) -> Result<BTreeSet<String>, String> {
-        self.0.clone()
+    fn live_window_ids<'a>(
+        &'a mut self,
+        _surface: &'a str,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<BTreeSet<String>, String>> + Send + 'a>,
+    > {
+        Box::pin(async move { self.0.clone() })
     }
 }
 

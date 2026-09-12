@@ -13,9 +13,16 @@ use serde_json::{Value, json};
 
 use crate::project_api_contract::routes;
 
-use super::agent_output::{
-    BoundedAgentOutputCaptureRuntime, route_agent_output_request_with_runtime,
+use super::agent_input_delivery::{
+    AgentInputDeliveryDecision, decide_agent_input_delivery, enqueue_agent_input_delivery,
+    record_agent_input_delivery_probe_failure,
 };
+use super::agent_output::{
+    AgentOutputResponseMode, BoundedAgentOutputCaptureRuntime, deliver_prompt_to_tmux_async,
+    read_agent_output_payload_async, resolve_live_window_id,
+    route_agent_output_request_with_runtime,
+};
+use super::prompt_context::{compose_with_prompt_context, get_prompt_context_text};
 use super::router::ProjectServiceRequestContext;
 
 /// How long a single delivery may take before the rail gives up on it.
@@ -43,6 +50,16 @@ pub fn deliver_agent_input(
     let deadline = Instant::now() + DELIVERY_TIMEOUT;
     let mut runtime = BoundedAgentOutputCaptureRuntime::new(deadline, cancelled);
     deliver_agent_input_with_runtime(&context, session_id, text, &mut runtime).consumes_cooldown()
+}
+
+pub async fn deliver_agent_input_async(
+    context: Arc<ProjectServiceRequestContext>,
+    session_id: &str,
+    text: &str,
+) -> bool {
+    deliver_agent_input_direct_async(&context, session_id, text)
+        .await
+        .consumes_cooldown()
 }
 
 pub fn deliver_agent_input_with_runtime(
@@ -75,6 +92,48 @@ pub fn deliver_agent_input_with_runtime(
     }
 }
 
+async fn deliver_agent_input_direct_async(
+    context: &ProjectServiceRequestContext,
+    session_id: &str,
+    text: &str,
+) -> WatcherDeliveryResult {
+    let Some(window_id) = resolve_live_window_id(context, session_id) else {
+        return WatcherDeliveryResult::Failed;
+    };
+    let project_state_dir = context.project_state_dir();
+    let prompt_context = get_prompt_context_text(&project_state_dir, session_id);
+    let contextualized_text = compose_with_prompt_context(text, prompt_context.as_deref());
+    let prompt = crate::agent_prompt_delivery::normalize_submitted_prompt(&contextualized_text);
+    let now_ms = super::scheduler::scheduler_now_ms();
+    let activity =
+        super::agent_output::tmux_agent_input_window_activity_async(&window_id, DELIVERY_TIMEOUT)
+            .await;
+    let decision = decide_agent_input_delivery(false, activity, now_ms, now_ms);
+    if let AgentInputDeliveryDecision::Hold {
+        reason,
+        quiet_for_ms: _,
+        retry_after_ms: _,
+    } = decision
+    {
+        if enqueue_agent_input_delivery(context, session_id, &window_id, &prompt, &reason, now_ms)
+            .is_err()
+        {
+            return WatcherDeliveryResult::Failed;
+        }
+        if reason.starts_with("tmux client activity probe failed") {
+            record_agent_input_delivery_probe_failure(context, session_id, &reason);
+        }
+        context
+            .scheduler
+            .force_task_next_tick(super::agent_input_delivery::AGENT_INPUT_DELIVERY_TASK_NAME);
+        return WatcherDeliveryResult::Queued;
+    }
+    match deliver_prompt_to_tmux_async(&window_id, &prompt, DELIVERY_TIMEOUT).await {
+        Ok(()) => WatcherDeliveryResult::Delivered,
+        Err(_) => WatcherDeliveryResult::Failed,
+    }
+}
+
 /// How long a single pane read may take before the rail gives up on it.
 ///
 /// Shorter than a delivery: capturing a pane is one fast tmux call, and a scan
@@ -101,6 +160,28 @@ pub fn read_agent_output_tail(
         super::agent_output::AgentOutputResponseMode::Full,
         &mut runtime,
     )
+    .ok()
+    .and_then(|read| {
+        read.payload
+            .get("output")
+            .and_then(serde_json::Value::as_str)
+            .map(ToOwned::to_owned)
+    })
+}
+
+pub async fn read_agent_output_tail_async(
+    context: Arc<ProjectServiceRequestContext>,
+    session_id: &str,
+    start_line: i64,
+) -> Option<String> {
+    read_agent_output_payload_async(
+        &context,
+        session_id,
+        Some(start_line),
+        AgentOutputResponseMode::Full,
+        READ_TIMEOUT,
+    )
+    .await
     .ok()
     .and_then(|read| {
         read.payload

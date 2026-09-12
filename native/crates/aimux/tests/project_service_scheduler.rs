@@ -1,15 +1,22 @@
 use aimux::async_runtime::init_process_runtime;
 use aimux::project_api_contract::routes;
+use aimux::project_service::loop_watcher_task::LoopWatcherTask;
 use aimux::project_service::router::ProjectServiceRequestContext;
 use aimux::project_service::router::route_project_service_request;
 use aimux::project_service::scheduler::{
-    PeriodicScheduler, PeriodicTask, ProjectSchedulerHandle, spawn_project_service_scheduler,
+    PeriodicScheduler, PeriodicTask, PeriodicTaskFuture, ProjectSchedulerHandle,
+    spawn_project_service_scheduler,
 };
 use serde_json::json;
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::mpsc;
+use std::sync::{Mutex, mpsc};
 use std::time::Duration;
+
+static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 struct CountingTask {
     name: String,
@@ -33,9 +40,11 @@ impl PeriodicTask for CountingTask {
                 .max(1)
         })
     }
-    fn run(&mut self, _context: &ProjectServiceRequestContext) {
-        self.runs.fetch_add(1, Ordering::SeqCst);
-        assert!(!self.panics, "task panicked on purpose");
+    fn run<'a>(&'a mut self, _context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
+        Box::pin(async move {
+            self.runs.fetch_add(1, Ordering::SeqCst);
+            assert!(!self.panics, "task panicked on purpose");
+        })
     }
 }
 
@@ -73,6 +82,66 @@ fn context_with_scheduler(scheduler: ProjectSchedulerHandle) -> ProjectServiceRe
     let dir = std::env::temp_dir().join("aimux-scheduler-kick-test");
     ProjectServiceRequestContext::with_project_state_dir(&dir, dir.join("state"))
         .with_scheduler(scheduler)
+}
+
+#[test]
+fn scheduler_reschedules_configured_tasks_without_spawning_git() {
+    let _guard = ENV_LOCK.lock().expect("env lock");
+    let root = unique_temp_dir("aimux-scheduler-no-git");
+    let project_root = root.join("project");
+    let state_dir = root.join("state");
+    let bin_dir = root.join("bin");
+    let log_path = root.join("git.log");
+    fs::create_dir_all(project_root.join(".aimux")).expect("project config dir");
+    fs::create_dir_all(&state_dir).expect("state dir");
+    fs::create_dir_all(&bin_dir).expect("bin dir");
+    fs::write(
+        project_root.join(".aimux/config.json"),
+        r#"{"loop":{"scanEveryTicks":2,"scanIntervalMs":500}}"#,
+    )
+    .expect("config");
+    let git_path = bin_dir.join("git");
+    fs::write(
+        &git_path,
+        format!(
+            "#!/bin/sh\necho \"$@\" >> {}\npwd\n",
+            shell_quote(&log_path)
+        ),
+    )
+    .expect("git shim");
+    fs::set_permissions(&git_path, fs::Permissions::from_mode(0o755)).expect("git shim mode");
+
+    let old_path = std::env::var_os("PATH");
+    unsafe {
+        std::env::set_var("PATH", &bin_dir);
+    }
+    let ctx = Arc::new(ProjectServiceRequestContext::with_project_state_dir(
+        &project_root,
+        &state_dir,
+    ));
+    let task = Box::new(LoopWatcherTask::new(Arc::clone(&ctx)));
+    let _ = fs::remove_file(&log_path);
+    let mut scheduler = PeriodicScheduler::new(vec![task], 0);
+
+    assert_eq!(scheduler.run_due_at(&ctx, 500), vec!["loop-watcher"]);
+    assert!(scheduler.run_due_at(&ctx, 750).is_empty());
+    assert_eq!(scheduler.run_due_at(&ctx, 1_000), vec!["loop-watcher"]);
+
+    if let Some(old_path) = old_path {
+        unsafe {
+            std::env::set_var("PATH", old_path);
+        }
+    } else {
+        unsafe {
+            std::env::remove_var("PATH");
+        }
+    }
+    let invocations = fs::read_to_string(&log_path).unwrap_or_default();
+    let _ = fs::remove_dir_all(&root);
+    assert_eq!(
+        invocations, "",
+        "scheduler cadence/reschedule path spawned git: {invocations}"
+    );
 }
 
 #[test]
@@ -233,9 +302,11 @@ impl PeriodicTask for SlowTask {
     fn interval_ms(&self) -> i64 {
         1_000
     }
-    fn run(&mut self, _context: &ProjectServiceRequestContext) {
-        self.runs.fetch_add(1, Ordering::SeqCst);
-        *self.clock.lock().unwrap() += self.cost_ms;
+    fn run<'a>(&'a mut self, _context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
+        Box::pin(async move {
+            self.runs.fetch_add(1, Ordering::SeqCst);
+            *self.clock.lock().unwrap() += self.cost_ms;
+        })
     }
 }
 
@@ -283,8 +354,10 @@ impl PeriodicTask for EagerTask {
     fn interval_ms(&self) -> i64 {
         60_000
     }
-    fn run(&mut self, _context: &ProjectServiceRequestContext) {
-        self.runs.fetch_add(1, Ordering::SeqCst);
+    fn run<'a>(&'a mut self, _context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
+        Box::pin(async move {
+            self.runs.fetch_add(1, Ordering::SeqCst);
+        })
     }
     fn run_immediately(&self) -> bool {
         true
@@ -315,6 +388,95 @@ fn a_task_can_ask_to_run_at_startup_instead_of_one_interval_out() {
     );
 }
 
+struct WedgeTask {
+    started: Arc<AtomicUsize>,
+    dropped: Arc<AtomicUsize>,
+    completed: Arc<AtomicUsize>,
+}
+
+struct FutureDropCounter(Arc<AtomicUsize>);
+
+impl Drop for FutureDropCounter {
+    fn drop(&mut self) {
+        self.0.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+impl PeriodicTask for WedgeTask {
+    fn name(&self) -> &str {
+        "wedged"
+    }
+
+    fn interval_ms(&self) -> i64 {
+        1_000
+    }
+
+    fn timeout(&self) -> Duration {
+        Duration::from_millis(25)
+    }
+
+    fn run_immediately(&self) -> bool {
+        true
+    }
+
+    fn run<'a>(&'a mut self, _context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
+        let started = Arc::clone(&self.started);
+        let dropped = Arc::clone(&self.dropped);
+        let completed = Arc::clone(&self.completed);
+        Box::pin(async move {
+            let _drop_counter = FutureDropCounter(dropped);
+            started.fetch_add(1, Ordering::SeqCst);
+            std::future::pending::<()>().await;
+            completed.fetch_add(1, Ordering::SeqCst);
+        })
+    }
+}
+
+#[test]
+fn a_timed_out_task_future_is_cancelled_not_abandoned() {
+    init_process_runtime().expect("runtime initialized");
+    let started = Arc::new(AtomicUsize::new(0));
+    let dropped = Arc::new(AtomicUsize::new(0));
+    let completed = Arc::new(AtomicUsize::new(0));
+    let tasks = vec![Box::new(WedgeTask {
+        started: Arc::clone(&started),
+        dropped: Arc::clone(&dropped),
+        completed: Arc::clone(&completed),
+    }) as Box<dyn PeriodicTask>];
+    let ctx = Arc::new(context());
+
+    spawn_project_service_scheduler(ctx, tasks, ProjectSchedulerHandle::default());
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(1);
+    while dropped.load(Ordering::SeqCst) == 0 && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(started.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        dropped.load(Ordering::SeqCst),
+        1,
+        "the in-flight future must be dropped when the scheduler timeout fires"
+    );
+    assert_eq!(
+        completed.load(Ordering::SeqCst),
+        0,
+        "the wedged future must not keep running after timeout"
+    );
+}
+
+#[test]
+fn scheduler_test_helper_is_for_instant_return_tasks() {
+    let runs = Arc::new(AtomicUsize::new(0));
+    let mut scheduler = PeriodicScheduler::new(vec![task("instant", 1_000, &runs, false)], 0);
+    let ctx = context();
+
+    assert_eq!(
+        scheduler.run_due_at(&ctx, 1_000),
+        vec!["instant".to_owned()]
+    );
+    assert_eq!(runs.load(Ordering::SeqCst), 1);
+}
+
 struct BlockingStartupTask {
     name: String,
     started: mpsc::Sender<String>,
@@ -338,21 +500,23 @@ impl PeriodicTask for BlockingStartupTask {
         true
     }
 
-    fn run(&mut self, _context: &ProjectServiceRequestContext) {
-        self.started
-            .send(self.name.clone())
-            .expect("test receiver should be open");
-        let (lock, changed) = &*self.gate;
-        let mut released = lock.lock().expect("gate lock");
-        while !*released {
-            let (next, _) = changed
-                .wait_timeout(released, Duration::from_secs(2))
-                .expect("wait on gate");
-            released = next;
-            if !*released {
-                break;
+    fn run<'a>(&'a mut self, _context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
+        Box::pin(async move {
+            self.started
+                .send(self.name.clone())
+                .expect("test receiver should be open");
+            let (lock, changed) = &*self.gate;
+            let mut released = lock.lock().expect("gate lock");
+            while !*released {
+                let (next, _) = changed
+                    .wait_timeout(released, Duration::from_secs(2))
+                    .expect("wait on gate");
+                released = next;
+                if !*released {
+                    break;
+                }
             }
-        }
+        })
     }
 }
 
@@ -404,8 +568,10 @@ impl PeriodicTask for KickTask {
         Duration::from_secs(1)
     }
 
-    fn run(&mut self, _context: &ProjectServiceRequestContext) {
-        self.started.send(()).expect("test receiver should be open");
+    fn run<'a>(&'a mut self, _context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
+        Box::pin(async move {
+            self.started.send(()).expect("test receiver should be open");
+        })
     }
 }
 
@@ -432,4 +598,17 @@ fn spawned_scheduler_force_kick_runs_before_the_full_interval() {
     started_rx
         .recv_timeout(Duration::from_secs(1))
         .expect("force should wake the task loop on the next scheduler tick");
+}
+
+fn unique_temp_dir(prefix: &str) -> std::path::PathBuf {
+    static SEQ: AtomicUsize = AtomicUsize::new(0);
+    std::env::temp_dir().join(format!(
+        "{prefix}-{}-{}",
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::SeqCst)
+    ))
+}
+
+fn shell_quote(path: &Path) -> String {
+    format!("'{}'", path.to_string_lossy().replace('\'', "'\"'\"'"))
 }

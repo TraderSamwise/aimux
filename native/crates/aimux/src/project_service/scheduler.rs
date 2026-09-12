@@ -7,16 +7,24 @@
 //! run.
 
 use std::collections::BTreeSet;
+use std::fs;
+use std::future::Future;
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+use std::task::Poll;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use serde_json::Value;
 use serde_json::json;
 use tokio::task::JoinSet;
 use tokio::time::{MissedTickBehavior, interval, timeout};
 
-use crate::async_runtime::{scoped_task_name, spawn_blocking_named, spawn_named, task_name};
+use crate::async_runtime::{spawn_named, task_name};
+use crate::config::{load_config_for_known_project_root, project_config_path_for_known_root};
 use crate::debug_logging::{LogLevel, log_at, log_lifecycle_always};
+use crate::paths::PathResolver;
 
 use super::router::ProjectServiceRequestContext;
 
@@ -65,6 +73,91 @@ impl ProjectSchedulerHandle {
     }
 }
 
+pub type PeriodicTaskFuture<'a> = Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
+
+#[derive(Debug, Clone)]
+pub struct CachedProjectConfig {
+    project_root: PathBuf,
+    global_path: PathBuf,
+    project_path: PathBuf,
+    signature: ConfigSignature,
+    value: Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ConfigSignature {
+    global: FileSignature,
+    project: FileSignature,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FileSignature {
+    exists: bool,
+    len: u64,
+    modified_ms: Option<u128>,
+}
+
+impl CachedProjectConfig {
+    pub fn new(project_root: impl AsRef<Path>) -> Self {
+        let project_root = project_root.as_ref().to_path_buf();
+        let resolver = PathResolver::from_env();
+        let global_path = resolver.global_config_path();
+        let project_path = project_config_path_for_known_root(&project_root);
+        let signature = ConfigSignature::read(&global_path, &project_path);
+        let value = load_config_for_known_project_root(&project_root);
+        Self {
+            project_root,
+            global_path,
+            project_path,
+            signature,
+            value,
+        }
+    }
+
+    pub fn get(&self) -> &Value {
+        &self.value
+    }
+
+    pub fn refresh_if_changed(&mut self) {
+        let signature = ConfigSignature::read(&self.global_path, &self.project_path);
+        if signature == self.signature {
+            return;
+        }
+        self.value = load_config_for_known_project_root(&self.project_root);
+        self.signature = signature;
+    }
+}
+
+impl ConfigSignature {
+    fn read(global_path: &Path, project_path: &Path) -> Self {
+        Self {
+            global: FileSignature::read(global_path),
+            project: FileSignature::read(project_path),
+        }
+    }
+}
+
+impl FileSignature {
+    fn read(path: &Path) -> Self {
+        let Ok(metadata) = fs::metadata(path) else {
+            return Self {
+                exists: false,
+                len: 0,
+                modified_ms: None,
+            };
+        };
+        Self {
+            exists: true,
+            len: metadata.len(),
+            modified_ms: metadata
+                .modified()
+                .ok()
+                .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+                .map(|duration| duration.as_millis()),
+        }
+    }
+}
+
 pub trait PeriodicTask: Send + 'static {
     fn name(&self) -> &str;
     /// Re-read every reschedule, so a config change takes effect without a restart.
@@ -81,7 +174,7 @@ pub trait PeriodicTask: Send + 'static {
     fn tick_multiple(&self) -> u64 {
         interval_ms_to_ticks(self.interval_ms())
     }
-    fn run(&mut self, context: &ProjectServiceRequestContext);
+    fn run<'a>(&'a mut self, context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a>;
     /// Whether the first run should happen at startup instead of one interval
     /// out. Node's scribe watcher scanned on `start()`; its loop watcher did not.
     fn run_immediately(&self) -> bool {
@@ -145,6 +238,17 @@ impl PeriodicScheduler {
         context: &ProjectServiceRequestContext,
         clock: &mut dyn FnMut() -> i64,
     ) -> Vec<String> {
+        crate::async_runtime::block_on_named(
+            task_name("project-service", "scheduler-run-due"),
+            self.run_due_async(context, clock),
+        )
+    }
+
+    pub async fn run_due_async(
+        &mut self,
+        context: &ProjectServiceRequestContext,
+        clock: &mut dyn FnMut() -> i64,
+    ) -> Vec<String> {
         let now_ms = clock();
         let forced_tasks = self.handle.take_forced_tasks();
         let mut ran = Vec::new();
@@ -156,7 +260,7 @@ impl PeriodicScheduler {
             }
             let task = &mut scheduled.task;
             let started = Instant::now();
-            let outcome = catch_unwind(AssertUnwindSafe(|| task.run(context)));
+            let panicked = run_task_future(task.run(context)).await;
             let elapsed_ms = started.elapsed().as_millis().min(i64::MAX as u128) as i64;
             let finished_ms = clock();
             let interval_ms = interval_of(scheduled.task.as_ref());
@@ -171,10 +275,10 @@ impl PeriodicScheduler {
                     "intervalMs": interval_ms,
                     "tickMultiple": scheduled.task.tick_multiple(),
                     "forced": forced,
-                    "panicked": outcome.is_err(),
+                    "panicked": panicked,
                 })),
             );
-            if outcome.is_err() {
+            if panicked {
                 log_lifecycle_always(
                     "watcher rail task panicked",
                     "watcher",
@@ -310,56 +414,21 @@ async fn run_task_once(
     let interval_ms = interval_of(task.as_ref());
     let timeout_after = task.timeout();
     let started = Instant::now();
-    let blocking_name = scoped_task_name("project-service", "scheduler-task", &name);
-    // Transitional pre-Phase-1 shape: PeriodicTask::run is still sync, so a
-    // timeout around spawn_blocking cannot cancel the OS worker. Report the
-    // overrun, then wait for that worker to finish before rescheduling this
-    // task; otherwise one wedged task could create a herd of overlapping runs.
-    // This blocking seam goes away when the task bodies become async fn.
-    let mut join = spawn_blocking_named(blocking_name, move || {
-        let outcome = catch_unwind(AssertUnwindSafe(|| task.run(&context)));
-        (task, outcome.is_err())
-    });
-    let (task, panicked, timed_out) = match timeout(timeout_after, &mut join).await {
-        Ok(result) => match result {
-            Ok((task, panicked)) => (task, panicked, false),
-            Err(error) => {
+    let (panicked, timed_out) =
+        match timeout(timeout_after, run_task_future(task.run(&context))).await {
+            Ok(panicked) => (panicked, false),
+            Err(_) => {
                 log_lifecycle_always(
-                    "watcher rail task join failed",
+                    "watcher rail task timed out",
                     "watcher",
                     Some(json!({
                         "task": name.clone(),
-                        "error": error.to_string(),
+                        "timeoutMs": timeout_after.as_millis(),
                     })),
                 );
-                return Box::new(StoppedTask { name });
+                (false, true)
             }
-        },
-        Err(_) => {
-            log_lifecycle_always(
-                "watcher rail task timed out",
-                "watcher",
-                Some(json!({
-                    "task": name.clone(),
-                    "timeoutMs": timeout_after.as_millis(),
-                })),
-            );
-            match join.await {
-                Ok((task, panicked)) => (task, panicked, true),
-                Err(error) => {
-                    log_lifecycle_always(
-                        "watcher rail task join failed after timeout",
-                        "watcher",
-                        Some(json!({
-                            "task": name.clone(),
-                            "error": error.to_string(),
-                        })),
-                    );
-                    return Box::new(StoppedTask { name });
-                }
-            }
-        }
-    };
+        };
     let elapsed_ms = started.elapsed().as_millis().min(i64::MAX as u128) as i64;
     log_at(
         LogLevel::Debug,
@@ -399,20 +468,16 @@ async fn run_task_once(
     task
 }
 
-struct StoppedTask {
-    name: String,
-}
-
-impl PeriodicTask for StoppedTask {
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn interval_ms(&self) -> i64 {
-        i64::MAX
-    }
-
-    fn run(&mut self, _context: &ProjectServiceRequestContext) {}
+async fn run_task_future(future: PeriodicTaskFuture<'_>) -> bool {
+    let mut future = future;
+    std::future::poll_fn(move |cx| {
+        match catch_unwind(AssertUnwindSafe(|| future.as_mut().poll(cx))) {
+            Ok(Poll::Ready(())) => Poll::Ready(false),
+            Ok(Poll::Pending) => Poll::Pending,
+            Err(_) => Poll::Ready(true),
+        }
+    })
+    .await
 }
 
 fn interval_ms_to_ticks(interval_ms: i64) -> u64 {

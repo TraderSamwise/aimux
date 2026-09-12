@@ -67,6 +67,64 @@ pub fn try_live_window_ids_for_session_projection(
     }
 }
 
+pub async fn try_live_window_ids_for_session_projection_async(
+    surface: &str,
+) -> Result<BTreeSet<String>, String> {
+    let mut command = crate::tmux::tmux_command_from_env();
+    command.args(crate::tmux::list_all_window_ids_argv());
+    let output = command
+        .output_timeout_async(std::time::Duration::from_secs(2))
+        .await
+        .map_err(|error| error.to_string());
+    let raw = match output {
+        Ok(output) if output.status.success() => {
+            String::from_utf8_lossy(&output.stdout).into_owned()
+        }
+        Ok(output) => {
+            let error = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+            let error = if error.is_empty() {
+                format!("tmux exited with {}", output.status)
+            } else {
+                error
+            };
+            if crate::tmux::tmux_list_sessions_failed_because_no_server(&error) {
+                return Ok(Default::default());
+            }
+            log_always_at(
+                LogLevel::Warn,
+                "tmux live window query failed; preserving session liveness",
+                "project-service",
+                Some(json!({
+                    "surface": surface,
+                    "error": error,
+                })),
+            );
+            return Err(error);
+        }
+        Err(error) => {
+            if crate::tmux::tmux_list_sessions_failed_because_no_server(&error) {
+                return Ok(Default::default());
+            }
+            log_always_at(
+                LogLevel::Warn,
+                "tmux live window query failed; preserving session liveness",
+                "project-service",
+                Some(json!({
+                    "surface": surface,
+                    "error": error,
+                })),
+            );
+            return Err(error);
+        }
+    };
+    Ok(raw
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect())
+}
+
 pub fn route_agent_read_request(
     context: &ProjectServiceRequestContext,
     method: &str,

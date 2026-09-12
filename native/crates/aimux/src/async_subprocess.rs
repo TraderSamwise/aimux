@@ -126,6 +126,10 @@ impl AsyncCommand {
         self.output_timeout(name, DEFAULT_COMMAND_TIMEOUT)
     }
 
+    pub async fn output_async(&mut self) -> Result<Output, AsyncCommandError> {
+        self.output_timeout_async(DEFAULT_COMMAND_TIMEOUT).await
+    }
+
     pub fn output_timeout(
         &mut self,
         name: impl Into<String>,
@@ -134,9 +138,20 @@ impl AsyncCommand {
         block_on_named(name, run_output(self, timeout))
     }
 
+    pub async fn output_timeout_async(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<Output, AsyncCommandError> {
+        run_output(self, timeout).await
+    }
+
     pub fn status(&mut self) -> Result<ExitStatus, AsyncCommandError> {
         let name = command_task_name("subprocess", &self.program_display());
         self.status_timeout(name, DEFAULT_COMMAND_TIMEOUT)
+    }
+
+    pub async fn status_async(&mut self) -> Result<ExitStatus, AsyncCommandError> {
+        self.status_timeout_async(DEFAULT_COMMAND_TIMEOUT).await
     }
 
     pub fn status_timeout(
@@ -147,8 +162,19 @@ impl AsyncCommand {
         block_on_named(name, run_status(self, timeout))
     }
 
+    pub async fn status_timeout_async(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<ExitStatus, AsyncCommandError> {
+        run_status(self, timeout).await
+    }
+
     pub fn spawn_detached(&mut self, name: impl Into<String>) -> Result<u32, AsyncCommandError> {
         block_on_named(name, run_spawn_detached(self))
+    }
+
+    pub async fn spawn_detached_async(&mut self) -> Result<u32, AsyncCommandError> {
+        run_spawn_detached(self).await
     }
 
     fn program_display(&self) -> String {
