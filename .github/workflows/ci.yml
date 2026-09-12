@@ -275,6 +275,14 @@ jobs:
             --skip-build \
             --aimux-bin "$CARGO_TARGET_DIR/debug/aimux"
 
+      - name: Run live Expose residual
+        env:
+          AIMUX_HOME: ${{ runner.temp }}/aimux-home-phase8-expose-interaction
+        run: |
+          yarn audit:phase8-live-residuals:expose-interaction \
+            --skip-build \
+            --aimux-bin "$CARGO_TARGET_DIR/debug/aimux"
+
       - name: Run live SSE residual
         env:
           AIMUX_HOME: ${{ runner.temp }}/aimux-home-phase8-sse
