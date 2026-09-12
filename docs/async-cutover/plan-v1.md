@@ -28,6 +28,23 @@ Five gates, every phase, no exceptions:
    real. Never install on the primary machine.
 5. `yarn verify` fast lane green. Scoped cargo targets only; never the full suite.
 
+## Branches
+
+`feat/async-cutover` is the integration branch and the thing that eventually PRs to
+master. It is what the main checkout is on.
+
+- **Phases 0, 1, 2** land directly on it. The agents share the main checkout and the file
+  groups are disjoint, so a branch per agent would buy nothing and cost a merge each.
+- **Phase 3** is where separate branches earn their keep, because the three daemon islands
+  are worked simultaneously in separate worktrees. One branch each off
+  `feat/async-cutover` — `feat/async-daemon-listener`, `feat/async-relay`,
+  `feat/async-hosted` — merged back in that order, since hosted calls the listener's
+  generic stream handler.
+- **Phase 4** lands on the integration branch again.
+
+Merge, never rebase, across agents and branches. Nobody creates a branch in the main
+checkout while others are working in it.
+
 ## Where builds may be installed
 
 **sam-mbp2 only.** For the whole cutover, no build from this work goes onto the primary
