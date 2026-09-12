@@ -18,7 +18,7 @@ use std::io::{self, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream as TokioTcpStream;
 use tokio::time::timeout;
 
@@ -302,6 +302,58 @@ pub async fn pipe_project_event_stream_from_url_async(
     Ok(())
 }
 
+async fn pipe_project_event_stream_from_url_until_downstream_closes_async(
+    writer: &mut (impl AsyncWrite + Unpin),
+    downstream: &mut (impl AsyncRead + Unpin),
+    target: &ProjectEventStreamTarget,
+    options: HostAgentStreamRequestOptions,
+) -> Result<(), HostAgentStreamError> {
+    let endpoint = parse_upstream_url(&target.url)?;
+    let mut stream = connect_upstream_async(&endpoint, options.timeout_ms).await?;
+    stream
+        .write_all(project_event_stream_request(&endpoint, &target.headers).as_bytes())
+        .await
+        .map_err(map_io_error)?;
+
+    let mut opened = read_upstream_response_async(stream, options.timeout_ms).await?;
+    if !(200..300).contains(&opened.status) {
+        let status = opened.status;
+        let message = opened.body_text().await.trim().to_owned();
+        writer
+            .write_all(&host_agent_stream_failure_bytes(HostAgentStreamFailure {
+                status,
+                message,
+            }))
+            .await
+            .map_err(map_io_error)?;
+        return Ok(());
+    }
+
+    write_project_event_stream_headers_async(writer).await?;
+    let mut downstream_buffer = [0_u8; 1024];
+    loop {
+        match timeout(
+            Duration::from_millis(1),
+            downstream.read(&mut downstream_buffer),
+        )
+        .await
+        {
+            Ok(Ok(0)) => return Ok(()),
+            Ok(Ok(_)) => {}
+            Ok(Err(error)) => return Err(map_io_error(error)),
+            Err(_) => {}
+        }
+        let chunk = match timeout(Duration::from_millis(100), opened.body.next_chunk()).await {
+            Ok(chunk) => chunk?,
+            Err(_) => continue,
+        };
+        let Some(chunk) = chunk else {
+            return Ok(());
+        };
+        writer.write_all(&chunk).await.map_err(map_io_error)?;
+    }
+}
+
 pub fn open_project_event_stream_from_url(
     target: &ProjectEventStreamTarget,
     options: HostAgentStreamRequestOptions,
@@ -383,12 +435,12 @@ pub fn maybe_handle_project_event_stream_request(
     }
 }
 
-pub async fn maybe_handle_project_event_stream_request_async<Writer>(
+pub async fn maybe_handle_project_event_stream_request_async<Stream>(
     request: &DaemonHttpRequest,
-    writer: &mut Writer,
+    stream: &mut Stream,
 ) -> Result<bool, HostAgentStreamError>
 where
-    Writer: AsyncWrite + Unpin + Send,
+    Stream: AsyncRead + AsyncWrite + Unpin + Send,
 {
     let route_url = DaemonRouteUrl::parse(&request.path);
     let project_stream = parse_proxy_target(route_url.pathname())
@@ -399,9 +451,11 @@ where
     }
     match resolve_authorized_project_event_stream(&request.path, &request.headers) {
         Ok(target) => {
-            let mut writer = CountingAsyncWriter::new(writer);
-            match pipe_project_event_stream_from_url_async(
+            let (mut downstream, mut writer) = tokio::io::split(stream);
+            let mut writer = CountingAsyncWriter::new(&mut writer);
+            match pipe_project_event_stream_from_url_until_downstream_closes_async(
                 &mut writer,
+                &mut downstream,
                 &target,
                 HostAgentStreamRequestOptions::default(),
             )
@@ -420,7 +474,7 @@ where
             }
         }
         Err(response) => {
-            write_prepared_async(writer, &response).await?;
+            write_prepared_async(stream, &response).await?;
             Ok(true)
         }
     }
