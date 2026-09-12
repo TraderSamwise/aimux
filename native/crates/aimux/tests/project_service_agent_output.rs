@@ -126,9 +126,7 @@ impl AgentOutputCaptureRuntime for FakeCaptureRuntime {
     fn send_carriage_return(&mut self, window_id: &str) -> Result<(), String> {
         self.actions
             .push(FakeRuntimeAction::CarriageReturn(window_id.to_owned()));
-        self.send_carriage_return_result
-            .clone()
-            .unwrap_or_else(|| Ok(()))
+        self.send_carriage_return_result.clone().unwrap_or(Ok(()))
     }
 
     fn submit_prompt(&mut self, window_id: &str, _draft: &str) -> Result<(), String> {
@@ -138,7 +136,7 @@ impl AgentOutputCaptureRuntime for FakeCaptureRuntime {
             FakeSubmitOutcome::Dropped => {
                 self.actions
                     .push(FakeRuntimeAction::SubmitDropped(window_id.to_owned()));
-                Ok(())
+                Err("agent input submit did not land: carriage return dropped".into())
             }
         }
     }
@@ -179,6 +177,10 @@ impl AgentOutputCaptureRuntime for FakeActivityRuntime {
 
     fn send_carriage_return(&mut self, window_id: &str) -> Result<(), String> {
         self.inner.send_carriage_return(window_id)
+    }
+
+    fn submit_prompt(&mut self, window_id: &str, draft: &str) -> Result<(), String> {
+        self.inner.submit_prompt(window_id, draft)
     }
 
     fn send_escape(&mut self, window_id: &str) -> Result<(), String> {
@@ -1725,7 +1727,6 @@ fn agent_input_to_unattended_window_delivers_without_queue_delay() {
 }
 
 #[test]
-#[ignore = "proof test for gqaapg-1: current /agents/input accepts a submit that did not land"]
 fn agent_input_rejects_prompt_when_submit_carriage_return_does_not_land() {
     let project = temp_project("unattended-submit-dropped");
     let state_dir = project.join("state");
@@ -1751,6 +1752,11 @@ fn agent_input_rejects_prompt_when_submit_carriage_return_does_not_land() {
     assert_ne!(
         response.status, 200,
         "a half-delivered prompt must not be accepted as submitted"
+    );
+    assert_eq!(response.status, 500);
+    assert_eq!(
+        response.body["error"],
+        "agent input submit did not land: carriage return dropped"
     );
     assert_eq!(
         runtime.inner.actions,

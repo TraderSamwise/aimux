@@ -148,7 +148,7 @@ impl ProjectLifecycleRuntime for FakeLifecycleRuntime {
 
     fn kill_window(&mut self, window_id: &str) -> Result<(), String> {
         self.killed.push(window_id.to_owned());
-        self.kill_window_result.clone().unwrap_or_else(|| Ok(()))
+        self.kill_window_result.clone().unwrap_or(Ok(()))
     }
 
     fn rename_window(&mut self, window_id: &str, name: &str) -> Result<(), String> {
