@@ -90,6 +90,11 @@ struct AgentInputDeliveryState {
     pending: Vec<PendingAgentInputDelivery>,
 }
 
+enum QueuedDeliveryTarget {
+    Deliverable(String),
+    Blocked(String),
+}
+
 pub fn agent_input_delivery_queue_path(project_state_dir: impl AsRef<Path>) -> PathBuf {
     project_state_dir
         .as_ref()
@@ -312,20 +317,17 @@ pub fn run_pending_agent_input_deliveries_with_runtime(
             remaining.extend(ready);
             break;
         }
-        let window_id = match resolve_live_window_id(context, &pending.session_id) {
-            Ok(Some(window_id)) => window_id,
-            Ok(None) => pending.window_id.clone(),
-            Err(error) => {
+        let window_id = match resolve_queued_delivery_target(context, &pending) {
+            QueuedDeliveryTarget::Deliverable(window_id) => window_id,
+            QueuedDeliveryTarget::Blocked(reason) => {
                 record_agent_input_delivery_failure(
                     context,
                     Some(&pending.session_id),
-                    "Agent input delivery topology unavailable",
-                    format!(
-                        "Using queued tmux target {} because {error}",
-                        pending.window_id
-                    ),
+                    "Agent input delivery blocked",
+                    reason,
                 );
-                pending.window_id.clone()
+                remaining.push(pending);
+                continue;
             }
         };
         let force_due_to_max = now_ms >= pending.max_deliver_at_ms;
@@ -474,20 +476,17 @@ pub async fn run_pending_agent_input_deliveries_async(
             remaining.extend(ready);
             break;
         }
-        let window_id = match resolve_live_window_id(context, &pending.session_id) {
-            Ok(Some(window_id)) => window_id,
-            Ok(None) => pending.window_id.clone(),
-            Err(error) => {
+        let window_id = match resolve_queued_delivery_target(context, &pending) {
+            QueuedDeliveryTarget::Deliverable(window_id) => window_id,
+            QueuedDeliveryTarget::Blocked(reason) => {
                 record_agent_input_delivery_failure(
                     context,
                     Some(&pending.session_id),
-                    "Agent input delivery topology unavailable",
-                    format!(
-                        "Using queued tmux target {} because {error}",
-                        pending.window_id
-                    ),
+                    "Agent input delivery blocked",
+                    reason,
                 );
-                pending.window_id.clone()
+                remaining.push(pending);
+                continue;
             }
         };
         let force_due_to_max = now_ms >= pending.max_deliver_at_ms;
@@ -615,6 +614,23 @@ pub fn agent_input_delivery_backlog_snapshot(
         Err(error) => metric.set_error(error),
     }
     metric.snapshot()
+}
+
+fn resolve_queued_delivery_target(
+    context: &ProjectServiceRequestContext,
+    pending: &PendingAgentInputDelivery,
+) -> QueuedDeliveryTarget {
+    match resolve_live_window_id(context, &pending.session_id) {
+        Ok(Some(window_id)) => QueuedDeliveryTarget::Deliverable(window_id),
+        Ok(None) => QueuedDeliveryTarget::Blocked(format!(
+            "Kept queued input for {} because runtime topology has no live tmux window for that session; refused stale queued tmux target {}",
+            pending.session_id, pending.window_id
+        )),
+        Err(error) => QueuedDeliveryTarget::Blocked(format!(
+            "Kept queued input for {} because {error}; refused stale queued tmux target {}",
+            pending.session_id, pending.window_id
+        )),
+    }
 }
 
 pub fn agent_input_delivery_task(
