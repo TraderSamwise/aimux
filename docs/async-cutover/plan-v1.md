@@ -28,6 +28,17 @@ Five gates, every phase, no exceptions:
    real. Never install on the primary machine.
 5. `yarn verify` fast lane green. Scoped cargo targets only; never the full suite.
 
+## Where builds may be installed
+
+**sam-mbp2 only.** For the whole cutover, no build from this work goes onto the primary
+machine or the Mac mini — not "just to check", not a build that looks fine. Stability is
+far enough away that a local install is a way to lose a working machine.
+
+On sam-mbp2 there are no limits: install obviously broken builds, leave it wedged, break
+the daemon. That is what it is for. Nothing important runs there.
+
+Revisit only when Sam says the cutover is approaching stable.
+
 ## Async hazard checklist (the review rubric)
 
 Every review pass checks all of these by name and reports per item:
