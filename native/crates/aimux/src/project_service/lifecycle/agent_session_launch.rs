@@ -4,7 +4,7 @@ use std::io::Write;
 use std::path::Path;
 use std::time::Duration;
 
-use crate::config::load_config_for_project;
+use crate::config::load_config_for_known_project_root;
 use crate::debug_logging::{LogLevel, log_always_at};
 use crate::managed_launch_env::wrap_command_with_managed_launch_env_extra;
 use crate::project_service::router::ProjectServiceRequestContext;
@@ -69,7 +69,7 @@ pub(super) fn launch_agent_session(
 ) -> Result<AgentSessionLaunchResult, String> {
     let project_state_dir = context.project_state_dir();
     let project_root = context.project_root().to_string_lossy().into_owned();
-    let config = load_config_for_project(context.project_root());
+    let config = load_config_for_known_project_root(context.project_root());
     let tool_config = config
         .get("tools")
         .and_then(Value::as_object)
@@ -396,7 +396,7 @@ pub(super) async fn launch_agent_session_async(
 ) -> Result<AgentSessionLaunchResult, String> {
     let project_state_dir = context.project_state_dir();
     let project_root = context.project_root().to_string_lossy().into_owned();
-    let config = load_config_for_project(context.project_root());
+    let config = load_config_for_known_project_root(context.project_root());
     let tool_config = config
         .get("tools")
         .and_then(Value::as_object)

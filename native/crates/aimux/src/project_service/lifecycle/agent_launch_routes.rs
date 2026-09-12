@@ -1,6 +1,6 @@
 use serde_json::{Value, json};
 
-use crate::config::load_config_for_project;
+use crate::config::{load_config_for_known_project_root, load_config_for_project};
 use crate::daemon_state::load_metadata_state;
 use crate::debug_logging::{LogLevel, log_always_at};
 use crate::project_service::coordination_mutations::derive_runtime_exchange_indexes;
@@ -71,7 +71,7 @@ pub(super) fn route_agent_migrate(
         .unwrap_or_else(|| project_root.clone());
     let tool_key = tool_config_key_for_session(&source_session)
         .unwrap_or_else(|| string_field(&source_session, "command"));
-    let config = load_config_for_project(context.project_root());
+    let config = load_config_for_known_project_root(context.project_root());
     let Some(tool_config) = config
         .get("tools")
         .and_then(Value::as_object)
@@ -180,7 +180,7 @@ pub(super) fn route_agent_spawn(
         );
         return json_error(400, "tool is required");
     };
-    let config = load_config_for_project(context.project_root());
+    let config = load_config_for_known_project_root(context.project_root());
     let Some(tool_config) = config
         .get("tools")
         .and_then(Value::as_object)
