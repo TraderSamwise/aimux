@@ -4,6 +4,7 @@ use crate::project_service::switchable_agents::{
     AgentListScope, ManagedWindowEntry, SwitchableContext, SwitchableListOptions,
     list_switchable_agent_items, serialize_fast_control_item,
 };
+use crate::project_service::tmux_metadata_sync::derive_recency_fields_for_window_metadata;
 use crate::project_service::usage::load_last_used_state;
 use crate::tmux::{CapturePaneOptions, TmuxManagedWindow, TmuxRuntimeManager, TmuxTarget};
 use crate::tmux_expose::{ExposeScope, ExposeScopeView, ExposeSublabel};
@@ -266,7 +267,7 @@ fn list_project_switchable_items(
     let entries = input
         .live_launch_contexts
         .iter()
-        .map(managed_window_entry)
+        .map(|window| managed_window_entry(window, &metadata.sessions, input.project_state_dir))
         .collect::<Vec<_>>();
     let context = SwitchableContext {
         project_root: input.project_root.into(),
@@ -293,13 +294,58 @@ fn list_project_switchable_items(
         .collect()
 }
 
-fn managed_window_entry(window: &TmuxManagedWindow) -> ManagedWindowEntry {
+fn managed_window_entry(
+    window: &TmuxManagedWindow,
+    sessions: &std::collections::BTreeMap<String, Value>,
+    project_state_dir: &Path,
+) -> ManagedWindowEntry {
     ManagedWindowEntry {
         target: target_to_value(&window.target),
-        metadata: window.metadata.clone(),
+        metadata: enrich_window_metadata_recency(&window.metadata, sessions, project_state_dir),
         alive: window.target.pane_dead != Some(true),
         activity: window.target.window_index,
     }
+}
+
+fn enrich_window_metadata_recency(
+    metadata: &Value,
+    sessions: &std::collections::BTreeMap<String, Value>,
+    project_state_dir: &Path,
+) -> Value {
+    if metadata.get("kind").and_then(Value::as_str) != Some("agent") {
+        return metadata.clone();
+    }
+    if metadata
+        .get("recencyAt")
+        .is_some_and(|value| !value.is_null())
+        && metadata
+            .get("recencyLabel")
+            .is_some_and(|value| !value.is_null())
+    {
+        return metadata.clone();
+    }
+    let Some(session_id) = metadata.get("sessionId").and_then(Value::as_str) else {
+        return metadata.clone();
+    };
+    let Some((recency_at, recency_label)) = derive_recency_fields_for_window_metadata(
+        project_state_dir,
+        session_id,
+        metadata,
+        sessions.get(session_id),
+    ) else {
+        return metadata.clone();
+    };
+    let mut enriched = metadata.clone();
+    let Some(object) = enriched.as_object_mut() else {
+        return metadata.clone();
+    };
+    if object.get("recencyAt").is_none_or(Value::is_null) {
+        object.insert("recencyAt".into(), recency_at);
+    }
+    if object.get("recencyLabel").is_none_or(Value::is_null) {
+        object.insert("recencyLabel".into(), recency_label);
+    }
+    enriched
 }
 
 fn attach_captured_preview(
