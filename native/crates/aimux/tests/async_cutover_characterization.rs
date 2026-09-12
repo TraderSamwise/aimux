@@ -2,8 +2,11 @@
 
 mod support;
 
-use aimux::daemon_state::load_metadata_endpoint;
+use aimux::daemon_state::{load_metadata_endpoint, load_metadata_state};
 use aimux::paths::{PathResolver, compute_project_id};
+use aimux::runtime_topology::{
+    empty_runtime_topology, read_runtime_topology, runtime_topology_path, write_runtime_topology,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::fs;
@@ -255,22 +258,44 @@ fn observe_pre_async_surface() -> Vec<CharacterizationCase> {
         &context,
     ));
 
+    write_explicit_empty_topology(&project_state_dir);
     let project_desktop = json_exchange(
         endpoint.port,
         "GET",
         "/desktop-state",
         None,
         Duration::from_secs(5),
-        "project-desktop-state-empty",
+        "project-desktop-state-explicit-empty-topology",
         "project-service-http",
     );
     cases.push(case(
-        "project-desktop-state-empty",
+        "project-desktop-state-explicit-empty-topology",
         "project-service-http",
-        "Desktop state projection stays parseable and preserves operationFailures and empty session shape.",
+        "Desktop state projection stays parseable and empty only when the topology source is explicitly available and empty.",
         &project_desktop,
         &context,
     ));
+
+    let topology_path = runtime_topology_path(&project_state_dir);
+    fs::remove_file(&topology_path).expect("remove explicit empty topology before unreadable case");
+    fs::create_dir(&topology_path).expect("create unreadable topology directory");
+    let project_desktop_unavailable = json_exchange(
+        endpoint.port,
+        "GET",
+        "/desktop-state",
+        None,
+        Duration::from_secs(5),
+        "project-desktop-state-unreadable-topology-error",
+        "project-service-http",
+    );
+    cases.push(case(
+        "project-desktop-state-unreadable-topology-error",
+        "project-service-http",
+        "Recording current correct behavior: an unreadable topology source must be an explicit error, not a 200 empty desktop.",
+        &project_desktop_unavailable,
+        &context,
+    ));
+    write_explicit_empty_topology(&project_state_dir);
 
     let project_method_error = json_exchange(
         endpoint.port,
@@ -489,7 +514,7 @@ fn project_sse_disconnect_case(port: u16, context: &NormalizeContext) -> Charact
 
 fn project_incomplete_mutation_disconnect_case(
     port: u16,
-    _context: &NormalizeContext,
+    context: &NormalizeContext,
 ) -> CharacterizationCase {
     let full_body = r#"{"session":"codex-disconnect","activity":"busy"}"#;
     let partial_body = r#"{"session":"codex-disconnect","activity":"#;
@@ -522,21 +547,51 @@ fn project_incomplete_mutation_disconnect_case(
             "project-incomplete-mutation-disconnect-no-side-effect",
             "project-service-http",
         );
+        assert_eq!(
+            state.response.status_line, "HTTP/1.1 200 OK",
+            "desktop-state sample must be an observed success, not a failed read"
+        );
+        let body = state
+            .response
+            .body_json
+            .as_ref()
+            .expect("desktop-state sample json body");
+        assert_eq!(
+            body.get("ok").and_then(Value::as_bool),
+            Some(true),
+            "desktop-state sample must be ok:true before absence can prove no side effect"
+        );
         let present = response_body_contains_session(&state, "codex-disconnect");
-        samples.push(present);
+        samples.push(json!({
+            "statusLine": state.response.status_line,
+            "ok": true,
+            "disconnectedSessionPresent": present,
+        }));
         if present {
             break;
         }
         thread::sleep(Duration::from_millis(50));
     }
+    let topology = read_runtime_topology(runtime_topology_path(&context.project_state_dir))
+        .expect("read topology after incomplete mutation");
+    let metadata = load_metadata_state(&context.project_state_dir);
+    let topology_contains_session = json_contains_string(&topology, "codex-disconnect");
+    let metadata_contains_session = metadata.sessions.contains_key("codex-disconnect");
 
     CharacterizationCase {
         name: "project-incomplete-mutation-disconnect-no-side-effect".into(),
         surface: "project-service-http".into(),
-        catches: "A client that disconnects after sending an incomplete mutation body must not leave the mutation applied.".into(),
+        catches: "A client that disconnects after sending an incomplete mutation body must not leave the mutation applied; the harness must positively observe a readable clean state.".into(),
         request: "POST /set-activity with a truncated JSON body, close socket, then sample GET /desktop-state for codex-disconnect".into(),
         observed: json!({
-            "disconnectedSessionPresent": samples.iter().any(|present| *present),
+            "disconnectedSessionPresent": samples.iter().any(|sample| {
+                sample
+                    .get("disconnectedSessionPresent")
+                    .and_then(Value::as_bool)
+                    == Some(true)
+            }),
+            "topologyContainsSession": topology_contains_session,
+            "metadataContainsSession": metadata_contains_session,
             "samples": samples,
         }),
     }
@@ -600,7 +655,24 @@ fn runtime_log_no_nested_panics_case(
     aimux_home: &Path,
     context: &NormalizeContext,
 ) -> CharacterizationCase {
-    let panic_lines = collect_nested_runtime_panic_lines(aimux_home)
+    let sentinel_path = aimux_home.join("fixture-log-scan-sentinel.log");
+    fs::write(&sentinel_path, "fixture log scan sentinel\n").expect("write log scan sentinel");
+    let report = collect_nested_runtime_panic_lines(aimux_home);
+    assert!(
+        report.directories_scanned > 0,
+        "runtime panic scanner did not observe the isolated Aimux home"
+    );
+    assert!(
+        report.read_errors.is_empty(),
+        "runtime panic scanner could not read all selected logs: {:?}",
+        report.read_errors
+    );
+    assert!(
+        report.sentinel_log_observed,
+        "runtime panic scanner did not read the sentinel log"
+    );
+    let panic_lines = report
+        .panic_lines
         .into_iter()
         .map(|line| normalize_text(&line, context))
         .collect::<Vec<_>>();
@@ -608,12 +680,23 @@ fn runtime_log_no_nested_panics_case(
     CharacterizationCase {
         name: "runtime-logs-no-nested-runtime-panics".into(),
         surface: "daemon-and-project-service-logs".into(),
-        catches: "A route can return HTTP success while background tasks panic; the characterization gate must catch nested Tokio runtime panics in isolated daemon and project-service logs.".into(),
+        catches: "A route can return HTTP success while background tasks panic; the characterization gate must prove it read the isolated logs before accepting no nested Tokio runtime panics.".into(),
         request: "scan isolated daemon and project-service logs after exercising HTTP and SSE surfaces".into(),
         observed: json!({
+            "logObservationProved": report.sentinel_log_observed,
+            "filesScannedAtLeastOne": report.files_scanned > 0,
+            "readErrors": report.read_errors,
             "panicLogLines": panic_lines,
         }),
     }
+}
+
+fn write_explicit_empty_topology(project_state_dir: &Path) {
+    let path = runtime_topology_path(project_state_dir);
+    if path.is_dir() {
+        fs::remove_dir_all(&path).expect("remove unreadable topology directory");
+    }
+    write_runtime_topology(path, &empty_runtime_topology()).expect("write explicit empty topology");
 }
 
 struct DaemonChild {
@@ -1021,21 +1104,52 @@ fn json_contains_string(value: &Value, needle: &str) -> bool {
     }
 }
 
-fn collect_nested_runtime_panic_lines(aimux_home: &Path) -> Vec<String> {
-    let mut lines = Vec::new();
-    collect_nested_runtime_panic_lines_from_dir(aimux_home, aimux_home, &mut lines);
-    lines.sort();
-    lines
+#[derive(Default)]
+struct LogScanReport {
+    directories_scanned: usize,
+    files_scanned: usize,
+    sentinel_log_observed: bool,
+    read_errors: Vec<String>,
+    panic_lines: Vec<String>,
 }
 
-fn collect_nested_runtime_panic_lines_from_dir(root: &Path, dir: &Path, lines: &mut Vec<String>) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
+fn collect_nested_runtime_panic_lines(aimux_home: &Path) -> LogScanReport {
+    let mut report = LogScanReport::default();
+    collect_nested_runtime_panic_lines_from_dir(aimux_home, aimux_home, &mut report);
+    report.read_errors.sort();
+    report.panic_lines.sort();
+    report
+}
+
+fn collect_nested_runtime_panic_lines_from_dir(
+    root: &Path,
+    dir: &Path,
+    report: &mut LogScanReport,
+) {
+    report.directories_scanned += 1;
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) => {
+            report.read_errors.push(format!(
+                "{}: {error}",
+                dir.strip_prefix(root).unwrap_or(dir).display()
+            ));
+            return;
+        }
     };
-    for entry in entries.flatten() {
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                report
+                    .read_errors
+                    .push(format!("{}: {error}", dir.display()));
+                continue;
+            }
+        };
         let path = entry.path();
         if path.is_dir() {
-            collect_nested_runtime_panic_lines_from_dir(root, &path, lines);
+            collect_nested_runtime_panic_lines_from_dir(root, &path, report);
             continue;
         }
         let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
@@ -1044,16 +1158,27 @@ fn collect_nested_runtime_panic_lines_from_dir(root: &Path, dir: &Path, lines: &
         if !(name.ends_with(".log") || name.ends_with(".jsonl")) {
             continue;
         }
-        let Ok(contents) = fs::read_to_string(&path) else {
-            continue;
+        let contents = match fs::read_to_string(&path) {
+            Ok(contents) => contents,
+            Err(error) => {
+                report.read_errors.push(format!(
+                    "{}: {error}",
+                    path.strip_prefix(root).unwrap_or(&path).display()
+                ));
+                continue;
+            }
         };
+        report.files_scanned += 1;
         let relative = path.strip_prefix(root).unwrap_or(&path).display();
+        if relative.to_string() == "fixture-log-scan-sentinel.log" {
+            report.sentinel_log_observed = true;
+        }
         for line in contents.lines() {
             if line.contains("Cannot start a runtime from within a runtime")
                 || line.contains("block_on_named was called from an async task")
                 || line.contains("panicked at crates/aimux/src/async_runtime.rs")
             {
-                lines.push(format!("{relative}: {line}"));
+                report.panic_lines.push(format!("{relative}: {line}"));
             }
         }
     }
