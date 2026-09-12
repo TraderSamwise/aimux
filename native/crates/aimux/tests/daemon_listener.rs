@@ -1,8 +1,10 @@
+use aimux::async_runtime::block_on_named;
 use aimux::daemon::http::{DaemonResponseBody, prepare_daemon_response};
 use aimux::daemon::listener::{
     DaemonListenConfig, DaemonRequestBodyLimit, DaemonRequestMetadata, handle_daemon_stream,
     handle_daemon_stream_with_metadata, handle_daemon_stream_with_metadata_and_interceptor,
     handle_daemon_stream_with_metadata_and_interceptor_and_body_limit_blocking,
+    handle_daemon_stream_with_metadata_and_interceptor_and_body_limit_with_read_timeout,
     parse_daemon_http_request, parse_daemon_http_request_with_metadata, prepared_response_bytes,
     serve_daemon_http_with_metadata_and_interceptor_until, spawn_daemon_connection,
 };
@@ -349,6 +351,41 @@ fn accepted_daemon_listener_does_not_hard_shutdown_peer_socket() {
         !source.contains("Shutdown::Both"),
         "accepted daemon sockets must close through AsyncWriteExt::shutdown so peers see EOF"
     );
+}
+
+#[test]
+fn async_body_limit_reader_can_timeout_idle_clients() {
+    let (client_stream, mut server_stream) = tokio::io::duplex(64);
+    let result = block_on_named("daemon-listener-test:body-limit-timeout", async {
+        tokio::time::timeout(
+            Duration::from_millis(250),
+            handle_daemon_stream_with_metadata_and_interceptor_and_body_limit_with_read_timeout(
+                &mut server_stream,
+                DaemonRequestMetadata::default(),
+                &mut |_| None,
+                &mut |_, _| Box::pin(async { Ok(false) }),
+                &mut |_| {
+                    Box::pin(async {
+                        Ok(prepare_daemon_response(
+                            200,
+                            DaemonResponseBody::Json(json!({ "ok": true })),
+                            None,
+                        ))
+                    })
+                },
+                Some(Duration::from_millis(25)),
+            ),
+        )
+        .await
+        .expect("reader should return its own timeout")
+    });
+    drop(client_stream);
+
+    let error = result.expect_err("idle client should time out");
+    let aimux::daemon::listener::DaemonListenerError::Io(error) = error else {
+        panic!("unexpected listener error: {error}");
+    };
+    assert_eq!(error.kind(), io::ErrorKind::TimedOut);
 }
 
 struct MemoryStream {
