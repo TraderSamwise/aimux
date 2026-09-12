@@ -4,7 +4,8 @@
   "recorded_from_commit": "8203a33c",
   "normalization": [
     "temporary roots, project ids, pids, ports, timestamps and build stamps are replaced with stable placeholders",
-    "HTTP status lines, header order, content type, connection mode, JSON error shapes and SSE frame ordering/framing are compared literally after that normalization"
+    "HTTP status lines, header order, content type, connection mode, JSON error shapes and SSE frame ordering/framing are compared literally after that normalization",
+    "Runtime panic log lines are scanned under the isolated Aimux home and normalized before comparison"
   ],
   "cases": [
     {
@@ -444,6 +445,20 @@
       }
     },
     {
+      "name": "project-incomplete-mutation-disconnect-no-side-effect",
+      "surface": "project-service-http",
+      "catches": "A client that disconnects after sending an incomplete mutation body must not leave the mutation applied.",
+      "request": "POST /set-activity with a truncated JSON body, close socket, then sample GET /desktop-state for codex-disconnect",
+      "observed": {
+        "disconnectedSessionPresent": false,
+        "samples": [
+          false,
+          false,
+          false
+        ]
+      }
+    },
+    {
       "name": "daemon-concurrent-projects-with-slow-client",
       "surface": "daemon-http",
       "catches": "One slow/incomplete client cannot serialize the daemon listener or corrupt concurrent /projects responses.",
@@ -756,6 +771,15 @@
             }
           }
         ]
+      }
+    },
+    {
+      "name": "runtime-logs-no-nested-runtime-panics",
+      "surface": "daemon-and-project-service-logs",
+      "catches": "A route can return HTTP success while background tasks panic; the characterization gate must catch nested Tokio runtime panics in isolated daemon and project-service logs.",
+      "request": "scan isolated daemon and project-service logs after exercising HTTP and SSE surfaces",
+      "observed": {
+        "panicLogLines": []
       }
     }
   ]

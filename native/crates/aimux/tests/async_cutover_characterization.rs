@@ -7,8 +7,9 @@ use aimux::paths::{PathResolver, compute_project_id};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
 use std::net::{Shutdown, TcpStream};
+use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
@@ -31,6 +32,7 @@ fn async_cutover_http_and_sse_surface_matches_pre_conversion_fixture() {
             normalization: vec![
                 "temporary roots, project ids, pids, ports, timestamps and build stamps are replaced with stable placeholders".into(),
                 "HTTP status lines, header order, content type, connection mode, JSON error shapes and SSE frame ordering/framing are compared literally after that normalization".into(),
+                "Runtime panic log lines are scanned under the isolated Aimux home and normalized before comparison".into(),
             ],
             cases: observed,
         };
@@ -49,7 +51,7 @@ fn async_cutover_http_and_sse_surface_matches_pre_conversion_fixture() {
     let fixture: CharacterizationFixture =
         serde_json::from_str(&fs::read_to_string(&path).expect("read async cutover fixture"))
             .expect("parse async cutover fixture");
-    assert_eq!(observed, fixture.cases);
+    assert_characterization_cases_match(&observed, &fixture.cases);
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -70,6 +72,45 @@ struct CharacterizationCase {
     observed: Value,
 }
 
+fn assert_characterization_cases_match(
+    observed: &[CharacterizationCase],
+    expected: &[CharacterizationCase],
+) {
+    if observed.len() != expected.len() {
+        panic!(
+            "async cutover fixture case count mismatch: observed {} cases [{}], expected {} cases [{}]",
+            observed.len(),
+            case_names(observed),
+            expected.len(),
+            case_names(expected)
+        );
+    }
+
+    for (index, (observed_case, expected_case)) in observed.iter().zip(expected).enumerate() {
+        if observed_case != expected_case {
+            panic!(
+                "async cutover fixture mismatch at case #{index}: observed '{}', expected '{}'\nobserved:\n{}\nexpected:\n{}",
+                observed_case.name,
+                expected_case.name,
+                pretty_case(observed_case),
+                pretty_case(expected_case)
+            );
+        }
+    }
+}
+
+fn case_names(cases: &[CharacterizationCase]) -> String {
+    cases
+        .iter()
+        .map(|case| case.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn pretty_case(case: &CharacterizationCase) -> String {
+    serde_json::to_string_pretty(case).expect("serialize characterization case")
+}
+
 #[derive(Clone)]
 struct NormalizeContext {
     root: PathBuf,
@@ -84,6 +125,16 @@ struct NormalizeContext {
 
 fn observe_pre_async_surface() -> Vec<CharacterizationCase> {
     let isolation = TestIsolation::new("async-cutover-characterization");
+    if std::env::var_os("AIMUX_ASYNC_CUTOVER_DIAGNOSTICS").is_some() {
+        eprintln!(
+            "async cutover isolation root: {}",
+            isolation.root().display()
+        );
+        eprintln!(
+            "async cutover AIMUX_HOME: {}",
+            isolation.aimux_home().display()
+        );
+    }
     let project_root = isolation.root().join("repo");
     fs::create_dir_all(&project_root).expect("create project root");
     let git_init = Command::new("git")
@@ -111,6 +162,8 @@ fn observe_pre_async_surface() -> Vec<CharacterizationCase> {
         "/health",
         None,
         Duration::from_secs(5),
+        "daemon-health",
+        "daemon-http",
     );
     let mut context = NormalizeContext {
         root: isolation.root().to_path_buf(),
@@ -136,9 +189,11 @@ fn observe_pre_async_surface() -> Vec<CharacterizationCase> {
         "POST",
         "/projects/ensure",
         Some(&ensure_body),
-        Duration::from_secs(20),
+        Duration::from_secs(45),
+        "daemon-project-ensure",
+        "daemon-http",
     );
-    wait_for_project_endpoint(&project_state_dir);
+    wait_for_project_endpoint(&project_state_dir, "daemon-project-ensure", "daemon-http");
     let endpoint = load_metadata_endpoint(&project_state_dir).expect("load project endpoint");
     context.project_port = endpoint.port;
     cases.push(case(
@@ -155,6 +210,8 @@ fn observe_pre_async_surface() -> Vec<CharacterizationCase> {
         "/projects",
         None,
         Duration::from_secs(5),
+        "daemon-projects-after-ensure",
+        "daemon-http",
     );
     cases.push(case(
         "daemon-projects-after-ensure",
@@ -170,6 +227,8 @@ fn observe_pre_async_surface() -> Vec<CharacterizationCase> {
         "/definitely-missing",
         None,
         Duration::from_secs(5),
+        "daemon-missing-route-error",
+        "daemon-http",
     );
     cases.push(case(
         "daemon-missing-route-error",
@@ -185,6 +244,8 @@ fn observe_pre_async_surface() -> Vec<CharacterizationCase> {
         "/health",
         None,
         Duration::from_secs(5),
+        "project-health",
+        "project-service-http",
     );
     cases.push(case(
         "project-health",
@@ -200,6 +261,8 @@ fn observe_pre_async_surface() -> Vec<CharacterizationCase> {
         "/desktop-state",
         None,
         Duration::from_secs(5),
+        "project-desktop-state-empty",
+        "project-service-http",
     );
     cases.push(case(
         "project-desktop-state-empty",
@@ -215,6 +278,8 @@ fn observe_pre_async_surface() -> Vec<CharacterizationCase> {
         "/agents/spawn",
         None,
         Duration::from_secs(5),
+        "project-method-not-allowed-error",
+        "project-service-http",
     );
     cases.push(case(
         "project-method-not-allowed-error",
@@ -230,6 +295,8 @@ fn observe_pre_async_surface() -> Vec<CharacterizationCase> {
         "/events?intervalMs=99",
         None,
         Duration::from_secs(5),
+        "project-sse-query-validation-error",
+        "project-service-http",
     );
     cases.push(case(
         "project-sse-query-validation-error",
@@ -242,8 +309,16 @@ fn observe_pre_async_surface() -> Vec<CharacterizationCase> {
     cases.push(project_sse_concurrent_clients_case(endpoint.port, &context));
     cases.push(project_sse_keepalive_case(endpoint.port, &context));
     cases.push(project_sse_disconnect_case(endpoint.port, &context));
+    cases.push(project_incomplete_mutation_disconnect_case(
+        endpoint.port,
+        &context,
+    ));
     cases.push(daemon_concurrent_requests_case(
         isolation.daemon_port(),
+        &context,
+    ));
+    cases.push(runtime_log_no_nested_panics_case(
+        isolation.aimux_home(),
         &context,
     ));
 
@@ -277,9 +352,21 @@ fn project_sse_concurrent_clients_case(
     port: u16,
     context: &NormalizeContext,
 ) -> CharacterizationCase {
-    let mut fast = open_sse(port, "/events?intervalMs=100", Duration::from_secs(5));
+    let mut fast = open_sse(
+        port,
+        "/events?intervalMs=100",
+        Duration::from_secs(5),
+        "project-sse-concurrent-clients-ordering",
+        "project-service-sse",
+    );
     let fast_ready = fast.read_frames(1, Duration::from_secs(5));
-    let mut slow = open_sse(port, "/events?intervalMs=100", Duration::from_secs(5));
+    let mut slow = open_sse(
+        port,
+        "/events?intervalMs=100",
+        Duration::from_secs(5),
+        "project-sse-concurrent-clients-ordering",
+        "project-service-sse",
+    );
     let slow_ready = slow.read_frames(1, Duration::from_secs(5));
     let fast_head = fast.head.clone();
     let slow_head = slow.head.clone();
@@ -290,6 +377,8 @@ fn project_sse_concurrent_clients_case(
         "/set-activity",
         Some(&json!({ "session": "codex-async", "activity": "busy" })),
         Duration::from_secs(5),
+        "project-sse-concurrent-clients-ordering",
+        "project-service-sse",
     );
     let second = json_exchange(
         port,
@@ -297,6 +386,8 @@ fn project_sse_concurrent_clients_case(
         "/set-activity",
         Some(&json!({ "session": "codex-async", "activity": "idle" })),
         Duration::from_secs(5),
+        "project-sse-concurrent-clients-ordering",
+        "project-service-sse",
     );
     assert_eq!(first.response.status_line, "HTTP/1.1 200 OK");
     assert_eq!(second.response.status_line, "HTTP/1.1 200 OK");
@@ -321,7 +412,13 @@ fn project_sse_concurrent_clients_case(
 }
 
 fn project_sse_keepalive_case(port: u16, context: &NormalizeContext) -> CharacterizationCase {
-    let mut stream = open_sse(port, "/agents/interaction/stream", Duration::from_secs(5));
+    let mut stream = open_sse(
+        port,
+        "/agents/interaction/stream",
+        Duration::from_secs(5),
+        "project-sse-keepalive-framing",
+        "project-service-sse",
+    );
     let ready = stream.read_frames(1, Duration::from_secs(5));
     let head = stream.head.clone();
     let started = Instant::now();
@@ -347,14 +444,27 @@ fn project_sse_keepalive_case(port: u16, context: &NormalizeContext) -> Characte
 }
 
 fn project_sse_disconnect_case(port: u16, context: &NormalizeContext) -> CharacterizationCase {
-    let mut stream = open_sse(port, "/events?intervalMs=100", Duration::from_secs(5));
+    let mut stream = open_sse(
+        port,
+        "/events?intervalMs=100",
+        Duration::from_secs(5),
+        "project-sse-client-disconnect",
+        "project-service-sse",
+    );
     let ready = stream.read_frames(1, Duration::from_secs(5));
     let head = stream.head.clone();
     let _ = stream.stream.shutdown(Shutdown::Both);
     drop(stream);
 
-    let health_after_disconnect =
-        json_exchange(port, "GET", "/health", None, Duration::from_secs(5));
+    let health_after_disconnect = json_exchange(
+        port,
+        "GET",
+        "/health",
+        None,
+        Duration::from_secs(5),
+        "project-sse-client-disconnect",
+        "project-service-sse",
+    );
 
     CharacterizationCase {
         name: "project-sse-client-disconnect".into(),
@@ -377,18 +487,87 @@ fn project_sse_disconnect_case(port: u16, context: &NormalizeContext) -> Charact
     }
 }
 
+fn project_incomplete_mutation_disconnect_case(
+    port: u16,
+    _context: &NormalizeContext,
+) -> CharacterizationCase {
+    let full_body = r#"{"session":"codex-disconnect","activity":"busy"}"#;
+    let partial_body = r#"{"session":"codex-disconnect","activity":"#;
+    let request = format!(
+        "POST /set-activity HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{partial_body}",
+        full_body.len()
+    );
+    let mut stream = connect_harness_stream(
+        port,
+        Duration::from_secs(5),
+        "project-incomplete-mutation-disconnect-no-side-effect [project-service-http] connect POST /set-activity truncated body client disconnect",
+    );
+    write_all_ready(
+        &mut stream,
+        request.as_bytes(),
+        Duration::from_secs(5),
+        "project-incomplete-mutation-disconnect-no-side-effect [project-service-http] write truncated POST /set-activity before client disconnect",
+    );
+    let _ = stream.shutdown(Shutdown::Both);
+    drop(stream);
+
+    let mut samples = Vec::new();
+    for _ in 0..3 {
+        let state = json_exchange(
+            port,
+            "GET",
+            "/desktop-state",
+            None,
+            Duration::from_secs(5),
+            "project-incomplete-mutation-disconnect-no-side-effect",
+            "project-service-http",
+        );
+        let present = response_body_contains_session(&state, "codex-disconnect");
+        samples.push(present);
+        if present {
+            break;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+
+    CharacterizationCase {
+        name: "project-incomplete-mutation-disconnect-no-side-effect".into(),
+        surface: "project-service-http".into(),
+        catches: "A client that disconnects after sending an incomplete mutation body must not leave the mutation applied.".into(),
+        request: "POST /set-activity with a truncated JSON body, close socket, then sample GET /desktop-state for codex-disconnect".into(),
+        observed: json!({
+            "disconnectedSessionPresent": samples.iter().any(|present| *present),
+            "samples": samples,
+        }),
+    }
+}
+
 fn daemon_concurrent_requests_case(port: u16, context: &NormalizeContext) -> CharacterizationCase {
-    let mut slow = TcpStream::connect(("127.0.0.1", port)).expect("connect slow daemon client");
-    slow.set_read_timeout(Some(Duration::from_secs(1)))
-        .expect("slow read timeout");
-    slow.write_all(b"GET /projects HTTP/1.1\r\nHost: 127.0.0.1")
-        .expect("write partial slow request");
+    let mut slow = connect_harness_stream(
+        port,
+        Duration::from_secs(5),
+        "daemon-concurrent-projects-with-slow-client [daemon-http] connect slow daemon client for incomplete GET /projects",
+    );
+    write_all_ready(
+        &mut slow,
+        b"GET /projects HTTP/1.1\r\nHost: 127.0.0.1",
+        Duration::from_secs(5),
+        "daemon-concurrent-projects-with-slow-client [daemon-http] write partial slow daemon request GET /projects",
+    );
 
     let (tx, rx) = mpsc::channel();
     for _ in 0..8 {
         let tx = tx.clone();
         thread::spawn(move || {
-            let exchange = json_exchange(port, "GET", "/projects", None, Duration::from_secs(8));
+            let exchange = json_exchange(
+                port,
+                "GET",
+                "/projects",
+                None,
+                Duration::from_secs(8),
+                "daemon-concurrent-projects-with-slow-client",
+                "daemon-http",
+            );
             tx.send(exchange).expect("send daemon exchange");
         });
     }
@@ -413,6 +592,26 @@ fn daemon_concurrent_requests_case(port: u16, context: &NormalizeContext) -> Cha
         observed: json!({
             "responseCount": responses.len(),
             "responses": normalize_json(json!(responses), context),
+        }),
+    }
+}
+
+fn runtime_log_no_nested_panics_case(
+    aimux_home: &Path,
+    context: &NormalizeContext,
+) -> CharacterizationCase {
+    let panic_lines = collect_nested_runtime_panic_lines(aimux_home)
+        .into_iter()
+        .map(|line| normalize_text(&line, context))
+        .collect::<Vec<_>>();
+
+    CharacterizationCase {
+        name: "runtime-logs-no-nested-runtime-panics".into(),
+        surface: "daemon-and-project-service-logs".into(),
+        catches: "A route can return HTTP success while background tasks panic; the characterization gate must catch nested Tokio runtime panics in isolated daemon and project-service logs.".into(),
+        request: "scan isolated daemon and project-service logs after exercising HTTP and SSE surfaces".into(),
+        observed: json!({
+            "panicLogLines": panic_lines,
         }),
     }
 }
@@ -482,18 +681,24 @@ fn json_exchange(
     path: &str,
     body: Option<&Value>,
     timeout: Duration,
+    case_name: &str,
+    phase: &str,
 ) -> HttpExchange {
     let request = build_request(port, method, path, body);
-    let mut stream = TcpStream::connect(("127.0.0.1", port))
-        .unwrap_or_else(|error| panic!("connect to 127.0.0.1:{port} for {method} {path}: {error}"));
-    stream
-        .set_read_timeout(Some(timeout))
-        .expect("set read timeout");
-    stream
-        .write_all(request.as_bytes())
-        .expect("write http request");
-    let mut bytes = Vec::new();
-    stream.read_to_end(&mut bytes).expect("read http response");
+    let label = format!("{case_name} [{phase}] {method} {path}");
+    let mut stream = connect_harness_stream(port, timeout, &label);
+    write_all_ready(
+        &mut stream,
+        request.as_bytes(),
+        timeout,
+        &format!("write http request for {label}"),
+    );
+    finish_request_write(&stream, &format!("finish http request for {label}"));
+    let bytes = read_to_end_ready(
+        &mut stream,
+        timeout,
+        &format!("read http response for {label}"),
+    );
     HttpExchange {
         request,
         response: canonical_http_response(&bytes),
@@ -556,22 +761,33 @@ fn canonical_http_response(bytes: &[u8]) -> CanonicalHttpResponse {
 struct SseStream {
     stream: TcpStream,
     head: Value,
+    request_label: String,
 }
 
-fn open_sse(port: u16, path: &str, timeout: Duration) -> SseStream {
+fn open_sse(port: u16, path: &str, timeout: Duration, case_name: &str, phase: &str) -> SseStream {
+    let request_label = format!("{case_name} [{phase}] GET {path} SSE");
     let request = format!(
         "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAccept: text/event-stream\r\nConnection: close\r\n\r\n"
     );
-    let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect sse");
-    stream
-        .set_read_timeout(Some(timeout))
-        .expect("set sse read timeout");
-    stream.write_all(request.as_bytes()).expect("write sse");
-    let head = read_until(&mut stream, b"\r\n\r\n", timeout);
+    let mut stream = connect_harness_stream(port, timeout, &request_label);
+    write_all_ready(
+        &mut stream,
+        request.as_bytes(),
+        timeout,
+        &format!("write request for {request_label}"),
+    );
+    finish_request_write(&stream, &format!("finish request for {request_label}"));
+    let head = read_until(
+        &mut stream,
+        b"\r\n\r\n",
+        timeout,
+        &format!("read response head for {request_label}"),
+    );
     let response = canonical_http_response(&head);
     assert_eq!(response.status_line, "HTTP/1.1 200 OK");
     SseStream {
         stream,
+        request_label,
         head: json!({
             "statusLine": response.status_line,
             "headers": response.headers,
@@ -584,34 +800,271 @@ impl SseStream {
     fn read_frames(&mut self, count: usize, timeout: Duration) -> Vec<String> {
         let mut frames = Vec::new();
         for _ in 0..count {
-            let bytes = read_until(&mut self.stream, b"\n\n", timeout);
+            let bytes = read_until(
+                &mut self.stream,
+                b"\n\n",
+                timeout,
+                &format!("read SSE frame for {}", self.request_label),
+            );
             frames.push(String::from_utf8(bytes).expect("sse frame utf8"));
         }
         frames
     }
 }
 
-fn read_until(stream: &mut TcpStream, delimiter: &[u8], timeout: Duration) -> Vec<u8> {
+fn read_until(
+    stream: &mut TcpStream,
+    delimiter: &[u8],
+    timeout: Duration,
+    operation: &str,
+) -> Vec<u8> {
     let deadline = Instant::now() + timeout;
     let mut bytes = Vec::new();
     let mut buffer = [0_u8; 1];
     while !bytes.ends_with(delimiter) {
-        assert!(Instant::now() < deadline, "timed out reading stream frame");
         match stream.read(&mut buffer) {
-            Ok(0) => panic!("stream closed before delimiter {:?}", delimiter),
+            Ok(0) => panic!(
+                "{operation}: stream closed before delimiter {:?}",
+                delimiter
+            ),
             Ok(_) => bytes.push(buffer[0]),
             Err(error)
                 if matches!(
                     error.kind(),
-                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    io::ErrorKind::WouldBlock
+                        | io::ErrorKind::TimedOut
+                        | io::ErrorKind::Interrupted
                 ) =>
             {
-                thread::sleep(Duration::from_millis(10));
+                wait_for_stream_ready(stream, libc::POLLIN, deadline, operation)
+                    .unwrap_or_else(|error| panic!("{operation}: {error}"));
             }
             Err(error) => panic!("read stream: {error}"),
         }
     }
     bytes
+}
+
+fn connect_harness_stream(port: u16, timeout: Duration, operation: &str) -> TcpStream {
+    connect_harness_stream_result(port, timeout, operation)
+        .unwrap_or_else(|error| panic!("{operation}: {error}"))
+}
+
+fn connect_harness_stream_result(
+    port: u16,
+    timeout: Duration,
+    operation: &str,
+) -> Result<TcpStream, String> {
+    let stream = TcpStream::connect(("127.0.0.1", port))
+        .map_err(|error| format!("connect to 127.0.0.1:{port} for {operation}: {error}"))?;
+    stream
+        .set_nonblocking(true)
+        .map_err(|error| format!("set nonblocking for {operation}: {error}"))?;
+    wait_for_stream_ready(
+        &stream,
+        libc::POLLOUT,
+        Instant::now() + timeout,
+        &format!("connect readiness for {operation}"),
+    )
+    .map_err(|error| format!("connect readiness for {operation}: {error}"))?;
+    Ok(stream)
+}
+
+fn write_all_ready(stream: &mut TcpStream, bytes: &[u8], timeout: Duration, operation: &str) {
+    write_all_ready_result(stream, bytes, timeout, operation)
+        .unwrap_or_else(|error| panic!("{operation}: {error}"));
+}
+
+fn write_all_ready_result(
+    stream: &mut TcpStream,
+    mut bytes: &[u8],
+    timeout: Duration,
+    operation: &str,
+) -> Result<(), String> {
+    let deadline = Instant::now() + timeout;
+    while !bytes.is_empty() {
+        match stream.write(bytes) {
+            Ok(0) => return Err("socket accepted zero bytes".into()),
+            Ok(count) => bytes = &bytes[count..],
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock
+                        | io::ErrorKind::TimedOut
+                        | io::ErrorKind::Interrupted
+                ) =>
+            {
+                wait_for_stream_ready(stream, libc::POLLOUT, deadline, operation)
+                    .map_err(|error| error.to_string())?;
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    Ok(())
+}
+
+fn read_to_end_ready(stream: &mut TcpStream, timeout: Duration, operation: &str) -> Vec<u8> {
+    read_to_end_ready_result(stream, timeout, operation)
+        .unwrap_or_else(|error| panic!("{operation}: {error}"))
+}
+
+fn read_to_end_ready_result(
+    stream: &mut TcpStream,
+    timeout: Duration,
+    operation: &str,
+) -> Result<Vec<u8>, String> {
+    let deadline = Instant::now() + timeout;
+    let mut bytes = Vec::new();
+    let mut buffer = [0_u8; 8192];
+    loop {
+        match stream.read(&mut buffer) {
+            Ok(0) => return Ok(bytes),
+            Ok(count) => bytes.extend_from_slice(&buffer[..count]),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock
+                        | io::ErrorKind::TimedOut
+                        | io::ErrorKind::Interrupted
+                ) =>
+            {
+                wait_for_stream_ready(stream, libc::POLLIN, deadline, operation)
+                    .map_err(|error| error.to_string())?;
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+}
+
+fn finish_request_write(stream: &TcpStream, operation: &str) {
+    finish_request_write_result(stream, operation)
+        .unwrap_or_else(|error| panic!("{operation}: {error}"));
+}
+
+fn finish_request_write_result(stream: &TcpStream, operation: &str) -> Result<(), String> {
+    stream
+        .shutdown(Shutdown::Write)
+        .map_err(|error| format!("{operation}: {error}"))
+}
+
+fn wait_for_stream_ready(
+    stream: &TcpStream,
+    events: libc::c_short,
+    deadline: Instant,
+    operation: &str,
+) -> io::Result<()> {
+    loop {
+        let Some(timeout_ms) = poll_timeout_ms(deadline) else {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!(
+                    "{operation} timed out waiting for {} socket readiness",
+                    readiness_label(events)
+                ),
+            ));
+        };
+        let mut pollfd = libc::pollfd {
+            fd: stream.as_raw_fd(),
+            events,
+            revents: 0,
+        };
+        // SAFETY: poll is called with one valid file descriptor borrowed from
+        // the live TcpStream and a finite timeout derived from the test deadline.
+        let ready = unsafe { libc::poll(&mut pollfd, 1, timeout_ms) };
+        if ready > 0 {
+            if pollfd.revents & libc::POLLNVAL != 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("{operation} polled an invalid socket"),
+                ));
+            }
+            if pollfd.revents & (events | libc::POLLERR | libc::POLLHUP) != 0 {
+                return Ok(());
+            }
+            continue;
+        }
+        if ready == 0 {
+            continue;
+        }
+        let error = io::Error::last_os_error();
+        if error.kind() == io::ErrorKind::Interrupted {
+            continue;
+        }
+        return Err(error);
+    }
+}
+
+fn readiness_label(events: libc::c_short) -> &'static str {
+    if events & libc::POLLIN != 0 {
+        "readable"
+    } else if events & libc::POLLOUT != 0 {
+        "writable"
+    } else {
+        "requested"
+    }
+}
+
+fn response_body_contains_session(exchange: &HttpExchange, session: &str) -> bool {
+    exchange
+        .response
+        .body_json
+        .as_ref()
+        .is_some_and(|body| json_contains_string(body, session))
+}
+
+fn json_contains_string(value: &Value, needle: &str) -> bool {
+    match value {
+        Value::String(text) => text == needle,
+        Value::Array(items) => items.iter().any(|item| json_contains_string(item, needle)),
+        Value::Object(map) => map.values().any(|item| json_contains_string(item, needle)),
+        _ => false,
+    }
+}
+
+fn collect_nested_runtime_panic_lines(aimux_home: &Path) -> Vec<String> {
+    let mut lines = Vec::new();
+    collect_nested_runtime_panic_lines_from_dir(aimux_home, aimux_home, &mut lines);
+    lines.sort();
+    lines
+}
+
+fn collect_nested_runtime_panic_lines_from_dir(root: &Path, dir: &Path, lines: &mut Vec<String>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_nested_runtime_panic_lines_from_dir(root, &path, lines);
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if !(name.ends_with(".log") || name.ends_with(".jsonl")) {
+            continue;
+        }
+        let Ok(contents) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let relative = path.strip_prefix(root).unwrap_or(&path).display();
+        for line in contents.lines() {
+            if line.contains("Cannot start a runtime from within a runtime")
+                || line.contains("block_on_named was called from an async task")
+                || line.contains("panicked at crates/aimux/src/async_runtime.rs")
+            {
+                lines.push(format!("{relative}: {line}"));
+            }
+        }
+    }
+}
+
+fn poll_timeout_ms(deadline: Instant) -> Option<libc::c_int> {
+    let remaining = deadline.checked_duration_since(Instant::now())?;
+    if remaining.is_zero() {
+        return None;
+    }
+    Some(remaining.as_millis().clamp(1, libc::c_int::MAX as u128) as libc::c_int)
 }
 
 fn normalize_sse_frames(frames: Vec<String>, context: &NormalizeContext) -> Vec<String> {
@@ -733,9 +1186,15 @@ fn is_iso_timestamp(value: &str) -> bool {
 fn wait_for_daemon_health(port: u16) {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
-        if let Ok(exchange) =
-            try_json_exchange(port, "GET", "/health", None, Duration::from_secs(1))
-            && exchange.response.status_line == "HTTP/1.1 200 OK"
+        if let Ok(exchange) = try_json_exchange(
+            port,
+            "GET",
+            "/health",
+            None,
+            Duration::from_secs(1),
+            "daemon-health-startup-probe",
+            "daemon-http",
+        ) && exchange.response.status_line == "HTTP/1.1 200 OK"
         {
             return;
         }
@@ -753,26 +1212,31 @@ fn try_json_exchange(
     path: &str,
     body: Option<&Value>,
     timeout: Duration,
+    case_name: &str,
+    phase: &str,
 ) -> Result<HttpExchange, String> {
     let request = build_request(port, method, path, body);
-    let mut stream = TcpStream::connect(("127.0.0.1", port)).map_err(|error| error.to_string())?;
-    stream
-        .set_read_timeout(Some(timeout))
-        .map_err(|error| error.to_string())?;
-    stream
-        .write_all(request.as_bytes())
-        .map_err(|error| error.to_string())?;
-    let mut bytes = Vec::new();
-    stream
-        .read_to_end(&mut bytes)
-        .map_err(|error| error.to_string())?;
+    let label = format!("{case_name} [{phase}] {method} {path}");
+    let mut stream = connect_harness_stream_result(port, timeout, &label)?;
+    write_all_ready_result(
+        &mut stream,
+        request.as_bytes(),
+        timeout,
+        &format!("write http request for {label}"),
+    )?;
+    finish_request_write_result(&stream, &format!("finish http request for {label}"))?;
+    let bytes = read_to_end_ready_result(
+        &mut stream,
+        timeout,
+        &format!("read http response for {label}"),
+    )?;
     Ok(HttpExchange {
         request,
         response: canonical_http_response(&bytes),
     })
 }
 
-fn wait_for_project_endpoint(project_state_dir: &Path) {
+fn wait_for_project_endpoint(project_state_dir: &Path, case_name: &str, phase: &str) {
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
         if load_metadata_endpoint(project_state_dir).is_some() {
@@ -780,7 +1244,7 @@ fn wait_for_project_endpoint(project_state_dir: &Path) {
         }
         assert!(
             Instant::now() < deadline,
-            "project endpoint did not appear at {}",
+            "{case_name} [{phase}] project endpoint did not appear at {}",
             project_state_dir.display()
         );
         thread::sleep(Duration::from_millis(50));

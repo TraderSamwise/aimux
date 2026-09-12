@@ -1,11 +1,16 @@
 //! The connection loop, driven by a fake socket and a fake daemon.
 
 use aimux::relay_client::RelayStatus;
-use aimux::relay_runner::{DaemonRelayBridge, DaemonRouteResponse, RelayRunner};
-use aimux::websocket::{WebSocketConnection, WebSocketConnector, WebSocketError, WebSocketEvent};
+use aimux::relay_runner::{
+    DaemonRelayBridge, DaemonRouteResponse, ProjectEventStream, ProjectEventStreamItem, RelayRunner,
+};
+use aimux::websocket::{
+    BoxFuture, WebSocketConnectionParts, WebSocketConnector, WebSocketError, WebSocketEvent,
+    WebSocketReader, WebSocketWriter,
+};
 use serde_json::{Value, json};
-use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 #[derive(Default)]
@@ -19,51 +24,69 @@ struct Recorder {
 struct FakeBridge {
     recorder: Arc<Recorder>,
     subscribe_error: Option<(u16, String)>,
+    subscribe_pending: bool,
 }
 
 impl DaemonRelayBridge for FakeBridge {
-    fn route_request(
-        &self,
-        method: &str,
-        path: &str,
-        _body: &Value,
-        _headers: &Value,
-    ) -> DaemonRouteResponse {
-        self.recorder
-            .routed
-            .lock()
-            .unwrap()
-            .push((method.to_owned(), path.to_owned()));
-        DaemonRouteResponse {
-            status: 200,
-            body: json!({ "ok": true }),
-        }
+    fn route_request<'a>(
+        &'a self,
+        method: &'a str,
+        path: &'a str,
+        _body: &'a Value,
+        _headers: &'a Value,
+    ) -> BoxFuture<'a, DaemonRouteResponse> {
+        Box::pin(async move {
+            self.recorder
+                .routed
+                .lock()
+                .unwrap()
+                .push((method.to_owned(), path.to_owned()));
+            DaemonRouteResponse {
+                status: 200,
+                body: json!({ "ok": true }),
+            }
+        })
     }
 
     fn subscribe_project_events(
-        &self,
-        _subscription_id: &str,
-        _path: &str,
-        _headers: &Value,
-        _send: Arc<dyn Fn(String) + Send + Sync>,
-        _cancelled: Arc<AtomicBool>,
-    ) -> Result<(), (u16, String)> {
-        match &self.subscribe_error {
-            Some((status, message)) => Err((*status, message.clone())),
-            None => Ok(()),
-        }
+        self: Arc<Self>,
+        _subscription_id: String,
+        _path: String,
+        _headers: Value,
+    ) -> BoxFuture<'static, Result<Box<dyn ProjectEventStream>, (u16, String)>> {
+        Box::pin(async move {
+            if self.subscribe_pending {
+                std::future::pending::<()>().await;
+            }
+            match &self.subscribe_error {
+                Some((status, message)) => Err((*status, message.clone())),
+                None => Ok(Box::new(PendingProjectEventStream) as Box<dyn ProjectEventStream>),
+            }
+        })
     }
 
-    fn notify_client_connected(&self, title: &str, _body: &str) {
-        self.recorder.clients.lock().unwrap().push(title.to_owned());
+    fn notify_client_connected<'a>(&'a self, title: &'a str, _body: &'a str) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            self.recorder.clients.lock().unwrap().push(title.to_owned());
+        })
     }
 
-    fn notify_auth_lost(&self, message: &str) {
-        self.recorder
-            .auth_lost
-            .lock()
-            .unwrap()
-            .push(message.to_owned());
+    fn notify_auth_lost<'a>(&'a self, message: &'a str) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            self.recorder
+                .auth_lost
+                .lock()
+                .unwrap()
+                .push(message.to_owned());
+        })
+    }
+}
+
+struct PendingProjectEventStream;
+
+impl ProjectEventStream for PendingProjectEventStream {
+    fn poll_next(&mut self, _cx: &mut Context<'_>) -> Poll<ProjectEventStreamItem> {
+        Poll::Pending
     }
 }
 
@@ -72,54 +95,76 @@ struct FakeConnector {
     scripts: Vec<Result<Vec<WebSocketEvent>, WebSocketError>>,
     attempts: Arc<Mutex<usize>>,
     recorder: Arc<Recorder>,
+    writer_failures: Vec<Option<WebSocketError>>,
 }
 
 impl WebSocketConnector for FakeConnector {
-    fn connect(
-        &mut self,
-        _url: &str,
-        _subprotocols: &[String],
-    ) -> Result<Box<dyn WebSocketConnection>, WebSocketError> {
-        let index = {
-            let mut attempts = self.attempts.lock().unwrap();
-            let index = *attempts;
-            *attempts += 1;
-            index
-        };
-        match self.scripts.get(index).cloned() {
-            Some(Ok(events)) => Ok(Box::new(FakeConnection {
-                events,
-                recorder: Arc::clone(&self.recorder),
-            })),
-            Some(Err(error)) => Err(error),
-            None => Err(WebSocketError::Transport("no more scripts".into())),
-        }
+    fn connect<'a>(
+        &'a mut self,
+        _url: &'a str,
+        _subprotocols: &'a [String],
+    ) -> BoxFuture<'a, Result<WebSocketConnectionParts, WebSocketError>> {
+        Box::pin(async move {
+            let index = {
+                let mut attempts = self.attempts.lock().unwrap();
+                let index = *attempts;
+                *attempts += 1;
+                index
+            };
+            match self.scripts.get(index).cloned() {
+                Some(Ok(events)) => Ok(WebSocketConnectionParts {
+                    reader: Box::new(FakeReader { events }),
+                    writer: Box::new(FakeWriter {
+                        recorder: Arc::clone(&self.recorder),
+                        send_text_error: self.writer_failures.get(index).cloned().flatten(),
+                    }),
+                }),
+                Some(Err(error)) => Err(error),
+                None => Err(WebSocketError::Transport("no more scripts".into())),
+            }
+        })
     }
 }
 
-struct FakeConnection {
+struct FakeReader {
     events: Vec<WebSocketEvent>,
-    recorder: Arc<Recorder>,
 }
 
-impl WebSocketConnection for FakeConnection {
-    fn read(&mut self, _timeout: Duration) -> Result<Option<WebSocketEvent>, WebSocketError> {
-        if self.events.is_empty() {
-            return Ok(Some(WebSocketEvent::Closed {
-                code: None,
-                reason: String::new(),
-            }));
-        }
-        Ok(Some(self.events.remove(0)))
+impl WebSocketReader for FakeReader {
+    fn next_event<'a>(&'a mut self) -> BoxFuture<'a, Result<WebSocketEvent, WebSocketError>> {
+        Box::pin(async move {
+            if self.events.is_empty() {
+                return Ok(WebSocketEvent::Closed {
+                    code: None,
+                    reason: String::new(),
+                });
+            }
+            Ok(self.events.remove(0))
+        })
     }
-    fn send_text(&mut self, text: &str) -> Result<(), WebSocketError> {
-        self.recorder.sent.lock().unwrap().push(text.to_owned());
-        Ok(())
+}
+
+struct FakeWriter {
+    recorder: Arc<Recorder>,
+    send_text_error: Option<WebSocketError>,
+}
+
+impl WebSocketWriter for FakeWriter {
+    fn send_text<'a>(&'a mut self, text: &'a str) -> BoxFuture<'a, Result<(), WebSocketError>> {
+        Box::pin(async move {
+            if let Some(error) = self.send_text_error.take() {
+                return Err(error);
+            }
+            self.recorder.sent.lock().unwrap().push(text.to_owned());
+            Ok(())
+        })
     }
-    fn send_pong(&mut self, _payload: Vec<u8>) -> Result<(), WebSocketError> {
-        Ok(())
+    fn send_pong<'a>(&'a mut self, _payload: Vec<u8>) -> BoxFuture<'a, Result<(), WebSocketError>> {
+        Box::pin(async { Ok(()) })
     }
-    fn close(&mut self) {}
+    fn close<'a>(&'a mut self) -> BoxFuture<'a, ()> {
+        Box::pin(async {})
+    }
 }
 
 fn text(value: serde_json::Value) -> WebSocketEvent {
@@ -145,11 +190,21 @@ fn harness(
     scripts: Vec<Result<Vec<WebSocketEvent>, WebSocketError>>,
     subscribe_error: Option<(u16, String)>,
 ) -> Harness {
+    harness_with_options(scripts, subscribe_error, false, Vec::new())
+}
+
+fn harness_with_options(
+    scripts: Vec<Result<Vec<WebSocketEvent>, WebSocketError>>,
+    subscribe_error: Option<(u16, String)>,
+    subscribe_pending: bool,
+    writer_failures: Vec<Option<WebSocketError>>,
+) -> Harness {
     let recorder = Arc::new(Recorder::default());
     let attempts = Arc::new(Mutex::new(0));
     let bridge = Arc::new(FakeBridge {
         recorder: Arc::clone(&recorder),
         subscribe_error,
+        subscribe_pending,
     });
     Harness {
         runner: RelayRunner::new("wss://relay.example/", "tok", bridge),
@@ -157,6 +212,7 @@ fn harness(
             scripts,
             attempts: Arc::clone(&attempts),
             recorder: Arc::clone(&recorder),
+            writer_failures,
         },
         recorder,
         attempts,
@@ -172,11 +228,17 @@ impl Harness {
         let runner = Arc::clone(&self.runner);
         let handle = runner.handle();
         let slept = &mut self.slept;
-        runner.run(&mut self.connector, &mut |delay| {
-            slept.push(delay);
-            if slept.len() >= max_sleeps {
-                handle.stop();
-            }
+        aimux::async_runtime::init_process_runtime().expect("runtime initialized");
+        aimux::async_runtime::block_on_named("test:relay-runner", async {
+            runner
+                .run_with_sleep(&mut self.connector, &mut |delay| {
+                    slept.push(delay);
+                    if slept.len() >= max_sleeps {
+                        handle.stop();
+                    }
+                    Box::pin(async {})
+                })
+                .await;
         });
     }
 
@@ -402,6 +464,56 @@ fn a_successful_subscription_acknowledges_itself() {
     let frame: Value = serde_json::from_str(&sent[0]).unwrap();
     assert_eq!(frame["type"], "project_events_subscribed");
     assert_eq!(frame["id"], "s1");
+}
+
+#[test]
+fn a_pending_subscription_open_does_not_pin_the_socket_pump() {
+    let mut harness = harness_with_options(
+        vec![Ok(vec![
+            text(json!({
+                "type":"project_events_subscribe",
+                "id":"sub-1",
+                "path":"/projects/events",
+            })),
+            text(json!({"type":"ping"})),
+            closed(1000),
+        ])],
+        None,
+        true,
+        Vec::new(),
+    );
+    harness.run();
+
+    assert_eq!(
+        *harness.attempts.lock().unwrap(),
+        1,
+        "the pump should keep reading websocket frames while a subscription is opening"
+    );
+}
+
+#[test]
+fn a_failed_outbox_write_reconnects_without_dropping_the_frame() {
+    let mut harness = harness_with_options(
+        vec![Ok(vec![closed(1000)]), Ok(vec![closed(1000)])],
+        None,
+        false,
+        vec![Some(WebSocketError::Transport("write failed".into())), None],
+    );
+    harness
+        .runner
+        .push_notification(&json!({ "title": "important" }))
+        .expect("notification queued");
+    harness.run_until(2);
+
+    assert_eq!(
+        *harness.attempts.lock().unwrap(),
+        2,
+        "a websocket write failure should reconnect"
+    );
+    assert_eq!(harness.sent().len(), 1);
+    let frame: Value = serde_json::from_str(&harness.sent()[0]).unwrap();
+    assert_eq!(frame["type"], "notification_push");
+    assert_eq!(frame["notification"]["title"], "important");
 }
 
 #[test]

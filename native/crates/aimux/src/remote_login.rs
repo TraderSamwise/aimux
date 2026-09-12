@@ -4,13 +4,14 @@ use crate::paths::PathResolver;
 use crate::remote_credentials::{AimuxCredentials, save_credentials_at};
 use std::collections::BTreeMap;
 use std::fs::File;
-use std::io::{self, Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::io::{self, Read};
+use std::net::TcpListener as StdTcpListener;
 use std::path::Path;
 use std::process::Stdio;
-use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::mpsc::{Receiver, channel};
+use std::time::Duration;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
 
 const LOGIN_TIMEOUT_MS: u128 = 5 * 60 * 1000;
 const HTML_CONTENT_TYPE: &str = "text/html; charset=utf-8";
@@ -49,24 +50,20 @@ pub struct LoginCallbackResponse {
 
 #[derive(Debug)]
 pub struct LoginFlowWaiter {
-    result: Arc<Mutex<Option<Result<LoginFlowResult, String>>>>,
+    receiver: Receiver<Result<LoginFlowResult, String>>,
 }
 
 impl LoginFlowWaiter {
     pub fn ready_error(error: String) -> Self {
-        Self {
-            result: Arc::new(Mutex::new(Some(Err(error)))),
-        }
+        let (sender, receiver) = channel();
+        let _ = sender.send(Err(error));
+        Self { receiver }
     }
 
     pub fn wait(self) -> Result<LoginFlowResult, String> {
-        loop {
-            let result = self.result.lock().expect("login result mutex").take();
-            if let Some(result) = result {
-                return result;
-            }
-            thread::sleep(Duration::from_millis(100));
-        }
+        self.receiver
+            .recv()
+            .unwrap_or_else(|_| Err("Login flow ended without a result".to_owned()))
     }
 }
 
@@ -74,28 +71,43 @@ pub fn run_login_flow(
     resolver: &PathResolver,
     action: LoginAction,
 ) -> Result<LoginFlowResult, String> {
-    let prepared = prepare_login_flow(resolver, action)?;
-    wait_for_login_callback(prepared)
+    let (_messages, waiter) = start_login_flow(resolver, action)?;
+    waiter.wait()
 }
 
 pub fn start_login_flow(
     resolver: &PathResolver,
     action: LoginAction,
 ) -> Result<(Vec<String>, LoginFlowWaiter), String> {
+    crate::async_runtime::init_process_runtime().map_err(|error| error.to_string())?;
     let prepared = prepare_login_flow(resolver, action)?;
     let messages = prepared.messages.clone();
-    let result = Arc::new(Mutex::new(None));
-    let thread_result = Arc::clone(&result);
-    thread::spawn(move || {
-        let flow_result = wait_for_login_callback(prepared);
-        *thread_result.lock().expect("login result mutex") = Some(flow_result);
-    });
-    Ok((messages, LoginFlowWaiter { result }))
+    let (sender, receiver) = channel();
+    crate::async_runtime::spawn_named(
+        crate::async_runtime::task_name("remote-login", "callback"),
+        async move {
+            let flow_result = match TcpListener::from_std(prepared.listener) {
+                Ok(listener) => {
+                    wait_for_login_callback(
+                        listener,
+                        prepared.state,
+                        prepared.relay_url,
+                        prepared.auth_path,
+                        prepared.messages,
+                    )
+                    .await
+                }
+                Err(error) => Err(error.to_string()),
+            };
+            let _ = sender.send(flow_result);
+        },
+    );
+    Ok((messages, LoginFlowWaiter { receiver }))
 }
 
 #[derive(Debug)]
 struct PreparedLoginFlow {
-    listener: TcpListener,
+    listener: StdTcpListener,
     state: String,
     relay_url: String,
     auth_path: std::path::PathBuf,
@@ -106,7 +118,8 @@ fn prepare_login_flow(
     resolver: &PathResolver,
     action: LoginAction,
 ) -> Result<PreparedLoginFlow, String> {
-    let listener = TcpListener::bind(("127.0.0.1", 0)).map_err(|error| error.to_string())?;
+    let listener =
+        std::net::TcpListener::bind(("127.0.0.1", 0)).map_err(|error| error.to_string())?;
     listener
         .set_nonblocking(true)
         .map_err(|error| error.to_string())?;
@@ -133,36 +146,27 @@ fn prepare_login_flow(
     })
 }
 
-fn wait_for_login_callback(prepared: PreparedLoginFlow) -> Result<LoginFlowResult, String> {
-    let deadline = current_unix_millis() + LOGIN_TIMEOUT_MS;
-    loop {
-        match prepared.listener.accept() {
-            Ok((stream, _)) => {
-                let response = handle_login_stream(
-                    stream,
-                    &prepared.state,
-                    &prepared.relay_url,
-                    &prepared.auth_path,
-                    now_iso(),
-                )
-                .map_err(|error| error.to_string())?;
-                if let Some(user_id) = response.user_id {
-                    return Ok(LoginFlowResult {
-                        user_id,
-                        messages: prepared.messages,
-                    });
-                }
-                return Err(response.error.unwrap_or_else(|| "Login failed".to_owned()));
-            }
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                if current_unix_millis() >= deadline {
-                    return Err("Login timed out after 5 minutes".into());
-                }
-                thread::sleep(Duration::from_millis(100));
-            }
-            Err(error) => return Err(error.to_string()),
-        }
+async fn wait_for_login_callback(
+    listener: TcpListener,
+    state: String,
+    relay_url: String,
+    auth_path: std::path::PathBuf,
+    messages: Vec<String>,
+) -> Result<LoginFlowResult, String> {
+    let accept = tokio::time::timeout(
+        Duration::from_millis(LOGIN_TIMEOUT_MS as u64),
+        listener.accept(),
+    )
+    .await
+    .map_err(|_| "Login timed out after 5 minutes".to_owned())?;
+    let (stream, _) = accept.map_err(|error| error.to_string())?;
+    let response = handle_login_stream(stream, &state, &relay_url, &auth_path, now_iso())
+        .await
+        .map_err(|error| error.to_string())?;
+    if let Some(user_id) = response.user_id {
+        return Ok(LoginFlowResult { user_id, messages });
     }
+    Err(response.error.unwrap_or_else(|| "Login failed".to_owned()))
 }
 
 pub fn build_auth_url(
@@ -258,7 +262,7 @@ pub fn handle_login_callback(
     }
 }
 
-fn handle_login_stream(
+async fn handle_login_stream(
     mut stream: TcpStream,
     state: &str,
     relay_url: &str,
@@ -266,7 +270,7 @@ fn handle_login_stream(
     created_at: String,
 ) -> io::Result<LoginCallbackResponse> {
     let mut buffer = [0_u8; 8192];
-    let count = stream.read(&mut buffer)?;
+    let count = stream.read(&mut buffer).await?;
     let request = String::from_utf8_lossy(&buffer[..count]);
     let path = request
         .lines()
@@ -274,20 +278,23 @@ fn handle_login_stream(
         .and_then(|line| line.split_whitespace().nth(1))
         .unwrap_or("/");
     let response = handle_login_callback(path, state, relay_url, auth_path, &created_at);
-    write_http_response(&mut stream, &response)?;
+    write_http_response(&mut stream, &response).await?;
     Ok(response)
 }
 
-fn write_http_response(stream: &mut TcpStream, response: &LoginCallbackResponse) -> io::Result<()> {
+async fn write_http_response(
+    stream: &mut TcpStream,
+    response: &LoginCallbackResponse,
+) -> io::Result<()> {
     let body = response.body.as_bytes();
-    write!(
-        stream,
+    let header = format!(
         "HTTP/1.1 {} OK\r\ncontent-type: {}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
         response.status,
         response.content_type,
         body.len()
-    )?;
-    stream.write_all(body)
+    );
+    stream.write_all(header.as_bytes()).await?;
+    stream.write_all(body).await
 }
 
 fn open_browser(url: &str) {
@@ -429,11 +436,4 @@ fn now_iso() -> String {
         now.second(),
         now.millisecond()
     )
-}
-
-fn current_unix_millis() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis()
 }

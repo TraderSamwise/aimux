@@ -28,7 +28,7 @@ use super::runtime_events::route_runtime_event_with_context;
 use super::runtime_exchange::{
     empty_runtime_exchange, read_runtime_exchange, runtime_exchange_path,
 };
-use super::scheduler::PeriodicTask;
+use super::scheduler::{PeriodicTask, PeriodicTaskFuture};
 use super::watcher_delivery::RailBudget;
 
 /// Node polled every 2s. That is a floor here, not a promise: the rail is
@@ -67,11 +67,17 @@ impl PeriodicTask for BuiltinMetadataTask {
         SCAN_INTERVAL_MS
     }
 
-    fn run(&mut self, context: &ProjectServiceRequestContext) {
-        let budget = RailBudget::new(SCAN_BUDGET);
-        let input = collect_watcher_sources(context, &budget);
-        let effects = self.watchers.scan(&input);
-        apply_effects(&self.context, &effects);
+    fn timeout(&self) -> Duration {
+        SCAN_BUDGET + Duration::from_secs(1)
+    }
+
+    fn run<'a>(&'a mut self, context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
+        Box::pin(async move {
+            let budget = RailBudget::new(SCAN_BUDGET);
+            let input = collect_watcher_sources(context, &budget);
+            let effects = self.watchers.scan(&input);
+            apply_effects(&self.context, &effects);
+        })
     }
 }
 

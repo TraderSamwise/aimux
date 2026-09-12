@@ -9,8 +9,10 @@ use crate::runtime_topology::{
 };
 
 use super::LIVE_STATUSES;
+use super::LifecycleMutationProgress;
 use super::agent_launch_helpers::{
     MissingBackendSessionDisposition, missing_backend_session_disposition,
+    missing_backend_session_disposition_async_runtime,
 };
 use super::ids::now_iso;
 use super::json_helpers::{
@@ -18,7 +20,7 @@ use super::json_helpers::{
 };
 use super::response_helpers::{json_error, lifecycle_response};
 use super::restore_snapshot::prune_restore_eligibility;
-use super::runtime_adapter::ProjectLifecycleRuntime;
+use super::runtime_adapter::{AsyncProjectLifecycleRuntime, ProjectLifecycleRuntime};
 use super::topology_helpers::{live_window_id_for_session, map_topology_array};
 use super::worktrees::worktree_path_is_graveyarded;
 use crate::project_service::prompt_context::clear_prompt_context;
@@ -105,6 +107,87 @@ pub(super) fn route_agent_stop(
     )
 }
 
+pub(super) async fn route_agent_stop_async(
+    context: &ProjectServiceRequestContext,
+    body: &Value,
+    runtime: &mut impl AsyncProjectLifecycleRuntime,
+    progress: &LifecycleMutationProgress,
+) -> ProjectServiceDispatchResponse {
+    let Some(session_id) = trimmed_string(body.get("sessionId")) else {
+        return json_error(400, "sessionId is required");
+    };
+    let project_state_dir = context.project_state_dir();
+    let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
+        Ok(topology) => topology,
+        Err(error) => return json_error(500, error),
+    };
+    let Some(session) = find_by_id(&topology, "sessions", &session_id) else {
+        return json_error(404, format!("Unknown session \"{session_id}\""));
+    };
+    if string_field(&session, "status") == "graveyard" {
+        return json_error(
+            400,
+            format!("Session \"{session_id}\" is already in graveyard"),
+        );
+    }
+    let window_id = live_window_id_for_session(&topology, &session);
+    let session_state = topology_session_to_session_state(&session, &topology);
+    let missing_backend_disposition = missing_backend_session_disposition_async_runtime(
+        runtime,
+        &session_state,
+        &context.project_root().to_string_lossy(),
+    );
+    if let Some(window_id) = window_id {
+        let _ = runtime.kill_window(&window_id).await;
+        progress.mark_irreversible();
+    } else {
+        progress.mark_irreversible();
+    }
+    clear_prompt_context(&project_state_dir, &session_id);
+    let result = update_runtime_topology(runtime_topology_path(&project_state_dir), |topology| {
+        let now = now_iso();
+        map_topology_array(topology, "sessions", |mut current| {
+            if string_field(&current, "id") == session_id {
+                object_insert_mut(&mut current, "status", Value::String("offline".into()));
+                object_insert_mut(&mut current, "updatedAt", Value::String(now.clone()));
+                object_insert_mut(&mut current, "restoreBlockedReason", Value::Null);
+                match &missing_backend_disposition {
+                    MissingBackendSessionDisposition::RecordBackendSession(backend_session_id) => {
+                        object_insert_mut(
+                            &mut current,
+                            "backendSessionId",
+                            Value::String(backend_session_id.clone()),
+                        );
+                        object_insert_mut(&mut current, "freshRelaunchAllowed", Value::Bool(false));
+                    }
+                    MissingBackendSessionDisposition::AllowFreshRelaunch => {
+                        object_insert_mut(&mut current, "freshRelaunchAllowed", Value::Bool(true));
+                    }
+                    MissingBackendSessionDisposition::Blocked(reason) => {
+                        object_insert_mut(
+                            &mut current,
+                            "restoreBlockedReason",
+                            Value::String(reason.clone()),
+                        );
+                    }
+                    MissingBackendSessionDisposition::Unchanged => {}
+                }
+            }
+            current
+        })
+    });
+    if let Err(error) = result {
+        return json_error(500, error);
+    }
+    prune_restore_eligibility(&project_state_dir, &session_id);
+    lifecycle_response(
+        json!({ "sessionId": session_id, "status": "offline" }),
+        "agent.stop",
+        "agent",
+        Some(&session_id),
+    )
+}
+
 pub(super) fn route_agent_kill(
     context: &ProjectServiceRequestContext,
     body: &Value,
@@ -153,6 +236,65 @@ pub(super) fn route_agent_kill(
     if let Some(window_id) = window_id {
         let _ = runtime.kill_window(&window_id);
     }
+    lifecycle_response(
+        json!({ "sessionId": session_id, "status": "graveyard", "previousStatus": previous_status }),
+        "agent.kill",
+        "agent",
+        Some(&session_id),
+    )
+}
+
+pub(super) async fn route_agent_kill_async(
+    context: &ProjectServiceRequestContext,
+    body: &Value,
+    runtime: &mut impl AsyncProjectLifecycleRuntime,
+    progress: &LifecycleMutationProgress,
+) -> ProjectServiceDispatchResponse {
+    let Some(session_id) = trimmed_string(body.get("sessionId")) else {
+        return json_error(400, "sessionId is required");
+    };
+    let reason = trimmed_string(body.get("reason"));
+    let project_state_dir = context.project_state_dir();
+    let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
+        Ok(topology) => topology,
+        Err(error) => return json_error(500, error),
+    };
+    let Some(session) = find_by_id(&topology, "sessions", &session_id) else {
+        return json_error(404, format!("Unknown session \"{session_id}\""));
+    };
+    let previous_status = if LIVE_STATUSES.contains(&string_field(&session, "status").as_str()) {
+        "running"
+    } else {
+        "offline"
+    };
+    if let Some(window_id) = live_window_id_for_session(&topology, &session) {
+        let _ = runtime.kill_window(&window_id).await;
+        progress.mark_irreversible();
+    } else {
+        progress.mark_irreversible();
+    }
+    clear_prompt_context(&project_state_dir, &session_id);
+    let result = update_runtime_topology(runtime_topology_path(&project_state_dir), |topology| {
+        let now = now_iso();
+        map_topology_array(topology, "sessions", |mut current| {
+            if string_field(&current, "id") == session_id {
+                object_insert_mut(&mut current, "status", Value::String("graveyard".into()));
+                object_insert_mut(&mut current, "updatedAt", Value::String(now.clone()));
+                if current.get("graveyardedAt").is_none() {
+                    object_insert_mut(&mut current, "graveyardedAt", Value::String(now.clone()));
+                }
+                object_insert_mut(&mut current, "restoreBlockedReason", Value::Null);
+                if let Some(reason) = reason.clone() {
+                    object_insert_mut(&mut current, "graveyardReason", Value::String(reason));
+                }
+            }
+            current
+        })
+    });
+    if let Err(error) = result {
+        return json_error(500, error);
+    }
+    prune_restore_eligibility(&project_state_dir, &session_id);
     lifecycle_response(
         json!({ "sessionId": session_id, "status": "graveyard", "previousStatus": previous_status }),
         "agent.kill",

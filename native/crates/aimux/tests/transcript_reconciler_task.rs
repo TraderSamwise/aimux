@@ -131,7 +131,10 @@ impl Rail {
 
     fn tick(&mut self, times: usize) {
         for _ in 0..times {
-            self.task.run(&self.context);
+            aimux::async_runtime::block_on_named(
+                "transcript-reconciler-task-test",
+                self.task.run(&self.context),
+            );
         }
     }
 }

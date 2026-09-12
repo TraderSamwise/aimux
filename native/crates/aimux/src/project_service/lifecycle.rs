@@ -1,4 +1,9 @@
 use serde_json::Value;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+use std::time::Instant;
 
 use crate::project_api_contract::routes;
 use crate::runtime_topology::read_runtime_topology;
@@ -41,6 +46,8 @@ pub use restore_snapshot::seed_agent_restore_prompt_gates_for_daemon_boot;
 pub(crate) use restore_snapshot::{
     derive_agent_restore_offer, record_last_online_agents, restore_now_iso, restore_project_id,
 };
+#[cfg(test)]
+pub(crate) use runtime_adapter::AsyncProjectLifecycleRuntime;
 pub use runtime_adapter::{ProjectLifecycleRuntime, SystemProjectLifecycleRuntime};
 use services::*;
 use session_state::*;
@@ -58,6 +65,103 @@ pub fn route_lifecycle_request(
 ) -> Option<ProjectServiceDispatchResponse> {
     let mut runtime = SystemProjectLifecycleRuntime;
     route_lifecycle_request_with_runtime(context, method, path, body, &mut runtime)
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct LifecycleMutationProgress {
+    operation: String,
+    target_kind: String,
+    target_id: Option<String>,
+    irreversible: Arc<AtomicBool>,
+    abandoned_recorded: Arc<AtomicBool>,
+}
+
+impl LifecycleMutationProgress {
+    pub fn mark_irreversible(&self) {
+        self.irreversible.store(true, Ordering::SeqCst);
+    }
+
+    pub fn is_irreversible(&self) -> bool {
+        self.irreversible.load(Ordering::SeqCst)
+    }
+
+    pub fn mark_abandoned_recorded(&self) -> bool {
+        !self.abandoned_recorded.swap(true, Ordering::SeqCst)
+    }
+
+    pub fn operation(&self) -> &str {
+        &self.operation
+    }
+
+    pub fn target_kind(&self) -> &str {
+        &self.target_kind
+    }
+
+    pub fn target_id(&self) -> Option<&str> {
+        self.target_id.as_deref()
+    }
+}
+
+pub(crate) fn async_lifecycle_progress_for_request(
+    method: &str,
+    path: &str,
+    body: Option<&Value>,
+) -> Option<LifecycleMutationProgress> {
+    if !method.eq_ignore_ascii_case("POST") {
+        return None;
+    }
+    let body = body.unwrap_or(&Value::Null);
+    let transition = lifecycle_transition_for_route(project_service_pathname(path), body)?;
+    if !matches!(
+        transition.operation.as_str(),
+        "agent.spawn" | "agent.stop" | "agent.kill"
+    ) {
+        return None;
+    }
+    Some(LifecycleMutationProgress {
+        operation: transition.operation,
+        target_kind: transition.target_kind,
+        target_id: transition.target_id,
+        irreversible: Arc::new(AtomicBool::new(false)),
+        abandoned_recorded: Arc::new(AtomicBool::new(false)),
+    })
+}
+
+pub(crate) async fn route_lifecycle_request_async(
+    context: &ProjectServiceRequestContext,
+    method: &str,
+    path: &str,
+    body: Option<&Value>,
+    progress: &LifecycleMutationProgress,
+) -> Option<ProjectServiceDispatchResponse> {
+    let mut runtime = SystemProjectLifecycleRuntime;
+    route_lifecycle_request_async_with_runtime(context, method, path, body, progress, &mut runtime)
+        .await
+}
+
+pub(crate) async fn route_lifecycle_request_async_with_runtime(
+    context: &ProjectServiceRequestContext,
+    method: &str,
+    path: &str,
+    body: Option<&Value>,
+    progress: &LifecycleMutationProgress,
+    runtime: &mut impl runtime_adapter::AsyncProjectLifecycleRuntime,
+) -> Option<ProjectServiceDispatchResponse> {
+    if !method.eq_ignore_ascii_case("POST") {
+        return None;
+    }
+    let pathname = project_service_pathname(path);
+    let body = body.unwrap_or(&Value::Null);
+    let transition = lifecycle_transition_for_route(pathname, body);
+    let mut permit = match context.lifecycle_mutations.begin(transition) {
+        Ok(permit) => permit,
+        Err(error) => return Some(lifecycle_queue_error_response(error)),
+    };
+    let started_at = Instant::now();
+    let response =
+        route_lifecycle_request_unqueued_async(context, pathname, body, runtime, progress).await;
+    permit.succeed(started_at);
+    response
 }
 
 pub fn route_lifecycle_request_with_runtime(
@@ -136,6 +240,27 @@ fn route_lifecycle_request_unqueued(
             Some(route_graveyard_worktree_delete(context, body))
         }
         routes::graveyard_actions::CLEANUP => Some(route_graveyard_cleanup(context, body)),
+        _ => None,
+    }
+}
+
+async fn route_lifecycle_request_unqueued_async(
+    context: &ProjectServiceRequestContext,
+    pathname: &str,
+    body: &Value,
+    runtime: &mut impl runtime_adapter::AsyncProjectLifecycleRuntime,
+    progress: &LifecycleMutationProgress,
+) -> Option<ProjectServiceDispatchResponse> {
+    match pathname {
+        routes::agents::SPAWN => {
+            Some(route_agent_spawn_async(context, body, runtime, progress).await)
+        }
+        routes::agents::STOP => {
+            Some(route_agent_stop_async(context, body, runtime, progress).await)
+        }
+        routes::agents::KILL => {
+            Some(route_agent_kill_async(context, body, runtime, progress).await)
+        }
         _ => None,
     }
 }

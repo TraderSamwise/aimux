@@ -7,13 +7,17 @@
 
 use aimux::daemon::relay::resolve_project_event_stream;
 use aimux::relay_client::{RelayStatus, project_event_frame, project_events_error_frame};
-use aimux::relay_runner::{DaemonRelayBridge, DaemonRouteResponse, RelayRunner};
-use aimux::websocket::{WebSocketConnection, WebSocketConnector, WebSocketError, WebSocketEvent};
+use aimux::relay_runner::{
+    DaemonRelayBridge, DaemonRouteResponse, ProjectEventStream, ProjectEventStreamItem, RelayRunner,
+};
+use aimux::websocket::{
+    BoxFuture, WebSocketConnectionParts, WebSocketConnector, WebSocketError, WebSocketEvent,
+    WebSocketReader, WebSocketWriter,
+};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::task::{Context, Poll};
 
 const FIXTURE: &str = include_str!("../../../../../testdata/contracts/v1/relay/client.json");
 const RELAY_URL: &str = "wss://relay.aimux.app";
@@ -84,7 +88,7 @@ fn auth_close_case(input: &Value) -> Value {
     );
     // Twice, to prove the auth-lost notification is raised once and not per attempt.
     let mut connector = FakeConnector::new(vec![Ok(vec![closed(code)]), Ok(vec![closed(code)])]);
-    Arc::clone(&runner).run(&mut connector, &mut |_| {});
+    run_relay(&runner, &mut connector, |_| Box::pin(async {}));
 
     let status = runner.handle().status();
     json!({
@@ -116,7 +120,11 @@ fn security_event_case(input: &Value) -> Value {
         .collect();
     events.push(closed(1000));
     let mut connector = FakeConnector::new(vec![Ok(events)]);
-    Arc::clone(&runner).run(&mut connector, &mut |_| runner.handle().stop());
+    let handle = runner.handle();
+    run_relay(&runner, &mut connector, move |_| {
+        handle.stop();
+        Box::pin(async {})
+    });
 
     json!({ "notifications": recorder.notifications() })
 }
@@ -196,41 +204,53 @@ struct FakeBridge {
 }
 
 impl DaemonRelayBridge for FakeBridge {
-    fn route_request(
-        &self,
-        _method: &str,
-        _path: &str,
-        _body: &Value,
-        _headers: &Value,
-    ) -> DaemonRouteResponse {
-        DaemonRouteResponse {
-            status: 200,
-            body: Value::Null,
-        }
+    fn route_request<'a>(
+        &'a self,
+        _method: &'a str,
+        _path: &'a str,
+        _body: &'a Value,
+        _headers: &'a Value,
+    ) -> BoxFuture<'a, DaemonRouteResponse> {
+        Box::pin(async {
+            DaemonRouteResponse {
+                status: 200,
+                body: Value::Null,
+            }
+        })
     }
     fn subscribe_project_events(
-        &self,
-        _subscription_id: &str,
-        _path: &str,
-        _headers: &Value,
-        _send: Arc<dyn Fn(String) + Send + Sync>,
-        _cancelled: Arc<AtomicBool>,
-    ) -> Result<(), (u16, String)> {
-        Ok(())
+        self: Arc<Self>,
+        _subscription_id: String,
+        _path: String,
+        _headers: Value,
+    ) -> BoxFuture<'static, Result<Box<dyn ProjectEventStream>, (u16, String)>> {
+        Box::pin(async { Ok(Box::new(EmptyProjectEventStream) as Box<dyn ProjectEventStream>) })
     }
-    fn notify_client_connected(&self, title: &str, body: &str) {
-        self.recorder
-            .client_connected
-            .lock()
-            .unwrap()
-            .push(json!({ "title": title, "body": body }));
+    fn notify_client_connected<'a>(&'a self, title: &'a str, body: &'a str) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            self.recorder
+                .client_connected
+                .lock()
+                .unwrap()
+                .push(json!({ "title": title, "body": body }));
+        })
     }
-    fn notify_auth_lost(&self, message: &str) {
-        self.recorder
-            .auth_lost
-            .lock()
-            .unwrap()
-            .push(json!({ "body": message }));
+    fn notify_auth_lost<'a>(&'a self, message: &'a str) -> BoxFuture<'a, ()> {
+        Box::pin(async move {
+            self.recorder
+                .auth_lost
+                .lock()
+                .unwrap()
+                .push(json!({ "body": message }));
+        })
+    }
+}
+
+struct EmptyProjectEventStream;
+
+impl ProjectEventStream for EmptyProjectEventStream {
+    fn poll_next(&mut self, _cx: &mut Context<'_>) -> Poll<ProjectEventStreamItem> {
+        Poll::Ready(ProjectEventStreamItem::Closed)
     }
 }
 
@@ -249,39 +269,53 @@ impl FakeConnector {
 }
 
 impl WebSocketConnector for FakeConnector {
-    fn connect(
-        &mut self,
-        _url: &str,
-        _subprotocols: &[String],
-    ) -> Result<Box<dyn WebSocketConnection>, WebSocketError> {
-        let index = self.attempts;
-        self.attempts += 1;
-        match self.scripts.get(index).cloned() {
-            Some(Ok(events)) => Ok(Box::new(FakeConnection { events })),
-            Some(Err(error)) => Err(error),
-            None => Err(WebSocketError::Transport("exhausted".into())),
-        }
+    fn connect<'a>(
+        &'a mut self,
+        _url: &'a str,
+        _subprotocols: &'a [String],
+    ) -> BoxFuture<'a, Result<WebSocketConnectionParts, WebSocketError>> {
+        Box::pin(async move {
+            let index = self.attempts;
+            self.attempts += 1;
+            match self.scripts.get(index).cloned() {
+                Some(Ok(events)) => Ok(WebSocketConnectionParts {
+                    reader: Box::new(FakeReader { events }),
+                    writer: Box::new(FakeWriter),
+                }),
+                Some(Err(error)) => Err(error),
+                None => Err(WebSocketError::Transport("exhausted".into())),
+            }
+        })
     }
 }
 
-struct FakeConnection {
+struct FakeReader {
     events: Vec<WebSocketEvent>,
 }
 
-impl WebSocketConnection for FakeConnection {
-    fn read(&mut self, _timeout: Duration) -> Result<Option<WebSocketEvent>, WebSocketError> {
-        if self.events.is_empty() {
-            return Ok(Some(closed(1000)));
-        }
-        Ok(Some(self.events.remove(0)))
+impl WebSocketReader for FakeReader {
+    fn next_event<'a>(&'a mut self) -> BoxFuture<'a, Result<WebSocketEvent, WebSocketError>> {
+        Box::pin(async move {
+            if self.events.is_empty() {
+                return Ok(closed(1000));
+            }
+            Ok(self.events.remove(0))
+        })
     }
-    fn send_text(&mut self, _text: &str) -> Result<(), WebSocketError> {
-        Ok(())
+}
+
+struct FakeWriter;
+
+impl WebSocketWriter for FakeWriter {
+    fn send_text<'a>(&'a mut self, _text: &'a str) -> BoxFuture<'a, Result<(), WebSocketError>> {
+        Box::pin(async { Ok(()) })
     }
-    fn send_pong(&mut self, _payload: Vec<u8>) -> Result<(), WebSocketError> {
-        Ok(())
+    fn send_pong<'a>(&'a mut self, _payload: Vec<u8>) -> BoxFuture<'a, Result<(), WebSocketError>> {
+        Box::pin(async { Ok(()) })
     }
-    fn close(&mut self) {}
+    fn close<'a>(&'a mut self) -> BoxFuture<'a, ()> {
+        Box::pin(async {})
+    }
 }
 
 fn closed(code: u16) -> WebSocketEvent {
@@ -289,4 +323,15 @@ fn closed(code: u16) -> WebSocketEvent {
         code: Some(code),
         reason: String::new(),
     }
+}
+
+fn run_relay(
+    runner: &Arc<RelayRunner>,
+    connector: &mut dyn WebSocketConnector,
+    mut sleep: impl FnMut(std::time::Duration) -> BoxFuture<'static, ()> + Send,
+) {
+    aimux::async_runtime::init_process_runtime().expect("runtime initialized");
+    aimux::async_runtime::block_on_named("fixture:relay-client", async {
+        runner.run_with_sleep(connector, &mut sleep).await;
+    });
 }

@@ -165,6 +165,31 @@ impl LifecycleMutationQueue {
     where
         F: FnOnce() -> Result<T, String>,
     {
+        let mut permit = self.begin(transition)?;
+
+        let started_at = Instant::now();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(action));
+
+        match result {
+            Ok(Ok(value)) => {
+                permit.succeed(started_at);
+                Ok(Ok(value))
+            }
+            Ok(Err(error)) => {
+                permit.fail(started_at, error.clone());
+                Ok(Err(error))
+            }
+            Err(payload) => {
+                permit.fail(started_at, "lifecycle mutation panicked".into());
+                std::panic::resume_unwind(payload);
+            }
+        }
+    }
+
+    pub fn begin(
+        &self,
+        transition: Option<LifecycleTransitionInput>,
+    ) -> Result<LifecycleMutationPermit, LifecycleMutationError> {
         let target_key = transition
             .as_ref()
             .map(LifecycleTransitionInput::target_key);
@@ -212,51 +237,12 @@ impl LifecycleMutationQueue {
                 .max(queued_at.elapsed().as_millis());
             state.telemetry.last_started_at = Some(now_iso());
         }
-        drop(state);
-
-        let started_at = Instant::now();
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(action));
-
-        let mut state = self.inner.state.lock().expect("lifecycle queue lock");
-        state.running = false;
-        if transition.is_some() {
-            state.queued_count = state.queued_count.saturating_sub(1);
-            state.telemetry.released += 1;
-            state.telemetry.max_duration_ms = state
-                .telemetry
-                .max_duration_ms
-                .max(started_at.elapsed().as_millis());
-            state.telemetry.last_settled_at = Some(now_iso());
-            if let Some(key) = target_key {
-                state.active_targets.remove(&key);
-            }
-        }
-        match result {
-            Ok(Ok(value)) => {
-                if transition.is_some() {
-                    state.telemetry.succeeded += 1;
-                    state.telemetry.last_error = None;
-                }
-                self.inner.ready.notify_one();
-                Ok(Ok(value))
-            }
-            Ok(Err(error)) => {
-                if transition.is_some() {
-                    state.telemetry.failed += 1;
-                    state.telemetry.last_error = Some(error.clone());
-                }
-                self.inner.ready.notify_one();
-                Ok(Err(error))
-            }
-            Err(payload) => {
-                if transition.is_some() {
-                    state.telemetry.failed += 1;
-                    state.telemetry.last_error = Some("lifecycle mutation panicked".into());
-                }
-                self.inner.ready.notify_one();
-                std::panic::resume_unwind(payload);
-            }
-        }
+        Ok(LifecycleMutationPermit {
+            inner: Arc::clone(&self.inner),
+            target_key,
+            tracked: transition.is_some(),
+            finished: false,
+        })
     }
 
     pub fn diagnostics(&self, project_root: &str) -> Value {
@@ -308,6 +294,82 @@ impl LifecycleMutationQueue {
             },
         })
     }
+}
+
+pub struct LifecycleMutationPermit {
+    inner: Arc<QueueInner>,
+    target_key: Option<String>,
+    tracked: bool,
+    finished: bool,
+}
+
+impl LifecycleMutationPermit {
+    pub fn succeed(&mut self, started_at: Instant) {
+        self.release(started_at, None);
+    }
+
+    pub fn fail(&mut self, started_at: Instant, error: String) {
+        self.release(started_at, Some(error));
+    }
+
+    fn release(&mut self, started_at: Instant, error: Option<String>) {
+        if self.finished {
+            return;
+        }
+        self.finished = true;
+        release_lifecycle_mutation(
+            &self.inner,
+            self.tracked,
+            self.target_key.take(),
+            started_at,
+            error,
+        );
+    }
+}
+
+impl Drop for LifecycleMutationPermit {
+    fn drop(&mut self) {
+        if !self.finished {
+            release_lifecycle_mutation(
+                &self.inner,
+                self.tracked,
+                self.target_key.take(),
+                Instant::now(),
+                Some("lifecycle mutation cancelled before completion".into()),
+            );
+        }
+    }
+}
+
+fn release_lifecycle_mutation(
+    inner: &QueueInner,
+    tracked: bool,
+    target_key: Option<String>,
+    started_at: Instant,
+    error: Option<String>,
+) {
+    let mut state = inner.state.lock().expect("lifecycle queue lock");
+    state.running = false;
+    if tracked {
+        state.queued_count = state.queued_count.saturating_sub(1);
+        state.telemetry.released += 1;
+        state.telemetry.max_duration_ms = state
+            .telemetry
+            .max_duration_ms
+            .max(started_at.elapsed().as_millis());
+        state.telemetry.last_settled_at = Some(now_iso());
+        if let Some(key) = target_key {
+            state.active_targets.remove(&key);
+        }
+        if let Some(error) = error {
+            state.telemetry.failed += 1;
+            state.telemetry.last_error = Some(error);
+        } else {
+            state.telemetry.succeeded += 1;
+            state.telemetry.last_error = None;
+        }
+    }
+    inner.ready.notify_one();
 }
 
 pub fn lifecycle_transition_for_route(

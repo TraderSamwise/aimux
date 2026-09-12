@@ -1,6 +1,6 @@
 use serde_json::{Value, json};
 
-use crate::config::load_config_for_project;
+use crate::config::{load_config_for_known_project_root, load_config_for_project};
 use crate::daemon_state::load_metadata_state;
 use crate::debug_logging::{LogLevel, log_always_at};
 use crate::project_service::coordination_mutations::derive_runtime_exchange_indexes;
@@ -26,9 +26,11 @@ use crate::tool_capabilities::restart_restore_warning;
 use crate::user_facing_errors::user_facing_error_message;
 
 use super::LIVE_STATUSES;
+use super::LifecycleMutationProgress;
 use super::agent_launch_helpers::*;
 use super::agent_session_launch::{
-    AgentLaunchWrapInput, AgentSessionLaunchInput, launch_agent_session, wrap_agent_launch,
+    AgentLaunchWrapInput, AgentSessionLaunchInput, launch_agent_session,
+    launch_agent_session_async, wrap_agent_launch,
 };
 use super::agent_topology::{
     agent_window_metadata, apply_agent_window_policy, clear_session_derived_metadata,
@@ -37,7 +39,7 @@ use super::agent_topology::{
 use super::ids::{now_iso, random_id};
 use super::json_helpers::*;
 use super::response_helpers::{json_error, lifecycle_response};
-use super::runtime_adapter::ProjectLifecycleRuntime;
+use super::runtime_adapter::{AsyncProjectLifecycleRuntime, ProjectLifecycleRuntime};
 use super::session_liveness::LiveWindows;
 use super::session_state::relocate_claude_transcript;
 use super::topology_helpers::{live_window_id_for_session, object_value, upsert_array_item};
@@ -69,7 +71,7 @@ pub(super) fn route_agent_migrate(
         .unwrap_or_else(|| project_root.clone());
     let tool_key = tool_config_key_for_session(&source_session)
         .unwrap_or_else(|| string_field(&source_session, "command"));
-    let config = load_config_for_project(context.project_root());
+    let config = load_config_for_known_project_root(context.project_root());
     let Some(tool_config) = config
         .get("tools")
         .and_then(Value::as_object)
@@ -178,7 +180,7 @@ pub(super) fn route_agent_spawn(
         );
         return json_error(400, "tool is required");
     };
-    let config = load_config_for_project(context.project_root());
+    let config = load_config_for_known_project_root(context.project_root());
     let Some(tool_config) = config
         .get("tools")
         .and_then(Value::as_object)
@@ -276,6 +278,167 @@ pub(super) fn route_agent_spawn(
             mark_scribe: body.get("scribe").and_then(Value::as_bool) == Some(true),
         },
     );
+    match result {
+        Ok(result) => lifecycle_response(
+            {
+                clear_agent_create_operation_failure(
+                    context.project_state_dir(),
+                    worktree_path.as_deref(),
+                );
+                let mut payload = json!({
+                    "sessionId": result.session_id,
+                    "tmuxTarget": {
+                        "sessionName": result.target.session_name,
+                        "windowId": result.target.window_id,
+                        "windowIndex": result.target.window_index,
+                        "windowName": result.target.window_name,
+                    }
+                });
+                if let Some(warning) = restore_warning {
+                    object_insert_mut(&mut payload, "warning", Value::String(warning.clone()));
+                    object_insert_mut(
+                        &mut payload,
+                        "warnings",
+                        json!([{ "kind": "restartRestore", "message": warning }]),
+                    );
+                }
+                payload
+            },
+            "agent.spawn",
+            "agent",
+            Some(&result.session_id),
+        ),
+        Err(error) => {
+            let message = user_facing_error_message(&error);
+            record_agent_create_operation_failure(
+                context.project_state_dir(),
+                &tool_key,
+                &session_id,
+                worktree_path.as_deref(),
+                &message,
+            );
+            json_error(500, message)
+        }
+    }
+}
+
+pub(super) async fn route_agent_spawn_async(
+    context: &ProjectServiceRequestContext,
+    body: &Value,
+    runtime: &mut impl AsyncProjectLifecycleRuntime,
+    progress: &LifecycleMutationProgress,
+) -> ProjectServiceDispatchResponse {
+    let Some(tool_key) = trimmed_string(body.get("tool")) else {
+        log_agent_spawn_route_failure(
+            context,
+            "missing-tool",
+            None,
+            None,
+            None,
+            "tool is required",
+        );
+        return json_error(400, "tool is required");
+    };
+    let config = load_config_for_known_project_root(context.project_root());
+    let Some(tool_config) = config
+        .get("tools")
+        .and_then(Value::as_object)
+        .and_then(|tools| tools.get(&tool_key))
+    else {
+        let error = format!("Unknown tool config: {tool_key}");
+        log_agent_spawn_route_failure(
+            context,
+            "unknown-tool-config",
+            Some(&tool_key),
+            None,
+            None,
+            &error,
+        );
+        return json_error(500, error);
+    };
+    let launch_override = launch_override(body.get("launchOverride"));
+    let command = launch_override
+        .as_ref()
+        .map(|launch| launch.command.clone())
+        .or_else(|| trimmed_string(tool_config.get("command")))
+        .unwrap_or_else(|| tool_key.clone());
+    let mut args = launch_override
+        .as_ref()
+        .map(|launch| launch.args.clone())
+        .unwrap_or_else(|| string_array_field(tool_config.get("args")));
+    args.extend(string_array_field(body.get("extraArgs")));
+    let mut env = launch_override
+        .as_ref()
+        .map(|launch| launch.env.clone())
+        .unwrap_or_default();
+    let team = if body.get("overseer").and_then(Value::as_bool) == Some(true) {
+        env.push(("AIMUX_OVERSEER".into(), "1".into()));
+        Some(overseer_team())
+    } else if body.get("scribe").and_then(Value::as_bool) == Some(true) {
+        env.push(("AIMUX_SCRIBE".into(), "1".into()));
+        Some(scribe_team())
+    } else {
+        None
+    };
+    let topology = match read_runtime_topology(runtime_topology_path(context.project_state_dir())) {
+        Ok(topology) => topology,
+        Err(error) => {
+            log_agent_spawn_route_failure(
+                context,
+                "read-topology",
+                Some(&tool_key),
+                None,
+                trimmed_string(body.get("worktreePath")).as_deref(),
+                &error,
+            );
+            return json_error(500, error);
+        }
+    };
+    let backend_session_id = launch_backend_session_id(tool_config, &command, &args);
+    let restore_warning = restart_restore_warning(&tool_key, Some(tool_config));
+    let session_id = trimmed_string(body.get("sessionId")).unwrap_or_else(|| {
+        generated_session_id_for_launch(&topology, &command, backend_session_id.as_deref())
+    });
+    if let Some(existing) = find_by_id(&topology, "sessions", &session_id)
+        && LIVE_STATUSES.contains(&string_field(&existing, "status").as_str())
+    {
+        let error = format!("Session \"{session_id}\" already exists");
+        log_agent_spawn_route_failure(
+            context,
+            "duplicate-live-session",
+            Some(&tool_key),
+            Some(&session_id),
+            trimmed_string(body.get("worktreePath")).as_deref(),
+            &error,
+        );
+        return json_error(500, error);
+    }
+    let worktree_path = trimmed_string(body.get("worktreePath"));
+    clear_agent_create_operation_failure(context.project_state_dir(), worktree_path.as_deref());
+    let result = launch_agent_session_async(
+        context,
+        runtime,
+        AgentSessionLaunchInput {
+            session_id: session_id.clone(),
+            tool_key: tool_key.clone(),
+            command,
+            args,
+            worktree_path: worktree_path.clone(),
+            label: None,
+            team,
+            extra_preamble: None,
+            launch_env: env,
+            backend_session_id_override: backend_session_id,
+            detached: body.get("open").and_then(Value::as_bool) != Some(true),
+            suppress_startup_preamble: false,
+            persist_args: None,
+            allow_replace_session: false,
+            mark_overseer: body.get("overseer").and_then(Value::as_bool) == Some(true),
+            mark_scribe: body.get("scribe").and_then(Value::as_bool) == Some(true),
+        },
+        progress,
+    )
+    .await;
     match result {
         Ok(result) => lifecycle_response(
             {
@@ -936,6 +1099,127 @@ fn create_fork_handoff(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::project_api_contract::routes;
+    use crate::project_service::lifecycle::async_lifecycle_progress_for_request;
+    use crate::project_service::router::ProjectServiceRequestContext;
+    use crate::tmux::TmuxTarget;
+    use std::collections::BTreeSet;
+    use std::fs;
+    use std::path::Path;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    struct FakeAsyncLifecycleRuntime;
+
+    impl AsyncProjectLifecycleRuntime for FakeAsyncLifecycleRuntime {
+        async fn ensure_project_session(&mut self, _project_root: &Path) -> Result<(), String> {
+            Ok(())
+        }
+
+        async fn create_window(
+            &mut self,
+            session_name: &str,
+            name: &str,
+            _cwd: &str,
+            _command: &str,
+            _args: &[String],
+            _detached: bool,
+        ) -> Result<TmuxTarget, String> {
+            Ok(TmuxTarget {
+                session_name: session_name.to_owned(),
+                window_id: "@42".to_owned(),
+                window_index: 1,
+                window_name: name.to_owned(),
+                pane_dead: None,
+            })
+        }
+
+        async fn set_window_metadata(
+            &mut self,
+            _window_id: &str,
+            _metadata: &Value,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        async fn set_window_option(
+            &mut self,
+            _window_id: &str,
+            _key: &str,
+            _value: &str,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        async fn clear_history(&mut self, _window_id: &str) -> Result<(), String> {
+            Ok(())
+        }
+
+        async fn wait_for_window_after_launch(
+            &mut self,
+            _target: &TmuxTarget,
+            _timeout: Duration,
+        ) -> bool {
+            true
+        }
+
+        fn codex_backend_session_ids_for_cwd(
+            &mut self,
+            _cwd: &str,
+        ) -> Result<BTreeSet<String>, String> {
+            Ok(BTreeSet::new())
+        }
+
+        async fn kill_window(&mut self, _window_id: &str) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn async_spawn_uses_known_project_root_without_git_reprobe() {
+        let root = unique_test_dir("aimux-async-spawn-root");
+        let state_dir = unique_test_dir("aimux-async-spawn-state");
+        fs::create_dir_all(root.join(".aimux")).expect("create project .aimux dir");
+        fs::create_dir_all(&state_dir).expect("create project state dir");
+        fs::write(root.join(".aimux/config.json"), "{}\n").expect("write project config");
+        let context = ProjectServiceRequestContext::with_project_state_dir(&root, &state_dir);
+        let body = json!({
+            "tool": "claude",
+            "sessionId": "claude-async-spawn",
+            "open": false,
+            "launchOverride": {
+                "command": "/bin/sh",
+                "args": ["-lc", "sleep 1"],
+                "env": []
+            }
+        });
+        let progress =
+            async_lifecycle_progress_for_request("POST", routes::agents::SPAWN, Some(&body))
+                .expect("spawn lifecycle progress");
+        let mut runtime = FakeAsyncLifecycleRuntime;
+
+        let response = crate::async_runtime::process_runtime().block_on(route_agent_spawn_async(
+            &context,
+            &body,
+            &mut runtime,
+            &progress,
+        ));
+
+        assert_eq!(response.status, 200);
+        assert_eq!(
+            response.body.get("sessionId").and_then(Value::as_str),
+            Some("claude-async-spawn")
+        );
+        let _ = fs::remove_dir_all(root);
+        let _ = fs::remove_dir_all(state_dir);
+    }
+
+    fn unique_test_dir(prefix: &str) -> std::path::PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        std::env::temp_dir().join(format!("{prefix}-{}-{nanos}", std::process::id()))
+    }
 
     #[test]
     fn inherited_launch_team_drops_stale_scribe_role_when_flag_is_false() {

@@ -2983,7 +2983,7 @@ fn is_no_such_session_error(error: &str) -> bool {
     normalized.contains("no such session") || normalized.contains("can't find session")
 }
 
-fn tmux_list_sessions_failed_because_no_server(error: &str) -> bool {
+pub(crate) fn tmux_list_sessions_failed_because_no_server(error: &str) -> bool {
     let error = error.to_ascii_lowercase();
     error.contains("no server running")
         || (error.contains("error connecting to")

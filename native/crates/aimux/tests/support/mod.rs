@@ -147,7 +147,11 @@ impl Drop for TestIsolation {
                 }
             }
         }
-        let _ = fs::remove_dir_all(&self.root);
+        if std::env::var_os("AIMUX_KEEP_TEST_ISOLATION").is_some() {
+            eprintln!("keeping test isolation root: {}", self.root.display());
+        } else {
+            let _ = fs::remove_dir_all(&self.root);
+        }
     }
 }
 

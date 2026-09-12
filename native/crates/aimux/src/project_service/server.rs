@@ -58,7 +58,13 @@ where
         None
     };
 
-    let response = route(&request.method, &request.path, body.as_ref());
+    prepare_dispatch_response(route(&request.method, &request.path, body.as_ref()), cors)
+}
+
+pub(super) fn prepare_dispatch_response(
+    response: ProjectServiceDispatchResponse,
+    cors: BTreeMap<String, String>,
+) -> PreparedProjectServiceResponse {
     if let Some(bytes) = response.bytes {
         if response.content_type.as_deref() == Some("text/event-stream") {
             return prepare_project_service_sse_response(
@@ -81,7 +87,7 @@ where
     prepare_project_service_json_response(response.status, response.body, cors)
 }
 
-fn method_reads_json_body(method: &str) -> bool {
+pub(super) fn method_reads_json_body(method: &str) -> bool {
     matches!(
         method.to_ascii_uppercase().as_str(),
         "POST" | "PUT" | "DELETE"

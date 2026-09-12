@@ -126,6 +126,10 @@ impl AsyncCommand {
         self.output_timeout(name, DEFAULT_COMMAND_TIMEOUT)
     }
 
+    pub async fn output_async(&mut self) -> Result<Output, AsyncCommandError> {
+        self.output_timeout_async(DEFAULT_COMMAND_TIMEOUT).await
+    }
+
     pub fn output_timeout(
         &mut self,
         name: impl Into<String>,
@@ -134,9 +138,20 @@ impl AsyncCommand {
         block_on_named(name, run_output(self, timeout))
     }
 
+    pub async fn output_timeout_async(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<Output, AsyncCommandError> {
+        run_output(self, timeout).await
+    }
+
     pub fn status(&mut self) -> Result<ExitStatus, AsyncCommandError> {
         let name = command_task_name("subprocess", &self.program_display());
         self.status_timeout(name, DEFAULT_COMMAND_TIMEOUT)
+    }
+
+    pub async fn status_async(&mut self) -> Result<ExitStatus, AsyncCommandError> {
+        self.status_timeout_async(DEFAULT_COMMAND_TIMEOUT).await
     }
 
     pub fn status_timeout(
@@ -147,8 +162,19 @@ impl AsyncCommand {
         block_on_named(name, run_status(self, timeout))
     }
 
+    pub async fn status_timeout_async(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<ExitStatus, AsyncCommandError> {
+        run_status(self, timeout).await
+    }
+
     pub fn spawn_detached(&mut self, name: impl Into<String>) -> Result<u32, AsyncCommandError> {
         block_on_named(name, run_spawn_detached(self))
+    }
+
+    pub async fn spawn_detached_async(&mut self) -> Result<u32, AsyncCommandError> {
+        run_spawn_detached(self).await
     }
 
     fn program_display(&self) -> String {
@@ -306,6 +332,81 @@ mod tests {
             )
             .expect_err("spawn should fail");
         assert!(matches!(error, AsyncCommandError::Spawn { .. }));
+    }
+
+    #[test]
+    fn sync_subprocess_call_runs_from_blocking_pool_route() {
+        let route_runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_io()
+            .enable_time()
+            .build()
+            .expect("route runtime");
+        let handle = route_runtime.spawn(async {
+            crate::async_runtime::spawn_blocking_named(
+                command_task_name("async-subprocess-test", "blocking-route"),
+                || {
+                    let mut command = AsyncCommand::new("/bin/sh");
+                    command.args(["-c", "printf route-ok"]);
+                    command.output().expect("subprocess should run")
+                },
+            )
+            .await
+            .expect("blocking route should finish")
+        });
+        let output = route_runtime
+            .block_on(handle)
+            .expect("route worker should not panic");
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "route-ok");
+    }
+
+    #[test]
+    fn shared_runtime_blocking_subprocess_call_still_runs() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        let handle = crate::async_runtime::spawn_blocking_named(
+            command_task_name("async-subprocess-test", "shared-blocking-route"),
+            || {
+                let mut command = AsyncCommand::new("/bin/sh");
+                command.args(["-c", "printf shared-ok"]);
+                command.output().expect("subprocess should run")
+            },
+        );
+        let output = crate::async_runtime::process_runtime()
+            .block_on(handle)
+            .expect("blocking route should not panic");
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "shared-ok");
+    }
+
+    #[test]
+    fn detached_spawn_survives_helper_returning() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        let root =
+            std::env::temp_dir().join(format!("aimux-async-detached-{}", std::process::id()));
+        fs::create_dir_all(&root).expect("temp dir");
+        let pid_path = root.join("pid");
+
+        let mut command = AsyncCommand::new("/bin/sh");
+        command.args([
+            "-c",
+            &format!(
+                "echo $$ > {}; while :; do sleep 1; done",
+                pid_path.display()
+            ),
+        ]);
+        let child_id = command
+            .spawn_detached(command_task_name("async-subprocess-test", "detached"))
+            .expect("detached child should spawn");
+        let pid = wait_for_pid_file(&pid_path);
+        assert_eq!(pid, child_id as i32);
+        assert!(pid_alive(pid), "detached child died when helper returned");
+
+        unsafe {
+            libc::kill(pid, libc::SIGTERM);
+        }
+        wait_until_not_alive(pid);
+        let _ = fs::remove_dir_all(root);
     }
 
     fn wait_for_pid_file(path: &std::path::Path) -> i32 {

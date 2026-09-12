@@ -1,17 +1,23 @@
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::future::Future;
+use std::panic::{AssertUnwindSafe, resume_unwind};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
-use tokio::runtime::{Builder, Runtime};
+use tokio::runtime::{Builder, Handle, Runtime};
 use tokio::task::JoinHandle;
 
 pub const ASYNC_RUNTIME_WORKER_THREADS: usize = 2;
 
 static PROCESS_RUNTIME: OnceLock<Runtime> = OnceLock::new();
 static TASK_REGISTRY: OnceLock<AsyncTaskRegistry> = OnceLock::new();
+
+thread_local! {
+    static BLOCKING_RUNTIME_HANDLE: RefCell<Option<Handle>> = const { RefCell::new(None) };
+}
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -110,10 +116,19 @@ where
     F: Future,
 {
     let guard = registry().register(name.into(), AsyncTaskKind::Async);
-    process_runtime().block_on(async move {
+    let future = async move {
         let _guard = guard;
         future.await
-    })
+    };
+    if let Some(handle) = blocking_runtime_handle() {
+        return handle.block_on(future);
+    }
+    match Handle::try_current() {
+        Ok(_) => panic!(
+            "block_on_named was called from an async task; move this caller to async or spawn_blocking_named"
+        ),
+        Err(_) => process_runtime().block_on(future),
+    }
 }
 
 /// Use only for blocking OS/process/filesystem seams during the async cutover.
@@ -124,9 +139,29 @@ where
     R: Send + 'static,
 {
     let guard = registry().register(name.into(), AsyncTaskKind::Blocking);
-    process_runtime().spawn_blocking(move || {
+    let runtime_handle = Handle::try_current()
+        .ok()
+        .unwrap_or_else(|| process_runtime().handle().clone());
+    let blocking_handle = runtime_handle.clone();
+    runtime_handle.spawn_blocking(move || {
         let _guard = guard;
-        closure()
+        with_blocking_runtime_handle(blocking_handle, closure)
+    })
+}
+
+fn blocking_runtime_handle() -> Option<Handle> {
+    BLOCKING_RUNTIME_HANDLE.with(|handle| handle.borrow().clone())
+}
+
+fn with_blocking_runtime_handle<R>(handle: Handle, closure: impl FnOnce() -> R) -> R {
+    BLOCKING_RUNTIME_HANDLE.with(|slot| {
+        let previous = slot.replace(Some(handle));
+        let result = std::panic::catch_unwind(AssertUnwindSafe(closure));
+        slot.replace(previous);
+        match result {
+            Ok(value) => value,
+            Err(payload) => resume_unwind(payload),
+        }
     })
 }
 
@@ -288,6 +323,39 @@ mod tests {
         assert_eq!(live.kind, AsyncTaskKind::Blocking);
         release_tx.send(()).expect("release task");
         wait_for_task_to_finish(&name).expect("blocking task is unregistered");
+    }
+
+    #[test]
+    fn block_on_named_runs_from_plain_sync_thread() {
+        init_process_runtime().expect("runtime initialized");
+        assert_eq!(
+            block_on_named(task_name("phase1", "plain-sync"), async { 7 }),
+            7
+        );
+    }
+
+    #[test]
+    fn block_on_named_runs_from_blocking_pool_thread() {
+        init_process_runtime().expect("runtime initialized");
+        let handle = spawn_blocking_named(task_name("phase1", "blocking-seam"), || {
+            block_on_named(task_name("phase1", "nested-from-blocking"), async { 11 })
+        });
+        let result = process_runtime()
+            .block_on(handle)
+            .expect("blocking task should finish");
+        assert_eq!(result, 11);
+    }
+
+    #[test]
+    fn block_on_named_panics_from_async_worker_thread() {
+        init_process_runtime().expect("runtime initialized");
+        let handle = spawn_named(task_name("phase1", "async-seam"), async {
+            block_on_named(task_name("phase1", "nested-from-async"), async { 13 })
+        });
+        let error = process_runtime()
+            .block_on(handle)
+            .expect_err("async task must not block_on nested work");
+        assert!(error.is_panic());
     }
 
     #[test]
