@@ -41,8 +41,8 @@ use crate::daemon::routing::{DaemonRouteResponse, DaemonRouteUrl};
 use crate::daemon::server::{DaemonHttpRequest, handle_daemon_http_request};
 use crate::daemon::status::{DAEMON_HEALTH_KIND, DaemonStatusRuntime};
 use crate::daemon::stream::{
-    maybe_handle_host_agent_stream_request_with_runtime_mutex,
-    maybe_handle_project_event_stream_request,
+    maybe_handle_host_agent_stream_request_with_runtime_mutex_async,
+    maybe_handle_project_event_stream_request_async,
 };
 use crate::daemon::text::agents::{DaemonAgentTextRuntime, ProjectServicePostOptions};
 use crate::daemon::text::auth::{
@@ -2067,22 +2067,29 @@ pub fn run_daemon_internal() -> Result<()> {
             stopping: crate::process_signals::received_shutdown_signal().is_some(),
         },
         move |request, writer| {
-            if maybe_handle_project_event_stream_request(request, writer).map_err(|error| {
-                crate::daemon::listener::DaemonListenerError::Io(std::io::Error::other(
-                    error.to_string(),
-                ))
-            })? {
-                return Ok(true);
-            }
-            maybe_handle_host_agent_stream_request_with_runtime_mutex(
-                &stream_runtime,
-                request,
-                writer,
-            )
-            .map_err(|error| {
-                crate::daemon::listener::DaemonListenerError::Io(std::io::Error::other(
-                    error.to_string(),
-                ))
+            let stream_runtime = Arc::clone(&stream_runtime);
+            Box::pin(async move {
+                if maybe_handle_project_event_stream_request_async(request, writer)
+                    .await
+                    .map_err(|error| {
+                        crate::daemon::listener::DaemonListenerError::Io(std::io::Error::other(
+                            error.to_string(),
+                        ))
+                    })?
+                {
+                    return Ok(true);
+                }
+                maybe_handle_host_agent_stream_request_with_runtime_mutex_async(
+                    &stream_runtime,
+                    request,
+                    writer,
+                )
+                .await
+                .map_err(|error| {
+                    crate::daemon::listener::DaemonListenerError::Io(std::io::Error::other(
+                        error.to_string(),
+                    ))
+                })
             })
         },
         || crate::process_signals::received_shutdown_signal().is_some(),

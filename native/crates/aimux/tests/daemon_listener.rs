@@ -2,8 +2,9 @@ use aimux::daemon::http::{DaemonResponseBody, prepare_daemon_response};
 use aimux::daemon::listener::{
     DaemonRequestBodyLimit, DaemonRequestMetadata, handle_daemon_stream,
     handle_daemon_stream_with_metadata, handle_daemon_stream_with_metadata_and_interceptor,
-    handle_daemon_stream_with_metadata_and_interceptor_and_body_limit, parse_daemon_http_request,
-    parse_daemon_http_request_with_metadata, prepared_response_bytes, spawn_daemon_connection,
+    handle_daemon_stream_with_metadata_and_interceptor_and_body_limit_blocking,
+    parse_daemon_http_request, parse_daemon_http_request_with_metadata, prepared_response_bytes,
+    spawn_daemon_connection,
 };
 use aimux::daemon::routing::DaemonRouteResponse;
 use aimux::daemon::server::handle_daemon_http_request;
@@ -192,7 +193,7 @@ fn body_limit_rejects_content_length_before_consuming_body() {
     let header_len = input.find("\r\n\r\n").expect("headers") + 4;
     let mut stream = MemoryStream::new(input.as_bytes());
 
-    handle_daemon_stream_with_metadata_and_interceptor_and_body_limit(
+    handle_daemon_stream_with_metadata_and_interceptor_and_body_limit_blocking(
         &mut stream,
         DaemonRequestMetadata::default(),
         &mut |head| {
@@ -232,18 +233,25 @@ fn spawned_connections_do_not_serialize_slow_streams() {
     });
     let accept_handler = Arc::clone(&handler);
     let acceptor = thread::spawn(move || {
-        let mut joins = Vec::new();
+        let mut streams = Vec::new();
         for _ in 0..2 {
             let (stream, _) = listener.accept().expect("accept");
-            joins.push(spawn_daemon_connection(
-                stream,
-                DaemonRequestMetadata::default(),
-                Arc::clone(&accept_handler),
-            ));
+            streams.push(stream);
         }
-        for join in joins {
-            join.join().expect("connection thread");
-        }
+        aimux::async_runtime::block_on_named("daemon-listener-test:joins", async move {
+            let mut joins = Vec::new();
+            for stream in streams {
+                stream.set_nonblocking(true).expect("nonblocking stream");
+                joins.push(spawn_daemon_connection(
+                    tokio::net::TcpStream::from_std(stream).expect("tokio stream"),
+                    DaemonRequestMetadata::default(),
+                    Arc::clone(&accept_handler),
+                ));
+            }
+            for join in joins {
+                join.await.expect("connection task");
+            }
+        });
     });
 
     let mut slow = TcpStream::connect(address).expect("slow connect");
