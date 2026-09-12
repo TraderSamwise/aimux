@@ -2081,6 +2081,7 @@ pub fn run_daemon_internal() -> Result<()> {
     let route_runtime = Arc::clone(&runtime);
     let stream_runtime = Arc::clone(&runtime);
     let shutdown_runtime = Arc::clone(&runtime);
+    // aimux-async-seam: permanent - daemon process entry point starts the async listener from mainline sync startup
     let serve_result = crate::async_runtime::process_runtime().block_on(
         serve_daemon_http_with_metadata_and_interceptor_until(
             DaemonListenConfig { host, port },
