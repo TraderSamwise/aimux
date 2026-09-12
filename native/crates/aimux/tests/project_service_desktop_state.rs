@@ -1,4 +1,5 @@
 use aimux::daemon_state::{MetadataState, save_metadata_state};
+use aimux::dashboard_model::DashboardOperationFailure;
 use aimux::project_api_contract::routes;
 use aimux::project_service::agent_output::AgentOutputCaptureRuntime;
 use aimux::project_service::desktop_state::{
@@ -6,7 +7,7 @@ use aimux::project_service::desktop_state::{
     route_desktop_state_request_with_runtime,
 };
 use aimux::project_service::operation_failures::{
-    OperationFailureInput, add_dashboard_operation_failure,
+    OperationFailureInput, add_dashboard_operation_failure, dashboard_operation_failures_path,
 };
 use aimux::project_service::router::{
     OscOutputTap, ProjectServiceRequestContext, route_project_service_request,
@@ -303,6 +304,40 @@ fn route_desktop_state_reports_persisted_operation_failures() {
     assert_eq!(failures[0]["title"], "Worktree failed");
     assert_eq!(failures[0]["message"], "not a git repository");
     assert_eq!(failures[0]["worktreeName"], "feature");
+    cleanup(project);
+}
+
+#[test]
+fn route_desktop_state_normalizes_legacy_string_operation_failures_for_dashboard_clients() {
+    let (project, state_dir) = write_desktop_state_fixtures("legacy-operation-failure");
+    let legacy_message =
+        "fatal: 'test' is already used by worktree at '/repo/.aimux/worktrees/test'";
+    write(
+        dashboard_operation_failures_path(&state_dir),
+        json!({
+            "version": 1,
+            "failures": [legacy_message]
+        })
+        .to_string(),
+    )
+    .expect("seed legacy failures");
+    let isolation = support::TestIsolation::new("desktop-state-legacy-operation-failure");
+    let context = isolation.project_context(&project, &state_dir);
+
+    let response = route_project_service_request(&context, "GET", routes::DESKTOP_STATE, None);
+
+    assert_eq!(response.status, 200);
+    let failures: Vec<DashboardOperationFailure> =
+        serde_json::from_value(response.body["operationFailures"].clone())
+            .expect("dashboard operation failures");
+    let failure = failures
+        .first()
+        .expect("legacy failure is preserved for the dashboard");
+    assert_eq!(failure.id, "legacy-operation-failure-0");
+    assert_eq!(failure.target_kind.as_deref(), Some("project"));
+    assert_eq!(failure.operation.as_deref(), Some("legacy"));
+    assert_eq!(failure.title.as_deref(), Some("Legacy operation failure"));
+    assert_eq!(failure.message.as_deref(), Some(legacy_message));
     cleanup(project);
 }
 
