@@ -284,12 +284,12 @@ impl RelayRunner {
                     reason: None,
                 };
             }
-            if let Some(frame) = self.pop_outbox_frame() {
-                if let Err(error) = writer.send_text(&frame).await {
-                    self.requeue_outbox_front(frame);
+            match self.send_next_outbox_frame(writer.as_mut()).await {
+                Ok(true) => continue,
+                Ok(false) => {}
+                Err(error) => {
                     return self.write_failed(error);
                 }
-                continue;
             }
 
             if subscriptions.has_any() {
@@ -406,21 +406,24 @@ impl RelayRunner {
                 body,
                 headers,
             } => {
-                let route = self.bridge.route_request(&method, &path, &body, &headers);
-                // Cancellation safety: if stop wins, the local loopback request
-                // future is dropped and no relay response frame is emitted.
-                let response = tokio::select! {
-                    biased;
-                    _ = self.handle.wait_stopped() => {
-                        return Some(CloseInfo { code: None, reason: None });
-                    }
-                    response = route => response,
-                };
+                // Once local routing starts, the daemon request may cross a mutation boundary.
+                // Wait for its bounded outcome and try to send it before honoring a stop.
+                let response = self
+                    .bridge
+                    .route_request(&method, &path, &body, &headers)
+                    .await;
                 if let Err(error) = writer
                     .send_text(&response_frame(&id, response.status, response.body))
                     .await
                 {
                     return Some(self.write_failed(error));
+                }
+                if self.handle.is_stopped() {
+                    writer.close().await;
+                    return Some(CloseInfo {
+                        code: None,
+                        reason: None,
+                    });
                 }
             }
             RelayAction::UnsubscribeProjectEvents { id } => subscriptions.remove(&id),
@@ -474,18 +477,33 @@ impl RelayRunner {
         Ok(())
     }
 
-    fn pop_outbox_frame(&self) -> Option<String> {
+    async fn send_next_outbox_frame(
+        &self,
+        writer: &mut dyn WebSocketWriter,
+    ) -> Result<bool, crate::websocket::WebSocketError> {
+        let Some(frame) = self.peek_outbox_frame() else {
+            return Ok(false);
+        };
+        // Remove only after send_text completes. If this task is aborted mid-write, the
+        // frame remains queued for the next pump.
+        writer.send_text(&frame).await?;
+        self.remove_outbox_front_if_matches(&frame);
+        Ok(true)
+    }
+
+    fn peek_outbox_frame(&self) -> Option<String> {
         self.outbox
             .lock()
             .ok()
-            .and_then(|mut outbox| outbox.pop_front())
+            .and_then(|outbox| outbox.front().cloned())
     }
 
-    fn requeue_outbox_front(&self, frame: String) {
-        if let Ok(mut outbox) = self.outbox.lock() {
-            let _ = push_front_outbox_frame(&mut outbox, frame);
+    fn remove_outbox_front_if_matches(&self, frame: &str) {
+        if let Ok(mut outbox) = self.outbox.lock()
+            && outbox.front().is_some_and(|queued| queued == frame)
+        {
+            outbox.pop_front();
         }
-        self.outbox_ready.notify_one();
     }
 
     fn write_failed(&self, error: crate::websocket::WebSocketError) -> CloseInfo {
@@ -650,6 +668,7 @@ fn push_outbox_frame(outbox: &mut VecDeque<String>, frame: String) -> Result<(),
     Ok(())
 }
 
+#[cfg(test)]
 fn push_front_outbox_frame(outbox: &mut VecDeque<String>, frame: String) -> Result<(), String> {
     if outbox.len() >= MAX_RELAY_OUTBOX_FRAMES && !drop_oldest_project_event(outbox) {
         return Err("relay_outbox_full".to_owned());
@@ -717,12 +736,20 @@ impl CloseInfo {
 #[cfg(test)]
 mod tests {
     use super::{
-        MAX_RELAY_OUTBOX_FRAMES, ProjectEventStream, ProjectEventStreamItem, RelaySubscriptions,
-        push_front_outbox_frame, push_outbox_frame,
+        DaemonRelayBridge, DaemonRouteResponse, MAX_RELAY_OUTBOX_FRAMES, ProjectEventStream,
+        ProjectEventStreamItem, RelayRunner, RelaySubscriptions, push_front_outbox_frame,
+        push_outbox_frame,
+    };
+    use crate::websocket::{
+        BoxFuture, WebSocketConnectionParts, WebSocketError, WebSocketEvent, WebSocketReader,
+        WebSocketWriter,
     };
     use serde_json::{Value, json};
     use std::collections::VecDeque;
+    use std::future::pending;
+    use std::sync::{Arc, Mutex};
     use std::task::{Context, Poll};
+    use tokio::sync::Notify;
 
     fn project_event_frame(seq: usize) -> String {
         json!({
@@ -835,6 +862,81 @@ mod tests {
     }
 
     #[test]
+    fn relay_route_stop_after_dispatch_still_sends_response_frame() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        let bridge = Arc::new(StopAfterRouteBridge {
+            handle: Mutex::new(None),
+        });
+        let runner = RelayRunner::new("wss://relay.example/", "tok", bridge.clone());
+        *bridge.handle.lock().unwrap() = Some(runner.handle());
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let connection = WebSocketConnectionParts {
+            reader: Box::new(ScriptedWebSocketReader {
+                events: VecDeque::from([WebSocketEvent::Text(
+                    json!({
+                        "id": "req-1",
+                        "type": "request",
+                        "method": "POST",
+                        "path": "/agents/kill",
+                    })
+                    .to_string(),
+                )]),
+            }),
+            writer: Box::new(RecordingWebSocketWriter {
+                sent: Arc::clone(&sent),
+            }),
+        };
+
+        // aimux-async-seam: test - relay runner unit test drives async pump
+        crate::async_runtime::block_on_named("relay:test-route-stop-response", async {
+            let close = runner.pump(connection).await;
+            assert!(close.code.is_none());
+        });
+
+        let sent = sent.lock().unwrap().clone();
+        assert_eq!(sent.len(), 1, "stopped route must still answer: {sent:?}");
+        let frame: Value = serde_json::from_str(&sent[0]).expect("response json");
+        assert_eq!(frame["type"], "response");
+        assert_eq!(frame["id"], "req-1");
+        assert_eq!(frame["status"], 200);
+        assert_eq!(frame["body"]["ok"], true);
+    }
+
+    #[test]
+    fn relay_outbox_write_cancel_keeps_frame_queued_until_send_completes() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        let runner = RelayRunner::new("wss://relay.example/", "tok", Arc::new(NoopBridge));
+        runner
+            .push_notification(&json!({ "title": "still queued" }))
+            .expect("notification queued");
+        let send_started = Arc::new(Notify::new());
+        let connection = WebSocketConnectionParts {
+            reader: Box::new(PendingWebSocketReader),
+            writer: Box::new(PendingWebSocketWriter {
+                send_started: Arc::clone(&send_started),
+            }),
+        };
+        let pump_runner = Arc::clone(&runner);
+
+        // aimux-async-seam: test - relay runner unit test drives async pump
+        crate::async_runtime::block_on_named("relay:test-outbox-cancel", async {
+            let task = tokio::spawn(async move {
+                let _ = pump_runner.pump(connection).await;
+            });
+            tokio::time::timeout(std::time::Duration::from_secs(1), send_started.notified())
+                .await
+                .expect("outbox write started");
+            task.abort();
+            let _ = task.await;
+        });
+
+        let queued = runner.peek_outbox_frame().expect("frame remains queued");
+        let frame: Value = serde_json::from_str(&queued).expect("queued frame json");
+        assert_eq!(frame["type"], "notification_push");
+        assert_eq!(frame["notification"]["title"], "still queued");
+    }
+
+    #[test]
     fn relay_subscription_set_polls_multiple_streams_in_one_task() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
         let mut subscriptions = RelaySubscriptions::default();
@@ -900,6 +1002,15 @@ mod tests {
         pending_when_empty: bool,
     }
 
+    impl ScriptedProjectStream {
+        fn pending() -> Self {
+            Self {
+                items: VecDeque::new(),
+                pending_when_empty: true,
+            }
+        }
+    }
+
     impl ProjectEventStream for ScriptedProjectStream {
         fn poll_next(&mut self, _cx: &mut Context<'_>) -> Poll<ProjectEventStreamItem> {
             match self.items.pop_front() {
@@ -907,6 +1018,147 @@ mod tests {
                 None if self.pending_when_empty => Poll::Pending,
                 None => Poll::Ready(ProjectEventStreamItem::Closed),
             }
+        }
+    }
+
+    struct StopAfterRouteBridge {
+        handle: Mutex<Option<super::RelayHandle>>,
+    }
+
+    impl DaemonRelayBridge for StopAfterRouteBridge {
+        fn route_request<'a>(
+            &'a self,
+            _method: &'a str,
+            _path: &'a str,
+            _body: &'a Value,
+            _headers: &'a Value,
+        ) -> BoxFuture<'a, DaemonRouteResponse> {
+            Box::pin(async move {
+                if let Some(handle) = self.handle.lock().unwrap().as_ref() {
+                    handle.stop();
+                }
+                tokio::task::yield_now().await;
+                DaemonRouteResponse {
+                    status: 200,
+                    body: json!({ "ok": true }),
+                }
+            })
+        }
+
+        fn subscribe_project_events(
+            self: Arc<Self>,
+            _subscription_id: String,
+            _path: String,
+            _headers: Value,
+        ) -> BoxFuture<'static, Result<Box<dyn ProjectEventStream>, (u16, String)>> {
+            Box::pin(async {
+                Ok(Box::new(ScriptedProjectStream::pending()) as Box<dyn ProjectEventStream>)
+            })
+        }
+    }
+
+    struct NoopBridge;
+
+    impl DaemonRelayBridge for NoopBridge {
+        fn route_request<'a>(
+            &'a self,
+            _method: &'a str,
+            _path: &'a str,
+            _body: &'a Value,
+            _headers: &'a Value,
+        ) -> BoxFuture<'a, DaemonRouteResponse> {
+            Box::pin(async {
+                DaemonRouteResponse {
+                    status: 200,
+                    body: Value::Null,
+                }
+            })
+        }
+
+        fn subscribe_project_events(
+            self: Arc<Self>,
+            _subscription_id: String,
+            _path: String,
+            _headers: Value,
+        ) -> BoxFuture<'static, Result<Box<dyn ProjectEventStream>, (u16, String)>> {
+            Box::pin(async {
+                Ok(Box::new(ScriptedProjectStream::pending()) as Box<dyn ProjectEventStream>)
+            })
+        }
+    }
+
+    struct ScriptedWebSocketReader {
+        events: VecDeque<WebSocketEvent>,
+    }
+
+    impl WebSocketReader for ScriptedWebSocketReader {
+        fn next_event<'a>(&'a mut self) -> BoxFuture<'a, Result<WebSocketEvent, WebSocketError>> {
+            Box::pin(async move {
+                Ok(self.events.pop_front().unwrap_or(WebSocketEvent::Closed {
+                    code: Some(1000),
+                    reason: String::new(),
+                }))
+            })
+        }
+    }
+
+    struct PendingWebSocketReader;
+
+    impl WebSocketReader for PendingWebSocketReader {
+        fn next_event<'a>(&'a mut self) -> BoxFuture<'a, Result<WebSocketEvent, WebSocketError>> {
+            Box::pin(pending())
+        }
+    }
+
+    struct RecordingWebSocketWriter {
+        sent: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl WebSocketWriter for RecordingWebSocketWriter {
+        fn send_text<'a>(&'a mut self, text: &'a str) -> BoxFuture<'a, Result<(), WebSocketError>> {
+            Box::pin(async move {
+                self.sent.lock().unwrap().push(text.to_owned());
+                Ok(())
+            })
+        }
+
+        fn send_pong<'a>(
+            &'a mut self,
+            _payload: Vec<u8>,
+        ) -> BoxFuture<'a, Result<(), WebSocketError>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn close<'a>(&'a mut self) -> BoxFuture<'a, ()> {
+            Box::pin(async {})
+        }
+    }
+
+    struct PendingWebSocketWriter {
+        send_started: Arc<Notify>,
+    }
+
+    impl WebSocketWriter for PendingWebSocketWriter {
+        fn send_text<'a>(
+            &'a mut self,
+            _text: &'a str,
+        ) -> BoxFuture<'a, Result<(), WebSocketError>> {
+            let send_started = Arc::clone(&self.send_started);
+            Box::pin(async move {
+                send_started.notify_one();
+                pending().await
+            })
+        }
+
+        fn send_pong<'a>(
+            &'a mut self,
+            _payload: Vec<u8>,
+        ) -> BoxFuture<'a, Result<(), WebSocketError>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn close<'a>(&'a mut self) -> BoxFuture<'a, ()> {
+            Box::pin(async {})
         }
     }
 }
