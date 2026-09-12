@@ -224,26 +224,6 @@ impl PeriodicScheduler {
         self.tasks.is_empty()
     }
 
-    /// Run every task that is due, reschedule it, and report what ran.
-    ///
-    /// The next run is scheduled from the moment the task **finished**, never
-    /// from the moment it fell due. An interval is a gap between runs, not a
-    /// rate to keep up with: a task that overruns simply runs less often
-    /// instead of being re-entered back to back with no breathing room.
-    ///
-    /// A panicking task is caught and rescheduled rather than taking the rail
-    /// down with it, so one bad watcher cannot silence the others.
-    pub fn run_due(
-        &mut self,
-        context: &ProjectServiceRequestContext,
-        clock: &mut dyn FnMut() -> i64,
-    ) -> Vec<String> {
-        crate::async_runtime::block_on_named(
-            task_name("project-service", "scheduler-run-due"),
-            self.run_due_async(context, clock),
-        )
-    }
-
     pub async fn run_due_async(
         &mut self,
         context: &ProjectServiceRequestContext,
@@ -305,12 +285,12 @@ impl PeriodicScheduler {
     }
 
     /// Convenience for callers with a fixed instant and instant-return tasks.
-    pub fn run_due_at(
+    pub async fn run_due_at(
         &mut self,
         context: &ProjectServiceRequestContext,
         now_ms: i64,
     ) -> Vec<String> {
-        self.run_due(context, &mut || now_ms)
+        self.run_due_async(context, &mut || now_ms).await
     }
 
     /// Milliseconds until the next task is due, for the sleep between ticks.

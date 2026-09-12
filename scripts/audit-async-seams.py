@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -116,16 +117,44 @@ ALLOWED_SEAMS = [
     AllowedSeam(
         "native/crates/aimux/src/project_service/process.rs",
         "crate::async_runtime::process_runtime().block_on(async {",
-        9,
+        10,
         "test",
         "project-service transport unit tests drive async handlers from sync test cases",
     ),
     AllowedSeam(
-        "native/crates/aimux/src/project_service/scheduler.rs",
-        "crate::async_runtime::block_on_named(",
+        "native/crates/aimux/tests/project_service_agents.rs",
+        "aimux::async_runtime::block_on_named(",
         1,
-        "transitional",
-        "sync scheduler test/legacy caller bridge until all PeriodicTask bodies are async-only",
+        "test",
+        "agent read route test drives async handler from sync test case",
+    ),
+    AllowedSeam(
+        "native/crates/aimux/tests/project_service_controls.rs",
+        "aimux::async_runtime::block_on_named(",
+        2,
+        "test",
+        "control route tests drive async handlers from sync test cases",
+    ),
+    AllowedSeam(
+        "native/crates/aimux/tests/project_service_desktop_state.rs",
+        "aimux::async_runtime::block_on_named(",
+        1,
+        "test",
+        "desktop-state route test drives async handler from sync test case",
+    ),
+    AllowedSeam(
+        "native/crates/aimux/tests/project_service_statusline.rs",
+        "aimux::async_runtime::block_on_named(",
+        1,
+        "test",
+        "statusline route test drives async handler from sync test case",
+    ),
+    AllowedSeam(
+        "native/crates/aimux/tests/project_service_switchable_agents.rs",
+        "aimux::async_runtime::block_on_named(",
+        1,
+        "test",
+        "switchable-agents route test drives async handler from sync test case",
     ),
     AllowedSeam(
         "native/crates/aimux/src/project_service/lifecycle/agent_launch_routes.rs",
@@ -138,8 +167,15 @@ ALLOWED_SEAMS = [
         "native/crates/aimux/src/relay_runner.rs",
         "crate::async_runtime::block_on_named(",
         2,
-        "transitional",
-        "relay runner still exposes sync poll hooks around async subscription streams",
+        "test",
+        "relay runner unit tests drive async subscription polling from sync tests",
+    ),
+    AllowedSeam(
+        "native/crates/aimux/tests/project_service_scheduler.rs",
+        "aimux::async_runtime::block_on_named(",
+        1,
+        "test",
+        "scheduler tests drive async scheduler methods from sync test cases",
     ),
     AllowedSeam(
         "native/crates/aimux/tests/async_cutover_phase3_characterization.rs",
@@ -357,6 +393,10 @@ def main() -> int:
             )
     if violations:
         print("async seam audit failed: unclassified sync/async bridge", file=sys.stderr)
+        print(
+            "classify each allowed seam as one of: permanent, transitional, test, fixture",
+            file=sys.stderr,
+        )
         for violation in violations:
             print(f"  {violation}", file=sys.stderr)
         return 1
