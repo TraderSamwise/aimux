@@ -853,6 +853,7 @@ mod tests {
             }),
         );
 
+        // aimux-async-seam: test - relay runner unit test drives async polling
         let delivery = crate::async_runtime::block_on_named(
             "relay:test-subscription-poll",
             subscriptions.next_event(),
@@ -878,6 +879,7 @@ mod tests {
             }),
         );
 
+        // aimux-async-seam: test - relay runner unit test drives async polling
         let delivery = crate::async_runtime::block_on_named(
             "relay:test-subscription-close",
             subscriptions.next_event(),

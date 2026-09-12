@@ -248,6 +248,7 @@ fn async_project_event_stream_proxy_drops_upstream_when_downstream_disconnects()
     });
     let mut writer = FailAfterWrites::new(1);
 
+    // aimux-async-seam: test - daemon stream test drives async stream helper
     let error = aimux::async_runtime::block_on_named(
         "daemon-stream-test:disconnect",
         pipe_project_event_stream_from_url_async(

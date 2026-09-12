@@ -131,6 +131,7 @@ impl TickLoop {
 
     fn tick(&mut self, times: usize) {
         for _ in 0..times {
+            // aimux-async-seam: test - transcript reconciler test drives async PeriodicTask body
             aimux::async_runtime::block_on_named(
                 "transcript-reconciler-task-test",
                 self.task.run(&self.context),

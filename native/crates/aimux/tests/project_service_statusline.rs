@@ -169,6 +169,7 @@ fn async_statusline_refresh_reports_tmux_refresh_failure_after_writing_artifacts
     let isolation = support::TestIsolation::new("statusline-async-refresh-client");
     let context = isolation.project_context(&project, &state_dir);
 
+    // aimux-async-seam: test - statusline route test drives async handler
     let response = aimux::async_runtime::block_on_named(
         "test:statusline-refresh-async",
         route_statusline_refresh_request_async(

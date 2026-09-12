@@ -121,12 +121,14 @@ where
         future.await
     };
     if let Some(handle) = blocking_runtime_handle() {
+        // aimux-async-seam: permanent - bridge execution from registered blocking-pool handle
         return handle.block_on(future);
     }
     match Handle::try_current() {
         Ok(_) => panic!(
             "block_on_named was called from an async task; move this caller to async or spawn_blocking_named"
         ),
+        // aimux-async-seam: permanent - process-entry bridge when no async runtime is entered
         Err(_) => process_runtime().block_on(future),
     }
 }
@@ -329,6 +331,7 @@ mod tests {
     fn block_on_named_runs_from_plain_sync_thread() {
         init_process_runtime().expect("runtime initialized");
         assert_eq!(
+            // aimux-async-seam: test - unit test drives async bridge helper
             block_on_named(task_name("phase1", "plain-sync"), async { 7 }),
             7
         );
@@ -338,9 +341,11 @@ mod tests {
     fn block_on_named_runs_from_blocking_pool_thread() {
         init_process_runtime().expect("runtime initialized");
         let handle = spawn_blocking_named(task_name("phase1", "blocking-seam"), || {
+            // aimux-async-seam: test - unit test drives async bridge helper
             block_on_named(task_name("phase1", "nested-from-blocking"), async { 11 })
         });
         let result = process_runtime()
+            // aimux-async-seam: test - unit test awaits spawned runtime handle
             .block_on(handle)
             .expect("blocking task should finish");
         assert_eq!(result, 11);
@@ -350,9 +355,11 @@ mod tests {
     fn block_on_named_panics_from_async_worker_thread() {
         init_process_runtime().expect("runtime initialized");
         let handle = spawn_named(task_name("phase1", "async-seam"), async {
+            // aimux-async-seam: test - unit test drives async bridge helper
             block_on_named(task_name("phase1", "nested-from-async"), async { 13 })
         });
         let error = process_runtime()
+            // aimux-async-seam: test - unit test awaits spawned runtime handle
             .block_on(handle)
             .expect_err("async task must not block_on nested work");
         assert!(error.is_panic());
