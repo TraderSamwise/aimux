@@ -238,8 +238,12 @@ def main() -> int:
         for violation in violations:
             print(f"  {violation}", file=sys.stderr)
         return 1
-    permanent = sum(1 for _, marker in classified if marker.classification == "permanent")
-    transitional = sum(1 for _, marker in classified if marker.classification == "transitional")
+    permanent = sum(
+        1 for _, marker in classified if marker.classification == "permanent"
+    )
+    transitional = sum(
+        1 for _, marker in classified if marker.classification == "transitional"
+    )
     tests = len(seams) - permanent - transitional
     print(
         f"async seam audit passed: {len(seams)} seams ({permanent} permanent, {transitional} transitional, {tests} test/fixture)"

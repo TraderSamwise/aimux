@@ -25,7 +25,9 @@ use crate::tool_output_watchers::{classify_tool_pane, reconcile_agent_activity};
 use serde_json::{Map, Value, json};
 use sha1::{Digest, Sha1};
 use std::fs;
+use std::future::Future;
 use std::path::Path;
+use std::pin::Pin;
 use std::process::Output;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -2183,12 +2185,7 @@ pub(super) async fn deliver_prompt_to_tmux_async(
 ) -> Result<(), String> {
     let deadline = Instant::now() + timeout;
     send_prompt_to_tmux_async(window_id, prompt, deadline).await?;
-    wait_for_prompt_submit_async(window_id, prompt, deadline).await;
-    if Instant::now() >= deadline {
-        Err("agent output request timed out".to_owned())
-    } else {
-        Ok(())
-    }
+    wait_for_prompt_submit_async(window_id, prompt, deadline).await
 }
 
 async fn send_prompt_to_tmux_async(
@@ -2243,26 +2240,51 @@ async fn flush_tmux_text_async(
     Ok(())
 }
 
-async fn wait_for_prompt_submit_async(window_id: &str, draft: &str, deadline: Instant) -> bool {
-    let generation = claim_submit_generation(window_id);
+async fn wait_for_prompt_submit_async(
+    window_id: &str,
+    draft: &str,
+    deadline: Instant,
+) -> Result<(), String> {
+    let mut runtime = SystemAsyncPromptSubmitRuntime {
+        window_id: window_id.to_owned(),
+        generation: claim_submit_generation(window_id),
+        deadline,
+    };
+    wait_for_prompt_submit_with_runtime_async(&mut runtime, draft).await
+}
+
+async fn wait_for_prompt_submit_with_runtime_async(
+    runtime: &mut dyn AsyncPromptSubmitRuntime,
+    draft: &str,
+) -> Result<(), String> {
     let mut visible_count = 0u32;
     let mut last_signature = String::new();
 
     for attempt in 1..=MAX_POLL_ATTEMPTS {
-        if !sleep_until_deadline(if attempt == 1 { FIRST_POLL_MS } else { POLL_MS }, deadline).await
-            || !submit_generation_is_current(window_id, generation)
-        {
-            return false;
-        }
-        let pane = capture_prompt_tail_async(window_id, DRAFT_CAPTURE_START_LINE, deadline)
+        if !runtime
+            .sleep(if attempt == 1 { FIRST_POLL_MS } else { POLL_MS })
             .await
-            .unwrap_or_default();
+        {
+            return Err("agent input submit timed out while waiting for pasted prompt".to_owned());
+        }
+        if !runtime.is_current() {
+            return Err("agent input submit was superseded by a newer prompt".to_owned());
+        }
+        let pane = runtime
+            .capture(DRAFT_CAPTURE_START_LINE)
+            .await
+            .map_err(|error| {
+                format!("agent input submit verification failed before submit: {error}")
+            })?;
         let still_draft = pane_still_contains_prompt_draft(&pane, draft);
         let signature = if still_draft {
-            capture_prompt_tail_async(window_id, SIGNATURE_CAPTURE_START_LINE, deadline)
+            runtime
+                .capture(SIGNATURE_CAPTURE_START_LINE)
                 .await
                 .map(|pane| prompt_draft_signature(&pane))
-                .unwrap_or_default()
+                .map_err(|error| {
+                    format!("agent input submit signature capture failed before submit: {error}")
+                })?
         } else {
             String::new()
         };
@@ -2275,44 +2297,98 @@ async fn wait_for_prompt_submit_async(window_id: &str, draft: &str, deadline: In
         };
         last_signature = signature;
         if visible_count >= 2 {
-            return submit_prompt_async(window_id, draft, generation, deadline).await;
+            return submit_prompt_with_runtime_async(runtime, draft).await;
         }
     }
 
-    submit_prompt_async(window_id, draft, generation, deadline).await
+    submit_prompt_with_runtime_async(runtime, draft).await
 }
 
-async fn submit_prompt_async(
-    window_id: &str,
+async fn submit_prompt_with_runtime_async(
+    runtime: &mut dyn AsyncPromptSubmitRuntime,
     draft: &str,
+) -> Result<(), String> {
+    if !runtime.sleep(SETTLE_BEFORE_SUBMIT_MS).await {
+        return Err("agent input submit timed out before carriage return".to_owned());
+    }
+    if !runtime.is_current() {
+        return Err("agent input submit was superseded by a newer prompt".to_owned());
+    }
+    runtime
+        .send_carriage_return()
+        .await
+        .map_err(|error| format!("agent input submit failed: {error}"))?;
+    if !runtime.sleep(VERIFY_AFTER_SUBMIT_MS).await {
+        return Err("agent input submit timed out before verification".to_owned());
+    }
+    let pane = runtime
+        .capture(DRAFT_CAPTURE_START_LINE)
+        .await
+        .map_err(|error| format!("agent input submit verification failed after submit: {error}"))?;
+    if pane_still_contains_prompt_draft(&pane, draft) {
+        Err(
+            "agent input submit verification failed: prompt draft remained visible after submit"
+                .to_owned(),
+        )
+    } else {
+        Ok(())
+    }
+}
+
+type AsyncPromptSubmitFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
+trait AsyncPromptSubmitRuntime: Send {
+    fn is_current(&mut self) -> bool;
+    fn capture<'a>(
+        &'a mut self,
+        start_line: i64,
+    ) -> AsyncPromptSubmitFuture<'a, Result<String, String>>;
+    fn send_carriage_return<'a>(&'a mut self) -> AsyncPromptSubmitFuture<'a, Result<(), String>>;
+    fn sleep<'a>(&'a mut self, millis: u64) -> AsyncPromptSubmitFuture<'a, bool>;
+}
+
+struct SystemAsyncPromptSubmitRuntime {
+    window_id: String,
     generation: u64,
     deadline: Instant,
-) -> bool {
-    if !sleep_until_deadline(SETTLE_BEFORE_SUBMIT_MS, deadline).await
-        || !submit_generation_is_current(window_id, generation)
-    {
-        return false;
+}
+
+impl AsyncPromptSubmitRuntime for SystemAsyncPromptSubmitRuntime {
+    fn is_current(&mut self) -> bool {
+        submit_generation_is_current(&self.window_id, self.generation)
     }
-    let _ = run_tmux_argv_with_timeout_async(
-        send_carriage_return_argv(window_id),
-        format!("tmux send carriage return failed for {window_id}"),
-        remaining_until(deadline).unwrap_or_default(),
-    )
-    .await;
-    if !sleep_until_deadline(VERIFY_AFTER_SUBMIT_MS, deadline).await {
-        return false;
+
+    fn capture<'a>(
+        &'a mut self,
+        start_line: i64,
+    ) -> AsyncPromptSubmitFuture<'a, Result<String, String>> {
+        Box::pin(async move {
+            capture_prompt_tail_async(&self.window_id, start_line, self.deadline).await
+        })
     }
-    let pane = capture_prompt_tail_async(window_id, DRAFT_CAPTURE_START_LINE, deadline)
-        .await
-        .unwrap_or_default();
-    !pane_still_contains_prompt_draft(&pane, draft)
+
+    fn send_carriage_return<'a>(&'a mut self) -> AsyncPromptSubmitFuture<'a, Result<(), String>> {
+        Box::pin(async move {
+            run_tmux_argv_with_timeout_async(
+                send_carriage_return_argv(&self.window_id),
+                format!("tmux send carriage return failed for {}", self.window_id),
+                remaining_until(self.deadline)?,
+            )
+            .await
+            .map(|_| ())
+        })
+    }
+
+    fn sleep<'a>(&'a mut self, millis: u64) -> AsyncPromptSubmitFuture<'a, bool> {
+        Box::pin(async move { sleep_until_deadline(millis, self.deadline).await })
+    }
 }
 
 async fn capture_prompt_tail_async(
     window_id: &str,
     start_line: i64,
     deadline: Instant,
-) -> Option<String> {
+) -> Result<String, String> {
     capture_pane_async(
         window_id,
         CapturePaneOptions {
@@ -2320,10 +2396,9 @@ async fn capture_prompt_tail_async(
             end_line: None,
             include_escapes: false,
         },
-        remaining_until(deadline).ok()?,
+        remaining_until(deadline)?,
     )
     .await
-    .ok()
 }
 
 async fn sleep_until_deadline(millis: u64, deadline: Instant) -> bool {
@@ -2578,6 +2653,139 @@ fn object_value(value: Value) -> Map<String, Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct FakeAsyncPromptSubmitRuntime {
+        current: bool,
+        captures: std::collections::VecDeque<Result<String, String>>,
+        carriage_return: Result<(), String>,
+        carriage_returns: usize,
+        sleeps: Vec<u64>,
+    }
+
+    impl FakeAsyncPromptSubmitRuntime {
+        fn successful(draft: &str) -> Self {
+            Self {
+                current: true,
+                captures: std::collections::VecDeque::from([
+                    Ok(format!("› {draft}")),
+                    Ok(format!("› {draft}")),
+                    Ok(format!("› {draft}")),
+                    Ok(format!("› {draft}")),
+                    Ok("assistant response\n› ".to_owned()),
+                ]),
+                carriage_return: Ok(()),
+                carriage_returns: 0,
+                sleeps: Vec::new(),
+            }
+        }
+    }
+
+    impl AsyncPromptSubmitRuntime for FakeAsyncPromptSubmitRuntime {
+        fn is_current(&mut self) -> bool {
+            self.current
+        }
+
+        fn capture<'a>(
+            &'a mut self,
+            _start_line: i64,
+        ) -> AsyncPromptSubmitFuture<'a, Result<String, String>> {
+            Box::pin(async move {
+                self.captures
+                    .pop_front()
+                    .unwrap_or_else(|| Ok(String::new()))
+            })
+        }
+
+        fn send_carriage_return<'a>(
+            &'a mut self,
+        ) -> AsyncPromptSubmitFuture<'a, Result<(), String>> {
+            Box::pin(async move {
+                self.carriage_returns += 1;
+                self.carriage_return.clone()
+            })
+        }
+
+        fn sleep<'a>(&'a mut self, millis: u64) -> AsyncPromptSubmitFuture<'a, bool> {
+            Box::pin(async move {
+                self.sleeps.push(millis);
+                true
+            })
+        }
+    }
+
+    #[test]
+    fn async_prompt_submit_success_accepts_after_verification() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        let mut runtime = FakeAsyncPromptSubmitRuntime::successful("hello from route");
+
+        // aimux-async-seam: test - agent output unit test drives async submit verification
+        crate::async_runtime::block_on_named("agent-output:test-submit-success", async {
+            wait_for_prompt_submit_with_runtime_async(&mut runtime, "hello from route")
+                .await
+                .expect("submit verified");
+        });
+
+        assert_eq!(runtime.carriage_returns, 1);
+    }
+
+    #[test]
+    fn async_prompt_submit_reports_carriage_return_failure() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        let mut runtime = FakeAsyncPromptSubmitRuntime {
+            carriage_return: Err("tmux send carriage return failed for @1".to_owned()),
+            ..FakeAsyncPromptSubmitRuntime::successful("stuck draft")
+        };
+
+        let error = {
+            // aimux-async-seam: test - agent output unit test drives async submit verification
+            crate::async_runtime::block_on_named("agent-output:test-submit-send-failure", async {
+                wait_for_prompt_submit_with_runtime_async(&mut runtime, "stuck draft")
+                    .await
+                    .expect_err("submit send failure must not be accepted")
+            })
+        };
+
+        assert_eq!(runtime.carriage_returns, 1);
+        assert!(error.contains("agent input submit failed"), "{error}");
+        assert!(
+            error.contains("tmux send carriage return failed for @1"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn async_prompt_submit_reports_verification_capture_failure() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        let mut runtime = FakeAsyncPromptSubmitRuntime {
+            captures: std::collections::VecDeque::from([
+                Ok("› verify draft".to_owned()),
+                Ok("› verify draft".to_owned()),
+                Ok("› verify draft".to_owned()),
+                Ok("› verify draft".to_owned()),
+                Err("tmux capture-pane failed for @1".to_owned()),
+            ]),
+            ..FakeAsyncPromptSubmitRuntime::successful("verify draft")
+        };
+
+        let error = {
+            // aimux-async-seam: test - agent output unit test drives async submit verification
+            crate::async_runtime::block_on_named(
+                "agent-output:test-submit-capture-failure",
+                async {
+                    wait_for_prompt_submit_with_runtime_async(&mut runtime, "verify draft")
+                        .await
+                        .expect_err("verification capture failure must not be accepted")
+                },
+            )
+        };
+
+        assert_eq!(runtime.carriage_returns, 1);
+        assert!(
+            error.contains("agent input submit verification failed after submit"),
+            "{error}"
+        );
+        assert!(error.contains("tmux capture-pane failed for @1"), "{error}");
+    }
 
     #[test]
     fn command_timeout_kills_a_blocked_child() {

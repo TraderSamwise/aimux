@@ -3,8 +3,8 @@ use crate::daemon::http::{DaemonResponseBody, PreparedDaemonResponse, prepare_da
 use crate::daemon::json::ProjectEventStreamTarget;
 use crate::daemon::listener::{
     DaemonRequestBodyLimit, DaemonRequestHead, DaemonRequestMetadata,
-    handle_daemon_stream_with_metadata_and_interceptor_and_body_limit,
     handle_daemon_stream_with_metadata_and_interceptor_and_body_limit_blocking,
+    handle_daemon_stream_with_metadata_and_interceptor_and_body_limit_with_read_timeout,
     prepared_response_bytes,
 };
 use crate::daemon::router::{DaemonRouteRuntime, route_daemon_request};
@@ -35,11 +35,12 @@ use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::net::TcpListener as StdTcpListener;
-use std::sync::{Arc, Condvar, Mutex};
-use std::thread::{self, JoinHandle as ThreadJoinHandle};
+use std::sync::{Arc, Condvar, Mutex, Weak};
+use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpListener;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::task::JoinHandle;
 use tokio::time::sleep;
 
@@ -57,6 +58,11 @@ const STREAM_MAX_BYTES: usize = 64 * 1024 * 1024;
 const STREAM_REAUTH_INTERVAL_MS: u64 = 5_000;
 const AUTH_FAILURE_WINDOW_MS: u128 = 60_000;
 const AUTH_FAILURE_DELIVERY_MAX: usize = 10;
+const HOSTED_REQUEST_READ_TIMEOUT_MS: u64 = 1_000;
+
+fn hosted_connection_capacity(config: &HostedConfig) -> usize {
+    usize::try_from(config.rate_limit.max_concurrent.max(1)).unwrap_or(1)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HostedStreamLimits {
@@ -87,7 +93,10 @@ pub struct HostedServerState {
     lockdown: HostedLockdownStore,
     outbox: HostedOutboxStore,
     outbox_drain: Arc<HostedOutboxDrainSignal>,
-    outbox_drain_worker: Mutex<Option<ThreadJoinHandle<()>>>,
+    outbox_drain_worker: Mutex<Option<JoinHandle<()>>>,
+    connection_limiter: Arc<Semaphore>,
+    connection_peer_limit: usize,
+    connections_by_peer: Arc<Mutex<BTreeMap<String, usize>>>,
     limiter: HostedRateLimiter,
     peer_limiter: HostedRateLimiter,
     delivery: Arc<Mutex<HostedEventDelivery>>,
@@ -152,6 +161,7 @@ impl HostedServerState {
         let delivery = Arc::new(Mutex::new(delivery));
         let outbox = HostedOutboxStore::with_resolver(resolver.clone());
         let outbox_drain = Arc::new(HostedOutboxDrainSignal::default());
+        let connection_capacity = hosted_connection_capacity(&config);
         let outbox_drain_worker = spawn_hosted_outbox_drain_background(
             outbox.clone(),
             Arc::clone(&delivery),
@@ -168,6 +178,9 @@ impl HostedServerState {
             outbox,
             outbox_drain,
             outbox_drain_worker: Mutex::new(Some(outbox_drain_worker)),
+            connection_limiter: Arc::new(Semaphore::new(connection_capacity)),
+            connection_peer_limit: connection_capacity,
+            connections_by_peer: Arc::new(Mutex::new(BTreeMap::new())),
             limiter,
             peer_limiter,
             streams_by_principal: Mutex::new(BTreeMap::new()),
@@ -239,6 +252,71 @@ impl HostedServerState {
             streams.insert(principal_id.to_owned(), open);
         }
     }
+
+    fn acquire_stream_permit(&self, principal_id: &str) -> Option<HostedStreamPermit<'_>> {
+        if self.acquire_stream(principal_id) {
+            Some(HostedStreamPermit {
+                state: self,
+                principal_id: principal_id.to_owned(),
+            })
+        } else {
+            None
+        }
+    }
+
+    fn acquire_connection(&self, peer_key: &str) -> Option<HostedConnectionPermit> {
+        let connection = Arc::clone(&self.connection_limiter)
+            .try_acquire_owned()
+            .ok()?;
+        {
+            let mut peers = self
+                .connections_by_peer
+                .lock()
+                .expect("hosted connection peer counts");
+            let open = peers.entry(peer_key.to_owned()).or_default();
+            if *open >= self.connection_peer_limit {
+                return None;
+            }
+            *open += 1;
+        }
+        Some(HostedConnectionPermit {
+            _connection: connection,
+            peer_counts: Arc::clone(&self.connections_by_peer),
+            peer_key: peer_key.to_owned(),
+        })
+    }
+}
+
+struct HostedStreamPermit<'a> {
+    state: &'a HostedServerState,
+    principal_id: String,
+}
+
+impl Drop for HostedStreamPermit<'_> {
+    fn drop(&mut self) {
+        self.state.release_stream(&self.principal_id);
+    }
+}
+
+struct HostedConnectionPermit {
+    _connection: OwnedSemaphorePermit,
+    peer_counts: Arc<Mutex<BTreeMap<String, usize>>>,
+    peer_key: String,
+}
+
+impl Drop for HostedConnectionPermit {
+    fn drop(&mut self) {
+        let Ok(mut peers) = self.peer_counts.lock() else {
+            return;
+        };
+        let Some(open) = peers.get_mut(&self.peer_key) else {
+            return;
+        };
+        *open = open.saturating_sub(1);
+        if *open == 0 {
+            peers.remove(&self.peer_key);
+        }
+    }
 }
 
 impl Drop for HostedServerState {
@@ -247,7 +325,7 @@ impl Drop for HostedServerState {
         if let Ok(mut worker) = self.outbox_drain_worker.lock()
             && let Some(worker) = worker.take()
         {
-            let _ = worker.join();
+            drop(worker);
         }
         let _ = drain_hosted_outbox(&self.outbox, &self.delivery);
     }
@@ -418,14 +496,7 @@ where
         .set_nonblocking(true)
         .context("set hosted listener nonblocking")?;
     let state = Arc::new(HostedServerState::with_resolver(config, resolver));
-    let prune_state = Arc::clone(&state);
-    thread::spawn(move || {
-        thread::sleep(Duration::from_millis(PRUNE_INTERVAL_MS));
-        loop {
-            prune_state.prune();
-            thread::sleep(Duration::from_millis(PRUNE_INTERVAL_MS));
-        }
-    });
+    spawn_hosted_prune_background(&state);
 
     Ok(Some(crate::async_runtime::spawn_named(
         crate::async_runtime::task_name("hosted", "listener"),
@@ -444,6 +515,17 @@ where
                 match listener.accept().await {
                     Ok((mut stream, peer)) => {
                         let peer_address = Some(peer.ip().to_string());
+                        let Some(connection_permit) = serve_state
+                            .acquire_connection(peer_address.as_deref().unwrap_or("unknown"))
+                        else {
+                            let response = hosted_json(
+                                429,
+                                json!({ "ok": false, "error": "too many requests" }),
+                            );
+                            let _ = stream.write_all(&prepared_response_bytes(&response)).await;
+                            let _ = stream.shutdown().await;
+                            continue;
+                        };
                         let handle_runtime = Arc::clone(&runtime);
                         let handle_state = Arc::clone(&serve_state);
                         let intercept_runtime = Arc::clone(&stream_runtime);
@@ -455,6 +537,7 @@ where
                                 peer_address.as_deref().unwrap_or("unknown"),
                             ),
                             async move {
+                                let connection_permit = connection_permit;
                                 if let Err(error) = handle_hosted_daemon_stream_async(
                                     &handle_runtime,
                                     &handle_state,
@@ -479,6 +562,7 @@ where
                                     );
                                 }
                                 let _ = stream.shutdown().await;
+                                drop(connection_permit);
                             },
                         );
                     }
@@ -492,17 +576,35 @@ where
     )))
 }
 
+fn spawn_hosted_prune_background(state: &Arc<HostedServerState>) -> JoinHandle<()> {
+    let state = Arc::downgrade(state);
+    crate::async_runtime::spawn_blocking_named(
+        crate::async_runtime::task_name("hosted", "prune"),
+        move || {
+            thread::sleep(Duration::from_millis(PRUNE_INTERVAL_MS));
+            while let Some(state) = Weak::upgrade(&state) {
+                state.prune();
+                drop(state);
+                thread::sleep(Duration::from_millis(PRUNE_INTERVAL_MS));
+            }
+        },
+    )
+}
+
 fn spawn_hosted_outbox_drain_background(
     outbox: HostedOutboxStore,
     delivery: Arc<Mutex<HostedEventDelivery>>,
     signal: Arc<HostedOutboxDrainSignal>,
     backstop: Duration,
-) -> ThreadJoinHandle<()> {
-    thread::spawn(move || {
-        while signal.wait_for_next_run(backstop) {
-            drain_hosted_outbox(&outbox, &delivery);
-        }
-    })
+) -> JoinHandle<()> {
+    crate::async_runtime::spawn_blocking_named(
+        crate::async_runtime::task_name("hosted", "outbox-drain"),
+        move || {
+            while signal.wait_for_next_run(backstop) {
+                drain_hosted_outbox(&outbox, &delivery);
+            }
+        },
+    )
 }
 
 pub fn handle_hosted_daemon_stream<Runtime, Stream>(
@@ -570,7 +672,7 @@ where
     let route_state = Arc::clone(handle_state);
     let route_peer_address = peer_address.map(str::to_owned);
     let body_limit_state = Arc::clone(handle_state);
-    handle_daemon_stream_with_metadata_and_interceptor_and_body_limit(
+    handle_daemon_stream_with_metadata_and_interceptor_and_body_limit_with_read_timeout(
         stream,
         metadata,
         &mut |head| hosted_body_limit_for_head(&body_limit_state.config, head),
@@ -621,6 +723,7 @@ where
                 })
             })
         },
+        Some(Duration::from_millis(HOSTED_REQUEST_READ_TIMEOUT_MS)),
     )
     .await
 }
@@ -741,7 +844,7 @@ where
             return Ok(true);
         }
     };
-    if !state.acquire_stream(&principal.id) {
+    let Some(_stream_permit) = state.acquire_stream_permit(&principal.id) else {
         peer_slot.release();
         write_prepared(
             writer,
@@ -751,7 +854,7 @@ where
             ),
         )?;
         return Ok(true);
-    }
+    };
     peer_slot.release();
     pipe_hosted_project_event_stream(
         state,
@@ -764,7 +867,6 @@ where
             headers: BTreeMap::new(),
         },
     );
-    state.release_stream(&principal.id);
     Ok(true)
 }
 
@@ -886,7 +988,7 @@ where
             return Ok(true);
         }
     };
-    if !state.acquire_stream(&principal.id) {
+    let Some(_stream_permit) = state.acquire_stream_permit(&principal.id) else {
         peer_slot.release();
         write_prepared_async(
             writer,
@@ -897,7 +999,7 @@ where
         )
         .await?;
         return Ok(true);
-    }
+    };
     peer_slot.release();
     pipe_hosted_project_event_stream_async(
         state,
@@ -911,7 +1013,6 @@ where
         },
     )
     .await;
-    state.release_stream(&principal.id);
     Ok(true)
 }
 

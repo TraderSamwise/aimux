@@ -29,6 +29,7 @@ struct FakeLifecycleRuntime {
     metadata: Vec<(String, Value)>,
     options: Vec<(String, String, String)>,
     killed: Vec<String>,
+    kill_window_result: Option<Result<(), String>>,
     existing_windows: Vec<String>,
     renamed: Vec<(String, String)>,
     codex_backend_ids_by_cwd: BTreeMap<String, Result<BTreeSet<String>, String>>,
@@ -36,7 +37,6 @@ struct FakeLifecycleRuntime {
     worktrees_created: Vec<FakeCreateWorktree>,
     create_worktree_error: Option<String>,
     create_window_error: Option<String>,
-    kill_window_error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -148,10 +148,7 @@ impl ProjectLifecycleRuntime for FakeLifecycleRuntime {
 
     fn kill_window(&mut self, window_id: &str) -> Result<(), String> {
         self.killed.push(window_id.to_owned());
-        match &self.kill_window_error {
-            Some(error) => Err(error.clone()),
-            None => Ok(()),
-        }
+        self.kill_window_result.clone().unwrap_or(Ok(()))
     }
 
     fn rename_window(&mut self, window_id: &str, name: &str) -> Result<(), String> {
@@ -207,7 +204,7 @@ fn agent_stop_reports_tmux_kill_failure_without_taking_session_offline() {
     write_lifecycle_topology(&state_dir);
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
     let mut runtime = FakeLifecycleRuntime {
-        kill_window_error: Some("tmux server refused kill-window".into()),
+        kill_window_result: Some(Err("tmux server refused kill-window".into())),
         ..Default::default()
     };
     assert!(set_prompt_context(&state_dir, "codex-live", "form=event").is_some());
@@ -371,15 +368,14 @@ fn agent_kill_moves_session_to_graveyard_and_preserves_previous_status() {
     );
     cleanup(project);
 }
-
 #[test]
-fn agent_kill_reports_tmux_kill_failure_without_graveyarding_session() {
-    let project = temp_project("agent-kill-kill-failure");
+fn agent_kill_reports_tmux_kill_failure_instead_of_graveyard_success() {
+    let project = temp_project("agent-kill-failing-tmux");
     let state_dir = project.join("state");
     write_lifecycle_topology(&state_dir);
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
     let mut runtime = FakeLifecycleRuntime {
-        kill_window_error: Some("tmux server refused kill-window".into()),
+        kill_window_result: Some(Err("tmux kill-window failed for @agent".into())),
         ..Default::default()
     };
     assert!(set_prompt_context(&state_dir, "codex-live", "form=event").is_some());
@@ -395,7 +391,7 @@ fn agent_kill_reports_tmux_kill_failure_without_graveyarding_session() {
 
     assert_eq!(response.status, 500);
     assert!(response.body["error"].as_str().unwrap().contains(
-        "tmux kill-window failed for session \"codex-live\": tmux server refused kill-window"
+        "tmux kill-window failed for session \"codex-live\": tmux kill-window failed for @agent"
     ));
     assert_eq!(runtime.killed, vec!["@agent"]);
     let topology = read_topology(&state_dir);

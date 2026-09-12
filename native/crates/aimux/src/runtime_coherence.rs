@@ -268,6 +268,15 @@ pub fn render_runtime_coherence_report(report: &Value) -> String {
             .and_then(Value::as_u64)
             .unwrap_or(0)
     ));
+    for error in report
+        .get("projectReadErrors")
+        .and_then(Value::as_array)
+        .unwrap_or(&empty)
+        .iter()
+        .filter_map(Value::as_str)
+    {
+        lines.push(format!("  project read error: {error}"));
+    }
     lines.push(format!(
         "  tmux: {}",
         if report.pointer("/tmux/available").and_then(Value::as_bool) == Some(true) {
