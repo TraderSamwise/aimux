@@ -5,9 +5,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::project_service::runtime_health_history::RUNTIME_HEALTH_HISTORY_INTERVAL_MS;
+
 const HISTORY_FILE: &str = "runtime-health.jsonl";
 const ROTATED_HISTORY_FILES: usize = 5;
 const MIN_HISTORY_SPAN_MS: u64 = 24 * 60 * 60 * 1000;
+const GROWTH_WINDOW_MS: u64 = MIN_HISTORY_SPAN_MS;
+const GROWTH_WINDOW_BOUNDARY_TOLERANCE_MS: u64 = (RUNTIME_HEALTH_HISTORY_INTERVAL_MS as u64) * 2;
 const WEDGED_TASK_MS: u64 = 2 * 60 * 60 * 1000;
 const BUFFER_HIGH_WATER_PERCENT: u64 = 90;
 const BUFFER_DEPTH_WARN_PERCENT: u64 = 80;
@@ -415,16 +419,12 @@ fn evaluate_buffer_pressure(timed_samples: &[(u64, &Value)], reasons: &mut Vec<S
         }
     }
 
-    let Some((first_ms, first)) = timed_samples.first() else {
+    let Some(window) = growth_window(timed_samples, "buffer depth", reasons) else {
         return;
     };
-    let Some((last_ms, last)) = timed_samples.last() else {
-        return;
-    };
-    if last_ms.saturating_sub(*first_ms) < MIN_HISTORY_SPAN_MS {
-        return;
-    }
-    for (name, first_depth, last_depth, capacity) in comparable_backlog_depths(first, last) {
+    for (name, first_depth, last_depth, capacity) in
+        comparable_backlog_depths(window.first, window.last)
+    {
         if first_depth == 0 {
             continue;
         }
@@ -441,7 +441,7 @@ fn evaluate_buffer_pressure(timed_samples: &[(u64, &Value)], reasons: &mut Vec<S
                 "buffer-depth-growth",
                 format!(
                     "{name} depth rose {growth} percent over {} ({first_depth} -> {last_depth}{capacity_text})",
-                    format_duration(last_ms.saturating_sub(*first_ms))
+                    format_duration(window.span_ms())
                 ),
             ));
         }
@@ -449,17 +449,11 @@ fn evaluate_buffer_pressure(timed_samples: &[(u64, &Value)], reasons: &mut Vec<S
 }
 
 fn evaluate_task_count_growth(timed_samples: &[(u64, &Value)], reasons: &mut Vec<StabilityReason>) {
-    let Some((first_ms, first)) = timed_samples.first() else {
+    let Some(window) = growth_window(timed_samples, "task count", reasons) else {
         return;
     };
-    let Some((last_ms, last)) = timed_samples.last() else {
-        return;
-    };
-    if last_ms.saturating_sub(*first_ms) < MIN_HISTORY_SPAN_MS {
-        return;
-    }
-    let first_count = task_count(first);
-    let last_count = task_count(last);
+    let first_count = task_count(window.first);
+    let last_count = task_count(window.last);
     match (first_count, last_count) {
         (Some(first_count), Some(last_count)) if first_count > 0 => {
             let growth = growth_percent(first_count, last_count);
@@ -468,7 +462,7 @@ fn evaluate_task_count_growth(timed_samples: &[(u64, &Value)], reasons: &mut Vec
                     "task-count-growth",
                     format!(
                         "task count up {growth} percent over {} ({first_count} -> {last_count})",
-                        format_duration(last_ms.saturating_sub(*first_ms))
+                        format_duration(window.span_ms())
                     ),
                 ));
             }
@@ -479,6 +473,76 @@ fn evaluate_task_count_growth(timed_samples: &[(u64, &Value)], reasons: &mut Vec
         )),
         _ => {}
     }
+}
+
+struct GrowthWindow<'a> {
+    first_ms: u64,
+    first: &'a Value,
+    last_ms: u64,
+    last: &'a Value,
+}
+
+impl GrowthWindow<'_> {
+    fn span_ms(&self) -> u64 {
+        self.last_ms.saturating_sub(self.first_ms)
+    }
+}
+
+fn growth_window<'a>(
+    timed_samples: &'a [(u64, &'a Value)],
+    metric_name: &str,
+    reasons: &mut Vec<StabilityReason>,
+) -> Option<GrowthWindow<'a>> {
+    let Some((oldest_ms, _)) = timed_samples.first() else {
+        return None;
+    };
+    let Some((last_ms, last)) = timed_samples.last() else {
+        return None;
+    };
+    let window_start_ms = last_ms.saturating_sub(GROWTH_WINDOW_MS);
+    if *oldest_ms > window_start_ms {
+        reasons.push(unknown(
+            "growth-window-too-short",
+            format!(
+                "{metric_name} growth needs {}, but runtime-health history covers only {}",
+                format_duration(GROWTH_WINDOW_MS),
+                format_duration(last_ms.saturating_sub(*oldest_ms))
+            ),
+        ));
+        return None;
+    }
+    let Some((first_ms, first)) = timed_samples
+        .iter()
+        .rev()
+        .find(|(sample_ms, _)| *sample_ms <= window_start_ms)
+        .copied()
+    else {
+        reasons.push(unknown(
+            "growth-window-too-short",
+            format!(
+                "{metric_name} growth needs {}, but no runtime-health sample reaches the window start",
+                format_duration(GROWTH_WINDOW_MS)
+            ),
+        ));
+        return None;
+    };
+    let boundary_gap_ms = window_start_ms.saturating_sub(first_ms);
+    if boundary_gap_ms > GROWTH_WINDOW_BOUNDARY_TOLERANCE_MS {
+        reasons.push(unknown(
+            "growth-window-gap",
+            format!(
+                "{metric_name} growth cannot be judged because the closest baseline sample is {} before the 24h window",
+                format_duration(boundary_gap_ms)
+            ),
+        ));
+        return None;
+    }
+    Some(GrowthWindow {
+        first_ms,
+        first,
+        last_ms: *last_ms,
+        last,
+    })
 }
 
 fn comparable_backlog_depths(first: &Value, last: &Value) -> Vec<(String, u64, u64, Option<u64>)> {
@@ -649,6 +713,7 @@ fn format_duration(ms: u64) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::fs;
 
     #[test]
     fn refuses_to_call_wedged_task_and_filling_buffer_stable() {
@@ -721,5 +786,104 @@ mod tests {
 
         assert_eq!(report.verdict, StabilityVerdict::Unknown);
         assert!(report.reasons[0].message.contains("snapshot missing"));
+    }
+
+    #[test]
+    fn growth_window_with_short_history_is_unknown_not_endpoint_growth() {
+        let base = 1_000_000_000_u64;
+        let history = vec![
+            stable_sample(base, 10, 10, 10, 512),
+            stable_sample(base + 6 * 60 * 60 * 1000, 13, 13, 13, 512),
+        ];
+
+        let report = build_stability_doctor_report_from_history(
+            "/repo",
+            Path::new("/tmp/runtime-health.jsonl"),
+            base + 6 * 60 * 60 * 1000,
+            Ok(history),
+        );
+
+        assert_eq!(report.verdict, StabilityVerdict::Unknown);
+        assert!(
+            report
+                .reasons
+                .iter()
+                .any(|reason| reason.kind == "growth-window-too-short"
+                    && reason.message.contains("task count growth needs 1d")
+                    && reason.message.contains("covers only 6h"))
+        );
+        assert!(
+            report
+                .reasons
+                .iter()
+                .all(|reason| reason.kind != "task-count-growth")
+        );
+        assert!(
+            report
+                .reasons
+                .iter()
+                .all(|reason| reason.kind != "buffer-depth-growth")
+        );
+    }
+
+    #[test]
+    fn growth_window_detects_real_24h_rise_across_rotation_boundary() {
+        let root = unique_temp_dir("stability-growth-rotation");
+        fs::create_dir_all(&root).expect("state dir");
+        let history_path = root.join(HISTORY_FILE);
+        let old_masking_sample = stable_sample(1_000_000_000, 100, 400, 400, 480);
+        let window_start_sample =
+            stable_sample(1_000_000_000 + 6 * GROWTH_WINDOW_MS, 10, 300, 300, 480);
+        let latest_sample = stable_sample(1_000_000_000 + 7 * GROWTH_WINDOW_MS, 13, 390, 390, 480);
+        fs::write(
+            format!("{}.2", history_path.display()),
+            format!("{old_masking_sample}\n"),
+        )
+        .expect("older rotated history");
+        fs::write(
+            format!("{}.1", history_path.display()),
+            format!("{window_start_sample}\n"),
+        )
+        .expect("window-start rotated history");
+        fs::write(&history_path, format!("{latest_sample}\n")).expect("active history");
+
+        let report = build_stability_doctor_report("/repo", &root);
+
+        assert_eq!(report.verdict, StabilityVerdict::NotStable);
+        let text = render_stability_doctor_report(&report);
+        assert!(text.contains("task count up 30 percent over 1d (10 -> 13)"));
+        assert!(text.contains("relay outbox depth rose 30 percent over 1d (300 -> 390 of 480)"));
+    }
+
+    fn stable_sample(
+        recorded_at_ms: u64,
+        task_count: u64,
+        depth: u64,
+        high_water: u64,
+        capacity: u64,
+    ) -> Value {
+        json!({
+            "recordedAtMs": recorded_at_ms,
+            "scheduler": {
+                "periodicTasks": [{
+                    "name": "loop-watcher",
+                    "runs": 42,
+                    "lastCompletedAtMs": recorded_at_ms.saturating_sub(60_000),
+                    "consecutiveFailures": 0,
+                    "consecutiveTimeouts": 0
+                }]
+            },
+            "backlog": [{
+                "name": "relay outbox",
+                "depth": depth,
+                "highWater": high_water,
+                "capacity": capacity
+            }],
+            "process": { "taskCount": task_count }
+        })
+    }
+
+    fn unique_temp_dir(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("aimux-{name}-{}-{}", std::process::id(), now_ms()))
     }
 }
