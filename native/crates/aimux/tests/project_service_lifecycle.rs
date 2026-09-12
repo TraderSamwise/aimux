@@ -198,6 +198,41 @@ fn agent_stop_takes_session_offline_and_kills_window() {
 }
 
 #[test]
+fn agent_stop_reports_tmux_kill_failure_without_taking_session_offline() {
+    let project = temp_project("agent-stop-kill-failure");
+    let state_dir = project.join("state");
+    write_lifecycle_topology(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime {
+        kill_window_result: Some(Err("tmux server refused kill-window".into())),
+        ..Default::default()
+    };
+    assert!(set_prompt_context(&state_dir, "codex-live", "form=event").is_some());
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::STOP,
+        Some(&json!({ "sessionId": "codex-live" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 500);
+    assert!(response.body["error"].as_str().unwrap().contains(
+        "tmux kill-window failed for session \"codex-live\": tmux server refused kill-window"
+    ));
+    assert_eq!(runtime.killed, vec!["@agent"]);
+    let topology = read_topology(&state_dir);
+    assert_eq!(session(&topology, "codex-live")["status"], "running");
+    assert_eq!(
+        get_prompt_context_text(&state_dir, "codex-live"),
+        Some("form=event".to_owned())
+    );
+    cleanup(project);
+}
+
+#[test]
 fn agent_stop_marks_codex_without_backend_history_fresh_relaunchable() {
     let project = temp_project("agent-stop-codex-fresh");
     let state_dir = project.join("state");
@@ -333,9 +368,7 @@ fn agent_kill_moves_session_to_graveyard_and_preserves_previous_status() {
     );
     cleanup(project);
 }
-
 #[test]
-#[ignore = "proof test for gqaapg-1: current route ignores tmux kill-window failure"]
 fn agent_kill_reports_tmux_kill_failure_instead_of_graveyard_success() {
     let project = temp_project("agent-kill-failing-tmux");
     let state_dir = project.join("state");
@@ -345,6 +378,7 @@ fn agent_kill_reports_tmux_kill_failure_instead_of_graveyard_success() {
         kill_window_result: Some(Err("tmux kill-window failed for @agent".into())),
         ..Default::default()
     };
+    assert!(set_prompt_context(&state_dir, "codex-live", "form=event").is_some());
 
     let response = route_lifecycle_request_with_runtime(
         &context,
@@ -355,16 +389,19 @@ fn agent_kill_reports_tmux_kill_failure_instead_of_graveyard_success() {
     )
     .unwrap();
 
-    assert_ne!(
-        response.status, 200,
-        "a failed tmux kill must not be reported as a successful graveyard transition"
-    );
+    assert_eq!(response.status, 500);
+    assert!(response.body["error"].as_str().unwrap().contains(
+        "tmux kill-window failed for session \"codex-live\": tmux kill-window failed for @agent"
+    ));
     assert_eq!(runtime.killed, vec!["@agent"]);
     let topology = read_topology(&state_dir);
-    let session = session(&topology, "codex-live");
+    let current = session(&topology, "codex-live");
+    assert_eq!(current["status"], "running");
+    assert!(current["graveyardedAt"].is_null());
+    assert!(current["graveyardReason"].is_null());
     assert_eq!(
-        session["status"], "running",
-        "the session should not be marked graveyard when tmux kill failed"
+        get_prompt_context_text(&state_dir, "codex-live"),
+        Some("form=event".to_owned())
     );
     cleanup(project);
 }
