@@ -1,6 +1,7 @@
 use crate::async_runtime::{scoped_task_name, spawn_blocking_named, spawn_named, task_name};
 use crate::daemon::http::PreparedDaemonResponse;
 use crate::daemon::server::DaemonHttpRequest;
+use serde_json::json;
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
@@ -14,6 +15,7 @@ use tokio::task::JoinHandle;
 use tokio::time::{Duration, sleep, timeout};
 
 const MAX_HEADER_BYTES: usize = 64 * 1024;
+pub const DAEMON_RESPONSE_WRITE_IDLE_TIMEOUT: Duration = Duration::from_secs(5);
 pub type DaemonInterceptFuture<'a> =
     Pin<Box<dyn Future<Output = Result<bool, DaemonListenerError>> + Send + 'a>>;
 pub type DaemonHandleFuture<'a> =
@@ -118,8 +120,17 @@ where
                         handle,
                     )
                     .await;
+                    if let Err(error) = result {
+                        crate::debug_logging::log_lifecycle_always(
+                            "daemon listener connection failed",
+                            "daemon-listener",
+                            Some(json!({
+                                "peer": peer.to_string(),
+                                "error": error.to_string(),
+                            })),
+                        );
+                    }
                     let _ = stream.shutdown().await;
-                    let _ = result;
                 });
             }
             Ok(Err(error)) if error.kind() == io::ErrorKind::Interrupted => {
@@ -325,6 +336,38 @@ where
     Intercept: for<'a> FnMut(&'a DaemonHttpRequest, &'a mut Stream) -> DaemonInterceptFuture<'a>,
     Handle: FnMut(DaemonHttpRequest) -> DaemonHandleFuture<'static>,
 {
+    handle_daemon_stream_with_metadata_and_interceptor_and_body_limit_with_timeouts(
+        stream,
+        metadata,
+        body_limit,
+        intercept,
+        handle,
+        read_timeout,
+        Some(DAEMON_RESPONSE_WRITE_IDLE_TIMEOUT),
+    )
+    .await
+}
+
+pub async fn handle_daemon_stream_with_metadata_and_interceptor_and_body_limit_with_timeouts<
+    Stream,
+    BodyLimit,
+    Intercept,
+    Handle,
+>(
+    stream: &mut Stream,
+    metadata: DaemonRequestMetadata,
+    body_limit: &mut BodyLimit,
+    intercept: &mut Intercept,
+    handle: &mut Handle,
+    read_timeout: Option<Duration>,
+    write_idle_timeout: Option<Duration>,
+) -> Result<(), DaemonListenerError>
+where
+    Stream: AsyncRead + AsyncWrite + Unpin + Send,
+    BodyLimit: FnMut(&DaemonRequestHead) -> Option<DaemonRequestBodyLimit>,
+    Intercept: for<'a> FnMut(&'a DaemonHttpRequest, &'a mut Stream) -> DaemonInterceptFuture<'a>,
+    Handle: FnMut(DaemonHttpRequest) -> DaemonHandleFuture<'static>,
+{
     let read_request = read_http_request_with_body_limit_async(stream, body_limit);
     let read_outcome = match read_timeout {
         Some(read_timeout) => timeout(read_timeout, read_request).await.map_err(|_| {
@@ -338,7 +381,8 @@ where
     let bytes = match read_outcome {
         ReadHttpRequestOutcome::Request(bytes) => bytes,
         ReadHttpRequestOutcome::Rejected(response) => {
-            write_prepared_response_async(stream, &response).await?;
+            write_prepared_response_async_with_idle_timeout(stream, &response, write_idle_timeout)
+                .await?;
             return Ok(());
         }
     };
@@ -347,7 +391,7 @@ where
         return Ok(());
     }
     let response = handle(request).await?;
-    write_prepared_response_async(stream, &response).await?;
+    write_prepared_response_async_with_idle_timeout(stream, &response, write_idle_timeout).await?;
     Ok(())
 }
 
@@ -469,7 +513,45 @@ async fn write_prepared_response_async(
     writer: &mut (impl AsyncWrite + Unpin),
     response: &PreparedDaemonResponse,
 ) -> Result<(), DaemonListenerError> {
-    writer.write_all(&prepared_response_bytes(response)).await?;
+    write_prepared_response_async_with_idle_timeout(
+        writer,
+        response,
+        Some(DAEMON_RESPONSE_WRITE_IDLE_TIMEOUT),
+    )
+    .await?;
+    Ok(())
+}
+
+async fn write_prepared_response_async_with_idle_timeout(
+    writer: &mut (impl AsyncWrite + Unpin),
+    response: &PreparedDaemonResponse,
+    idle_timeout: Option<Duration>,
+) -> Result<(), DaemonListenerError> {
+    write_all_with_idle_timeout(writer, &prepared_response_bytes(response), idle_timeout).await?;
+    Ok(())
+}
+
+async fn write_all_with_idle_timeout(
+    writer: &mut (impl AsyncWrite + Unpin),
+    mut bytes: &[u8],
+    idle_timeout: Option<Duration>,
+) -> io::Result<()> {
+    while !bytes.is_empty() {
+        let write = writer.write(bytes);
+        let count = match idle_timeout {
+            Some(idle_timeout) => timeout(idle_timeout, write).await.map_err(|_| {
+                io::Error::new(io::ErrorKind::TimedOut, "timed out writing HTTP response")
+            })?,
+            None => write.await,
+        }?;
+        if count == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::WriteZero,
+                "failed to write HTTP response",
+            ));
+        }
+        bytes = &bytes[count..];
+    }
     Ok(())
 }
 
