@@ -4182,6 +4182,25 @@ def run_process_race_smoke(aimux_bin: Path, mutation: str | None) -> dict[str, A
         (lock_dir / "owner.json").write_text('{"pid":"not-an-int"}\n')
 
         try:
+            stale_recovery = run(
+                [str(aimux_bin), "serve"],
+                cwd=scope.project,
+                env=scope.env,
+                timeout=45,
+                check=False,
+            )
+            if stale_recovery.returncode != 0:
+                raise LiveResidualFailure(
+                    "stale daemon recovery serve failed before concurrent serve check:\n"
+                    + json.dumps({
+                        "command": [str(aimux_bin), "serve"],
+                        "returncode": stale_recovery.returncode,
+                        "stdout": stale_recovery.stdout[-2000:],
+                        "stderr": stale_recovery.stderr[-2000:],
+                        "snapshot": process_residual_snapshot(scope, aimux_bin),
+                    }, indent=2)
+                )
+
             commands = [
                 subprocess.Popen(
                     [str(aimux_bin), "serve"],
@@ -4201,7 +4220,20 @@ def run_process_race_smoke(aimux_bin: Path, mutation: str | None) -> dict[str, A
                 outputs.append((proc.returncode, stdout, stderr))
             failures = [output for output in outputs if output[0] != 0]
             if failures:
-                raise LiveResidualFailure(f"concurrent serve commands failed: {failures}")
+                raise LiveResidualFailure(
+                    "concurrent serve commands failed after stale daemon recovery:\n"
+                    + json.dumps({
+                        "outputs": [
+                            {
+                                "returncode": returncode,
+                                "stdout": stdout[-2000:],
+                                "stderr": stderr[-2000:],
+                            }
+                            for returncode, stdout, stderr in outputs
+                        ],
+                        "snapshot": process_residual_snapshot(scope, aimux_bin),
+                    }, indent=2)
+                )
 
             daemon_info_path = daemon_dir / "daemon.json"
             daemon_info = json.loads(daemon_info_path.read_text())
@@ -4234,7 +4266,7 @@ def run_process_race_smoke(aimux_bin: Path, mutation: str | None) -> dict[str, A
                 "caught": [
                     "stale daemon info cleanup",
                     "malformed daemon start lock reclamation",
-                    "concurrent daemon ensure serialization",
+                    "concurrent daemon ensure serialization after stale recovery",
                     "project-service endpoint publication",
                     "daemon/project-service state-health mismatch",
                 ],
@@ -4247,6 +4279,37 @@ def run_process_race_smoke(aimux_bin: Path, mutation: str | None) -> dict[str, A
         finally:
             stop_temp_project_and_daemon(scope, aimux_bin)
             kill_recorded_temp_processes(scope, aimux_bin)
+
+
+def process_residual_snapshot(scope: Scope, aimux_bin: Path) -> dict[str, Any]:
+    def read_json_file(path: Path) -> Any:
+        try:
+            return json.loads(path.read_text() or "{}")
+        except Exception as error:
+            return {"error": str(error), "raw": path.read_text(errors="replace")[-2000:] if path.exists() else None}
+
+    port = scope.env["AIMUX_DAEMON_PORT"]
+    listeners = run(
+        ["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN"],
+        timeout=5,
+        check=False,
+    )
+    processes = run(["ps", "-axo", "pid=,ppid=,args="], timeout=5, check=False)
+    process_rows = [
+        line.strip()
+        for line in processes.stdout.splitlines()
+        if str(aimux_bin) in line or str(scope.project) in line or str(scope.aimux_home) in line
+    ]
+    return {
+        "aimuxHome": str(scope.aimux_home),
+        "project": str(scope.project),
+        "daemonPort": port,
+        "daemonInfo": read_json_file(scope.aimux_home / "daemon" / "daemon.json"),
+        "daemonState": read_json_file(scope.aimux_home / "daemon" / "state.json"),
+        "lockOwner": read_json_file(scope.aimux_home / "locks" / "daemon-start" / "owner.json"),
+        "listeners": listeners.stdout.strip() or listeners.stderr.strip(),
+        "processes": process_rows[-20:],
+    }
 
 
 def stop_temp_project_and_daemon(scope: Scope, aimux_bin: Path) -> None:

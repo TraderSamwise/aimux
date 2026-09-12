@@ -5,8 +5,8 @@ use aimux::project_service::router::{ProjectServiceRequestContext, route_project
 use aimux::project_service::switchable_agents::{
     AgentListScope, ManagedWindowEntry, SwitchableContext, SwitchableListOptions,
     agent_status_chip, list_switchable_agent_items, resolve_next_agent, resolve_prev_agent,
-    route_switchable_agent_request_with_runtime, serialize_fast_control_item,
-    topology_switchable_entries_for_context,
+    route_switchable_agent_request_async, route_switchable_agent_request_with_runtime,
+    serialize_fast_control_item, topology_switchable_entries_for_context,
 };
 use aimux::runtime_topology::runtime_topology_path;
 use aimux::tmux::CapturePaneOptions;
@@ -499,6 +499,75 @@ fn route_switchable_agents_drops_sessions_without_live_tmux_windows() {
             .map(|item| item["id"].as_str().unwrap())
             .collect::<Vec<_>>(),
         vec!["codex-live"]
+    );
+    cleanup(project);
+}
+
+#[test]
+fn async_route_switchable_agents_preserves_live_sessions_when_tmux_query_is_unavailable() {
+    let project = temp_project("route-switchable-live-window-unavailable");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).unwrap();
+    let mut topology = topology_fixture();
+    topology["bindings"] = json!([
+        { "id": "binding-codex", "nodeId": "node-codex", "tmuxSession": "aimux-repo", "tmuxWindowId": "@1", "tmuxWindowIndex": 1, "tmuxWindowName": "codex", "updatedAt": "2026-09-05T00:00:00.000Z" },
+        { "id": "binding-stale", "nodeId": "node-stale", "tmuxSession": "aimux-repo", "tmuxWindowId": "@99", "tmuxWindowIndex": 99, "tmuxWindowName": "codex", "updatedAt": "2026-09-05T00:00:00.000Z" }
+    ]);
+    topology["nodes"] = json!([
+        { "id": "node-codex", "rigId": "rig-1", "logicalId": "codex", "toolConfigKey": "codex", "cwd": "/repo/wt", "label": "codex-live", "createdAt": "2026-09-05T00:00:00.000Z" },
+        { "id": "node-stale", "rigId": "rig-1", "logicalId": "codex-stale", "toolConfigKey": "codex", "cwd": "/repo/wt", "label": "codex-stale", "createdAt": "2026-09-05T00:00:00.000Z" }
+    ]);
+    topology["sessions"] = json!([
+        { "id": "codex-live", "nodeId": "node-codex", "status": "running", "tool": "codex", "command": "codex", "worktreePath": "/repo/wt", "label": "codex-live", "createdAt": "2026-09-05T00:00:00.000Z", "updatedAt": "2026-09-05T00:00:00.000Z" },
+        { "id": "codex-stale", "nodeId": "node-stale", "status": "idle", "tool": "codex", "command": "codex", "worktreePath": "/repo/wt", "label": "codex-stale", "createdAt": "2026-09-05T00:00:00.000Z", "updatedAt": "2026-09-05T00:00:00.000Z" }
+    ]);
+    topology["services"] = json!([]);
+    write(
+        runtime_topology_path(&state_dir),
+        serde_yaml::to_string(&topology).unwrap(),
+    )
+    .unwrap();
+    let path =
+        "/control/switchable-agents?currentPath=/repo/wt&currentWindowId=%401&labelFormat=raw";
+
+    let empty_inventory_context =
+        ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+            .with_live_window_ids(support::live_window_ids(&[]));
+    let empty_inventory_response = aimux::async_runtime::block_on_named(
+        "test:switchable-agents-empty-inventory",
+        route_switchable_agent_request_async(&empty_inventory_context, "GET", path),
+    )
+    .expect("switchable async route with empty inventory");
+    assert_eq!(empty_inventory_response.status, 200);
+    let empty_inventory_items = empty_inventory_response.body["items"].as_array().unwrap();
+    assert!(
+        empty_inventory_items.is_empty(),
+        "a successful empty tmux inventory should remove dead sessions from switchable controls"
+    );
+
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids_error("tmux socket busy");
+
+    let response = aimux::async_runtime::block_on_named(
+        "test:switchable-agents-async",
+        route_switchable_agent_request_async(&context, "GET", path),
+    )
+    .expect("switchable async route");
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["tmuxLiveWindowQuery"]["ok"], false);
+    assert_eq!(
+        response.body["tmuxLiveWindowQuery"]["error"],
+        "tmux socket busy"
+    );
+    let items = response.body["items"].as_array().unwrap();
+    assert_eq!(
+        items
+            .iter()
+            .map(|item| item["id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["codex-live", "codex-stale"],
+        "a tmux query error must preserve claimed-live items instead of rendering an empty list"
     );
     cleanup(project);
 }

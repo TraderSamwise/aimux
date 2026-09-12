@@ -1,4 +1,4 @@
-//! Periodic-task rail for the project service.
+//! Periodic tick loop for the project service.
 //!
 //! Node ran each background scan on its own `setInterval` scattered across three
 //! processes. The project service had no equivalent, which is why every watcher
@@ -28,7 +28,7 @@ use crate::paths::PathResolver;
 
 use super::router::ProjectServiceRequestContext;
 
-/// How long the rail sleeps when nothing is scheduled.
+/// How long the tick loop sleeps when nothing is scheduled.
 const IDLE_SLEEP: Duration = Duration::from_millis(1_000);
 /// Floor on a task's interval, so a misconfigured value cannot spin the thread.
 const MIN_INTERVAL_MS: i64 = 250;
@@ -168,7 +168,7 @@ pub trait PeriodicTask: Send + 'static {
     fn timeout(&self) -> Duration {
         Duration::from_secs(30)
     }
-    /// Cadence as a multiple of the shared rail tick. Existing interval-based
+    /// Cadence as a multiple of the shared tick-loop tick. Existing interval-based
     /// tasks ride the default conversion; tasks with tick-native config can
     /// override this directly.
     fn tick_multiple(&self) -> u64 {
@@ -247,7 +247,7 @@ impl PeriodicScheduler {
             scheduled.next_due_ms = finished_ms.saturating_add(interval_ms);
             log_at(
                 LogLevel::Debug,
-                "watcher rail task ran",
+                "watcher tick loop task ran",
                 "watcher",
                 Some(json!({
                     "task": name.clone(),
@@ -260,7 +260,7 @@ impl PeriodicScheduler {
             );
             if panicked {
                 log_lifecycle_always(
-                    "watcher rail task panicked",
+                    "watcher tick loop task panicked",
                     "watcher",
                     Some(json!({
                         "task": name.clone(),
@@ -270,7 +270,7 @@ impl PeriodicScheduler {
                 );
             } else if elapsed_ms >= SLOW_TASK_WARNING_MS {
                 log_lifecycle_always(
-                    "watcher rail task slow",
+                    "watcher tick loop task slow",
                     "watcher",
                     Some(json!({
                         "task": name.clone(),
@@ -399,7 +399,7 @@ async fn run_task_once(
             Ok(panicked) => (panicked, false),
             Err(_) => {
                 log_lifecycle_always(
-                    "watcher rail task timed out",
+                    "watcher tick loop task timed out",
                     "watcher",
                     Some(json!({
                         "task": name.clone(),
@@ -412,7 +412,7 @@ async fn run_task_once(
     let elapsed_ms = started.elapsed().as_millis().min(i64::MAX as u128) as i64;
     log_at(
         LogLevel::Debug,
-        "watcher rail task ran",
+        "watcher tick loop task ran",
         "watcher",
         Some(json!({
             "task": name.clone(),
@@ -426,7 +426,7 @@ async fn run_task_once(
     );
     if panicked {
         log_lifecycle_always(
-            "watcher rail task panicked",
+            "watcher tick loop task panicked",
             "watcher",
             Some(json!({
                 "task": name,
@@ -436,7 +436,7 @@ async fn run_task_once(
         );
     } else if elapsed_ms >= SLOW_TASK_WARNING_MS {
         log_lifecycle_always(
-            "watcher rail task slow",
+            "watcher tick loop task slow",
             "watcher",
             Some(json!({
                 "task": name,

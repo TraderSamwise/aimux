@@ -111,7 +111,7 @@ scribe watcher, transcript reconciler, agent prompt delivery, runtime guard
 repair start, and debug logging have all been ported and wired. Debug logging
 now lives in native `debug_logging.rs` with production call sites for control
 plane restart, project-service ensure/startup, tmux repair, runtime-guard
-repair, and watcher rail diagnostics; the old debug parity fixtures were
+repair, and watcher tick loop diagnostics; the old debug parity fixtures were
 deleted. Repair events now write durable project `repairs.jsonl` entries from
 control-plane restart, project-service ensure, tmux runtime repair, dashboard
 reload, dashboard-triggered runtime-guard repair, and lifecycle orphan cleanup.

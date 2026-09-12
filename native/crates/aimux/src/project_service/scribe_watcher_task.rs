@@ -1,7 +1,7 @@
 //! The scribe watcher as a scheduled task.
 //!
 //! Everything behavioural lives in `crate::scribe_watcher`; this assembles the
-//! real inputs and does the IO, all of it off the rail.
+//! real inputs and does the IO, all of it off the tick loop.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -18,16 +18,16 @@ use crate::scribe_watcher::{ScribeBriefing, ScribeWatcher};
 use super::router::ProjectServiceRequestContext;
 use super::scheduler::{PeriodicTask, PeriodicTaskFuture};
 use super::watcher_delivery::{
-    RailBudget, deliver_agent_input_async, read_agent_output_tail_async,
+    TickLoopBudget, deliver_agent_input_async, read_agent_output_tail_async,
 };
 
 const SCAN_INTERVAL_MS: i64 = 60_000;
 /// Only a session backed by a live window has a pane to read.
 const READABLE_SESSION_STATUSES: &[&str] = &["starting", "running", "idle"];
-/// Node scanned up to 50 candidates. Each read is a tmux spawn, so the rail
+/// Node scanned up to 50 candidates. Each read is a tmux spawn, so the tick loop
 /// keeps a far tighter budget; the briefing only ever carries four anyway.
 const MAX_SCAN_CANDIDATES: i64 = 12;
-/// Longest one scan may hold the shared rail. Twelve 3s reads plus a delivery
+/// Longest one scan may hold the shared tick loop. Twelve 3s reads plus a delivery
 /// could otherwise block the 2s plugin tick for over half a minute.
 const SCAN_BUDGET: Duration = Duration::from_secs(20);
 
@@ -80,7 +80,7 @@ impl PeriodicTask for ScribeWatcherTask {
 
             let read_context = Arc::clone(&self.context);
             let deliver_context = Arc::clone(&self.context);
-            let budget = RailBudget::new(SCAN_BUDGET);
+            let budget = TickLoopBudget::new(SCAN_BUDGET);
             let mut outputs = BTreeMap::new();
             for session in sessions.iter().take(MAX_SCAN_CANDIDATES as usize) {
                 if budget.spent() {
@@ -145,7 +145,7 @@ pub fn readable_session_statuses() -> &'static [&'static str] {
     READABLE_SESSION_STATUSES
 }
 
-/// Exposed so the rail's read budget is pinned by a test rather than by
+/// Exposed so the tick loop's read budget is pinned by a test rather than by
 /// whoever last edited the constant.
 pub fn max_scan_candidates() -> i64 {
     MAX_SCAN_CANDIDATES
