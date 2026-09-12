@@ -339,7 +339,7 @@ pub(super) async fn route_agent_spawn_async(
         );
         return json_error(400, "tool is required");
     };
-    let config = load_config_for_project(context.project_root());
+    let config = load_config_for_known_project_root(context.project_root());
     let Some(tool_config) = config
         .get("tools")
         .and_then(Value::as_object)
