@@ -189,9 +189,21 @@ impl ProjectLifecycleRuntime for SystemProjectLifecycleRuntime {
 
 impl AsyncProjectLifecycleRuntime for SystemProjectLifecycleRuntime {
     async fn ensure_project_session(&mut self, project_root: &Path) -> Result<(), String> {
-        TmuxRuntimeManager::new()
-            .ensure_project_session(project_root, None, None)
-            .map(|_| ())
+        let project_root = project_root.to_path_buf();
+        crate::async_runtime::spawn_blocking_named(
+            crate::async_runtime::scoped_task_name(
+                "project-service",
+                "lifecycle-ensure-session",
+                &project_root.to_string_lossy(),
+            ),
+            move || {
+                TmuxRuntimeManager::new()
+                    .ensure_project_session(&project_root, None, None)
+                    .map(|_| ())
+            },
+        )
+        .await
+        .map_err(|error| format!("tmux ensure project session task failed: {error}"))?
     }
 
     async fn create_window(
