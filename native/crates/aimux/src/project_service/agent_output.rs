@@ -1941,7 +1941,7 @@ fn run_tmux_argv_with_timeout(
     timeout: Duration,
 ) -> Result<Output, String> {
     let output = run_command_with_timeout("tmux", &argv, timeout)
-        .map_err(|error| format!("{fallback_error}: {error}"))?;
+        .map_err(|error| tmux_command_error(&fallback_error, &argv, &error))?;
     if !output.status.success() {
         let error = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         return Err(if error.is_empty() {
@@ -1963,7 +1963,7 @@ async fn run_tmux_argv_with_timeout_async(
     let output = command
         .output_timeout_async(timeout)
         .await
-        .map_err(|error| format!("{fallback_error}: {error}"))?;
+        .map_err(|error| tmux_command_error(&fallback_error, &argv, &error.to_string()))?;
     if !output.status.success() {
         let error = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         return Err(if error.is_empty() {
@@ -1973,6 +1973,28 @@ async fn run_tmux_argv_with_timeout_async(
         });
     }
     Ok(output)
+}
+
+fn tmux_command_error(fallback_error: &str, argv: &[String], error: &str) -> String {
+    format!("{fallback_error} ({}): {error}", tmux_command_display(argv))
+}
+
+fn tmux_command_display(argv: &[String]) -> String {
+    let mut parts = Vec::with_capacity(argv.len() + 1);
+    parts.push("tmux".to_owned());
+    parts.extend(argv.iter().map(|arg| shellish_quote(arg)));
+    parts.join(" ")
+}
+
+fn shellish_quote(value: &str) -> String {
+    if value
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | '/' | ':' | '@'))
+    {
+        value.to_owned()
+    } else {
+        format!("{value:?}")
+    }
 }
 
 fn run_command_with_timeout(
@@ -1992,14 +2014,24 @@ async fn verify_target_runtime_async(
     expected_project_root: &Path,
     timeout: Duration,
 ) -> Result<(), String> {
-    let Some(actual_target) =
-        tmux_get_target_by_window_id_async(&target.session_name, &target.window_id, timeout).await
-    else {
-        return Err(format!(
-            "refusing to read pane {}: window is not present in addressed tmux runtime {}",
-            target.window_id, target.session_name
-        ));
-    };
+    let actual_target =
+        match tmux_get_target_by_window_id_async(&target.session_name, &target.window_id, timeout)
+            .await
+        {
+            Ok(Some(actual_target)) => actual_target,
+            Ok(None) => {
+                return Err(format!(
+                    "refusing to read pane {}: window is not present in addressed tmux runtime {}",
+                    target.window_id, target.session_name
+                ));
+            }
+            Err(error) => {
+                return Err(format!(
+                    "refusing to read pane {}: could not verify addressed tmux runtime {}: {}",
+                    target.window_id, target.session_name, error
+                ));
+            }
+        };
     if actual_target.window_id != target.window_id {
         return Err(format!(
             "refusing to read pane {}: tmux resolved unexpected window {}",
@@ -2007,10 +2039,19 @@ async fn verify_target_runtime_async(
         ));
     }
     let expected_project_root = canonicalize_project_root(expected_project_root);
-    let actual_project_root =
-        tmux_get_session_option_async(&target.session_name, "@aimux-project-root", timeout)
-            .await
-            .map(canonicalize_project_root);
+    let actual_project_root = tmux_get_session_option_async(
+        &target.session_name,
+        "@aimux-project-root",
+        timeout,
+    )
+    .await
+    .map_err(|error| {
+        format!(
+            "refusing to read pane {}: could not verify tmux session {} project ownership: {}",
+            target.window_id, target.session_name, error
+        )
+    })?
+    .map(canonicalize_project_root);
     if actual_project_root.as_deref() != Some(expected_project_root.as_str()) {
         return Err(format!(
             "refusing to read pane {}: tmux session {} belongs to project {:?}, expected {}",
@@ -2020,7 +2061,13 @@ async fn verify_target_runtime_async(
     let expected_owner = get_runtime_owner_id();
     let actual_owner =
         tmux_get_session_option_async(&target.session_name, TMUX_RUNTIME_OWNER_OPTION, timeout)
-            .await;
+            .await
+            .map_err(|error| {
+                format!(
+                    "refusing to read pane {}: could not verify tmux session {} runtime owner: {}",
+                    target.window_id, target.session_name, error
+                )
+            })?;
     if actual_owner.as_deref() != Some(expected_owner.as_str()) {
         return Err(format!(
             "refusing to read pane {}: tmux session {} belongs to runtime owner {:?}, expected {}",
@@ -2034,7 +2081,7 @@ async fn tmux_get_target_by_window_id_async(
     session_name: &str,
     window_id: &str,
     timeout: Duration,
-) -> Option<TmuxTarget> {
+) -> Result<Option<TmuxTarget>, String> {
     let output = run_tmux_argv_with_timeout_async(
         vec![
             "list-windows".to_owned(),
@@ -2046,9 +2093,8 @@ async fn tmux_get_target_by_window_id_async(
         format!("tmux list-windows failed for {session_name}"),
         timeout,
     )
-    .await
-    .ok()?;
-    String::from_utf8_lossy(&output.stdout)
+    .await?;
+    Ok(String::from_utf8_lossy(&output.stdout)
         .lines()
         .find_map(|line| {
             let mut parts = line.splitn(3, '\t');
@@ -2065,14 +2111,14 @@ async fn tmux_get_target_by_window_id_async(
                 window_name: name,
                 pane_dead: None,
             })
-        })
+        }))
 }
 
 async fn tmux_get_session_option_async(
     session_name: &str,
     key: &str,
     timeout: Duration,
-) -> Option<String> {
+) -> Result<Option<String>, String> {
     let output = run_tmux_argv_with_timeout_async(
         vec![
             "show-options".to_owned(),
@@ -2084,10 +2130,11 @@ async fn tmux_get_session_option_async(
         format!("tmux show-options failed for {session_name} {key}"),
         timeout,
     )
-    .await
-    .ok()?;
-    Some(String::from_utf8_lossy(&output.stdout).trim().to_owned())
-        .filter(|value| !value.is_empty())
+    .await?;
+    Ok(
+        Some(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+            .filter(|value| !value.is_empty()),
+    )
 }
 
 async fn capture_pane_async(
@@ -2579,6 +2626,25 @@ mod tests {
         .expect("large output command should complete");
 
         assert_eq!(result.stdout.len(), 200_000);
+    }
+
+    #[test]
+    fn tmux_command_errors_name_the_tmux_call() {
+        let message = tmux_command_error(
+            "tmux list-windows failed for aimux-project",
+            &[
+                "list-windows".to_owned(),
+                "-t".to_owned(),
+                "aimux-project".to_owned(),
+                "-F".to_owned(),
+                "#{window_id}\t#{window_index}".to_owned(),
+            ],
+            "tmux timed out after 2s",
+        );
+
+        assert!(message.contains("tmux list-windows failed for aimux-project"));
+        assert!(message.contains("tmux list-windows -t aimux-project -F"));
+        assert!(message.contains("timed out after 2s"));
     }
 
     fn process_is_alive(pid: &str) -> bool {

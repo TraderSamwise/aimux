@@ -239,6 +239,44 @@ fn route_agents_reads_topology_metadata_and_exchange_tasks() {
 }
 
 #[test]
+fn route_agents_preserves_live_sessions_when_tmux_liveness_query_is_unavailable() {
+    let project = temp_project("route-tmux-unavailable");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).unwrap();
+    write(
+        runtime_topology_path(&state_dir),
+        serde_yaml::to_string(&topology_fixture()).unwrap(),
+    )
+    .unwrap();
+
+    let empty_inventory_context =
+        ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+            .with_live_window_ids(support::live_window_ids(&[]));
+    let empty_inventory_response =
+        route_project_service_request(&empty_inventory_context, "GET", routes::agents::LIST, None);
+    let empty_inventory_agents = empty_inventory_response.body["agents"].as_array().unwrap();
+    assert_eq!(
+        find(empty_inventory_agents, "codex-live")["status"],
+        "offline",
+        "a successful empty tmux inventory proves the live binding is gone"
+    );
+
+    let unavailable_context =
+        ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+            .with_live_window_ids_error("tmux list-windows timed out after 2s");
+    let unavailable_response =
+        route_project_service_request(&unavailable_context, "GET", routes::agents::LIST, None);
+    let unavailable_agents = unavailable_response.body["agents"].as_array().unwrap();
+    assert_eq!(
+        find(unavailable_agents, "codex-live")["status"],
+        "running",
+        "a tmux query timeout is could-not-ask, not proof that the live binding disappeared"
+    );
+
+    cleanup(project);
+}
+
+#[test]
 fn history_route_preserves_runtime_core_replacement_stub() {
     let project = temp_project("history");
     let context =

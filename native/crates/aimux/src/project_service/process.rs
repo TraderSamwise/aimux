@@ -2439,6 +2439,73 @@ mod tests {
     }
 
     #[test]
+    fn async_agent_input_disconnect_after_first_write_finishes_remaining_writes() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        crate::async_runtime::process_runtime().block_on(async {
+            let root = unique_test_root("async-input-no-half-delivery");
+            let project_root = root.join("repo");
+            let state_dir = root.join("state");
+            create_git_checkout(&project_root);
+            let context = Arc::new(ProjectServiceRequestContext::with_project_state_dir(
+                &project_root,
+                &state_dir,
+            ));
+            let writes = Arc::new(Mutex::new(Vec::new()));
+            let (started_tx, started_rx) = mpsc::channel();
+            let (release_tx, release_rx) = oneshot::channel();
+            let (client, mut server) = tokio::io::duplex(4096);
+            let route_writes = Arc::clone(&writes);
+            let task = crate::async_runtime::spawn_named(
+                "project-service-test:async-input-no-half-delivery",
+                async move {
+                    route_async_agent_output_with_disconnect_and_route(
+                        context,
+                        "POST".to_owned(),
+                        routes::agents::INPUT.to_owned(),
+                        Some(json!({ "sessionId": "codex-live", "text": "abc" })),
+                        &mut server,
+                        move |_context, _method, _path, _body, irreversible| async move {
+                            irreversible.store(true, Ordering::SeqCst);
+                            route_writes
+                                .lock()
+                                .expect("writes lock")
+                                .push("first tmux write".to_owned());
+                            started_tx.send(()).expect("signal first input write");
+                            release_rx.await.expect("release remaining input writes");
+                            route_writes
+                                .lock()
+                                .expect("writes lock")
+                                .push("remaining tmux write".to_owned());
+                            Some(ProjectServiceDispatchResponse::json(
+                                200,
+                                json!({ "ok": true, "accepted": true }),
+                            ))
+                        },
+                    )
+                    .await
+                },
+            );
+            wait_for_signal(&started_rx, "first input write").await;
+            drop(client);
+            release_tx
+                .send(())
+                .expect("input route should finish after the first write");
+            let response = tokio::time::timeout(Duration::from_secs(2), task)
+                .await
+                .expect("irreversible route should finish")
+                .expect("route task should join")
+                .expect("disconnect after first write should not cancel route");
+            assert_eq!(response.status, 200);
+            assert_eq!(
+                writes.lock().expect("writes lock").as_slice(),
+                ["first tmux write", "remaining tmux write"],
+                "disconnect after the first tmux write must not half-deliver an input sequence"
+            );
+            let _ = fs::remove_dir_all(root);
+        });
+    }
+
+    #[test]
     fn async_lifecycle_stop_disconnect_before_tmux_kill_cancels_mutation() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
         crate::async_runtime::process_runtime().block_on(async {

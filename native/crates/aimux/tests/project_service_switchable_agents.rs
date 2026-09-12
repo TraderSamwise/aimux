@@ -527,16 +527,30 @@ fn async_route_switchable_agents_preserves_live_sessions_when_tmux_query_is_unav
         serde_yaml::to_string(&topology).unwrap(),
     )
     .unwrap();
+    let path =
+        "/control/switchable-agents?currentPath=/repo/wt&currentWindowId=%401&labelFormat=raw";
+
+    let empty_inventory_context =
+        ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+            .with_live_window_ids(support::live_window_ids(&[]));
+    let empty_inventory_response = aimux::async_runtime::block_on_named(
+        "test:switchable-agents-empty-inventory",
+        route_switchable_agent_request_async(&empty_inventory_context, "GET", path),
+    )
+    .expect("switchable async route with empty inventory");
+    assert_eq!(empty_inventory_response.status, 200);
+    let empty_inventory_items = empty_inventory_response.body["items"].as_array().unwrap();
+    assert!(
+        empty_inventory_items.is_empty(),
+        "a successful empty tmux inventory should remove dead sessions from switchable controls"
+    );
+
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
         .with_live_window_ids_error("tmux socket busy");
 
     let response = aimux::async_runtime::block_on_named(
         "test:switchable-agents-async",
-        route_switchable_agent_request_async(
-            &context,
-            "GET",
-            "/control/switchable-agents?currentPath=/repo/wt&currentWindowId=%401&labelFormat=raw",
-        ),
+        route_switchable_agent_request_async(&context, "GET", path),
     )
     .expect("switchable async route");
 
