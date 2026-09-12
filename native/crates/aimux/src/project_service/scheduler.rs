@@ -311,6 +311,11 @@ async fn run_task_once(
     let timeout_after = task.timeout();
     let started = Instant::now();
     let blocking_name = scoped_task_name("project-service", "scheduler-task", &name);
+    // Transitional pre-Phase-1 shape: PeriodicTask::run is still sync, so a
+    // timeout around spawn_blocking cannot cancel the OS worker. Report the
+    // overrun, then wait for that worker to finish before rescheduling this
+    // task; otherwise one wedged task could create a herd of overlapping runs.
+    // This blocking seam goes away when the task bodies become async fn.
     let mut join = spawn_blocking_named(blocking_name, move || {
         let outcome = catch_unwind(AssertUnwindSafe(|| task.run(&context)));
         (task, outcome.is_err())
