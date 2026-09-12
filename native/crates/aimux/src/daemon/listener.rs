@@ -9,7 +9,6 @@ use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 use std::future::Future;
 use std::io::{self, Read, Write};
-use std::net::Shutdown;
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -208,9 +207,7 @@ where
                         handle,
                     )
                     .await;
-                    if let Ok(stream) = stream.into_std() {
-                        let _ = stream.shutdown(Shutdown::Both);
-                    }
+                    let _ = stream.shutdown().await;
                     let _ = result;
                 });
             }
