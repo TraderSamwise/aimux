@@ -51,7 +51,7 @@ fn async_cutover_http_and_sse_surface_matches_pre_conversion_fixture() {
     let fixture: CharacterizationFixture =
         serde_json::from_str(&fs::read_to_string(&path).expect("read async cutover fixture"))
             .expect("parse async cutover fixture");
-    assert_eq!(observed, fixture.cases);
+    assert_characterization_cases_match(&observed, &fixture.cases);
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -70,6 +70,45 @@ struct CharacterizationCase {
     catches: String,
     request: String,
     observed: Value,
+}
+
+fn assert_characterization_cases_match(
+    observed: &[CharacterizationCase],
+    expected: &[CharacterizationCase],
+) {
+    if observed.len() != expected.len() {
+        panic!(
+            "async cutover fixture case count mismatch: observed {} cases [{}], expected {} cases [{}]",
+            observed.len(),
+            case_names(observed),
+            expected.len(),
+            case_names(expected)
+        );
+    }
+
+    for (index, (observed_case, expected_case)) in observed.iter().zip(expected).enumerate() {
+        if observed_case != expected_case {
+            panic!(
+                "async cutover fixture mismatch at case #{index}: observed '{}', expected '{}'\nobserved:\n{}\nexpected:\n{}",
+                observed_case.name,
+                expected_case.name,
+                pretty_case(observed_case),
+                pretty_case(expected_case)
+            );
+        }
+    }
+}
+
+fn case_names(cases: &[CharacterizationCase]) -> String {
+    cases
+        .iter()
+        .map(|case| case.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn pretty_case(case: &CharacterizationCase) -> String {
+    serde_json::to_string_pretty(case).expect("serialize characterization case")
 }
 
 #[derive(Clone)]
