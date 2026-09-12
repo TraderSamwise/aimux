@@ -123,10 +123,7 @@ impl PeriodicTask for LoopWatcherTask {
             }
             if !delivered.is_empty() {
                 let mut commit = |send: &LoopSend| {
-                    if delivered.contains(&(send.session_id.clone(), send.text.clone())) {
-                        return true;
-                    }
-                    return false;
+                    delivered.contains(&(send.session_id.clone(), send.text.clone()))
                 };
                 self.watcher.scan(&input, now_ms(), &mut commit);
             }

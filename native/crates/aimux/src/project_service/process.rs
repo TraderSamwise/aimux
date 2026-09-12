@@ -6,6 +6,7 @@ use std::io::{self, Read};
 use std::net::TcpListener as StdTcpListener;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -29,6 +30,7 @@ use crate::plugin_api::NativePluginStatus;
 use crate::plugin_project_service_host::{
     builtin_plugin_tick_tasks, native_plugin_statuses_for_context,
 };
+use crate::project_api_contract::{project_api_views_for_mutation_route, routes};
 use crate::project_service::agent_input_delivery::agent_input_delivery_task;
 use crate::project_service::agent_restore_task::agent_restore_snapshot_task;
 use crate::project_service::builtin_metadata_task::builtin_metadata_task;
@@ -45,7 +47,7 @@ use crate::tmux_expose::{
 
 use super::agent_output::{
     AgentOutputCaptureRuntime, AgentOutputResponseMode, SystemAgentOutputCaptureRuntime,
-    read_agent_output_payload,
+    read_agent_output_payload, read_agent_output_payload_async, route_agent_output_request_async,
 };
 use super::dispatcher::{ProjectServiceDispatchResponse, ProjectServiceStreamKind};
 use super::event_streams::{encode_sse_event, encode_sse_keepalive};
@@ -451,6 +453,23 @@ where
         });
     }
 
+    if async_agent_output_route(&request.method, &request.path) {
+        let method = request.method;
+        let path = request.path;
+        let response = route_async_agent_output_with_disconnect(
+            Arc::clone(&context),
+            method,
+            path,
+            body,
+            reader,
+        )
+        .await?;
+        return Ok(ProjectServiceTransportResponse {
+            response: prepare_dispatch_response(response, cors),
+            lifecycle_progress: None,
+        });
+    }
+
     let method = request.method;
     let path = request.path;
     let response = route_project_service_dispatch_blocking(
@@ -498,6 +517,133 @@ where
     .map_err(|error| {
         DaemonListenerError::InvalidRequest(format!("project service route task failed: {error}"))
     })
+}
+
+fn async_agent_output_route(method: &str, path: &str) -> bool {
+    let pathname = super::dispatcher::project_service_pathname(path);
+    if method.eq_ignore_ascii_case("GET") {
+        return matches!(pathname, routes::agents::OUTPUT | routes::live_pane::OUTPUT);
+    }
+    if !method.eq_ignore_ascii_case("POST") {
+        return false;
+    }
+    matches!(
+        pathname,
+        routes::agents::INPUT
+            | routes::live_pane::INPUT
+            | routes::live_pane::ATTACH
+            | routes::live_pane::RESIZE
+            | routes::agents::INTERRUPT
+            | routes::live_pane::INTERRUPT
+    )
+}
+
+async fn route_async_agent_output_with_disconnect<Reader>(
+    context: Arc<ProjectServiceRequestContext>,
+    method: String,
+    path: String,
+    body: Option<Value>,
+    reader: &mut Reader,
+) -> Result<ProjectServiceDispatchResponse, DaemonListenerError>
+where
+    Reader: AsyncRead + Unpin,
+{
+    route_async_agent_output_with_disconnect_and_route(
+        context,
+        method,
+        path,
+        body,
+        reader,
+        |context, method, path, body, irreversible_input| async move {
+            route_agent_output_request_async(
+                &context,
+                &method,
+                &path,
+                body.as_ref(),
+                Some(&irreversible_input),
+            )
+            .await
+        },
+    )
+    .await
+}
+
+async fn route_async_agent_output_with_disconnect_and_route<Reader, Route, Fut>(
+    context: Arc<ProjectServiceRequestContext>,
+    method: String,
+    path: String,
+    body: Option<Value>,
+    reader: &mut Reader,
+    route: Route,
+) -> Result<ProjectServiceDispatchResponse, DaemonListenerError>
+where
+    Reader: AsyncRead + Unpin,
+    Route: FnOnce(
+        Arc<ProjectServiceRequestContext>,
+        String,
+        String,
+        Option<Value>,
+        Arc<AtomicBool>,
+    ) -> Fut,
+    Fut: std::future::Future<Output = Option<ProjectServiceDispatchResponse>>,
+{
+    let irreversible_input = Arc::new(AtomicBool::new(false));
+    let route_context = Arc::clone(&context);
+    let route = route(
+        route_context,
+        method.clone(),
+        path.clone(),
+        body.clone(),
+        Arc::clone(&irreversible_input),
+    );
+    tokio::pin!(route);
+    tokio::select! {
+        response = &mut route => {
+            let response = response.unwrap_or_else(|| {
+                route_project_service_request(&context, &method, &path, body.as_ref())
+            });
+            publish_async_agent_output_project_update(&context, &method, &path, &response);
+            Ok(response)
+        },
+        disconnect = wait_for_client_disconnect(reader) => {
+            disconnect?;
+            if irreversible_input.load(Ordering::SeqCst) {
+                let response = route.await.unwrap_or_else(|| {
+                    route_project_service_request(&context, &method, &path, body.as_ref())
+                });
+                publish_async_agent_output_project_update(&context, &method, &path, &response);
+                Ok(response)
+            } else {
+                Err(DaemonListenerError::InvalidRequest(format!(
+                    "client disconnected before {} {} completed",
+                    method,
+                    super::dispatcher::project_service_pathname(&path)
+                )))
+            }
+        }
+    }
+}
+
+fn publish_async_agent_output_project_update(
+    context: &ProjectServiceRequestContext,
+    method: &str,
+    path: &str,
+    response: &ProjectServiceDispatchResponse,
+) {
+    if !(200..300).contains(&response.status) {
+        return;
+    }
+    let pathname = super::dispatcher::project_service_pathname(path);
+    if project_api_views_for_mutation_route(method, pathname).is_none() {
+        return;
+    }
+    context.project_events.publish_project_update_for_route(
+        context.project_root(),
+        method,
+        pathname,
+        None,
+        None,
+    );
 }
 
 async fn route_async_lifecycle_with_disconnect<Reader>(
@@ -843,78 +989,39 @@ async fn encode_stream_frame_async(
     context: Option<Arc<ProjectServiceRequestContext>>,
     state: ProjectServiceStreamState,
 ) -> Result<(ProjectServiceStreamState, Vec<u8>), DaemonListenerError> {
-    if stream.kind == ProjectServiceStreamKind::ProjectEvents && stream.session_id.is_none() {
-        let mut state = state;
-        let mut runtime = SystemAgentOutputCaptureRuntime;
-        let frame = encode_project_event_stream_frame(
-            &stream,
-            context.as_deref(),
-            &mut runtime,
-            &mut state.last_project_event_sequence,
-            &mut state.last_output_fingerprint,
-        );
-        let frame = if frame.is_empty() && stream_keepalive_due(&stream, state.last_stream_write) {
-            encode_sse_keepalive()
-        } else {
-            frame
-        };
-        return Ok((state, frame));
-    }
-    let task_name = crate::async_runtime::scoped_task_name(
-        "project-service",
-        "sse-frame",
-        stream_frame_task_subject(&stream).as_str(),
-    );
-    crate::async_runtime::spawn_blocking_named(task_name, move || {
-        let mut state = state;
-        let mut runtime = SystemAgentOutputCaptureRuntime;
-        let frame = match stream.kind {
-            ProjectServiceStreamKind::ProjectEvents => {
-                let frame = encode_project_event_stream_frame(
-                    &stream,
-                    context.as_deref(),
-                    &mut runtime,
-                    &mut state.last_project_event_sequence,
-                    &mut state.last_output_fingerprint,
-                );
-                if frame.is_empty() && stream_keepalive_due(&stream, state.last_stream_write) {
-                    encode_sse_keepalive()
-                } else {
-                    frame
-                }
-            }
-            ProjectServiceStreamKind::AgentOutput => encode_agent_output_stream_frame(
+    let mut state = state;
+    let frame = match stream.kind {
+        ProjectServiceStreamKind::ProjectEvents => {
+            let frame = encode_project_event_stream_frame_async(
                 &stream,
                 context.as_deref(),
-                &mut runtime,
+                &mut state.last_project_event_sequence,
                 &mut state.last_output_fingerprint,
-            ),
-            ProjectServiceStreamKind::AgentInteraction => {
-                if stream_keepalive_due(&stream, state.last_stream_write) {
-                    encode_sse_keepalive()
-                } else {
-                    Vec::new()
-                }
+            )
+            .await;
+            if frame.is_empty() && stream_keepalive_due(&stream, state.last_stream_write) {
+                encode_sse_keepalive()
+            } else {
+                frame
             }
-        };
-        (state, frame)
-    })
-    .await
-    .map_err(|error| {
-        DaemonListenerError::InvalidRequest(format!("project service SSE task failed: {error}"))
-    })
-}
-
-fn stream_frame_task_subject(stream: &super::dispatcher::ProjectServiceStreamPlan) -> String {
-    let kind = match stream.kind {
-        ProjectServiceStreamKind::ProjectEvents => "events",
-        ProjectServiceStreamKind::AgentOutput => "output",
-        ProjectServiceStreamKind::AgentInteraction => "interaction",
+        }
+        ProjectServiceStreamKind::AgentOutput => {
+            encode_agent_output_stream_frame_async(
+                &stream,
+                context.as_deref(),
+                &mut state.last_output_fingerprint,
+            )
+            .await
+        }
+        ProjectServiceStreamKind::AgentInteraction => {
+            if stream_keepalive_due(&stream, state.last_stream_write) {
+                encode_sse_keepalive()
+            } else {
+                Vec::new()
+            }
+        }
     };
-    match stream.session_id.as_deref() {
-        Some(session_id) => format!("{kind} {session_id}"),
-        None => kind.to_owned(),
-    }
+    Ok((state, frame))
 }
 
 fn wait_for_next_stream_tick(
@@ -993,6 +1100,42 @@ fn encode_project_event_stream_frame(
     bytes
 }
 
+async fn encode_project_event_stream_frame_async(
+    stream: &super::dispatcher::ProjectServiceStreamPlan,
+    context: Option<&ProjectServiceRequestContext>,
+    last_sequence: &mut u64,
+    last_output_fingerprint: &mut Option<String>,
+) -> Vec<u8> {
+    let Some(context) = context else {
+        return encode_sse_keepalive();
+    };
+    let mut bytes = Vec::new();
+    let records = context
+        .project_events
+        .events_since(*last_sequence, stream.session_id.as_deref());
+    for record in records {
+        *last_sequence = (*last_sequence).max(record.sequence);
+        let event_name = record
+            .event
+            .get("type")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("project_update");
+        bytes.extend(encode_sse_event(event_name, &record.event));
+    }
+    if let Some(session_id) = stream.session_id.as_deref() {
+        bytes.extend(
+            encode_project_event_output_frame_async(
+                stream,
+                context,
+                session_id,
+                last_output_fingerprint,
+            )
+            .await,
+        );
+    }
+    bytes
+}
+
 fn encode_project_event_output_frame(
     stream: &super::dispatcher::ProjectServiceStreamPlan,
     context: &ProjectServiceRequestContext,
@@ -1005,6 +1148,60 @@ fn encode_project_event_output_frame(
         _ => AgentOutputResponseMode::Full,
     };
     match read_agent_output_payload(context, session_id, stream.start_line, mode, runtime) {
+        Ok(result) => {
+            let fingerprint = agent_output_stream_fingerprint(&result.payload);
+            if last_output_fingerprint.as_deref() == Some(fingerprint.as_str()) {
+                context.output_metrics.record(AgentOutputReadRecord {
+                    source: "events".to_owned(),
+                    session_id: session_id.to_owned(),
+                    changed: Some(false),
+                    coalesced: result.coalesced,
+                    error: false,
+                });
+                return Vec::new();
+            }
+            *last_output_fingerprint = Some(fingerprint);
+            context.output_metrics.record(AgentOutputReadRecord {
+                source: "events".to_owned(),
+                session_id: session_id.to_owned(),
+                changed: Some(true),
+                coalesced: result.coalesced,
+                error: false,
+            });
+            encode_sse_event("agent_output", &result.payload)
+        }
+        Err(response) => {
+            context.output_metrics.record(AgentOutputReadRecord {
+                source: "events".to_owned(),
+                session_id: session_id.to_owned(),
+                changed: None,
+                coalesced: false,
+                error: true,
+            });
+            encode_sse_event("error", &response.body)
+        }
+    }
+}
+
+async fn encode_project_event_output_frame_async(
+    stream: &super::dispatcher::ProjectServiceStreamPlan,
+    context: &ProjectServiceRequestContext,
+    session_id: &str,
+    last_output_fingerprint: &mut Option<String>,
+) -> Vec<u8> {
+    let mode = match stream.mode.as_deref() {
+        Some("chat") => AgentOutputResponseMode::Chat,
+        _ => AgentOutputResponseMode::Full,
+    };
+    match read_agent_output_payload_async(
+        context,
+        session_id,
+        stream.start_line,
+        mode,
+        Duration::from_secs(2),
+    )
+    .await
+    {
         Ok(result) => {
             let fingerprint = agent_output_stream_fingerprint(&result.payload);
             if last_output_fingerprint.as_deref() == Some(fingerprint.as_str()) {
@@ -1057,6 +1254,65 @@ fn encode_agent_output_stream_frame(
         _ => AgentOutputResponseMode::Full,
     };
     match read_agent_output_payload(context, session_id, stream.start_line, mode, runtime) {
+        Ok(result) => {
+            let fingerprint = agent_output_stream_fingerprint(&result.payload);
+            if last_output_fingerprint.as_deref() == Some(fingerprint.as_str()) {
+                context.output_metrics.record(AgentOutputReadRecord {
+                    source: "output-stream".to_owned(),
+                    session_id: session_id.to_owned(),
+                    changed: Some(false),
+                    coalesced: result.coalesced,
+                    error: false,
+                });
+                return encode_sse_keepalive();
+            }
+            *last_output_fingerprint = Some(fingerprint);
+            context.output_metrics.record(AgentOutputReadRecord {
+                source: "output-stream".to_owned(),
+                session_id: session_id.to_owned(),
+                changed: Some(true),
+                coalesced: result.coalesced,
+                error: false,
+            });
+            encode_sse_event("output", &result.payload)
+        }
+        Err(response) => {
+            context.output_metrics.record(AgentOutputReadRecord {
+                source: "output-stream".to_owned(),
+                session_id: session_id.to_owned(),
+                changed: None,
+                coalesced: false,
+                error: true,
+            });
+            encode_sse_event("error", &response.body)
+        }
+    }
+}
+
+async fn encode_agent_output_stream_frame_async(
+    stream: &super::dispatcher::ProjectServiceStreamPlan,
+    context: Option<&ProjectServiceRequestContext>,
+    last_output_fingerprint: &mut Option<String>,
+) -> Vec<u8> {
+    let Some(context) = context else {
+        return encode_sse_keepalive();
+    };
+    let Some(session_id) = stream.session_id.as_deref() else {
+        return encode_sse_keepalive();
+    };
+    let mode = match stream.mode.as_deref() {
+        Some("chat") => AgentOutputResponseMode::Chat,
+        _ => AgentOutputResponseMode::Full,
+    };
+    match read_agent_output_payload_async(
+        context,
+        session_id,
+        stream.start_line,
+        mode,
+        Duration::from_secs(2),
+    )
+    .await
+    {
         Ok(result) => {
             let fingerprint = agent_output_stream_fingerprint(&result.payload);
             if last_output_fingerprint.as_deref() == Some(fingerprint.as_str()) {
@@ -1887,6 +2143,151 @@ mod tests {
                 "{path} should stay on the sync dispatcher in this phase"
             );
         }
+    }
+
+    #[test]
+    fn async_agent_output_transport_covers_live_pane_hot_routes_only() {
+        for path in [routes::agents::OUTPUT, routes::live_pane::OUTPUT] {
+            assert!(
+                async_agent_output_route("GET", path),
+                "{path} should use the cancellable output transport"
+            );
+        }
+        for path in [
+            routes::agents::INPUT,
+            routes::live_pane::INPUT,
+            routes::live_pane::ATTACH,
+            routes::live_pane::RESIZE,
+            routes::agents::INTERRUPT,
+            routes::live_pane::INTERRUPT,
+        ] {
+            assert!(
+                async_agent_output_route("POST", path),
+                "{path} should use the cancellable output transport"
+            );
+        }
+        for (method, path) in [
+            ("GET", routes::HEALTH),
+            ("GET", routes::agents::OUTPUT_STREAM),
+            ("POST", routes::agents::STOP),
+            ("POST", routes::agents::SPAWN),
+            ("POST", routes::threads::SEND),
+        ] {
+            assert!(
+                !async_agent_output_route(method, path),
+                "{method} {path} should stay on its existing route family"
+            );
+        }
+    }
+
+    #[test]
+    fn async_agent_output_disconnect_before_irreversible_write_cancels_route() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        crate::async_runtime::process_runtime().block_on(async {
+            let root = unique_test_root("async-output-disconnect");
+            let project_root = root.join("repo");
+            let state_dir = root.join("state");
+            create_git_checkout(&project_root);
+            let context = Arc::new(ProjectServiceRequestContext::with_project_state_dir(
+                &project_root,
+                &state_dir,
+            ));
+            let (started_tx, started_rx) = mpsc::channel();
+            let (release_tx, release_rx) = oneshot::channel();
+            let (client, mut server) = tokio::io::duplex(4096);
+            let task = crate::async_runtime::spawn_named(
+                "project-service-test:async-output-disconnect",
+                async move {
+                    route_async_agent_output_with_disconnect_and_route(
+                        context,
+                        "GET".to_owned(),
+                        format!("{}?sessionId=codex-live", routes::agents::OUTPUT),
+                        None,
+                        &mut server,
+                        move |_context, _method, _path, _body, _irreversible| async move {
+                            started_tx.send(()).expect("signal output route started");
+                            let _ = release_rx.await;
+                            Some(ProjectServiceDispatchResponse::json(
+                                200,
+                                json!({ "ok": true }),
+                            ))
+                        },
+                    )
+                    .await
+                },
+            );
+            wait_for_signal(&started_rx, "output route started").await;
+            drop(client);
+            let error = tokio::time::timeout(Duration::from_secs(2), task)
+                .await
+                .expect("route cancellation should finish")
+                .expect("route task should join")
+                .expect_err("disconnect before output route completes should cancel route");
+            assert!(
+                error
+                    .to_string()
+                    .contains("client disconnected before GET /agents/output completed"),
+                "unexpected error: {error}"
+            );
+            assert!(
+                release_tx.send(()).is_err(),
+                "output future should have been dropped before release"
+            );
+            let _ = fs::remove_dir_all(root);
+        });
+    }
+
+    #[test]
+    fn async_agent_input_disconnect_after_irreversible_write_waits_for_route() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        crate::async_runtime::process_runtime().block_on(async {
+            let root = unique_test_root("async-input-irreversible");
+            let project_root = root.join("repo");
+            let state_dir = root.join("state");
+            create_git_checkout(&project_root);
+            let context = Arc::new(ProjectServiceRequestContext::with_project_state_dir(
+                &project_root,
+                &state_dir,
+            ));
+            let (started_tx, started_rx) = mpsc::channel();
+            let (release_tx, release_rx) = oneshot::channel();
+            let (client, mut server) = tokio::io::duplex(4096);
+            let task = crate::async_runtime::spawn_named(
+                "project-service-test:async-input-irreversible",
+                async move {
+                    route_async_agent_output_with_disconnect_and_route(
+                        context,
+                        "POST".to_owned(),
+                        routes::agents::INPUT.to_owned(),
+                        Some(json!({ "sessionId": "codex-live", "text": "hello" })),
+                        &mut server,
+                        move |_context, _method, _path, _body, irreversible| async move {
+                            irreversible.store(true, Ordering::SeqCst);
+                            started_tx.send(()).expect("signal input route started");
+                            release_rx.await.expect("release input route");
+                            Some(ProjectServiceDispatchResponse::json(
+                                200,
+                                json!({ "ok": true, "accepted": true }),
+                            ))
+                        },
+                    )
+                    .await
+                },
+            );
+            wait_for_signal(&started_rx, "input route started").await;
+            drop(client);
+            release_tx
+                .send(())
+                .expect("input route should still be live");
+            let response = tokio::time::timeout(Duration::from_secs(2), task)
+                .await
+                .expect("irreversible route should finish")
+                .expect("route task should join")
+                .expect("disconnect after irreversible write should not cancel route");
+            assert_eq!(response.status, 200);
+            assert_eq!(response.body["accepted"], true);
+            let _ = fs::remove_dir_all(root);
+        });
     }
 
     #[test]
