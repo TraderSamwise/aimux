@@ -131,7 +131,7 @@
             "itemIds": ["wt-agent"],
             "items": [{ "id": "wt-agent", "target": { "windowId": "@1" }, "previewSnapshot": { "output": "warm\n" } }]
           },
-          { "scope": "project", "scopeLabel": "all worktrees", "sublabel": "worktree", "itemIds": [], "items": [] },
+          { "error": "expose items request returned ok:false" },
           {
             "scope": "global",
             "scopeLabel": "all projects",
