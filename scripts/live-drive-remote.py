@@ -121,6 +121,60 @@ def check_version(phase8: Any, aimux_bin: Path) -> dict[str, Any]:
     return {"aimuxBin": str(aimux_bin), "version": version}
 
 
+def read_embedded_build_stamp(aimux_bin: Path) -> str:
+    prefix = b"AIMUX_EMBEDDED_BUILD_STAMP="
+    try:
+        data = aimux_bin.read_bytes()
+    except OSError as error:
+        raise LiveDriveFailure(f"could not read installed aimux binary {aimux_bin}: {error}") from error
+    start = data.find(prefix)
+    if start < 0:
+        raise LiveDriveFailure(
+            f"installed aimux binary {aimux_bin} is missing embedded BUILD_STAMP witness"
+        )
+    remainder = data[start + len(prefix):]
+    ends = [
+        index
+        for index in (
+            remainder.find(b"\0"),
+            remainder.find(b"\n"),
+            remainder.find(b"\r"),
+        )
+        if index >= 0
+    ]
+    raw = remainder[: min(ends)] if ends else remainder
+    match = re.match(rb"[0-9A-Za-z_.:+/-]+", raw)
+    stamp = match.group(0).decode(errors="replace") if match else ""
+    if not stamp:
+        raise LiveDriveFailure(
+            f"installed aimux binary {aimux_bin} has an empty embedded BUILD_STAMP witness"
+        )
+    return stamp
+
+
+def verify_build_stamp(aimux_bin: Path, expected_build_stamp: str) -> dict[str, str]:
+    actual_build_stamp = read_embedded_build_stamp(aimux_bin)
+    if actual_build_stamp != expected_build_stamp:
+        raise LiveDriveFailure(
+            "live-drive build stamp mismatch before checks; refusing to drive unknown binary\n"
+            + json.dumps(
+                {
+                    "aimuxBin": str(aimux_bin),
+                    "expectedBuildStamp": expected_build_stamp,
+                    "installedBinaryBuildStamp": actual_build_stamp,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+    evidence = {
+        "aimuxBin": str(aimux_bin),
+        "verifiedBuildStamp": actual_build_stamp,
+    }
+    print("LIVE_DRIVE_BUILD_STAMP " + json.dumps(evidence, sort_keys=True), flush=True)
+    return evidence
+
+
 def check_lifecycle(phase8: Any, aimux_bin: Path) -> dict[str, Any]:
     tmux = phase8.find_tmux()
     with phase8.Scope("live-drive-lifecycle", aimux_bin) as scope:
@@ -670,14 +724,21 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Remote side of the Aimux live-drive gate")
     parser.add_argument("--aimux-bin", required=True)
     parser.add_argument("--phase8-helper", required=True)
+    parser.add_argument("--expected-build-stamp", required=True)
     parser.add_argument("--dashboard-deadline-seconds", type=float, default=6.0)
     parser.add_argument("--hosted-attempts", type=int, default=10)
     args = parser.parse_args()
 
     aimux_bin = Path(args.aimux_bin).expanduser()
     phase8 = load_phase8(Path(args.phase8_helper))
+    try:
+        stamp_evidence = verify_build_stamp(aimux_bin, args.expected_build_stamp)
+    except Exception as error:
+        print("[FAIL] build-stamp " + json.dumps({"status": "fail", "error": str(error)}, sort_keys=True), flush=True)
+        print("LIVE_DRIVE_SUMMARY " + json.dumps({"failures": [{"name": "build-stamp", "status": "fail", "error": str(error)}], "results": []}, sort_keys=True), flush=True)
+        return 1
     checks = [
-        ("versioned-binary", lambda: check_version(phase8, aimux_bin)),
+        ("versioned-binary", lambda: {**check_version(phase8, aimux_bin), **stamp_evidence}),
         ("lifecycle", lambda: check_lifecycle(phase8, aimux_bin)),
         ("dashboard-repaint", lambda: check_dashboard_repaint(phase8, aimux_bin, args.dashboard_deadline_seconds)),
         ("sse-multiclient", lambda: check_sse(phase8, aimux_bin)),
@@ -713,6 +774,11 @@ def parse_args() -> argparse.Namespace:
         help="Installed version label. Defaults to aimux/VERSION inside the asset.",
     )
     parser.add_argument(
+        "--expected-build-stamp",
+        default=None,
+        help="Expected BUILD_STAMP. Defaults to aimux/BUILD_STAMP inside the asset.",
+    )
+    parser.add_argument(
         "--remote-dir",
         default=None,
         help="Remote temp directory. Defaults to /tmp/aimux-live-drive-<timestamp>.",
@@ -736,19 +802,30 @@ def newest_asset() -> Path:
     return candidates[0]
 
 
-def version_from_asset(asset: Path) -> str:
+def text_from_asset(asset: Path, member_name: str) -> str:
     with tarfile.open(asset, "r:gz") as archive:
         try:
-            member = archive.getmember("aimux/VERSION")
+            member = archive.getmember(member_name)
         except KeyError as error:
-            raise SystemExit(f"{asset} does not contain aimux/VERSION") from error
+            raise SystemExit(f"{asset} does not contain {member_name}") from error
         file_obj = archive.extractfile(member)
         if file_obj is None:
-            raise SystemExit(f"could not read aimux/VERSION from {asset}")
-        version = file_obj.read().decode().strip()
+            raise SystemExit(f"could not read {member_name} from {asset}")
+        value = file_obj.read().decode().strip()
+    if not value:
+        raise SystemExit(f"{member_name} in {asset} was empty")
+    return value
+
+
+def version_from_asset(asset: Path) -> str:
+    version = text_from_asset(asset, "aimux/VERSION")
     if not version:
         raise SystemExit(f"aimux/VERSION in {asset} was empty")
     return version
+
+
+def build_stamp_from_asset(asset: Path) -> str:
+    return text_from_asset(asset, "aimux/BUILD_STAMP")
 
 
 def ssh_base(args: argparse.Namespace) -> list[str]:
@@ -799,13 +876,29 @@ def write_remote_driver() -> Path:
 
 def main() -> int:
     args = parse_args()
-    asset = args.asset or newest_asset()
-    asset = asset.resolve()
-    if not asset.exists() and not args.skip_install:
+    asset = args.asset.resolve() if args.asset else None
+    if asset is None:
+        try:
+            asset = newest_asset().resolve()
+        except SystemExit:
+            if not (args.skip_install and args.version and args.expected_build_stamp):
+                raise
+    if asset is not None and not asset.exists() and not args.skip_install:
         raise SystemExit(f"asset does not exist: {asset}")
-    version = args.version or version_from_asset(asset)
+    if asset is not None and not asset.exists() and args.skip_install:
+        asset = None
+    version = args.version or (version_from_asset(asset) if asset is not None else None)
+    if not version:
+        raise SystemExit("--version is required when --skip-install is used without an asset")
+    expected_build_stamp = args.expected_build_stamp or (
+        build_stamp_from_asset(asset) if asset is not None else None
+    )
+    if not expected_build_stamp:
+        raise SystemExit(
+            "--expected-build-stamp is required when --skip-install is used without an asset"
+        )
     remote_dir = args.remote_dir or f"/tmp/aimux-live-drive-{int(time.time())}"
-    remote_asset = f"{remote_dir}/{asset.name}"
+    remote_asset = f"{remote_dir}/{asset.name}" if asset is not None else None
     remote_install = f"{remote_dir}/install.sh"
     remote_phase8 = f"{remote_dir}/phase8-live-residuals.py"
     remote_driver_path = f"{remote_dir}/live-drive-remote-side.py"
@@ -816,6 +909,7 @@ def main() -> int:
         print(f"remote host: {args.host}", flush=True)
         print(f"asset: {asset}", flush=True)
         print(f"version: {version}", flush=True)
+        print(f"expected build stamp: {expected_build_stamp}", flush=True)
         print(f"remote versioned binary: {remote_aimux}", flush=True)
         run_with_retries(
             "remote mkdir",
@@ -842,6 +936,8 @@ def main() -> int:
             timeout=args.connect_timeout + 10,
         )
         if not args.skip_install:
+            assert asset is not None
+            assert remote_asset is not None
             run_with_retries(
                 "copy release asset",
                 [*scp_base(args), str(asset), f"{args.host}:{shlex.quote(remote_asset)}"],
@@ -868,6 +964,8 @@ def main() -> int:
             shlex.quote(remote_aimux),
             "--phase8-helper",
             shlex.quote(remote_phase8),
+            "--expected-build-stamp",
+            shlex.quote(expected_build_stamp),
             "--dashboard-deadline-seconds",
             str(args.dashboard_deadline_seconds),
             "--hosted-attempts",
