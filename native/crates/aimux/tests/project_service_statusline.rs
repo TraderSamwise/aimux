@@ -3,6 +3,7 @@ use aimux::project_api_contract::routes;
 use aimux::project_service::router::route_project_service_request;
 use aimux::project_service::statusline::{
     StatuslineRefreshInput, refresh_project_statusline_with_tmux_refresh,
+    route_statusline_refresh_request_async,
 };
 use aimux::runtime_topology::{runtime_topology_path, write_runtime_topology};
 use serde_json::{Value, json};
@@ -153,6 +154,52 @@ fn statusline_refresh_requests_tmux_refresh_after_writing_artifacts() {
     .expect("refresh statusline");
 
     assert_eq!(calls, vec![vec!["refresh-client", "-S"]]);
+    cleanup(project);
+}
+
+#[test]
+fn async_statusline_refresh_reports_tmux_refresh_failure_after_writing_artifacts() {
+    let project = temp_project("async-refresh-client");
+    let state_dir = project.join("state");
+    write_runtime_topology(
+        runtime_topology_path(&state_dir),
+        &topology_fixture(&project),
+    )
+    .expect("topology");
+    let isolation = support::TestIsolation::new("statusline-async-refresh-client");
+    let context = isolation.project_context(&project, &state_dir);
+
+    let response = aimux::async_runtime::block_on_named(
+        "test:statusline-refresh-async",
+        route_statusline_refresh_request_async(
+            &context,
+            "POST",
+            routes::STATUSLINE_REFRESH,
+            Some(&json!({ "force": false })),
+        ),
+    )
+    .expect("statusline async route");
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["ok"], true);
+    assert!(
+        response.body["tmuxRefresh"]["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("tmux refresh-client")),
+        "tmux refresh failure must be reported, not swallowed: {}",
+        response.body
+    );
+    assert!(
+        state_dir.join("statusline.json").exists(),
+        "statusline artifact writes still succeed when tmux refresh notification fails"
+    );
+    assert!(
+        state_dir
+            .join("tmux-statusline")
+            .join("top-dashboard.txt")
+            .exists(),
+        "precomputed tmux files are the hard success condition"
+    );
     cleanup(project);
 }
 

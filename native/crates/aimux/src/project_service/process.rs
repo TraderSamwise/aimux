@@ -49,8 +49,14 @@ use super::agent_output::{
     AgentOutputCaptureRuntime, AgentOutputResponseMode, SystemAgentOutputCaptureRuntime,
     read_agent_output_payload, read_agent_output_payload_async, route_agent_output_request_async,
 };
+use super::agents::route_agent_read_request_async;
 use super::attachments::{is_attachment_route, route_attachment_request_async};
-use super::dispatcher::{ProjectServiceDispatchResponse, ProjectServiceStreamKind};
+use super::controls::route_control_request_async;
+use super::desktop_state::route_desktop_state_request_async;
+use super::dispatcher::{
+    ProjectServiceDispatchResponse, ProjectServiceStreamKind,
+    route_unimplemented_project_service_request,
+};
 use super::event_streams::{encode_sse_event, encode_sse_keepalive};
 use super::http::{
     MAX_BODY_BYTES, PreparedProjectServiceResponse, ProjectServiceBodyError,
@@ -69,6 +75,8 @@ use super::server::{
     ProjectServiceHttpRequest, handle_project_service_http_request, method_reads_json_body,
     prepare_dispatch_response,
 };
+use super::statusline::route_statusline_refresh_request_async;
+use super::switchable_agents::route_switchable_agent_request_async;
 
 #[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -488,6 +496,19 @@ where
         });
     }
 
+    if async_read_control_route(&request.method, &request.path) {
+        let method = request.method;
+        let path = request.path;
+        let response =
+            route_async_read_control(Arc::clone(&context), method.clone(), path.clone(), body)
+                .await?;
+        publish_async_route_project_update(&context, &method, &path, &response);
+        return Ok(ProjectServiceTransportResponse {
+            response: prepare_dispatch_response(response, cors),
+            lifecycle_progress: None,
+        });
+    }
+
     let method = request.method;
     let path = request.path;
     let response = route_project_service_dispatch_blocking(
@@ -556,6 +577,68 @@ fn async_agent_output_route(method: &str, path: &str) -> bool {
     )
 }
 
+fn async_read_control_route(method: &str, path: &str) -> bool {
+    let pathname = super::dispatcher::project_service_pathname(path);
+    if method.eq_ignore_ascii_case("GET") {
+        return matches!(
+            pathname,
+            routes::agents::LIST
+                | routes::agents::TEAMMATES
+                | routes::DESKTOP_STATE
+                | routes::controls::SWITCHABLE_AGENTS
+                | routes::controls::OPEN_DASHBOARD
+                | routes::controls::OPEN_NOTIFICATION_TARGET
+                | routes::controls::FOCUS_WINDOW
+                | routes::controls::ACTIVE_WINDOW
+                | routes::controls::SWITCH_NEXT
+                | routes::controls::SWITCH_PREV
+                | routes::controls::SWITCH_ATTENTION
+        );
+    }
+    if method.eq_ignore_ascii_case("POST") {
+        return matches!(
+            pathname,
+            routes::controls::OPEN_DASHBOARD
+                | routes::controls::OPEN_NOTIFICATION_TARGET
+                | routes::controls::FOCUS_WINDOW
+                | routes::controls::ACTIVE_WINDOW
+                | routes::controls::SWITCH_NEXT
+                | routes::controls::SWITCH_PREV
+                | routes::controls::SWITCH_ATTENTION
+                | routes::STATUSLINE_REFRESH
+        );
+    }
+    false
+}
+
+async fn route_async_read_control(
+    context: Arc<ProjectServiceRequestContext>,
+    method: String,
+    path: String,
+    body: Option<Value>,
+) -> Result<ProjectServiceDispatchResponse, DaemonListenerError> {
+    if let Some(response) = route_agent_read_request_async(&context, &method, &path).await {
+        return Ok(response);
+    }
+    if let Some(response) = route_desktop_state_request_async(&context, &method, &path).await {
+        return Ok(response);
+    }
+    if let Some(response) = route_switchable_agent_request_async(&context, &method, &path).await {
+        return Ok(response);
+    }
+    if let Some(response) =
+        route_control_request_async(&context, &method, &path, body.as_ref()).await
+    {
+        return Ok(response);
+    }
+    if let Some(response) =
+        route_statusline_refresh_request_async(&context, &method, &path, body.as_ref()).await
+    {
+        return Ok(response);
+    }
+    Ok(route_unimplemented_project_service_request(&method, &path))
+}
+
 async fn route_async_agent_output_with_disconnect<Reader>(
     context: Arc<ProjectServiceRequestContext>,
     method: String,
@@ -620,7 +703,7 @@ where
             let response = response.unwrap_or_else(|| {
                 route_project_service_request(&context, &method, &path, body.as_ref())
             });
-            publish_async_agent_output_project_update(&context, &method, &path, &response);
+            publish_async_route_project_update(&context, &method, &path, &response);
             Ok(response)
         },
         disconnect = wait_for_client_disconnect(reader) => {
@@ -629,7 +712,7 @@ where
                 let response = route.await.unwrap_or_else(|| {
                     route_project_service_request(&context, &method, &path, body.as_ref())
                 });
-                publish_async_agent_output_project_update(&context, &method, &path, &response);
+                publish_async_route_project_update(&context, &method, &path, &response);
                 Ok(response)
             } else {
                 Err(DaemonListenerError::InvalidRequest(format!(
@@ -642,7 +725,7 @@ where
     }
 }
 
-fn publish_async_agent_output_project_update(
+fn publish_async_route_project_update(
     context: &ProjectServiceRequestContext,
     method: &str,
     path: &str,
@@ -1781,6 +1864,53 @@ mod tests {
         .expect("write topology");
     }
 
+    #[test]
+    fn async_read_control_routes_bypass_blocking_dispatcher() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        crate::async_runtime::process_runtime().block_on(async {
+            let root = unique_test_root("async-read-control");
+            let project_root = root.join("repo");
+            let state_dir = root.join("state");
+            create_git_checkout(&project_root);
+            fs::create_dir_all(&state_dir).expect("create state dir");
+            write_running_agent_topology(&state_dir, &project_root);
+            let context = Arc::new(
+                ProjectServiceRequestContext::with_project_state_dir(&project_root, &state_dir)
+                    .with_live_window_ids_error("tmux socket busy"),
+            );
+            let mut reader = tokio::io::empty();
+            let request = ProjectServiceHttpRequest {
+                method: "GET".to_owned(),
+                path: routes::agents::LIST.to_owned(),
+                headers: Default::default(),
+                body_chunks: Vec::new(),
+            };
+
+            let response =
+                handle_project_service_http_request_transport_async(request, context, &mut reader)
+                    .await
+                    .expect("async read route returns");
+            assert_eq!(response.response.status, 200);
+            let body: Value =
+                serde_json::from_slice(&response.response.body).expect("JSON response body");
+            assert_eq!(body.get("ok"), Some(&Value::Bool(true)));
+            assert_eq!(
+                body.pointer("/tmuxLiveWindowQuery/ok"),
+                Some(&Value::Bool(false))
+            );
+            assert_eq!(
+                body.pointer("/tmuxLiveWindowQuery/error"),
+                Some(&Value::String("tmux socket busy".to_owned()))
+            );
+            let sessions = body
+                .get("agents")
+                .and_then(Value::as_array)
+                .expect("agents array");
+            assert_eq!(sessions.len(), 1);
+            let _ = fs::remove_dir_all(root);
+        });
+    }
+
     struct PendingKillLifecycleRuntime {
         killed: Arc<Mutex<Vec<String>>>,
         kill_started: mpsc::Sender<()>,
@@ -2616,12 +2746,7 @@ fn handle_expose_socket_stream(
         fallback_project_state_dir,
     );
     let mut input = PrefixedRead::new(parsed.rest, input);
-    let context = ProjectServiceRequestContext::with_project_state_dir(
-        fallback_project_root,
-        fallback_project_state_dir,
-    );
     let mut client = ProjectServiceExposeHttpClient {
-        context,
         fallback: SystemExposeHttpClient,
     };
     let mut capture = crate::tmux_expose::SystemExposeTmuxCapture::default();
@@ -2640,7 +2765,6 @@ fn handle_expose_socket_stream(
 
 #[cfg(unix)]
 struct ProjectServiceExposeHttpClient {
-    context: ProjectServiceRequestContext,
     fallback: SystemExposeHttpClient,
 }
 
@@ -2654,34 +2778,13 @@ impl ExposeHttpClient for ProjectServiceExposeHttpClient {
         let Some(path) = local_project_service_request_path(url) else {
             return self.fallback.request_json(url, request);
         };
-        let response = route_project_service_request(
-            &self.context,
-            request.method.as_str(),
-            &path,
-            request.body.as_ref(),
-        );
-        if response.status >= 400 {
-            return Err(response
-                .body
-                .get("error")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("project service expose request failed")
-                .to_owned());
-        }
-        Ok(response.body)
+        let _ = path;
+        self.fallback.request_json(url, request)
     }
 }
 
 #[cfg(unix)]
-fn local_project_service_request_path(url: &str) -> Option<String> {
-    let after_scheme = url.split_once("://")?.1;
-    let slash = after_scheme.find('/')?;
-    let path = &after_scheme[slash..];
-    if path.starts_with(crate::project_api_contract::routes::controls::SWITCHABLE_AGENTS)
-        || path.starts_with(crate::project_api_contract::routes::controls::FOCUS_WINDOW)
-    {
-        return Some(path.to_owned());
-    }
+fn local_project_service_request_path(_url: &str) -> Option<String> {
     None
 }
 

@@ -19,7 +19,7 @@ use crate::tmux::TmuxTarget;
 use super::agent_output::{AgentOutputCaptureRuntime, SystemAgentOutputCaptureRuntime};
 use super::agents::{
     LiveWindowIdsProjection, topology_desktop_session_list,
-    topology_desktop_session_list_for_context,
+    topology_desktop_session_list_for_context, topology_desktop_session_list_for_context_async,
     topology_desktop_session_list_with_live_window_projection,
 };
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
@@ -30,6 +30,7 @@ use super::expose_ordering::{
 use super::http::{query_params, trimmed_query};
 use super::preview_snapshots::{
     DEFAULT_PREVIEW_CAPTURE_LINES, DEFAULT_PREVIEW_MAX_CHARS, capture_preview_snapshot_with_tap,
+    capture_preview_snapshot_with_tap_async,
 };
 use super::router::ProjectServiceRequestContext;
 use super::usage::{load_last_used_state, parse_recency_timestamp};
@@ -235,6 +236,137 @@ pub fn route_switchable_agent_request_with_runtime(
     ))
 }
 
+pub async fn route_switchable_agent_request_async(
+    context: &ProjectServiceRequestContext,
+    method: &str,
+    path: &str,
+) -> Option<ProjectServiceDispatchResponse> {
+    if !method.eq_ignore_ascii_case("GET")
+        || project_service_pathname(path) != routes::controls::SWITCHABLE_AGENTS
+    {
+        return None;
+    }
+    let project_state_dir = context.project_state_dir();
+    let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
+        Ok(topology) => topology,
+        Err(error) => {
+            return Some(ProjectServiceDispatchResponse::json(
+                500,
+                json!({ "ok": false, "error": error }),
+            ));
+        }
+    };
+    let params = query_params(path);
+    let switch_context = SwitchableContext {
+        project_root: context.project_root().to_string_lossy().into_owned(),
+        current_path: trimmed_query(&params, "currentPath"),
+        current_window: trimmed_query(&params, "currentWindow"),
+        current_window_id: trimmed_query(&params, "currentWindowId"),
+        current_client_session: trimmed_query(&params, "currentClientSession"),
+    };
+    let options = SwitchableListOptions {
+        scope: if params.get("scope").is_some_and(|value| value == "all") {
+            AgentListScope::All
+        } else {
+            AgentListScope::Worktree
+        },
+        include_overseer: params
+            .get("includeOverseer")
+            .is_some_and(|value| value == "1"),
+        raw_labels: params
+            .get("labelFormat")
+            .is_some_and(|value| value == "raw"),
+        display_order_ids: dashboard_display_order_ids(context.desktop_state.as_ref()),
+    };
+    let expose = params.get("expose").is_some_and(|value| value == "1");
+    let include_preview = matches!(
+        params.get("includePreview").map(String::as_str),
+        Some("1" | "true")
+    );
+    let include_chat_preview = params
+        .get("includeChatPreview")
+        .is_some_and(|value| value == "1");
+    if include_preview || include_chat_preview {
+        context.visual_clients.touch_route_lease(
+            &params,
+            VisualClientLeaseRoute {
+                surface: if expose {
+                    "expose"
+                } else {
+                    "switchable-agents"
+                },
+                requested_preview: include_preview,
+                requested_chat_preview: include_chat_preview,
+                default_kind: if expose { Some("expose") } else { None },
+                remote_address: context.remote_address.as_deref(),
+            },
+            context.project_root(),
+            &project_state_dir,
+        );
+    }
+    let metadata = load_metadata_state(&project_state_dir);
+    let projection =
+        topology_switchable_entries_for_context_async(context, &topology, &metadata.sessions).await;
+    let last_used = load_last_used_state(&project_state_dir);
+    let mut items = list_switchable_agent_items(
+        &projection.entries,
+        &metadata.sessions,
+        &switch_context,
+        &options,
+        &last_used,
+    );
+    let sublabel = if expose && options.scope == AgentListScope::All {
+        ExposeSublabel::Worktree
+    } else {
+        ExposeSublabel::None
+    };
+    let expose_tones = if expose {
+        let expose_options = ExposeOrderingOptions {
+            worktree_order_by_project_root: BTreeMap::from([(
+                clean_path_string(&switch_context.project_root),
+                dashboard_worktree_order_paths(&switch_context.project_root, &topology),
+            )]),
+            sort_mode_recent_output: params
+                .get("sort")
+                .is_some_and(|value| value == "recent-output"),
+        };
+        items = order_expose_items(
+            &items,
+            &switch_context.project_root,
+            sublabel,
+            &expose_options,
+        );
+        Some(assign_worktree_tones(&items, &switch_context.project_root))
+    } else {
+        None
+    };
+    let route_project_root = switch_context.project_root.clone();
+    let mut serialized_items = Vec::new();
+    for item in items {
+        let mut serialized = serialize_route_item(
+            &item,
+            options.raw_labels,
+            sublabel,
+            &route_project_root,
+            expose_tones.as_ref(),
+        );
+        if include_preview {
+            attach_expose_preview_snapshot_async(context, &mut serialized).await;
+        }
+        serialized_items.push(serialized);
+    }
+    let mut body = json!({ "ok": true, "items": serialized_items });
+    if let Some(error) = projection.live_window_query_error
+        && let Value::Object(map) = &mut body
+    {
+        map.insert(
+            "tmuxLiveWindowQuery".into(),
+            json!({ "ok": false, "error": error }),
+        );
+    }
+    Some(ProjectServiceDispatchResponse::json(200, body))
+}
+
 pub fn topology_switchable_entries_for_context(
     context: &ProjectServiceRequestContext,
     topology: &Value,
@@ -244,6 +376,34 @@ pub fn topology_switchable_entries_for_context(
     let sessions =
         topology_desktop_session_list_for_context(context, topology, metadata_sessions, &tools);
     topology_switchable_entries_from_sessions(sessions, topology, metadata_sessions)
+}
+
+pub struct SwitchableEntriesProjection {
+    pub entries: Vec<ManagedWindowEntry>,
+    pub live_window_query_error: Option<String>,
+}
+
+pub async fn topology_switchable_entries_for_context_async(
+    context: &ProjectServiceRequestContext,
+    topology: &Value,
+    metadata_sessions: &BTreeMap<String, Value>,
+) -> SwitchableEntriesProjection {
+    let tools = default_tools_config();
+    let projection = topology_desktop_session_list_for_context_async(
+        context,
+        topology,
+        metadata_sessions,
+        &tools,
+    )
+    .await;
+    SwitchableEntriesProjection {
+        entries: topology_switchable_entries_from_sessions(
+            projection.sessions,
+            topology,
+            metadata_sessions,
+        ),
+        live_window_query_error: projection.live_window_query_error,
+    }
 }
 
 pub fn topology_switchable_entries_with_live_window_normalization(
@@ -740,6 +900,44 @@ fn attach_expose_preview_snapshot(
         DEFAULT_PREVIEW_CAPTURE_LINES,
         DEFAULT_PREVIEW_MAX_CHARS,
     ) else {
+        return;
+    };
+    let Some(map) = item.as_object_mut() else {
+        return;
+    };
+    map.insert("previewSnapshot".into(), preview);
+}
+
+async fn attach_expose_preview_snapshot_async(
+    context: &ProjectServiceRequestContext,
+    item: &mut Value,
+) {
+    let Some(window_id) = item
+        .get("target")
+        .and_then(|target| target.get("windowId"))
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+    else {
+        return;
+    };
+    let target = item.get("target").and_then(tmux_target_from_value);
+    let tap_snapshot = target.and_then(|target| {
+        context.osc_output_tap.track_and_read_snapshot(
+            string_field(item, "id").unwrap_or_default(),
+            target,
+            DEFAULT_PREVIEW_MAX_CHARS,
+        )
+    });
+    let Some(preview) = capture_preview_snapshot_with_tap_async(
+        context,
+        &window_id,
+        tap_snapshot.as_ref(),
+        DEFAULT_PREVIEW_CAPTURE_LINES,
+        DEFAULT_PREVIEW_MAX_CHARS,
+    )
+    .await
+    .ok()
+    .flatten() else {
         return;
     };
     let Some(map) = item.as_object_mut() else {
