@@ -135,6 +135,7 @@ impl AsyncCommand {
         name: impl Into<String>,
         timeout: Duration,
     ) -> Result<Output, AsyncCommandError> {
+        // aimux-async-seam: transitional - sync subprocess wrapper remains until Command callers convert
         block_on_named(name, run_output(self, timeout))
     }
 
@@ -159,6 +160,7 @@ impl AsyncCommand {
         name: impl Into<String>,
         timeout: Duration,
     ) -> Result<ExitStatus, AsyncCommandError> {
+        // aimux-async-seam: transitional - sync subprocess wrapper remains until Command callers convert
         block_on_named(name, run_status(self, timeout))
     }
 
@@ -170,6 +172,7 @@ impl AsyncCommand {
     }
 
     pub fn spawn_detached(&mut self, name: impl Into<String>) -> Result<u32, AsyncCommandError> {
+        // aimux-async-seam: transitional - sync subprocess wrapper remains until Command callers convert
         block_on_named(name, run_spawn_detached(self))
     }
 
@@ -355,6 +358,7 @@ mod tests {
             .expect("blocking route should finish")
         });
         let output = route_runtime
+            // aimux-async-seam: test - unit test awaits spawned runtime handle
             .block_on(handle)
             .expect("route worker should not panic");
         assert!(output.status.success());
@@ -373,6 +377,7 @@ mod tests {
             },
         );
         let output = crate::async_runtime::process_runtime()
+            // aimux-async-seam: test - unit test awaits spawned runtime handle
             .block_on(handle)
             .expect("blocking route should not panic");
         assert!(output.status.success());

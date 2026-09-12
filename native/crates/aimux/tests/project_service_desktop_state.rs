@@ -345,6 +345,7 @@ fn async_route_desktop_state_preserves_live_sessions_and_reports_tmux_liveness_q
         .project_context(&project, &state_dir)
         .with_live_window_ids_error("tmux socket busy");
 
+    // aimux-async-seam: test - desktop-state route test drives async handler
     let response = aimux::async_runtime::block_on_named(
         "test:desktop-state-async",
         route_desktop_state_request_async(&context, "GET", routes::DESKTOP_STATE),

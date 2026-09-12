@@ -415,6 +415,7 @@ fn route_teammates_reads_runtime_topology() {
 #[test]
 fn async_route_teammates_preserves_live_sessions_when_tmux_query_is_unavailable() {
     aimux::async_runtime::init_process_runtime().expect("runtime initialized");
+    // aimux-async-seam: test - agent read route test drives async handler
     aimux::async_runtime::block_on_named(
         "test:async-route-teammates-preserves-live-sessions",
         async {

@@ -229,6 +229,7 @@ impl Harness {
         let handle = runner.handle();
         let slept = &mut self.slept;
         aimux::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-seam: test - relay runner test drives async subscription polling
         aimux::async_runtime::block_on_named("test:relay-runner", async {
             runner
                 .run_with_sleep(&mut self.connector, &mut |delay| {

@@ -58,6 +58,7 @@ fn async_open_dashboard_keeps_focus_false_as_success_without_tmux() {
     let isolation = support::TestIsolation::new("control-async-dashboard-no-focus");
     let context = isolation.project_context(&project, &state_dir);
 
+    // aimux-async-seam: test - control route test drives async handler
     let response = aimux::async_runtime::block_on_named(
         "test:control-open-dashboard-async",
         route_control_request_async(
@@ -161,6 +162,7 @@ fn async_focus_window_reports_tmux_focus_failure() {
     let isolation = support::TestIsolation::new("control-async-focus-failure");
     let context = isolation.project_context(&project, &state_dir);
 
+    // aimux-async-seam: test - control route test drives async handler
     let response = aimux::async_runtime::block_on_named(
         "test:control-focus-window-async",
         route_control_request_async(

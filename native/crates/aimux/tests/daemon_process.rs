@@ -1557,9 +1557,11 @@ fn async_hosted_operator_stream_stops_after_principal_revocation() {
     };
     upstream.stop();
     process_runtime()
+        // aimux-async-seam: test - hosted stream test awaits paired async exchange
         .block_on(hosted)
         .expect("hosted async task");
     process_runtime()
+        // aimux-async-seam: test - hosted stream test awaits paired async exchange
         .block_on(client)
         .expect("client async task");
 

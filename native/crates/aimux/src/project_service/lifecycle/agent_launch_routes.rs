@@ -1197,6 +1197,7 @@ mod tests {
                 .expect("spawn lifecycle progress");
         let mut runtime = FakeAsyncLifecycleRuntime;
 
+        // aimux-async-seam: transitional - temporary spawn route seam until lifecycle conversion completes
         let response = crate::async_runtime::process_runtime().block_on(route_agent_spawn_async(
             &context,
             &body,
