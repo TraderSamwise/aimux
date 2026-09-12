@@ -3,7 +3,8 @@ use crate::daemon::http::{DaemonResponseBody, PreparedDaemonResponse, prepare_da
 use crate::daemon::json::ProjectEventStreamTarget;
 use crate::daemon::listener::{
     DaemonRequestBodyLimit, DaemonRequestHead, DaemonRequestMetadata,
-    handle_daemon_stream_with_metadata_and_interceptor_and_body_limit, prepared_response_bytes,
+    handle_daemon_stream_with_metadata_and_interceptor_and_body_limit_blocking,
+    prepared_response_bytes,
 };
 use crate::daemon::router::{DaemonRouteRuntime, route_daemon_request};
 use crate::daemon::routing::DaemonRouteUrl;
@@ -477,7 +478,7 @@ where
     Runtime: DaemonRouteRuntime,
     Stream: std::io::Read + Write,
 {
-    handle_daemon_stream_with_metadata_and_interceptor_and_body_limit(
+    handle_daemon_stream_with_metadata_and_interceptor_and_body_limit_blocking(
         stream,
         metadata,
         &mut |head| hosted_body_limit_for_head(&handle_state.config, head),
