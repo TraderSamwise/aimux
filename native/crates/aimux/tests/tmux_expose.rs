@@ -30,7 +30,7 @@ const EXPOSE_NODE_FRAME: &str =
 
 #[derive(Debug, Default)]
 struct FakeHttp {
-    responses: VecDeque<Value>,
+    responses: VecDeque<Result<Value, String>>,
     requests: Vec<(String, ExposeHttpRequest)>,
 }
 
@@ -135,6 +135,13 @@ impl ExposeTmuxCapture for FakeCapture {
 impl FakeHttp {
     fn with_responses(values: impl IntoIterator<Item = Value>) -> Self {
         Self {
+            responses: values.into_iter().map(Ok).collect(),
+            requests: Vec::new(),
+        }
+    }
+
+    fn with_results(values: impl IntoIterator<Item = Result<Value, String>>) -> Self {
+        Self {
             responses: values.into_iter().collect(),
             requests: Vec::new(),
         }
@@ -155,10 +162,9 @@ fn run_tmux_expose_with_stable_size(
 impl ExposeHttpClient for FakeHttp {
     fn request_json(&mut self, url: &str, request: ExposeHttpRequest) -> Result<Value, String> {
         self.requests.push((url.to_owned(), request));
-        Ok(self
-            .responses
+        self.responses
             .pop_front()
-            .unwrap_or_else(|| json!({ "ok": true, "items": [] })))
+            .unwrap_or_else(|| Ok(json!({ "ok": true, "items": [] })))
     }
 }
 
@@ -258,17 +264,18 @@ fn initial_scope_uses_project_control_identity_from_metadata() {
 }
 
 #[test]
-fn scope_items_build_local_and_global_requests_with_empty_failure_fallback() {
+fn scope_items_build_local_and_global_requests_without_collapsing_failures_to_empty() {
     let state_dir = temp_dir("scope-items");
     fs::write(
         state_dir.join("metadata-api.txt"),
         "http://127.0.0.1:45000/\n",
     )
     .expect("endpoint");
-    let mut fake = FakeHttp::with_responses([
-        json!({ "ok": true, "items": [{ "id": "local", "target": { "windowId": "@1" } }] }),
-        json!({ "ok": false, "items": [{ "id": "ignored" }] }),
-        json!({ "ok": true, "items": [{ "id": "global", "target": { "windowId": "@9" } }] }),
+    let mut fake = FakeHttp::with_results([
+        Ok(json!({ "ok": true, "items": [{ "id": "local", "target": { "windowId": "@1" } }] })),
+        Err("empty reply from server".into()),
+        Ok(json!({ "ok": true, "items": [] })),
+        Ok(json!({ "ok": true, "items": [{ "id": "global", "target": { "windowId": "@9" } }] })),
     ]);
     let deps = LoadExposeScopeDeps {
         daemon_endpoint: Some("http://127.0.0.1:43190/".into()),
@@ -289,8 +296,15 @@ fn scope_items_build_local_and_global_requests_with_empty_failure_fallback() {
         &state_dir,
         &deps,
         &mut fake,
+    );
+    let empty = load_expose_scope_items_with(
+        ExposeScope::Project,
+        &context(),
+        &state_dir,
+        &deps,
+        &mut fake,
     )
-    .expect("project scope");
+    .expect("empty project scope");
     let global = load_expose_scope_items_with(
         ExposeScope::Global,
         &context(),
@@ -303,7 +317,11 @@ fn scope_items_build_local_and_global_requests_with_empty_failure_fallback() {
     assert_eq!(local.scope_label, "this worktree");
     assert_eq!(local.sublabel, ExposeSublabel::None);
     assert_eq!(local.items[0]["id"], "local");
-    assert!(failed.items.is_empty());
+    assert_eq!(
+        failed.expect_err("transient failure"),
+        "empty reply from server"
+    );
+    assert!(empty.items.is_empty());
     assert_eq!(global.scope_label, "all projects");
     assert_eq!(global.sublabel, ExposeSublabel::ProjectWorktree);
     assert_eq!(global.items[0]["id"], "global");
@@ -321,7 +339,7 @@ fn scope_items_build_local_and_global_requests_with_empty_failure_fallback() {
     assert_eq!(fake.requests[0].1.method, DaemonHttpMethod::Get);
     assert_eq!(fake.requests[0].1.timeout_ms, EXPOSE_HTTP_TIMEOUT_MS);
 
-    let global_url = &fake.requests[2].0;
+    let global_url = &fake.requests[3].0;
     assert!(global_url.starts_with("http://127.0.0.1:43190/core/expose/items?"));
     assert!(global_url.contains("includePreview=1"));
     assert!(!global_url.contains("currentWindow"));
@@ -804,6 +822,49 @@ fn runner_renders_loading_frame_before_initial_item_discovery() {
     assert!(!first_frame.contains("loaded preview line"));
     assert!(last_frame.contains("loaded preview line"));
     assert_eq!(client.requests.len(), 1);
+    assert_eq!(capture.calls, vec!["@1"]);
+    cleanup(state_dir);
+}
+
+#[test]
+fn runner_retries_initial_item_discovery_failure_instead_of_rendering_empty() {
+    let state_dir = temp_dir("runner-retry-initial-discovery");
+    let mut options = parsed_options(&state_dir);
+    options.current_window = Some("codex".into());
+    options.current_window_id = Some("@1".into());
+    options.expose_config.initial_scope = Some(ExposeScope::Project);
+    let mut client = FakeHttp::with_results([
+        Err("empty reply from server".into()),
+        Ok(json!({
+            "ok": true,
+            "items": [hot_item("@1", "retry loaded preview line\n")]
+        })),
+    ]);
+    let mut capture = FakeCapture::with_responses([Err("tmux unavailable".into())]);
+    let mut input = ScriptedInput::new([
+        ScriptedInputEvent::Timeout,
+        ScriptedInputEvent::Bytes(b"q".to_vec()),
+    ]);
+    let mut output = Vec::new();
+
+    assert_eq!(
+        run_tmux_expose_with_stable_size(
+            options,
+            &mut input,
+            &mut output,
+            &mut client,
+            &mut capture,
+        ),
+        0
+    );
+
+    let rendered = String::from_utf8(output).expect("utf8 output");
+    let first_frame = first_synchronized_frame(&rendered);
+    let last_frame = last_synchronized_frame(&rendered);
+    assert!(first_frame.contains("Loading sessions..."));
+    assert!(!first_frame.contains("No active agents"));
+    assert!(last_frame.contains("retry loaded preview line"));
+    assert_eq!(client.requests.len(), 2);
     assert_eq!(capture.calls, vec!["@1"]);
     cleanup(state_dir);
 }

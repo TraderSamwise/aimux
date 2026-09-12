@@ -82,27 +82,24 @@ fn run_case(case: &Value) -> Value {
                     &state_dir,
                     &deps,
                     &mut fake,
-                )
-                .expect("worktree scope"),
+                ),
                 load_expose_scope_items_with(
                     ExposeScope::Project,
                     &context(),
                     &state_dir,
                     &deps,
                     &mut fake,
-                )
-                .expect("project scope"),
+                ),
                 load_expose_scope_items_with(
                     ExposeScope::Global,
                     &context(),
                     &state_dir,
                     &deps,
                     &mut fake,
-                )
-                .expect("global scope"),
+                ),
             ];
             json!({
-                "views": views.iter().map(view_to_value).collect::<Vec<_>>(),
+                "views": views.iter().map(scope_load_to_value).collect::<Vec<_>>(),
                 "requests": fake.requests.borrow().clone(),
             })
         }),
@@ -284,6 +281,13 @@ fn view_to_value(view: &ExposeScopeView) -> Value {
         "itemIds": view.items.iter().filter_map(|item| item.get("id").and_then(Value::as_str)).collect::<Vec<_>>(),
         "items": view.items,
     })
+}
+
+fn scope_load_to_value(result: &Result<ExposeScopeView, String>) -> Value {
+    match result {
+        Ok(view) => view_to_value(view),
+        Err(error) => json!({ "error": error }),
+    }
 }
 
 fn expose_ui_state_to_value(state: ExposeUiState) -> Value {
