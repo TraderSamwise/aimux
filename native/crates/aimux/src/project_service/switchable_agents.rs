@@ -193,6 +193,28 @@ pub fn route_switchable_agent_request_with_runtime(
     } else {
         ExposeSublabel::None
     };
+    let mut live_window_projection_error = context
+        .live_window_ids_status()
+        .and_then(|result| result.err().map(str::to_owned));
+    if expose && live_window_projection_error.is_none() && items.is_empty() {
+        let fallback_entries = topology_switchable_entries_with_live_window_projection(
+            &topology,
+            &metadata.sessions,
+            LiveWindowIdsProjection::Unavailable("tmux live-window projection erased expose items"),
+        );
+        let fallback_items = list_switchable_agent_items(
+            &fallback_entries,
+            &metadata.sessions,
+            &switch_context,
+            &options,
+            &last_used,
+        );
+        if !fallback_items.is_empty() {
+            items = fallback_items;
+            live_window_projection_error =
+                Some("tmux live-window projection matched no topology-backed Expose items".into());
+        }
+    }
     let expose_tones = if expose {
         let expose_options = ExposeOrderingOptions {
             worktree_order_by_project_root: BTreeMap::from([(
@@ -230,10 +252,16 @@ pub fn route_switchable_agent_request_with_runtime(
             serialized
         })
         .collect::<Vec<_>>();
-    Some(ProjectServiceDispatchResponse::json(
-        200,
-        json!({ "ok": true, "items": items }),
-    ))
+    let mut body = json!({ "ok": true, "items": items });
+    if let Some(error) = live_window_projection_error
+        && let Value::Object(map) = &mut body
+    {
+        map.insert(
+            "tmuxLiveWindowQuery".into(),
+            json!({ "ok": false, "error": error }),
+        );
+    }
+    Some(ProjectServiceDispatchResponse::json(200, body))
 }
 
 pub async fn route_switchable_agent_request_async(
@@ -320,6 +348,26 @@ pub async fn route_switchable_agent_request_async(
     } else {
         ExposeSublabel::None
     };
+    let mut live_window_projection_error = projection.live_window_query_error;
+    if expose && live_window_projection_error.is_none() && items.is_empty() {
+        let fallback_entries = topology_switchable_entries_with_live_window_projection(
+            &topology,
+            &metadata.sessions,
+            LiveWindowIdsProjection::Unavailable("tmux live-window projection erased expose items"),
+        );
+        let fallback_items = list_switchable_agent_items(
+            &fallback_entries,
+            &metadata.sessions,
+            &switch_context,
+            &options,
+            &last_used,
+        );
+        if !fallback_items.is_empty() {
+            items = fallback_items;
+            live_window_projection_error =
+                Some("tmux live-window projection matched no topology-backed Expose items".into());
+        }
+    }
     let expose_tones = if expose {
         let expose_options = ExposeOrderingOptions {
             worktree_order_by_project_root: BTreeMap::from([(
@@ -356,7 +404,7 @@ pub async fn route_switchable_agent_request_async(
         serialized_items.push(serialized);
     }
     let mut body = json!({ "ok": true, "items": serialized_items });
-    if let Some(error) = projection.live_window_query_error
+    if let Some(error) = live_window_projection_error
         && let Value::Object(map) = &mut body
     {
         map.insert(
