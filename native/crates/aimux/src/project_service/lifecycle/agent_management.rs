@@ -2,6 +2,10 @@ use serde_json::{Map, Value, json};
 use std::path::Path;
 
 use crate::project_service::dispatcher::ProjectServiceDispatchResponse;
+use crate::project_service::operation_failures::{
+    OperationFailureInput, OperationFailureMatch, WorktreePathMatch,
+    add_dashboard_operation_failure, clear_dashboard_operation_failures,
+};
 use crate::project_service::router::ProjectServiceRequestContext;
 use crate::runtime_topology::{
     read_runtime_topology, runtime_topology_path, topology_session_to_session_state,
@@ -224,10 +228,9 @@ pub(super) fn route_agent_kill(
     if let Some(window_id) = &window_id
         && let Err(error) = runtime.kill_window(window_id)
     {
-        return json_error(
-            500,
-            format!("tmux kill-window failed for session \"{session_id}\": {error}"),
-        );
+        let message = format!("tmux kill-window failed for session \"{session_id}\": {error}");
+        record_agent_kill_operation_failure(&project_state_dir, &session_id, &message);
+        return json_error(500, message);
     }
     clear_prompt_context(&project_state_dir, &session_id);
     let result = update_runtime_topology(runtime_topology_path(&project_state_dir), |topology| {
@@ -251,6 +254,7 @@ pub(super) fn route_agent_kill(
         return json_error(500, error);
     }
     prune_restore_eligibility(&project_state_dir, &session_id);
+    clear_agent_kill_operation_failure(&project_state_dir, &session_id);
     lifecycle_response(
         json!({ "sessionId": session_id, "status": "graveyard", "previousStatus": previous_status }),
         "agent.kill",
@@ -285,10 +289,9 @@ pub(super) async fn route_agent_kill_async(
     if let Some(window_id) = live_window_id_for_session(&topology, &session) {
         progress.mark_irreversible();
         if let Err(error) = runtime.kill_window(&window_id).await {
-            return json_error(
-                500,
-                format!("tmux kill-window failed for session \"{session_id}\": {error}"),
-            );
+            let message = format!("tmux kill-window failed for session \"{session_id}\": {error}");
+            record_agent_kill_operation_failure(&project_state_dir, &session_id, &message);
+            return json_error(500, message);
         }
     } else {
         progress.mark_irreversible();
@@ -315,12 +318,41 @@ pub(super) async fn route_agent_kill_async(
         return json_error(500, error);
     }
     prune_restore_eligibility(&project_state_dir, &session_id);
+    clear_agent_kill_operation_failure(&project_state_dir, &session_id);
     lifecycle_response(
         json!({ "sessionId": session_id, "status": "graveyard", "previousStatus": previous_status }),
         "agent.kill",
         "agent",
         Some(&session_id),
     )
+}
+
+fn record_agent_kill_operation_failure(project_state_dir: &Path, session_id: &str, message: &str) {
+    let _ = add_dashboard_operation_failure(
+        project_state_dir,
+        OperationFailureInput {
+            target_kind: "agent".into(),
+            operation: "agent.kill".into(),
+            title: format!("Failed to kill {session_id}"),
+            message: message.to_owned(),
+            target_id: Some(session_id.to_owned()),
+            worktree_path: None,
+            worktree_name: None,
+            created_at: None,
+        },
+    );
+}
+
+fn clear_agent_kill_operation_failure(project_state_dir: &Path, session_id: &str) {
+    let _ = clear_dashboard_operation_failures(
+        project_state_dir,
+        OperationFailureMatch {
+            target_kind: Some("agent".into()),
+            operation: Some("agent.kill".into()),
+            target_id: Some(session_id.to_owned()),
+            worktree_path: WorktreePathMatch::Any,
+        },
+    );
 }
 
 pub(super) fn route_agent_rename(

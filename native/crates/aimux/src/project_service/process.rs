@@ -15,7 +15,7 @@ use tokio::net::{TcpListener as TokioTcpListener, TcpStream as TokioTcpStream};
 use crate::backend_session_ids::reconcile_offline_backend_session_ids;
 use crate::backlog_metrics::{
     BacklogMetric, SSE_AGENT_INTERACTION_BACKLOG, SSE_AGENT_OUTPUT_BACKLOG,
-    SSE_PROJECT_EVENTS_BACKLOG, backlog_metric,
+    SSE_PROJECT_EVENTS_BACKLOG, SSE_SUBSCRIBER_BACKLOG_CAPACITY, backlog_metric,
 };
 use crate::config::load_config_for_project;
 use crate::daemon::http::PreparedDaemonResponse;
@@ -39,7 +39,10 @@ use crate::project_service::agent_input_delivery::agent_input_delivery_task;
 use crate::project_service::agent_restore_task::agent_restore_snapshot_task;
 use crate::project_service::builtin_metadata_task::builtin_metadata_task;
 use crate::project_service::loop_watcher_task::loop_watcher_task;
-use crate::project_service::scheduler::{ProjectSchedulerHandle, spawn_project_service_scheduler};
+use crate::project_service::runtime_health_history::runtime_health_recorder_task;
+use crate::project_service::scheduler::{
+    PeriodicTask, PeriodicTaskFuture, ProjectSchedulerHandle, spawn_project_service_scheduler,
+};
 use crate::project_service::scribe_watcher_task::scribe_watcher_task;
 use crate::project_service::transcript_reconciler_task::transcript_reconciler_task;
 use crate::runtime_lifecycle_methods::write_instruction_files;
@@ -84,6 +87,8 @@ use super::switchable_agents::route_switchable_agent_request_async;
 
 #[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
+
+pub const STABILITY_DOCTOR_TEST_WEDGE_ENV: &str = "AIMUX_TEST_STABILITY_DOCTOR_WEDGE_TASK";
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ProjectServiceInternalOptions {
@@ -808,9 +813,13 @@ where
     );
     tokio::pin!(route);
     tokio::select! {
-        response = &mut route => Ok(response.unwrap_or_else(|| {
-            route_project_service_request(&context, &method, &path, body.as_ref())
-        })),
+        response = &mut route => {
+            let response = response.unwrap_or_else(|| {
+                route_project_service_request(&context, &method, &path, body.as_ref())
+            });
+            publish_async_route_project_update(&context, &method, &path, &response);
+            Ok(response)
+        },
         disconnect = wait_for_client_disconnect(reader) => {
             disconnect?;
             if progress.is_irreversible() {
@@ -818,6 +827,7 @@ where
                 let response = route.await.unwrap_or_else(|| {
                     route_project_service_request(&context, &method, &path, body.as_ref())
                 });
+                publish_async_route_project_update(&context, &method, &path, &response);
                 Ok(response)
             } else {
                 Err(DaemonListenerError::InvalidRequest(format!(
@@ -1076,9 +1086,16 @@ impl Drop for SseSubscriberGuard {
 }
 
 fn enter_sse_subscriber(kind: ProjectServiceStreamKind) -> SseSubscriberGuard {
-    let metric = backlog_metric(sse_subscriber_metric_name(kind), None);
+    let metric = backlog_metric(
+        sse_subscriber_metric_name(kind),
+        Some(sse_subscriber_capacity(kind)),
+    );
     metric.increment();
     SseSubscriberGuard { metric }
+}
+
+fn sse_subscriber_capacity(_kind: ProjectServiceStreamKind) -> usize {
+    SSE_SUBSCRIBER_BACKLOG_CAPACITY
 }
 
 fn sse_subscriber_metric_name(kind: ProjectServiceStreamKind) -> &'static str {
@@ -1528,17 +1545,7 @@ async fn serve_project_service_listener_until<Stop>(
         .with_plugin_statuses(plugin_statuses)
         .with_hot_snapshot_background_refresh(),
     );
-    let mut periodic_tasks = builtin_plugin_tick_tasks();
-    // Order matters: the tick loop runs co-due tasks in sequence, and the two
-    // watchers below may each hold it for 20s. The reconciler's 4s cadence is
-    // the tightest on the tick loop, so it goes ahead of them — behind the metadata
-    // watchers only, whose events it wants to read after, not settle over.
-    periodic_tasks.push(builtin_metadata_task(&context));
-    periodic_tasks.push(agent_restore_snapshot_task(&context));
-    periodic_tasks.push(transcript_reconciler_task(&context));
-    periodic_tasks.push(agent_input_delivery_task(&context));
-    periodic_tasks.push(loop_watcher_task(&context));
-    periodic_tasks.push(scribe_watcher_task(&context));
+    let periodic_tasks = project_service_periodic_tasks_for_context(&context);
     log_lifecycle_always(
         "project service watcher tick loop starting",
         "watcher",
@@ -1558,6 +1565,91 @@ async fn serve_project_service_listener_until<Stop>(
         })),
     );
     serve_project_service_connections_until(listener, context, should_stop).await;
+}
+
+#[doc(hidden)]
+pub fn project_service_periodic_tasks_for_context(
+    context: &Arc<ProjectServiceRequestContext>,
+) -> Vec<Box<dyn PeriodicTask>> {
+    let mut periodic_tasks = builtin_plugin_tick_tasks();
+    // Order matters: the tick loop runs co-due tasks in sequence, and the two
+    // watchers below may each hold it for 20s. The reconciler's 4s cadence is
+    // the tightest on the tick loop, so it goes ahead of them behind the metadata
+    // watchers only, whose events it wants to read after, not settle over.
+    periodic_tasks.push(builtin_metadata_task(context));
+    periodic_tasks.push(agent_restore_snapshot_task(context));
+    periodic_tasks.push(transcript_reconciler_task(context));
+    periodic_tasks.push(agent_input_delivery_task(context));
+    periodic_tasks.push(runtime_health_recorder_task());
+    periodic_tasks.push(loop_watcher_task(context));
+    periodic_tasks.push(scribe_watcher_task(context));
+    append_stability_doctor_test_wedge_task(&mut periodic_tasks);
+    periodic_tasks
+}
+
+fn append_stability_doctor_test_wedge_task(tasks: &mut Vec<Box<dyn PeriodicTask>>) {
+    if !crate::runtime_safety_guard::is_cargo_test_process_context() {
+        return;
+    }
+    let Some(mode) = std::env::var_os(STABILITY_DOCTOR_TEST_WEDGE_ENV) else {
+        return;
+    };
+    let mode = mode.to_string_lossy();
+    let Some(mode) = StabilityDoctorTestWedgeMode::parse(&mode) else {
+        return;
+    };
+    tasks.push(Box::new(StabilityDoctorTestWedgeTask { mode }));
+}
+
+#[derive(Debug, Clone, Copy)]
+enum StabilityDoctorTestWedgeMode {
+    Panic,
+    Timeout,
+}
+
+impl StabilityDoctorTestWedgeMode {
+    fn parse(raw: &str) -> Option<Self> {
+        match raw {
+            "panic" => Some(Self::Panic),
+            "timeout" | "block" => Some(Self::Timeout),
+            _ => None,
+        }
+    }
+}
+
+struct StabilityDoctorTestWedgeTask {
+    mode: StabilityDoctorTestWedgeMode,
+}
+
+impl PeriodicTask for StabilityDoctorTestWedgeTask {
+    fn name(&self) -> &str {
+        "stability-doctor-test-wedge"
+    }
+
+    fn interval_ms(&self) -> i64 {
+        250
+    }
+
+    fn timeout(&self) -> Duration {
+        Duration::from_millis(50)
+    }
+
+    fn run_immediately(&self) -> bool {
+        true
+    }
+
+    fn run<'a>(&'a mut self, _context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
+        Box::pin(async move {
+            match self.mode {
+                StabilityDoctorTestWedgeMode::Panic => {
+                    panic!("stability doctor test wedge requested panic");
+                }
+                StabilityDoctorTestWedgeMode::Timeout => {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+            }
+        })
+    }
 }
 
 async fn serve_project_service_connections_until<Stop>(
@@ -2185,6 +2277,62 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn expose_socket_input_drops_initial_trigger_after_terminal_report() {
+        let (mut writer, reader) = UnixStream::pair().expect("unix stream pair");
+        let mut input = PrefixedRead::new(Vec::new(), reader);
+        let mut buffer = [0_u8; 16];
+
+        std::io::Write::write_all(&mut writer, b"\x1b[18tg")
+            .expect("write terminal report then trigger echo");
+        match input.read_timeout(&mut buffer, Duration::from_millis(20)) {
+            ExposeInputEvent::Data(5) => assert_eq!(&buffer[..5], b"\x1b[18t"),
+            other => panic!("expected terminal report while dropping trigger echo, got {other:?}"),
+        }
+
+        std::io::Write::write_all(&mut writer, b"n").expect("write navigation key");
+        match input.read_timeout(&mut buffer, Duration::from_millis(20)) {
+            ExposeInputEvent::Data(1) => assert_eq!(buffer[0], b'n'),
+            other => panic!("expected navigation key after delayed trigger echo, got {other:?}"),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn expose_socket_input_preserves_initial_key_after_terminal_report() {
+        let (mut writer, reader) = UnixStream::pair().expect("unix stream pair");
+        let mut input = PrefixedRead::new(Vec::new(), reader);
+        let mut buffer = [0_u8; 16];
+
+        std::io::Write::write_all(&mut writer, b"\x1b[18tn")
+            .expect("write terminal report then navigation key");
+        match input.read_timeout(&mut buffer, Duration::from_millis(20)) {
+            ExposeInputEvent::Data(6) => assert_eq!(&buffer[..6], b"\x1b[18tn"),
+            other => panic!("expected terminal report and navigation key, got {other:?}"),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn expose_socket_input_preserves_real_g_after_initial_terminal_report() {
+        let (mut writer, reader) = UnixStream::pair().expect("unix stream pair");
+        let mut input = PrefixedRead::new(Vec::new(), reader);
+        let mut buffer = [0_u8; 16];
+
+        std::io::Write::write_all(&mut writer, b"\x1b[18t").expect("write initial terminal report");
+        match input.read_timeout(&mut buffer, Duration::from_millis(20)) {
+            ExposeInputEvent::Data(5) => assert_eq!(&buffer[..5], b"\x1b[18t"),
+            other => panic!("expected terminal report, got {other:?}"),
+        }
+
+        std::io::Write::write_all(&mut writer, b"g").expect("write real scope key");
+        match input.read_timeout(&mut buffer, Duration::from_millis(20)) {
+            ExposeInputEvent::Data(1) => assert_eq!(buffer[0], b'g'),
+            other => panic!("expected real scope key after terminal report, got {other:?}"),
+        }
+    }
+
     #[test]
     fn async_connection_routes_http_to_rust_project_router() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
@@ -2358,6 +2506,103 @@ mod tests {
                 "{path} should stay on the sync dispatcher in this phase"
             );
         }
+    }
+
+    #[test]
+    fn async_lifecycle_success_publishes_dashboard_refresh_event() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
+        crate::async_runtime::process_runtime().block_on(async {
+            let root = unique_test_root("async-lifecycle-publishes-refresh");
+            let project_root = root.join("repo");
+            let state_dir = root.join("state");
+            create_git_checkout(&project_root);
+            fs::create_dir_all(&state_dir).expect("create state dir");
+            let context = Arc::new(ProjectServiceRequestContext::with_project_state_dir(
+                &project_root,
+                &state_dir,
+            ));
+            let body = json!({ "tool": "shell", "sessionId": "sh-live", "open": false });
+            let progress =
+                async_lifecycle_progress_for_request("POST", routes::agents::SPAWN, Some(&body))
+                    .expect("async lifecycle progress");
+            let (_client, mut server) = tokio::io::duplex(4096);
+
+            let response = route_async_lifecycle_with_disconnect_and_route(
+                Arc::clone(&context),
+                "POST".to_owned(),
+                routes::agents::SPAWN.to_owned(),
+                Some(body),
+                progress,
+                &mut server,
+                |_context, _method, _path, _body, _progress| async move {
+                    Some(ProjectServiceDispatchResponse::json(
+                        200,
+                        json!({ "ok": true, "sessionId": "sh-live" }),
+                    ))
+                },
+            )
+            .await
+            .expect("async lifecycle route");
+
+            assert_eq!(response.status, 200);
+            let events = context.project_events.events_since(0, None);
+            assert_eq!(events.len(), 1);
+            assert_eq!(events[0].event["type"], "project_update");
+            assert_eq!(events[0].event["reason"], "POST /agents/spawn");
+            assert!(
+                events[0].event["views"]
+                    .as_array()
+                    .expect("views")
+                    .iter()
+                    .any(|view| view == "desktop-state"),
+                "spawn must refresh the dashboard model"
+            );
+            let _ = fs::remove_dir_all(root);
+        });
+    }
+
+    #[test]
+    fn async_lifecycle_failure_does_not_publish_dashboard_refresh_event() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
+        crate::async_runtime::process_runtime().block_on(async {
+            let root = unique_test_root("async-lifecycle-no-false-refresh");
+            let project_root = root.join("repo");
+            let state_dir = root.join("state");
+            create_git_checkout(&project_root);
+            fs::create_dir_all(&state_dir).expect("create state dir");
+            let context = Arc::new(ProjectServiceRequestContext::with_project_state_dir(
+                &project_root,
+                &state_dir,
+            ));
+            let body = json!({ "sessionId": "sh-live" });
+            let progress =
+                async_lifecycle_progress_for_request("POST", routes::agents::STOP, Some(&body))
+                    .expect("async lifecycle progress");
+            let (_client, mut server) = tokio::io::duplex(4096);
+
+            let response = route_async_lifecycle_with_disconnect_and_route(
+                Arc::clone(&context),
+                "POST".to_owned(),
+                routes::agents::STOP.to_owned(),
+                Some(body),
+                progress,
+                &mut server,
+                |_context, _method, _path, _body, _progress| async move {
+                    Some(ProjectServiceDispatchResponse::json(
+                        500,
+                        json!({ "ok": false, "error": "tmux refused" }),
+                    ))
+                },
+            )
+            .await
+            .expect("async lifecycle route");
+
+            assert_eq!(response.status, 500);
+            assert!(context.project_events.events_since(0, None).is_empty());
+            let _ = fs::remove_dir_all(root);
+        });
     }
 
     #[test]
@@ -3219,6 +3464,15 @@ struct PrefixedRead<R> {
     prefix: Vec<u8>,
     offset: usize,
     inner: R,
+    initial_tmux_trigger_echo: InitialTmuxTriggerEcho,
+}
+
+#[cfg(unix)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InitialTmuxTriggerEcho {
+    Armed,
+    SawCtrlA,
+    Done,
 }
 
 #[cfg(unix)]
@@ -3228,6 +3482,7 @@ impl<R> PrefixedRead<R> {
             prefix,
             offset: 0,
             inner,
+            initial_tmux_trigger_echo: InitialTmuxTriggerEcho::Armed,
         }
     }
 }
@@ -3258,7 +3513,10 @@ impl ExposeInputSource for PrefixedRead<UnixStream> {
         let _ = self.inner.set_read_timeout(Some(timeout));
         let event = match self.inner.read(buffer) {
             Ok(0) => ExposeInputEvent::End,
-            Ok(count) => ExposeInputEvent::Data(count),
+            Ok(count) => match self.strip_initial_tmux_trigger_echo(buffer, count) {
+                0 => ExposeInputEvent::Timeout,
+                count => ExposeInputEvent::Data(count),
+            },
             Err(error)
                 if matches!(
                     error.kind(),
@@ -3274,6 +3532,82 @@ impl ExposeInputSource for PrefixedRead<UnixStream> {
         let _ = self.inner.set_read_timeout(None);
         event
     }
+}
+
+#[cfg(unix)]
+impl<R> PrefixedRead<R> {
+    fn strip_initial_tmux_trigger_echo(&mut self, buffer: &mut [u8], count: usize) -> usize {
+        match self.initial_tmux_trigger_echo {
+            InitialTmuxTriggerEcho::Done => count,
+            InitialTmuxTriggerEcho::SawCtrlA => {
+                if count == 0 {
+                    return 0;
+                }
+                self.initial_tmux_trigger_echo = InitialTmuxTriggerEcho::Done;
+                if matches!(buffer[0], b'g' | b'd') {
+                    let remaining = count - 1;
+                    buffer.copy_within(1..count, 0);
+                    remaining
+                } else {
+                    count
+                }
+            }
+            InitialTmuxTriggerEcho::Armed => {
+                let Some(offset) = first_initial_key_offset(buffer, count) else {
+                    return count;
+                };
+                if offset > 0 && matches!(buffer.get(offset).copied(), Some(b'g' | b'd')) {
+                    self.initial_tmux_trigger_echo = InitialTmuxTriggerEcho::Done;
+                    let remaining = count - 1;
+                    buffer.copy_within(offset + 1..count, offset);
+                    return remaining;
+                }
+                if buffer[offset] == 0x01 {
+                    if offset + 1 >= count {
+                        self.initial_tmux_trigger_echo = InitialTmuxTriggerEcho::SawCtrlA;
+                        return offset;
+                    }
+                    if matches!(buffer.get(offset + 1).copied(), Some(b'g' | b'd')) {
+                        self.initial_tmux_trigger_echo = InitialTmuxTriggerEcho::Done;
+                        let remaining = count - 2;
+                        buffer.copy_within(offset + 2..count, offset);
+                        return remaining;
+                    }
+                }
+                self.initial_tmux_trigger_echo = InitialTmuxTriggerEcho::Done;
+                count
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+fn first_initial_key_offset(buffer: &[u8], count: usize) -> Option<usize> {
+    let mut offset = 0;
+    while offset < count {
+        if let Some(next) = terminal_report_end(buffer, offset, count) {
+            offset = next;
+            continue;
+        }
+        return Some(offset);
+    }
+    None
+}
+
+#[cfg(unix)]
+fn terminal_report_end(buffer: &[u8], offset: usize, count: usize) -> Option<usize> {
+    if buffer.get(offset) != Some(&0x1b) || buffer.get(offset + 1) != Some(&b'[') {
+        return None;
+    }
+    let mut cursor = offset + 2;
+    while cursor < count {
+        let byte = buffer[cursor];
+        if (0x40..=0x7e).contains(&byte) {
+            return Some(cursor + 1);
+        }
+        cursor += 1;
+    }
+    None
 }
 
 fn project_request_from_daemon(request: DaemonHttpRequest) -> ProjectServiceHttpRequest {

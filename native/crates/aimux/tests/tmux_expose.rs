@@ -4,6 +4,9 @@ use aimux::debug_logging::{
     LogLevel, LoggingRuntimeConfig, configure_logging, reset_logging_for_tests,
 };
 use aimux::project_api_contract::routes;
+use aimux::project_service::router::ProjectServiceRequestContext;
+use aimux::project_service::switchable_agents::route_switchable_agent_request_async;
+use aimux::runtime_topology::runtime_topology_path;
 use aimux::tmux_expose::{
     EXPOSE_HTTP_TIMEOUT_MS, ExposeClientSizeProbe, ExposeConfig, ExposeHttpClient,
     ExposeHttpRequest, ExposeInputEvent, ExposeInputSource, ExposeScope, ExposeScopeView,
@@ -30,7 +33,7 @@ const EXPOSE_NODE_FRAME: &str =
 
 #[derive(Debug, Default)]
 struct FakeHttp {
-    responses: VecDeque<Value>,
+    responses: VecDeque<Result<Value, String>>,
     requests: Vec<(String, ExposeHttpRequest)>,
 }
 
@@ -135,6 +138,13 @@ impl ExposeTmuxCapture for FakeCapture {
 impl FakeHttp {
     fn with_responses(values: impl IntoIterator<Item = Value>) -> Self {
         Self {
+            responses: values.into_iter().map(Ok).collect(),
+            requests: Vec::new(),
+        }
+    }
+
+    fn with_results(values: impl IntoIterator<Item = Result<Value, String>>) -> Self {
+        Self {
             responses: values.into_iter().collect(),
             requests: Vec::new(),
         }
@@ -155,10 +165,9 @@ fn run_tmux_expose_with_stable_size(
 impl ExposeHttpClient for FakeHttp {
     fn request_json(&mut self, url: &str, request: ExposeHttpRequest) -> Result<Value, String> {
         self.requests.push((url.to_owned(), request));
-        Ok(self
-            .responses
+        self.responses
             .pop_front()
-            .unwrap_or_else(|| json!({ "ok": true, "items": [] })))
+            .unwrap_or_else(|| Ok(json!({ "ok": true, "items": [] })))
     }
 }
 
@@ -258,17 +267,18 @@ fn initial_scope_uses_project_control_identity_from_metadata() {
 }
 
 #[test]
-fn scope_items_build_local_and_global_requests_with_empty_failure_fallback() {
+fn scope_items_build_local_and_global_requests_without_collapsing_failures_to_empty() {
     let state_dir = temp_dir("scope-items");
     fs::write(
         state_dir.join("metadata-api.txt"),
         "http://127.0.0.1:45000/\n",
     )
     .expect("endpoint");
-    let mut fake = FakeHttp::with_responses([
-        json!({ "ok": true, "items": [{ "id": "local", "target": { "windowId": "@1" } }] }),
-        json!({ "ok": false, "items": [{ "id": "ignored" }] }),
-        json!({ "ok": true, "items": [{ "id": "global", "target": { "windowId": "@9" } }] }),
+    let mut fake = FakeHttp::with_results([
+        Ok(json!({ "ok": true, "items": [{ "id": "local", "target": { "windowId": "@1" } }] })),
+        Err("empty reply from server".into()),
+        Ok(json!({ "ok": true, "items": [] })),
+        Ok(json!({ "ok": true, "items": [{ "id": "global", "target": { "windowId": "@9" } }] })),
     ]);
     let deps = LoadExposeScopeDeps {
         daemon_endpoint: Some("http://127.0.0.1:43190/".into()),
@@ -289,8 +299,15 @@ fn scope_items_build_local_and_global_requests_with_empty_failure_fallback() {
         &state_dir,
         &deps,
         &mut fake,
+    );
+    let empty = load_expose_scope_items_with(
+        ExposeScope::Project,
+        &context(),
+        &state_dir,
+        &deps,
+        &mut fake,
     )
-    .expect("project scope");
+    .expect("empty project scope");
     let global = load_expose_scope_items_with(
         ExposeScope::Global,
         &context(),
@@ -303,7 +320,11 @@ fn scope_items_build_local_and_global_requests_with_empty_failure_fallback() {
     assert_eq!(local.scope_label, "this worktree");
     assert_eq!(local.sublabel, ExposeSublabel::None);
     assert_eq!(local.items[0]["id"], "local");
-    assert!(failed.items.is_empty());
+    assert_eq!(
+        failed.expect_err("transient failure"),
+        "empty reply from server"
+    );
+    assert!(empty.items.is_empty());
     assert_eq!(global.scope_label, "all projects");
     assert_eq!(global.sublabel, ExposeSublabel::ProjectWorktree);
     assert_eq!(global.items[0]["id"], "global");
@@ -321,7 +342,7 @@ fn scope_items_build_local_and_global_requests_with_empty_failure_fallback() {
     assert_eq!(fake.requests[0].1.method, DaemonHttpMethod::Get);
     assert_eq!(fake.requests[0].1.timeout_ms, EXPOSE_HTTP_TIMEOUT_MS);
 
-    let global_url = &fake.requests[2].0;
+    let global_url = &fake.requests[3].0;
     assert!(global_url.starts_with("http://127.0.0.1:43190/core/expose/items?"));
     assert!(global_url.contains("includePreview=1"));
     assert!(!global_url.contains("currentWindow"));
@@ -511,6 +532,47 @@ fn expose_args_require_paths_and_resolve_them_without_touching_optional_values()
 }
 
 #[test]
+fn expose_args_load_resolved_initial_scope_from_aimux_config() {
+    let root = temp_dir("parse-expose-config");
+    let aimux_home = root.join("aimux-home");
+    let project = root.join("repo");
+    let state = root.join("state");
+    fs::create_dir_all(&aimux_home).expect("aimux home");
+    fs::create_dir_all(project.join(".aimux")).expect("project config dir");
+    fs::create_dir_all(&state).expect("state dir");
+    fs::write(
+        aimux_home.join("config.json"),
+        r#"{"expose":{"initialScope":"project"}}"#,
+    )
+    .expect("global config");
+    fs::write(project.join(".aimux/config.json"), "{}").expect("project config");
+
+    let parsed = parse_expose_args(&[
+        "expose",
+        "--project-root",
+        project.to_str().unwrap(),
+        "--project-state-dir",
+        state.to_str().unwrap(),
+        "--current-window",
+        "codex",
+        "--current-window-id",
+        "@1",
+        "--current-project-control",
+        "false",
+        "--aimux-home",
+        aimux_home.to_str().unwrap(),
+    ])
+    .expect("parse");
+
+    assert_eq!(
+        parsed.expose_config.initial_scope,
+        Some(ExposeScope::Project),
+        "agent-launched Expose must honor resolved config instead of the built-in worktree default"
+    );
+    cleanup(root);
+}
+
+#[test]
 fn socket_header_mapping_matches_metadata_server_contract() {
     let header = vec![
         "/project".to_owned(),
@@ -555,6 +617,42 @@ fn socket_header_mapping_matches_metadata_server_contract() {
     );
     assert_eq!(options.columns, Some(120));
     assert_eq!(options.rows, Some(30));
+}
+
+#[test]
+fn socket_header_mapping_loads_resolved_initial_scope_from_aimux_config() {
+    let root = temp_dir("socket-expose-config");
+    let aimux_home = root.join("aimux-home");
+    let project = root.join("repo");
+    let state = root.join("state");
+    fs::create_dir_all(&aimux_home).expect("aimux home");
+    fs::create_dir_all(project.join(".aimux")).expect("project config dir");
+    fs::create_dir_all(&state).expect("state dir");
+    fs::write(
+        aimux_home.join("config.json"),
+        r#"{"expose":{"initialScope":"project"}}"#,
+    )
+    .expect("global config");
+    fs::write(project.join(".aimux/config.json"), "{}").expect("project config");
+    let header = vec![
+        project.to_string_lossy().into_owned(),
+        state.to_string_lossy().into_owned(),
+        String::new(),
+        String::new(),
+        "codex".to_owned(),
+        "@1".to_owned(),
+        project.to_string_lossy().into_owned(),
+        String::new(),
+        aimux_home.to_string_lossy().into_owned(),
+    ];
+
+    let options = tmux_expose_options_from_socket_header(&header, "/fallback", "/fallback-state");
+
+    assert_eq!(
+        options.expose_config.initial_scope,
+        Some(ExposeScope::Project)
+    );
+    cleanup(root);
 }
 
 #[test]
@@ -672,6 +770,86 @@ fn runner_moves_selection_with_n_before_closing() {
     assert!(
         last_frame.contains("▸\u{1b}[0m \u{1b}[1;33m2"),
         "expected n to move selection to tile 2:\n{rendered}"
+    );
+    cleanup(state_dir);
+}
+
+#[test]
+fn runner_renders_topology_backed_tiles_when_live_window_projection_erases_expose_items() {
+    let state_dir = temp_dir("runner-projection-erased-items");
+    fs::write(
+        runtime_topology_path(&state_dir),
+        serde_yaml::to_string(&expose_projection_topology()).expect("topology yaml"),
+    )
+    .expect("write topology");
+    let request_context =
+        ProjectServiceRequestContext::with_project_state_dir(Path::new("/repo"), &state_dir)
+            .with_live_window_ids(Vec::<String>::new());
+    // aimux-async-seam: test - Expose regression drives the async switchable-agents route
+    let route_response = aimux::async_runtime::block_on_named(
+        "test:expose-projection-erased-items",
+        route_switchable_agent_request_async(
+            &request_context,
+            "GET",
+            "/control/switchable-agents?scope=all&currentPath=/repo/wt&currentWindowId=%401&labelFormat=raw&expose=1",
+        ),
+    )
+    .expect("switchable-agents route");
+
+    assert_eq!(route_response.status, 200);
+    assert_eq!(route_response.body["tmuxLiveWindowQuery"]["ok"], false);
+    assert_eq!(
+        route_response.body["items"]
+            .as_array()
+            .expect("items")
+            .len(),
+        2,
+        "the route must not collapse topology-backed Expose sessions into an empty list"
+    );
+
+    let mut options = parsed_options(&state_dir);
+    options.current_window = Some("dashboard".into());
+    options.current_window_id = Some("@dashboard".into());
+    options.current_path = Some("/repo/wt".into());
+    options.columns = Some(120);
+    options.rows = Some(30);
+    options.expose_config.initial_scope = Some(ExposeScope::Project);
+    let mut client = FakeHttp::with_responses([route_response.body]);
+    let mut capture =
+        FakeCapture::with_responses([Ok("first live\n".into()), Ok("second live\n".into())]);
+    let mut input = ScriptedInput::new([
+        ScriptedInputEvent::Timeout,
+        ScriptedInputEvent::Bytes(b"q".to_vec()),
+    ]);
+    let mut output = Vec::new();
+
+    assert_eq!(
+        run_tmux_expose_with_stable_size(
+            options,
+            &mut input,
+            &mut output,
+            &mut client,
+            &mut capture,
+        ),
+        0
+    );
+
+    let rendered = String::from_utf8(output).expect("utf8 output");
+    let populated_frame = synchronized_frames(&rendered)
+        .into_iter()
+        .find(|frame| frame.contains("all worktrees (2)"))
+        .unwrap_or_else(|| {
+            panic!("expected Expose to eventually render two topology-backed tiles:\n{rendered}")
+        });
+    assert!(
+        !populated_frame.contains("all worktrees (0)"),
+        "projection-erased sessions must not render as authoritative empty Expose:\n{populated_frame}"
+    );
+    assert!(
+        capture.calls.iter().any(|window_id| window_id == "@1")
+            && capture.calls.iter().any(|window_id| window_id == "@2"),
+        "expected Expose to capture both rendered tiles, got {:?}",
+        capture.calls
     );
     cleanup(state_dir);
 }
@@ -804,6 +982,49 @@ fn runner_renders_loading_frame_before_initial_item_discovery() {
     assert!(!first_frame.contains("loaded preview line"));
     assert!(last_frame.contains("loaded preview line"));
     assert_eq!(client.requests.len(), 1);
+    assert_eq!(capture.calls, vec!["@1"]);
+    cleanup(state_dir);
+}
+
+#[test]
+fn runner_retries_initial_item_discovery_failure_instead_of_rendering_empty() {
+    let state_dir = temp_dir("runner-retry-initial-discovery");
+    let mut options = parsed_options(&state_dir);
+    options.current_window = Some("codex".into());
+    options.current_window_id = Some("@1".into());
+    options.expose_config.initial_scope = Some(ExposeScope::Project);
+    let mut client = FakeHttp::with_results([
+        Err("empty reply from server".into()),
+        Ok(json!({
+            "ok": true,
+            "items": [hot_item("@1", "retry loaded preview line\n")]
+        })),
+    ]);
+    let mut capture = FakeCapture::with_responses([Err("tmux unavailable".into())]);
+    let mut input = ScriptedInput::new([
+        ScriptedInputEvent::Timeout,
+        ScriptedInputEvent::Bytes(b"q".to_vec()),
+    ]);
+    let mut output = Vec::new();
+
+    assert_eq!(
+        run_tmux_expose_with_stable_size(
+            options,
+            &mut input,
+            &mut output,
+            &mut client,
+            &mut capture,
+        ),
+        0
+    );
+
+    let rendered = String::from_utf8(output).expect("utf8 output");
+    let first_frame = first_synchronized_frame(&rendered);
+    let last_frame = last_synchronized_frame(&rendered);
+    assert!(first_frame.contains("Loading sessions..."));
+    assert!(!first_frame.contains("No active agents"));
+    assert!(last_frame.contains("retry loaded preview line"));
+    assert_eq!(client.requests.len(), 2);
     assert_eq!(capture.calls, vec!["@1"]);
     cleanup(state_dir);
 }
@@ -1435,6 +1656,36 @@ fn hot_item(window_id: &str, output: &str) -> Value {
             "toolConfigKey": "codex",
             "worktreePath": "/repo"
         }
+    })
+}
+
+fn expose_projection_topology() -> Value {
+    json!({
+        "version": 1,
+        "generatedAt": "2026-09-12T00:00:00.000Z",
+        "rigs": [
+            { "id": "rig-1", "name": "local", "projectRoot": "/repo", "createdAt": "2026-09-12T00:00:00.000Z", "updatedAt": "2026-09-12T00:00:00.000Z" }
+        ],
+        "nodes": [
+            { "id": "node-one", "rigId": "rig-1", "logicalId": "one", "toolConfigKey": "shell", "cwd": "/repo/wt", "label": "shell-one", "createdAt": "2026-09-12T00:00:00.000Z" },
+            { "id": "node-two", "rigId": "rig-1", "logicalId": "two", "toolConfigKey": "shell", "cwd": "/repo/wt", "label": "shell-two", "createdAt": "2026-09-12T00:00:00.000Z" }
+        ],
+        "edges": [],
+        "bindings": [
+            { "id": "binding-one", "nodeId": "node-one", "tmuxSession": "aimux-repo", "tmuxWindowId": "@1", "tmuxWindowIndex": 1, "tmuxWindowName": "shell-one", "updatedAt": "2026-09-12T00:00:00.000Z" },
+            { "id": "binding-two", "nodeId": "node-two", "tmuxSession": "aimux-repo", "tmuxWindowId": "@2", "tmuxWindowIndex": 2, "tmuxWindowName": "shell-two", "updatedAt": "2026-09-12T00:00:00.000Z" }
+        ],
+        "sessions": [
+            { "id": "session-one", "nodeId": "node-one", "status": "running", "tool": "shell", "command": "shell", "worktreePath": "/repo/wt", "label": "shell-one", "createdAt": "2026-09-12T00:00:00.000Z", "updatedAt": "2026-09-12T00:00:00.000Z" },
+            { "id": "session-two", "nodeId": "node-two", "status": "running", "tool": "shell", "command": "shell", "worktreePath": "/repo/wt", "label": "shell-two", "createdAt": "2026-09-12T00:00:00.000Z", "updatedAt": "2026-09-12T00:00:00.000Z" }
+        ],
+        "services": [],
+        "worktrees": [],
+        "worktreeGraveyard": [],
+        "teamRoles": [],
+        "remoteClients": [],
+        "lifecycleOperations": [],
+        "exchangeRefs": []
     })
 }
 

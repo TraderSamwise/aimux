@@ -114,8 +114,15 @@ pub fn list_dashboard_operation_failures(project_state_dir: impl AsRef<Path>) ->
         .and_then(Value::as_array)
         .map_or(&[][..], Vec::as_slice)
         .iter()
+        .enumerate()
+        .map(|(index, failure)| {
+            normalize_dashboard_operation_failure_record(
+                format!("legacy-operation-failure-{index}"),
+                format!("invalid-operation-failure-{index}"),
+                failure,
+            )
+        })
         .filter(|failure| is_active_failure(failure, now_epoch_millis()))
-        .cloned()
         .collect()
 }
 
@@ -222,6 +229,35 @@ fn is_active_failure(failure: &Value, now: u128) -> bool {
         return true;
     };
     now.saturating_sub(created_at) < ACTIVE_FAILURE_MAX_AGE_MS
+}
+
+pub fn normalize_dashboard_operation_failure_record(
+    legacy_id: String,
+    invalid_id: String,
+    failure: &Value,
+) -> Value {
+    if failure.is_object() {
+        return failure.clone();
+    }
+    if let Some(message) = failure
+        .as_str()
+        .and_then(|value| trimmed_owned(Some(value)))
+    {
+        return json!({
+            "id": legacy_id,
+            "targetKind": "project",
+            "operation": "legacy",
+            "title": "Legacy operation failure",
+            "message": message,
+        });
+    }
+    json!({
+        "id": invalid_id,
+        "targetKind": "project",
+        "operation": "legacy",
+        "title": "Invalid operation failure",
+        "message": format!("invalid dashboard operation failure record: {failure}"),
+    })
 }
 
 fn failure_matches(failure: &Value, matcher: &OperationFailureMatch) -> bool {

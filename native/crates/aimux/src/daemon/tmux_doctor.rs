@@ -11,7 +11,8 @@ use crate::repair_events::{
 use crate::shell_hooks::shell_quote;
 use crate::tmux::{
     AIMUX_TMUX_RUNTIME_CONTRACT_VERSION, MANAGED_TMUX_AGENT_WINDOW_OPTIONS,
-    MANAGED_TMUX_SESSION_OPTIONS, MANAGED_TMUX_TERMINAL_FEATURES, TMUX_RUNTIME_CONTRACT_OPTION,
+    MANAGED_TMUX_SESSION_OPTIONS, MANAGED_TMUX_TERMINAL_FEATURES, TMUX_DASHBOARD_BUILD_OPTION,
+    TMUX_DASHBOARD_OWNER_OPTION, TMUX_DASHBOARD_READY_OPTION, TMUX_RUNTIME_CONTRACT_OPTION,
     TMUX_RUNTIME_OWNER_OPTION, TMUX_RUNTIME_REBUILD_REQUIRED_OPTION, TmuxCommandSpec,
     WINDOW_LIST_FORMAT, append_session_option_argv,
     build_default_root_mouse_bindings_install_config_for_command, is_dashboard_window_name,
@@ -25,8 +26,10 @@ use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 const MANAGED_WINDOWS_FORMAT: &str = "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}\t#{pane_dead}\t#{@aimux-meta}";
+const DEFAULT_DASHBOARD_REPAIR_READY_TIMEOUT_MS: u64 = 20_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TmuxDoctorInput {
@@ -47,6 +50,8 @@ pub struct TmuxRepairInput {
     pub aimux_home: PathBuf,
     pub session_prefix: String,
     pub dashboard_command: Option<TmuxCommandSpec>,
+    pub dashboard_build_stamp: Option<String>,
+    pub dashboard_ready_timeout_ms: u64,
     pub statusline_script_path: PathBuf,
     pub tmux_control_script_path: PathBuf,
     pub tmux_env: Option<String>,
@@ -273,7 +278,9 @@ pub fn system_tmux_repair_result(
         project_root: PathBuf::from(project_root),
         aimux_home: resolver.global_aimux_dir(),
         session_prefix,
+        dashboard_build_stamp: Some(dashboard_spec.dashboard_build_stamp),
         dashboard_command: Some(dashboard_spec.dashboard_command),
+        dashboard_ready_timeout_ms: DEFAULT_DASHBOARD_REPAIR_READY_TIMEOUT_MS,
         statusline_script_path: resolve_statusline_script_path(),
         tmux_control_script_path: resolve_tmux_control_script_path(),
         tmux_env: nonempty_env("TMUX"),
@@ -392,6 +399,7 @@ pub fn repair_tmux_runtime(
 
     let dashboard_target = ensure_dashboard_target(
         runner,
+        input,
         &host_session.session_name,
         &project_root_text,
         dashboard_command.as_ref(),
@@ -984,13 +992,23 @@ fn statusline_command(_input: &TmuxRepairInput, line: &str, project_state_dir: &
 
 fn ensure_dashboard_target(
     runner: &mut impl TmuxDoctorCommandRunner,
+    input: &TmuxRepairInput,
     session_name: &str,
     project_root: &str,
     dashboard_command: Option<&TmuxCommandSpec>,
 ) -> Result<TmuxRepairTarget, String> {
     if let Some(target) = find_dashboard_target(runner, session_name) {
+        let placeholder = dashboard_target_is_noop_placeholder(runner, &target);
         if let Some(command) = dashboard_command {
             run_tmux_owned(runner, &respawn_window_argv(&target.window_id, command))?;
+            if placeholder && let Some(build_stamp) = input.dashboard_build_stamp.as_deref() {
+                wait_for_repaired_dashboard_ready(
+                    runner,
+                    &target.window_id,
+                    build_stamp,
+                    input.dashboard_ready_timeout_ms,
+                )?;
+            }
         }
         return Ok(target);
     }
@@ -1000,6 +1018,83 @@ fn ensure_dashboard_target(
     )?;
     find_dashboard_target(runner, session_name)
         .ok_or_else(|| "dashboard window not found after repair".to_owned())
+}
+
+fn dashboard_target_is_noop_placeholder(
+    runner: &mut impl TmuxDoctorCommandRunner,
+    target: &TmuxRepairTarget,
+) -> bool {
+    let pane_command = tmux_value(
+        runner,
+        &[
+            "display-message",
+            "-p",
+            "-t",
+            &target.window_id,
+            "#{pane_current_command}",
+        ],
+    );
+    pane_command.as_deref() == Some("tail")
+        && window_option(runner, &target.window_id, TMUX_DASHBOARD_BUILD_OPTION).is_none()
+        && window_option(runner, &target.window_id, TMUX_DASHBOARD_OWNER_OPTION).is_none()
+}
+
+fn wait_for_repaired_dashboard_ready(
+    runner: &mut impl TmuxDoctorCommandRunner,
+    window_id: &str,
+    build_stamp: &str,
+    timeout_ms: u64,
+) -> Result<(), String> {
+    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+    loop {
+        if window_option(runner, window_id, TMUX_DASHBOARD_READY_OPTION).as_deref()
+            == Some(build_stamp)
+        {
+            return Ok(());
+        }
+        if tmux_value(
+            runner,
+            &["display-message", "-p", "-t", window_id, "#{pane_dead}"],
+        )
+        .as_deref()
+            == Some("1")
+        {
+            return Err(repaired_dashboard_crash_error(
+                runner,
+                window_id,
+                build_stamp,
+            ));
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "Timed out waiting {timeout_ms}ms for repaired dashboard window {window_id} readiness option {TMUX_DASHBOARD_READY_OPTION}={build_stamp}"
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+fn repaired_dashboard_crash_error(
+    runner: &mut impl TmuxDoctorCommandRunner,
+    window_id: &str,
+    build_stamp: &str,
+) -> String {
+    let output = run_command(
+        runner,
+        "tmux",
+        &["capture-pane", "-p", "-J", "-t", window_id, "-S", "-80"],
+    )
+    .unwrap_or_default();
+    let output = output.trim();
+    if output.is_empty() {
+        format!(
+            "Repaired dashboard window {window_id} exited before setting readiness option {TMUX_DASHBOARD_READY_OPTION}={build_stamp}"
+        )
+    } else {
+        format!(
+            "Repaired dashboard window {window_id} exited before setting readiness option {TMUX_DASHBOARD_READY_OPTION}={build_stamp}:\n{output}"
+        )
+    }
 }
 
 fn find_dashboard_target(

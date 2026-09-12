@@ -7,9 +7,9 @@ use aimux::daemon_supervisor::{
     assert_not_stale_against_daemon_with, daemon_start_lock_path, daemon_start_steal_lock_path,
     is_aimux_daemon_health, is_lock_stale, is_matching_daemon_health, read_lock_pid,
     release_daemon_start_lock, runtime_restart_lock_is_owned_by, runtime_restart_lock_path,
-    runtime_restart_steal_lock_path, signal_number, signal_to_number, stop_daemon_info_with,
-    stop_daemon_process_info_with, try_acquire_daemon_start_lock_with,
-    try_acquire_runtime_restart_lock_with,
+    runtime_restart_steal_lock_path, should_keep_unresponsive_daemon_after_pid_probe,
+    signal_number, signal_to_number, stop_daemon_info_with, stop_daemon_process_info_with,
+    try_acquire_daemon_start_lock_with, try_acquire_runtime_restart_lock_with,
 };
 use aimux::paths::PathResolver;
 use aimux::project_service_manifest::{
@@ -114,6 +114,30 @@ fn unresponsive_daemon_policy_matches_adopt_existing_truth_table() {
     assert!(should_keep_unresponsive_daemon(Some(true), true));
     assert!(!should_keep_unresponsive_daemon(Some(false), true));
     assert!(!should_keep_unresponsive_daemon(None, false));
+}
+
+#[test]
+fn unresponsive_daemon_pid_probe_failure_is_not_dead() {
+    let error = should_keep_unresponsive_daemon_after_pid_probe(None, Err("ps unavailable".into()))
+        .expect_err("unknown pid liveness must not become false");
+
+    assert!(
+        error
+            .to_string()
+            .contains("could not determine whether existing aimux daemon process is alive"),
+        "{error}"
+    );
+    assert!(error.to_string().contains("ps unavailable"), "{error}");
+}
+
+#[test]
+fn unresponsive_daemon_confirmed_dead_still_clears() {
+    assert!(
+        !should_keep_unresponsive_daemon_after_pid_probe(None, Ok(false)).expect("confirmed dead")
+    );
+    assert!(
+        should_keep_unresponsive_daemon_after_pid_probe(None, Ok(true)).expect("confirmed alive")
+    );
 }
 
 #[test]

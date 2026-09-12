@@ -3,8 +3,10 @@ use aimux::daemon_state::{MetadataState, load_metadata_state, save_metadata_stat
 use aimux::osc_notifications::OscNotificationParser;
 use aimux::project_api_contract::routes;
 use aimux::project_service::agent_input_delivery::{
-    ACTIVE_CLIENT_DWELL_MS, AgentInputWindowActivity, agent_input_delivery_backlog_snapshot,
-    agent_input_delivery_queue_path, run_pending_agent_input_deliveries_with_runtime,
+    ACTIVE_CLIENT_DWELL_MS, AgentInputWindowActivity, MAX_AGENT_INPUT_HOLD_MS,
+    agent_input_delivery_backlog_snapshot, agent_input_delivery_queue_path,
+    classify_agent_input_window_activity, pane_has_unsubmitted_agent_input,
+    run_pending_agent_input_deliveries_with_runtime,
 };
 use aimux::project_service::agent_output::{
     AgentOutputCaptureRuntime, AgentOutputResponseMode, MAX_AGENT_OUTPUT_CAPTURE_LINES,
@@ -192,9 +194,13 @@ impl AgentOutputCaptureRuntime for FakeActivityRuntime {
         &mut self,
         _window_id: &str,
     ) -> Result<AgentInputWindowActivity, String> {
-        self.input_activity
-            .pop_front()
-            .unwrap_or(Ok(AgentInputWindowActivity::Unattended))
+        self.input_activity.pop_front().unwrap_or_else(|| {
+            if pane_has_unsubmitted_agent_input(&self.inner.output) {
+                Ok(AgentInputWindowActivity::UnsubmittedInputVisible)
+            } else {
+                Ok(AgentInputWindowActivity::Unattended)
+            }
+        })
     }
 }
 
@@ -1702,6 +1708,344 @@ fn agent_input_holds_for_recent_active_client_then_flushes_from_queue() {
 }
 
 #[test]
+fn agent_input_holds_visible_draft_even_without_active_client() {
+    let project = temp_project("visible-draft-no-client-hold");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeActivityRuntime {
+        inner: FakeCaptureRuntime {
+            output:
+                "Ready\n› Sam is still typing this prompt\n\n  gpt-5.5 medium · ~/workspace/project"
+                    .into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let held = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::INPUT,
+        Some(&json!({ "sessionId": "codex-1", "text": "loop update" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(held.status, 200);
+    assert_eq!(held.body["delivery"]["state"], "held");
+    assert_eq!(held.body["delivery"]["reason"], "visible-unsubmitted-input");
+    assert!(runtime.inner.actions.is_empty());
+    assert!(agent_input_delivery_queue_path(&state_dir).exists());
+    cleanup(project);
+}
+
+#[test]
+fn agent_input_holds_multiline_composer_draft_even_without_active_client() {
+    let project = temp_project("multiline-draft-no-client-hold");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeActivityRuntime {
+        inner: FakeCaptureRuntime {
+            output: "Ready\n❯\nSam is composing across a wrapped prompt\n\n  claude-opus · ~/workspace/project"
+                .into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let held = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::INPUT,
+        Some(&json!({ "sessionId": "codex-1", "text": "loop update" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(held.status, 200);
+    assert_eq!(held.body["delivery"]["state"], "held");
+    assert_eq!(held.body["delivery"]["reason"], "visible-unsubmitted-input");
+    assert!(runtime.inner.actions.is_empty());
+    assert!(agent_input_delivery_queue_path(&state_dir).exists());
+    cleanup(project);
+}
+
+#[test]
+fn active_client_with_visible_draft_holds_instead_of_idle_delivery() {
+    let panes = "@1\t1\n";
+    let clients = "client-1\t1000\t@1\n";
+    let pane = "Ready\n› Sam paused with a draft\n\n  gpt-5.5 medium · ~/workspace/project";
+
+    let activity = classify_agent_input_window_activity("@1", panes, pane, Some(clients)).unwrap();
+    let decision = aimux::project_service::agent_input_delivery::decide_agent_input_delivery(
+        false,
+        Ok(activity),
+        10_000,
+        10_000,
+    );
+
+    assert_eq!(
+        decision,
+        aimux::project_service::agent_input_delivery::AgentInputDeliveryDecision::Hold {
+            reason: "visible-unsubmitted-input".into(),
+            quiet_for_ms: None,
+            retry_after_ms: aimux::project_service::agent_input_delivery::DELIVERY_TASK_INTERVAL_MS,
+        }
+    );
+}
+
+#[test]
+fn active_client_with_empty_composer_can_deliver_after_dwell() {
+    let panes = "@1\t1\n";
+    let clients = "client-1\t1\t@1\n";
+    let pane = "Ready\n› Ask Codex to do anything\n\n  gpt-5.5 medium · ~/workspace/project";
+
+    let activity = classify_agent_input_window_activity("@1", panes, pane, Some(clients)).unwrap();
+    let decision = aimux::project_service::agent_input_delivery::decide_agent_input_delivery(
+        false,
+        Ok(activity),
+        5_000,
+        5_000,
+    );
+
+    assert_eq!(
+        decision,
+        aimux::project_service::agent_input_delivery::AgentInputDeliveryDecision::DeliverNow {
+            reason: "active-client-idle".into(),
+        }
+    );
+}
+
+#[test]
+fn agent_input_blank_prompt_is_genuine_unattended_no_data_path() {
+    let project = temp_project("blank-prompt-unattended");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeActivityRuntime {
+        inner: FakeCaptureRuntime {
+            output: "Ready\n› \n\n  gpt-5.5 medium · ~/workspace/project".into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let response = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::INPUT,
+        Some(&json!({ "sessionId": "codex-1", "text": "safe loop update" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert!(response.body.get("delivery").is_none());
+    assert_eq!(
+        runtime.inner.actions,
+        vec![
+            FakeRuntimeAction::Text("@1".into(), "safe loop update".into()),
+            FakeRuntimeAction::CarriageReturn("@1".into()),
+        ]
+    );
+    assert!(!agent_input_delivery_queue_path(&state_dir).exists());
+    cleanup(project);
+}
+
+#[test]
+fn agent_input_idle_codex_placeholder_is_genuine_unattended_no_data_path() {
+    let project = temp_project("placeholder-prompt-unattended");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeActivityRuntime {
+        inner: FakeCaptureRuntime {
+            output: "Ready\n› Ask Codex to do anything".into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let response = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::INPUT,
+        Some(&json!({ "sessionId": "codex-1", "text": "safe loop update" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert!(response.body.get("delivery").is_none());
+    assert_eq!(
+        runtime.inner.actions,
+        vec![
+            FakeRuntimeAction::Text("@1".into(), "safe loop update".into()),
+            FakeRuntimeAction::CarriageReturn("@1".into()),
+        ]
+    );
+    assert!(!agent_input_delivery_queue_path(&state_dir).exists());
+    cleanup(project);
+}
+
+#[test]
+fn queued_visible_draft_releases_after_hold_budget() {
+    let project = temp_project("visible-draft-hold-budget");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeActivityRuntime {
+        inner: FakeCaptureRuntime {
+            output:
+                "Ready\n› Sam is still typing this prompt\n\n  gpt-5.5 medium · ~/workspace/project"
+                    .into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let held = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::INPUT,
+        Some(&json!({ "sessionId": "codex-1", "text": "loop update" })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(held.status, 200);
+    assert_eq!(held.body["delivery"]["state"], "held");
+    assert!(runtime.inner.actions.is_empty());
+    let deliver_at_ms = queued_max_deliver_at_ms(&state_dir);
+
+    run_pending_agent_input_deliveries_with_runtime(&context, &mut runtime, deliver_at_ms + 1);
+
+    assert_eq!(
+        runtime.inner.actions,
+        vec![
+            FakeRuntimeAction::Text("@1".into(), "loop update".into()),
+            FakeRuntimeAction::CarriageReturn("@1".into()),
+        ]
+    );
+    assert!(!agent_input_delivery_queue_path(&state_dir).exists());
+    cleanup(project);
+}
+
+#[test]
+fn queued_agent_input_does_not_override_fresh_typing_after_hold_budget() {
+    let project = temp_project("typing-outlasts-hold-budget");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let now_ms = aimux::project_service::scheduler::scheduler_now_ms();
+    let mut runtime = FakeActivityRuntime {
+        input_activity: VecDeque::from([Ok(AgentInputWindowActivity::Attended {
+            active_clients: 1,
+            latest_activity_ms: now_ms,
+        })]),
+        ..Default::default()
+    };
+
+    let held = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::INPUT,
+        Some(&json!({ "sessionId": "codex-1", "text": "loop update" })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(held.status, 200);
+    assert_eq!(held.body["delivery"]["state"], "held");
+
+    runtime
+        .input_activity
+        .push_back(Ok(AgentInputWindowActivity::Attended {
+            active_clients: 1,
+            latest_activity_ms: now_ms + MAX_AGENT_INPUT_HOLD_MS + 1,
+        }));
+    run_pending_agent_input_deliveries_with_runtime(
+        &context,
+        &mut runtime,
+        now_ms + MAX_AGENT_INPUT_HOLD_MS + 1,
+    );
+
+    assert!(
+        runtime.inner.actions.is_empty(),
+        "the hold budget must not turn fresh typing into permission to deliver"
+    );
+    assert!(agent_input_delivery_queue_path(&state_dir).exists());
+
+    runtime
+        .input_activity
+        .push_back(Ok(AgentInputWindowActivity::Unattended));
+    run_pending_agent_input_deliveries_with_runtime(
+        &context,
+        &mut runtime,
+        now_ms + MAX_AGENT_INPUT_HOLD_MS + ACTIVE_CLIENT_DWELL_MS + 1,
+    );
+
+    assert_eq!(
+        runtime.inner.actions,
+        vec![
+            FakeRuntimeAction::Text("@1".into(), "loop update".into()),
+            FakeRuntimeAction::CarriageReturn("@1".into()),
+        ]
+    );
+    assert!(!agent_input_delivery_queue_path(&state_dir).exists());
+    cleanup(project);
+}
+
+#[test]
+fn queued_probe_failure_releases_after_hold_budget() {
+    let project = temp_project("probe-failure-max-release");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let now_ms = aimux::project_service::scheduler::scheduler_now_ms();
+    let mut runtime = FakeActivityRuntime {
+        input_activity: VecDeque::from([Err("tmux socket busy".into())]),
+        ..Default::default()
+    };
+
+    let held = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::INPUT,
+        Some(&json!({ "sessionId": "codex-1", "text": "queued through probe error" })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(held.status, 200);
+    assert_eq!(held.body["delivery"]["state"], "held");
+
+    runtime
+        .input_activity
+        .push_back(Err("tmux socket still busy".into()));
+    run_pending_agent_input_deliveries_with_runtime(
+        &context,
+        &mut runtime,
+        now_ms + MAX_AGENT_INPUT_HOLD_MS + 1,
+    );
+
+    assert_eq!(
+        runtime.inner.actions,
+        vec![
+            FakeRuntimeAction::Text("@1".into(), "queued through probe error".into()),
+            FakeRuntimeAction::CarriageReturn("@1".into()),
+        ]
+    );
+    assert!(!agent_input_delivery_queue_path(&state_dir).exists());
+    let failures = list_dashboard_operation_failures(&state_dir);
+    assert!(
+        failures
+            .iter()
+            .any(|failure| failure["title"] == "Agent input delivery forced after hold budget")
+    );
+    cleanup(project);
+}
+
+#[test]
 fn agent_input_delivery_backlog_read_failure_reports_unavailable_not_zero() {
     let project = temp_project("delivery-backlog-error");
     let state_dir = project.join("state");
@@ -1897,6 +2241,44 @@ fn agent_input_force_bypasses_active_client_probe() {
 
     assert_eq!(response.status, 200);
     assert_eq!(runtime.input_activity.len(), 1);
+    assert_eq!(
+        runtime.inner.actions,
+        vec![
+            FakeRuntimeAction::Text("@1".into(), "urgent".into()),
+            FakeRuntimeAction::CarriageReturn("@1".into()),
+        ]
+    );
+    assert!(!agent_input_delivery_queue_path(&state_dir).exists());
+    cleanup(project);
+}
+
+#[test]
+fn agent_input_force_bypasses_visible_draft_hold() {
+    let project = temp_project("force-visible-draft");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeActivityRuntime {
+        inner: FakeCaptureRuntime {
+            output:
+                "Ready\n› Sam is still typing this prompt\n\n  gpt-5.5 medium · ~/workspace/project"
+                    .into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let response = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::INPUT,
+        Some(&json!({ "sessionId": "codex-1", "text": "urgent", "force": true })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert!(response.body.get("delivery").is_none());
     assert_eq!(
         runtime.inner.actions,
         vec![
@@ -2262,4 +2644,13 @@ fn temp_project(label: &str) -> PathBuf {
 
 fn cleanup(path: PathBuf) {
     let _ = remove_dir_all(path);
+}
+
+fn queued_max_deliver_at_ms(state_dir: &std::path::Path) -> i64 {
+    let text = std::fs::read_to_string(agent_input_delivery_queue_path(state_dir))
+        .expect("queued delivery state");
+    let value: Value = serde_json::from_str(&text).expect("queued delivery json");
+    value["pending"][0]["maxDeliverAtMs"]
+        .as_i64()
+        .expect("queued max deliver time")
 }

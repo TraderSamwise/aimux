@@ -296,7 +296,29 @@ fn mirrors_remaining_low_level_command_vectors() {
     assert_eq!(stop_pane_pipe_argv("@3"), ["pipe-pane", "-t", "@3"]);
     assert_eq!(
         send_text_argv("@3", "hello"),
-        ["send-keys", "-t", "@3", "-l", "hello"]
+        ["send-keys", "-t", "@3", "-l", "--", "hello"]
+    );
+    assert_eq!(
+        send_text_argv("@3", "-leading hyphen stays literal"),
+        [
+            "send-keys",
+            "-t",
+            "@3",
+            "-l",
+            "--",
+            "-leading hyphen stays literal"
+        ]
+    );
+    assert_eq!(
+        send_text_argv("@3", "-- -X cancel is user text, not tmux options"),
+        [
+            "send-keys",
+            "-t",
+            "@3",
+            "-l",
+            "--",
+            "-- -X cancel is user text, not tmux options"
+        ]
     );
     assert_eq!(send_enter_argv("@3"), ["send-keys", "-t", "@3", "Enter"]);
     assert_eq!(

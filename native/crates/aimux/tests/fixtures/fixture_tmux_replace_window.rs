@@ -94,6 +94,100 @@ fn replacement_failure_reports_child_output_before_timeout() {
     );
 }
 
+#[test]
+fn replacement_timeout_reports_pane_output_when_wrapper_keeps_window_alive() {
+    let calls = Rc::new(RefCell::new(Vec::<Value>::new()));
+    let calls_for_exec = calls.clone();
+    let mut manager = TmuxRuntimeManager::with_exec(move |args, options| {
+        calls_for_exec.borrow_mut().push(call_to_value(
+            args,
+            options.and_then(|options| options.cwd.as_deref()),
+        ));
+        let joined = args.join(" ");
+        if joined == "display-message -p -t @1 #{window_active}" {
+            return Ok("1".to_owned());
+        }
+        if joined.starts_with("new-window -d -P -t aimux-mobile-abc ") {
+            return Ok("@2\t2\taimux-reload-1-rust".to_owned());
+        }
+        if joined == "capture-pane -p -J -t @2 -S -80" {
+            return Ok("Error: request project desktop-state\ninvalid type: string".to_owned());
+        }
+        Ok(String::new())
+    });
+
+    let result = manager.replace_window_when_ready(
+        &target_from_value(&json!({
+            "sessionName": "aimux-mobile-abc",
+            "windowId": "@1",
+            "windowIndex": 0,
+            "windowName": "dashboard"
+        })),
+        &command_spec_from_value(&json!({
+            "cwd": "/repo/mobile",
+            "command": "bash",
+            "args": ["-lc", "aimux __dashboard-internal-native"]
+        })),
+        "@ready",
+        "stamp",
+        0,
+    );
+
+    let error = result.expect_err("unstamped replacement should fail");
+    assert!(
+        error.contains("Timed out waiting 0ms for replacement tmux window @2"),
+        "{error}"
+    );
+    assert!(error.contains("invalid type: string"), "{error}");
+    assert_eq!(
+        calls.borrow().last(),
+        Some(&json!(["kill-window", "-t", "@2"]))
+    );
+}
+
+#[test]
+fn replacement_timeout_without_pane_output_stays_a_timeout() {
+    let calls = Rc::new(RefCell::new(Vec::<Value>::new()));
+    let calls_for_exec = calls.clone();
+    let mut manager = TmuxRuntimeManager::with_exec(move |args, options| {
+        calls_for_exec.borrow_mut().push(call_to_value(
+            args,
+            options.and_then(|options| options.cwd.as_deref()),
+        ));
+        let joined = args.join(" ");
+        if joined == "display-message -p -t @1 #{window_active}" {
+            return Ok("1".to_owned());
+        }
+        if joined.starts_with("new-window -d -P -t aimux-mobile-abc ") {
+            return Ok("@2\t2\taimux-reload-1-rust".to_owned());
+        }
+        Ok(String::new())
+    });
+
+    let result = manager.replace_window_when_ready(
+        &target_from_value(&json!({
+            "sessionName": "aimux-mobile-abc",
+            "windowId": "@1",
+            "windowIndex": 0,
+            "windowName": "dashboard"
+        })),
+        &command_spec_from_value(&json!({
+            "cwd": "/repo/mobile",
+            "command": "bash",
+            "args": ["-lc", "aimux __dashboard-internal-native"]
+        })),
+        "@ready",
+        "stamp",
+        0,
+    );
+
+    let error = result.expect_err("unstamped replacement should fail");
+    assert_eq!(
+        error,
+        "Timed out waiting 0ms for replacement tmux window @2 readiness option @ready=stamp"
+    );
+}
+
 fn run_case(case: &Value) -> Value {
     let input = &case["input"];
     let calls = Rc::new(RefCell::new(Vec::<Value>::new()));

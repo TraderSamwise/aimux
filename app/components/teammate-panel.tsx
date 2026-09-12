@@ -19,6 +19,7 @@ import type { ProjectLifecycleTransition } from "../../src/project-api-contract"
 import type { ServiceEndpoint } from "@/lib/daemon-url";
 import type { DesktopSession } from "@/lib/desktop-state";
 import { isTransientRequestError } from "@/lib/request-errors";
+import { formatTmuxUnavailable } from "@/lib/unavailable-state";
 import { cn } from "@/lib/utils";
 import { kickDesktopStateRefreshAtom } from "@/stores/desktopState";
 import { recordProjectLifecycleTransitionAtom } from "@/stores/lifecycleTransitions";
@@ -70,6 +71,9 @@ export function TeammatePanel({
 
   const applyTeammates = useCallback((result: TeammateListResponse) => {
     setTeammates(result.teammates);
+    setError(
+      formatTmuxUnavailable(result.tmuxLiveWindowQuery, "tmux window inventory unavailable"),
+    );
     setSelectedTeammateId((current) =>
       result.teammates.some((teammate) => teammate.id === current)
         ? current

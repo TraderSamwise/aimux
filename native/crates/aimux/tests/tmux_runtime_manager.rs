@@ -1,8 +1,10 @@
+mod support;
+
 use aimux::tmux::{
     AIMUX_MODIFIED_ENTER_COMMAND, AIMUX_STALE_MODIFIED_ENTER_COMMAND,
     AIMUX_TMUX_RUNTIME_CONTRACT_VERSION, CapturePaneOptions, OpenTargetOptions,
-    TMUX_RUNTIME_CONTRACT_OPTION, TmuxClientInfo, TmuxCommandSpec, TmuxRuntimeConfig,
-    TmuxRuntimeManager, TmuxTarget, TmuxWindowInfo, project_session,
+    TMUX_CAPTURE_TARGET_TIMEOUT, TMUX_RUNTIME_CONTRACT_OPTION, TmuxClientInfo, TmuxCommandSpec,
+    TmuxRuntimeConfig, TmuxRuntimeManager, TmuxTarget, TmuxWindowInfo, project_session,
 };
 use serde_json::json;
 use std::cell::RefCell;
@@ -10,6 +12,7 @@ use std::future::Future;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::task::{Context, Poll, Wake, Waker};
+use std::time::Duration;
 
 #[test]
 fn treats_missing_tmux_server_as_empty_session_inventory() {
@@ -344,12 +347,17 @@ fn creates_window_with_cwd_and_parses_created_target() {
 
 #[test]
 fn wraps_target_mutations_with_existing_argv_builders() {
-    let calls = Rc::new(RefCell::new(Vec::<(Vec<String>, Option<String>)>::new()));
+    let calls = Rc::new(RefCell::new(Vec::<(
+        Vec<String>,
+        Option<String>,
+        Option<std::time::Duration>,
+    )>::new()));
     let calls_for_exec = calls.clone();
     let mut manager = TmuxRuntimeManager::with_exec(move |args, options| {
         calls_for_exec.borrow_mut().push((
             args.to_vec(),
             options.and_then(|options| options.cwd.clone()),
+            options.and_then(|options| options.timeout),
         ));
         Ok("captured output".to_owned())
     });
@@ -415,7 +423,8 @@ fn wraps_target_mutations_with_existing_argv_builders() {
             "-1",
         ]
     );
-    assert!(calls.iter().any(|(args, _)| args
+    assert_eq!(calls[0].2, Some(TMUX_CAPTURE_TARGET_TIMEOUT));
+    assert!(calls.iter().any(|(args, _, _)| args
         == &vec![
             "resize-window".to_owned(),
             "-t".to_owned(),
@@ -425,18 +434,81 @@ fn wraps_target_mutations_with_existing_argv_builders() {
             "-y".to_owned(),
             "40".to_owned(),
         ]));
-    assert!(calls.iter().any(|(args, _)| args
+    assert!(calls.iter().any(|(args, _, _)| args
         == &vec![
             "unlink-window".to_owned(),
             "-t".to_owned(),
             "aimux-mobile-abc:@9".to_owned(),
         ]));
-    assert!(calls.iter().any(|(args, _)| args
+    assert!(calls.iter().any(|(args, _, _)| args
         == &vec![
             "kill-session".to_owned(),
             "-t".to_owned(),
             "aimux-mobile-abc".to_owned(),
         ]));
+    assert!(
+        calls
+            .iter()
+            .skip(1)
+            .all(|(_, _, timeout)| timeout.is_none())
+    );
+}
+
+#[test]
+fn capture_target_async_does_not_enter_sync_bridge() {
+    let _isolation = support::TestIsolation::new("tmux-capture-target-async");
+    let mut manager = TmuxRuntimeManager::new();
+    let target = TmuxTarget {
+        session_name: "aimux-test".to_owned(),
+        window_id: "@1".to_owned(),
+        window_index: 1,
+        window_name: "codex".to_owned(),
+        pane_dead: Some(false),
+    };
+
+    // aimux-async-seam: test - tmux runtime manager test drives async capture from sync harness
+    let error = aimux::async_runtime::block_on_named(
+        "test:tmux-capture-target-async",
+        manager.capture_target_async(
+            &target,
+            CapturePaneOptions {
+                start_line: Some(-40),
+                end_line: None,
+                include_escapes: true,
+            },
+        ),
+    )
+    .expect_err("isolated tmux socket should report unavailable");
+
+    assert!(
+        error.contains("tmux") || error.contains("error connecting") || error.contains("timed out"),
+        "capture_target_async must return the tmux failure instead of panicking: {error}"
+    );
+}
+
+#[test]
+fn live_window_inventory_can_use_bounded_timeout() {
+    let captured_timeout = Rc::new(RefCell::new(None::<Duration>));
+    let captured_timeout_for_exec = Rc::clone(&captured_timeout);
+    let mut manager = TmuxRuntimeManager::with_exec(move |args, options| {
+        if args.join(" ") == "list-windows -a -F #{window_id}" {
+            *captured_timeout_for_exec.borrow_mut() = options.and_then(|options| options.timeout);
+            return Ok("@1\n@2\n".to_owned());
+        }
+        Ok(String::new())
+    });
+
+    let ids = manager
+        .try_live_window_ids_with_timeout(TMUX_CAPTURE_TARGET_TIMEOUT)
+        .expect("live window ids");
+
+    assert!(ids.contains("@1"));
+    assert!(ids.contains("@2"));
+    assert_eq!(
+        *captured_timeout.borrow(),
+        Some(TMUX_CAPTURE_TARGET_TIMEOUT),
+        "global Expose inventory must use a bounded tmux deadline"
+    );
 }
 
 #[test]
@@ -492,11 +564,42 @@ fn sends_text_in_chunks_and_skips_empty_text() {
     manager.send_text(&target(), &text).expect("send text");
 
     assert_eq!(calls.borrow().len(), 2);
-    assert_eq!(calls.borrow()[0][..4], ["send-keys", "-t", "@9", "-l"]);
-    assert_eq!(calls.borrow()[1][..4], ["send-keys", "-t", "@9", "-l"]);
     assert_eq!(
-        format!("{}{}", calls.borrow()[0][4], calls.borrow()[1][4]),
+        calls.borrow()[0][..5],
+        ["send-keys", "-t", "@9", "-l", "--"]
+    );
+    assert_eq!(
+        calls.borrow()[1][..5],
+        ["send-keys", "-t", "@9", "-l", "--"]
+    );
+    assert_eq!(
+        format!("{}{}", calls.borrow()[0][5], calls.borrow()[1][5]),
         text
+    );
+}
+
+#[test]
+fn send_text_delivers_leading_hyphen_payloads_as_literal_text() {
+    let calls = Rc::new(RefCell::new(Vec::<Vec<String>>::new()));
+    let calls_for_exec = calls.clone();
+    let mut manager = TmuxRuntimeManager::with_exec(move |args, _options| {
+        calls_for_exec.borrow_mut().push(args.to_vec());
+        Ok(String::new())
+    });
+    let text = "-flag-looking first line\n-- -X cancel stays text";
+
+    manager.send_text(&target(), text).expect("send text");
+
+    assert_eq!(
+        calls.borrow()[0],
+        vec![
+            "send-keys",
+            "-t",
+            "@9",
+            "-l",
+            "--",
+            "-flag-looking first line\n-- -X cancel stays text"
+        ]
     );
 }
 
@@ -554,7 +657,7 @@ fn writes_window_metadata_and_agent_policy_options() {
 }
 
 #[test]
-fn async_named_runtime_methods_use_the_same_tmux_commands() {
+fn async_named_runtime_wrappers_use_the_same_tmux_commands() {
     let calls = Rc::new(RefCell::new(Vec::<(Vec<String>, Option<String>)>::new()));
     let calls_for_exec = calls.clone();
     let mut manager = TmuxRuntimeManager::with_exec(move |args, options| {
@@ -588,19 +691,8 @@ fn async_named_runtime_methods_use_the_same_tmux_commands() {
         .window_id,
         "@10"
     );
-    assert_eq!(
-        // aimux-async-seam: test - tmux runtime test drives async tmux method
-        block_on(manager.capture_target_async(
-            &target,
-            CapturePaneOptions {
-                start_line: Some(0),
-                end_line: Some(10),
-                include_escapes: false,
-            },
-        ))
-        .expect("capture async"),
-        "screen"
-    );
+    // capture_target_async is covered separately because it intentionally uses
+    // the Tokio subprocess path instead of the fake sync executor.
     // aimux-async-seam: test - tmux runtime test drives async tmux method
     block_on(manager.clear_target_history_async(&target)).expect("clear async");
     // aimux-async-seam: test - tmux runtime test drives async tmux method
@@ -648,18 +740,6 @@ fn async_named_runtime_methods_use_the_same_tmux_commands() {
                     "gpt-5".to_owned(),
                 ]
     }));
-    assert!(calls.iter().any(|(args, _)| args
-        == &vec![
-            "capture-pane".to_owned(),
-            "-p".to_owned(),
-            "-J".to_owned(),
-            "-t".to_owned(),
-            "@9".to_owned(),
-            "-S".to_owned(),
-            "0".to_owned(),
-            "-E".to_owned(),
-            "10".to_owned(),
-        ]));
     assert!(
         calls.iter().any(|(args, _)| args
             == &vec!["clear-history".to_owned(), "-t".to_owned(), "@9".to_owned(),])

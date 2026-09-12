@@ -1,4 +1,5 @@
 use crate::atomic_write::write_json_atomic;
+use crate::config::load_config_for_project_with_resolver;
 use crate::core_command_contract::CORE_API_ROUTES;
 use crate::core_command_transport::{
     CoreCommandTransportError, DaemonHttpMethod, DaemonJsonRequest, execute_loopback_json_request,
@@ -6,6 +7,7 @@ use crate::core_command_transport::{
 use crate::daemon_state::get_daemon_base_url;
 use crate::debug_logging::{LogLevel, log_at};
 use crate::expose_socket::parse_positive_header_integer;
+use crate::paths::PathResolver;
 use crate::project_api_contract::routes;
 use crate::project_service::switchable_agents::agent_status_chip;
 use crate::project_service::usage::parse_recency_timestamp;
@@ -792,6 +794,8 @@ pub fn parse_expose_args<S: AsRef<str>>(raw_args: &[S]) -> Result<TmuxExposeOpti
     }
     options.project_root = project_root.ok_or("--project-root is required")?;
     options.project_state_dir = project_state_dir.ok_or("--project-state-dir is required")?;
+    options.expose_config =
+        load_expose_config(&options.project_root, options.aimux_home.as_deref());
     Ok(options)
 }
 
@@ -807,7 +811,7 @@ pub fn tmux_expose_options_from_socket_header(
             .filter(|value| !value.is_empty())
             .map(str::to_owned)
     };
-    TmuxExposeOptions {
+    let mut options = TmuxExposeOptions {
         project_root: value(0)
             .map(PathBuf::from)
             .unwrap_or_else(|| fallback_project_root.as_ref().to_path_buf()),
@@ -827,6 +831,42 @@ pub fn tmux_expose_options_from_socket_header(
         columns: parse_positive_header_integer(header.get(11).map(String::as_str)),
         rows: parse_positive_header_integer(header.get(12).map(String::as_str)),
         ..TmuxExposeOptions::default()
+    };
+    options.expose_config =
+        load_expose_config(&options.project_root, options.aimux_home.as_deref());
+    options
+}
+
+fn load_expose_config(project_root: &Path, aimux_home: Option<&str>) -> ExposeConfig {
+    let resolver = PathResolver::new(
+        std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+        std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(".")),
+        aimux_home.map(str::to_owned),
+    );
+    expose_config_from_value(&load_config_for_project_with_resolver(
+        &resolver,
+        project_root,
+    ))
+}
+
+fn expose_config_from_value(config: &Value) -> ExposeConfig {
+    ExposeConfig {
+        initial_scope: config
+            .get("expose")
+            .and_then(|expose| expose.get("initialScope"))
+            .and_then(Value::as_str)
+            .and_then(expose_scope_from_str),
+    }
+}
+
+fn expose_scope_from_str(value: &str) -> Option<ExposeScope> {
+    match value {
+        "worktree" => Some(ExposeScope::Worktree),
+        "project" => Some(ExposeScope::Project),
+        "global" => Some(ExposeScope::Global),
+        _ => None,
     }
 }
 
@@ -982,9 +1022,7 @@ pub fn run_tmux_expose_with_drivers(
                     options.current_window_id.as_deref(),
                 );
             }
-            Err(_) if loading => {
-                loading = false;
-            }
+            Err(_) if loading => {}
             Err(_) => {}
         }
         render_state = RenderGridExposeState { sort_mode, loading };
@@ -1427,7 +1465,7 @@ pub fn load_expose_scope_items_with(
             CORE_API_ROUTES.expose_items,
             common_expose_query(),
         );
-        let items = request_expose_items(&url, client);
+        let items = request_expose_items(&url, client)?;
         return Ok(ExposeScopeView {
             scope,
             items,
@@ -1451,7 +1489,7 @@ pub fn load_expose_scope_items_with(
     query.extend(common_expose_query());
     append_focus_context_query(&mut query, context);
     let url = url_with_query(&endpoint, routes::controls::SWITCHABLE_AGENTS, query);
-    let items = request_expose_items(&url, client);
+    let items = request_expose_items(&url, client)?;
     Ok(ExposeScopeView {
         scope,
         items,
@@ -1483,7 +1521,7 @@ pub fn load_overseer_expose_item_with(
     query.push(("includeOverseer".into(), "1".into()));
     append_focus_context_query(&mut query, context);
     let url = url_with_query(&endpoint, routes::controls::SWITCHABLE_AGENTS, query);
-    Ok(request_expose_items(&url, client)
+    Ok(request_expose_items(&url, client)?
         .into_iter()
         .find(|item| item.get("overseer").and_then(Value::as_bool) == Some(true)))
 }
@@ -1587,7 +1625,10 @@ pub fn write_expose_ui_state(
     .map_err(|error| error.to_string())
 }
 
-fn request_expose_items(url: &str, client: &mut impl ExposeHttpClient) -> Vec<Value> {
+fn request_expose_items(
+    url: &str,
+    client: &mut impl ExposeHttpClient,
+) -> Result<Vec<Value>, String> {
     let response = client.request_json(
         url,
         ExposeHttpRequest {
@@ -1595,18 +1636,14 @@ fn request_expose_items(url: &str, client: &mut impl ExposeHttpClient) -> Vec<Va
             body: None,
             timeout_ms: EXPOSE_HTTP_TIMEOUT_MS,
         },
-    );
-    let Ok(response) = response else {
-        return Vec::new();
-    };
+    )?;
     if response.get("ok").and_then(Value::as_bool) != Some(true) {
-        return Vec::new();
+        return Err("expose items request returned ok:false".to_owned());
     }
-    response
-        .get("items")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default()
+    let Some(items) = response.get("items").and_then(Value::as_array).cloned() else {
+        return Err("expose items response missing items array".to_owned());
+    };
+    Ok(items)
 }
 
 fn seed_preview_snapshots(items: &[Value]) -> BTreeMap<String, String> {

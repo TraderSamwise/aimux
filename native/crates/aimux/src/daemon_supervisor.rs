@@ -7,7 +7,7 @@ use crate::core_command_transport::{
 use crate::daemon_state::{
     AimuxDaemonInfo, DaemonState, EnsureDaemonRunningOptions, ProjectServiceState,
     StoppedDaemonInfo, clear_daemon_info, get_daemon_base_url, get_daemon_port, load_daemon_info,
-    load_daemon_state, save_daemon_info, save_daemon_state,
+    load_daemon_state, save_daemon_info, save_daemon_state, try_is_pid_alive,
 };
 use crate::paths::PathResolver;
 use crate::process_inspector::{
@@ -499,10 +499,10 @@ pub fn ensure_daemon_running_at(
                 }
             }
             Err(error) => {
-                if should_keep_unresponsive_daemon(
+                if should_keep_unresponsive_daemon_after_pid_probe(
                     options.adopt_existing,
-                    is_pid_alive(existing.pid),
-                ) {
+                    try_is_pid_alive(existing.pid),
+                )? {
                     return Ok(existing);
                 }
                 let _ = error;
@@ -568,6 +568,21 @@ pub fn ensure_daemon_running_at(
         (Err(error), _) => Err(error),
         (Ok(_), Err(error)) => Err(error),
     }
+}
+
+pub fn should_keep_unresponsive_daemon_after_pid_probe(
+    adopt_existing: Option<bool>,
+    daemon_pid_alive: Result<bool, String>,
+) -> Result<bool, DaemonSupervisorError> {
+    let daemon_pid_alive = daemon_pid_alive.map_err(|error| {
+        DaemonSupervisorError::Message(format!(
+            "could not determine whether existing aimux daemon process is alive: {error}"
+        ))
+    })?;
+    Ok(should_keep_unresponsive_daemon(
+        adopt_existing,
+        daemon_pid_alive,
+    ))
 }
 
 fn stored_daemon_health() -> Result<Value, CoreCommandTransportError> {

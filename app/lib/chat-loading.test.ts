@@ -52,6 +52,14 @@ describe("paneOutputSnapshotSettlesInitialTranscript", () => {
     expect(paneOutputSnapshotSettlesInitialTranscript({ output: "ready" })).toBe(true);
     expect(paneOutputSnapshotSettlesInitialTranscript({ outputAvailable: true })).toBe(true);
   });
+
+  it("settles initial loading for an explicit tmux-unavailable marker", () => {
+    expect(
+      paneOutputSnapshotSettlesInitialTranscript({
+        tmuxUnavailable: { ok: false, error: "tmux list-panes timed out after 2s" },
+      }),
+    ).toBe(true);
+  });
 });
 
 describe("chatTranscriptPlaceholderState", () => {

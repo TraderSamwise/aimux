@@ -39,6 +39,7 @@ use crate::daemon::listener::{
 use crate::daemon::process::handle_daemon_runtime_request;
 use crate::daemon::routing::{DaemonRouteResponse, DaemonRouteUrl};
 use crate::daemon::server::{DaemonHttpRequest, handle_daemon_http_request};
+use crate::daemon::stability_doctor::{StabilityDoctorReport, build_stability_doctor_report};
 use crate::daemon::status::{DAEMON_HEALTH_KIND, DaemonStatusRuntime};
 use crate::daemon::stream::{
     maybe_handle_host_agent_stream_request_with_runtime_mutex_async,
@@ -3145,6 +3146,19 @@ impl DaemonOperationsTextRuntime for RealDaemonRuntime {
         system_tmux_doctor_report(&mut self.resolver, project_root, session_name, window_id)
     }
 
+    fn doctor_stability_report(
+        &mut self,
+        project_root: &str,
+    ) -> Result<StabilityDoctorReport, String> {
+        let mut resolver = self.resolver.clone();
+        let project_root = stability_doctor_project_root(project_root);
+        let project_state_dir = resolver.project_state_dir_for(&project_root);
+        Ok(build_stability_doctor_report(
+            &project_root,
+            project_state_dir,
+        ))
+    }
+
     fn repair_tmux_runtime(
         &mut self,
         project_root: &str,
@@ -3687,7 +3701,7 @@ impl DaemonJsonRouteRuntime for RealDaemonRuntime {
     }
 
     fn expose_items(&mut self, path: &str) -> Result<Value, String> {
-        let projects = self.list_projects_for_route();
+        let projects = self.try_list_projects_for_route()?;
         expose_items_route(
             &mut self.resolver,
             session_prefix_for_project,
@@ -4350,11 +4364,15 @@ fn tmux_target_json(target: &TmuxTarget) -> Value {
 }
 
 fn restart_before_report(runtime: &impl DaemonStatusRuntime, issued_at: &str) -> Value {
-    let projects = runtime.list_projects_for_route();
+    let (projects, project_read_error) = match runtime.try_list_projects_for_route() {
+        Ok(projects) => (projects, Value::Null),
+        Err(error) => (Vec::new(), Value::String(error)),
+    };
     json!({
         "generatedAt": issued_at,
         "daemon": runtime.current_daemon_info(issued_at),
         "expectedServiceManifest": runtime.project_service_info(),
+        "projectReadError": project_read_error,
         "projectCount": projects.len(),
         "serviceAliveCount": projects.iter().filter(|project| project.service_alive).count(),
         "daemonStateProjectCount": runtime.daemon_state().projects.len(),
@@ -4882,6 +4900,13 @@ fn project_roots_equivalent(left: &Path, right: &Path) -> bool {
     }
 }
 
+fn stability_doctor_project_root(project_root: &str) -> String {
+    fs::canonicalize(project_root)
+        .unwrap_or_else(|_| PathBuf::from(project_root))
+        .to_string_lossy()
+        .into_owned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4915,6 +4940,39 @@ mod tests {
                 std::process::id()
             ))
             .join("repo")
+    }
+
+    #[test]
+    fn doctor_stability_canonicalizes_project_root_before_state_dir_lookup() {
+        let project_root = unique_temp_fixture_project_root("stability-canonical");
+        fs::create_dir_all(&project_root).expect("project root");
+        let alias_root = project_root
+            .parent()
+            .expect("fixture parent")
+            .join("repo-alias");
+        std::os::unix::fs::symlink(&project_root, &alias_root).expect("alias root");
+
+        let canonical_root = fs::canonicalize(&project_root).expect("canonical project root");
+        let resolved = stability_doctor_project_root(&alias_root.to_string_lossy());
+        assert_eq!(PathBuf::from(&resolved), canonical_root);
+
+        let aimux_home = project_root
+            .parent()
+            .expect("fixture parent")
+            .join("aimux-home");
+        let mut alias_resolver =
+            PathResolver::new("/", "/", Some(aimux_home.to_string_lossy().into_owned()));
+        let mut canonical_resolver =
+            PathResolver::new("/", "/", Some(aimux_home.to_string_lossy().into_owned()));
+        let mut resolved_resolver =
+            PathResolver::new("/", "/", Some(aimux_home.to_string_lossy().into_owned()));
+
+        let alias_state_dir = alias_resolver.project_state_dir_for(&alias_root);
+        let canonical_state_dir = canonical_resolver.project_state_dir_for(&canonical_root);
+        let resolved_state_dir = resolved_resolver.project_state_dir_for(&resolved);
+
+        assert_ne!(alias_state_dir, canonical_state_dir);
+        assert_eq!(resolved_state_dir, canonical_state_dir);
     }
 
     #[test]

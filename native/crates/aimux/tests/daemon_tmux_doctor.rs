@@ -4,7 +4,8 @@ use aimux::daemon::tmux_doctor::{
 };
 use aimux::tmux::{
     AIMUX_MODIFIED_ENTER_COMMAND, AIMUX_STALE_MODIFIED_ENTER_COMMAND,
-    AIMUX_TMUX_RUNTIME_CONTRACT_VERSION, TMUX_RUNTIME_CONTRACT_OPTION,
+    AIMUX_TMUX_RUNTIME_CONTRACT_VERSION, TMUX_DASHBOARD_BUILD_OPTION, TMUX_DASHBOARD_OWNER_OPTION,
+    TMUX_DASHBOARD_READY_OPTION, TMUX_RUNTIME_CONTRACT_OPTION,
     TMUX_RUNTIME_REBUILD_REQUIRED_OPTION, TmuxCommandSpec, project_session,
 };
 use serde_json::{Value, json};
@@ -409,6 +410,8 @@ fn repair_creates_dashboard_window_when_host_session_exists_without_dashboard() 
                 command: "aimux".into(),
                 args: vec!["__dashboard-internal-native".into()],
             }),
+            dashboard_build_stamp: Some("dashboard-ready".into()),
+            dashboard_ready_timeout_ms: 50,
             statusline_script_path: fixture.script.clone(),
             tmux_control_script_path: control_script,
             tmux_env: None,
@@ -434,6 +437,442 @@ fn repair_creates_dashboard_window_when_host_session_exists_without_dashboard() 
             "__dashboard-internal-native".to_owned(),
         ]));
     assert!(render_tmux_repair_result(&result).contains("dashboard target:"));
+    fixture.cleanup();
+}
+
+#[test]
+fn repair_reclaims_stale_tail_dashboard_placeholder_and_waits_for_ready() {
+    let fixture = Fixture::new("stale-dashboard-placeholder");
+    let project_root = fixture.root.join("repo");
+    fs::create_dir_all(&project_root).expect("project root");
+    fs::create_dir_all(fixture.script.parent().expect("script parent")).expect("script dir");
+    fs::write(&fixture.script, "#!/bin/sh\n").expect("statusline script");
+    let control_script = fixture.root.join("scripts/tmux-control.sh");
+    fs::write(&control_script, "#!/bin/sh\n").expect("control script");
+    let canonical_project_root = fs::canonicalize(&project_root).expect("canonical project root");
+    let host_session = project_session(&canonical_project_root, "aimux").session_name;
+
+    let mut runner = FakeRunner {
+        pass_mutations: true,
+        ..FakeRunner::default()
+    };
+    runner.respond("tmux", &["-V"], "tmux 3.5a\n");
+    runner.respond(
+        "tmux",
+        &["list-sessions", "-F", "#{session_name}"],
+        &format!("{host_session}\n"),
+    );
+    runner.respond("tmux", &["has-session", "-t", &host_session], "");
+    runner.respond(
+        "tmux",
+        &[
+            "show-options",
+            "-v",
+            "-t",
+            &host_session,
+            "@aimux-runtime-contract",
+        ],
+        AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
+    );
+    runner.respond(
+        "tmux",
+        &[
+            "show-options",
+            "-v",
+            "-t",
+            &host_session,
+            "terminal-features",
+        ],
+        "",
+    );
+    runner.respond(
+        "tmux",
+        &[
+            "list-windows",
+            "-t",
+            &host_session,
+            "-F",
+            "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}\t#{pane_dead}",
+        ],
+        "@22\t0\tdashboard\t1\t0\t0\n@7\t7\tcodex\t0\t0\t0\n",
+    );
+    runner.respond(
+        "tmux",
+        &[
+            "display-message",
+            "-p",
+            "-t",
+            "@22",
+            "#{pane_current_command}",
+        ],
+        "tail\n",
+    );
+    runner.respond(
+        "tmux",
+        &[
+            "show-window-options",
+            "-v",
+            "-t",
+            "@22",
+            TMUX_DASHBOARD_BUILD_OPTION,
+        ],
+        "",
+    );
+    runner.respond(
+        "tmux",
+        &[
+            "show-window-options",
+            "-v",
+            "-t",
+            "@22",
+            TMUX_DASHBOARD_OWNER_OPTION,
+        ],
+        "",
+    );
+    runner.respond(
+        "tmux",
+        &[
+            "show-window-options",
+            "-v",
+            "-t",
+            "@22",
+            TMUX_DASHBOARD_READY_OPTION,
+        ],
+        "dashboard-ready\n",
+    );
+    runner.respond(
+        "tmux",
+        &[
+            "list-windows",
+            "-t",
+            &host_session,
+            "-F",
+            "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}\t#{pane_dead}\t#{@aimux-meta}",
+        ],
+        &format!(
+            "@7\t7\tcodex\t0\t0\t0\t{}",
+            json!({
+                "sessionId": "codex-1",
+                "command": "codex",
+                "args": [],
+                "toolConfigKey": "codex"
+            })
+        ),
+    );
+
+    let result = repair_tmux_runtime(
+        &mut runner,
+        &TmuxRepairInput {
+            project_root,
+            aimux_home: fixture.aimux_home.clone(),
+            session_prefix: "aimux".into(),
+            dashboard_command: Some(TmuxCommandSpec {
+                cwd: canonical_project_root.to_string_lossy().into_owned(),
+                command: "aimux".into(),
+                args: vec!["--tmux-dashboard-internal".into()],
+            }),
+            dashboard_build_stamp: Some("dashboard-ready".into()),
+            dashboard_ready_timeout_ms: 50,
+            statusline_script_path: fixture.script.clone(),
+            tmux_control_script_path: control_script,
+            tmux_env: None,
+            open: false,
+        },
+    )
+    .expect("repair result");
+
+    assert_eq!(result.dashboard_window_id, "@22");
+    assert!(runner.calls.iter().any(|(_, args)| args
+        == &[
+            "respawn-window".to_owned(),
+            "-k".to_owned(),
+            "-t".to_owned(),
+            "@22".to_owned(),
+            "-c".to_owned(),
+            canonical_project_root.to_string_lossy().into_owned(),
+            "aimux".to_owned(),
+            "--tmux-dashboard-internal".to_owned(),
+        ]));
+    assert!(runner.calls.iter().any(|(_, args)| args
+        == &[
+            "show-window-options".to_owned(),
+            "-v".to_owned(),
+            "-t".to_owned(),
+            "@22".to_owned(),
+            TMUX_DASHBOARD_READY_OPTION.to_owned(),
+        ]));
+    assert!(!runner.calls.iter().any(|(_, args)| {
+        args.first().map(String::as_str) == Some("kill-window")
+            && args.iter().any(|arg| arg == "@7")
+    }));
+    fixture.cleanup();
+}
+
+#[test]
+fn repair_reports_stale_tail_dashboard_placeholder_that_never_becomes_ready() {
+    let fixture = Fixture::new("stale-dashboard-placeholder-timeout");
+    let project_root = fixture.root.join("repo");
+    fs::create_dir_all(&project_root).expect("project root");
+    fs::create_dir_all(fixture.script.parent().expect("script parent")).expect("script dir");
+    fs::write(&fixture.script, "#!/bin/sh\n").expect("statusline script");
+    let control_script = fixture.root.join("scripts/tmux-control.sh");
+    fs::write(&control_script, "#!/bin/sh\n").expect("control script");
+    let canonical_project_root = fs::canonicalize(&project_root).expect("canonical project root");
+    let host_session = project_session(&canonical_project_root, "aimux").session_name;
+
+    let mut runner = FakeRunner {
+        pass_mutations: true,
+        ..FakeRunner::default()
+    };
+    runner.respond("tmux", &["-V"], "tmux 3.5a\n");
+    runner.respond(
+        "tmux",
+        &["list-sessions", "-F", "#{session_name}"],
+        &format!("{host_session}\n"),
+    );
+    runner.respond("tmux", &["has-session", "-t", &host_session], "");
+    runner.respond(
+        "tmux",
+        &[
+            "show-options",
+            "-v",
+            "-t",
+            &host_session,
+            "@aimux-runtime-contract",
+        ],
+        AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
+    );
+    runner.respond(
+        "tmux",
+        &[
+            "show-options",
+            "-v",
+            "-t",
+            &host_session,
+            "terminal-features",
+        ],
+        "",
+    );
+    runner.respond(
+        "tmux",
+        &[
+            "list-windows",
+            "-t",
+            &host_session,
+            "-F",
+            "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}\t#{pane_dead}",
+        ],
+        "@22\t0\tdashboard\t1\t0\t0\n",
+    );
+    runner.respond(
+        "tmux",
+        &[
+            "display-message",
+            "-p",
+            "-t",
+            "@22",
+            "#{pane_current_command}",
+        ],
+        "tail\n",
+    );
+    runner.respond(
+        "tmux",
+        &[
+            "show-window-options",
+            "-v",
+            "-t",
+            "@22",
+            TMUX_DASHBOARD_BUILD_OPTION,
+        ],
+        "",
+    );
+    runner.respond(
+        "tmux",
+        &[
+            "show-window-options",
+            "-v",
+            "-t",
+            "@22",
+            TMUX_DASHBOARD_OWNER_OPTION,
+        ],
+        "",
+    );
+    runner.respond(
+        "tmux",
+        &[
+            "show-window-options",
+            "-v",
+            "-t",
+            "@22",
+            TMUX_DASHBOARD_READY_OPTION,
+        ],
+        "",
+    );
+
+    let error = repair_tmux_runtime(
+        &mut runner,
+        &TmuxRepairInput {
+            project_root,
+            aimux_home: fixture.aimux_home.clone(),
+            session_prefix: "aimux".into(),
+            dashboard_command: Some(TmuxCommandSpec {
+                cwd: canonical_project_root.to_string_lossy().into_owned(),
+                command: "aimux".into(),
+                args: vec!["--tmux-dashboard-internal".into()],
+            }),
+            dashboard_build_stamp: Some("dashboard-ready".into()),
+            dashboard_ready_timeout_ms: 0,
+            statusline_script_path: fixture.script.clone(),
+            tmux_control_script_path: control_script,
+            tmux_env: None,
+            open: false,
+        },
+    )
+    .expect_err("repair must not report success before the replacement dashboard is ready");
+
+    assert!(error.contains("Timed out waiting 0ms for repaired dashboard window @22"));
+    assert!(error.contains(TMUX_DASHBOARD_READY_OPTION));
+    assert!(!error.contains("exited before setting readiness"));
+    fixture.cleanup();
+}
+
+#[test]
+fn repair_reports_replacement_dashboard_child_crash_instead_of_readiness_timeout() {
+    let fixture = Fixture::new("stale-dashboard-placeholder-crash");
+    let project_root = fixture.root.join("repo");
+    fs::create_dir_all(&project_root).expect("project root");
+    fs::create_dir_all(fixture.script.parent().expect("script parent")).expect("script dir");
+    fs::write(&fixture.script, "#!/bin/sh\n").expect("statusline script");
+    let control_script = fixture.root.join("scripts/tmux-control.sh");
+    fs::write(&control_script, "#!/bin/sh\n").expect("control script");
+    let canonical_project_root = fs::canonicalize(&project_root).expect("canonical project root");
+    let host_session = project_session(&canonical_project_root, "aimux").session_name;
+
+    let mut runner = FakeRunner {
+        pass_mutations: true,
+        ..FakeRunner::default()
+    };
+    runner.respond("tmux", &["-V"], "tmux 3.5a\n");
+    runner.respond(
+        "tmux",
+        &["list-sessions", "-F", "#{session_name}"],
+        &format!("{host_session}\n"),
+    );
+    runner.respond("tmux", &["has-session", "-t", &host_session], "");
+    runner.respond(
+        "tmux",
+        &[
+            "show-options",
+            "-v",
+            "-t",
+            &host_session,
+            "@aimux-runtime-contract",
+        ],
+        AIMUX_TMUX_RUNTIME_CONTRACT_VERSION,
+    );
+    runner.respond(
+        "tmux",
+        &[
+            "show-options",
+            "-v",
+            "-t",
+            &host_session,
+            "terminal-features",
+        ],
+        "",
+    );
+    runner.respond(
+        "tmux",
+        &[
+            "list-windows",
+            "-t",
+            &host_session,
+            "-F",
+            "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}\t#{pane_dead}",
+        ],
+        "@22\t0\tdashboard\t1\t0\t0\n",
+    );
+    runner.respond(
+        "tmux",
+        &[
+            "display-message",
+            "-p",
+            "-t",
+            "@22",
+            "#{pane_current_command}",
+        ],
+        "tail\n",
+    );
+    runner.respond(
+        "tmux",
+        &[
+            "show-window-options",
+            "-v",
+            "-t",
+            "@22",
+            TMUX_DASHBOARD_BUILD_OPTION,
+        ],
+        "",
+    );
+    runner.respond(
+        "tmux",
+        &[
+            "show-window-options",
+            "-v",
+            "-t",
+            "@22",
+            TMUX_DASHBOARD_OWNER_OPTION,
+        ],
+        "",
+    );
+    runner.respond(
+        "tmux",
+        &[
+            "show-window-options",
+            "-v",
+            "-t",
+            "@22",
+            TMUX_DASHBOARD_READY_OPTION,
+        ],
+        "",
+    );
+    runner.respond(
+        "tmux",
+        &["display-message", "-p", "-t", "@22", "#{pane_dead}"],
+        "1\n",
+    );
+    runner.respond(
+        "tmux",
+        &["capture-pane", "-p", "-J", "-t", "@22", "-S", "-80"],
+        "Error: request project desktop-state\n\nCaused by:\n    invalid type: string, expected struct DashboardOperationFailure\n",
+    );
+
+    let error = repair_tmux_runtime(
+        &mut runner,
+        &TmuxRepairInput {
+            project_root,
+            aimux_home: fixture.aimux_home.clone(),
+            session_prefix: "aimux".into(),
+            dashboard_command: Some(TmuxCommandSpec {
+                cwd: canonical_project_root.to_string_lossy().into_owned(),
+                command: "aimux".into(),
+                args: vec!["--tmux-dashboard-internal".into()],
+            }),
+            dashboard_build_stamp: Some("dashboard-ready".into()),
+            dashboard_ready_timeout_ms: 50,
+            statusline_script_path: fixture.script.clone(),
+            tmux_control_script_path: control_script,
+            tmux_env: None,
+            open: false,
+        },
+    )
+    .expect_err("repair must report the child crash, not a readiness timeout");
+
+    assert!(error.contains("Repaired dashboard window @22 exited before setting readiness"));
+    assert!(error.contains(TMUX_DASHBOARD_READY_OPTION));
+    assert!(error.contains("invalid type: string"));
+    assert!(error.contains("DashboardOperationFailure"));
+    assert!(!error.contains("Timed out waiting"));
     fixture.cleanup();
 }
 
@@ -544,6 +983,8 @@ fn repairs_managed_sessions_dashboard_and_agent_window_policy() {
                 command: "aimux".into(),
                 args: vec!["--tmux-dashboard-internal".into()],
             }),
+            dashboard_build_stamp: Some("dashboard-ready".into()),
+            dashboard_ready_timeout_ms: 50,
             statusline_script_path: fixture.script.clone(),
             tmux_control_script_path: control_script,
             tmux_env: None,
@@ -724,6 +1165,8 @@ fn repair_preserves_user_modified_enter_bindings() {
                 command: "aimux".into(),
                 args: vec!["--tmux-dashboard-internal".into()],
             }),
+            dashboard_build_stamp: Some("dashboard-ready".into()),
+            dashboard_ready_timeout_ms: 50,
             statusline_script_path: fixture.script.clone(),
             tmux_control_script_path: control_script,
             tmux_env: None,

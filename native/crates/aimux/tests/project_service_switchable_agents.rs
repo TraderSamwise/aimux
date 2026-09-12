@@ -450,6 +450,31 @@ fn route_switchable_agents_reads_topology_metadata_and_last_used() {
 }
 
 #[test]
+fn route_switchable_agents_topology_read_failure_is_error_not_empty_expose_tiles() {
+    let project = temp_project("route-switchable-topology-unavailable");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids(support::live_window_ids(&["@1"]));
+
+    let response = route_project_service_request(
+        &context,
+        "GET",
+        "/control/switchable-agents?currentPath=/repo/wt&currentWindowId=%401&labelFormat=raw&expose=1",
+        None,
+    );
+
+    assert_eq!(response.status, 500);
+    assert_eq!(response.body["ok"], false);
+    assert!(
+        response.body.get("items").is_none(),
+        "topology read failure must not masquerade as an empty Expose tile list"
+    );
+    assert!(response.body["error"].as_str().is_some());
+    cleanup(project);
+}
+
+#[test]
 fn route_switchable_agents_drops_sessions_without_live_tmux_windows() {
     let project = temp_project("route-switchable-live-window-filter");
     let state_dir = project.join("state");
@@ -548,6 +573,29 @@ fn async_route_switchable_agents_preserves_live_sessions_when_tmux_query_is_unav
     assert!(
         empty_inventory_items.is_empty(),
         "a successful empty tmux inventory should remove dead sessions from switchable controls"
+    );
+    let expose_path = "/control/switchable-agents?scope=all&currentPath=/repo/wt&currentWindowId=%401&labelFormat=raw&expose=1";
+    // aimux-async-seam: test - switchable-agents route test drives async handler
+    let expose_empty_inventory_response = aimux::async_runtime::block_on_named(
+        "test:switchable-agents-expose-empty-inventory",
+        route_switchable_agent_request_async(&empty_inventory_context, "GET", expose_path),
+    )
+    .expect("switchable async expose route with empty inventory");
+    assert_eq!(expose_empty_inventory_response.status, 200);
+    assert_eq!(
+        expose_empty_inventory_response.body["tmuxLiveWindowQuery"]["ok"],
+        false
+    );
+    let expose_items = expose_empty_inventory_response.body["items"]
+        .as_array()
+        .unwrap();
+    assert_eq!(
+        expose_items
+            .iter()
+            .map(|item| item["id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["codex-live", "codex-stale"],
+        "Expose must not render an authoritative empty grid when live-window projection erases topology-backed sessions"
     );
 
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)

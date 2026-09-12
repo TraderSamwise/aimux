@@ -1,4 +1,5 @@
 use aimux::daemon_state::{MetadataState, save_metadata_state};
+use aimux::dashboard_model::{DashboardOperationFailure, DesktopStateSnapshot};
 use aimux::project_api_contract::routes;
 use aimux::project_service::agent_output::AgentOutputCaptureRuntime;
 use aimux::project_service::desktop_state::{
@@ -6,10 +7,13 @@ use aimux::project_service::desktop_state::{
     route_desktop_state_request_with_runtime,
 };
 use aimux::project_service::operation_failures::{
-    OperationFailureInput, add_dashboard_operation_failure,
+    OperationFailureInput, add_dashboard_operation_failure, dashboard_operation_failures_path,
 };
-use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
+use aimux::project_service::router::{
+    OscOutputTap, ProjectServiceRequestContext, route_project_service_request,
+};
 use aimux::project_service::runtime_exchange::{runtime_exchange_path, write_runtime_exchange};
+use aimux::project_service::visual_clients::ProjectHotSnapshotCoordinator;
 use aimux::runtime_topology::{coerce_runtime_topology, runtime_topology_path};
 use aimux::tmux::CapturePaneOptions;
 use aimux::tmux_expose::{ExposeScope, ExposeScopeView, ExposeSublabel};
@@ -304,6 +308,40 @@ fn route_desktop_state_reports_persisted_operation_failures() {
 }
 
 #[test]
+fn route_desktop_state_normalizes_legacy_string_operation_failures_for_dashboard_clients() {
+    let (project, state_dir) = write_desktop_state_fixtures("legacy-operation-failure");
+    let legacy_message =
+        "fatal: 'test' is already used by worktree at '/repo/.aimux/worktrees/test'";
+    write(
+        dashboard_operation_failures_path(&state_dir),
+        json!({
+            "version": 1,
+            "failures": [legacy_message]
+        })
+        .to_string(),
+    )
+    .expect("seed legacy failures");
+    let isolation = support::TestIsolation::new("desktop-state-legacy-operation-failure");
+    let context = isolation.project_context(&project, &state_dir);
+
+    let response = route_project_service_request(&context, "GET", routes::DESKTOP_STATE, None);
+
+    assert_eq!(response.status, 200);
+    let failures: Vec<DashboardOperationFailure> =
+        serde_json::from_value(response.body["operationFailures"].clone())
+            .expect("dashboard operation failures");
+    let failure = failures
+        .first()
+        .expect("legacy failure is preserved for the dashboard");
+    assert_eq!(failure.id, "legacy-operation-failure-0");
+    assert_eq!(failure.target_kind.as_deref(), Some("project"));
+    assert_eq!(failure.operation.as_deref(), Some("legacy"));
+    assert_eq!(failure.title.as_deref(), Some("Legacy operation failure"));
+    assert_eq!(failure.message.as_deref(), Some(legacy_message));
+    cleanup(project);
+}
+
+#[test]
 fn route_desktop_state_preserves_live_sessions_and_reports_tmux_liveness_query_errors() {
     let (project, state_dir) = write_desktop_state_fixtures("tmux-liveness-error");
     let isolation = support::TestIsolation::new("desktop-state-tmux-liveness-error");
@@ -378,6 +416,112 @@ fn async_route_desktop_state_preserves_live_sessions_and_reports_tmux_liveness_q
                     .is_some_and(|message| message.contains("tmux socket busy"))
         }),
         "desktop-state async route must name tmux liveness query failures: {failures:#?}"
+    );
+    cleanup(project);
+}
+
+#[test]
+fn async_route_desktop_state_preview_does_not_start_sync_tap() {
+    let (project, state_dir) = write_desktop_state_fixtures("async-preview-no-sync-tap");
+    write_hot_expose_scope_view(
+        &state_dir,
+        HotExposeScopeKey {
+            project_root: project.to_string_lossy().into_owned(),
+            scope: ExposeScope::Project,
+            worktree_key: None,
+            launch_window_id: None,
+        },
+        ExposeScopeView {
+            scope: ExposeScope::Project,
+            scope_label: "all worktrees".into(),
+            sublabel: ExposeSublabel::Worktree,
+            items: vec![json!({
+                "id": "codex-live",
+                "label": "codex-live",
+                "urgency": 0,
+                "activity": 0,
+                "recentRank": 0,
+                "target": {
+                    "sessionName": "aimux-test",
+                    "windowId": "@1",
+                    "windowIndex": 1,
+                    "windowName": "codex-live"
+                },
+                "metadata": {
+                    "kind": "agent",
+                    "sessionId": "codex-live",
+                    "command": "codex"
+                },
+                "previewSnapshot": {
+                    "output": "hot preview",
+                    "capturedAt": "2026-07-20T13:00:00.000Z",
+                    "source": "capture",
+                    "windowId": "@1",
+                    "startLine": -40,
+                    "lineCount": 40
+                }
+            })],
+        },
+        None,
+    );
+    let isolation = support::TestIsolation::new("desktop-state-async-preview-no-sync-tap");
+    let tap = OscOutputTap::counting_for_test();
+    let mut context = isolation.project_context(&project, &state_dir);
+    context.osc_output_tap = tap.clone();
+
+    // aimux-async-seam: test - desktop-state preview route test drives async handler
+    let response = aimux::async_runtime::block_on_named(
+        "test:desktop-state-async-preview",
+        route_desktop_state_request_async(
+            &context,
+            "GET",
+            &format!("{}?includePreview=1", routes::DESKTOP_STATE),
+        ),
+    )
+    .expect("desktop-state async route");
+
+    assert_eq!(response.status, 200);
+    let live = find(response.body["sessions"].as_array().unwrap(), "codex-live");
+    assert_eq!(live["previewSnapshot"]["output"], "hot preview");
+    assert_eq!(
+        tap.track_read_call_count(),
+        0,
+        "async preview routes must not start sync tmux pane taps"
+    );
+    cleanup(project);
+}
+
+#[test]
+fn async_route_desktop_state_preview_with_hot_refresh_does_not_resolve_config_synchronously() {
+    let (project, state_dir) = write_desktop_state_fixtures("async-preview-hot-refresh");
+    let isolation = support::TestIsolation::new("desktop-state-async-preview-hot-refresh");
+    let tap = OscOutputTap::counting_for_test();
+    let mut context = isolation
+        .project_context(&project, &state_dir)
+        .with_hot_snapshot_background_refresh();
+    context.visual_clients = ProjectHotSnapshotCoordinator::new(true).with_refresh_delay_ms(60_000);
+    context.osc_output_tap = tap.clone();
+
+    // aimux-async-seam: test - desktop-state preview route test drives async handler
+    let response = aimux::async_runtime::block_on_named(
+        "test:desktop-state-async-preview-hot-refresh",
+        route_desktop_state_request_async(
+            &context,
+            "GET",
+            &format!("{}?includePreview=1", routes::DESKTOP_STATE),
+        ),
+    )
+    .expect("desktop-state async route");
+
+    assert_eq!(response.status, 200);
+    assert!(
+        context.visual_clients.has_active_preview_clients(),
+        "includePreview must still register a hot-preview client"
+    );
+    assert_eq!(
+        tap.track_read_call_count(),
+        0,
+        "async preview routes must not start sync tmux pane taps"
     );
     cleanup(project);
 }
@@ -708,6 +852,77 @@ fn main_checkout_group_coalesces_realpath_and_symlink_spellings() {
     assert_eq!(
         ids(main_groups[0]["sessions"].as_array().unwrap()),
         vec!["codex-alias".to_owned(), "codex-real".to_owned()]
+    );
+    cleanup(project);
+}
+
+#[test]
+fn desktop_state_normalizes_legacy_string_worktree_operation_failures_for_dashboard_clients() {
+    let project = temp_project("legacy-worktree-operation-failure");
+    let root = project.join("repo");
+    let worktree = root.join(".aimux/worktrees/test");
+    create_dir_all(&worktree).expect("worktree dir");
+    let root_path = root.to_string_lossy().into_owned();
+    let worktree_path = worktree.to_string_lossy().into_owned();
+    let legacy_message = format!("fatal: 'test' is already used by worktree at '{worktree_path}'");
+    let topology = coerce_runtime_topology(&json!({
+        "version": 1,
+        "generatedAt": "2026-09-10T00:00:00.000Z",
+        "rigs": [
+            { "id": "rig-1", "name": "aimux", "projectRoot": root_path, "createdAt": "2026-09-10T00:00:00.000Z", "updatedAt": "2026-09-10T00:00:00.000Z" }
+        ],
+        "nodes": [],
+        "edges": [],
+        "bindings": [],
+        "sessions": [],
+        "services": [],
+        "worktrees": [
+            {
+                "id": "wt-test",
+                "rigId": "rig-1",
+                "path": worktree_path,
+                "name": "test",
+                "status": "error",
+                "branch": "test",
+                "createdAt": "2026-09-10T00:00:00.000Z",
+                "updatedAt": "2026-09-10T00:00:00.000Z",
+                "operationFailure": legacy_message
+            }
+        ],
+        "worktreeGraveyard": [],
+        "teamRoles": [],
+        "remoteClients": [],
+        "lifecycleOperations": [],
+        "exchangeRefs": []
+    }))
+    .expect("topology");
+
+    let state = build_desktop_state_with_live_window_ids(
+        DesktopStateInput {
+            project_root: root_path,
+            topology: &topology,
+            metadata_sessions: &BTreeMap::new(),
+            exchange: &exchange_fixture(),
+        },
+        Some(&support::live_window_ids(&[])),
+    );
+
+    let snapshot: DesktopStateSnapshot =
+        serde_json::from_value(state.clone()).expect("dashboard desktop-state snapshot");
+    let group_failure = snapshot
+        .worktree_groups
+        .iter()
+        .find(|group| group.name == "test")
+        .and_then(|group| group.operation_failure.as_ref())
+        .expect("group operation failure");
+    assert_eq!(group_failure.id, "legacy-worktree-operation-failure");
+    assert_eq!(
+        group_failure.message.as_deref(),
+        Some(legacy_message.as_str())
+    );
+    assert_eq!(
+        state["worktrees"][1]["operationFailure"]["message"],
+        legacy_message
     );
     cleanup(project);
 }
