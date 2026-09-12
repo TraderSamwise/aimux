@@ -722,11 +722,28 @@ impl TmuxRuntimeManager {
             }
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
+        let output = self
+            .capture_target(
+                &replacement,
+                CapturePaneOptions {
+                    start_line: Some(-80),
+                    ..CapturePaneOptions::default()
+                },
+            )
+            .unwrap_or_default();
         let _ = self.kill_window(&replacement);
-        Err(format!(
-            "Timed out waiting {}ms for replacement tmux window {} readiness option {}={}",
-            timeout_ms, replacement.window_id, readiness_option, readiness_value
-        ))
+        let output = output.trim();
+        Err(if output.is_empty() {
+            format!(
+                "Timed out waiting {}ms for replacement tmux window {} readiness option {}={}",
+                timeout_ms, replacement.window_id, readiness_option, readiness_value
+            )
+        } else {
+            format!(
+                "Timed out waiting {}ms for replacement tmux window {} readiness option {}={}:\n{}",
+                timeout_ms, replacement.window_id, readiness_option, readiness_value, output
+            )
+        })
     }
 
     pub fn select_window(&mut self, target: &TmuxTarget) -> Result<(), String> {

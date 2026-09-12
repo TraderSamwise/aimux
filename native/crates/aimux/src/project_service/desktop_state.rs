@@ -26,7 +26,9 @@ use super::agents::{
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::http::query_params;
 use super::lifecycle::read_displayable_agent_restore_offer;
-use super::operation_failures::list_dashboard_operation_failures;
+use super::operation_failures::{
+    list_dashboard_operation_failures, normalize_dashboard_operation_failure_record,
+};
 use super::preview_snapshots::{
     DEFAULT_PREVIEW_CAPTURE_LINES, DEFAULT_PREVIEW_MAX_CHARS,
     capture_preview_snapshot_with_tap_async, capture_preview_snapshot_with_tap_result,
@@ -663,15 +665,10 @@ fn desktop_worktrees(project_root: &str, topology: &Value) -> Vec<Value> {
                 &worktree_branch_or_current(project_root, path, string_field(&worktree, "branch")),
             );
             item.insert("isBare".into(), Value::Bool(false));
-            for key in [
-                "createdAt",
-                "pending",
-                "removing",
-                "pendingAction",
-                "operationFailure",
-            ] {
+            for key in ["createdAt", "pending", "removing", "pendingAction"] {
                 insert_value(&mut item, key, worktree.get(key).cloned());
             }
+            insert_operation_failure_value(&mut item, worktree.get("operationFailure").cloned());
             Value::Object(item)
         })
         .collect::<Vec<_>>();
@@ -739,15 +736,10 @@ async fn desktop_worktrees_async(
                 ),
             );
             item.insert("isBare".into(), Value::Bool(false));
-            for key in [
-                "createdAt",
-                "pending",
-                "removing",
-                "pendingAction",
-                "operationFailure",
-            ] {
+            for key in ["createdAt", "pending", "removing", "pendingAction"] {
                 insert_value(&mut item, key, worktree.get(key).cloned());
             }
+            insert_operation_failure_value(&mut item, worktree.get("operationFailure").cloned());
             Value::Object(item)
         })
         .collect::<Vec<_>>();
@@ -1207,19 +1199,19 @@ fn worktree_group(
     if !main {
         insert_string(&mut group, "path", path);
     }
-    for key in [
-        "createdAt",
-        "pending",
-        "removing",
-        "pendingAction",
-        "operationFailure",
-    ] {
+    for key in ["createdAt", "pending", "removing", "pendingAction"] {
         insert_value(
             &mut group,
             key,
             worktree.and_then(|worktree| worktree.get(key)).cloned(),
         );
     }
+    insert_operation_failure_value(
+        &mut group,
+        worktree
+            .and_then(|worktree| worktree.get("operationFailure"))
+            .cloned(),
+    );
     let group_sessions = sorted_dashboard_items(
         context
             .sessions
@@ -1831,4 +1823,21 @@ fn insert_value(map: &mut Map<String, Value>, key: &str, value: Option<Value>) {
     {
         map.insert(key.into(), value);
     }
+}
+
+fn insert_operation_failure_value(map: &mut Map<String, Value>, value: Option<Value>) {
+    let Some(value) = value else {
+        return;
+    };
+    if value.is_null() {
+        return;
+    }
+    map.insert(
+        "operationFailure".into(),
+        normalize_dashboard_operation_failure_record(
+            "legacy-worktree-operation-failure".to_owned(),
+            "invalid-worktree-operation-failure".to_owned(),
+            &value,
+        ),
+    );
 }

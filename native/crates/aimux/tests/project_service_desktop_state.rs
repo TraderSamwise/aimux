@@ -1,5 +1,5 @@
 use aimux::daemon_state::{MetadataState, save_metadata_state};
-use aimux::dashboard_model::DashboardOperationFailure;
+use aimux::dashboard_model::{DashboardOperationFailure, DesktopStateSnapshot};
 use aimux::project_api_contract::routes;
 use aimux::project_service::agent_output::AgentOutputCaptureRuntime;
 use aimux::project_service::desktop_state::{
@@ -852,6 +852,77 @@ fn main_checkout_group_coalesces_realpath_and_symlink_spellings() {
     assert_eq!(
         ids(main_groups[0]["sessions"].as_array().unwrap()),
         vec!["codex-alias".to_owned(), "codex-real".to_owned()]
+    );
+    cleanup(project);
+}
+
+#[test]
+fn desktop_state_normalizes_legacy_string_worktree_operation_failures_for_dashboard_clients() {
+    let project = temp_project("legacy-worktree-operation-failure");
+    let root = project.join("repo");
+    let worktree = root.join(".aimux/worktrees/test");
+    create_dir_all(&worktree).expect("worktree dir");
+    let root_path = root.to_string_lossy().into_owned();
+    let worktree_path = worktree.to_string_lossy().into_owned();
+    let legacy_message = format!("fatal: 'test' is already used by worktree at '{worktree_path}'");
+    let topology = coerce_runtime_topology(&json!({
+        "version": 1,
+        "generatedAt": "2026-09-10T00:00:00.000Z",
+        "rigs": [
+            { "id": "rig-1", "name": "aimux", "projectRoot": root_path, "createdAt": "2026-09-10T00:00:00.000Z", "updatedAt": "2026-09-10T00:00:00.000Z" }
+        ],
+        "nodes": [],
+        "edges": [],
+        "bindings": [],
+        "sessions": [],
+        "services": [],
+        "worktrees": [
+            {
+                "id": "wt-test",
+                "rigId": "rig-1",
+                "path": worktree_path,
+                "name": "test",
+                "status": "error",
+                "branch": "test",
+                "createdAt": "2026-09-10T00:00:00.000Z",
+                "updatedAt": "2026-09-10T00:00:00.000Z",
+                "operationFailure": legacy_message
+            }
+        ],
+        "worktreeGraveyard": [],
+        "teamRoles": [],
+        "remoteClients": [],
+        "lifecycleOperations": [],
+        "exchangeRefs": []
+    }))
+    .expect("topology");
+
+    let state = build_desktop_state_with_live_window_ids(
+        DesktopStateInput {
+            project_root: root_path,
+            topology: &topology,
+            metadata_sessions: &BTreeMap::new(),
+            exchange: &exchange_fixture(),
+        },
+        Some(&support::live_window_ids(&[])),
+    );
+
+    let snapshot: DesktopStateSnapshot =
+        serde_json::from_value(state.clone()).expect("dashboard desktop-state snapshot");
+    let group_failure = snapshot
+        .worktree_groups
+        .iter()
+        .find(|group| group.name == "test")
+        .and_then(|group| group.operation_failure.as_ref())
+        .expect("group operation failure");
+    assert_eq!(group_failure.id, "legacy-worktree-operation-failure");
+    assert_eq!(
+        group_failure.message.as_deref(),
+        Some(legacy_message.as_str())
+    );
+    assert_eq!(
+        state["worktrees"][1]["operationFailure"]["message"],
+        legacy_message
     );
     cleanup(project);
 }
