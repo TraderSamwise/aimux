@@ -2,17 +2,20 @@
 //!
 //! Node ran each background scan on its own `setInterval` scattered across three
 //! processes. The project service had no equivalent, which is why every watcher
-//! that depended on one went unported together. One thread drives every task
-//! here; a task is a small object that says how often it wants to run.
+//! that depended on one went unported together. One Tokio supervisor now drives
+//! one loop per task; a task is a small object that says how often it wants to
+//! run.
 
 use std::collections::BTreeSet;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::{Arc, Condvar, Mutex};
-use std::thread;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::json;
+use tokio::task::JoinSet;
+use tokio::time::{MissedTickBehavior, interval, timeout};
 
+use crate::async_runtime::{scoped_task_name, spawn_blocking_named, spawn_named, task_name};
 use crate::debug_logging::{LogLevel, log_at, log_lifecycle_always};
 
 use super::router::ProjectServiceRequestContext;
@@ -32,7 +35,6 @@ pub struct ProjectSchedulerHandle {
 #[derive(Debug, Default)]
 struct ProjectSchedulerSignal {
     forced_tasks: Mutex<BTreeSet<String>>,
-    changed: Condvar,
 }
 
 impl ProjectSchedulerHandle {
@@ -43,8 +45,6 @@ impl ProjectSchedulerHandle {
         }
         if let Ok(mut forced_tasks) = self.inner.forced_tasks.lock() {
             forced_tasks.insert(name.to_owned());
-            drop(forced_tasks);
-            self.inner.changed.notify_all();
         }
     }
 
@@ -56,22 +56,25 @@ impl ProjectSchedulerHandle {
             .unwrap_or_default()
     }
 
-    fn wait_for_force_or_timeout(&self, timeout: Duration) {
-        let Ok(forced_tasks) = self.inner.forced_tasks.lock() else {
-            thread::sleep(timeout);
-            return;
-        };
-        if !forced_tasks.is_empty() {
-            return;
-        }
-        let _ = self.inner.changed.wait_timeout(forced_tasks, timeout);
+    fn take_forced_task(&self, name: &str) -> bool {
+        self.inner
+            .forced_tasks
+            .lock()
+            .map(|mut forced_tasks| forced_tasks.remove(name))
+            .unwrap_or(false)
     }
 }
 
-pub trait PeriodicTask: Send {
+pub trait PeriodicTask: Send + 'static {
     fn name(&self) -> &str;
     /// Re-read every reschedule, so a config change takes effect without a restart.
     fn interval_ms(&self) -> i64;
+    /// Upper bound for one run. Sync task bodies still finish on their blocking
+    /// worker after the timeout fires, but the scheduler names the overrun and
+    /// keeps every other task loop moving.
+    fn timeout(&self) -> Duration {
+        Duration::from_secs(30)
+    }
     /// Cadence as a multiple of the shared rail tick. Existing interval-based
     /// tasks ride the default conversion; tasks with tick-native config can
     /// override this directly.
@@ -224,9 +227,9 @@ pub fn scheduler_now_ms() -> i64 {
         .unwrap_or_default()
 }
 
-/// Start the rail. The context is shared with the request handlers rather than
-/// rebuilt per tick, so a tick that publishes a project update reaches the same
-/// event bus the SSE subscribers are listening on.
+/// Start the periodic task loops. The context is shared with the request
+/// handlers rather than rebuilt per tick, so a tick that publishes a project
+/// update reaches the same event bus the SSE subscribers are listening on.
 pub fn spawn_project_service_scheduler(
     context: Arc<ProjectServiceRequestContext>,
     tasks: Vec<Box<dyn PeriodicTask>>,
@@ -235,18 +238,176 @@ pub fn spawn_project_service_scheduler(
     if tasks.is_empty() {
         return;
     }
-    thread::spawn(move || {
-        let mut scheduler = PeriodicScheduler::with_handle(tasks, scheduler_now_ms(), handle);
-        loop {
-            // Sleep is computed after the work, so a long tick delays the next
-            // one rather than being chased by an alarm that already went off.
-            scheduler.run_due(&context, &mut scheduler_now_ms);
-            let sleep_ms = scheduler.sleep_ms(scheduler_now_ms()).max(50);
-            scheduler
-                .handle
-                .wait_for_force_or_timeout(Duration::from_millis(sleep_ms as u64));
+    let supervisor_name = task_name("project-service", "scheduler");
+    spawn_named(supervisor_name, async move {
+        let mut loops: JoinSet<()> = JoinSet::new();
+        for task in tasks {
+            let task_name = task.name().to_owned();
+            loops.spawn(run_periodic_task_loop(
+                Arc::clone(&context),
+                task,
+                handle.clone(),
+            ));
+            log_at(
+                LogLevel::Debug,
+                "watcher task loop spawned",
+                "watcher",
+                Some(json!({ "task": task_name })),
+            );
+        }
+        while let Some(result) = loops.join_next().await {
+            if let Err(error) = result {
+                log_lifecycle_always(
+                    "watcher task loop exited",
+                    "watcher",
+                    Some(json!({ "error": error.to_string() })),
+                );
+            }
         }
     });
+}
+
+async fn run_periodic_task_loop(
+    context: Arc<ProjectServiceRequestContext>,
+    mut task: Box<dyn PeriodicTask>,
+    handle: ProjectSchedulerHandle,
+) {
+    let name = task.name().to_owned();
+    if task.run_immediately() {
+        task = run_task_once(Arc::clone(&context), task, false).await;
+    }
+    let mut ticks_until_due = task.tick_multiple().max(1);
+    let mut ticker = task_interval();
+    ticker.tick().await;
+    loop {
+        ticker.tick().await;
+        let forced = handle.take_forced_task(&name);
+        if !forced {
+            ticks_until_due = ticks_until_due.saturating_sub(1);
+            if ticks_until_due > 0 {
+                continue;
+            }
+        }
+        task = run_task_once(Arc::clone(&context), task, forced).await;
+        ticks_until_due = task.tick_multiple().max(1);
+        ticker = task_interval();
+        ticker.tick().await;
+    }
+}
+
+fn task_interval() -> tokio::time::Interval {
+    let mut ticker = interval(Duration::from_millis(TICK_INTERVAL_MS as u64));
+    ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    ticker
+}
+
+async fn run_task_once(
+    context: Arc<ProjectServiceRequestContext>,
+    mut task: Box<dyn PeriodicTask>,
+    forced: bool,
+) -> Box<dyn PeriodicTask> {
+    let name = task.name().to_owned();
+    let interval_ms = interval_of(task.as_ref());
+    let timeout_after = task.timeout();
+    let started = Instant::now();
+    let blocking_name = scoped_task_name("project-service", "scheduler-task", &name);
+    let mut join = spawn_blocking_named(blocking_name, move || {
+        let outcome = catch_unwind(AssertUnwindSafe(|| task.run(&context)));
+        (task, outcome.is_err())
+    });
+    let (task, panicked, timed_out) = match timeout(timeout_after, &mut join).await {
+        Ok(result) => match result {
+            Ok((task, panicked)) => (task, panicked, false),
+            Err(error) => {
+                log_lifecycle_always(
+                    "watcher rail task join failed",
+                    "watcher",
+                    Some(json!({
+                        "task": name.clone(),
+                        "error": error.to_string(),
+                    })),
+                );
+                return Box::new(StoppedTask { name });
+            }
+        },
+        Err(_) => {
+            log_lifecycle_always(
+                "watcher rail task timed out",
+                "watcher",
+                Some(json!({
+                    "task": name.clone(),
+                    "timeoutMs": timeout_after.as_millis(),
+                })),
+            );
+            match join.await {
+                Ok((task, panicked)) => (task, panicked, true),
+                Err(error) => {
+                    log_lifecycle_always(
+                        "watcher rail task join failed after timeout",
+                        "watcher",
+                        Some(json!({
+                            "task": name.clone(),
+                            "error": error.to_string(),
+                        })),
+                    );
+                    return Box::new(StoppedTask { name });
+                }
+            }
+        }
+    };
+    let elapsed_ms = started.elapsed().as_millis().min(i64::MAX as u128) as i64;
+    log_at(
+        LogLevel::Debug,
+        "watcher rail task ran",
+        "watcher",
+        Some(json!({
+            "task": name.clone(),
+            "elapsedMs": elapsed_ms,
+            "intervalMs": interval_ms,
+            "tickMultiple": task.tick_multiple(),
+            "forced": forced,
+            "panicked": panicked,
+            "timedOut": timed_out,
+        })),
+    );
+    if panicked {
+        log_lifecycle_always(
+            "watcher rail task panicked",
+            "watcher",
+            Some(json!({
+                "task": name,
+                "elapsedMs": elapsed_ms,
+                "intervalMs": interval_ms,
+            })),
+        );
+    } else if elapsed_ms >= SLOW_TASK_WARNING_MS {
+        log_lifecycle_always(
+            "watcher rail task slow",
+            "watcher",
+            Some(json!({
+                "task": name,
+                "elapsedMs": elapsed_ms,
+                "intervalMs": interval_ms,
+            })),
+        );
+    }
+    task
+}
+
+struct StoppedTask {
+    name: String,
+}
+
+impl PeriodicTask for StoppedTask {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn interval_ms(&self) -> i64 {
+        i64::MAX
+    }
+
+    fn run(&mut self, _context: &ProjectServiceRequestContext) {}
 }
 
 fn interval_ms_to_ticks(interval_ms: i64) -> u64 {

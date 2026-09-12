@@ -1,10 +1,15 @@
+use aimux::async_runtime::init_process_runtime;
 use aimux::project_api_contract::routes;
 use aimux::project_service::router::ProjectServiceRequestContext;
 use aimux::project_service::router::route_project_service_request;
-use aimux::project_service::scheduler::{PeriodicScheduler, PeriodicTask, ProjectSchedulerHandle};
+use aimux::project_service::scheduler::{
+    PeriodicScheduler, PeriodicTask, ProjectSchedulerHandle, spawn_project_service_scheduler,
+};
 use serde_json::json;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc;
+use std::time::Duration;
 
 struct CountingTask {
     name: String,
@@ -308,4 +313,123 @@ fn a_task_can_ask_to_run_at_startup_instead_of_one_interval_out() {
         0,
         "the default is unchanged"
     );
+}
+
+struct BlockingStartupTask {
+    name: String,
+    started: mpsc::Sender<String>,
+    gate: Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
+}
+
+impl PeriodicTask for BlockingStartupTask {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn interval_ms(&self) -> i64 {
+        60_000
+    }
+
+    fn timeout(&self) -> Duration {
+        Duration::from_millis(100)
+    }
+
+    fn run_immediately(&self) -> bool {
+        true
+    }
+
+    fn run(&mut self, _context: &ProjectServiceRequestContext) {
+        self.started
+            .send(self.name.clone())
+            .expect("test receiver should be open");
+        let (lock, changed) = &*self.gate;
+        let mut released = lock.lock().expect("gate lock");
+        while !*released {
+            let (next, _) = changed
+                .wait_timeout(released, Duration::from_secs(2))
+                .expect("wait on gate");
+            released = next;
+            if !*released {
+                break;
+            }
+        }
+    }
+}
+
+#[test]
+fn spawned_scheduler_dispatches_task_loops_concurrently() {
+    init_process_runtime().expect("runtime initialized");
+    let (started_tx, started_rx) = mpsc::channel();
+    let gate = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+    let tasks = ["first", "second"]
+        .into_iter()
+        .map(|name| {
+            Box::new(BlockingStartupTask {
+                name: name.to_owned(),
+                started: started_tx.clone(),
+                gate: Arc::clone(&gate),
+            }) as Box<dyn PeriodicTask>
+        })
+        .collect();
+    let ctx = Arc::new(context());
+
+    spawn_project_service_scheduler(ctx, tasks, ProjectSchedulerHandle::default());
+
+    let first = started_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("first task should start");
+    let second = started_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("second task should start before the first is released");
+    assert_ne!(first, second);
+    let (lock, changed) = &*gate;
+    *lock.lock().expect("gate lock") = true;
+    changed.notify_all();
+}
+
+struct KickTask {
+    started: mpsc::Sender<()>,
+}
+
+impl PeriodicTask for KickTask {
+    fn name(&self) -> &str {
+        "kick-me"
+    }
+
+    fn interval_ms(&self) -> i64 {
+        60_000
+    }
+
+    fn timeout(&self) -> Duration {
+        Duration::from_secs(1)
+    }
+
+    fn run(&mut self, _context: &ProjectServiceRequestContext) {
+        self.started.send(()).expect("test receiver should be open");
+    }
+}
+
+#[test]
+fn spawned_scheduler_force_kick_runs_before_the_full_interval() {
+    init_process_runtime().expect("runtime initialized");
+    let (started_tx, started_rx) = mpsc::channel();
+    let handle = ProjectSchedulerHandle::default();
+    let ctx = Arc::new(context_with_scheduler(handle.clone()));
+
+    spawn_project_service_scheduler(
+        ctx,
+        vec![Box::new(KickTask {
+            started: started_tx,
+        })],
+        handle.clone(),
+    );
+
+    assert!(
+        started_rx.recv_timeout(Duration::from_millis(100)).is_err(),
+        "the task should not run before its long interval"
+    );
+    handle.force_task_next_tick("kick-me");
+    started_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("force should wake the task loop on the next scheduler tick");
 }

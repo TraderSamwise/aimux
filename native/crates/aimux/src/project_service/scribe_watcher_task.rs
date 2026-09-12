@@ -55,6 +55,10 @@ impl PeriodicTask for ScribeWatcherTask {
         true
     }
 
+    fn timeout(&self) -> Duration {
+        SCAN_BUDGET + Duration::from_secs(1)
+    }
+
     fn run(&mut self, context: &ProjectServiceRequestContext) {
         let project_state_dir = context.project_state_dir();
         let Ok(topology) = read_runtime_topology(runtime_topology_path(&project_state_dir)) else {

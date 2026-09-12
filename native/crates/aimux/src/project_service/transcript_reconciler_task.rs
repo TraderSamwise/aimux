@@ -64,6 +64,10 @@ impl PeriodicTask for TranscriptReconcilerTask {
         DEFAULT_INTERVAL_MS
     }
 
+    fn timeout(&self) -> Duration {
+        SCAN_BUDGET + Duration::from_secs(10)
+    }
+
     fn run(&mut self, context: &ProjectServiceRequestContext) {
         let project_state_dir = context.project_state_dir();
         let Ok(topology) = read_runtime_topology(runtime_topology_path(&project_state_dir)) else {
