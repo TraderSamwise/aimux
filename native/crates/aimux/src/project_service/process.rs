@@ -813,9 +813,13 @@ where
     );
     tokio::pin!(route);
     tokio::select! {
-        response = &mut route => Ok(response.unwrap_or_else(|| {
-            route_project_service_request(&context, &method, &path, body.as_ref())
-        })),
+        response = &mut route => {
+            let response = response.unwrap_or_else(|| {
+                route_project_service_request(&context, &method, &path, body.as_ref())
+            });
+            publish_async_route_project_update(&context, &method, &path, &response);
+            Ok(response)
+        },
         disconnect = wait_for_client_disconnect(reader) => {
             disconnect?;
             if progress.is_irreversible() {
@@ -823,6 +827,7 @@ where
                 let response = route.await.unwrap_or_else(|| {
                     route_project_service_request(&context, &method, &path, body.as_ref())
                 });
+                publish_async_route_project_update(&context, &method, &path, &response);
                 Ok(response)
             } else {
                 Err(DaemonListenerError::InvalidRequest(format!(
@@ -2481,6 +2486,103 @@ mod tests {
                 "{path} should stay on the sync dispatcher in this phase"
             );
         }
+    }
+
+    #[test]
+    fn async_lifecycle_success_publishes_dashboard_refresh_event() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
+        crate::async_runtime::process_runtime().block_on(async {
+            let root = unique_test_root("async-lifecycle-publishes-refresh");
+            let project_root = root.join("repo");
+            let state_dir = root.join("state");
+            create_git_checkout(&project_root);
+            fs::create_dir_all(&state_dir).expect("create state dir");
+            let context = Arc::new(ProjectServiceRequestContext::with_project_state_dir(
+                &project_root,
+                &state_dir,
+            ));
+            let body = json!({ "tool": "shell", "sessionId": "sh-live", "open": false });
+            let progress =
+                async_lifecycle_progress_for_request("POST", routes::agents::SPAWN, Some(&body))
+                    .expect("async lifecycle progress");
+            let (_client, mut server) = tokio::io::duplex(4096);
+
+            let response = route_async_lifecycle_with_disconnect_and_route(
+                Arc::clone(&context),
+                "POST".to_owned(),
+                routes::agents::SPAWN.to_owned(),
+                Some(body),
+                progress,
+                &mut server,
+                |_context, _method, _path, _body, _progress| async move {
+                    Some(ProjectServiceDispatchResponse::json(
+                        200,
+                        json!({ "ok": true, "sessionId": "sh-live" }),
+                    ))
+                },
+            )
+            .await
+            .expect("async lifecycle route");
+
+            assert_eq!(response.status, 200);
+            let events = context.project_events.events_since(0, None);
+            assert_eq!(events.len(), 1);
+            assert_eq!(events[0].event["type"], "project_update");
+            assert_eq!(events[0].event["reason"], "POST /agents/spawn");
+            assert!(
+                events[0].event["views"]
+                    .as_array()
+                    .expect("views")
+                    .iter()
+                    .any(|view| view == "desktop-state"),
+                "spawn must refresh the dashboard model"
+            );
+            let _ = fs::remove_dir_all(root);
+        });
+    }
+
+    #[test]
+    fn async_lifecycle_failure_does_not_publish_dashboard_refresh_event() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
+        crate::async_runtime::process_runtime().block_on(async {
+            let root = unique_test_root("async-lifecycle-no-false-refresh");
+            let project_root = root.join("repo");
+            let state_dir = root.join("state");
+            create_git_checkout(&project_root);
+            fs::create_dir_all(&state_dir).expect("create state dir");
+            let context = Arc::new(ProjectServiceRequestContext::with_project_state_dir(
+                &project_root,
+                &state_dir,
+            ));
+            let body = json!({ "sessionId": "sh-live" });
+            let progress =
+                async_lifecycle_progress_for_request("POST", routes::agents::STOP, Some(&body))
+                    .expect("async lifecycle progress");
+            let (_client, mut server) = tokio::io::duplex(4096);
+
+            let response = route_async_lifecycle_with_disconnect_and_route(
+                Arc::clone(&context),
+                "POST".to_owned(),
+                routes::agents::STOP.to_owned(),
+                Some(body),
+                progress,
+                &mut server,
+                |_context, _method, _path, _body, _progress| async move {
+                    Some(ProjectServiceDispatchResponse::json(
+                        500,
+                        json!({ "ok": false, "error": "tmux refused" }),
+                    ))
+                },
+            )
+            .await
+            .expect("async lifecycle route");
+
+            assert_eq!(response.status, 500);
+            assert!(context.project_events.events_since(0, None).is_empty());
+            let _ = fs::remove_dir_all(root);
+        });
     }
 
     #[test]

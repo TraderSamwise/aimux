@@ -3151,9 +3151,10 @@ impl DaemonOperationsTextRuntime for RealDaemonRuntime {
         project_root: &str,
     ) -> Result<StabilityDoctorReport, String> {
         let mut resolver = self.resolver.clone();
-        let project_state_dir = resolver.project_state_dir_for(project_root);
+        let project_root = stability_doctor_project_root(project_root);
+        let project_state_dir = resolver.project_state_dir_for(&project_root);
         Ok(build_stability_doctor_report(
-            project_root,
+            &project_root,
             project_state_dir,
         ))
     }
@@ -4895,6 +4896,13 @@ fn project_roots_equivalent(left: &Path, right: &Path) -> bool {
     }
 }
 
+fn stability_doctor_project_root(project_root: &str) -> String {
+    fs::canonicalize(project_root)
+        .unwrap_or_else(|_| PathBuf::from(project_root))
+        .to_string_lossy()
+        .into_owned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4928,6 +4936,39 @@ mod tests {
                 std::process::id()
             ))
             .join("repo")
+    }
+
+    #[test]
+    fn doctor_stability_canonicalizes_project_root_before_state_dir_lookup() {
+        let project_root = unique_temp_fixture_project_root("stability-canonical");
+        fs::create_dir_all(&project_root).expect("project root");
+        let alias_root = project_root
+            .parent()
+            .expect("fixture parent")
+            .join("repo-alias");
+        std::os::unix::fs::symlink(&project_root, &alias_root).expect("alias root");
+
+        let canonical_root = fs::canonicalize(&project_root).expect("canonical project root");
+        let resolved = stability_doctor_project_root(&alias_root.to_string_lossy());
+        assert_eq!(PathBuf::from(&resolved), canonical_root);
+
+        let aimux_home = project_root
+            .parent()
+            .expect("fixture parent")
+            .join("aimux-home");
+        let mut alias_resolver =
+            PathResolver::new("/", "/", Some(aimux_home.to_string_lossy().into_owned()));
+        let mut canonical_resolver =
+            PathResolver::new("/", "/", Some(aimux_home.to_string_lossy().into_owned()));
+        let mut resolved_resolver =
+            PathResolver::new("/", "/", Some(aimux_home.to_string_lossy().into_owned()));
+
+        let alias_state_dir = alias_resolver.project_state_dir_for(&alias_root);
+        let canonical_state_dir = canonical_resolver.project_state_dir_for(&canonical_root);
+        let resolved_state_dir = resolved_resolver.project_state_dir_for(&resolved);
+
+        assert_ne!(alias_state_dir, canonical_state_dir);
+        assert_eq!(resolved_state_dir, canonical_state_dir);
     }
 
     #[test]

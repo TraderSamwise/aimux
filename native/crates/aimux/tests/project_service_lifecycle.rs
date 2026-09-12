@@ -1,4 +1,6 @@
 use aimux::daemon_state::load_metadata_state;
+use aimux::dashboard_model::DesktopStateSnapshot;
+use aimux::dashboard_renderer::{DashboardNavLevel, DashboardRenderInput, render_dashboard_frame};
 use aimux::project_api_contract::routes;
 use aimux::project_service::lifecycle::{
     ProjectLifecycleRuntime, ensure_default_scribe_agent, route_lifecycle_request_with_runtime,
@@ -12,6 +14,7 @@ use aimux::runtime_topology::{
     coerce_runtime_topology, read_runtime_topology, runtime_topology_path, write_runtime_topology,
 };
 use aimux::tmux::TmuxTarget;
+use aimux::tui_render::text::strip_ansi;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, remove_dir_all};
@@ -424,6 +427,32 @@ fn agent_kill_reports_tmux_kill_failure_instead_of_graveyard_success() {
         }),
         "kill failure must reach desktop-state operationFailures: {desktop_failures:#?}"
     );
+    let snapshot: DesktopStateSnapshot =
+        serde_json::from_value(desktop_state.body).expect("desktop-state snapshot");
+    let rendered = render_dashboard_frame(&DashboardRenderInput {
+        snapshot: &snapshot,
+        overseer_sessions: &[],
+        scribe_sessions: &[],
+        cols: 140,
+        rows: 24,
+        nav_level: DashboardNavLevel::Sessions,
+        selected_session_id: Some("codex-live"),
+        selected_service_id: None,
+        focused_worktree_path: Some(project.to_string_lossy().as_ref()),
+        runtime_label: Some("native"),
+        version: Some("local"),
+        is_dev_runtime: false,
+        hide_offline_agents: false,
+        hidden_offline_agent_count: 0,
+        scroll_offset: 0,
+        footer_message: None,
+        details_sidebar_visible: false,
+        preview_source: "output",
+        scribe_preview_entries: &[],
+    });
+    let plain = strip_ansi(&rendered.frame);
+    assert!(plain.contains("FAILED OPERATIONS"));
+    assert!(plain.contains("Failed to kill codex-live"));
     let diagnostics = context
         .lifecycle_mutations
         .diagnostics(&project.to_string_lossy());
