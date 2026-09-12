@@ -532,6 +532,47 @@ fn expose_args_require_paths_and_resolve_them_without_touching_optional_values()
 }
 
 #[test]
+fn expose_args_load_resolved_initial_scope_from_aimux_config() {
+    let root = temp_dir("parse-expose-config");
+    let aimux_home = root.join("aimux-home");
+    let project = root.join("repo");
+    let state = root.join("state");
+    fs::create_dir_all(&aimux_home).expect("aimux home");
+    fs::create_dir_all(project.join(".aimux")).expect("project config dir");
+    fs::create_dir_all(&state).expect("state dir");
+    fs::write(
+        aimux_home.join("config.json"),
+        r#"{"expose":{"initialScope":"project"}}"#,
+    )
+    .expect("global config");
+    fs::write(project.join(".aimux/config.json"), "{}").expect("project config");
+
+    let parsed = parse_expose_args(&[
+        "expose",
+        "--project-root",
+        project.to_str().unwrap(),
+        "--project-state-dir",
+        state.to_str().unwrap(),
+        "--current-window",
+        "codex",
+        "--current-window-id",
+        "@1",
+        "--current-project-control",
+        "false",
+        "--aimux-home",
+        aimux_home.to_str().unwrap(),
+    ])
+    .expect("parse");
+
+    assert_eq!(
+        parsed.expose_config.initial_scope,
+        Some(ExposeScope::Project),
+        "agent-launched Expose must honor resolved config instead of the built-in worktree default"
+    );
+    cleanup(root);
+}
+
+#[test]
 fn socket_header_mapping_matches_metadata_server_contract() {
     let header = vec![
         "/project".to_owned(),
@@ -576,6 +617,42 @@ fn socket_header_mapping_matches_metadata_server_contract() {
     );
     assert_eq!(options.columns, Some(120));
     assert_eq!(options.rows, Some(30));
+}
+
+#[test]
+fn socket_header_mapping_loads_resolved_initial_scope_from_aimux_config() {
+    let root = temp_dir("socket-expose-config");
+    let aimux_home = root.join("aimux-home");
+    let project = root.join("repo");
+    let state = root.join("state");
+    fs::create_dir_all(&aimux_home).expect("aimux home");
+    fs::create_dir_all(project.join(".aimux")).expect("project config dir");
+    fs::create_dir_all(&state).expect("state dir");
+    fs::write(
+        aimux_home.join("config.json"),
+        r#"{"expose":{"initialScope":"project"}}"#,
+    )
+    .expect("global config");
+    fs::write(project.join(".aimux/config.json"), "{}").expect("project config");
+    let header = vec![
+        project.to_string_lossy().into_owned(),
+        state.to_string_lossy().into_owned(),
+        String::new(),
+        String::new(),
+        "codex".to_owned(),
+        "@1".to_owned(),
+        project.to_string_lossy().into_owned(),
+        String::new(),
+        aimux_home.to_string_lossy().into_owned(),
+    ];
+
+    let options = tmux_expose_options_from_socket_header(&header, "/fallback", "/fallback-state");
+
+    assert_eq!(
+        options.expose_config.initial_scope,
+        Some(ExposeScope::Project)
+    );
+    cleanup(root);
 }
 
 #[test]

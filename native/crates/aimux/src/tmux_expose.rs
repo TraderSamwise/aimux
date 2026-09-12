@@ -1,4 +1,5 @@
 use crate::atomic_write::write_json_atomic;
+use crate::config::load_config_for_project_with_resolver;
 use crate::core_command_contract::CORE_API_ROUTES;
 use crate::core_command_transport::{
     CoreCommandTransportError, DaemonHttpMethod, DaemonJsonRequest, execute_loopback_json_request,
@@ -6,6 +7,7 @@ use crate::core_command_transport::{
 use crate::daemon_state::get_daemon_base_url;
 use crate::debug_logging::{LogLevel, log_at};
 use crate::expose_socket::parse_positive_header_integer;
+use crate::paths::PathResolver;
 use crate::project_api_contract::routes;
 use crate::project_service::switchable_agents::agent_status_chip;
 use crate::project_service::usage::parse_recency_timestamp;
@@ -792,6 +794,8 @@ pub fn parse_expose_args<S: AsRef<str>>(raw_args: &[S]) -> Result<TmuxExposeOpti
     }
     options.project_root = project_root.ok_or("--project-root is required")?;
     options.project_state_dir = project_state_dir.ok_or("--project-state-dir is required")?;
+    options.expose_config =
+        load_expose_config(&options.project_root, options.aimux_home.as_deref());
     Ok(options)
 }
 
@@ -807,7 +811,7 @@ pub fn tmux_expose_options_from_socket_header(
             .filter(|value| !value.is_empty())
             .map(str::to_owned)
     };
-    TmuxExposeOptions {
+    let mut options = TmuxExposeOptions {
         project_root: value(0)
             .map(PathBuf::from)
             .unwrap_or_else(|| fallback_project_root.as_ref().to_path_buf()),
@@ -827,6 +831,42 @@ pub fn tmux_expose_options_from_socket_header(
         columns: parse_positive_header_integer(header.get(11).map(String::as_str)),
         rows: parse_positive_header_integer(header.get(12).map(String::as_str)),
         ..TmuxExposeOptions::default()
+    };
+    options.expose_config =
+        load_expose_config(&options.project_root, options.aimux_home.as_deref());
+    options
+}
+
+fn load_expose_config(project_root: &Path, aimux_home: Option<&str>) -> ExposeConfig {
+    let resolver = PathResolver::new(
+        std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+        std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(".")),
+        aimux_home.map(str::to_owned),
+    );
+    expose_config_from_value(&load_config_for_project_with_resolver(
+        &resolver,
+        project_root,
+    ))
+}
+
+fn expose_config_from_value(config: &Value) -> ExposeConfig {
+    ExposeConfig {
+        initial_scope: config
+            .get("expose")
+            .and_then(|expose| expose.get("initialScope"))
+            .and_then(Value::as_str)
+            .and_then(expose_scope_from_str),
+    }
+}
+
+fn expose_scope_from_str(value: &str) -> Option<ExposeScope> {
+    match value {
+        "worktree" => Some(ExposeScope::Worktree),
+        "project" => Some(ExposeScope::Project),
+        "global" => Some(ExposeScope::Global),
+        _ => None,
     }
 }
 

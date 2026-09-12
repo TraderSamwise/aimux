@@ -2313,6 +2313,26 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn expose_socket_input_preserves_real_g_after_initial_terminal_report() {
+        let (mut writer, reader) = UnixStream::pair().expect("unix stream pair");
+        let mut input = PrefixedRead::new(Vec::new(), reader);
+        let mut buffer = [0_u8; 16];
+
+        std::io::Write::write_all(&mut writer, b"\x1b[18t").expect("write initial terminal report");
+        match input.read_timeout(&mut buffer, Duration::from_millis(20)) {
+            ExposeInputEvent::Data(5) => assert_eq!(&buffer[..5], b"\x1b[18t"),
+            other => panic!("expected terminal report, got {other:?}"),
+        }
+
+        std::io::Write::write_all(&mut writer, b"g").expect("write real scope key");
+        match input.read_timeout(&mut buffer, Duration::from_millis(20)) {
+            ExposeInputEvent::Data(1) => assert_eq!(buffer[0], b'g'),
+            other => panic!("expected real scope key after terminal report, got {other:?}"),
+        }
+    }
+
     #[test]
     fn async_connection_routes_http_to_rust_project_router() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
@@ -3536,7 +3556,7 @@ impl<R> PrefixedRead<R> {
                 let Some(offset) = first_initial_key_offset(buffer, count) else {
                     return count;
                 };
-                if matches!(buffer.get(offset).copied(), Some(b'g' | b'd')) {
+                if offset > 0 && matches!(buffer.get(offset).copied(), Some(b'g' | b'd')) {
                     self.initial_tmux_trigger_echo = InitialTmuxTriggerEcho::Done;
                     let remaining = count - 1;
                     buffer.copy_within(offset + 1..count, offset);
