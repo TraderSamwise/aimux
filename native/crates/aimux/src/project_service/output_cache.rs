@@ -61,4 +61,22 @@ impl AgentOutputCaptureCache {
         );
         Ok((output, false))
     }
+
+    pub fn fresh(&self, key: &AgentOutputCaptureCacheKey) -> Result<Option<String>, String> {
+        let mut cached = self.inner.lock().map_err(|error| error.to_string())?;
+        cached.retain(|_, entry| entry.captured_at.elapsed() <= self.ttl);
+        Ok(cached.get(key).map(|entry| entry.output.clone()))
+    }
+
+    pub fn store(&self, key: AgentOutputCaptureCacheKey, output: String) -> Result<(), String> {
+        let mut cached = self.inner.lock().map_err(|error| error.to_string())?;
+        cached.insert(
+            key,
+            AgentOutputCaptureCacheEntry {
+                output,
+                captured_at: Instant::now(),
+            },
+        );
+        Ok(())
+    }
 }

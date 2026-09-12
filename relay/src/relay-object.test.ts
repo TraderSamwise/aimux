@@ -56,6 +56,95 @@ class FakeR2Bucket {
   }
 }
 
+describe("RelayObject request hibernation", () => {
+  it("delivers a daemon response after pending request state is rebuilt from the client socket", async () => {
+    const daemonSocket = fakeSocket(["daemon", "user:user_owner"]);
+    const clientSocket = fakeSocket(["client", "device:client_1"]);
+    const storage = storageWithSockets([daemonSocket, clientSocket]);
+    const object = createObject(storage, {} as unknown as Env);
+
+    await object.webSocketMessage(
+      clientSocket,
+      JSON.stringify({ id: "client-req-1", type: "request", method: "GET", path: "/projects" }),
+    );
+    const daemonRequest = JSON.parse(String(daemonSocket.send.mock.calls.at(-1)?.[0])) as {
+      id: string;
+      type: string;
+    };
+    expect(daemonRequest).toMatchObject({ type: "request" });
+
+    const hibernatedObject = createObject(storage, {} as unknown as Env);
+    await hibernatedObject.webSocketMessage(
+      daemonSocket,
+      JSON.stringify({
+        id: daemonRequest.id,
+        type: "response",
+        status: 200,
+        body: { ok: true, projects: [{ id: "aimux" }] },
+      }),
+    );
+
+    expect(clientSocket.send).toHaveBeenCalledWith(
+      JSON.stringify({
+        id: "client-req-1",
+        type: "response",
+        status: 200,
+        body: { ok: true, projects: [{ id: "aimux" }] },
+      }),
+    );
+  });
+
+  it("sweeps expired daemon requests after pending request state is rebuilt from the client socket", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-09-12T00:00:00.000Z"));
+      const daemonSocket = fakeSocket(["daemon", "user:user_owner"]);
+      const clientSocket = fakeSocket(["client", "device:client_1"]);
+      const storage = storageWithSockets([daemonSocket, clientSocket]);
+      const object = createObject(storage, {} as unknown as Env);
+
+      await object.webSocketMessage(
+        clientSocket,
+        JSON.stringify({ id: "client-req-2", type: "request", method: "POST", path: "/agents/input" }),
+      );
+      vi.setSystemTime(new Date("2026-09-12T00:01:01.000Z"));
+
+      const hibernatedObject = createObject(storage, {} as unknown as Env);
+      await hibernatedObject.alarm();
+
+      expect(clientSocket.send).toHaveBeenCalledWith(
+        JSON.stringify({
+          id: "client-req-2",
+          type: "response",
+          status: 504,
+          body: { ok: false, error: "Daemon did not respond in time" },
+        }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reports a daemon response with no recoverable request mapping instead of dropping it", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const daemonSocket = fakeSocket(["daemon", "user:user_owner"]);
+      const object = createObject(storageWithSockets([daemonSocket]), {} as unknown as Env);
+
+      await object.webSocketMessage(
+        daemonSocket,
+        JSON.stringify({ id: "missing-request", type: "response", status: 200, body: { ok: true } }),
+      );
+
+      const message = "No pending relay request for daemon response id missing-request";
+      expect(warn).toHaveBeenCalledWith(message);
+      expect(daemonSocket.send).toHaveBeenCalledWith(JSON.stringify({ type: "error", message }));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
 describe("RelayObject sharing index repair", () => {
   let storage: MemoryStorage;
   let receiverFetch: ReturnType<typeof vi.fn>;
@@ -1208,11 +1297,21 @@ function storageWithSockets(sockets: Array<ReturnType<typeof fakeSocket>>) {
 }
 
 function fakeSocket(tags: string[]) {
+  let attachment: unknown;
   return {
     tags,
     send: vi.fn(),
     close: vi.fn(),
-  } as unknown as WebSocket & { tags: string[]; send: ReturnType<typeof vi.fn> };
+    serializeAttachment: vi.fn((value: unknown) => {
+      attachment = value;
+    }),
+    deserializeAttachment: vi.fn(() => attachment),
+  } as unknown as WebSocket & {
+    tags: string[];
+    send: ReturnType<typeof vi.fn>;
+    serializeAttachment: ReturnType<typeof vi.fn>;
+    deserializeAttachment: ReturnType<typeof vi.fn>;
+  };
 }
 
 async function createAcceptedShareInOwnerObject(object: RelayObject): Promise<string> {

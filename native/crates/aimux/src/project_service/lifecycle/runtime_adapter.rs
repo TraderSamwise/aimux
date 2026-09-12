@@ -1,18 +1,20 @@
-use std::path::Path;
-use std::process::Command;
-use std::time::{Duration, Instant};
-
-use serde_json::Value;
-use std::collections::BTreeSet;
-
+use crate::async_subprocess::AsyncCommand;
 use crate::backend_session_ids::{
     BackendSessionDiscoveryOptions, codex_backend_session_ids_for_cwd,
 };
 use crate::paths::{is_git_project_root, project_checkout_required_message};
 use crate::tmux::{
-    CapturePaneOptions, TmuxRuntimeManager, TmuxTarget, clear_history_argv, kill_window_argv,
-    new_window_argv, rename_window_argv, set_window_option_argv, tmux_command_from_env,
+    AIMUX_TMUX_SOCKET_PATH_ENV, CapturePaneOptions, TmuxRuntimeManager, TmuxTarget,
+    clear_history_argv, kill_window_argv, new_window_argv, rename_window_argv,
+    set_window_option_argv, tmux_command_from_env,
 };
+use serde_json::Value;
+use std::collections::BTreeSet;
+use std::path::Path;
+use std::time::{Duration, Instant};
+use tokio::process::Command as TokioCommand;
+
+const LIFECYCLE_SUBPROCESS_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub trait ProjectLifecycleRuntime {
     fn repair_legacy_project_session_names(&mut self, project_root: &Path) -> Result<(), String>;
@@ -60,6 +62,38 @@ pub trait ProjectLifecycleRuntime {
     fn rename_window(&mut self, window_id: &str, name: &str) -> Result<(), String>;
 }
 
+pub(crate) trait AsyncProjectLifecycleRuntime {
+    async fn ensure_project_session(&mut self, project_root: &Path) -> Result<(), String>;
+    async fn create_window(
+        &mut self,
+        session_name: &str,
+        name: &str,
+        cwd: &str,
+        command: &str,
+        args: &[String],
+        detached: bool,
+    ) -> Result<TmuxTarget, String>;
+    async fn set_window_metadata(
+        &mut self,
+        window_id: &str,
+        metadata: &Value,
+    ) -> Result<(), String>;
+    async fn set_window_option(
+        &mut self,
+        window_id: &str,
+        key: &str,
+        value: &str,
+    ) -> Result<(), String>;
+    async fn clear_history(&mut self, window_id: &str) -> Result<(), String>;
+    async fn wait_for_window_after_launch(
+        &mut self,
+        target: &TmuxTarget,
+        timeout: Duration,
+    ) -> bool;
+    fn codex_backend_session_ids_for_cwd(&mut self, cwd: &str) -> Result<BTreeSet<String>, String>;
+    async fn kill_window(&mut self, window_id: &str) -> Result<(), String>;
+}
+
 pub struct SystemProjectLifecycleRuntime;
 
 impl ProjectLifecycleRuntime for SystemProjectLifecycleRuntime {
@@ -105,7 +139,7 @@ impl ProjectLifecycleRuntime for SystemProjectLifecycleRuntime {
 
     fn set_window_metadata(&mut self, window_id: &str, metadata: &Value) -> Result<(), String> {
         let metadata = serde_json::to_string(metadata).map_err(|error| error.to_string())?;
-        self.set_window_option(window_id, "@aimux-meta", &metadata)
+        ProjectLifecycleRuntime::set_window_option(self, window_id, "@aimux-meta", &metadata)
     }
 
     fn set_window_option(&mut self, window_id: &str, key: &str, value: &str) -> Result<(), String> {
@@ -151,6 +185,123 @@ impl ProjectLifecycleRuntime for SystemProjectLifecycleRuntime {
             format!("tmux rename-window failed for {window_id}"),
         )
     }
+}
+
+impl AsyncProjectLifecycleRuntime for SystemProjectLifecycleRuntime {
+    async fn ensure_project_session(&mut self, project_root: &Path) -> Result<(), String> {
+        let project_root = project_root.to_path_buf();
+        crate::async_runtime::spawn_blocking_named(
+            crate::async_runtime::scoped_task_name(
+                "project-service",
+                "lifecycle-ensure-session",
+                &project_root.to_string_lossy(),
+            ),
+            move || {
+                TmuxRuntimeManager::new()
+                    .ensure_project_session(&project_root, None, None)
+                    .map(|_| ())
+            },
+        )
+        .await
+        .map_err(|error| format!("tmux ensure project session task failed: {error}"))?
+    }
+
+    async fn create_window(
+        &mut self,
+        session_name: &str,
+        name: &str,
+        cwd: &str,
+        command: &str,
+        args: &[String],
+        detached: bool,
+    ) -> Result<TmuxTarget, String> {
+        let output = run_tmux_argv_output_async(
+            new_window_argv(session_name, name, cwd, command, args, detached),
+            format!("tmux failed to create window \"{name}\" in session {session_name}"),
+            Some(cwd),
+        )
+        .await?;
+        parse_tmux_target(session_name, &output)
+    }
+
+    async fn set_window_metadata(
+        &mut self,
+        window_id: &str,
+        metadata: &Value,
+    ) -> Result<(), String> {
+        let metadata = serde_json::to_string(metadata).map_err(|error| error.to_string())?;
+        AsyncProjectLifecycleRuntime::set_window_option(self, window_id, "@aimux-meta", &metadata)
+            .await
+    }
+
+    async fn set_window_option(
+        &mut self,
+        window_id: &str,
+        key: &str,
+        value: &str,
+    ) -> Result<(), String> {
+        run_tmux_argv_async(
+            set_window_option_argv(window_id, key, value),
+            format!("tmux set-window-option {key} failed for {window_id}"),
+            None,
+        )
+        .await
+    }
+
+    async fn clear_history(&mut self, window_id: &str) -> Result<(), String> {
+        run_tmux_argv_async(
+            clear_history_argv(window_id),
+            format!("tmux clear-history failed for {window_id}"),
+            None,
+        )
+        .await
+    }
+
+    async fn wait_for_window_after_launch(
+        &mut self,
+        target: &TmuxTarget,
+        timeout: Duration,
+    ) -> bool {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if has_window_async(target).await {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    fn codex_backend_session_ids_for_cwd(&mut self, cwd: &str) -> Result<BTreeSet<String>, String> {
+        codex_backend_session_ids_for_cwd(cwd, &BackendSessionDiscoveryOptions::default())
+    }
+
+    async fn kill_window(&mut self, window_id: &str) -> Result<(), String> {
+        run_tmux_argv_async(
+            kill_window_argv(window_id),
+            format!("tmux kill-window failed for {window_id}"),
+            None,
+        )
+        .await
+    }
+}
+
+async fn has_window_async(target: &TmuxTarget) -> bool {
+    run_tmux_argv_output_async(
+        vec![
+            "display-message".to_owned(),
+            "-p".to_owned(),
+            "-t".to_owned(),
+            target.window_id.clone(),
+            "#{window_id}".to_owned(),
+        ],
+        format!("tmux failed to inspect window {}", target.window_id),
+        None,
+    )
+    .await
+    .is_ok_and(|output| output.trim() == target.window_id)
 }
 
 pub(super) fn remove_git_worktree_checkout(main_repo: &str, path: &str) -> Result<(), String> {
@@ -210,6 +361,51 @@ fn run_tmux_argv_output(argv: Vec<String>, fallback_error: String) -> Result<Str
             }
         }
         Err(error) => Err(format!("{fallback_error}: {error}")),
+    }
+}
+
+async fn run_tmux_argv_async(
+    argv: Vec<String>,
+    fallback_error: String,
+    cwd: Option<&str>,
+) -> Result<(), String> {
+    run_tmux_argv_output_async(argv, fallback_error, cwd)
+        .await
+        .map(|_| ())
+}
+
+async fn run_tmux_argv_output_async(
+    argv: Vec<String>,
+    fallback_error: String,
+    cwd: Option<&str>,
+) -> Result<String, String> {
+    let mut command = TokioCommand::new("tmux");
+    if let Some(socket_path) =
+        std::env::var_os(AIMUX_TMUX_SOCKET_PATH_ENV).filter(|value| !value.is_empty())
+    {
+        command.arg("-S").arg(socket_path);
+    }
+    command.args(argv);
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
+    command.kill_on_drop(true);
+    match tokio::time::timeout(LIFECYCLE_SUBPROCESS_TIMEOUT, command.output()).await {
+        Ok(Ok(output)) if output.status.success() => {
+            Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        }
+        Ok(Ok(output)) => {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+            if stderr.is_empty() {
+                Err(fallback_error)
+            } else {
+                Err(stderr)
+            }
+        }
+        Ok(Err(error)) => Err(format!("{fallback_error}: {error}")),
+        Err(_) => Err(format!(
+            "{fallback_error}: tmux timed out after {LIFECYCLE_SUBPROCESS_TIMEOUT:?}"
+        )),
     }
 }
 
@@ -278,8 +474,8 @@ fn run_git_argv_output(cwd: &str, argv: &[&str], fallback_error: String) -> Resu
     }
 }
 
-fn git_command(cwd: &str) -> Command {
-    let mut command = Command::new("git");
+fn git_command(cwd: &str) -> AsyncCommand {
+    let mut command = AsyncCommand::new("git");
     command.current_dir(cwd);
     for key in [
         "GIT_DIR",

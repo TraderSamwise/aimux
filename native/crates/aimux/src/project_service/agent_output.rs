@@ -1,14 +1,10 @@
-use serde_json::{Map, Value, json};
-use sha1::{Digest, Sha1};
-use std::fs;
-use std::path::Path;
-use std::process::{Command, Output, Stdio};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::time::{Duration, Instant};
-
 pub use crate::agent_prompt_delivery::normalize_submitted_prompt;
-use crate::agent_prompt_delivery::{PromptSubmitRuntime, wait_for_prompt_submit};
+use crate::agent_prompt_delivery::{
+    DRAFT_CAPTURE_START_LINE, FIRST_POLL_MS, MAX_POLL_ATTEMPTS, POLL_MS, PromptSubmitRuntime,
+    SETTLE_BEFORE_SUBMIT_MS, SIGNATURE_CAPTURE_START_LINE, VERIFY_AFTER_SUBMIT_MS,
+    pane_still_contains_prompt_draft, prompt_draft_signature, wait_for_prompt_submit,
+};
+use crate::async_subprocess::{AsyncCommand, command_task_name};
 use crate::daemon_state::load_metadata_state;
 use crate::dashboard_readiness::get_runtime_owner_id;
 use crate::expose_pane_output_tap::EXPOSE_PANE_TAP_MAX_BYTES;
@@ -21,10 +17,21 @@ use crate::runtime_topology::{
 use crate::tmux::TmuxRuntimeManager;
 use crate::tmux::{
     CapturePaneOptions, TMUX_RUNTIME_OWNER_OPTION, TMUX_SEND_TEXT_CHUNK_BYTES, TmuxTarget,
-    capture_pane_argv, resize_window_argv, send_carriage_return_argv, send_escape_argv,
-    send_key_argv, send_text_argv, split_text_for_tmux_send_keys,
+    WINDOW_TARGET_FORMAT, capture_pane_argv, resize_window_argv, send_carriage_return_argv,
+    send_escape_argv, send_key_argv, send_text_argv, split_text_for_tmux_send_keys,
+    tmux_command_from_env,
 };
 use crate::tool_output_watchers::{classify_tool_pane, reconcile_agent_activity};
+use serde_json::{Map, Value, json};
+use sha1::{Digest, Sha1};
+use std::fs;
+use std::future::Future;
+use std::path::Path;
+use std::pin::Pin;
+use std::process::Output;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use super::agent_input::{
     format_agent_input_with_attachments, shared_chat_body_actor_prompt,
@@ -66,8 +73,7 @@ const AGENT_OUTPUT_READ_PURPOSES: &[&str] = &[
     "interrupt",
 ];
 const TMUX_COMMAND_TIMEOUT: Duration = Duration::from_secs(2);
-const TMUX_COMMAND_POLL: Duration = Duration::from_millis(10);
-
+const AGENT_INPUT_ROUTE_TIMEOUT: Duration = Duration::from_secs(10);
 static OPERATION_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -494,6 +500,87 @@ pub fn route_agent_output_request_with_runtime(
     }
 }
 
+pub async fn route_agent_output_request_async(
+    context: &ProjectServiceRequestContext,
+    method: &str,
+    path: &str,
+    body: Option<&Value>,
+    irreversible_input: Option<&AtomicBool>,
+) -> Option<ProjectServiceDispatchResponse> {
+    let pathname = project_service_pathname(path);
+    if method.eq_ignore_ascii_case("GET")
+        && (pathname == routes::agents::OUTPUT || pathname == routes::live_pane::OUTPUT)
+    {
+        return Some(read_agent_output_route_async(context, path).await);
+    }
+    if !method.eq_ignore_ascii_case("POST") {
+        return None;
+    }
+    match pathname {
+        routes::live_pane::ATTACH => Some(attach_live_pane_route_async(context, body).await),
+        routes::live_pane::RESIZE => Some(resize_live_pane_route_async(context, body).await),
+        routes::agents::INTERRUPT | routes::live_pane::INTERRUPT => {
+            Some(interrupt_live_pane_route_async(context, body).await)
+        }
+        routes::agents::INPUT | routes::live_pane::INPUT => {
+            Some(input_live_pane_route_async(context, pathname, body, irreversible_input).await)
+        }
+        _ => None,
+    }
+}
+
+async fn read_agent_output_route_async(
+    context: &ProjectServiceRequestContext,
+    path: &str,
+) -> ProjectServiceDispatchResponse {
+    let params = query_params(path);
+    let Some(session_id) = trimmed_query(&params, "sessionId") else {
+        return json_error(400, "sessionId is required");
+    };
+    let start_line =
+        match parse_optional_integer(params.get("startLine").map(String::as_str), "startLine") {
+            Ok(value) => value,
+            Err(error) => return json_error(400, error),
+        };
+    let mode = match parse_agent_output_response_mode(params.get("mode").map(String::as_str)) {
+        Ok(value) => value,
+        Err(error) => return json_error(400, error),
+    };
+    if let Err(error) = parse_agent_output_read_purpose(params.get("purpose").map(String::as_str)) {
+        return json_error(400, error);
+    }
+    match read_agent_output_payload_async(
+        context,
+        &session_id,
+        start_line,
+        mode,
+        TMUX_COMMAND_TIMEOUT,
+    )
+    .await
+    {
+        Ok(result) => {
+            context.output_metrics.record(AgentOutputReadRecord {
+                source: output_read_source(path).to_owned(),
+                session_id,
+                changed: Some(true),
+                coalesced: result.coalesced,
+                error: false,
+            });
+            ProjectServiceDispatchResponse::json(200, result.payload)
+        }
+        Err(response) => {
+            context.output_metrics.record(AgentOutputReadRecord {
+                source: output_read_source(path).to_owned(),
+                session_id,
+                changed: None,
+                coalesced: false,
+                error: true,
+            });
+            *response
+        }
+    }
+}
+
 pub fn bounded_agent_output_start_line(start_line: Option<i64>) -> i64 {
     match start_line {
         None => DEFAULT_AGENT_OUTPUT_START_LINE,
@@ -771,6 +858,135 @@ pub(super) fn read_agent_output_payload(
         .get(session_id)
         .and_then(|metadata| metadata.get("derived"));
     let _ = sync_tmux_window_metadata(runtime, &project_state_dir, &topology, session_id, &target);
+    if let Some(derived) = derived {
+        for key in ["activity", "activityText", "attention"] {
+            insert_value(&mut result, key, derived.get(key).cloned());
+        }
+    }
+    let tool = resolve_session_tool(&topology, session_id);
+    let pane_state = classify_tool_pane(tool.as_deref().unwrap_or_default(), &output);
+    insert_value(
+        &mut result,
+        "paneState",
+        serde_json::to_value(&pane_state).ok(),
+    );
+    insert_projection_fields(
+        &mut result,
+        &context.output_projection_cache,
+        &output,
+        tool.as_deref(),
+    );
+    if pane_state.interrupted_visible {
+        result.insert("activityText".into(), Value::String(String::new()));
+    }
+    if let Some(activity) = reconcile_agent_activity(
+        derived.and_then(|derived| derived.get("activity").and_then(Value::as_str)),
+        result.get("activityText").and_then(Value::as_str),
+        &pane_state,
+    ) {
+        result.insert("activity".into(), Value::String(activity));
+    }
+    let mut body = Map::new();
+    body.insert("ok".into(), Value::Bool(true));
+    let payload = project_agent_output_payload(
+        &Value::Object(result),
+        capture_window,
+        capture_window.start_line,
+        mode,
+    );
+    if let Value::Object(payload) = payload {
+        for (key, value) in payload {
+            body.insert(key, value);
+        }
+    }
+    Ok(AgentOutputPayloadRead {
+        payload: Value::Object(body),
+        coalesced,
+    })
+}
+
+pub(super) async fn read_agent_output_payload_async(
+    context: &ProjectServiceRequestContext,
+    session_id: &str,
+    start_line: Option<i64>,
+    mode: AgentOutputResponseMode,
+    timeout: Duration,
+) -> Result<AgentOutputPayloadRead, Box<ProjectServiceDispatchResponse>> {
+    let capture_window = agent_output_capture_window(start_line);
+    let project_state_dir = context.project_state_dir();
+    let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
+        Ok(topology) => topology,
+        Err(error) => return Err(Box::new(json_error(500, error))),
+    };
+    let Some(target) = resolve_session_target(&topology, session_id) else {
+        return Err(Box::new(json_error(
+            500,
+            format!("Session \"{session_id}\" is not running"),
+        )));
+    };
+    if let Err(error) = verify_target_runtime_async(&target, context.project_root(), timeout).await
+    {
+        return Err(Box::new(json_error(403, error)));
+    }
+    let window_id = target.window_id.clone();
+    let capture_options = CapturePaneOptions {
+        start_line: Some(capture_window.start_line),
+        end_line: capture_window.end_line,
+        include_escapes: true,
+    };
+    let cache_key = AgentOutputCaptureCacheKey {
+        window_id: window_id.clone(),
+        options: capture_options,
+    };
+    let (output_ansi, coalesced) = match context.output_cache.fresh(&cache_key) {
+        Ok(Some(output)) => (output, true),
+        Ok(None) => match capture_pane_async(&window_id, capture_options, timeout).await {
+            Ok(output) => {
+                if let Err(error) = context.output_cache.store(cache_key, output.clone()) {
+                    return Err(Box::new(json_error(500, error)));
+                }
+                (output, false)
+            }
+            Err(error) => return Err(Box::new(json_error(500, error))),
+        },
+        Err(error) => return Err(Box::new(json_error(500, error))),
+    };
+    let output_has_osc = has_osc_start(&output_ansi);
+    let osc_output = context.osc_notifications.process_capture_with_hint(
+        session_id,
+        &output_ansi,
+        output_has_osc,
+    );
+    let output_ansi = osc_output.cleaned_output.as_deref().unwrap_or(&output_ansi);
+    if let Err(error) = write_osc_notifications(context, session_id, &osc_output) {
+        return Err(Box::new(json_error(500, error)));
+    }
+    let output = strip_sgr(output_ansi);
+    let metadata = load_metadata_state(&project_state_dir);
+    let mut result = Map::new();
+    insert_string(&mut result, "sessionId", session_id);
+    insert_string(&mut result, "output", &output);
+    insert_string(&mut result, "outputAnsi", output_ansi);
+    insert_number(&mut result, "startLine", capture_window.start_line);
+    insert_number(
+        &mut result,
+        "requestedStartLine",
+        capture_window.requested_start_line,
+    );
+    if let Some(end_line) = capture_window.end_line {
+        insert_number(&mut result, "endLine", end_line);
+    }
+    insert_number(&mut result, "captureLineLimit", capture_window.max_lines);
+    insert_bool(&mut result, "outputTailOnly", capture_window.tail_only);
+    insert_bool(
+        &mut result,
+        "outputStartLineClamped",
+        capture_window.clamped,
+    );
+    let derived = metadata
+        .sessions
+        .get(session_id)
+        .and_then(|metadata| metadata.get("derived"));
     if let Some(derived) = derived {
         for key in ["activity", "activityText", "attention"] {
             insert_value(&mut result, key, derived.get(key).cloned());
@@ -1219,6 +1435,319 @@ fn input_live_pane_route(
     )
 }
 
+async fn attach_live_pane_route_async(
+    context: &ProjectServiceRequestContext,
+    body: Option<&Value>,
+) -> ProjectServiceDispatchResponse {
+    let body = body.unwrap_or(&Value::Null);
+    let Some(session_id) = body_trimmed_string(body, "sessionId").filter(|value| !value.is_empty())
+    else {
+        return json_error(400, "sessionId is required");
+    };
+    let start_line = match body.get("startLine") {
+        None => None,
+        Some(value) => match parse_integer_value(value, "startLine") {
+            Ok(value) => Some(value),
+            Err(error) => return json_error(400, error),
+        },
+    };
+    let capture_window = agent_output_capture_window(start_line);
+    let mut resize = None;
+    if body.get("cols").is_some() || body.get("rows").is_some() {
+        let cols = match body.get("cols") {
+            Some(value) => match parse_positive_integer_value(value, "cols") {
+                Ok(value) => value,
+                Err(error) => return json_error(400, error),
+            },
+            None => return json_error(400, "cols must be an integer"),
+        };
+        let rows = match body.get("rows") {
+            Some(value) => match parse_positive_integer_value(value, "rows") {
+                Ok(value) => value,
+                Err(error) => return json_error(400, error),
+            },
+            None => return json_error(400, "rows must be an integer"),
+        };
+        let Some(window_id) = resolve_live_window_id(context, &session_id) else {
+            return json_error(500, format!("Session \"{session_id}\" is not running"));
+        };
+        if let Err(error) = resize_window_async(&window_id, cols, rows, TMUX_COMMAND_TIMEOUT).await
+        {
+            return json_error(500, error);
+        }
+        resize = Some((cols, rows));
+    }
+    let mut payload = match read_agent_output_payload_async(
+        context,
+        &session_id,
+        start_line,
+        AgentOutputResponseMode::Full,
+        TMUX_COMMAND_TIMEOUT,
+    )
+    .await
+    {
+        Ok(result) => result.payload,
+        Err(response) => return *response,
+    };
+    if let Value::Object(map) = &mut payload {
+        let mut stream = Map::new();
+        stream.insert("route".into(), Value::String(routes::EVENTS.to_owned()));
+        stream.insert("sessionId".into(), Value::String(session_id.clone()));
+        insert_number(
+            &mut stream,
+            "startLine",
+            map.get("startLine")
+                .and_then(Value::as_i64)
+                .unwrap_or(capture_window.start_line),
+        );
+        insert_number(
+            &mut stream,
+            "requestedStartLine",
+            map.get("requestedStartLine")
+                .and_then(Value::as_i64)
+                .unwrap_or(capture_window.requested_start_line),
+        );
+        if let Some(end_line) = map
+            .get("endLine")
+            .and_then(Value::as_i64)
+            .or(capture_window.end_line)
+        {
+            insert_number(&mut stream, "endLine", end_line);
+        }
+        insert_number(
+            &mut stream,
+            "captureLineLimit",
+            map.get("captureLineLimit")
+                .and_then(Value::as_i64)
+                .unwrap_or(capture_window.max_lines),
+        );
+        insert_bool(
+            &mut stream,
+            "outputTailOnly",
+            map.get("outputTailOnly")
+                .and_then(Value::as_bool)
+                .unwrap_or(capture_window.tail_only),
+        );
+        insert_bool(
+            &mut stream,
+            "outputStartLineClamped",
+            map.get("outputStartLineClamped")
+                .and_then(Value::as_bool)
+                .unwrap_or(capture_window.clamped),
+        );
+        map.insert("stream".into(), Value::Object(stream));
+        if let Some((cols, rows)) = resize {
+            map.insert("resize".into(), json!({ "cols": cols, "rows": rows }));
+        }
+    }
+    ProjectServiceDispatchResponse::json(200, payload)
+}
+
+async fn resize_live_pane_route_async(
+    context: &ProjectServiceRequestContext,
+    body: Option<&Value>,
+) -> ProjectServiceDispatchResponse {
+    let body = body.unwrap_or(&Value::Null);
+    let Some(session_id) = body_trimmed_string(body, "sessionId").filter(|value| !value.is_empty())
+    else {
+        return json_error(400, "sessionId is required");
+    };
+    let cols = match body.get("cols") {
+        Some(value) => match parse_positive_integer_value(value, "cols") {
+            Ok(value) => value,
+            Err(error) => return json_error(400, error),
+        },
+        None => return json_error(400, "cols must be an integer"),
+    };
+    let rows = match body.get("rows") {
+        Some(value) => match parse_positive_integer_value(value, "rows") {
+            Ok(value) => value,
+            Err(error) => return json_error(400, error),
+        },
+        None => return json_error(400, "rows must be an integer"),
+    };
+    let Some(window_id) = resolve_live_window_id(context, &session_id) else {
+        return json_error(500, format!("Session \"{session_id}\" is not running"));
+    };
+    if let Err(error) = resize_window_async(&window_id, cols, rows, TMUX_COMMAND_TIMEOUT).await {
+        return json_error(500, error);
+    }
+    ProjectServiceDispatchResponse::json(
+        200,
+        json!({ "ok": true, "sessionId": session_id, "cols": cols, "rows": rows }),
+    )
+}
+
+async fn interrupt_live_pane_route_async(
+    context: &ProjectServiceRequestContext,
+    body: Option<&Value>,
+) -> ProjectServiceDispatchResponse {
+    let body = body.unwrap_or(&Value::Null);
+    let Some(session_id) = body_trimmed_string(body, "sessionId").filter(|value| !value.is_empty())
+    else {
+        return json_error(400, "sessionId is required");
+    };
+    let Some(window_id) = resolve_live_window_id(context, &session_id) else {
+        return json_error(500, format!("Session \"{session_id}\" is not running"));
+    };
+    if let Err(error) = send_escape_async(&window_id, TMUX_COMMAND_TIMEOUT).await {
+        return json_error(500, error);
+    }
+    mark_session_interrupted(context, &session_id);
+    let now = now_iso();
+    ProjectServiceDispatchResponse::json(
+        200,
+        json!({
+            "ok": true,
+            "accepted": true,
+            "transition": {
+                "operationId": operation_id("agent.interrupt", &session_id),
+                "operation": "agent.interrupt",
+                "targetKind": "agent",
+                "targetId": session_id,
+                "phase": "succeeded",
+                "startedAt": now,
+                "updatedAt": now,
+            }
+        }),
+    )
+}
+
+async fn input_live_pane_route_async(
+    context: &ProjectServiceRequestContext,
+    pathname: &str,
+    body: Option<&Value>,
+    irreversible_input: Option<&AtomicBool>,
+) -> ProjectServiceDispatchResponse {
+    let body = body.unwrap_or(&Value::Null);
+    let Some(session_id) = body_trimmed_string(body, "sessionId").filter(|value| !value.is_empty())
+    else {
+        return json_error(400, "sessionId is required");
+    };
+    let text = body_raw_string(body, "text").unwrap_or_default();
+    let attachment_ids = body
+        .get("attachmentIds")
+        .and_then(Value::as_array)
+        .map(|ids| {
+            ids.iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let remote_actor = remote_actor_from_headers(&context.request_headers);
+    if remote_actor
+        .as_ref()
+        .is_some_and(|actor| actor.role == RemoteActorRole::Guest)
+    {
+        if pathname != routes::live_pane::INPUT {
+            return json_error(403, "shared guests can only write to their shared session");
+        }
+        if remote_actor
+            .as_ref()
+            .and_then(|actor| actor.share_session_id.as_deref())
+            != Some(session_id.as_str())
+        {
+            return json_error(403, "shared guest cannot access another session");
+        }
+        if text.trim().is_empty() && attachment_ids.is_empty() {
+            return json_error(403, "shared guest input requires text or attachments");
+        }
+    } else if text.trim().is_empty() && attachment_ids.is_empty() {
+        return json_error(400, "text is required");
+    }
+    let mut attachments = Vec::new();
+    for attachment_id in &attachment_ids {
+        let Some(record) = get_attachment_record(
+            context.project_root(),
+            attachment_id,
+            Some(session_id.as_str()),
+        ) else {
+            return json_error(400, format!("attachment not found: {attachment_id}"));
+        };
+        attachments.push(record);
+    }
+    let Some(window_id) = resolve_live_window_id(context, &session_id) else {
+        return json_error(500, format!("Session \"{session_id}\" is not running"));
+    };
+    let input_text = match remote_actor
+        .as_ref()
+        .filter(|actor| actor.role == RemoteActorRole::Guest)
+        .and_then(|actor| shared_chat_remote_actor_prompt(actor, &text))
+        .or_else(|| shared_chat_body_actor_prompt(body, &text))
+    {
+        Some(value) => value,
+        None => text,
+    };
+    let formatted_text = format_agent_input_with_attachments(&input_text, &attachments);
+    let project_state_dir = context.project_state_dir();
+    let prompt_context = get_prompt_context_text(&project_state_dir, &session_id);
+    let contextualized_text =
+        compose_with_prompt_context(&formatted_text, prompt_context.as_deref());
+    let prompt = normalize_submitted_prompt(&contextualized_text);
+    let force = body.get("force").and_then(Value::as_bool) == Some(true);
+    let now_ms = super::scheduler::scheduler_now_ms();
+    let activity = if force {
+        Ok(AgentInputWindowActivity::Unattended)
+    } else {
+        tmux_agent_input_window_activity_async(&window_id, TMUX_COMMAND_TIMEOUT).await
+    };
+    let decision = decide_agent_input_delivery(force, activity, now_ms, now_ms);
+    if let AgentInputDeliveryDecision::Hold {
+        reason,
+        quiet_for_ms,
+        retry_after_ms,
+    } = decision
+    {
+        let pending = match enqueue_agent_input_delivery(
+            context,
+            &session_id,
+            &window_id,
+            &prompt,
+            &reason,
+            now_ms,
+        ) {
+            Ok(pending) => pending,
+            Err(error) => return json_error(500, error),
+        };
+        if reason.starts_with("tmux client activity probe failed") {
+            record_agent_input_delivery_probe_failure(context, &session_id, &reason);
+        }
+        context
+            .scheduler
+            .force_task_next_tick(AGENT_INPUT_DELIVERY_TASK_NAME);
+        return ProjectServiceDispatchResponse::json(
+            200,
+            json!({
+                "ok": true,
+                "sessionId": session_id,
+                "accepted": true,
+                "delivery": {
+                    "state": "held",
+                    "id": pending.id,
+                    "reason": reason,
+                    "quietForMs": quiet_for_ms,
+                    "retryAfterMs": retry_after_ms,
+                    "maxDeliverAtMs": pending.max_deliver_at_ms,
+                }
+            }),
+        );
+    }
+    if let Some(flag) = irreversible_input {
+        flag.store(true, Ordering::SeqCst);
+    }
+    if let Err(error) =
+        deliver_prompt_to_tmux_async(&window_id, &prompt, AGENT_INPUT_ROUTE_TIMEOUT).await
+    {
+        return json_error(500, error);
+    }
+    ProjectServiceDispatchResponse::json(
+        200,
+        json!({ "ok": true, "sessionId": session_id, "accepted": true }),
+    )
+}
+
 pub(super) fn resolve_live_window_id(
     context: &ProjectServiceRequestContext,
     session_id: &str,
@@ -1372,13 +1901,49 @@ fn tmux_agent_input_window_activity(
     )
 }
 
+pub(super) async fn tmux_agent_input_window_activity_async(
+    window_id: &str,
+    timeout: Duration,
+) -> Result<AgentInputWindowActivity, String> {
+    let panes = run_tmux_argv_with_timeout_async(
+        vec![
+            "list-panes".into(),
+            "-a".into(),
+            "-F".into(),
+            "#{window_id}\t#{window_active_clients}".into(),
+        ],
+        format!("tmux list-panes failed while checking active clients for {window_id}"),
+        timeout,
+    )
+    .await?;
+    let panes_text = String::from_utf8_lossy(&panes.stdout);
+    if active_client_count_for_window(window_id, &panes_text)? == 0 {
+        return Ok(AgentInputWindowActivity::Unattended);
+    }
+    let clients = run_tmux_argv_with_timeout_async(
+        vec![
+            "list-clients".into(),
+            "-F".into(),
+            "#{client_name}\t#{client_activity}\t#{window_id}".into(),
+        ],
+        format!("tmux list-clients failed while checking client activity for {window_id}"),
+        timeout,
+    )
+    .await?;
+    parse_agent_input_window_activity(
+        window_id,
+        &panes_text,
+        &String::from_utf8_lossy(&clients.stdout),
+    )
+}
+
 fn run_tmux_argv_with_timeout(
     argv: Vec<String>,
     fallback_error: String,
     timeout: Duration,
 ) -> Result<Output, String> {
     let output = run_command_with_timeout("tmux", &argv, timeout)
-        .map_err(|error| format!("{fallback_error}: {error}"))?;
+        .map_err(|error| tmux_command_error(&fallback_error, &argv, &error))?;
     if !output.status.success() {
         let error = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         return Err(if error.is_empty() {
@@ -1390,60 +1955,467 @@ fn run_tmux_argv_with_timeout(
     Ok(output)
 }
 
+async fn run_tmux_argv_with_timeout_async(
+    argv: Vec<String>,
+    fallback_error: String,
+    timeout: Duration,
+) -> Result<Output, String> {
+    let mut command = tmux_command_from_env();
+    command.args(&argv);
+    let output = command
+        .output_timeout_async(timeout)
+        .await
+        .map_err(|error| tmux_command_error(&fallback_error, &argv, &error.to_string()))?;
+    if !output.status.success() {
+        let error = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return Err(if error.is_empty() {
+            fallback_error
+        } else {
+            error
+        });
+    }
+    Ok(output)
+}
+
+fn tmux_command_error(fallback_error: &str, argv: &[String], error: &str) -> String {
+    format!("{fallback_error} ({}): {error}", tmux_command_display(argv))
+}
+
+fn tmux_command_display(argv: &[String]) -> String {
+    let mut parts = Vec::with_capacity(argv.len() + 1);
+    parts.push("tmux".to_owned());
+    parts.extend(argv.iter().map(|arg| shellish_quote(arg)));
+    parts.join(" ")
+}
+
+fn shellish_quote(value: &str) -> String {
+    if value
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | '/' | ':' | '@'))
+    {
+        value.to_owned()
+    } else {
+        format!("{value:?}")
+    }
+}
+
 fn run_command_with_timeout(
     program: &str,
     argv: &[String],
     timeout: Duration,
 ) -> Result<Output, String> {
-    let nonce = OPERATION_SEQUENCE.fetch_add(1, Ordering::SeqCst);
-    let temp_prefix = format!("aimux-command-{}-{nonce}", std::process::id());
-    let stdout_path = std::env::temp_dir().join(format!("{temp_prefix}.stdout"));
-    let stderr_path = std::env::temp_dir().join(format!("{temp_prefix}.stderr"));
-    let stdout = fs::File::create(&stdout_path).map_err(|error| error.to_string())?;
-    let stderr = fs::File::create(&stderr_path).map_err(|error| error.to_string())?;
-    let mut child = Command::new(program)
-        .args(argv)
-        .stdout(Stdio::from(stdout))
-        .stderr(Stdio::from(stderr))
-        .spawn()
-        .map_err(|error| {
-            cleanup_command_output_files(&stdout_path, &stderr_path);
-            error.to_string()
-        })?;
-    let deadline = Instant::now() + timeout;
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                let output = Output {
-                    status,
-                    stdout: fs::read(&stdout_path).unwrap_or_default(),
-                    stderr: fs::read(&stderr_path).unwrap_or_default(),
-                };
-                cleanup_command_output_files(&stdout_path, &stderr_path);
-                return Ok(output);
+    let mut command = AsyncCommand::new(program);
+    command.args(argv);
+    command
+        .output_timeout(command_task_name("agent-output", program), timeout)
+        .map_err(|error| error.to_string())
+}
+
+async fn verify_target_runtime_async(
+    target: &TmuxTarget,
+    expected_project_root: &Path,
+    timeout: Duration,
+) -> Result<(), String> {
+    let actual_target =
+        match tmux_get_target_by_window_id_async(&target.session_name, &target.window_id, timeout)
+            .await
+        {
+            Ok(Some(actual_target)) => actual_target,
+            Ok(None) => {
+                return Err(format!(
+                    "refusing to read pane {}: window is not present in addressed tmux runtime {}",
+                    target.window_id, target.session_name
+                ));
             }
-            Ok(None) => {}
             Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                cleanup_command_output_files(&stdout_path, &stderr_path);
-                return Err(error.to_string());
+                return Err(format!(
+                    "refusing to read pane {}: could not verify addressed tmux runtime {}: {}",
+                    target.window_id, target.session_name, error
+                ));
             }
+        };
+    if actual_target.window_id != target.window_id {
+        return Err(format!(
+            "refusing to read pane {}: tmux resolved unexpected window {}",
+            target.window_id, actual_target.window_id
+        ));
+    }
+    let expected_project_root = canonicalize_project_root(expected_project_root);
+    let actual_project_root = tmux_get_session_option_async(
+        &target.session_name,
+        "@aimux-project-root",
+        timeout,
+    )
+    .await
+    .map_err(|error| {
+        format!(
+            "refusing to read pane {}: could not verify tmux session {} project ownership: {}",
+            target.window_id, target.session_name, error
+        )
+    })?
+    .map(canonicalize_project_root);
+    if actual_project_root.as_deref() != Some(expected_project_root.as_str()) {
+        return Err(format!(
+            "refusing to read pane {}: tmux session {} belongs to project {:?}, expected {}",
+            target.window_id, target.session_name, actual_project_root, expected_project_root
+        ));
+    }
+    let expected_owner = get_runtime_owner_id();
+    let actual_owner =
+        tmux_get_session_option_async(&target.session_name, TMUX_RUNTIME_OWNER_OPTION, timeout)
+            .await
+            .map_err(|error| {
+                format!(
+                    "refusing to read pane {}: could not verify tmux session {} runtime owner: {}",
+                    target.window_id, target.session_name, error
+                )
+            })?;
+    if actual_owner.as_deref() != Some(expected_owner.as_str()) {
+        return Err(format!(
+            "refusing to read pane {}: tmux session {} belongs to runtime owner {:?}, expected {}",
+            target.window_id, target.session_name, actual_owner, expected_owner
+        ));
+    }
+    Ok(())
+}
+
+async fn tmux_get_target_by_window_id_async(
+    session_name: &str,
+    window_id: &str,
+    timeout: Duration,
+) -> Result<Option<TmuxTarget>, String> {
+    let output = run_tmux_argv_with_timeout_async(
+        vec![
+            "list-windows".to_owned(),
+            "-t".to_owned(),
+            session_name.to_owned(),
+            "-F".to_owned(),
+            WINDOW_TARGET_FORMAT.to_owned(),
+        ],
+        format!("tmux list-windows failed for {session_name}"),
+        timeout,
+    )
+    .await?;
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .find_map(|line| {
+            let mut parts = line.splitn(3, '\t');
+            let id = parts.next()?;
+            if id != window_id {
+                return None;
+            }
+            let index = parts.next().unwrap_or("0").parse().unwrap_or(0);
+            let name = parts.next().unwrap_or("").to_owned();
+            Some(TmuxTarget {
+                session_name: session_name.to_owned(),
+                window_id: id.to_owned(),
+                window_index: index,
+                window_name: name,
+                pane_dead: None,
+            })
+        }))
+}
+
+async fn tmux_get_session_option_async(
+    session_name: &str,
+    key: &str,
+    timeout: Duration,
+) -> Result<Option<String>, String> {
+    let output = run_tmux_argv_with_timeout_async(
+        vec![
+            "show-options".to_owned(),
+            "-v".to_owned(),
+            "-t".to_owned(),
+            session_name.to_owned(),
+            key.to_owned(),
+        ],
+        format!("tmux show-options failed for {session_name} {key}"),
+        timeout,
+    )
+    .await?;
+    Ok(
+        Some(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+            .filter(|value| !value.is_empty()),
+    )
+}
+
+async fn capture_pane_async(
+    window_id: &str,
+    options: CapturePaneOptions,
+    timeout: Duration,
+) -> Result<String, String> {
+    let output = run_tmux_argv_with_timeout_async(
+        capture_pane_argv(window_id, options),
+        format!("tmux capture-pane failed for {window_id}"),
+        timeout,
+    )
+    .await?;
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+async fn resize_window_async(
+    window_id: &str,
+    cols: i64,
+    rows: i64,
+    timeout: Duration,
+) -> Result<(), String> {
+    run_tmux_argv_with_timeout_async(
+        resize_window_argv(window_id, cols, rows),
+        format!("tmux resize-window failed for {window_id}"),
+        timeout,
+    )
+    .await
+    .map(|_| ())
+}
+
+async fn send_escape_async(window_id: &str, timeout: Duration) -> Result<(), String> {
+    run_tmux_argv_with_timeout_async(
+        send_escape_argv(window_id),
+        format!("tmux send escape failed for {window_id}"),
+        timeout,
+    )
+    .await
+    .map(|_| ())
+}
+
+pub(super) async fn deliver_prompt_to_tmux_async(
+    window_id: &str,
+    prompt: &str,
+    timeout: Duration,
+) -> Result<(), String> {
+    let deadline = Instant::now() + timeout;
+    send_prompt_to_tmux_async(window_id, prompt, deadline).await?;
+    wait_for_prompt_submit_async(window_id, prompt, deadline).await
+}
+
+async fn send_prompt_to_tmux_async(
+    window_id: &str,
+    text: &str,
+    deadline: Instant,
+) -> Result<(), String> {
+    let mut pending = String::new();
+    for character in text.chars() {
+        match character {
+            '\r' => {
+                flush_tmux_text_async(window_id, &mut pending, deadline).await?;
+                run_tmux_argv_with_timeout_async(
+                    send_carriage_return_argv(window_id),
+                    format!("tmux send carriage return failed for {window_id}"),
+                    remaining_until(deadline)?,
+                )
+                .await?;
+            }
+            '\n' => {
+                flush_tmux_text_async(window_id, &mut pending, deadline).await?;
+                run_tmux_argv_with_timeout_async(
+                    send_key_argv(window_id, "C-j"),
+                    format!("tmux send-keys C-j failed for {window_id}"),
+                    remaining_until(deadline)?,
+                )
+                .await?;
+            }
+            value => pending.push(value),
         }
-        let now = Instant::now();
-        if now >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            cleanup_command_output_files(&stdout_path, &stderr_path);
-            return Err(format!("timed out after {timeout:?}"));
+    }
+    flush_tmux_text_async(window_id, &mut pending, deadline).await
+}
+
+async fn flush_tmux_text_async(
+    window_id: &str,
+    pending: &mut String,
+    deadline: Instant,
+) -> Result<(), String> {
+    if pending.is_empty() {
+        return Ok(());
+    }
+    for chunk in split_text_for_tmux_send_keys(pending, TMUX_SEND_TEXT_CHUNK_BYTES) {
+        run_tmux_argv_with_timeout_async(
+            send_text_argv(window_id, &chunk),
+            format!("tmux send-keys text failed for {window_id}"),
+            remaining_until(deadline)?,
+        )
+        .await?;
+    }
+    pending.clear();
+    Ok(())
+}
+
+async fn wait_for_prompt_submit_async(
+    window_id: &str,
+    draft: &str,
+    deadline: Instant,
+) -> Result<(), String> {
+    let mut runtime = SystemAsyncPromptSubmitRuntime {
+        window_id: window_id.to_owned(),
+        generation: claim_submit_generation(window_id),
+        deadline,
+    };
+    wait_for_prompt_submit_with_runtime_async(&mut runtime, draft).await
+}
+
+async fn wait_for_prompt_submit_with_runtime_async(
+    runtime: &mut dyn AsyncPromptSubmitRuntime,
+    draft: &str,
+) -> Result<(), String> {
+    let mut visible_count = 0u32;
+    let mut last_signature = String::new();
+
+    for attempt in 1..=MAX_POLL_ATTEMPTS {
+        if !runtime
+            .sleep(if attempt == 1 { FIRST_POLL_MS } else { POLL_MS })
+            .await
+        {
+            return Err("agent input submit timed out while waiting for pasted prompt".to_owned());
         }
-        std::thread::sleep(TMUX_COMMAND_POLL.min(deadline.saturating_duration_since(now)));
+        if !runtime.is_current() {
+            return Err("agent input submit was superseded by a newer prompt".to_owned());
+        }
+        let pane = runtime
+            .capture(DRAFT_CAPTURE_START_LINE)
+            .await
+            .map_err(|error| {
+                format!("agent input submit verification failed before submit: {error}")
+            })?;
+        let still_draft = pane_still_contains_prompt_draft(&pane, draft);
+        let signature = if still_draft {
+            runtime
+                .capture(SIGNATURE_CAPTURE_START_LINE)
+                .await
+                .map(|pane| prompt_draft_signature(&pane))
+                .map_err(|error| {
+                    format!("agent input submit signature capture failed before submit: {error}")
+                })?
+        } else {
+            String::new()
+        };
+        visible_count = if still_draft && !signature.is_empty() && signature == last_signature {
+            visible_count + 1
+        } else if still_draft {
+            1
+        } else {
+            0
+        };
+        last_signature = signature;
+        if visible_count >= 2 {
+            return submit_prompt_with_runtime_async(runtime, draft).await;
+        }
+    }
+
+    submit_prompt_with_runtime_async(runtime, draft).await
+}
+
+async fn submit_prompt_with_runtime_async(
+    runtime: &mut dyn AsyncPromptSubmitRuntime,
+    draft: &str,
+) -> Result<(), String> {
+    if !runtime.sleep(SETTLE_BEFORE_SUBMIT_MS).await {
+        return Err("agent input submit timed out before carriage return".to_owned());
+    }
+    if !runtime.is_current() {
+        return Err("agent input submit was superseded by a newer prompt".to_owned());
+    }
+    runtime
+        .send_carriage_return()
+        .await
+        .map_err(|error| format!("agent input submit failed: {error}"))?;
+    if !runtime.sleep(VERIFY_AFTER_SUBMIT_MS).await {
+        return Err("agent input submit timed out before verification".to_owned());
+    }
+    let pane = runtime
+        .capture(DRAFT_CAPTURE_START_LINE)
+        .await
+        .map_err(|error| format!("agent input submit verification failed after submit: {error}"))?;
+    if pane_still_contains_prompt_draft(&pane, draft) {
+        Err(
+            "agent input submit verification failed: prompt draft remained visible after submit"
+                .to_owned(),
+        )
+    } else {
+        Ok(())
     }
 }
 
-fn cleanup_command_output_files(stdout_path: &std::path::Path, stderr_path: &std::path::Path) {
-    let _ = fs::remove_file(stdout_path);
-    let _ = fs::remove_file(stderr_path);
+type AsyncPromptSubmitFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
+trait AsyncPromptSubmitRuntime: Send {
+    fn is_current(&mut self) -> bool;
+    fn capture<'a>(
+        &'a mut self,
+        start_line: i64,
+    ) -> AsyncPromptSubmitFuture<'a, Result<String, String>>;
+    fn send_carriage_return<'a>(&'a mut self) -> AsyncPromptSubmitFuture<'a, Result<(), String>>;
+    fn sleep<'a>(&'a mut self, millis: u64) -> AsyncPromptSubmitFuture<'a, bool>;
+}
+
+struct SystemAsyncPromptSubmitRuntime {
+    window_id: String,
+    generation: u64,
+    deadline: Instant,
+}
+
+impl AsyncPromptSubmitRuntime for SystemAsyncPromptSubmitRuntime {
+    fn is_current(&mut self) -> bool {
+        submit_generation_is_current(&self.window_id, self.generation)
+    }
+
+    fn capture<'a>(
+        &'a mut self,
+        start_line: i64,
+    ) -> AsyncPromptSubmitFuture<'a, Result<String, String>> {
+        Box::pin(async move {
+            capture_prompt_tail_async(&self.window_id, start_line, self.deadline).await
+        })
+    }
+
+    fn send_carriage_return<'a>(&'a mut self) -> AsyncPromptSubmitFuture<'a, Result<(), String>> {
+        Box::pin(async move {
+            run_tmux_argv_with_timeout_async(
+                send_carriage_return_argv(&self.window_id),
+                format!("tmux send carriage return failed for {}", self.window_id),
+                remaining_until(self.deadline)?,
+            )
+            .await
+            .map(|_| ())
+        })
+    }
+
+    fn sleep<'a>(&'a mut self, millis: u64) -> AsyncPromptSubmitFuture<'a, bool> {
+        Box::pin(async move { sleep_until_deadline(millis, self.deadline).await })
+    }
+}
+
+async fn capture_prompt_tail_async(
+    window_id: &str,
+    start_line: i64,
+    deadline: Instant,
+) -> Result<String, String> {
+    capture_pane_async(
+        window_id,
+        CapturePaneOptions {
+            start_line: Some(start_line),
+            end_line: None,
+            include_escapes: false,
+        },
+        remaining_until(deadline)?,
+    )
+    .await
+}
+
+async fn sleep_until_deadline(millis: u64, deadline: Instant) -> bool {
+    let Ok(remaining) = remaining_until(deadline) else {
+        return false;
+    };
+    tokio::time::sleep(Duration::from_millis(millis).min(remaining)).await;
+    Instant::now() < deadline
+}
+
+fn remaining_until(deadline: Instant) -> Result<Duration, String> {
+    let now = Instant::now();
+    if now >= deadline {
+        Err("agent output request timed out".to_owned())
+    } else {
+        Ok(deadline.saturating_duration_since(now))
+    }
 }
 
 /// Newest submit generation per window.
@@ -1682,6 +2654,139 @@ fn object_value(value: Value) -> Map<String, Value> {
 mod tests {
     use super::*;
 
+    struct FakeAsyncPromptSubmitRuntime {
+        current: bool,
+        captures: std::collections::VecDeque<Result<String, String>>,
+        carriage_return: Result<(), String>,
+        carriage_returns: usize,
+        sleeps: Vec<u64>,
+    }
+
+    impl FakeAsyncPromptSubmitRuntime {
+        fn successful(draft: &str) -> Self {
+            Self {
+                current: true,
+                captures: std::collections::VecDeque::from([
+                    Ok(format!("› {draft}")),
+                    Ok(format!("› {draft}")),
+                    Ok(format!("› {draft}")),
+                    Ok(format!("› {draft}")),
+                    Ok("assistant response\n› ".to_owned()),
+                ]),
+                carriage_return: Ok(()),
+                carriage_returns: 0,
+                sleeps: Vec::new(),
+            }
+        }
+    }
+
+    impl AsyncPromptSubmitRuntime for FakeAsyncPromptSubmitRuntime {
+        fn is_current(&mut self) -> bool {
+            self.current
+        }
+
+        fn capture<'a>(
+            &'a mut self,
+            _start_line: i64,
+        ) -> AsyncPromptSubmitFuture<'a, Result<String, String>> {
+            Box::pin(async move {
+                self.captures
+                    .pop_front()
+                    .unwrap_or_else(|| Ok(String::new()))
+            })
+        }
+
+        fn send_carriage_return<'a>(
+            &'a mut self,
+        ) -> AsyncPromptSubmitFuture<'a, Result<(), String>> {
+            Box::pin(async move {
+                self.carriage_returns += 1;
+                self.carriage_return.clone()
+            })
+        }
+
+        fn sleep<'a>(&'a mut self, millis: u64) -> AsyncPromptSubmitFuture<'a, bool> {
+            Box::pin(async move {
+                self.sleeps.push(millis);
+                true
+            })
+        }
+    }
+
+    #[test]
+    fn async_prompt_submit_success_accepts_after_verification() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        let mut runtime = FakeAsyncPromptSubmitRuntime::successful("hello from route");
+
+        // aimux-async-seam: test - agent output unit test drives async submit verification
+        crate::async_runtime::block_on_named("agent-output:test-submit-success", async {
+            wait_for_prompt_submit_with_runtime_async(&mut runtime, "hello from route")
+                .await
+                .expect("submit verified");
+        });
+
+        assert_eq!(runtime.carriage_returns, 1);
+    }
+
+    #[test]
+    fn async_prompt_submit_reports_carriage_return_failure() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        let mut runtime = FakeAsyncPromptSubmitRuntime {
+            carriage_return: Err("tmux send carriage return failed for @1".to_owned()),
+            ..FakeAsyncPromptSubmitRuntime::successful("stuck draft")
+        };
+
+        let error = {
+            // aimux-async-seam: test - agent output unit test drives async submit verification
+            crate::async_runtime::block_on_named("agent-output:test-submit-send-failure", async {
+                wait_for_prompt_submit_with_runtime_async(&mut runtime, "stuck draft")
+                    .await
+                    .expect_err("submit send failure must not be accepted")
+            })
+        };
+
+        assert_eq!(runtime.carriage_returns, 1);
+        assert!(error.contains("agent input submit failed"), "{error}");
+        assert!(
+            error.contains("tmux send carriage return failed for @1"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn async_prompt_submit_reports_verification_capture_failure() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        let mut runtime = FakeAsyncPromptSubmitRuntime {
+            captures: std::collections::VecDeque::from([
+                Ok("› verify draft".to_owned()),
+                Ok("› verify draft".to_owned()),
+                Ok("› verify draft".to_owned()),
+                Ok("› verify draft".to_owned()),
+                Err("tmux capture-pane failed for @1".to_owned()),
+            ]),
+            ..FakeAsyncPromptSubmitRuntime::successful("verify draft")
+        };
+
+        let error = {
+            // aimux-async-seam: test - agent output unit test drives async submit verification
+            crate::async_runtime::block_on_named(
+                "agent-output:test-submit-capture-failure",
+                async {
+                    wait_for_prompt_submit_with_runtime_async(&mut runtime, "verify draft")
+                        .await
+                        .expect_err("verification capture failure must not be accepted")
+                },
+            )
+        };
+
+        assert_eq!(runtime.carriage_returns, 1);
+        assert!(
+            error.contains("agent input submit verification failed after submit"),
+            "{error}"
+        );
+        assert!(error.contains("tmux capture-pane failed for @1"), "{error}");
+    }
+
     #[test]
     fn command_timeout_kills_a_blocked_child() {
         let pid_path = std::env::temp_dir().join(format!(
@@ -1731,11 +2836,30 @@ mod tests {
         assert_eq!(result.stdout.len(), 200_000);
     }
 
+    #[test]
+    fn tmux_command_errors_name_the_tmux_call() {
+        let message = tmux_command_error(
+            "tmux list-windows failed for aimux-project",
+            &[
+                "list-windows".to_owned(),
+                "-t".to_owned(),
+                "aimux-project".to_owned(),
+                "-F".to_owned(),
+                "#{window_id}\t#{window_index}".to_owned(),
+            ],
+            "tmux timed out after 2s",
+        );
+
+        assert!(message.contains("tmux list-windows failed for aimux-project"));
+        assert!(message.contains("tmux list-windows -t aimux-project -F"));
+        assert!(message.contains("timed out after 2s"));
+    }
+
     fn process_is_alive(pid: &str) -> bool {
-        Command::new("/bin/kill")
+        AsyncCommand::new("/bin/kill")
             .args(["-0", pid])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
             .status()
             .is_ok_and(|status| status.success())
     }

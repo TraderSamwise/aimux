@@ -3,14 +3,16 @@ use crate::daemon::http::{DaemonResponseBody, PreparedDaemonResponse, prepare_da
 use crate::daemon::json::ProjectEventStreamTarget;
 use crate::daemon::listener::{
     DaemonRequestBodyLimit, DaemonRequestHead, DaemonRequestMetadata,
-    handle_daemon_stream_with_metadata_and_interceptor_and_body_limit, prepared_response_bytes,
+    handle_daemon_stream_with_metadata_and_interceptor_and_body_limit_blocking,
+    handle_daemon_stream_with_metadata_and_interceptor_and_body_limit_with_read_timeout,
+    prepared_response_bytes,
 };
 use crate::daemon::router::{DaemonRouteRuntime, route_daemon_request};
 use crate::daemon::routing::DaemonRouteUrl;
 use crate::daemon::server::DaemonHttpRequest;
 use crate::daemon::stream::{
     HostAgentStreamError, HostAgentStreamRequestOptions, ProjectEventStreamChunk,
-    open_project_event_stream_from_url,
+    open_project_event_stream_from_url, open_project_event_stream_from_url_async,
 };
 use crate::hosted_audit::{HostedAuditRecord, HostedAuditStore, HostedPromptRecord, hash_prompt};
 use crate::hosted_auth::{authenticate_hosted, strip_trusted_headers};
@@ -27,14 +29,20 @@ use crate::hosted_rate_limit::{HostedLimitOutcome, HostedRateLimitOptions, Hoste
 use crate::paths::PathResolver;
 use crate::project_api_contract::routes as project_routes;
 use crate::proxy_project_binding::{is_binary_project_route, parse_proxy_target};
+use crate::remote_access::{RemoteAccessDecision, RemoteActor};
 use anyhow::{Context, Result, anyhow};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::io::Write;
-use std::net::TcpListener;
-use std::sync::{Arc, Mutex};
-use std::thread::{self, JoinHandle};
+use std::net::TcpListener as StdTcpListener;
+use std::sync::{Arc, Condvar, Mutex, Weak};
+use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tokio::io::{AsyncWrite, AsyncWriteExt};
+use tokio::net::TcpListener;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio::task::JoinHandle;
+use tokio::time::sleep;
 
 const MAX_AUDIT_PROMPT_CHARS: usize = 1_024;
 const MAX_AUDIT_FIELD_CHARS: usize = 256;
@@ -50,6 +58,11 @@ const STREAM_MAX_BYTES: usize = 64 * 1024 * 1024;
 const STREAM_REAUTH_INTERVAL_MS: u64 = 5_000;
 const AUTH_FAILURE_WINDOW_MS: u128 = 60_000;
 const AUTH_FAILURE_DELIVERY_MAX: usize = 10;
+const HOSTED_REQUEST_READ_TIMEOUT_MS: u64 = 1_000;
+
+fn hosted_connection_capacity(config: &HostedConfig) -> usize {
+    usize::try_from(config.rate_limit.max_concurrent.max(1)).unwrap_or(1)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HostedStreamLimits {
@@ -79,6 +92,11 @@ pub struct HostedServerState {
     devices: HostedDevicesStore,
     lockdown: HostedLockdownStore,
     outbox: HostedOutboxStore,
+    outbox_drain: Arc<HostedOutboxDrainSignal>,
+    outbox_drain_worker: Mutex<Option<JoinHandle<()>>>,
+    connection_limiter: Arc<Semaphore>,
+    connection_peer_limit: usize,
+    connections_by_peer: Arc<Mutex<BTreeMap<String, usize>>>,
     limiter: HostedRateLimiter,
     peer_limiter: HostedRateLimiter,
     delivery: Arc<Mutex<HostedEventDelivery>>,
@@ -140,14 +158,29 @@ impl HostedServerState {
             max_concurrent: config.rate_limit.max_concurrent * PEER_BUDGET_MULTIPLIER as i64,
             bytes_per_minute: config.rate_limit.bytes_per_minute as f64 * PEER_BUDGET_MULTIPLIER,
         });
+        let delivery = Arc::new(Mutex::new(delivery));
+        let outbox = HostedOutboxStore::with_resolver(resolver.clone());
+        let outbox_drain = Arc::new(HostedOutboxDrainSignal::default());
+        let connection_capacity = hosted_connection_capacity(&config);
+        let outbox_drain_worker = spawn_hosted_outbox_drain_background(
+            outbox.clone(),
+            Arc::clone(&delivery),
+            Arc::clone(&outbox_drain),
+            Duration::from_millis(OUTBOX_INTERVAL_MS),
+        );
         Self {
-            delivery: Arc::new(Mutex::new(delivery)),
+            delivery,
             config,
             principals: HostedPrincipalsStore::with_resolver(resolver.clone()),
             audit: HostedAuditStore::with_resolver(resolver.clone()),
             devices: HostedDevicesStore::with_resolver(resolver.clone()),
             lockdown: HostedLockdownStore::with_resolver(resolver.clone()),
-            outbox: HostedOutboxStore::with_resolver(resolver),
+            outbox,
+            outbox_drain,
+            outbox_drain_worker: Mutex::new(Some(outbox_drain_worker)),
+            connection_limiter: Arc::new(Semaphore::new(connection_capacity)),
+            connection_peer_limit: connection_capacity,
+            connections_by_peer: Arc::new(Mutex::new(BTreeMap::new())),
             limiter,
             peer_limiter,
             streams_by_principal: Mutex::new(BTreeMap::new()),
@@ -169,16 +202,9 @@ impl HostedServerState {
             .prune_devices(self.config.retention_days, unix_millis(SystemTime::now()));
     }
 
-    fn drain_outbox(&self) {
-        let events = self.outbox.drain_outbox();
-        if events.is_empty() {
-            return;
-        }
-        if let Ok(mut delivery) = self.delivery.lock() {
-            for event in events {
-                delivery.enqueue(event);
-            }
-        }
+    fn spool_delivery_event(&self, event: &HostedEvent) {
+        self.outbox.spool_event(event);
+        self.outbox_drain.signal();
     }
 
     fn enqueue_delivery_async(&self, event: HostedEvent) {
@@ -225,6 +251,182 @@ impl HostedServerState {
         } else {
             streams.insert(principal_id.to_owned(), open);
         }
+    }
+
+    fn acquire_stream_permit(&self, principal_id: &str) -> Option<HostedStreamPermit<'_>> {
+        if self.acquire_stream(principal_id) {
+            Some(HostedStreamPermit {
+                state: self,
+                principal_id: principal_id.to_owned(),
+            })
+        } else {
+            None
+        }
+    }
+
+    fn acquire_connection(&self, peer_key: &str) -> Option<HostedConnectionPermit> {
+        let connection = Arc::clone(&self.connection_limiter)
+            .try_acquire_owned()
+            .ok()?;
+        {
+            let mut peers = self
+                .connections_by_peer
+                .lock()
+                .expect("hosted connection peer counts");
+            let open = peers.entry(peer_key.to_owned()).or_default();
+            if *open >= self.connection_peer_limit {
+                return None;
+            }
+            *open += 1;
+        }
+        Some(HostedConnectionPermit {
+            _connection: connection,
+            peer_counts: Arc::clone(&self.connections_by_peer),
+            peer_key: peer_key.to_owned(),
+        })
+    }
+}
+
+struct HostedStreamPermit<'a> {
+    state: &'a HostedServerState,
+    principal_id: String,
+}
+
+impl Drop for HostedStreamPermit<'_> {
+    fn drop(&mut self) {
+        self.state.release_stream(&self.principal_id);
+    }
+}
+
+struct HostedConnectionPermit {
+    _connection: OwnedSemaphorePermit,
+    peer_counts: Arc<Mutex<BTreeMap<String, usize>>>,
+    peer_key: String,
+}
+
+impl Drop for HostedConnectionPermit {
+    fn drop(&mut self) {
+        let Ok(mut peers) = self.peer_counts.lock() else {
+            return;
+        };
+        let Some(open) = peers.get_mut(&self.peer_key) else {
+            return;
+        };
+        *open = open.saturating_sub(1);
+        if *open == 0 {
+            peers.remove(&self.peer_key);
+        }
+    }
+}
+
+impl Drop for HostedServerState {
+    fn drop(&mut self) {
+        self.outbox_drain.stop();
+        if let Ok(mut worker) = self.outbox_drain_worker.lock()
+            && let Some(worker) = worker.take()
+        {
+            drop(worker);
+        }
+        let _ = drain_hosted_outbox(&self.outbox, &self.delivery);
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HostedOutboxDrainResult {
+    Empty,
+    Delivered(usize),
+    Failed,
+}
+
+#[derive(Debug, Default)]
+struct HostedOutboxDrainSignal {
+    state: Mutex<HostedOutboxDrainState>,
+    changed: Condvar,
+}
+
+#[derive(Debug, Default)]
+struct HostedOutboxDrainState {
+    pending: bool,
+    stopped: bool,
+}
+
+impl HostedOutboxDrainSignal {
+    fn signal(&self) {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        state.pending = true;
+        self.changed.notify_one();
+    }
+
+    fn stop(&self) {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        state.stopped = true;
+        self.changed.notify_all();
+    }
+
+    fn wait_for_next_run(&self, backstop: Duration) -> bool {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        if state.stopped {
+            return false;
+        }
+        if !state.pending {
+            let waited = self
+                .changed
+                .wait_timeout(state, backstop)
+                .unwrap_or_else(|error| error.into_inner());
+            state = waited.0;
+        }
+        if state.stopped {
+            return false;
+        }
+        state.pending = false;
+        true
+    }
+}
+
+fn drain_hosted_outbox(
+    outbox: &HostedOutboxStore,
+    delivery: &Arc<Mutex<HostedEventDelivery>>,
+) -> HostedOutboxDrainResult {
+    let events = match outbox.try_drain_outbox() {
+        Ok(events) => events,
+        Err(error) => {
+            crate::debug_logging::log_lifecycle_always(
+                "hosted outbox drain failed",
+                "hosted-outbox",
+                Some(json!({ "error": error.to_string() })),
+            );
+            return HostedOutboxDrainResult::Failed;
+        }
+    };
+    if events.is_empty() {
+        return HostedOutboxDrainResult::Empty;
+    }
+    let event_count = events.len();
+    match delivery.lock() {
+        Ok(mut delivery) => {
+            for event in events {
+                delivery.enqueue(event);
+            }
+            HostedOutboxDrainResult::Delivered(event_count)
+        }
+        Err(error) => {
+            respool_drained_events(outbox, &events, &error.to_string());
+            HostedOutboxDrainResult::Failed
+        }
+    }
+}
+
+fn respool_drained_events(outbox: &HostedOutboxStore, events: &[HostedEvent], error: &str) {
+    crate::debug_logging::log_lifecycle_always(
+        "hosted outbox delivery handoff failed",
+        "hosted-outbox",
+        Some(json!({
+            "error": error,
+            "eventCount": events.len(),
+        })),
+    );
+    for event in events {
+        outbox.spool_event(event);
     }
 }
 
@@ -288,58 +490,121 @@ where
         ));
     }
 
-    let listener = TcpListener::bind((config.bind_address.as_str(), config.port))
+    let listener = StdTcpListener::bind((config.bind_address.as_str(), config.port))
         .with_context(|| format!("bind hosted listener on {}", config.bind_address))?;
+    listener
+        .set_nonblocking(true)
+        .context("set hosted listener nonblocking")?;
     let state = Arc::new(HostedServerState::with_resolver(config, resolver));
-    let maintenance_state = Arc::clone(&state);
-    thread::spawn(move || {
-        thread::sleep(Duration::from_millis(OUTBOX_INTERVAL_MS));
-        loop {
-            maintenance_state.drain_outbox();
-            thread::sleep(Duration::from_millis(OUTBOX_INTERVAL_MS));
-        }
-    });
-    let prune_state = Arc::clone(&state);
-    thread::spawn(move || {
-        thread::sleep(Duration::from_millis(PRUNE_INTERVAL_MS));
-        loop {
-            prune_state.prune();
-            thread::sleep(Duration::from_millis(PRUNE_INTERVAL_MS));
-        }
-    });
+    spawn_hosted_prune_background(&state);
 
-    Ok(Some(thread::spawn(move || {
-        let serve_state = Arc::clone(&state);
-        let stream_runtime = Arc::clone(&runtime);
-        let stream_state = Arc::clone(&state);
-        for stream in listener.incoming() {
-            let Ok(mut stream) = stream else {
-                continue;
+    Ok(Some(crate::async_runtime::spawn_named(
+        crate::async_runtime::task_name("hosted", "listener"),
+        async move {
+            let listener = match TcpListener::from_std(listener) {
+                Ok(listener) => listener,
+                Err(error) => {
+                    eprintln!("hosted listener failed to enter tokio runtime: {error}");
+                    return;
+                }
             };
-            let peer_address = stream
-                .peer_addr()
-                .ok()
-                .map(|address| address.ip().to_string());
-            let handle_runtime = Arc::clone(&runtime);
-            let handle_state = Arc::clone(&serve_state);
-            let intercept_runtime = Arc::clone(&stream_runtime);
-            let intercept_state = Arc::clone(&stream_state);
-            thread::spawn(move || {
-                let _ = handle_hosted_daemon_stream(
-                    &handle_runtime,
-                    &handle_state,
-                    &intercept_runtime,
-                    &intercept_state,
-                    &mut stream,
-                    DaemonRequestMetadata {
-                        issued_at: now_iso(),
-                        stopping: false,
-                    },
-                    peer_address.as_deref(),
-                );
-            });
-        }
-    })))
+            let serve_state = Arc::clone(&state);
+            let stream_runtime = Arc::clone(&runtime);
+            let stream_state = Arc::clone(&state);
+            loop {
+                match listener.accept().await {
+                    Ok((mut stream, peer)) => {
+                        let peer_address = Some(peer.ip().to_string());
+                        let Some(connection_permit) = serve_state
+                            .acquire_connection(peer_address.as_deref().unwrap_or("unknown"))
+                        else {
+                            let response = hosted_json(
+                                429,
+                                json!({ "ok": false, "error": "too many requests" }),
+                            );
+                            let _ = stream.write_all(&prepared_response_bytes(&response)).await;
+                            let _ = stream.shutdown().await;
+                            continue;
+                        };
+                        let handle_runtime = Arc::clone(&runtime);
+                        let handle_state = Arc::clone(&serve_state);
+                        let intercept_runtime = Arc::clone(&stream_runtime);
+                        let intercept_state = Arc::clone(&stream_state);
+                        crate::async_runtime::spawn_named(
+                            crate::async_runtime::scoped_task_name(
+                                "hosted",
+                                "connection",
+                                peer_address.as_deref().unwrap_or("unknown"),
+                            ),
+                            async move {
+                                let connection_permit = connection_permit;
+                                if let Err(error) = handle_hosted_daemon_stream_async(
+                                    &handle_runtime,
+                                    &handle_state,
+                                    &intercept_runtime,
+                                    &intercept_state,
+                                    &mut stream,
+                                    DaemonRequestMetadata {
+                                        issued_at: now_iso(),
+                                        stopping: false,
+                                    },
+                                    peer_address.as_deref(),
+                                )
+                                .await
+                                {
+                                    crate::debug_logging::log_lifecycle_always(
+                                        "hosted connection handler failed",
+                                        "hosted",
+                                        Some(json!({
+                                            "peer": peer_address.as_deref().unwrap_or("unknown"),
+                                            "error": error.to_string(),
+                                        })),
+                                    );
+                                }
+                                let _ = stream.shutdown().await;
+                                drop(connection_permit);
+                            },
+                        );
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {
+                        sleep(Duration::from_millis(25)).await;
+                    }
+                    Err(_) => sleep(Duration::from_millis(25)).await,
+                }
+            }
+        },
+    )))
+}
+
+fn spawn_hosted_prune_background(state: &Arc<HostedServerState>) -> JoinHandle<()> {
+    let state = Arc::downgrade(state);
+    crate::async_runtime::spawn_blocking_named(
+        crate::async_runtime::task_name("hosted", "prune"),
+        move || {
+            thread::sleep(Duration::from_millis(PRUNE_INTERVAL_MS));
+            while let Some(state) = Weak::upgrade(&state) {
+                state.prune();
+                drop(state);
+                thread::sleep(Duration::from_millis(PRUNE_INTERVAL_MS));
+            }
+        },
+    )
+}
+
+fn spawn_hosted_outbox_drain_background(
+    outbox: HostedOutboxStore,
+    delivery: Arc<Mutex<HostedEventDelivery>>,
+    signal: Arc<HostedOutboxDrainSignal>,
+    backstop: Duration,
+) -> JoinHandle<()> {
+    crate::async_runtime::spawn_blocking_named(
+        crate::async_runtime::task_name("hosted", "outbox-drain"),
+        move || {
+            while signal.wait_for_next_run(backstop) {
+                drain_hosted_outbox(&outbox, &delivery);
+            }
+        },
+    )
 }
 
 pub fn handle_hosted_daemon_stream<Runtime, Stream>(
@@ -355,7 +620,7 @@ where
     Runtime: DaemonRouteRuntime,
     Stream: std::io::Read + Write,
 {
-    handle_daemon_stream_with_metadata_and_interceptor_and_body_limit(
+    handle_daemon_stream_with_metadata_and_interceptor_and_body_limit_blocking(
         stream,
         metadata,
         &mut |head| hosted_body_limit_for_head(&handle_state.config, head),
@@ -385,6 +650,82 @@ where
             )
         },
     )
+}
+
+pub async fn handle_hosted_daemon_stream_async<Runtime, Stream>(
+    handle_runtime: &Arc<Mutex<Runtime>>,
+    handle_state: &Arc<HostedServerState>,
+    intercept_runtime: &Arc<Mutex<Runtime>>,
+    intercept_state: &Arc<HostedServerState>,
+    stream: &mut Stream,
+    metadata: DaemonRequestMetadata,
+    peer_address: Option<&str>,
+) -> Result<(), crate::daemon::listener::DaemonListenerError>
+where
+    Runtime: DaemonRouteRuntime + Send + 'static,
+    Stream: tokio::io::AsyncRead + AsyncWrite + Unpin + Send,
+{
+    let stream_runtime = Arc::clone(intercept_runtime);
+    let stream_state = Arc::clone(intercept_state);
+    let stream_peer_address = peer_address.map(str::to_owned);
+    let route_runtime = Arc::clone(handle_runtime);
+    let route_state = Arc::clone(handle_state);
+    let route_peer_address = peer_address.map(str::to_owned);
+    let body_limit_state = Arc::clone(handle_state);
+    handle_daemon_stream_with_metadata_and_interceptor_and_body_limit_with_read_timeout(
+        stream,
+        metadata,
+        &mut |head| hosted_body_limit_for_head(&body_limit_state.config, head),
+        &mut move |request, writer| {
+            let intercept_runtime = Arc::clone(&stream_runtime);
+            let intercept_state = Arc::clone(&stream_state);
+            let peer_address = stream_peer_address.clone();
+            Box::pin(async move {
+                maybe_handle_hosted_operator_stream_request_async(
+                    &intercept_runtime,
+                    &intercept_state,
+                    request,
+                    writer,
+                    peer_address.as_deref(),
+                )
+                .await
+                .map_err(|error| {
+                    crate::daemon::listener::DaemonListenerError::Io(std::io::Error::other(
+                        error.to_string(),
+                    ))
+                })
+            })
+        },
+        &mut move |request| {
+            let handle_runtime = Arc::clone(&route_runtime);
+            let handle_state = Arc::clone(&route_state);
+            let peer_address = route_peer_address.clone();
+            Box::pin(async move {
+                crate::async_runtime::spawn_blocking_named(
+                    crate::async_runtime::task_name("hosted", "route"),
+                    move || {
+                        let mut runtime = handle_runtime
+                            .lock()
+                            .expect("hosted daemon runtime mutex poisoned");
+                        handle_hosted_daemon_request_from_peer(
+                            &mut *runtime,
+                            &handle_state,
+                            request,
+                            peer_address.as_deref(),
+                        )
+                    },
+                )
+                .await
+                .map_err(|error| {
+                    crate::daemon::listener::DaemonListenerError::Io(std::io::Error::other(
+                        error.to_string(),
+                    ))
+                })
+            })
+        },
+        Some(Duration::from_millis(HOSTED_REQUEST_READ_TIMEOUT_MS)),
+    )
+    .await
 }
 
 pub fn maybe_handle_hosted_operator_stream_request<Runtime>(
@@ -503,7 +844,7 @@ where
             return Ok(true);
         }
     };
-    if !state.acquire_stream(&principal.id) {
+    let Some(_stream_permit) = state.acquire_stream_permit(&principal.id) else {
         peer_slot.release();
         write_prepared(
             writer,
@@ -513,7 +854,7 @@ where
             ),
         )?;
         return Ok(true);
-    }
+    };
     peer_slot.release();
     pipe_hosted_project_event_stream(
         state,
@@ -526,8 +867,176 @@ where
             headers: BTreeMap::new(),
         },
     );
-    state.release_stream(&principal.id);
     Ok(true)
+}
+
+pub async fn maybe_handle_hosted_operator_stream_request_async<Runtime, Writer>(
+    runtime: &Arc<Mutex<Runtime>>,
+    state: &HostedServerState,
+    request: &DaemonHttpRequest,
+    writer: &mut Writer,
+    peer_address: Option<&str>,
+) -> Result<bool, HostAgentStreamError>
+where
+    Runtime: DaemonRouteRuntime + Send + 'static,
+    Writer: AsyncWrite + Unpin + Send,
+{
+    let route_url = DaemonRouteUrl::parse(&request.path);
+    if request.method != "GET" || !is_hosted_stream_path(route_url.pathname()) {
+        return Ok(false);
+    }
+    if request.stopping {
+        write_prepared_async(
+            writer,
+            &hosted_json(
+                503,
+                json!({ "ok": false, "error": "aimux daemon is stopping" }),
+            ),
+        )
+        .await?;
+        return Ok(true);
+    }
+    if state
+        .lockdown
+        .is_locked_down(unix_millis(SystemTime::now()))
+    {
+        write_prepared_async(
+            writer,
+            &hosted_json(
+                503,
+                json!({ "ok": false, "error": "hosted mode is locked down" }),
+            ),
+        )
+        .await?;
+        return Ok(true);
+    }
+
+    let peer_key = hosted_client_address(peer_address, &request.headers, &state.config)
+        .unwrap_or_else(|| "unknown".to_owned());
+    let peer_slot = match state.peer_limiter.acquire(&peer_key) {
+        HostedLimitOutcome::Allowed(release) => release,
+        HostedLimitOutcome::Denied(_) => {
+            write_prepared_async(
+                writer,
+                &hosted_json(429, json!({ "ok": false, "error": "too many requests" })),
+            )
+            .await?;
+            return Ok(true);
+        }
+    };
+
+    let headers = strip_trusted_headers(&request.headers);
+    let auth = match authenticate_hosted(&headers, &state.principals) {
+        Ok(auth) => auth,
+        Err(_) => {
+            peer_slot.release();
+            write_prepared_async(
+                writer,
+                &hosted_json(401, json!({ "ok": false, "error": "unauthorized" })),
+            )
+            .await?;
+            return Ok(true);
+        }
+    };
+    if !auth.ok {
+        record_auth_failure(state, "GET", &headers, peer_address, auth.reason.as_deref());
+        peer_slot.release();
+        write_prepared_async(
+            writer,
+            &hosted_json(401, json!({ "ok": false, "error": "unauthorized" })),
+        )
+        .await?;
+        return Ok(true);
+    }
+    let principal = auth.principal.expect("authenticated principal");
+    let actor = auth.actor.expect("authenticated hosted actor");
+    let open_slot = match state.limiter.acquire(&principal.id) {
+        HostedLimitOutcome::Allowed(release) => release,
+        HostedLimitOutcome::Denied(denied) => {
+            let error = if denied.reason == "rate" {
+                "rate limit exceeded"
+            } else {
+                "too many requests"
+            };
+            peer_slot.release();
+            write_prepared_async(
+                writer,
+                &hosted_json(429, json!({ "ok": false, "error": error })),
+            )
+            .await?;
+            return Ok(true);
+        }
+    };
+    open_slot.release();
+
+    let resolved = resolve_hosted_operator_stream_async(runtime, actor, request.path.clone()).await;
+    let target = match resolved {
+        Ok(target) => target,
+        Err(decision) => {
+            peer_slot.release();
+            write_prepared_async(
+                writer,
+                &hosted_json(
+                    decision.status.unwrap_or(403),
+                    json!({
+                        "ok": false,
+                        "error": decision.error.as_deref().unwrap_or("remote access denied")
+                    }),
+                ),
+            )
+            .await?;
+            return Ok(true);
+        }
+    };
+    let Some(_stream_permit) = state.acquire_stream_permit(&principal.id) else {
+        peer_slot.release();
+        write_prepared_async(
+            writer,
+            &hosted_json(
+                429,
+                json!({ "ok": false, "error": "too many concurrent streams" }),
+            ),
+        )
+        .await?;
+        return Ok(true);
+    };
+    peer_slot.release();
+    pipe_hosted_project_event_stream_async(
+        state,
+        writer,
+        &principal,
+        route_url,
+        &target.project_root,
+        &ProjectEventStreamTarget {
+            url: target.url,
+            headers: BTreeMap::new(),
+        },
+    )
+    .await;
+    Ok(true)
+}
+
+async fn resolve_hosted_operator_stream_async<Runtime>(
+    runtime: &Arc<Mutex<Runtime>>,
+    actor: RemoteActor,
+    path: String,
+) -> Result<crate::daemon::access::HostedOperatorStreamTarget, RemoteAccessDecision>
+where
+    Runtime: DaemonRouteRuntime + Send + 'static,
+{
+    let runtime = Arc::clone(runtime);
+    crate::async_runtime::spawn_blocking_named(
+        crate::async_runtime::task_name("hosted", "stream-route"),
+        move || {
+            let runtime = runtime
+                .lock()
+                .expect("hosted daemon runtime mutex poisoned");
+            let projects = runtime.list_projects_for_route();
+            resolve_hosted_operator_stream(&actor, "GET", &path, &projects)
+        },
+    )
+    .await
+    .map_err(|error| RemoteAccessDecision::deny(500, error.to_string()))?
 }
 
 fn pipe_hosted_project_event_stream(
@@ -675,6 +1184,187 @@ fn pipe_hosted_project_event_stream(
                     break;
                 }
                 if writer.write_all(&chunk).is_err() {
+                    close_reason = "client";
+                    break;
+                }
+                response_bytes = next_bytes;
+                last_chunk_at = Instant::now();
+            }
+            Ok(ProjectEventStreamChunk::Timeout) => {}
+            Ok(ProjectEventStreamChunk::Eof) => {
+                close_reason = "eof";
+                break;
+            }
+            Err(_) => {
+                status = 502;
+                close_reason = "error";
+                break;
+            }
+        }
+    }
+    audit_stream(
+        state,
+        principal,
+        HostedStreamAudit {
+            route_url: &route_url,
+            status,
+            event: &format!("closed:{close_reason}"),
+            response_bytes,
+            duration_ms: started.elapsed().as_millis(),
+            stream_ref: Some(&stream_ref),
+        },
+    );
+}
+
+async fn pipe_hosted_project_event_stream_async(
+    state: &HostedServerState,
+    writer: &mut (impl AsyncWrite + Unpin),
+    principal: &HostedPrincipal,
+    route_url: DaemonRouteUrl,
+    project_root: &str,
+    target: &ProjectEventStreamTarget,
+) {
+    let stream_ref = random_uuid_like();
+    let started = Instant::now();
+    let mut response_bytes = 0_usize;
+    let mut status = 200_u16;
+    audit_stream(
+        state,
+        principal,
+        HostedStreamAudit {
+            route_url: &route_url,
+            status: 200,
+            event: "open",
+            response_bytes: 0,
+            duration_ms: 0,
+            stream_ref: Some(&stream_ref),
+        },
+    );
+
+    let read_timeout_ms = state.stream_limits.reauth_interval_ms.max(1).min(
+        HostAgentStreamRequestOptions::default()
+            .timeout_ms
+            .unwrap_or(10_000),
+    );
+    let mut opened = match open_project_event_stream_from_url_async(
+        target,
+        HostAgentStreamRequestOptions {
+            timeout_ms: Some(read_timeout_ms),
+        },
+    )
+    .await
+    {
+        Ok(opened) => opened,
+        Err(error) => {
+            status = 502;
+            let close_reason = "upstream";
+            let _ = write_prepared_async(
+                writer,
+                &hosted_json(502, json!({ "ok": false, "error": error.to_string() })),
+            )
+            .await;
+            audit_stream(
+                state,
+                principal,
+                HostedStreamAudit {
+                    route_url: &route_url,
+                    status,
+                    event: &format!("closed:{close_reason}"),
+                    response_bytes,
+                    duration_ms: started.elapsed().as_millis(),
+                    stream_ref: Some(&stream_ref),
+                },
+            );
+            return;
+        }
+    };
+    if !(200..300).contains(&opened.status()) {
+        status = 502;
+        let close_reason = "upstream";
+        let message = opened.body_text().await.trim().to_owned();
+        let _ = write_prepared_async(
+            writer,
+            &hosted_json(
+                502,
+                json!({ "ok": false, "error": if message.is_empty() { "upstream stream unavailable" } else { &message } }),
+            ),
+        )
+        .await;
+        audit_stream(
+            state,
+            principal,
+            HostedStreamAudit {
+                route_url: &route_url,
+                status,
+                event: &format!("closed:{close_reason}"),
+                response_bytes,
+                duration_ms: started.elapsed().as_millis(),
+                stream_ref: Some(&stream_ref),
+            },
+        );
+        return;
+    }
+
+    if write_hosted_stream_headers_async(writer).await.is_err() {
+        let close_reason = "client";
+        audit_stream(
+            state,
+            principal,
+            HostedStreamAudit {
+                route_url: &route_url,
+                status,
+                event: &format!("closed:{close_reason}"),
+                response_bytes,
+                duration_ms: started.elapsed().as_millis(),
+                stream_ref: Some(&stream_ref),
+            },
+        );
+        return;
+    }
+
+    let granted_session_id = route_url
+        .search_param("sessionId")
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_owned();
+    let mut last_chunk_at = Instant::now();
+    let mut last_reauth_at = Instant::now();
+    let close_reason;
+    loop {
+        let now = Instant::now();
+        if now.duration_since(started).as_millis() >= state.stream_limits.max_lifetime_ms as u128 {
+            close_reason = "lifetime";
+            break;
+        }
+        if now.duration_since(last_chunk_at).as_millis()
+            >= state.stream_limits.idle_timeout_ms as u128
+        {
+            close_reason = "idle";
+            break;
+        }
+        if now.duration_since(last_reauth_at).as_millis()
+            >= state.stream_limits.reauth_interval_ms as u128
+        {
+            last_reauth_at = now;
+            if !stream_principal_still_allowed(
+                state,
+                &principal.id,
+                project_root,
+                &granted_session_id,
+            ) {
+                close_reason = "revoked";
+                break;
+            }
+        }
+
+        match opened.next_chunk().await {
+            Ok(ProjectEventStreamChunk::Data(chunk)) => {
+                let next_bytes = response_bytes.saturating_add(chunk.len());
+                if next_bytes > state.stream_limits.max_bytes {
+                    close_reason = "budget";
+                    break;
+                }
+                if writer.write_all(&chunk).await.is_err() {
                     close_reason = "client";
                     break;
                 }
@@ -1048,7 +1738,7 @@ fn record_authenticated_bookkeeping(
             event: Some(sighting.kind.clone()),
             detail: sighting.fingerprint.clone(),
         });
-        state.enqueue_delivery_async(sighting);
+        state.spool_delivery_event(&sighting);
     }
 }
 
@@ -1176,6 +1866,17 @@ fn write_hosted_stream_headers(writer: &mut impl Write) -> Result<(), HostAgentS
         .map_err(|error| HostAgentStreamError::Io(error.to_string()))
 }
 
+async fn write_hosted_stream_headers_async(
+    writer: &mut (impl AsyncWrite + Unpin),
+) -> Result<(), HostAgentStreamError> {
+    writer
+        .write_all(
+            b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncache-control: no-store\r\nx-accel-buffering: no\r\nconnection: close\r\n\r\n",
+        )
+        .await
+        .map_err(|error| HostAgentStreamError::Io(error.to_string()))
+}
+
 fn read_hosted_json_body(chunks: &[Vec<u8>]) -> Result<Value> {
     let mut body = Vec::new();
     for chunk in chunks {
@@ -1215,6 +1916,16 @@ fn write_prepared(
 ) -> Result<(), HostAgentStreamError> {
     writer
         .write_all(&prepared_response_bytes(response))
+        .map_err(|error| HostAgentStreamError::Io(error.to_string()))
+}
+
+async fn write_prepared_async(
+    writer: &mut (impl AsyncWrite + Unpin),
+    response: &PreparedDaemonResponse,
+) -> Result<(), HostAgentStreamError> {
+    writer
+        .write_all(&prepared_response_bytes(response))
+        .await
         .map_err(|error| HostAgentStreamError::Io(error.to_string()))
 }
 
@@ -1294,4 +2005,226 @@ fn unix_millis(time: SystemTime) -> u128 {
     time.duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hosted_events::HostedEventDeliveryConfig;
+    use std::io::Read;
+    use std::net::TcpStream;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::mpsc;
+
+    #[test]
+    fn hosted_outbox_signal_drains_without_waiting_for_backstop() {
+        let fixture = HostedServerFixture::new("outbox-signal");
+        let webhook = CountingWebhookServer::spawn();
+        let state = Arc::new(HostedServerState::with_resolver_and_delivery(
+            HostedConfig {
+                enabled: true,
+                webhook_url: Some(format!("http://127.0.0.1:{}/hook", webhook.port)),
+                ..HostedConfig::default()
+            },
+            fixture.resolver.clone(),
+            HostedEventDelivery::new(HostedEventDeliveryConfig {
+                webhook_url: Some(format!("http://127.0.0.1:{}/hook", webhook.port)),
+                webhook_secret: Some("secret".into()),
+            }),
+        ));
+
+        state.spool_delivery_event(&hosted_event("hosted_new_device"));
+
+        webhook.wait_for_count(1, Duration::from_millis(500));
+    }
+
+    #[test]
+    fn hosted_outbox_failed_delivery_handoff_preserves_drained_events() {
+        let fixture = HostedServerFixture::new("outbox-failed-handoff");
+        let state = HostedServerState::with_resolver_and_delivery(
+            HostedConfig {
+                enabled: true,
+                ..HostedConfig::default()
+            },
+            fixture.resolver.clone(),
+            HostedEventDelivery::new(HostedEventDeliveryConfig {
+                webhook_url: Some("http://127.0.0.1:9/hook".into()),
+                webhook_secret: Some("secret".into()),
+            }),
+        );
+        let event = hosted_event("hosted_token_revoked");
+        state.outbox.spool_event(&event);
+        let delivery = Arc::clone(&state.delivery);
+        let _ = std::panic::catch_unwind(move || {
+            let _guard = delivery.lock().expect("delivery lock");
+            panic!("poison delivery lock");
+        });
+
+        assert!(matches!(
+            drain_hosted_outbox(&state.outbox, &state.delivery),
+            HostedOutboxDrainResult::Failed
+        ));
+
+        let preserved = state
+            .outbox
+            .try_drain_outbox()
+            .expect("preserved outbox drains");
+        assert_eq!(preserved, vec![event]);
+    }
+
+    struct HostedServerFixture {
+        root: PathBuf,
+        resolver: PathResolver,
+    }
+
+    impl HostedServerFixture {
+        fn new(name: &str) -> Self {
+            let root = std::env::temp_dir().join(format!(
+                "aimux-hosted-server-unit-{name}-{}-{}",
+                std::process::id(),
+                unix_millis(SystemTime::now())
+            ));
+            std::fs::create_dir_all(&root).expect("fixture root");
+            let resolver = PathResolver::new(
+                "/",
+                &root,
+                Some(root.join(".aimux").to_string_lossy().into_owned()),
+            );
+            Self { root, resolver }
+        }
+    }
+
+    impl Drop for HostedServerFixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    struct CountingWebhookServer {
+        port: u16,
+        count: Arc<AtomicUsize>,
+        stop: mpsc::Sender<()>,
+        worker: Mutex<Option<thread::JoinHandle<()>>>,
+    }
+
+    impl CountingWebhookServer {
+        fn spawn() -> Self {
+            let listener = StdTcpListener::bind(("127.0.0.1", 0)).expect("bind webhook");
+            listener.set_nonblocking(true).expect("nonblocking webhook");
+            let port = listener.local_addr().expect("webhook addr").port();
+            let count = Arc::new(AtomicUsize::new(0));
+            let worker_count = Arc::clone(&count);
+            let (stop_tx, stop_rx) = mpsc::channel();
+            let worker = thread::spawn(move || {
+                loop {
+                    match listener.accept() {
+                        Ok((mut stream, _)) => {
+                            let _ = read_webhook_request(&mut stream);
+                            worker_count.fetch_add(1, Ordering::SeqCst);
+                            let _ =
+                                stream.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n");
+                        }
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            if stop_rx.try_recv().is_ok() {
+                                return;
+                            }
+                            thread::sleep(Duration::from_millis(10));
+                        }
+                        Err(error) => panic!("accept webhook: {error}"),
+                    }
+                }
+            });
+            Self {
+                port,
+                count,
+                stop: stop_tx,
+                worker: Mutex::new(Some(worker)),
+            }
+        }
+
+        fn wait_for_count(&self, expected: usize, timeout: Duration) {
+            let started = Instant::now();
+            while started.elapsed() < timeout {
+                if self.count.load(Ordering::SeqCst) >= expected {
+                    return;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            assert_eq!(self.count.load(Ordering::SeqCst), expected);
+        }
+
+        fn stop(&self) {
+            let _ = self.stop.send(());
+            if let Some(worker) = self.worker.lock().expect("worker lock").take() {
+                worker.join().expect("webhook worker");
+            }
+        }
+    }
+
+    impl Drop for CountingWebhookServer {
+        fn drop(&mut self) {
+            self.stop();
+        }
+    }
+
+    fn read_webhook_request(stream: &mut TcpStream) -> Vec<u8> {
+        stream
+            .set_read_timeout(Some(Duration::from_millis(100)))
+            .expect("webhook read timeout");
+        let mut bytes = Vec::new();
+        let mut buffer = [0_u8; 1024];
+        loop {
+            match stream.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(count) => {
+                    bytes.extend_from_slice(&buffer[..count]);
+                    if webhook_request_complete(&bytes) {
+                        break;
+                    }
+                }
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+                    ) =>
+                {
+                    break;
+                }
+                Err(error) => panic!("read webhook request: {error}"),
+            }
+        }
+        bytes
+    }
+
+    fn webhook_request_complete(bytes: &[u8]) -> bool {
+        let Some(header_end) = bytes.windows(4).position(|window| window == b"\r\n\r\n") else {
+            return false;
+        };
+        let Ok(headers) = std::str::from_utf8(&bytes[..header_end]) else {
+            return false;
+        };
+        let content_length = headers
+            .split("\r\n")
+            .filter_map(|line| line.split_once(':'))
+            .find(|(name, _)| name.trim().eq_ignore_ascii_case("content-length"))
+            .and_then(|(_, value)| value.trim().parse::<usize>().ok())
+            .unwrap_or(0);
+        bytes.len() >= header_end + 4 + content_length
+    }
+
+    fn hosted_event(kind: &str) -> HostedEvent {
+        HostedEvent {
+            id: format!("event-{kind}"),
+            kind: kind.to_owned(),
+            ts: "2026-09-12T00:00:00.000Z".to_owned(),
+            principal_id: Some("principal".into()),
+            label: Some("label".into()),
+            session_id: None,
+            fingerprint: None,
+            address_known: false,
+            user_agent: None,
+            detail: None,
+        }
+    }
 }

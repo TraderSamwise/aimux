@@ -1,7 +1,7 @@
+use crate::async_subprocess::AsyncCommand;
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TmuxOpenHyperlinkEnv {
@@ -33,7 +33,7 @@ pub struct SystemTmuxOpenHyperlinkRunner;
 
 impl TmuxOpenHyperlinkRunner for SystemTmuxOpenHyperlinkRunner {
     fn command_exists(&mut self, program: &str) -> bool {
-        Command::new("sh")
+        AsyncCommand::new("sh")
             .arg("-c")
             .arg(format!("command -v {}", shell_word(program)))
             .status()
@@ -41,7 +41,7 @@ impl TmuxOpenHyperlinkRunner for SystemTmuxOpenHyperlinkRunner {
     }
 
     fn run(&mut self, program: &str, args: &[String]) -> i32 {
-        Command::new(program)
+        AsyncCommand::new(program)
             .args(args)
             .status()
             .ok()

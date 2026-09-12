@@ -28,10 +28,10 @@ use super::runtime_events::route_runtime_event_with_context;
 use super::runtime_exchange::{
     empty_runtime_exchange, read_runtime_exchange, runtime_exchange_path,
 };
-use super::scheduler::PeriodicTask;
-use super::watcher_delivery::RailBudget;
+use super::scheduler::{PeriodicTask, PeriodicTaskFuture};
+use super::watcher_delivery::TickLoopBudget;
 
-/// Node polled every 2s. That is a floor here, not a promise: the rail is
+/// Node polled every 2s. That is a floor here, not a promise: the tick loop is
 /// shared, and a watcher ahead of this one may hold it for its whole budget.
 const SCAN_INTERVAL_MS: i64 = 5_000;
 /// This task is pure file reads, so it should never be the reason another
@@ -67,19 +67,25 @@ impl PeriodicTask for BuiltinMetadataTask {
         SCAN_INTERVAL_MS
     }
 
-    fn run(&mut self, context: &ProjectServiceRequestContext) {
-        let budget = RailBudget::new(SCAN_BUDGET);
-        let input = collect_watcher_sources(context, &budget);
-        let effects = self.watchers.scan(&input);
-        apply_effects(&self.context, &effects);
+    fn timeout(&self) -> Duration {
+        SCAN_BUDGET + Duration::from_secs(1)
+    }
+
+    fn run<'a>(&'a mut self, context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
+        Box::pin(async move {
+            let budget = TickLoopBudget::new(SCAN_BUDGET);
+            let input = collect_watcher_sources(context, &budget);
+            let effects = self.watchers.scan(&input);
+            apply_effects(&self.context, &effects);
+        })
     }
 }
 
-/// Read every source the watchers look at, giving up early if the rail budget
+/// Read every source the watchers look at, giving up early if the tick-loop budget
 /// runs out — a partial read simply means those watchers see no change.
 pub fn collect_watcher_sources(
     context: &ProjectServiceRequestContext,
-    budget: &RailBudget,
+    budget: &TickLoopBudget,
 ) -> Value {
     let project_root = context.project_root().to_path_buf();
     let project_state_dir = context.project_state_dir();
@@ -136,7 +142,7 @@ pub fn collect_watcher_sources(
     })
 }
 
-fn read_live_session_ids(project_state_dir: &Path, budget: &RailBudget) -> Vec<String> {
+fn read_live_session_ids(project_state_dir: &Path, budget: &TickLoopBudget) -> Vec<String> {
     if budget.spent() {
         return Vec::new();
     }
@@ -156,7 +162,7 @@ fn read_live_session_ids(project_state_dir: &Path, budget: &RailBudget) -> Vec<S
 fn read_session_markdown_files(
     dir: &Path,
     live_sessions: &BTreeSet<String>,
-    budget: &RailBudget,
+    budget: &TickLoopBudget,
 ) -> Map<String, Value> {
     let mut files = Map::new();
     if budget.spent() || live_sessions.is_empty() {
@@ -204,7 +210,7 @@ fn markdown_session_file(
     Some((session_id.to_owned(), path))
 }
 
-fn read_exchange_with_budget(project_state_dir: &Path, budget: &RailBudget) -> Value {
+fn read_exchange_with_budget(project_state_dir: &Path, budget: &TickLoopBudget) -> Value {
     if budget.spent() {
         return empty_runtime_exchange();
     }

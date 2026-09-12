@@ -1,3 +1,6 @@
+use crate::backlog_metrics::{
+    BacklogMetricSnapshot, HOSTED_OUTBOX_BACKLOG, backlog_metric, record_backlog_error,
+};
 use crate::hosted_audit::{HostedAuditRecord, HostedAuditStore};
 pub use crate::hosted_events::HostedEvent;
 use crate::hosted_lock::{HostedLockOptions, with_hosted_lock};
@@ -91,10 +94,8 @@ impl HostedOutboxStore {
         {
             return;
         }
-        let append = || {
-            let _ = append_jsonl(path.clone(), event);
-        };
-        match with_hosted_lock(
+        let append = || append_jsonl(path.clone(), event);
+        let result = match with_hosted_lock(
             &path,
             append,
             HostedLockOptions {
@@ -102,8 +103,29 @@ impl HostedOutboxStore {
                 timeout_ms: 0,
             },
         ) {
-            Ok(Some(())) => {}
+            Ok(Some(result)) => {
+                if let Err(error) = &result {
+                    record_backlog_error(
+                        HOSTED_OUTBOX_BACKLOG,
+                        Some(MAX_SPOOLED),
+                        error.to_string(),
+                    );
+                }
+                result
+            }
             Ok(None) | Err(_) => append(),
+        };
+        match result {
+            Ok(()) => {
+                let _ = self.outbox_backlog_snapshot();
+            }
+            Err(error) => {
+                record_backlog_error(
+                    HOSTED_OUTBOX_BACKLOG,
+                    Some(MAX_SPOOLED),
+                    format!("failed to append hosted outbox: {error}"),
+                );
+            }
         }
     }
 
@@ -124,12 +146,14 @@ impl HostedOutboxStore {
     pub fn try_drain_outbox(&self) -> Result<Vec<HostedEvent>> {
         let path = self.outbox_path();
         if !path.exists() {
+            backlog_metric(HOSTED_OUTBOX_BACKLOG, Some(MAX_SPOOLED)).set_depth(0);
             return Ok(Vec::new());
         }
         match with_hosted_lock(
             &path,
             || {
                 if !path.exists() {
+                    backlog_metric(HOSTED_OUTBOX_BACKLOG, Some(MAX_SPOOLED)).set_depth(0);
                     return Ok(Vec::new());
                 }
                 let raw = fs::read_to_string(&path)
@@ -138,6 +162,7 @@ impl HostedOutboxStore {
                 fs::remove_file(&path).with_context(|| {
                     format!("failed to remove drained hosted outbox {}", path.display())
                 })?;
+                backlog_metric(HOSTED_OUTBOX_BACKLOG, Some(MAX_SPOOLED)).set_depth(0);
                 Ok(events)
             },
             HostedLockOptions {
@@ -146,9 +171,44 @@ impl HostedOutboxStore {
             },
         ) {
             Ok(Some(result)) => result,
-            Ok(None) => Err(anyhow!("hosted outbox is locked")),
-            Err(message) => Err(anyhow!(message)),
+            Ok(None) => {
+                record_backlog_error(
+                    HOSTED_OUTBOX_BACKLOG,
+                    Some(MAX_SPOOLED),
+                    "hosted outbox is locked",
+                );
+                Err(anyhow!("hosted outbox is locked"))
+            }
+            Err(message) => {
+                record_backlog_error(HOSTED_OUTBOX_BACKLOG, Some(MAX_SPOOLED), message.clone());
+                Err(anyhow!(message))
+            }
         }
+    }
+
+    pub fn outbox_backlog_snapshot(&self) -> BacklogMetricSnapshot {
+        let metric = backlog_metric(HOSTED_OUTBOX_BACKLOG, Some(MAX_SPOOLED));
+        let path = self.outbox_path();
+        match hosted_outbox_depth(&path) {
+            Ok(depth) => metric.set_depth(depth),
+            Err(error) => metric.set_error(error),
+        }
+        metric.snapshot()
+    }
+}
+
+pub fn hosted_outbox_backlog_snapshot_from_env() -> BacklogMetricSnapshot {
+    HostedOutboxStore::from_env().outbox_backlog_snapshot()
+}
+
+fn hosted_outbox_depth(path: &Path) -> Result<usize, String> {
+    match fs::read_to_string(path) {
+        Ok(raw) => Ok(raw.lines().filter(|line| !line.trim().is_empty()).count()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(0),
+        Err(error) => Err(format!(
+            "failed to read hosted outbox {}: {error}",
+            path.display()
+        )),
     }
 }
 
@@ -310,6 +370,7 @@ impl OpenOptionsModeExt for OpenOptions {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backlog_metrics::BacklogMetricStatus;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -393,6 +454,55 @@ mod tests {
         assert!(
             !path.exists(),
             "successfully drained valid events should delete the outbox"
+        );
+    }
+
+    #[test]
+    fn outbox_backlog_reports_current_depth_and_high_water() {
+        let temp = TestDir::new("backlog-depth");
+        let store = temp.store();
+
+        store.spool_event(&hosted_event("evt_1", "hosted_token_revoked"));
+        store.spool_event(&hosted_event("evt_2", "hosted_grant_changed"));
+
+        let queued = store.outbox_backlog_snapshot();
+        assert_eq!(queued.status, BacklogMetricStatus::Ok);
+        assert_eq!(queued.current_depth, Some(2));
+        assert!(
+            queued
+                .high_water_mark
+                .is_some_and(|high_water| high_water >= 2)
+        );
+        assert_eq!(queued.capacity, Some(MAX_SPOOLED));
+
+        let drained = store.try_drain_outbox().expect("drain outbox");
+        assert_eq!(drained.len(), 2);
+        let empty = store.outbox_backlog_snapshot();
+        assert_eq!(empty.current_depth, Some(0));
+        assert!(
+            empty
+                .high_water_mark
+                .is_some_and(|high_water| high_water >= 2)
+        );
+    }
+
+    #[test]
+    fn outbox_backlog_read_failure_reports_unavailable_not_zero() {
+        let temp = TestDir::new("backlog-error");
+        let store = temp.store();
+        let path = store.outbox_path();
+        fs::create_dir_all(path.parent().expect("outbox parent")).expect("create outbox parent");
+        fs::write(&path, [0xff, 0xfe, 0xfd]).expect("write invalid utf8 outbox");
+
+        let snapshot = store.outbox_backlog_snapshot();
+
+        assert_eq!(snapshot.status, BacklogMetricStatus::Unavailable);
+        assert_eq!(snapshot.current_depth, None);
+        assert!(
+            snapshot
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("failed to read hosted outbox"))
         );
     }
 

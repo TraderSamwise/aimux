@@ -35,7 +35,10 @@ pub enum LiveWindowIdsProjection<'a> {
 /// window dropped out on its own. The native service has no such runtime object and
 /// treats topology as durable, so liveness has to be re-derived from tmux on read;
 /// otherwise a killed tmux server leaves every session reading `running` forever.
-fn session_is_backed_by_live_window(session: &Value, live_window_ids: &BTreeSet<String>) -> bool {
+pub fn session_is_backed_by_live_window(
+    session: &Value,
+    live_window_ids: &BTreeSet<String>,
+) -> bool {
     session
         .get("tmuxTarget")
         .and_then(|target| target.get("windowId"))
@@ -62,6 +65,64 @@ pub fn try_live_window_ids_for_session_projection(
             Err(error)
         }
     }
+}
+
+pub async fn try_live_window_ids_for_session_projection_async(
+    surface: &str,
+) -> Result<BTreeSet<String>, String> {
+    let mut command = crate::tmux::tmux_command_from_env();
+    command.args(crate::tmux::list_all_window_ids_argv());
+    let output = command
+        .output_timeout_async(std::time::Duration::from_secs(2))
+        .await
+        .map_err(|error| error.to_string());
+    let raw = match output {
+        Ok(output) if output.status.success() => {
+            String::from_utf8_lossy(&output.stdout).into_owned()
+        }
+        Ok(output) => {
+            let error = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+            let error = if error.is_empty() {
+                format!("tmux exited with {}", output.status)
+            } else {
+                error
+            };
+            if crate::tmux::tmux_list_sessions_failed_because_no_server(&error) {
+                return Ok(Default::default());
+            }
+            log_always_at(
+                LogLevel::Warn,
+                "tmux live window query failed; preserving session liveness",
+                "project-service",
+                Some(json!({
+                    "surface": surface,
+                    "error": error,
+                })),
+            );
+            return Err(error);
+        }
+        Err(error) => {
+            if crate::tmux::tmux_list_sessions_failed_because_no_server(&error) {
+                return Ok(Default::default());
+            }
+            log_always_at(
+                LogLevel::Warn,
+                "tmux live window query failed; preserving session liveness",
+                "project-service",
+                Some(json!({
+                    "surface": surface,
+                    "error": error,
+                })),
+            );
+            return Err(error);
+        }
+    };
+    Ok(raw
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect())
 }
 
 pub fn route_agent_read_request(
@@ -114,6 +175,80 @@ pub fn route_agent_read_request(
             ),
         }),
     ))
+}
+
+pub async fn route_agent_read_request_async(
+    context: &ProjectServiceRequestContext,
+    method: &str,
+    path: &str,
+) -> Option<ProjectServiceDispatchResponse> {
+    if !method.eq_ignore_ascii_case("GET") {
+        return None;
+    }
+    let pathname = project_service_pathname(path);
+    if pathname == routes::agents::HISTORY {
+        return Some(json_response(
+            410,
+            json!({ "ok": false, "error": "agent message history requires the runtime core replacement" }),
+        ));
+    }
+    if pathname != routes::agents::LIST && pathname != routes::agents::TEAMMATES {
+        return None;
+    }
+    let project_state_dir = context.project_state_dir();
+    let metadata_state = load_metadata_state(&project_state_dir);
+    let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
+        Ok(topology) => topology,
+        Err(error) => return Some(json_response(500, json!({ "ok": false, "error": error }))),
+    };
+    let exchange = read_runtime_exchange(runtime_exchange_path(&project_state_dir));
+    let tools = default_config()
+        .get("tools")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let projection = topology_desktop_session_list_for_context_async(
+        context,
+        &topology,
+        &metadata_state.sessions,
+        &tools,
+    )
+    .await;
+    if pathname == routes::agents::TEAMMATES {
+        let mut response = route_teammates(path, &projection.sessions);
+        if response.status == 200
+            && let Some(error) = projection.live_window_query_error
+            && let Value::Object(map) = &mut response.body
+        {
+            map.insert(
+                "tmuxLiveWindowQuery".into(),
+                json!({ "ok": false, "error": error }),
+            );
+        }
+        return Some(response);
+    }
+    let mut body = json!({
+        "ok": true,
+        "agents": build_agent_list(
+            &projection.sessions,
+            &metadata_state.sessions,
+            array_field(&exchange, "tasks"),
+        ),
+    });
+    if let Some(error) = projection.live_window_query_error
+        && let Value::Object(map) = &mut body
+    {
+        map.insert(
+            "tmuxLiveWindowQuery".into(),
+            json!({ "ok": false, "error": error }),
+        );
+    }
+    Some(json_response(200, body))
+}
+
+pub struct TopologyDesktopSessionProjection {
+    pub sessions: Vec<Value>,
+    pub live_window_query_error: Option<String>,
 }
 
 fn route_teammates(path: &str, sessions: &[Value]) -> ProjectServiceDispatchResponse {
@@ -173,6 +308,58 @@ pub fn topology_desktop_session_list_for_context(
             LiveWindowIdsProjection::Unavailable(error),
         ),
         None => topology_desktop_session_list(topology, metadata_sessions, tools),
+    }
+}
+
+pub async fn topology_desktop_session_list_for_context_async(
+    context: &ProjectServiceRequestContext,
+    topology: &Value,
+    metadata_sessions: &BTreeMap<String, Value>,
+    tools: &Map<String, Value>,
+) -> TopologyDesktopSessionProjection {
+    match context.live_window_ids_status() {
+        Some(Ok(live_window_ids)) => TopologyDesktopSessionProjection {
+            sessions: topology_desktop_session_list_with_live_window_ids(
+                topology,
+                metadata_sessions,
+                tools,
+                live_window_ids,
+            ),
+            live_window_query_error: None,
+        },
+        Some(Err(error)) => TopologyDesktopSessionProjection {
+            sessions: topology_desktop_session_list_with_live_window_projection(
+                topology,
+                metadata_sessions,
+                tools,
+                LiveWindowIdsProjection::Unavailable(error),
+            ),
+            live_window_query_error: Some(error.to_owned()),
+        },
+        None => {
+            match try_live_window_ids_for_session_projection_async("topology-desktop-session-list")
+                .await
+            {
+                Ok(live_window_ids) => TopologyDesktopSessionProjection {
+                    sessions: topology_desktop_session_list_with_live_window_ids(
+                        topology,
+                        metadata_sessions,
+                        tools,
+                        &live_window_ids,
+                    ),
+                    live_window_query_error: None,
+                },
+                Err(error) => TopologyDesktopSessionProjection {
+                    sessions: topology_desktop_session_list_with_live_window_projection(
+                        topology,
+                        metadata_sessions,
+                        tools,
+                        LiveWindowIdsProjection::Unavailable(&error),
+                    ),
+                    live_window_query_error: Some(error),
+                },
+            }
+        }
     }
 }
 

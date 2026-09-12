@@ -21,8 +21,8 @@ use aimux::daemon::text::auth::DaemonAuthTextRuntime;
 use aimux::daemon::text::params::ProjectServiceJsonResult;
 use aimux::daemon_state::{
     AimuxDaemonInfo, DaemonState, MetadataApiEndpoint, MetadataState, ProjectServiceState,
-    ProjectServiceStatus, load_metadata_endpoint, save_daemon_state, save_metadata_endpoint,
-    save_metadata_state,
+    ProjectServiceStatus, load_metadata_endpoint, metadata_endpoint_path, save_daemon_state,
+    save_metadata_endpoint, save_metadata_state,
 };
 use aimux::dashboard_command_spec::get_dashboard_command_spec;
 use aimux::dashboard_readiness::get_runtime_owner_id;
@@ -215,6 +215,115 @@ fn native_daemon_http_routes_health_and_projects_through_real_runtime() {
     assert_eq!(projects_json["projects"].as_array().map(Vec::len), Some(1));
     assert_eq!(projects_json["projects"][0]["name"], "repo");
     assert_eq!(projects_json["projects"][0]["serviceAlive"], false);
+    fixture.cleanup();
+}
+
+#[test]
+fn native_daemon_projects_route_reports_genuine_empty_registry_as_empty() {
+    let fixture = RuntimeFixture::new("projects-empty-registry");
+    let runtime = Arc::new(Mutex::new(fixture.runtime()));
+
+    let response = handle_daemon_runtime_request_with_mutex(&runtime, request("GET", "/projects"));
+    let body: Value = serde_json::from_slice(&response.body).expect("projects json");
+
+    assert_eq!(response.status, 200);
+    assert_eq!(body["ok"], true);
+    assert_eq!(body["projects"].as_array().map(Vec::len), Some(0));
+    assert!(body.get("projectReadErrors").is_none());
+    fixture.cleanup();
+}
+
+#[test]
+fn native_daemon_projects_route_reports_registry_parse_failure_not_empty() {
+    let fixture = RuntimeFixture::new("projects-bad-registry");
+    let resolver = fixture.resolver();
+    fs::write(resolver.projects_registry_path(), "{").expect("bad registry");
+    let runtime = Arc::new(Mutex::new(fixture.runtime()));
+
+    let response = handle_daemon_runtime_request_with_mutex(&runtime, request("GET", "/projects"));
+    let body: Value = serde_json::from_slice(&response.body).expect("projects error json");
+
+    assert_eq!(response.status, 500);
+    assert_eq!(body["ok"], false);
+    assert!(
+        body["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("failed to parse project registry")),
+        "{body}"
+    );
+    assert!(body.get("projects").is_none());
+
+    let doctor = handle_daemon_runtime_request(
+        &mut *runtime.lock().expect("runtime"),
+        request(
+            "GET",
+            &format!("{}?json=1", CORE_API_ROUTES.doctor_versions_text),
+        ),
+    );
+    let doctor_body = String::from_utf8_lossy(&doctor.body);
+    assert_eq!(doctor.status, 500);
+    assert!(
+        doctor_body.contains("failed to parse project registry"),
+        "{doctor_body}"
+    );
+    fixture.cleanup();
+}
+
+#[test]
+fn native_daemon_projects_route_and_doctor_report_endpoint_parse_failure() {
+    let fixture = RuntimeFixture::new("projects-bad-endpoint");
+    let project = fixture.project("repo");
+    let mut resolver = fixture.resolver();
+    let entry = resolver
+        .register_project(&project)
+        .expect("register project")
+        .expect("project entry");
+    let endpoint_path = metadata_endpoint_path(resolver.project_state_dir_for(&project));
+    fs::create_dir_all(endpoint_path.parent().expect("endpoint parent")).expect("endpoint parent");
+    fs::write(&endpoint_path, "{").expect("bad endpoint");
+    let runtime = Arc::new(Mutex::new(fixture.runtime()));
+
+    let response = handle_daemon_runtime_request_with_mutex(&runtime, request("GET", "/projects"));
+    let body: Value = serde_json::from_slice(&response.body).expect("projects json");
+
+    assert_eq!(response.status, 200);
+    assert_eq!(body["ok"], true);
+    assert_eq!(body["projects"].as_array().map(Vec::len), Some(1));
+    assert_eq!(body["projects"][0]["id"], entry.id);
+    assert!(body["projects"][0]["serviceEndpoint"].is_null());
+    let errors = body["projectReadErrors"]
+        .as_array()
+        .expect("project read errors");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.as_str().is_some_and(|error| {
+                error.contains("failed to parse project service endpoint")
+                    && error.contains(&endpoint_path.display().to_string())
+            })),
+        "{body}"
+    );
+
+    let doctor = handle_daemon_runtime_request(
+        &mut *runtime.lock().expect("runtime"),
+        request(
+            "GET",
+            &format!("{}?json=1", CORE_API_ROUTES.doctor_versions_text),
+        ),
+    );
+    let report: Value = serde_json::from_slice(&doctor.body).expect("doctor json");
+    assert_eq!(doctor.status, 200);
+    assert!(
+        report["projectReadErrors"]
+            .as_array()
+            .expect("doctor project read errors")
+            .iter()
+            .any(|error| error.as_str().is_some_and(|error| {
+                error.contains("failed to parse project service endpoint")
+                    && error.contains(&endpoint_path.display().to_string())
+            })),
+        "{report}"
+    );
     fixture.cleanup();
 }
 

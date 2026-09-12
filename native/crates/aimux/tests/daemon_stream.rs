@@ -8,8 +8,9 @@ use aimux::daemon::stream::{
     host_agent_stream_failure_bytes, host_agent_stream_failure_response,
     maybe_handle_host_agent_stream_request,
     maybe_handle_host_agent_stream_request_with_runtime_mutex,
-    maybe_handle_project_event_stream_request, pipe_host_agent_stream_from_url,
-    pipe_project_event_stream_from_url, write_host_agent_stream_text,
+    maybe_handle_project_event_stream_request, maybe_handle_project_event_stream_request_async,
+    pipe_host_agent_stream_from_url, pipe_project_event_stream_from_url,
+    pipe_project_event_stream_from_url_async, write_host_agent_stream_text,
 };
 use aimux::daemon::text::host_agent::DaemonHostAgentTextRuntime;
 use aimux::daemon::text::params::ProjectServiceJsonResult;
@@ -17,10 +18,13 @@ use aimux::daemon_state::MetadataApiEndpoint;
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::pin::Pin;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll};
 use std::thread;
 use std::time::Duration;
+use tokio::io::{AsyncReadExt, AsyncWrite};
 
 #[test]
 fn upstream_failure_maps_to_plain_text_response_before_stream_headers() {
@@ -219,6 +223,116 @@ fn project_event_stream_pipe_preserves_raw_sse_chunks() {
     assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
     assert!(response.contains("content-type: text/event-stream\r\n"));
     assert!(response.ends_with("event: ready\ndata: {\"ok\":true}\n\n"));
+}
+
+#[test]
+fn async_project_event_stream_proxy_drops_upstream_when_downstream_disconnects() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("upstream listener");
+    let address = listener.local_addr().expect("upstream address");
+    let (observed_tx, observed_rx) = mpsc::channel();
+    let join = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept upstream");
+        let _request = read_request_text(&mut stream);
+        stream
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n17\r\nevent: ready\ndata: {}\n\n\r\n",
+            )
+            .expect("write upstream response");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("read timeout");
+        let mut byte = [0_u8; 1];
+        observed_tx
+            .send(stream.read(&mut byte).expect("read upstream close") == 0)
+            .expect("send close observation");
+    });
+    let mut writer = FailAfterWrites::new(1);
+
+    // aimux-async-seam: test - daemon stream test drives async stream helper
+    let error = aimux::async_runtime::block_on_named(
+        "daemon-stream-test:disconnect",
+        pipe_project_event_stream_from_url_async(
+            &mut writer,
+            &ProjectEventStreamTarget {
+                url: format!("http://127.0.0.1:{}/events", address.port()),
+                headers: BTreeMap::new(),
+            },
+            HostAgentStreamRequestOptions {
+                timeout_ms: Some(1_000),
+            },
+        ),
+    )
+    .expect_err("downstream write fails");
+
+    assert!(
+        matches!(error, HostAgentStreamError::Io(ref message) if message.contains("broken pipe")),
+        "unexpected error: {error:?}"
+    );
+    assert!(
+        observed_rx
+            .recv_timeout(Duration::from_secs(3))
+            .expect("upstream close observed")
+    );
+    join.join().expect("upstream thread");
+}
+
+#[test]
+fn async_project_event_stream_interceptor_drops_idle_upstream_when_downstream_disconnects() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("upstream listener");
+    let address = listener.local_addr().expect("upstream address");
+    let (observed_tx, observed_rx) = mpsc::channel();
+    let join = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept upstream");
+        let _request = read_request_text(&mut stream);
+        stream
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\nevent: ready\ndata: {}\n\n",
+            )
+            .expect("write upstream response");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("read timeout");
+        let mut byte = [0_u8; 1];
+        observed_tx
+            .send(stream.read(&mut byte).expect("read upstream close") == 0)
+            .expect("send close observation");
+    });
+    let request = request(
+        "GET",
+        &format!("/proxy/127.0.0.1/{}/events", address.port()),
+    );
+
+    // aimux-async-seam: test - daemon stream test drives async stream helper from sync test
+    aimux::async_runtime::block_on_named("daemon-stream-test:idle-downstream-close", async {
+        let (mut client, mut server) = tokio::io::duplex(4096);
+        let proxy = tokio::spawn(async move {
+            maybe_handle_project_event_stream_request_async(&request, &mut server).await
+        });
+        let mut response = Vec::new();
+        let mut buffer = [0_u8; 1024];
+        while !response
+            .windows(b"event: ready".len())
+            .any(|window| window == b"event: ready")
+        {
+            let count = client.read(&mut buffer).await.expect("read proxy response");
+            assert_ne!(count, 0, "proxy closed before ready event");
+            response.extend_from_slice(&buffer[..count]);
+        }
+        drop(client);
+        let handled = tokio::time::timeout(Duration::from_secs(3), proxy)
+            .await
+            .expect("proxy task exits after downstream close")
+            .expect("proxy task join")
+            .expect("proxy result");
+        assert!(handled);
+    });
+
+    assert!(
+        observed_rx
+            .recv_timeout(Duration::from_secs(3))
+            .expect("upstream close observed")
+    );
+    join.join().expect("upstream thread");
 }
 
 #[test]
@@ -617,4 +731,44 @@ fn upstream_request_signal() -> &'static (mpsc::Sender<()>, Mutex<mpsc::Receiver
         let (tx, rx) = mpsc::channel();
         (tx, Mutex::new(rx))
     })
+}
+
+struct FailAfterWrites {
+    ok_writes_remaining: usize,
+}
+
+impl FailAfterWrites {
+    fn new(ok_writes: usize) -> Self {
+        Self {
+            ok_writes_remaining: ok_writes,
+        }
+    }
+}
+
+impl AsyncWrite for FailAfterWrites {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        _context: &mut Context<'_>,
+        buffer: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        if self.ok_writes_remaining == 0 {
+            return Poll::Ready(Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "broken pipe",
+            )));
+        }
+        self.ok_writes_remaining -= 1;
+        Poll::Ready(Ok(buffer.len()))
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(
+        self: Pin<&mut Self>,
+        _context: &mut Context<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
 }

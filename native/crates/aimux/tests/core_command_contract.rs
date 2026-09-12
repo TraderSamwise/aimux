@@ -10,6 +10,7 @@ fn core_api_routes_match_the_typescript_contract() {
         ("doctorExchangeText", "/core/doctor/exchange-text"),
         ("doctorLifecycleText", "/core/doctor/lifecycle-text"),
         ("doctorTmuxText", "/core/doctor/tmux-text"),
+        ("doctorTasksText", "/core/doctor/tasks-text"),
         ("doctorVersionsText", "/core/doctor/versions-text"),
         ("doctorDiskText", "/core/doctor/disk-text"),
         ("dashboardReloadText", "/core/dashboard-reload-text"),
@@ -209,6 +210,7 @@ fn constant_objects_serialize_with_typescript_keys() {
     assert_eq!(routes["doctorExchangeText"], "/core/doctor/exchange-text");
     assert_eq!(routes["doctorLifecycleText"], "/core/doctor/lifecycle-text");
     assert_eq!(routes["doctorTmuxText"], "/core/doctor/tmux-text");
+    assert_eq!(routes["doctorTasksText"], "/core/doctor/tasks-text");
     assert_eq!(
         routes["worktreeResurrectText"],
         "/core/worktree/resurrect-text"

@@ -148,6 +148,12 @@ impl HostedRateLimitRelease {
     }
 }
 
+impl Drop for HostedRateLimitRelease {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
 impl HostedRateLimiterState {
     fn bucket_for(&mut self, key: &str, now: f64) -> &mut Bucket {
         self.buckets.entry(key.to_owned()).or_insert(Bucket {

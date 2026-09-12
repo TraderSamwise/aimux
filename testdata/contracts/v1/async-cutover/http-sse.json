@@ -1,0 +1,828 @@
+{
+  "version": 1,
+  "source": "current sync Rust binary before async cutover",
+  "recorded_from_commit": "8203a33c",
+  "normalization": [
+    "temporary roots, project ids, pids, ports, timestamps and build stamps are replaced with stable placeholders",
+    "HTTP status lines, header order, content type, connection mode, JSON error shapes and SSE frame ordering/framing are compared literally after that normalization",
+    "Runtime panic log lines are scanned under the isolated Aimux home and normalized before comparison"
+  ],
+  "cases": [
+    {
+      "name": "daemon-health",
+      "surface": "daemon-http",
+      "catches": "Daemon liveness response shape, CORS/header framing and build stamp field survive listener conversion.",
+      "request": "GET /health HTTP/1.1\r\nHost: 127.0.0.1:<daemon-port>\r\nConnection: close\r\n\r\n",
+      "observed": {
+        "statusLine": "HTTP/1.1 200 OK",
+        "headers": [
+          "access-control-allow-headers: Content-Type, Authorization",
+          "access-control-allow-methods: GET, POST, OPTIONS",
+          "connection: close",
+          "content-length: <verified-body-bytes>",
+          "content-type: application/json"
+        ],
+        "body": {
+          "ok": true,
+          "kind": "aimux-daemon",
+          "pid": "<pid>",
+          "port": "<daemon-port>",
+          "serviceInfo": {
+            "apiVersion": 5,
+            "capabilities": {
+              "agentActivityState": true,
+              "agentTranscriptMessages": true,
+              "attachmentRead": true,
+              "chatEventStream": true,
+              "parsedAgentOutput": true
+            },
+            "buildStamp": "<build-stamp>"
+          }
+        },
+        "framing": {
+          "headerTerminator": "\\r\\n\\r\\n",
+          "contentLengthVerified": true
+        }
+      }
+    },
+    {
+      "name": "daemon-project-ensure",
+      "surface": "daemon-http",
+      "catches": "Project-service materialization response proves daemon POST handling waits for a published, healthy endpoint.",
+      "request": "POST /projects/ensure HTTP/1.1\r\nHost: 127.0.0.1:<daemon-port>\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: <verified-body-bytes>\r\n\r\n{\"projectRoot\":\"<project-root>\"}",
+      "observed": {
+        "statusLine": "HTTP/1.1 200 OK",
+        "headers": [
+          "access-control-allow-headers: Content-Type, Authorization",
+          "access-control-allow-methods: GET, POST, OPTIONS",
+          "connection: close",
+          "content-length: <verified-body-bytes>",
+          "content-type: application/json"
+        ],
+        "body": {
+          "ok": true,
+          "project": {
+            "projectId": "<project-id>",
+            "projectRoot": "<project-root>",
+            "pid": "<pid>",
+            "startedAt": "<timestamp>",
+            "updatedAt": "<timestamp>",
+            "status": "running",
+            "restartCount": 0
+          }
+        },
+        "framing": {
+          "headerTerminator": "\\r\\n\\r\\n",
+          "contentLengthVerified": true
+        }
+      }
+    },
+    {
+      "name": "daemon-projects-after-ensure",
+      "surface": "daemon-http",
+      "catches": "Daemon registry projection includes the ensured project and its service state after startup.",
+      "request": "GET /projects HTTP/1.1\r\nHost: 127.0.0.1:<daemon-port>\r\nConnection: close\r\n\r\n",
+      "observed": {
+        "statusLine": "HTTP/1.1 200 OK",
+        "headers": [
+          "access-control-allow-headers: Content-Type, Authorization",
+          "access-control-allow-methods: GET, POST, OPTIONS",
+          "connection: close",
+          "content-length: <verified-body-bytes>",
+          "content-type: application/json"
+        ],
+        "body": {
+          "ok": true,
+          "projects": [
+            {
+              "id": "<project-id>",
+              "name": "repo",
+              "path": "<project-root>",
+              "lastSeen": "<timestamp>",
+              "dashboardSessionName": "aimux-<project-id>",
+              "service": {
+                "projectId": "<project-id>",
+                "projectRoot": "<project-root>",
+                "pid": "<pid>",
+                "startedAt": "<timestamp>",
+                "updatedAt": "<timestamp>",
+                "status": "running",
+                "restartCount": 0
+              },
+              "serviceAlive": true,
+              "serviceEndpoint": {
+                "host": "127.0.0.1",
+                "port": "<project-port>",
+                "pid": "<pid>",
+                "updatedAt": "<timestamp>"
+              }
+            }
+          ]
+        },
+        "framing": {
+          "headerTerminator": "\\r\\n\\r\\n",
+          "contentLengthVerified": true
+        }
+      }
+    },
+    {
+      "name": "daemon-missing-route-error",
+      "surface": "daemon-http",
+      "catches": "Unknown daemon routes keep their explicit JSON error shape instead of timing out or returning an empty response.",
+      "request": "GET /definitely-missing HTTP/1.1\r\nHost: 127.0.0.1:<daemon-port>\r\nConnection: close\r\n\r\n",
+      "observed": {
+        "statusLine": "HTTP/1.1 404 Not Found",
+        "headers": [
+          "access-control-allow-headers: Content-Type, Authorization",
+          "access-control-allow-methods: GET, POST, OPTIONS",
+          "connection: close",
+          "content-length: <verified-body-bytes>",
+          "content-type: application/json"
+        ],
+        "body": {
+          "ok": false,
+          "error": "not found"
+        },
+        "framing": {
+          "headerTerminator": "\\r\\n\\r\\n",
+          "contentLengthVerified": true
+        }
+      }
+    },
+    {
+      "name": "project-health",
+      "surface": "project-service-http",
+      "catches": "Project service health reports the same state directory and service-info fields through the live listener.",
+      "request": "GET /health HTTP/1.1\r\nHost: 127.0.0.1:<project-port>\r\nConnection: close\r\n\r\n",
+      "observed": {
+        "statusLine": "HTTP/1.1 200 OK",
+        "headers": [
+          "access-control-allow-headers: Content-Type, Authorization",
+          "access-control-allow-methods: GET, POST, PUT, OPTIONS",
+          "access-control-allow-origin: *",
+          "connection: close",
+          "content-length: <verified-body-bytes>",
+          "content-type: application/json"
+        ],
+        "body": {
+          "ok": true,
+          "projectStateDir": "<project-state-dir>",
+          "pid": "<pid>",
+          "serviceInfo": {
+            "apiVersion": 5,
+            "capabilities": {
+              "agentActivityState": true,
+              "agentTranscriptMessages": true,
+              "attachmentRead": true,
+              "chatEventStream": true,
+              "parsedAgentOutput": true
+            },
+            "buildStamp": "<build-stamp>"
+          }
+        },
+        "framing": {
+          "headerTerminator": "\\r\\n\\r\\n",
+          "contentLengthVerified": true
+        }
+      }
+    },
+    {
+      "name": "project-desktop-state-explicit-empty-topology",
+      "surface": "project-service-http",
+      "catches": "Desktop state projection stays parseable and empty only when the topology source is explicitly available and empty.",
+      "request": "GET /desktop-state HTTP/1.1\r\nHost: 127.0.0.1:<project-port>\r\nConnection: close\r\n\r\n",
+      "observed": {
+        "statusLine": "HTTP/1.1 200 OK",
+        "headers": [
+          "access-control-allow-headers: Content-Type, Authorization",
+          "access-control-allow-methods: GET, POST, PUT, OPTIONS",
+          "access-control-allow-origin: *",
+          "connection: close",
+          "content-length: <verified-body-bytes>",
+          "content-type: application/json"
+        ],
+        "body": {
+          "ok": true,
+          "serviceInfo": {
+            "apiVersion": 5,
+            "capabilities": {
+              "agentActivityState": true,
+              "agentTranscriptMessages": true,
+              "attachmentRead": true,
+              "chatEventStream": true,
+              "parsedAgentOutput": true
+            },
+            "buildStamp": "<build-stamp>"
+          },
+          "pendingInteractions": [],
+          "sessions": [],
+          "teammates": [],
+          "services": [],
+          "worktrees": [
+            {
+              "name": "Main Checkout",
+              "path": "<project-root>",
+              "branch": "main",
+              "isBare": false
+            }
+          ],
+          "worktreeGroups": [
+            {
+              "name": "Main Checkout",
+              "branch": "main",
+              "status": "offline",
+              "sessions": [],
+              "services": []
+            }
+          ],
+          "operationFailures": [],
+          "agentRestoreOffer": null,
+          "mainCheckoutInfo": {
+            "name": "Main Checkout",
+            "branch": "main"
+          },
+          "mainCheckoutPath": "<project-root>",
+          "controlPlane": {
+            "daemonAlive": true,
+            "projectServiceAlive": true
+          },
+          "tasks": {
+            "pending": 0,
+            "assigned": 0
+          }
+        },
+        "framing": {
+          "headerTerminator": "\\r\\n\\r\\n",
+          "contentLengthVerified": true
+        }
+      }
+    },
+    {
+      "name": "project-desktop-state-unreadable-topology-error",
+      "surface": "project-service-http",
+      "catches": "Recording current correct behavior: an unreadable topology source must be an explicit error, not a 200 empty desktop.",
+      "request": "GET /desktop-state HTTP/1.1\r\nHost: 127.0.0.1:<project-port>\r\nConnection: close\r\n\r\n",
+      "observed": {
+        "statusLine": "HTTP/1.1 500 Internal Server Error",
+        "headers": [
+          "access-control-allow-headers: Content-Type, Authorization",
+          "access-control-allow-methods: GET, POST, PUT, OPTIONS",
+          "access-control-allow-origin: *",
+          "connection: close",
+          "content-length: <verified-body-bytes>",
+          "content-type: application/json"
+        ],
+        "body": {
+          "ok": false,
+          "error": "Is a directory (os error 21)"
+        },
+        "framing": {
+          "headerTerminator": "\\r\\n\\r\\n",
+          "contentLengthVerified": true
+        }
+      }
+    },
+    {
+      "name": "project-method-not-allowed-error",
+      "surface": "project-service-http",
+      "catches": "Method errors name the path and allowed methods rather than falling through to a generic failure.",
+      "request": "GET /agents/spawn HTTP/1.1\r\nHost: 127.0.0.1:<project-port>\r\nConnection: close\r\n\r\n",
+      "observed": {
+        "statusLine": "HTTP/1.1 405 Method Not Allowed",
+        "headers": [
+          "access-control-allow-headers: Content-Type, Authorization",
+          "access-control-allow-methods: GET, POST, PUT, OPTIONS",
+          "access-control-allow-origin: *",
+          "connection: close",
+          "content-length: <verified-body-bytes>",
+          "content-type: application/json"
+        ],
+        "body": {
+          "ok": false,
+          "error": "method not allowed",
+          "path": "/agents/spawn",
+          "allowed": [
+            "POST"
+          ]
+        },
+        "framing": {
+          "headerTerminator": "\\r\\n\\r\\n",
+          "contentLengthVerified": true
+        }
+      }
+    },
+    {
+      "name": "project-sse-query-validation-error",
+      "surface": "project-service-http",
+      "catches": "SSE query validation remains a prompt 400 JSON error before stream headers are written.",
+      "request": "GET /events?intervalMs=99 HTTP/1.1\r\nHost: 127.0.0.1:<project-port>\r\nConnection: close\r\n\r\n",
+      "observed": {
+        "statusLine": "HTTP/1.1 400 Bad Request",
+        "headers": [
+          "access-control-allow-headers: Content-Type, Authorization",
+          "access-control-allow-methods: GET, POST, PUT, OPTIONS",
+          "access-control-allow-origin: *",
+          "connection: close",
+          "content-length: <verified-body-bytes>",
+          "content-type: application/json"
+        ],
+        "body": {
+          "ok": false,
+          "error": "intervalMs must be an integer >= 100"
+        },
+        "framing": {
+          "headerTerminator": "\\r\\n\\r\\n",
+          "contentLengthVerified": true
+        }
+      }
+    },
+    {
+      "name": "project-sse-concurrent-clients-ordering",
+      "surface": "project-service-sse",
+      "catches": "Two clients connected before mutations receive the same ordered event frames; a slow peer must not starve the fast peer or reorder events.",
+      "request": "GET /events?intervalMs=100 over two simultaneous clients, then POST /set-activity busy and idle",
+      "observed": {
+        "fastHeaders": {
+          "statusLine": "HTTP/1.1 200 OK",
+          "headers": [
+            "access-control-allow-headers: Content-Type, Authorization",
+            "access-control-allow-methods: GET, POST, PUT, OPTIONS",
+            "access-control-allow-origin: *",
+            "cache-control: no-cache, no-transform",
+            "connection: keep-alive",
+            "content-type: text/event-stream",
+            "x-accel-buffering: no"
+          ],
+          "framing": {
+            "headerTerminator": "\\r\\n\\r\\n",
+            "contentLengthVerified": false
+          }
+        },
+        "slowHeaders": {
+          "statusLine": "HTTP/1.1 200 OK",
+          "headers": [
+            "access-control-allow-headers: Content-Type, Authorization",
+            "access-control-allow-methods: GET, POST, PUT, OPTIONS",
+            "access-control-allow-origin: *",
+            "cache-control: no-cache, no-transform",
+            "connection: keep-alive",
+            "content-type: text/event-stream",
+            "x-accel-buffering: no"
+          ],
+          "framing": {
+            "headerTerminator": "\\r\\n\\r\\n",
+            "contentLengthVerified": false
+          }
+        },
+        "fastFrames": [
+          "event: ready\ndata: {\"projectId\":\"<project-id>\",\"ts\":\"<timestamp>\",\"sessionId\":null,\"startLine\":-120,\"requestedStartLine\":-120,\"endLine\":null,\"captureLineLimit\":2000,\"outputTailOnly\":true,\"outputStartLineClamped\":false,\"intervalMs\":100}\n\n",
+          "event: project_update\ndata: {\"type\":\"project_update\",\"projectId\":\"<project-id>\",\"ts\":\"<timestamp>\",\"views\":[\"agents\",\"coordination-worklist\",\"desktop-state\",\"project-observability\",\"topology\",\"worktrees\"],\"reason\":\"POST /set-activity\"}\n\n",
+          "event: project_update\ndata: {\"type\":\"project_update\",\"projectId\":\"<project-id>\",\"ts\":\"<timestamp>\",\"views\":[\"agents\",\"coordination-worklist\",\"desktop-state\",\"project-observability\",\"topology\",\"worktrees\"],\"reason\":\"POST /set-activity\"}\n\n"
+        ],
+        "slowFrames": [
+          "event: ready\ndata: {\"projectId\":\"<project-id>\",\"ts\":\"<timestamp>\",\"sessionId\":null,\"startLine\":-120,\"requestedStartLine\":-120,\"endLine\":null,\"captureLineLimit\":2000,\"outputTailOnly\":true,\"outputStartLineClamped\":false,\"intervalMs\":100}\n\n",
+          "event: project_update\ndata: {\"type\":\"project_update\",\"projectId\":\"<project-id>\",\"ts\":\"<timestamp>\",\"views\":[\"agents\",\"coordination-worklist\",\"desktop-state\",\"project-observability\",\"topology\",\"worktrees\"],\"reason\":\"POST /set-activity\"}\n\n",
+          "event: project_update\ndata: {\"type\":\"project_update\",\"projectId\":\"<project-id>\",\"ts\":\"<timestamp>\",\"views\":[\"agents\",\"coordination-worklist\",\"desktop-state\",\"project-observability\",\"topology\",\"worktrees\"],\"reason\":\"POST /set-activity\"}\n\n"
+        ]
+      }
+    },
+    {
+      "name": "project-sse-keepalive-framing",
+      "surface": "project-service-sse",
+      "catches": "Idle streams keep the connection alive with the exact SSE comment frame instead of closing or emitting JSON noise.",
+      "request": "GET /agents/interaction/stream and wait for the first idle keepalive",
+      "observed": {
+        "headers": {
+          "statusLine": "HTTP/1.1 200 OK",
+          "headers": [
+            "access-control-allow-headers: Content-Type, Authorization",
+            "access-control-allow-methods: GET, POST, PUT, OPTIONS",
+            "access-control-allow-origin: *",
+            "cache-control: no-cache, no-transform",
+            "connection: keep-alive",
+            "content-type: text/event-stream",
+            "x-accel-buffering: no"
+          ],
+          "framing": {
+            "headerTerminator": "\\r\\n\\r\\n",
+            "contentLengthVerified": false
+          }
+        },
+        "frames": [
+          "event: ready\ndata: {\"pending\":[]}\n\n",
+          ": keepalive\n\n"
+        ],
+        "keepaliveWindow": ">=14000ms"
+      }
+    },
+    {
+      "name": "project-sse-client-disconnect",
+      "surface": "project-service-sse",
+      "catches": "A client disconnecting mid-stream releases the stream without poisoning later HTTP requests.",
+      "request": "GET /events?intervalMs=100, read ready, close socket, then GET /health",
+      "observed": {
+        "streamHeaders": {
+          "statusLine": "HTTP/1.1 200 OK",
+          "headers": [
+            "access-control-allow-headers: Content-Type, Authorization",
+            "access-control-allow-methods: GET, POST, PUT, OPTIONS",
+            "access-control-allow-origin: *",
+            "cache-control: no-cache, no-transform",
+            "connection: keep-alive",
+            "content-type: text/event-stream",
+            "x-accel-buffering: no"
+          ],
+          "framing": {
+            "headerTerminator": "\\r\\n\\r\\n",
+            "contentLengthVerified": false
+          }
+        },
+        "framesBeforeDisconnect": [
+          "event: ready\ndata: {\"projectId\":\"<project-id>\",\"ts\":\"<timestamp>\",\"sessionId\":null,\"startLine\":-120,\"requestedStartLine\":-120,\"endLine\":null,\"captureLineLimit\":2000,\"outputTailOnly\":true,\"outputStartLineClamped\":false,\"intervalMs\":100}\n\n"
+        ],
+        "healthAfterDisconnect": {
+          "statusLine": "HTTP/1.1 200 OK",
+          "headers": [
+            "access-control-allow-headers: Content-Type, Authorization",
+            "access-control-allow-methods: GET, POST, PUT, OPTIONS",
+            "access-control-allow-origin: *",
+            "connection: close",
+            "content-length: <verified-body-bytes>",
+            "content-type: application/json"
+          ],
+          "body": {
+            "ok": true,
+            "projectStateDir": "<project-state-dir>",
+            "pid": "<pid>",
+            "serviceInfo": {
+              "apiVersion": 5,
+              "capabilities": {
+                "agentActivityState": true,
+                "agentTranscriptMessages": true,
+                "attachmentRead": true,
+                "chatEventStream": true,
+                "parsedAgentOutput": true
+              },
+              "buildStamp": "<build-stamp>"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "project-incomplete-mutation-disconnect-no-side-effect",
+      "surface": "project-service-http",
+      "catches": "A client that disconnects after sending an incomplete mutation body must not leave the mutation applied; the harness must positively observe a readable clean state.",
+      "request": "POST /set-activity with a truncated JSON body, close socket, then sample GET /desktop-state for codex-disconnect",
+      "observed": {
+        "disconnectedSessionPresent": false,
+        "topologyContainsSession": false,
+        "metadataContainsSession": false,
+        "samples": [
+          {
+            "statusLine": "HTTP/1.1 200 OK",
+            "ok": true,
+            "disconnectedSessionPresent": false
+          },
+          {
+            "statusLine": "HTTP/1.1 200 OK",
+            "ok": true,
+            "disconnectedSessionPresent": false
+          },
+          {
+            "statusLine": "HTTP/1.1 200 OK",
+            "ok": true,
+            "disconnectedSessionPresent": false
+          }
+        ]
+      }
+    },
+    {
+      "name": "daemon-concurrent-projects-with-slow-client",
+      "surface": "daemon-http",
+      "catches": "One slow/incomplete client cannot serialize the daemon listener or corrupt concurrent /projects responses.",
+      "request": "one incomplete GET /projects client held open while eight complete GET /projects requests run concurrently",
+      "observed": {
+        "responseCount": 8,
+        "responses": [
+          {
+            "statusLine": "HTTP/1.1 200 OK",
+            "headers": [
+              "access-control-allow-headers: Content-Type, Authorization",
+              "access-control-allow-methods: GET, POST, OPTIONS",
+              "connection: close",
+              "content-length: <verified-body-bytes>",
+              "content-type: application/json"
+            ],
+            "body": {
+              "ok": true,
+              "projects": [
+                {
+                  "id": "<project-id>",
+                  "name": "repo",
+                  "path": "<project-root>",
+                  "lastSeen": "<timestamp>",
+                  "dashboardSessionName": "aimux-<project-id>",
+                  "service": {
+                    "projectId": "<project-id>",
+                    "projectRoot": "<project-root>",
+                    "pid": "<pid>",
+                    "startedAt": "<timestamp>",
+                    "updatedAt": "<timestamp>",
+                    "status": "running",
+                    "restartCount": 0
+                  },
+                  "serviceAlive": true,
+                  "serviceEndpoint": {
+                    "host": "127.0.0.1",
+                    "port": "<project-port>",
+                    "pid": "<pid>",
+                    "updatedAt": "<timestamp>"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "statusLine": "HTTP/1.1 200 OK",
+            "headers": [
+              "access-control-allow-headers: Content-Type, Authorization",
+              "access-control-allow-methods: GET, POST, OPTIONS",
+              "connection: close",
+              "content-length: <verified-body-bytes>",
+              "content-type: application/json"
+            ],
+            "body": {
+              "ok": true,
+              "projects": [
+                {
+                  "id": "<project-id>",
+                  "name": "repo",
+                  "path": "<project-root>",
+                  "lastSeen": "<timestamp>",
+                  "dashboardSessionName": "aimux-<project-id>",
+                  "service": {
+                    "projectId": "<project-id>",
+                    "projectRoot": "<project-root>",
+                    "pid": "<pid>",
+                    "startedAt": "<timestamp>",
+                    "updatedAt": "<timestamp>",
+                    "status": "running",
+                    "restartCount": 0
+                  },
+                  "serviceAlive": true,
+                  "serviceEndpoint": {
+                    "host": "127.0.0.1",
+                    "port": "<project-port>",
+                    "pid": "<pid>",
+                    "updatedAt": "<timestamp>"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "statusLine": "HTTP/1.1 200 OK",
+            "headers": [
+              "access-control-allow-headers: Content-Type, Authorization",
+              "access-control-allow-methods: GET, POST, OPTIONS",
+              "connection: close",
+              "content-length: <verified-body-bytes>",
+              "content-type: application/json"
+            ],
+            "body": {
+              "ok": true,
+              "projects": [
+                {
+                  "id": "<project-id>",
+                  "name": "repo",
+                  "path": "<project-root>",
+                  "lastSeen": "<timestamp>",
+                  "dashboardSessionName": "aimux-<project-id>",
+                  "service": {
+                    "projectId": "<project-id>",
+                    "projectRoot": "<project-root>",
+                    "pid": "<pid>",
+                    "startedAt": "<timestamp>",
+                    "updatedAt": "<timestamp>",
+                    "status": "running",
+                    "restartCount": 0
+                  },
+                  "serviceAlive": true,
+                  "serviceEndpoint": {
+                    "host": "127.0.0.1",
+                    "port": "<project-port>",
+                    "pid": "<pid>",
+                    "updatedAt": "<timestamp>"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "statusLine": "HTTP/1.1 200 OK",
+            "headers": [
+              "access-control-allow-headers: Content-Type, Authorization",
+              "access-control-allow-methods: GET, POST, OPTIONS",
+              "connection: close",
+              "content-length: <verified-body-bytes>",
+              "content-type: application/json"
+            ],
+            "body": {
+              "ok": true,
+              "projects": [
+                {
+                  "id": "<project-id>",
+                  "name": "repo",
+                  "path": "<project-root>",
+                  "lastSeen": "<timestamp>",
+                  "dashboardSessionName": "aimux-<project-id>",
+                  "service": {
+                    "projectId": "<project-id>",
+                    "projectRoot": "<project-root>",
+                    "pid": "<pid>",
+                    "startedAt": "<timestamp>",
+                    "updatedAt": "<timestamp>",
+                    "status": "running",
+                    "restartCount": 0
+                  },
+                  "serviceAlive": true,
+                  "serviceEndpoint": {
+                    "host": "127.0.0.1",
+                    "port": "<project-port>",
+                    "pid": "<pid>",
+                    "updatedAt": "<timestamp>"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "statusLine": "HTTP/1.1 200 OK",
+            "headers": [
+              "access-control-allow-headers: Content-Type, Authorization",
+              "access-control-allow-methods: GET, POST, OPTIONS",
+              "connection: close",
+              "content-length: <verified-body-bytes>",
+              "content-type: application/json"
+            ],
+            "body": {
+              "ok": true,
+              "projects": [
+                {
+                  "id": "<project-id>",
+                  "name": "repo",
+                  "path": "<project-root>",
+                  "lastSeen": "<timestamp>",
+                  "dashboardSessionName": "aimux-<project-id>",
+                  "service": {
+                    "projectId": "<project-id>",
+                    "projectRoot": "<project-root>",
+                    "pid": "<pid>",
+                    "startedAt": "<timestamp>",
+                    "updatedAt": "<timestamp>",
+                    "status": "running",
+                    "restartCount": 0
+                  },
+                  "serviceAlive": true,
+                  "serviceEndpoint": {
+                    "host": "127.0.0.1",
+                    "port": "<project-port>",
+                    "pid": "<pid>",
+                    "updatedAt": "<timestamp>"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "statusLine": "HTTP/1.1 200 OK",
+            "headers": [
+              "access-control-allow-headers: Content-Type, Authorization",
+              "access-control-allow-methods: GET, POST, OPTIONS",
+              "connection: close",
+              "content-length: <verified-body-bytes>",
+              "content-type: application/json"
+            ],
+            "body": {
+              "ok": true,
+              "projects": [
+                {
+                  "id": "<project-id>",
+                  "name": "repo",
+                  "path": "<project-root>",
+                  "lastSeen": "<timestamp>",
+                  "dashboardSessionName": "aimux-<project-id>",
+                  "service": {
+                    "projectId": "<project-id>",
+                    "projectRoot": "<project-root>",
+                    "pid": "<pid>",
+                    "startedAt": "<timestamp>",
+                    "updatedAt": "<timestamp>",
+                    "status": "running",
+                    "restartCount": 0
+                  },
+                  "serviceAlive": true,
+                  "serviceEndpoint": {
+                    "host": "127.0.0.1",
+                    "port": "<project-port>",
+                    "pid": "<pid>",
+                    "updatedAt": "<timestamp>"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "statusLine": "HTTP/1.1 200 OK",
+            "headers": [
+              "access-control-allow-headers: Content-Type, Authorization",
+              "access-control-allow-methods: GET, POST, OPTIONS",
+              "connection: close",
+              "content-length: <verified-body-bytes>",
+              "content-type: application/json"
+            ],
+            "body": {
+              "ok": true,
+              "projects": [
+                {
+                  "id": "<project-id>",
+                  "name": "repo",
+                  "path": "<project-root>",
+                  "lastSeen": "<timestamp>",
+                  "dashboardSessionName": "aimux-<project-id>",
+                  "service": {
+                    "projectId": "<project-id>",
+                    "projectRoot": "<project-root>",
+                    "pid": "<pid>",
+                    "startedAt": "<timestamp>",
+                    "updatedAt": "<timestamp>",
+                    "status": "running",
+                    "restartCount": 0
+                  },
+                  "serviceAlive": true,
+                  "serviceEndpoint": {
+                    "host": "127.0.0.1",
+                    "port": "<project-port>",
+                    "pid": "<pid>",
+                    "updatedAt": "<timestamp>"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "statusLine": "HTTP/1.1 200 OK",
+            "headers": [
+              "access-control-allow-headers: Content-Type, Authorization",
+              "access-control-allow-methods: GET, POST, OPTIONS",
+              "connection: close",
+              "content-length: <verified-body-bytes>",
+              "content-type: application/json"
+            ],
+            "body": {
+              "ok": true,
+              "projects": [
+                {
+                  "id": "<project-id>",
+                  "name": "repo",
+                  "path": "<project-root>",
+                  "lastSeen": "<timestamp>",
+                  "dashboardSessionName": "aimux-<project-id>",
+                  "service": {
+                    "projectId": "<project-id>",
+                    "projectRoot": "<project-root>",
+                    "pid": "<pid>",
+                    "startedAt": "<timestamp>",
+                    "updatedAt": "<timestamp>",
+                    "status": "running",
+                    "restartCount": 0
+                  },
+                  "serviceAlive": true,
+                  "serviceEndpoint": {
+                    "host": "127.0.0.1",
+                    "port": "<project-port>",
+                    "pid": "<pid>",
+                    "updatedAt": "<timestamp>"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "runtime-logs-no-nested-runtime-panics",
+      "surface": "daemon-and-project-service-logs",
+      "catches": "A route can return HTTP success while background tasks panic; the characterization gate must prove it read the isolated logs before accepting no nested Tokio runtime panics.",
+      "request": "scan isolated daemon and project-service logs after exercising HTTP and SSE surfaces",
+      "observed": {
+        "logObservationProved": true,
+        "filesScannedAtLeastOne": true,
+        "readErrors": [],
+        "panicLogLines": []
+      }
+    }
+  ]
+}

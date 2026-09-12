@@ -114,12 +114,12 @@ impl TempProject {
 
 /// The two-tick confirmation lives in the task instance, so every tick in one
 /// test has to come from one task — a fresh one starts over.
-struct Rail {
+struct TickLoop {
     context: Arc<ProjectServiceRequestContext>,
     task: TranscriptReconcilerTask,
 }
 
-impl Rail {
+impl TickLoop {
     fn new(project: &TempProject) -> Self {
         let context = Arc::new(ProjectServiceRequestContext::with_project_state_dir(
             project.root(),
@@ -131,7 +131,11 @@ impl Rail {
 
     fn tick(&mut self, times: usize) {
         for _ in 0..times {
-            self.task.run(&self.context);
+            // aimux-async-seam: test - transcript reconciler test drives async PeriodicTask body
+            aimux::async_runtime::block_on_named(
+                "transcript-reconciler-task-test",
+                self.task.run(&self.context),
+            );
         }
     }
 }
@@ -146,16 +150,16 @@ fn a_stranded_running_session_is_settled_once_the_transcript_is_quiescent() {
     let transcript = project.write_transcript("end_turn");
     project.write_topology("running");
     project.write_metadata(running(), &transcript);
-    let mut rail = Rail::new(&project);
+    let mut tick_loop = TickLoop::new(&project);
 
-    rail.tick(1);
+    tick_loop.tick(1);
     assert_eq!(
         project.derived("activity").as_deref(),
         Some("running"),
         "settled on the first look, before confirming the file went quiet"
     );
 
-    rail.tick(1);
+    tick_loop.tick(1);
     assert_eq!(
         project.derived("activity").as_deref(),
         Some("idle"),
@@ -169,9 +173,9 @@ fn a_mid_turn_transcript_is_never_settled() {
     let transcript = project.write_transcript("tool_use");
     project.write_topology("running");
     project.write_metadata(running(), &transcript);
-    let mut rail = Rail::new(&project);
+    let mut tick_loop = TickLoop::new(&project);
 
-    rail.tick(4);
+    tick_loop.tick(4);
     assert_eq!(
         project.derived("activity").as_deref(),
         Some("running"),
@@ -181,7 +185,7 @@ fn a_mid_turn_transcript_is_never_settled() {
     // Positive control: the same fixture settles the moment the turn ends, so
     // the four ticks above really did reach it.
     project.write_transcript("end_turn");
-    rail.tick(2);
+    tick_loop.tick(2);
     assert_eq!(
         project.derived("activity").as_deref(),
         Some("idle"),
@@ -195,9 +199,9 @@ fn an_offline_session_is_never_probed() {
     let transcript = project.write_transcript("end_turn");
     project.write_topology("offline");
     project.write_metadata(running(), &transcript);
-    let mut rail = Rail::new(&project);
+    let mut tick_loop = TickLoop::new(&project);
 
-    rail.tick(4);
+    tick_loop.tick(4);
     assert_eq!(
         project.derived("activity").as_deref(),
         Some("running"),
@@ -206,7 +210,7 @@ fn an_offline_session_is_never_probed() {
 
     // Positive control: only the status was holding it back.
     project.write_topology("running");
-    rail.tick(2);
+    tick_loop.tick(2);
     assert_eq!(
         project.derived("activity").as_deref(),
         Some("idle"),
@@ -223,16 +227,16 @@ fn a_stranded_needs_response_is_cleared_after_a_second_unbacked_tick() {
         json!({ "activity": "idle", "attention": "needs_response" }),
         &transcript,
     );
-    let mut rail = Rail::new(&project);
+    let mut tick_loop = TickLoop::new(&project);
 
-    rail.tick(1);
+    tick_loop.tick(1);
     assert_eq!(
         project.derived("attention").as_deref(),
         Some("needs_response"),
         "cleared on the first look, with no second confirmation"
     );
 
-    rail.tick(1);
+    tick_loop.tick(1);
     assert_eq!(
         project.derived("attention").as_deref(),
         Some("normal"),

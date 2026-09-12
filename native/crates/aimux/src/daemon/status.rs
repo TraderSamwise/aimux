@@ -16,8 +16,16 @@ pub trait DaemonStatusRuntime {
     fn current_daemon_info(&self, issued_at: &str) -> AimuxDaemonInfo;
     fn project_service_info(&self) -> Value;
     fn list_projects_for_route(&self) -> Vec<ProjectsRouteProject>;
+    fn try_list_projects_for_route(&self) -> Result<Vec<ProjectsRouteProject>, String> {
+        Ok(self.list_projects_for_route())
+    }
     fn list_projects_with_online_agent_counts_for_route(&mut self) -> Vec<ProjectsRouteProject> {
         self.list_projects_for_route()
+    }
+    fn try_list_projects_with_online_agent_counts_for_route(
+        &mut self,
+    ) -> Result<Vec<ProjectsRouteProject>, String> {
+        Ok(self.list_projects_with_online_agent_counts_for_route())
     }
     fn ensure_project_paths(&mut self, _project: &str) {}
     fn daemon_state(&self) -> DaemonState;
@@ -76,7 +84,12 @@ pub fn route_status_request(
     }
 
     if method == "GET" && pathname == CORE_API_ROUTES.daemon_status_text {
-        let projects = runtime.list_projects_for_route();
+        let projects = match runtime.try_list_projects_for_route() {
+            Ok(projects) => projects,
+            Err(error) => {
+                return Some(DaemonRouteResponse::text(500, format!("Error: {error}\n")));
+            }
+        };
         let payload = daemon_status_payload(runtime, issued_at, &projects);
         return Some(text_or_json_lines(
             &route_url,
@@ -86,7 +99,12 @@ pub fn route_status_request(
     }
 
     if method == "GET" && pathname == CORE_API_ROUTES.daemon_projects_text {
-        let projects = projects_json(runtime.list_projects_for_route());
+        let projects = match runtime.try_list_projects_for_route() {
+            Ok(projects) => projects_json(projects),
+            Err(error) => {
+                return Some(DaemonRouteResponse::text(500, format!("Error: {error}\n")));
+            }
+        };
         return Some(text_or_json_lines(
             &route_url,
             json!({ "projects": projects.clone() }),
@@ -95,7 +113,12 @@ pub fn route_status_request(
     }
 
     if method == "GET" && pathname == CORE_API_ROUTES.projects_list_text {
-        let projects = projects_json(runtime.list_projects_for_route());
+        let projects = match runtime.try_list_projects_for_route() {
+            Ok(projects) => projects_json(projects),
+            Err(error) => {
+                return Some(DaemonRouteResponse::text(500, format!("Error: {error}\n")));
+            }
+        };
         return Some(text_or_json_lines(
             &route_url,
             json!({ "projects": projects.clone() }),
@@ -104,7 +127,15 @@ pub fn route_status_request(
     }
 
     if method == "GET" && pathname == "/projects" {
-        let projects = runtime.list_projects_with_online_agent_counts_for_route();
+        let projects = match runtime.try_list_projects_with_online_agent_counts_for_route() {
+            Ok(projects) => projects,
+            Err(error) => {
+                return Some(DaemonRouteResponse::json(
+                    500,
+                    json!({ "ok": false, "error": error }),
+                ));
+            }
+        };
         return Some(DaemonRouteResponse::json(
             200,
             json!({ "ok": true, "projects": projects }),

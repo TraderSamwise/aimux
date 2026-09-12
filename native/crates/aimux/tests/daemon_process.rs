@@ -1,3 +1,4 @@
+use aimux::async_runtime::{AsyncTaskKind, doctor_tasks_report, process_runtime, spawn_named};
 use aimux::daemon::core_commands::{CoreCommandFailure, DaemonCoreCommandRuntime};
 use aimux::daemon::json::{
     DaemonJsonRouteRuntime, ExposeFocusRequest, ProxyBinaryResponse, ProxyJsonResponse,
@@ -32,7 +33,7 @@ use aimux::hosted_principals::{HostedGrant, HostedPrincipalsStore};
 use aimux::hosted_server::{
     HostedServerState, HostedStreamLimits, handle_hosted_daemon_request,
     handle_hosted_daemon_request_from_peer, handle_hosted_daemon_stream,
-    start_hosted_server_background,
+    handle_hosted_daemon_stream_async, start_hosted_server_background,
 };
 use aimux::paths::PathResolver;
 use serde_json::{Map, Value, json};
@@ -41,13 +42,16 @@ use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicUsize, Ordering},
     mpsc,
 };
+use std::task::{Context, Poll};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 #[derive(Debug, Clone)]
 struct FakeRuntime {
@@ -55,6 +59,8 @@ struct FakeRuntime {
     projects: Vec<ProjectsRouteProject>,
     proxy_json: ProxyJsonResponse,
     proxy_binary: ProxyBinaryResponse,
+    proxy_json_gate: Option<Arc<BlockingProxyGate>>,
+    list_projects_gate: Option<Arc<BlockingProxyGate>>,
 }
 
 impl FakeRuntime {
@@ -71,6 +77,8 @@ impl FakeRuntime {
                 body: Vec::new(),
                 content_type: Some("image/png".into()),
             },
+            proxy_json_gate: None,
+            list_projects_gate: None,
         }
     }
 
@@ -93,6 +101,99 @@ impl FakeRuntime {
     }
 }
 
+#[derive(Debug)]
+struct BlockingProxyGate {
+    entered: Mutex<Option<mpsc::Sender<()>>>,
+    release: Mutex<mpsc::Receiver<()>>,
+}
+
+impl BlockingProxyGate {
+    fn new() -> (Arc<Self>, mpsc::Receiver<()>, mpsc::Sender<()>) {
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        (
+            Arc::new(Self {
+                entered: Mutex::new(Some(entered_tx)),
+                release: Mutex::new(release_rx),
+            }),
+            entered_rx,
+            release_tx,
+        )
+    }
+
+    fn wait(&self) {
+        if let Some(sender) = self.entered.lock().expect("entered lock").take() {
+            sender.send(()).expect("signal proxy entered");
+        }
+        self.release
+            .lock()
+            .expect("release lock")
+            .recv_timeout(Duration::from_secs(2))
+            .expect("release blocked proxy request");
+    }
+}
+
+struct ResettingAsyncHttpStream {
+    input: Vec<u8>,
+    offset: usize,
+    output: Vec<u8>,
+    reset_after_written: usize,
+}
+
+impl ResettingAsyncHttpStream {
+    fn new(input: &[u8], reset_after_written: usize) -> Self {
+        Self {
+            input: input.to_vec(),
+            offset: 0,
+            output: Vec::new(),
+            reset_after_written,
+        }
+    }
+}
+
+impl AsyncRead for ResettingAsyncHttpStream {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        if self.offset >= self.input.len() {
+            return Poll::Ready(Ok(()));
+        }
+        let remaining = &self.input[self.offset..];
+        let count = remaining.len().min(buf.remaining());
+        buf.put_slice(&remaining[..count]);
+        self.offset += count;
+        Poll::Ready(Ok(()))
+    }
+}
+
+impl AsyncWrite for ResettingAsyncHttpStream {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        if self.output.len() >= self.reset_after_written {
+            return Poll::Ready(Err(std::io::Error::new(
+                std::io::ErrorKind::ConnectionReset,
+                "injected client reset",
+            )));
+        }
+        let writable = (self.reset_after_written - self.output.len()).min(buf.len());
+        self.output.extend_from_slice(&buf[..writable]);
+        Poll::Ready(Ok(writable))
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+}
+
 impl DaemonStatusRuntime for FakeRuntime {
     fn current_daemon_info(&self, issued_at: &str) -> AimuxDaemonInfo {
         AimuxDaemonInfo {
@@ -108,6 +209,9 @@ impl DaemonStatusRuntime for FakeRuntime {
     }
 
     fn list_projects_for_route(&self) -> Vec<ProjectsRouteProject> {
+        if let Some(gate) = &self.list_projects_gate {
+            gate.wait();
+        }
         self.projects.clone()
     }
 
@@ -214,6 +318,9 @@ impl DaemonJsonRouteRuntime for FakeRuntime {
             "proxy-json:{method}:{target_url}:{}",
             body.cloned().unwrap_or(Value::Null)
         ));
+        if let Some(gate) = &self.proxy_json_gate {
+            gate.wait();
+        }
         Ok(self.proxy_json.clone())
     }
 
@@ -1013,6 +1120,63 @@ fn unix_millis(time: SystemTime) -> u128 {
         .as_millis()
 }
 
+fn unused_loopback_port() -> u16 {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind unused port");
+    listener.local_addr().expect("unused port addr").port()
+}
+
+fn connect_loopback_port(port: u16) -> TcpStream {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        match TcpStream::connect(("127.0.0.1", port)) {
+            Ok(stream) => return stream,
+            Err(error) if Instant::now() < deadline => {
+                assert!(
+                    matches!(
+                        error.kind(),
+                        std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::TimedOut
+                    ),
+                    "unexpected hosted connect error: {error}"
+                );
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => panic!("connect hosted listener on {port}: {error}"),
+        }
+    }
+}
+
+fn read_socket_text(stream: &mut TcpStream) -> String {
+    let mut bytes = Vec::new();
+    stream.read_to_end(&mut bytes).expect("read socket");
+    String::from_utf8(bytes).expect("socket utf8")
+}
+
+fn wait_for_async_task(name: &str) -> Option<aimux::async_runtime::AsyncTaskSnapshot> {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
+        if let Some(task) = doctor_tasks_report()
+            .tasks
+            .into_iter()
+            .find(|task| task.name == name)
+        {
+            return Some(task);
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    None
+}
+
+fn join_hosted_exchange(hosted: tokio::task::JoinHandle<()>, client: tokio::task::JoinHandle<()>) {
+    process_runtime()
+        // aimux-async-seam: test - hosted stream test awaits paired async exchange
+        .block_on(hosted)
+        .expect("hosted async task");
+    process_runtime()
+        // aimux-async-seam: test - hosted stream test awaits paired async exchange
+        .block_on(client)
+        .expect("client async task");
+}
+
 #[test]
 fn runtime_processor_routes_health_through_status_contract() {
     let mut runtime = FakeRuntime::empty();
@@ -1099,6 +1263,153 @@ fn hosted_server_startup_is_default_off() {
     .expect("hosted startup decision");
 
     assert!(handle.is_none());
+}
+
+#[test]
+fn hosted_server_accept_loop_and_connections_are_async_tasks() {
+    let fixture = HostedFixture::new("async-listener");
+    let runtime = Arc::new(Mutex::new(FakeRuntime::empty()));
+    let port = unused_loopback_port();
+
+    let handle = start_hosted_server_background(
+        HostedConfig {
+            enabled: true,
+            port,
+            ..HostedConfig::default()
+        },
+        fixture.resolver.clone(),
+        Arc::clone(&runtime),
+    )
+    .expect("hosted startup")
+    .expect("hosted server starts");
+
+    let listener_task = wait_for_async_task("hosted:listener").expect("hosted listener task");
+    assert_eq!(listener_task.kind, AsyncTaskKind::Async);
+    let prune_task = wait_for_async_task("hosted:prune").expect("hosted prune task");
+    assert_eq!(prune_task.kind, AsyncTaskKind::Blocking);
+    let outbox_task = wait_for_async_task("hosted:outbox-drain").expect("hosted outbox drain task");
+    assert_eq!(outbox_task.kind, AsyncTaskKind::Blocking);
+
+    let client = connect_loopback_port(port);
+    let connection_task =
+        wait_for_async_task("hosted:connection 127.0.0.1").expect("hosted connection task");
+    assert_eq!(connection_task.kind, AsyncTaskKind::Async);
+
+    drop(client);
+    handle.abort();
+}
+
+#[test]
+fn hosted_listener_caps_idle_connections_before_request_parse() {
+    let fixture = HostedFixture::new("preauth-connection-cap");
+    let runtime = Arc::new(Mutex::new(FakeRuntime::empty()));
+    let port = unused_loopback_port();
+    let handle = start_hosted_server_background(
+        HostedConfig {
+            enabled: true,
+            port,
+            rate_limit: HostedRateLimitConfig {
+                requests_per_minute: 60,
+                max_concurrent: 1,
+                bytes_per_minute: 1024 * 1024,
+            },
+            ..HostedConfig::default()
+        },
+        fixture.resolver.clone(),
+        Arc::clone(&runtime),
+    )
+    .expect("hosted startup")
+    .expect("hosted server starts");
+
+    let first_idle = connect_loopback_port(port);
+    let mut second = connect_loopback_port(port);
+    second
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .expect("second timeout");
+    let denied = read_socket_text(&mut second);
+    assert!(
+        denied.starts_with("HTTP/1.1 429 Too Many Requests\r\n"),
+        "unexpected denial response: {denied}"
+    );
+
+    thread::sleep(Duration::from_millis(1_500));
+    drop(first_idle);
+    let mut third = connect_loopback_port(port);
+    third
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .expect("third timeout");
+    third
+        .write_all(b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+        .expect("write health");
+    let accepted = read_socket_text(&mut third);
+    assert!(
+        accepted.starts_with("HTTP/1.1 200 OK\r\n"),
+        "connection slot was not released after idle timeout: {accepted}"
+    );
+
+    handle.abort();
+}
+
+#[test]
+fn hosted_listener_connection_cap_does_not_consume_request_peer_slot() {
+    let fixture = HostedFixture::new("preauth-cap-does-not-double-charge");
+    let token = grant_hosted_operator(&fixture.resolver, "grand", "/repo", "s");
+    let mut runtime = FakeRuntime::empty();
+    runtime.projects = vec![hosted_project("/repo", 43210, true)];
+    let runtime = Arc::new(Mutex::new(runtime));
+    let port = unused_loopback_port();
+    let handle = start_hosted_server_background(
+        HostedConfig {
+            enabled: true,
+            port,
+            rate_limit: HostedRateLimitConfig {
+                requests_per_minute: 60,
+                max_concurrent: 1,
+                bytes_per_minute: 1024 * 1024,
+            },
+            ..HostedConfig::default()
+        },
+        fixture.resolver.clone(),
+        Arc::clone(&runtime),
+    )
+    .expect("hosted startup")
+    .expect("hosted server starts");
+
+    let mut client = connect_loopback_port(port);
+    client
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .expect("client timeout");
+    write!(
+        client,
+        "GET /proxy/127.0.0.1/43210/agents/output?sessionId=s HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {token}\r\n\r\n"
+    )
+    .expect("write request");
+    let response = read_socket_text(&mut client);
+    assert!(
+        response.starts_with("HTTP/1.1 200 OK\r\n"),
+        "preauth connection cap consumed the request peer slot: {response}"
+    );
+    assert_eq!(
+        runtime.lock().expect("runtime").calls,
+        vec!["proxy-json:GET:http://127.0.0.1:43210/agents/output?sessionId=s:null"]
+    );
+
+    handle.abort();
+}
+
+#[test]
+fn hosted_background_workers_are_named_runtime_tasks_not_bare_threads() {
+    let source = include_str!("../src/hosted_server.rs");
+    let production_source = source
+        .split("#[cfg(test)]")
+        .next()
+        .expect("production source");
+    assert!(
+        !production_source.contains("thread::spawn("),
+        "hosted background workers must use named async-runtime tasks"
+    );
+    assert!(production_source.contains("task_name(\"hosted\", \"prune\")"));
+    assert!(production_source.contains("task_name(\"hosted\", \"outbox-drain\")"));
 }
 
 #[test]
@@ -1402,6 +1713,560 @@ fn hosted_peer_limiter_uses_separate_client_buckets() {
         Some("198.51.100.2"),
     );
     assert_eq!(other_peer.status, 401);
+}
+
+#[test]
+fn hosted_listener_socket_forwards_operator_stream_headers_and_first_event() {
+    let fixture = HostedFixture::new("listener-stream");
+    let upstream = HeldSseServer::spawn();
+    let token = grant_hosted_operator(&fixture.resolver, "grand", "/repo", "s");
+    let mut runtime = FakeRuntime::empty();
+    runtime.projects = vec![hosted_project("/repo", upstream.port as u64, true)];
+    let runtime = Arc::new(Mutex::new(runtime));
+    let port = unused_loopback_port();
+    let handle = start_hosted_server_background(
+        HostedConfig {
+            enabled: true,
+            port,
+            ..HostedConfig::default()
+        },
+        fixture.resolver.clone(),
+        Arc::clone(&runtime),
+    )
+    .expect("hosted startup")
+    .expect("hosted server starts");
+
+    let mut client = connect_loopback_port(port);
+    client
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .expect("read timeout");
+    write!(
+        client,
+        "GET /proxy/127.0.0.1/{}/agents/output/stream?sessionId=s HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {token}\r\n\r\n",
+        upstream.port
+    )
+    .expect("write stream request");
+
+    let mut response = Vec::new();
+    let mut buffer = [0_u8; 1024];
+    while !response
+        .windows(b"data: first".len())
+        .any(|window| window == b"data: first")
+    {
+        let count = client.read(&mut buffer).expect("read hosted stream");
+        assert_ne!(count, 0, "hosted listener closed before stream event");
+        response.extend_from_slice(&buffer[..count]);
+    }
+    drop(client);
+    upstream.stop();
+    handle.abort();
+
+    let response = String::from_utf8(response).expect("stream response utf8");
+    assert!(
+        response.starts_with("HTTP/1.1 200 OK\r\n"),
+        "unexpected response: {response}"
+    );
+    assert!(response.contains("content-type: text/event-stream\r\n"));
+    assert!(response.contains("data: first"));
+    let audit = HostedAuditStore::with_resolver(fixture.resolver.clone()).tail_audit(10);
+    assert!(audit.iter().any(|entry| {
+        entry.event.as_deref() == Some("hosted_stream_open")
+            && entry.session_id.as_deref() == Some("s")
+    }));
+}
+
+#[test]
+fn async_hosted_operator_stream_stops_after_principal_revocation() {
+    let fixture = HostedFixture::new("async-stream-revoked");
+    let upstream = HeldSseServer::spawn();
+    let store = HostedPrincipalsStore::with_resolver(fixture.resolver.clone());
+    let (principal, token) = store.create_principal("grand").expect("create principal");
+    store
+        .grant_session(
+            &principal.id,
+            HostedGrant {
+                project_root: "/repo".into(),
+                session_id: "s".into(),
+            },
+        )
+        .expect("grant principal");
+    let mut runtime = FakeRuntime::empty();
+    runtime.projects = vec![hosted_project("/repo", upstream.port as u64, true)];
+    let runtime = Arc::new(Mutex::new(runtime));
+    let state = Arc::new(HostedServerState::with_resolver_and_stream_limits(
+        HostedConfig {
+            enabled: true,
+            ..HostedConfig::default()
+        },
+        fixture.resolver.clone(),
+        HostedStreamLimits {
+            max_per_principal: 2,
+            max_lifetime_ms: 10_000,
+            idle_timeout_ms: 10_000,
+            max_bytes: 1024 * 1024,
+            reauth_interval_ms: 250,
+        },
+    ));
+    let request = format!(
+        "GET /proxy/127.0.0.1/{}/agents/output/stream?sessionId=s HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {token}\r\n\r\n",
+        upstream.port
+    );
+    let (done_tx, done_rx) = mpsc::channel();
+    let (mut client_stream, mut server_stream) = tokio::io::duplex(16 * 1024);
+    let client = spawn_named("hosted-test:async-client", async move {
+        tokio::io::AsyncWriteExt::write_all(&mut client_stream, request.as_bytes())
+            .await
+            .expect("write request");
+        let mut output = Vec::new();
+        tokio::io::AsyncReadExt::read_to_end(&mut client_stream, &mut output)
+            .await
+            .expect("read response");
+        done_tx.send(output).expect("send output");
+    });
+    let handle_runtime = Arc::clone(&runtime);
+    let handle_state = Arc::clone(&state);
+    let intercept_runtime = Arc::clone(&runtime);
+    let intercept_state = Arc::clone(&state);
+    let hosted = spawn_named("hosted-test:async-stream", async move {
+        handle_hosted_daemon_stream_async(
+            &handle_runtime,
+            &handle_state,
+            &intercept_runtime,
+            &intercept_state,
+            &mut server_stream,
+            aimux::daemon::listener::DaemonRequestMetadata {
+                issued_at: "issued".into(),
+                stopping: false,
+            },
+            None,
+        )
+        .await
+        .expect("hosted stream handled");
+    });
+
+    upstream.wait_until_open();
+    store
+        .revoke_principal(&principal.id)
+        .expect("revoke principal");
+    let output = match done_rx.recv_timeout(Duration::from_secs(2)) {
+        Ok(output) => output,
+        Err(error) => {
+            upstream.stop();
+            panic!("async stream did not stop after revocation: {error}");
+        }
+    };
+    upstream.stop();
+    join_hosted_exchange(hosted, client);
+
+    let response = String::from_utf8(output).expect("stream response");
+    assert!(
+        response.starts_with("HTTP/1.1 200 OK\r\n"),
+        "unexpected response: {response}"
+    );
+    assert!(response.contains("content-type: text/event-stream\r\n"));
+    let audit = HostedAuditStore::with_resolver(fixture.resolver.clone()).tail_audit(10);
+    assert!(audit.iter().any(|entry| {
+        entry.event.as_deref() == Some("hosted_stream_closed:revoked")
+            && entry.session_id.as_deref() == Some("s")
+    }));
+}
+
+#[test]
+fn async_hosted_stream_slot_is_released_when_future_is_cancelled() {
+    let fixture = HostedFixture::new("async-stream-cancel-slot");
+    let first_upstream = HeldSseServer::spawn();
+    let second_upstream = HeldSseServer::spawn();
+    let token = grant_hosted_operator(&fixture.resolver, "grand", "/repo", "s");
+    let mut runtime = FakeRuntime::empty();
+    runtime.projects = vec![hosted_project("/repo", first_upstream.port as u64, true)];
+    let runtime = Arc::new(Mutex::new(runtime));
+    let state = Arc::new(HostedServerState::with_resolver_and_stream_limits(
+        HostedConfig {
+            enabled: true,
+            ..HostedConfig::default()
+        },
+        fixture.resolver.clone(),
+        HostedStreamLimits {
+            max_per_principal: 1,
+            max_lifetime_ms: 10_000,
+            idle_timeout_ms: 10_000,
+            max_bytes: 1024 * 1024,
+            reauth_interval_ms: 250,
+        },
+    ));
+    let first_request = format!(
+        "GET /proxy/127.0.0.1/{}/agents/output/stream?sessionId=s HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {token}\r\n\r\n",
+        first_upstream.port
+    );
+    let (mut first_client, mut first_server) = tokio::io::duplex(16 * 1024);
+    process_runtime()
+        // aimux-async-seam: test - stream cancellation test primes an async request
+        .block_on(tokio::io::AsyncWriteExt::write_all(
+            &mut first_client,
+            first_request.as_bytes(),
+        ))
+        .expect("write first request");
+    let first_handle_runtime = Arc::clone(&runtime);
+    let first_handle_state = Arc::clone(&state);
+    let first_intercept_runtime = Arc::clone(&runtime);
+    let first_intercept_state = Arc::clone(&state);
+    let first_hosted = spawn_named("hosted-test:async-stream-cancelled", async move {
+        handle_hosted_daemon_stream_async(
+            &first_handle_runtime,
+            &first_handle_state,
+            &first_intercept_runtime,
+            &first_intercept_state,
+            &mut first_server,
+            aimux::daemon::listener::DaemonRequestMetadata {
+                issued_at: "issued".into(),
+                stopping: false,
+            },
+            None,
+        )
+        .await
+        .expect("first hosted stream handled");
+    });
+
+    first_upstream.wait_until_open();
+    first_hosted.abort();
+    let _ = process_runtime()
+        // aimux-async-seam: test - stream cancellation test observes aborted task
+        .block_on(first_hosted);
+    drop(first_client);
+    first_upstream.stop();
+    runtime.lock().expect("runtime").projects =
+        vec![hosted_project("/repo", second_upstream.port as u64, true)];
+
+    let second_request = format!(
+        "GET /proxy/127.0.0.1/{}/agents/output/stream?sessionId=s HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {token}\r\n\r\n",
+        second_upstream.port
+    );
+    let (done_tx, done_rx) = mpsc::channel();
+    let (mut second_client, mut second_server) = tokio::io::duplex(16 * 1024);
+    let client = spawn_named("hosted-test:async-stream-after-cancel-client", async move {
+        tokio::io::AsyncWriteExt::write_all(&mut second_client, second_request.as_bytes())
+            .await
+            .expect("write second request");
+        let mut output = Vec::new();
+        let mut buffer = [0_u8; 1024];
+        while !output
+            .windows(b"data: first".len())
+            .any(|window| window == b"data: first")
+        {
+            let count = tokio::io::AsyncReadExt::read(&mut second_client, &mut buffer)
+                .await
+                .expect("read second response");
+            if count == 0 {
+                break;
+            }
+            output.extend_from_slice(&buffer[..count]);
+        }
+        done_tx.send(output).expect("send second output");
+    });
+    let second_handle_runtime = Arc::clone(&runtime);
+    let second_handle_state = Arc::clone(&state);
+    let second_intercept_runtime = Arc::clone(&runtime);
+    let second_intercept_state = Arc::clone(&state);
+    let hosted = spawn_named("hosted-test:async-stream-after-cancel", async move {
+        handle_hosted_daemon_stream_async(
+            &second_handle_runtime,
+            &second_handle_state,
+            &second_intercept_runtime,
+            &second_intercept_state,
+            &mut second_server,
+            aimux::daemon::listener::DaemonRequestMetadata {
+                issued_at: "issued".into(),
+                stopping: false,
+            },
+            None,
+        )
+        .await
+        .expect("second hosted stream handled");
+    });
+
+    second_upstream.wait_until_open();
+    let output = done_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("second stream response");
+    second_upstream.stop();
+    join_hosted_exchange(hosted, client);
+
+    let response = String::from_utf8(output).expect("response utf8");
+    assert!(
+        response.starts_with("HTTP/1.1 200 OK\r\n"),
+        "stream slot leaked after cancellation: {response}"
+    );
+    assert!(response.contains("data: first"));
+}
+
+#[test]
+fn async_hosted_operator_stream_resolves_project_on_named_blocking_task() {
+    let fixture = HostedFixture::new("async-stream-blocking-route");
+    let upstream = HeldSseServer::spawn();
+    let token = grant_hosted_operator(&fixture.resolver, "grand", "/repo", "s");
+    let (gate, entered_rx, release_tx) = BlockingProxyGate::new();
+    let mut runtime = FakeRuntime::empty();
+    runtime.projects = vec![hosted_project("/repo", upstream.port as u64, true)];
+    runtime.list_projects_gate = Some(gate);
+    let runtime = Arc::new(Mutex::new(runtime));
+    let state = Arc::new(HostedServerState::with_resolver_and_stream_limits(
+        HostedConfig {
+            enabled: true,
+            ..HostedConfig::default()
+        },
+        fixture.resolver.clone(),
+        HostedStreamLimits {
+            max_per_principal: 2,
+            max_lifetime_ms: 10_000,
+            idle_timeout_ms: 10_000,
+            max_bytes: 1024 * 1024,
+            reauth_interval_ms: 250,
+        },
+    ));
+    let request = format!(
+        "GET /proxy/127.0.0.1/{}/agents/output/stream?sessionId=s HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {token}\r\n\r\n",
+        upstream.port
+    );
+    let (done_tx, done_rx) = mpsc::channel();
+    let (mut client_stream, mut server_stream) = tokio::io::duplex(16 * 1024);
+    let client = spawn_named("hosted-test:async-stream-route-client", async move {
+        tokio::io::AsyncWriteExt::write_all(&mut client_stream, request.as_bytes())
+            .await
+            .expect("write request");
+        let mut output = Vec::new();
+        let mut buffer = [0_u8; 1024];
+        while !output
+            .windows(b"data: first".len())
+            .any(|window| window == b"data: first")
+        {
+            let count = tokio::io::AsyncReadExt::read(&mut client_stream, &mut buffer)
+                .await
+                .expect("read response");
+            if count == 0 {
+                break;
+            }
+            output.extend_from_slice(&buffer[..count]);
+        }
+        done_tx.send(output).expect("send output");
+    });
+    let handle_runtime = Arc::clone(&runtime);
+    let handle_state = Arc::clone(&state);
+    let intercept_runtime = Arc::clone(&runtime);
+    let intercept_state = Arc::clone(&state);
+    let hosted = spawn_named("hosted-test:async-stream-route", async move {
+        handle_hosted_daemon_stream_async(
+            &handle_runtime,
+            &handle_state,
+            &intercept_runtime,
+            &intercept_state,
+            &mut server_stream,
+            aimux::daemon::listener::DaemonRequestMetadata {
+                issued_at: "issued".into(),
+                stopping: false,
+            },
+            None,
+        )
+        .await
+        .expect("hosted stream handled");
+    });
+
+    entered_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("stream route reached runtime");
+    let route_task = wait_for_async_task("hosted:stream-route");
+    release_tx.send(()).expect("release stream route");
+    upstream.wait_until_open();
+    let output = done_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("hosted stream response");
+    upstream.stop();
+    join_hosted_exchange(hosted, client);
+
+    let route_task = route_task.expect("hosted stream route task should be visible while blocked");
+    assert_eq!(route_task.kind, AsyncTaskKind::Blocking);
+    let response = String::from_utf8(output).expect("response utf8");
+    assert!(
+        response.starts_with("HTTP/1.1 200 OK\r\n"),
+        "unexpected response: {response}"
+    );
+    assert!(response.contains("content-type: text/event-stream\r\n"));
+    assert!(response.contains("data: first"));
+}
+
+#[test]
+fn async_hosted_connection_forwards_non_stream_proxy_response() {
+    let fixture = HostedFixture::new("async-non-stream-proxy");
+    let token = grant_hosted_operator(&fixture.resolver, "grand", "/repo", "s");
+    let mut runtime = FakeRuntime::empty();
+    runtime.projects = vec![hosted_project("/repo", 43210, true)];
+    let runtime = Arc::new(Mutex::new(runtime));
+    let state = Arc::new(fixture.state(HostedConfig {
+        enabled: true,
+        ..HostedConfig::default()
+    }));
+    let request = format!(
+        "GET /proxy/127.0.0.1/43210/agents/output?sessionId=s HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {token}\r\n\r\n",
+    );
+
+    let (done_tx, done_rx) = mpsc::channel();
+    let (mut client_stream, mut server_stream) = tokio::io::duplex(16 * 1024);
+    let client = spawn_named("hosted-test:async-non-stream-client", async move {
+        tokio::io::AsyncWriteExt::write_all(&mut client_stream, request.as_bytes())
+            .await
+            .expect("write request");
+        let mut output = Vec::new();
+        tokio::io::AsyncReadExt::read_to_end(&mut client_stream, &mut output)
+            .await
+            .expect("read response");
+        done_tx.send(output).expect("send output");
+    });
+    let handle_runtime = Arc::clone(&runtime);
+    let handle_state = Arc::clone(&state);
+    let intercept_runtime = Arc::clone(&runtime);
+    let intercept_state = Arc::clone(&state);
+    let hosted = spawn_named("hosted-test:async-non-stream", async move {
+        handle_hosted_daemon_stream_async(
+            &handle_runtime,
+            &handle_state,
+            &intercept_runtime,
+            &intercept_state,
+            &mut server_stream,
+            aimux::daemon::listener::DaemonRequestMetadata {
+                issued_at: "issued".into(),
+                stopping: false,
+            },
+            None,
+        )
+        .await
+        .expect("hosted request handled");
+    });
+
+    let output = done_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("hosted response");
+    join_hosted_exchange(hosted, client);
+
+    let response = String::from_utf8(output).expect("response utf8");
+    assert!(
+        response.starts_with("HTTP/1.1 200 OK\r\n"),
+        "unexpected response: {response}"
+    );
+    assert!(response.contains(r#""ok":true"#), "response: {response}");
+    assert!(runtime.lock().expect("runtime").calls.contains(
+        &"proxy-json:GET:http://127.0.0.1:43210/agents/output?sessionId=s:null".to_owned()
+    ));
+}
+
+#[test]
+#[ignore = "proof test for gqaapg-1: current hosted proxy handler surfaces a reset mid-response as a handler error"]
+fn async_hosted_non_stream_proxy_handles_client_reset_mid_response() {
+    let fixture = HostedFixture::new("async-non-stream-proxy-reset");
+    let token = grant_hosted_operator(&fixture.resolver, "grand", "/repo", "s");
+    let mut runtime = FakeRuntime::empty();
+    runtime.projects = vec![hosted_project("/repo", 43210, true)];
+    let runtime = Arc::new(Mutex::new(runtime));
+    let state = Arc::new(fixture.state(HostedConfig {
+        enabled: true,
+        ..HostedConfig::default()
+    }));
+    let request = format!(
+        "GET /proxy/127.0.0.1/43210/agents/output?sessionId=s HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {token}\r\n\r\n",
+    );
+    let mut stream = ResettingAsyncHttpStream::new(request.as_bytes(), 16);
+
+    let result = process_runtime()
+        // aimux-async-seam: test - hosted reset proof drives async stream handler directly
+        .block_on(handle_hosted_daemon_stream_async(
+            &runtime,
+            &state,
+            &runtime,
+            &state,
+            &mut stream,
+            aimux::daemon::listener::DaemonRequestMetadata {
+                issued_at: "issued".into(),
+                stopping: false,
+            },
+            None,
+        ));
+
+    assert!(
+        result.is_ok(),
+        "a client reset while writing the proxy response must be handled as a connection close"
+    );
+    assert!(
+        stream.output.starts_with(b"HTTP/1.1 200 OK"),
+        "reset should happen mid-response after the hosted proxy begins writing"
+    );
+}
+
+#[test]
+fn async_hosted_non_stream_proxy_runs_on_named_blocking_task() {
+    let fixture = HostedFixture::new("async-non-stream-proxy-blocking-task");
+    let token = grant_hosted_operator(&fixture.resolver, "grand", "/repo", "s");
+    let (gate, entered_rx, release_tx) = BlockingProxyGate::new();
+    let mut runtime = FakeRuntime::empty();
+    runtime.projects = vec![hosted_project("/repo", 43210, true)];
+    runtime.proxy_json_gate = Some(gate);
+    let runtime = Arc::new(Mutex::new(runtime));
+    let state = Arc::new(fixture.state(HostedConfig {
+        enabled: true,
+        ..HostedConfig::default()
+    }));
+    let request = format!(
+        "GET /proxy/127.0.0.1/43210/agents/output?sessionId=s HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {token}\r\n\r\n",
+    );
+
+    let (done_tx, done_rx) = mpsc::channel();
+    let (mut client_stream, mut server_stream) = tokio::io::duplex(16 * 1024);
+    let client = spawn_named("hosted-test:async-non-stream-blocking-client", async move {
+        tokio::io::AsyncWriteExt::write_all(&mut client_stream, request.as_bytes())
+            .await
+            .expect("write request");
+        let mut output = Vec::new();
+        tokio::io::AsyncReadExt::read_to_end(&mut client_stream, &mut output)
+            .await
+            .expect("read response");
+        done_tx.send(output).expect("send output");
+    });
+    let handle_runtime = Arc::clone(&runtime);
+    let handle_state = Arc::clone(&state);
+    let intercept_runtime = Arc::clone(&runtime);
+    let intercept_state = Arc::clone(&state);
+    let hosted = spawn_named("hosted-test:async-non-stream-blocking-seam", async move {
+        handle_hosted_daemon_stream_async(
+            &handle_runtime,
+            &handle_state,
+            &intercept_runtime,
+            &intercept_state,
+            &mut server_stream,
+            aimux::daemon::listener::DaemonRequestMetadata {
+                issued_at: "issued".into(),
+                stopping: false,
+            },
+            None,
+        )
+        .await
+        .expect("hosted request handled");
+    });
+
+    entered_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("proxy request reached runtime");
+    let route_task = wait_for_async_task("hosted:route");
+    release_tx.send(()).expect("release proxy request");
+    let output = done_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("hosted response");
+    join_hosted_exchange(hosted, client);
+
+    let route_task = route_task.expect("hosted route task should be visible while proxy blocks");
+    assert_eq!(route_task.kind, AsyncTaskKind::Blocking);
+    let response = String::from_utf8(output).expect("response utf8");
+    assert!(
+        response.starts_with("HTTP/1.1 200 OK\r\n"),
+        "unexpected response: {response}"
+    );
+    assert!(response.contains(r#""ok":true"#), "response: {response}");
 }
 
 #[test]

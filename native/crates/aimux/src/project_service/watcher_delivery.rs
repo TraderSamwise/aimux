@@ -1,28 +1,31 @@
 //! Sending text to an agent from a scheduled task.
 //!
-//! One send is roughly a tmux spawn per line, and tmux has no timeout of its
-//! own, so a wedged server would block the single scheduler thread forever and
-//! silence every other task. Every watcher therefore delivers off the rail with
-//! a bounded wait. A held delivery is a successful handoff to the queued input
-//! rail, not a failed send; otherwise loop checks burn ten seconds waiting for a
-//! fifteen second human-input dwell window they are not responsible for owning.
+//! One send is roughly a tmux spawn per line, so watcher turns use a bounded
+//! runtime and run inside the Tokio scheduler's per-task timeout. A held
+//! delivery is a successful handoff to the queued input task, not a failed send;
+//! the watcher is not responsible for owning a human-input dwell window.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc;
-use std::thread;
+use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
 use crate::project_api_contract::routes;
 
-use super::agent_output::{
-    BoundedAgentOutputCaptureRuntime, route_agent_output_request_with_runtime,
+use super::agent_input_delivery::{
+    AgentInputDeliveryDecision, decide_agent_input_delivery, enqueue_agent_input_delivery,
+    record_agent_input_delivery_probe_failure,
 };
+use super::agent_output::{
+    AgentOutputResponseMode, BoundedAgentOutputCaptureRuntime, deliver_prompt_to_tmux_async,
+    read_agent_output_payload_async, resolve_live_window_id,
+    route_agent_output_request_with_runtime,
+};
+use super::prompt_context::{compose_with_prompt_context, get_prompt_context_text};
 use super::router::ProjectServiceRequestContext;
 
-/// How long a single delivery may take before the rail gives up on it.
+/// How long a single delivery may take before the tick loop gives up on it.
 pub const DELIVERY_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,24 +46,20 @@ pub fn deliver_agent_input(
     session_id: &str,
     text: &str,
 ) -> bool {
-    let (tx, rx) = mpsc::channel();
     let cancelled = Arc::new(AtomicBool::new(false));
     let deadline = Instant::now() + DELIVERY_TIMEOUT;
-    let worker_cancelled = Arc::clone(&cancelled);
-    let session_id = session_id.to_owned();
-    let text = text.to_owned();
-    thread::spawn(move || {
-        let mut runtime = BoundedAgentOutputCaptureRuntime::new(deadline, worker_cancelled);
-        let result = deliver_agent_input_with_runtime(&context, &session_id, &text, &mut runtime);
-        let _ = tx.send(result);
-    });
-    match rx.recv_timeout(DELIVERY_TIMEOUT) {
-        Ok(result) => result.consumes_cooldown(),
-        Err(_) => {
-            cancelled.store(true, Ordering::SeqCst);
-            false
-        }
-    }
+    let mut runtime = BoundedAgentOutputCaptureRuntime::new(deadline, cancelled);
+    deliver_agent_input_with_runtime(&context, session_id, text, &mut runtime).consumes_cooldown()
+}
+
+pub async fn deliver_agent_input_async(
+    context: Arc<ProjectServiceRequestContext>,
+    session_id: &str,
+    text: &str,
+) -> bool {
+    deliver_agent_input_direct_async(&context, session_id, text)
+        .await
+        .consumes_cooldown()
 }
 
 pub fn deliver_agent_input_with_runtime(
@@ -93,67 +92,115 @@ pub fn deliver_agent_input_with_runtime(
     }
 }
 
-/// How long a single pane read may take before the rail gives up on it.
+async fn deliver_agent_input_direct_async(
+    context: &ProjectServiceRequestContext,
+    session_id: &str,
+    text: &str,
+) -> WatcherDeliveryResult {
+    let Some(window_id) = resolve_live_window_id(context, session_id) else {
+        return WatcherDeliveryResult::Failed;
+    };
+    let project_state_dir = context.project_state_dir();
+    let prompt_context = get_prompt_context_text(&project_state_dir, session_id);
+    let contextualized_text = compose_with_prompt_context(text, prompt_context.as_deref());
+    let prompt = crate::agent_prompt_delivery::normalize_submitted_prompt(&contextualized_text);
+    let now_ms = super::scheduler::scheduler_now_ms();
+    let activity =
+        super::agent_output::tmux_agent_input_window_activity_async(&window_id, DELIVERY_TIMEOUT)
+            .await;
+    let decision = decide_agent_input_delivery(false, activity, now_ms, now_ms);
+    if let AgentInputDeliveryDecision::Hold {
+        reason,
+        quiet_for_ms: _,
+        retry_after_ms: _,
+    } = decision
+    {
+        if enqueue_agent_input_delivery(context, session_id, &window_id, &prompt, &reason, now_ms)
+            .is_err()
+        {
+            return WatcherDeliveryResult::Failed;
+        }
+        if reason.starts_with("tmux client activity probe failed") {
+            record_agent_input_delivery_probe_failure(context, session_id, &reason);
+        }
+        context
+            .scheduler
+            .force_task_next_tick(super::agent_input_delivery::AGENT_INPUT_DELIVERY_TASK_NAME);
+        return WatcherDeliveryResult::Queued;
+    }
+    match deliver_prompt_to_tmux_async(&window_id, &prompt, DELIVERY_TIMEOUT).await {
+        Ok(()) => WatcherDeliveryResult::Delivered,
+        Err(_) => WatcherDeliveryResult::Failed,
+    }
+}
+
+/// How long a single pane read may take before the tick loop gives up on it.
 ///
 /// Shorter than a delivery: capturing a pane is one fast tmux call, and a scan
 /// may do a dozen of them.
 pub const READ_TIMEOUT: Duration = Duration::from_secs(3);
 
-/// Read an agent's bounded output tail, off the rail.
+/// Read an agent's bounded output tail.
 ///
 /// Same reasoning as delivery, and one more: the output cache holds its mutex
-/// across the capture, so a wedged pane read on the rail would stall every
-/// HTTP and SSE output read in the service, not just the watchers.
+/// across the capture, so a wedged pane read must be bounded before it reaches
+/// every HTTP and SSE output reader in the service.
 pub fn read_agent_output_tail(
     context: Arc<ProjectServiceRequestContext>,
     session_id: &str,
     start_line: i64,
 ) -> Option<String> {
-    let session_id = session_id.to_owned();
-    let (tx, rx) = mpsc::channel();
     let cancelled = Arc::new(AtomicBool::new(false));
     let deadline = Instant::now() + READ_TIMEOUT;
-    let worker_cancelled = Arc::clone(&cancelled);
-    thread::spawn(move || {
-        let mut runtime = BoundedAgentOutputCaptureRuntime::new(deadline, worker_cancelled);
-        let read = super::agent_output::read_agent_output_payload(
-            &context,
-            &session_id,
-            Some(start_line),
-            super::agent_output::AgentOutputResponseMode::Full,
-            &mut runtime,
-        )
-        .ok()
-        .and_then(|read| {
-            read.payload
-                .get("output")
-                .and_then(serde_json::Value::as_str)
-                .map(ToOwned::to_owned)
-        });
-        let _ = tx.send(read);
-    });
-    match rx.recv_timeout(READ_TIMEOUT) {
-        Ok(read) => read,
-        Err(_) => {
-            cancelled.store(true, Ordering::SeqCst);
-            None
-        }
-    }
+    let mut runtime = BoundedAgentOutputCaptureRuntime::new(deadline, cancelled);
+    super::agent_output::read_agent_output_payload(
+        &context,
+        session_id,
+        Some(start_line),
+        super::agent_output::AgentOutputResponseMode::Full,
+        &mut runtime,
+    )
+    .ok()
+    .and_then(|read| {
+        read.payload
+            .get("output")
+            .and_then(serde_json::Value::as_str)
+            .map(ToOwned::to_owned)
+    })
 }
 
-/// A wall-clock allowance for one task's turn on the rail.
+pub async fn read_agent_output_tail_async(
+    context: Arc<ProjectServiceRequestContext>,
+    session_id: &str,
+    start_line: i64,
+) -> Option<String> {
+    read_agent_output_payload_async(
+        &context,
+        session_id,
+        Some(start_line),
+        AgentOutputResponseMode::Full,
+        READ_TIMEOUT,
+    )
+    .await
+    .ok()
+    .and_then(|read| {
+        read.payload
+            .get("output")
+            .and_then(serde_json::Value::as_str)
+            .map(ToOwned::to_owned)
+    })
+}
+
+/// A wall-clock allowance for one task's turn on the tick loop.
 ///
-/// The rail is a single thread shared by every watcher and both plugin ticks,
-/// so a task that spends two minutes waiting on tmux does not just delay
-/// itself — it silences the 2s transcript tick for that whole window. Each
-/// watcher checks its budget between units of work and gives up the rest of
-/// the scan rather than holding the thread.
-pub struct RailBudget {
+/// Each watcher checks its budget between units of work and gives up the rest
+/// of the scan rather than overrunning its own scheduler turn.
+pub struct TickLoopBudget {
     started: std::time::Instant,
     allowance: Duration,
 }
 
-impl RailBudget {
+impl TickLoopBudget {
     pub fn new(allowance: Duration) -> Self {
         Self {
             started: std::time::Instant::now(),

@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
+use crate::async_subprocess::AsyncCommand;
 use crate::notification_delivery_guard::current_process_external_notification_refusal_reason;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -247,7 +247,7 @@ pub fn notification_test_json(attempt: &DesktopNotificationDeliveryResult) -> se
 }
 
 fn check_mac_notifier_helper(helper_path: &str) -> MacNotifierHelperCheck {
-    match Command::new(helper_path).arg("--check").output() {
+    match AsyncCommand::new(helper_path).arg("--check").output() {
         Ok(output) => MacNotifierHelperCheck {
             ok: output.status.success(),
             exit_code: output.status.code(),
@@ -272,7 +272,7 @@ fn run_notification_command(
     program: &str,
     args: &[String],
 ) -> DesktopNotificationDeliveryResult {
-    match Command::new(program).args(args).output() {
+    match AsyncCommand::new(program).args(args).output() {
         Ok(output) => DesktopNotificationDeliveryResult {
             transport,
             helper_path,

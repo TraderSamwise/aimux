@@ -128,6 +128,7 @@ pub enum CoreCliOperation {
     DoctorExchange,
     DoctorLifecycle,
     DoctorTmux,
+    DoctorTasks,
     DoctorInstalls,
     DoctorNotifications,
     NotificationsTest,
@@ -1993,7 +1994,10 @@ where
             },
             CoreCliFallback::None,
         ),
-        ("doctor", "disk" | "exchange" | "lifecycle" | "tmux" | "installs" | "notifications") => {
+        (
+            "doctor",
+            "disk" | "exchange" | "lifecycle" | "tmux" | "tasks" | "installs" | "notifications",
+        ) => {
             let parsed = parse_core_doctor_args(&args).expect("eligible doctor must parse");
             if parsed.subcommand == "disk" {
                 let project_root = parsed.project.as_deref().map(&resolve_project_root);
@@ -2023,6 +2027,16 @@ where
                 (
                     CoreCliOperation::DoctorNotifications,
                     CoreCliAction::DoctorNotifications,
+                    CoreCliFallback::None,
+                )
+            } else if parsed.subcommand == "tasks" {
+                let project_root = parsed.project.as_deref().map(&resolve_project_root);
+                (
+                    CoreCliOperation::DoctorTasks,
+                    CoreCliAction::TextRoute {
+                        path: doctor_tasks_text_path(project_root.as_deref(), parsed.json),
+                        body: None,
+                    },
                     CoreCliFallback::None,
                 )
             } else if parsed.subcommand == "exchange" {

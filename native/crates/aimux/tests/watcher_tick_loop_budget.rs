@@ -1,17 +1,17 @@
-//! The rail is one thread shared by every watcher and both plugin ticks, so a
-//! task that waits on tmux is not only slow — it silences everything else.
+//! Scheduler tasks run independently, but each watcher still needs a turn
+//! budget so a stuck dependency cannot make its own loop pile up forever.
 
 use aimux::project_service::scribe_watcher_task::{max_scan_candidates, scan_budget};
-use aimux::project_service::watcher_delivery::{DELIVERY_TIMEOUT, READ_TIMEOUT, RailBudget};
+use aimux::project_service::watcher_delivery::{DELIVERY_TIMEOUT, READ_TIMEOUT, TickLoopBudget};
 use std::time::Duration;
 
 #[test]
 fn a_budget_reports_spent_only_once_its_allowance_has_passed() {
-    let budget = RailBudget::new(Duration::from_secs(60));
+    let budget = TickLoopBudget::new(Duration::from_secs(60));
     assert!(!budget.spent());
     assert!(budget.remaining() > Duration::from_secs(50));
 
-    let spent = RailBudget::new(Duration::ZERO);
+    let spent = TickLoopBudget::new(Duration::ZERO);
     assert!(spent.spent());
     assert_eq!(spent.remaining(), Duration::ZERO);
 }
@@ -28,13 +28,13 @@ fn a_pane_read_is_bounded_far_tighter_than_a_delivery() {
 }
 
 #[test]
-fn a_scribe_scan_cannot_hold_the_rail_for_a_minute() {
+fn a_scribe_scan_cannot_hold_a_scheduler_turn_for_a_minute() {
     let worst_case_without_budget = READ_TIMEOUT * max_scan_candidates() as u32 + DELIVERY_TIMEOUT;
     assert!(
         scan_budget() < worst_case_without_budget,
         "the budget must actually bite: {:?} vs {worst_case_without_budget:?}",
         scan_budget()
     );
-    // the 2s transcript tick should never be starved for a whole minute
+    // a timed-out scribe turn should surface long before a full minute passes
     assert!(scan_budget() + DELIVERY_TIMEOUT <= Duration::from_secs(35));
 }

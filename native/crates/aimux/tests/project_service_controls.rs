@@ -1,14 +1,21 @@
 use aimux::daemon_state::{MetadataState, load_metadata_state, save_metadata_state};
 use aimux::project_api_contract::routes;
-use aimux::project_service::controls::{ProjectControlRuntime, route_control_request_with_runtime};
+use aimux::project_service::controls::{
+    AsyncProjectControlRuntime, ProjectControlRuntime, route_control_request_async,
+    route_control_request_async_with_runtime, route_control_request_with_runtime,
+};
 use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
 use aimux::runtime_topology::runtime_topology_path;
 use serde_json::{Value, json};
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::fs::{create_dir_all, remove_dir_all, write};
+use std::future::{Future, pending};
 use std::path::PathBuf;
+use std::pin::Pin;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 mod support;
 
@@ -23,6 +30,37 @@ impl ProjectControlRuntime for FakeControlRuntime {
     fn focus_target(&mut self, target: &Value, _client_tty: Option<&str>) -> Result<(), String> {
         self.focused.borrow_mut().push(target.clone());
         Ok(())
+    }
+}
+
+#[derive(Default)]
+struct FakeAsyncControlRuntime {
+    focused: RefCell<Vec<Value>>,
+}
+
+impl AsyncProjectControlRuntime for FakeAsyncControlRuntime {
+    fn focus_target<'a>(
+        &'a mut self,
+        target: &'a Value,
+        _client_tty: Option<&'a str>,
+    ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
+        self.focused.borrow_mut().push(target.clone());
+        Box::pin(async { Ok(()) })
+    }
+}
+
+struct PendingAsyncControlRuntime {
+    focus_started: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl AsyncProjectControlRuntime for PendingAsyncControlRuntime {
+    fn focus_target<'a>(
+        &'a mut self,
+        _target: &'a Value,
+        _client_tty: Option<&'a str>,
+    ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
+        self.focus_started.store(true, Ordering::SeqCst);
+        Box::pin(pending())
     }
 }
 
@@ -45,6 +83,33 @@ fn open_dashboard_resolves_existing_dashboard_without_focus() {
     assert_eq!(response.body["focused"], false);
     assert_eq!(response.body["target"]["windowId"], "@9");
     assert_eq!(response.body["screen"], "topology");
+    cleanup(project);
+}
+
+#[test]
+fn async_open_dashboard_keeps_focus_false_as_success_without_tmux() {
+    let project = temp_project("async-dashboard-no-focus");
+    let state_dir = project.join("state");
+    write_topology(&state_dir, topology_fixture());
+    let isolation = support::TestIsolation::new("control-async-dashboard-no-focus");
+    let context = isolation.project_context(&project, &state_dir);
+
+    // aimux-async-seam: test - control route test drives async handler
+    let response = aimux::async_runtime::block_on_named(
+        "test:control-open-dashboard-async",
+        route_control_request_async(
+            &context,
+            "POST",
+            routes::controls::OPEN_DASHBOARD,
+            Some(&json!({ "focus": false, "screen": "topology" })),
+        ),
+    )
+    .expect("control async route");
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["action"], "open-dashboard");
+    assert_eq!(response.body["focused"], false);
+    assert_eq!(response.body["target"]["windowId"], "@9");
     cleanup(project);
 }
 
@@ -122,6 +187,148 @@ fn focus_window_marks_agent_seen_and_recent_when_focused() {
     let last_used = std::fs::read_to_string(state_dir.join("last-used.json")).unwrap();
     assert!(last_used.contains("codex-live"));
     assert!(last_used.contains("client-1"));
+    cleanup(project);
+}
+
+#[test]
+fn async_focus_window_marks_agent_seen_and_recent_after_focus_completes() {
+    let project = temp_project("async-focus-window-success");
+    let state_dir = project.join("state");
+    write_topology(&state_dir, topology_fixture());
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([(
+                "codex-live".into(),
+                json!({ "derived": { "activity": "waiting", "attention": "needs_input", "unseenCount": 7 } }),
+            )]),
+        },
+    )
+    .unwrap();
+    let context = fixture_context(&project, &state_dir);
+    let mut runtime = FakeAsyncControlRuntime::default();
+
+    // aimux-async-seam: test - control route test drives async handler
+    let response = aimux::async_runtime::block_on_named(
+        "test:control-focus-window-async-success",
+        route_control_request_async_with_runtime(
+            &context,
+            "POST",
+            routes::controls::FOCUS_WINDOW,
+            Some(&json!({
+                "windowId": "@1",
+                "currentClientSession": "client-1",
+                "focus": true
+            })),
+            &mut runtime,
+        ),
+    )
+    .expect("focus-window route");
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["focused"], true);
+    assert_eq!(runtime.focused.borrow().len(), 1);
+    let state = load_metadata_state(&state_dir);
+    assert_eq!(state.sessions["codex-live"]["derived"]["unseenCount"], 0);
+    let last_used = std::fs::read_to_string(state_dir.join("last-used.json")).unwrap();
+    assert!(last_used.contains("codex-live"));
+    assert!(last_used.contains("client-1"));
+    cleanup(project);
+}
+
+#[test]
+fn async_focus_window_cancellation_before_focus_completes_writes_no_seen_metadata() {
+    let project = temp_project("async-focus-window-cancel");
+    let state_dir = project.join("state");
+    write_topology(&state_dir, topology_fixture());
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([(
+                "codex-live".into(),
+                json!({ "derived": { "activity": "waiting", "attention": "needs_input", "unseenCount": 7 } }),
+            )]),
+        },
+    )
+    .unwrap();
+    let context = fixture_context(&project, &state_dir);
+    let focus_started = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut runtime = PendingAsyncControlRuntime {
+        focus_started: Arc::clone(&focus_started),
+    };
+
+    let timed_out =
+        // aimux-async-seam: test - control cancellation test drives async handler
+        aimux::async_runtime::block_on_named("test:control-focus-window-cancel", async {
+            tokio::time::timeout(
+                Duration::from_millis(10),
+                route_control_request_async_with_runtime(
+                    &context,
+                    "POST",
+                    routes::controls::FOCUS_WINDOW,
+                    Some(&json!({
+                        "windowId": "@1",
+                        "currentClientSession": "client-1",
+                        "focus": true
+                    })),
+                    &mut runtime,
+                ),
+            )
+            .await
+        });
+
+    assert!(
+        timed_out.is_err(),
+        "test must cancel while async focus is pending"
+    );
+    assert!(
+        focus_started.load(Ordering::SeqCst),
+        "cancellation must happen after focus starts, not before the route reaches it"
+    );
+    let state = load_metadata_state(&state_dir);
+    assert_eq!(
+        state.sessions["codex-live"]["derived"]["unseenCount"], 7,
+        "a dropped focus route must not mark an agent seen before focus completes"
+    );
+    assert!(
+        !state_dir.join("last-used.json").exists(),
+        "a dropped focus route must not mark a target recently used before focus completes"
+    );
+    cleanup(project);
+}
+
+#[test]
+fn async_focus_window_reports_tmux_focus_failure() {
+    let project = temp_project("async-focus-window-failure");
+    let state_dir = project.join("state");
+    write_topology(&state_dir, topology_fixture());
+    let isolation = support::TestIsolation::new("control-async-focus-failure");
+    let context = isolation.project_context(&project, &state_dir);
+
+    // aimux-async-seam: test - control route test drives async handler
+    let response = aimux::async_runtime::block_on_named(
+        "test:control-focus-window-async",
+        route_control_request_async(
+            &context,
+            "POST",
+            routes::controls::FOCUS_WINDOW,
+            Some(&json!({
+                "windowId": "@1",
+                "currentClientSession": "client-1",
+                "focus": true
+            })),
+        ),
+    )
+    .expect("control async route");
+
+    assert_eq!(response.status, 500);
+    let error = response.body["error"].as_str().expect("error");
+    assert!(
+        error.contains("failed to focus window @1") || error.contains("tmux"),
+        "focus failures must name the tmux/focus cause: {error}"
+    );
     cleanup(project);
 }
 
@@ -262,6 +469,95 @@ fn focus_window_reaches_a_scribe_window_hidden_from_switch_cycling() {
     assert_eq!(response.body["itemId"], "claude-scribe");
     assert_eq!(response.body["focused"], true);
     assert_eq!(runtime.focused.borrow()[0]["windowId"], "@7");
+    cleanup(project);
+}
+
+#[test]
+fn async_attention_switch_preserves_tmux_query_error_when_no_target_resolves() {
+    let project = temp_project("attention-no-target-tmux-unavailable");
+    let state_dir = project.join("state");
+    write_topology(&state_dir, topology_fixture());
+    let body = json!({ "currentPath": "/repo/wt", "currentWindowId": "@1" });
+    let mut runtime = FakeAsyncControlRuntime::default();
+
+    let unavailable_context =
+        ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+            .with_live_window_ids_error("tmux list-windows timed out");
+    // aimux-async-seam: test - control route test drives async handler
+    let unavailable = aimux::async_runtime::block_on_named(
+        "test:control-switch-tmux-unavailable",
+        route_control_request_async_with_runtime(
+            &unavailable_context,
+            "POST",
+            routes::controls::SWITCH_ATTENTION,
+            Some(&body),
+            &mut runtime,
+        ),
+    )
+    .expect("switch route with unavailable tmux inventory");
+
+    assert_eq!(unavailable.status, 404);
+    assert_eq!(unavailable.body["error"], "no attention target found");
+    assert_eq!(unavailable.body["tmuxLiveWindowQuery"]["ok"], false);
+    assert_eq!(
+        unavailable.body["tmuxLiveWindowQuery"]["error"],
+        "tmux list-windows timed out"
+    );
+
+    let empty_context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids(support::live_window_ids(&[]));
+    let mut empty_runtime = FakeAsyncControlRuntime::default();
+    // aimux-async-seam: test - control route test drives async handler
+    let empty = aimux::async_runtime::block_on_named(
+        "test:control-switch-empty-inventory",
+        route_control_request_async_with_runtime(
+            &empty_context,
+            "POST",
+            routes::controls::SWITCH_ATTENTION,
+            Some(&body),
+            &mut empty_runtime,
+        ),
+    )
+    .expect("switch route with empty tmux inventory");
+
+    assert_eq!(empty.status, 404);
+    assert_eq!(empty.body["error"], "no attention target found");
+    assert!(
+        empty.body.get("tmuxLiveWindowQuery").is_none(),
+        "a successful empty inventory must not be reported as tmux unavailable"
+    );
+    cleanup(project);
+}
+
+#[test]
+fn async_focus_window_preserves_tmux_query_error_when_window_is_not_found() {
+    let project = temp_project("focus-window-tmux-unavailable");
+    let state_dir = project.join("state");
+    write_topology(&state_dir, topology_fixture());
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids_error("tmux socket busy");
+    let mut runtime = FakeAsyncControlRuntime::default();
+
+    // aimux-async-seam: test - control route test drives async handler
+    let response = aimux::async_runtime::block_on_named(
+        "test:control-focus-tmux-unavailable",
+        route_control_request_async_with_runtime(
+            &context,
+            "POST",
+            routes::controls::FOCUS_WINDOW,
+            Some(&json!({ "windowId": "@missing", "focus": true })),
+            &mut runtime,
+        ),
+    )
+    .expect("focus route with unavailable tmux inventory");
+
+    assert_eq!(response.status, 404);
+    assert_eq!(response.body["error"], "window not found");
+    assert_eq!(response.body["tmuxLiveWindowQuery"]["ok"], false);
+    assert_eq!(
+        response.body["tmuxLiveWindowQuery"]["error"],
+        "tmux socket busy"
+    );
     cleanup(project);
 }
 

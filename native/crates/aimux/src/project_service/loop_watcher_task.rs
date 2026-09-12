@@ -8,21 +8,17 @@ use std::sync::Arc;
 
 use serde_json::{Map, Value, json};
 
-use crate::config::load_config_for_project;
 use crate::daemon_state::load_metadata_state;
 use crate::loop_watcher::{LoopSend, LoopWatcher};
 use crate::runtime_topology::{
     list_topology_session_states, read_runtime_topology, runtime_topology_path,
 };
 
-use super::agent_output::{
-    AgentOutputCaptureRuntime, AgentOutputResponseMode, SystemAgentOutputCaptureRuntime,
-    read_agent_output_payload,
-};
+use super::agent_output::AgentOutputResponseMode;
 use super::interactions::pending_interactions_for_stream;
 use super::router::ProjectServiceRequestContext;
-use super::scheduler::PeriodicTask;
-use super::watcher_delivery::{RailBudget, deliver_agent_input};
+use super::scheduler::{CachedProjectConfig, PeriodicTask, PeriodicTaskFuture};
+use super::watcher_delivery::{TickLoopBudget, deliver_agent_input_async};
 
 /// Only a session backed by a live window can be nudged. This is also what
 /// keeps a graveyarded or offline session with stale `loop.active` metadata
@@ -34,47 +30,41 @@ const DEFAULT_STOPPED_DWELL_MS: i64 = 30_000;
 const DEFAULT_UNCHANGED_REMINDER_TICKS: u64 = 4;
 /// Blast-radius cap: no single scan may message more agents than this.
 const MAX_SENDS_PER_SCAN: usize = 8;
-/// Longest one scan may hold the shared rail; eight unanswered sends would
+/// Longest one scan may hold the shared tick loop; eight unanswered sends would
 /// otherwise block every other task for over a minute.
 const SCAN_BUDGET: std::time::Duration = std::time::Duration::from_secs(20);
 const LIVE_ACTIVITY_PROBE_START_LINE: i64 = -80;
 
 pub struct LoopWatcherTask {
-    project_root: String,
     context: Arc<ProjectServiceRequestContext>,
+    config: CachedProjectConfig,
+    loop_config: Value,
+    scan_interval_ms: i64,
+    scan_every_ticks: u64,
     watcher: LoopWatcher,
 }
 
 impl LoopWatcherTask {
     pub fn new(context: Arc<ProjectServiceRequestContext>) -> Self {
+        let config = CachedProjectConfig::new(context.project_root());
+        let loop_config = loop_config_from(config.get());
+        let scan_interval_ms = loop_scan_interval_ms(&loop_config);
+        let scan_every_ticks = loop_scan_every_ticks(&loop_config);
         Self {
-            project_root: context.project_root().to_string_lossy().into_owned(),
             context,
+            config,
+            loop_config,
+            scan_interval_ms,
+            scan_every_ticks,
             watcher: LoopWatcher::new(),
         }
     }
 
-    fn loop_config(&self) -> Value {
-        let mut config = load_config_for_project(&self.project_root)
-            .get("loop")
-            .cloned()
-            .unwrap_or(Value::Null);
-        let object = match &mut config {
-            Value::Object(object) => object,
-            _ => {
-                config = Value::Object(Map::new());
-                config.as_object_mut().expect("object inserted")
-            }
-        };
-        insert_default_i64(object, "scanIntervalMs", DEFAULT_SCAN_INTERVAL_MS);
-        insert_default_u64(object, "scanEveryTicks", DEFAULT_SCAN_EVERY_TICKS);
-        insert_default_i64(object, "stoppedDwellMs", DEFAULT_STOPPED_DWELL_MS);
-        insert_default_u64(
-            object,
-            "unchangedReminderTicks",
-            DEFAULT_UNCHANGED_REMINDER_TICKS,
-        );
-        config
+    fn refresh_config_if_changed(&mut self) {
+        self.config.refresh_if_changed();
+        self.loop_config = loop_config_from(self.config.get());
+        self.scan_interval_ms = loop_scan_interval_ms(&self.loop_config);
+        self.scan_every_ticks = loop_scan_every_ticks(&self.loop_config);
     }
 }
 
@@ -84,43 +74,60 @@ impl PeriodicTask for LoopWatcherTask {
     }
 
     fn interval_ms(&self) -> i64 {
-        self.loop_config()
-            .get("scanIntervalMs")
-            .and_then(Value::as_i64)
-            .unwrap_or(DEFAULT_SCAN_INTERVAL_MS)
+        self.scan_interval_ms
     }
 
     fn tick_multiple(&self) -> u64 {
-        self.loop_config()
-            .get("scanEveryTicks")
-            .and_then(Value::as_u64)
-            .unwrap_or(DEFAULT_SCAN_EVERY_TICKS)
-            .max(1)
+        self.scan_every_ticks
     }
 
-    fn run(&mut self, context: &ProjectServiceRequestContext) {
-        let project_state_dir = context.project_state_dir();
-        let delivery_context = Arc::clone(&self.context);
-        let Ok(topology) = read_runtime_topology(runtime_topology_path(&project_state_dir)) else {
-            return;
-        };
-        let metadata = serde_json::to_value(load_metadata_state(&project_state_dir))
-            .unwrap_or_else(|_| json!({ "sessions": {} }));
-        let sessions = list_topology_session_states(&topology, Some(NUDGEABLE_SESSION_STATUSES));
-        let pending = pending_interactions_for_stream(&project_state_dir);
-        let mut input = build_scan_input(sessions, &metadata, &pending, self.loop_config());
-        apply_live_activity_overrides_for_scan(context, &mut input);
+    fn timeout(&self) -> std::time::Duration {
+        SCAN_BUDGET + std::time::Duration::from_secs(1)
+    }
 
-        let budget = RailBudget::new(SCAN_BUDGET);
-        let mut delivered = 0usize;
-        let mut deliver = |send: &LoopSend| {
-            if delivered >= MAX_SENDS_PER_SCAN || budget.spent() {
-                return false;
+    fn run<'a>(&'a mut self, context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
+        Box::pin(async move {
+            self.refresh_config_if_changed();
+            let project_state_dir = context.project_state_dir();
+            let delivery_context = Arc::clone(&self.context);
+            let Ok(topology) = read_runtime_topology(runtime_topology_path(&project_state_dir))
+            else {
+                return;
+            };
+            let metadata = serde_json::to_value(load_metadata_state(&project_state_dir))
+                .unwrap_or_else(|_| json!({ "sessions": {} }));
+            let sessions =
+                list_topology_session_states(&topology, Some(NUDGEABLE_SESSION_STATUSES));
+            let pending = pending_interactions_for_stream(&project_state_dir);
+            let mut input =
+                build_scan_input(sessions, &metadata, &pending, self.loop_config.clone());
+            apply_live_activity_overrides_for_scan(context, &mut input).await;
+
+            let budget = TickLoopBudget::new(SCAN_BUDGET);
+            let mut collect = |_send: &LoopSend| false;
+            let sends = self.watcher.scan(&input, now_ms(), &mut collect);
+            let mut delivered = std::collections::BTreeSet::new();
+            for send in sends.into_iter().take(MAX_SENDS_PER_SCAN) {
+                if budget.spent() {
+                    break;
+                }
+                if deliver_agent_input_async(
+                    Arc::clone(&delivery_context),
+                    &send.session_id,
+                    &send.text,
+                )
+                .await
+                {
+                    delivered.insert((send.session_id, send.text));
+                }
             }
-            delivered += 1;
-            deliver_agent_input(Arc::clone(&delivery_context), &send.session_id, &send.text)
-        };
-        self.watcher.scan(&input, now_ms(), &mut deliver);
+            if !delivered.is_empty() {
+                let mut commit = |send: &LoopSend| {
+                    delivered.contains(&(send.session_id.clone(), send.text.clone()))
+                };
+                self.watcher.scan(&input, now_ms(), &mut commit);
+            }
+        })
     }
 }
 
@@ -155,7 +162,7 @@ pub fn build_scan_input(
     })
 }
 
-fn apply_live_activity_overrides_for_scan(
+async fn apply_live_activity_overrides_for_scan(
     context: &ProjectServiceRequestContext,
     input: &mut Value,
 ) {
@@ -163,26 +170,25 @@ fn apply_live_activity_overrides_for_scan(
     if candidate_ids.is_empty() {
         return;
     }
-    let mut runtime = SystemAgentOutputCaptureRuntime;
     for session_id in candidate_ids {
-        if let Some(live) = live_activity_override(context, &session_id, &mut runtime) {
+        if let Some(live) = live_activity_override(context, &session_id).await {
             apply_live_activity_override(input, &session_id, &live);
         }
     }
 }
 
-fn live_activity_override(
+async fn live_activity_override(
     context: &ProjectServiceRequestContext,
     session_id: &str,
-    runtime: &mut impl AgentOutputCaptureRuntime,
 ) -> Option<Value> {
-    let payload = read_agent_output_payload(
+    let payload = super::agent_output::read_agent_output_payload_async(
         context,
         session_id,
         Some(LIVE_ACTIVITY_PROBE_START_LINE),
         AgentOutputResponseMode::Full,
-        runtime,
+        std::time::Duration::from_secs(3),
     )
+    .await
     .ok()?
     .payload;
     let activity = payload.get("activity").and_then(Value::as_str)?;
@@ -273,6 +279,41 @@ pub fn is_scribe(metadata: &Value, session: &Value) -> bool {
 
 fn now_ms() -> i64 {
     super::scheduler::scheduler_now_ms()
+}
+
+fn loop_config_from(config: &Value) -> Value {
+    let mut config = config.get("loop").cloned().unwrap_or(Value::Null);
+    let object = match &mut config {
+        Value::Object(object) => object,
+        _ => {
+            config = Value::Object(Map::new());
+            config.as_object_mut().expect("object inserted")
+        }
+    };
+    insert_default_i64(object, "scanIntervalMs", DEFAULT_SCAN_INTERVAL_MS);
+    insert_default_u64(object, "scanEveryTicks", DEFAULT_SCAN_EVERY_TICKS);
+    insert_default_i64(object, "stoppedDwellMs", DEFAULT_STOPPED_DWELL_MS);
+    insert_default_u64(
+        object,
+        "unchangedReminderTicks",
+        DEFAULT_UNCHANGED_REMINDER_TICKS,
+    );
+    config
+}
+
+fn loop_scan_interval_ms(loop_config: &Value) -> i64 {
+    loop_config
+        .get("scanIntervalMs")
+        .and_then(Value::as_i64)
+        .unwrap_or(DEFAULT_SCAN_INTERVAL_MS)
+}
+
+fn loop_scan_every_ticks(loop_config: &Value) -> u64 {
+    loop_config
+        .get("scanEveryTicks")
+        .and_then(Value::as_u64)
+        .unwrap_or(DEFAULT_SCAN_EVERY_TICKS)
+        .max(1)
 }
 
 fn insert_default_i64(object: &mut Map<String, Value>, key: &str, value: i64) {

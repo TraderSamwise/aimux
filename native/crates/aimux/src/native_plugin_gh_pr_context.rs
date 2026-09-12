@@ -81,7 +81,7 @@ impl NativePlugin for GithubPrContextPlugin {
     }
 }
 
-fn collect_targets_from_state(
+pub(crate) fn collect_targets_from_state(
     statusline: &Value,
     state: &Value,
     metadata: &Value,

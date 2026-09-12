@@ -1,3 +1,4 @@
+use crate::async_subprocess::AsyncCommand;
 use crate::cli_launcher::{
     AimuxCliLaunchOptions, get_aimux_current_cli_identity, is_cargo_test_aimux_binary,
 };
@@ -13,7 +14,6 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::io::IsTerminal;
 use std::path::Path;
-use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -695,8 +695,8 @@ impl TmuxRuntimeManager {
         }
         let _ = self.kill_window(&replacement);
         Err(format!(
-            "Timed out waiting for replacement tmux window {} to become ready",
-            replacement.window_id
+            "Timed out waiting {}ms for replacement tmux window {} readiness option {}={}",
+            timeout_ms, replacement.window_id, readiness_option, readiness_value
         ))
     }
 
@@ -2983,7 +2983,7 @@ fn is_no_such_session_error(error: &str) -> bool {
     normalized.contains("no such session") || normalized.contains("can't find session")
 }
 
-fn tmux_list_sessions_failed_because_no_server(error: &str) -> bool {
+pub(crate) fn tmux_list_sessions_failed_because_no_server(error: &str) -> bool {
     let error = error.to_ascii_lowercase();
     error.contains("no server running")
         || (error.contains("error connecting to")
@@ -3028,7 +3028,7 @@ fn command_output(program: &str, args: &[&str]) -> Result<String, String> {
     let mut command = if program == "tmux" {
         tmux_command_from_env()
     } else {
-        Command::new(program)
+        AsyncCommand::new(program)
     };
     let output = command
         .args(args)
@@ -3068,8 +3068,8 @@ fn default_interactive_exec(
     }
 }
 
-pub fn tmux_command_from_env() -> Command {
-    let mut command = Command::new("tmux");
+pub fn tmux_command_from_env() -> AsyncCommand {
+    let mut command = AsyncCommand::new("tmux");
     if let Some(socket_path) =
         std::env::var_os(AIMUX_TMUX_SOCKET_PATH_ENV).filter(|value| !value.is_empty())
     {

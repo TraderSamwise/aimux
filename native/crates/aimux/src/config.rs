@@ -194,6 +194,17 @@ pub fn load_config_for_project(project_root: impl AsRef<Path>) -> Value {
     load_config_for_project_with_resolver(&resolver, project_root)
 }
 
+pub fn load_config_for_known_project_root(project_root: impl AsRef<Path>) -> Value {
+    let resolver = PathResolver::from_env();
+    let global = read_json_file(resolver.global_config_path());
+    let project = read_json_file(project_config_path_for_known_root(project_root));
+    merge_config_layers(global.as_ref(), project.as_ref())
+}
+
+pub fn project_config_path_for_known_root(project_root: impl AsRef<Path>) -> PathBuf {
+    project_root.as_ref().join(".aimux").join("config.json")
+}
+
 pub fn load_config_for_project_with_resolver(
     resolver: &PathResolver,
     project_root: impl AsRef<Path>,

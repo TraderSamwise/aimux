@@ -572,8 +572,10 @@ fn async_named_runtime_methods_use_the_same_tmux_commands() {
     });
     let target = target();
 
+    // aimux-async-seam: test - tmux runtime test drives async tmux method
     assert!(block_on(manager.has_session_async("aimux-mobile-abc")));
     assert_eq!(
+        // aimux-async-seam: test - tmux runtime test drives async tmux method
         block_on(manager.create_window_async(
             "aimux-mobile-abc",
             "codex",
@@ -587,6 +589,7 @@ fn async_named_runtime_methods_use_the_same_tmux_commands() {
         "@10"
     );
     assert_eq!(
+        // aimux-async-seam: test - tmux runtime test drives async tmux method
         block_on(manager.capture_target_async(
             &target,
             CapturePaneOptions {
@@ -598,18 +601,24 @@ fn async_named_runtime_methods_use_the_same_tmux_commands() {
         .expect("capture async"),
         "screen"
     );
+    // aimux-async-seam: test - tmux runtime test drives async tmux method
     block_on(manager.clear_target_history_async(&target)).expect("clear async");
+    // aimux-async-seam: test - tmux runtime test drives async tmux method
     block_on(manager.kill_window_async(&target)).expect("kill async");
+    // aimux-async-seam: test - tmux runtime test drives async tmux method
     block_on(manager.set_window_metadata_async("@9", &json!({ "sessionId": "codex-1" })))
         .expect("metadata async");
+    // aimux-async-seam: test - tmux runtime test drives async tmux method
     block_on(manager.set_window_option_async("@9", "@aimux-tool", "codex"))
         .expect("window option async");
+    // aimux-async-seam: test - tmux runtime test drives async tmux method
     block_on(manager.set_session_option_async(
         "aimux-mobile-abc",
         "@aimux-project-root",
         "/repo/mobile",
     ))
     .expect("session option async");
+    // aimux-async-seam: test - tmux runtime test drives async tmux method
     block_on(manager.apply_managed_agent_window_policy_async("@9", "codex")).expect("policy async");
 
     let calls = calls.borrow();

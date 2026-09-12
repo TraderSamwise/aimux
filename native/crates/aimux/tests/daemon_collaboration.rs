@@ -2,7 +2,7 @@ use aimux::core_command_contract::CORE_API_ROUTES;
 use aimux::daemon::http::DaemonResponseBody;
 use aimux::daemon::routing::DaemonRouteResponse;
 use aimux::daemon::text::collaboration::{
-    DaemonCollaborationTextRuntime, route_collaboration_text_request,
+    CLI_MESSAGE_SEND_TIMEOUT_MS, DaemonCollaborationTextRuntime, route_collaboration_text_request,
 };
 use aimux::daemon::text::params::ProjectServiceJsonResult;
 use aimux::daemon::text::worktrees::CLI_PROJECT_MUTATION_TIMEOUT_MS;
@@ -24,6 +24,7 @@ struct FakeCollaborationRuntime {
     missing_task: bool,
     invalid_message_thread_id: bool,
     invalid_message_id: bool,
+    message_delivery_error: bool,
 }
 
 impl DaemonCollaborationTextRuntime for FakeCollaborationRuntime {
@@ -127,6 +128,12 @@ impl DaemonCollaborationTextRuntime for FakeCollaborationRuntime {
             }
             project_routes::threads::SEND if body.get("threadId").is_some() => {
                 json!({ "message": { "id": "msg-2" } })
+            }
+            project_routes::threads::SEND if self.message_delivery_error => {
+                return ProjectServiceJsonResult::error(DaemonRouteResponse::text(
+                    424,
+                    "message msg-3 in thread thread-3 was recorded but not delivered: codex-missing: no live tmux window in runtime topology\n",
+                ));
             }
             project_routes::threads::SEND if self.invalid_message_thread_id => {
                 json!({ "thread": {}, "message": { "id": "msg-3" }, "deliveredTo": ["claude-1"] })
@@ -304,6 +311,7 @@ fn thread_routes_match_text_json_and_project_service_contracts() {
     );
     let message_call = runtime.calls.last().unwrap();
     assert_eq!(message_call.route_path, project_routes::threads::SEND);
+    assert_eq!(message_call.timeout_ms, Some(CLI_MESSAGE_SEND_TIMEOUT_MS));
     assert_eq!(
         message_call.body.as_ref().unwrap(),
         &json!({
@@ -408,6 +416,23 @@ fn collaboration_validation_and_not_found_errors_match_text_routes() {
         text_body(bad_message_id),
         "Error: project service returned invalid message send response: message.id is required\n"
     );
+
+    let undelivered = route_collaboration_text_request(
+        &mut FakeCollaborationRuntime {
+            message_delivery_error: true,
+            ..FakeCollaborationRuntime::default()
+        },
+        "POST",
+        CORE_API_ROUTES.message_send_text,
+        Some(&json!({ "project": "/repo", "to": "codex-missing", "body": "please" })),
+    )
+    .expect("message send");
+    assert_eq!(undelivered.status, 424);
+    let undelivered_body = text_body(undelivered);
+    assert!(undelivered_body.contains("message msg-3 in thread thread-3"));
+    assert!(undelivered_body.contains("recorded but not delivered"));
+    assert!(undelivered_body.contains("codex-missing"));
+    assert!(undelivered_body.contains("no live tmux window in runtime topology"));
 }
 
 #[test]

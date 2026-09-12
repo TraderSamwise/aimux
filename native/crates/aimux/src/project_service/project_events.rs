@@ -3,6 +3,7 @@ use std::collections::VecDeque;
 use std::path::Path;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
+use tokio::sync::Notify;
 
 use crate::paths::compute_project_id;
 use crate::project_api_contract::{
@@ -25,6 +26,7 @@ pub struct ProjectEventBus {
 struct ProjectEventBusInner {
     state: Mutex<ProjectEventBusState>,
     changed: Condvar,
+    changed_async: Notify,
 }
 
 #[derive(Debug, Default)]
@@ -62,6 +64,7 @@ impl ProjectEventBus {
         }
         drop(state);
         self.inner.changed.notify_all();
+        self.inner.changed_async.notify_waiters();
         sequence
     }
 
@@ -102,6 +105,30 @@ impl ProjectEventBus {
             if wait_result.timed_out()
                 && !state_has_events_since(&state, after_sequence, session_filter)
             {
+                return false;
+            }
+        }
+    }
+
+    pub async fn wait_for_events_since_async(
+        &self,
+        after_sequence: u64,
+        session_filter: Option<&str>,
+        timeout: Duration,
+    ) -> bool {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let notified = self.inner.changed_async.notified();
+            if let Ok(state) = self.inner.state.lock()
+                && state_has_events_since(&state, after_sequence, session_filter)
+            {
+                return true;
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return false;
+            }
+            if tokio::time::timeout(remaining, notified).await.is_err() {
                 return false;
             }
         }

@@ -1,0 +1,5 @@
+await-holding-invalid-types = [
+  "std::sync::MutexGuard",
+  "std::sync::RwLockReadGuard",
+  "std::sync::RwLockWriteGuard",
+]

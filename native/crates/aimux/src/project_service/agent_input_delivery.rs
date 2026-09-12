@@ -1,25 +1,28 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::VecDeque;
+use std::collections::{BTreeSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::atomic_write::write_json_atomic;
+use crate::backlog_metrics::{
+    AGENT_INPUT_DELIVERY_BACKLOG, BacklogMetricSnapshot, backlog_metric, record_backlog_error,
+};
 use crate::debug_logging::{LogLevel, log_at};
 
 use super::agent_output::{
-    AgentOutputCaptureRuntime, BoundedAgentOutputCaptureRuntime, deliver_prompt_to_tmux,
-    resolve_live_window_id,
+    AgentOutputCaptureRuntime, deliver_prompt_to_tmux, deliver_prompt_to_tmux_async,
+    resolve_live_window_id, tmux_agent_input_window_activity_async,
 };
 use super::operation_failures::{
     OperationFailureInput, OperationFailureMatch, WorktreePathMatch,
     add_dashboard_operation_failure, clear_dashboard_operation_failures,
 };
 use super::router::ProjectServiceRequestContext;
-use super::scheduler::{PeriodicTask, scheduler_now_ms};
+use super::scheduler::{PeriodicTask, PeriodicTaskFuture, scheduler_now_ms};
 
 pub const AGENT_INPUT_DELIVERY_TASK_NAME: &str = "agent-input-delivery";
 pub const ACTIVE_CLIENT_DWELL_MS: i64 = 3_000;
@@ -188,7 +191,9 @@ pub fn enqueue_agent_input_delivery(
 ) -> Result<PendingAgentInputDelivery, String> {
     let _guard = context.agent_input_delivery_queue.lock();
     let path = agent_input_delivery_queue_path(context.project_state_dir());
-    let mut state = load_delivery_state(&path)?;
+    let mut state = load_delivery_state(&path).inspect_err(|error| {
+        record_backlog_error(AGENT_INPUT_DELIVERY_BACKLOG, None, error.clone());
+    })?;
     let pending = PendingAgentInputDelivery {
         id: next_delivery_id(),
         session_id: session_id.to_owned(),
@@ -199,7 +204,9 @@ pub fn enqueue_agent_input_delivery(
         hold_reason: hold_reason.to_owned(),
     };
     state.pending.push(pending.clone());
+    let depth = state.pending.len();
     save_delivery_state(&path, state)?;
+    backlog_metric(AGENT_INPUT_DELIVERY_BACKLOG, None).set_depth(depth);
     Ok(pending)
 }
 
@@ -224,6 +231,11 @@ pub fn run_pending_agent_input_deliveries_with_runtime(
     let _guard = context.agent_input_delivery_queue.lock();
     let path = agent_input_delivery_queue_path(context.project_state_dir());
     let Ok(state) = load_delivery_state(&path) else {
+        record_backlog_error(
+            AGENT_INPUT_DELIVERY_BACKLOG,
+            None,
+            load_error_for_path(&path),
+        );
         record_agent_input_delivery_failure(
             context,
             None,
@@ -236,6 +248,7 @@ pub fn run_pending_agent_input_deliveries_with_runtime(
         return;
     };
     if state.pending.is_empty() {
+        backlog_metric(AGENT_INPUT_DELIVERY_BACKLOG, None).set_depth(0);
         return;
     }
 
@@ -320,14 +333,181 @@ pub fn run_pending_agent_input_deliveries_with_runtime(
         version: 1,
         pending: remaining,
     };
-    if let Err(error) = save_delivery_state(&path, state) {
-        record_agent_input_delivery_failure(
-            context,
-            None,
-            "Agent input delivery queue unavailable",
-            format!("Could not save queued agent input delivery state: {error}"),
+    let depth = state.pending.len();
+    match save_delivery_state(&path, state) {
+        Ok(()) => backlog_metric(AGENT_INPUT_DELIVERY_BACKLOG, None).set_depth(depth),
+        Err(error) => {
+            record_backlog_error(AGENT_INPUT_DELIVERY_BACKLOG, None, error.clone());
+            record_agent_input_delivery_failure(
+                context,
+                None,
+                "Agent input delivery queue unavailable",
+                format!("Could not save queued agent input delivery state: {error}"),
+            );
+        }
+    }
+}
+
+pub async fn run_pending_agent_input_deliveries_async(
+    context: &ProjectServiceRequestContext,
+    now_ms: i64,
+) {
+    let path = agent_input_delivery_queue_path(context.project_state_dir());
+    let state = {
+        let _guard = context.agent_input_delivery_queue.lock();
+        match load_delivery_state(&path) {
+            Ok(state) => state,
+            Err(_) => {
+                record_backlog_error(
+                    AGENT_INPUT_DELIVERY_BACKLOG,
+                    None,
+                    load_error_for_path(&path),
+                );
+                record_agent_input_delivery_failure(
+                    context,
+                    None,
+                    "Agent input delivery queue unavailable",
+                    format!(
+                        "Skipped queued agent input delivery because {}",
+                        load_error_for_path(&path)
+                    ),
+                );
+                return;
+            }
+        }
+    };
+    if state.pending.is_empty() {
+        backlog_metric(AGENT_INPUT_DELIVERY_BACKLOG, None).set_depth(0);
+        return;
+    }
+
+    let original_ids = state
+        .pending
+        .iter()
+        .map(|pending| pending.id.clone())
+        .collect::<BTreeSet<_>>();
+    let mut remaining = Vec::new();
+    let mut ready = VecDeque::from(state.pending);
+    let mut delivered = 0usize;
+    while let Some(pending) = ready.pop_front() {
+        if delivered >= MAX_DELIVERIES_PER_TICK {
+            remaining.push(pending);
+            remaining.extend(ready);
+            break;
+        }
+        let window_id = resolve_live_window_id(context, &pending.session_id)
+            .unwrap_or_else(|| pending.window_id.clone());
+        let force_due_to_max = now_ms >= pending.max_deliver_at_ms;
+        let activity = if force_due_to_max {
+            Ok(AgentInputWindowActivity::Unattended)
+        } else {
+            tmux_agent_input_window_activity_async(&window_id, DELIVERY_TASK_TIMEOUT).await
+        };
+        let decision =
+            decide_agent_input_delivery(force_due_to_max, activity, now_ms, pending.created_at_ms);
+        match decision {
+            AgentInputDeliveryDecision::Hold { reason, .. } => {
+                if reason.starts_with("tmux client activity probe failed") {
+                    record_agent_input_delivery_failure(
+                        context,
+                        Some(&pending.session_id),
+                        "Agent input delivery held",
+                        reason,
+                    );
+                }
+                remaining.push(pending);
+            }
+            AgentInputDeliveryDecision::DeliverNow { reason } => {
+                if force_due_to_max {
+                    record_agent_input_delivery_failure(
+                        context,
+                        Some(&pending.session_id),
+                        "Agent input delivery forced after hold budget",
+                        format!(
+                            "Delivered queued input after holding for {}ms; last hold reason: {}",
+                            now_ms.saturating_sub(pending.created_at_ms),
+                            pending.hold_reason
+                        ),
+                    );
+                }
+                match deliver_prompt_to_tmux_async(
+                    &window_id,
+                    &pending.prompt,
+                    DELIVERY_TASK_TIMEOUT,
+                )
+                .await
+                {
+                    Ok(()) => {
+                        if !force_due_to_max {
+                            clear_agent_input_delivery_failure(context, &pending.session_id);
+                        }
+                        log_at(
+                            LogLevel::Info,
+                            "queued agent input delivered",
+                            "agent-input-delivery",
+                            Some(json!({
+                                "sessionId": pending.session_id,
+                                "windowId": window_id,
+                                "reason": reason,
+                            })),
+                        );
+                        delivered += 1;
+                    }
+                    Err(error) => {
+                        record_agent_input_delivery_failure(
+                            context,
+                            Some(&pending.session_id),
+                            "Agent input delivery failed",
+                            error,
+                        );
+                        if now_ms < pending.max_deliver_at_ms {
+                            remaining.push(pending);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let _guard = context.agent_input_delivery_queue.lock();
+    let mut pending = remaining;
+    if let Ok(current) = load_delivery_state(&path) {
+        pending.extend(
+            current
+                .pending
+                .into_iter()
+                .filter(|entry| !original_ids.contains(&entry.id)),
         );
     }
+    let state = AgentInputDeliveryState {
+        version: 1,
+        pending,
+    };
+    let depth = state.pending.len();
+    match save_delivery_state(&path, state) {
+        Ok(()) => backlog_metric(AGENT_INPUT_DELIVERY_BACKLOG, None).set_depth(depth),
+        Err(error) => {
+            record_backlog_error(AGENT_INPUT_DELIVERY_BACKLOG, None, error.clone());
+            record_agent_input_delivery_failure(
+                context,
+                None,
+                "Agent input delivery queue unavailable",
+                format!("Could not save queued agent input delivery state: {error}"),
+            );
+        }
+    }
+}
+
+pub fn agent_input_delivery_backlog_snapshot(
+    project_state_dir: impl AsRef<Path>,
+) -> BacklogMetricSnapshot {
+    let path = agent_input_delivery_queue_path(project_state_dir);
+    let metric = backlog_metric(AGENT_INPUT_DELIVERY_BACKLOG, None);
+    match load_delivery_state(&path) {
+        Ok(state) => metric.set_depth(state.pending.len()),
+        Err(error) => metric.set_error(error),
+    }
+    metric.snapshot()
 }
 
 pub fn agent_input_delivery_task(
@@ -351,15 +531,14 @@ impl PeriodicTask for AgentInputDeliveryTask {
         DELIVERY_TASK_INTERVAL_MS
     }
 
-    fn run(&mut self, _context: &ProjectServiceRequestContext) {
-        let deadline = Instant::now() + DELIVERY_TASK_TIMEOUT;
-        let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let mut runtime = BoundedAgentOutputCaptureRuntime::new(deadline, cancelled);
-        run_pending_agent_input_deliveries_with_runtime(
-            &self.context,
-            &mut runtime,
-            scheduler_now_ms(),
-        );
+    fn timeout(&self) -> Duration {
+        DELIVERY_TASK_TIMEOUT + Duration::from_secs(1)
+    }
+
+    fn run<'a>(&'a mut self, _context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
+        Box::pin(async move {
+            run_pending_agent_input_deliveries_async(&self.context, scheduler_now_ms()).await;
+        })
     }
 }
 

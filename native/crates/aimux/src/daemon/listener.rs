@@ -1,15 +1,25 @@
+use crate::async_runtime::{scoped_task_name, spawn_blocking_named, spawn_named, task_name};
 use crate::daemon::http::PreparedDaemonResponse;
 use crate::daemon::server::DaemonHttpRequest;
+use serde_json::json;
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
+use std::future::Future;
 use std::io::{self, Read, Write};
-use std::net::TcpListener;
+use std::pin::Pin;
 use std::sync::Arc;
-use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
+use tokio::task::JoinHandle;
+use tokio::time::{Duration, sleep, timeout};
 
 const MAX_HEADER_BYTES: usize = 64 * 1024;
+pub const DAEMON_RESPONSE_WRITE_IDLE_TIMEOUT: Duration = Duration::from_secs(5);
+pub type DaemonInterceptFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<bool, DaemonListenerError>> + Send + 'a>>;
+pub type DaemonHandleFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<PreparedDaemonResponse, DaemonListenerError>> + Send + 'a>>;
 
 #[derive(Debug)]
 pub enum DaemonListenerError {
@@ -66,64 +76,12 @@ pub struct DaemonRequestBodyLimit {
     pub too_large_response: PreparedDaemonResponse,
 }
 
-pub fn serve_daemon_http<Handle>(
-    config: DaemonListenConfig,
-    handle: Handle,
-) -> Result<(), DaemonListenerError>
-where
-    Handle: Fn(DaemonHttpRequest) -> PreparedDaemonResponse + Send + Sync + 'static,
-{
-    serve_daemon_http_with_metadata(config, handle, || DaemonRequestMetadata {
-        issued_at: now_iso(),
-        stopping: false,
-    })
-}
-
-pub fn serve_daemon_http_with_metadata<Handle, Metadata>(
-    config: DaemonListenConfig,
-    handle: Handle,
-    metadata: Metadata,
-) -> Result<(), DaemonListenerError>
-where
-    Handle: Fn(DaemonHttpRequest) -> PreparedDaemonResponse + Send + Sync + 'static,
-    Metadata: Fn() -> DaemonRequestMetadata + Send + Sync + 'static,
-{
-    let listener = TcpListener::bind((config.host.as_str(), config.port))?;
-    let handle = Arc::new(handle);
-    let metadata = Arc::new(metadata);
-    for stream in listener.incoming() {
-        let Ok(stream) = stream else {
-            continue;
-        };
-        spawn_daemon_connection(stream, metadata(), Arc::clone(&handle));
-    }
-    Ok(())
-}
-
-pub fn serve_daemon_http_with_metadata_and_interceptor<Handle, Metadata, Intercept>(
-    config: DaemonListenConfig,
-    handle: Handle,
-    metadata: Metadata,
-    intercept: Intercept,
-) -> Result<(), DaemonListenerError>
-where
-    Handle: Fn(DaemonHttpRequest) -> PreparedDaemonResponse + Send + Sync + 'static,
-    Metadata: Fn() -> DaemonRequestMetadata + Send + Sync + 'static,
-    Intercept: Fn(&DaemonHttpRequest, &mut std::net::TcpStream) -> Result<bool, DaemonListenerError>
-        + Send
-        + Sync
-        + 'static,
-{
-    serve_daemon_http_with_metadata_and_interceptor_until(
-        config,
-        handle,
-        metadata,
-        intercept,
-        || false,
-    )
-}
-
-pub fn serve_daemon_http_with_metadata_and_interceptor_until<Handle, Metadata, Intercept, Stop>(
+pub async fn serve_daemon_http_with_metadata_and_interceptor_until<
+    Handle,
+    Metadata,
+    Intercept,
+    Stop,
+>(
     config: DaemonListenConfig,
     handle: Handle,
     metadata: Metadata,
@@ -133,14 +91,13 @@ pub fn serve_daemon_http_with_metadata_and_interceptor_until<Handle, Metadata, I
 where
     Handle: Fn(DaemonHttpRequest) -> PreparedDaemonResponse + Send + Sync + 'static,
     Metadata: Fn() -> DaemonRequestMetadata + Send + Sync + 'static,
-    Intercept: Fn(&DaemonHttpRequest, &mut std::net::TcpStream) -> Result<bool, DaemonListenerError>
+    Intercept: for<'a> Fn(&'a DaemonHttpRequest, &'a mut TcpStream) -> DaemonInterceptFuture<'a>
         + Send
         + Sync
         + 'static,
     Stop: Fn() -> bool,
 {
-    let listener = TcpListener::bind((config.host.as_str(), config.port))?;
-    listener.set_nonblocking(true)?;
+    let listener = TcpListener::bind((config.host.as_str(), config.port)).await?;
     let handle = Arc::new(handle);
     let metadata = Arc::new(metadata);
     let intercept = Arc::new(intercept);
@@ -148,32 +105,39 @@ where
         if should_stop() {
             return Ok(());
         }
-        match listener.accept() {
-            Ok((mut stream, _)) => {
-                let _ = stream.set_nonblocking(false);
+        match tokio::time::timeout(Duration::from_millis(25), listener.accept()).await {
+            Ok(Ok((stream, peer))) => {
                 let handle = Arc::clone(&handle);
                 let intercept = Arc::clone(&intercept);
                 let metadata = metadata();
-                thread::spawn(move || {
-                    let _ = handle_daemon_stream_with_metadata_and_interceptor(
+                let task = scoped_task_name("daemon-listener", "connection", &peer.to_string());
+                spawn_named(task, async move {
+                    let mut stream = stream;
+                    let result = handle_daemon_connection_with_metadata_and_interceptor(
                         &mut stream,
                         metadata,
-                        &mut |request, stream| intercept(request, stream),
-                        &mut |request| handle(request),
-                    );
+                        intercept,
+                        handle,
+                    )
+                    .await;
+                    if let Err(error) = result {
+                        crate::debug_logging::log_lifecycle_always(
+                            "daemon listener connection failed",
+                            "daemon-listener",
+                            Some(json!({
+                                "peer": peer.to_string(),
+                                "error": error.to_string(),
+                            })),
+                        );
+                    }
+                    let _ = stream.shutdown().await;
                 });
             }
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
-                ) =>
-            {
-                thread::sleep(Duration::from_millis(25));
+            Ok(Err(error)) if error.kind() == io::ErrorKind::Interrupted => {
+                sleep(Duration::from_millis(25)).await;
             }
-            Err(_) => {
-                thread::sleep(Duration::from_millis(25));
-            }
+            Ok(Err(_)) => sleep(Duration::from_millis(25)).await,
+            Err(_) => {}
         }
     }
 }
@@ -184,13 +148,12 @@ pub fn spawn_daemon_connection<Stream, Handle>(
     handle: Arc<Handle>,
 ) -> JoinHandle<()>
 where
-    Stream: Read + Write + Send + 'static,
+    Stream: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     Handle: Fn(DaemonHttpRequest) -> PreparedDaemonResponse + Send + Sync + 'static,
 {
-    thread::spawn(move || {
-        let _ = handle_daemon_stream_with_metadata(&mut stream, metadata, &mut |request| {
-            handle(request)
-        });
+    spawn_named(task_name("daemon-listener", "connection"), async move {
+        let _ = handle_daemon_connection_with_metadata(&mut stream, metadata, handle).await;
+        let _ = stream.shutdown().await;
     })
 }
 
@@ -243,7 +206,196 @@ where
     Ok(())
 }
 
-pub fn handle_daemon_stream_with_metadata_and_interceptor_and_body_limit<
+pub async fn handle_daemon_stream_with_metadata_async<Stream, Handle>(
+    stream: &mut Stream,
+    metadata: DaemonRequestMetadata,
+    handle: &mut Handle,
+) -> Result<(), DaemonListenerError>
+where
+    Stream: AsyncRead + AsyncWrite + Unpin + Send,
+    Handle: FnMut(DaemonHttpRequest) -> PreparedDaemonResponse,
+{
+    handle_daemon_stream_with_metadata_and_interceptor_async(
+        stream,
+        metadata,
+        &mut |_, _| Box::pin(async { Ok(false) }),
+        handle,
+    )
+    .await
+}
+
+async fn handle_daemon_connection_with_metadata<Stream, Handle>(
+    stream: &mut Stream,
+    metadata: DaemonRequestMetadata,
+    handle: Arc<Handle>,
+) -> Result<(), DaemonListenerError>
+where
+    Stream: AsyncRead + AsyncWrite + Unpin + Send,
+    Handle: Fn(DaemonHttpRequest) -> PreparedDaemonResponse + Send + Sync + 'static,
+{
+    let bytes = read_http_request_async(stream).await?;
+    let request = parse_daemon_http_request_with_metadata(&bytes, metadata)?;
+    let response = spawn_blocking_named(task_name("daemon-listener", "route"), move || {
+        handle(request)
+    })
+    .await
+    .map_err(|error| DaemonListenerError::Io(io::Error::other(error.to_string())))?;
+    write_prepared_response_async(stream, &response).await?;
+    Ok(())
+}
+
+async fn handle_daemon_connection_with_metadata_and_interceptor<Stream, Intercept, Handle>(
+    stream: &mut Stream,
+    metadata: DaemonRequestMetadata,
+    intercept: Arc<Intercept>,
+    handle: Arc<Handle>,
+) -> Result<(), DaemonListenerError>
+where
+    Stream: AsyncRead + AsyncWrite + Unpin + Send,
+    Intercept: for<'a> Fn(&'a DaemonHttpRequest, &'a mut Stream) -> DaemonInterceptFuture<'a>
+        + Send
+        + Sync
+        + 'static,
+    Handle: Fn(DaemonHttpRequest) -> PreparedDaemonResponse + Send + Sync + 'static,
+{
+    let bytes = read_http_request_async(stream).await?;
+    let request = parse_daemon_http_request_with_metadata(&bytes, metadata)?;
+    if intercept(&request, stream).await? {
+        return Ok(());
+    }
+    let response = spawn_blocking_named(task_name("daemon-listener", "route"), move || {
+        handle(request)
+    })
+    .await
+    .map_err(|error| DaemonListenerError::Io(io::Error::other(error.to_string())))?;
+    write_prepared_response_async(stream, &response).await?;
+    Ok(())
+}
+
+pub async fn handle_daemon_stream_with_metadata_and_interceptor_async<Stream, Intercept, Handle>(
+    stream: &mut Stream,
+    metadata: DaemonRequestMetadata,
+    intercept: &mut Intercept,
+    handle: &mut Handle,
+) -> Result<(), DaemonListenerError>
+where
+    Stream: AsyncRead + AsyncWrite + Unpin + Send,
+    Intercept: for<'a> FnMut(&'a DaemonHttpRequest, &'a mut Stream) -> DaemonInterceptFuture<'a>,
+    Handle: FnMut(DaemonHttpRequest) -> PreparedDaemonResponse,
+{
+    let bytes = read_http_request_async(stream).await?;
+    let request = parse_daemon_http_request_with_metadata(&bytes, metadata)?;
+    if intercept(&request, stream).await? {
+        return Ok(());
+    }
+    let response = handle(request);
+    write_prepared_response_async(stream, &response).await?;
+    Ok(())
+}
+
+pub async fn handle_daemon_stream_with_metadata_and_interceptor_and_body_limit<
+    Stream,
+    BodyLimit,
+    Intercept,
+    Handle,
+>(
+    stream: &mut Stream,
+    metadata: DaemonRequestMetadata,
+    body_limit: &mut BodyLimit,
+    intercept: &mut Intercept,
+    handle: &mut Handle,
+) -> Result<(), DaemonListenerError>
+where
+    Stream: AsyncRead + AsyncWrite + Unpin + Send,
+    BodyLimit: FnMut(&DaemonRequestHead) -> Option<DaemonRequestBodyLimit>,
+    Intercept: for<'a> FnMut(&'a DaemonHttpRequest, &'a mut Stream) -> DaemonInterceptFuture<'a>,
+    Handle: FnMut(DaemonHttpRequest) -> DaemonHandleFuture<'static>,
+{
+    handle_daemon_stream_with_metadata_and_interceptor_and_body_limit_with_read_timeout(
+        stream, metadata, body_limit, intercept, handle, None,
+    )
+    .await
+}
+
+pub async fn handle_daemon_stream_with_metadata_and_interceptor_and_body_limit_with_read_timeout<
+    Stream,
+    BodyLimit,
+    Intercept,
+    Handle,
+>(
+    stream: &mut Stream,
+    metadata: DaemonRequestMetadata,
+    body_limit: &mut BodyLimit,
+    intercept: &mut Intercept,
+    handle: &mut Handle,
+    read_timeout: Option<Duration>,
+) -> Result<(), DaemonListenerError>
+where
+    Stream: AsyncRead + AsyncWrite + Unpin + Send,
+    BodyLimit: FnMut(&DaemonRequestHead) -> Option<DaemonRequestBodyLimit>,
+    Intercept: for<'a> FnMut(&'a DaemonHttpRequest, &'a mut Stream) -> DaemonInterceptFuture<'a>,
+    Handle: FnMut(DaemonHttpRequest) -> DaemonHandleFuture<'static>,
+{
+    handle_daemon_stream_with_metadata_and_interceptor_and_body_limit_with_timeouts(
+        stream,
+        metadata,
+        body_limit,
+        intercept,
+        handle,
+        read_timeout,
+        Some(DAEMON_RESPONSE_WRITE_IDLE_TIMEOUT),
+    )
+    .await
+}
+
+pub async fn handle_daemon_stream_with_metadata_and_interceptor_and_body_limit_with_timeouts<
+    Stream,
+    BodyLimit,
+    Intercept,
+    Handle,
+>(
+    stream: &mut Stream,
+    metadata: DaemonRequestMetadata,
+    body_limit: &mut BodyLimit,
+    intercept: &mut Intercept,
+    handle: &mut Handle,
+    read_timeout: Option<Duration>,
+    write_idle_timeout: Option<Duration>,
+) -> Result<(), DaemonListenerError>
+where
+    Stream: AsyncRead + AsyncWrite + Unpin + Send,
+    BodyLimit: FnMut(&DaemonRequestHead) -> Option<DaemonRequestBodyLimit>,
+    Intercept: for<'a> FnMut(&'a DaemonHttpRequest, &'a mut Stream) -> DaemonInterceptFuture<'a>,
+    Handle: FnMut(DaemonHttpRequest) -> DaemonHandleFuture<'static>,
+{
+    let read_request = read_http_request_with_body_limit_async(stream, body_limit);
+    let read_outcome = match read_timeout {
+        Some(read_timeout) => timeout(read_timeout, read_request).await.map_err(|_| {
+            DaemonListenerError::Io(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "timed out reading HTTP request",
+            ))
+        })?,
+        None => read_request.await,
+    }?;
+    let bytes = match read_outcome {
+        ReadHttpRequestOutcome::Request(bytes) => bytes,
+        ReadHttpRequestOutcome::Rejected(response) => {
+            write_prepared_response_async_with_idle_timeout(stream, &response, write_idle_timeout)
+                .await?;
+            return Ok(());
+        }
+    };
+    let request = parse_daemon_http_request_with_metadata(&bytes, metadata)?;
+    if intercept(&request, stream).await? {
+        return Ok(());
+    }
+    let response = handle(request).await?;
+    write_prepared_response_async_with_idle_timeout(stream, &response, write_idle_timeout).await?;
+    Ok(())
+}
+
+pub fn handle_daemon_stream_with_metadata_and_interceptor_and_body_limit_blocking<
     Stream,
     BodyLimit,
     Intercept,
@@ -261,7 +413,7 @@ where
     Intercept: FnMut(&DaemonHttpRequest, &mut Stream) -> Result<bool, DaemonListenerError>,
     Handle: FnMut(DaemonHttpRequest) -> PreparedDaemonResponse,
 {
-    let bytes = match read_http_request_with_body_limit(stream, body_limit)? {
+    let bytes = match read_http_request_with_body_limit_blocking(stream, body_limit)? {
         ReadHttpRequestOutcome::Request(bytes) => bytes,
         ReadHttpRequestOutcome::Rejected(response) => {
             write_prepared_response(stream, &response)?;
@@ -357,6 +509,52 @@ fn write_prepared_response(
     Ok(())
 }
 
+async fn write_prepared_response_async(
+    writer: &mut (impl AsyncWrite + Unpin),
+    response: &PreparedDaemonResponse,
+) -> Result<(), DaemonListenerError> {
+    write_prepared_response_async_with_idle_timeout(
+        writer,
+        response,
+        Some(DAEMON_RESPONSE_WRITE_IDLE_TIMEOUT),
+    )
+    .await?;
+    Ok(())
+}
+
+async fn write_prepared_response_async_with_idle_timeout(
+    writer: &mut (impl AsyncWrite + Unpin),
+    response: &PreparedDaemonResponse,
+    idle_timeout: Option<Duration>,
+) -> Result<(), DaemonListenerError> {
+    write_all_with_idle_timeout(writer, &prepared_response_bytes(response), idle_timeout).await?;
+    Ok(())
+}
+
+async fn write_all_with_idle_timeout(
+    writer: &mut (impl AsyncWrite + Unpin),
+    mut bytes: &[u8],
+    idle_timeout: Option<Duration>,
+) -> io::Result<()> {
+    while !bytes.is_empty() {
+        let write = writer.write(bytes);
+        let count = match idle_timeout {
+            Some(idle_timeout) => timeout(idle_timeout, write).await.map_err(|_| {
+                io::Error::new(io::ErrorKind::TimedOut, "timed out writing HTTP response")
+            })?,
+            None => write.await,
+        }?;
+        if count == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::WriteZero,
+                "failed to write HTTP response",
+            ));
+        }
+        bytes = &bytes[count..];
+    }
+    Ok(())
+}
+
 pub fn read_http_request(reader: &mut impl Read) -> Result<Vec<u8>, DaemonListenerError> {
     let mut bytes = Vec::new();
     let mut buffer = [0_u8; 8192];
@@ -383,12 +581,40 @@ pub fn read_http_request(reader: &mut impl Read) -> Result<Vec<u8>, DaemonListen
     }
 }
 
+pub async fn read_http_request_async(
+    reader: &mut (impl AsyncRead + Unpin),
+) -> Result<Vec<u8>, DaemonListenerError> {
+    let mut bytes = Vec::new();
+    let mut buffer = [0_u8; 8192];
+    loop {
+        if let Some(length) = complete_request_len(&bytes)? {
+            bytes.truncate(length);
+            return Ok(bytes);
+        }
+        let count = reader.read(&mut buffer).await?;
+        if count == 0 {
+            if bytes.is_empty() {
+                return Err(DaemonListenerError::InvalidRequest(
+                    "empty HTTP request".into(),
+                ));
+            }
+            return Ok(bytes);
+        }
+        bytes.extend_from_slice(&buffer[..count]);
+        if find_bytes(&bytes, b"\r\n\r\n").is_none() && bytes.len() > MAX_HEADER_BYTES {
+            return Err(DaemonListenerError::InvalidRequest(
+                "HTTP request headers are too large".into(),
+            ));
+        }
+    }
+}
+
 enum ReadHttpRequestOutcome {
     Request(Vec<u8>),
     Rejected(PreparedDaemonResponse),
 }
 
-fn read_http_request_with_body_limit(
+fn read_http_request_with_body_limit_blocking(
     reader: &mut impl Read,
     body_limit: &mut impl FnMut(&DaemonRequestHead) -> Option<DaemonRequestBodyLimit>,
 ) -> Result<ReadHttpRequestOutcome, DaemonListenerError> {
@@ -437,6 +663,69 @@ fn read_http_request_with_body_limit(
             return Ok(ReadHttpRequestOutcome::Request(bytes));
         }
         let count = reader.read(&mut buffer)?;
+        if count == 0 {
+            return Ok(ReadHttpRequestOutcome::Request(bytes));
+        }
+        bytes.extend_from_slice(&buffer[..count]);
+        if let Some(limit) = limit.as_ref()
+            && bytes.len().saturating_sub(body_start) > limit.max_bytes
+        {
+            return Ok(ReadHttpRequestOutcome::Rejected(
+                limit.too_large_response.clone(),
+            ));
+        }
+    }
+}
+
+async fn read_http_request_with_body_limit_async(
+    reader: &mut (impl AsyncRead + Unpin),
+    body_limit: &mut impl FnMut(&DaemonRequestHead) -> Option<DaemonRequestBodyLimit>,
+) -> Result<ReadHttpRequestOutcome, DaemonListenerError> {
+    let mut bytes = Vec::new();
+    let mut one = [0_u8; 1];
+    let header_end = loop {
+        if let Some(header_end) = find_bytes(&bytes, b"\r\n\r\n") {
+            break header_end;
+        }
+        let count = reader.read(&mut one).await?;
+        if count == 0 {
+            if bytes.is_empty() {
+                return Err(DaemonListenerError::InvalidRequest(
+                    "empty HTTP request".into(),
+                ));
+            }
+            return Ok(ReadHttpRequestOutcome::Request(bytes));
+        }
+        bytes.push(one[0]);
+        if bytes.len() > MAX_HEADER_BYTES {
+            return Err(DaemonListenerError::InvalidRequest(
+                "HTTP request headers are too large".into(),
+            ));
+        }
+    };
+
+    let head = parse_daemon_request_head(&bytes[..header_end])?;
+    let limit = body_limit(&head);
+    let headers_text = std::str::from_utf8(&bytes[..header_end]).map_err(|error| {
+        DaemonListenerError::InvalidRequest(format!("invalid HTTP request headers: {error}"))
+    })?;
+    if let Some(limit) = limit.as_ref()
+        && !transfer_encoding_chunked(headers_text)
+        && content_length(headers_text)? > limit.max_bytes
+    {
+        return Ok(ReadHttpRequestOutcome::Rejected(
+            limit.too_large_response.clone(),
+        ));
+    }
+
+    let body_start = header_end + 4;
+    let mut buffer = [0_u8; 8192];
+    loop {
+        if let Some(length) = complete_request_len(&bytes)? {
+            bytes.truncate(length);
+            return Ok(ReadHttpRequestOutcome::Request(bytes));
+        }
+        let count = reader.read(&mut buffer).await?;
         if count == 0 {
             return Ok(ReadHttpRequestOutcome::Request(bytes));
         }
@@ -652,10 +941,4 @@ fn reason_phrase(status: u16) -> &'static str {
         504 => "Gateway Timeout",
         _ => "OK",
     }
-}
-
-fn now_iso() -> String {
-    time::OffsetDateTime::now_utc()
-        .format(&time::format_description::well_known::Rfc3339)
-        .unwrap_or_else(|_| "1970-01-01T00:00:00Z".into())
 }

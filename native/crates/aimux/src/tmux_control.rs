@@ -1,3 +1,4 @@
+use crate::async_subprocess::AsyncCommand;
 use crate::cli_launcher::{
     AimuxCliLaunchOptions, get_aimux_current_cli_identity, is_cargo_test_aimux_binary,
 };
@@ -9,7 +10,7 @@ use std::ffi::OsStr;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -1996,7 +1997,7 @@ where
     let mut command = if program == "tmux" {
         tmux_command_from_env()
     } else {
-        Command::new(program)
+        AsyncCommand::new(program)
     };
     let output = command.args(args).stderr(Stdio::null()).output().ok()?;
     if !output.status.success() {
@@ -2013,7 +2014,7 @@ where
     let mut command = if program == "tmux" {
         tmux_command_from_env()
     } else {
-        Command::new(program)
+        AsyncCommand::new(program)
     };
     command
         .args(args)

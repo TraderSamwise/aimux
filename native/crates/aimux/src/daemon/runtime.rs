@@ -41,8 +41,8 @@ use crate::daemon::routing::{DaemonRouteResponse, DaemonRouteUrl};
 use crate::daemon::server::{DaemonHttpRequest, handle_daemon_http_request};
 use crate::daemon::status::{DAEMON_HEALTH_KIND, DaemonStatusRuntime};
 use crate::daemon::stream::{
-    maybe_handle_host_agent_stream_request_with_runtime_mutex,
-    maybe_handle_project_event_stream_request,
+    maybe_handle_host_agent_stream_request_with_runtime_mutex_async,
+    maybe_handle_project_event_stream_request_async,
 };
 use crate::daemon::text::agents::{DaemonAgentTextRuntime, ProjectServicePostOptions};
 use crate::daemon::text::auth::{
@@ -70,14 +70,15 @@ use crate::daemon_projects::{
 use crate::daemon_state::{
     AimuxDaemonInfo, DaemonState, MetadataApiEndpoint, ProjectServiceState,
     clear_daemon_info_if_owned, get_daemon_host, get_daemon_port, is_pid_alive, load_daemon_state,
-    load_metadata_endpoint, remove_metadata_endpoint, save_daemon_info, save_daemon_state,
+    load_metadata_endpoint, metadata_endpoint_path, remove_metadata_endpoint, save_daemon_info,
+    save_daemon_state,
 };
 use crate::daemon_supervisor::RUNTIME_RESTART_LOCK_STALE_MS;
 use crate::dashboard_readiness::get_runtime_owner_id;
 use crate::dashboard_targets::{
     DashboardResolveOptions, DashboardTargetContext, DashboardTargetRef, DashboardTargetTmux,
-    find_live_dashboard_target_with_context, resolve_dashboard_target,
-    resolve_dashboard_target_for_restart_with_context,
+    find_live_dashboard_target_with_context, find_recoverable_dashboard_target_with_context,
+    resolve_dashboard_target, resolve_dashboard_target_for_restart_with_context,
 };
 use crate::debug_logging::{LogLevel, log_at, log_lifecycle_always};
 use crate::event_loop_budget::{
@@ -101,6 +102,7 @@ use crate::process_inspector::{
 };
 use crate::project_api_contract::routes as project_routes;
 use crate::project_catalog::{hidden_project_tmp_dirs, list_registered_desktop_projects};
+use crate::project_service::lifecycle::seed_agent_restore_prompt_gates_for_daemon_boot;
 use crate::project_service_manifest::get_project_service_manifest;
 use crate::recording_cleanup::{
     RunRecordingCleanupInput, normalize_recordings_config, plan_recording_cleanup,
@@ -206,6 +208,8 @@ struct ProjectOnlineAgentCountCacheEntry {
 struct RestartDashboardTarget {
     target: DashboardTargetRef,
     retained: bool,
+    status: &'static str,
+    warning: Option<String>,
 }
 
 impl RestartDashboardTarget {
@@ -213,6 +217,8 @@ impl RestartDashboardTarget {
         Self {
             target,
             retained: false,
+            status: "reloaded",
+            warning: None,
         }
     }
 
@@ -220,6 +226,17 @@ impl RestartDashboardTarget {
         Self {
             target,
             retained: true,
+            status: "retained",
+            warning: None,
+        }
+    }
+
+    fn verified_after_timeout(target: DashboardTargetRef, warning: String) -> Self {
+        Self {
+            target,
+            retained: false,
+            status: "verified-after-timeout",
+            warning: Some(warning),
         }
     }
 
@@ -227,7 +244,7 @@ impl RestartDashboardTarget {
         if self.retained {
             "retained"
         } else {
-            "reloaded"
+            self.status
         }
     }
 }
@@ -1175,11 +1192,22 @@ impl RealDaemonRuntime {
         project_root: &str,
         open: Option<DashboardOpenRequest>,
     ) -> Result<Value, String> {
-        let _ = <Self as DaemonCoreCommandRuntime>::stop_project(self, project_root, false);
-        let project_state_dir = self.resolver.project_state_dir_for(project_root);
-        let tmux_sessions_killed =
-            stop_project_tmux_runtime_with_service_snapshots(project_root, &project_state_dir)
-                .unwrap_or_default();
+        self.restart_project_runtime_with_tmux_stop(
+            project_root,
+            open,
+            |project_root, state_dir| {
+                stop_project_tmux_runtime_with_service_snapshots(project_root, state_dir)
+            },
+        )
+    }
+
+    fn restart_project_runtime_with_tmux_stop(
+        &mut self,
+        project_root: &str,
+        open: Option<DashboardOpenRequest>,
+        stop_tmux: impl FnOnce(&str, &Path) -> Result<Vec<String>, String>,
+    ) -> Result<Value, String> {
+        let tmux_sessions_killed = self.stop_project_for_restart(project_root, stop_tmux)?;
         let project = <Self as DaemonCoreCommandRuntime>::ensure_project(self, project_root)?;
         let mut tmux = TmuxRuntimeManager::new();
         let target = resolve_dashboard_target(
@@ -1205,6 +1233,18 @@ impl RealDaemonRuntime {
             );
         }
         Ok(payload)
+    }
+
+    fn stop_project_for_restart(
+        &mut self,
+        project_root: &str,
+        stop_tmux: impl FnOnce(&str, &Path) -> Result<Vec<String>, String>,
+    ) -> Result<Vec<String>, String> {
+        <Self as DaemonCoreCommandRuntime>::stop_project(self, project_root, false)
+            .map_err(|error| format!("failed to stop project before restart: {error}"))?;
+        let project_state_dir = self.resolver.project_state_dir_for(project_root);
+        stop_tmux(project_root, &project_state_dir)
+            .map_err(|error| format!("failed to stop project tmux runtime before restart: {error}"))
     }
 
     fn restart_control_plane_runtime(
@@ -1593,12 +1633,19 @@ impl RealDaemonRuntime {
                 Ok(restart_dashboard) => {
                     refresh_statusline(self, project_root);
                     let status = restart_dashboard.status();
+                    let warning = restart_dashboard.warning;
                     let target = restart_dashboard.target;
-                    json!({
+                    let mut dashboard = json!({
                         "status": status,
                         "sessionName": target.dashboard_session.session_name,
                         "target": tmux_target_json(&target.dashboard_target),
-                    })
+                    });
+                    if let Some(warning) = warning
+                        && let Value::Object(object) = &mut dashboard
+                    {
+                        object.insert("error".into(), json!(warning));
+                    }
+                    dashboard
                 }
                 Err(error) => json!({ "status": "failed", "error": error }),
             }
@@ -1646,10 +1693,20 @@ fn daemon_project_read_snapshot(
     }
 }
 
-fn list_projects_for_route_from_snapshot(
+#[derive(Debug)]
+struct ProjectsRouteRead {
+    projects: Vec<ProjectsRouteProject>,
+    read_errors: Vec<String>,
+}
+
+fn read_projects_for_route_from_snapshot(
     snapshot: &DaemonProjectReadSnapshot,
-) -> Vec<ProjectsRouteProject> {
-    let entries = snapshot.resolver.list_projects().unwrap_or_default();
+) -> Result<ProjectsRouteRead, String> {
+    validate_project_registry_for_route(&snapshot.resolver)?;
+    let entries = snapshot
+        .resolver
+        .list_projects()
+        .map_err(|error| format!("failed to load project registry: {error}"))?;
     let tmp_dirs = hidden_project_tmp_dirs(std::env::temp_dir());
     let mut session_prefix_by_root = HashMap::<String, String>::new();
     for entry in &entries {
@@ -1664,12 +1721,12 @@ fn list_projects_for_route_from_snapshot(
             .unwrap_or_else(|| "aimux".to_owned())
     });
     let services_by_id = project_service_state_by_id_from_resolver(&snapshot.resolver);
-    let endpoints_by_id = service_endpoints_by_id_from_resolver(&snapshot.resolver);
-    build_projects_route_projects(
+    let endpoint_read = service_endpoints_by_id_from_resolver(&snapshot.resolver, &entries);
+    let projects = build_projects_route_projects(
         &projects,
         &services_by_id,
         &services_by_id,
-        &endpoints_by_id,
+        &endpoint_read.endpoints_by_id,
         |service| {
             serde_json::from_value::<ProjectServiceState>(service.clone())
                 .ok()
@@ -1680,7 +1737,11 @@ fn list_projects_for_route_from_snapshot(
                             .is_live_native_project_service(&service)
                 })
         },
-    )
+    );
+    Ok(ProjectsRouteRead {
+        projects,
+        read_errors: endpoint_read.read_errors,
+    })
 }
 
 fn project_service_state_by_id_from_resolver(resolver: &PathResolver) -> HashMap<String, Value> {
@@ -1690,22 +1751,94 @@ fn project_service_state_by_id_from_resolver(resolver: &PathResolver) -> HashMap
         .collect()
 }
 
-fn service_endpoints_by_id_from_resolver(resolver: &PathResolver) -> HashMap<String, Value> {
-    let Ok(registry) = resolver.load_registry() else {
-        return HashMap::new();
-    };
-    registry
-        .projects
-        .into_iter()
-        .filter_map(|entry| {
-            let endpoint = load_metadata_endpoint(
-                resolver.global_aimux_dir().join("projects").join(&entry.id),
-            )?;
-            serde_json::to_value(endpoint)
-                .ok()
-                .map(|endpoint| (entry.id, endpoint))
-        })
-        .collect()
+#[derive(Debug)]
+struct ServiceEndpointRead {
+    endpoints_by_id: HashMap<String, Value>,
+    read_errors: Vec<String>,
+}
+
+fn service_endpoints_by_id_from_resolver(
+    resolver: &PathResolver,
+    entries: &[ProjectEntry],
+) -> ServiceEndpointRead {
+    let mut endpoints_by_id = HashMap::new();
+    let mut read_errors = Vec::new();
+    for entry in entries {
+        match read_metadata_endpoint_value_for_project_id(resolver, &entry.id) {
+            Ok(Some(endpoint)) => {
+                endpoints_by_id.insert(entry.id.clone(), endpoint);
+            }
+            Ok(None) => {}
+            Err(error) => read_errors.push(error),
+        }
+    }
+    ServiceEndpointRead {
+        endpoints_by_id,
+        read_errors,
+    }
+}
+
+fn validate_project_registry_for_route(resolver: &PathResolver) -> Result<(), String> {
+    let path = resolver.projects_registry_path();
+    if !path.exists() {
+        return Ok(());
+    }
+    let raw = fs::read_to_string(&path).map_err(|error| {
+        format!(
+            "failed to read project registry {}: {error}",
+            path.display()
+        )
+    })?;
+    let value = serde_json::from_str::<Value>(&raw).map_err(|error| {
+        format!(
+            "failed to parse project registry {}: {error}",
+            path.display()
+        )
+    })?;
+    let projects = value
+        .get("projects")
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("project registry {} has no projects array", path.display()))?;
+    for (index, project) in projects.iter().enumerate() {
+        serde_json::from_value::<ProjectEntry>(project.clone()).map_err(|error| {
+            format!(
+                "failed to parse project registry {} entry {}: {error}",
+                path.display(),
+                index + 1
+            )
+        })?;
+    }
+    Ok(())
+}
+
+fn read_metadata_endpoint_value_for_project_id(
+    resolver: &PathResolver,
+    project_id: &str,
+) -> Result<Option<Value>, String> {
+    let path = metadata_endpoint_path(
+        resolver
+            .global_aimux_dir()
+            .join("projects")
+            .join(project_id),
+    );
+    if !path.exists() {
+        return Ok(None);
+    }
+    let raw = fs::read_to_string(&path).map_err(|error| {
+        format!(
+            "failed to read project service endpoint {}: {error}",
+            path.display()
+        )
+    })?;
+    let endpoint = serde_json::from_str::<MetadataApiEndpoint>(&raw).map_err(|error| {
+        format!(
+            "failed to parse project service endpoint {}: {error}",
+            path.display()
+        )
+    })?;
+    serde_json::to_value(endpoint)
+        .map(Some)
+        .map_err(|error| format!("failed to serialize project service endpoint: {error}"))
 }
 
 fn project_service_info_value() -> Value {
@@ -1773,15 +1906,27 @@ pub fn handle_daemon_runtime_request_with_mutex(
                         }),
                     );
                 }
-                DaemonRouteResponse::json(
-                    200,
-                    json!({
-                        "ok": true,
-                        "projects": list_projects_for_route_from_snapshot(
-                            &daemon_project_read_snapshot(runtime),
-                        ),
-                    }),
-                )
+                let read = match read_projects_for_route_from_snapshot(
+                    &daemon_project_read_snapshot(runtime),
+                ) {
+                    Ok(read) => read,
+                    Err(error) => {
+                        return DaemonRouteResponse::json(
+                            500,
+                            json!({ "ok": false, "error": error }),
+                        );
+                    }
+                };
+                let mut payload = json!({
+                    "ok": true,
+                    "projects": read.projects,
+                });
+                if !read.read_errors.is_empty()
+                    && let Some(object) = payload.as_object_mut()
+                {
+                    object.insert("projectReadErrors".into(), json!(read.read_errors));
+                }
+                DaemonRouteResponse::json(200, payload)
             },
         );
     }
@@ -2034,6 +2179,7 @@ pub fn run_daemon_internal() -> Result<()> {
         })),
     );
     save_daemon_info(resolver.daemon_info_path(), &info).context("save daemon info")?;
+    seed_agent_restore_prompt_gates(&resolver, &info);
     let _guard = DaemonInfoGuard {
         path: resolver.daemon_info_path(),
         pid: info.pid,
@@ -2057,33 +2203,43 @@ pub fn run_daemon_internal() -> Result<()> {
     let route_runtime = Arc::clone(&runtime);
     let stream_runtime = Arc::clone(&runtime);
     let shutdown_runtime = Arc::clone(&runtime);
-    let serve_result = serve_daemon_http_with_metadata_and_interceptor_until(
-        DaemonListenConfig { host, port },
-        move |request| handle_daemon_runtime_request_with_mutex(&route_runtime, request),
-        || crate::daemon::listener::DaemonRequestMetadata {
-            issued_at: now_iso(),
-            stopping: crate::process_signals::received_shutdown_signal().is_some(),
-        },
-        move |request, writer| {
-            if maybe_handle_project_event_stream_request(request, writer).map_err(|error| {
-                crate::daemon::listener::DaemonListenerError::Io(std::io::Error::other(
-                    error.to_string(),
-                ))
-            })? {
-                return Ok(true);
-            }
-            maybe_handle_host_agent_stream_request_with_runtime_mutex(
-                &stream_runtime,
-                request,
-                writer,
-            )
-            .map_err(|error| {
-                crate::daemon::listener::DaemonListenerError::Io(std::io::Error::other(
-                    error.to_string(),
-                ))
-            })
-        },
-        || crate::process_signals::received_shutdown_signal().is_some(),
+    // aimux-async-seam: permanent - daemon process entry point starts the async listener from mainline sync startup
+    let serve_result = crate::async_runtime::process_runtime().block_on(
+        serve_daemon_http_with_metadata_and_interceptor_until(
+            DaemonListenConfig { host, port },
+            move |request| handle_daemon_runtime_request_with_mutex(&route_runtime, request),
+            || crate::daemon::listener::DaemonRequestMetadata {
+                issued_at: now_iso(),
+                stopping: crate::process_signals::received_shutdown_signal().is_some(),
+            },
+            move |request, writer| {
+                let stream_runtime = Arc::clone(&stream_runtime);
+                Box::pin(async move {
+                    if maybe_handle_project_event_stream_request_async(request, writer)
+                        .await
+                        .map_err(|error| {
+                            crate::daemon::listener::DaemonListenerError::Io(std::io::Error::other(
+                                error.to_string(),
+                            ))
+                        })?
+                    {
+                        return Ok(true);
+                    }
+                    maybe_handle_host_agent_stream_request_with_runtime_mutex_async(
+                        &stream_runtime,
+                        request,
+                        writer,
+                    )
+                    .await
+                    .map_err(|error| {
+                        crate::daemon::listener::DaemonListenerError::Io(std::io::Error::other(
+                            error.to_string(),
+                        ))
+                    })
+                })
+            },
+            || crate::process_signals::received_shutdown_signal().is_some(),
+        ),
     );
     if let Some(signal_name) = crate::process_signals::received_shutdown_signal_name()
         && let Ok(mut runtime) = shutdown_runtime.lock()
@@ -2093,15 +2249,72 @@ pub fn run_daemon_internal() -> Result<()> {
     serve_result.map_err(anyhow::Error::new)
 }
 
+/// Open a restore prompt gate per project for this boot.
+///
+/// The gate records the snapshot generation that was on disk the moment the
+/// daemon came up, which is what makes the offer a once-per-boot question
+/// instead of something re-asked on every dashboard refresh. The daemon's own
+/// pid and start time already identify this boot, so no parallel id is minted.
+fn seed_agent_restore_prompt_gates(resolver: &PathResolver, info: &AimuxDaemonInfo) {
+    let daemon_boot_id = format!("{}-{}", info.pid, info.started_at);
+    if let Err(error) =
+        seed_agent_restore_prompt_gates_for_daemon_boot(resolver, &daemon_boot_id, &info.started_at)
+    {
+        log_lifecycle_always(
+            "agent restore prompt gates not seeded",
+            "agent-restore",
+            Some(json!({ "daemonBootId": daemon_boot_id, "error": error })),
+        );
+    }
+}
+
 fn start_daemon_disk_maintenance_background(resolver: PathResolver) {
-    thread::spawn(move || {
-        thread::sleep(Duration::from_millis(INSTALL_CLEANUP_INITIAL_DELAY_MS));
+    crate::async_runtime::spawn_named(daemon_disk_maintenance_task_name(&resolver), async move {
+        tokio::time::sleep(Duration::from_millis(INSTALL_CLEANUP_INITIAL_DELAY_MS)).await;
         loop {
-            let interval =
-                run_daemon_disk_maintenance_once(&resolver, DiskMaintenanceOptions::default());
-            thread::sleep(interval);
+            let maintenance_resolver = resolver.clone();
+            let interval = match crate::async_runtime::spawn_blocking_named(
+                daemon_disk_maintenance_pass_task_name(&resolver),
+                move || {
+                    run_daemon_disk_maintenance_once(
+                        &maintenance_resolver,
+                        DiskMaintenanceOptions::default(),
+                    )
+                },
+            )
+            .await
+            {
+                Ok(interval) => interval,
+                Err(error) => {
+                    log_lifecycle_always(
+                        "daemon disk maintenance task failed",
+                        "daemon-maintenance",
+                        Some(json!({
+                            "error": error.to_string(),
+                        })),
+                    );
+                    Duration::from_millis(86_400_000)
+                }
+            };
+            tokio::time::sleep(interval).await;
         }
     });
+}
+
+fn daemon_disk_maintenance_task_name(resolver: &PathResolver) -> String {
+    crate::async_runtime::scoped_task_name(
+        "daemon",
+        "disk-maintenance",
+        &resolver.global_aimux_dir().to_string_lossy(),
+    )
+}
+
+fn daemon_disk_maintenance_pass_task_name(resolver: &PathResolver) -> String {
+    crate::async_runtime::scoped_task_name(
+        "daemon",
+        "disk-maintenance-pass",
+        &resolver.global_aimux_dir().to_string_lossy(),
+    )
 }
 
 fn run_daemon_disk_maintenance_once(
@@ -2239,18 +2452,30 @@ impl DaemonStatusRuntime for RealDaemonRuntime {
     }
 
     fn list_projects_for_route(&self) -> Vec<ProjectsRouteProject> {
-        list_projects_for_route_from_snapshot(&DaemonProjectReadSnapshot {
+        self.try_list_projects_for_route().unwrap_or_default()
+    }
+
+    fn try_list_projects_for_route(&self) -> Result<Vec<ProjectsRouteProject>, String> {
+        read_projects_for_route_from_snapshot(&DaemonProjectReadSnapshot {
             resolver: self.resolver.clone(),
             project_service_process_verifier: Arc::clone(&self.project_service_process_verifier),
         })
+        .map(|read| read.projects)
     }
 
     fn list_projects_with_online_agent_counts_for_route(&mut self) -> Vec<ProjectsRouteProject> {
-        let mut projects = self.list_projects_for_route();
+        self.try_list_projects_with_online_agent_counts_for_route()
+            .unwrap_or_default()
+    }
+
+    fn try_list_projects_with_online_agent_counts_for_route(
+        &mut self,
+    ) -> Result<Vec<ProjectsRouteProject>, String> {
+        let mut projects = self.try_list_projects_for_route()?;
         for project in &mut projects {
             project.online_agent_count = self.read_project_online_agent_count(project);
         }
-        projects
+        Ok(projects)
     }
 
     fn daemon_state(&self) -> DaemonState {
@@ -2825,7 +3050,12 @@ impl DaemonOperationsTextRuntime for RealDaemonRuntime {
 
     fn doctor_versions_report(&mut self) -> Result<(Value, String), String> {
         let generated_at = now_iso();
-        let projects = self.list_projects_for_route();
+        let project_read = read_projects_for_route_from_snapshot(&DaemonProjectReadSnapshot {
+            resolver: self.resolver.clone(),
+            project_service_process_verifier: Arc::clone(&self.project_service_process_verifier),
+        })?;
+        let project_read_errors = project_read.read_errors;
+        let projects = project_read.projects;
         let service_alive = projects
             .iter()
             .filter(|project| project.service_alive)
@@ -2869,6 +3099,9 @@ impl DaemonOperationsTextRuntime for RealDaemonRuntime {
             object.insert("expectedServiceManifest".into(), expected_project_service);
             object.insert("projectCount".into(), json!(projects.len()));
             object.insert("serviceAliveCount".into(), json!(service_alive));
+            if !project_read_errors.is_empty() {
+                object.insert("projectReadErrors".into(), json!(project_read_errors));
+            }
             object.insert(
                 "daemonStateProjectCount".into(),
                 json!(state.projects.len()),
@@ -3791,19 +4024,83 @@ fn reload_dashboard_for_restart_with_tmux(
                 Err(error)
             }
         }
-        Err(error) => {
-            record_repair_event_from_env(
-                project_root,
-                ACTION_DASHBOARD_RELOAD,
-                "control-plane-restart",
-                STATUS_FAILED,
-                Some(json!({ "error": error.clone() })),
-            );
-            Err(error)
-        }
+        Err(error) => match verify_dashboard_after_readiness_timeout(project_root, tmux, &error) {
+            Ok(Some(target)) => {
+                let status = target.status();
+                let session_name = target.target.dashboard_session.session_name.clone();
+                let target_json = tmux_target_json(&target.target.dashboard_target);
+                record_repair_event_from_env(
+                    project_root,
+                    ACTION_DASHBOARD_RELOAD,
+                    "control-plane-restart",
+                    STATUS_REPAIRED,
+                    Some(json!({
+                        "status": status,
+                        "error": error.clone(),
+                        "sessionName": session_name,
+                        "target": target_json,
+                    })),
+                );
+                Ok(target)
+            }
+            Ok(None) => {
+                record_repair_event_from_env(
+                    project_root,
+                    ACTION_DASHBOARD_RELOAD,
+                    "control-plane-restart",
+                    STATUS_FAILED,
+                    Some(json!({ "error": error.clone() })),
+                );
+                Err(error)
+            }
+            Err(verification_error) => {
+                let error = format!(
+                    "{error}; post-timeout dashboard verification failed: {verification_error}"
+                );
+                record_repair_event_from_env(
+                    project_root,
+                    ACTION_DASHBOARD_RELOAD,
+                    "control-plane-restart",
+                    STATUS_FAILED,
+                    Some(json!({ "error": error.clone() })),
+                );
+                Err(error)
+            }
+        },
     };
     restore_active_windows(tmux, &active_windows);
     result
+}
+
+fn verify_dashboard_after_readiness_timeout(
+    project_root: &str,
+    tmux: &mut impl DashboardTargetTmux,
+    error: &str,
+) -> Result<Option<RestartDashboardTarget>, String> {
+    if !is_dashboard_readiness_timeout(error) {
+        return Ok(None);
+    }
+    let context = DashboardTargetContext::for_project(project_root)?;
+    let Some(target) =
+        find_recoverable_dashboard_target_with_context(project_root, tmux, &context)?
+    else {
+        return Ok(None);
+    };
+    tmux.set_session_option(
+        &target.dashboard_session.session_name,
+        TMUX_DASHBOARD_BUILD_OPTION,
+        &context.dashboard_build_stamp,
+    )?;
+    Ok(Some(RestartDashboardTarget::verified_after_timeout(
+        target,
+        error.to_owned(),
+    )))
+}
+
+fn is_dashboard_readiness_timeout(error: &str) -> bool {
+    error.contains("Timed out waiting")
+        && error.contains("tmux window")
+        && error.contains("readiness option")
 }
 
 fn retained_dashboard_for_restart(
@@ -5450,6 +5747,69 @@ mod tests {
     }
 
     #[test]
+    fn restart_project_stop_failure_is_not_reported_as_empty_tmux_kill_list() {
+        let fixture = restart_service_fixture("restart-stop-failure");
+        let project = fixture.project_root.clone();
+        let project_id = fixture.register_project();
+        fixture.persist_service(&project_id, 91_030, ProjectServiceStatus::Running);
+        let launcher =
+            Arc::new(RestartTestLauncher::new(91_130).with_terminate_error("terminate denied"));
+        let verifier = Arc::new(RestartTestProcessVerifier::current_native([91_030]));
+        let mut runtime = fixture.runtime(launcher.clone(), verifier);
+
+        let error = runtime
+            .stop_project_for_restart(&project, |_project_root, _project_state_dir| {
+                panic!("tmux stop must not run after project stop failure")
+            })
+            .expect_err("project stop failure should abort restart");
+
+        assert!(error.contains("failed to stop project before restart"));
+        assert!(error.contains("terminate denied"));
+        assert_eq!(launcher.terminations(), vec![(91_030, false)]);
+        assert!(launcher.calls().is_empty());
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn restart_project_tmux_stop_failure_is_not_reported_as_empty_kill_list() {
+        let fixture = restart_service_fixture("restart-tmux-stop-failure");
+        let project = fixture.project_root.clone();
+        let launcher = Arc::new(RestartTestLauncher::new(91_131));
+        let verifier = Arc::new(RestartTestProcessVerifier::current_native([]));
+        let mut runtime = fixture.runtime(launcher.clone(), verifier);
+
+        let error = runtime
+            .stop_project_for_restart(&project, |_project_root, _project_state_dir| {
+                Err("tmux kill-session failed".to_owned())
+            })
+            .expect_err("tmux stop failure should abort restart");
+
+        assert!(error.contains("failed to stop project tmux runtime before restart"));
+        assert!(error.contains("tmux kill-session failed"));
+        assert!(launcher.calls().is_empty());
+        assert!(launcher.terminations().is_empty());
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn restart_project_empty_tmux_stop_remains_empty_only_after_successful_stop() {
+        let fixture = restart_service_fixture("restart-tmux-empty-success");
+        let project = fixture.project_root.clone();
+        let launcher = Arc::new(RestartTestLauncher::new(91_132));
+        let verifier = Arc::new(RestartTestProcessVerifier::current_native([]));
+        let mut runtime = fixture.runtime(launcher.clone(), verifier);
+
+        let killed = runtime
+            .stop_project_for_restart(&project, |_project_root, _project_state_dir| Ok(Vec::new()))
+            .expect("empty tmux kill list is valid when tmux stop succeeds");
+
+        assert!(killed.is_empty());
+        assert!(launcher.calls().is_empty());
+        assert!(launcher.terminations().is_empty());
+        fixture.cleanup();
+    }
+
+    #[test]
     fn control_plane_restart_reports_retained_dashboard_without_reload() {
         let fixture = restart_service_fixture("restart-retained-dashboard");
         let project = fixture.project_root.clone();
@@ -5821,6 +6181,117 @@ mod tests {
     }
 
     #[test]
+    fn dashboard_readiness_timeout_recovers_when_live_dashboard_is_verified() {
+        let project_root = "/repo/live-dashboard-after-timeout";
+        let context = DashboardTargetContext::for_project(project_root).expect("context");
+        let mut tmux = RestartDashboardFastPathTmux::new(project_root, &context);
+        let timeout = format!(
+            "Timed out waiting 20000ms for tmux window @1 readiness option {}={}",
+            TMUX_DASHBOARD_READY_OPTION, context.dashboard_build_stamp
+        );
+
+        let target = verify_dashboard_after_readiness_timeout(project_root, &mut tmux, &timeout)
+            .expect("timeout recovery check succeeds")
+            .expect("live dashboard recovered");
+
+        assert_eq!(target.status(), "verified-after-timeout");
+        assert_eq!(target.warning.as_deref(), Some(timeout.as_str()));
+        assert_eq!(target.target.dashboard_target.window_id, "@1");
+        assert_eq!(tmux.set_session_option_calls, 1);
+    }
+
+    #[test]
+    fn dashboard_readiness_timeout_recovers_when_owned_dashboard_is_stale() {
+        let project_root = "/repo/stale-dashboard-after-timeout";
+        let context = DashboardTargetContext::for_project(project_root).expect("context");
+        let mut tmux = RestartDashboardFastPathTmux::new(project_root, &context)
+            .with_build_stamp("previous-build-stamp");
+        let timeout = format!(
+            "Timed out waiting 20000ms for replacement tmux window @2 readiness option {}={}",
+            TMUX_DASHBOARD_READY_OPTION, context.dashboard_build_stamp
+        );
+
+        let target = verify_dashboard_after_readiness_timeout(project_root, &mut tmux, &timeout)
+            .expect("timeout recovery check succeeds")
+            .expect("same-owner stale dashboard recovered");
+
+        assert_eq!(target.status(), "verified-after-timeout");
+        assert_eq!(target.warning.as_deref(), Some(timeout.as_str()));
+        assert_eq!(target.target.dashboard_target.window_id, "@1");
+        assert_eq!(tmux.set_session_option_calls, 1);
+    }
+
+    #[test]
+    fn control_plane_restart_treats_verified_dashboard_timeout_as_nonfatal() {
+        let fixture = restart_service_fixture("restart-dashboard-timeout-verified");
+        let project = fixture.project_root.clone();
+        let project_id = fixture.register_project();
+        fixture.persist_service(&project_id, 91_027, ProjectServiceStatus::Running);
+        fixture.persist_endpoint(91_027);
+        let launcher = Arc::new(RestartTestLauncher::new(91_127));
+        let verifier = Arc::new(RestartTestProcessVerifier::current_native([91_027]));
+        let mut runtime = fixture.runtime(launcher.clone(), verifier);
+        let timeout = "Timed out waiting 20000ms for tmux window @1 readiness option @aimux-dashboard-ready=stamp";
+        let refreshed = RefCell::new(Vec::<String>::new());
+
+        let result = runtime.restart_control_plane_project_with_statusline(
+            &project,
+            |project_root| {
+                Ok(RestartDashboardTarget::verified_after_timeout(
+                    restart_test_dashboard_ref(project_root),
+                    timeout.to_owned(),
+                ))
+            },
+            |_runtime, project_root| refreshed.borrow_mut().push(project_root.to_owned()),
+        );
+        let restart = json!({
+            "daemon": { "current": { "pid": 9002 } },
+            "projects": [result.clone()],
+            "summary": restart_summary(std::slice::from_ref(&result), &json!({})),
+        });
+        let text = render_runtime_restart_result(&restart);
+
+        assert_eq!(result["dashboard"]["status"], "verified-after-timeout");
+        assert_eq!(result["dashboard"]["error"], timeout);
+        assert_eq!(restart["summary"]["failures"], json!(0));
+        assert!(text.contains("dashboard: verified-after-timeout"));
+        assert!(text.contains(timeout));
+        assert_eq!(refreshed.into_inner(), vec![project]);
+        fixture.cleanup();
+    }
+
+    #[test]
+    fn control_plane_restart_keeps_unverified_dashboard_timeout_failed() {
+        let fixture = restart_service_fixture("restart-dashboard-timeout-unverified");
+        let project = fixture.project_root.clone();
+        let project_id = fixture.register_project();
+        fixture.persist_service(&project_id, 91_028, ProjectServiceStatus::Running);
+        fixture.persist_endpoint(91_028);
+        let launcher = Arc::new(RestartTestLauncher::new(91_128));
+        let verifier = Arc::new(RestartTestProcessVerifier::current_native([91_028]));
+        let mut runtime = fixture.runtime(launcher.clone(), verifier);
+        let timeout = "Timed out waiting 20000ms for tmux window @2 readiness option @aimux-dashboard-ready=stamp";
+        let refreshed = RefCell::new(Vec::<String>::new());
+
+        let result = runtime.restart_control_plane_project_with_statusline(
+            &project,
+            |_project_root| Err(timeout.to_owned()),
+            |_runtime, project_root| refreshed.borrow_mut().push(project_root.to_owned()),
+        );
+        let restart = json!({
+            "daemon": { "current": { "pid": 9002 } },
+            "projects": [result.clone()],
+            "summary": restart_summary(std::slice::from_ref(&result), &json!({})),
+        });
+
+        assert_eq!(result["dashboard"]["status"], "failed");
+        assert_eq!(result["dashboard"]["error"], timeout);
+        assert_eq!(restart["summary"]["failures"], json!(1));
+        assert!(refreshed.into_inner().is_empty());
+        fixture.cleanup();
+    }
+
+    #[test]
     fn restart_retained_dashboard_relinks_clients_and_cleans_stale_dashboards() {
         let project_root = "/repo";
         let context = DashboardTargetContext::for_project(project_root).expect("context");
@@ -6126,6 +6597,39 @@ mod tests {
         assert_eq!(interval, Duration::from_millis(86_400_000));
         assert!(stale_recording.exists());
         assert!(old_install.exists());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn daemon_disk_maintenance_background_runs_on_async_runtime() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        let root = temp_root("disk-maintenance-async");
+        let home = root.join("home");
+        fs::create_dir_all(&home).expect("home");
+        let resolver = PathResolver::new(
+            &root,
+            &home,
+            Some(home.join(".aimux").to_string_lossy().into_owned()),
+        );
+        fs::create_dir_all(resolver.global_aimux_dir()).expect("aimux home");
+        let task_name = daemon_disk_maintenance_task_name(&resolver);
+
+        start_daemon_disk_maintenance_background(resolver);
+
+        let started = Instant::now();
+        let mut found = false;
+        while started.elapsed() < Duration::from_secs(1) {
+            found = crate::async_runtime::doctor_tasks_report()
+                .tasks
+                .iter()
+                .any(|task| task.name == task_name);
+            if found {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(found, "daemon disk maintenance async task registered");
 
         let _ = fs::remove_dir_all(root);
     }
@@ -6827,6 +7331,11 @@ mod tests {
                 replace_window_when_ready_calls: 0,
             }
         }
+
+        fn with_build_stamp(mut self, build_stamp: &str) -> Self {
+            self.build_stamp = build_stamp.to_owned();
+            self
+        }
     }
 
     impl DashboardTargetTmux for RestartDashboardFastPathTmux {
@@ -6955,6 +7464,7 @@ mod tests {
     struct RestartTestLauncher {
         pid: i32,
         endpoint_port: Option<u16>,
+        terminate_error: Option<String>,
         calls: Mutex<Vec<String>>,
         terminations: Mutex<Vec<(i32, bool)>>,
     }
@@ -6964,6 +7474,7 @@ mod tests {
             Self {
                 pid,
                 endpoint_port: None,
+                terminate_error: None,
                 calls: Mutex::new(Vec::new()),
                 terminations: Mutex::new(Vec::new()),
             }
@@ -6971,6 +7482,11 @@ mod tests {
 
         fn with_endpoint(mut self, port: u16) -> Self {
             self.endpoint_port = Some(port);
+            self
+        }
+
+        fn with_terminate_error(mut self, error: &str) -> Self {
+            self.terminate_error = Some(error.to_owned());
             self
         }
 
@@ -7014,6 +7530,9 @@ mod tests {
                 .lock()
                 .expect("terminations")
                 .push((service.pid, force));
+            if let Some(error) = &self.terminate_error {
+                return Err(error.clone());
+            }
             Ok(())
         }
     }

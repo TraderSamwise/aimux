@@ -11,6 +11,7 @@ use aimux::paths::PathResolver;
 use aimux::project_api_contract::routes as project_routes;
 use aimux::runtime_coherence::render_runtime_coherence_report;
 use serde_json::{Value, json};
+use std::time::{Duration, Instant};
 
 mod support;
 use support::TestIsolation;
@@ -202,6 +203,20 @@ impl DaemonOperationsTextRuntime for FakeOperationsRuntime {
                 json!({
                     "ok": true,
                     "projectRoot": project_root,
+                    "scheduler": {
+                        "ok": true,
+                        "periodicTasks": [{
+                            "name": "loop-watcher",
+                            "totalRuns": 3,
+                            "lastCompletedAtMs": 1234,
+                            "lastDurationMs": 45,
+                            "p95DurationMs": 67,
+                            "consecutiveFailures": 0,
+                            "consecutiveTimeouts": 1,
+                            "totalTimeouts": 2,
+                            "lastError": "timed out after 30000ms"
+                        }]
+                    },
                     "runtimeExchange": {
                         "path": "/repo/.aimux/runtime-exchange.yaml",
                         "bytes": 600,
@@ -436,6 +451,21 @@ fn json_text(response: DaemonRouteResponse) -> Value {
     serde_json::from_str(&text_body(response)).expect("json text")
 }
 
+fn wait_for_async_task(name: &str) -> Option<()> {
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_secs(1) {
+        let found = aimux::async_runtime::doctor_tasks_report()
+            .tasks
+            .iter()
+            .any(|task| task.name == name);
+        if found {
+            return Some(());
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    None
+}
+
 fn fake_runtime_coherence_report() -> Value {
     json!({
         "generatedAt": "now",
@@ -609,6 +639,78 @@ fn doctor_versions_text_and_json_routes_render_runtime_report() {
     assert_eq!(report["cliVersion"], json!("test-cli"));
     assert_eq!(report["summary"]["projects"], json!(0));
     assert_eq!(report["expected"]["runtimeContract"], json!("2"));
+}
+
+#[test]
+fn doctor_tasks_text_and_json_routes_render_runtime_task_registry() {
+    aimux::async_runtime::init_process_runtime().expect("runtime initialized");
+    let task_name = aimux::async_runtime::scoped_task_name("doctor", "route", "visible");
+    let handle = aimux::async_runtime::spawn_named(task_name.clone(), std::future::pending::<()>());
+    let mut runtime = FakeOperationsRuntime::default();
+    wait_for_async_task(&task_name).expect("task registered");
+
+    let text =
+        route_operations_text_request(&mut runtime, "GET", CORE_API_ROUTES.doctor_tasks_text, None)
+            .expect("tasks route");
+    assert_eq!(text.status, 200);
+    let body = text_body(text);
+    assert!(body.contains("Async Runtime Tasks\n"));
+    assert!(body.contains(&task_name));
+
+    let json = route_operations_text_request(
+        &mut runtime,
+        "GET",
+        &format!("{}?json=1", CORE_API_ROUTES.doctor_tasks_text),
+        None,
+    )
+    .expect("tasks json route");
+    let report = json_text(json);
+    assert_eq!(report["runtime"]["initialized"], json!(true));
+    assert!(
+        report["tasks"]
+            .as_array()
+            .expect("tasks array")
+            .iter()
+            .any(|task| task["name"] == task_name)
+    );
+    handle.abort();
+}
+
+#[test]
+fn doctor_tasks_project_route_renders_project_scheduler_health() {
+    let mut runtime = FakeOperationsRuntime::default();
+
+    let text = route_operations_text_request(
+        &mut runtime,
+        "GET",
+        &format!("{}?projectRoot=/repo", CORE_API_ROUTES.doctor_tasks_text),
+        None,
+    )
+    .expect("tasks project route");
+    assert_eq!(text.status, 200);
+    let body = text_body(text);
+    assert!(body.contains("Project Scheduler Tasks\n"));
+    assert!(body.contains("project: /repo"));
+    assert!(body.contains("loop-watcher: runs=3"));
+    assert!(body.contains("timeouts=1/2"));
+    assert!(body.contains("last error: timed out after 30000ms"));
+
+    let json = route_operations_text_request(
+        &mut runtime,
+        "GET",
+        &format!(
+            "{}?projectRoot=/repo&json=1",
+            CORE_API_ROUTES.doctor_tasks_text
+        ),
+        None,
+    )
+    .expect("tasks project json route");
+    let report = json_text(json);
+    assert_eq!(report["projectRoot"], json!("/repo"));
+    assert_eq!(
+        report["scheduler"]["periodicTasks"][0]["name"],
+        json!("loop-watcher")
+    );
 }
 
 #[test]

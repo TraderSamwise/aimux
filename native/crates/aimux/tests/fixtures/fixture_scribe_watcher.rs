@@ -124,7 +124,7 @@ fn run_case(input: &Value) -> Value {
 
 fn run_scan(input: &Value) -> Value {
     if input.get("stopDuringRead").is_some() {
-        // Node's async scan could be stopped mid-read; the rail runs tasks to
+        // Node's async scan could be stopped mid-read; the tick loop runs tasks to
         // completion, so the corpus's recorded shape is asserted directly.
         return json!([{
             "kind": "stopDuringRead",

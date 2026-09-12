@@ -1,3 +1,4 @@
+use crate::async_subprocess::AsyncCommand;
 use crate::cli_launcher::{
     AimuxCliLaunchOptions, AimuxCliLaunchSource, get_aimux_dashboard_launch_command,
 };
@@ -11,7 +12,6 @@ use std::fmt::Write as _;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::UNIX_EPOCH;
 
@@ -306,7 +306,7 @@ fn summarize_dashboard_spec(
 }
 
 fn bash_syntax_ok(command: &str) -> bool {
-    Command::new("bash")
+    AsyncCommand::new("bash")
         .args(["-n", "-c", command])
         .status()
         .map(|status| status.success())

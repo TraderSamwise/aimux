@@ -1,7 +1,7 @@
+use crate::async_subprocess::AsyncCommand;
 use crate::paths::PathResolver;
 use crate::remote_credentials::load_credentials;
 use serde_json::Value;
-use std::process::Command;
 
 pub fn list_remote_security_devices(pending: bool) -> Result<Vec<Value>, String> {
     let path = if pending {
@@ -64,7 +64,7 @@ fn security_request(path: &str, method: &str, body: Option<Value>) -> Result<Val
         return Err("Not logged in. Run `aimux login` first.".into());
     };
     let url = format!("{}{}", relay_http_url(&credentials.relay_url)?, path);
-    let mut command = Command::new("curl");
+    let mut command = AsyncCommand::new("curl");
     command
         .args(["--silent", "--show-error", "--max-time", "15"])
         .args(["--request", method])

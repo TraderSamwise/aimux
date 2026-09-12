@@ -5,6 +5,8 @@ use aimux::websocket::{
     INITIAL_RETRY_MS, MAX_RETRY_MS, TOKEN_PROTOCOL_PREFIX, WebSocketError, next_retry_ms,
     relay_subprotocols,
 };
+use std::io;
+use tokio_tungstenite::tungstenite;
 
 #[test]
 fn the_token_travels_as_a_subprotocol_not_a_header() {
@@ -47,11 +49,43 @@ fn the_backoff_cannot_overflow_into_a_short_delay() {
 
 #[test]
 fn a_refused_handshake_is_distinguishable_from_a_broken_socket() {
-    // They are handled differently: five refused handshakes stop the client
-    // because the token is bad, while a broken socket just reconnects.
-    let refused = WebSocketError::Handshake("401 Unauthorized".into());
+    // They are handled differently: a refused upgrade carries the relay's
+    // HTTP reason, while a broken socket just reconnects.
+    let refused = WebSocketError::handshake_refused(401, "Unauthorized");
     let dropped = WebSocketError::Transport("connection reset".into());
     assert!(refused.is_handshake());
     assert!(!dropped.is_handshake());
-    assert_eq!(refused.message(), "401 Unauthorized");
+    assert_eq!(refused.http_status(), Some(401));
+    assert_eq!(
+        refused.message(),
+        "websocket upgrade refused with HTTP 401: Unauthorized"
+    );
+}
+
+#[test]
+fn http_upgrade_refusals_keep_status_and_body() {
+    let response = tungstenite::http::Response::builder()
+        .status(423)
+        .body(Some(b"remote access locked".to_vec()))
+        .unwrap();
+    let error = WebSocketError::from_tungstenite_connect_error(tungstenite::Error::Http(response));
+
+    assert!(error.is_handshake());
+    assert_eq!(error.http_status(), Some(423));
+    assert_eq!(error.http_body(), Some("remote access locked"));
+    assert_eq!(
+        error.message(),
+        "websocket upgrade refused with HTTP 423: remote access locked"
+    );
+}
+
+#[test]
+fn tcp_connect_errors_are_transport_not_refused_handshakes() {
+    let error = WebSocketError::from_tungstenite_connect_error(tungstenite::Error::Io(
+        io::Error::new(io::ErrorKind::ConnectionRefused, "connection refused"),
+    ));
+
+    assert!(!error.is_handshake());
+    assert_eq!(error.http_status(), None);
+    assert_eq!(error.message(), "connection refused");
 }

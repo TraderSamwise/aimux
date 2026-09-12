@@ -73,7 +73,6 @@ describe("audit-rust-orphans fixture dispatcher gate", () => {
 
     expect(trackedDebt.map((entry) => entry.file).sort()).toEqual(allowlistFiles);
     expect(allowlistFiles).toEqual([
-      "native/crates/aimux/src/agent_restore_state_contract.rs",
       "native/crates/aimux/src/attachment_store_contract.rs",
       "native/crates/aimux/src/cli_attachment_contract.rs",
       "native/crates/aimux/src/plugin_runtime_contract.rs",

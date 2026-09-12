@@ -98,6 +98,10 @@ fn restart_contract_reaches_production_cli_restart_sequence() {
                         }),
                     })
                 },
+            verify_restarted_daemon: || {
+                calls.borrow_mut().push("verify");
+                Ok(())
+            },
         },
     )
     .expect("restart through production helper");
@@ -105,7 +109,7 @@ fn restart_contract_reaches_production_cli_restart_sequence() {
     assert_eq!(result.text, "restart text");
     assert_eq!(
         calls.into_inner(),
-        vec!["assert", "stop", "ensure", "request"]
+        vec!["assert", "stop", "ensure", "request", "verify"]
     );
 }
 
@@ -285,6 +289,12 @@ fn restart_control_plane_from_cli(input: &Value) -> Value {
                         }),
                     })
                 },
+            verify_restarted_daemon: || {
+                calls
+                    .borrow_mut()
+                    .push(json!({ "fn": "verifyRestartedDaemon" }));
+                Ok(())
+            },
         },
     );
 

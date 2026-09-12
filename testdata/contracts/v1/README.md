@@ -95,13 +95,6 @@ Priority fixture groups:
 - `agent-output/read-metrics.json`: output-read metric aggregation and recent
   ring-buffer behavior captured from the TypeScript metric accumulator.
 
-## Agent Restore
-
-- `agent-restore/state.json`: last-online snapshot, prompt-gate, restore-offer,
-  acknowledgement, removal, and reconciliation scenarios captured by running
-  TypeScript `runtime-core/agent-restore-state` transitions. Volatile generated
-  identifiers and timestamps are normalized after TypeScript execution.
-
 ## Agent Status
 
 
@@ -344,7 +337,7 @@ Priority fixture groups:
 
 - `metadata-store/store.json`: persisted metadata load/save, topology-owned
   field scrubbing, loop/control-session flags, no-op writes, statusline segment
-  replacement/expiry/drop/rejection, and malformed rail cases captured by
+  replacement/expiry/drop/rejection, and malformed statusline segment cases captured by
   running the TypeScript metadata store against temporary project state.
 
 ## Metadata Watchers

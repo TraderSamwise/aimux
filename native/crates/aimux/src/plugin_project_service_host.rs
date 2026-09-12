@@ -1,14 +1,15 @@
+use crate::async_subprocess::AsyncCommand;
 use crate::plugin_api::{
     NativePlugin, NativePluginApi, NativePluginApiRequest, NativePluginHost, NativePluginStatus,
 };
 use crate::plugin_registry::NativePluginRegistry;
 use crate::project_service::router::ProjectServiceRequestContext;
-use crate::project_service::scheduler::PeriodicTask;
+use crate::project_service::scheduler::{PeriodicTask, PeriodicTaskFuture};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::time::Duration;
 
 pub fn native_plugin_statuses_for_context(
     context: &ProjectServiceRequestContext,
@@ -265,8 +266,15 @@ impl NativePluginHost for ProjectServicePluginHost<'_> {
                 command,
                 args,
                 cwd,
-                timeout_ms: _,
-            } => run_declared_subprocess(plugin_name, &capability, &command, &args, cwd.as_deref()),
+                timeout_ms,
+            } => run_declared_subprocess(
+                plugin_name,
+                &capability,
+                &command,
+                &args,
+                cwd.as_deref(),
+                timeout_ms,
+            ),
             NativePluginApiRequest::PublishNotification { notification } => Ok(json!({
                 "ok": false,
                 "error": "native plugin notification writes are not wired yet",
@@ -313,6 +321,7 @@ fn run_declared_subprocess(
     command: &str,
     args: &[String],
     cwd: Option<&str>,
+    timeout_ms: Option<u64>,
 ) -> Result<Value, String> {
     if !(plugin_name == "gh-pr-context"
         && ((capability == "git" && command == "git") || (capability == "gh" && command == "gh")))
@@ -321,12 +330,53 @@ fn run_declared_subprocess(
             "{plugin_name} did not declare subprocess capability {capability}"
         ));
     }
-    let mut process = Command::new(command);
+    let mut process = AsyncCommand::new(command);
     process.args(args);
     if let Some(cwd) = cwd {
         process.current_dir(cwd);
     }
-    match process.output() {
+    let timeout = Duration::from_millis(timeout_ms.unwrap_or(30_000).max(1));
+    match process.output_timeout(
+        crate::async_subprocess::command_task_name("plugin", command),
+        timeout,
+    ) {
+        Ok(output) => Ok(json!({
+            "ok": output.status.success(),
+            "exitCode": output.status.code(),
+            "stdout": String::from_utf8_lossy(&output.stdout),
+            "stderr": String::from_utf8_lossy(&output.stderr),
+        })),
+        Err(error) => Ok(json!({
+            "ok": false,
+            "error": error.to_string(),
+            "stdout": "",
+            "stderr": "",
+        })),
+    }
+}
+
+async fn run_declared_subprocess_async(
+    plugin_name: &str,
+    capability: &str,
+    command: &str,
+    args: &[String],
+    cwd: Option<&str>,
+    timeout_ms: Option<u64>,
+) -> Result<Value, String> {
+    if !(plugin_name == "gh-pr-context"
+        && ((capability == "git" && command == "git") || (capability == "gh" && command == "gh")))
+    {
+        return Err(format!(
+            "{plugin_name} did not declare subprocess capability {capability}"
+        ));
+    }
+    let mut process = AsyncCommand::new(command);
+    process.args(args);
+    if let Some(cwd) = cwd {
+        process.current_dir(cwd);
+    }
+    let timeout = Duration::from_millis(timeout_ms.unwrap_or(30_000).max(1));
+    match process.output_timeout_async(timeout).await {
         Ok(output) => Ok(json!({
             "ok": output.status.success(),
             "exitCode": output.status.code(),
@@ -516,13 +566,118 @@ impl PeriodicTask for PluginTickTask {
         self.interval_ms
     }
 
-    fn run(&mut self, context: &ProjectServiceRequestContext) {
-        let mut host = ProjectServicePluginHost::new(context);
-        let plugin_name = self.name.clone();
-        let mut api = NativePluginApi::new(&plugin_name, &mut host);
-        // The builtins do their refresh in on_event; start() would re-subscribe.
-        let _ = self.plugin.on_event(json!({ "type": "tick" }), &mut api);
+    fn timeout(&self) -> Duration {
+        Duration::from_secs(10)
     }
+
+    fn run<'a>(&'a mut self, context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
+        Box::pin(async move {
+            if self.name == "gh-pr-context" {
+                let _ = refresh_github_pr_context_async(context).await;
+                return;
+            }
+            let mut host = ProjectServicePluginHost::new(context);
+            let plugin_name = self.name.clone();
+            let mut api = NativePluginApi::new(&plugin_name, &mut host);
+            // The builtins do their refresh in on_event; start() would re-subscribe.
+            let _ = self.plugin.on_event(json!({ "type": "tick" }), &mut api);
+        })
+    }
+}
+
+async fn refresh_github_pr_context_async(
+    context: &ProjectServiceRequestContext,
+) -> Result<(), String> {
+    let mut host = ProjectServicePluginHost::new(context);
+    let plugin_name = "gh-pr-context";
+    let statusline = host.execute(plugin_name, NativePluginApiRequest::ReadStatuslineSnapshot)?;
+    let state = host.execute(plugin_name, NativePluginApiRequest::ReadDaemonStateSnapshot)?;
+    let metadata = host.execute(plugin_name, NativePluginApiRequest::ReadMetadataState)?;
+    let topology = host.execute(
+        plugin_name,
+        NativePluginApiRequest::ReadRuntimeTopology {
+            statuses: Some(vec!["running".to_owned(), "idle".to_owned()]),
+        },
+    )?;
+    let targets = crate::native_plugin_gh_pr_context::collect_targets_from_state(
+        &statusline,
+        &state,
+        &metadata,
+        topology.get("sessions").unwrap_or(&topology),
+    );
+    for target in targets.as_array().into_iter().flatten() {
+        let Some(session_id) = target.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(worktree_path) = target.get("worktreePath").and_then(Value::as_str) else {
+            continue;
+        };
+        if let Some(context_value) = pr_context_for_worktree_async(worktree_path).await? {
+            host.execute(
+                plugin_name,
+                NativePluginApiRequest::SetSessionContext {
+                    session_id: session_id.to_owned(),
+                    context: context_value,
+                },
+            )?;
+        }
+    }
+    Ok(())
+}
+
+async fn pr_context_for_worktree_async(worktree_path: &str) -> Result<Option<Value>, String> {
+    let branch = declared_subprocess_stdout_async(
+        "git",
+        "git",
+        &["branch", "--show-current"],
+        Some(worktree_path),
+    )
+    .await?;
+    if branch.trim().is_empty() {
+        return Ok(None);
+    }
+    let pr_json = declared_subprocess_stdout_async(
+        "gh",
+        "gh",
+        &[
+            "pr",
+            "view",
+            "--json",
+            "number,title,url,headRefName,baseRefName,state,author",
+        ],
+        Some(worktree_path),
+    )
+    .await?;
+    if pr_json.trim().is_empty() {
+        return Ok(None);
+    }
+    let pr = serde_json::from_str::<Value>(&pr_json).map_err(|error| error.to_string())?;
+    Ok(Some(json!({ "branch": branch.trim(), "pr": pr })))
+}
+
+async fn declared_subprocess_stdout_async(
+    capability: &str,
+    command: &str,
+    args: &[&str],
+    cwd: Option<&str>,
+) -> Result<String, String> {
+    let output = run_declared_subprocess_async(
+        "gh-pr-context",
+        capability,
+        command,
+        &args.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>(),
+        cwd,
+        Some(10_000),
+    )
+    .await?;
+    if output.get("ok").and_then(Value::as_bool) != Some(true) {
+        return Ok(String::new());
+    }
+    Ok(output
+        .get("stdout")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned())
 }
 
 /// Derived from the one builtin list, so a plugin cannot be registered for a

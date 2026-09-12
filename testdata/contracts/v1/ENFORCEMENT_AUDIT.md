@@ -29,7 +29,6 @@ Binding statuses: PROVEN-FAILS 183, VACUOUS 0, CHECKLIST 0, ERROR 0, STATIC 3.
 | `fixture_agent_contracts` | PROVEN-FAILS | `testdata/contracts/v1/agent-output/parser-audit.json` | 22 | mutated fixture output failed owning Rust suite |
 | `fixture_agent_contracts` | PROVEN-FAILS | `testdata/contracts/v1/agent-output/parser-fuzz.json` | 410 | mutated fixture output failed owning Rust suite |
 | `fixture_agent_contracts` | PROVEN-FAILS | `testdata/contracts/v1/agent-output/activity-text.json` | 16 | mutated fixture output failed owning Rust suite |
-| `fixture_agent_contracts` | PROVEN-FAILS | `testdata/contracts/v1/agent-restore/state.json` | 13 | mutated fixture output failed owning Rust suite |
 | `fixture_agent_contracts` | PROVEN-FAILS | `testdata/contracts/v1/agent-output/transcript.json` | 50 | mutated fixture output failed owning Rust suite |
 | `fixture_agent_contracts` | PROVEN-FAILS | `testdata/contracts/v1/ansi/sgr-spans.json` | 17 | mutated fixture output failed owning Rust suite |
 | `fixture_runtime_contracts` | PROVEN-FAILS | `testdata/contracts/v1/runtime-state/atomic-write.json` | 8 | mutated fixture output failed owning Rust suite |

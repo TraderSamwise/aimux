@@ -1,10 +1,22 @@
+use aimux::async_runtime::init_process_runtime;
 use aimux::project_api_contract::routes;
+use aimux::project_service::loop_watcher_task::LoopWatcherTask;
 use aimux::project_service::router::ProjectServiceRequestContext;
 use aimux::project_service::router::route_project_service_request;
-use aimux::project_service::scheduler::{PeriodicScheduler, PeriodicTask, ProjectSchedulerHandle};
+use aimux::project_service::scheduler::{
+    PeriodicScheduler, PeriodicTask, PeriodicTaskFuture, PeriodicTaskHealthSnapshot,
+    ProjectSchedulerHandle, spawn_project_service_scheduler,
+};
 use serde_json::json;
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Mutex, mpsc};
+use std::time::Duration;
+
+static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 struct CountingTask {
     name: String,
@@ -28,9 +40,11 @@ impl PeriodicTask for CountingTask {
                 .max(1)
         })
     }
-    fn run(&mut self, _context: &ProjectServiceRequestContext) {
-        self.runs.fetch_add(1, Ordering::SeqCst);
-        assert!(!self.panics, "task panicked on purpose");
+    fn run<'a>(&'a mut self, _context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
+        Box::pin(async move {
+            self.runs.fetch_add(1, Ordering::SeqCst);
+            assert!(!self.panics, "task panicked on purpose");
+        })
     }
 }
 
@@ -64,10 +78,94 @@ fn context() -> ProjectServiceRequestContext {
     ProjectServiceRequestContext::with_project_state_dir(&dir, dir.join("state"))
 }
 
+fn run_due_at(
+    scheduler: &mut PeriodicScheduler,
+    context: &ProjectServiceRequestContext,
+    now_ms: i64,
+) -> Vec<String> {
+    run_due_with_clock(scheduler, context, &mut || now_ms)
+}
+
+fn run_due_with_clock(
+    scheduler: &mut PeriodicScheduler,
+    context: &ProjectServiceRequestContext,
+    clock: &mut dyn FnMut() -> i64,
+) -> Vec<String> {
+    init_process_runtime().expect("runtime initialized");
+    // aimux-async-seam: test - scheduler test drives async PeriodicTask method
+    aimux::async_runtime::block_on_named(
+        "project-service-scheduler-test:run-due",
+        scheduler.run_due_async(context, clock),
+    )
+}
+
 fn context_with_scheduler(scheduler: ProjectSchedulerHandle) -> ProjectServiceRequestContext {
     let dir = std::env::temp_dir().join("aimux-scheduler-kick-test");
     ProjectServiceRequestContext::with_project_state_dir(&dir, dir.join("state"))
         .with_scheduler(scheduler)
+}
+
+#[test]
+fn scheduler_reschedules_configured_tasks_without_spawning_git() {
+    let _guard = ENV_LOCK.lock().expect("env lock");
+    let root = unique_temp_dir("aimux-scheduler-no-git");
+    let project_root = root.join("project");
+    let state_dir = root.join("state");
+    let bin_dir = root.join("bin");
+    let log_path = root.join("git.log");
+    fs::create_dir_all(project_root.join(".aimux")).expect("project config dir");
+    fs::create_dir_all(&state_dir).expect("state dir");
+    fs::create_dir_all(&bin_dir).expect("bin dir");
+    fs::write(
+        project_root.join(".aimux/config.json"),
+        r#"{"loop":{"scanEveryTicks":2,"scanIntervalMs":500}}"#,
+    )
+    .expect("config");
+    let git_path = bin_dir.join("git");
+    fs::write(
+        &git_path,
+        format!(
+            "#!/bin/sh\necho \"$@\" >> {}\npwd\n",
+            shell_quote(&log_path)
+        ),
+    )
+    .expect("git shim");
+    fs::set_permissions(&git_path, fs::Permissions::from_mode(0o755)).expect("git shim mode");
+
+    let old_path = std::env::var_os("PATH");
+    unsafe {
+        std::env::set_var("PATH", &bin_dir);
+    }
+    let ctx = Arc::new(ProjectServiceRequestContext::with_project_state_dir(
+        &project_root,
+        &state_dir,
+    ));
+    let task = Box::new(LoopWatcherTask::new(Arc::clone(&ctx)));
+    let _ = fs::remove_file(&log_path);
+    let mut scheduler = PeriodicScheduler::new(vec![task], 0);
+
+    assert_eq!(run_due_at(&mut scheduler, &ctx, 500), vec!["loop-watcher"]);
+    assert!(run_due_at(&mut scheduler, &ctx, 750).is_empty());
+    assert_eq!(
+        run_due_at(&mut scheduler, &ctx, 1_000),
+        vec!["loop-watcher"]
+    );
+
+    if let Some(old_path) = old_path {
+        unsafe {
+            std::env::set_var("PATH", old_path);
+        }
+    } else {
+        unsafe {
+            std::env::remove_var("PATH");
+        }
+    }
+    let invocations = fs::read_to_string(&log_path).unwrap_or_default();
+    let _ = fs::remove_dir_all(&root);
+    assert_eq!(
+        invocations, "",
+        "scheduler cadence/reschedule path spawned git: {invocations}"
+    );
 }
 
 #[test]
@@ -76,10 +174,13 @@ fn a_task_does_not_run_before_its_first_interval_elapses() {
     let mut scheduler = PeriodicScheduler::new(vec![task("slow", 2_000, &runs, false)], 0);
     let ctx = context();
 
-    assert!(scheduler.run_due_at(&ctx, 1_999).is_empty());
+    assert!(run_due_at(&mut scheduler, &ctx, 1_999).is_empty());
     assert_eq!(runs.load(Ordering::SeqCst), 0);
 
-    assert_eq!(scheduler.run_due_at(&ctx, 2_000), vec!["slow".to_owned()]);
+    assert_eq!(
+        run_due_at(&mut scheduler, &ctx, 2_000),
+        vec!["slow".to_owned()]
+    );
     assert_eq!(runs.load(Ordering::SeqCst), 1);
 }
 
@@ -89,9 +190,9 @@ fn a_task_reschedules_itself_one_interval_out() {
     let mut scheduler = PeriodicScheduler::new(vec![task("tick", 1_000, &runs, false)], 0);
     let ctx = context();
 
-    scheduler.run_due_at(&ctx, 1_000);
-    assert!(scheduler.run_due_at(&ctx, 1_500).is_empty());
-    scheduler.run_due_at(&ctx, 2_000);
+    run_due_at(&mut scheduler, &ctx, 1_000);
+    assert!(run_due_at(&mut scheduler, &ctx, 1_500).is_empty());
+    run_due_at(&mut scheduler, &ctx, 2_000);
 
     assert_eq!(runs.load(Ordering::SeqCst), 2);
 }
@@ -110,7 +211,7 @@ fn tasks_with_different_intervals_fire_independently() {
     let ctx = context();
 
     for tick in 1..=5 {
-        scheduler.run_due_at(&ctx, tick * 1_000);
+        run_due_at(&mut scheduler, &ctx, tick * 1_000);
     }
 
     assert_eq!(fast.load(Ordering::SeqCst), 5);
@@ -123,8 +224,8 @@ fn a_task_can_declare_cadence_as_a_tick_multiple() {
     let mut scheduler = PeriodicScheduler::new(vec![tick_task("three-ticks", 3, &runs)], 0);
     let ctx = context();
 
-    assert!(scheduler.run_due_at(&ctx, 749).is_empty());
-    assert_eq!(scheduler.run_due_at(&ctx, 750), vec!["three-ticks"]);
+    assert!(run_due_at(&mut scheduler, &ctx, 749).is_empty());
+    assert_eq!(run_due_at(&mut scheduler, &ctx, 750), vec!["three-ticks"]);
     assert_eq!(runs.load(Ordering::SeqCst), 1);
 }
 
@@ -136,12 +237,12 @@ fn a_named_force_kick_runs_a_task_on_the_next_tick() {
         PeriodicScheduler::with_handle(vec![task("slow", 10_000, &runs, false)], 0, handle.clone());
     let ctx = context();
 
-    assert!(scheduler.run_due_at(&ctx, 1_000).is_empty());
+    assert!(run_due_at(&mut scheduler, &ctx, 1_000).is_empty());
     handle.force_task_next_tick("slow");
-    assert_eq!(scheduler.run_due_at(&ctx, 1_001), vec!["slow"]);
+    assert_eq!(run_due_at(&mut scheduler, &ctx, 1_001), vec!["slow"]);
     assert_eq!(runs.load(Ordering::SeqCst), 1);
-    assert!(scheduler.run_due_at(&ctx, 10_000).is_empty());
-    assert_eq!(scheduler.run_due_at(&ctx, 11_001), vec!["slow"]);
+    assert!(run_due_at(&mut scheduler, &ctx, 10_000).is_empty());
+    assert_eq!(run_due_at(&mut scheduler, &ctx, 11_001), vec!["slow"]);
     assert_eq!(runs.load(Ordering::SeqCst), 2);
 }
 
@@ -153,7 +254,7 @@ fn a_runtime_event_kicks_the_loop_watcher_onto_the_next_tick() {
     let mut scheduler =
         PeriodicScheduler::with_handle(vec![task("loop-watcher", 60_000, &runs, false)], 0, handle);
 
-    assert!(scheduler.run_due_at(&ctx, 1_000).is_empty());
+    assert!(run_due_at(&mut scheduler, &ctx, 1_000).is_empty());
     let response = route_project_service_request(
         &ctx,
         "POST",
@@ -167,7 +268,10 @@ fn a_runtime_event_kicks_the_loop_watcher_onto_the_next_tick() {
         (200..300).contains(&response.status),
         "runtime event should be accepted"
     );
-    assert_eq!(scheduler.run_due_at(&ctx, 1_001), vec!["loop-watcher"]);
+    assert_eq!(
+        run_due_at(&mut scheduler, &ctx, 1_001),
+        vec!["loop-watcher"]
+    );
     assert_eq!(runs.load(Ordering::SeqCst), 1);
 }
 
@@ -184,14 +288,78 @@ fn a_panicking_task_does_not_stop_its_neighbour() {
     );
     let ctx = context();
 
-    let ran = scheduler.run_due_at(&ctx, 1_000);
+    let ran = run_due_at(&mut scheduler, &ctx, 1_000);
     assert_eq!(ran, vec!["bad".to_owned(), "good".to_owned()]);
     assert_eq!(good.load(Ordering::SeqCst), 1);
 
-    // and it stays on the rail rather than being dropped after one failure
-    scheduler.run_due_at(&ctx, 2_000);
+    // and it stays on the tick loop rather than being dropped after one failure
+    run_due_at(&mut scheduler, &ctx, 2_000);
     assert_eq!(bad.load(Ordering::SeqCst), 2);
     assert_eq!(good.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn scheduler_health_records_success_and_failure_counters() {
+    let ok_runs = Arc::new(AtomicUsize::new(0));
+    let bad_runs = Arc::new(AtomicUsize::new(0));
+    let mut scheduler = PeriodicScheduler::new(
+        vec![
+            task("ok", 1_000, &ok_runs, false),
+            task("bad", 1_000, &bad_runs, true),
+        ],
+        0,
+    );
+    let ctx = context();
+
+    run_due_at(&mut scheduler, &ctx, 1_000);
+    run_due_at(&mut scheduler, &ctx, 2_000);
+
+    let health = scheduler
+        .try_health_snapshot()
+        .expect("scheduler health is readable");
+    let ok = health
+        .iter()
+        .find(|task| task.name == "ok")
+        .expect("ok task");
+    assert_eq!(ok.total_runs, 2);
+    assert!(ok.last_completed_at_ms.is_some());
+    assert!(ok.last_duration_ms.is_some());
+    assert!(ok.p95_duration_ms.is_some());
+    assert_eq!(ok.consecutive_failures, 0);
+    assert_eq!(ok.consecutive_timeouts, 0);
+    assert_eq!(ok.total_timeouts, 0);
+    assert_eq!(ok.last_error, None);
+
+    let bad = health
+        .iter()
+        .find(|task| task.name == "bad")
+        .expect("bad task");
+    assert_eq!(bad.total_runs, 2);
+    assert!(bad.last_completed_at_ms.is_some());
+    assert!(bad.last_duration_ms.is_some());
+    assert!(bad.p95_duration_ms.is_some());
+    assert_eq!(bad.consecutive_failures, 2);
+    assert_eq!(bad.consecutive_timeouts, 0);
+    assert_eq!(bad.total_timeouts, 0);
+    assert_eq!(bad.last_error.as_deref(), Some("task panicked"));
+}
+
+#[test]
+fn project_diagnostics_expose_scheduler_health() {
+    let runs = Arc::new(AtomicUsize::new(0));
+    let handle = ProjectSchedulerHandle::default();
+    let ctx = context_with_scheduler(handle.clone());
+    let mut scheduler =
+        PeriodicScheduler::with_handle(vec![task("visible", 1_000, &runs, false)], 0, handle);
+
+    run_due_at(&mut scheduler, &ctx, 1_000);
+
+    let response = route_project_service_request(&ctx, "GET", routes::DIAGNOSTICS, None);
+    assert_eq!(response.status, 200);
+    let scheduler = response.body.get("scheduler").expect("scheduler health");
+    assert_eq!(scheduler["ok"], json!(true));
+    assert_eq!(scheduler["periodicTasks"][0]["name"], json!("visible"));
+    assert_eq!(scheduler["periodicTasks"][0]["totalRuns"], json!(1));
 }
 
 #[test]
@@ -205,13 +373,13 @@ fn sleep_never_exceeds_the_idle_ceiling_or_goes_negative() {
 }
 
 #[test]
-fn an_absurd_interval_is_floored_so_the_rail_cannot_spin() {
+fn an_absurd_interval_is_floored_so_the_tick_loop_cannot_spin() {
     let runs = Arc::new(AtomicUsize::new(0));
     let mut scheduler = PeriodicScheduler::new(vec![task("hot", 0, &runs, false)], 0);
     let ctx = context();
 
-    assert!(scheduler.run_due_at(&ctx, 249).is_empty());
-    scheduler.run_due_at(&ctx, 250);
+    assert!(run_due_at(&mut scheduler, &ctx, 249).is_empty());
+    run_due_at(&mut scheduler, &ctx, 250);
     assert_eq!(runs.load(Ordering::SeqCst), 1);
 }
 
@@ -228,9 +396,11 @@ impl PeriodicTask for SlowTask {
     fn interval_ms(&self) -> i64 {
         1_000
     }
-    fn run(&mut self, _context: &ProjectServiceRequestContext) {
-        self.runs.fetch_add(1, Ordering::SeqCst);
-        *self.clock.lock().unwrap() += self.cost_ms;
+    fn run<'a>(&'a mut self, _context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
+        Box::pin(async move {
+            self.runs.fetch_add(1, Ordering::SeqCst);
+            *self.clock.lock().unwrap() += self.cost_ms;
+        })
     }
 }
 
@@ -252,18 +422,18 @@ fn a_task_that_overruns_its_interval_still_gets_a_full_gap_afterwards() {
     let mut now = move || *reader.lock().unwrap();
 
     *clock.lock().unwrap() = 1_000;
-    scheduler.run_due(&ctx, &mut now);
+    run_due_with_clock(&mut scheduler, &ctx, &mut now);
     assert_eq!(runs.load(Ordering::SeqCst), 1);
     // finished at 6_000, so the next run is due at 7_000 — NOT at 2_000, which
     // is what rescheduling from the due time would have produced.
     assert_eq!(*clock.lock().unwrap(), 6_000);
 
     *clock.lock().unwrap() = 6_999;
-    assert!(scheduler.run_due(&ctx, &mut now).is_empty());
+    assert!(run_due_with_clock(&mut scheduler, &ctx, &mut now).is_empty());
     assert_eq!(runs.load(Ordering::SeqCst), 1);
 
     *clock.lock().unwrap() = 7_000;
-    scheduler.run_due(&ctx, &mut now);
+    run_due_with_clock(&mut scheduler, &ctx, &mut now);
     assert_eq!(runs.load(Ordering::SeqCst), 2);
 }
 
@@ -278,8 +448,10 @@ impl PeriodicTask for EagerTask {
     fn interval_ms(&self) -> i64 {
         60_000
     }
-    fn run(&mut self, _context: &ProjectServiceRequestContext) {
-        self.runs.fetch_add(1, Ordering::SeqCst);
+    fn run<'a>(&'a mut self, _context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
+        Box::pin(async move {
+            self.runs.fetch_add(1, Ordering::SeqCst);
+        })
     }
     fn run_immediately(&self) -> bool {
         true
@@ -301,11 +473,287 @@ fn a_task_can_ask_to_run_at_startup_instead_of_one_interval_out() {
     );
     let ctx = context();
 
-    assert_eq!(scheduler.run_due_at(&ctx, 0), vec!["eager".to_owned()]);
+    assert_eq!(
+        run_due_at(&mut scheduler, &ctx, 0),
+        vec!["eager".to_owned()]
+    );
     assert_eq!(eager.load(Ordering::SeqCst), 1);
     assert_eq!(
         patient.load(Ordering::SeqCst),
         0,
         "the default is unchanged"
     );
+}
+
+struct WedgeTask {
+    started: Arc<AtomicUsize>,
+    dropped: Arc<AtomicUsize>,
+    completed: Arc<AtomicUsize>,
+}
+
+struct FutureDropCounter(Arc<AtomicUsize>);
+
+impl Drop for FutureDropCounter {
+    fn drop(&mut self) {
+        self.0.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+impl PeriodicTask for WedgeTask {
+    fn name(&self) -> &str {
+        "wedged"
+    }
+
+    fn interval_ms(&self) -> i64 {
+        1_000
+    }
+
+    fn timeout(&self) -> Duration {
+        Duration::from_millis(25)
+    }
+
+    fn run_immediately(&self) -> bool {
+        true
+    }
+
+    fn run<'a>(&'a mut self, _context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
+        let started = Arc::clone(&self.started);
+        let dropped = Arc::clone(&self.dropped);
+        let completed = Arc::clone(&self.completed);
+        Box::pin(async move {
+            let _drop_counter = FutureDropCounter(dropped);
+            started.fetch_add(1, Ordering::SeqCst);
+            std::future::pending::<()>().await;
+            completed.fetch_add(1, Ordering::SeqCst);
+        })
+    }
+}
+
+#[test]
+fn a_timed_out_task_future_is_cancelled_not_abandoned() {
+    init_process_runtime().expect("runtime initialized");
+    let started = Arc::new(AtomicUsize::new(0));
+    let dropped = Arc::new(AtomicUsize::new(0));
+    let completed = Arc::new(AtomicUsize::new(0));
+    let tasks = vec![Box::new(WedgeTask {
+        started: Arc::clone(&started),
+        dropped: Arc::clone(&dropped),
+        completed: Arc::clone(&completed),
+    }) as Box<dyn PeriodicTask>];
+    let ctx = Arc::new(context());
+
+    spawn_project_service_scheduler(ctx, tasks, ProjectSchedulerHandle::default());
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(1);
+    while dropped.load(Ordering::SeqCst) == 0 && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(started.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        dropped.load(Ordering::SeqCst),
+        1,
+        "the in-flight future must be dropped when the scheduler timeout fires"
+    );
+    assert_eq!(
+        completed.load(Ordering::SeqCst),
+        0,
+        "the wedged future must not keep running after timeout"
+    );
+}
+
+#[test]
+fn scheduler_health_records_timeouts_without_marking_completion() {
+    init_process_runtime().expect("runtime initialized");
+    let started = Arc::new(AtomicUsize::new(0));
+    let dropped = Arc::new(AtomicUsize::new(0));
+    let completed = Arc::new(AtomicUsize::new(0));
+    let handle = ProjectSchedulerHandle::default();
+    let tasks = vec![Box::new(WedgeTask {
+        started: Arc::clone(&started),
+        dropped,
+        completed,
+    }) as Box<dyn PeriodicTask>];
+    let ctx = Arc::new(context_with_scheduler(handle.clone()));
+
+    spawn_project_service_scheduler(ctx, tasks, handle.clone());
+
+    let health = wait_for_scheduler_health(&handle, "wedged", |task| task.total_timeouts == 1)
+        .expect("timeout health recorded");
+    assert_eq!(started.load(Ordering::SeqCst), 1);
+    assert_eq!(health.total_runs, 1);
+    assert_eq!(health.last_completed_at_ms, None);
+    assert_eq!(health.last_duration_ms, None);
+    assert_eq!(health.p95_duration_ms, None);
+    assert_eq!(health.consecutive_failures, 1);
+    assert_eq!(health.consecutive_timeouts, 1);
+    assert_eq!(health.total_timeouts, 1);
+    assert_eq!(health.last_error.as_deref(), Some("timed out after 25ms"));
+}
+
+#[test]
+fn scheduler_test_helper_is_for_instant_return_tasks() {
+    let runs = Arc::new(AtomicUsize::new(0));
+    let mut scheduler = PeriodicScheduler::new(vec![task("instant", 1_000, &runs, false)], 0);
+    let ctx = context();
+
+    assert_eq!(
+        run_due_at(&mut scheduler, &ctx, 1_000),
+        vec!["instant".to_owned()]
+    );
+    assert_eq!(runs.load(Ordering::SeqCst), 1);
+}
+
+struct BlockingStartupTask {
+    name: String,
+    started: mpsc::Sender<String>,
+    gate: Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
+}
+
+impl PeriodicTask for BlockingStartupTask {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn interval_ms(&self) -> i64 {
+        60_000
+    }
+
+    fn timeout(&self) -> Duration {
+        Duration::from_millis(100)
+    }
+
+    fn run_immediately(&self) -> bool {
+        true
+    }
+
+    fn run<'a>(&'a mut self, _context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
+        Box::pin(async move {
+            self.started
+                .send(self.name.clone())
+                .expect("test receiver should be open");
+            let (lock, changed) = &*self.gate;
+            let mut released = lock.lock().expect("gate lock");
+            while !*released {
+                let (next, _) = changed
+                    .wait_timeout(released, Duration::from_secs(2))
+                    .expect("wait on gate");
+                released = next;
+                if !*released {
+                    break;
+                }
+            }
+        })
+    }
+}
+
+#[test]
+fn spawned_scheduler_dispatches_task_loops_concurrently() {
+    init_process_runtime().expect("runtime initialized");
+    let (started_tx, started_rx) = mpsc::channel();
+    let gate = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+    let tasks = ["first", "second"]
+        .into_iter()
+        .map(|name| {
+            Box::new(BlockingStartupTask {
+                name: name.to_owned(),
+                started: started_tx.clone(),
+                gate: Arc::clone(&gate),
+            }) as Box<dyn PeriodicTask>
+        })
+        .collect();
+    let ctx = Arc::new(context());
+
+    spawn_project_service_scheduler(ctx, tasks, ProjectSchedulerHandle::default());
+
+    let first = started_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("first task should start");
+    let second = started_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("second task should start before the first is released");
+    assert_ne!(first, second);
+    let (lock, changed) = &*gate;
+    *lock.lock().expect("gate lock") = true;
+    changed.notify_all();
+}
+
+struct KickTask {
+    started: mpsc::Sender<()>,
+}
+
+impl PeriodicTask for KickTask {
+    fn name(&self) -> &str {
+        "kick-me"
+    }
+
+    fn interval_ms(&self) -> i64 {
+        60_000
+    }
+
+    fn timeout(&self) -> Duration {
+        Duration::from_secs(1)
+    }
+
+    fn run<'a>(&'a mut self, _context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
+        Box::pin(async move {
+            self.started.send(()).expect("test receiver should be open");
+        })
+    }
+}
+
+#[test]
+fn spawned_scheduler_force_kick_runs_before_the_full_interval() {
+    init_process_runtime().expect("runtime initialized");
+    let (started_tx, started_rx) = mpsc::channel();
+    let handle = ProjectSchedulerHandle::default();
+    let ctx = Arc::new(context_with_scheduler(handle.clone()));
+
+    spawn_project_service_scheduler(
+        ctx,
+        vec![Box::new(KickTask {
+            started: started_tx,
+        })],
+        handle.clone(),
+    );
+
+    assert!(
+        started_rx.recv_timeout(Duration::from_millis(100)).is_err(),
+        "the task should not run before its long interval"
+    );
+    handle.force_task_next_tick("kick-me");
+    started_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("force should wake the task loop on the next scheduler tick");
+}
+
+fn unique_temp_dir(prefix: &str) -> std::path::PathBuf {
+    static SEQ: AtomicUsize = AtomicUsize::new(0);
+    std::env::temp_dir().join(format!(
+        "{prefix}-{}-{}",
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::SeqCst)
+    ))
+}
+
+fn shell_quote(path: &Path) -> String {
+    format!("'{}'", path.to_string_lossy().replace('\'', "'\"'\"'"))
+}
+
+fn wait_for_scheduler_health(
+    handle: &ProjectSchedulerHandle,
+    name: &str,
+    predicate: impl Fn(&PeriodicTaskHealthSnapshot) -> bool,
+) -> Option<PeriodicTaskHealthSnapshot> {
+    let started = std::time::Instant::now();
+    while started.elapsed() < Duration::from_secs(1) {
+        let health = handle.try_health_snapshot().ok()?;
+        if let Some(task) = health
+            .into_iter()
+            .find(|task| task.name == name && predicate(task))
+        {
+            return Some(task);
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    None
 }

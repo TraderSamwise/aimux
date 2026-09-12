@@ -1,7 +1,8 @@
+use aimux::async_runtime::{AsyncTaskKind, doctor_tasks_report};
 use aimux::dashboard_client::ProjectServiceEndpoint;
 use aimux::dashboard_event_stream::{
     DashboardEventStreamMessage, build_project_event_stream_request,
-    spawn_dashboard_project_event_stream,
+    spawn_dashboard_project_event_stream, spawn_dashboard_project_event_stream_with_capacity,
 };
 use aimux::dashboard_project_events::DashboardProjectEvent;
 use std::io::{Read, Write};
@@ -62,6 +63,74 @@ fn decodes_chunked_project_event_stream() {
 }
 
 #[test]
+fn event_stream_reader_is_registered_as_async_task() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind");
+    let port = listener.local_addr().expect("local addr").port();
+    let (ready_tx, ready_rx) = mpsc::channel();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept");
+        let _ = read_request_text(&mut stream);
+        stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n")
+            .expect("write headers");
+        ready_tx.send(()).expect("ready");
+        thread::sleep(Duration::from_millis(250));
+    });
+
+    let endpoint = ProjectServiceEndpoint {
+        host: "127.0.0.1".into(),
+        port,
+    };
+    let handle = spawn_dashboard_project_event_stream(endpoint);
+    ready_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("stream opened");
+    let task = wait_for_dashboard_event_stream_task(port).expect("async task registered");
+    assert_eq!(task.kind, AsyncTaskKind::Async);
+    drop(handle);
+    server.join().expect("server");
+}
+
+#[test]
+fn bounded_channel_preserves_fast_stream_events_for_slow_dashboard() {
+    let (endpoint, server) = serve_once(|mut stream| {
+        let _ = read_request_text(&mut stream);
+        let body = b"event: ready\ndata: {\"sequence\":1}\n\nevent: project_update\ndata: {\"sequence\":2}\n\nevent: alert\ndata: {\"sequence\":3}\n\n";
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n{:x}\r\n{}\r\n0\r\n\r\n",
+            body.len(),
+            String::from_utf8_lossy(body)
+        );
+        stream
+            .write_all(response.as_bytes())
+            .expect("write response");
+    });
+
+    let handle = spawn_dashboard_project_event_stream_with_capacity(endpoint, 1);
+    thread::sleep(Duration::from_millis(50));
+    let messages = collect_messages(&handle, 4);
+    drop(handle);
+    server.join().expect("server");
+
+    assert!(matches!(
+        messages.first(),
+        Some(DashboardEventStreamMessage::Event(DashboardProjectEvent::Ready(payload)))
+            if payload.get("sequence").and_then(|value| value.as_i64()) == Some(1)
+    ));
+    assert!(matches!(
+        messages.get(1),
+        Some(DashboardEventStreamMessage::Event(DashboardProjectEvent::ProjectUpdate(payload)))
+            if payload.get("sequence").and_then(|value| value.as_i64()) == Some(2)
+    ));
+    assert!(matches!(
+        messages.get(2),
+        Some(DashboardEventStreamMessage::Event(DashboardProjectEvent::Alert(payload)))
+            if payload.get("sequence").and_then(|value| value.as_i64()) == Some(3)
+    ));
+    assert_eq!(messages.last(), Some(&DashboardEventStreamMessage::Ended));
+}
+
+#[test]
 fn reports_non_success_stream_response() {
     let (endpoint, server) = serve_once(|mut stream| {
         let _ = read_request_text(&mut stream);
@@ -81,6 +150,30 @@ fn reports_non_success_stream_response() {
         messages,
         vec![DashboardEventStreamMessage::Error(
             "project event stream failed: 503".into()
+        )]
+    );
+}
+
+#[test]
+fn reports_stream_framing_errors_instead_of_ending_silently() {
+    let (endpoint, server) = serve_once(|mut stream| {
+        let _ = read_request_text(&mut stream);
+        stream
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\nnot-hex\r\n",
+            )
+            .expect("write response");
+    });
+
+    let handle = spawn_dashboard_project_event_stream(endpoint);
+    let messages = collect_messages(&handle, 1);
+    drop(handle);
+    server.join().expect("server");
+
+    assert_eq!(
+        messages,
+        vec![DashboardEventStreamMessage::Error(
+            "invalid event stream chunk size: not-hex".into()
         )]
     );
 }
@@ -156,4 +249,22 @@ fn collect_messages(
         }
     }
     messages
+}
+
+fn wait_for_dashboard_event_stream_task(
+    port: u16,
+) -> Option<aimux::async_runtime::AsyncTaskSnapshot> {
+    let needle = format!("dashboard:project-event-stream 127.0.0.1:{port}");
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
+        if let Some(task) = doctor_tasks_report()
+            .tasks
+            .into_iter()
+            .find(|task| task.name == needle)
+        {
+            return Some(task);
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    None
 }

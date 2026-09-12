@@ -1,9 +1,13 @@
+use aimux::async_runtime::block_on_named;
 use aimux::daemon::http::{DaemonResponseBody, prepare_daemon_response};
 use aimux::daemon::listener::{
-    DaemonRequestBodyLimit, DaemonRequestMetadata, handle_daemon_stream,
+    DaemonListenConfig, DaemonRequestBodyLimit, DaemonRequestMetadata, handle_daemon_stream,
     handle_daemon_stream_with_metadata, handle_daemon_stream_with_metadata_and_interceptor,
-    handle_daemon_stream_with_metadata_and_interceptor_and_body_limit, parse_daemon_http_request,
-    parse_daemon_http_request_with_metadata, prepared_response_bytes, spawn_daemon_connection,
+    handle_daemon_stream_with_metadata_and_interceptor_and_body_limit_blocking,
+    handle_daemon_stream_with_metadata_and_interceptor_and_body_limit_with_read_timeout,
+    handle_daemon_stream_with_metadata_and_interceptor_and_body_limit_with_timeouts,
+    parse_daemon_http_request, parse_daemon_http_request_with_metadata, prepared_response_bytes,
+    serve_daemon_http_with_metadata_and_interceptor_until, spawn_daemon_connection,
 };
 use aimux::daemon::routing::DaemonRouteResponse;
 use aimux::daemon::server::handle_daemon_http_request;
@@ -11,7 +15,11 @@ use aimux::remote_access::RemoteAccessDecision;
 use serde_json::json;
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::Arc;
+use std::process::Command;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use std::thread;
 use std::time::Duration;
 
@@ -192,7 +200,7 @@ fn body_limit_rejects_content_length_before_consuming_body() {
     let header_len = input.find("\r\n\r\n").expect("headers") + 4;
     let mut stream = MemoryStream::new(input.as_bytes());
 
-    handle_daemon_stream_with_metadata_and_interceptor_and_body_limit(
+    handle_daemon_stream_with_metadata_and_interceptor_and_body_limit_blocking(
         &mut stream,
         DaemonRequestMetadata::default(),
         &mut |head| {
@@ -232,18 +240,26 @@ fn spawned_connections_do_not_serialize_slow_streams() {
     });
     let accept_handler = Arc::clone(&handler);
     let acceptor = thread::spawn(move || {
-        let mut joins = Vec::new();
+        let mut streams = Vec::new();
         for _ in 0..2 {
             let (stream, _) = listener.accept().expect("accept");
-            joins.push(spawn_daemon_connection(
-                stream,
-                DaemonRequestMetadata::default(),
-                Arc::clone(&accept_handler),
-            ));
+            streams.push(stream);
         }
-        for join in joins {
-            join.join().expect("connection thread");
-        }
+        // aimux-async-seam: test - listener test joins async client and server tasks
+        aimux::async_runtime::block_on_named("daemon-listener-test:joins", async move {
+            let mut joins = Vec::new();
+            for stream in streams {
+                stream.set_nonblocking(true).expect("nonblocking stream");
+                joins.push(spawn_daemon_connection(
+                    tokio::net::TcpStream::from_std(stream).expect("tokio stream"),
+                    DaemonRequestMetadata::default(),
+                    Arc::clone(&accept_handler),
+                ));
+            }
+            for join in joins {
+                join.await.expect("connection task");
+            }
+        });
     });
 
     let mut slow = TcpStream::connect(address).expect("slow connect");
@@ -263,6 +279,218 @@ fn spawned_connections_do_not_serialize_slow_streams() {
 
     let _ = read_socket_text(&mut slow);
     acceptor.join().expect("acceptor");
+}
+
+#[test]
+fn accepted_daemon_connections_close_after_peer_can_read_response() {
+    let port = unused_loopback_port();
+    let stopped = Arc::new(AtomicBool::new(false));
+    let serve_stopped = Arc::clone(&stopped);
+    let server = thread::spawn(move || {
+        // aimux-async-seam: test - listener test drives async daemon listener
+        aimux::async_runtime::block_on_named("daemon-listener-test:serve-until", async move {
+            serve_daemon_http_with_metadata_and_interceptor_until(
+                DaemonListenConfig {
+                    host: "127.0.0.1".into(),
+                    port,
+                },
+                |request| {
+                    assert_eq!(request.path, "/large");
+                    prepare_daemon_response(
+                        200,
+                        DaemonResponseBody::Bytes(vec![b'x'; 512 * 1024]),
+                        Some("application/octet-stream"),
+                    )
+                },
+                DaemonRequestMetadata::default,
+                |_, _| Box::pin(async { Ok(false) }),
+                move || serve_stopped.load(Ordering::SeqCst),
+            )
+            .await
+            .expect("serve daemon listener");
+        });
+    });
+
+    wait_for_loopback_port(port);
+    let script = format!(
+        r#"
+const response = await fetch("http://127.0.0.1:{port}/large");
+const body = await response.arrayBuffer();
+console.log(JSON.stringify({{ status: response.status, bytes: body.byteLength }}));
+"#
+    );
+    let output = Command::new("node")
+        .arg("--input-type=module")
+        .arg("-e")
+        .arg(script)
+        .output()
+        .expect("run node fetch");
+    stopped.store(true, Ordering::SeqCst);
+    server.join().expect("server thread");
+
+    assert!(
+        output.status.success(),
+        "node fetch failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("node stdout utf8");
+    assert!(
+        stdout.contains(r#""status":200"#),
+        "unexpected fetch result: {stdout}"
+    );
+    assert!(
+        stdout.contains(r#""bytes":524288"#),
+        "unexpected fetch body length: {stdout}"
+    );
+}
+
+#[test]
+fn accepted_daemon_listener_does_not_hard_shutdown_peer_socket() {
+    let source = include_str!("../src/daemon/listener.rs");
+    assert!(
+        !source.contains("Shutdown::Both"),
+        "accepted daemon sockets must close through AsyncWriteExt::shutdown so peers see EOF"
+    );
+}
+
+#[test]
+fn async_response_write_times_out_when_peer_stops_reading() {
+    let (mut client_stream, mut server_stream) = tokio::io::duplex(64);
+    block_on_named("daemon-listener-test:write-timeout", async {
+        tokio::io::AsyncWriteExt::write_all(
+            &mut client_stream,
+            b"GET /large HTTP/1.1\r\nHost: local\r\n\r\n",
+        )
+        .await
+        .expect("client writes request");
+        let result = tokio::time::timeout(
+            Duration::from_millis(250),
+            handle_daemon_stream_with_metadata_and_interceptor_and_body_limit_with_timeouts(
+                &mut server_stream,
+                DaemonRequestMetadata::default(),
+                &mut |_| None,
+                &mut |_, _| Box::pin(async { Ok(false) }),
+                &mut |_| {
+                    Box::pin(async {
+                        Ok(prepare_daemon_response(
+                            200,
+                            DaemonResponseBody::Bytes(vec![b'x'; 1024]),
+                            Some("application/octet-stream"),
+                        ))
+                    })
+                },
+                None,
+                Some(Duration::from_millis(25)),
+            ),
+        )
+        .await
+        .expect("handler should return its own write timeout");
+        drop(client_stream);
+
+        let error = result.expect_err("stalled peer should time out response write");
+        let aimux::daemon::listener::DaemonListenerError::Io(error) = error else {
+            panic!("unexpected listener error: {error}");
+        };
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert_eq!(error.to_string(), "timed out writing HTTP response");
+    });
+}
+
+#[test]
+fn async_response_write_allows_slow_progressing_reader() {
+    let (mut client_stream, mut server_stream) = tokio::io::duplex(64);
+    block_on_named("daemon-listener-test:slow-progressing-write", async {
+        tokio::io::AsyncWriteExt::write_all(
+            &mut client_stream,
+            b"GET /large HTTP/1.1\r\nHost: local\r\n\r\n",
+        )
+        .await
+        .expect("client writes request");
+        let server = aimux::async_runtime::spawn_named(
+            "daemon-listener-test:slow-progressing-write-server",
+            async move {
+                handle_daemon_stream_with_metadata_and_interceptor_and_body_limit_with_timeouts(
+                    &mut server_stream,
+                    DaemonRequestMetadata::default(),
+                    &mut |_| None,
+                    &mut |_, _| Box::pin(async { Ok(false) }),
+                    &mut |_| {
+                        Box::pin(async {
+                            Ok(prepare_daemon_response(
+                                200,
+                                DaemonResponseBody::Bytes(vec![b'x'; 256]),
+                                Some("application/octet-stream"),
+                            ))
+                        })
+                    },
+                    None,
+                    Some(Duration::from_millis(50)),
+                )
+                .await
+            },
+        );
+
+        let mut output = Vec::new();
+        let mut buffer = [0_u8; 16];
+        loop {
+            let count = tokio::time::timeout(
+                Duration::from_secs(2),
+                tokio::io::AsyncReadExt::read(&mut client_stream, &mut buffer),
+            )
+            .await
+            .expect("client read should not stall")
+            .expect("client read");
+            if count == 0 {
+                break;
+            }
+            output.extend_from_slice(&buffer[..count]);
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+
+        server
+            .await
+            .expect("server task")
+            .expect("slow progressing reader should receive response");
+        let response = String::from_utf8_lossy(&output);
+        assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
+        assert!(output.ends_with(&vec![b'x'; 256]));
+    });
+}
+
+#[test]
+fn async_body_limit_reader_can_timeout_idle_clients() {
+    let (client_stream, mut server_stream) = tokio::io::duplex(64);
+    let result = block_on_named("daemon-listener-test:body-limit-timeout", async {
+        tokio::time::timeout(
+            Duration::from_millis(250),
+            handle_daemon_stream_with_metadata_and_interceptor_and_body_limit_with_read_timeout(
+                &mut server_stream,
+                DaemonRequestMetadata::default(),
+                &mut |_| None,
+                &mut |_, _| Box::pin(async { Ok(false) }),
+                &mut |_| {
+                    Box::pin(async {
+                        Ok(prepare_daemon_response(
+                            200,
+                            DaemonResponseBody::Json(json!({ "ok": true })),
+                            None,
+                        ))
+                    })
+                },
+                Some(Duration::from_millis(25)),
+            ),
+        )
+        .await
+        .expect("reader should return its own timeout")
+    });
+    drop(client_stream);
+
+    let error = result.expect_err("idle client should time out");
+    let aimux::daemon::listener::DaemonListenerError::Io(error) = error else {
+        panic!("unexpected listener error: {error}");
+    };
+    assert_eq!(error.kind(), io::ErrorKind::TimedOut);
 }
 
 struct MemoryStream {
@@ -308,4 +536,28 @@ fn read_socket_text(stream: &mut TcpStream) -> String {
     let mut bytes = Vec::new();
     stream.read_to_end(&mut bytes).expect("read socket");
     String::from_utf8(bytes).expect("utf8")
+}
+
+fn unused_loopback_port() -> u16 {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind unused port");
+    listener.local_addr().expect("unused port").port()
+}
+
+fn connect_loopback_port(port: u16) -> TcpStream {
+    let address = ("127.0.0.1", port);
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        match TcpStream::connect(address) {
+            Ok(stream) => return stream,
+            Err(error) if std::time::Instant::now() < deadline => {
+                let _ = error;
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => panic!("connect to daemon listener on {port}: {error}"),
+        }
+    }
+}
+
+fn wait_for_loopback_port(port: u16) {
+    drop(connect_loopback_port(port));
 }

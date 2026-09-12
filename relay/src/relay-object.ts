@@ -61,7 +61,13 @@ const HEARTBEAT_INTERVAL_MS = 30_000;
 const PENDING_REQUEST_TTL_MS = 60_000;
 
 interface ClientSocketAttachment {
+  pendingRequests?: Record<string, PendingRequestAttachment>;
   projectEventSubscriptions?: Record<string, string>;
+}
+
+interface PendingRequestAttachment {
+  clientRequestId: string;
+  expiresAt: number;
 }
 
 interface SharedClientAuth {
@@ -282,11 +288,14 @@ export class RelayObject extends DurableObject<Env> {
       const pending = this.pendingRequests.get(parsed.id);
       if (pending) {
         this.pendingRequests.delete(parsed.id);
+        this.detachClientPendingRequest(pending.client, parsed.id);
         try {
           pending.client.send(JSON.stringify({ ...parsed, id: pending.clientRequestId }));
         } catch {
           // client has gone away — drop silently
         }
+      } else {
+        this.reportUnmatchedDaemonResponse(ws, parsed.id);
       }
     } else if (!isDaemon && parsed.type === "project_events_subscribe") {
       await this.handleClientProjectEventsSubscribe(ws, parsed);
@@ -321,16 +330,19 @@ export class RelayObject extends DurableObject<Env> {
       }
       if (this.daemonWs) {
         const relayRequestId = this.nextRelayRequestId();
+        const expiresAt = Date.now() + PENDING_REQUEST_TTL_MS;
         this.pendingRequests.set(relayRequestId, {
           client: ws,
           clientRequestId: parsed.id,
-          expiresAt: Date.now() + PENDING_REQUEST_TTL_MS,
+          expiresAt,
         });
+        this.attachClientPendingRequest(ws, relayRequestId, parsed.id, expiresAt);
         const daemonMessage = JSON.stringify({ ...parsed, ...clientResult.requestPatch, id: relayRequestId });
         try {
           this.daemonWs.send(daemonMessage);
         } catch {
           this.pendingRequests.delete(relayRequestId);
+          this.detachClientPendingRequest(ws, relayRequestId);
           this.send(ws, {
             id: parsed.id,
             type: "response",
@@ -523,6 +535,7 @@ export class RelayObject extends DurableObject<Env> {
     for (const [relayRequestId, entry] of this.pendingRequests) {
       if (entry.expiresAt >= now) continue;
       this.pendingRequests.delete(relayRequestId);
+      this.detachClientPendingRequest(entry.client, relayRequestId);
       // Tell the waiting client the request never made it back, so it can
       // fail-fast instead of hanging until its own transport timeout.
       try {
@@ -588,6 +601,7 @@ export class RelayObject extends DurableObject<Env> {
       for (const [id, entry] of this.pendingRequests) {
         if (entry.client === ws) this.pendingRequests.delete(id);
       }
+      this.clearClientPendingRequests(ws);
       for (const id of closingProjectEventSubscriptionIds) {
         this.detachClientProjectEventSubscription(ws, id);
         this.sendDaemonProjectEventsUnsubscribe(id);
@@ -628,6 +642,14 @@ export class RelayObject extends DurableObject<Env> {
 
   private send(ws: WebSocket, msg: RelayMessage): void {
     ws.send(JSON.stringify(msg));
+  }
+
+  private reportUnmatchedDaemonResponse(ws: WebSocket, responseId: string): void {
+    const message = `No pending relay request for daemon response id ${responseId}`;
+    console.warn(message);
+    try {
+      this.send(ws, { type: "error", message });
+    } catch {}
   }
 
   private async recordClientConnected(
@@ -1461,6 +1483,7 @@ export class RelayObject extends DurableObject<Env> {
     this.daemonWs = null;
     this.clientSockets.clear();
     this.clientDeviceIds.clear();
+    this.pendingRequests.clear();
     this.eventSubscriptions.clear();
     for (const ws of this.ctx.getWebSockets()) {
       if (ws === exclude) continue;
@@ -1481,6 +1504,14 @@ export class RelayObject extends DurableObject<Env> {
           this.clientSocketAttachment(ws).projectEventSubscriptions ?? {},
         )) {
           this.eventSubscriptions.set(relaySubscriptionId, { client: ws, clientSubscriptionId });
+        }
+        for (const [relayRequestId, pending] of Object.entries(this.clientSocketAttachment(ws).pendingRequests ?? {})) {
+          if (!isPendingRequestAttachment(pending)) continue;
+          this.pendingRequests.set(relayRequestId, {
+            client: ws,
+            clientRequestId: pending.clientRequestId,
+            expiresAt: pending.expiresAt,
+          });
         }
       }
     }
@@ -1510,6 +1541,7 @@ export class RelayObject extends DurableObject<Env> {
       } catch {
         // client gone too — nothing to deliver
       }
+      this.clearClientPendingRequests(entry.client);
     }
     this.pendingRequests.clear();
   }
@@ -1567,6 +1599,37 @@ export class RelayObject extends DurableObject<Env> {
         [relaySubscriptionId]: clientSubscriptionId,
       },
     });
+  }
+
+  private attachClientPendingRequest(
+    ws: WebSocket,
+    relayRequestId: string,
+    clientRequestId: string,
+    expiresAt: number,
+  ): void {
+    const attachment = this.clientSocketAttachment(ws);
+    this.saveClientSocketAttachment(ws, {
+      ...attachment,
+      pendingRequests: {
+        ...(attachment.pendingRequests ?? {}),
+        [relayRequestId]: { clientRequestId, expiresAt },
+      },
+    });
+  }
+
+  private detachClientPendingRequest(ws: WebSocket, relayRequestId: string): void {
+    const attachment = this.clientSocketAttachment(ws);
+    const pendingRequests = { ...(attachment.pendingRequests ?? {}) };
+    delete pendingRequests[relayRequestId];
+    this.saveClientSocketAttachment(ws, {
+      ...attachment,
+      pendingRequests: Object.keys(pendingRequests).length > 0 ? pendingRequests : undefined,
+    });
+  }
+
+  private clearClientPendingRequests(ws: WebSocket): void {
+    const attachment = this.clientSocketAttachment(ws);
+    this.saveClientSocketAttachment(ws, { ...attachment, pendingRequests: undefined });
   }
 
   private detachClientProjectEventSubscription(ws: WebSocket, relaySubscriptionId: string): void {
@@ -1627,6 +1690,12 @@ function json(body: unknown, status: number): Response {
     status,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+function isPendingRequestAttachment(value: unknown): value is PendingRequestAttachment {
+  if (!value || typeof value !== "object") return false;
+  const pending = value as Partial<Record<keyof PendingRequestAttachment, unknown>>;
+  return typeof pending.clientRequestId === "string" && typeof pending.expiresAt === "number";
 }
 
 function errorMessage(error: unknown, fallback: string): string {

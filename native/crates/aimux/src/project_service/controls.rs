@@ -1,6 +1,10 @@
 use serde_json::{Map, Value, json};
+use std::future::Future;
 use std::path::Path;
+use std::pin::Pin;
+use std::time::Duration;
 
+use crate::async_subprocess::AsyncCommand;
 use crate::daemon_state::load_metadata_state;
 use crate::project_api_contract::routes;
 use crate::runtime_topology::{
@@ -17,7 +21,7 @@ use super::switchable_agents::{
     AgentListScope, ManagedWindowEntry, SwitchableAgentItem, SwitchableContext,
     SwitchableListOptions, find_managed_window_item, list_switchable_agent_items,
     resolve_next_agent, resolve_prev_agent, serialize_fast_control_item,
-    topology_switchable_entries_for_context,
+    topology_switchable_entries_for_context, topology_switchable_entries_for_context_async,
 };
 use super::usage::{MarkLastUsedOptions, load_last_used_state, mark_last_used};
 
@@ -40,6 +44,26 @@ impl ProjectControlRuntime for SystemProjectControlRuntime {
             select_window_argv(window_id)
         };
         run_tmux_argv(argv, format!("failed to focus window {window_id}"))
+    }
+}
+
+pub trait AsyncProjectControlRuntime {
+    fn focus_target<'a>(
+        &'a mut self,
+        target: &'a Value,
+        client_tty: Option<&'a str>,
+    ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>>;
+}
+
+pub struct SystemAsyncProjectControlRuntime;
+
+impl AsyncProjectControlRuntime for SystemAsyncProjectControlRuntime {
+    fn focus_target<'a>(
+        &'a mut self,
+        target: &'a Value,
+        client_tty: Option<&'a str>,
+    ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>> {
+        Box::pin(focus_target_async(target, client_tty))
     }
 }
 
@@ -90,6 +114,52 @@ pub fn route_control_request_with_runtime<R: ProjectControlRuntime>(
             runtime,
             SwitchDirection::Attention,
         )),
+        _ => None,
+    }
+}
+
+pub async fn route_control_request_async(
+    context: &ProjectServiceRequestContext,
+    method: &str,
+    path: &str,
+    body: Option<&Value>,
+) -> Option<ProjectServiceDispatchResponse> {
+    let mut runtime = SystemAsyncProjectControlRuntime;
+    route_control_request_async_with_runtime(context, method, path, body, &mut runtime).await
+}
+
+pub async fn route_control_request_async_with_runtime<R: AsyncProjectControlRuntime>(
+    context: &ProjectServiceRequestContext,
+    method: &str,
+    path: &str,
+    body: Option<&Value>,
+    runtime: &mut R,
+) -> Option<ProjectServiceDispatchResponse> {
+    if !method.eq_ignore_ascii_case("GET") && !method.eq_ignore_ascii_case("POST") {
+        return None;
+    }
+    let pathname = project_service_pathname(path);
+    let input = ControlInput::from_request(method, path, body.unwrap_or(&Value::Null));
+    match pathname {
+        routes::controls::OPEN_DASHBOARD => {
+            Some(route_open_dashboard_async(context, &input, runtime).await)
+        }
+        routes::controls::OPEN_NOTIFICATION_TARGET => {
+            Some(route_open_notification_target_async(context, &input, runtime).await)
+        }
+        routes::controls::FOCUS_WINDOW => {
+            Some(route_focus_window_async(context, &input, runtime).await)
+        }
+        routes::controls::ACTIVE_WINDOW => Some(route_active_window_async(context, &input).await),
+        routes::controls::SWITCH_NEXT => {
+            Some(route_switch_agent_async(context, &input, runtime, SwitchDirection::Next).await)
+        }
+        routes::controls::SWITCH_PREV => {
+            Some(route_switch_agent_async(context, &input, runtime, SwitchDirection::Prev).await)
+        }
+        routes::controls::SWITCH_ATTENTION => Some(
+            route_switch_agent_async(context, &input, runtime, SwitchDirection::Attention).await,
+        ),
         _ => None,
     }
 }
@@ -193,6 +263,37 @@ fn route_open_dashboard<R: ProjectControlRuntime>(
     )
 }
 
+async fn route_open_dashboard_async<R: AsyncProjectControlRuntime>(
+    context: &ProjectServiceRequestContext,
+    input: &ControlInput,
+    runtime: &mut R,
+) -> ProjectServiceDispatchResponse {
+    let topology = match load_topology(context) {
+        Ok(topology) => topology,
+        Err(error) => return json_response(500, json!({ "ok": false, "error": error })),
+    };
+    let Some(target) = find_dashboard_target(&topology) else {
+        return json_response(
+            404,
+            json!({ "ok": false, "error": "dashboard window not found" }),
+        );
+    };
+    let focused = match maybe_focus_target_async(runtime, input, &target).await {
+        Ok(focused) => focused,
+        Err(error) => return json_response(500, json!({ "ok": false, "error": error })),
+    };
+    json_response(
+        200,
+        json!({
+            "ok": true,
+            "action": "open-dashboard",
+            "target": target,
+            "focused": focused,
+            "screen": input.screen,
+        }),
+    )
+}
+
 fn route_open_notification_target<R: ProjectControlRuntime>(
     context: &ProjectServiceRequestContext,
     input: &ControlInput,
@@ -235,7 +336,54 @@ fn route_open_notification_target<R: ProjectControlRuntime>(
     }
     json_response(
         404,
-        json!({ "ok": false, "error": "notification target is no longer available" }),
+        control_error_body(&model, "notification target is no longer available"),
+    )
+}
+
+async fn route_open_notification_target_async<R: AsyncProjectControlRuntime>(
+    context: &ProjectServiceRequestContext,
+    input: &ControlInput,
+    runtime: &mut R,
+) -> ProjectServiceDispatchResponse {
+    let Some(session_id) = input.session_id.as_deref() else {
+        return json_response(
+            400,
+            json!({ "ok": false, "error": "sessionId is required" }),
+        );
+    };
+    let model = match load_control_model_async(context).await {
+        Ok(model) => model,
+        Err(error) => return json_response(500, json!({ "ok": false, "error": error })),
+    };
+    if let Some(item) = item_by_id(&model.items, session_id) {
+        return open_control_item_async(
+            context.project_state_dir(),
+            runtime,
+            input,
+            item,
+            "open-notification-target",
+        )
+        .await;
+    }
+    if let Some(status) = service_status(&model.topology, session_id)
+        && !LIVE_SERVICE_STATUSES.contains(&status.as_str())
+    {
+        return json_response(
+            409,
+            json!({ "ok": false, "error": "service is offline", "itemId": session_id }),
+        );
+    }
+    if let Some(status) = session_status(&model.topology, session_id)
+        && !LIVE_AGENT_STATUSES.contains(&status.as_str())
+    {
+        return json_response(
+            409,
+            json!({ "ok": false, "error": "agent is offline", "itemId": session_id }),
+        );
+    }
+    json_response(
+        404,
+        control_error_body(&model, "notification target is no longer available"),
     )
 }
 
@@ -252,7 +400,7 @@ fn route_focus_window<R: ProjectControlRuntime>(
         Err(error) => return json_response(500, json!({ "ok": false, "error": error })),
     };
     let Some(item) = model.find_window(context, window_id) else {
-        return json_response(404, json!({ "ok": false, "error": "window not found" }));
+        return json_response(404, control_error_body(&model, "window not found"));
     };
     open_control_item(
         context.project_state_dir(),
@@ -261,6 +409,31 @@ fn route_focus_window<R: ProjectControlRuntime>(
         &item,
         "focus-window",
     )
+}
+
+async fn route_focus_window_async<R: AsyncProjectControlRuntime>(
+    context: &ProjectServiceRequestContext,
+    input: &ControlInput,
+    runtime: &mut R,
+) -> ProjectServiceDispatchResponse {
+    let Some(window_id) = input.window_id.as_deref() else {
+        return json_response(400, json!({ "ok": false, "error": "windowId is required" }));
+    };
+    let model = match load_control_model_async(context).await {
+        Ok(model) => model,
+        Err(error) => return json_response(500, json!({ "ok": false, "error": error })),
+    };
+    let Some(item) = model.find_window(context, window_id) else {
+        return json_response(404, control_error_body(&model, "window not found"));
+    };
+    open_control_item_async(
+        context.project_state_dir(),
+        runtime,
+        input,
+        &item,
+        "focus-window",
+    )
+    .await
 }
 
 fn route_active_window(
@@ -280,6 +453,50 @@ fn route_active_window(
         );
     };
     let model = match load_control_model(context) {
+        Ok(model) => model,
+        Err(error) => return json_response(500, json!({ "ok": false, "error": error })),
+    };
+    let Some(item) = model.find_window(context, current_window_id) else {
+        return json_response(404, json!({ "ok": false, "error": "window not found" }));
+    };
+    let item = &item;
+    mark_target_used(
+        context.project_state_dir(),
+        item,
+        Some(current_client_session),
+    );
+    if !is_service_item(item) {
+        mark_item_seen(context.project_state_dir(), &item.id);
+    }
+    json_response(
+        200,
+        json!({
+            "ok": true,
+            "action": "active-window",
+            "focused": false,
+            "target": item.target,
+            "itemId": item.id,
+        }),
+    )
+}
+
+async fn route_active_window_async(
+    context: &ProjectServiceRequestContext,
+    input: &ControlInput,
+) -> ProjectServiceDispatchResponse {
+    let Some(current_client_session) = input.current_client_session.as_deref() else {
+        return json_response(
+            400,
+            json!({ "ok": false, "error": "currentClientSession is required" }),
+        );
+    };
+    let Some(current_window_id) = input.current_window_id.as_deref() else {
+        return json_response(
+            400,
+            json!({ "ok": false, "error": "currentWindowId is required" }),
+        );
+    };
+    let model = match load_control_model_async(context).await {
         Ok(model) => model,
         Err(error) => return json_response(500, json!({ "ok": false, "error": error })),
     };
@@ -352,7 +569,7 @@ fn route_switch_agent<R: ProjectControlRuntime>(
             SwitchDirection::Attention => "no attention target found",
             SwitchDirection::Next | SwitchDirection::Prev => "no switchable agent found",
         };
-        return json_response(404, json!({ "ok": false, "error": error }));
+        return json_response(404, control_error_body(&model, error));
     };
     let action = match direction {
         SwitchDirection::Next => "switch-next",
@@ -362,12 +579,68 @@ fn route_switch_agent<R: ProjectControlRuntime>(
     open_control_item(context.project_state_dir(), runtime, input, &item, action)
 }
 
+async fn route_switch_agent_async<R: AsyncProjectControlRuntime>(
+    context: &ProjectServiceRequestContext,
+    input: &ControlInput,
+    runtime: &mut R,
+    direction: SwitchDirection,
+) -> ProjectServiceDispatchResponse {
+    let model = match load_control_model_async(context).await {
+        Ok(model) => model,
+        Err(error) => return json_response(500, json!({ "ok": false, "error": error })),
+    };
+    let switch_context = switch_context(context, input);
+    let options = SwitchableListOptions {
+        scope: AgentListScope::Worktree,
+        include_overseer: false,
+        raw_labels: true,
+        display_order_ids: Vec::new(),
+    };
+    let resolved = match direction {
+        SwitchDirection::Next => resolve_next_agent(
+            &model.entries,
+            &model.metadata.sessions,
+            &switch_context,
+            &options,
+            &model.last_used,
+        ),
+        SwitchDirection::Prev => resolve_prev_agent(
+            &model.entries,
+            &model.metadata.sessions,
+            &switch_context,
+            &options,
+            &model.last_used,
+        ),
+        SwitchDirection::Attention => resolve_attention_agent(
+            &model.entries,
+            &model.metadata.sessions,
+            &switch_context,
+            &options,
+            &model.last_used,
+        ),
+    };
+    let Some(item) = resolved else {
+        let error = match direction {
+            SwitchDirection::Attention => "no attention target found",
+            SwitchDirection::Next | SwitchDirection::Prev => "no switchable agent found",
+        };
+        return json_response(404, control_error_body(&model, error));
+    };
+    let action = match direction {
+        SwitchDirection::Next => "switch-next",
+        SwitchDirection::Prev => "switch-prev",
+        SwitchDirection::Attention => "switch-attention",
+    };
+    open_control_item_async(context.project_state_dir(), runtime, input, &item, action).await
+}
+
 struct ControlModel {
     topology: Value,
     metadata: crate::daemon_state::MetadataState,
     entries: Vec<ManagedWindowEntry>,
     items: Vec<SwitchableAgentItem>,
     last_used: Value,
+    live_window_query_error: Option<String>,
 }
 
 impl ControlModel {
@@ -422,7 +695,57 @@ fn load_control_model(context: &ProjectServiceRequestContext) -> Result<ControlM
         entries,
         items,
         last_used,
+        live_window_query_error: context
+            .live_window_ids_status()
+            .and_then(|status| status.err().map(str::to_owned)),
     })
+}
+
+async fn load_control_model_async(
+    context: &ProjectServiceRequestContext,
+) -> Result<ControlModel, String> {
+    let topology = load_topology(context)?;
+    let project_state_dir = context.project_state_dir();
+    let metadata = load_metadata_state(&project_state_dir);
+    let entries_projection =
+        topology_switchable_entries_for_context_async(context, &topology, &metadata.sessions).await;
+    let last_used = load_last_used_state(&project_state_dir);
+    let switch_context = SwitchableContext {
+        project_root: context.project_root().to_string_lossy().into_owned(),
+        ..SwitchableContext::default()
+    };
+    let items = list_switchable_agent_items(
+        &entries_projection.entries,
+        &metadata.sessions,
+        &switch_context,
+        &SwitchableListOptions {
+            scope: AgentListScope::All,
+            raw_labels: true,
+            ..SwitchableListOptions::default()
+        },
+        &last_used,
+    );
+    Ok(ControlModel {
+        topology,
+        metadata,
+        entries: entries_projection.entries,
+        items,
+        last_used,
+        live_window_query_error: entries_projection.live_window_query_error,
+    })
+}
+
+fn control_error_body(model: &ControlModel, error: &str) -> Value {
+    let mut body = json!({ "ok": false, "error": error });
+    if let Some(query_error) = model.live_window_query_error.as_ref()
+        && let Some(map) = body.as_object_mut()
+    {
+        map.insert(
+            "tmuxLiveWindowQuery".into(),
+            json!({ "ok": false, "error": query_error }),
+        );
+    }
+    body
 }
 
 fn load_topology(context: &ProjectServiceRequestContext) -> Result<Value, String> {
@@ -465,6 +788,41 @@ fn open_control_item<R: ProjectControlRuntime>(
     )
 }
 
+async fn open_control_item_async<R: AsyncProjectControlRuntime>(
+    project_state_dir: impl AsRef<Path>,
+    runtime: &mut R,
+    input: &ControlInput,
+    item: &SwitchableAgentItem,
+    action: &str,
+) -> ProjectServiceDispatchResponse {
+    let project_state_dir = project_state_dir.as_ref();
+    let focused = match maybe_focus_target_async(runtime, input, &item.target).await {
+        Ok(focused) => focused,
+        Err(error) => return json_response(500, json!({ "ok": false, "error": error })),
+    };
+    if focused {
+        mark_target_used(
+            project_state_dir,
+            item,
+            input.current_client_session.as_deref(),
+        );
+        if !is_service_item(item) {
+            mark_item_seen(project_state_dir, &item.id);
+        }
+    }
+    json_response(
+        200,
+        json!({
+            "ok": true,
+            "action": action,
+            "target": item.target,
+            "item": serialize_fast_control_item(item),
+            "itemId": item.id,
+            "focused": focused,
+        }),
+    )
+}
+
 fn maybe_focus_target<R: ProjectControlRuntime>(
     runtime: &mut R,
     input: &ControlInput,
@@ -476,6 +834,31 @@ fn maybe_focus_target<R: ProjectControlRuntime>(
     runtime
         .focus_target(target, input.client_tty.as_deref())
         .map(|_| true)
+}
+
+async fn maybe_focus_target_async<R: AsyncProjectControlRuntime>(
+    runtime: &mut R,
+    input: &ControlInput,
+    target: &Value,
+) -> Result<bool, String> {
+    if !input.focus {
+        return Ok(false);
+    }
+    runtime
+        .focus_target(target, input.client_tty.as_deref())
+        .await
+        .map(|_| true)
+}
+
+async fn focus_target_async(target: &Value, client_tty: Option<&str>) -> Result<(), String> {
+    let window_id =
+        string_field(target, "windowId").ok_or_else(|| "target window id is missing".to_owned())?;
+    let argv = if let Some(client_tty) = client_tty {
+        switch_client_to_target_argv(client_tty, window_id)
+    } else {
+        select_window_argv(window_id)
+    };
+    run_tmux_argv_async(argv, format!("failed to focus window {window_id}")).await
 }
 
 fn resolve_attention_agent(
@@ -644,6 +1027,23 @@ fn object_value(value: Value) -> Map<String, Value> {
 
 fn run_tmux_argv(argv: Vec<String>, fallback_error: String) -> Result<(), String> {
     match tmux_command_from_env().args(argv).output() {
+        Ok(output) if output.status.success() => Ok(()),
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+            if stderr.is_empty() {
+                Err(fallback_error)
+            } else {
+                Err(stderr)
+            }
+        }
+        Err(error) => Err(format!("{fallback_error}: {error}")),
+    }
+}
+
+async fn run_tmux_argv_async(argv: Vec<String>, fallback_error: String) -> Result<(), String> {
+    let mut command: AsyncCommand = tmux_command_from_env();
+    command.args(argv);
+    match command.output_timeout_async(Duration::from_secs(5)).await {
         Ok(output) if output.status.success() => Ok(()),
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();

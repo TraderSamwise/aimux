@@ -1,11 +1,11 @@
+use crate::async_subprocess::AsyncCommand;
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 
 use crate::config::default_config;
-use crate::daemon_state::{load_daemon_info, load_metadata_state};
+use crate::daemon_state::{load_daemon_info, load_daemon_info_async, load_metadata_state};
 use crate::paths::PathResolver;
 use crate::project_api_contract::routes;
 use crate::project_service_manifest::get_project_service_manifest;
@@ -21,13 +21,15 @@ use crate::tmux::TmuxTarget;
 use super::agent_output::{AgentOutputCaptureRuntime, SystemAgentOutputCaptureRuntime};
 use super::agents::{
     LiveWindowIdsProjection, topology_desktop_session_list_with_live_window_projection,
-    try_live_window_ids_for_session_projection,
+    try_live_window_ids_for_session_projection, try_live_window_ids_for_session_projection_async,
 };
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::http::query_params;
+use super::lifecycle::read_displayable_agent_restore_offer;
 use super::operation_failures::list_dashboard_operation_failures;
 use super::preview_snapshots::{
-    DEFAULT_PREVIEW_CAPTURE_LINES, DEFAULT_PREVIEW_MAX_CHARS, capture_preview_snapshot_with_tap,
+    DEFAULT_PREVIEW_CAPTURE_LINES, DEFAULT_PREVIEW_MAX_CHARS,
+    capture_preview_snapshot_with_tap_async, capture_preview_snapshot_with_tap_result,
 };
 use super::router::ProjectServiceRequestContext;
 use super::runtime_exchange::{read_runtime_exchange, runtime_exchange_path};
@@ -134,6 +136,54 @@ pub fn route_desktop_state_request_with_runtime(
     Some(ProjectServiceDispatchResponse::json(200, state))
 }
 
+pub async fn route_desktop_state_request_async(
+    context: &ProjectServiceRequestContext,
+    method: &str,
+    path: &str,
+) -> Option<ProjectServiceDispatchResponse> {
+    if !method.eq_ignore_ascii_case("GET")
+        || project_service_pathname(path) != routes::DESKTOP_STATE
+    {
+        return None;
+    }
+    let params = query_params(path);
+    let include_preview = matches!(
+        params.get("includePreview").map(String::as_str),
+        Some("1" | "true")
+    );
+    let include_chat_preview = matches!(
+        params.get("includeChatPreview").map(String::as_str),
+        Some("1" | "true")
+    );
+    if include_preview || include_chat_preview {
+        touch_desktop_preview_client(context, &params, include_preview, include_chat_preview);
+    }
+    if let Some(desktop_state) = context.desktop_state.as_ref() {
+        let mut body = desktop_state.as_object().cloned().unwrap_or_default();
+        body.insert("ok".into(), Value::Bool(true));
+        body.insert("serviceInfo".into(), service_info());
+        body.insert("pendingInteractions".into(), Value::Array(Vec::new()));
+        let mut body = Value::Object(body);
+        if include_preview {
+            attach_desktop_state_previews_async(context, &mut body).await;
+        }
+        return Some(ProjectServiceDispatchResponse::json(200, body));
+    }
+    let mut state = match desktop_state_for_context_async(context).await {
+        Ok(state) => state,
+        Err(error) => {
+            return Some(ProjectServiceDispatchResponse::json(
+                500,
+                json!({ "ok": false, "error": error }),
+            ));
+        }
+    };
+    if include_preview {
+        attach_desktop_state_previews_async(context, &mut state).await;
+    }
+    Some(ProjectServiceDispatchResponse::json(200, state))
+}
+
 fn touch_desktop_preview_client(
     context: &ProjectServiceRequestContext,
     params: &BTreeMap<String, String>,
@@ -200,6 +250,69 @@ pub fn desktop_state_for_context(context: &ProjectServiceRequestContext) -> Resu
             operation_failures.insert(0, tmux_live_window_query_failure(&error));
         }
         object.insert("operationFailures".into(), Value::Array(operation_failures));
+        object.insert(
+            "agentRestoreOffer".into(),
+            read_displayable_agent_restore_offer(context, &project_state_dir)
+                .unwrap_or(Value::Null),
+        );
+    }
+    Ok(state)
+}
+
+pub async fn desktop_state_for_context_async(
+    context: &ProjectServiceRequestContext,
+) -> Result<Value, String> {
+    if let Some(desktop_state) = context.desktop_state.as_ref() {
+        return Ok(desktop_state.clone());
+    }
+    let project_state_dir = context.project_state_dir();
+    let topology = read_runtime_topology(runtime_topology_path(&project_state_dir))?;
+    let metadata = load_metadata_state(&project_state_dir);
+    let exchange = read_runtime_exchange(runtime_exchange_path(&project_state_dir));
+    let live_window_ids_owned;
+    let mut live_window_query_error = None;
+    let live_window_projection = match context.live_window_ids_status() {
+        Some(Ok(live_window_ids)) => LiveWindowIdsProjection::Known(live_window_ids),
+        Some(Err(error)) => {
+            live_window_query_error = Some(error.to_owned());
+            LiveWindowIdsProjection::Unavailable(error)
+        }
+        None => match try_live_window_ids_for_session_projection_async("desktop-state").await {
+            Ok(live_window_ids) => {
+                live_window_ids_owned = live_window_ids;
+                LiveWindowIdsProjection::Known(&live_window_ids_owned)
+            }
+            Err(error) => {
+                live_window_query_error = Some(error);
+                LiveWindowIdsProjection::Unavailable(
+                    live_window_query_error
+                        .as_deref()
+                        .expect("live window query error was just stored"),
+                )
+            }
+        },
+    };
+    let mut state = build_desktop_state_with_live_window_projection_async(
+        DesktopStateInput {
+            project_root: context.project_root().to_string_lossy().into_owned(),
+            topology: &topology,
+            metadata_sessions: &metadata.sessions,
+            exchange: &exchange,
+        },
+        live_window_projection,
+    )
+    .await;
+    if let Value::Object(object) = &mut state {
+        let mut operation_failures = list_dashboard_operation_failures(&project_state_dir);
+        if let Some(error) = live_window_query_error {
+            operation_failures.insert(0, tmux_live_window_query_failure(&error));
+        }
+        object.insert("operationFailures".into(), Value::Array(operation_failures));
+        object.insert(
+            "agentRestoreOffer".into(),
+            read_displayable_agent_restore_offer(context, &project_state_dir)
+                .unwrap_or(Value::Null),
+        );
     }
     Ok(state)
 }
@@ -323,6 +436,100 @@ pub fn build_desktop_state_with_live_window_projection(
     Value::Object(state)
 }
 
+async fn build_desktop_state_with_live_window_projection_async(
+    input: DesktopStateInput<'_>,
+    live_window_ids: LiveWindowIdsProjection<'_>,
+) -> Value {
+    let tools = default_config()
+        .get("tools")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let all_sessions = topology_desktop_session_list_with_live_window_projection(
+        input.topology,
+        input.metadata_sessions,
+        &tools,
+        live_window_ids,
+    )
+    .into_iter()
+    .filter(|session| {
+        string_field(session, "status")
+            .is_some_and(|status| DASHBOARD_SESSION_STATUSES.contains(&status))
+    })
+    .collect::<Vec<_>>();
+    let worktree_projection = desktop_worktrees_async(&input.project_root, input.topology).await;
+    let worktrees = worktree_projection.worktrees;
+    let worktree_by_path = worktree_lookup_by_identity(&worktrees);
+    let thread_stats = summarize_thread_stats(input.exchange);
+    let workflow_stats = summarize_workflow_stats(input.exchange);
+    let notification_stats = summarize_notification_stats(input.exchange);
+    let active_tasks = summarize_active_tasks(input.exchange);
+    let mut sessions = Vec::new();
+    let mut teammates = Vec::new();
+    for session in all_sessions {
+        let dashboard_session = dashboard_session(
+            &session,
+            input.metadata_sessions,
+            &worktree_by_path,
+            &thread_stats,
+            &workflow_stats,
+            &notification_stats,
+            &active_tasks,
+        );
+        if is_teammate_session(&dashboard_session) {
+            teammates.push(dashboard_session);
+        } else {
+            sessions.push(dashboard_session);
+        }
+    }
+    set_indexes(&mut sessions);
+    set_indexes(&mut teammates);
+    let services = list_topology_service_states(input.topology, Some(DASHBOARD_SERVICE_STATUSES))
+        .iter()
+        .map(|service| dashboard_service(service, input.metadata_sessions, &worktree_by_path))
+        .collect::<Vec<_>>();
+    let retired_worktree_paths = retired_worktree_paths(input.topology);
+    let worktree_groups = build_worktree_groups_with_branch_probe(
+        &input.project_root,
+        &worktrees,
+        &sessions,
+        &services,
+        &retired_worktree_paths,
+        worktree_projection.main_branch_probe.as_ref(),
+    );
+    let mut state = Map::new();
+    state.insert("ok".into(), Value::Bool(true));
+    state.insert("serviceInfo".into(), service_info());
+    state.insert("pendingInteractions".into(), Value::Array(Vec::new()));
+    state.insert("sessions".into(), Value::Array(sessions));
+    state.insert("teammates".into(), Value::Array(teammates));
+    state.insert("services".into(), Value::Array(services));
+    state.insert("worktrees".into(), Value::Array(worktrees));
+    state.insert("worktreeGroups".into(), Value::Array(worktree_groups));
+    state.insert("operationFailures".into(), Value::Array(Vec::new()));
+    state.insert("agentRestoreOffer".into(), Value::Null);
+    let mut main_checkout_info = json!({
+        "name": "Main Checkout",
+        "branch": main_checkout_branch_from_worktrees(&input.project_root, state.get("worktrees")),
+    });
+    if let Some(error) = worktree_projection.main_branch_error
+        && let Value::Object(map) = &mut main_checkout_info
+    {
+        map.insert(
+            "branchUnavailable".into(),
+            json!({ "ok": false, "error": error }),
+        );
+    }
+    state.insert("mainCheckoutInfo".into(), main_checkout_info);
+    state.insert(
+        "mainCheckoutPath".into(),
+        Value::String(input.project_root.clone()),
+    );
+    state.insert("controlPlane".into(), control_plane_async().await);
+    state.insert("tasks".into(), task_counts(input.exchange));
+    Value::Object(state)
+}
+
 fn tmux_live_window_query_failure(error: &str) -> Value {
     json!({
         "id": "tmux-live-window-query",
@@ -365,14 +572,26 @@ pub fn attach_desktop_state_previews(
             target,
             DEFAULT_PREVIEW_MAX_CHARS,
         );
-        let Some(preview) = capture_preview_snapshot_with_tap(
+        let preview = match capture_preview_snapshot_with_tap_result(
             context,
             &window_id,
             tap_snapshot.as_ref(),
             runtime,
             DEFAULT_PREVIEW_CAPTURE_LINES,
             DEFAULT_PREVIEW_MAX_CHARS,
-        ) else {
+        ) {
+            Ok(preview) => preview,
+            Err(error) => {
+                if let Some(object) = session.as_object_mut() {
+                    object.insert(
+                        "previewCapture".into(),
+                        json!({ "ok": false, "error": error }),
+                    );
+                }
+                continue;
+            }
+        };
+        let Some(preview) = preview else {
             continue;
         };
         if let Some(object) = session.as_object_mut() {
@@ -380,6 +599,61 @@ pub fn attach_desktop_state_previews(
         }
     }
     state
+}
+
+async fn attach_desktop_state_previews_async(
+    context: &ProjectServiceRequestContext,
+    state: &mut Value,
+) {
+    let Some(sessions) = state.get_mut("sessions").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for session in sessions {
+        if string_field(session, "id").is_none() {
+            continue;
+        }
+        let Some(window_id) = string_field(session, "tmuxWindowId").map(str::to_owned) else {
+            continue;
+        };
+        let target = TmuxTarget {
+            session_name: String::new(),
+            window_id: window_id.clone(),
+            window_index: integer_field(session, "tmuxWindowIndex"),
+            window_name: String::new(),
+            pane_dead: None,
+        };
+        let tap_snapshot = context.osc_output_tap.track_and_read_snapshot(
+            string_field(session, "id").unwrap_or_default(),
+            target,
+            DEFAULT_PREVIEW_MAX_CHARS,
+        );
+        let preview = match capture_preview_snapshot_with_tap_async(
+            context,
+            &window_id,
+            tap_snapshot.as_ref(),
+            DEFAULT_PREVIEW_CAPTURE_LINES,
+            DEFAULT_PREVIEW_MAX_CHARS,
+        )
+        .await
+        {
+            Ok(preview) => preview,
+            Err(error) => {
+                if let Some(object) = session.as_object_mut() {
+                    object.insert(
+                        "previewCapture".into(),
+                        json!({ "ok": false, "error": error }),
+                    );
+                }
+                continue;
+            }
+        };
+        let Some(preview) = preview else {
+            continue;
+        };
+        if let Some(object) = session.as_object_mut() {
+            object.insert("previewSnapshot".into(), preview);
+        }
+    }
 }
 
 fn desktop_worktrees(project_root: &str, topology: &Value) -> Vec<Value> {
@@ -428,6 +702,88 @@ fn desktop_worktrees(project_root: &str, topology: &Value) -> Vec<Value> {
     }
     sort_worktrees(&mut worktrees, project_root);
     worktrees
+}
+
+struct DesktopWorktreeProjection {
+    worktrees: Vec<Value>,
+    main_branch_error: Option<String>,
+    main_branch_probe: Option<GitBranchProbe>,
+}
+
+async fn desktop_worktrees_async(
+    project_root: &str,
+    topology: &Value,
+) -> DesktopWorktreeProjection {
+    let topology_worktrees =
+        list_topology_worktree_states(topology, Some(ACTIVE_WORKTREE_STATUSES));
+    let needs_main_branch_probe = topology_worktrees.iter().any(|worktree| {
+        let path = string_field(worktree, "path").unwrap_or(project_root);
+        same_worktree_path(path, project_root)
+            && string_field(worktree, "branch").is_none_or(|branch| branch.trim().is_empty())
+    }) || !topology_worktrees.iter().any(|worktree| {
+        string_field(worktree, "path").is_some_and(|path| same_worktree_path(path, project_root))
+    });
+    let main_branch_probe = if needs_main_branch_probe {
+        Some(current_git_branch_async(project_root).await)
+    } else {
+        None
+    };
+    let mut worktrees = topology_worktrees
+        .into_iter()
+        .map(|worktree| {
+            let mut item = Map::new();
+            let path = string_field(&worktree, "path").unwrap_or(project_root);
+            insert_string(
+                &mut item,
+                "name",
+                string_field(&worktree, "name")
+                    .unwrap_or_else(|| path_basename(path).unwrap_or(path)),
+            );
+            insert_string(&mut item, "path", path);
+            insert_string(
+                &mut item,
+                "branch",
+                &worktree_branch_or_current_from_probe(
+                    project_root,
+                    path,
+                    string_field(&worktree, "branch"),
+                    main_branch_probe.as_ref(),
+                ),
+            );
+            item.insert("isBare".into(), Value::Bool(false));
+            for key in [
+                "createdAt",
+                "pending",
+                "removing",
+                "pendingAction",
+                "operationFailure",
+            ] {
+                insert_value(&mut item, key, worktree.get(key).cloned());
+            }
+            Value::Object(item)
+        })
+        .collect::<Vec<_>>();
+    if !worktrees.iter().any(|worktree| {
+        string_field(worktree, "path").is_some_and(|path| same_worktree_path(path, project_root))
+    }) {
+        worktrees.insert(
+            0,
+            json!({
+                "name": "Main Checkout",
+                "path": project_root,
+                "branch": branch_from_probe(main_branch_probe.as_ref()).unwrap_or_default(),
+                "isBare": false,
+            }),
+        );
+    }
+    sort_worktrees(&mut worktrees, project_root);
+    DesktopWorktreeProjection {
+        worktrees,
+        main_branch_error: main_branch_probe
+            .as_ref()
+            .and_then(|probe| probe.error.clone()),
+        main_branch_probe,
+    }
 }
 
 fn dashboard_session(
@@ -743,6 +1099,34 @@ fn build_worktree_groups(
     services: &[Value],
     retired_paths: &BTreeSet<String>,
 ) -> Vec<Value> {
+    let main_branch_probe = GitBranchProbe {
+        branch: current_git_branch(project_root),
+        error: None,
+    };
+    build_worktree_groups_with_branch_probe(
+        project_root,
+        worktrees,
+        sessions,
+        services,
+        retired_paths,
+        Some(&main_branch_probe),
+    )
+}
+
+fn build_worktree_groups_with_branch_probe(
+    project_root: &str,
+    worktrees: &[Value],
+    sessions: &[Value],
+    services: &[Value],
+    retired_paths: &BTreeSet<String>,
+    main_branch_probe: Option<&GitBranchProbe>,
+) -> Vec<Value> {
+    let context = WorktreeGroupContext {
+        project_root,
+        sessions,
+        services,
+        main_branch_probe,
+    };
     let main_path = project_root;
     let main_key = worktree_path_identity(main_path);
     let mut group_paths = BTreeMap::<String, String>::new();
@@ -765,22 +1149,20 @@ fn build_worktree_groups(
     }
     let mut groups = Vec::new();
     groups.push(worktree_group(
-        project_root,
+        &context,
         worktrees.iter().find(|worktree| {
             string_field(worktree, "path").is_some_and(|path| same_worktree_path(path, main_path))
         }),
         main_path,
         &main_key,
         true,
-        sessions,
-        services,
     ));
     let mut secondary = group_paths
         .into_iter()
         .filter(|(path_key, _)| path_key != &main_key)
         .map(|(path_key, path)| {
             worktree_group(
-                project_root,
+                &context,
                 worktrees.iter().find(|worktree| {
                     string_field(worktree, "path")
                         .is_some_and(|candidate| worktree_path_identity(candidate) == path_key)
@@ -788,8 +1170,6 @@ fn build_worktree_groups(
                 &path,
                 &path_key,
                 false,
-                sessions,
-                services,
             )
         })
         .collect::<Vec<_>>();
@@ -800,14 +1180,19 @@ fn build_worktree_groups(
     groups
 }
 
+struct WorktreeGroupContext<'a> {
+    project_root: &'a str,
+    sessions: &'a [Value],
+    services: &'a [Value],
+    main_branch_probe: Option<&'a GitBranchProbe>,
+}
+
 fn worktree_group(
-    project_root: &str,
+    context: &WorktreeGroupContext<'_>,
     worktree: Option<&Value>,
     path: &str,
     path_key: &str,
     main: bool,
-    sessions: &[Value],
-    services: &[Value],
 ) -> Value {
     let mut group = Map::new();
     insert_string(
@@ -824,10 +1209,11 @@ fn worktree_group(
     insert_string(
         &mut group,
         "branch",
-        &worktree_branch_or_current(
-            project_root,
+        &worktree_branch_or_current_from_probe(
+            context.project_root,
             path,
             worktree.and_then(|worktree| string_field(worktree, "branch")),
+            context.main_branch_probe,
         ),
     );
     if !main {
@@ -847,7 +1233,8 @@ fn worktree_group(
         );
     }
     let group_sessions = sorted_dashboard_items(
-        sessions
+        context
+            .sessions
             .iter()
             .filter(|session| {
                 !is_project_control_session(session)
@@ -857,7 +1244,8 @@ fn worktree_group(
             .collect(),
     );
     let group_services = sorted_dashboard_items(
-        services
+        context
+            .services
             .iter()
             .filter(|service| item_matches_worktree_group(service, path_key, main))
             .cloned()
@@ -1202,6 +1590,20 @@ fn main_checkout_branch(project_root: &str, worktrees: Option<&Value>) -> String
         .unwrap_or_default()
 }
 
+fn main_checkout_branch_from_worktrees(project_root: &str, worktrees: Option<&Value>) -> String {
+    worktrees
+        .and_then(Value::as_array)
+        .and_then(|worktrees| {
+            worktrees
+                .iter()
+                .find(|worktree| string_field(worktree, "path") == Some(project_root))
+        })
+        .and_then(|worktree| string_field(worktree, "branch"))
+        .filter(|branch| !branch.trim().is_empty())
+        .map(str::to_owned)
+        .unwrap_or_default()
+}
+
 fn worktree_branch_or_current(project_root: &str, path: &str, branch: Option<&str>) -> String {
     branch
         .filter(|branch| !branch.trim().is_empty())
@@ -1216,8 +1618,27 @@ fn worktree_branch_or_current(project_root: &str, path: &str, branch: Option<&st
         .unwrap_or_default()
 }
 
+fn worktree_branch_or_current_from_probe(
+    project_root: &str,
+    path: &str,
+    branch: Option<&str>,
+    main_branch_probe: Option<&GitBranchProbe>,
+) -> String {
+    branch
+        .filter(|branch| !branch.trim().is_empty())
+        .map(str::to_owned)
+        .or_else(|| {
+            if path == project_root {
+                branch_from_probe(main_branch_probe)
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default()
+}
+
 fn current_git_branch(project_root: &str) -> Option<String> {
-    let output = Command::new("git")
+    let output = AsyncCommand::new("git")
         .args(["-C", project_root, "branch", "--show-current"])
         .output()
         .ok()?;
@@ -1230,6 +1651,50 @@ fn current_git_branch(project_root: &str) -> Option<String> {
         None
     } else {
         Some(branch.to_owned())
+    }
+}
+
+struct GitBranchProbe {
+    branch: Option<String>,
+    error: Option<String>,
+}
+
+fn branch_from_probe(probe: Option<&GitBranchProbe>) -> Option<String> {
+    probe.and_then(|probe| probe.branch.clone())
+}
+
+async fn current_git_branch_async(project_root: &str) -> GitBranchProbe {
+    let output = AsyncCommand::new("git")
+        .args(["-C", project_root, "branch", "--show-current"])
+        .output_timeout_async(std::time::Duration::from_secs(2))
+        .await;
+    let output = match output {
+        Ok(output) => output,
+        Err(error) => {
+            return GitBranchProbe {
+                branch: None,
+                error: Some(error.to_string()),
+            };
+        }
+    };
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return GitBranchProbe {
+            branch: None,
+            error: Some(if stderr.is_empty() {
+                "git branch --show-current failed".to_owned()
+            } else {
+                stderr
+            }),
+        };
+    }
+    let branch = String::from_utf8(output.stdout)
+        .ok()
+        .map(|branch| branch.trim().to_owned())
+        .filter(|branch| !branch.is_empty());
+    GitBranchProbe {
+        branch,
+        error: None,
     }
 }
 
@@ -1249,6 +1714,14 @@ fn control_plane() -> Value {
     let resolver = PathResolver::from_env();
     json!({
         "daemonAlive": load_daemon_info(resolver.daemon_info_path()).is_some(),
+        "projectServiceAlive": true,
+    })
+}
+
+async fn control_plane_async() -> Value {
+    let resolver = PathResolver::from_env();
+    json!({
+        "daemonAlive": load_daemon_info_async(resolver.daemon_info_path()).await.is_some(),
         "projectServiceAlive": true,
     })
 }

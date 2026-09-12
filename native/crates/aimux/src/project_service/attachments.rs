@@ -3,6 +3,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
@@ -124,6 +125,44 @@ pub fn route_attachment_request(
         200,
         json!({ "ok": true, "attachment": attachment }),
     ))
+}
+
+pub fn is_attachment_route(method: &str, path: &str) -> bool {
+    let pathname = project_service_pathname(path);
+    if method.eq_ignore_ascii_case("POST") {
+        return matches!(pathname, routes::ATTACHMENTS_PUBLISH | routes::ATTACHMENTS);
+    }
+    if !method.eq_ignore_ascii_case("GET") {
+        return false;
+    }
+    attachment_content_id(pathname).is_some() || attachment_metadata_id(pathname).is_some()
+}
+
+pub async fn route_attachment_request_async(
+    context: Arc<ProjectServiceRequestContext>,
+    method: String,
+    path: String,
+    body: Option<Value>,
+) -> Option<ProjectServiceDispatchResponse> {
+    if !is_attachment_route(&method, &path) {
+        return None;
+    }
+    let task_name = crate::async_runtime::scoped_task_name(
+        "project-service",
+        "attachment-route",
+        &format!("{method} {path}"),
+    );
+    match crate::async_runtime::spawn_blocking_named(task_name, move || {
+        route_attachment_request(&context, &method, &path, body.as_ref())
+    })
+    .await
+    {
+        Ok(response) => response,
+        Err(error) => Some(ProjectServiceDispatchResponse::json(
+            500,
+            json!({ "ok": false, "error": format!("attachment route task failed: {error}") }),
+        )),
+    }
 }
 
 fn route_attachment_publish(

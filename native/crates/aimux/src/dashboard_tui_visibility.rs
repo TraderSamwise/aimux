@@ -1,11 +1,10 @@
+use crate::async_subprocess::AsyncCommand;
+use crate::tmux::tmux_command_from_env;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
-use std::process::{Command, Output, Stdio};
-use std::thread;
-use std::time::{Duration, Instant};
-
-use crate::tmux::tmux_command_from_env;
+use std::process::Output;
+use std::time::Duration;
 
 pub const DASHBOARD_TUI_VISIBILITY_CACHE_MS: i64 = 250;
 pub const DASHBOARD_VISIBLE_VISIBILITY_RECHECK_MS: i64 = 1_000;
@@ -444,30 +443,11 @@ fn tmux_output(args: &[&str]) -> Result<String, ()> {
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
-fn command_output_with_timeout(command: &mut Command, timeout: Duration) -> io::Result<Output> {
-    let mut child = command
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
-    let deadline = Instant::now() + timeout;
-    loop {
-        if child.try_wait()?.is_some() {
-            return child.wait_with_output();
-        }
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            let kill_deadline = Instant::now() + Duration::from_millis(100);
-            while Instant::now() < kill_deadline {
-                if child.try_wait().ok().flatten().is_some() {
-                    break;
-                }
-                thread::sleep(Duration::from_millis(5));
-            }
-            return Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                "timed out waiting for tmux output",
-            ));
-        }
-        thread::sleep(Duration::from_millis(10));
-    }
+fn command_output_with_timeout(
+    command: &mut AsyncCommand,
+    timeout: Duration,
+) -> io::Result<Output> {
+    command
+        .output_timeout("dashboard-visibility:subprocess tmux", timeout)
+        .map_err(|error| io::Error::other(error.to_string()))
 }

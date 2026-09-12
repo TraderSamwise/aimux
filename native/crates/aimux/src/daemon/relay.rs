@@ -6,24 +6,32 @@
 //! response — it just arrives the way any other client's would, which also
 //! means the relay cannot reach anything a local caller could not.
 
-use std::io::{BufRead, BufReader, Read, Write};
-use std::net::TcpStream;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::collections::VecDeque;
+use std::io::Read;
+use std::pin::Pin;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use serde_json::{Value, json};
+use tokio::io::{
+    AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, ReadBuf,
+};
+use tokio::net::TcpStream;
+use tokio::time::Instant;
 
+use crate::async_runtime::{spawn_blocking_named, task_name};
 use crate::desktop_notifier::{DesktopNotificationPayload, send_desktop_notification_and_wait};
 use crate::launcher_env::DEFAULT_DAEMON_PORT;
-use crate::relay_client::{project_event_frame, project_events_error_frame, split_sse_frames};
-use crate::relay_runner::{DaemonRelayBridge, DaemonRouteResponse, RelayHandle, RelayRunner};
-use crate::websocket::TungsteniteConnector;
+use crate::relay_client::{project_event_frame, split_sse_frames};
+use crate::relay_runner::{
+    DaemonRelayBridge, DaemonRouteResponse, ProjectEventStream, ProjectEventStreamItem,
+    RelayHandle, RelayRunner,
+};
+use crate::websocket::{BoxFuture, TokioTungsteniteConnector};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
-/// An event stream is meant to be idle most of the time, so its read timeout is
-/// how often the reader notices it has been cancelled, not a failure threshold.
-const STREAM_POLL: Duration = Duration::from_millis(500);
 /// Relay request/response traffic is control JSON, not attachment bytes or bulk
 /// terminal history. Four MiB leaves room for large project lists and tails while
 /// refusing a relay-triggered bulk read into daemon memory.
@@ -60,18 +68,6 @@ impl Default for LoopbackRelayBridge {
 }
 
 impl LoopbackRelayBridge {
-    fn connect(&self, timeout: Duration) -> Result<TcpStream, String> {
-        let stream = TcpStream::connect(("127.0.0.1", self.port_number()))
-            .map_err(|error| error.to_string())?;
-        stream
-            .set_read_timeout(Some(timeout))
-            .map_err(|error| error.to_string())?;
-        stream
-            .set_write_timeout(Some(REQUEST_TIMEOUT))
-            .map_err(|error| error.to_string())?;
-        Ok(stream)
-    }
-
     fn port_number(&self) -> u16 {
         self.port.parse().unwrap_or(43_190)
     }
@@ -153,8 +149,8 @@ pub fn build_request_head(
     wire
 }
 
-fn write_request(
-    stream: &mut TcpStream,
+async fn write_request(
+    stream: &mut (impl AsyncRead + AsyncWrite + Unpin),
     method: &str,
     path: &str,
     headers: &Value,
@@ -164,6 +160,7 @@ fn write_request(
     let wire = build_request_head(method, path, headers, body, port);
     stream
         .write_all(wire.as_bytes())
+        .await
         .map_err(|error| error.to_string())
 }
 
@@ -191,155 +188,245 @@ pub fn read_status_and_body(stream: &mut impl Read) -> Result<(u16, String), Str
     Ok((status, body.to_owned()))
 }
 
+async fn read_status_and_body_async(
+    stream: &mut (impl AsyncRead + Unpin),
+) -> Result<(u16, String), String> {
+    let mut raw = Vec::new();
+    stream
+        .take((MAX_RELAY_DAEMON_RESPONSE_BYTES + 1) as u64)
+        .read_to_end(&mut raw)
+        .await
+        .map_err(|error| error.to_string())?;
+    read_status_and_body(&mut std::io::Cursor::new(raw))
+}
+
+struct LoopbackRequest<'a> {
+    method: &'a str,
+    path: &'a str,
+    headers: &'a Value,
+    body: Option<&'a str>,
+    port: &'a str,
+}
+
+async fn route_request_over_stream(
+    stream: &mut (impl AsyncRead + AsyncWrite + Unpin),
+    request: LoopbackRequest<'_>,
+    timeout: Duration,
+    deadline: Instant,
+) -> Result<(u16, String), String> {
+    tokio::time::timeout_at(
+        deadline,
+        write_request(
+            stream,
+            request.method,
+            request.path,
+            request.headers,
+            request.body,
+            request.port,
+        ),
+    )
+    .await
+    .map_err(|_| "daemon request timed out before it was fully written".to_owned())??;
+
+    tokio::time::timeout_at(deadline, read_status_and_body_async(stream))
+        .await
+        .map_err(|_| {
+            format!(
+                "daemon request was fully written but no response arrived before {}ms timeout; mutation outcome is unknown",
+                timeout.as_millis()
+            )
+        })?
+}
+
 impl DaemonRelayBridge for LoopbackRelayBridge {
-    fn route_request(
-        &self,
-        method: &str,
-        path: &str,
-        body: &Value,
-        headers: &Value,
-    ) -> DaemonRouteResponse {
-        let payload = (!body.is_null()).then(|| body.to_string());
-        let result = self.connect(REQUEST_TIMEOUT).and_then(|mut stream| {
-            write_request(
-                &mut stream,
-                method,
-                path,
-                headers,
-                payload.as_deref(),
-                &self.port,
-            )?;
-            read_status_and_body(&mut stream)
-        });
-        match result {
-            Ok((status, body)) => DaemonRouteResponse {
-                status,
-                body: serde_json::from_str(&body).unwrap_or(Value::Null),
-            },
-            Err(error) => DaemonRouteResponse {
-                status: 502,
-                body: json!({ "ok": false, "error": error }),
-            },
-        }
+    fn route_request<'a>(
+        &'a self,
+        method: &'a str,
+        path: &'a str,
+        body: &'a Value,
+        headers: &'a Value,
+    ) -> BoxFuture<'a, DaemonRouteResponse> {
+        Box::pin(async move {
+            let payload = (!body.is_null()).then(|| body.to_string());
+            let port = self.port.clone();
+            let deadline = Instant::now() + REQUEST_TIMEOUT;
+            let result = async {
+                let mut stream = tokio::time::timeout_at(
+                    deadline,
+                    TcpStream::connect(("127.0.0.1", self.port_number())),
+                )
+                .await
+                .map_err(|_| "daemon request timed out before connecting".to_owned())?
+                .map_err(|error| error.to_string())?;
+                route_request_over_stream(
+                    &mut stream,
+                    LoopbackRequest {
+                        method,
+                        path,
+                        headers,
+                        body: payload.as_deref(),
+                        port: &port,
+                    },
+                    REQUEST_TIMEOUT,
+                    deadline,
+                )
+                .await
+            }
+            .await;
+            match result {
+                Ok((status, body)) => DaemonRouteResponse {
+                    status,
+                    body: serde_json::from_str(&body).unwrap_or(Value::Null),
+                },
+                Err(error) => DaemonRouteResponse {
+                    status: 502,
+                    body: json!({ "ok": false, "error": error }),
+                },
+            }
+        })
     }
 
     fn subscribe_project_events(
-        &self,
-        subscription_id: &str,
-        path: &str,
-        headers: &Value,
-        send: Arc<dyn Fn(String) + Send + Sync>,
-        cancelled: Arc<AtomicBool>,
-    ) -> Result<(), (u16, String)> {
-        // Authorize and resolve BEFORE opening anything. The path comes from
-        // the other end of the relay, so dialling first and checking after
-        // would already have made the connection.
-        let target = resolve_project_event_stream(path, headers)?;
-        let permit = self.acquire_event_subscription()?;
-        let (host, port, request_path) = split_http_url(&target)
-            .ok_or_else(|| (502u16, "unusable event stream target".to_owned()))?;
-        let mut stream = TcpStream::connect((host.as_str(), port))
-            .map_err(|error| (502u16, error.to_string()))?;
-        stream
-            .set_read_timeout(Some(STREAM_POLL))
-            .map_err(|error| (502u16, error.to_string()))?;
-        write_request(
-            &mut stream,
-            "GET",
-            &request_path,
-            headers,
-            None,
-            &port.to_string(),
-        )
-        .map_err(|error| (502u16, error))?;
+        self: Arc<Self>,
+        subscription_id: String,
+        path: String,
+        headers: Value,
+    ) -> BoxFuture<'static, Result<Box<dyn ProjectEventStream>, (u16, String)>> {
+        Box::pin(async move {
+            tokio::time::timeout(REQUEST_TIMEOUT, async move {
+                // Authorize and resolve BEFORE opening anything. The path comes from
+                // the other end of the relay, so dialling first and checking after
+                // would already have made the connection.
+                let target = resolve_project_event_stream(&path, &headers)?;
+                let permit = self.acquire_event_subscription()?;
+                let (host, port, request_path) = split_http_url(&target)
+                    .ok_or_else(|| (502u16, "unusable event stream target".to_owned()))?;
+                let mut stream = TcpStream::connect((host.as_str(), port))
+                    .await
+                    .map_err(|error| (502u16, error.to_string()))?;
+                write_request(
+                    &mut stream,
+                    "GET",
+                    &request_path,
+                    &headers,
+                    None,
+                    &port.to_string(),
+                )
+                .await
+                .map_err(|error| (502u16, error))?;
 
-        let mut reader = BufReader::new(stream);
-        let mut head = String::new();
-        loop {
-            let mut line = String::new();
-            match reader.read_line(&mut line) {
-                Ok(0) => return Err((502, "project event stream closed".to_owned())),
-                Ok(_) => {
-                    if line == "\r\n" || line == "\n" {
-                        break;
+                let mut reader = BufReader::new(stream);
+                let mut head = String::new();
+                loop {
+                    let mut line = String::new();
+                    match reader.read_line(&mut line).await {
+                        Ok(0) => return Err((502, "project event stream closed".to_owned())),
+                        Ok(_) => {
+                            if line == "\r\n" || line == "\n" {
+                                break;
+                            }
+                            head.push_str(&line);
+                        }
+                        Err(error) => return Err((502, error.to_string())),
                     }
-                    head.push_str(&line);
                 }
-                Err(error) => return Err((502, error.to_string())),
+                let status = head
+                    .lines()
+                    .next()
+                    .and_then(|line| line.split_whitespace().nth(1))
+                    .and_then(|code| code.parse::<u16>().ok())
+                    .unwrap_or(502);
+                if !(200..300).contains(&status) {
+                    return Err((status, format!("HTTP {status}")));
+                }
+
+                Ok(Box::new(LoopbackProjectEventStream {
+                    subscription_id,
+                    reader,
+                    pending: VecDeque::new(),
+                    buffer: String::new(),
+                    _permit: permit,
+                }) as Box<dyn ProjectEventStream>)
+            })
+            .await
+            .unwrap_or_else(|_| Err((502, "project event stream timed out".to_owned())))
+        })
+    }
+
+    fn notify_client_connected<'a>(&'a self, title: &'a str, body: &'a str) -> BoxFuture<'a, ()> {
+        let title = non_empty(title).unwrap_or("aimux remote access").to_owned();
+        let body = non_empty(body)
+            .unwrap_or("Remote client connected")
+            .to_owned();
+        Box::pin(async move {
+            let _ = spawn_blocking_named(task_name("daemon-relay", "notify-client"), move || {
+                security_notification(&title, &body);
+            })
+            .await;
+        })
+    }
+
+    fn notify_auth_lost<'a>(&'a self, message: &'a str) -> BoxFuture<'a, ()> {
+        let message = non_empty(message)
+            .unwrap_or("Remote access is disconnected. Run `aimux login` again.")
+            .to_owned();
+        Box::pin(async move {
+            let _ =
+                spawn_blocking_named(task_name("daemon-relay", "notify-auth-lost"), move || {
+                    security_notification("aimux remote login expired", &message);
+                })
+                .await;
+        })
+    }
+}
+
+struct LoopbackProjectEventStream {
+    subscription_id: String,
+    reader: BufReader<TcpStream>,
+    pending: VecDeque<String>,
+    buffer: String,
+    _permit: EventSubscriptionPermit,
+}
+
+impl ProjectEventStream for LoopbackProjectEventStream {
+    fn poll_next(&mut self, cx: &mut Context<'_>) -> Poll<ProjectEventStreamItem> {
+        loop {
+            if let Some(frame) = self.pending.pop_front() {
+                return Poll::Ready(ProjectEventStreamItem::Frame(frame));
+            }
+
+            let mut chunk = [0u8; 4096];
+            let mut read_buffer = ReadBuf::new(&mut chunk);
+            match Pin::new(&mut self.reader).poll_read(cx, &mut read_buffer) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Ok(())) => {
+                    let read = read_buffer.filled().len();
+                    if read == 0 {
+                        return Poll::Ready(ProjectEventStreamItem::Closed);
+                    }
+                    let frames = match append_limited_sse_chunk(&mut self.buffer, &chunk[..read]) {
+                        Ok(frames) => frames,
+                        Err(message) => {
+                            return Poll::Ready(ProjectEventStreamItem::Error {
+                                status: 502,
+                                message: message.to_owned(),
+                            });
+                        }
+                    };
+                    for frame in frames {
+                        if let Some(payload) = project_event_frame(&self.subscription_id, &frame) {
+                            self.pending.push_back(payload);
+                        }
+                    }
+                }
+                Poll::Ready(Err(error)) => {
+                    return Poll::Ready(ProjectEventStreamItem::Error {
+                        status: 502,
+                        message: error.to_string(),
+                    });
+                }
             }
         }
-        let status = head
-            .lines()
-            .next()
-            .and_then(|line| line.split_whitespace().nth(1))
-            .and_then(|code| code.parse::<u16>().ok())
-            .unwrap_or(502);
-        if !(200..300).contains(&status) {
-            return Err((status, format!("HTTP {status}")));
-        }
-
-        let subscription_id = subscription_id.to_owned();
-        std::thread::Builder::new()
-            .name("aimux-relay-events".into())
-            .spawn(move || {
-                let _permit = permit;
-                let mut buffer = String::new();
-                let mut chunk = [0u8; 4096];
-                let mut close_message = "Project event stream closed";
-                while !cancelled.load(Ordering::SeqCst) {
-                    match reader.read(&mut chunk) {
-                        Ok(0) => break,
-                        Ok(read) => {
-                            let frames = match append_limited_sse_chunk(&mut buffer, &chunk[..read])
-                            {
-                                Ok(frames) => frames,
-                                Err(message) => {
-                                    close_message = message;
-                                    break;
-                                }
-                            };
-                            for frame in frames {
-                                if let Some(payload) = project_event_frame(&subscription_id, &frame)
-                                {
-                                    send(payload);
-                                }
-                            }
-                        }
-                        Err(error)
-                            if matches!(
-                                error.kind(),
-                                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                            ) =>
-                        {
-                            continue;
-                        }
-                        Err(_) => break,
-                    }
-                }
-                if !cancelled.load(Ordering::SeqCst) {
-                    send(project_events_error_frame(
-                        &subscription_id,
-                        502,
-                        close_message,
-                    ));
-                }
-            })
-            .map_err(|error| (500u16, error.to_string()))?;
-        Ok(())
-    }
-
-    fn notify_client_connected(&self, title: &str, body: &str) {
-        security_notification(
-            non_empty(title).unwrap_or("aimux remote access"),
-            non_empty(body).unwrap_or("Remote client connected"),
-        );
-    }
-
-    fn notify_auth_lost(&self, message: &str) {
-        security_notification(
-            "aimux remote login expired",
-            non_empty(message).unwrap_or("Remote access is disconnected. Run `aimux login` again."),
-        );
     }
 }
 
@@ -408,12 +495,10 @@ impl RelaySupervisor {
         if let Ok(mut current) = self.current.lock() {
             *current = Some((Arc::clone(&runner), handle.clone()));
         }
-        let _ = std::thread::Builder::new()
-            .name("aimux-relay".into())
-            .spawn(move || {
-                let mut connector = TungsteniteConnector;
-                runner.run(&mut connector, &mut |delay| std::thread::sleep(delay));
-            });
+        crate::async_runtime::spawn_named(task_name("daemon", "relay"), async move {
+            let mut connector = TokioTungsteniteConnector;
+            runner.run(&mut connector).await;
+        });
     }
 
     pub fn disconnect(&self) {
@@ -590,10 +675,17 @@ fn sanitize_request_token(value: &str, fallback: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        LoopbackRelayBridge, MAX_RELAY_DAEMON_RESPONSE_BYTES, MAX_RELAY_EVENT_SUBSCRIPTIONS,
-        MAX_RELAY_SSE_BUFFER_BYTES, append_limited_sse_chunk, read_status_and_body,
+        LoopbackRelayBridge, LoopbackRequest, MAX_RELAY_DAEMON_RESPONSE_BYTES,
+        MAX_RELAY_EVENT_SUBSCRIPTIONS, MAX_RELAY_SSE_BUFFER_BYTES, append_limited_sse_chunk,
+        read_status_and_body, route_request_over_stream,
     };
+    use crate::relay_runner::DaemonRelayBridge;
     use std::io::Cursor;
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant as StdInstant};
+    use tokio::io::AsyncReadExt;
+    use tokio::sync::Notify;
+    use tokio::time::Instant;
 
     #[test]
     fn relay_daemon_response_over_the_cap_is_an_error() {
@@ -659,5 +751,95 @@ mod tests {
 
         drop(permits.pop());
         assert!(bridge.acquire_event_subscription().is_ok());
+    }
+
+    #[test]
+    fn relay_daemon_request_timeout_after_full_write_reports_unknown_commit() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-seam: test - daemon relay unit test drives async loopback bridge
+        crate::async_runtime::block_on_named("daemon-relay:test-committed-timeout", async {
+            let (mut client, mut server) = tokio::io::duplex(4096);
+            let captured = Arc::new(Mutex::new(Vec::new()));
+            let read_started = Arc::new(Notify::new());
+            let captured_for_task = Arc::clone(&captured);
+            let read_started_for_task = Arc::clone(&read_started);
+            tokio::spawn(async move {
+                let mut buf = vec![0; 4096];
+                let len = server.read(&mut buf).await.expect("request read");
+                captured_for_task
+                    .lock()
+                    .unwrap()
+                    .extend_from_slice(&buf[..len]);
+                read_started_for_task.notify_one();
+                std::future::pending::<()>().await;
+            });
+
+            let timeout = Duration::from_millis(25);
+            let error = route_request_over_stream(
+                &mut client,
+                LoopbackRequest {
+                    method: "POST",
+                    path: "/agents/kill",
+                    headers: &serde_json::json!({}),
+                    body: Some("{\"sessionId\":\"agent-1\"}"),
+                    port: "43190",
+                },
+                timeout,
+                Instant::now() + timeout,
+            )
+            .await
+            .expect_err("response should time out after commit");
+
+            tokio::time::timeout(Duration::from_secs(1), read_started.notified())
+                .await
+                .expect("request was fully written");
+            let captured = String::from_utf8(captured.lock().unwrap().clone()).expect("utf8");
+            assert!(
+                captured.contains("POST /agents/kill HTTP/1.1"),
+                "{captured}"
+            );
+            assert!(
+                error.contains("fully written")
+                    && error.contains("mutation outcome is unknown")
+                    && error.contains("25ms"),
+                "{error}"
+            );
+        });
+    }
+
+    #[test]
+    fn relay_daemon_request_connect_failure_is_not_reported_as_committed() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-seam: test - daemon relay unit test drives async loopback bridge
+        crate::async_runtime::block_on_named("daemon-relay:test-connect-failure", async {
+            let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind free port");
+            let port = listener.local_addr().expect("addr").port();
+            drop(listener);
+            let bridge = LoopbackRelayBridge {
+                port: port.to_string(),
+                active_event_subscriptions: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            };
+            let before = StdInstant::now();
+            let response = bridge
+                .route_request(
+                    "POST",
+                    "/agents/kill",
+                    &serde_json::json!({}),
+                    &serde_json::json!({}),
+                )
+                .await;
+
+            assert_eq!(response.status, 502);
+            let error = response.body["error"].as_str().unwrap_or_default();
+            assert!(
+                !error.contains("fully written") && !error.contains("mutation outcome"),
+                "{error}"
+            );
+            assert!(
+                before.elapsed() < Duration::from_secs(1),
+                "connect failure should stay fast, elapsed {:?}",
+                before.elapsed()
+            );
+        });
     }
 }
