@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -121,13 +122,6 @@ ALLOWED_SEAMS = [
         "project-service transport unit tests drive async handlers from sync test cases",
     ),
     AllowedSeam(
-        "native/crates/aimux/src/project_service/scheduler.rs",
-        "crate::async_runtime::block_on_named(",
-        1,
-        "transitional",
-        "sync scheduler test/legacy caller bridge until all PeriodicTask bodies are async-only",
-    ),
-    AllowedSeam(
         "native/crates/aimux/src/project_service/lifecycle/agent_launch_routes.rs",
         "crate::async_runtime::process_runtime().block_on(route_agent_spawn_async(",
         1,
@@ -138,8 +132,15 @@ ALLOWED_SEAMS = [
         "native/crates/aimux/src/relay_runner.rs",
         "crate::async_runtime::block_on_named(",
         2,
-        "transitional",
-        "relay runner still exposes sync poll hooks around async subscription streams",
+        "test",
+        "relay runner unit tests drive async subscription polling from sync tests",
+    ),
+    AllowedSeam(
+        "native/crates/aimux/tests/project_service_scheduler.rs",
+        "aimux::async_runtime::block_on_named(",
+        2,
+        "test",
+        "scheduler tests drive async scheduler methods from sync test cases",
     ),
     AllowedSeam(
         "native/crates/aimux/tests/async_cutover_phase3_characterization.rs",
@@ -357,6 +358,10 @@ def main() -> int:
             )
     if violations:
         print("async seam audit failed: unclassified sync/async bridge", file=sys.stderr)
+        print(
+            "classify each allowed seam as one of: permanent, transitional, test, fixture",
+            file=sys.stderr,
+        )
         for violation in violations:
             print(f"  {violation}", file=sys.stderr)
         return 1
