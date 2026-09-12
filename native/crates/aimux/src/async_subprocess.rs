@@ -310,31 +310,27 @@ mod tests {
 
     #[test]
     fn sync_subprocess_call_runs_from_blocking_pool_route() {
-        crate::async_runtime::init_process_runtime().expect("runtime initialized");
-        let route_runtime = tokio::runtime::Builder::new_current_thread()
+        let route_runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
             .enable_io()
             .enable_time()
             .build()
             .expect("route runtime");
-        let handle = route_runtime.spawn_blocking(|| {
-            crate::async_runtime::block_on_named(
-                command_task_name("async-subprocess-test", "blocking-route-wrapper"),
-                async {
-                    let blocking = crate::async_runtime::spawn_blocking_named(
-                        command_task_name("async-subprocess-test", "blocking-route"),
-                        || {
-                            let mut command = AsyncCommand::new("/bin/sh");
-                            command.args(["-c", "printf route-ok"]);
-                            command.output().expect("subprocess should run")
-                        },
-                    );
-                    blocking.await.expect("blocking route should finish")
+        let handle = route_runtime.spawn(async {
+            crate::async_runtime::spawn_blocking_named(
+                command_task_name("async-subprocess-test", "blocking-route"),
+                || {
+                    let mut command = AsyncCommand::new("/bin/sh");
+                    command.args(["-c", "printf route-ok"]);
+                    command.output().expect("subprocess should run")
                 },
             )
+            .await
+            .expect("blocking route should finish")
         });
         let output = route_runtime
             .block_on(handle)
-            .expect("blocking route should not panic");
+            .expect("route worker should not panic");
         assert!(output.status.success());
         assert_eq!(String::from_utf8_lossy(&output.stdout), "route-ok");
     }
