@@ -381,6 +381,65 @@ export interface ProjectApiOk {
   ok: boolean;
 }
 
+export type DaemonProjectReadError =
+  | string
+  | {
+      projectId?: string;
+      projectName?: string;
+      projectRoot?: string;
+      root?: string;
+      path?: string;
+      error?: string;
+      message?: string;
+      [k: string]: unknown;
+    };
+
+export interface ProjectOperationFailure {
+  id?: string;
+  targetKind?: string;
+  targetId?: string;
+  operation?: string;
+  title?: string;
+  message?: string;
+  worktreeName?: string;
+  worktreePath?: string;
+  createdAt?: string;
+  [k: string]: unknown;
+}
+
+export interface TmuxUnavailableMarker {
+  ok?: false;
+  error?: string;
+  message?: string;
+  command?: string;
+  operation?: string;
+  timedOutAfterMs?: number;
+  [k: string]: unknown;
+}
+
+export interface PreviewCaptureMarker {
+  ok: false;
+  error: string;
+  [k: string]: unknown;
+}
+
+export interface LivePaneInputDelivery {
+  state: "held" | "delivered" | "failed" | string;
+  id?: string;
+  reason?: string;
+  error?: string;
+  quietForMs?: number;
+  retryAfterMs?: number;
+  maxDeliverAtMs?: number;
+  [k: string]: unknown;
+}
+
+export interface TmuxLiveWindowQueryUnavailable {
+  ok: false;
+  error: string;
+  [k: string]: unknown;
+}
+
 export interface TeamRoleConfig {
   description: string;
   reviewedBy?: string;
@@ -459,6 +518,7 @@ export interface LivePaneOutputResponse extends ProjectApiOk {
    */
   activityText?: string;
   attention?: AgentAttentionState;
+  tmuxUnavailable?: TmuxUnavailableMarker;
 }
 
 export interface AgentOutputStreamInput extends LivePaneOutputInput {
@@ -489,6 +549,7 @@ export interface AgentOutputStreamOutputData {
   outputStartLineClamped?: boolean;
   outputAvailable?: boolean;
   parsed?: unknown;
+  tmuxUnavailable?: TmuxUnavailableMarker;
 }
 
 export interface AgentOutputStreamErrorData {
@@ -509,6 +570,7 @@ export interface LivePaneInputRequest extends LivePaneSessionInput {
 export interface LivePaneInputResponse extends ProjectApiOk {
   sessionId: string;
   accepted: true;
+  delivery?: LivePaneInputDelivery;
 }
 
 /**
@@ -1196,6 +1258,7 @@ export interface AgentListItem {
 
 export interface AgentListResponse extends ProjectApiOk {
   agents: AgentListItem[];
+  tmuxLiveWindowQuery?: TmuxLiveWindowQueryUnavailable;
 }
 
 export interface SpawnAgentInput {
@@ -1407,6 +1470,7 @@ export interface TeammateLifecycleResponse extends ProjectLifecycleTransitionRes
 export interface TeammateListResponse extends ProjectApiOk {
   parentSessionId: string;
   teammates: AgentListItem[];
+  tmuxLiveWindowQuery?: TmuxLiveWindowQueryUnavailable;
 }
 
 export interface SwitchableAgentsInput {
@@ -1444,6 +1508,7 @@ export interface ExposeChatPreview {
 
 export interface SwitchableAgentItem extends Record<string, unknown> {
   previewSnapshot?: ExposePreviewSnapshot;
+  previewCapture?: PreviewCaptureMarker;
   chatPreview?: ExposeChatPreview;
   exposeContext?: {
     worktree: string;
@@ -1460,6 +1525,7 @@ export interface SwitchableAgentItem extends Record<string, unknown> {
 
 export interface SwitchableAgentsResponse extends ProjectApiOk {
   items: SwitchableAgentItem[];
+  tmuxLiveWindowQuery?: TmuxLiveWindowQueryUnavailable;
 }
 
 export interface InteractionPendingResponse extends ProjectApiOk {
