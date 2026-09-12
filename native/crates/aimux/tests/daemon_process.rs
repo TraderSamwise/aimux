@@ -56,6 +56,7 @@ struct FakeRuntime {
     projects: Vec<ProjectsRouteProject>,
     proxy_json: ProxyJsonResponse,
     proxy_binary: ProxyBinaryResponse,
+    proxy_json_gate: Option<Arc<BlockingProxyGate>>,
 }
 
 impl FakeRuntime {
@@ -72,6 +73,7 @@ impl FakeRuntime {
                 body: Vec::new(),
                 content_type: Some("image/png".into()),
             },
+            proxy_json_gate: None,
         }
     }
 
@@ -91,6 +93,38 @@ impl FakeRuntime {
             404,
             "not found\n",
         ))
+    }
+}
+
+#[derive(Debug)]
+struct BlockingProxyGate {
+    entered: Mutex<Option<mpsc::Sender<()>>>,
+    release: Mutex<mpsc::Receiver<()>>,
+}
+
+impl BlockingProxyGate {
+    fn new() -> (Arc<Self>, mpsc::Receiver<()>, mpsc::Sender<()>) {
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        (
+            Arc::new(Self {
+                entered: Mutex::new(Some(entered_tx)),
+                release: Mutex::new(release_rx),
+            }),
+            entered_rx,
+            release_tx,
+        )
+    }
+
+    fn wait(&self) {
+        if let Some(sender) = self.entered.lock().expect("entered lock").take() {
+            sender.send(()).expect("signal proxy entered");
+        }
+        self.release
+            .lock()
+            .expect("release lock")
+            .recv_timeout(Duration::from_secs(2))
+            .expect("release blocked proxy request");
     }
 }
 
@@ -215,6 +249,9 @@ impl DaemonJsonRouteRuntime for FakeRuntime {
             "proxy-json:{method}:{target_url}:{}",
             body.cloned().unwrap_or(Value::Null)
         ));
+        if let Some(gate) = &self.proxy_json_gate {
+            gate.wait();
+        }
         Ok(self.proxy_json.clone())
     }
 
@@ -1054,6 +1091,15 @@ fn wait_for_async_task(name: &str) -> Option<aimux::async_runtime::AsyncTaskSnap
     None
 }
 
+fn join_hosted_exchange(hosted: tokio::task::JoinHandle<()>, client: tokio::task::JoinHandle<()>) {
+    process_runtime()
+        .block_on(hosted)
+        .expect("hosted async task");
+    process_runtime()
+        .block_on(client)
+        .expect("client async task");
+}
+
 #[test]
 fn runtime_processor_routes_health_through_status_contract() {
     let mut runtime = FakeRuntime::empty();
@@ -1556,12 +1602,7 @@ fn async_hosted_operator_stream_stops_after_principal_revocation() {
         }
     };
     upstream.stop();
-    process_runtime()
-        .block_on(hosted)
-        .expect("hosted async task");
-    process_runtime()
-        .block_on(client)
-        .expect("client async task");
+    join_hosted_exchange(hosted, client);
 
     let response = String::from_utf8(output).expect("stream response");
     assert!(
@@ -1574,6 +1615,140 @@ fn async_hosted_operator_stream_stops_after_principal_revocation() {
         entry.event.as_deref() == Some("hosted_stream_closed:revoked")
             && entry.session_id.as_deref() == Some("s")
     }));
+}
+
+#[test]
+fn async_hosted_connection_forwards_non_stream_proxy_response() {
+    let fixture = HostedFixture::new("async-non-stream-proxy");
+    let token = grant_hosted_operator(&fixture.resolver, "grand", "/repo", "s");
+    let mut runtime = FakeRuntime::empty();
+    runtime.projects = vec![hosted_project("/repo", 43210, true)];
+    let runtime = Arc::new(Mutex::new(runtime));
+    let state = Arc::new(fixture.state(HostedConfig {
+        enabled: true,
+        ..HostedConfig::default()
+    }));
+    let request = format!(
+        "GET /proxy/127.0.0.1/43210/agents/output?sessionId=s HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {token}\r\n\r\n",
+    );
+
+    let (done_tx, done_rx) = mpsc::channel();
+    let (mut client_stream, mut server_stream) = tokio::io::duplex(16 * 1024);
+    let client = spawn_named("hosted-test:async-non-stream-client", async move {
+        tokio::io::AsyncWriteExt::write_all(&mut client_stream, request.as_bytes())
+            .await
+            .expect("write request");
+        let mut output = Vec::new();
+        tokio::io::AsyncReadExt::read_to_end(&mut client_stream, &mut output)
+            .await
+            .expect("read response");
+        done_tx.send(output).expect("send output");
+    });
+    let handle_runtime = Arc::clone(&runtime);
+    let handle_state = Arc::clone(&state);
+    let intercept_runtime = Arc::clone(&runtime);
+    let intercept_state = Arc::clone(&state);
+    let hosted = spawn_named("hosted-test:async-non-stream", async move {
+        handle_hosted_daemon_stream_async(
+            &handle_runtime,
+            &handle_state,
+            &intercept_runtime,
+            &intercept_state,
+            &mut server_stream,
+            aimux::daemon::listener::DaemonRequestMetadata {
+                issued_at: "issued".into(),
+                stopping: false,
+            },
+            None,
+        )
+        .await
+        .expect("hosted request handled");
+    });
+
+    let output = done_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("hosted response");
+    join_hosted_exchange(hosted, client);
+
+    let response = String::from_utf8(output).expect("response utf8");
+    assert!(
+        response.starts_with("HTTP/1.1 200 OK\r\n"),
+        "unexpected response: {response}"
+    );
+    assert!(response.contains(r#""ok":true"#), "response: {response}");
+    assert!(runtime.lock().expect("runtime").calls.contains(
+        &"proxy-json:GET:http://127.0.0.1:43210/agents/output?sessionId=s:null".to_owned()
+    ));
+}
+
+#[test]
+fn async_hosted_non_stream_proxy_runs_on_named_blocking_task() {
+    let fixture = HostedFixture::new("async-non-stream-proxy-blocking-task");
+    let token = grant_hosted_operator(&fixture.resolver, "grand", "/repo", "s");
+    let (gate, entered_rx, release_tx) = BlockingProxyGate::new();
+    let mut runtime = FakeRuntime::empty();
+    runtime.projects = vec![hosted_project("/repo", 43210, true)];
+    runtime.proxy_json_gate = Some(gate);
+    let runtime = Arc::new(Mutex::new(runtime));
+    let state = Arc::new(fixture.state(HostedConfig {
+        enabled: true,
+        ..HostedConfig::default()
+    }));
+    let request = format!(
+        "GET /proxy/127.0.0.1/43210/agents/output?sessionId=s HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {token}\r\n\r\n",
+    );
+
+    let (done_tx, done_rx) = mpsc::channel();
+    let (mut client_stream, mut server_stream) = tokio::io::duplex(16 * 1024);
+    let client = spawn_named("hosted-test:async-non-stream-blocking-client", async move {
+        tokio::io::AsyncWriteExt::write_all(&mut client_stream, request.as_bytes())
+            .await
+            .expect("write request");
+        let mut output = Vec::new();
+        tokio::io::AsyncReadExt::read_to_end(&mut client_stream, &mut output)
+            .await
+            .expect("read response");
+        done_tx.send(output).expect("send output");
+    });
+    let handle_runtime = Arc::clone(&runtime);
+    let handle_state = Arc::clone(&state);
+    let intercept_runtime = Arc::clone(&runtime);
+    let intercept_state = Arc::clone(&state);
+    let hosted = spawn_named("hosted-test:async-non-stream-blocking-seam", async move {
+        handle_hosted_daemon_stream_async(
+            &handle_runtime,
+            &handle_state,
+            &intercept_runtime,
+            &intercept_state,
+            &mut server_stream,
+            aimux::daemon::listener::DaemonRequestMetadata {
+                issued_at: "issued".into(),
+                stopping: false,
+            },
+            None,
+        )
+        .await
+        .expect("hosted request handled");
+    });
+
+    entered_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("proxy request reached runtime");
+    let route_task = wait_for_async_task("hosted:route");
+    release_tx.send(()).expect("release proxy request");
+    let output = done_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("hosted response");
+    join_hosted_exchange(hosted, client);
+
+    let route_task = route_task.expect("hosted route task should be visible while proxy blocks");
+    assert_eq!(route_task.kind, AsyncTaskKind::Blocking);
+    let response = String::from_utf8(output).expect("response utf8");
+    assert!(
+        response.starts_with("HTTP/1.1 200 OK\r\n"),
+        "unexpected response: {response}"
+    );
+    assert!(response.contains(r#""ok":true"#), "response: {response}");
 }
 
 #[test]

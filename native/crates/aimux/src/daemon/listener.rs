@@ -20,6 +20,8 @@ use tokio::time::{Duration, sleep};
 const MAX_HEADER_BYTES: usize = 64 * 1024;
 pub type DaemonInterceptFuture<'a> =
     Pin<Box<dyn Future<Output = Result<bool, DaemonListenerError>> + Send + 'a>>;
+pub type DaemonHandleFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<PreparedDaemonResponse, DaemonListenerError>> + Send + 'a>>;
 
 #[derive(Debug)]
 pub enum DaemonListenerError {
@@ -393,7 +395,7 @@ where
     Stream: AsyncRead + AsyncWrite + Unpin + Send,
     BodyLimit: FnMut(&DaemonRequestHead) -> Option<DaemonRequestBodyLimit>,
     Intercept: for<'a> FnMut(&'a DaemonHttpRequest, &'a mut Stream) -> DaemonInterceptFuture<'a>,
-    Handle: FnMut(DaemonHttpRequest) -> PreparedDaemonResponse,
+    Handle: FnMut(DaemonHttpRequest) -> DaemonHandleFuture<'static>,
 {
     let bytes = match read_http_request_with_body_limit_async(stream, body_limit).await? {
         ReadHttpRequestOutcome::Request(bytes) => bytes,
@@ -406,7 +408,7 @@ where
     if intercept(&request, stream).await? {
         return Ok(());
     }
-    let response = handle(request);
+    let response = handle(request).await?;
     write_prepared_response_async(stream, &response).await?;
     Ok(())
 }

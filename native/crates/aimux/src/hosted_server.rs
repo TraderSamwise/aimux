@@ -555,10 +555,14 @@ where
     let stream_runtime = Arc::clone(intercept_runtime);
     let stream_state = Arc::clone(intercept_state);
     let stream_peer_address = peer_address.map(str::to_owned);
+    let route_runtime = Arc::clone(handle_runtime);
+    let route_state = Arc::clone(handle_state);
+    let route_peer_address = peer_address.map(str::to_owned);
+    let body_limit_state = Arc::clone(handle_state);
     handle_daemon_stream_with_metadata_and_interceptor_and_body_limit(
         stream,
         metadata,
-        &mut |head| hosted_body_limit_for_head(&handle_state.config, head),
+        &mut |head| hosted_body_limit_for_head(&body_limit_state.config, head),
         &mut move |request, writer| {
             let intercept_runtime = Arc::clone(&stream_runtime);
             let intercept_state = Arc::clone(&stream_state);
@@ -579,16 +583,32 @@ where
                 })
             })
         },
-        &mut |request| {
-            let mut runtime = handle_runtime
-                .lock()
-                .expect("hosted daemon runtime mutex poisoned");
-            handle_hosted_daemon_request_from_peer(
-                &mut *runtime,
-                handle_state,
-                request,
-                peer_address,
-            )
+        &mut move |request| {
+            let handle_runtime = Arc::clone(&route_runtime);
+            let handle_state = Arc::clone(&route_state);
+            let peer_address = route_peer_address.clone();
+            Box::pin(async move {
+                crate::async_runtime::spawn_blocking_named(
+                    crate::async_runtime::task_name("hosted", "route"),
+                    move || {
+                        let mut runtime = handle_runtime
+                            .lock()
+                            .expect("hosted daemon runtime mutex poisoned");
+                        handle_hosted_daemon_request_from_peer(
+                            &mut *runtime,
+                            &handle_state,
+                            request,
+                            peer_address.as_deref(),
+                        )
+                    },
+                )
+                .await
+                .map_err(|error| {
+                    crate::daemon::listener::DaemonListenerError::Io(std::io::Error::other(
+                        error.to_string(),
+                    ))
+                })
+            })
         },
     )
     .await

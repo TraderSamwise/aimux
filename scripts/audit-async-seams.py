@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -186,9 +187,9 @@ ALLOWED_SEAMS = [
     AllowedSeam(
         "native/crates/aimux/tests/daemon_stream.rs",
         "aimux::async_runtime::block_on_named(",
-        1,
+        2,
         "test",
-        "daemon stream test drives async stream helper from a sync test",
+        "daemon stream tests drive async stream helpers and downstream-close coverage from sync tests",
     ),
     AllowedSeam(
         "native/crates/aimux/tests/fixtures/fixture_relay_client.rs",
