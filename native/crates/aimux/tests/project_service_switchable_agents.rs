@@ -23,6 +23,7 @@ static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 #[derive(Debug, Default)]
 struct FakePreviewRuntime {
     output: String,
+    error: Option<String>,
     calls: Vec<(String, CapturePaneOptions)>,
 }
 
@@ -33,6 +34,9 @@ impl AgentOutputCaptureRuntime for FakePreviewRuntime {
         options: CapturePaneOptions,
     ) -> Result<String, String> {
         self.calls.push((window_id.to_owned(), options));
+        if let Some(error) = self.error.as_ref() {
+            return Err(error.clone());
+        }
         Ok(self.output.clone())
     }
 }
@@ -600,6 +604,7 @@ fn route_switchable_agents_attaches_expose_previews_through_capture_cache() {
     let path = "/control/switchable-agents?currentPath=/repo/wt&currentWindowId=%401&labelFormat=raw&expose=1";
     let mut runtime = FakePreviewRuntime {
         output: format!("{}tail", "x".repeat(9_000)),
+        error: None,
         calls: Vec::new(),
     };
 
@@ -666,6 +671,43 @@ fn route_switchable_agents_attaches_expose_previews_through_capture_cache() {
 }
 
 #[test]
+fn route_switchable_agents_marks_preview_capture_failure() {
+    let project = temp_project("route-switchable-preview-capture-failure");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).unwrap();
+    write(
+        runtime_topology_path(&state_dir),
+        serde_yaml::to_string(&topology_fixture()).unwrap(),
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids(support::live_window_ids(&["@1", "@2", "@3"]));
+    let mut runtime = FakePreviewRuntime {
+        output: String::new(),
+        error: Some("tmux capture-pane failed for @1".into()),
+        calls: Vec::new(),
+    };
+
+    let response = route_switchable_agent_request_with_runtime(
+        &context,
+        "GET",
+        "/control/switchable-agents?currentPath=/repo/wt&currentWindowId=%401&labelFormat=raw&expose=1&includePreview=1",
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    let live = find(response.body["items"].as_array().unwrap(), "codex-live");
+    assert!(live.get("previewSnapshot").is_none());
+    assert_eq!(live["previewCapture"]["ok"], false);
+    assert_eq!(
+        live["previewCapture"]["error"],
+        "tmux capture-pane failed for @1"
+    );
+    cleanup(project);
+}
+
+#[test]
 fn preview_snapshot_builder_merges_capture_with_tap_output() {
     let project = temp_project("route-switchable-preview-tap");
     let state_dir = project.join("state");
@@ -679,6 +721,7 @@ fn preview_snapshot_builder_merges_capture_with_tap_output() {
     });
     let mut runtime = FakePreviewRuntime {
         output: "one".into(),
+        error: None,
         calls: Vec::new(),
     };
 
@@ -713,6 +756,7 @@ fn route_switchable_agents_uses_remote_address_for_anonymous_preview_client_id()
         .with_live_window_ids(support::live_window_ids(&["@1", "@2", "@3"]));
     let mut runtime = FakePreviewRuntime {
         output: "preview".into(),
+        error: None,
         calls: Vec::new(),
     };
 
