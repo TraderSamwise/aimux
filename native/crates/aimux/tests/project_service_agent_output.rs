@@ -1808,6 +1808,88 @@ fn agent_input_blank_prompt_is_genuine_unattended_no_data_path() {
 }
 
 #[test]
+fn agent_input_idle_codex_placeholder_is_genuine_unattended_no_data_path() {
+    let project = temp_project("placeholder-prompt-unattended");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeActivityRuntime {
+        inner: FakeCaptureRuntime {
+            output: "Ready\n› Ask Codex to do anything".into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let response = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::INPUT,
+        Some(&json!({ "sessionId": "codex-1", "text": "safe loop update" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert!(response.body.get("delivery").is_none());
+    assert_eq!(
+        runtime.inner.actions,
+        vec![
+            FakeRuntimeAction::Text("@1".into(), "safe loop update".into()),
+            FakeRuntimeAction::CarriageReturn("@1".into()),
+        ]
+    );
+    assert!(!agent_input_delivery_queue_path(&state_dir).exists());
+    cleanup(project);
+}
+
+#[test]
+fn queued_visible_draft_releases_after_hold_budget() {
+    let project = temp_project("visible-draft-hold-budget");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let now_ms = aimux::project_service::scheduler::scheduler_now_ms();
+    let mut runtime = FakeActivityRuntime {
+        inner: FakeCaptureRuntime {
+            output:
+                "Ready\n› Sam is still typing this prompt\n\n  gpt-5.5 medium · ~/workspace/project"
+                    .into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let held = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::INPUT,
+        Some(&json!({ "sessionId": "codex-1", "text": "loop update" })),
+        &mut runtime,
+    )
+    .unwrap();
+    assert_eq!(held.status, 200);
+    assert_eq!(held.body["delivery"]["state"], "held");
+    assert!(runtime.inner.actions.is_empty());
+
+    run_pending_agent_input_deliveries_with_runtime(
+        &context,
+        &mut runtime,
+        now_ms + MAX_AGENT_INPUT_HOLD_MS + 1,
+    );
+
+    assert_eq!(
+        runtime.inner.actions,
+        vec![
+            FakeRuntimeAction::Text("@1".into(), "loop update".into()),
+            FakeRuntimeAction::CarriageReturn("@1".into()),
+        ]
+    );
+    assert!(!agent_input_delivery_queue_path(&state_dir).exists());
+    cleanup(project);
+}
+
+#[test]
 fn queued_agent_input_does_not_override_fresh_typing_after_hold_budget() {
     let project = temp_project("typing-outlasts-hold-budget");
     let state_dir = project.join("state");
@@ -2067,6 +2149,44 @@ fn agent_input_force_bypasses_active_client_probe() {
 
     assert_eq!(response.status, 200);
     assert_eq!(runtime.input_activity.len(), 1);
+    assert_eq!(
+        runtime.inner.actions,
+        vec![
+            FakeRuntimeAction::Text("@1".into(), "urgent".into()),
+            FakeRuntimeAction::CarriageReturn("@1".into()),
+        ]
+    );
+    assert!(!agent_input_delivery_queue_path(&state_dir).exists());
+    cleanup(project);
+}
+
+#[test]
+fn agent_input_force_bypasses_visible_draft_hold() {
+    let project = temp_project("force-visible-draft");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeActivityRuntime {
+        inner: FakeCaptureRuntime {
+            output:
+                "Ready\n› Sam is still typing this prompt\n\n  gpt-5.5 medium · ~/workspace/project"
+                    .into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let response = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::INPUT,
+        Some(&json!({ "sessionId": "codex-1", "text": "urgent", "force": true })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert!(response.body.get("delivery").is_none());
     assert_eq!(
         runtime.inner.actions,
         vec![

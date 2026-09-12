@@ -162,11 +162,19 @@ pub fn decide_agent_input_delivery(
                 reason: reason.into(),
             }
         }
-        Ok(AgentInputWindowActivity::UnsubmittedInputVisible) => AgentInputDeliveryDecision::Hold {
-            reason: "visible-unsubmitted-input".into(),
-            quiet_for_ms: None,
-            retry_after_ms: DELIVERY_TASK_INTERVAL_MS,
-        },
+        Ok(AgentInputWindowActivity::UnsubmittedInputVisible) => {
+            if now_ms >= max_deliver_at_ms {
+                AgentInputDeliveryDecision::DeliverNow {
+                    reason: "max-hold-elapsed".into(),
+                }
+            } else {
+                AgentInputDeliveryDecision::Hold {
+                    reason: "visible-unsubmitted-input".into(),
+                    quiet_for_ms: None,
+                    retry_after_ms: DELIVERY_TASK_INTERVAL_MS,
+                }
+            }
+        }
         Ok(AgentInputWindowActivity::Attended {
             latest_activity_ms, ..
         }) => {
@@ -616,11 +624,11 @@ pub fn pane_has_unsubmitted_agent_input(pane: &str) -> bool {
                 && strip_agent_prompt_marker(visible_lines[index - 1])
                     .is_some_and(|rest| rest.trim().is_empty())
             {
-                return true;
+                return has_user_composer_text(trimmed);
             }
             return false;
         };
-        return !rest.trim().is_empty();
+        return has_user_composer_text(rest);
     }
     false
 }
@@ -638,6 +646,19 @@ fn strip_agent_prompt_marker(line: &str) -> Option<&str> {
 fn looks_like_agent_bottom_chrome(line: &str) -> bool {
     (line.starts_with("gpt-") || line.starts_with("claude-"))
         && (line.contains(" · ~/") || line.contains(" · /"))
+}
+
+fn has_user_composer_text(value: &str) -> bool {
+    let text = value.trim();
+    !text.is_empty() && !is_empty_composer_placeholder(text)
+}
+
+fn is_empty_composer_placeholder(text: &str) -> bool {
+    let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    matches!(
+        normalized.as_str(),
+        "Ask Codex to do anything" | "Ask Claude to do anything"
+    )
 }
 
 fn load_delivery_state(path: &Path) -> Result<AgentInputDeliveryState, String> {
