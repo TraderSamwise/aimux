@@ -2,8 +2,7 @@ pub use crate::agent_prompt_delivery::normalize_submitted_prompt;
 use crate::agent_prompt_delivery::{
     DRAFT_CAPTURE_START_LINE, FIRST_POLL_MS, MAX_POLL_ATTEMPTS, POLL_MS, PromptSubmitRuntime,
     SETTLE_BEFORE_SUBMIT_MS, SIGNATURE_CAPTURE_START_LINE, VERIFY_AFTER_SUBMIT_MS,
-    composer_still_contains_prompt_draft, pane_still_contains_prompt_draft, prompt_draft_signature,
-    wait_for_prompt_submit,
+    composer_still_contains_prompt_draft, prompt_draft_signature, wait_for_prompt_submit,
 };
 use crate::async_subprocess::{AsyncCommand, command_task_name};
 use crate::daemon_state::load_metadata_state;
@@ -2309,7 +2308,7 @@ async fn wait_for_prompt_submit_with_runtime_async(
             .map_err(|error| {
                 format!("agent input submit verification failed before submit: {error}")
             })?;
-        let still_draft = pane_still_contains_prompt_draft(&pane, draft);
+        let still_draft = composer_still_contains_prompt_draft(&pane, draft);
         let signature = if still_draft {
             runtime
                 .capture(SIGNATURE_CAPTURE_START_LINE)
@@ -2783,6 +2782,48 @@ mod tests {
         });
 
         assert_eq!(runtime.carriage_returns, 1);
+    }
+
+    #[test]
+    fn async_prompt_submit_ignores_stale_transcript_echo_before_submit() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        let mut runtime = FakeAsyncPromptSubmitRuntime {
+            captures: std::collections::VecDeque::from([
+                Ok("› stale async draft\n• Waiting\n› ".to_owned()),
+                Ok("› stale async draft\n• Waiting\n› ".to_owned()),
+                Ok("› stale async draft\n• Waiting\n› ".to_owned()),
+                Ok("› stale async draft\n• Waiting\n› ".to_owned()),
+                Ok("› stale async draft".to_owned()),
+                Ok("› stale async draft".to_owned()),
+                Ok("› stale async draft".to_owned()),
+                Ok("› stale async draft".to_owned()),
+                Ok("assistant response\n› ".to_owned()),
+            ]),
+            ..FakeAsyncPromptSubmitRuntime::successful("stale async draft")
+        };
+
+        // aimux-async-seam: test - agent output unit test drives async submit verification
+        crate::async_runtime::block_on_named("agent-output:test-submit-stale-echo", async {
+            wait_for_prompt_submit_with_runtime_async(&mut runtime, "stale async draft")
+                .await
+                .expect("submit ignored stale transcript echo");
+        });
+
+        assert_eq!(runtime.carriage_returns, 1);
+        assert_eq!(
+            runtime.sleeps,
+            vec![
+                FIRST_POLL_MS,
+                POLL_MS,
+                POLL_MS,
+                POLL_MS,
+                POLL_MS,
+                POLL_MS,
+                SETTLE_BEFORE_SUBMIT_MS,
+                VERIFY_AFTER_SUBMIT_MS,
+            ],
+            "a stale transcript echo must not satisfy the pre-submit paste wait"
+        );
     }
 
     #[test]

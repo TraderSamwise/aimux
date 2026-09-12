@@ -121,7 +121,7 @@ pub fn wait_for_prompt_submit(runtime: &mut dyn PromptSubmitRuntime, draft: &str
         let pane = runtime
             .capture(DRAFT_CAPTURE_START_LINE)
             .unwrap_or_default();
-        let still_draft = pane_still_contains_prompt_draft(&pane, draft);
+        let still_draft = composer_still_contains_prompt_draft(&pane, draft);
         let signature = if still_draft {
             runtime
                 .capture(SIGNATURE_CAPTURE_START_LINE)

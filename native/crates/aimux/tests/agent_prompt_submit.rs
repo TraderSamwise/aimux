@@ -107,6 +107,33 @@ fn transcript_echo_after_submit_does_not_count_as_uncleared_composer() {
 }
 
 #[test]
+fn stale_transcript_echo_before_submit_does_not_release_enter() {
+    let stale_echo_with_empty_composer = format!("› {DRAFT}\n• Waiting\n› ");
+    let drawn = format!("› {DRAFT}");
+    let mut pane = FakePane::new(&[
+        &stale_echo_with_empty_composer,
+        &stale_echo_with_empty_composer,
+        &stale_echo_with_empty_composer,
+        &stale_echo_with_empty_composer,
+        &drawn,
+        &drawn,
+        &drawn,
+        &drawn,
+        "› ",
+    ]);
+
+    let submitted = wait_for_prompt_submit(&mut pane, DRAFT);
+
+    assert_eq!(pane.carriage_returns, 1);
+    assert_eq!(
+        pane.reads_before_submit,
+        Some(8),
+        "a transcript echo must not make the submit wait press Enter before the paste reaches the composer"
+    );
+    assert!(submitted);
+}
+
+#[test]
 fn a_pane_that_never_renders_still_submits_rather_than_losing_the_prompt() {
     let mut pane = FakePane::new(&[""]);
 
