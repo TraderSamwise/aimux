@@ -368,6 +368,7 @@ fn parse_managed_windows(input: &Value) -> Vec<TmuxManagedWindow> {
 struct MockProjectRuntime {
     windows: Vec<TmuxManagedWindow>,
     capture_calls: Vec<String>,
+    capture_error: Option<String>,
 }
 
 impl MockProjectRuntime {
@@ -375,7 +376,13 @@ impl MockProjectRuntime {
         Self {
             windows,
             capture_calls: Vec::new(),
+            capture_error: None,
         }
+    }
+
+    fn with_capture_error(mut self, error: impl Into<String>) -> Self {
+        self.capture_error = Some(error.into());
+        self
     }
 }
 
@@ -393,6 +400,44 @@ impl ProjectExposeHotSnapshotRuntime for MockProjectRuntime {
         _options: CapturePaneOptions,
     ) -> Result<String, String> {
         self.capture_calls.push(target.window_id.clone());
+        if let Some(error) = self.capture_error.as_ref() {
+            return Err(error.clone());
+        }
         Ok(format!("{} captured preview\n", target.window_id))
     }
+}
+
+#[test]
+fn project_hot_snapshot_records_preview_capture_failure() {
+    let home = temp_root();
+    let project_root = "/repo";
+    let windows = vec![TmuxManagedWindow {
+        target: TmuxTarget {
+            session_name: "aimux-test".into(),
+            window_id: "@1".into(),
+            window_index: 1,
+            window_name: "agent-a".into(),
+            pane_dead: Some(false),
+        },
+        metadata: json!({
+            "kind": "agent",
+            "sessionId": "agent-a",
+            "command": "codex",
+            "worktreePath": project_root,
+        }),
+    }];
+    let mut runtime =
+        MockProjectRuntime::new(windows).with_capture_error("tmux capture-pane timed out");
+
+    refresh_project_expose_hot_snapshots(project_root, state_dir(&home, "repo"), &mut runtime);
+
+    let project = project_snapshot(&home, "repo", project_root);
+    let item = &project["items"][0];
+    assert!(item.get("previewSnapshot").is_none());
+    assert_eq!(item["previewCapture"]["ok"], false);
+    assert_eq!(
+        item["previewCapture"]["error"],
+        "tmux capture-pane timed out"
+    );
+    let _ = fs::remove_dir_all(&home);
 }

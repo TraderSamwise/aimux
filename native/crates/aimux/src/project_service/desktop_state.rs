@@ -615,22 +615,10 @@ async fn attach_desktop_state_previews_async(
         let Some(window_id) = string_field(session, "tmuxWindowId").map(str::to_owned) else {
             continue;
         };
-        let target = TmuxTarget {
-            session_name: String::new(),
-            window_id: window_id.clone(),
-            window_index: integer_field(session, "tmuxWindowIndex"),
-            window_name: String::new(),
-            pane_dead: None,
-        };
-        let tap_snapshot = context.osc_output_tap.track_and_read_snapshot(
-            string_field(session, "id").unwrap_or_default(),
-            target,
-            DEFAULT_PREVIEW_MAX_CHARS,
-        );
         let preview = match capture_preview_snapshot_with_tap_async(
             context,
             &window_id,
-            tap_snapshot.as_ref(),
+            None,
             DEFAULT_PREVIEW_CAPTURE_LINES,
             DEFAULT_PREVIEW_MAX_CHARS,
         )

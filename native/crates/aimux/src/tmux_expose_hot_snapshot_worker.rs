@@ -1,4 +1,5 @@
 use crate::daemon_state::load_metadata_state;
+use crate::project_service::preview_snapshots::{DEFAULT_PREVIEW_MAX_CHARS, trailing_chars};
 use crate::project_service::switchable_agents::{
     AgentListScope, ManagedWindowEntry, SwitchableContext, SwitchableListOptions,
     list_switchable_agent_items, serialize_fast_control_item,
@@ -65,7 +66,7 @@ pub fn refresh_project_expose_hot_snapshots(
     let project_root = normalize_hot_snapshot_path(&project_root.as_ref().to_string_lossy());
     let project_state_dir = project_state_dir.as_ref();
     let captured_at = now_iso();
-    let mut capture_cache = HashMap::<String, Option<Value>>::new();
+    let mut capture_cache = HashMap::<String, Value>::new();
     let live_launch_contexts = match runtime.list_project_managed_windows(Path::new(&project_root))
     {
         Ok(windows) => windows
@@ -258,7 +259,7 @@ fn list_project_switchable_items(
     input: ProjectSwitchableItemsInput<'_>,
     runtime: &mut impl ProjectExposeHotSnapshotRuntime,
     captured_at: &str,
-    capture_cache: &mut HashMap<String, Option<Value>>,
+    capture_cache: &mut HashMap<String, Value>,
 ) -> Vec<Value> {
     let metadata = load_metadata_state(input.project_state_dir);
     let last_used = load_last_used_state(input.project_state_dir);
@@ -305,41 +306,51 @@ fn attach_captured_preview(
     item: &mut Value,
     runtime: &mut impl ProjectExposeHotSnapshotRuntime,
     captured_at: &str,
-    capture_cache: &mut HashMap<String, Option<Value>>,
+    capture_cache: &mut HashMap<String, Value>,
 ) {
     let Some(target) = item.get("target").and_then(tmux_target_from_value) else {
         return;
     };
     if !capture_cache.contains_key(&target.window_id) {
-        let snapshot = runtime
-            .capture_target(
-                &target,
-                CapturePaneOptions {
-                    start_line: Some(-EXPOSE_PREVIEW_CAPTURE_LINES),
-                    end_line: None,
-                    include_escapes: true,
-                },
-            )
-            .ok()
-            .map(|output| {
-                json!({
-                    "output": output,
+        let snapshot = match runtime.capture_target(
+            &target,
+            CapturePaneOptions {
+                start_line: Some(-EXPOSE_PREVIEW_CAPTURE_LINES),
+                end_line: None,
+                include_escapes: true,
+            },
+        ) {
+            Ok(output) => json!({
+                "previewSnapshot": {
+                    "output": trailing_chars(&output, DEFAULT_PREVIEW_MAX_CHARS),
                     "capturedAt": captured_at,
                     "source": "capture",
                     "windowId": target.window_id,
                     "startLine": -EXPOSE_PREVIEW_CAPTURE_LINES,
                     "lineCount": EXPOSE_PREVIEW_CAPTURE_LINES,
-                })
-            });
+                }
+            }),
+            Err(error) => json!({
+                "previewCapture": {
+                    "ok": false,
+                    "error": error,
+                }
+            }),
+        };
         capture_cache.insert(target.window_id.clone(), snapshot);
     }
-    let Some(snapshot) = capture_cache.get(&target.window_id).cloned().flatten() else {
+    let Some(snapshot) = capture_cache.get(&target.window_id).cloned() else {
         return;
     };
     let Some(object) = item.as_object_mut() else {
         return;
     };
-    object.insert("previewSnapshot".into(), snapshot);
+    if let Some(preview_snapshot) = snapshot.get("previewSnapshot") {
+        object.insert("previewSnapshot".into(), preview_snapshot.clone());
+    }
+    if let Some(preview_capture) = snapshot.get("previewCapture") {
+        object.insert("previewCapture".into(), preview_capture.clone());
+    }
 }
 
 fn target_to_value(target: &TmuxTarget) -> Value {

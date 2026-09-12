@@ -12,6 +12,9 @@ use crate::project_service::expose_ordering::{
     ExposeOrderingOptions, ExposeSublabel, assign_worktree_tones, dashboard_worktree_order_paths,
     expose_tile_context_for_item, order_expose_items,
 };
+use crate::project_service::preview_snapshots::{
+    DEFAULT_PREVIEW_CAPTURE_LINES, DEFAULT_PREVIEW_MAX_CHARS, trailing_chars,
+};
 use crate::project_service::switchable_agents::{
     AgentListScope, SwitchableContext, SwitchableListOptions, agent_status_chip,
     list_switchable_agent_items, serialize_fast_control_item,
@@ -21,7 +24,8 @@ use crate::project_service::switchable_agents::{
 use crate::project_service::usage::load_last_used_state;
 use crate::runtime_topology::{read_runtime_topology, runtime_topology_path};
 use crate::tmux::{
-    TmuxTarget, attach_session_argv, is_dashboard_window_name, is_tmux_client_session_for_host,
+    CapturePaneOptions, TMUX_CAPTURE_TARGET_TIMEOUT, TmuxRuntimeManager, TmuxTarget,
+    attach_session_argv, is_dashboard_window_name, is_tmux_client_session_for_host,
     list_clients_argv, list_windows_argv, refresh_status_argv, send_focus_in_argv,
     switch_client_argv, switch_client_to_target_argv, tmux_command_from_env,
 };
@@ -373,22 +377,25 @@ pub fn expose_items_route(
             project_state_dirs.clone(),
         );
     }
-    let hot_previews = if include_preview {
+    let preview_results = if include_preview {
         hot_preview_snapshots_for_global_items(resolver, &ordered)
     } else {
         BTreeMap::new()
     };
     let tones = assign_worktree_tones(&ordered, "/");
-    let items = ordered
+    let mut items = ordered
         .iter()
         .map(|item| {
             serialize_global_expose_item(
                 item,
                 &tones,
-                preview_key_for_item(item).and_then(|key| hot_previews.get(&key)),
+                preview_key_for_item(item).and_then(|key| preview_results.get(&key)),
             )
         })
         .collect::<Vec<_>>();
+    if include_preview {
+        attach_missing_global_preview_results(&mut items);
+    }
     Ok(json!({ "ok": true, "items": items }))
 }
 
@@ -711,12 +718,19 @@ fn order_global_expose_items(
 fn serialize_global_expose_item(
     item: &crate::project_service::switchable_agents::SwitchableAgentItem,
     tones: &BTreeMap<String, i64>,
-    preview_snapshot: Option<&Value>,
+    preview_result: Option<&Value>,
 ) -> Value {
     let mut serialized = serialize_fast_control_item(item);
     if let Value::Object(map) = &mut serialized {
-        if let Some(preview_snapshot) = preview_snapshot {
+        if let Some(preview_snapshot) =
+            preview_result.and_then(|result| result.get("previewSnapshot"))
+        {
             map.insert("previewSnapshot".into(), preview_snapshot.clone());
+        }
+        if let Some(preview_capture) =
+            preview_result.and_then(|result| result.get("previewCapture"))
+        {
+            map.insert("previewCapture".into(), preview_capture.clone());
         }
         map.insert(
             "exposeContext".into(),
@@ -787,10 +801,83 @@ fn insert_hot_preview_snapshots(
         else {
             continue;
         };
-        let Some(preview) = item.get("previewSnapshot") else {
+        let mut result = serde_json::Map::new();
+        if let Some(preview) = item.get("previewSnapshot") {
+            result.insert("previewSnapshot".into(), preview.clone());
+        }
+        if let Some(capture) = item.get("previewCapture") {
+            result.insert("previewCapture".into(), capture.clone());
+        }
+        if result.is_empty() {
+            continue;
+        }
+        previews.insert(
+            global_preview_key(project_root, window_id),
+            Value::Object(result),
+        );
+    }
+}
+
+fn attach_missing_global_preview_results(items: &mut [Value]) {
+    let mut runtime = TmuxRuntimeManager::new();
+    let deadline = std::time::Instant::now() + TMUX_CAPTURE_TARGET_TIMEOUT;
+    for item in items {
+        let Some(object) = item.as_object_mut() else {
             continue;
         };
-        previews.insert(global_preview_key(project_root, window_id), preview.clone());
+        if object.contains_key("previewSnapshot") || object.contains_key("previewCapture") {
+            continue;
+        }
+        let Ok(target) = object.get("target").map(tmux_target_from_value).transpose() else {
+            continue;
+        };
+        let Some(target) = target else {
+            continue;
+        };
+        if std::time::Instant::now() >= deadline {
+            object.insert(
+                "previewCapture".into(),
+                json!({
+                    "ok": false,
+                    "error": format!(
+                        "tmux capture-pane skipped for {}: global Expose preview deadline exhausted",
+                        target.window_id
+                    ),
+                }),
+            );
+            continue;
+        }
+        match runtime.capture_target(
+            &target,
+            CapturePaneOptions {
+                start_line: Some(-DEFAULT_PREVIEW_CAPTURE_LINES),
+                end_line: None,
+                include_escapes: true,
+            },
+        ) {
+            Ok(output) => {
+                object.insert(
+                    "previewSnapshot".into(),
+                    json!({
+                        "output": trailing_chars(&output, DEFAULT_PREVIEW_MAX_CHARS),
+                        "capturedAt": now_iso(),
+                        "source": "capture",
+                        "windowId": target.window_id,
+                        "startLine": -DEFAULT_PREVIEW_CAPTURE_LINES,
+                        "lineCount": DEFAULT_PREVIEW_CAPTURE_LINES,
+                    }),
+                );
+            }
+            Err(error) => {
+                object.insert(
+                    "previewCapture".into(),
+                    json!({
+                        "ok": false,
+                        "error": error,
+                    }),
+                );
+            }
+        }
     }
 }
 
@@ -841,6 +928,12 @@ fn current_unix_millis() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
         .unwrap_or(0)
+}
+
+fn now_iso() -> String {
+    time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_owned())
 }
 
 fn normalize_path_string(path: &str) -> String {
