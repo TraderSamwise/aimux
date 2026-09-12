@@ -3,11 +3,13 @@ use serde_json::json;
 use sha1::{Digest, Sha1};
 use std::fs;
 use std::io::{self, Read};
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpListener as StdTcpListener;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::net::{TcpListener as TokioTcpListener, TcpStream as TokioTcpStream};
 
 use crate::backend_session_ids::reconcile_offline_backend_session_ids;
 use crate::config::load_config_for_project;
@@ -74,6 +76,8 @@ pub struct ProjectServiceStartup {
 }
 
 pub fn run_project_service_internal(options: ProjectServiceInternalOptions) -> Result<()> {
+    crate::async_runtime::init_process_runtime()
+        .context("initialize project-service async runtime")?;
     let startup = prepare_project_service_startup(options)?;
     log_lifecycle_always(
         "project service starting",
@@ -130,9 +134,12 @@ pub fn run_project_service_internal(options: ProjectServiceInternalOptions) -> R
             "pluginCount": plugin_statuses.len(),
         })),
     );
-    serve_project_service_listener_until(listener, startup, plugin_statuses, || {
-        crate::process_signals::received_shutdown_signal().is_some()
-    });
+    crate::async_runtime::process_runtime().block_on(serve_project_service_listener_until(
+        listener,
+        startup,
+        plugin_statuses,
+        || crate::process_signals::received_shutdown_signal().is_some(),
+    ));
     if let Some(signal_name) = crate::process_signals::received_shutdown_signal_name() {
         log_lifecycle_always(
             "project service signal shutdown returning through guards",
@@ -254,15 +261,55 @@ where
     handle_project_service_connection_with_remote(stream, context, None)
 }
 
-fn handle_project_service_tcp_connection(
-    stream: &mut TcpStream,
-    context: &ProjectServiceRequestContext,
+async fn handle_project_service_tcp_connection_async(
+    mut stream: TokioTcpStream,
+    context: Arc<ProjectServiceRequestContext>,
+    remote_address: Option<String>,
 ) -> Result<(), DaemonListenerError> {
-    let remote_address = stream
-        .peer_addr()
-        .ok()
-        .map(|address| address.ip().to_string());
-    handle_project_service_connection_with_remote(stream, context, remote_address)
+    handle_project_service_connection_with_remote_async(&mut stream, context, remote_address).await
+}
+
+async fn handle_project_service_connection_with_remote_async<Stream>(
+    stream: &mut Stream,
+    context: Arc<ProjectServiceRequestContext>,
+    remote_address: Option<String>,
+) -> Result<(), DaemonListenerError>
+where
+    Stream: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    let bytes = read_http_request_async(stream).await?;
+    let request = parse_daemon_http_request(&bytes)?;
+    let request = project_request_from_daemon(request);
+    let mut request_context = (*context)
+        .clone()
+        .with_request_headers(request.headers.clone());
+    if let Some(remote_address) = remote_address {
+        request_context = request_context.with_remote_address(remote_address);
+    }
+    let request_context = Arc::new(request_context);
+    let response =
+        route_project_service_request_blocking(request, Arc::clone(&request_context)).await?;
+    write_project_service_response_async(stream, response, Some(request_context)).await
+}
+
+async fn route_project_service_request_blocking(
+    request: ProjectServiceHttpRequest,
+    context: Arc<ProjectServiceRequestContext>,
+) -> Result<PreparedProjectServiceResponse, DaemonListenerError> {
+    let task_name = crate::async_runtime::scoped_task_name(
+        "project-service",
+        "route",
+        &format!("{} {}", request.method, request.path),
+    );
+    crate::async_runtime::spawn_blocking_named(task_name, move || {
+        handle_project_service_http_request(request, |method, path, body| {
+            route_project_service_request(&context, method, path, body)
+        })
+    })
+    .await
+    .map_err(|error| {
+        DaemonListenerError::InvalidRequest(format!("project service route task failed: {error}"))
+    })
 }
 
 fn handle_project_service_connection_with_remote<Stream>(
@@ -372,6 +419,169 @@ pub fn write_project_service_response_with_runtime(
         }
     }
     Ok(())
+}
+
+async fn write_project_service_response_async<Writer>(
+    writer: &mut Writer,
+    response: PreparedProjectServiceResponse,
+    context: Option<Arc<ProjectServiceRequestContext>>,
+) -> Result<(), DaemonListenerError>
+where
+    Writer: AsyncWrite + Unpin + Send,
+{
+    let _interaction_watcher = response
+        .stream
+        .as_ref()
+        .filter(|stream| stream.kind == ProjectServiceStreamKind::AgentInteraction)
+        .and_then(|_| {
+            context
+                .as_ref()
+                .map(|context| register_interaction_watcher(context.project_state_dir()))
+        });
+    writer
+        .write_all(&prepared_response_bytes(
+            &prepared_project_response_to_daemon(&response),
+        ))
+        .await?;
+    writer.flush().await?;
+    let Some(stream) = response.stream else {
+        return Ok(());
+    };
+    let interval_ms = u64::try_from(stream.interval_ms).unwrap_or(500).max(100);
+    let mut state = ProjectServiceStreamState {
+        last_output_fingerprint: None,
+        last_project_event_sequence: stream.event_cursor.unwrap_or_default(),
+        last_stream_write: Instant::now(),
+    };
+    loop {
+        wait_for_next_stream_tick_async(
+            &stream,
+            context.as_deref(),
+            state.last_project_event_sequence,
+            interval_ms,
+            state.last_stream_write,
+        )
+        .await;
+        let (next_state, frame) =
+            encode_stream_frame_async(stream.clone(), context.clone(), state).await?;
+        state = next_state;
+        if frame.is_empty() {
+            continue;
+        }
+        writer.write_all(&frame).await?;
+        writer.flush().await?;
+        if stream.kind != ProjectServiceStreamKind::AgentOutput {
+            state.last_stream_write = Instant::now();
+        }
+    }
+}
+
+#[derive(Debug)]
+struct ProjectServiceStreamState {
+    last_output_fingerprint: Option<String>,
+    last_project_event_sequence: u64,
+    last_stream_write: Instant,
+}
+
+async fn wait_for_next_stream_tick_async(
+    stream: &super::dispatcher::ProjectServiceStreamPlan,
+    context: Option<&ProjectServiceRequestContext>,
+    after_sequence: u64,
+    interval_ms: u64,
+    last_write: Instant,
+) {
+    if stream.kind == ProjectServiceStreamKind::ProjectEvents
+        && stream.session_id.is_none()
+        && let Some(context) = context
+    {
+        let wait = duration_until_stream_keepalive(stream, last_write)
+            .unwrap_or_else(|| Duration::from_millis(interval_ms));
+        let _ = context
+            .project_events
+            .wait_for_events_since_async(after_sequence, None, wait)
+            .await;
+        return;
+    }
+    tokio::time::sleep(Duration::from_millis(interval_ms)).await;
+}
+
+async fn encode_stream_frame_async(
+    stream: super::dispatcher::ProjectServiceStreamPlan,
+    context: Option<Arc<ProjectServiceRequestContext>>,
+    state: ProjectServiceStreamState,
+) -> Result<(ProjectServiceStreamState, Vec<u8>), DaemonListenerError> {
+    if stream.kind == ProjectServiceStreamKind::ProjectEvents && stream.session_id.is_none() {
+        let mut state = state;
+        let mut runtime = SystemAgentOutputCaptureRuntime;
+        let frame = encode_project_event_stream_frame(
+            &stream,
+            context.as_deref(),
+            &mut runtime,
+            &mut state.last_project_event_sequence,
+            &mut state.last_output_fingerprint,
+        );
+        let frame = if frame.is_empty() && stream_keepalive_due(&stream, state.last_stream_write) {
+            encode_sse_keepalive()
+        } else {
+            frame
+        };
+        return Ok((state, frame));
+    }
+    let task_name = crate::async_runtime::scoped_task_name(
+        "project-service",
+        "sse-frame",
+        stream_frame_task_subject(&stream).as_str(),
+    );
+    crate::async_runtime::spawn_blocking_named(task_name, move || {
+        let mut state = state;
+        let mut runtime = SystemAgentOutputCaptureRuntime;
+        let frame = match stream.kind {
+            ProjectServiceStreamKind::ProjectEvents => {
+                let frame = encode_project_event_stream_frame(
+                    &stream,
+                    context.as_deref(),
+                    &mut runtime,
+                    &mut state.last_project_event_sequence,
+                    &mut state.last_output_fingerprint,
+                );
+                if frame.is_empty() && stream_keepalive_due(&stream, state.last_stream_write) {
+                    encode_sse_keepalive()
+                } else {
+                    frame
+                }
+            }
+            ProjectServiceStreamKind::AgentOutput => encode_agent_output_stream_frame(
+                &stream,
+                context.as_deref(),
+                &mut runtime,
+                &mut state.last_output_fingerprint,
+            ),
+            ProjectServiceStreamKind::AgentInteraction => {
+                if stream_keepalive_due(&stream, state.last_stream_write) {
+                    encode_sse_keepalive()
+                } else {
+                    Vec::new()
+                }
+            }
+        };
+        (state, frame)
+    })
+    .await
+    .map_err(|error| {
+        DaemonListenerError::InvalidRequest(format!("project service SSE task failed: {error}"))
+    })
+}
+
+fn stream_frame_task_subject(stream: &super::dispatcher::ProjectServiceStreamPlan) -> String {
+    let kind = match stream.kind {
+        ProjectServiceStreamKind::ProjectEvents => "events",
+        ProjectServiceStreamKind::AgentOutput => "output",
+        ProjectServiceStreamKind::AgentInteraction => "interaction",
+    };
+    match stream.session_id.as_deref() {
+        Some(session_id) => format!("{kind} {session_id}"),
+        None => kind.to_owned(),
+    }
 }
 
 fn wait_for_next_stream_tick(
@@ -564,8 +774,8 @@ fn agent_output_stream_fingerprint(payload: &serde_json::Value) -> String {
     .unwrap_or_default()
 }
 
-fn serve_project_service_listener_until<Stop>(
-    listener: TcpListener,
+async fn serve_project_service_listener_until<Stop>(
+    listener: StdTcpListener,
     startup: ProjectServiceStartup,
     plugin_statuses: Vec<NativePluginStatus>,
     should_stop: Stop,
@@ -621,37 +831,202 @@ fn serve_project_service_listener_until<Stop>(
             })),
         );
     }
+    let listener = match TokioTcpListener::from_std(listener) {
+        Ok(listener) => listener,
+        Err(error) => {
+            log_lifecycle_always(
+                "project service listener could not enter async mode",
+                "project-service",
+                Some(json!({
+                    "projectRoot": context.project_root().to_string_lossy(),
+                    "error": error.to_string(),
+                })),
+            );
+            return;
+        }
+    };
     loop {
         if should_stop() {
             return;
         }
-        match listener.accept() {
-            Ok((mut stream, _)) => {
-                let _ = stream.set_nonblocking(false);
+        match tokio::time::timeout(Duration::from_millis(25), listener.accept()).await {
+            Ok(Ok((stream, remote_address))) => {
                 let context = Arc::clone(&context);
-                thread::spawn(move || {
-                    let _ = handle_project_service_tcp_connection(&mut stream, &context);
+                let remote_address = Some(remote_address.ip().to_string());
+                let task_name = crate::async_runtime::scoped_task_name(
+                    "project-service",
+                    "http-connection",
+                    remote_address.as_deref().unwrap_or("unknown"),
+                );
+                crate::async_runtime::spawn_named(task_name, async move {
+                    if let Err(error) =
+                        handle_project_service_tcp_connection_async(stream, context, remote_address)
+                            .await
+                    {
+                        log_at(
+                            LogLevel::Debug,
+                            "project service connection failed",
+                            "project-service",
+                            Some(json!({
+                                "error": error.to_string(),
+                            })),
+                        );
+                    }
                 });
             }
-            Err(error)
+            Ok(Err(error))
                 if matches!(
                     error.kind(),
                     io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
                 ) =>
             {
-                thread::sleep(Duration::from_millis(25));
+                tokio::time::sleep(Duration::from_millis(25)).await;
             }
-            Err(_) => {
-                thread::sleep(Duration::from_millis(25));
+            Ok(Err(error)) => {
+                log_at(
+                    LogLevel::Debug,
+                    "project service listener accept failed",
+                    "project-service",
+                    Some(json!({
+                        "error": error.to_string(),
+                    })),
+                );
+                tokio::time::sleep(Duration::from_millis(25)).await;
             }
+            Err(_) => {}
         }
     }
 }
 
-fn bind_project_service_listener(desired_port: u16) -> Result<TcpListener> {
-    TcpListener::bind(("127.0.0.1", desired_port))
-        .or_else(|_| TcpListener::bind(("127.0.0.1", 0)))
+fn bind_project_service_listener(desired_port: u16) -> Result<StdTcpListener> {
+    StdTcpListener::bind(("127.0.0.1", desired_port))
+        .or_else(|_| StdTcpListener::bind(("127.0.0.1", 0)))
         .context("bind project-service listener")
+}
+
+async fn read_http_request_async(
+    reader: &mut (impl AsyncRead + Unpin),
+) -> Result<Vec<u8>, DaemonListenerError> {
+    const MAX_HEADER_BYTES: usize = 64 * 1024;
+    let mut bytes = Vec::new();
+    let mut buffer = [0_u8; 8192];
+    loop {
+        if let Some(length) = complete_http_request_len(&bytes)? {
+            bytes.truncate(length);
+            return Ok(bytes);
+        }
+        let count = reader.read(&mut buffer).await?;
+        if count == 0 {
+            if bytes.is_empty() {
+                return Err(DaemonListenerError::InvalidRequest(
+                    "empty HTTP request".into(),
+                ));
+            }
+            return Ok(bytes);
+        }
+        bytes.extend_from_slice(&buffer[..count]);
+        if find_bytes(&bytes, b"\r\n\r\n").is_none() && bytes.len() > MAX_HEADER_BYTES {
+            return Err(DaemonListenerError::InvalidRequest(
+                "HTTP request headers are too large".into(),
+            ));
+        }
+    }
+}
+
+fn complete_http_request_len(bytes: &[u8]) -> Result<Option<usize>, DaemonListenerError> {
+    let Some(header_end) = find_bytes(bytes, b"\r\n\r\n") else {
+        return Ok(None);
+    };
+    let headers = std::str::from_utf8(&bytes[..header_end]).map_err(|error| {
+        DaemonListenerError::InvalidRequest(format!("invalid HTTP request headers: {error}"))
+    })?;
+    if transfer_encoding_chunked(headers) {
+        return Ok(complete_chunked_body_len(&bytes[header_end + 4..])
+            .map(|length| header_end + 4 + length));
+    }
+    let content_length = content_length(headers)?;
+    let body_start = header_end + 4;
+    let total = body_start.checked_add(content_length).ok_or_else(|| {
+        DaemonListenerError::InvalidRequest("request body length overflows usize".into())
+    })?;
+    Ok((bytes.len() >= total).then_some(total))
+}
+
+fn content_length(headers: &str) -> Result<usize, DaemonListenerError> {
+    let mut length = None;
+    for line in headers.split("\r\n").skip(1) {
+        let Some((name, value)) = line.split_once(':') else {
+            if line.is_empty() {
+                continue;
+            }
+            return Err(DaemonListenerError::InvalidRequest(format!(
+                "invalid HTTP header: {line}"
+            )));
+        };
+        if name.trim().eq_ignore_ascii_case("content-length") {
+            let parsed = value.trim().parse::<usize>().map_err(|_| {
+                DaemonListenerError::InvalidRequest(format!(
+                    "invalid content-length: {}",
+                    value.trim()
+                ))
+            })?;
+            length = Some(parsed);
+        }
+    }
+    Ok(length.unwrap_or(0))
+}
+
+fn transfer_encoding_chunked(headers: &str) -> bool {
+    headers
+        .split("\r\n")
+        .skip(1)
+        .filter_map(|line| line.split_once(':'))
+        .any(|(name, value)| {
+            name.trim().eq_ignore_ascii_case("transfer-encoding")
+                && value
+                    .split(',')
+                    .any(|part| part.trim().eq_ignore_ascii_case("chunked"))
+        })
+}
+
+fn complete_chunked_body_len(bytes: &[u8]) -> Option<usize> {
+    let mut index = 0;
+    loop {
+        let line_end = find_bytes(&bytes[index..], b"\r\n")? + index;
+        let line = std::str::from_utf8(&bytes[index..line_end]).ok()?;
+        let size = chunk_size(line).ok()?;
+        index = line_end + 2;
+        if size == 0 {
+            let trailer_end =
+                find_bytes(&bytes[index..], b"\r\n\r\n").map(|offset| index + offset + 4);
+            return trailer_end.or_else(|| {
+                bytes
+                    .get(index..index + 2)
+                    .filter(|value| *value == b"\r\n")
+                    .map(|_| index + 2)
+            });
+        }
+        index = index.checked_add(size)?.checked_add(2)?;
+        if bytes.get(index - 2..index)? != b"\r\n" {
+            return None;
+        }
+    }
+}
+
+fn chunk_size(line: &str) -> Result<usize, DaemonListenerError> {
+    let size = line
+        .split_once(';')
+        .map(|(size, _)| size)
+        .unwrap_or(line)
+        .trim();
+    usize::from_str_radix(size, 16)
+        .map_err(|_| DaemonListenerError::InvalidRequest(format!("invalid chunk size: {size}")))
+}
+
+fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
 }
 
 #[cfg(unix)]
@@ -696,7 +1071,10 @@ impl Drop for ProjectExposeSocketGuard {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    use crate::project_service::dispatcher::ProjectServiceStreamPlan;
+    use crate::project_service::http::prepare_project_service_sse_response;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     static TEST_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 
@@ -836,6 +1214,161 @@ mod tests {
             "unexpected error: {error:#}"
         );
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn async_connection_routes_http_to_rust_project_router() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        crate::async_runtime::process_runtime().block_on(async {
+            let root = unique_test_root("async-connection");
+            let project_root = root.join("repo");
+            let state_dir = root.join("state");
+            create_git_checkout(&project_root);
+            let context = Arc::new(
+                ProjectServiceRequestContext::with_project_state_dir(&project_root, &state_dir)
+                    .with_live_window_ids(["@1"]),
+            );
+            let (mut client, mut server) = tokio::io::duplex(4096);
+            let task = tokio::spawn(async move {
+                handle_project_service_connection_with_remote_async(&mut server, context, None)
+                    .await
+            });
+
+            client
+                .write_all(b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+                .await
+                .expect("write request");
+            let response = read_until_contains(&mut client, "\"ok\":true").await;
+
+            assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
+            assert!(response.contains("content-type: application/json\r\n"));
+            task.await
+                .expect("connection task joins")
+                .expect("connection succeeds");
+            let _ = fs::remove_dir_all(root);
+        });
+    }
+
+    #[test]
+    fn async_project_event_stream_wakes_on_publish_before_poll_interval() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        crate::async_runtime::process_runtime().block_on(async {
+            let root = unique_test_root("async-event-stream");
+            let project_root = root.join("repo");
+            let state_dir = root.join("state");
+            create_git_checkout(&project_root);
+            let context = Arc::new(ProjectServiceRequestContext::with_project_state_dir(
+                &project_root,
+                &state_dir,
+            ));
+            let response = prepare_project_service_sse_response(
+                200,
+                b"event: ready\ndata: {\"ok\":true}\n\n".to_vec(),
+                Some(ProjectServiceStreamPlan {
+                    kind: ProjectServiceStreamKind::ProjectEvents,
+                    session_id: None,
+                    start_line: None,
+                    interval_ms: 5_000,
+                    keepalive_interval_ms: Some(5_000),
+                    mode: None,
+                    event_cursor: Some(0),
+                }),
+                Default::default(),
+            );
+            let (mut client, mut server) = tokio::io::duplex(8192);
+            let writer_context = Arc::clone(&context);
+            let task = crate::async_runtime::spawn_named(
+                "project-service-test:async-event-stream",
+                async move {
+                    write_project_service_response_async(
+                        &mut server,
+                        response,
+                        Some(writer_context),
+                    )
+                    .await
+                },
+            );
+
+            let ready = read_until_contains(&mut client, "event: ready\n").await;
+            assert!(ready.contains("event: ready\ndata: {\"ok\":true}\n\n"));
+            let started = Instant::now();
+            context.project_events.publish(json!({
+                "type": "project_update",
+                "projectId": "project",
+                "ts": "2026-01-01T00:00:00.000Z",
+                "views": ["desktop-state"],
+                "reason": "async-wakeup"
+            }));
+            let output = read_until_contains(&mut client, "async-wakeup").await;
+
+            assert!(
+                started.elapsed() < Duration::from_millis(500),
+                "event stream waited for the poll interval instead of the event edge"
+            );
+            assert!(output.contains("event: project_update\n"));
+            drop(client);
+            task.abort();
+            let _ = fs::remove_dir_all(root);
+        });
+    }
+
+    #[test]
+    fn async_sse_disconnect_returns_io_error() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        crate::async_runtime::process_runtime().block_on(async {
+            let response = prepare_project_service_sse_response(
+                200,
+                b"event: ready\ndata: {\"ok\":true}\n\n".to_vec(),
+                Some(ProjectServiceStreamPlan {
+                    kind: ProjectServiceStreamKind::ProjectEvents,
+                    session_id: None,
+                    start_line: None,
+                    interval_ms: 100,
+                    keepalive_interval_ms: Some(100),
+                    mode: None,
+                    event_cursor: None,
+                }),
+                Default::default(),
+            );
+            let (mut client, mut server) = tokio::io::duplex(4096);
+            let task = crate::async_runtime::spawn_named(
+                "project-service-test:async-sse-disconnect",
+                async move { write_project_service_response_async(&mut server, response, None).await },
+            );
+
+            let output = read_until_contains(&mut client, "event: ready\n").await;
+            assert!(output.contains("event: ready\ndata: {\"ok\":true}\n\n"));
+            drop(client);
+            let error = tokio::time::timeout(Duration::from_secs(2), task)
+                .await
+                .expect("disconnect should end stream task")
+                .expect("stream task joins")
+                .expect_err("stream should return disconnect error");
+
+            assert!(matches!(error, DaemonListenerError::Io(_)));
+        });
+    }
+
+    async fn read_until_contains(reader: &mut tokio::io::DuplexStream, needle: &str) -> String {
+        let started = Instant::now();
+        let mut output = Vec::new();
+        loop {
+            let text = String::from_utf8_lossy(&output);
+            if text.contains(needle) {
+                return text.into_owned();
+            }
+            assert!(
+                started.elapsed() < Duration::from_secs(2),
+                "timed out waiting for {needle:?}; output: {text}"
+            );
+            let mut buffer = [0_u8; 512];
+            let count = tokio::time::timeout(Duration::from_secs(2), reader.read(&mut buffer))
+                .await
+                .expect("read timed out")
+                .expect("read stream");
+            assert_ne!(count, 0, "stream closed before {needle:?}");
+            output.extend_from_slice(&buffer[..count]);
+        }
     }
 }
 
