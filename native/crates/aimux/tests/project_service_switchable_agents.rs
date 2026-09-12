@@ -574,6 +574,29 @@ fn async_route_switchable_agents_preserves_live_sessions_when_tmux_query_is_unav
         empty_inventory_items.is_empty(),
         "a successful empty tmux inventory should remove dead sessions from switchable controls"
     );
+    let expose_path = "/control/switchable-agents?scope=all&currentPath=/repo/wt&currentWindowId=%401&labelFormat=raw&expose=1";
+    // aimux-async-seam: test - switchable-agents route test drives async handler
+    let expose_empty_inventory_response = aimux::async_runtime::block_on_named(
+        "test:switchable-agents-expose-empty-inventory",
+        route_switchable_agent_request_async(&empty_inventory_context, "GET", expose_path),
+    )
+    .expect("switchable async expose route with empty inventory");
+    assert_eq!(expose_empty_inventory_response.status, 200);
+    assert_eq!(
+        expose_empty_inventory_response.body["tmuxLiveWindowQuery"]["ok"],
+        false
+    );
+    let expose_items = expose_empty_inventory_response.body["items"]
+        .as_array()
+        .unwrap();
+    assert_eq!(
+        expose_items
+            .iter()
+            .map(|item| item["id"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec!["codex-live", "codex-stale"],
+        "Expose must not render an authoritative empty grid when live-window projection erases topology-backed sessions"
+    );
 
     let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
         .with_live_window_ids_error("tmux socket busy");
