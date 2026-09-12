@@ -1,8 +1,16 @@
 use aimux::async_runtime::{block_on_named, init_process_runtime};
 use aimux::backlog_metrics::record_backlog_depth;
+use aimux::core_command_contract::CORE_API_ROUTES;
+use aimux::daemon::http::DaemonResponseBody;
+use aimux::daemon::routing::DaemonRouteResponse;
 use aimux::daemon::stability_doctor::{
     StabilityVerdict, build_stability_doctor_report, render_stability_doctor_report,
 };
+use aimux::daemon::text::operations::{
+    DaemonOperationsTextRuntime, DashboardOpenRequest, RestartBackendIdGuardNotice,
+    RestartControlPlaneTextResult, route_operations_text_request,
+};
+use aimux::daemon::text::params::ProjectServiceJsonResult;
 use aimux::project_service::process::{
     STABILITY_DOCTOR_TEST_WEDGE_ENV, project_service_periodic_tasks_for_context,
 };
@@ -11,6 +19,7 @@ use aimux::project_service::runtime_health_history::{
     RUNTIME_HEALTH_HISTORY_INTERVAL_MS, record_runtime_health_sample_with_limits_for_tests,
 };
 use aimux::project_service::scheduler::{PeriodicScheduler, ProjectSchedulerHandle};
+use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 use time::OffsetDateTime;
@@ -97,6 +106,176 @@ fn real_task_and_buffer_metrics_reach_history_and_stability_doctor() {
     assert!(rendered.contains("verdict: not stable"));
     assert!(rendered.contains("stability-doctor-test-wedge has 1 consecutive failure(s)"));
     assert!(rendered.contains(&format!("{backlog_name} depth 9 of 10")));
+
+    let mut route_runtime = HistoryDoctorRouteRuntime {
+        state_dir: state_dir.clone(),
+    };
+    let text = route_operations_text_request(
+        &mut route_runtime,
+        "GET",
+        &format!(
+            "{}?projectRoot=/repo",
+            CORE_API_ROUTES.doctor_stability_text
+        ),
+        None,
+    )
+    .expect("doctor stability text route");
+    assert_eq!(text.status, 200);
+    let body = text_body(text);
+    assert!(body.contains("verdict: not stable"));
+    assert!(body.contains("stability-doctor-test-wedge has 1 consecutive failure(s)"));
+    assert!(body.contains(&format!("{backlog_name} depth 9 of 10")));
+    assert!(!body.contains("task-count-missing"));
+
+    let json = route_operations_text_request(
+        &mut route_runtime,
+        "GET",
+        &format!(
+            "{}?projectRoot=/repo&json=1",
+            CORE_API_ROUTES.doctor_stability_text
+        ),
+        None,
+    )
+    .expect("doctor stability json route");
+    let payload = json_text(json);
+    assert_eq!(payload["verdict"], json!("not_stable"));
+    let reasons = payload["reasons"].as_array().expect("stability reasons");
+    assert!(
+        reasons
+            .iter()
+            .any(|reason| reason["kind"] == "task-failures")
+    );
+    assert!(
+        reasons
+            .iter()
+            .any(|reason| reason["kind"] == "buffer-depth")
+    );
+    assert!(
+        !reasons
+            .iter()
+            .any(|reason| reason["kind"] == "task-count-missing")
+    );
+}
+
+struct HistoryDoctorRouteRuntime {
+    state_dir: PathBuf,
+}
+
+impl DaemonOperationsTextRuntime for HistoryDoctorRouteRuntime {
+    fn now_iso(&self) -> String {
+        "now".into()
+    }
+
+    fn resolve_project_root(&self, value: &str) -> String {
+        value.to_owned()
+    }
+
+    fn list_project_paths_for_route(&self) -> Vec<String> {
+        unreachable!("stability route must not list projects")
+    }
+
+    fn is_git_project_root(&self, _project_root: &str) -> bool {
+        unreachable!("stability route must not inspect git roots")
+    }
+
+    fn doctor_versions_report(&mut self) -> Result<(Value, String), String> {
+        unreachable!("stability route must not call doctor versions")
+    }
+
+    fn doctor_disk_report(
+        &mut self,
+        _project_roots: Vec<String>,
+        _include_active_measurement: bool,
+        _skipped_stale_project_roots: Vec<String>,
+        _generated_at: String,
+    ) -> Result<(Value, String), String> {
+        unreachable!("stability route must not call doctor disk")
+    }
+
+    fn doctor_tmux_report(
+        &mut self,
+        _project_root: &str,
+        _session_name: Option<&str>,
+        _window_id: Option<&str>,
+    ) -> Result<(Value, String), String> {
+        unreachable!("stability route must not call doctor tmux")
+    }
+
+    fn doctor_stability_report(
+        &mut self,
+        project_root: &str,
+    ) -> Result<aimux::daemon::stability_doctor::StabilityDoctorReport, String> {
+        Ok(build_stability_doctor_report(project_root, &self.state_dir))
+    }
+
+    fn repair_tmux_runtime(
+        &mut self,
+        _project_root: &str,
+        _open: bool,
+    ) -> Result<(Value, String), String> {
+        unreachable!("stability route must not call tmux repair")
+    }
+
+    fn get_project_service_json(
+        &mut self,
+        _project_root: &str,
+        _route_path: &str,
+    ) -> ProjectServiceJsonResult {
+        unreachable!("stability route must not call project-service GET")
+    }
+
+    fn post_project_service_json(
+        &mut self,
+        _project_root: &str,
+        _route_path: &str,
+        _body: Value,
+    ) -> ProjectServiceJsonResult {
+        unreachable!("stability route must not call project-service POST")
+    }
+
+    fn restart_control_plane(
+        &mut self,
+        _issued_at: &str,
+        _project_root: Option<&str>,
+    ) -> Result<RestartControlPlaneTextResult, String> {
+        unreachable!("stability route must not restart control plane")
+    }
+
+    fn dashboard_reload(
+        &mut self,
+        _project_root: &str,
+        _open: Option<DashboardOpenRequest>,
+    ) -> Result<Value, String> {
+        unreachable!("stability route must not reload dashboard")
+    }
+
+    fn runtime_restart(
+        &mut self,
+        _project_root: &str,
+        _open: Option<DashboardOpenRequest>,
+    ) -> Result<Value, String> {
+        unreachable!("stability route must not restart runtime")
+    }
+
+    fn prepare_restart_control_plane(
+        &mut self,
+        _project_root: Option<&str>,
+        _force: bool,
+        _wait_for_capture: bool,
+    ) -> Result<Option<RestartBackendIdGuardNotice>, String> {
+        unreachable!("stability route must not prepare restart")
+    }
+}
+
+fn text_body(response: DaemonRouteResponse) -> String {
+    match response.body {
+        DaemonResponseBody::Text(value) => value,
+        other => panic!("expected text body, got {other:?}"),
+    }
+}
+
+fn json_text(response: DaemonRouteResponse) -> Value {
+    serde_json::from_str(&text_body(response)).expect("json text")
 }
 
 struct TestEnvGuard {
