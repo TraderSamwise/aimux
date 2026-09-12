@@ -1081,6 +1081,12 @@ fn connect_loopback_port(port: u16) -> TcpStream {
     }
 }
 
+fn read_socket_text(stream: &mut TcpStream) -> String {
+    let mut bytes = Vec::new();
+    stream.read_to_end(&mut bytes).expect("read socket");
+    String::from_utf8(bytes).expect("socket utf8")
+}
+
 fn wait_for_async_task(name: &str) -> Option<aimux::async_runtime::AsyncTaskSnapshot> {
     let deadline = Instant::now() + Duration::from_secs(2);
     while Instant::now() < deadline {
@@ -1215,6 +1221,10 @@ fn hosted_server_accept_loop_and_connections_are_async_tasks() {
 
     let listener_task = wait_for_async_task("hosted:listener").expect("hosted listener task");
     assert_eq!(listener_task.kind, AsyncTaskKind::Async);
+    let prune_task = wait_for_async_task("hosted:prune").expect("hosted prune task");
+    assert_eq!(prune_task.kind, AsyncTaskKind::Blocking);
+    let outbox_task = wait_for_async_task("hosted:outbox-drain").expect("hosted outbox drain task");
+    assert_eq!(outbox_task.kind, AsyncTaskKind::Blocking);
 
     let client = connect_loopback_port(port);
     let connection_task =
@@ -1223,6 +1233,119 @@ fn hosted_server_accept_loop_and_connections_are_async_tasks() {
 
     drop(client);
     handle.abort();
+}
+
+#[test]
+fn hosted_listener_caps_idle_connections_before_request_parse() {
+    let fixture = HostedFixture::new("preauth-connection-cap");
+    let runtime = Arc::new(Mutex::new(FakeRuntime::empty()));
+    let port = unused_loopback_port();
+    let handle = start_hosted_server_background(
+        HostedConfig {
+            enabled: true,
+            port,
+            rate_limit: HostedRateLimitConfig {
+                requests_per_minute: 60,
+                max_concurrent: 1,
+                bytes_per_minute: 1024 * 1024,
+            },
+            ..HostedConfig::default()
+        },
+        fixture.resolver.clone(),
+        Arc::clone(&runtime),
+    )
+    .expect("hosted startup")
+    .expect("hosted server starts");
+
+    let first_idle = connect_loopback_port(port);
+    let mut second = connect_loopback_port(port);
+    second
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .expect("second timeout");
+    let denied = read_socket_text(&mut second);
+    assert!(
+        denied.starts_with("HTTP/1.1 429 Too Many Requests\r\n"),
+        "unexpected denial response: {denied}"
+    );
+
+    thread::sleep(Duration::from_millis(1_500));
+    drop(first_idle);
+    let mut third = connect_loopback_port(port);
+    third
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .expect("third timeout");
+    third
+        .write_all(b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+        .expect("write health");
+    let accepted = read_socket_text(&mut third);
+    assert!(
+        accepted.starts_with("HTTP/1.1 200 OK\r\n"),
+        "connection slot was not released after idle timeout: {accepted}"
+    );
+
+    handle.abort();
+}
+
+#[test]
+fn hosted_listener_connection_cap_does_not_consume_request_peer_slot() {
+    let fixture = HostedFixture::new("preauth-cap-does-not-double-charge");
+    let token = grant_hosted_operator(&fixture.resolver, "grand", "/repo", "s");
+    let mut runtime = FakeRuntime::empty();
+    runtime.projects = vec![hosted_project("/repo", 43210, true)];
+    let runtime = Arc::new(Mutex::new(runtime));
+    let port = unused_loopback_port();
+    let handle = start_hosted_server_background(
+        HostedConfig {
+            enabled: true,
+            port,
+            rate_limit: HostedRateLimitConfig {
+                requests_per_minute: 60,
+                max_concurrent: 1,
+                bytes_per_minute: 1024 * 1024,
+            },
+            ..HostedConfig::default()
+        },
+        fixture.resolver.clone(),
+        Arc::clone(&runtime),
+    )
+    .expect("hosted startup")
+    .expect("hosted server starts");
+
+    let mut client = connect_loopback_port(port);
+    client
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .expect("client timeout");
+    write!(
+        client,
+        "GET /proxy/127.0.0.1/43210/agents/output?sessionId=s HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {token}\r\n\r\n"
+    )
+    .expect("write request");
+    let response = read_socket_text(&mut client);
+    assert!(
+        response.starts_with("HTTP/1.1 200 OK\r\n"),
+        "preauth connection cap consumed the request peer slot: {response}"
+    );
+    assert_eq!(
+        runtime.lock().expect("runtime").calls,
+        vec!["proxy-json:GET:http://127.0.0.1:43210/agents/output?sessionId=s:null"]
+    );
+
+    handle.abort();
+}
+
+#[test]
+fn hosted_background_workers_are_named_runtime_tasks_not_bare_threads() {
+    let source = include_str!("../src/hosted_server.rs");
+    let production_source = source
+        .split("#[cfg(test)]")
+        .next()
+        .expect("production source");
+    assert!(
+        !production_source.contains("thread::spawn("),
+        "hosted background workers must use named async-runtime tasks"
+    );
+    assert!(production_source.contains("task_name(\"hosted\", \"prune\")"));
+    assert!(production_source.contains("task_name(\"hosted\", \"outbox-drain\")"));
 }
 
 #[test]
@@ -1682,6 +1805,134 @@ fn async_hosted_operator_stream_stops_after_principal_revocation() {
         entry.event.as_deref() == Some("hosted_stream_closed:revoked")
             && entry.session_id.as_deref() == Some("s")
     }));
+}
+
+#[test]
+fn async_hosted_stream_slot_is_released_when_future_is_cancelled() {
+    let fixture = HostedFixture::new("async-stream-cancel-slot");
+    let first_upstream = HeldSseServer::spawn();
+    let second_upstream = HeldSseServer::spawn();
+    let token = grant_hosted_operator(&fixture.resolver, "grand", "/repo", "s");
+    let mut runtime = FakeRuntime::empty();
+    runtime.projects = vec![hosted_project("/repo", first_upstream.port as u64, true)];
+    let runtime = Arc::new(Mutex::new(runtime));
+    let state = Arc::new(HostedServerState::with_resolver_and_stream_limits(
+        HostedConfig {
+            enabled: true,
+            ..HostedConfig::default()
+        },
+        fixture.resolver.clone(),
+        HostedStreamLimits {
+            max_per_principal: 1,
+            max_lifetime_ms: 10_000,
+            idle_timeout_ms: 10_000,
+            max_bytes: 1024 * 1024,
+            reauth_interval_ms: 250,
+        },
+    ));
+    let first_request = format!(
+        "GET /proxy/127.0.0.1/{}/agents/output/stream?sessionId=s HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {token}\r\n\r\n",
+        first_upstream.port
+    );
+    let (mut first_client, mut first_server) = tokio::io::duplex(16 * 1024);
+    process_runtime()
+        // aimux-async-seam: test - stream cancellation test primes an async request
+        .block_on(tokio::io::AsyncWriteExt::write_all(
+            &mut first_client,
+            first_request.as_bytes(),
+        ))
+        .expect("write first request");
+    let first_handle_runtime = Arc::clone(&runtime);
+    let first_handle_state = Arc::clone(&state);
+    let first_intercept_runtime = Arc::clone(&runtime);
+    let first_intercept_state = Arc::clone(&state);
+    let first_hosted = spawn_named("hosted-test:async-stream-cancelled", async move {
+        handle_hosted_daemon_stream_async(
+            &first_handle_runtime,
+            &first_handle_state,
+            &first_intercept_runtime,
+            &first_intercept_state,
+            &mut first_server,
+            aimux::daemon::listener::DaemonRequestMetadata {
+                issued_at: "issued".into(),
+                stopping: false,
+            },
+            None,
+        )
+        .await
+        .expect("first hosted stream handled");
+    });
+
+    first_upstream.wait_until_open();
+    first_hosted.abort();
+    let _ = process_runtime()
+        // aimux-async-seam: test - stream cancellation test observes aborted task
+        .block_on(first_hosted);
+    drop(first_client);
+    first_upstream.stop();
+    runtime.lock().expect("runtime").projects =
+        vec![hosted_project("/repo", second_upstream.port as u64, true)];
+
+    let second_request = format!(
+        "GET /proxy/127.0.0.1/{}/agents/output/stream?sessionId=s HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {token}\r\n\r\n",
+        second_upstream.port
+    );
+    let (done_tx, done_rx) = mpsc::channel();
+    let (mut second_client, mut second_server) = tokio::io::duplex(16 * 1024);
+    let client = spawn_named("hosted-test:async-stream-after-cancel-client", async move {
+        tokio::io::AsyncWriteExt::write_all(&mut second_client, second_request.as_bytes())
+            .await
+            .expect("write second request");
+        let mut output = Vec::new();
+        let mut buffer = [0_u8; 1024];
+        while !output
+            .windows(b"data: first".len())
+            .any(|window| window == b"data: first")
+        {
+            let count = tokio::io::AsyncReadExt::read(&mut second_client, &mut buffer)
+                .await
+                .expect("read second response");
+            if count == 0 {
+                break;
+            }
+            output.extend_from_slice(&buffer[..count]);
+        }
+        done_tx.send(output).expect("send second output");
+    });
+    let second_handle_runtime = Arc::clone(&runtime);
+    let second_handle_state = Arc::clone(&state);
+    let second_intercept_runtime = Arc::clone(&runtime);
+    let second_intercept_state = Arc::clone(&state);
+    let hosted = spawn_named("hosted-test:async-stream-after-cancel", async move {
+        handle_hosted_daemon_stream_async(
+            &second_handle_runtime,
+            &second_handle_state,
+            &second_intercept_runtime,
+            &second_intercept_state,
+            &mut second_server,
+            aimux::daemon::listener::DaemonRequestMetadata {
+                issued_at: "issued".into(),
+                stopping: false,
+            },
+            None,
+        )
+        .await
+        .expect("second hosted stream handled");
+    });
+
+    second_upstream.wait_until_open();
+    let output = done_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("second stream response");
+    second_upstream.stop();
+    join_hosted_exchange(hosted, client);
+
+    let response = String::from_utf8(output).expect("response utf8");
+    assert!(
+        response.starts_with("HTTP/1.1 200 OK\r\n"),
+        "stream slot leaked after cancellation: {response}"
+    );
+    assert!(response.contains("data: first"));
 }
 
 #[test]

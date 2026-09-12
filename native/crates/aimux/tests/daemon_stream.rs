@@ -302,6 +302,7 @@ fn async_project_event_stream_interceptor_drops_idle_upstream_when_downstream_di
         &format!("/proxy/127.0.0.1/{}/events", address.port()),
     );
 
+    // aimux-async-seam: test - sync test drives async handler
     aimux::async_runtime::block_on_named("daemon-stream-test:idle-downstream-close", async {
         let (mut client, mut server) = tokio::io::duplex(4096);
         let proxy = tokio::spawn(async move {
