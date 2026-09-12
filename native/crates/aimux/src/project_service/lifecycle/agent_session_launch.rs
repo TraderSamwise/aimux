@@ -556,6 +556,7 @@ pub(super) async fn launch_agent_session_async(
         );
         return Err(error);
     }
+    progress.mark_irreversible();
     let target = match runtime
         .create_window(
             &session_name,
@@ -578,7 +579,6 @@ pub(super) async fn launch_agent_session_async(
                 visible: None,
                 first_pane_capture: None,
             });
-            progress.mark_irreversible();
             target
         }
         Err(error) => {

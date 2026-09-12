@@ -29,8 +29,8 @@ use super::expose_ordering::{
 };
 use super::http::{query_params, trimmed_query};
 use super::preview_snapshots::{
-    DEFAULT_PREVIEW_CAPTURE_LINES, DEFAULT_PREVIEW_MAX_CHARS, capture_preview_snapshot_with_tap,
-    capture_preview_snapshot_with_tap_async,
+    DEFAULT_PREVIEW_CAPTURE_LINES, DEFAULT_PREVIEW_MAX_CHARS,
+    capture_preview_snapshot_with_tap_async, capture_preview_snapshot_with_tap_result,
 };
 use super::router::ProjectServiceRequestContext;
 use super::usage::{load_last_used_state, parse_recency_timestamp};
@@ -892,14 +892,26 @@ fn attach_expose_preview_snapshot(
             DEFAULT_PREVIEW_MAX_CHARS,
         )
     });
-    let Some(preview) = capture_preview_snapshot_with_tap(
+    let preview = match capture_preview_snapshot_with_tap_result(
         context,
         &window_id,
         tap_snapshot.as_ref(),
         runtime,
         DEFAULT_PREVIEW_CAPTURE_LINES,
         DEFAULT_PREVIEW_MAX_CHARS,
-    ) else {
+    ) {
+        Ok(preview) => preview,
+        Err(error) => {
+            if let Some(map) = item.as_object_mut() {
+                map.insert(
+                    "previewCapture".into(),
+                    json!({ "ok": false, "error": error }),
+                );
+            }
+            return;
+        }
+    };
+    let Some(preview) = preview else {
         return;
     };
     let Some(map) = item.as_object_mut() else {
@@ -928,7 +940,7 @@ async fn attach_expose_preview_snapshot_async(
             DEFAULT_PREVIEW_MAX_CHARS,
         )
     });
-    let Some(preview) = capture_preview_snapshot_with_tap_async(
+    let preview = match capture_preview_snapshot_with_tap_async(
         context,
         &window_id,
         tap_snapshot.as_ref(),
@@ -936,8 +948,19 @@ async fn attach_expose_preview_snapshot_async(
         DEFAULT_PREVIEW_MAX_CHARS,
     )
     .await
-    .ok()
-    .flatten() else {
+    {
+        Ok(preview) => preview,
+        Err(error) => {
+            if let Some(map) = item.as_object_mut() {
+                map.insert(
+                    "previewCapture".into(),
+                    json!({ "ok": false, "error": error }),
+                );
+            }
+            return;
+        }
+    };
+    let Some(preview) = preview else {
         return;
     };
     let Some(map) = item.as_object_mut() else {

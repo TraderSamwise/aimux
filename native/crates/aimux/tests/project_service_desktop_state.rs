@@ -30,6 +30,7 @@ static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 #[derive(Default)]
 struct FakePreviewRuntime {
     output: String,
+    error: Option<String>,
     calls: Vec<(String, CapturePaneOptions)>,
 }
 
@@ -40,6 +41,9 @@ impl AgentOutputCaptureRuntime for FakePreviewRuntime {
         options: CapturePaneOptions,
     ) -> Result<String, String> {
         self.calls.push((window_id.to_owned(), options));
+        if let Some(error) = self.error.as_ref() {
+            return Err(error.clone());
+        }
         Ok(self.output.clone())
     }
 }
@@ -385,6 +389,7 @@ fn desktop_state_preview_query_controls_capture_and_session_snapshots() {
     let context = isolation.project_context(&project, &state_dir);
     let mut runtime = FakePreviewRuntime {
         output: "cold".into(),
+        error: None,
         calls: Vec::new(),
     };
 
@@ -455,12 +460,50 @@ fn desktop_state_preview_query_controls_capture_and_session_snapshots() {
 }
 
 #[test]
+fn desktop_state_preview_capture_failure_is_not_reported_as_no_preview() {
+    let (project, state_dir) = write_desktop_state_fixtures("preview-capture-failure");
+    let isolation = support::TestIsolation::new("desktop-state-preview-capture-failure");
+    let context = isolation.project_context(&project, &state_dir);
+    let mut runtime = FakePreviewRuntime {
+        output: String::new(),
+        error: Some("tmux capture-pane timed out".into()),
+        calls: Vec::new(),
+    };
+
+    let response = route_desktop_state_request_with_runtime(
+        &context,
+        "GET",
+        &format!("{}?includePreview=1", routes::DESKTOP_STATE),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    let live = find(response.body["sessions"].as_array().unwrap(), "codex-live");
+    assert!(live.get("previewSnapshot").is_none());
+    assert_eq!(live["previewCapture"]["ok"], false);
+    assert_eq!(
+        live["previewCapture"]["error"],
+        "tmux capture-pane timed out"
+    );
+    let cold = find(response.body["sessions"].as_array().unwrap(), "codex-cold");
+    assert!(cold.get("previewSnapshot").is_none());
+    assert!(
+        cold.get("previewCapture").is_none(),
+        "a genuine no-preview session must not be marked as tmux capture unavailable"
+    );
+
+    cleanup(project);
+}
+
+#[test]
 fn desktop_state_previews_reuse_cached_capture_per_window() {
     let (project, state_dir) = write_desktop_state_fixtures("preview-cache");
     let isolation = support::TestIsolation::new("desktop-state-preview-cache");
     let context = isolation.project_context(&project, &state_dir);
     let mut runtime = FakePreviewRuntime {
         output: "first".into(),
+        error: None,
         calls: Vec::new(),
     };
     let path = format!("{}?includePreview=1", routes::DESKTOP_STATE);
@@ -528,6 +571,7 @@ fn desktop_state_previews_use_hot_snapshot_before_live_capture() {
     let context = isolation.project_context(&project, &state_dir);
     let mut runtime = FakePreviewRuntime {
         output: "live".into(),
+        error: None,
         calls: Vec::new(),
     };
 

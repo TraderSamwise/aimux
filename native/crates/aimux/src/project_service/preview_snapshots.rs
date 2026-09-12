@@ -31,8 +31,62 @@ pub fn capture_preview_snapshot_with_tap(
     line_count: i64,
     max_chars: usize,
 ) -> Option<Value> {
+    capture_preview_snapshot_with_tap_result(
+        context,
+        window_id,
+        tap_snapshot,
+        runtime,
+        line_count,
+        max_chars,
+    )
+    .ok()?
+}
+
+pub fn capture_preview_snapshot_with_tap_result(
+    context: &ProjectServiceRequestContext,
+    window_id: &str,
+    tap_snapshot: Option<&Value>,
+    runtime: &mut impl AgentOutputCaptureRuntime,
+    line_count: i64,
+    max_chars: usize,
+) -> Result<Option<Value>, String> {
     if let Some(snapshot) = hot_preview_snapshot(context, window_id, max_chars) {
-        return merge_expose_preview_snapshots(Some(&snapshot), tap_snapshot).map(
+        return Ok(
+            merge_expose_preview_snapshots(Some(&snapshot), tap_snapshot).map(|mut snapshot| {
+                if let Some(output) = snapshot
+                    .get("output")
+                    .and_then(Value::as_str)
+                    .map(|output| trailing_chars(output, max_chars))
+                    && let Some(object) = snapshot.as_object_mut()
+                {
+                    object.insert("output".into(), Value::String(output));
+                }
+                snapshot
+            }),
+        );
+    }
+    let options = CapturePaneOptions {
+        start_line: Some(-line_count),
+        end_line: None,
+        include_escapes: true,
+    };
+    let (output, _coalesced) = context.output_cache.capture_or_reuse(
+        AgentOutputCaptureCacheKey {
+            window_id: window_id.to_owned(),
+            options,
+        },
+        || runtime.capture_pane(window_id, options),
+    )?;
+    let capture_snapshot = json!({
+        "output": trailing_chars(&output, max_chars),
+        "capturedAt": now_iso(),
+        "source": "capture",
+        "windowId": window_id,
+        "startLine": -line_count,
+        "lineCount": line_count,
+    });
+    Ok(
+        merge_expose_preview_snapshots(Some(&capture_snapshot), tap_snapshot).map(
             |mut snapshot| {
                 if let Some(output) = snapshot
                     .get("output")
@@ -44,42 +98,8 @@ pub fn capture_preview_snapshot_with_tap(
                 }
                 snapshot
             },
-        );
-    }
-    let options = CapturePaneOptions {
-        start_line: Some(-line_count),
-        end_line: None,
-        include_escapes: true,
-    };
-    let (output, _coalesced) = context
-        .output_cache
-        .capture_or_reuse(
-            AgentOutputCaptureCacheKey {
-                window_id: window_id.to_owned(),
-                options,
-            },
-            || runtime.capture_pane(window_id, options),
-        )
-        .ok()?;
-    let capture_snapshot = json!({
-        "output": trailing_chars(&output, max_chars),
-        "capturedAt": now_iso(),
-        "source": "capture",
-        "windowId": window_id,
-        "startLine": -line_count,
-        "lineCount": line_count,
-    });
-    merge_expose_preview_snapshots(Some(&capture_snapshot), tap_snapshot).map(|mut snapshot| {
-        if let Some(output) = snapshot
-            .get("output")
-            .and_then(Value::as_str)
-            .map(|output| trailing_chars(output, max_chars))
-            && let Some(object) = snapshot.as_object_mut()
-        {
-            object.insert("output".into(), Value::String(output));
-        }
-        snapshot
-    })
+        ),
+    )
 }
 
 pub async fn capture_preview_snapshot_with_tap_async(

@@ -28,8 +28,8 @@ use super::http::query_params;
 use super::lifecycle::read_displayable_agent_restore_offer;
 use super::operation_failures::list_dashboard_operation_failures;
 use super::preview_snapshots::{
-    DEFAULT_PREVIEW_CAPTURE_LINES, DEFAULT_PREVIEW_MAX_CHARS, capture_preview_snapshot_with_tap,
-    capture_preview_snapshot_with_tap_async,
+    DEFAULT_PREVIEW_CAPTURE_LINES, DEFAULT_PREVIEW_MAX_CHARS,
+    capture_preview_snapshot_with_tap_async, capture_preview_snapshot_with_tap_result,
 };
 use super::router::ProjectServiceRequestContext;
 use super::runtime_exchange::{read_runtime_exchange, runtime_exchange_path};
@@ -572,14 +572,26 @@ pub fn attach_desktop_state_previews(
             target,
             DEFAULT_PREVIEW_MAX_CHARS,
         );
-        let Some(preview) = capture_preview_snapshot_with_tap(
+        let preview = match capture_preview_snapshot_with_tap_result(
             context,
             &window_id,
             tap_snapshot.as_ref(),
             runtime,
             DEFAULT_PREVIEW_CAPTURE_LINES,
             DEFAULT_PREVIEW_MAX_CHARS,
-        ) else {
+        ) {
+            Ok(preview) => preview,
+            Err(error) => {
+                if let Some(object) = session.as_object_mut() {
+                    object.insert(
+                        "previewCapture".into(),
+                        json!({ "ok": false, "error": error }),
+                    );
+                }
+                continue;
+            }
+        };
+        let Some(preview) = preview else {
             continue;
         };
         if let Some(object) = session.as_object_mut() {
@@ -615,7 +627,7 @@ async fn attach_desktop_state_previews_async(
             target,
             DEFAULT_PREVIEW_MAX_CHARS,
         );
-        let Some(preview) = capture_preview_snapshot_with_tap_async(
+        let preview = match capture_preview_snapshot_with_tap_async(
             context,
             &window_id,
             tap_snapshot.as_ref(),
@@ -623,8 +635,19 @@ async fn attach_desktop_state_previews_async(
             DEFAULT_PREVIEW_MAX_CHARS,
         )
         .await
-        .ok()
-        .flatten() else {
+        {
+            Ok(preview) => preview,
+            Err(error) => {
+                if let Some(object) = session.as_object_mut() {
+                    object.insert(
+                        "previewCapture".into(),
+                        json!({ "ok": false, "error": error }),
+                    );
+                }
+                continue;
+            }
+        };
+        let Some(preview) = preview else {
             continue;
         };
         if let Some(object) = session.as_object_mut() {

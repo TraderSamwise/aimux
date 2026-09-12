@@ -855,22 +855,36 @@ fn record_lifecycle_response_abandoned(
             "projectRoot": context.project_root().display().to_string(),
         })),
     );
-    let _ = crate::project_service::operation_failures::add_dashboard_operation_failure(
-        context.project_state_dir(),
-        crate::project_service::operation_failures::OperationFailureInput {
-            target_kind: progress.target_kind().to_owned(),
-            operation: progress.operation().to_owned(),
-            title: "Lifecycle response was not delivered".into(),
-            message: format!(
-                "{} completed after the caller disconnected; refresh before retrying.",
-                progress.operation()
-            ),
-            target_id: progress.target_id().map(str::to_owned),
-            worktree_path: None,
-            worktree_name: None,
-            created_at: None,
-        },
-    );
+    if let Err((error, _failure)) =
+        crate::project_service::operation_failures::try_add_dashboard_operation_failure(
+            context.project_state_dir(),
+            crate::project_service::operation_failures::OperationFailureInput {
+                target_kind: progress.target_kind().to_owned(),
+                operation: progress.operation().to_owned(),
+                title: "Lifecycle response was not delivered".into(),
+                message: format!(
+                    "{} completed after the caller disconnected; refresh before retrying.",
+                    progress.operation()
+                ),
+                target_id: progress.target_id().map(str::to_owned),
+                worktree_path: None,
+                worktree_name: None,
+                created_at: None,
+            },
+        )
+    {
+        log_lifecycle_always(
+            "failed to record abandoned lifecycle response",
+            "project-service",
+            Some(json!({
+                "operation": progress.operation(),
+                "targetKind": progress.target_kind(),
+                "targetId": progress.target_id(),
+                "projectRoot": context.project_root().display().to_string(),
+                "error": error.to_string(),
+            })),
+        );
+    }
 }
 
 fn handle_project_service_connection_with_remote<Stream>(
@@ -1917,6 +1931,7 @@ mod tests {
         killed: Arc<Mutex<Vec<String>>>,
         kill_started: mpsc::Sender<()>,
         kill_release: Option<oneshot::Receiver<()>>,
+        kill_error: Option<String>,
     }
 
     impl PendingKillLifecycleRuntime {
@@ -1929,6 +1944,20 @@ mod tests {
                 killed,
                 kill_started,
                 kill_release: Some(kill_release),
+                kill_error: None,
+            }
+        }
+
+        fn with_error(
+            killed: Arc<Mutex<Vec<String>>>,
+            kill_started: mpsc::Sender<()>,
+            kill_error: impl Into<String>,
+        ) -> Self {
+            Self {
+                killed,
+                kill_started,
+                kill_release: None,
+                kill_error: Some(kill_error.into()),
             }
         }
     }
@@ -2001,7 +2030,10 @@ mod tests {
                 .lock()
                 .expect("killed lock")
                 .push(window_id.to_owned());
-            Ok(())
+            match &self.kill_error {
+                Some(error) => Err(error.clone()),
+                None => Ok(()),
+            }
         }
     }
 
@@ -2514,11 +2546,123 @@ mod tests {
     }
 
     #[test]
-    fn async_lifecycle_stop_disconnect_before_tmux_kill_cancels_mutation() {
+    fn async_lifecycle_stop_reports_tmux_kill_failure_without_taking_session_offline() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
         // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
         crate::async_runtime::process_runtime().block_on(async {
-            let root = unique_test_root("async-lifecycle-stop-disconnect");
+            let root = unique_test_root("async-stop-kill-failure");
+            let project_root = root.join("repo");
+            let state_dir = root.join("state");
+            create_git_checkout(&project_root);
+            fs::create_dir_all(&state_dir).expect("create state dir");
+            write_running_agent_topology(&state_dir, &project_root);
+            let context =
+                ProjectServiceRequestContext::with_project_state_dir(&project_root, &state_dir);
+            let progress = async_lifecycle_progress_for_request(
+                "POST",
+                routes::agents::STOP,
+                Some(&json!({ "sessionId": "codex-live" })),
+            )
+            .expect("async lifecycle progress");
+            let killed = Arc::new(Mutex::new(Vec::new()));
+            let (started_tx, _started_rx) = mpsc::channel();
+            let mut runtime = PendingKillLifecycleRuntime::with_error(
+                Arc::clone(&killed),
+                started_tx,
+                "tmux refused kill-window",
+            );
+
+            let response = route_lifecycle_request_async_with_runtime(
+                &context,
+                "POST",
+                routes::agents::STOP,
+                Some(&json!({ "sessionId": "codex-live" })),
+                &progress,
+                &mut runtime,
+            )
+            .await
+            .expect("async lifecycle response");
+
+            assert_eq!(response.status, 500);
+            assert!(
+                response.body["error"]
+                    .as_str()
+                    .unwrap()
+                    .contains("tmux kill-window failed for session \"codex-live\"")
+            );
+            assert_eq!(killed.lock().expect("killed lock").as_slice(), ["@agent"]);
+            let topology =
+                read_runtime_topology(runtime_topology_path(&state_dir)).expect("read topology");
+            assert_eq!(topology["sessions"][0]["status"], "running");
+            let _ = fs::remove_dir_all(root);
+        });
+    }
+
+    #[test]
+    fn async_lifecycle_kill_reports_tmux_kill_failure_without_graveyarding_session() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
+        crate::async_runtime::process_runtime().block_on(async {
+            let root = unique_test_root("async-kill-kill-failure");
+            let project_root = root.join("repo");
+            let state_dir = root.join("state");
+            create_git_checkout(&project_root);
+            fs::create_dir_all(&state_dir).expect("create state dir");
+            write_running_agent_topology(&state_dir, &project_root);
+            let context =
+                ProjectServiceRequestContext::with_project_state_dir(&project_root, &state_dir);
+            let progress = async_lifecycle_progress_for_request(
+                "POST",
+                routes::agents::KILL,
+                Some(&json!({ "sessionId": "codex-live" })),
+            )
+            .expect("async lifecycle progress");
+            let killed = Arc::new(Mutex::new(Vec::new()));
+            let (started_tx, _started_rx) = mpsc::channel();
+            let mut runtime = PendingKillLifecycleRuntime::with_error(
+                Arc::clone(&killed),
+                started_tx,
+                "tmux refused kill-window",
+            );
+
+            let response = route_lifecycle_request_async_with_runtime(
+                &context,
+                "POST",
+                routes::agents::KILL,
+                Some(&json!({ "sessionId": "codex-live" })),
+                &progress,
+                &mut runtime,
+            )
+            .await
+            .expect("async lifecycle response");
+
+            assert_eq!(response.status, 500);
+            assert!(
+                response.body["error"]
+                    .as_str()
+                    .unwrap()
+                    .contains("tmux kill-window failed for session \"codex-live\"")
+            );
+            assert_eq!(killed.lock().expect("killed lock").as_slice(), ["@agent"]);
+            let topology =
+                read_runtime_topology(runtime_topology_path(&state_dir)).expect("read topology");
+            assert_eq!(topology["sessions"][0]["status"], "running");
+            assert!(
+                topology
+                    .get("graveyard")
+                    .and_then(Value::as_array)
+                    .is_none_or(Vec::is_empty)
+            );
+            let _ = fs::remove_dir_all(root);
+        });
+    }
+
+    #[test]
+    fn async_lifecycle_stop_disconnect_after_tmux_kill_started_records_abandoned_response() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
+        crate::async_runtime::process_runtime().block_on(async {
+            let root = unique_test_root("async-lifecycle-stop-abandoned");
             let project_root = root.join("repo");
             let state_dir = root.join("state");
             create_git_checkout(&project_root);
@@ -2565,31 +2709,180 @@ mod tests {
             );
             wait_for_signal(&started_rx, "kill started").await;
             drop(client);
-            let error = tokio::time::timeout(Duration::from_secs(2), task)
+            let failures = wait_for_operation_failure(&state_dir, "agent.stop", "codex-live").await;
+            assert_eq!(failures[0]["title"], "Lifecycle response was not delivered");
+            release_tx.send(()).expect("release kill route");
+            let response = tokio::time::timeout(Duration::from_secs(2), task)
                 .await
-                .expect("route cancellation should finish")
+                .expect("route should finish")
                 .expect("route task should join")
-                .expect_err("disconnect before kill completes should cancel route");
-            assert!(
-                error
-                    .to_string()
-                    .contains("client disconnected before agent.stop mutation completed"),
-                "unexpected error: {error}"
+                .expect("disconnect after tmux kill starts should wait for route");
+            assert_eq!(response.status, 200);
+            assert_eq!(killed.lock().expect("killed lock").as_slice(), ["@agent"]);
+            let topology =
+                read_runtime_topology(runtime_topology_path(&state_dir)).expect("read topology");
+            assert_eq!(topology["sessions"][0]["status"], "offline");
+            let _ = fs::remove_dir_all(root);
+        });
+    }
+
+    struct PendingCreateLifecycleRuntime {
+        create_started: mpsc::Sender<()>,
+        create_release: Option<oneshot::Receiver<()>>,
+        created: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl PendingCreateLifecycleRuntime {
+        fn new(
+            created: Arc<Mutex<Vec<String>>>,
+            create_started: mpsc::Sender<()>,
+            create_release: oneshot::Receiver<()>,
+        ) -> Self {
+            Self {
+                create_started,
+                create_release: Some(create_release),
+                created,
+            }
+        }
+    }
+
+    impl AsyncProjectLifecycleRuntime for PendingCreateLifecycleRuntime {
+        async fn ensure_project_session(&mut self, _project_root: &Path) -> Result<(), String> {
+            Ok(())
+        }
+
+        async fn create_window(
+            &mut self,
+            session_name: &str,
+            name: &str,
+            _cwd: &str,
+            _command: &str,
+            _args: &[String],
+            _detached: bool,
+        ) -> Result<TmuxTarget, String> {
+            self.create_started.send(()).expect("signal create started");
+            if let Some(release) = self.create_release.take() {
+                let _ = release.await;
+            }
+            self.created
+                .lock()
+                .expect("created lock")
+                .push(name.to_owned());
+            Ok(TmuxTarget {
+                session_name: session_name.to_owned(),
+                window_id: "@spawned".to_owned(),
+                window_index: 1,
+                window_name: name.to_owned(),
+                pane_dead: None,
+            })
+        }
+
+        async fn set_window_metadata(
+            &mut self,
+            _window_id: &str,
+            _metadata: &Value,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        async fn set_window_option(
+            &mut self,
+            _window_id: &str,
+            _key: &str,
+            _value: &str,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        async fn clear_history(&mut self, _window_id: &str) -> Result<(), String> {
+            Ok(())
+        }
+
+        async fn wait_for_window_after_launch(
+            &mut self,
+            _target: &TmuxTarget,
+            _timeout: Duration,
+        ) -> bool {
+            true
+        }
+
+        fn codex_backend_session_ids_for_cwd(
+            &mut self,
+            _cwd: &str,
+        ) -> Result<BTreeSet<String>, String> {
+            Ok(BTreeSet::new())
+        }
+
+        async fn kill_window(&mut self, _window_id: &str) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn async_lifecycle_spawn_disconnect_after_create_started_records_abandoned_response() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
+        crate::async_runtime::process_runtime().block_on(async {
+            let root = unique_test_root("async-lifecycle-spawn-abandoned");
+            let project_root = root.join("repo");
+            let state_dir = root.join("state");
+            create_git_checkout(&project_root);
+            fs::create_dir_all(&state_dir).expect("create state dir");
+            let context = Arc::new(ProjectServiceRequestContext::with_project_state_dir(
+                &project_root,
+                &state_dir,
+            ));
+            let body = json!({ "tool": "codex", "sessionId": "codex-new", "open": false });
+            let progress =
+                async_lifecycle_progress_for_request("POST", routes::agents::SPAWN, Some(&body))
+                    .expect("async lifecycle progress");
+            let created = Arc::new(Mutex::new(Vec::new()));
+            let (started_tx, started_rx) = mpsc::channel();
+            let (release_tx, release_rx) = oneshot::channel();
+            let (client, mut server) = tokio::io::duplex(4096);
+            let runtime =
+                PendingCreateLifecycleRuntime::new(Arc::clone(&created), started_tx, release_rx);
+            let task = crate::async_runtime::spawn_named(
+                "project-service-test:async-lifecycle-spawn-abandoned",
+                async move {
+                    route_async_lifecycle_with_disconnect_and_route(
+                        context,
+                        "POST".to_owned(),
+                        routes::agents::SPAWN.to_owned(),
+                        Some(body),
+                        progress,
+                        &mut server,
+                        move |context, method, path, body, progress| async move {
+                            let mut runtime = runtime;
+                            route_lifecycle_request_async_with_runtime(
+                                &context,
+                                &method,
+                                &path,
+                                body.as_ref(),
+                                &progress,
+                                &mut runtime,
+                            )
+                            .await
+                        },
+                    )
+                    .await
+                },
             );
-            assert!(
-                release_tx.send(()).is_err(),
-                "kill future should have been dropped before release"
-            );
-            assert!(killed.lock().expect("killed lock").is_empty());
+            wait_for_signal(&started_rx, "create started").await;
+            drop(client);
+            let failures = wait_for_operation_failure(&state_dir, "agent.spawn", "codex-new").await;
+            assert_eq!(failures[0]["title"], "Lifecycle response was not delivered");
+            release_tx.send(()).expect("release create route");
+            let response = tokio::time::timeout(Duration::from_secs(2), task)
+                .await
+                .expect("route should finish")
+                .expect("route task should join")
+                .expect("disconnect after create starts should wait for route");
+            assert_eq!(response.status, 200);
+            assert_eq!(created.lock().expect("created lock").as_slice(), ["codex"]);
             let topology =
                 read_runtime_topology(runtime_topology_path(&state_dir)).expect("read topology");
             assert_eq!(topology["sessions"][0]["status"], "running");
-            assert!(
-                crate::project_service::operation_failures::list_dashboard_operation_failures(
-                    &state_dir
-                )
-                .is_empty()
-            );
             let _ = fs::remove_dir_all(root);
         });
     }
@@ -2765,6 +3058,30 @@ mod tests {
         })
         .await
         .unwrap_or_else(|_| panic!("timed out waiting for {label}"));
+    }
+
+    async fn wait_for_operation_failure(
+        state_dir: &Path,
+        operation: &str,
+        target_id: &str,
+    ) -> Vec<Value> {
+        let started = Instant::now();
+        loop {
+            let failures =
+                crate::project_service::operation_failures::list_dashboard_operation_failures(
+                    state_dir,
+                );
+            if failures.iter().any(|failure| {
+                failure["operation"] == operation && failure["targetId"] == target_id
+            }) {
+                return failures;
+            }
+            assert!(
+                started.elapsed() < Duration::from_secs(2),
+                "timed out waiting for operation failure {operation} {target_id}"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
     }
 
     async fn read_until_contains(reader: &mut (impl AsyncRead + Unpin), needle: &str) -> String {

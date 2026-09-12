@@ -47,7 +47,6 @@ pub(super) fn route_agent_stop(
             format!("Session \"{session_id}\" is already in graveyard"),
         );
     }
-    clear_prompt_context(&project_state_dir, &session_id);
     let window_id = live_window_id_for_session(&topology, &session);
     let session_state = topology_session_to_session_state(&session, &topology);
     let missing_backend_disposition = missing_backend_session_disposition(
@@ -55,6 +54,15 @@ pub(super) fn route_agent_stop(
         &session_state,
         &context.project_root().to_string_lossy(),
     );
+    if let Some(window_id) = &window_id
+        && let Err(error) = runtime.kill_window(window_id)
+    {
+        return json_error(
+            500,
+            format!("tmux kill-window failed for session \"{session_id}\": {error}"),
+        );
+    }
+    clear_prompt_context(&project_state_dir, &session_id);
     // Stop takes a session offline and keeps the record; only kill and the
     // graveyard routes remove it from the list.
     let result = update_runtime_topology(runtime_topology_path(&project_state_dir), |topology| {
@@ -96,9 +104,6 @@ pub(super) fn route_agent_stop(
     // exactly what separates a clean exit from a crash. Forget it here or the
     // next boot offers to bring back something nobody lost.
     prune_restore_eligibility(&project_state_dir, &session_id);
-    if let Some(window_id) = window_id {
-        let _ = runtime.kill_window(&window_id);
-    }
     lifecycle_response(
         json!({ "sessionId": session_id, "status": "offline" }),
         "agent.stop",
@@ -138,8 +143,13 @@ pub(super) async fn route_agent_stop_async(
         &context.project_root().to_string_lossy(),
     );
     if let Some(window_id) = window_id {
-        let _ = runtime.kill_window(&window_id).await;
         progress.mark_irreversible();
+        if let Err(error) = runtime.kill_window(&window_id).await {
+            return json_error(
+                500,
+                format!("tmux kill-window failed for session \"{session_id}\": {error}"),
+            );
+        }
     } else {
         progress.mark_irreversible();
     }
@@ -198,7 +208,6 @@ pub(super) fn route_agent_kill(
     };
     let reason = trimmed_string(body.get("reason"));
     let project_state_dir = context.project_state_dir();
-    clear_prompt_context(&project_state_dir, &session_id);
     let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
         Ok(topology) => topology,
         Err(error) => return json_error(500, error),
@@ -212,6 +221,15 @@ pub(super) fn route_agent_kill(
         "offline"
     };
     let window_id = live_window_id_for_session(&topology, &session);
+    if let Some(window_id) = &window_id
+        && let Err(error) = runtime.kill_window(window_id)
+    {
+        return json_error(
+            500,
+            format!("tmux kill-window failed for session \"{session_id}\": {error}"),
+        );
+    }
+    clear_prompt_context(&project_state_dir, &session_id);
     let result = update_runtime_topology(runtime_topology_path(&project_state_dir), |topology| {
         let now = now_iso();
         map_topology_array(topology, "sessions", |mut current| {
@@ -233,9 +251,6 @@ pub(super) fn route_agent_kill(
         return json_error(500, error);
     }
     prune_restore_eligibility(&project_state_dir, &session_id);
-    if let Some(window_id) = window_id {
-        let _ = runtime.kill_window(&window_id);
-    }
     lifecycle_response(
         json!({ "sessionId": session_id, "status": "graveyard", "previousStatus": previous_status }),
         "agent.kill",
@@ -268,8 +283,13 @@ pub(super) async fn route_agent_kill_async(
         "offline"
     };
     if let Some(window_id) = live_window_id_for_session(&topology, &session) {
-        let _ = runtime.kill_window(&window_id).await;
         progress.mark_irreversible();
+        if let Err(error) = runtime.kill_window(&window_id).await {
+            return json_error(
+                500,
+                format!("tmux kill-window failed for session \"{session_id}\": {error}"),
+            );
+        }
     } else {
         progress.mark_irreversible();
     }

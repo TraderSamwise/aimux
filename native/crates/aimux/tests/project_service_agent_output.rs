@@ -42,6 +42,9 @@ const OSC_NOTIFICATIONS: &str =
 #[derive(Default)]
 struct FakeCaptureRuntime {
     output: String,
+    capture_result: Option<Result<String, String>>,
+    send_carriage_return_result: Option<Result<(), String>>,
+    submit_outcome: FakeSubmitOutcome,
     calls: Vec<(String, CapturePaneOptions)>,
     actions: Vec<FakeRuntimeAction>,
 }
@@ -53,7 +56,15 @@ enum FakeRuntimeAction {
     Text(String, String),
     Key(String, String),
     CarriageReturn(String),
+    SubmitDropped(String),
     Escape(String),
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum FakeSubmitOutcome {
+    #[default]
+    Landed,
+    Dropped,
 }
 
 struct FakeMetadataSyncRuntime {
@@ -87,7 +98,9 @@ impl AgentOutputCaptureRuntime for FakeCaptureRuntime {
         self.calls.push((window_id.to_owned(), options));
         self.actions
             .push(FakeRuntimeAction::Capture(window_id.to_owned()));
-        Ok(self.output.clone())
+        self.capture_result
+            .clone()
+            .unwrap_or_else(|| Ok(self.output.clone()))
     }
 
     fn resize_window(&mut self, window_id: &str, cols: i64, rows: i64) -> Result<(), String> {
@@ -113,7 +126,19 @@ impl AgentOutputCaptureRuntime for FakeCaptureRuntime {
     fn send_carriage_return(&mut self, window_id: &str) -> Result<(), String> {
         self.actions
             .push(FakeRuntimeAction::CarriageReturn(window_id.to_owned()));
-        Ok(())
+        self.send_carriage_return_result.clone().unwrap_or(Ok(()))
+    }
+
+    fn submit_prompt(&mut self, window_id: &str, _draft: &str) -> Result<(), String> {
+        self.send_carriage_return(window_id)?;
+        match self.submit_outcome {
+            FakeSubmitOutcome::Landed => Ok(()),
+            FakeSubmitOutcome::Dropped => {
+                self.actions
+                    .push(FakeRuntimeAction::SubmitDropped(window_id.to_owned()));
+                Ok(())
+            }
+        }
     }
 
     fn send_escape(&mut self, window_id: &str) -> Result<(), String> {
@@ -630,6 +655,7 @@ fn output_route_writes_osc_terminal_notifications_and_cleans_output() {
         output: "before \u{1b}]777;notify;Build finished;Tests passed\u{7} after".into(),
         calls: Vec::new(),
         actions: Vec::new(),
+        ..Default::default()
     };
 
     let response = route_agent_output_request_with_runtime(
@@ -694,6 +720,7 @@ fn output_route_no_osc_fast_path_keeps_parser_state_empty() {
         output: "plain output without escape sequences".into(),
         calls: Vec::new(),
         actions: Vec::new(),
+        ..Default::default()
     };
 
     for _ in 0..5 {
@@ -730,6 +757,7 @@ fn output_route_marks_osc_payload_as_untrusted_session_output() {
         output: "\u{1b}]777;notify;Approve this;Looks safe\u{7}".into(),
         calls: Vec::new(),
         actions: Vec::new(),
+        ..Default::default()
     };
 
     let response = route_agent_output_request_with_runtime(
@@ -843,6 +871,7 @@ fn output_route_captures_live_topology_target_and_shapes_full_payload() {
         output: "\u{1b}[32mhello\u{1b}[0m\n".into(),
         calls: Vec::new(),
         actions: Vec::new(),
+        ..Default::default()
     };
 
     let response = route_agent_output_request_with_runtime(
@@ -906,6 +935,7 @@ fn output_route_classifies_live_pane_state_and_reconciles_activity() {
         output: "Ready\n› ".into(),
         calls: Vec::new(),
         actions: Vec::new(),
+        ..Default::default()
     };
 
     let prompt = route_agent_output_request_with_runtime(
@@ -1031,6 +1061,7 @@ fn output_route_projects_parsed_status_and_activity_text_from_capture() {
         output: "› Build it\n• Working (12s • esc to interrupt)\n• Built the first slice.".into(),
         calls: Vec::new(),
         actions: Vec::new(),
+        ..Default::default()
     };
 
     let response = route_agent_output_request_with_runtime(
@@ -1085,6 +1116,7 @@ fn output_route_omits_terminal_fields_in_chat_mode_and_bounds_forward_reads() {
         output: "\u{1b}[31mnew line\u{1b}[0m".into(),
         calls: Vec::new(),
         actions: Vec::new(),
+        ..Default::default()
     };
 
     let response = route_agent_output_request_with_runtime(
@@ -1125,6 +1157,7 @@ fn equivalent_output_reads_share_one_capture_inside_project_context() {
         output: "\u{1b}[31mfirst\u{1b}[0m".into(),
         calls: Vec::new(),
         actions: Vec::new(),
+        ..Default::default()
     };
 
     let full = route_agent_output_request_with_runtime(
@@ -1361,6 +1394,7 @@ fn live_pane_attach_resizes_before_full_output_and_returns_stream_metadata() {
         output: "\u{1b}[32mhello\u{1b}[0m".into(),
         calls: Vec::new(),
         actions: Vec::new(),
+        ..Default::default()
     };
 
     let response = route_agent_output_request_with_runtime(
@@ -1410,6 +1444,7 @@ fn live_pane_attach_omits_stream_end_line_for_tail_reads() {
         output: "tail".into(),
         calls: Vec::new(),
         actions: Vec::new(),
+        ..Default::default()
     };
 
     let response = route_agent_output_request_with_runtime(
@@ -1684,6 +1719,45 @@ fn agent_input_to_unattended_window_delivers_without_queue_delay() {
         ]
     );
     assert!(!agent_input_delivery_queue_path(&state_dir).exists());
+    cleanup(project);
+}
+
+#[test]
+#[ignore = "proof test for gqaapg-1: current /agents/input accepts a submit that did not land"]
+fn agent_input_rejects_prompt_when_submit_carriage_return_does_not_land() {
+    let project = temp_project("unattended-submit-dropped");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeActivityRuntime {
+        inner: FakeCaptureRuntime {
+            submit_outcome: FakeSubmitOutcome::Dropped,
+            ..Default::default()
+        },
+        input_activity: VecDeque::from([Ok(AgentInputWindowActivity::Unattended)]),
+    };
+
+    let response = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::INPUT,
+        Some(&json!({ "sessionId": "codex-1", "text": "deliver now" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_ne!(
+        response.status, 200,
+        "a half-delivered prompt must not be accepted as submitted"
+    );
+    assert_eq!(
+        runtime.inner.actions,
+        vec![
+            FakeRuntimeAction::Text("@1".into(), "deliver now".into()),
+            FakeRuntimeAction::CarriageReturn("@1".into()),
+            FakeRuntimeAction::SubmitDropped("@1".into()),
+        ]
+    );
     cleanup(project);
 }
 

@@ -1,5 +1,6 @@
 use serde_json::{Value, json};
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -96,8 +97,13 @@ pub fn clear_dashboard_operation_failures(
             changed += 1;
         }
     }
-    if changed > 0 {
-        save_state(&path, state);
+    if changed > 0
+        && let Err(error) = save_state(&path, state)
+    {
+        eprintln!(
+            "aimux: failed to persist dashboard operation failure clear at {}: {error}",
+            path.display()
+        );
     }
     changed
 }
@@ -117,6 +123,21 @@ pub fn add_dashboard_operation_failure(
     project_state_dir: impl AsRef<Path>,
     input: OperationFailureInput,
 ) -> Value {
+    try_add_dashboard_operation_failure(project_state_dir, input)
+        .unwrap_or_else(|(_, failure)| failure)
+}
+
+pub fn try_add_dashboard_operation_failure(
+    project_state_dir: impl AsRef<Path>,
+    input: OperationFailureInput,
+) -> Result<Value, (io::Error, Value)> {
+    add_dashboard_operation_failure_impl(project_state_dir.as_ref(), input)
+}
+
+fn add_dashboard_operation_failure_impl(
+    project_state_dir: &Path,
+    input: OperationFailureInput,
+) -> Result<Value, (io::Error, Value)> {
     let path = dashboard_operation_failures_path(project_state_dir);
     let mut state = load_state(&path);
     let created_at = input
@@ -158,8 +179,10 @@ pub fn add_dashboard_operation_failure(
     });
     failures.insert(0, failure.clone());
     state["failures"] = Value::Array(failures);
-    save_state(&path, state);
-    failure
+    match save_state(&path, state) {
+        Ok(()) => Ok(failure),
+        Err(error) => Err((error, failure)),
+    }
 }
 
 fn load_state(path: impl AsRef<Path>) -> Value {
@@ -181,11 +204,11 @@ fn load_state(path: impl AsRef<Path>) -> Value {
     value
 }
 
-fn save_state(path: impl AsRef<Path>, mut state: Value) {
+fn save_state(path: impl AsRef<Path>, mut state: Value) -> io::Result<()> {
     if let Some(failures) = state.get_mut("failures").and_then(Value::as_array_mut) {
         failures.truncate(MAX_FAILURES);
     }
-    let _ = write_json_atomic(path, &state);
+    write_json_atomic(path, &state)
 }
 
 fn is_active_failure(failure: &Value, now: u128) -> bool {

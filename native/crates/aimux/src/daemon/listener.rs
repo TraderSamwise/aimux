@@ -11,7 +11,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::task::JoinHandle;
-use tokio::time::{Duration, sleep};
+use tokio::time::{Duration, sleep, timeout};
 
 const MAX_HEADER_BYTES: usize = 64 * 1024;
 pub type DaemonInterceptFuture<'a> =
@@ -300,7 +300,42 @@ where
     Intercept: for<'a> FnMut(&'a DaemonHttpRequest, &'a mut Stream) -> DaemonInterceptFuture<'a>,
     Handle: FnMut(DaemonHttpRequest) -> DaemonHandleFuture<'static>,
 {
-    let bytes = match read_http_request_with_body_limit_async(stream, body_limit).await? {
+    handle_daemon_stream_with_metadata_and_interceptor_and_body_limit_with_read_timeout(
+        stream, metadata, body_limit, intercept, handle, None,
+    )
+    .await
+}
+
+pub async fn handle_daemon_stream_with_metadata_and_interceptor_and_body_limit_with_read_timeout<
+    Stream,
+    BodyLimit,
+    Intercept,
+    Handle,
+>(
+    stream: &mut Stream,
+    metadata: DaemonRequestMetadata,
+    body_limit: &mut BodyLimit,
+    intercept: &mut Intercept,
+    handle: &mut Handle,
+    read_timeout: Option<Duration>,
+) -> Result<(), DaemonListenerError>
+where
+    Stream: AsyncRead + AsyncWrite + Unpin + Send,
+    BodyLimit: FnMut(&DaemonRequestHead) -> Option<DaemonRequestBodyLimit>,
+    Intercept: for<'a> FnMut(&'a DaemonHttpRequest, &'a mut Stream) -> DaemonInterceptFuture<'a>,
+    Handle: FnMut(DaemonHttpRequest) -> DaemonHandleFuture<'static>,
+{
+    let read_request = read_http_request_with_body_limit_async(stream, body_limit);
+    let read_outcome = match read_timeout {
+        Some(read_timeout) => timeout(read_timeout, read_request).await.map_err(|_| {
+            DaemonListenerError::Io(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "timed out reading HTTP request",
+            ))
+        })?,
+        None => read_request.await,
+    }?;
+    let bytes = match read_outcome {
         ReadHttpRequestOutcome::Request(bytes) => bytes,
         ReadHttpRequestOutcome::Rejected(response) => {
             write_prepared_response_async(stream, &response).await?;

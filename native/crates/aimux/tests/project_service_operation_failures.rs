@@ -1,7 +1,8 @@
 use aimux::project_api_contract::routes;
 use aimux::project_service::operation_failures::{
-    OperationFailureMatch, WorktreePathMatch, clear_dashboard_operation_failures,
-    dashboard_operation_failures_path,
+    OperationFailureInput, OperationFailureMatch, WorktreePathMatch,
+    clear_dashboard_operation_failures, dashboard_operation_failures_path,
+    try_add_dashboard_operation_failure,
 };
 use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
 use serde_json::json;
@@ -82,6 +83,39 @@ fn route_clears_failures_and_returns_count() {
     );
     assert_eq!(response.status, 200);
     assert_eq!(response.body, json!({ "ok": true, "cleared": 1 }));
+    cleanup(project);
+}
+
+#[test]
+fn adding_failure_reports_persist_error() {
+    let project = temp_project("persist-error");
+    create_dir_all(&project).expect("project dir");
+    let state_dir = project.join("state-file");
+    write(&state_dir, "not a directory").expect("state marker");
+
+    let result = try_add_dashboard_operation_failure(
+        &state_dir,
+        OperationFailureInput {
+            target_kind: "agent".into(),
+            operation: "agent.stop".into(),
+            title: "Lifecycle response abandoned".into(),
+            message: "caller disconnected".into(),
+            target_id: Some("codex-live".into()),
+            ..OperationFailureInput::default()
+        },
+    );
+
+    let (error, failure) = result.expect_err("persist error");
+    assert!(
+        error.kind() == std::io::ErrorKind::AlreadyExists
+            || error.kind() == std::io::ErrorKind::NotADirectory
+    );
+    assert_eq!(failure["operation"], "agent.stop");
+    assert_eq!(failure["targetId"], "codex-live");
+    assert!(
+        !dashboard_operation_failures_path(&state_dir).exists(),
+        "failed persistence must not fabricate a stored failure record"
+    );
     cleanup(project);
 }
 

@@ -336,7 +336,7 @@ fn route_open_notification_target<R: ProjectControlRuntime>(
     }
     json_response(
         404,
-        json!({ "ok": false, "error": "notification target is no longer available" }),
+        control_error_body(&model, "notification target is no longer available"),
     )
 }
 
@@ -383,7 +383,7 @@ async fn route_open_notification_target_async<R: AsyncProjectControlRuntime>(
     }
     json_response(
         404,
-        json!({ "ok": false, "error": "notification target is no longer available" }),
+        control_error_body(&model, "notification target is no longer available"),
     )
 }
 
@@ -400,7 +400,7 @@ fn route_focus_window<R: ProjectControlRuntime>(
         Err(error) => return json_response(500, json!({ "ok": false, "error": error })),
     };
     let Some(item) = model.find_window(context, window_id) else {
-        return json_response(404, json!({ "ok": false, "error": "window not found" }));
+        return json_response(404, control_error_body(&model, "window not found"));
     };
     open_control_item(
         context.project_state_dir(),
@@ -424,7 +424,7 @@ async fn route_focus_window_async<R: AsyncProjectControlRuntime>(
         Err(error) => return json_response(500, json!({ "ok": false, "error": error })),
     };
     let Some(item) = model.find_window(context, window_id) else {
-        return json_response(404, json!({ "ok": false, "error": "window not found" }));
+        return json_response(404, control_error_body(&model, "window not found"));
     };
     open_control_item_async(
         context.project_state_dir(),
@@ -569,7 +569,7 @@ fn route_switch_agent<R: ProjectControlRuntime>(
             SwitchDirection::Attention => "no attention target found",
             SwitchDirection::Next | SwitchDirection::Prev => "no switchable agent found",
         };
-        return json_response(404, json!({ "ok": false, "error": error }));
+        return json_response(404, control_error_body(&model, error));
     };
     let action = match direction {
         SwitchDirection::Next => "switch-next",
@@ -624,7 +624,7 @@ async fn route_switch_agent_async<R: AsyncProjectControlRuntime>(
             SwitchDirection::Attention => "no attention target found",
             SwitchDirection::Next | SwitchDirection::Prev => "no switchable agent found",
         };
-        return json_response(404, json!({ "ok": false, "error": error }));
+        return json_response(404, control_error_body(&model, error));
     };
     let action = match direction {
         SwitchDirection::Next => "switch-next",
@@ -640,6 +640,7 @@ struct ControlModel {
     entries: Vec<ManagedWindowEntry>,
     items: Vec<SwitchableAgentItem>,
     last_used: Value,
+    live_window_query_error: Option<String>,
 }
 
 impl ControlModel {
@@ -694,6 +695,9 @@ fn load_control_model(context: &ProjectServiceRequestContext) -> Result<ControlM
         entries,
         items,
         last_used,
+        live_window_query_error: context
+            .live_window_ids_status()
+            .and_then(|status| status.err().map(str::to_owned)),
     })
 }
 
@@ -727,7 +731,21 @@ async fn load_control_model_async(
         entries: entries_projection.entries,
         items,
         last_used,
+        live_window_query_error: entries_projection.live_window_query_error,
     })
+}
+
+fn control_error_body(model: &ControlModel, error: &str) -> Value {
+    let mut body = json!({ "ok": false, "error": error });
+    if let Some(query_error) = model.live_window_query_error.as_ref()
+        && let Some(map) = body.as_object_mut()
+    {
+        map.insert(
+            "tmuxLiveWindowQuery".into(),
+            json!({ "ok": false, "error": query_error }),
+        );
+    }
+    body
 }
 
 fn load_topology(context: &ProjectServiceRequestContext) -> Result<Value, String> {
