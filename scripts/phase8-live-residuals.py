@@ -43,6 +43,7 @@ DEFAULT_DAEMON_PORT = 43190
 RESIDUAL_DAEMON_PORT_MIN = 45000
 RESIDUAL_DAEMON_PORT_MAX = 45999
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+DASHBOARD_SELECTION_MARKERS = ("▸ ●", "▸ ◆", "▸ ◇", "> ●", "> ◆", "> ◇")
 TMUX_SESSION_ENV_KEYS = [
     "AIMUX_HOME",
     "AIMUX_DAEMON_HOST",
@@ -2353,11 +2354,11 @@ def run_expose_interaction_smoke(aimux_bin: Path, mutation: str | None) -> dict[
             )
 
         write_client_keys(b"\r")
-        wait_until(
-            lambda: capture_all_tmux(scope)
-            if any(marker in capture_all_tmux(scope) for marker in ["▸ ●", "▸ ◆", "▸ ◇", "> ●", "> ◆", "> ◇"])
-            else None,
-            timeout=5,
+        wait_for_client_screen(
+            lambda screen: any(marker in screen for marker in DASHBOARD_SELECTION_MARKERS),
+            cols=120,
+            rows=30,
+            timeout=20,
             label="expose dashboard session selection",
         )
         write_client_keys(b"\r")
