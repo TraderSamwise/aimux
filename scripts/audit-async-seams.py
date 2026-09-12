@@ -119,7 +119,7 @@ ALLOWED_SEAMS = [
         "crate::async_runtime::process_runtime().block_on(async {",
         11,
         "test",
-        "project-service transport unit tests drive async handlers from sync test cases",
+        "project-service transport and lifecycle cancellation unit tests drive async handlers from sync test cases",
     ),
     AllowedSeam(
         "native/crates/aimux/tests/project_service_agents.rs",
@@ -154,7 +154,7 @@ ALLOWED_SEAMS = [
         "aimux::async_runtime::block_on_named(",
         2,
         "test",
-        "switchable-agents route test drives async handler from sync test case",
+        "switchable-agents route tests drive async handler success and tmux-query-failure cases from sync test cases",
     ),
     AllowedSeam(
         "native/crates/aimux/src/project_service/lifecycle/agent_launch_routes.rs",
@@ -222,9 +222,9 @@ ALLOWED_SEAMS = [
     AllowedSeam(
         "native/crates/aimux/tests/daemon_stream.rs",
         "aimux::async_runtime::block_on_named(",
-        1,
+        2,
         "test",
-        "daemon stream test drives async stream helper from a sync test",
+        "daemon stream tests drive async stream helpers and downstream-close coverage from sync tests",
     ),
     AllowedSeam(
         "native/crates/aimux/tests/fixtures/fixture_relay_client.rs",

@@ -183,7 +183,7 @@ async fn handle_connection(
     ui_root: &Path,
     config: &LocalUiConfig,
 ) -> io::Result<()> {
-    let request_line = read_request_line(&mut stream).await?;
+    let request_line = read_request_head(&mut stream).await?;
     let mut parts = request_line.split_whitespace();
     let method = parts.next().unwrap_or_default();
     let uri = parts.next().unwrap_or("/");
@@ -222,7 +222,7 @@ async fn handle_connection(
     write_text(&mut stream, 404, "Not found").await
 }
 
-async fn read_request_line(stream: &mut TcpStream) -> io::Result<String> {
+async fn read_request_head(stream: &mut TcpStream) -> io::Result<String> {
     let mut bytes = Vec::new();
     let mut buffer = [0_u8; 1];
     while bytes.len() < 8192 {
@@ -231,7 +231,7 @@ async fn read_request_line(stream: &mut TcpStream) -> io::Result<String> {
             break;
         }
         bytes.push(buffer[0]);
-        if buffer[0] == b'\n' {
+        if bytes.ends_with(b"\r\n\r\n") || bytes.ends_with(b"\n\n") {
             break;
         }
     }
