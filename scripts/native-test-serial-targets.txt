@@ -1,5 +1,7 @@
 # Integration test targets that stay serial. Format:
 # target<TAB>reason
+async_cutover_characterization	real daemon and project-service subprocesses with isolated sockets and async HTTP/SSE timing
+async_cutover_phase3_characterization	async stream/proxy characterization over live TCP sockets and timing-sensitive disconnect paths
 context_history_cli	real aimux subprocess with project cwd and isolated daemon state
 core_cli	command classification route with resolver/env edge cases
 core_cli_executor	real subprocess/git and daemon text execution helpers
@@ -30,6 +32,7 @@ notification_delivery_guard	mutates notification guard environment
 paths	path resolver tests mutate cwd and inspect home/env fallbacks
 project_catalog	mutates process cwd
 project_discovery_cli	real aimux subprocesses and isolated daemon/project-service activation
+project_service_agent_restore	restore snapshot/offer task mutates temp runtime topology and tmux-shaped liveness state
 project_service_agents	runtime liveness projection and tmux-window inventory boundaries
 project_service_agents_liveness	tmux liveness failure/success projection boundaries
 project_service_controls	project-control route mutations over runtime state

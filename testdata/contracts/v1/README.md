@@ -337,7 +337,7 @@ Priority fixture groups:
 
 - `metadata-store/store.json`: persisted metadata load/save, topology-owned
   field scrubbing, loop/control-session flags, no-op writes, statusline segment
-  replacement/expiry/drop/rejection, and malformed rail cases captured by
+  replacement/expiry/drop/rejection, and malformed statusline segment cases captured by
   running the TypeScript metadata store against temporary project state.
 
 ## Metadata Watchers

@@ -1,6 +1,8 @@
 use aimux::daemon_state::{MetadataState, load_metadata_state, save_metadata_state};
 use aimux::project_api_contract::routes;
-use aimux::project_service::controls::{ProjectControlRuntime, route_control_request_with_runtime};
+use aimux::project_service::controls::{
+    ProjectControlRuntime, route_control_request_async, route_control_request_with_runtime,
+};
 use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
 use aimux::runtime_topology::runtime_topology_path;
 use serde_json::{Value, json};
@@ -45,6 +47,32 @@ fn open_dashboard_resolves_existing_dashboard_without_focus() {
     assert_eq!(response.body["focused"], false);
     assert_eq!(response.body["target"]["windowId"], "@9");
     assert_eq!(response.body["screen"], "topology");
+    cleanup(project);
+}
+
+#[test]
+fn async_open_dashboard_keeps_focus_false_as_success_without_tmux() {
+    let project = temp_project("async-dashboard-no-focus");
+    let state_dir = project.join("state");
+    write_topology(&state_dir, topology_fixture());
+    let isolation = support::TestIsolation::new("control-async-dashboard-no-focus");
+    let context = isolation.project_context(&project, &state_dir);
+
+    let response = aimux::async_runtime::block_on_named(
+        "test:control-open-dashboard-async",
+        route_control_request_async(
+            &context,
+            "POST",
+            routes::controls::OPEN_DASHBOARD,
+            Some(&json!({ "focus": false, "screen": "topology" })),
+        ),
+    )
+    .expect("control async route");
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["action"], "open-dashboard");
+    assert_eq!(response.body["focused"], false);
+    assert_eq!(response.body["target"]["windowId"], "@9");
     cleanup(project);
 }
 
@@ -122,6 +150,38 @@ fn focus_window_marks_agent_seen_and_recent_when_focused() {
     let last_used = std::fs::read_to_string(state_dir.join("last-used.json")).unwrap();
     assert!(last_used.contains("codex-live"));
     assert!(last_used.contains("client-1"));
+    cleanup(project);
+}
+
+#[test]
+fn async_focus_window_reports_tmux_focus_failure() {
+    let project = temp_project("async-focus-window-failure");
+    let state_dir = project.join("state");
+    write_topology(&state_dir, topology_fixture());
+    let isolation = support::TestIsolation::new("control-async-focus-failure");
+    let context = isolation.project_context(&project, &state_dir);
+
+    let response = aimux::async_runtime::block_on_named(
+        "test:control-focus-window-async",
+        route_control_request_async(
+            &context,
+            "POST",
+            routes::controls::FOCUS_WINDOW,
+            Some(&json!({
+                "windowId": "@1",
+                "currentClientSession": "client-1",
+                "focus": true
+            })),
+        ),
+    )
+    .expect("control async route");
+
+    assert_eq!(response.status, 500);
+    let error = response.body["error"].as_str().expect("error");
+    assert!(
+        error.contains("failed to focus window @1") || error.contains("tmux"),
+        "focus failures must name the tmux/focus cause: {error}"
+    );
     cleanup(project);
 }
 

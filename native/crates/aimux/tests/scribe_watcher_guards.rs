@@ -193,7 +193,7 @@ mod task_budget {
     #[test]
     fn the_read_budget_stays_far_below_nodes_fifty() {
         // each candidate read is a tmux spawn; Node's 50 was affordable on an
-        // async event loop and is not on a shared rail
+        // async event loop and is not on a shared tick loop
         assert!(max_scan_candidates() <= 12, "got {}", max_scan_candidates());
         assert!(
             max_scan_candidates() >= 4,

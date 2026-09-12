@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::agent_display::{AgentDisplayInput, resolve_statusline_model};
+use crate::async_subprocess::AsyncCommand;
 use crate::atomic_write::write_text_atomic_fast;
 use crate::daemon_state::load_metadata_state;
 use crate::dashboard_ui_state::DashboardUiStatePersistence;
@@ -20,7 +21,7 @@ use crate::tmux::{refresh_status_argv, tmux_command_from_env};
 use super::agents::LiveWindowIdsProjection;
 use super::desktop_state::{
     DesktopStateInput, build_desktop_state, build_desktop_state_with_live_window_ids,
-    build_desktop_state_with_live_window_projection,
+    build_desktop_state_with_live_window_projection, desktop_state_for_context_async,
 };
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::router::ProjectServiceRequestContext;
@@ -52,10 +53,49 @@ pub fn route_statusline_refresh_request(
     })
 }
 
+pub async fn route_statusline_refresh_request_async(
+    context: &ProjectServiceRequestContext,
+    method: &str,
+    path: &str,
+    body: Option<&Value>,
+) -> Option<ProjectServiceDispatchResponse> {
+    if !method.eq_ignore_ascii_case("POST")
+        || project_service_pathname(path) != routes::STATUSLINE_REFRESH
+    {
+        return None;
+    }
+    let body = body.unwrap_or(&Value::Null);
+    let input = StatuslineRefreshInput {
+        session_id: trimmed_string(body.get("sessionId")),
+        force: body.get("force").and_then(Value::as_bool) == Some(true),
+    };
+    Some(
+        match refresh_project_statusline_async(context, input).await {
+            Ok(result) => {
+                let mut body = json!({ "ok": true });
+                if let Some(error) = result.tmux_refresh_error
+                    && let Value::Object(map) = &mut body
+                {
+                    map.insert("tmuxRefresh".into(), json!({ "ok": false, "error": error }));
+                }
+                ProjectServiceDispatchResponse::json(200, body)
+            }
+            Err(error) => {
+                ProjectServiceDispatchResponse::json(500, json!({ "ok": false, "error": error }))
+            }
+        },
+    )
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StatuslineRefreshInput {
     pub session_id: Option<String>,
     pub force: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct StatuslineRefreshResult {
+    pub tmux_refresh_error: Option<String>,
 }
 
 pub fn refresh_project_statusline(
@@ -87,8 +127,43 @@ pub fn refresh_project_statusline_with_tmux_refresh(
     Ok(())
 }
 
+pub async fn refresh_project_statusline_async(
+    context: &ProjectServiceRequestContext,
+    input: StatuslineRefreshInput,
+) -> Result<StatuslineRefreshResult, String> {
+    let project_state_dir = context.project_state_dir();
+    if input.force {
+        invalidate_tmux_statusline_artifacts(&project_state_dir);
+    }
+    let snapshot = build_statusline_snapshot_async(context).await?;
+    write_statusline_snapshot(&project_state_dir, &snapshot)?;
+    write_precomputed_tmux_statusline_files(
+        &project_state_dir,
+        &context.project_root().to_string_lossy(),
+        &snapshot,
+        input.session_id.as_deref(),
+    )?;
+    let tmux_refresh_error = refresh_tmux_status_async(&refresh_status_argv())
+        .await
+        .err();
+    Ok(StatuslineRefreshResult { tmux_refresh_error })
+}
+
 fn refresh_tmux_status(args: &[String]) {
     let _ = tmux_command_from_env().args(args).status();
+}
+
+async fn refresh_tmux_status_async(args: &[String]) -> Result<(), String> {
+    let mut command: AsyncCommand = tmux_command_from_env();
+    command.args(args);
+    match command
+        .status_timeout_async(std::time::Duration::from_secs(5))
+        .await
+    {
+        Ok(status) if status.success() => Ok(()),
+        Ok(status) => Err(format!("tmux refresh-client exited with {status}")),
+        Err(error) => Err(format!("tmux refresh-client failed: {error}")),
+    }
 }
 
 pub fn build_statusline_snapshot(context: &ProjectServiceRequestContext) -> Result<Value, String> {
@@ -115,6 +190,72 @@ pub fn build_statusline_snapshot(context: &ProjectServiceRequestContext) -> Resu
             ),
             None => build_desktop_state(input),
         }
+    };
+    let sessions = statusline_sessions(array_field(&desktop_state, "sessions"), "agent")
+        .into_iter()
+        .chain(statusline_sessions(
+            array_field(&desktop_state, "services"),
+            "service",
+        ))
+        .collect::<Vec<_>>();
+    let teammates = statusline_sessions(array_field(&desktop_state, "teammates"), "agent");
+    let known_ids = sessions
+        .iter()
+        .chain(teammates.iter())
+        .filter_map(|session| string_field(session, "id").map(str::to_owned))
+        .collect::<BTreeSet<_>>();
+    let mut snapshot = Map::new();
+    snapshot.insert(
+        "project".into(),
+        Value::String(
+            basename_like_node_posix(&context.project_root().to_string_lossy()).to_owned(),
+        ),
+    );
+    snapshot.insert(
+        "dashboardScreen".into(),
+        Value::String(
+            string_field(&desktop_state, "dashboardScreen")
+                .unwrap_or("dashboard")
+                .to_owned(),
+        ),
+    );
+    snapshot.insert("sessions".into(), Value::Array(sessions));
+    snapshot.insert("teammates".into(), Value::Array(teammates));
+    snapshot.insert(
+        "tasks".into(),
+        desktop_state
+            .get("tasks")
+            .cloned()
+            .unwrap_or_else(|| json!({ "pending": 0, "assigned": 0 })),
+    );
+    snapshot.insert(
+        "controlPlane".into(),
+        desktop_state
+            .get("controlPlane")
+            .cloned()
+            .unwrap_or_else(|| json!({ "daemonAlive": false, "projectServiceAlive": true })),
+    );
+    snapshot.insert(
+        "flash".into(),
+        desktop_state.get("flash").cloned().unwrap_or(Value::Null),
+    );
+    snapshot.insert(
+        "metadata".into(),
+        Value::Object(project_statusline_metadata(&metadata.sessions, &known_ids)),
+    );
+    snapshot.insert("updatedAt".into(), Value::String(now_iso()));
+    Ok(Value::Object(snapshot))
+}
+
+pub async fn build_statusline_snapshot_async(
+    context: &ProjectServiceRequestContext,
+) -> Result<Value, String> {
+    let project_state_dir = context.project_state_dir();
+    let metadata = load_metadata_state(&project_state_dir);
+    let desktop_state = if let Some(desktop_state) = context.desktop_state.as_ref() {
+        desktop_state.clone()
+    } else {
+        desktop_state_for_context_async(context).await?
     };
     let sessions = statusline_sessions(array_field(&desktop_state, "sessions"), "agent")
         .into_iter()

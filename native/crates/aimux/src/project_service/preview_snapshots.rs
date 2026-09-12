@@ -1,6 +1,8 @@
 use serde_json::{Value, json};
+use std::time::Duration;
 
-use crate::tmux::CapturePaneOptions;
+use crate::async_subprocess::AsyncCommand;
+use crate::tmux::{CapturePaneOptions, capture_pane_argv, tmux_command_from_env};
 use crate::tmux_expose::ExposeScope;
 use crate::tmux_expose_hot_snapshot::{HotExposeScopeKey, read_hot_expose_scope_view};
 
@@ -78,6 +80,64 @@ pub fn capture_preview_snapshot_with_tap(
         }
         snapshot
     })
+}
+
+pub async fn capture_preview_snapshot_with_tap_async(
+    context: &ProjectServiceRequestContext,
+    window_id: &str,
+    tap_snapshot: Option<&Value>,
+    line_count: i64,
+    max_chars: usize,
+) -> Result<Option<Value>, String> {
+    if let Some(snapshot) = hot_preview_snapshot(context, window_id, max_chars) {
+        return Ok(merge_expose_preview_snapshots(
+            Some(&snapshot),
+            tap_snapshot,
+        ));
+    }
+    let options = CapturePaneOptions {
+        start_line: Some(-line_count),
+        end_line: None,
+        include_escapes: true,
+    };
+    let key = AgentOutputCaptureCacheKey {
+        window_id: window_id.to_owned(),
+        options,
+    };
+    let output = match context.output_cache.fresh(&key)? {
+        Some(output) => output,
+        None => {
+            let mut command: AsyncCommand = tmux_command_from_env();
+            command.args(capture_pane_argv(window_id, options));
+            let output = command
+                .output_timeout_async(Duration::from_secs(2))
+                .await
+                .map_err(|error| format!("tmux capture-pane failed for {window_id}: {error}"))?;
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+                return Err(if stderr.is_empty() {
+                    format!("tmux capture-pane failed for {window_id}")
+                } else {
+                    stderr
+                });
+            }
+            let output = String::from_utf8_lossy(&output.stdout).into_owned();
+            context.output_cache.store(key, output.clone())?;
+            output
+        }
+    };
+    let capture_snapshot = json!({
+        "output": trailing_chars(&output, max_chars),
+        "capturedAt": now_iso(),
+        "source": "capture",
+        "windowId": window_id,
+        "startLine": -line_count,
+        "lineCount": line_count,
+    });
+    Ok(merge_expose_preview_snapshots(
+        Some(&capture_snapshot),
+        tap_snapshot,
+    ))
 }
 
 pub fn hot_preview_snapshot(
