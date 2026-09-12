@@ -4,9 +4,9 @@
 This is intentionally not part of the default unit test lane. It is a blocking
 CI residual job because it starts live processes and a private tmux server, but
 every side effect is scoped to temp HOME/AIMUX_HOME roots, random loopback
-ports, and a unique tmux -L socket. Run lanes serially. Parallel residual lanes
-can observe each other's live daemon/process snapshots and report confusing
-false residuals.
+ports, and a unique tmux -L socket. Temp project-services must stay on the
+scope's isolated daemon port; using the default daemon would let unrelated live
+drives contaminate the result.
 """
 
 from __future__ import annotations
@@ -79,6 +79,18 @@ class Scope:
         self.home.mkdir(parents=True, exist_ok=True)
         self.aimux_home.mkdir(parents=True, exist_ok=True)
         self.project.mkdir(parents=True, exist_ok=True)
+        assert_isolated_daemon_port(self.env.get("AIMUX_DAEMON_PORT"), "scope initialization")
+
+    def daemon_port(self) -> int:
+        port = self.env.get("AIMUX_DAEMON_PORT")
+        assert_isolated_daemon_port(port, "scope daemon port")
+        return int(port)
+
+    def set_daemon_port(self, port: int) -> None:
+        if not isinstance(port, int):
+            raise LiveResidualFailure(f"isolated daemon port must be an integer, got {port!r}")
+        assert_isolated_daemon_port(str(port), "scope daemon port override")
+        self.env["AIMUX_DAEMON_PORT"] = str(port)
 
     def init_git_project(self) -> None:
         run(["git", "init", "-q"], cwd=self.project, env=self.env, timeout=10)
@@ -194,6 +206,20 @@ def isolated_env(home: Path, aimux_home: Path, aimux_bin: Path, tmp: Path) -> di
     env["TMPDIR"] = str(tmp)
     Path(env["TMPDIR"]).mkdir(parents=True, exist_ok=True)
     return without_tmux(env)
+
+
+def assert_isolated_daemon_port(value: str | None, label: str) -> None:
+    try:
+        port = int((value or "").strip())
+    except ValueError as error:
+        raise LiveResidualFailure(f"{label} has invalid AIMUX_DAEMON_PORT={value!r}") from error
+    if port == DEFAULT_DAEMON_PORT:
+        raise LiveResidualFailure(
+            f"{label} would use default daemon port {DEFAULT_DAEMON_PORT}; "
+            "live residual temp project-services require an isolated daemon port"
+        )
+    if port <= 0 or port > 65535:
+        raise LiveResidualFailure(f"{label} has out-of-range AIMUX_DAEMON_PORT={port}")
 
 
 def without_tmux(env: dict[str, str]) -> dict[str, str]:
@@ -4215,7 +4241,7 @@ def run_process_race_smoke(aimux_bin: Path, mutation: str | None) -> dict[str, A
         (daemon_dir / "daemon.json").write_text(
             json.dumps({
                 "pid": 999999,
-                "port": int(scope.env["AIMUX_DAEMON_PORT"]),
+                "port": scope.daemon_port(),
                 "startedAt": "1970-01-01T00:00:00.000Z",
                 "updatedAt": "1970-01-01T00:00:00.000Z",
             })
@@ -4330,7 +4356,7 @@ def process_residual_snapshot(scope: Scope, aimux_bin: Path) -> dict[str, Any]:
         except Exception as error:
             return {"error": str(error), "raw": path.read_text(errors="replace")[-2000:] if path.exists() else None}
 
-    port = scope.env["AIMUX_DAEMON_PORT"]
+    port = str(scope.daemon_port())
     listeners = run(
         ["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN"],
         timeout=5,
