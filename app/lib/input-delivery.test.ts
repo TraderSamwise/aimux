@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   formatLivePaneInputDeliveryNotice,
   formatLivePaneInputResponseRefusal,
+  formatPostActionTranscriptRefreshResult,
 } from "./input-delivery";
 
 describe("formatLivePaneInputDeliveryNotice", () => {
@@ -36,5 +37,18 @@ describe("formatLivePaneInputDeliveryNotice", () => {
         accepted: true,
       }),
     ).toBeNull();
+  });
+
+  it("reports post-action transcript refresh failures without rewriting the action result", () => {
+    expect(
+      formatPostActionTranscriptRefreshResult(
+        "Input sent",
+        new Error("live-pane output request timed out"),
+      ),
+    ).toBe("Input sent, but transcript refresh failed: live-pane output request timed out");
+  });
+
+  it("keeps successful post-action transcript refreshes quiet", () => {
+    expect(formatPostActionTranscriptRefreshResult("Input sent", null)).toBeNull();
   });
 });
