@@ -8,7 +8,9 @@ use aimux::project_service::desktop_state::{
 use aimux::project_service::operation_failures::{
     OperationFailureInput, add_dashboard_operation_failure,
 };
-use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
+use aimux::project_service::router::{
+    OscOutputTap, ProjectServiceRequestContext, route_project_service_request,
+};
 use aimux::project_service::runtime_exchange::{runtime_exchange_path, write_runtime_exchange};
 use aimux::runtime_topology::{coerce_runtime_topology, runtime_topology_path};
 use aimux::tmux::CapturePaneOptions;
@@ -378,6 +380,77 @@ fn async_route_desktop_state_preserves_live_sessions_and_reports_tmux_liveness_q
                     .is_some_and(|message| message.contains("tmux socket busy"))
         }),
         "desktop-state async route must name tmux liveness query failures: {failures:#?}"
+    );
+    cleanup(project);
+}
+
+#[test]
+fn async_route_desktop_state_preview_does_not_start_sync_tap() {
+    let (project, state_dir) = write_desktop_state_fixtures("async-preview-no-sync-tap");
+    write_hot_expose_scope_view(
+        &state_dir,
+        HotExposeScopeKey {
+            project_root: project.to_string_lossy().into_owned(),
+            scope: ExposeScope::Project,
+            worktree_key: None,
+            launch_window_id: None,
+        },
+        ExposeScopeView {
+            scope: ExposeScope::Project,
+            scope_label: "all worktrees".into(),
+            sublabel: ExposeSublabel::Worktree,
+            items: vec![json!({
+                "id": "codex-live",
+                "label": "codex-live",
+                "urgency": 0,
+                "activity": 0,
+                "recentRank": 0,
+                "target": {
+                    "sessionName": "aimux-test",
+                    "windowId": "@1",
+                    "windowIndex": 1,
+                    "windowName": "codex-live"
+                },
+                "metadata": {
+                    "kind": "agent",
+                    "sessionId": "codex-live",
+                    "command": "codex"
+                },
+                "previewSnapshot": {
+                    "output": "hot preview",
+                    "capturedAt": "2026-07-20T13:00:00.000Z",
+                    "source": "capture",
+                    "windowId": "@1",
+                    "startLine": -40,
+                    "lineCount": 40
+                }
+            })],
+        },
+        None,
+    );
+    let isolation = support::TestIsolation::new("desktop-state-async-preview-no-sync-tap");
+    let tap = OscOutputTap::counting_for_test();
+    let mut context = isolation.project_context(&project, &state_dir);
+    context.osc_output_tap = tap.clone();
+
+    // aimux-async-seam: test - desktop-state preview route test drives async handler
+    let response = aimux::async_runtime::block_on_named(
+        "test:desktop-state-async-preview",
+        route_desktop_state_request_async(
+            &context,
+            "GET",
+            &format!("{}?includePreview=1", routes::DESKTOP_STATE),
+        ),
+    )
+    .expect("desktop-state async route");
+
+    assert_eq!(response.status, 200);
+    let live = find(response.body["sessions"].as_array().unwrap(), "codex-live");
+    assert_eq!(live["previewSnapshot"]["output"], "hot preview");
+    assert_eq!(
+        tap.track_read_call_count(),
+        0,
+        "async preview routes must not start sync tmux pane taps"
     );
     cleanup(project);
 }

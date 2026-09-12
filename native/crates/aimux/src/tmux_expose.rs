@@ -982,9 +982,7 @@ pub fn run_tmux_expose_with_drivers(
                     options.current_window_id.as_deref(),
                 );
             }
-            Err(_) if loading => {
-                loading = false;
-            }
+            Err(_) if loading => {}
             Err(_) => {}
         }
         render_state = RenderGridExposeState { sort_mode, loading };
@@ -1427,7 +1425,7 @@ pub fn load_expose_scope_items_with(
             CORE_API_ROUTES.expose_items,
             common_expose_query(),
         );
-        let items = request_expose_items(&url, client);
+        let items = request_expose_items(&url, client)?;
         return Ok(ExposeScopeView {
             scope,
             items,
@@ -1451,7 +1449,7 @@ pub fn load_expose_scope_items_with(
     query.extend(common_expose_query());
     append_focus_context_query(&mut query, context);
     let url = url_with_query(&endpoint, routes::controls::SWITCHABLE_AGENTS, query);
-    let items = request_expose_items(&url, client);
+    let items = request_expose_items(&url, client)?;
     Ok(ExposeScopeView {
         scope,
         items,
@@ -1483,7 +1481,7 @@ pub fn load_overseer_expose_item_with(
     query.push(("includeOverseer".into(), "1".into()));
     append_focus_context_query(&mut query, context);
     let url = url_with_query(&endpoint, routes::controls::SWITCHABLE_AGENTS, query);
-    Ok(request_expose_items(&url, client)
+    Ok(request_expose_items(&url, client)?
         .into_iter()
         .find(|item| item.get("overseer").and_then(Value::as_bool) == Some(true)))
 }
@@ -1587,7 +1585,10 @@ pub fn write_expose_ui_state(
     .map_err(|error| error.to_string())
 }
 
-fn request_expose_items(url: &str, client: &mut impl ExposeHttpClient) -> Vec<Value> {
+fn request_expose_items(
+    url: &str,
+    client: &mut impl ExposeHttpClient,
+) -> Result<Vec<Value>, String> {
     let response = client.request_json(
         url,
         ExposeHttpRequest {
@@ -1595,18 +1596,14 @@ fn request_expose_items(url: &str, client: &mut impl ExposeHttpClient) -> Vec<Va
             body: None,
             timeout_ms: EXPOSE_HTTP_TIMEOUT_MS,
         },
-    );
-    let Ok(response) = response else {
-        return Vec::new();
-    };
+    )?;
     if response.get("ok").and_then(Value::as_bool) != Some(true) {
-        return Vec::new();
+        return Err("expose items request returned ok:false".to_owned());
     }
-    response
-        .get("items")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default()
+    let Some(items) = response.get("items").and_then(Value::as_array).cloned() else {
+        return Err("expose items response missing items array".to_owned());
+    };
+    Ok(items)
 }
 
 fn seed_preview_snapshots(items: &[Value]) -> BTreeMap<String, String> {

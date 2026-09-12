@@ -19,6 +19,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 pub const TMUX_SEND_TEXT_CHUNK_BYTES: usize = 4_000;
+pub const TMUX_CAPTURE_TARGET_TIMEOUT: Duration = Duration::from_secs(2);
 pub const WINDOW_TARGET_FORMAT: &str = "#{window_id}\t#{window_index}\t#{window_name}";
 pub const WINDOW_LIST_FORMAT: &str = "#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_activity}\t#{pane_dead}";
 pub const MANAGED_TMUX_TERMINAL_FEATURES: [&str; 5] = [
@@ -146,6 +147,7 @@ pub struct PanePipeFileOptions {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TmuxExecOptions {
     pub cwd: Option<String>,
+    pub timeout: Option<Duration>,
 }
 
 type TmuxExecFn = dyn FnMut(&[String], Option<&TmuxExecOptions>) -> Result<String, String>;
@@ -176,9 +178,15 @@ impl TmuxRuntimeManager {
             if let Some(cwd) = options.and_then(|options| options.cwd.as_deref()) {
                 command.current_dir(cwd);
             }
-            let result = command
-                .output()
-                .map_err(|error| format!("failed to run tmux: {error}"))?;
+            let result = if let Some(timeout) = options.and_then(|options| options.timeout) {
+                command
+                    .output_timeout("tmux:subprocess", timeout)
+                    .map_err(|error| format!("failed to run tmux: {error}"))?
+            } else {
+                command
+                    .output()
+                    .map_err(|error| format!("failed to run tmux: {error}"))?
+            };
             let elapsed_ms = started_at.elapsed().as_secs_f64() * 1000.0;
             record_tmux_exec(args, elapsed_ms, TmuxExecMode::Sync);
             if result.status.success() {
@@ -333,6 +341,7 @@ impl TmuxRuntimeManager {
                     new_session_argv(&session.session_name, &project_root_text, dashboard_command),
                     Some(TmuxExecOptions {
                         cwd: Some(project_root_text.clone()),
+                        ..TmuxExecOptions::default()
                     }),
                 )?;
                 if !self.wait_for_session(&session.session_name, Duration::from_millis(500)) {
@@ -429,7 +438,24 @@ impl TmuxRuntimeManager {
     /// Window ids that currently exist across every tmux session on this server.
     /// One call, so a caller validating many sessions does not spawn tmux per session.
     pub fn try_live_window_ids(&mut self) -> Result<std::collections::BTreeSet<String>, String> {
-        let raw = match self.exec_owned(list_all_window_ids_argv(), None) {
+        self.try_live_window_ids_with_options(None)
+    }
+
+    pub fn try_live_window_ids_with_timeout(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<std::collections::BTreeSet<String>, String> {
+        self.try_live_window_ids_with_options(Some(TmuxExecOptions {
+            timeout: Some(timeout),
+            ..TmuxExecOptions::default()
+        }))
+    }
+
+    fn try_live_window_ids_with_options(
+        &mut self,
+        options: Option<TmuxExecOptions>,
+    ) -> Result<std::collections::BTreeSet<String>, String> {
+        let raw = match self.exec_owned(list_all_window_ids_argv(), options) {
             Ok(raw) => raw,
             Err(error) if tmux_list_sessions_failed_because_no_server(&error) => {
                 return Ok(Default::default());
@@ -475,6 +501,7 @@ impl TmuxRuntimeManager {
                 argv,
                 Some(TmuxExecOptions {
                     cwd: Some(cwd.to_owned()),
+                    ..TmuxExecOptions::default()
                 }),
             )
             .map_err(|_| {
@@ -554,6 +581,7 @@ impl TmuxRuntimeManager {
             ),
             Some(TmuxExecOptions {
                 cwd: Some(project_root.to_owned()),
+                ..TmuxExecOptions::default()
             }),
         )?;
         self.list_windows(session_name)?
@@ -580,6 +608,7 @@ impl TmuxRuntimeManager {
             respawn_window_argv(&target.window_id, spec),
             Some(TmuxExecOptions {
                 cwd: Some(spec.cwd.clone()),
+                ..TmuxExecOptions::default()
             }),
         )
         .map(|_| ())
@@ -744,7 +773,13 @@ impl TmuxRuntimeManager {
         target: &TmuxTarget,
         options: CapturePaneOptions,
     ) -> Result<String, String> {
-        self.exec_owned(capture_pane_argv(&target.window_id, options), None)
+        self.exec_owned(
+            capture_pane_argv(&target.window_id, options),
+            Some(TmuxExecOptions {
+                timeout: Some(TMUX_CAPTURE_TARGET_TIMEOUT),
+                ..TmuxExecOptions::default()
+            }),
+        )
     }
 
     pub async fn capture_target_async(
@@ -752,7 +787,25 @@ impl TmuxRuntimeManager {
         target: &TmuxTarget,
         options: CapturePaneOptions,
     ) -> Result<String, String> {
-        self.capture_target(target, options)
+        let started_at = Instant::now();
+        let args = capture_pane_argv(&target.window_id, options);
+        let mut command = tmux_command_from_env();
+        command.args(&args);
+        let result = command
+            .output_timeout_async(TMUX_CAPTURE_TARGET_TIMEOUT)
+            .await
+            .map_err(|error| format!("failed to run tmux: {error}"))?;
+        let elapsed_ms = started_at.elapsed().as_secs_f64() * 1000.0;
+        record_tmux_exec(&args, elapsed_ms, TmuxExecMode::Async);
+        if result.status.success() {
+            return Ok(String::from_utf8_lossy(&result.stdout).trim().to_owned());
+        }
+        let stderr = String::from_utf8_lossy(&result.stderr).trim().to_owned();
+        Err(if stderr.is_empty() {
+            format!("tmux exited with {}", result.status)
+        } else {
+            stderr
+        })
     }
 
     pub fn start_pane_pipe(
@@ -1704,6 +1757,7 @@ impl TmuxRuntimeManager {
                 new_session_argv(client_session_name, project_root, None),
                 Some(TmuxExecOptions {
                     cwd: Some(project_root.to_owned()),
+                    ..TmuxExecOptions::default()
                 }),
             )?;
             self.set_current_runtime_contract(client_session_name)?;
@@ -1762,6 +1816,7 @@ impl TmuxRuntimeManager {
                     ],
                     Some(TmuxExecOptions {
                         cwd: Some(project_root.to_owned()),
+                        ..TmuxExecOptions::default()
                     }),
                 )?;
             }

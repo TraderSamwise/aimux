@@ -39,6 +39,7 @@ use crate::project_service::agent_input_delivery::agent_input_delivery_task;
 use crate::project_service::agent_restore_task::agent_restore_snapshot_task;
 use crate::project_service::builtin_metadata_task::builtin_metadata_task;
 use crate::project_service::loop_watcher_task::loop_watcher_task;
+use crate::project_service::runtime_health_history::runtime_health_recorder_task;
 use crate::project_service::scheduler::{ProjectSchedulerHandle, spawn_project_service_scheduler};
 use crate::project_service::scribe_watcher_task::scribe_watcher_task;
 use crate::project_service::transcript_reconciler_task::transcript_reconciler_task;
@@ -1537,6 +1538,7 @@ async fn serve_project_service_listener_until<Stop>(
     periodic_tasks.push(agent_restore_snapshot_task(&context));
     periodic_tasks.push(transcript_reconciler_task(&context));
     periodic_tasks.push(agent_input_delivery_task(&context));
+    periodic_tasks.push(runtime_health_recorder_task());
     periodic_tasks.push(loop_watcher_task(&context));
     periodic_tasks.push(scribe_watcher_task(&context));
     log_lifecycle_always(
@@ -2183,6 +2185,42 @@ mod tests {
             "unexpected error: {error:#}"
         );
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn expose_socket_input_drops_initial_trigger_after_terminal_report() {
+        let (mut writer, reader) = UnixStream::pair().expect("unix stream pair");
+        let mut input = PrefixedRead::new(Vec::new(), reader);
+        let mut buffer = [0_u8; 16];
+
+        std::io::Write::write_all(&mut writer, b"\x1b[18tg")
+            .expect("write terminal report then trigger echo");
+        match input.read_timeout(&mut buffer, Duration::from_millis(20)) {
+            ExposeInputEvent::Data(5) => assert_eq!(&buffer[..5], b"\x1b[18t"),
+            other => panic!("expected terminal report while dropping trigger echo, got {other:?}"),
+        }
+
+        std::io::Write::write_all(&mut writer, b"n").expect("write navigation key");
+        match input.read_timeout(&mut buffer, Duration::from_millis(20)) {
+            ExposeInputEvent::Data(1) => assert_eq!(buffer[0], b'n'),
+            other => panic!("expected navigation key after delayed trigger echo, got {other:?}"),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn expose_socket_input_preserves_initial_key_after_terminal_report() {
+        let (mut writer, reader) = UnixStream::pair().expect("unix stream pair");
+        let mut input = PrefixedRead::new(Vec::new(), reader);
+        let mut buffer = [0_u8; 16];
+
+        std::io::Write::write_all(&mut writer, b"\x1b[18tn")
+            .expect("write terminal report then navigation key");
+        match input.read_timeout(&mut buffer, Duration::from_millis(20)) {
+            ExposeInputEvent::Data(6) => assert_eq!(&buffer[..6], b"\x1b[18tn"),
+            other => panic!("expected terminal report and navigation key, got {other:?}"),
+        }
     }
 
     #[test]
@@ -3219,6 +3257,15 @@ struct PrefixedRead<R> {
     prefix: Vec<u8>,
     offset: usize,
     inner: R,
+    initial_tmux_trigger_echo: InitialTmuxTriggerEcho,
+}
+
+#[cfg(unix)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InitialTmuxTriggerEcho {
+    Armed,
+    SawCtrlA,
+    Done,
 }
 
 #[cfg(unix)]
@@ -3228,6 +3275,7 @@ impl<R> PrefixedRead<R> {
             prefix,
             offset: 0,
             inner,
+            initial_tmux_trigger_echo: InitialTmuxTriggerEcho::Armed,
         }
     }
 }
@@ -3258,7 +3306,10 @@ impl ExposeInputSource for PrefixedRead<UnixStream> {
         let _ = self.inner.set_read_timeout(Some(timeout));
         let event = match self.inner.read(buffer) {
             Ok(0) => ExposeInputEvent::End,
-            Ok(count) => ExposeInputEvent::Data(count),
+            Ok(count) => match self.strip_initial_tmux_trigger_echo(buffer, count) {
+                0 => ExposeInputEvent::Timeout,
+                count => ExposeInputEvent::Data(count),
+            },
             Err(error)
                 if matches!(
                     error.kind(),
@@ -3274,6 +3325,82 @@ impl ExposeInputSource for PrefixedRead<UnixStream> {
         let _ = self.inner.set_read_timeout(None);
         event
     }
+}
+
+#[cfg(unix)]
+impl<R> PrefixedRead<R> {
+    fn strip_initial_tmux_trigger_echo(&mut self, buffer: &mut [u8], count: usize) -> usize {
+        match self.initial_tmux_trigger_echo {
+            InitialTmuxTriggerEcho::Done => count,
+            InitialTmuxTriggerEcho::SawCtrlA => {
+                if count == 0 {
+                    return 0;
+                }
+                self.initial_tmux_trigger_echo = InitialTmuxTriggerEcho::Done;
+                if matches!(buffer[0], b'g' | b'd') {
+                    let remaining = count - 1;
+                    buffer.copy_within(1..count, 0);
+                    remaining
+                } else {
+                    count
+                }
+            }
+            InitialTmuxTriggerEcho::Armed => {
+                let Some(offset) = first_initial_key_offset(buffer, count) else {
+                    return count;
+                };
+                if matches!(buffer.get(offset).copied(), Some(b'g' | b'd')) {
+                    self.initial_tmux_trigger_echo = InitialTmuxTriggerEcho::Done;
+                    let remaining = count - 1;
+                    buffer.copy_within(offset + 1..count, offset);
+                    return remaining;
+                }
+                if buffer[offset] == 0x01 {
+                    if offset + 1 >= count {
+                        self.initial_tmux_trigger_echo = InitialTmuxTriggerEcho::SawCtrlA;
+                        return offset;
+                    }
+                    if matches!(buffer.get(offset + 1).copied(), Some(b'g' | b'd')) {
+                        self.initial_tmux_trigger_echo = InitialTmuxTriggerEcho::Done;
+                        let remaining = count - 2;
+                        buffer.copy_within(offset + 2..count, offset);
+                        return remaining;
+                    }
+                }
+                self.initial_tmux_trigger_echo = InitialTmuxTriggerEcho::Done;
+                count
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+fn first_initial_key_offset(buffer: &[u8], count: usize) -> Option<usize> {
+    let mut offset = 0;
+    while offset < count {
+        if let Some(next) = terminal_report_end(buffer, offset, count) {
+            offset = next;
+            continue;
+        }
+        return Some(offset);
+    }
+    None
+}
+
+#[cfg(unix)]
+fn terminal_report_end(buffer: &[u8], offset: usize, count: usize) -> Option<usize> {
+    if buffer.get(offset) != Some(&0x1b) || buffer.get(offset + 1) != Some(&b'[') {
+        return None;
+    }
+    let mut cursor = offset + 2;
+    while cursor < count {
+        let byte = buffer[cursor];
+        if (0x40..=0x7e).contains(&byte) {
+            return Some(cursor + 1);
+        }
+        cursor += 1;
+    }
+    None
 }
 
 fn project_request_from_daemon(request: DaemonHttpRequest) -> ProjectServiceHttpRequest {
