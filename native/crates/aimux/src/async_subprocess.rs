@@ -308,6 +308,36 @@ mod tests {
         assert!(matches!(error, AsyncCommandError::Spawn { .. }));
     }
 
+    #[test]
+    fn detached_spawn_survives_helper_returning() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        let root =
+            std::env::temp_dir().join(format!("aimux-async-detached-{}", std::process::id()));
+        fs::create_dir_all(&root).expect("temp dir");
+        let pid_path = root.join("pid");
+
+        let mut command = AsyncCommand::new("/bin/sh");
+        command.args([
+            "-c",
+            &format!(
+                "echo $$ > {}; while :; do sleep 1; done",
+                pid_path.display()
+            ),
+        ]);
+        let child_id = command
+            .spawn_detached(command_task_name("async-subprocess-test", "detached"))
+            .expect("detached child should spawn");
+        let pid = wait_for_pid_file(&pid_path);
+        assert_eq!(pid, child_id as i32);
+        assert!(pid_alive(pid), "detached child died when helper returned");
+
+        unsafe {
+            libc::kill(pid, libc::SIGTERM);
+        }
+        wait_until_not_alive(pid);
+        let _ = fs::remove_dir_all(root);
+    }
+
     fn wait_for_pid_file(path: &std::path::Path) -> i32 {
         let deadline = Instant::now() + Duration::from_secs(2);
         loop {
