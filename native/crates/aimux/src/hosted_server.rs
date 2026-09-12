@@ -824,8 +824,12 @@ where
         let runtime = runtime
             .lock()
             .expect("hosted daemon runtime mutex poisoned");
-        let projects = runtime.list_projects_for_route();
-        resolve_hosted_operator_stream(&actor, "GET", &request.path, &projects)
+        runtime
+            .try_list_projects_for_route()
+            .map_err(|error| RemoteAccessDecision::deny(500, error))
+            .and_then(|projects| {
+                resolve_hosted_operator_stream(&actor, "GET", &request.path, &projects)
+            })
     };
     let target = match resolved {
         Ok(target) => target,
@@ -1031,8 +1035,12 @@ where
             let runtime = runtime
                 .lock()
                 .expect("hosted daemon runtime mutex poisoned");
-            let projects = runtime.list_projects_for_route();
-            resolve_hosted_operator_stream(&actor, "GET", &path, &projects)
+            runtime
+                .try_list_projects_for_route()
+                .map_err(|error| RemoteAccessDecision::deny(500, error))
+                .and_then(|projects| {
+                    resolve_hosted_operator_stream(&actor, "GET", &path, &projects)
+                })
         },
     )
     .await
@@ -1574,7 +1582,13 @@ fn handle_authenticated(
             }
         }
 
-        let projects = runtime.list_projects_for_route();
+        let projects = match runtime.try_list_projects_for_route() {
+            Ok(projects) => projects,
+            Err(error) => {
+                status = 500;
+                return hosted_json(500, json!({ "ok": false, "error": error }));
+            }
+        };
         let context = build_hosted_daemon_route_context(
             method,
             &request.path,

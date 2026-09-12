@@ -3701,7 +3701,7 @@ impl DaemonJsonRouteRuntime for RealDaemonRuntime {
     }
 
     fn expose_items(&mut self, path: &str) -> Result<Value, String> {
-        let projects = self.list_projects_for_route();
+        let projects = self.try_list_projects_for_route()?;
         expose_items_route(
             &mut self.resolver,
             session_prefix_for_project,
@@ -4364,11 +4364,15 @@ fn tmux_target_json(target: &TmuxTarget) -> Value {
 }
 
 fn restart_before_report(runtime: &impl DaemonStatusRuntime, issued_at: &str) -> Value {
-    let projects = runtime.list_projects_for_route();
+    let (projects, project_read_error) = match runtime.try_list_projects_for_route() {
+        Ok(projects) => (projects, Value::Null),
+        Err(error) => (Vec::new(), Value::String(error)),
+    };
     json!({
         "generatedAt": issued_at,
         "daemon": runtime.current_daemon_info(issued_at),
         "expectedServiceManifest": runtime.project_service_info(),
+        "projectReadError": project_read_error,
         "projectCount": projects.len(),
         "serviceAliveCount": projects.iter().filter(|project| project.service_alive).count(),
         "daemonStateProjectCount": runtime.daemon_state().projects.len(),

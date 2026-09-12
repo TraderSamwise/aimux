@@ -21,6 +21,8 @@ struct FakeCoreRuntime {
     credentials: bool,
     relay: Value,
     record_prepare: bool,
+    project_read_error: Option<String>,
+    projects: Vec<ProjectsRouteProject>,
 }
 
 impl Default for FakeCoreRuntime {
@@ -30,6 +32,20 @@ impl Default for FakeCoreRuntime {
             credentials: true,
             relay: json!({ "status": "connected" }),
             record_prepare: false,
+            project_read_error: None,
+            projects: vec![ProjectsRouteProject {
+                id: "repo-id".into(),
+                name: "repo".into(),
+                path: "/repo".into(),
+                last_seen: Some("2026-03-28T00:00:00.000Z".into()),
+                dashboard_session_name: "aimux-repo-id".into(),
+                service: Some(
+                    json!({ "projectId": "repo-id", "projectRoot": "/repo", "pid": 9123 }),
+                ),
+                service_alive: true,
+                service_endpoint: Some(json!({ "host": "127.0.0.1", "port": 44191, "pid": 9123 })),
+                online_agent_count: None,
+            }],
         }
     }
 }
@@ -49,17 +65,14 @@ impl DaemonStatusRuntime for FakeCoreRuntime {
     }
 
     fn list_projects_for_route(&self) -> Vec<ProjectsRouteProject> {
-        vec![ProjectsRouteProject {
-            id: "repo-id".into(),
-            name: "repo".into(),
-            path: "/repo".into(),
-            last_seen: Some("2026-03-28T00:00:00.000Z".into()),
-            dashboard_session_name: "aimux-repo-id".into(),
-            service: Some(json!({ "projectId": "repo-id", "projectRoot": "/repo", "pid": 9123 })),
-            service_alive: true,
-            service_endpoint: Some(json!({ "host": "127.0.0.1", "port": 44191, "pid": 9123 })),
-            online_agent_count: None,
-        }]
+        self.projects.clone()
+    }
+
+    fn try_list_projects_for_route(&self) -> Result<Vec<ProjectsRouteProject>, String> {
+        if let Some(error) = &self.project_read_error {
+            return Err(error.clone());
+        }
+        Ok(self.list_projects_for_route())
     }
 
     fn daemon_state(&self) -> DaemonState {
@@ -80,6 +93,54 @@ impl DaemonStatusRuntime for FakeCoreRuntime {
     fn resolve_project_root(&self, cwd: &str) -> String {
         cwd.into()
     }
+}
+
+#[test]
+fn core_status_reports_project_read_failure_not_empty() {
+    let mut runtime = FakeCoreRuntime {
+        project_read_error: Some("registry snapshot unreadable".into()),
+        ..FakeCoreRuntime::default()
+    };
+
+    let status = json_body(route_core_command(
+        &mut runtime,
+        Some(&json!({ "id": "status", "command": CORE_COMMAND_NAMES.status })),
+        "issued",
+    ));
+    assert_eq!(status["ok"], false);
+    assert_eq!(status["error"], "registry snapshot unreadable");
+    assert!(status.get("projects").is_none(), "{status}");
+
+    let projects = json_body(route_core_command(
+        &mut runtime,
+        Some(&json!({ "id": "projects", "command": CORE_COMMAND_NAMES.projects_list })),
+        "issued",
+    ));
+    assert_eq!(projects["ok"], false);
+    assert_eq!(projects["error"], "registry snapshot unreadable");
+    assert!(projects.get("projects").is_none(), "{projects}");
+}
+
+#[test]
+fn core_projects_list_preserves_genuine_empty_result() {
+    let mut runtime = FakeCoreRuntime {
+        projects: Vec::new(),
+        ..FakeCoreRuntime::default()
+    };
+
+    let projects = json_body(route_core_command(
+        &mut runtime,
+        Some(&json!({ "id": "projects", "command": CORE_COMMAND_NAMES.projects_list })),
+        "issued",
+    ));
+    assert_eq!(projects["ok"], true);
+    assert_eq!(
+        projects["result"]["projects"]
+            .as_array()
+            .expect("projects array")
+            .len(),
+        0
+    );
 }
 
 impl DaemonCoreCommandRuntime for FakeCoreRuntime {

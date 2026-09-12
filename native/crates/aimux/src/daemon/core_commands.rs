@@ -72,7 +72,15 @@ pub fn route_core_command(
         command if command == CORE_COMMAND_NAMES.ping => Ok(json!({ "pong": true })),
         command if command == CORE_COMMAND_NAMES.status => {
             let daemon = runtime.current_daemon_info(issued_at);
-            let projects = runtime.list_projects_for_route();
+            let projects = match runtime.try_list_projects_for_route() {
+                Ok(projects) => projects,
+                Err(error) => {
+                    return DaemonRouteResponse::json(
+                        500,
+                        command_error(&id, Some(command), error),
+                    );
+                }
+            };
             let state = runtime.daemon_state();
             let project_service_fleet = project_service_fleet_json(&projects, &state);
             Ok(json!({
@@ -90,7 +98,10 @@ pub fn route_core_command(
             }))
         }
         command if command == CORE_COMMAND_NAMES.projects_list => {
-            Ok(json!({ "projects": runtime.list_projects_for_route() }))
+            match runtime.try_list_projects_for_route() {
+                Ok(projects) => Ok(json!({ "projects": projects })),
+                Err(error) => Err(error),
+            }
         }
         command if command == CORE_COMMAND_NAMES.project_ensure => {
             let project_root = match require_project_root(&id, command, payload) {
