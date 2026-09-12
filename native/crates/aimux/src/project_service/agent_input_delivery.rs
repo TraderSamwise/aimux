@@ -351,6 +351,10 @@ impl PeriodicTask for AgentInputDeliveryTask {
         DELIVERY_TASK_INTERVAL_MS
     }
 
+    fn timeout(&self) -> Duration {
+        DELIVERY_TASK_TIMEOUT + Duration::from_secs(1)
+    }
+
     fn run(&mut self, _context: &ProjectServiceRequestContext) {
         let deadline = Instant::now() + DELIVERY_TASK_TIMEOUT;
         let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));

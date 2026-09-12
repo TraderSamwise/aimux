@@ -98,6 +98,10 @@ impl PeriodicTask for LoopWatcherTask {
             .max(1)
     }
 
+    fn timeout(&self) -> std::time::Duration {
+        SCAN_BUDGET + std::time::Duration::from_secs(1)
+    }
+
     fn run(&mut self, context: &ProjectServiceRequestContext) {
         let project_state_dir = context.project_state_dir();
         let delivery_context = Arc::clone(&self.context);

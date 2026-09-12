@@ -67,6 +67,10 @@ impl PeriodicTask for BuiltinMetadataTask {
         SCAN_INTERVAL_MS
     }
 
+    fn timeout(&self) -> Duration {
+        SCAN_BUDGET + Duration::from_secs(1)
+    }
+
     fn run(&mut self, context: &ProjectServiceRequestContext) {
         let budget = RailBudget::new(SCAN_BUDGET);
         let input = collect_watcher_sources(context, &budget);

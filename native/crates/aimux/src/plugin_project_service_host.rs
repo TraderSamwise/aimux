@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 pub fn native_plugin_statuses_for_context(
     context: &ProjectServiceRequestContext,
@@ -514,6 +515,10 @@ impl PeriodicTask for PluginTickTask {
 
     fn interval_ms(&self) -> i64 {
         self.interval_ms
+    }
+
+    fn timeout(&self) -> Duration {
+        Duration::from_secs(10)
     }
 
     fn run(&mut self, context: &ProjectServiceRequestContext) {
