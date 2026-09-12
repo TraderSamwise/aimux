@@ -14,8 +14,10 @@ struct FakePane {
     /// Captures consumed before the first carriage return.
     reads_before_submit: Option<usize>,
     carriage_returns: usize,
+    failed_carriage_returns: usize,
     slept_ms: u64,
     current: bool,
+    carriage_return_lands: bool,
     /// Reads after which this window is claimed by a newer submit.
     superseded_after_reads: Option<usize>,
 }
@@ -27,10 +29,17 @@ impl FakePane {
             reads: 0,
             reads_before_submit: None,
             carriage_returns: 0,
+            failed_carriage_returns: 0,
             slept_ms: 0,
             current: true,
+            carriage_return_lands: true,
             superseded_after_reads: None,
         }
+    }
+
+    fn with_failing_carriage_return(mut self) -> Self {
+        self.carriage_return_lands = false;
+        self
     }
 }
 
@@ -51,6 +60,9 @@ impl PromptSubmitRuntime for FakePane {
             self.reads_before_submit = Some(self.reads);
         }
         self.carriage_returns += 1;
+        if !self.carriage_return_lands {
+            self.failed_carriage_returns += 1;
+        }
     }
     fn sleep(&mut self, millis: u64) {
         self.slept_ms += millis;
@@ -88,6 +100,21 @@ fn a_pane_that_never_renders_still_submits_rather_than_losing_the_prompt() {
     assert_eq!(
         pane.carriage_returns, 1,
         "an unrendered prompt was never submitted, so it is lost"
+    );
+}
+
+#[test]
+fn a_carriage_return_that_does_not_land_is_observable_to_tests() {
+    let drawn = format!("› {DRAFT}");
+    let mut pane = FakePane::new(&[&drawn, &drawn, &drawn, &drawn]).with_failing_carriage_return();
+
+    let submitted = wait_for_prompt_submit(&mut pane, DRAFT);
+
+    assert_eq!(pane.carriage_returns, 1);
+    assert_eq!(pane.failed_carriage_returns, 1);
+    assert!(
+        !submitted,
+        "the fake must be able to model the draft staying visible after Enter"
     );
 }
 

@@ -42,13 +42,16 @@ use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicUsize, Ordering},
     mpsc,
 };
+use std::task::{Context, Poll};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 #[derive(Debug, Clone)]
 struct FakeRuntime {
@@ -127,6 +130,67 @@ impl BlockingProxyGate {
             .expect("release lock")
             .recv_timeout(Duration::from_secs(2))
             .expect("release blocked proxy request");
+    }
+}
+
+struct ResettingAsyncHttpStream {
+    input: Vec<u8>,
+    offset: usize,
+    output: Vec<u8>,
+    reset_after_written: usize,
+}
+
+impl ResettingAsyncHttpStream {
+    fn new(input: &[u8], reset_after_written: usize) -> Self {
+        Self {
+            input: input.to_vec(),
+            offset: 0,
+            output: Vec::new(),
+            reset_after_written,
+        }
+    }
+}
+
+impl AsyncRead for ResettingAsyncHttpStream {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        if self.offset >= self.input.len() {
+            return Poll::Ready(Ok(()));
+        }
+        let remaining = &self.input[self.offset..];
+        let count = remaining.len().min(buf.remaining());
+        buf.put_slice(&remaining[..count]);
+        self.offset += count;
+        Poll::Ready(Ok(()))
+    }
+}
+
+impl AsyncWrite for ResettingAsyncHttpStream {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        if self.output.len() >= self.reset_after_written {
+            return Poll::Ready(Err(std::io::Error::new(
+                std::io::ErrorKind::ConnectionReset,
+                "injected client reset",
+            )));
+        }
+        let writable = (self.reset_after_written - self.output.len()).min(buf.len());
+        self.output.extend_from_slice(&buf[..writable]);
+        Poll::Ready(Ok(writable))
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Poll::Ready(Ok(()))
     }
 }
 
@@ -1840,6 +1904,48 @@ fn async_hosted_connection_forwards_non_stream_proxy_response() {
     assert!(runtime.lock().expect("runtime").calls.contains(
         &"proxy-json:GET:http://127.0.0.1:43210/agents/output?sessionId=s:null".to_owned()
     ));
+}
+
+#[test]
+#[ignore = "proof test for gqaapg-1: current hosted proxy handler surfaces a reset mid-response as a handler error"]
+fn async_hosted_non_stream_proxy_handles_client_reset_mid_response() {
+    let fixture = HostedFixture::new("async-non-stream-proxy-reset");
+    let token = grant_hosted_operator(&fixture.resolver, "grand", "/repo", "s");
+    let mut runtime = FakeRuntime::empty();
+    runtime.projects = vec![hosted_project("/repo", 43210, true)];
+    let runtime = Arc::new(Mutex::new(runtime));
+    let state = Arc::new(fixture.state(HostedConfig {
+        enabled: true,
+        ..HostedConfig::default()
+    }));
+    let request = format!(
+        "GET /proxy/127.0.0.1/43210/agents/output?sessionId=s HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {token}\r\n\r\n",
+    );
+    let mut stream = ResettingAsyncHttpStream::new(request.as_bytes(), 16);
+
+    let result = process_runtime()
+        // aimux-async-seam: test - hosted reset proof drives async stream handler directly
+        .block_on(handle_hosted_daemon_stream_async(
+            &runtime,
+            &state,
+            &runtime,
+            &state,
+            &mut stream,
+            aimux::daemon::listener::DaemonRequestMetadata {
+                issued_at: "issued".into(),
+                stopping: false,
+            },
+            None,
+        ));
+
+    assert!(
+        result.is_ok(),
+        "a client reset while writing the proxy response must be handled as a connection close"
+    );
+    assert!(
+        stream.output.starts_with(b"HTTP/1.1 200 OK"),
+        "reset should happen mid-response after the hosted proxy begins writing"
+    );
 }
 
 #[test]
