@@ -8,6 +8,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::atomic_write::write_json_atomic;
+use crate::backlog_metrics::{
+    AGENT_INPUT_DELIVERY_BACKLOG, BacklogMetricSnapshot, backlog_metric, record_backlog_error,
+};
 use crate::debug_logging::{LogLevel, log_at};
 
 use super::agent_output::{
@@ -188,7 +191,9 @@ pub fn enqueue_agent_input_delivery(
 ) -> Result<PendingAgentInputDelivery, String> {
     let _guard = context.agent_input_delivery_queue.lock();
     let path = agent_input_delivery_queue_path(context.project_state_dir());
-    let mut state = load_delivery_state(&path)?;
+    let mut state = load_delivery_state(&path).inspect_err(|error| {
+        record_backlog_error(AGENT_INPUT_DELIVERY_BACKLOG, None, error.clone());
+    })?;
     let pending = PendingAgentInputDelivery {
         id: next_delivery_id(),
         session_id: session_id.to_owned(),
@@ -199,7 +204,9 @@ pub fn enqueue_agent_input_delivery(
         hold_reason: hold_reason.to_owned(),
     };
     state.pending.push(pending.clone());
+    let depth = state.pending.len();
     save_delivery_state(&path, state)?;
+    backlog_metric(AGENT_INPUT_DELIVERY_BACKLOG, None).set_depth(depth);
     Ok(pending)
 }
 
@@ -224,6 +231,11 @@ pub fn run_pending_agent_input_deliveries_with_runtime(
     let _guard = context.agent_input_delivery_queue.lock();
     let path = agent_input_delivery_queue_path(context.project_state_dir());
     let Ok(state) = load_delivery_state(&path) else {
+        record_backlog_error(
+            AGENT_INPUT_DELIVERY_BACKLOG,
+            None,
+            load_error_for_path(&path),
+        );
         record_agent_input_delivery_failure(
             context,
             None,
@@ -236,6 +248,7 @@ pub fn run_pending_agent_input_deliveries_with_runtime(
         return;
     };
     if state.pending.is_empty() {
+        backlog_metric(AGENT_INPUT_DELIVERY_BACKLOG, None).set_depth(0);
         return;
     }
 
@@ -320,13 +333,18 @@ pub fn run_pending_agent_input_deliveries_with_runtime(
         version: 1,
         pending: remaining,
     };
-    if let Err(error) = save_delivery_state(&path, state) {
-        record_agent_input_delivery_failure(
-            context,
-            None,
-            "Agent input delivery queue unavailable",
-            format!("Could not save queued agent input delivery state: {error}"),
-        );
+    let depth = state.pending.len();
+    match save_delivery_state(&path, state) {
+        Ok(()) => backlog_metric(AGENT_INPUT_DELIVERY_BACKLOG, None).set_depth(depth),
+        Err(error) => {
+            record_backlog_error(AGENT_INPUT_DELIVERY_BACKLOG, None, error.clone());
+            record_agent_input_delivery_failure(
+                context,
+                None,
+                "Agent input delivery queue unavailable",
+                format!("Could not save queued agent input delivery state: {error}"),
+            );
+        }
     }
 }
 
@@ -340,6 +358,11 @@ pub async fn run_pending_agent_input_deliveries_async(
         match load_delivery_state(&path) {
             Ok(state) => state,
             Err(_) => {
+                record_backlog_error(
+                    AGENT_INPUT_DELIVERY_BACKLOG,
+                    None,
+                    load_error_for_path(&path),
+                );
                 record_agent_input_delivery_failure(
                     context,
                     None,
@@ -354,6 +377,7 @@ pub async fn run_pending_agent_input_deliveries_async(
         }
     };
     if state.pending.is_empty() {
+        backlog_metric(AGENT_INPUT_DELIVERY_BACKLOG, None).set_depth(0);
         return;
     }
 
@@ -459,14 +483,31 @@ pub async fn run_pending_agent_input_deliveries_async(
         version: 1,
         pending,
     };
-    if let Err(error) = save_delivery_state(&path, state) {
-        record_agent_input_delivery_failure(
-            context,
-            None,
-            "Agent input delivery queue unavailable",
-            format!("Could not save queued agent input delivery state: {error}"),
-        );
+    let depth = state.pending.len();
+    match save_delivery_state(&path, state) {
+        Ok(()) => backlog_metric(AGENT_INPUT_DELIVERY_BACKLOG, None).set_depth(depth),
+        Err(error) => {
+            record_backlog_error(AGENT_INPUT_DELIVERY_BACKLOG, None, error.clone());
+            record_agent_input_delivery_failure(
+                context,
+                None,
+                "Agent input delivery queue unavailable",
+                format!("Could not save queued agent input delivery state: {error}"),
+            );
+        }
     }
+}
+
+pub fn agent_input_delivery_backlog_snapshot(
+    project_state_dir: impl AsRef<Path>,
+) -> BacklogMetricSnapshot {
+    let path = agent_input_delivery_queue_path(project_state_dir);
+    let metric = backlog_metric(AGENT_INPUT_DELIVERY_BACKLOG, None);
+    match load_delivery_state(&path) {
+        Ok(state) => metric.set_depth(state.pending.len()),
+        Err(error) => metric.set_error(error),
+    }
+    metric.snapshot()
 }
 
 pub fn agent_input_delivery_task(

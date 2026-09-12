@@ -1,3 +1,4 @@
+use crate::backlog_metrics::{BacklogMetricSnapshot, backlog_snapshots};
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
 use std::cell::RefCell;
@@ -25,6 +26,7 @@ pub struct AsyncRuntimeDoctorReport {
     pub runtime: AsyncRuntimeState,
     pub totals: AsyncRuntimeTotals,
     pub tasks: Vec<AsyncTaskSnapshot>,
+    pub backlogs: Vec<BacklogMetricSnapshot>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -169,6 +171,10 @@ fn with_blocking_runtime_handle<R>(handle: Handle, closure: impl FnOnce() -> R) 
 
 pub fn doctor_tasks_report() -> AsyncRuntimeDoctorReport {
     let tasks = registry().snapshot();
+    let hosted_backlog = crate::hosted_outbox::hosted_outbox_backlog_snapshot_from_env();
+    let mut backlogs = backlog_snapshots();
+    backlogs.retain(|backlog| backlog.name != hosted_backlog.name);
+    backlogs.push(hosted_backlog);
     AsyncRuntimeDoctorReport {
         runtime: AsyncRuntimeState {
             initialized: PROCESS_RUNTIME.get().is_some(),
@@ -176,6 +182,7 @@ pub fn doctor_tasks_report() -> AsyncRuntimeDoctorReport {
         },
         totals: AsyncRuntimeTotals { live: tasks.len() },
         tasks,
+        backlogs,
     }
 }
 
@@ -197,6 +204,34 @@ pub fn render_doctor_tasks_report(report: &AsyncRuntimeDoctorReport) -> String {
             name = task.name,
             age_ms = task.age_ms
         ));
+    }
+    if !report.backlogs.is_empty() {
+        lines.push(String::new());
+        lines.push("Backlog Buffers".to_owned());
+        for backlog in &report.backlogs {
+            let depth = backlog
+                .current_depth
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "unavailable".to_owned());
+            let high = backlog
+                .high_water_mark
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "unavailable".to_owned());
+            let capacity = backlog
+                .capacity
+                .map(|value| format!("/{value}"))
+                .unwrap_or_default();
+            let error = backlog
+                .error
+                .as_deref()
+                .map(|error| format!(" error={error}"))
+                .unwrap_or_default();
+            lines.push(format!(
+                "  {name}: depth={depth} high-water={high}{capacity} status={status}{error}",
+                name = backlog.name,
+                status = backlog.status.label()
+            ));
+        }
     }
     lines.join("\n")
 }
@@ -369,6 +404,7 @@ mod tests {
     fn doctor_tasks_report_and_text_include_live_task_names() {
         init_process_runtime().expect("runtime initialized");
         let name = scoped_task_name("doctor", "tasks", "sample");
+        crate::backlog_metrics::record_backlog_depth("test/doctor-tasks-backlog", 2, Some(4));
         let task_name = name.clone();
         let handle = spawn_named(task_name, std::future::pending::<()>());
         wait_for_task(&name).expect("doctor task is registered");
@@ -376,8 +412,16 @@ mod tests {
         let report = doctor_tasks_report();
         let text = render_doctor_tasks_report(&report);
         assert!(report.tasks.iter().any(|task| task.name == name));
+        assert!(report.backlogs.iter().any(|backlog| {
+            backlog.name == "test/doctor-tasks-backlog"
+                && backlog.current_depth == Some(2)
+                && backlog.high_water_mark == Some(2)
+                && backlog.capacity == Some(4)
+        }));
         assert!(text.contains("Async Runtime Tasks"));
         assert!(text.contains(&name));
+        assert!(text.contains("Backlog Buffers"));
+        assert!(text.contains("test/doctor-tasks-backlog: depth=2 high-water=2/4"));
 
         handle.abort();
         wait_for_task_to_finish(&name).expect("doctor task is unregistered");

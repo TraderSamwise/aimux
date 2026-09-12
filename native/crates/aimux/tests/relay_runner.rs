@@ -1,5 +1,6 @@
 //! The connection loop, driven by a fake socket and a fake daemon.
 
+use aimux::backlog_metrics::BacklogMetricStatus;
 use aimux::relay_client::RelayStatus;
 use aimux::relay_runner::{
     DaemonRelayBridge, DaemonRouteResponse, ProjectEventStream, ProjectEventStreamItem, RelayRunner,
@@ -272,6 +273,32 @@ fn a_request_frame_is_routed_and_answered_with_its_id() {
     assert_eq!(response["id"], "r1");
     assert_eq!(response["type"], "response");
     assert_eq!(response["status"], 200);
+}
+
+#[test]
+fn relay_outbox_backlog_reports_current_depth_and_high_water() {
+    let runner = harness(Vec::new(), None).runner;
+
+    let initial = runner.outbox_backlog_snapshot();
+    assert_eq!(initial.status, BacklogMetricStatus::Ok);
+    assert_eq!(initial.current_depth, Some(0));
+
+    runner
+        .push_notification(&json!({ "title": "first" }))
+        .expect("first notification queued");
+    runner
+        .push_notification(&json!({ "title": "second" }))
+        .expect("second notification queued");
+
+    let queued = runner.outbox_backlog_snapshot();
+    assert_eq!(queued.status, BacklogMetricStatus::Ok);
+    assert_eq!(queued.current_depth, Some(2));
+    assert!(
+        queued
+            .high_water_mark
+            .is_some_and(|high_water| high_water >= 2)
+    );
+    assert_eq!(queued.capacity, Some(512));
 }
 
 #[test]
