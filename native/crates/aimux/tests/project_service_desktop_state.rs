@@ -12,6 +12,7 @@ use aimux::project_service::router::{
     OscOutputTap, ProjectServiceRequestContext, route_project_service_request,
 };
 use aimux::project_service::runtime_exchange::{runtime_exchange_path, write_runtime_exchange};
+use aimux::project_service::visual_clients::ProjectHotSnapshotCoordinator;
 use aimux::runtime_topology::{coerce_runtime_topology, runtime_topology_path};
 use aimux::tmux::CapturePaneOptions;
 use aimux::tmux_expose::{ExposeScope, ExposeScopeView, ExposeSublabel};
@@ -447,6 +448,41 @@ fn async_route_desktop_state_preview_does_not_start_sync_tap() {
     assert_eq!(response.status, 200);
     let live = find(response.body["sessions"].as_array().unwrap(), "codex-live");
     assert_eq!(live["previewSnapshot"]["output"], "hot preview");
+    assert_eq!(
+        tap.track_read_call_count(),
+        0,
+        "async preview routes must not start sync tmux pane taps"
+    );
+    cleanup(project);
+}
+
+#[test]
+fn async_route_desktop_state_preview_with_hot_refresh_does_not_resolve_config_synchronously() {
+    let (project, state_dir) = write_desktop_state_fixtures("async-preview-hot-refresh");
+    let isolation = support::TestIsolation::new("desktop-state-async-preview-hot-refresh");
+    let tap = OscOutputTap::counting_for_test();
+    let mut context = isolation
+        .project_context(&project, &state_dir)
+        .with_hot_snapshot_background_refresh();
+    context.visual_clients = ProjectHotSnapshotCoordinator::new(true).with_refresh_delay_ms(60_000);
+    context.osc_output_tap = tap.clone();
+
+    // aimux-async-seam: test - desktop-state preview route test drives async handler
+    let response = aimux::async_runtime::block_on_named(
+        "test:desktop-state-async-preview-hot-refresh",
+        route_desktop_state_request_async(
+            &context,
+            "GET",
+            &format!("{}?includePreview=1", routes::DESKTOP_STATE),
+        ),
+    )
+    .expect("desktop-state async route");
+
+    assert_eq!(response.status, 200);
+    assert!(
+        context.visual_clients.has_active_preview_clients(),
+        "includePreview must still register a hot-preview client"
+    );
     assert_eq!(
         tap.track_read_call_count(),
         0,
