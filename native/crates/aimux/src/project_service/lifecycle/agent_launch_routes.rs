@@ -1197,13 +1197,11 @@ mod tests {
                 .expect("spawn lifecycle progress");
         let mut runtime = FakeAsyncLifecycleRuntime;
 
-        // aimux-async-seam: transitional - temporary spawn route seam until lifecycle conversion completes
-        let response = crate::async_runtime::process_runtime().block_on(route_agent_spawn_async(
-            &context,
-            &body,
-            &mut runtime,
-            &progress,
-        ));
+        // aimux-async-seam: test - agent spawn unit test drives async handler from a sync test case
+        let response = crate::async_runtime::block_on_named(
+            "test:agent-spawn-known-root",
+            route_agent_spawn_async(&context, &body, &mut runtime, &progress),
+        );
 
         assert_eq!(response.status, 200);
         assert_eq!(

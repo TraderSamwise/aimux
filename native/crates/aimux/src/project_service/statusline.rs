@@ -1,6 +1,7 @@
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -28,6 +29,7 @@ use super::router::ProjectServiceRequestContext;
 use super::runtime_exchange::{read_runtime_exchange, runtime_exchange_path};
 
 const STATUSLINE_STALE_MS: u128 = 8_000;
+const STATUSLINE_REFRESH_STATE_FILE: &str = "statusline-refresh.json";
 
 pub fn route_statusline_refresh_request(
     context: &ProjectServiceRequestContext,
@@ -131,6 +133,21 @@ pub async fn refresh_project_statusline_async(
     context: &ProjectServiceRequestContext,
     input: StatuslineRefreshInput,
 ) -> Result<StatuslineRefreshResult, String> {
+    refresh_project_statusline_with_tmux_refresh_async(context, input, |argv| async move {
+        refresh_tmux_status_async(&argv).await
+    })
+    .await
+}
+
+pub async fn refresh_project_statusline_with_tmux_refresh_async<F, Fut>(
+    context: &ProjectServiceRequestContext,
+    input: StatuslineRefreshInput,
+    refresh_status: F,
+) -> Result<StatuslineRefreshResult, String>
+where
+    F: FnOnce(Vec<String>) -> Fut,
+    Fut: Future<Output = Result<(), String>>,
+{
     let project_state_dir = context.project_state_dir();
     if input.force {
         invalidate_tmux_statusline_artifacts(&project_state_dir);
@@ -143,9 +160,32 @@ pub async fn refresh_project_statusline_async(
         &snapshot,
         input.session_id.as_deref(),
     )?;
-    let tmux_refresh_error = refresh_tmux_status_async(&refresh_status_argv())
-        .await
-        .err();
+    write_statusline_refresh_state(
+        &project_state_dir,
+        "pending",
+        input.session_id.as_deref(),
+        None,
+    )?;
+    let tmux_refresh_error = match refresh_status(refresh_status_argv()).await {
+        Ok(()) => {
+            write_statusline_refresh_state(
+                &project_state_dir,
+                "applied",
+                input.session_id.as_deref(),
+                None,
+            )?;
+            None
+        }
+        Err(error) => {
+            write_statusline_refresh_state(
+                &project_state_dir,
+                "failed",
+                input.session_id.as_deref(),
+                Some(&error),
+            )?;
+            Some(error)
+        }
+    };
     Ok(StatuslineRefreshResult { tmux_refresh_error })
 }
 
@@ -320,6 +360,28 @@ fn write_statusline_snapshot(
     let mut text = serde_json::to_string(snapshot).map_err(|error| error.to_string())?;
     text.push('\n');
     write_text_atomic_fast(project_state_dir.as_ref().join("statusline.json"), text)
+        .map_err(|error| error.to_string())
+}
+
+fn write_statusline_refresh_state(
+    project_state_dir: &Path,
+    state: &str,
+    session_id: Option<&str>,
+    error: Option<&str>,
+) -> Result<(), String> {
+    let mut body = json!({
+        "state": state,
+        "updatedAt": now_iso(),
+    });
+    if let Some(session_id) = session_id {
+        body["sessionId"] = Value::String(session_id.to_owned());
+    }
+    if let Some(error) = error {
+        body["error"] = Value::String(error.to_owned());
+    }
+    let mut text = serde_json::to_string_pretty(&body).map_err(|error| error.to_string())?;
+    text.push('\n');
+    write_text_atomic_fast(project_state_dir.join(STATUSLINE_REFRESH_STATE_FILE), text)
         .map_err(|error| error.to_string())
 }
 

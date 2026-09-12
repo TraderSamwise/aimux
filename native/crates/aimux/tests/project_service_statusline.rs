@@ -3,13 +3,15 @@ use aimux::project_api_contract::routes;
 use aimux::project_service::router::route_project_service_request;
 use aimux::project_service::statusline::{
     StatuslineRefreshInput, refresh_project_statusline_with_tmux_refresh,
-    route_statusline_refresh_request_async,
+    refresh_project_statusline_with_tmux_refresh_async, route_statusline_refresh_request_async,
 };
 use aimux::runtime_topology::{runtime_topology_path, write_runtime_topology};
 use serde_json::{Value, json};
 use std::fs::{create_dir_all, read_to_string, remove_dir_all, write};
+use std::future::pending;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 mod support;
 
@@ -201,6 +203,97 @@ fn async_statusline_refresh_reports_tmux_refresh_failure_after_writing_artifacts
             .exists(),
         "precomputed tmux files are the hard success condition"
     );
+    let refresh_state = read_json(state_dir.join("statusline-refresh.json"));
+    assert_eq!(refresh_state["state"], "failed");
+    assert!(
+        refresh_state["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("tmux refresh-client")),
+        "failed refresh marker must preserve the tmux cause: {refresh_state}"
+    );
+    cleanup(project);
+}
+
+#[test]
+fn async_statusline_refresh_cancellation_leaves_refresh_marked_pending() {
+    let project = temp_project("async-refresh-cancel");
+    let state_dir = project.join("state");
+    write_runtime_topology(
+        runtime_topology_path(&state_dir),
+        &topology_fixture(&project),
+    )
+    .expect("topology");
+    let isolation = support::TestIsolation::new("statusline-async-refresh-cancel");
+    let context = isolation
+        .project_context(&project, &state_dir)
+        .with_desktop_state(desktop_state_fixture());
+
+    // aimux-async-seam: test - statusline cancellation test drives async helper
+    let timed_out = aimux::async_runtime::block_on_named("test:statusline-refresh-cancel", async {
+        tokio::time::timeout(
+            Duration::from_millis(10),
+            refresh_project_statusline_with_tmux_refresh_async(
+                &context,
+                StatuslineRefreshInput {
+                    session_id: Some("client-abc".into()),
+                    force: false,
+                },
+                |_argv| pending::<Result<(), String>>(),
+            ),
+        )
+        .await
+    });
+
+    assert!(
+        timed_out.is_err(),
+        "test must cancel while tmux refresh is pending"
+    );
+    assert!(
+        state_dir.join("statusline.json").exists(),
+        "statusline artifacts are complete before tmux refresh is awaited"
+    );
+    let refresh_state = read_json(state_dir.join("statusline-refresh.json"));
+    assert_eq!(refresh_state["state"], "pending");
+    assert_eq!(refresh_state["sessionId"], "client-abc");
+    assert!(
+        refresh_state.get("error").is_none(),
+        "pending refresh must not look like an applied or failed refresh: {refresh_state}"
+    );
+    cleanup(project);
+}
+
+#[test]
+fn async_statusline_refresh_success_marks_refresh_applied() {
+    let project = temp_project("async-refresh-applied");
+    let state_dir = project.join("state");
+    write_runtime_topology(
+        runtime_topology_path(&state_dir),
+        &topology_fixture(&project),
+    )
+    .expect("topology");
+    let isolation = support::TestIsolation::new("statusline-async-refresh-applied");
+    let context = isolation
+        .project_context(&project, &state_dir)
+        .with_desktop_state(desktop_state_fixture());
+
+    // aimux-async-seam: test - statusline success test drives async helper
+    let result = aimux::async_runtime::block_on_named(
+        "test:statusline-refresh-applied",
+        refresh_project_statusline_with_tmux_refresh_async(
+            &context,
+            StatuslineRefreshInput {
+                session_id: Some("client-abc".into()),
+                force: false,
+            },
+            |_argv| async { Ok(()) },
+        ),
+    )
+    .expect("refresh result");
+
+    assert_eq!(result.tmux_refresh_error, None);
+    let refresh_state = read_json(state_dir.join("statusline-refresh.json"));
+    assert_eq!(refresh_state["state"], "applied");
+    assert_eq!(refresh_state["sessionId"], "client-abc");
     cleanup(project);
 }
 
@@ -281,6 +374,25 @@ fn topology_fixture(project: &std::path::Path) -> Value {
         "remoteClients": [],
         "lifecycleOperations": [],
         "exchangeRefs": []
+    })
+}
+
+fn desktop_state_fixture() -> Value {
+    json!({
+        "sessions": [
+            {
+                "id": "codex-1",
+                "command": "codex",
+                "tmuxWindowId": "@1",
+                "windowName": "codex",
+                "worktreePath": "/repo"
+            }
+        ],
+        "services": [],
+        "teammates": [],
+        "tasks": { "pending": 0, "assigned": 0 },
+        "controlPlane": { "daemonAlive": true, "projectServiceAlive": true },
+        "flash": null
     })
 }
 

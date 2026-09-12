@@ -2081,40 +2081,43 @@ pub fn run_daemon_internal() -> Result<()> {
     let route_runtime = Arc::clone(&runtime);
     let stream_runtime = Arc::clone(&runtime);
     let shutdown_runtime = Arc::clone(&runtime);
-    let serve_result = serve_daemon_http_with_metadata_and_interceptor_until(
-        DaemonListenConfig { host, port },
-        move |request| handle_daemon_runtime_request_with_mutex(&route_runtime, request),
-        || crate::daemon::listener::DaemonRequestMetadata {
-            issued_at: now_iso(),
-            stopping: crate::process_signals::received_shutdown_signal().is_some(),
-        },
-        move |request, writer| {
-            let stream_runtime = Arc::clone(&stream_runtime);
-            Box::pin(async move {
-                if maybe_handle_project_event_stream_request_async(request, writer)
+    // aimux-async-seam: permanent - daemon process entry point starts the async listener from mainline sync startup
+    let serve_result = crate::async_runtime::process_runtime().block_on(
+        serve_daemon_http_with_metadata_and_interceptor_until(
+            DaemonListenConfig { host, port },
+            move |request| handle_daemon_runtime_request_with_mutex(&route_runtime, request),
+            || crate::daemon::listener::DaemonRequestMetadata {
+                issued_at: now_iso(),
+                stopping: crate::process_signals::received_shutdown_signal().is_some(),
+            },
+            move |request, writer| {
+                let stream_runtime = Arc::clone(&stream_runtime);
+                Box::pin(async move {
+                    if maybe_handle_project_event_stream_request_async(request, writer)
+                        .await
+                        .map_err(|error| {
+                            crate::daemon::listener::DaemonListenerError::Io(std::io::Error::other(
+                                error.to_string(),
+                            ))
+                        })?
+                    {
+                        return Ok(true);
+                    }
+                    maybe_handle_host_agent_stream_request_with_runtime_mutex_async(
+                        &stream_runtime,
+                        request,
+                        writer,
+                    )
                     .await
                     .map_err(|error| {
                         crate::daemon::listener::DaemonListenerError::Io(std::io::Error::other(
                             error.to_string(),
                         ))
-                    })?
-                {
-                    return Ok(true);
-                }
-                maybe_handle_host_agent_stream_request_with_runtime_mutex_async(
-                    &stream_runtime,
-                    request,
-                    writer,
-                )
-                .await
-                .map_err(|error| {
-                    crate::daemon::listener::DaemonListenerError::Io(std::io::Error::other(
-                        error.to_string(),
-                    ))
+                    })
                 })
-            })
-        },
-        || crate::process_signals::received_shutdown_signal().is_some(),
+            },
+            || crate::process_signals::received_shutdown_signal().is_some(),
+        ),
     );
     if let Some(signal_name) = crate::process_signals::received_shutdown_signal_name()
         && let Ok(mut runtime) = shutdown_runtime.lock()
