@@ -9,6 +9,7 @@ use aimux::project_service::team::save_team_config;
 use aimux::runtime_topology::{coerce_runtime_topology, runtime_topology_path};
 use aimux::tmux::CapturePaneOptions;
 use serde_json::{Value, json};
+use std::collections::VecDeque;
 use std::fs::{create_dir_all, read_to_string, remove_dir_all, write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -21,6 +22,10 @@ static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 struct FakeDeliveryRuntime {
     actions: Vec<FakeRuntimeAction>,
     fail_text_for_window: Option<String>,
+    send_carriage_return_result: Option<Result<(), String>>,
+    input_activity: VecDeque<
+        Result<aimux::project_service::agent_input_delivery::AgentInputWindowActivity, String>,
+    >,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,13 +77,23 @@ impl AgentOutputCaptureRuntime for FakeDeliveryRuntime {
     fn send_carriage_return(&mut self, window_id: &str) -> Result<(), String> {
         self.actions
             .push(FakeRuntimeAction::CarriageReturn(window_id.to_owned()));
-        Ok(())
+        self.send_carriage_return_result.clone().unwrap_or(Ok(()))
     }
 
     fn send_escape(&mut self, window_id: &str) -> Result<(), String> {
         self.actions
             .push(FakeRuntimeAction::Escape(window_id.to_owned()));
         Ok(())
+    }
+
+    fn agent_input_window_activity(
+        &mut self,
+        _window_id: &str,
+    ) -> Result<aimux::project_service::agent_input_delivery::AgentInputWindowActivity, String>
+    {
+        self.input_activity.pop_front().unwrap_or(Ok(
+            aimux::project_service::agent_input_delivery::AgentInputWindowActivity::Unattended,
+        ))
     }
 }
 
@@ -566,6 +581,139 @@ fn thread_send_delivers_to_each_live_recipient_with_recipient_reply_actions() {
         .unwrap();
     assert_eq!(message["deliveredTo"], json!(["codex-one", "codex-two"]));
     assert!(message["deliveredAt"].as_str().is_some());
+    cleanup(project);
+}
+
+#[test]
+fn thread_send_holds_live_recipient_with_recent_active_client() {
+    let project = temp_project("thread-delivery-held");
+    let state_dir = project.join("state");
+    write_delivery_topology(&state_dir, &[("codex-one", "@one")]);
+    let isolation = support::TestIsolation::new("coordination-held");
+    let context = isolation.project_context(&project, &state_dir);
+    let opened = route_project_service_request(
+        &context,
+        "POST",
+        routes::threads::OPEN,
+        Some(&json!({
+            "from": "claude-lead",
+            "title": "Coordination",
+            "participants": ["codex-one"]
+        })),
+    );
+    assert_eq!(opened.status, 200);
+    let thread_id = opened.body["thread"]["id"].as_str().unwrap().to_owned();
+    let now_ms = aimux::project_service::scheduler::scheduler_now_ms();
+    let mut runtime = FakeDeliveryRuntime {
+        input_activity: VecDeque::from([Ok(
+            aimux::project_service::agent_input_delivery::AgentInputWindowActivity::Attended {
+                active_clients: 1,
+                latest_activity_ms: now_ms,
+            },
+        )]),
+        ..FakeDeliveryRuntime::default()
+    };
+
+    let sent = route_coordination_mutation_request_with_runtime(
+        &context,
+        "POST",
+        routes::threads::SEND,
+        Some(&json!({
+            "threadId": thread_id,
+            "from": "claude-lead",
+            "to": ["codex-one"],
+            "kind": "request",
+            "body": "Please inspect this."
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(sent.status, 200);
+    assert_eq!(sent.body["deliveredTo"], json!([]));
+    assert_eq!(sent.body["queuedTo"], json!(["codex-one"]));
+    assert!(runtime.actions.is_empty());
+
+    let exchange = read_exchange(&state_dir);
+    let message_id = sent.body["message"]["id"].as_str().unwrap();
+    let message = exchange["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|message| message["id"] == message_id)
+        .unwrap();
+    assert_eq!(message.get("deliveredTo"), None);
+    assert!(
+        aimux::project_service::agent_input_delivery::agent_input_delivery_queue_path(&state_dir)
+            .exists()
+    );
+    cleanup(project);
+}
+
+#[test]
+fn thread_send_does_not_mark_delivered_when_submit_fails() {
+    let project = temp_project("thread-delivery-submit-error");
+    let state_dir = project.join("state");
+    write_delivery_topology(&state_dir, &[("codex-one", "@one")]);
+    let isolation = support::TestIsolation::new("coordination-submit-error");
+    let context = isolation.project_context(&project, &state_dir);
+    let opened = route_project_service_request(
+        &context,
+        "POST",
+        routes::threads::OPEN,
+        Some(&json!({
+            "from": "claude-lead",
+            "title": "Coordination",
+            "participants": ["codex-one"]
+        })),
+    );
+    assert_eq!(opened.status, 200);
+    let thread_id = opened.body["thread"]["id"].as_str().unwrap().to_owned();
+    let mut runtime = FakeDeliveryRuntime {
+        send_carriage_return_result: Some(Err("tmux enter failed".into())),
+        ..FakeDeliveryRuntime::default()
+    };
+
+    let sent = route_coordination_mutation_request_with_runtime(
+        &context,
+        "POST",
+        routes::threads::SEND,
+        Some(&json!({
+            "threadId": thread_id,
+            "from": "claude-lead",
+            "to": ["codex-one"],
+            "kind": "request",
+            "body": "Please inspect this."
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(sent.status, 424);
+    assert_eq!(sent.body["ok"], false);
+    assert_eq!(sent.body["deliveredTo"], json!([]));
+    assert!(
+        sent.body["error"]
+            .as_str()
+            .unwrap()
+            .contains("tmux enter failed")
+    );
+    assert!(text_sent_to(&runtime, "@one").contains("Please inspect this."));
+    assert_eq!(
+        runtime.actions.last(),
+        Some(&FakeRuntimeAction::CarriageReturn("@one".into()))
+    );
+
+    let exchange = read_exchange(&state_dir);
+    let message_id = sent.body["message"]["id"].as_str().unwrap();
+    let message = exchange["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|message| message["id"] == message_id)
+        .unwrap();
+    assert_eq!(message.get("deliveredTo"), None);
+    assert_eq!(message.get("deliveredAt"), None);
     cleanup(project);
 }
 

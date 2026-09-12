@@ -1,8 +1,8 @@
 pub use crate::agent_prompt_delivery::normalize_submitted_prompt;
 use crate::agent_prompt_delivery::{
-    DRAFT_CAPTURE_START_LINE, FIRST_POLL_MS, MAX_POLL_ATTEMPTS, POLL_MS, PromptSubmitRuntime,
-    SETTLE_BEFORE_SUBMIT_MS, SIGNATURE_CAPTURE_START_LINE, VERIFY_AFTER_SUBMIT_MS,
-    composer_still_contains_prompt_draft, prompt_draft_signature, wait_for_prompt_submit,
+    DRAFT_CAPTURE_START_LINE, FIRST_POLL_MS, MAX_POLL_ATTEMPTS, POLL_MS, SETTLE_BEFORE_SUBMIT_MS,
+    SIGNATURE_CAPTURE_START_LINE, VERIFY_AFTER_SUBMIT_MS, composer_still_contains_prompt_draft,
+    prompt_draft_signature,
 };
 use crate::async_subprocess::{AsyncCommand, command_task_name};
 use crate::daemon_state::load_metadata_state;
@@ -39,8 +39,8 @@ use super::agent_input::{
 };
 use super::agent_input_delivery::{
     AGENT_INPUT_DELIVERY_TASK_NAME, AgentInputDeliveryDecision, AgentInputWindowActivity,
-    active_client_count_for_window, decide_agent_input_delivery, enqueue_agent_input_delivery,
-    pane_has_unsubmitted_agent_input, parse_agent_input_window_activity,
+    active_client_count_for_window, classify_agent_input_window_activity,
+    decide_agent_input_delivery, enqueue_agent_input_delivery,
     record_agent_input_delivery_probe_failure,
 };
 use super::agent_output_projection::insert_projection_fields;
@@ -283,7 +283,12 @@ impl AgentOutputCaptureRuntime for SystemAgentOutputCaptureRuntime {
     }
 
     fn submit_prompt(&mut self, window_id: &str, draft: &str) -> Result<(), String> {
-        spawn_prompt_submit(window_id, draft)
+        let mut runtime = SystemSyncPromptSubmitRuntime {
+            window_id: window_id.to_owned(),
+            generation: claim_submit_generation(window_id),
+            deadline: Instant::now() + AGENT_INPUT_ROUTE_TIMEOUT,
+        };
+        wait_for_prompt_submit_confirmed_sync(&mut runtime, draft)
     }
 
     fn send_escape(&mut self, window_id: &str) -> Result<(), String> {
@@ -407,19 +412,13 @@ impl AgentOutputCaptureRuntime for BoundedAgentOutputCaptureRuntime {
     }
 
     fn submit_prompt(&mut self, window_id: &str, draft: &str) -> Result<(), String> {
-        let generation = claim_submit_generation(window_id);
         let mut runtime = BoundedPromptSubmitRuntime {
             window_id: window_id.to_owned(),
-            generation,
+            generation: claim_submit_generation(window_id),
             deadline: self.deadline,
             cancelled: Arc::clone(&self.cancelled),
         };
-        let _ = wait_for_prompt_submit(&mut runtime, draft);
-        if self.cancelled.load(Ordering::SeqCst) || Instant::now() >= self.deadline {
-            Err("agent output request timed out".to_owned())
-        } else {
-            Ok(())
-        }
+        wait_for_prompt_submit_confirmed_sync(&mut runtime, draft)
     }
 
     fn send_escape(&mut self, window_id: &str) -> Result<(), String> {
@@ -1883,23 +1882,22 @@ fn tmux_agent_input_window_activity(
         timeout,
     )?;
     let panes_text = String::from_utf8_lossy(&panes.stdout);
-    if active_client_count_for_window(window_id, &panes_text)? == 0 {
-        let pane = run_tmux_argv_with_timeout(
-            vec![
-                "capture-pane".into(),
-                "-p".into(),
-                "-t".into(),
-                window_id.into(),
-                "-S".into(),
-                "-20".into(),
-            ],
-            format!("tmux capture-pane failed while checking unsubmitted input for {window_id}"),
-            timeout,
-        )?;
-        if pane_has_unsubmitted_agent_input(&String::from_utf8_lossy(&pane.stdout)) {
-            return Ok(AgentInputWindowActivity::UnsubmittedInputVisible);
-        }
-        return Ok(AgentInputWindowActivity::Unattended);
+    let active_clients = active_client_count_for_window(window_id, &panes_text)?;
+    let pane = run_tmux_argv_with_timeout(
+        vec![
+            "capture-pane".into(),
+            "-p".into(),
+            "-t".into(),
+            window_id.into(),
+            "-S".into(),
+            "-20".into(),
+        ],
+        format!("tmux capture-pane failed while checking unsubmitted input for {window_id}"),
+        timeout,
+    )?;
+    let pane_text = String::from_utf8_lossy(&pane.stdout);
+    if active_clients == 0 {
+        return classify_agent_input_window_activity(window_id, &panes_text, &pane_text, None);
     }
     let clients = run_tmux_argv_with_timeout(
         vec![
@@ -1910,11 +1908,8 @@ fn tmux_agent_input_window_activity(
         format!("tmux list-clients failed while checking client activity for {window_id}"),
         timeout,
     )?;
-    parse_agent_input_window_activity(
-        window_id,
-        &panes_text,
-        &String::from_utf8_lossy(&clients.stdout),
-    )
+    let clients_text = String::from_utf8_lossy(&clients.stdout);
+    classify_agent_input_window_activity(window_id, &panes_text, &pane_text, Some(&clients_text))
 }
 
 pub(super) async fn tmux_agent_input_window_activity_async(
@@ -1933,24 +1928,23 @@ pub(super) async fn tmux_agent_input_window_activity_async(
     )
     .await?;
     let panes_text = String::from_utf8_lossy(&panes.stdout);
-    if active_client_count_for_window(window_id, &panes_text)? == 0 {
-        let pane = run_tmux_argv_with_timeout_async(
-            vec![
-                "capture-pane".into(),
-                "-p".into(),
-                "-t".into(),
-                window_id.into(),
-                "-S".into(),
-                "-20".into(),
-            ],
-            format!("tmux capture-pane failed while checking unsubmitted input for {window_id}"),
-            timeout,
-        )
-        .await?;
-        if pane_has_unsubmitted_agent_input(&String::from_utf8_lossy(&pane.stdout)) {
-            return Ok(AgentInputWindowActivity::UnsubmittedInputVisible);
-        }
-        return Ok(AgentInputWindowActivity::Unattended);
+    let active_clients = active_client_count_for_window(window_id, &panes_text)?;
+    let pane = run_tmux_argv_with_timeout_async(
+        vec![
+            "capture-pane".into(),
+            "-p".into(),
+            "-t".into(),
+            window_id.into(),
+            "-S".into(),
+            "-20".into(),
+        ],
+        format!("tmux capture-pane failed while checking unsubmitted input for {window_id}"),
+        timeout,
+    )
+    .await?;
+    let pane_text = String::from_utf8_lossy(&pane.stdout);
+    if active_clients == 0 {
+        return classify_agent_input_window_activity(window_id, &panes_text, &pane_text, None);
     }
     let clients = run_tmux_argv_with_timeout_async(
         vec![
@@ -1962,11 +1956,8 @@ pub(super) async fn tmux_agent_input_window_activity_async(
         timeout,
     )
     .await?;
-    parse_agent_input_window_activity(
-        window_id,
-        &panes_text,
-        &String::from_utf8_lossy(&clients.stdout),
-    )
+    let clients_text = String::from_utf8_lossy(&clients.stdout);
+    classify_agent_input_window_activity(window_id, &panes_text, &pane_text, Some(&clients_text))
 }
 
 fn run_tmux_argv_with_timeout(
@@ -2478,17 +2469,97 @@ fn submit_generation_is_current(window_id: &str, generation: u64) -> bool {
     }
 }
 
-struct SystemPromptSubmitRuntime {
-    window_id: String,
-    generation: u64,
+trait SyncPromptSubmitRuntime {
+    fn is_current(&mut self) -> bool;
+    fn capture(&mut self, start_line: i64) -> Result<String, String>;
+    fn send_carriage_return(&mut self) -> Result<(), String>;
+    fn sleep(&mut self, millis: u64) -> bool;
 }
 
-impl PromptSubmitRuntime for SystemPromptSubmitRuntime {
+fn wait_for_prompt_submit_confirmed_sync(
+    runtime: &mut dyn SyncPromptSubmitRuntime,
+    draft: &str,
+) -> Result<(), String> {
+    let mut visible_count = 0u32;
+    let mut last_signature = String::new();
+
+    for attempt in 1..=MAX_POLL_ATTEMPTS {
+        if !runtime.sleep(if attempt == 1 { FIRST_POLL_MS } else { POLL_MS }) {
+            return Err("agent input submit timed out while waiting for pasted prompt".to_owned());
+        }
+        if !runtime.is_current() {
+            return Err("agent input submit was superseded by a newer prompt".to_owned());
+        }
+        let pane = runtime.capture(DRAFT_CAPTURE_START_LINE).map_err(|error| {
+            format!("agent input submit verification failed before submit: {error}")
+        })?;
+        let still_draft = composer_still_contains_prompt_draft(&pane, draft);
+        let signature = if still_draft {
+            prompt_draft_signature(&runtime.capture(SIGNATURE_CAPTURE_START_LINE).map_err(
+                |error| {
+                    format!("agent input submit signature capture failed before submit: {error}")
+                },
+            )?)
+        } else {
+            String::new()
+        };
+        visible_count = if still_draft && !signature.is_empty() && signature == last_signature {
+            visible_count + 1
+        } else if still_draft {
+            1
+        } else {
+            0
+        };
+        last_signature = signature;
+        if visible_count >= 2 {
+            return submit_prompt_with_runtime_sync(runtime, draft);
+        }
+    }
+
+    submit_prompt_with_runtime_sync(runtime, draft)
+}
+
+fn submit_prompt_with_runtime_sync(
+    runtime: &mut dyn SyncPromptSubmitRuntime,
+    draft: &str,
+) -> Result<(), String> {
+    if !runtime.sleep(SETTLE_BEFORE_SUBMIT_MS) {
+        return Err("agent input submit timed out before carriage return".to_owned());
+    }
+    if !runtime.is_current() {
+        return Err("agent input submit was superseded by a newer prompt".to_owned());
+    }
+    runtime
+        .send_carriage_return()
+        .map_err(|error| format!("agent input submit failed: {error}"))?;
+    if !runtime.sleep(VERIFY_AFTER_SUBMIT_MS) {
+        return Err("agent input submit timed out before verification".to_owned());
+    }
+    let pane = runtime
+        .capture(DRAFT_CAPTURE_START_LINE)
+        .map_err(|error| format!("agent input submit verification failed after submit: {error}"))?;
+    if composer_still_contains_prompt_draft(&pane, draft) {
+        Err(
+            "agent input submit verification failed: prompt draft remained visible after submit"
+                .to_owned(),
+        )
+    } else {
+        Ok(())
+    }
+}
+
+struct SystemSyncPromptSubmitRuntime {
+    window_id: String,
+    generation: u64,
+    deadline: Instant,
+}
+
+impl SyncPromptSubmitRuntime for SystemSyncPromptSubmitRuntime {
     fn is_current(&mut self) -> bool {
         submit_generation_is_current(&self.window_id, self.generation)
     }
 
-    fn capture(&mut self, start_line: i64) -> Option<String> {
+    fn capture(&mut self, start_line: i64) -> Result<String, String> {
         let argv = capture_pane_argv(
             &self.window_id,
             CapturePaneOptions {
@@ -2497,24 +2568,29 @@ impl PromptSubmitRuntime for SystemPromptSubmitRuntime {
                 include_escapes: false,
             },
         );
-        // A dead window is not an error worth panicking a detached thread over.
-        let output = run_tmux_argv(
+        let output = run_tmux_argv_with_timeout(
             argv,
             format!("tmux capture-pane failed for {}", self.window_id),
-        )
-        .ok()?;
-        Some(String::from_utf8_lossy(&output.stdout).into_owned())
+            remaining_until(self.deadline)?,
+        )?;
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
 
-    fn send_carriage_return(&mut self) {
-        let _ = run_tmux_argv(
+    fn send_carriage_return(&mut self) -> Result<(), String> {
+        run_tmux_argv_with_timeout(
             send_carriage_return_argv(&self.window_id),
             format!("tmux send carriage return failed for {}", self.window_id),
-        );
+            remaining_until(self.deadline)?,
+        )
+        .map(|_| ())
     }
 
-    fn sleep(&mut self, millis: u64) {
-        std::thread::sleep(std::time::Duration::from_millis(millis));
+    fn sleep(&mut self, millis: u64) -> bool {
+        let Ok(remaining) = remaining_until(self.deadline) else {
+            return false;
+        };
+        std::thread::sleep(Duration::from_millis(millis).min(remaining));
+        Instant::now() < self.deadline
     }
 }
 
@@ -2531,14 +2607,14 @@ impl BoundedPromptSubmitRuntime {
     }
 }
 
-impl PromptSubmitRuntime for BoundedPromptSubmitRuntime {
+impl SyncPromptSubmitRuntime for BoundedPromptSubmitRuntime {
     fn is_current(&mut self) -> bool {
         self.active() && submit_generation_is_current(&self.window_id, self.generation)
     }
 
-    fn capture(&mut self, start_line: i64) -> Option<String> {
+    fn capture(&mut self, start_line: i64) -> Result<String, String> {
         if !self.active() {
-            return None;
+            return Err("agent output request timed out".to_owned());
         }
         let argv = capture_pane_argv(
             &self.window_id,
@@ -2553,52 +2629,32 @@ impl PromptSubmitRuntime for BoundedPromptSubmitRuntime {
             argv,
             format!("tmux capture-pane failed for {}", self.window_id),
             remaining,
-        )
-        .ok()?;
-        Some(String::from_utf8_lossy(&output.stdout).into_owned())
+        )?;
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
 
-    fn send_carriage_return(&mut self) {
+    fn send_carriage_return(&mut self) -> Result<(), String> {
         if !self.active() {
-            return;
+            return Err("agent output request timed out".to_owned());
         }
         let remaining = self.deadline.saturating_duration_since(Instant::now());
-        let _ = run_tmux_argv_with_timeout(
+        run_tmux_argv_with_timeout(
             send_carriage_return_argv(&self.window_id),
             format!("tmux send carriage return failed for {}", self.window_id),
             remaining,
-        );
+        )
+        .map(|_| ())
     }
 
-    fn sleep(&mut self, millis: u64) {
+    fn sleep(&mut self, millis: u64) -> bool {
         if !self.active() {
-            return;
+            return false;
         }
         let requested = Duration::from_millis(millis);
         let remaining = self.deadline.saturating_duration_since(Instant::now());
         std::thread::sleep(requested.min(remaining));
+        self.active()
     }
-}
-
-/// Paste-then-submit runs off the request thread on purpose: confirming the
-/// submit takes seconds, and blocking the response on it is what made the app's
-/// send time out on prompts that flood the pane.
-fn spawn_prompt_submit(window_id: &str, draft: &str) -> Result<(), String> {
-    let generation = claim_submit_generation(window_id);
-    let mut runtime = SystemPromptSubmitRuntime {
-        window_id: window_id.to_owned(),
-        generation,
-    };
-    let draft = draft.to_owned();
-    std::thread::Builder::new()
-        .name("aimux-submit-prompt".into())
-        .spawn(move || {
-            // Advisory: a Codex transcript keeps showing the pasted-content
-            // marker after a successful send, so a false here is routine.
-            let _ = wait_for_prompt_submit(&mut runtime, &draft);
-        })
-        .map(|_| ())
-        .map_err(|error| error.to_string())
 }
 
 fn operation_id(operation: &str, target_id: &str) -> String {
