@@ -137,11 +137,9 @@ pub(super) async fn route_agent_stop_async(
         &session_state,
         &context.project_root().to_string_lossy(),
     );
+    progress.mark_irreversible();
     if let Some(window_id) = window_id {
         let _ = runtime.kill_window(&window_id).await;
-        progress.mark_irreversible();
-    } else {
-        progress.mark_irreversible();
     }
     clear_prompt_context(&project_state_dir, &session_id);
     let result = update_runtime_topology(runtime_topology_path(&project_state_dir), |topology| {
@@ -267,11 +265,9 @@ pub(super) async fn route_agent_kill_async(
     } else {
         "offline"
     };
+    progress.mark_irreversible();
     if let Some(window_id) = live_window_id_for_session(&topology, &session) {
         let _ = runtime.kill_window(&window_id).await;
-        progress.mark_irreversible();
-    } else {
-        progress.mark_irreversible();
     }
     clear_prompt_context(&project_state_dir, &session_id);
     let result = update_runtime_topology(runtime_topology_path(&project_state_dir), |topology| {

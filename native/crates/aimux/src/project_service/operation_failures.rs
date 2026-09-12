@@ -1,5 +1,6 @@
 use serde_json::{Value, json};
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -97,7 +98,7 @@ pub fn clear_dashboard_operation_failures(
         }
     }
     if changed > 0 {
-        save_state(&path, state);
+        let _ = save_state(&path, state);
     }
     changed
 }
@@ -117,8 +118,38 @@ pub fn add_dashboard_operation_failure(
     project_state_dir: impl AsRef<Path>,
     input: OperationFailureInput,
 ) -> Value {
+    match try_add_dashboard_operation_failure(project_state_dir, input.clone()) {
+        Ok(failure) => failure,
+        Err(_) => operation_failure_value(input),
+    }
+}
+
+pub fn try_add_dashboard_operation_failure(
+    project_state_dir: impl AsRef<Path>,
+    input: OperationFailureInput,
+) -> io::Result<Value> {
     let path = dashboard_operation_failures_path(project_state_dir);
     let mut state = load_state(&path);
+    let failure = operation_failure_value(input);
+    let mut failures = state
+        .get("failures")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    failures.retain(|existing| {
+        existing.get("cleared").and_then(Value::as_bool) == Some(true)
+            || existing.get("targetKind") != failure.get("targetKind")
+            || existing.get("operation") != failure.get("operation")
+            || existing.get("targetId") != failure.get("targetId")
+            || existing.get("worktreePath") != failure.get("worktreePath")
+    });
+    failures.insert(0, failure.clone());
+    state["failures"] = Value::Array(failures);
+    save_state(&path, state)?;
+    Ok(failure)
+}
+
+fn operation_failure_value(input: OperationFailureInput) -> Value {
     let created_at = input
         .created_at
         .and_then(|value| trimmed_owned(Some(&value)))
@@ -143,23 +174,7 @@ pub fn add_dashboard_operation_failure(
     insert_optional(&mut failure, "worktreePath", input.worktree_path);
     insert_optional(&mut failure, "worktreeName", input.worktree_name);
     failure.insert("createdAt".into(), Value::String(created_at));
-    let failure = Value::Object(failure);
-    let mut failures = state
-        .get("failures")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    failures.retain(|existing| {
-        existing.get("cleared").and_then(Value::as_bool) == Some(true)
-            || existing.get("targetKind") != failure.get("targetKind")
-            || existing.get("operation") != failure.get("operation")
-            || existing.get("targetId") != failure.get("targetId")
-            || existing.get("worktreePath") != failure.get("worktreePath")
-    });
-    failures.insert(0, failure.clone());
-    state["failures"] = Value::Array(failures);
-    save_state(&path, state);
-    failure
+    Value::Object(failure)
 }
 
 fn load_state(path: impl AsRef<Path>) -> Value {
@@ -181,11 +196,11 @@ fn load_state(path: impl AsRef<Path>) -> Value {
     value
 }
 
-fn save_state(path: impl AsRef<Path>, mut state: Value) {
+fn save_state(path: impl AsRef<Path>, mut state: Value) -> io::Result<()> {
     if let Some(failures) = state.get_mut("failures").and_then(Value::as_array_mut) {
         failures.truncate(MAX_FAILURES);
     }
-    let _ = write_json_atomic(path, &state);
+    write_json_atomic(path, &state)
 }
 
 fn is_active_failure(failure: &Value, now: u128) -> bool {

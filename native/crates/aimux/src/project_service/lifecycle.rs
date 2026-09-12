@@ -89,6 +89,10 @@ impl LifecycleMutationProgress {
         !self.abandoned_recorded.swap(true, Ordering::SeqCst)
     }
 
+    pub fn reset_abandoned_recorded(&self) {
+        self.abandoned_recorded.store(false, Ordering::SeqCst);
+    }
+
     pub fn operation(&self) -> &str {
         &self.operation
     }

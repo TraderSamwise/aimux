@@ -810,10 +810,11 @@ where
         disconnect = wait_for_client_disconnect(reader) => {
             disconnect?;
             if progress.is_irreversible() {
-                record_lifecycle_response_abandoned(&context, &progress);
+                let record_result = record_lifecycle_response_abandoned(&context, &progress);
                 let response = route.await.unwrap_or_else(|| {
                     route_project_service_request(&context, &method, &path, body.as_ref())
                 });
+                record_result?;
                 Ok(response)
             } else {
                 Err(DaemonListenerError::InvalidRequest(format!(
@@ -841,9 +842,9 @@ async fn wait_for_client_disconnect(
 fn record_lifecycle_response_abandoned(
     context: &ProjectServiceRequestContext,
     progress: &LifecycleMutationProgress,
-) {
+) -> Result<(), DaemonListenerError> {
     if !progress.mark_abandoned_recorded() {
-        return;
+        return Ok(());
     }
     log_lifecycle_always(
         "lifecycle mutation completed after caller disconnected",
@@ -855,22 +856,43 @@ fn record_lifecycle_response_abandoned(
             "projectRoot": context.project_root().display().to_string(),
         })),
     );
-    let _ = crate::project_service::operation_failures::add_dashboard_operation_failure(
-        context.project_state_dir(),
-        crate::project_service::operation_failures::OperationFailureInput {
-            target_kind: progress.target_kind().to_owned(),
-            operation: progress.operation().to_owned(),
-            title: "Lifecycle response was not delivered".into(),
-            message: format!(
-                "{} completed after the caller disconnected; refresh before retrying.",
-                progress.operation()
-            ),
-            target_id: progress.target_id().map(str::to_owned),
-            worktree_path: None,
-            worktree_name: None,
-            created_at: None,
-        },
-    );
+    if let Err(error) =
+        crate::project_service::operation_failures::try_add_dashboard_operation_failure(
+            context.project_state_dir(),
+            crate::project_service::operation_failures::OperationFailureInput {
+                target_kind: progress.target_kind().to_owned(),
+                operation: progress.operation().to_owned(),
+                title: "Lifecycle response was not delivered".into(),
+                message: format!(
+                    "{} completed after the caller disconnected; refresh before retrying.",
+                    progress.operation()
+                ),
+                target_id: progress.target_id().map(str::to_owned),
+                worktree_path: None,
+                worktree_name: None,
+                created_at: None,
+            },
+        )
+    {
+        progress.reset_abandoned_recorded();
+        log_at(
+            LogLevel::Error,
+            "failed to record abandoned lifecycle response",
+            "project-service",
+            Some(json!({
+                "operation": progress.operation(),
+                "targetKind": progress.target_kind(),
+                "targetId": progress.target_id(),
+                "projectRoot": context.project_root().display().to_string(),
+                "error": error.to_string(),
+            })),
+        );
+        return Err(DaemonListenerError::Io(io::Error::other(format!(
+            "failed to record abandoned lifecycle response for {}: {error}",
+            progress.operation()
+        ))));
+    }
+    Ok(())
 }
 
 fn handle_project_service_connection_with_remote<Stream>(
@@ -1006,11 +1028,11 @@ where
         ))
         .await
     {
-        record_abandoned_lifecycle_response_on_write_error(&context, &lifecycle_progress);
+        record_abandoned_lifecycle_response_on_write_error(&context, &lifecycle_progress, &error)?;
         return Err(DaemonListenerError::Io(error));
     }
     if let Err(error) = writer.flush().await {
-        record_abandoned_lifecycle_response_on_write_error(&context, &lifecycle_progress);
+        record_abandoned_lifecycle_response_on_write_error(&context, &lifecycle_progress, &error)?;
         return Err(DaemonListenerError::Io(error));
     }
     let Some(stream) = response.stream else {
@@ -1048,13 +1070,19 @@ where
 fn record_abandoned_lifecycle_response_on_write_error(
     context: &Option<Arc<ProjectServiceRequestContext>>,
     progress: &Option<LifecycleMutationProgress>,
-) {
+    write_error: &io::Error,
+) -> Result<(), DaemonListenerError> {
     let (Some(context), Some(progress)) = (context.as_ref(), progress.as_ref()) else {
-        return;
+        return Ok(());
     };
     if progress.is_irreversible() {
-        record_lifecycle_response_abandoned(context, progress);
+        record_lifecycle_response_abandoned(context, progress).map_err(|record_error| {
+            DaemonListenerError::Io(io::Error::other(format!(
+                "{write_error}; additionally failed to record abandoned lifecycle response: {record_error}"
+            )))
+        })?;
     }
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -1865,6 +1893,27 @@ mod tests {
         .expect("write topology");
     }
 
+    fn write_project_tool_config(project_root: &Path) {
+        let aimux_dir = project_root.join(".aimux");
+        fs::create_dir_all(&aimux_dir).expect("create .aimux config dir");
+        fs::write(
+            aimux_dir.join("config.json"),
+            serde_json::to_string_pretty(&json!({
+                "tools": {
+                    "mock": {
+                        "command": "/bin/mock",
+                        "args": ["--base"],
+                        "enabled": true,
+                        "wrapperEnabled": false,
+                        "resumeByBackendSessionId": true
+                    }
+                }
+            }))
+            .expect("serialize config"),
+        )
+        .expect("write project config");
+    }
+
     #[test]
     fn async_read_control_routes_bypass_blocking_dispatcher() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
@@ -1911,6 +1960,98 @@ mod tests {
             assert_eq!(sessions.len(), 1);
             let _ = fs::remove_dir_all(root);
         });
+    }
+
+    struct PendingCreateWindowLifecycleRuntime {
+        created: Arc<Mutex<Vec<String>>>,
+        create_started: mpsc::Sender<()>,
+        create_release: Option<oneshot::Receiver<()>>,
+    }
+
+    impl PendingCreateWindowLifecycleRuntime {
+        fn new(
+            created: Arc<Mutex<Vec<String>>>,
+            create_started: mpsc::Sender<()>,
+            create_release: oneshot::Receiver<()>,
+        ) -> Self {
+            Self {
+                created,
+                create_started,
+                create_release: Some(create_release),
+            }
+        }
+    }
+
+    impl AsyncProjectLifecycleRuntime for PendingCreateWindowLifecycleRuntime {
+        async fn ensure_project_session(&mut self, _project_root: &Path) -> Result<(), String> {
+            Ok(())
+        }
+
+        async fn create_window(
+            &mut self,
+            session_name: &str,
+            name: &str,
+            _cwd: &str,
+            _command: &str,
+            _args: &[String],
+            _detached: bool,
+        ) -> Result<TmuxTarget, String> {
+            self.create_started.send(()).expect("signal create started");
+            if let Some(release) = self.create_release.take() {
+                let _ = release.await;
+            }
+            self.created
+                .lock()
+                .expect("created lock")
+                .push(name.to_owned());
+            Ok(TmuxTarget {
+                session_name: session_name.to_owned(),
+                window_id: "@mock-new".to_owned(),
+                window_index: 2,
+                window_name: name.to_owned(),
+                pane_dead: None,
+            })
+        }
+
+        async fn set_window_metadata(
+            &mut self,
+            _window_id: &str,
+            _metadata: &Value,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        async fn set_window_option(
+            &mut self,
+            _window_id: &str,
+            _key: &str,
+            _value: &str,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+
+        async fn clear_history(&mut self, _window_id: &str) -> Result<(), String> {
+            Ok(())
+        }
+
+        async fn wait_for_window_after_launch(
+            &mut self,
+            _target: &TmuxTarget,
+            _timeout: Duration,
+        ) -> bool {
+            true
+        }
+
+        fn codex_backend_session_ids_for_cwd(
+            &mut self,
+            _cwd: &str,
+        ) -> Result<BTreeSet<String>, String> {
+            Ok(BTreeSet::new())
+        }
+
+        async fn kill_window(&mut self, _window_id: &str) -> Result<(), String> {
+            Ok(())
+        }
     }
 
     struct PendingKillLifecycleRuntime {
@@ -2514,7 +2655,76 @@ mod tests {
     }
 
     #[test]
-    fn async_lifecycle_stop_disconnect_before_tmux_kill_cancels_mutation() {
+    fn async_lifecycle_disconnect_before_irreversible_step_cancels_route() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
+        crate::async_runtime::process_runtime().block_on(async {
+            let root = unique_test_root("async-lifecycle-precommit-disconnect");
+            let project_root = root.join("repo");
+            let state_dir = root.join("state");
+            create_git_checkout(&project_root);
+            let context = Arc::new(ProjectServiceRequestContext::with_project_state_dir(
+                &project_root,
+                &state_dir,
+            ));
+            let body = json!({ "sessionId": "codex-live" });
+            let progress =
+                async_lifecycle_progress_for_request("POST", routes::agents::STOP, Some(&body))
+                    .expect("async lifecycle progress");
+            let (started_tx, started_rx) = mpsc::channel();
+            let (release_tx, release_rx) = oneshot::channel();
+            let (client, mut server) = tokio::io::duplex(4096);
+            let task = crate::async_runtime::spawn_named(
+                "project-service-test:async-lifecycle-precommit-disconnect",
+                async move {
+                    route_async_lifecycle_with_disconnect_and_route(
+                        context,
+                        "POST".to_owned(),
+                        routes::agents::STOP.to_owned(),
+                        Some(body),
+                        progress,
+                        &mut server,
+                        move |_context, _method, _path, _body, _progress| async move {
+                            started_tx.send(()).expect("signal route started");
+                            let _ = release_rx.await;
+                            Some(ProjectServiceDispatchResponse::json(
+                                200,
+                                json!({ "ok": true }),
+                            ))
+                        },
+                    )
+                    .await
+                },
+            );
+            wait_for_signal(&started_rx, "route started").await;
+            drop(client);
+            let error = tokio::time::timeout(Duration::from_secs(2), task)
+                .await
+                .expect("route cancellation should finish")
+                .expect("route task should join")
+                .expect_err("disconnect before mutation begins should cancel route");
+            assert!(
+                error
+                    .to_string()
+                    .contains("client disconnected before agent.stop mutation completed"),
+                "unexpected error: {error}"
+            );
+            assert!(
+                release_tx.send(()).is_err(),
+                "pre-commit lifecycle future should have been dropped before release"
+            );
+            assert!(
+                crate::project_service::operation_failures::list_dashboard_operation_failures(
+                    &state_dir
+                )
+                .is_empty()
+            );
+            let _ = fs::remove_dir_all(root);
+        });
+    }
+
+    #[test]
+    fn async_lifecycle_stop_disconnect_after_tmux_kill_started_records_abandoned_response() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
         // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
         crate::async_runtime::process_runtime().block_on(async {
@@ -2565,31 +2775,119 @@ mod tests {
             );
             wait_for_signal(&started_rx, "kill started").await;
             drop(client);
-            let error = tokio::time::timeout(Duration::from_secs(2), task)
+            tokio::time::sleep(Duration::from_millis(25)).await;
+            release_tx
+                .send(())
+                .expect("kill route should remain live after mutation starts");
+            let response = tokio::time::timeout(Duration::from_secs(2), task)
                 .await
-                .expect("route cancellation should finish")
+                .expect("route should finish")
                 .expect("route task should join")
-                .expect_err("disconnect before kill completes should cancel route");
-            assert!(
-                error
-                    .to_string()
-                    .contains("client disconnected before agent.stop mutation completed"),
-                "unexpected error: {error}"
-            );
-            assert!(
-                release_tx.send(()).is_err(),
-                "kill future should have been dropped before release"
-            );
-            assert!(killed.lock().expect("killed lock").is_empty());
+                .expect("disconnect after kill starts should await route");
+            assert_eq!(response.status, 200);
+            assert_eq!(response.body["status"], "offline");
+            assert_eq!(killed.lock().expect("killed lock").as_slice(), ["@agent"]);
             let topology =
                 read_runtime_topology(runtime_topology_path(&state_dir)).expect("read topology");
-            assert_eq!(topology["sessions"][0]["status"], "running");
-            assert!(
+            assert_eq!(topology["sessions"][0]["status"], "offline");
+            let failures =
                 crate::project_service::operation_failures::list_dashboard_operation_failures(
-                    &state_dir
-                )
-                .is_empty()
+                    &state_dir,
+                );
+            assert_eq!(failures.len(), 1);
+            assert_eq!(failures[0]["operation"], "agent.stop");
+            assert_eq!(failures[0]["targetId"], "codex-live");
+            let _ = fs::remove_dir_all(root);
+        });
+    }
+
+    #[test]
+    fn async_lifecycle_spawn_disconnect_after_window_create_started_records_abandoned_response() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
+        crate::async_runtime::process_runtime().block_on(async {
+            let root = unique_test_root("async-lifecycle-spawn-disconnect");
+            let project_root = root.join("repo");
+            let state_dir = root.join("state");
+            create_git_checkout(&project_root);
+            write_project_tool_config(&project_root);
+            write_running_agent_topology(&state_dir, &project_root);
+            let context = Arc::new(ProjectServiceRequestContext::with_project_state_dir(
+                &project_root,
+                &state_dir,
+            ));
+            let body = json!({ "tool": "mock", "sessionId": "mock-new", "open": false });
+            let progress =
+                async_lifecycle_progress_for_request("POST", routes::agents::SPAWN, Some(&body))
+                    .expect("async lifecycle progress");
+            let created = Arc::new(Mutex::new(Vec::new()));
+            let (started_tx, started_rx) = mpsc::channel();
+            let (release_tx, release_rx) = oneshot::channel();
+            let (client, mut server) = tokio::io::duplex(4096);
+            let runtime = PendingCreateWindowLifecycleRuntime::new(
+                Arc::clone(&created),
+                started_tx,
+                release_rx,
             );
+            let task = crate::async_runtime::spawn_named(
+                "project-service-test:async-lifecycle-spawn-disconnect",
+                async move {
+                    route_async_lifecycle_with_disconnect_and_route(
+                        context,
+                        "POST".to_owned(),
+                        routes::agents::SPAWN.to_owned(),
+                        Some(body),
+                        progress,
+                        &mut server,
+                        move |context, method, path, body, progress| async move {
+                            let mut runtime = runtime;
+                            route_lifecycle_request_async_with_runtime(
+                                &context,
+                                &method,
+                                &path,
+                                body.as_ref(),
+                                &progress,
+                                &mut runtime,
+                            )
+                            .await
+                        },
+                    )
+                    .await
+                },
+            );
+            wait_for_signal(&started_rx, "window create started").await;
+            drop(client);
+            tokio::time::sleep(Duration::from_millis(25)).await;
+            release_tx
+                .send(())
+                .expect("spawn route should remain live after create starts");
+            let response = tokio::time::timeout(Duration::from_secs(2), task)
+                .await
+                .expect("route should finish")
+                .expect("route task should join")
+                .expect("disconnect after create starts should await route");
+            assert_eq!(response.status, 200);
+            assert_eq!(response.body["sessionId"], "mock-new");
+            assert_eq!(
+                created.lock().expect("created lock").as_slice(),
+                ["/bin/mock"]
+            );
+            let topology =
+                read_runtime_topology(runtime_topology_path(&state_dir)).expect("read topology");
+            assert!(
+                topology["sessions"]
+                    .as_array()
+                    .expect("sessions")
+                    .iter()
+                    .any(|session| session["id"] == "mock-new" && session["status"] == "running")
+            );
+            let failures =
+                crate::project_service::operation_failures::list_dashboard_operation_failures(
+                    &state_dir,
+                );
+            assert_eq!(failures.len(), 1);
+            assert_eq!(failures[0]["operation"], "agent.spawn");
+            assert_eq!(failures[0]["targetId"], "mock-new");
             let _ = fs::remove_dir_all(root);
         });
     }
@@ -2640,6 +2938,52 @@ mod tests {
             assert_eq!(failures[0]["targetKind"], "agent");
             assert_eq!(failures[0]["targetId"], "codex-live");
             assert_eq!(failures[0]["title"], "Lifecycle response was not delivered");
+            let _ = fs::remove_dir_all(root);
+        });
+    }
+
+    #[test]
+    fn async_lifecycle_abandoned_response_write_failure_reports_recorder_failure() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
+        crate::async_runtime::process_runtime().block_on(async {
+            let root = unique_test_root("async-lifecycle-recorder-failure");
+            let project_root = root.join("repo");
+            let state_dir = root.join("state-as-file");
+            create_git_checkout(&project_root);
+            fs::write(&state_dir, "not a directory").expect("write state path as file");
+            let context = Arc::new(ProjectServiceRequestContext::with_project_state_dir(
+                &project_root,
+                &state_dir,
+            ));
+            let body = json!({ "sessionId": "codex-live" });
+            let progress =
+                async_lifecycle_progress_for_request("POST", routes::agents::STOP, Some(&body))
+                    .expect("async lifecycle progress");
+            progress.mark_irreversible();
+            let response = prepare_dispatch_response(
+                ProjectServiceDispatchResponse::json(200, json!({ "ok": true })),
+                Default::default(),
+            );
+            let (client, mut server) = tokio::io::duplex(4096);
+            drop(client);
+            let error = tokio::time::timeout(
+                Duration::from_secs(2),
+                write_project_service_response_async(
+                    &mut server,
+                    response,
+                    Some(Arc::clone(&context)),
+                    Some(progress),
+                ),
+            )
+            .await
+            .expect("write should finish")
+            .expect_err("closed client and unwritable recorder should fail");
+            let message = error.to_string();
+            assert!(
+                message.contains("additionally failed to record abandoned lifecycle response"),
+                "recorder failure should be reported, got: {message}"
+            );
             let _ = fs::remove_dir_all(root);
         });
     }

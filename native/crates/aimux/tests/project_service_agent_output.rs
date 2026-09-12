@@ -126,9 +126,7 @@ impl AgentOutputCaptureRuntime for FakeCaptureRuntime {
     fn send_carriage_return(&mut self, window_id: &str) -> Result<(), String> {
         self.actions
             .push(FakeRuntimeAction::CarriageReturn(window_id.to_owned()));
-        self.send_carriage_return_result
-            .clone()
-            .unwrap_or_else(|| Ok(()))
+        self.send_carriage_return_result.clone().unwrap_or(Ok(()))
     }
 
     fn submit_prompt(&mut self, window_id: &str, _draft: &str) -> Result<(), String> {

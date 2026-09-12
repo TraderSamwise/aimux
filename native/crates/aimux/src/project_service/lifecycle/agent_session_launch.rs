@@ -545,6 +545,7 @@ pub(super) async fn launch_agent_session_async(
         .unwrap_or_else(|| project_root.clone());
     let label = input.label.clone().unwrap_or_else(|| input.command.clone());
     let session_name = project_session(&project_root, "aimux").session_name;
+    progress.mark_irreversible();
     if let Err(error) = runtime.ensure_project_session(context.project_root()).await {
         record_launch_failure(
             &project_state_dir,
@@ -578,7 +579,6 @@ pub(super) async fn launch_agent_session_async(
                 visible: None,
                 first_pane_capture: None,
             });
-            progress.mark_irreversible();
             target
         }
         Err(error) => {
