@@ -312,8 +312,22 @@ pub fn run_pending_agent_input_deliveries_with_runtime(
             remaining.extend(ready);
             break;
         }
-        let window_id = resolve_live_window_id(context, &pending.session_id)
-            .unwrap_or_else(|| pending.window_id.clone());
+        let window_id = match resolve_live_window_id(context, &pending.session_id) {
+            Ok(Some(window_id)) => window_id,
+            Ok(None) => pending.window_id.clone(),
+            Err(error) => {
+                record_agent_input_delivery_failure(
+                    context,
+                    Some(&pending.session_id),
+                    "Agent input delivery topology unavailable",
+                    format!(
+                        "Using queued tmux target {} because {error}",
+                        pending.window_id
+                    ),
+                );
+                pending.window_id.clone()
+            }
+        };
         let force_due_to_max = now_ms >= pending.max_deliver_at_ms;
         let activity = runtime.agent_input_window_activity(&window_id);
         let persistent_probe_failure = force_due_to_max && activity.is_err();
@@ -460,8 +474,22 @@ pub async fn run_pending_agent_input_deliveries_async(
             remaining.extend(ready);
             break;
         }
-        let window_id = resolve_live_window_id(context, &pending.session_id)
-            .unwrap_or_else(|| pending.window_id.clone());
+        let window_id = match resolve_live_window_id(context, &pending.session_id) {
+            Ok(Some(window_id)) => window_id,
+            Ok(None) => pending.window_id.clone(),
+            Err(error) => {
+                record_agent_input_delivery_failure(
+                    context,
+                    Some(&pending.session_id),
+                    "Agent input delivery topology unavailable",
+                    format!(
+                        "Using queued tmux target {} because {error}",
+                        pending.window_id
+                    ),
+                );
+                pending.window_id.clone()
+            }
+        };
         let force_due_to_max = now_ms >= pending.max_deliver_at_ms;
         let activity =
             tmux_agent_input_window_activity_async(&window_id, DELIVERY_TASK_TIMEOUT).await;

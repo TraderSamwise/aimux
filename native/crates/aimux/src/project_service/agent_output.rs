@@ -780,7 +780,12 @@ pub(super) fn read_agent_output_payload(
     let project_state_dir = context.project_state_dir();
     let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
         Ok(topology) => topology,
-        Err(error) => return Err(Box::new(json_error(500, error))),
+        Err(error) => {
+            return Err(Box::new(json_error(
+                500,
+                format!("runtime topology could not be read: {error}"),
+            )));
+        }
     };
     let Some(target) = resolve_session_target(&topology, session_id) else {
         return Err(Box::new(json_error(
@@ -916,7 +921,12 @@ pub(super) async fn read_agent_output_payload_async(
     let project_state_dir = context.project_state_dir();
     let topology = match read_runtime_topology(runtime_topology_path(&project_state_dir)) {
         Ok(topology) => topology,
-        Err(error) => return Err(Box::new(json_error(500, error))),
+        Err(error) => {
+            return Err(Box::new(json_error(
+                500,
+                format!("runtime topology could not be read: {error}"),
+            )));
+        }
     };
     let Some(target) = resolve_session_target(&topology, session_id) else {
         return Err(Box::new(json_error(
@@ -1161,8 +1171,12 @@ fn attach_live_pane_route(
             },
             None => return json_error(400, "rows must be an integer"),
         };
-        let Some(window_id) = resolve_live_window_id(context, &session_id) else {
-            return json_error(500, format!("Session \"{session_id}\" is not running"));
+        let window_id = match resolve_live_window_id(context, &session_id) {
+            Ok(Some(window_id)) => window_id,
+            Ok(None) => {
+                return json_error(500, format!("Session \"{session_id}\" is not running"));
+            }
+            Err(error) => return json_error(500, error),
         };
         if let Err(error) = runtime.resize_window(&window_id, cols, rows) {
             return json_error(500, error);
@@ -1257,8 +1271,10 @@ fn resize_live_pane_route(
         },
         None => return json_error(400, "rows must be an integer"),
     };
-    let Some(window_id) = resolve_live_window_id(context, &session_id) else {
-        return json_error(500, format!("Session \"{session_id}\" is not running"));
+    let window_id = match resolve_live_window_id(context, &session_id) {
+        Ok(Some(window_id)) => window_id,
+        Ok(None) => return json_error(500, format!("Session \"{session_id}\" is not running")),
+        Err(error) => return json_error(500, error),
     };
     if let Err(error) = runtime.resize_window(&window_id, cols, rows) {
         return json_error(500, error);
@@ -1279,8 +1295,10 @@ fn interrupt_live_pane_route(
     else {
         return json_error(400, "sessionId is required");
     };
-    let Some(window_id) = resolve_live_window_id(context, &session_id) else {
-        return json_error(500, format!("Session \"{session_id}\" is not running"));
+    let window_id = match resolve_live_window_id(context, &session_id) {
+        Ok(Some(window_id)) => window_id,
+        Ok(None) => return json_error(500, format!("Session \"{session_id}\" is not running")),
+        Err(error) => return json_error(500, error),
     };
     if let Err(error) = runtime.send_escape(&window_id) {
         return json_error(500, error);
@@ -1360,8 +1378,10 @@ fn input_live_pane_route(
         };
         attachments.push(record);
     }
-    let Some(window_id) = resolve_live_window_id(context, &session_id) else {
-        return json_error(500, format!("Session \"{session_id}\" is not running"));
+    let window_id = match resolve_live_window_id(context, &session_id) {
+        Ok(Some(window_id)) => window_id,
+        Ok(None) => return json_error(500, format!("Session \"{session_id}\" is not running")),
+        Err(error) => return json_error(500, error),
     };
     let input_text = match remote_actor
         .as_ref()
@@ -1468,8 +1488,12 @@ async fn attach_live_pane_route_async(
             },
             None => return json_error(400, "rows must be an integer"),
         };
-        let Some(window_id) = resolve_live_window_id(context, &session_id) else {
-            return json_error(500, format!("Session \"{session_id}\" is not running"));
+        let window_id = match resolve_live_window_id(context, &session_id) {
+            Ok(Some(window_id)) => window_id,
+            Ok(None) => {
+                return json_error(500, format!("Session \"{session_id}\" is not running"));
+            }
+            Err(error) => return json_error(500, error),
         };
         if let Err(error) = resize_window_async(&window_id, cols, rows, TMUX_COMMAND_TIMEOUT).await
         {
@@ -1566,8 +1590,10 @@ async fn resize_live_pane_route_async(
         },
         None => return json_error(400, "rows must be an integer"),
     };
-    let Some(window_id) = resolve_live_window_id(context, &session_id) else {
-        return json_error(500, format!("Session \"{session_id}\" is not running"));
+    let window_id = match resolve_live_window_id(context, &session_id) {
+        Ok(Some(window_id)) => window_id,
+        Ok(None) => return json_error(500, format!("Session \"{session_id}\" is not running")),
+        Err(error) => return json_error(500, error),
     };
     if let Err(error) = resize_window_async(&window_id, cols, rows, TMUX_COMMAND_TIMEOUT).await {
         return json_error(500, error);
@@ -1587,8 +1613,10 @@ async fn interrupt_live_pane_route_async(
     else {
         return json_error(400, "sessionId is required");
     };
-    let Some(window_id) = resolve_live_window_id(context, &session_id) else {
-        return json_error(500, format!("Session \"{session_id}\" is not running"));
+    let window_id = match resolve_live_window_id(context, &session_id) {
+        Ok(Some(window_id)) => window_id,
+        Ok(None) => return json_error(500, format!("Session \"{session_id}\" is not running")),
+        Err(error) => return json_error(500, error),
     };
     if let Err(error) = send_escape_async(&window_id, TMUX_COMMAND_TIMEOUT).await {
         return json_error(500, error);
@@ -1668,8 +1696,10 @@ async fn input_live_pane_route_async(
         };
         attachments.push(record);
     }
-    let Some(window_id) = resolve_live_window_id(context, &session_id) else {
-        return json_error(500, format!("Session \"{session_id}\" is not running"));
+    let window_id = match resolve_live_window_id(context, &session_id) {
+        Ok(Some(window_id)) => window_id,
+        Ok(None) => return json_error(500, format!("Session \"{session_id}\" is not running")),
+        Err(error) => return json_error(500, error),
     };
     let input_text = match remote_actor
         .as_ref()
@@ -1751,10 +1781,11 @@ async fn input_live_pane_route_async(
 pub(super) fn resolve_live_window_id(
     context: &ProjectServiceRequestContext,
     session_id: &str,
-) -> Option<String> {
+) -> Result<Option<String>, String> {
     let project_state_dir = context.project_state_dir();
-    let topology = read_runtime_topology(runtime_topology_path(&project_state_dir)).ok()?;
-    resolve_session_window_id(&topology, session_id)
+    let topology = read_runtime_topology(runtime_topology_path(&project_state_dir))
+        .map_err(|error| format!("runtime topology could not be read: {error}"))?;
+    Ok(resolve_session_window_id(&topology, session_id))
 }
 
 fn mark_session_interrupted(context: &ProjectServiceRequestContext, session_id: &str) {

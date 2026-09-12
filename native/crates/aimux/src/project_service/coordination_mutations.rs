@@ -1553,11 +1553,18 @@ fn deliver_prompt_to_recipients(
         if matches!(recipient.as_str(), "" | "user" | "aimux") {
             continue;
         }
-        let Some(window_id) = resolve_live_window_id(context, recipient) else {
-            outcome.failures.push(format!(
-                "{recipient}: no live tmux window in runtime topology"
-            ));
-            continue;
+        let window_id = match resolve_live_window_id(context, recipient) {
+            Ok(Some(window_id)) => window_id,
+            Ok(None) => {
+                outcome.failures.push(format!(
+                    "{recipient}: no live tmux window in runtime topology"
+                ));
+                continue;
+            }
+            Err(error) => {
+                outcome.failures.push(format!("{recipient}: {error}"));
+                continue;
+            }
         };
         let prompt = plan.prompt.replace(RECIPIENT_PLACEHOLDER, recipient);
         let now_ms = scheduler_now_ms();

@@ -1234,6 +1234,67 @@ fn output_route_rejects_offline_sessions_without_capture() {
 }
 
 #[test]
+fn pane_routes_report_unreadable_topology_not_absent_session() {
+    let project = temp_project("unreadable-topology");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    write(runtime_topology_path(&state_dir), "{ not yaml").unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let cases = [
+        (
+            "GET",
+            "/agents/output?sessionId=codex-1",
+            None,
+            "agent output",
+        ),
+        (
+            "POST",
+            routes::live_pane::RESIZE,
+            Some(json!({ "sessionId": "codex-1", "cols": 100, "rows": 32 })),
+            "resize",
+        ),
+        (
+            "POST",
+            routes::agents::INTERRUPT,
+            Some(json!({ "sessionId": "codex-1" })),
+            "interrupt",
+        ),
+        (
+            "POST",
+            routes::live_pane::INPUT,
+            Some(json!({ "sessionId": "codex-1", "text": "hello" })),
+            "input",
+        ),
+    ];
+
+    for (method, path, body, label) in cases {
+        let mut runtime = FakeCaptureRuntime::default();
+        let response = route_agent_output_request_with_runtime(
+            &context,
+            method,
+            path,
+            body.as_ref(),
+            &mut runtime,
+        )
+        .unwrap();
+        assert_eq!(response.status, 500, "{label}");
+        let error = response.body["error"].as_str().unwrap();
+        assert!(
+            error.contains("runtime topology could not be read"),
+            "{label}: {error}"
+        );
+        assert!(
+            !error.contains("not running"),
+            "{label} converted topology failure into absent session: {error}"
+        );
+        assert!(runtime.actions.is_empty(), "{label}");
+    }
+
+    cleanup(project);
+}
+
+#[test]
 fn output_route_syncs_live_tmux_metadata_from_project_state() {
     let project = temp_project("metadata-sync");
     let state_dir = project.join("state");
