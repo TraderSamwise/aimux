@@ -167,20 +167,16 @@ fn runtime_backlog_health_snapshots(
 
 pub fn record_runtime_health_sample_at(context: &ProjectServiceRequestContext, now_ms: i64) {
     let path = runtime_health_history_path(context);
-    record_runtime_health_sample_to_path(context, now_ms, &path, |path, line| {
+    let sample = runtime_health_sample(context, now_ms);
+    record_runtime_health_value_to_path(sample, now_ms, &path, |path, line| {
         append_rotating_jsonl(path, line)
     });
 }
 
-fn record_runtime_health_sample_to_path<F>(
-    context: &ProjectServiceRequestContext,
-    now_ms: i64,
-    path: &Path,
-    append: F,
-) where
+fn record_runtime_health_value_to_path<F>(sample: Value, now_ms: i64, path: &Path, append: F)
+where
     F: FnOnce(&Path, &str) -> std::io::Result<()>,
 {
-    let sample = runtime_health_sample(context, now_ms);
     let Ok(mut line) = serde_json::to_string(&sample) else {
         log_lifecycle_always(
             "runtime health sample serialization failed",
@@ -192,14 +188,23 @@ fn record_runtime_health_sample_to_path<F>(
     line.push('\n');
     if line.len() > RUNTIME_HEALTH_HISTORY_MAX_SAMPLE_BYTES {
         log_lifecycle_always(
-            "runtime health sample too large",
+            "runtime health sample truncated",
             "runtime-health",
             Some(json!({
                 "bytes": line.len(),
                 "maxBytes": RUNTIME_HEALTH_HISTORY_MAX_SAMPLE_BYTES,
             })),
         );
-        return;
+        let Some(truncated_line) = truncated_runtime_health_line(&sample, now_ms, line.len())
+        else {
+            log_lifecycle_always(
+                "runtime health truncated sample serialization failed",
+                "runtime-health",
+                None,
+            );
+            return;
+        };
+        line = truncated_line;
     }
     if let Err(error) = append(path, &line) {
         log_lifecycle_always(
@@ -212,6 +217,48 @@ fn record_runtime_health_sample_to_path<F>(
     }
 }
 
+fn truncated_runtime_health_line(
+    sample: &Value,
+    now_ms: i64,
+    original_bytes: usize,
+) -> Option<String> {
+    let truncated = json!({
+        "v": sample.get("v").cloned().unwrap_or_else(|| json!(1)),
+        "recordedAtMs": sample
+            .get("recordedAtMs")
+            .and_then(Value::as_i64)
+            .unwrap_or(now_ms),
+        "pid": std::process::id(),
+        "truncated": true,
+        "truncation": {
+            "reason": "runtime-health-sample-too-large",
+            "originalBytes": original_bytes,
+            "maxBytes": RUNTIME_HEALTH_HISTORY_MAX_SAMPLE_BYTES,
+        },
+        "process": {
+            "taskCount": sample
+                .get("process")
+                .and_then(|process| process.get("taskCount"))
+                .and_then(Value::as_u64),
+        },
+        "scheduler": {
+            "readErrorPresent": true,
+            "errorPresent": true,
+            "truncated": true,
+        },
+        "backlogReadErrorPresent": true,
+        "backlog": [{
+            "name": "runtime-health-sample",
+            "status": "unavailable",
+            "errorPresent": true,
+            "truncated": true,
+        }],
+    });
+    let mut line = serde_json::to_string(&truncated).ok()?;
+    line.push('\n');
+    (line.len() <= RUNTIME_HEALTH_HISTORY_MAX_SAMPLE_BYTES).then_some(line)
+}
+
 #[doc(hidden)]
 pub fn record_runtime_health_sample_with_limits_for_tests(
     context: &ProjectServiceRequestContext,
@@ -220,7 +267,8 @@ pub fn record_runtime_health_sample_with_limits_for_tests(
     max_bytes: u64,
     max_files: u64,
 ) {
-    record_runtime_health_sample_to_path(context, now_ms, path, |path, line| {
+    let sample = runtime_health_sample(context, now_ms);
+    record_runtime_health_value_to_path(sample, now_ms, path, |path, line| {
         append_rotating_jsonl_with_limits(path, line, max_bytes, max_files)
     });
 }
@@ -235,8 +283,12 @@ pub fn runtime_health_history_retention_days_at_max_sample() -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::daemon::stability_doctor::{
+        StabilityVerdict, build_stability_doctor_report, render_stability_doctor_report,
+    };
     use crate::project_service::router::ProjectServiceRequestContext;
     use crate::project_service::scheduler::{PeriodicTaskHealthSnapshot, ProjectSchedulerHandle};
+    use std::fs;
     use time::OffsetDateTime;
 
     #[test]
@@ -342,18 +394,31 @@ mod tests {
     }
 
     #[test]
-    fn runtime_health_history_rotates_with_existing_log_rotation() {
+    fn runtime_health_history_rotates_oldest_data_out_and_doctor_reads_boundary() {
         let root = unique_temp_dir("runtime-health-rotation");
         let history_path = root.join("runtime-health.jsonl");
-        let context =
-            ProjectServiceRequestContext::with_project_state_dir(&root, root.join(".aimux"));
+        let base_ms = 1_800_000_000_000_i64;
+        let scheduler = ProjectSchedulerHandle::default();
+        scheduler.replace_health_snapshot_for_tests(vec![PeriodicTaskHealthSnapshot {
+            name: "loop-watcher".to_owned(),
+            total_runs: 3,
+            last_completed_at_ms: Some(base_ms + 4 * 12 * 60 * 60 * 1000),
+            last_duration_ms: Some(42),
+            p95_duration_ms: None,
+            consecutive_failures: 0,
+            consecutive_timeouts: 0,
+            total_timeouts: 0,
+            last_error: None,
+        }]);
+        let context = ProjectServiceRequestContext::with_project_state_dir(&root, root.clone())
+            .with_scheduler(scheduler);
 
-        for index in 0..6 {
+        for index in 0..5 {
             record_runtime_health_sample_with_limits_for_tests(
                 &context,
-                1_800_000_000_000 + index,
+                base_ms + index * 12 * 60 * 60 * 1000,
                 &history_path,
-                360,
+                1,
                 2,
             );
         }
@@ -362,6 +427,105 @@ mod tests {
         assert!(PathBuf::from(format!("{}.1", history_path.display())).exists());
         assert!(PathBuf::from(format!("{}.2", history_path.display())).exists());
         assert!(!PathBuf::from(format!("{}.3", history_path.display())).exists());
+        let retained_timestamps = [
+            format!("{}.2", history_path.display()),
+            format!("{}.1", history_path.display()),
+            history_path.to_string_lossy().into_owned(),
+        ]
+        .into_iter()
+        .map(|path| {
+            let text = fs::read_to_string(path).expect("retained history file");
+            let value: Value = serde_json::from_str(text.trim()).expect("retained sample json");
+            value["recordedAtMs"].as_i64().expect("recordedAtMs")
+        })
+        .collect::<Vec<_>>();
+        assert_eq!(
+            retained_timestamps,
+            vec![
+                base_ms + 2 * 12 * 60 * 60 * 1000,
+                base_ms + 3 * 12 * 60 * 60 * 1000,
+                base_ms + 4 * 12 * 60 * 60 * 1000,
+            ]
+        );
+
+        let report = build_stability_doctor_report("/repo", &root);
+        assert_ne!(report.verdict, StabilityVerdict::Unknown);
+        assert_eq!(report.sample_count, 3);
+        assert_eq!(report.history_span_ms, 24 * 60 * 60 * 1000);
+        assert!(
+            report
+                .reasons
+                .iter()
+                .all(|reason| !reason.kind.starts_with("history-")),
+            "{:#?}",
+            report.reasons
+        );
+    }
+
+    #[test]
+    fn runtime_health_history_writes_parseable_truncation_sentinel_for_oversized_sample() {
+        let root = unique_temp_dir("runtime-health-oversized");
+        fs::create_dir_all(&root).expect("state dir");
+        let history_path = root.join("runtime-health.jsonl");
+        let recorded_at_ms = 1_800_000_000_000_i64;
+        let oversized_sample = json!({
+            "v": 1,
+            "recordedAtMs": recorded_at_ms,
+            "process": { "taskCount": 12 },
+            "scheduler": {
+                "periodicTasks": [{
+                    "name": "huge-sample",
+                    "totalRuns": 1,
+                    "lastCompletedAtMs": recorded_at_ms,
+                    "padding": "x".repeat(RUNTIME_HEALTH_HISTORY_MAX_SAMPLE_BYTES),
+                }]
+            },
+            "backlog": [],
+        });
+
+        record_runtime_health_value_to_path(
+            oversized_sample,
+            recorded_at_ms,
+            &history_path,
+            |path, line| append_rotating_jsonl_with_limits(path, line, 1_000_000, 2),
+        );
+
+        let text = fs::read_to_string(&history_path).expect("history");
+        assert!(text.len() <= RUNTIME_HEALTH_HISTORY_MAX_SAMPLE_BYTES);
+        let sample: Value = serde_json::from_str(text.trim()).expect("truncated sample json");
+        assert_eq!(sample["recordedAtMs"], recorded_at_ms);
+        assert_eq!(sample["truncated"], true);
+        assert_eq!(
+            sample["truncation"]["reason"],
+            "runtime-health-sample-too-large"
+        );
+        assert!(
+            sample["truncation"]["originalBytes"]
+                .as_u64()
+                .expect("original bytes")
+                > RUNTIME_HEALTH_HISTORY_MAX_SAMPLE_BYTES as u64
+        );
+
+        let report = build_stability_doctor_report("/repo", &root);
+        let rendered = render_stability_doctor_report(&report);
+        assert_eq!(report.verdict, StabilityVerdict::Unknown);
+        assert_eq!(report.sample_count, 1);
+        assert!(
+            report
+                .reasons
+                .iter()
+                .any(|reason| reason.kind == "sample-truncated"),
+            "{:#?}\n{rendered}",
+            report.reasons
+        );
+        assert!(
+            report
+                .reasons
+                .iter()
+                .all(|reason| reason.kind != "history-unreadable"),
+            "{:#?}\n{rendered}",
+            report.reasons
+        );
     }
 
     #[test]

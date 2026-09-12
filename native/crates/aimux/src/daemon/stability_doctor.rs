@@ -280,6 +280,13 @@ fn history_span_ms(timed_samples: &[(u64, &Value)]) -> u64 {
 }
 
 fn evaluate_metric_readability(sample: &Value, reasons: &mut Vec<StabilityReason>) {
+    if sample.get("truncated").and_then(Value::as_bool) == Some(true) {
+        reasons.push(unknown(
+            "sample-truncated",
+            "latest runtime-health sample was truncated because it exceeded the line-size cap",
+        ));
+    }
+
     let scheduler = sample.get("scheduler");
     match scheduler {
         Some(value) if metric_failed(value) => reasons.push(unknown(

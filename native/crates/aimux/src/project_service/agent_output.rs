@@ -40,7 +40,8 @@ use super::agent_input::{
 use super::agent_input_delivery::{
     AGENT_INPUT_DELIVERY_TASK_NAME, AgentInputDeliveryDecision, AgentInputWindowActivity,
     active_client_count_for_window, decide_agent_input_delivery, enqueue_agent_input_delivery,
-    parse_agent_input_window_activity, record_agent_input_delivery_probe_failure,
+    pane_has_unsubmitted_agent_input, parse_agent_input_window_activity,
+    record_agent_input_delivery_probe_failure,
 };
 use super::agent_output_projection::insert_projection_fields;
 use super::attachments::get_attachment_record;
@@ -1883,6 +1884,21 @@ fn tmux_agent_input_window_activity(
     )?;
     let panes_text = String::from_utf8_lossy(&panes.stdout);
     if active_client_count_for_window(window_id, &panes_text)? == 0 {
+        let pane = run_tmux_argv_with_timeout(
+            vec![
+                "capture-pane".into(),
+                "-p".into(),
+                "-t".into(),
+                window_id.into(),
+                "-S".into(),
+                "-20".into(),
+            ],
+            format!("tmux capture-pane failed while checking unsubmitted input for {window_id}"),
+            timeout,
+        )?;
+        if pane_has_unsubmitted_agent_input(&String::from_utf8_lossy(&pane.stdout)) {
+            return Ok(AgentInputWindowActivity::UnsubmittedInputVisible);
+        }
         return Ok(AgentInputWindowActivity::Unattended);
     }
     let clients = run_tmux_argv_with_timeout(
@@ -1918,6 +1934,22 @@ pub(super) async fn tmux_agent_input_window_activity_async(
     .await?;
     let panes_text = String::from_utf8_lossy(&panes.stdout);
     if active_client_count_for_window(window_id, &panes_text)? == 0 {
+        let pane = run_tmux_argv_with_timeout_async(
+            vec![
+                "capture-pane".into(),
+                "-p".into(),
+                "-t".into(),
+                window_id.into(),
+                "-S".into(),
+                "-20".into(),
+            ],
+            format!("tmux capture-pane failed while checking unsubmitted input for {window_id}"),
+            timeout,
+        )
+        .await?;
+        if pane_has_unsubmitted_agent_input(&String::from_utf8_lossy(&pane.stdout)) {
+            return Ok(AgentInputWindowActivity::UnsubmittedInputVisible);
+        }
         return Ok(AgentInputWindowActivity::Unattended);
     }
     let clients = run_tmux_argv_with_timeout_async(
