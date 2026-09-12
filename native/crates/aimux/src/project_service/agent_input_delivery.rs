@@ -139,6 +139,27 @@ pub fn parse_agent_input_window_activity(
     })
 }
 
+pub fn classify_agent_input_window_activity(
+    window_id: &str,
+    panes_output: &str,
+    pane_output: &str,
+    clients_output: Option<&str>,
+) -> Result<AgentInputWindowActivity, String> {
+    let active_clients = active_client_count_for_window(window_id, panes_output)?;
+    if pane_has_unsubmitted_agent_input(pane_output) {
+        return Ok(AgentInputWindowActivity::UnsubmittedInputVisible);
+    }
+    if active_clients == 0 {
+        return Ok(AgentInputWindowActivity::Unattended);
+    }
+    let Some(clients_output) = clients_output else {
+        return Err(format!(
+            "tmux reported {active_clients} active client(s) for {window_id}, but client activity was not queried"
+        ));
+    };
+    parse_agent_input_window_activity(window_id, panes_output, clients_output)
+}
+
 pub fn decide_agent_input_delivery(
     force: bool,
     activity: Result<AgentInputWindowActivity, String>,
@@ -295,7 +316,14 @@ pub fn run_pending_agent_input_deliveries_with_runtime(
             .unwrap_or_else(|| pending.window_id.clone());
         let force_due_to_max = now_ms >= pending.max_deliver_at_ms;
         let activity = runtime.agent_input_window_activity(&window_id);
-        let decision = decide_agent_input_delivery(false, activity, now_ms, pending.created_at_ms);
+        let persistent_probe_failure = force_due_to_max && activity.is_err();
+        let decision = if persistent_probe_failure {
+            AgentInputDeliveryDecision::DeliverNow {
+                reason: "max-hold-elapsed".into(),
+            }
+        } else {
+            decide_agent_input_delivery(false, activity, now_ms, pending.created_at_ms)
+        };
         match decision {
             AgentInputDeliveryDecision::Hold { reason, .. } => {
                 if reason.starts_with("tmux client activity probe failed") {
@@ -437,7 +465,14 @@ pub async fn run_pending_agent_input_deliveries_async(
         let force_due_to_max = now_ms >= pending.max_deliver_at_ms;
         let activity =
             tmux_agent_input_window_activity_async(&window_id, DELIVERY_TASK_TIMEOUT).await;
-        let decision = decide_agent_input_delivery(false, activity, now_ms, pending.created_at_ms);
+        let persistent_probe_failure = force_due_to_max && activity.is_err();
+        let decision = if persistent_probe_failure {
+            AgentInputDeliveryDecision::DeliverNow {
+                reason: "max-hold-elapsed".into(),
+            }
+        } else {
+            decide_agent_input_delivery(false, activity, now_ms, pending.created_at_ms)
+        };
         match decision {
             AgentInputDeliveryDecision::Hold { reason, .. } => {
                 if reason.starts_with("tmux client activity probe failed") {

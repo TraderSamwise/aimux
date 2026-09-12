@@ -7,6 +7,10 @@ use crate::daemon_state::load_metadata_state;
 use crate::project_api_contract::routes;
 use crate::runtime_topology::{read_runtime_topology, runtime_topology_path};
 
+use super::agent_input_delivery::{
+    AGENT_INPUT_DELIVERY_TASK_NAME, AgentInputDeliveryDecision, decide_agent_input_delivery,
+    enqueue_agent_input_delivery, record_agent_input_delivery_probe_failure,
+};
 use super::agent_output::{
     AgentOutputCaptureRuntime, SystemAgentOutputCaptureRuntime, deliver_prompt_to_tmux,
     resolve_live_window_id,
@@ -15,6 +19,7 @@ use super::agents::{resolve_direct_teammates, topology_desktop_session_list_for_
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::router::ProjectServiceRequestContext;
 use super::runtime_exchange::{runtime_exchange_path, update_runtime_exchange};
+use super::scheduler::scheduler_now_ms;
 use super::team::load_team_config;
 
 mod indexes;
@@ -1455,6 +1460,9 @@ fn deliver_thread_send_response(
         "deliveredTo",
         json!(delivery.delivered_to),
     );
+    if !delivery.queued_to.is_empty() {
+        object_insert_mut(&mut response.body, "queuedTo", json!(delivery.queued_to));
+    }
     let thread_id = response
         .body
         .get("thread")
@@ -1507,6 +1515,7 @@ struct DeliveryPlan {
 #[derive(Default)]
 struct DeliveryOutcome {
     delivered_to: Vec<String>,
+    queued_to: Vec<String>,
     failures: Vec<String>,
 }
 
@@ -1551,6 +1560,32 @@ fn deliver_prompt_to_recipients(
             continue;
         };
         let prompt = plan.prompt.replace(RECIPIENT_PLACEHOLDER, recipient);
+        let now_ms = scheduler_now_ms();
+        let decision = decide_agent_input_delivery(
+            false,
+            runtime.agent_input_window_activity(&window_id),
+            now_ms,
+            now_ms,
+        );
+        if let AgentInputDeliveryDecision::Hold { reason, .. } = decision {
+            match enqueue_agent_input_delivery(
+                context, recipient, &window_id, &prompt, &reason, now_ms,
+            ) {
+                Ok(_) => {
+                    if reason.starts_with("tmux client activity probe failed") {
+                        record_agent_input_delivery_probe_failure(context, recipient, &reason);
+                    }
+                    context
+                        .scheduler
+                        .force_task_next_tick(AGENT_INPUT_DELIVERY_TASK_NAME);
+                    outcome.queued_to.push(recipient.clone());
+                }
+                Err(error) => outcome.failures.push(format!(
+                    "{recipient}: delivery to tmux window {window_id} could not be queued: {error}"
+                )),
+            }
+            continue;
+        }
         if let Err(error) = deliver_prompt_to_tmux(runtime, &window_id, &prompt) {
             outcome.failures.push(format!(
                 "{recipient}: delivery to tmux window {window_id} failed: {error}"
