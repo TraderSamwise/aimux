@@ -1,6 +1,5 @@
 pub mod agent_display;
 pub mod agent_prompt_delivery;
-pub mod agent_restore_state_contract;
 pub mod ansi_sgr_spans;
 pub mod atomic_write;
 pub mod attachment_hosting;

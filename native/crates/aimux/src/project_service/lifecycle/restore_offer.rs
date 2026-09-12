@@ -13,7 +13,7 @@ use super::{
     read_json_object, resume_agent_session, string_array_field, string_field, trimmed_string,
 };
 
-pub(super) fn read_displayable_agent_restore_offer(
+pub(crate) fn read_displayable_agent_restore_offer(
     context: &ProjectServiceRequestContext,
     project_state_dir: &Path,
 ) -> Option<Value> {
@@ -107,7 +107,7 @@ pub(super) fn route_agent_dismiss_restore_previous(
     ProjectServiceDispatchResponse::json(200, json!({ "ok": true }))
 }
 
-fn read_agent_restore_offer(project_state_dir: &Path) -> Option<Value> {
+pub(super) fn read_agent_restore_offer(project_state_dir: &Path) -> Option<Value> {
     let path = agent_restore_offer_path(project_state_dir);
     if !path.exists() {
         return None;
@@ -149,7 +149,7 @@ fn normalize_agent_restore_offer(value: &Value) -> Option<Value> {
     }))
 }
 
-fn normalize_agent_restore_sessions(value: Option<&Value>) -> Option<Vec<Value>> {
+pub(super) fn normalize_agent_restore_sessions(value: Option<&Value>) -> Option<Vec<Value>> {
     let mut sessions: Vec<Value> = Vec::new();
     for raw in value.and_then(Value::as_array)? {
         let Some(session) = normalize_agent_restore_session(raw) else {
@@ -353,7 +353,7 @@ fn mark_agent_restore_prompt_gate_asked(
     let _ = write_json_atomic(path, &Value::Object(state));
 }
 
-fn build_agent_restore_worktree_groups(sessions: &[Value]) -> Vec<Value> {
+pub(super) fn build_agent_restore_worktree_groups(sessions: &[Value]) -> Vec<Value> {
     let mut groups: Vec<(String, Value)> = Vec::new();
     for session in sessions {
         let path = trimmed_string(session.get("worktreePath"));
@@ -412,15 +412,15 @@ fn agent_restore_worktree_group_key(path: Option<&str>) -> String {
     path[..index + marker.len() + name.len()].to_owned()
 }
 
-fn agent_restore_offer_path(project_state_dir: &Path) -> PathBuf {
+pub(super) fn agent_restore_offer_path(project_state_dir: &Path) -> PathBuf {
     project_state_dir.join("agent-restore-offer.json")
 }
 
-fn agent_restore_ack_path(project_state_dir: &Path) -> PathBuf {
+pub(super) fn agent_restore_ack_path(project_state_dir: &Path) -> PathBuf {
     project_state_dir.join("agent-restore-offer-ack.json")
 }
 
-fn agent_restore_prompt_gate_path(project_state_dir: &Path) -> PathBuf {
+pub(super) fn agent_restore_prompt_gate_path(project_state_dir: &Path) -> PathBuf {
     if let Some(projects_dir) = project_state_dir.parent()
         && projects_dir.file_name().and_then(|name| name.to_str()) == Some("projects")
         && let Some(global_dir) = projects_dir.parent()
@@ -432,6 +432,6 @@ fn agent_restore_prompt_gate_path(project_state_dir: &Path) -> PathBuf {
         .join("restore-prompt-gates.json")
 }
 
-fn remove_agent_restore_offer(project_state_dir: &Path) {
+pub(super) fn remove_agent_restore_offer(project_state_dir: &Path) {
     let _ = std::fs::remove_file(agent_restore_offer_path(project_state_dir));
 }

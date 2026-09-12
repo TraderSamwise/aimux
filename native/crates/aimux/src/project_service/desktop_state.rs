@@ -25,6 +25,7 @@ use super::agents::{
 };
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::http::query_params;
+use super::lifecycle::read_displayable_agent_restore_offer;
 use super::operation_failures::list_dashboard_operation_failures;
 use super::preview_snapshots::{
     DEFAULT_PREVIEW_CAPTURE_LINES, DEFAULT_PREVIEW_MAX_CHARS, capture_preview_snapshot_with_tap,
@@ -200,6 +201,11 @@ pub fn desktop_state_for_context(context: &ProjectServiceRequestContext) -> Resu
             operation_failures.insert(0, tmux_live_window_query_failure(&error));
         }
         object.insert("operationFailures".into(), Value::Array(operation_failures));
+        object.insert(
+            "agentRestoreOffer".into(),
+            read_displayable_agent_restore_offer(context, &project_state_dir)
+                .unwrap_or(Value::Null),
+        );
     }
     Ok(state)
 }

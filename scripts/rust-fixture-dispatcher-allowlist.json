@@ -1,5 +1,4 @@
 {
-  "native/crates/aimux/src/agent_restore_state_contract.rs": "DEAD TWIN: production restore-offer routing, normalization, reconciliation, and prompt gates live in native/crates/aimux/src/project_service/lifecycle/restore_offer.rs:29, :110, :210, and :423; the feature is still incomplete because last-online-agents.json seeding exists only in this twin and write_agent_restore_retry_offer currently has no production caller.",
   "native/crates/aimux/src/attachment_store_contract.rs": "DEAD TWIN: production attachment routing and storage live in native/crates/aimux/src/project_service/attachments.rs:25, :129, and :1047.",
   "native/crates/aimux/src/cli_attachment_contract.rs": "DEAD TWIN: production MIME and relay URL handling live in native/crates/aimux/src/project_service/attachments.rs:1047 and native/crates/aimux/src/attachment_hosting.rs:28.",
   "native/crates/aimux/src/plugin_runtime_contract.rs": "Tracked plugin parity fixture; keep until plugin behavior is production-consumed natively or culled.",

@@ -101,6 +101,7 @@ use crate::process_inspector::{
 };
 use crate::project_api_contract::routes as project_routes;
 use crate::project_catalog::{hidden_project_tmp_dirs, list_registered_desktop_projects};
+use crate::project_service::lifecycle::seed_agent_restore_prompt_gates_for_daemon_boot;
 use crate::project_service_manifest::get_project_service_manifest;
 use crate::recording_cleanup::{
     RunRecordingCleanupInput, normalize_recordings_config, plan_recording_cleanup,
@@ -2034,6 +2035,7 @@ pub fn run_daemon_internal() -> Result<()> {
         })),
     );
     save_daemon_info(resolver.daemon_info_path(), &info).context("save daemon info")?;
+    seed_agent_restore_prompt_gates(&resolver, &info);
     let _guard = DaemonInfoGuard {
         path: resolver.daemon_info_path(),
         pid: info.pid,
@@ -2091,6 +2093,25 @@ pub fn run_daemon_internal() -> Result<()> {
         runtime.stop_project_services_for_signal_shutdown(signal_name);
     }
     serve_result.map_err(anyhow::Error::new)
+}
+
+/// Open a restore prompt gate per project for this boot.
+///
+/// The gate records the snapshot generation that was on disk the moment the
+/// daemon came up, which is what makes the offer a once-per-boot question
+/// instead of something re-asked on every dashboard refresh. The daemon's own
+/// pid and start time already identify this boot, so no parallel id is minted.
+fn seed_agent_restore_prompt_gates(resolver: &PathResolver, info: &AimuxDaemonInfo) {
+    let daemon_boot_id = format!("{}-{}", info.pid, info.started_at);
+    if let Err(error) =
+        seed_agent_restore_prompt_gates_for_daemon_boot(resolver, &daemon_boot_id, &info.started_at)
+    {
+        log_lifecycle_always(
+            "agent restore prompt gates not seeded",
+            "agent-restore",
+            Some(json!({ "daemonBootId": daemon_boot_id, "error": error })),
+        );
+    }
 }
 
 fn start_daemon_disk_maintenance_background(resolver: PathResolver) {

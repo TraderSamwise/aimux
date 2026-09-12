@@ -95,13 +95,6 @@ Priority fixture groups:
 - `agent-output/read-metrics.json`: output-read metric aggregation and recent
   ring-buffer behavior captured from the TypeScript metric accumulator.
 
-## Agent Restore
-
-- `agent-restore/state.json`: last-online snapshot, prompt-gate, restore-offer,
-  acknowledgement, removal, and reconciliation scenarios captured by running
-  TypeScript `runtime-core/agent-restore-state` transitions. Volatile generated
-  identifiers and timestamps are normalized after TypeScript execution.
-
 ## Agent Status
 
 

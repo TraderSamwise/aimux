@@ -17,6 +17,7 @@ use super::json_helpers::{
     array_field, find_by_id, object_insert_mut, string_field, trimmed_string,
 };
 use super::response_helpers::{json_error, lifecycle_response};
+use super::restore_snapshot::prune_restore_eligibility;
 use super::runtime_adapter::ProjectLifecycleRuntime;
 use super::topology_helpers::{live_window_id_for_session, map_topology_array};
 use super::worktrees::worktree_path_is_graveyarded;
@@ -89,6 +90,10 @@ pub(super) fn route_agent_stop(
     if let Err(error) = result {
         return json_error(500, error);
     }
+    // Stopping an agent is the human saying they are done with it, which is
+    // exactly what separates a clean exit from a crash. Forget it here or the
+    // next boot offers to bring back something nobody lost.
+    prune_restore_eligibility(&project_state_dir, &session_id);
     if let Some(window_id) = window_id {
         let _ = runtime.kill_window(&window_id);
     }
@@ -144,6 +149,7 @@ pub(super) fn route_agent_kill(
     if let Err(error) = result {
         return json_error(500, error);
     }
+    prune_restore_eligibility(&project_state_dir, &session_id);
     if let Some(window_id) = window_id {
         let _ = runtime.kill_window(&window_id);
     }

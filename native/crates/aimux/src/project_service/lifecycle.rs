@@ -17,6 +17,7 @@ mod ids;
 mod json_helpers;
 mod response_helpers;
 mod restore_offer;
+mod restore_snapshot;
 mod runtime_adapter;
 mod services;
 mod session_state;
@@ -33,7 +34,12 @@ pub(crate) use default_scribe::is_scribe_session;
 use ids::*;
 use json_helpers::*;
 use response_helpers::*;
+pub(crate) use restore_offer::read_displayable_agent_restore_offer;
 use restore_offer::*;
+pub use restore_snapshot::seed_agent_restore_prompt_gates_for_daemon_boot;
+pub(crate) use restore_snapshot::{
+    derive_agent_restore_offer, record_last_online_agents, restore_now_iso, restore_project_id,
+};
 pub use runtime_adapter::{ProjectLifecycleRuntime, SystemProjectLifecycleRuntime};
 use services::*;
 use session_state::*;
