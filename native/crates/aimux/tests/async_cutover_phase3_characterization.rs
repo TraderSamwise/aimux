@@ -172,6 +172,7 @@ fn project_event_stream_proxy_case() -> CharacterizationCase {
     let mut headers = BTreeMap::new();
     headers.insert("x-aimux-actor-role".into(), "owner".into());
 
+    // aimux-async-seam: test - characterization test drives async stream helper
     aimux::async_runtime::block_on_named(
         "phase3-characterization:project-event-stream",
         pipe_project_event_stream_from_url_async(
@@ -226,6 +227,7 @@ fn project_event_stream_downstream_disconnect_case() -> CharacterizationCase {
         headers: BTreeMap::new(),
     };
 
+    // aimux-async-seam: test - characterization test drives async stream helper
     let error = aimux::async_runtime::block_on_named(
         "phase3-characterization:project-event-disconnect",
         pipe_project_event_stream_from_url_async(
@@ -280,6 +282,7 @@ fn relay_project_events_subscription_case() -> CharacterizationCase {
     };
     let mut sleep = |_| Box::pin(async {}) as BoxFuture<'static, ()>;
 
+    // aimux-async-seam: test - characterization test drives async stream helper
     aimux::async_runtime::block_on_named("phase3-characterization:relay-subscription", async {
         runner.run_with_sleep(&mut connector, &mut sleep).await;
     });
@@ -388,9 +391,11 @@ fn hosted_operator_stream_revocation_case() -> CharacterizationCase {
     };
     upstream.stop();
     aimux::async_runtime::process_runtime()
+        // aimux-async-seam: test - hosted characterization awaits paired async exchange
         .block_on(hosted)
         .expect("hosted async task");
     aimux::async_runtime::process_runtime()
+        // aimux-async-seam: test - hosted characterization awaits paired async exchange
         .block_on(client)
         .expect("hosted client task");
     let response = String::from_utf8(output).expect("hosted response utf8");

@@ -146,6 +146,7 @@ where
         + 'static,
     Stop: Fn() -> bool,
 {
+    // aimux-async-seam: transitional - sync daemon listener entry remains during route-family conversion
     async_runtime::block_on_named(
         async_runtime::task_name("daemon-listener", "serve"),
         serve_daemon_http_with_metadata_and_interceptor_until_async(

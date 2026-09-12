@@ -201,6 +201,7 @@ impl TestProject {
         let context = self.context();
         let mut task =
             AgentRestoreSnapshotTask::with_live_window_source(&context, Box::new(live_windows));
+        // aimux-async-seam: test - restore task test drives async PeriodicTask body
         aimux::async_runtime::block_on_named("agent-restore-test", task.run(&context));
     }
 
