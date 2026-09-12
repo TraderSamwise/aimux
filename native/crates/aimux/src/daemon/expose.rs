@@ -1,8 +1,10 @@
+use crate::async_runtime::{scoped_task_name, spawn_blocking_named, spawn_named, task_name};
 use crate::config::load_global_config;
 use crate::daemon::json::ExposeFocusRequest;
 use crate::daemon::routing::DaemonRouteUrl;
 use crate::daemon_projects::ProjectsRouteProject;
 use crate::daemon_state::load_metadata_state;
+use crate::debug_logging::log_lifecycle_always;
 use crate::paths::PathResolver;
 use crate::project_catalog::{hidden_project_tmp_dirs, list_registered_desktop_projects};
 use crate::project_service::agents::LiveWindowIdsProjection;
@@ -34,7 +36,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::IsTerminal;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const GLOBAL_EXPOSE_HOT_SNAPSHOT_REFRESH_MS: u64 = 3_000;
@@ -96,6 +97,11 @@ impl GlobalExposeHotSnapshotCoordinator {
             background_refresh_enabled,
             refresh_delay_ms: GLOBAL_EXPOSE_HOT_SNAPSHOT_REFRESH_MS,
         }
+    }
+
+    pub fn with_refresh_delay_ms(mut self, refresh_delay_ms: u64) -> Self {
+        self.refresh_delay_ms = refresh_delay_ms;
+        self
     }
 
     pub fn touch_route_lease(
@@ -170,10 +176,27 @@ impl GlobalExposeHotSnapshotCoordinator {
             refresh.scheduled = true;
         }
         let coordinator = self.clone();
+        let cleanup_coordinator = self.clone();
         let delay = Duration::from_millis(self.refresh_delay_ms);
-        thread::spawn(move || {
-            thread::sleep(delay);
-            coordinator.run_scheduled_global_refresh(projects, project_state_dirs);
+        spawn_named(global_refresh_task_name(self), async move {
+            tokio::time::sleep(delay).await;
+            let refresh_result = spawn_blocking_named(
+                task_name("daemon-expose", "hot-snapshot-refresh-blocking"),
+                move || {
+                    coordinator.run_scheduled_global_refresh(projects, project_state_dirs);
+                },
+            )
+            .await;
+            if let Err(error) = refresh_result {
+                cleanup_coordinator.clear_refresh_state();
+                log_lifecycle_always(
+                    "global expose hot snapshot refresh task failed",
+                    "daemon-expose",
+                    Some(json!({
+                        "error": error.to_string(),
+                    })),
+                );
+            }
         });
     }
 
@@ -209,6 +232,23 @@ impl GlobalExposeHotSnapshotCoordinator {
             self.schedule_global_refresh(projects, project_state_dirs);
         }
     }
+
+    fn clear_refresh_state(&self) {
+        let mut refresh = self
+            .refresh
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        refresh.scheduled = false;
+        refresh.refreshing = false;
+    }
+}
+
+fn global_refresh_task_name(coordinator: &GlobalExposeHotSnapshotCoordinator) -> String {
+    scoped_task_name(
+        "daemon-expose",
+        "hot-snapshot-refresh",
+        &format!("{:p}", Arc::as_ptr(&coordinator.refresh)),
+    )
 }
 
 pub trait DaemonExposeFocusRuntime {
@@ -909,5 +949,77 @@ fn run_tmux_argv_output(argv: Vec<String>, fallback_error: String) -> Result<Str
             }
         }
         Err(error) => Err(format!("{fallback_error}: {error}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::async_runtime::{AsyncTaskKind, doctor_tasks_report, init_process_runtime};
+    use std::time::Instant;
+
+    #[test]
+    fn active_global_preview_refresh_runs_on_async_runtime() {
+        init_process_runtime().expect("runtime initialized");
+        let coordinator = GlobalExposeHotSnapshotCoordinator::new(true).with_refresh_delay_ms(200);
+        let route_url = DaemonRouteUrl::parse(
+            "/core/expose/items?includePreview=1&clientId=phase3c-global&clientTtlMs=1",
+        );
+
+        let active = coordinator.touch_route_lease(&route_url, &[], BTreeMap::new());
+
+        assert!(active);
+        let task_name = global_refresh_task_name(&coordinator);
+        let task = wait_for_task(&task_name).expect("refresh task registered");
+        assert_eq!(task.kind, AsyncTaskKind::Async);
+        wait_for_task_to_finish(&task_name).expect("refresh task finished");
+    }
+
+    #[test]
+    fn global_preview_refresh_does_not_schedule_without_preview_request() {
+        init_process_runtime().expect("runtime initialized");
+        let coordinator = GlobalExposeHotSnapshotCoordinator::new(true).with_refresh_delay_ms(200);
+        let route_url = DaemonRouteUrl::parse("/core/expose/items?clientId=phase3c-global-none");
+        let task_name = global_refresh_task_name(&coordinator);
+
+        let active = coordinator.touch_route_lease(&route_url, &[], BTreeMap::new());
+
+        assert!(!active);
+        assert!(
+            doctor_tasks_report()
+                .tasks
+                .iter()
+                .all(|task| task.name != task_name)
+        );
+    }
+
+    fn wait_for_task(name: &str) -> Option<crate::async_runtime::AsyncTaskSnapshot> {
+        wait_until(|| {
+            doctor_tasks_report()
+                .tasks
+                .into_iter()
+                .find(|task| task.name == name)
+        })
+    }
+
+    fn wait_for_task_to_finish(name: &str) -> Option<()> {
+        wait_until(|| {
+            let still_live = doctor_tasks_report()
+                .tasks
+                .iter()
+                .any(|task| task.name == name);
+            (!still_live).then_some(())
+        })
+    }
+
+    fn wait_until<T>(mut condition: impl FnMut() -> Option<T>) -> Option<T> {
+        let started = Instant::now();
+        while started.elapsed() < Duration::from_secs(2) {
+            if let Some(value) = condition() {
+                return Some(value);
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        None
     }
 }

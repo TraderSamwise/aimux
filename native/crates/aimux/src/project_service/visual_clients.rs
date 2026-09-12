@@ -1,10 +1,11 @@
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use crate::async_runtime::{scoped_task_name, spawn_blocking_named, spawn_named};
 use crate::config::load_config_for_project;
+use crate::debug_logging::log_lifecycle_always;
 use crate::tmux::TmuxRuntimeManager;
 use crate::tmux_expose_hot_snapshot::prune_expired_hot_expose_snapshots;
 use crate::tmux_expose_hot_snapshot_worker::refresh_project_expose_hot_snapshots;
@@ -197,10 +198,32 @@ impl ProjectHotSnapshotCoordinator {
             refresh.scheduled = true;
         }
         let coordinator = self.clone();
+        let cleanup_coordinator = self.clone();
         let delay = Duration::from_millis(self.refresh_delay_ms);
-        thread::spawn(move || {
-            thread::sleep(delay);
-            coordinator.run_scheduled_project_refresh(project_root, project_state_dir);
+        let task_name = project_refresh_task_name(&project_root);
+        spawn_named(task_name, async move {
+            tokio::time::sleep(delay).await;
+            let project_label = project_root.to_string_lossy().into_owned();
+            let blocking_task_name = scoped_task_name(
+                "project-service",
+                "hot-snapshot-refresh-blocking",
+                &project_label,
+            );
+            let refresh_result = spawn_blocking_named(blocking_task_name, move || {
+                coordinator.run_scheduled_project_refresh(project_root, project_state_dir);
+            })
+            .await;
+            if let Err(error) = refresh_result {
+                cleanup_coordinator.clear_refresh_state();
+                log_lifecycle_always(
+                    "project hot snapshot refresh task failed",
+                    "project-service-visual-clients",
+                    Some(json!({
+                        "projectRoot": project_label,
+                        "error": error.to_string(),
+                    })),
+                );
+            }
         });
     }
 
@@ -247,6 +270,11 @@ impl ProjectHotSnapshotCoordinator {
     }
 }
 
+fn project_refresh_task_name(project_root: &Path) -> String {
+    let subject = project_root.to_string_lossy();
+    scoped_task_name("project-service", "hot-snapshot-refresh", subject.as_ref())
+}
+
 fn project_hot_snapshots_enabled(project_root: &Path) -> bool {
     load_config_for_project(project_root)
         .get("expose")
@@ -267,4 +295,120 @@ fn sanitize_remote_address(remote_address: &str) -> String {
         .strip_prefix("::ffff:")
         .unwrap_or(remote_address)
         .to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::async_runtime::{AsyncTaskKind, doctor_tasks_report, init_process_runtime};
+    use std::collections::BTreeMap;
+    use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::Instant;
+
+    static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn active_project_preview_refresh_runs_on_async_runtime() {
+        init_process_runtime().expect("runtime initialized");
+        let project_root = temp_root("project-preview-refresh");
+        let project_state_dir = project_root.join("state");
+        fs::create_dir_all(&project_state_dir).expect("state dir");
+        let coordinator = ProjectHotSnapshotCoordinator::new(true).with_refresh_delay_ms(200);
+        let task_name = project_refresh_task_name(&project_root);
+        let params = BTreeMap::from([
+            ("clientId".to_owned(), "phase3c-project-preview".to_owned()),
+            ("clientTtlMs".to_owned(), "1".to_owned()),
+        ]);
+
+        let active = coordinator.touch_route_lease(
+            &params,
+            VisualClientLeaseRoute {
+                surface: "desktop-state",
+                requested_preview: true,
+                requested_chat_preview: false,
+                default_kind: None,
+                remote_address: Some("127.0.0.1"),
+            },
+            &project_root,
+            &project_state_dir,
+        );
+
+        assert!(active);
+        let task = wait_for_task(&task_name).expect("refresh task registered");
+        assert_eq!(task.kind, AsyncTaskKind::Async);
+        wait_for_task_to_finish(&task_name).expect("refresh task finished");
+        let _ = fs::remove_dir_all(project_root);
+    }
+
+    #[test]
+    fn project_preview_refresh_does_not_schedule_without_preview_request() {
+        init_process_runtime().expect("runtime initialized");
+        let project_root = temp_root("project-preview-inactive");
+        let project_state_dir = project_root.join("state");
+        fs::create_dir_all(&project_state_dir).expect("state dir");
+        let coordinator = ProjectHotSnapshotCoordinator::new(true).with_refresh_delay_ms(200);
+        let task_name = project_refresh_task_name(&project_root);
+        let params = BTreeMap::new();
+
+        let active = coordinator.touch_route_lease(
+            &params,
+            VisualClientLeaseRoute {
+                surface: "desktop-state",
+                requested_preview: false,
+                requested_chat_preview: false,
+                default_kind: None,
+                remote_address: Some("127.0.0.1"),
+            },
+            &project_root,
+            &project_state_dir,
+        );
+
+        assert!(!active);
+        assert!(
+            doctor_tasks_report()
+                .tasks
+                .iter()
+                .all(|task| task.name != task_name)
+        );
+        let _ = fs::remove_dir_all(project_root);
+    }
+
+    fn wait_for_task(name: &str) -> Option<crate::async_runtime::AsyncTaskSnapshot> {
+        wait_until(|| {
+            doctor_tasks_report()
+                .tasks
+                .into_iter()
+                .find(|task| task.name == name)
+        })
+    }
+
+    fn wait_for_task_to_finish(name: &str) -> Option<()> {
+        wait_until(|| {
+            let still_live = doctor_tasks_report()
+                .tasks
+                .iter()
+                .any(|task| task.name == name);
+            (!still_live).then_some(())
+        })
+    }
+
+    fn wait_until<T>(mut condition: impl FnMut() -> Option<T>) -> Option<T> {
+        let started = Instant::now();
+        while started.elapsed() < Duration::from_secs(2) {
+            if let Some(value) = condition() {
+                return Some(value);
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        None
+    }
+
+    fn temp_root(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "aimux-visual-clients-{label}-{}-{}",
+            std::process::id(),
+            TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
 }

@@ -2115,14 +2115,52 @@ fn seed_agent_restore_prompt_gates(resolver: &PathResolver, info: &AimuxDaemonIn
 }
 
 fn start_daemon_disk_maintenance_background(resolver: PathResolver) {
-    thread::spawn(move || {
-        thread::sleep(Duration::from_millis(INSTALL_CLEANUP_INITIAL_DELAY_MS));
+    crate::async_runtime::spawn_named(daemon_disk_maintenance_task_name(&resolver), async move {
+        tokio::time::sleep(Duration::from_millis(INSTALL_CLEANUP_INITIAL_DELAY_MS)).await;
         loop {
-            let interval =
-                run_daemon_disk_maintenance_once(&resolver, DiskMaintenanceOptions::default());
-            thread::sleep(interval);
+            let maintenance_resolver = resolver.clone();
+            let interval = match crate::async_runtime::spawn_blocking_named(
+                daemon_disk_maintenance_pass_task_name(&resolver),
+                move || {
+                    run_daemon_disk_maintenance_once(
+                        &maintenance_resolver,
+                        DiskMaintenanceOptions::default(),
+                    )
+                },
+            )
+            .await
+            {
+                Ok(interval) => interval,
+                Err(error) => {
+                    log_lifecycle_always(
+                        "daemon disk maintenance task failed",
+                        "daemon-maintenance",
+                        Some(json!({
+                            "error": error.to_string(),
+                        })),
+                    );
+                    Duration::from_millis(86_400_000)
+                }
+            };
+            tokio::time::sleep(interval).await;
         }
     });
+}
+
+fn daemon_disk_maintenance_task_name(resolver: &PathResolver) -> String {
+    crate::async_runtime::scoped_task_name(
+        "daemon",
+        "disk-maintenance",
+        &resolver.global_aimux_dir().to_string_lossy(),
+    )
+}
+
+fn daemon_disk_maintenance_pass_task_name(resolver: &PathResolver) -> String {
+    crate::async_runtime::scoped_task_name(
+        "daemon",
+        "disk-maintenance-pass",
+        &resolver.global_aimux_dir().to_string_lossy(),
+    )
 }
 
 fn run_daemon_disk_maintenance_once(
@@ -6147,6 +6185,39 @@ mod tests {
         assert_eq!(interval, Duration::from_millis(86_400_000));
         assert!(stale_recording.exists());
         assert!(old_install.exists());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn daemon_disk_maintenance_background_runs_on_async_runtime() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        let root = temp_root("disk-maintenance-async");
+        let home = root.join("home");
+        fs::create_dir_all(&home).expect("home");
+        let resolver = PathResolver::new(
+            &root,
+            &home,
+            Some(home.join(".aimux").to_string_lossy().into_owned()),
+        );
+        fs::create_dir_all(resolver.global_aimux_dir()).expect("aimux home");
+        let task_name = daemon_disk_maintenance_task_name(&resolver);
+
+        start_daemon_disk_maintenance_background(resolver);
+
+        let started = Instant::now();
+        let mut found = false;
+        while started.elapsed() < Duration::from_secs(1) {
+            found = crate::async_runtime::doctor_tasks_report()
+                .tasks
+                .iter()
+                .any(|task| task.name == task_name);
+            if found {
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(found, "daemon disk maintenance async task registered");
 
         let _ = fs::remove_dir_all(root);
     }
