@@ -7,8 +7,9 @@ use aimux::paths::{PathResolver, compute_project_id};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
 use std::net::{Shutdown, TcpStream};
+use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
@@ -378,11 +379,13 @@ fn project_sse_disconnect_case(port: u16, context: &NormalizeContext) -> Charact
 }
 
 fn daemon_concurrent_requests_case(port: u16, context: &NormalizeContext) -> CharacterizationCase {
-    let mut slow = TcpStream::connect(("127.0.0.1", port)).expect("connect slow daemon client");
-    slow.set_read_timeout(Some(Duration::from_secs(1)))
-        .expect("slow read timeout");
-    slow.write_all(b"GET /projects HTTP/1.1\r\nHost: 127.0.0.1")
-        .expect("write partial slow request");
+    let mut slow = connect_harness_stream(port, Duration::from_secs(5), "slow daemon client");
+    write_all_ready(
+        &mut slow,
+        b"GET /projects HTTP/1.1\r\nHost: 127.0.0.1",
+        Duration::from_secs(5),
+        "write partial slow request",
+    );
 
     let (tx, rx) = mpsc::channel();
     for _ in 0..8 {
@@ -484,16 +487,20 @@ fn json_exchange(
     timeout: Duration,
 ) -> HttpExchange {
     let request = build_request(port, method, path, body);
-    let mut stream = TcpStream::connect(("127.0.0.1", port))
-        .unwrap_or_else(|error| panic!("connect to 127.0.0.1:{port} for {method} {path}: {error}"));
-    stream
-        .set_read_timeout(Some(timeout))
-        .expect("set read timeout");
-    stream
-        .write_all(request.as_bytes())
-        .expect("write http request");
-    let mut bytes = Vec::new();
-    stream.read_to_end(&mut bytes).expect("read http response");
+    let label = format!("{method} {path}");
+    let mut stream = connect_harness_stream(port, timeout, &label);
+    write_all_ready(
+        &mut stream,
+        request.as_bytes(),
+        timeout,
+        &format!("write http request for {label}"),
+    );
+    finish_request_write(&stream, &format!("finish http request for {label}"));
+    let bytes = read_to_end_ready(
+        &mut stream,
+        timeout,
+        &format!("read http response for {label}"),
+    );
     HttpExchange {
         request,
         response: canonical_http_response(&bytes),
@@ -562,12 +569,15 @@ fn open_sse(port: u16, path: &str, timeout: Duration) -> SseStream {
     let request = format!(
         "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAccept: text/event-stream\r\nConnection: close\r\n\r\n"
     );
-    let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect sse");
-    stream
-        .set_read_timeout(Some(timeout))
-        .expect("set sse read timeout");
-    stream.write_all(request.as_bytes()).expect("write sse");
-    let head = read_until(&mut stream, b"\r\n\r\n", timeout);
+    let mut stream = connect_harness_stream(port, timeout, &format!("sse {path}"));
+    write_all_ready(
+        &mut stream,
+        request.as_bytes(),
+        timeout,
+        &format!("write sse request for {path}"),
+    );
+    finish_request_write(&stream, &format!("finish sse request for {path}"));
+    let head = read_until(&mut stream, b"\r\n\r\n", timeout, "read sse response head");
     let response = canonical_http_response(&head);
     assert_eq!(response.status_line, "HTTP/1.1 200 OK");
     SseStream {
@@ -584,34 +594,208 @@ impl SseStream {
     fn read_frames(&mut self, count: usize, timeout: Duration) -> Vec<String> {
         let mut frames = Vec::new();
         for _ in 0..count {
-            let bytes = read_until(&mut self.stream, b"\n\n", timeout);
+            let bytes = read_until(&mut self.stream, b"\n\n", timeout, "read sse frame");
             frames.push(String::from_utf8(bytes).expect("sse frame utf8"));
         }
         frames
     }
 }
 
-fn read_until(stream: &mut TcpStream, delimiter: &[u8], timeout: Duration) -> Vec<u8> {
+fn read_until(
+    stream: &mut TcpStream,
+    delimiter: &[u8],
+    timeout: Duration,
+    operation: &str,
+) -> Vec<u8> {
     let deadline = Instant::now() + timeout;
     let mut bytes = Vec::new();
     let mut buffer = [0_u8; 1];
     while !bytes.ends_with(delimiter) {
-        assert!(Instant::now() < deadline, "timed out reading stream frame");
         match stream.read(&mut buffer) {
             Ok(0) => panic!("stream closed before delimiter {:?}", delimiter),
             Ok(_) => bytes.push(buffer[0]),
             Err(error)
                 if matches!(
                     error.kind(),
-                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    io::ErrorKind::WouldBlock
+                        | io::ErrorKind::TimedOut
+                        | io::ErrorKind::Interrupted
                 ) =>
             {
-                thread::sleep(Duration::from_millis(10));
+                wait_for_stream_ready(stream, libc::POLLIN, deadline, operation)
+                    .unwrap_or_else(|error| panic!("{operation}: {error}"));
             }
             Err(error) => panic!("read stream: {error}"),
         }
     }
     bytes
+}
+
+fn connect_harness_stream(port: u16, timeout: Duration, operation: &str) -> TcpStream {
+    connect_harness_stream_result(port, timeout, operation)
+        .unwrap_or_else(|error| panic!("{operation}: {error}"))
+}
+
+fn connect_harness_stream_result(
+    port: u16,
+    timeout: Duration,
+    operation: &str,
+) -> Result<TcpStream, String> {
+    let stream = TcpStream::connect(("127.0.0.1", port))
+        .map_err(|error| format!("connect to 127.0.0.1:{port} for {operation}: {error}"))?;
+    stream
+        .set_nonblocking(true)
+        .map_err(|error| format!("set nonblocking for {operation}: {error}"))?;
+    wait_for_stream_ready(
+        &stream,
+        libc::POLLOUT,
+        Instant::now() + timeout,
+        &format!("connect readiness for {operation}"),
+    )
+    .map_err(|error| format!("connect readiness for {operation}: {error}"))?;
+    Ok(stream)
+}
+
+fn write_all_ready(stream: &mut TcpStream, bytes: &[u8], timeout: Duration, operation: &str) {
+    write_all_ready_result(stream, bytes, timeout, operation)
+        .unwrap_or_else(|error| panic!("{operation}: {error}"));
+}
+
+fn write_all_ready_result(
+    stream: &mut TcpStream,
+    mut bytes: &[u8],
+    timeout: Duration,
+    operation: &str,
+) -> Result<(), String> {
+    let deadline = Instant::now() + timeout;
+    while !bytes.is_empty() {
+        match stream.write(bytes) {
+            Ok(0) => return Err("socket accepted zero bytes".into()),
+            Ok(count) => bytes = &bytes[count..],
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock
+                        | io::ErrorKind::TimedOut
+                        | io::ErrorKind::Interrupted
+                ) =>
+            {
+                wait_for_stream_ready(stream, libc::POLLOUT, deadline, operation)
+                    .map_err(|error| error.to_string())?;
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    Ok(())
+}
+
+fn read_to_end_ready(stream: &mut TcpStream, timeout: Duration, operation: &str) -> Vec<u8> {
+    read_to_end_ready_result(stream, timeout, operation)
+        .unwrap_or_else(|error| panic!("{operation}: {error}"))
+}
+
+fn read_to_end_ready_result(
+    stream: &mut TcpStream,
+    timeout: Duration,
+    operation: &str,
+) -> Result<Vec<u8>, String> {
+    let deadline = Instant::now() + timeout;
+    let mut bytes = Vec::new();
+    let mut buffer = [0_u8; 8192];
+    loop {
+        match stream.read(&mut buffer) {
+            Ok(0) => return Ok(bytes),
+            Ok(count) => bytes.extend_from_slice(&buffer[..count]),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock
+                        | io::ErrorKind::TimedOut
+                        | io::ErrorKind::Interrupted
+                ) =>
+            {
+                wait_for_stream_ready(stream, libc::POLLIN, deadline, operation)
+                    .map_err(|error| error.to_string())?;
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+}
+
+fn finish_request_write(stream: &TcpStream, operation: &str) {
+    finish_request_write_result(stream, operation)
+        .unwrap_or_else(|error| panic!("{operation}: {error}"));
+}
+
+fn finish_request_write_result(stream: &TcpStream, operation: &str) -> Result<(), String> {
+    stream
+        .shutdown(Shutdown::Write)
+        .map_err(|error| format!("{operation}: {error}"))
+}
+
+fn wait_for_stream_ready(
+    stream: &TcpStream,
+    events: libc::c_short,
+    deadline: Instant,
+    operation: &str,
+) -> io::Result<()> {
+    loop {
+        let Some(timeout_ms) = poll_timeout_ms(deadline) else {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!(
+                    "{operation} timed out waiting for {} socket readiness",
+                    readiness_label(events)
+                ),
+            ));
+        };
+        let mut pollfd = libc::pollfd {
+            fd: stream.as_raw_fd(),
+            events,
+            revents: 0,
+        };
+        // SAFETY: poll is called with one valid file descriptor borrowed from
+        // the live TcpStream and a finite timeout derived from the test deadline.
+        let ready = unsafe { libc::poll(&mut pollfd, 1, timeout_ms) };
+        if ready > 0 {
+            if pollfd.revents & libc::POLLNVAL != 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("{operation} polled an invalid socket"),
+                ));
+            }
+            if pollfd.revents & (events | libc::POLLERR | libc::POLLHUP) != 0 {
+                return Ok(());
+            }
+            continue;
+        }
+        if ready == 0 {
+            continue;
+        }
+        let error = io::Error::last_os_error();
+        if error.kind() == io::ErrorKind::Interrupted {
+            continue;
+        }
+        return Err(error);
+    }
+}
+
+fn readiness_label(events: libc::c_short) -> &'static str {
+    if events & libc::POLLIN != 0 {
+        "readable"
+    } else if events & libc::POLLOUT != 0 {
+        "writable"
+    } else {
+        "requested"
+    }
+}
+
+fn poll_timeout_ms(deadline: Instant) -> Option<libc::c_int> {
+    let remaining = deadline.checked_duration_since(Instant::now())?;
+    if remaining.is_zero() {
+        return None;
+    }
+    Some(remaining.as_millis().clamp(1, libc::c_int::MAX as u128) as libc::c_int)
 }
 
 fn normalize_sse_frames(frames: Vec<String>, context: &NormalizeContext) -> Vec<String> {
@@ -755,17 +939,20 @@ fn try_json_exchange(
     timeout: Duration,
 ) -> Result<HttpExchange, String> {
     let request = build_request(port, method, path, body);
-    let mut stream = TcpStream::connect(("127.0.0.1", port)).map_err(|error| error.to_string())?;
-    stream
-        .set_read_timeout(Some(timeout))
-        .map_err(|error| error.to_string())?;
-    stream
-        .write_all(request.as_bytes())
-        .map_err(|error| error.to_string())?;
-    let mut bytes = Vec::new();
-    stream
-        .read_to_end(&mut bytes)
-        .map_err(|error| error.to_string())?;
+    let label = format!("{method} {path}");
+    let mut stream = connect_harness_stream_result(port, timeout, &label)?;
+    write_all_ready_result(
+        &mut stream,
+        request.as_bytes(),
+        timeout,
+        &format!("write http request for {label}"),
+    )?;
+    finish_request_write_result(&stream, &format!("finish http request for {label}"))?;
+    let bytes = read_to_end_ready_result(
+        &mut stream,
+        timeout,
+        &format!("read http response for {label}"),
+    )?;
     Ok(HttpExchange {
         request,
         response: canonical_http_response(&bytes),
