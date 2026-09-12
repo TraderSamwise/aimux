@@ -410,6 +410,17 @@ pub(super) fn doctor_project_text_path(route: &str, project_root: &str, json: bo
     path
 }
 
+pub(super) fn doctor_tasks_text_path(project_root: Option<&str>, json: bool) -> String {
+    let mut path = CORE_API_ROUTES.doctor_tasks_text.to_owned();
+    if let Some(project_root) = project_root {
+        push_text_query(&mut path, "projectRoot", project_root);
+    }
+    if json {
+        push_text_query(&mut path, "json", "1");
+    }
+    path
+}
+
 pub(super) fn doctor_tmux_text_path(
     project_root: &str,
     session: Option<&str>,

@@ -107,7 +107,7 @@ pub fn parse_core_doctor_args<S: AsRef<str>>(args: &[S]) -> Option<CoreDoctorArg
         }
         if matches!(
             parsed.subcommand.as_str(),
-            "disk" | "exchange" | "lifecycle"
+            "disk" | "exchange" | "lifecycle" | "tasks"
         ) && arg == "--project"
         {
             parsed.project = Some(required_non_flag_value(args, index)?.to_owned());
@@ -116,7 +116,7 @@ pub fn parse_core_doctor_args<S: AsRef<str>>(args: &[S]) -> Option<CoreDoctorArg
         }
         if matches!(
             parsed.subcommand.as_str(),
-            "disk" | "exchange" | "lifecycle"
+            "disk" | "exchange" | "lifecycle" | "tasks"
         ) && let Some(value) = arg.strip_prefix("--project=")
         {
             parsed.project = Some(non_flag_inline_value(value)?.to_owned());
