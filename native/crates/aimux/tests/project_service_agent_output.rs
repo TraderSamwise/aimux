@@ -1,9 +1,10 @@
+use aimux::backlog_metrics::BacklogMetricStatus;
 use aimux::daemon_state::{MetadataState, load_metadata_state, save_metadata_state};
 use aimux::osc_notifications::OscNotificationParser;
 use aimux::project_api_contract::routes;
 use aimux::project_service::agent_input_delivery::{
-    ACTIVE_CLIENT_DWELL_MS, AgentInputWindowActivity, agent_input_delivery_queue_path,
-    run_pending_agent_input_deliveries_with_runtime,
+    ACTIVE_CLIENT_DWELL_MS, AgentInputWindowActivity, agent_input_delivery_backlog_snapshot,
+    agent_input_delivery_queue_path, run_pending_agent_input_deliveries_with_runtime,
 };
 use aimux::project_service::agent_output::{
     AgentOutputCaptureRuntime, AgentOutputResponseMode, MAX_AGENT_OUTPUT_CAPTURE_LINES,
@@ -1672,6 +1673,10 @@ fn agent_input_holds_for_recent_active_client_then_flushes_from_queue() {
     );
     assert!(runtime.inner.actions.is_empty());
     assert!(agent_input_delivery_queue_path(&state_dir).exists());
+    let queued = agent_input_delivery_backlog_snapshot(&state_dir);
+    assert_eq!(queued.status, BacklogMetricStatus::Ok);
+    assert_eq!(queued.current_depth, Some(1));
+    assert_eq!(queued.high_water_mark, Some(1));
 
     runtime
         .input_activity
@@ -1690,6 +1695,33 @@ fn agent_input_holds_for_recent_active_client_then_flushes_from_queue() {
         ]
     );
     assert!(!agent_input_delivery_queue_path(&state_dir).exists());
+    let drained = agent_input_delivery_backlog_snapshot(&state_dir);
+    assert_eq!(drained.current_depth, Some(0));
+    assert_eq!(drained.high_water_mark, Some(1));
+    cleanup(project);
+}
+
+#[test]
+fn agent_input_delivery_backlog_read_failure_reports_unavailable_not_zero() {
+    let project = temp_project("delivery-backlog-error");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).expect("create state dir");
+    write(
+        agent_input_delivery_queue_path(&state_dir),
+        b"{not valid queue json",
+    )
+    .expect("write corrupt delivery queue");
+
+    let snapshot = agent_input_delivery_backlog_snapshot(&state_dir);
+
+    assert_eq!(snapshot.status, BacklogMetricStatus::Unavailable);
+    assert_eq!(snapshot.current_depth, None);
+    assert!(
+        snapshot
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("could not parse"))
+    );
     cleanup(project);
 }
 
