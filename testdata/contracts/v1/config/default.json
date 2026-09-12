@@ -71,6 +71,10 @@
     "nudgeCooldownMs": 60000,
     "autoNudgeWithoutOverseer": false
   },
+  "agentRestore": {
+    "scanIntervalMs": 2000,
+    "scanEveryTicks": 8
+  },
   "scribe": {
     "defaultAgent": null
   },
