@@ -85,7 +85,7 @@ export function useAgentOutputFeed({
   const applySnapshotResult = useCallback(
     (result: AgentOutputResponse) => {
       if (result.sessionId !== sessionId) return false;
-      if (!serviceProjectsTranscript(result.messages)) {
+      if (!result.tmuxUnavailable && !serviceProjectsTranscript(result.messages)) {
         setLastError(
           "This aimux daemon is older than the app and does not send a transcript. Restart it to pick up the new build.",
         );
@@ -101,6 +101,7 @@ export function useAgentOutputFeed({
         activity: result.activity,
         activityText: result.activityText,
         attention: result.attention,
+        tmuxUnavailable: result.tmuxUnavailable,
       });
       return paneOutputSnapshotSettlesInitialTranscript(result);
     },
@@ -110,7 +111,7 @@ export function useAgentOutputFeed({
   const applyStreamOutput = useCallback(
     (event: AgentOutputEvent) => {
       if (event.sessionId !== sessionId) return false;
-      if (!serviceProjectsTranscript(event.messages)) {
+      if (!event.tmuxUnavailable && !serviceProjectsTranscript(event.messages)) {
         setLastError(
           "This aimux daemon is older than the app and does not send a transcript. Restart it to pick up the new build.",
         );

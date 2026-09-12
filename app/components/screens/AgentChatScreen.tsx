@@ -106,6 +106,10 @@ import {
   userMessageAcknowledgesComposerSend,
 } from "@/lib/composer-protocol";
 import {
+  formatLivePaneInputDeliveryNotice,
+  formatLivePaneInputResponseRefusal,
+} from "@/lib/input-delivery";
+import {
   chatCommandForContentChange,
   chatCommandForInitialLayout,
   chatCommandForNavigationFocus,
@@ -1183,13 +1187,18 @@ export default function ChatScreen() {
             uploadedAttachmentId: uploaded.attachment.id,
           };
         }
-        await sendLivePaneInput(serviceEndpoint, sessionId, text, {
+        const sendResponse = await sendLivePaneInput(serviceEndpoint, sessionId, text, {
           token,
           attachmentIds: attachments
             .map((attachment) => attachment.uploadedAttachmentId)
             .filter((id): id is string => Boolean(id)),
           ...(sharedChatActor ? { sharedChatActor } : {}),
         });
+        const refusalNotice = formatLivePaneInputResponseRefusal(sendResponse);
+        if (refusalNotice) {
+          throw new Error(refusalNotice);
+        }
+        const deliveryNotice = formatLivePaneInputDeliveryNotice(sendResponse.delivery);
         const acceptedPending: PendingComposerAck = {
           attachmentCount: attachments.length,
           attachmentIds: attachments
@@ -1212,6 +1221,17 @@ export default function ChatScreen() {
         releasePendingAttachmentPreviews(attachments);
         if (!sendStillOwnsActiveComposer()) {
           if (sendComposerDraftKey) composerDraftsByKey.delete(sendComposerDraftKey);
+          return;
+        }
+        if (deliveryNotice) {
+          releasePendingAttachmentPreviews(attachments);
+          setDraft("");
+          setDraftHasContent(false);
+          setPendingAttachments([]);
+          setPendingComposerAck(null);
+          setSendError(deliveryNotice);
+          if (sendComposerDraftKey) composerDraftsByKey.delete(sendComposerDraftKey);
+          void refreshOutputSnapshot().catch(() => {});
           return;
         }
         setAcceptedComposerMessages((current) =>

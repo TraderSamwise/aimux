@@ -7,7 +7,11 @@ import { formatTerminalOutputForDisplay } from "@/lib/terminal-output";
 import { toChatMessages } from "@/lib/transcript-view";
 import { worktreeTone } from "@/lib/worktree-tone";
 import { cropExposePreviewFooter } from "../../src/expose-preview-crop";
-import type { ExposeChatPreview, ExposePreviewSnapshot } from "../../src/project-api-contract";
+import type {
+  ExposeChatPreview,
+  ExposePreviewSnapshot,
+  PreviewCaptureMarker,
+} from "../../src/project-api-contract";
 
 export type ExposeFilter = "all" | "working" | "attention" | "ready";
 
@@ -45,6 +49,7 @@ export interface ExposeSourceItem {
   projectName?: string;
   projectRoot?: string;
   previewSnapshot?: ExposePreviewSnapshot;
+  previewCapture?: PreviewCaptureMarker;
   chatPreview?: ExposeChatPreview | { messages?: AgentTranscriptMessage[] };
   exposeContext?: {
     worktree?: string;
@@ -87,6 +92,7 @@ export interface ExposeTile {
   tone: string;
   terminalPreviewLines: AnsiSpan[][];
   chatPreviewMessages: ChatMessage[];
+  previewCaptureError: string | null;
 }
 
 export interface ExposeSection {
@@ -240,6 +246,7 @@ export function buildExposeTiles(sources: ExposeSource[]): ExposeTile[] {
         tone: toneFor(item, projectRoot, worktreeName, projectName),
         terminalPreviewLines: previewLinesFor(item),
         chatPreviewMessages: chatPreviewMessagesFor(item, sessionId),
+        previewCaptureError: item.previewCapture?.error ?? null,
       });
     });
   }
