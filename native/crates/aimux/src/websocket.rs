@@ -5,7 +5,9 @@
 //! connector uses the shared tokio runtime; the relay is an idle-connection
 //! subsystem, which is exactly the work this cutover moves off blocking I/O.
 
+use std::borrow::Cow;
 use std::future::Future;
+use std::io;
 use std::pin::Pin;
 
 use futures_util::{SinkExt, StreamExt, stream::SplitSink, stream::SplitStream};
@@ -43,21 +45,67 @@ pub enum WebSocketEvent {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum WebSocketError {
-    /// The handshake itself was refused — wrong token, wrong URL, no relay.
-    Handshake(String),
-    /// The socket was open and then broke.
+    /// The relay answered the websocket upgrade with HTTP instead of a socket.
+    HandshakeRefused { status: u16, body: String },
+    /// The socket could not be opened, or was open and then broke.
     Transport(String),
 }
 
 impl WebSocketError {
-    pub fn message(&self) -> &str {
+    pub fn handshake_refused(status: u16, body: impl Into<String>) -> Self {
+        Self::HandshakeRefused {
+            status,
+            body: body.into(),
+        }
+    }
+
+    pub fn from_tungstenite_connect_error(error: tungstenite::Error) -> Self {
+        match error {
+            tungstenite::Error::Http(response) => Self::HandshakeRefused {
+                status: response.status().as_u16(),
+                body: response
+                    .body()
+                    .as_ref()
+                    .map(|body| String::from_utf8_lossy(body).trim().to_owned())
+                    .unwrap_or_default(),
+            },
+            tungstenite::Error::Io(error) => Self::transport_io(error),
+            other => Self::Transport(other.to_string()),
+        }
+    }
+
+    fn transport_io(error: io::Error) -> Self {
+        Self::Transport(error.to_string())
+    }
+
+    pub fn message(&self) -> Cow<'_, str> {
         match self {
-            Self::Handshake(message) | Self::Transport(message) => message,
+            Self::HandshakeRefused { status, body } if body.is_empty() => {
+                Cow::Owned(format!("websocket upgrade refused with HTTP {status}"))
+            }
+            Self::HandshakeRefused { status, body } => Cow::Owned(format!(
+                "websocket upgrade refused with HTTP {status}: {body}"
+            )),
+            Self::Transport(message) => Cow::Borrowed(message),
         }
     }
 
     pub fn is_handshake(&self) -> bool {
-        matches!(self, Self::Handshake(_))
+        matches!(self, Self::HandshakeRefused { .. })
+    }
+
+    pub fn http_status(&self) -> Option<u16> {
+        match self {
+            Self::HandshakeRefused { status, .. } => Some(*status),
+            Self::Transport(_) => None,
+        }
+    }
+
+    pub fn http_body(&self) -> Option<&str> {
+        match self {
+            Self::HandshakeRefused { body, .. } => Some(body),
+            Self::Transport(_) => None,
+        }
     }
 }
 
@@ -113,17 +161,17 @@ impl WebSocketConnector for TokioTungsteniteConnector {
         Box::pin(async move {
             let mut request = url
                 .into_client_request()
-                .map_err(|error| WebSocketError::Handshake(error.to_string()))?;
+                .map_err(|error| WebSocketError::Transport(error.to_string()))?;
             if !subprotocols.is_empty() {
                 let value = HeaderValue::from_str(&subprotocols.join(", "))
-                    .map_err(|error| WebSocketError::Handshake(error.to_string()))?;
+                    .map_err(|error| WebSocketError::Transport(error.to_string()))?;
                 request
                     .headers_mut()
                     .insert("Sec-WebSocket-Protocol", value);
             }
             let (socket, _response) = connect_async(request)
                 .await
-                .map_err(|error| WebSocketError::Handshake(error.to_string()))?;
+                .map_err(WebSocketError::from_tungstenite_connect_error)?;
             let (writer, reader) = socket.split();
             Ok(WebSocketConnectionParts {
                 reader: Box::new(TokioTungsteniteReader { reader }),

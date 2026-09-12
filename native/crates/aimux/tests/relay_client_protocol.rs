@@ -1,9 +1,11 @@
 //! The relay protocol decisions, frame by frame. No socket, no relay.
 
 use aimux::relay_client::{
-    CloseDecision, RelayAction, RelayStatus, RelayStatusSnapshot, decide_close, handle_frame,
-    notification_push_frame, project_event_frame, project_events_error_frame, split_sse_frames,
+    CloseDecision, RelayAction, RelayStatus, RelayStatusSnapshot, decide_close,
+    decide_connect_error, handle_frame, notification_push_frame, project_event_frame,
+    project_events_error_frame, split_sse_frames,
 };
+use aimux::websocket::WebSocketError;
 use serde_json::json;
 
 const MAX_HANDSHAKE_FAILURES: u32 = 5;
@@ -103,6 +105,57 @@ fn a_deliberate_disconnect_does_not_reconnect() {
     );
     assert_eq!(
         decide_close(None, 0, false, MAX_HANDSHAKE_FAILURES),
+        CloseDecision::Reconnect
+    );
+}
+
+#[test]
+fn a_http_401_connect_refusal_still_tells_the_user_to_login() {
+    match decide_connect_error(
+        &WebSocketError::handshake_refused(401, "invalid relay token"),
+        false,
+    ) {
+        CloseDecision::AuthFailed(message) => {
+            assert!(message.contains("HTTP 401"), "message was {message}");
+            assert!(
+                message.contains("invalid relay token"),
+                "message was {message}"
+            );
+            assert!(message.contains("aimux login"), "message was {message}");
+        }
+        other => panic!("expired token should stop as auth failure, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_lockdown_connect_refusal_is_not_reported_as_expired_credentials() {
+    match decide_connect_error(
+        &WebSocketError::handshake_refused(423, "remote access locked"),
+        false,
+    ) {
+        CloseDecision::Refused(message) => {
+            assert!(message.contains("HTTP 423"), "message was {message}");
+            assert!(
+                message.contains("remote access locked"),
+                "message was {message}"
+            );
+            assert!(!message.contains("aimux login"), "message was {message}");
+        }
+        other => panic!("lockdown should stop with its own reason, got {other:?}"),
+    }
+}
+
+#[test]
+fn network_and_retryable_http_connect_failures_reconnect() {
+    assert_eq!(
+        decide_connect_error(&WebSocketError::Transport("dns failed".into()), false),
+        CloseDecision::Reconnect
+    );
+    assert_eq!(
+        decide_connect_error(
+            &WebSocketError::handshake_refused(500, "relay temporarily unavailable"),
+            false,
+        ),
         CloseDecision::Reconnect
     );
 }

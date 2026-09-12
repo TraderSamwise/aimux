@@ -187,9 +187,9 @@
       }
     },
     {
-      "name": "project-desktop-state-empty",
+      "name": "project-desktop-state-explicit-empty-topology",
       "surface": "project-service-http",
-      "catches": "Desktop state projection stays parseable and preserves operationFailures and empty session shape.",
+      "catches": "Desktop state projection stays parseable and empty only when the topology source is explicitly available and empty.",
       "request": "GET /desktop-state HTTP/1.1\r\nHost: 127.0.0.1:<project-port>\r\nConnection: close\r\n\r\n",
       "observed": {
         "statusLine": "HTTP/1.1 200 OK",
@@ -250,6 +250,31 @@
             "pending": 0,
             "assigned": 0
           }
+        },
+        "framing": {
+          "headerTerminator": "\\r\\n\\r\\n",
+          "contentLengthVerified": true
+        }
+      }
+    },
+    {
+      "name": "project-desktop-state-unreadable-topology-error",
+      "surface": "project-service-http",
+      "catches": "Recording current correct behavior: an unreadable topology source must be an explicit error, not a 200 empty desktop.",
+      "request": "GET /desktop-state HTTP/1.1\r\nHost: 127.0.0.1:<project-port>\r\nConnection: close\r\n\r\n",
+      "observed": {
+        "statusLine": "HTTP/1.1 500 Internal Server Error",
+        "headers": [
+          "access-control-allow-headers: Content-Type, Authorization",
+          "access-control-allow-methods: GET, POST, PUT, OPTIONS",
+          "access-control-allow-origin: *",
+          "connection: close",
+          "content-length: <verified-body-bytes>",
+          "content-type: application/json"
+        ],
+        "body": {
+          "ok": false,
+          "error": "Is a directory (os error 21)"
         },
         "framing": {
           "headerTerminator": "\\r\\n\\r\\n",
@@ -447,14 +472,28 @@
     {
       "name": "project-incomplete-mutation-disconnect-no-side-effect",
       "surface": "project-service-http",
-      "catches": "A client that disconnects after sending an incomplete mutation body must not leave the mutation applied.",
+      "catches": "A client that disconnects after sending an incomplete mutation body must not leave the mutation applied; the harness must positively observe a readable clean state.",
       "request": "POST /set-activity with a truncated JSON body, close socket, then sample GET /desktop-state for codex-disconnect",
       "observed": {
         "disconnectedSessionPresent": false,
+        "topologyContainsSession": false,
+        "metadataContainsSession": false,
         "samples": [
-          false,
-          false,
-          false
+          {
+            "statusLine": "HTTP/1.1 200 OK",
+            "ok": true,
+            "disconnectedSessionPresent": false
+          },
+          {
+            "statusLine": "HTTP/1.1 200 OK",
+            "ok": true,
+            "disconnectedSessionPresent": false
+          },
+          {
+            "statusLine": "HTTP/1.1 200 OK",
+            "ok": true,
+            "disconnectedSessionPresent": false
+          }
         ]
       }
     },
@@ -776,9 +815,12 @@
     {
       "name": "runtime-logs-no-nested-runtime-panics",
       "surface": "daemon-and-project-service-logs",
-      "catches": "A route can return HTTP success while background tasks panic; the characterization gate must catch nested Tokio runtime panics in isolated daemon and project-service logs.",
+      "catches": "A route can return HTTP success while background tasks panic; the characterization gate must prove it read the isolated logs before accepting no nested Tokio runtime panics.",
       "request": "scan isolated daemon and project-service logs after exercising HTTP and SSE surfaces",
       "observed": {
+        "logObservationProved": true,
+        "filesScannedAtLeastOne": true,
+        "readErrors": [],
         "panicLogLines": []
       }
     }

@@ -9,12 +9,15 @@ use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::task::JoinHandle;
+use tokio::time::{Duration, timeout};
 
 pub const DEFAULT_LOCAL_UI_HOST: &str = "127.0.0.1";
 pub const DEFAULT_LOCAL_UI_PORT: u16 = 43192;
+const REQUEST_HEAD_MAX_BYTES: usize = 8192;
+const REQUEST_HEAD_IDLE_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -222,11 +225,25 @@ async fn handle_connection(
     write_text(&mut stream, 404, "Not found").await
 }
 
-async fn read_request_head(stream: &mut TcpStream) -> io::Result<String> {
+async fn read_request_head(stream: &mut (impl AsyncRead + Unpin)) -> io::Result<String> {
+    read_request_head_with_idle_timeout(stream, REQUEST_HEAD_IDLE_TIMEOUT).await
+}
+
+async fn read_request_head_with_idle_timeout(
+    stream: &mut (impl AsyncRead + Unpin),
+    idle_timeout: Duration,
+) -> io::Result<String> {
     let mut bytes = Vec::new();
     let mut buffer = [0_u8; 1];
-    while bytes.len() < 8192 {
-        let count = stream.read(&mut buffer).await?;
+    while bytes.len() < REQUEST_HEAD_MAX_BYTES {
+        let count = timeout(idle_timeout, stream.read(&mut buffer))
+            .await
+            .map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "timed out reading local UI request head",
+                )
+            })??;
         if count == 0 {
             break;
         }
@@ -385,5 +402,61 @@ fn format_host_for_url(host: &str) -> String {
         format!("[{host}]")
     } else {
         host.to_owned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn request_head_read_times_out_when_client_stops_progressing() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-seam: test - local UI timeout tests drive async request-head reads
+        crate::async_runtime::process_runtime().block_on(async {
+            let (mut client, mut server) = tokio::io::duplex(64);
+            client
+                .write_all(b"GET /")
+                .await
+                .expect("write partial request");
+
+            let result = tokio::time::timeout(
+                Duration::from_millis(250),
+                read_request_head_with_idle_timeout(&mut server, Duration::from_millis(25)),
+            )
+            .await
+            .expect("reader should return its own timeout");
+            drop(client);
+
+            let error = result.expect_err("stalled local UI request should time out");
+            assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+            assert_eq!(error.to_string(), "timed out reading local UI request head");
+        });
+    }
+
+    #[test]
+    fn request_head_read_allows_slow_progressing_client() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-seam: test - local UI timeout tests drive async request-head reads
+        crate::async_runtime::process_runtime().block_on(async {
+            let (mut client, mut server) = tokio::io::duplex(64);
+            let request = b"GET / HTTP/1.1\r\n\r\n".to_vec();
+            let expected = request.clone();
+            let writer = crate::async_runtime::spawn_named(
+                "local-ui-test:slow-progressing-head",
+                async move {
+                    for byte in request {
+                        client.write_all(&[byte]).await.expect("write byte");
+                        tokio::time::sleep(Duration::from_millis(5)).await;
+                    }
+                },
+            );
+
+            let head = read_request_head_with_idle_timeout(&mut server, Duration::from_millis(30))
+                .await
+                .expect("slow progressing request should complete");
+            writer.await.expect("writer task");
+            assert_eq!(head.as_bytes(), expected);
+        });
     }
 }
