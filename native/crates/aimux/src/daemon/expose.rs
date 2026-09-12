@@ -18,7 +18,6 @@ use crate::project_service::preview_snapshots::{
 use crate::project_service::switchable_agents::{
     AgentListScope, SwitchableContext, SwitchableListOptions, agent_status_chip,
     list_switchable_agent_items, serialize_fast_control_item,
-    topology_switchable_entries_with_live_window_normalization,
     topology_switchable_entries_with_live_window_projection,
 };
 use crate::project_service::usage::load_last_used_state;
@@ -368,7 +367,24 @@ pub fn expose_items_route(
     let include_preview = route_url.search_param("includePreview") == Some("1");
     let include_chat_preview = route_url.search_param("includeChatPreview") == Some("1");
     let project_state_dirs = project_state_dirs_by_id(resolver, projects_for_refresh);
-    let items = list_live_projects_expose_items(resolver, projects_for_refresh)?;
+    let live_window_ids =
+        TmuxRuntimeManager::new().try_live_window_ids_with_timeout(TMUX_CAPTURE_TARGET_TIMEOUT);
+    let mut live_window_query_error = None;
+    let items = match &live_window_ids {
+        Ok(live_window_ids) => list_live_projects_expose_items(
+            resolver,
+            projects_for_refresh,
+            LiveWindowIdsProjection::Known(live_window_ids),
+        )?,
+        Err(error) => {
+            live_window_query_error = Some(error.clone());
+            list_live_projects_expose_items(
+                resolver,
+                projects_for_refresh,
+                LiveWindowIdsProjection::Unavailable(error),
+            )?
+        }
+    };
     let ordered = order_global_expose_items(resolver, items);
     if include_preview || include_chat_preview {
         hot_snapshots.touch_route_lease(
@@ -396,7 +412,16 @@ pub fn expose_items_route(
     if include_preview {
         attach_missing_global_preview_results(&mut items);
     }
-    Ok(json!({ "ok": true, "items": items }))
+    let mut body = json!({ "ok": true, "items": items });
+    if let Some(error) = live_window_query_error
+        && let Value::Object(map) = &mut body
+    {
+        map.insert(
+            "tmuxLiveWindowQuery".into(),
+            json!({ "ok": false, "error": error }),
+        );
+    }
+    Ok(body)
 }
 
 pub fn expose_focus_route(
@@ -635,6 +660,7 @@ fn list_all_projects_expose_items_with_live_window_projection(
 fn list_live_projects_expose_items(
     resolver: &mut PathResolver,
     projects: &[ProjectsRouteProject],
+    live_window_ids: LiveWindowIdsProjection<'_>,
 ) -> Result<Vec<crate::project_service::switchable_agents::SwitchableAgentItem>, String> {
     let mut items = Vec::new();
     for project in projects.iter().filter(|project| project.service_alive) {
@@ -652,9 +678,10 @@ fn list_live_projects_expose_items(
             continue;
         }
         let metadata = load_metadata_state(&project_state_dir);
-        let entries = topology_switchable_entries_with_live_window_normalization(
+        let entries = topology_switchable_entries_with_live_window_projection(
             &topology,
             &metadata.sessions,
+            live_window_ids,
         );
         if entries.is_empty() {
             continue;

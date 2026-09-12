@@ -12,6 +12,7 @@ use std::future::Future;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::task::{Context, Poll, Wake, Waker};
+use std::time::Duration;
 
 #[test]
 fn treats_missing_tmux_server_as_empty_session_inventory() {
@@ -482,6 +483,31 @@ fn capture_target_async_does_not_enter_sync_bridge() {
     assert!(
         error.contains("tmux") || error.contains("error connecting") || error.contains("timed out"),
         "capture_target_async must return the tmux failure instead of panicking: {error}"
+    );
+}
+
+#[test]
+fn live_window_inventory_can_use_bounded_timeout() {
+    let captured_timeout = Rc::new(RefCell::new(None::<Duration>));
+    let captured_timeout_for_exec = Rc::clone(&captured_timeout);
+    let mut manager = TmuxRuntimeManager::with_exec(move |args, options| {
+        if args.join(" ") == "list-windows -a -F #{window_id}" {
+            *captured_timeout_for_exec.borrow_mut() = options.and_then(|options| options.timeout);
+            return Ok("@1\n@2\n".to_owned());
+        }
+        Ok(String::new())
+    });
+
+    let ids = manager
+        .try_live_window_ids_with_timeout(TMUX_CAPTURE_TARGET_TIMEOUT)
+        .expect("live window ids");
+
+    assert!(ids.contains("@1"));
+    assert!(ids.contains("@2"));
+    assert_eq!(
+        *captured_timeout.borrow(),
+        Some(TMUX_CAPTURE_TARGET_TIMEOUT),
+        "global Expose inventory must use a bounded tmux deadline"
     );
 }
 

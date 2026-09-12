@@ -438,7 +438,24 @@ impl TmuxRuntimeManager {
     /// Window ids that currently exist across every tmux session on this server.
     /// One call, so a caller validating many sessions does not spawn tmux per session.
     pub fn try_live_window_ids(&mut self) -> Result<std::collections::BTreeSet<String>, String> {
-        let raw = match self.exec_owned(list_all_window_ids_argv(), None) {
+        self.try_live_window_ids_with_options(None)
+    }
+
+    pub fn try_live_window_ids_with_timeout(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<std::collections::BTreeSet<String>, String> {
+        self.try_live_window_ids_with_options(Some(TmuxExecOptions {
+            timeout: Some(timeout),
+            ..TmuxExecOptions::default()
+        }))
+    }
+
+    fn try_live_window_ids_with_options(
+        &mut self,
+        options: Option<TmuxExecOptions>,
+    ) -> Result<std::collections::BTreeSet<String>, String> {
+        let raw = match self.exec_owned(list_all_window_ids_argv(), options) {
             Ok(raw) => raw,
             Err(error) if tmux_list_sessions_failed_because_no_server(&error) => {
                 return Ok(Default::default());
