@@ -284,24 +284,28 @@ fn accepted_daemon_connections_close_after_peer_can_read_response() {
     let stopped = Arc::new(AtomicBool::new(false));
     let serve_stopped = Arc::clone(&stopped);
     let server = thread::spawn(move || {
-        serve_daemon_http_with_metadata_and_interceptor_until(
-            DaemonListenConfig {
-                host: "127.0.0.1".into(),
-                port,
-            },
-            |request| {
-                assert_eq!(request.path, "/large");
-                prepare_daemon_response(
-                    200,
-                    DaemonResponseBody::Bytes(vec![b'x'; 512 * 1024]),
-                    Some("application/octet-stream"),
-                )
-            },
-            DaemonRequestMetadata::default,
-            |_, _| Box::pin(async { Ok(false) }),
-            move || serve_stopped.load(Ordering::SeqCst),
-        )
-        .expect("serve daemon listener");
+        // aimux-async-seam: test - listener test drives async daemon listener
+        aimux::async_runtime::block_on_named("daemon-listener-test:serve-until", async move {
+            serve_daemon_http_with_metadata_and_interceptor_until(
+                DaemonListenConfig {
+                    host: "127.0.0.1".into(),
+                    port,
+                },
+                |request| {
+                    assert_eq!(request.path, "/large");
+                    prepare_daemon_response(
+                        200,
+                        DaemonResponseBody::Bytes(vec![b'x'; 512 * 1024]),
+                        Some("application/octet-stream"),
+                    )
+                },
+                DaemonRequestMetadata::default,
+                |_, _| Box::pin(async { Ok(false) }),
+                move || serve_stopped.load(Ordering::SeqCst),
+            )
+            .await
+            .expect("serve daemon listener");
+        });
     });
 
     wait_for_loopback_port(port);
