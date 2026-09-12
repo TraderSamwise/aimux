@@ -331,6 +331,7 @@ fn run_relay(
     mut sleep: impl FnMut(std::time::Duration) -> BoxFuture<'static, ()> + Send,
 ) {
     aimux::async_runtime::init_process_runtime().expect("runtime initialized");
+    // aimux-async-seam: fixture - sync fixture executable wraps async relay client
     aimux::async_runtime::block_on_named("fixture:relay-client", async {
         runner.run_with_sleep(connector, &mut sleep).await;
     });

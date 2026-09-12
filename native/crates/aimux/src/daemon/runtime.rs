@@ -76,8 +76,8 @@ use crate::daemon_supervisor::RUNTIME_RESTART_LOCK_STALE_MS;
 use crate::dashboard_readiness::get_runtime_owner_id;
 use crate::dashboard_targets::{
     DashboardResolveOptions, DashboardTargetContext, DashboardTargetRef, DashboardTargetTmux,
-    find_live_dashboard_target_with_context, resolve_dashboard_target,
-    resolve_dashboard_target_for_restart_with_context,
+    find_live_dashboard_target_with_context, find_recoverable_dashboard_target_with_context,
+    resolve_dashboard_target, resolve_dashboard_target_for_restart_with_context,
 };
 use crate::debug_logging::{LogLevel, log_at, log_lifecycle_always};
 use crate::event_loop_budget::{
@@ -3938,7 +3938,8 @@ fn verify_dashboard_after_readiness_timeout(
         return Ok(None);
     }
     let context = DashboardTargetContext::for_project(project_root)?;
-    let Some(target) = find_live_dashboard_target_with_context(project_root, tmux, &context)?
+    let Some(target) =
+        find_recoverable_dashboard_target_with_context(project_root, tmux, &context)?
     else {
         return Ok(None);
     };
@@ -5994,6 +5995,27 @@ mod tests {
     }
 
     #[test]
+    fn dashboard_readiness_timeout_recovers_when_owned_dashboard_is_stale() {
+        let project_root = "/repo/stale-dashboard-after-timeout";
+        let context = DashboardTargetContext::for_project(project_root).expect("context");
+        let mut tmux = RestartDashboardFastPathTmux::new(project_root, &context)
+            .with_build_stamp("previous-build-stamp");
+        let timeout = format!(
+            "Timed out waiting 20000ms for replacement tmux window @2 readiness option {}={}",
+            TMUX_DASHBOARD_READY_OPTION, context.dashboard_build_stamp
+        );
+
+        let target = verify_dashboard_after_readiness_timeout(project_root, &mut tmux, &timeout)
+            .expect("timeout recovery check succeeds")
+            .expect("same-owner stale dashboard recovered");
+
+        assert_eq!(target.status(), "verified-after-timeout");
+        assert_eq!(target.warning.as_deref(), Some(timeout.as_str()));
+        assert_eq!(target.target.dashboard_target.window_id, "@1");
+        assert_eq!(tmux.set_session_option_calls, 1);
+    }
+
+    #[test]
     fn control_plane_restart_treats_verified_dashboard_timeout_as_nonfatal() {
         let fixture = restart_service_fixture("restart-dashboard-timeout-verified");
         let project = fixture.project_root.clone();
@@ -7102,6 +7124,11 @@ mod tests {
                 ensure_dashboard_window_calls: 0,
                 replace_window_when_ready_calls: 0,
             }
+        }
+
+        fn with_build_stamp(mut self, build_stamp: &str) -> Self {
+            self.build_stamp = build_stamp.to_owned();
+            self
         }
     }
 

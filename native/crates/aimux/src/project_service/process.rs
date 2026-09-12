@@ -154,6 +154,7 @@ pub fn run_project_service_internal(options: ProjectServiceInternalOptions) -> R
             "pluginCount": plugin_statuses.len(),
         })),
     );
+    // aimux-async-seam: permanent - process entry starts async project-service listener
     crate::async_runtime::process_runtime().block_on(serve_project_service_listener_until(
         listener,
         startup,
@@ -1867,6 +1868,7 @@ mod tests {
     #[test]
     fn async_read_control_routes_bypass_blocking_dispatcher() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
         crate::async_runtime::process_runtime().block_on(async {
             let root = unique_test_root("async-read-control");
             let project_root = root.join("repo");
@@ -2124,6 +2126,7 @@ mod tests {
     #[test]
     fn async_connection_routes_http_to_rust_project_router() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
         crate::async_runtime::process_runtime().block_on(async {
             let root = unique_test_root("async-connection");
             let project_root = root.join("repo");
@@ -2157,6 +2160,7 @@ mod tests {
     #[test]
     fn async_listener_serves_complete_request_while_slowloris_waits() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
         crate::async_runtime::process_runtime().block_on(async {
             let root = unique_test_root("async-slowloris");
             let project_root = root.join("repo");
@@ -2211,6 +2215,7 @@ mod tests {
     #[test]
     fn async_connection_cancelled_during_blocking_route_writes_no_partial_response() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
         crate::async_runtime::process_runtime().block_on(async {
             let root = unique_test_root("async-cancel-blocking");
             let project_root = root.join("repo");
@@ -2331,6 +2336,7 @@ mod tests {
     #[test]
     fn async_agent_output_disconnect_before_irreversible_write_cancels_route() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
         crate::async_runtime::process_runtime().block_on(async {
             let root = unique_test_root("async-output-disconnect");
             let project_root = root.join("repo");
@@ -2388,6 +2394,7 @@ mod tests {
     #[test]
     fn async_agent_input_disconnect_after_irreversible_write_waits_for_route() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
         crate::async_runtime::process_runtime().block_on(async {
             let root = unique_test_root("async-input-irreversible");
             let project_root = root.join("repo");
@@ -2441,6 +2448,7 @@ mod tests {
     #[test]
     fn async_agent_input_disconnect_after_first_write_finishes_remaining_writes() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
         crate::async_runtime::process_runtime().block_on(async {
             let root = unique_test_root("async-input-no-half-delivery");
             let project_root = root.join("repo");
@@ -2508,6 +2516,7 @@ mod tests {
     #[test]
     fn async_lifecycle_stop_disconnect_before_tmux_kill_cancels_mutation() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
         crate::async_runtime::process_runtime().block_on(async {
             let root = unique_test_root("async-lifecycle-stop-disconnect");
             let project_root = root.join("repo");
@@ -2588,6 +2597,7 @@ mod tests {
     #[test]
     fn async_lifecycle_write_failure_after_irreversible_step_records_abandoned_response() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
         crate::async_runtime::process_runtime().block_on(async {
             let root = unique_test_root("async-lifecycle-abandoned-response");
             let project_root = root.join("repo");
@@ -2637,6 +2647,7 @@ mod tests {
     #[test]
     fn async_project_event_stream_wakes_on_publish_before_poll_interval() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
         crate::async_runtime::process_runtime().block_on(async {
             let root = unique_test_root("async-event-stream");
             let project_root = root.join("repo");
@@ -2701,6 +2712,7 @@ mod tests {
     #[test]
     fn async_sse_disconnect_returns_io_error() {
         crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        // aimux-async-seam: test - transport and lifecycle cancellation tests drive async handlers
         crate::async_runtime::process_runtime().block_on(async {
             let response = prepare_project_service_sse_response(
                 200,
