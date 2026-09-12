@@ -5,7 +5,7 @@
 //! project-control flags — and runs the two halves in one place.
 //!
 //! Node derived the offer while building the dashboard model, so it only ran
-//! while a dashboard was open. On the rail it runs whether or not anyone is
+//! while a dashboard was open. On the tick loop it runs whether or not anyone is
 //! looking, which is the point: the snapshot has to be current at the moment
 //! the process dies, and nobody is watching then.
 
@@ -36,7 +36,7 @@ use super::scheduler::{CachedProjectConfig, PeriodicTask, PeriodicTaskFuture};
 /// `online_sessions` — but a session that is not even claiming to be live can
 /// be skipped without asking tmux anything.
 const ONLINE_SESSION_STATUSES: &[&str] = &["starting", "running", "idle"];
-/// Two seconds. The rail ticks every 250ms; one tick is more often than the
+/// Two seconds. The tick loop runs every 250ms; one tick is more often than the
 /// snapshot ever changes, and the cost of the cadence is how stale the snapshot
 /// can be at the instant the process dies.
 const DEFAULT_SCAN_EVERY_TICKS: u64 = 8;

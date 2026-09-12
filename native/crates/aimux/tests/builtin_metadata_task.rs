@@ -4,7 +4,7 @@
 use aimux::builtin_metadata_watchers::{BuiltinMetadataWatchers, MetadataEffects};
 use aimux::project_service::builtin_metadata_task::collect_watcher_sources;
 use aimux::project_service::router::ProjectServiceRequestContext;
-use aimux::project_service::watcher_delivery::RailBudget;
+use aimux::project_service::watcher_delivery::TickLoopBudget;
 use serde_json::{Value, json};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -91,7 +91,7 @@ fn a_status_file_is_collected_and_becomes_a_headline() {
     .unwrap();
     let context = context_for(&project);
 
-    let sources = collect_watcher_sources(&context, &RailBudget::new(Duration::from_secs(5)));
+    let sources = collect_watcher_sources(&context, &TickLoopBudget::new(Duration::from_secs(5)));
     assert_eq!(
         sources["statusFiles"]["claude-a1"].as_str(),
         Some("Shipping the rail\nmore detail below\n")
@@ -123,7 +123,7 @@ fn a_plan_file_is_collected_and_becomes_progress() {
     .unwrap();
     let context = context_for(&project);
 
-    let sources = collect_watcher_sources(&context, &RailBudget::new(Duration::from_secs(5)));
+    let sources = collect_watcher_sources(&context, &TickLoopBudget::new(Duration::from_secs(5)));
     let mut watchers = BuiltinMetadataWatchers::new();
     let effects = watchers.scan(&sources);
 
@@ -147,7 +147,7 @@ fn a_spent_budget_stops_the_scan_reading_history() {
     with_one_live_session_and_history(&project);
     let context = context_for(&project);
 
-    let read = collect_watcher_sources(&context, &RailBudget::new(Duration::from_secs(5)));
+    let read = collect_watcher_sources(&context, &TickLoopBudget::new(Duration::from_secs(5)));
     assert_eq!(
         read["sessions"],
         json!(["claude-a1"]),
@@ -160,9 +160,9 @@ fn a_spent_budget_stops_the_scan_reading_history() {
         read["history"]
     );
 
-    let skipped = collect_watcher_sources(&context, &RailBudget::new(Duration::ZERO));
+    let skipped = collect_watcher_sources(&context, &TickLoopBudget::new(Duration::ZERO));
     // A spent budget covers the source reads themselves, not only the history
-    // tail loop, so a slow project degrades instead of holding the rail.
+    // tail loop, so a slow project degrades instead of holding the tick loop.
     assert_eq!(skipped["statusFiles"], json!({}));
     assert_eq!(skipped["planFiles"], json!({}));
     assert_eq!(skipped["exchange"]["tasks"], json!([]));
@@ -190,7 +190,7 @@ fn a_task_in_the_exchange_is_collected_and_primed_before_it_logs() {
     .unwrap();
     let context = context_for(&project);
 
-    let sources = collect_watcher_sources(&context, &RailBudget::new(Duration::from_secs(5)));
+    let sources = collect_watcher_sources(&context, &TickLoopBudget::new(Duration::from_secs(5)));
     assert_eq!(
         sources["exchange"]["tasks"][0]["id"].as_str(),
         Some("t1"),
@@ -210,7 +210,7 @@ fn a_history_turn_becomes_a_log_and_an_event_once_primed() {
     let project = temp_project("history-effects");
     with_one_live_session_and_history(&project);
     let context = context_for(&project);
-    let sources = collect_watcher_sources(&context, &RailBudget::new(Duration::from_secs(5)));
+    let sources = collect_watcher_sources(&context, &TickLoopBudget::new(Duration::from_secs(5)));
 
     let mut watchers = BuiltinMetadataWatchers::new();
     // first look primes without emitting
@@ -225,7 +225,7 @@ fn a_history_turn_becomes_a_log_and_an_event_once_primed() {
         ),
     )
     .unwrap();
-    let sources = collect_watcher_sources(&context, &RailBudget::new(Duration::from_secs(5)));
+    let sources = collect_watcher_sources(&context, &TickLoopBudget::new(Duration::from_secs(5)));
     let effects = watchers.scan(&sources);
 
     assert_eq!(effects.logs.len(), 1, "{:?}", effects.logs);
@@ -256,7 +256,7 @@ fn a_stray_note_in_the_status_directory_does_not_mint_a_session() {
     .unwrap();
     let context = context_for(&project);
 
-    let sources = collect_watcher_sources(&context, &RailBudget::new(Duration::from_secs(5)));
+    let sources = collect_watcher_sources(&context, &TickLoopBudget::new(Duration::from_secs(5)));
     let keys = sources["statusFiles"]
         .as_object()
         .unwrap()
@@ -284,7 +284,7 @@ fn a_status_file_for_a_dead_session_does_not_mint_effects() {
     .unwrap();
     let context = context_for(&project);
 
-    let sources = collect_watcher_sources(&context, &RailBudget::new(Duration::from_secs(5)));
+    let sources = collect_watcher_sources(&context, &TickLoopBudget::new(Duration::from_secs(5)));
     assert_eq!(
         sources["statusFiles"]
             .as_object()
@@ -306,7 +306,7 @@ fn a_status_file_for_a_dead_session_does_not_mint_effects() {
 }
 
 #[test]
-fn metadata_collection_caps_files_and_content_on_the_rail() {
+fn metadata_collection_caps_files_and_content_on_the_tick_loop() {
     let project = temp_project("caps");
     let session_ids = (0..40)
         .map(|index| format!("claude-{index:02}"))
@@ -338,7 +338,7 @@ fn metadata_collection_caps_files_and_content_on_the_rail() {
     .unwrap();
     let context = context_for(&project);
 
-    let sources = collect_watcher_sources(&context, &RailBudget::new(Duration::from_secs(5)));
+    let sources = collect_watcher_sources(&context, &TickLoopBudget::new(Duration::from_secs(5)));
     assert_eq!(
         sources["planFiles"].as_object().unwrap().len(),
         32,
@@ -346,12 +346,12 @@ fn metadata_collection_caps_files_and_content_on_the_rail() {
     );
     assert!(
         sources["statusFiles"].as_object().unwrap().is_empty(),
-        "oversized status content is skipped rather than read on the rail"
+        "oversized status content is skipped rather than read on the tick loop"
     );
     assert_eq!(
         sources["exchange"]["tasks"],
         json!([]),
-        "oversized exchange is skipped rather than parsed on the rail"
+        "oversized exchange is skipped rather than parsed on the tick loop"
     );
 
     let _ = fs::remove_dir_all(project);
@@ -361,7 +361,7 @@ fn metadata_collection_caps_files_and_content_on_the_rail() {
 fn an_empty_project_produces_no_effects_at_all() {
     let project = temp_project("empty");
     let context = context_for(&project);
-    let sources = collect_watcher_sources(&context, &RailBudget::new(Duration::from_secs(5)));
+    let sources = collect_watcher_sources(&context, &TickLoopBudget::new(Duration::from_secs(5)));
 
     let mut watchers = BuiltinMetadataWatchers::new();
     assert!(watchers.scan(&sources).is_empty());

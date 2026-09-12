@@ -6,7 +6,7 @@ use aimux::debug_logging::{
 use aimux::project_api_contract::routes;
 use aimux::project_service::agents::{
     build_agent_list, describe_session_restorability, resolve_direct_teammates,
-    select_direct_teammates, teammate_api_record,
+    route_agent_read_request_async, select_direct_teammates, teammate_api_record,
     topology_desktop_session_list_with_live_window_ids,
 };
 use aimux::project_service::lifecycle::{
@@ -410,6 +410,53 @@ fn route_teammates_reads_runtime_topology() {
         "parent agent \"missing\" not found"
     );
     cleanup(project);
+}
+
+#[test]
+fn async_route_teammates_preserves_live_sessions_when_tmux_query_is_unavailable() {
+    aimux::async_runtime::init_process_runtime().expect("runtime initialized");
+    aimux::async_runtime::block_on_named(
+        "test:async-route-teammates-preserves-live-sessions",
+        async {
+            let project = temp_project("teammates-async-route");
+            let state_dir = project.join("state");
+            create_dir_all(&state_dir).unwrap();
+            write(
+                runtime_topology_path(&state_dir),
+                serde_yaml::to_string(&teammate_topology_fixture()).unwrap(),
+            )
+            .unwrap();
+
+            let context =
+                ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+                    .with_live_window_ids_error("tmux socket busy");
+            let response = route_agent_read_request_async(
+                &context,
+                "GET",
+                "/agents/teammates?parentSessionId=parent",
+            )
+            .await
+            .expect("teammate route handled");
+
+            assert_eq!(response.status, 200);
+            assert_eq!(response.body["ok"], true);
+            assert_eq!(response.body["tmuxLiveWindowQuery"]["ok"], false);
+            assert_eq!(
+                response.body["tmuxLiveWindowQuery"]["error"],
+                "tmux socket busy"
+            );
+            assert_eq!(
+                response.body["teammates"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|teammate| teammate["id"].as_str().unwrap())
+                    .collect::<Vec<_>>(),
+                vec!["child-review", "child-code"]
+            );
+            cleanup(project);
+        },
+    );
 }
 
 #[test]

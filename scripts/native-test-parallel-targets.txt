@@ -122,5 +122,5 @@ tmux_expose
 transcript_reconciler_behavior
 transcript_reconciler_task
 tui_render
-watcher_rail_budget
+watcher_tick_loop_budget
 websocket_client

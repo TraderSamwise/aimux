@@ -27,7 +27,7 @@ use crate::transcript_turn_state::{
 use super::interactions::pending_interactions_for_stream;
 use super::router::{ProjectServiceRequestContext, route_project_service_request};
 use super::scheduler::{PeriodicTask, PeriodicTaskFuture};
-use super::watcher_delivery::RailBudget;
+use super::watcher_delivery::TickLoopBudget;
 
 /// A session with no live window has nothing to settle. Node passed exactly
 /// these three to `listTopologySessionStates`.
@@ -98,7 +98,7 @@ impl PeriodicTask for TranscriptReconcilerTask {
                 context: Arc::clone(&self.context),
                 pending,
                 codex_sessions_dir: self.codex_sessions_dir.clone(),
-                budget: RailBudget::new(SCAN_BUDGET),
+                budget: TickLoopBudget::new(SCAN_BUDGET),
             };
             self.reconciler.scan(&sessions, &metadata, &mut deps);
         })
@@ -109,7 +109,7 @@ struct ServiceDeps {
     context: Arc<ProjectServiceRequestContext>,
     pending: Vec<String>,
     codex_sessions_dir: PathBuf,
-    budget: RailBudget,
+    budget: TickLoopBudget,
 }
 
 impl ServiceDeps {

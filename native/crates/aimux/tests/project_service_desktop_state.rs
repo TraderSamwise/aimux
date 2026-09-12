@@ -2,7 +2,7 @@ use aimux::daemon_state::{MetadataState, save_metadata_state};
 use aimux::project_api_contract::routes;
 use aimux::project_service::agent_output::AgentOutputCaptureRuntime;
 use aimux::project_service::desktop_state::{
-    DesktopStateInput, build_desktop_state_with_live_window_ids,
+    DesktopStateInput, build_desktop_state_with_live_window_ids, route_desktop_state_request_async,
     route_desktop_state_request_with_runtime,
 };
 use aimux::project_service::operation_failures::{
@@ -333,6 +333,46 @@ fn route_desktop_state_preserves_live_sessions_and_reports_tmux_liveness_query_e
                     .is_some_and(|message| message.contains("tmux socket busy"))
         }),
         "desktop-state must name tmux liveness query failures: {failures:#?}"
+    );
+    cleanup(project);
+}
+
+#[test]
+fn async_route_desktop_state_preserves_live_sessions_and_reports_tmux_liveness_query_errors() {
+    let (project, state_dir) = write_desktop_state_fixtures("async-tmux-liveness-error");
+    let isolation = support::TestIsolation::new("desktop-state-async-tmux-liveness-error");
+    let context = isolation
+        .project_context(&project, &state_dir)
+        .with_live_window_ids_error("tmux socket busy");
+
+    let response = aimux::async_runtime::block_on_named(
+        "test:desktop-state-async",
+        route_desktop_state_request_async(&context, "GET", routes::DESKTOP_STATE),
+    )
+    .expect("desktop-state async route");
+
+    assert_eq!(response.status, 200);
+    let sessions = response.body["sessions"].as_array().expect("sessions");
+    let live = find(sessions, "codex-live");
+    assert_eq!(
+        live["status"], "running",
+        "a tmux query error must not downgrade a live session"
+    );
+    assert_eq!(
+        live["tmuxWindowId"], "@1",
+        "a tmux query error must not remove the focus binding"
+    );
+    let failures = response.body["operationFailures"]
+        .as_array()
+        .expect("operation failures");
+    assert!(
+        failures.iter().any(|failure| {
+            failure["id"] == "tmux-live-window-query"
+                && failure["message"]
+                    .as_str()
+                    .is_some_and(|message| message.contains("tmux socket busy"))
+        }),
+        "desktop-state async route must name tmux liveness query failures: {failures:#?}"
     );
     cleanup(project);
 }

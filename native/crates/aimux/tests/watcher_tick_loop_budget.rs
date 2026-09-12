@@ -2,16 +2,16 @@
 //! budget so a stuck dependency cannot make its own loop pile up forever.
 
 use aimux::project_service::scribe_watcher_task::{max_scan_candidates, scan_budget};
-use aimux::project_service::watcher_delivery::{DELIVERY_TIMEOUT, READ_TIMEOUT, RailBudget};
+use aimux::project_service::watcher_delivery::{DELIVERY_TIMEOUT, READ_TIMEOUT, TickLoopBudget};
 use std::time::Duration;
 
 #[test]
 fn a_budget_reports_spent_only_once_its_allowance_has_passed() {
-    let budget = RailBudget::new(Duration::from_secs(60));
+    let budget = TickLoopBudget::new(Duration::from_secs(60));
     assert!(!budget.spent());
     assert!(budget.remaining() > Duration::from_secs(50));
 
-    let spent = RailBudget::new(Duration::ZERO);
+    let spent = TickLoopBudget::new(Duration::ZERO);
     assert!(spent.spent());
     assert_eq!(spent.remaining(), Duration::ZERO);
 }

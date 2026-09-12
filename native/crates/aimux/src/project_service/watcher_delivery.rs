@@ -25,7 +25,7 @@ use super::agent_output::{
 use super::prompt_context::{compose_with_prompt_context, get_prompt_context_text};
 use super::router::ProjectServiceRequestContext;
 
-/// How long a single delivery may take before the rail gives up on it.
+/// How long a single delivery may take before the tick loop gives up on it.
 pub const DELIVERY_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -134,7 +134,7 @@ async fn deliver_agent_input_direct_async(
     }
 }
 
-/// How long a single pane read may take before the rail gives up on it.
+/// How long a single pane read may take before the tick loop gives up on it.
 ///
 /// Shorter than a delivery: capturing a pane is one fast tmux call, and a scan
 /// may do a dozen of them.
@@ -191,16 +191,16 @@ pub async fn read_agent_output_tail_async(
     })
 }
 
-/// A wall-clock allowance for one task's turn on the rail.
+/// A wall-clock allowance for one task's turn on the tick loop.
 ///
 /// Each watcher checks its budget between units of work and gives up the rest
 /// of the scan rather than overrunning its own scheduler turn.
-pub struct RailBudget {
+pub struct TickLoopBudget {
     started: std::time::Instant,
     allowance: Duration,
 }
 
-impl RailBudget {
+impl TickLoopBudget {
     pub fn new(allowance: Duration) -> Self {
         Self {
             started: std::time::Instant::now(),

@@ -18,7 +18,7 @@ use super::agent_output::AgentOutputResponseMode;
 use super::interactions::pending_interactions_for_stream;
 use super::router::ProjectServiceRequestContext;
 use super::scheduler::{CachedProjectConfig, PeriodicTask, PeriodicTaskFuture};
-use super::watcher_delivery::{RailBudget, deliver_agent_input_async};
+use super::watcher_delivery::{TickLoopBudget, deliver_agent_input_async};
 
 /// Only a session backed by a live window can be nudged. This is also what
 /// keeps a graveyarded or offline session with stale `loop.active` metadata
@@ -30,7 +30,7 @@ const DEFAULT_STOPPED_DWELL_MS: i64 = 30_000;
 const DEFAULT_UNCHANGED_REMINDER_TICKS: u64 = 4;
 /// Blast-radius cap: no single scan may message more agents than this.
 const MAX_SENDS_PER_SCAN: usize = 8;
-/// Longest one scan may hold the shared rail; eight unanswered sends would
+/// Longest one scan may hold the shared tick loop; eight unanswered sends would
 /// otherwise block every other task for over a minute.
 const SCAN_BUDGET: std::time::Duration = std::time::Duration::from_secs(20);
 const LIVE_ACTIVITY_PROBE_START_LINE: i64 = -80;
@@ -103,7 +103,7 @@ impl PeriodicTask for LoopWatcherTask {
                 build_scan_input(sessions, &metadata, &pending, self.loop_config.clone());
             apply_live_activity_overrides_for_scan(context, &mut input).await;
 
-            let budget = RailBudget::new(SCAN_BUDGET);
+            let budget = TickLoopBudget::new(SCAN_BUDGET);
             let mut collect = |_send: &LoopSend| false;
             let sends = self.watcher.scan(&input, now_ms(), &mut collect);
             let mut delivered = std::collections::BTreeSet::new();
