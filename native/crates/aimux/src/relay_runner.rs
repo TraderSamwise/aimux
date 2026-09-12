@@ -5,27 +5,29 @@
 //! relay is a relay client nobody tests.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::future::poll_fn;
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use serde_json::{Value, json};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use tokio::sync::Notify;
 
 use crate::relay_client::{
     CloseDecision, RelayAction, RelayStatus, RelayStatusSnapshot, decide_close, handle_frame,
     project_events_error_frame, project_events_subscribed_frame, response_frame,
 };
 use crate::websocket::{
-    INITIAL_RETRY_MS, MAX_HANDSHAKE_FAILURES, WebSocketConnection, WebSocketConnector,
-    WebSocketEvent, next_retry_ms, relay_subprotocols,
+    BoxFuture, INITIAL_RETRY_MS, MAX_HANDSHAKE_FAILURES, WebSocketConnectionParts,
+    WebSocketConnector, WebSocketEvent, WebSocketReader, WebSocketWriter, next_retry_ms,
+    relay_subprotocols,
 };
 
-/// How long a read blocks before the loop looks at its stop flag again.
-const READ_TIMEOUT: Duration = Duration::from_millis(500);
-/// The pump drains the outbox before every socket read, including each 500 ms
-/// idle timeout. Five hundred twelve frames allows short stalls and bursty
-/// project events, but a dead relay cannot turn reader threads into unbounded
-/// memory. Overflow evicts old project-event frames before notification pushes.
+/// The pump drains the outbox before every socket read. Five hundred twelve
+/// frames allows short stalls and bursty project events, but a dead relay cannot
+/// turn project event streams into unbounded memory. Overflow evicts old
+/// project-event frames before notification pushes.
 pub const MAX_RELAY_OUTBOX_FRAMES: usize = 512;
 
 pub struct DaemonRouteResponse {
@@ -33,34 +35,49 @@ pub struct DaemonRouteResponse {
     pub body: Value,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProjectEventStreamItem {
+    Frame(String),
+    Closed,
+    Error { status: u16, message: String },
+}
+
+pub trait ProjectEventStream: Send {
+    /// Poll the next relay-ready project event frame. If another select branch
+    /// wins, the poll is simply retried later; no runner state is mutated until
+    /// `Ready` returns a complete item.
+    fn poll_next(&mut self, cx: &mut Context<'_>) -> Poll<ProjectEventStreamItem>;
+}
+
 /// What the relay needs from the daemon. Mirrors Node's `DaemonRelayBridge`.
 pub trait DaemonRelayBridge: Send + Sync {
-    fn route_request(
-        &self,
-        method: &str,
-        path: &str,
-        body: &Value,
-        headers: &Value,
-    ) -> DaemonRouteResponse;
+    fn route_request<'a>(
+        &'a self,
+        method: &'a str,
+        path: &'a str,
+        body: &'a Value,
+        headers: &'a Value,
+    ) -> BoxFuture<'a, DaemonRouteResponse>;
 
-    /// Start streaming a project's events, forwarding each frame through
-    /// `send`. Returns an error status and message if the stream cannot start.
+    /// Open a project's event stream. The returned stream is owned by the
+    /// relay pump, so all subscribed project sockets are driven by one task.
     fn subscribe_project_events(
-        &self,
-        subscription_id: &str,
-        path: &str,
-        headers: &Value,
-        send: Arc<dyn Fn(String) + Send + Sync>,
-        cancelled: Arc<AtomicBool>,
-    ) -> Result<(), (u16, String)>;
+        self: Arc<Self>,
+        subscription_id: String,
+        path: String,
+        headers: Value,
+    ) -> BoxFuture<'static, Result<Box<dyn ProjectEventStream>, (u16, String)>>;
 
     /// A person's browser reached this machine.
-    fn notify_client_connected(&self, title: &str, body: &str) {
+    fn notify_client_connected<'a>(&'a self, title: &'a str, body: &'a str) -> BoxFuture<'a, ()> {
         let _ = (title, body);
+        Box::pin(async {})
     }
+
     /// The relay refused our credentials and we have stopped trying.
-    fn notify_auth_lost(&self, message: &str) {
+    fn notify_auth_lost<'a>(&'a self, message: &'a str) -> BoxFuture<'a, ()> {
         let _ = message;
+        Box::pin(async {})
     }
 }
 
@@ -68,6 +85,7 @@ pub trait DaemonRelayBridge: Send + Sync {
 pub struct RelayHandle {
     status: Arc<Mutex<RelayStatusSnapshot>>,
     stopped: Arc<AtomicBool>,
+    stopped_notify: Arc<Notify>,
 }
 
 impl RelayHandle {
@@ -80,10 +98,21 @@ impl RelayHandle {
 
     pub fn stop(&self) {
         self.stopped.store(true, Ordering::SeqCst);
+        self.stopped_notify.notify_waiters();
     }
 
     pub fn is_stopped(&self) -> bool {
         self.stopped.load(Ordering::SeqCst)
+    }
+
+    async fn wait_stopped(&self) {
+        loop {
+            let notified = self.stopped_notify.notified();
+            if self.is_stopped() {
+                return;
+            }
+            notified.await;
+        }
     }
 }
 
@@ -92,10 +121,8 @@ pub struct RelayRunner {
     token: String,
     bridge: Arc<dyn DaemonRelayBridge>,
     handle: RelayHandle,
-    subscriptions: Mutex<Vec<(String, Arc<AtomicBool>)>>,
-    /// A project-event reader runs on its own thread and cannot hold the
-    /// socket, so it queues frames here and the pump loop drains them.
     outbox: Arc<Mutex<VecDeque<String>>>,
+    outbox_ready: Arc<Notify>,
 }
 
 impl RelayRunner {
@@ -110,12 +137,13 @@ impl RelayRunner {
                     last_error: None,
                 })),
                 stopped: Arc::new(AtomicBool::new(false)),
+                stopped_notify: Arc::new(Notify::new()),
             },
             relay_url,
             token: token.to_owned(),
             bridge,
-            subscriptions: Mutex::new(Vec::new()),
             outbox: Arc::new(Mutex::new(VecDeque::new())),
+            outbox_ready: Arc::new(Notify::new()),
         })
     }
 
@@ -136,13 +164,17 @@ impl RelayRunner {
     }
 
     /// Run until stopped or the relay refuses our credentials.
-    ///
-    /// `sleep` is injected so a test can run the whole backoff ladder without
-    /// actually waiting thirty seconds.
-    pub fn run(
+    pub async fn run(self: &Arc<Self>, connector: &mut dyn WebSocketConnector) {
+        let mut sleep = |delay| Box::pin(tokio::time::sleep(delay)) as BoxFuture<'static, ()>;
+        self.run_with_sleep(connector, &mut sleep).await;
+    }
+
+    /// Run with an injected sleeper so tests can traverse the reconnect ladder
+    /// without actually waiting thirty seconds.
+    pub async fn run_with_sleep(
         self: &Arc<Self>,
         connector: &mut dyn WebSocketConnector,
-        sleep: &mut dyn FnMut(Duration),
+        sleep: &mut (dyn FnMut(Duration) -> BoxFuture<'static, ()> + Send),
     ) {
         let mut retry_ms = INITIAL_RETRY_MS;
         let mut handshake_failures = 0u32;
@@ -160,13 +192,22 @@ impl RelayRunner {
                 None,
             );
 
-            match connector.connect(&url, &subprotocols) {
-                Ok(mut connection) => {
+            let connect = connector.connect(&url, &subprotocols);
+            // Cancellation safety: if stop wins, the in-flight connect future is
+            // dropped before any relay state changes; any half-open socket is
+            // dropped with the future.
+            let connect_result = tokio::select! {
+                biased;
+                _ = self.handle.wait_stopped() => break,
+                result = connect => result,
+            };
+
+            match connect_result {
+                Ok(connection) => {
                     retry_ms = INITIAL_RETRY_MS;
                     handshake_failures = 0;
                     self.set_status(RelayStatus::Connected, None);
-                    let close = self.pump(connection.as_mut());
-                    self.abort_subscriptions();
+                    let close = self.pump(connection).await;
                     match decide_close(
                         close.code,
                         handshake_failures,
@@ -174,7 +215,7 @@ impl RelayRunner {
                         MAX_HANDSHAKE_FAILURES,
                     ) {
                         CloseDecision::AuthFailed(message) => {
-                            self.fail_auth(&message);
+                            self.fail_auth(&message).await;
                             return;
                         }
                         CloseDecision::Stop => {
@@ -198,7 +239,7 @@ impl RelayRunner {
                             self.handle.is_stopped(),
                             MAX_HANDSHAKE_FAILURES,
                         ) {
-                            self.fail_auth(&message);
+                            self.fail_auth(&message).await;
                             return;
                         }
                     }
@@ -209,59 +250,154 @@ impl RelayRunner {
             if self.handle.is_stopped() {
                 break;
             }
-            sleep(Duration::from_millis(retry_ms));
+            let delay = sleep(Duration::from_millis(retry_ms));
+            // Cancellation safety: the sleeper mutates no runner state. If stop
+            // wins, the delay future is discarded and the loop exits.
+            tokio::select! {
+                biased;
+                _ = self.handle.wait_stopped() => break,
+                _ = delay => {}
+            }
             retry_ms = next_retry_ms(retry_ms);
         }
         self.set_status(RelayStatus::Disconnected, None);
     }
 
-    fn fail_auth(&self, message: &str) {
+    async fn fail_auth(&self, message: &str) {
         self.set_status(RelayStatus::AuthFailed, Some(message.to_owned()));
-        self.abort_subscriptions();
-        self.bridge.notify_auth_lost(message);
+        self.bridge.notify_auth_lost(message).await;
     }
 
     /// Read frames until the socket closes. Returns why it closed.
-    fn pump(self: &Arc<Self>, connection: &mut dyn WebSocketConnection) -> CloseInfo {
-        while !self.handle.is_stopped() {
-            self.drain_outbox(connection);
-            match connection.read(READ_TIMEOUT) {
-                Ok(None) => continue,
-                Ok(Some(WebSocketEvent::Text(text))) => self.dispatch(connection, &text),
-                Ok(Some(WebSocketEvent::Ping(payload))) => {
-                    let _ = connection.send_pong(payload);
+    async fn pump(self: &Arc<Self>, connection: WebSocketConnectionParts) -> CloseInfo {
+        let WebSocketConnectionParts {
+            mut reader,
+            mut writer,
+        } = connection;
+        let mut subscriptions = RelaySubscriptions::default();
+
+        loop {
+            if self.handle.is_stopped() {
+                writer.close().await;
+                return CloseInfo {
+                    code: None,
+                    reason: None,
+                };
+            }
+            if let Some(frame) = self.pop_outbox_frame() {
+                if let Err(error) = writer.send_text(&frame).await {
+                    self.requeue_outbox_front(frame);
+                    return self.write_failed(error);
                 }
-                Ok(Some(WebSocketEvent::Pong | WebSocketEvent::Binary(_))) => continue,
-                Ok(Some(WebSocketEvent::Closed { code, reason })) => {
-                    return CloseInfo {
-                        code,
-                        reason: Some(reason),
-                    };
+                continue;
+            }
+
+            if subscriptions.has_any() {
+                // Cancellation safety:
+                // - stop: no state is half-written; the writer is closed below.
+                // - outbox wake: queue contents live under the mutex and are
+                //   re-checked before any socket read.
+                // - websocket read: the reader trait yields only whole frames.
+                // - subscription read: a stream may retain partial bytes from a
+                //   poll that returns Pending, but no runner-visible
+                //   subscription state changes until a complete item is Ready.
+                tokio::select! {
+                    biased;
+                    _ = self.handle.wait_stopped() => {
+                        writer.close().await;
+                        return CloseInfo { code: None, reason: None };
+                    }
+                    _ = self.wait_for_outbox() => continue,
+                    delivery = subscriptions.next_event() => {
+                        self.queue_subscription_delivery(delivery);
+                    }
+                    event = reader.next_event() => {
+                        if let Some(close) = self.handle_socket_event(
+                            reader.as_mut(),
+                            writer.as_mut(),
+                            &mut subscriptions,
+                            event,
+                        ).await {
+                            return close;
+                        }
+                    }
                 }
-                Err(error) => {
-                    self.set_status(RelayStatus::Reconnecting, Some(error.message().to_owned()));
-                    return CloseInfo {
-                        code: None,
-                        reason: Some(error.message().to_owned()),
-                    };
+            } else {
+                // Cancellation safety is the same as the branch above, minus
+                // subscription reads because no project streams are active.
+                tokio::select! {
+                    biased;
+                    _ = self.handle.wait_stopped() => {
+                        writer.close().await;
+                        return CloseInfo { code: None, reason: None };
+                    }
+                    _ = self.wait_for_outbox() => continue,
+                    event = reader.next_event() => {
+                        if let Some(close) = self.handle_socket_event(
+                            reader.as_mut(),
+                            writer.as_mut(),
+                            &mut subscriptions,
+                            event,
+                        ).await {
+                            return close;
+                        }
+                    }
                 }
             }
-        }
-        connection.close();
-        CloseInfo {
-            code: None,
-            reason: None,
         }
     }
 
-    fn dispatch(self: &Arc<Self>, connection: &mut dyn WebSocketConnection, text: &str) {
+    async fn handle_socket_event(
+        self: &Arc<Self>,
+        _reader: &mut dyn WebSocketReader,
+        writer: &mut dyn WebSocketWriter,
+        subscriptions: &mut RelaySubscriptions,
+        event: Result<WebSocketEvent, crate::websocket::WebSocketError>,
+    ) -> Option<CloseInfo> {
+        match event {
+            Ok(WebSocketEvent::Text(text)) => {
+                if let Some(close) = self.dispatch(writer, subscriptions, &text).await {
+                    return Some(close);
+                }
+            }
+            Ok(WebSocketEvent::Ping(payload)) => {
+                if let Err(error) = writer.send_pong(payload).await {
+                    return Some(self.write_failed(error));
+                }
+            }
+            Ok(WebSocketEvent::Pong | WebSocketEvent::Binary(_)) => {}
+            Ok(WebSocketEvent::Closed { code, reason }) => {
+                return Some(CloseInfo {
+                    code,
+                    reason: Some(reason),
+                });
+            }
+            Err(error) => {
+                self.set_status(RelayStatus::Reconnecting, Some(error.message().to_owned()));
+                return Some(CloseInfo {
+                    code: None,
+                    reason: Some(error.message().to_owned()),
+                });
+            }
+        }
+        None
+    }
+
+    async fn dispatch(
+        self: &Arc<Self>,
+        writer: &mut dyn WebSocketWriter,
+        subscriptions: &mut RelaySubscriptions,
+        text: &str,
+    ) -> Option<CloseInfo> {
         match handle_frame(text) {
             RelayAction::Ignore => {}
             RelayAction::Send(frame) => {
-                let _ = connection.send_text(&frame);
+                if let Err(error) = writer.send_text(&frame).await {
+                    return Some(self.write_failed(error));
+                }
             }
             RelayAction::NotifyClientConnected { title, body } => {
-                self.bridge.notify_client_connected(&title, &body);
+                self.bridge.notify_client_connected(&title, &body).await;
             }
             RelayAction::RouteRequest {
                 id,
@@ -270,55 +406,56 @@ impl RelayRunner {
                 body,
                 headers,
             } => {
-                let response = self.bridge.route_request(&method, &path, &body, &headers);
-                let _ = connection.send_text(&response_frame(&id, response.status, response.body));
+                let route = self.bridge.route_request(&method, &path, &body, &headers);
+                // Cancellation safety: if stop wins, the local loopback request
+                // future is dropped and no relay response frame is emitted.
+                let response = tokio::select! {
+                    biased;
+                    _ = self.handle.wait_stopped() => {
+                        return Some(CloseInfo { code: None, reason: None });
+                    }
+                    response = route => response,
+                };
+                if let Err(error) = writer
+                    .send_text(&response_frame(&id, response.status, response.body))
+                    .await
+                {
+                    return Some(self.write_failed(error));
+                }
             }
-            RelayAction::UnsubscribeProjectEvents { id } => self.abort_subscription(&id),
+            RelayAction::UnsubscribeProjectEvents { id } => subscriptions.remove(&id),
             RelayAction::SubscribeProjectEvents { id, path, headers } => {
-                self.start_subscription(&id, &path, &headers);
+                self.start_subscription(subscriptions, id, path, headers);
             }
         }
+        None
     }
 
-    fn start_subscription(self: &Arc<Self>, id: &str, path: &str, headers: &Value) {
+    fn start_subscription(
+        self: &Arc<Self>,
+        subscriptions: &mut RelaySubscriptions,
+        id: String,
+        path: String,
+        headers: Value,
+    ) {
         // Node replaced an existing subscription with the same id.
-        self.abort_subscription(id);
-        let cancelled = Arc::new(AtomicBool::new(false));
-        if let Ok(mut subscriptions) = self.subscriptions.lock() {
-            subscriptions.push((id.to_owned(), Arc::clone(&cancelled)));
-        }
-        let outbox = Arc::clone(&self.outbox);
-        let sender: Arc<dyn Fn(String) + Send + Sync> = Arc::new(move |frame: String| {
-            if let Ok(mut queue) = outbox.lock() {
-                let _ = push_outbox_frame(&mut queue, frame);
-            }
-        });
-        match self.bridge.subscribe_project_events(
-            id,
-            path,
-            headers,
-            sender,
-            Arc::clone(&cancelled),
-        ) {
-            // The relay waits for this before treating the subscription as
-            // live. It was missing entirely: nothing in production ever sent
-            // it, and the corpus fixture hid that by building it by hand.
-            Ok(()) => {
-                let _ = self.queue(project_events_subscribed_frame(id));
-            }
-            Err((status, message)) => {
-                let _ = self.queue(project_events_error_frame(id, status, &message));
-                self.abort_subscription(id);
-            }
+        subscriptions.remove(&id);
+        let open = Arc::clone(&self.bridge).subscribe_project_events(id.clone(), path, headers);
+        subscriptions.open(id, open);
+    }
+
+    fn queue_subscription_delivery(&self, delivery: SubscriptionDelivery) {
+        for frame in delivery.frames {
+            let _ = self.queue(frame);
         }
     }
 
     /// Queue a notification for the relay.
     ///
-    /// The socket belongs to the pump thread, so this cannot write directly —
-    /// it goes on the same outbox the project-event readers use and leaves on
-    /// the next drain. A titleless notification is dropped rather than sent
-    /// blank, matching what Node did.
+    /// The socket belongs to the pump task, so this cannot write directly — it
+    /// goes on the same outbox the project-event streams use and leaves on the
+    /// next drain. A titleless notification is dropped rather than sent blank,
+    /// matching what Node did.
     pub fn push_notification(&self, notification: &Value) -> Result<(), String> {
         let Some(frame) = crate::relay_client::notification_push_frame(notification) else {
             return Err("notification_missing_title".to_owned());
@@ -331,39 +468,178 @@ impl RelayRunner {
             .outbox
             .lock()
             .map_err(|_| "relay_outbox_unavailable".to_owned())?;
-        push_outbox_frame(&mut outbox, frame)
+        push_outbox_frame(&mut outbox, frame)?;
+        drop(outbox);
+        self.outbox_ready.notify_one();
+        Ok(())
     }
 
-    fn drain_outbox(&self, connection: &mut dyn WebSocketConnection) {
-        let frames = match self.outbox.lock() {
-            Ok(mut outbox) => std::mem::take(&mut *outbox),
-            Err(_) => return,
-        };
-        for frame in frames {
-            let _ = connection.send_text(&frame);
+    fn pop_outbox_frame(&self) -> Option<String> {
+        self.outbox
+            .lock()
+            .ok()
+            .and_then(|mut outbox| outbox.pop_front())
+    }
+
+    fn requeue_outbox_front(&self, frame: String) {
+        if let Ok(mut outbox) = self.outbox.lock() {
+            let _ = push_front_outbox_frame(&mut outbox, frame);
+        }
+        self.outbox_ready.notify_one();
+    }
+
+    fn write_failed(&self, error: crate::websocket::WebSocketError) -> CloseInfo {
+        self.set_status(RelayStatus::Reconnecting, Some(error.message().to_owned()));
+        CloseInfo {
+            code: None,
+            reason: Some(error.message().to_owned()),
         }
     }
 
-    fn abort_subscription(&self, id: &str) {
-        if let Ok(mut subscriptions) = self.subscriptions.lock() {
-            subscriptions.retain(|(subscription_id, cancelled)| {
-                if subscription_id == id {
-                    cancelled.store(true, Ordering::SeqCst);
-                    return false;
-                }
-                true
-            });
-        }
-    }
-
-    fn abort_subscriptions(&self) {
-        if let Ok(mut subscriptions) = self.subscriptions.lock() {
-            for (_, cancelled) in subscriptions.iter() {
-                cancelled.store(true, Ordering::SeqCst);
+    async fn wait_for_outbox(&self) {
+        loop {
+            let notified = self.outbox_ready.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if self
+                .outbox
+                .lock()
+                .ok()
+                .is_some_and(|outbox| !outbox.is_empty())
+            {
+                return;
             }
-            subscriptions.clear();
+            notified.await;
         }
     }
+}
+
+#[derive(Default)]
+struct RelaySubscriptions {
+    subscriptions: Vec<RelaySubscriptionSlot>,
+}
+
+impl RelaySubscriptions {
+    fn has_any(&self) -> bool {
+        !self.subscriptions.is_empty()
+    }
+
+    fn open(
+        &mut self,
+        id: String,
+        open: BoxFuture<'static, Result<Box<dyn ProjectEventStream>, (u16, String)>>,
+    ) {
+        self.subscriptions
+            .push(RelaySubscriptionSlot::Opening { id, open });
+    }
+
+    #[cfg(test)]
+    fn insert(&mut self, id: String, stream: Box<dyn ProjectEventStream>) {
+        self.subscriptions
+            .push(RelaySubscriptionSlot::Active { id, stream });
+    }
+
+    fn remove(&mut self, id: &str) {
+        self.subscriptions
+            .retain(|subscription| subscription.id() != id);
+    }
+
+    async fn next_event(&mut self) -> SubscriptionDelivery {
+        poll_fn(|cx| {
+            for index in 0..self.subscriptions.len() {
+                match &mut self.subscriptions[index] {
+                    RelaySubscriptionSlot::Opening { open, .. } => match open.as_mut().poll(cx) {
+                        Poll::Ready(result) => {
+                            return Poll::Ready(Some((
+                                index,
+                                SubscriptionPollItem::Opened(result),
+                            )));
+                        }
+                        Poll::Pending => continue,
+                    },
+                    RelaySubscriptionSlot::Active { stream, .. } => match stream.poll_next(cx) {
+                        Poll::Ready(item) => {
+                            return Poll::Ready(Some((index, SubscriptionPollItem::Stream(item))));
+                        }
+                        Poll::Pending => continue,
+                    },
+                };
+            }
+            Poll::Pending
+        })
+        .await
+        .map(|(index, item)| {
+            let id = self.subscriptions[index].id().to_owned();
+            match item {
+                SubscriptionPollItem::Opened(Ok(stream)) => {
+                    self.subscriptions[index] = RelaySubscriptionSlot::Active {
+                        id: id.clone(),
+                        stream,
+                    };
+                    SubscriptionDelivery {
+                        frames: vec![project_events_subscribed_frame(&id)],
+                    }
+                }
+                SubscriptionPollItem::Opened(Err((status, message))) => {
+                    self.subscriptions.remove(index);
+                    SubscriptionDelivery {
+                        frames: vec![project_events_error_frame(&id, status, &message)],
+                    }
+                }
+                SubscriptionPollItem::Stream(ProjectEventStreamItem::Frame(frame)) => {
+                    SubscriptionDelivery {
+                        frames: vec![frame],
+                    }
+                }
+                SubscriptionPollItem::Stream(ProjectEventStreamItem::Closed) => {
+                    self.subscriptions.remove(index);
+                    SubscriptionDelivery {
+                        frames: vec![project_events_error_frame(
+                            &id,
+                            502,
+                            "Project event stream closed",
+                        )],
+                    }
+                }
+                SubscriptionPollItem::Stream(ProjectEventStreamItem::Error { status, message }) => {
+                    self.subscriptions.remove(index);
+                    SubscriptionDelivery {
+                        frames: vec![project_events_error_frame(&id, status, &message)],
+                    }
+                }
+            }
+        })
+        .unwrap_or_default()
+    }
+}
+
+enum RelaySubscriptionSlot {
+    Opening {
+        id: String,
+        open: BoxFuture<'static, Result<Box<dyn ProjectEventStream>, (u16, String)>>,
+    },
+    Active {
+        id: String,
+        stream: Box<dyn ProjectEventStream>,
+    },
+}
+
+impl RelaySubscriptionSlot {
+    fn id(&self) -> &str {
+        match self {
+            Self::Opening { id, .. } | Self::Active { id, .. } => id,
+        }
+    }
+}
+
+enum SubscriptionPollItem {
+    Opened(Result<Box<dyn ProjectEventStream>, (u16, String)>),
+    Stream(ProjectEventStreamItem),
+}
+
+#[derive(Default)]
+struct SubscriptionDelivery {
+    frames: Vec<String>,
 }
 
 fn push_outbox_frame(outbox: &mut VecDeque<String>, frame: String) -> Result<(), String> {
@@ -371,6 +647,14 @@ fn push_outbox_frame(outbox: &mut VecDeque<String>, frame: String) -> Result<(),
         return Err("relay_outbox_full".to_owned());
     }
     outbox.push_back(frame);
+    Ok(())
+}
+
+fn push_front_outbox_frame(outbox: &mut VecDeque<String>, frame: String) -> Result<(), String> {
+    if outbox.len() >= MAX_RELAY_OUTBOX_FRAMES && !drop_oldest_project_event(outbox) {
+        return Err("relay_outbox_full".to_owned());
+    }
+    outbox.push_front(frame);
     Ok(())
 }
 
@@ -401,6 +685,7 @@ pub fn relay_status_json(handle: Option<&RelayHandle>) -> Value {
         None => json!({ "status": "off" }),
     }
 }
+
 fn now_iso() -> String {
     let now = time::OffsetDateTime::now_utc();
     format!(
@@ -431,9 +716,13 @@ impl CloseInfo {
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_RELAY_OUTBOX_FRAMES, push_outbox_frame};
+    use super::{
+        MAX_RELAY_OUTBOX_FRAMES, ProjectEventStream, ProjectEventStreamItem, RelaySubscriptions,
+        push_front_outbox_frame, push_outbox_frame,
+    };
     use serde_json::{Value, json};
     use std::collections::VecDeque;
+    use std::task::{Context, Poll};
 
     fn project_event_frame(seq: usize) -> String {
         json!({
@@ -485,5 +774,137 @@ mod tests {
             has_project_event_seq(&outbox, 1),
             "newer project events should remain after one eviction"
         );
+    }
+
+    #[test]
+    fn relay_outbox_front_requeue_keeps_the_same_bound_and_eviction_policy() {
+        let mut outbox = VecDeque::new();
+        for seq in 0..MAX_RELAY_OUTBOX_FRAMES {
+            push_outbox_frame(&mut outbox, project_event_frame(seq)).expect("event queued");
+        }
+
+        let notification = json!({
+            "type": "notification_push",
+            "notification": { "title": "retry me" },
+        })
+        .to_string();
+        push_front_outbox_frame(&mut outbox, notification.clone()).expect("notification requeued");
+
+        assert_eq!(
+            outbox.len(),
+            MAX_RELAY_OUTBOX_FRAMES,
+            "front requeue must not bypass the dead-relay memory bound"
+        );
+        assert_eq!(outbox.front(), Some(&notification));
+        assert!(
+            !has_project_event_seq(&outbox, 0),
+            "front requeue should evict the oldest project event first"
+        );
+        assert!(
+            has_project_event_seq(&outbox, 1),
+            "newer project events should remain after one front requeue eviction"
+        );
+    }
+
+    #[test]
+    fn relay_outbox_front_requeue_refuses_to_grow_when_no_project_events_can_be_evicted() {
+        let mut outbox = VecDeque::new();
+        for seq in 0..MAX_RELAY_OUTBOX_FRAMES {
+            let notification = json!({
+                "type": "notification_push",
+                "notification": { "title": format!("n-{seq}") },
+            })
+            .to_string();
+            push_outbox_frame(&mut outbox, notification).expect("notification queued");
+        }
+
+        let retry = json!({
+            "type": "notification_push",
+            "notification": { "title": "retry me" },
+        })
+        .to_string();
+        assert_eq!(
+            push_front_outbox_frame(&mut outbox, retry),
+            Err("relay_outbox_full".to_owned())
+        );
+        assert_eq!(
+            outbox.len(),
+            MAX_RELAY_OUTBOX_FRAMES,
+            "failed front requeue must still keep the outbox bounded"
+        );
+    }
+
+    #[test]
+    fn relay_subscription_set_polls_multiple_streams_in_one_task() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        let mut subscriptions = RelaySubscriptions::default();
+        subscriptions.insert(
+            "pending".to_owned(),
+            Box::new(ScriptedProjectStream {
+                items: VecDeque::new(),
+                pending_when_empty: true,
+            }),
+        );
+        subscriptions.insert(
+            "ready".to_owned(),
+            Box::new(ScriptedProjectStream {
+                items: VecDeque::from([ProjectEventStreamItem::Frame(project_event_frame(7))]),
+                pending_when_empty: true,
+            }),
+        );
+
+        let delivery = crate::async_runtime::block_on_named(
+            "relay:test-subscription-poll",
+            subscriptions.next_event(),
+        );
+
+        assert_eq!(delivery.frames, vec![project_event_frame(7)]);
+        assert_eq!(
+            subscriptions.subscriptions.len(),
+            2,
+            "a delivered frame must not unsubscribe the stream"
+        );
+    }
+
+    #[test]
+    fn relay_subscription_set_removes_closed_stream_and_reports_error() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        let mut subscriptions = RelaySubscriptions::default();
+        subscriptions.insert(
+            "sub-1".to_owned(),
+            Box::new(ScriptedProjectStream {
+                items: VecDeque::from([ProjectEventStreamItem::Closed]),
+                pending_when_empty: false,
+            }),
+        );
+
+        let delivery = crate::async_runtime::block_on_named(
+            "relay:test-subscription-close",
+            subscriptions.next_event(),
+        );
+
+        assert!(
+            subscriptions.subscriptions.is_empty(),
+            "closed streams must be dropped so they are not polled forever"
+        );
+        let frame: Value = serde_json::from_str(&delivery.frames[0]).expect("error frame");
+        assert_eq!(frame["type"], "project_events_error");
+        assert_eq!(frame["id"], "sub-1");
+        assert_eq!(frame["status"], 502);
+    }
+
+    struct ScriptedProjectStream {
+        items: VecDeque<ProjectEventStreamItem>,
+        pending_when_empty: bool,
+    }
+
+    impl ProjectEventStream for ScriptedProjectStream {
+        fn poll_next(&mut self, _cx: &mut Context<'_>) -> Poll<ProjectEventStreamItem> {
+            match self.items.pop_front() {
+                Some(item) => Poll::Ready(item),
+                None if self.pending_when_empty => Poll::Pending,
+                None => Poll::Ready(ProjectEventStreamItem::Closed),
+            }
+        }
     }
 }
