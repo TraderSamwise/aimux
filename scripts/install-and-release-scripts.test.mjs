@@ -43,6 +43,12 @@ if [ "$1" = "restart" ]; then
   if [ -n "\${AIMUX_FAKE_RESTART_ARGS_FILE:-}" ]; then
     printf '%s\\n' "$*" > "$AIMUX_FAKE_RESTART_ARGS_FILE"
   fi
+  if [ -n "\${AIMUX_FAKE_RESTART_STDOUT:-}" ]; then
+    printf '%s\\n' "$AIMUX_FAKE_RESTART_STDOUT"
+  fi
+  if [ -n "\${AIMUX_FAKE_RESTART_STDERR:-}" ]; then
+    printf '%s\\n' "$AIMUX_FAKE_RESTART_STDERR" >&2
+  fi
   exit "\${AIMUX_FAKE_RESTART_STATUS:-0}"
 fi
 exit 0
@@ -214,11 +220,27 @@ describe("install.sh", () => {
       createExistingInstall(root);
       const result = run("sh", [join(repoRoot, "scripts/install.sh"), archive], {
         cwd: root,
-        env: installEnv(root, 37),
+        env: {
+          ...installEnv(root, 37),
+          AIMUX_FAKE_RESTART_STDOUT: [
+            "Aimux Restart",
+            "  daemon: retained pid=123",
+            "  failures: 1",
+            "",
+            "Project: /Users/sam/cs/glyde-frontend",
+            "  runtime: skipped",
+            "  service: ensured",
+            "  dashboard: failed (Timed out waiting 20000ms for tmux window @22 readiness option @aimux-dashboard-ready=stamp) aimux-glyde-client:@22",
+          ].join("\n"),
+        },
       });
 
       expect(result.status).toBe(75);
-      expect(result.stderr).toContain("post-install restart failed");
+      expect(result.stderr).toContain(
+        "post-install restart failed (exit 37): /Users/sam/cs/glyde-frontend dashboard failed (Timed out waiting 20000ms for tmux window @22 readiness option @aimux-dashboard-ready=stamp) aimux-glyde-client:@22",
+      );
+      expect(result.stderr).toContain("Project: /Users/sam/cs/glyde-frontend");
+      expect(result.stderr).toContain("tmux window @22");
       expect(result.stderr).toContain(`${join(root, "bin")}/aimux restart --all`);
     } finally {
       rmSync(root, { recursive: true, force: true });

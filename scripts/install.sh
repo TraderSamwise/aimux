@@ -184,10 +184,47 @@ if [ "$HAD_EXISTING_INSTALL" = "1" ]; then
     printf 'Skipped post-install aimux restart because AIMUX_SKIP_POST_INSTALL_RESTART=1\n'
   else
     printf 'Repairing running aimux control plane...\n'
-    if "$BIN_DIR/aimux" restart --all; then
+    RESTART_OUTPUT="$(mktemp "${TMPDIR:-/tmp}/aimux-post-install-restart.XXXXXX")"
+    if "$BIN_DIR/aimux" restart --all >"$RESTART_OUTPUT" 2>&1; then
+      cat "$RESTART_OUTPUT"
+      rm -f "$RESTART_OUTPUT"
       printf 'Aimux control plane repaired.\n'
     else
-      printf 'Installed aimux, but post-install restart failed. Run: %s/aimux restart --all\n' "$BIN_DIR" >&2
+      RESTART_STATUS=$?
+      cat "$RESTART_OUTPUT" >&2
+      RESTART_FAILURE_SUMMARY=$(awk '
+        /^Project: / {
+          project = $0
+          sub(/^Project: /, "", project)
+          next
+        }
+        /^[[:space:]]+dashboard: failed/ {
+          dashboard = $0
+          sub(/^[[:space:]]+dashboard: /, "", dashboard)
+          if (project != "") {
+            print project " dashboard " dashboard
+          } else {
+            print dashboard
+          }
+          found = 1
+          exit
+        }
+        /^[[:space:]]+failures: / {
+          failures = $0
+          sub(/^[[:space:]]+/, "", failures)
+        }
+        END {
+          if (!found && failures != "") {
+            print failures
+          }
+        }
+      ' "$RESTART_OUTPUT")
+      rm -f "$RESTART_OUTPUT"
+      if [ -n "$RESTART_FAILURE_SUMMARY" ]; then
+        printf 'Installed aimux, but post-install restart failed (exit %s): %s. Run: %s/aimux restart --all\n' "$RESTART_STATUS" "$RESTART_FAILURE_SUMMARY" "$BIN_DIR" >&2
+      else
+        printf 'Installed aimux, but post-install restart failed (exit %s). Run: %s/aimux restart --all\n' "$RESTART_STATUS" "$BIN_DIR" >&2
+      fi
       exit 75
     fi
   fi
