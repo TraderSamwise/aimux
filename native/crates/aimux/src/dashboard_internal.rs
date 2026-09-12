@@ -401,14 +401,18 @@ pub fn run_native_dashboard_internal(options: NativeDashboardOptions) -> Result<
             runtime_guard.disconnected_probe_count = disconnected_probe_count;
             if runtime_guard.set_state(next_state) {
                 if runtime_guard.state.is_ok() {
-                    clear_runtime_guard_repair_attempts(
+                    if let Err(error) = clear_runtime_guard_repair_attempts(
                         PathResolver::from_env().global_aimux_dir(),
                         &options.project_root.to_string_lossy(),
-                    );
-                    runtime_guard.repair_attempts.clear();
-                    runtime_guard.repair_failed_key = None;
-                    runtime_guard.repair_retry_at_ms = None;
-                    runtime_guard.repair_error = None;
+                    ) {
+                        runtime_guard.repair_error =
+                            Some(format!("Aimux repair history clear failed: {error}"));
+                    } else {
+                        runtime_guard.repair_attempts.clear();
+                        runtime_guard.repair_failed_key = None;
+                        runtime_guard.repair_retry_at_ms = None;
+                        runtime_guard.repair_error = None;
+                    }
                 }
                 render_now = true;
             }
@@ -978,12 +982,20 @@ fn maybe_start_dashboard_runtime_guard_repair(
     let project_root_text = project_root.to_string_lossy().into_owned();
     let now_ms = current_time_ms();
     let home = PathResolver::from_env().global_aimux_dir();
-    runtime_guard.repair_attempts = load_runtime_guard_repair_attempts(
+    runtime_guard.repair_attempts = match load_runtime_guard_repair_attempts(
         &home,
         &project_root_text,
         RUNTIME_GUARD_REPAIR_FLAP_WINDOW_MS,
         now_ms,
-    );
+    ) {
+        Ok(attempts) => attempts,
+        Err(error) => {
+            runtime_guard.repair_error = Some(format!("Aimux repair history unavailable: {error}"));
+            runtime_guard.repair_failed_key = Some(runtime_guard_repair_key(&runtime_guard.state));
+            runtime_guard.repair_retry_at_ms = Some(now_ms + RUNTIME_GUARD_REPAIR_RETRY_MS);
+            return true;
+        }
+    };
     let decision = runtime_guard_repair_decision(&RuntimeGuardRepairGate {
         state: &runtime_guard.state,
         repairing: runtime_guard.repairing(),
@@ -1017,12 +1029,21 @@ fn maybe_start_dashboard_runtime_guard_repair(
         }
     };
 
-    runtime_guard.repair_attempts = record_runtime_guard_repair_attempt(
+    runtime_guard.repair_attempts = match record_runtime_guard_repair_attempt(
         &home,
         &project_root_text,
         RUNTIME_GUARD_REPAIR_FLAP_WINDOW_MS,
         now_ms,
-    );
+    ) {
+        Ok(attempts) => attempts,
+        Err(error) => {
+            runtime_guard.repair_error =
+                Some(format!("Aimux repair history write failed: {error}"));
+            runtime_guard.repair_failed_key = Some(repair_key);
+            runtime_guard.repair_retry_at_ms = Some(now_ms + RUNTIME_GUARD_REPAIR_RETRY_MS);
+            return true;
+        }
+    };
     let state = runtime_guard.state.clone();
     runtime_guard.repair_key = Some(repair_key.clone());
     runtime_guard.repair_failed_key = None;

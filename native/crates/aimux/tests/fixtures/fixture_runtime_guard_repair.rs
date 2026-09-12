@@ -2,7 +2,8 @@ use std::fs;
 use std::path::PathBuf;
 
 use aimux::runtime_guard_repair_history::{
-    clear_attempts, history_path, load_attempts, record_attempt,
+    clear_attempts as clear_attempts_result, history_path, load_attempts as load_attempts_result,
+    record_attempt as record_attempt_result,
 };
 use serde_json::{Value, json};
 
@@ -135,30 +136,24 @@ fn guard_history_contract(case: &Value) -> Value {
             }
             fs::write(&path, case["input"]["fileText"].as_str().unwrap_or(""))
                 .expect("write corrupt history");
-            let before = load_attempts(
+            let before_error = load_attempts_result(
                 home,
                 case["input"]["projectRoot"].as_str().unwrap_or("/p"),
                 case["input"]["windowMs"].as_i64().unwrap_or_default(),
                 case["input"]["now"].as_i64().unwrap_or_default(),
-            );
-            let record_ok = std::panic::catch_unwind(|| {
-                record_attempt(
-                    home,
-                    case["input"]["projectRoot"].as_str().unwrap_or("/p"),
-                    case["input"]["windowMs"].as_i64().unwrap_or_default(),
-                    case["input"]["now"].as_i64().unwrap_or_default(),
-                );
-            })
-            .is_ok();
+            )
+            .unwrap_err();
+            let record_error = record_attempt_result(
+                home,
+                case["input"]["projectRoot"].as_str().unwrap_or("/p"),
+                case["input"]["windowMs"].as_i64().unwrap_or_default(),
+                case["input"]["now"].as_i64().unwrap_or_default(),
+            )
+            .unwrap_err();
             json!({
-                "before": before,
-                "recordOk": record_ok,
-                "after": load_attempts(
-                    home,
-                    case["input"]["projectRoot"].as_str().unwrap_or("/p"),
-                    case["input"]["windowMs"].as_i64().unwrap_or_default(),
-                    case["input"]["now"].as_i64().unwrap_or_default(),
-                ),
+                "beforeError": before_error.contains("could not parse runtime guard repair history"),
+                "recordError": record_error.contains("could not parse runtime guard repair history"),
+                "preserved": fs::read_to_string(&path).unwrap_or_default() == case["input"]["fileText"].as_str().unwrap_or(""),
             })
         }
         "limitProgression" => {
@@ -229,6 +224,72 @@ fn number_array(value: &Value) -> Vec<i64> {
         .flatten()
         .filter_map(Value::as_i64)
         .collect()
+}
+
+fn load_attempts(home: &PathBuf, project_root: &str, window_ms: i64, now: i64) -> Vec<i64> {
+    load_attempts_result(home, project_root, window_ms, now).expect("load attempts")
+}
+
+fn record_attempt(home: &PathBuf, project_root: &str, window_ms: i64, now: i64) -> Vec<i64> {
+    record_attempt_result(home, project_root, window_ms, now).expect("record attempt")
+}
+
+fn clear_attempts(home: &PathBuf, project_root: &str) {
+    clear_attempts_result(home, project_root).expect("clear attempts");
+}
+
+#[test]
+fn missing_repair_history_is_genuine_absence() {
+    with_home(|home| {
+        assert_eq!(
+            load_attempts_result(home, "/p", 120_000, 1_000).expect("missing history loads"),
+            Vec::<i64>::new()
+        );
+        assert_eq!(
+            record_attempt_result(home, "/p", 120_000, 1_000).expect("missing history records"),
+            vec![1_000]
+        );
+        json!(null)
+    });
+}
+
+#[test]
+fn corrupt_repair_history_errors_and_is_not_overwritten() {
+    with_home(|home| {
+        let path = history_path(home);
+        fs::create_dir_all(path.parent().expect("history parent")).expect("create history parent");
+        fs::write(&path, "{ not json").expect("write corrupt history");
+
+        let load_error = load_attempts_result(home, "/p", 120_000, 1_000).unwrap_err();
+        let record_error = record_attempt_result(home, "/p", 120_000, 1_000).unwrap_err();
+
+        assert!(load_error.contains("could not parse runtime guard repair history"));
+        assert!(record_error.contains("could not parse runtime guard repair history"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "{ not json");
+        json!(null)
+    });
+}
+
+#[test]
+fn repair_history_write_failure_is_reported_and_preserves_attempts() {
+    with_home(|home| {
+        record_attempt_result(home, "/p", 120_000, 1_000).expect("initial record");
+        let path = history_path(home);
+        let original_permissions = fs::metadata(&path).expect("history metadata").permissions();
+        let mut readonly_permissions = original_permissions.clone();
+        readonly_permissions.set_readonly(true);
+        fs::set_permissions(&path, readonly_permissions).expect("make history read only");
+
+        let error = record_attempt_result(home, "/p", 120_000, 2_000).unwrap_err();
+
+        fs::set_permissions(&path, original_permissions).expect("restore history permissions");
+        assert!(error.contains("could not write runtime guard repair history"));
+        assert_eq!(
+            load_attempts_result(home, "/p", 120_000, 2_000).unwrap(),
+            vec![1_000]
+        );
+        json!(null)
+    });
 }
 
 fn with_home(callback: impl FnOnce(&PathBuf) -> Value) -> Value {
