@@ -5,7 +5,7 @@ use aimux::project_service::project_observability::{
 use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
 use aimux::project_service::runtime_exchange::{runtime_exchange_path, write_runtime_exchange};
 use serde_json::{Value, json};
-use std::fs::remove_dir_all;
+use std::fs::{create_dir_all, remove_dir_all, write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -242,6 +242,36 @@ fn route_serves_observability_from_desktop_state_runtime_exchange_and_notificati
     assert_eq!(derived.body["project"]["summary"]["services"], 0);
     assert_eq!(derived.body["project"]["summary"]["openTasks"], 1);
     assert_eq!(derived.body["project"]["summary"]["doneTasks"], 1);
+    cleanup(project);
+}
+
+#[test]
+fn route_reports_corrupt_runtime_exchange_instead_of_empty_observability() {
+    let project = temp_project("corrupt-exchange");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).expect("state dir");
+    write(runtime_exchange_path(&state_dir), "version: [").expect("corrupt exchange");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_desktop_state(json!({
+            "sessions": [],
+            "teammates": [],
+            "services": [],
+            "worktrees": [],
+        }));
+
+    let response =
+        route_project_service_request(&context, "GET", routes::PROJECT_OBSERVABILITY, None);
+
+    assert_eq!(response.status, 500);
+    assert_eq!(response.body["ok"], false);
+    assert!(
+        response.body["error"]
+            .as_str()
+            .is_some_and(|error| error.contains("notification store unavailable")
+                || error.contains("failed to parse runtime exchange")),
+        "observability must report unreadable exchange, not zero tasks: {}",
+        response.body
+    );
     cleanup(project);
 }
 

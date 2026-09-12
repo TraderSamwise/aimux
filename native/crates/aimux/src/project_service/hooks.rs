@@ -175,7 +175,7 @@ fn mark_hook_session_running(
             ids: None,
             session_id: Some(session_id.to_owned()),
         },
-    );
+    )?;
     update_session_metadata(context.project_state_dir(), session_id, |current| {
         let mut object = current.as_object().cloned().unwrap_or_default();
         let mut derived = object
