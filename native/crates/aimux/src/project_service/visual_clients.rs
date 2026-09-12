@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::async_runtime::{scoped_task_name, spawn_blocking_named, spawn_named};
-use crate::config::load_config_for_project;
+use crate::config::load_config_for_known_project_root;
 use crate::debug_logging::log_lifecycle_always;
 use crate::tmux::TmuxRuntimeManager;
 use crate::tmux_expose_hot_snapshot::prune_expired_hot_expose_snapshots;
@@ -276,7 +276,7 @@ fn project_refresh_task_name(project_root: &Path) -> String {
 }
 
 fn project_hot_snapshots_enabled(project_root: &Path) -> bool {
-    load_config_for_project(project_root)
+    load_config_for_known_project_root(project_root)
         .get("expose")
         .and_then(|expose| expose.get("hotSnapshotsEnabled"))
         .and_then(Value::as_bool)
