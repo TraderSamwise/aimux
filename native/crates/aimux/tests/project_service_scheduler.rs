@@ -78,6 +78,26 @@ fn context() -> ProjectServiceRequestContext {
     ProjectServiceRequestContext::with_project_state_dir(&dir, dir.join("state"))
 }
 
+fn run_due_at(
+    scheduler: &mut PeriodicScheduler,
+    context: &ProjectServiceRequestContext,
+    now_ms: i64,
+) -> Vec<String> {
+    run_due_with_clock(scheduler, context, &mut || now_ms)
+}
+
+fn run_due_with_clock(
+    scheduler: &mut PeriodicScheduler,
+    context: &ProjectServiceRequestContext,
+    clock: &mut dyn FnMut() -> i64,
+) -> Vec<String> {
+    init_process_runtime().expect("runtime initialized");
+    aimux::async_runtime::block_on_named(
+        "project-service-scheduler-test:run-due",
+        scheduler.run_due_async(context, clock),
+    )
+}
+
 fn context_with_scheduler(scheduler: ProjectSchedulerHandle) -> ProjectServiceRequestContext {
     let dir = std::env::temp_dir().join("aimux-scheduler-kick-test");
     ProjectServiceRequestContext::with_project_state_dir(&dir, dir.join("state"))
@@ -123,9 +143,12 @@ fn scheduler_reschedules_configured_tasks_without_spawning_git() {
     let _ = fs::remove_file(&log_path);
     let mut scheduler = PeriodicScheduler::new(vec![task], 0);
 
-    assert_eq!(scheduler.run_due_at(&ctx, 500), vec!["loop-watcher"]);
-    assert!(scheduler.run_due_at(&ctx, 750).is_empty());
-    assert_eq!(scheduler.run_due_at(&ctx, 1_000), vec!["loop-watcher"]);
+    assert_eq!(run_due_at(&mut scheduler, &ctx, 500), vec!["loop-watcher"]);
+    assert!(run_due_at(&mut scheduler, &ctx, 750).is_empty());
+    assert_eq!(
+        run_due_at(&mut scheduler, &ctx, 1_000),
+        vec!["loop-watcher"]
+    );
 
     if let Some(old_path) = old_path {
         unsafe {
@@ -150,10 +173,13 @@ fn a_task_does_not_run_before_its_first_interval_elapses() {
     let mut scheduler = PeriodicScheduler::new(vec![task("slow", 2_000, &runs, false)], 0);
     let ctx = context();
 
-    assert!(scheduler.run_due_at(&ctx, 1_999).is_empty());
+    assert!(run_due_at(&mut scheduler, &ctx, 1_999).is_empty());
     assert_eq!(runs.load(Ordering::SeqCst), 0);
 
-    assert_eq!(scheduler.run_due_at(&ctx, 2_000), vec!["slow".to_owned()]);
+    assert_eq!(
+        run_due_at(&mut scheduler, &ctx, 2_000),
+        vec!["slow".to_owned()]
+    );
     assert_eq!(runs.load(Ordering::SeqCst), 1);
 }
 
@@ -163,9 +189,9 @@ fn a_task_reschedules_itself_one_interval_out() {
     let mut scheduler = PeriodicScheduler::new(vec![task("tick", 1_000, &runs, false)], 0);
     let ctx = context();
 
-    scheduler.run_due_at(&ctx, 1_000);
-    assert!(scheduler.run_due_at(&ctx, 1_500).is_empty());
-    scheduler.run_due_at(&ctx, 2_000);
+    run_due_at(&mut scheduler, &ctx, 1_000);
+    assert!(run_due_at(&mut scheduler, &ctx, 1_500).is_empty());
+    run_due_at(&mut scheduler, &ctx, 2_000);
 
     assert_eq!(runs.load(Ordering::SeqCst), 2);
 }
@@ -184,7 +210,7 @@ fn tasks_with_different_intervals_fire_independently() {
     let ctx = context();
 
     for tick in 1..=5 {
-        scheduler.run_due_at(&ctx, tick * 1_000);
+        run_due_at(&mut scheduler, &ctx, tick * 1_000);
     }
 
     assert_eq!(fast.load(Ordering::SeqCst), 5);
@@ -197,8 +223,8 @@ fn a_task_can_declare_cadence_as_a_tick_multiple() {
     let mut scheduler = PeriodicScheduler::new(vec![tick_task("three-ticks", 3, &runs)], 0);
     let ctx = context();
 
-    assert!(scheduler.run_due_at(&ctx, 749).is_empty());
-    assert_eq!(scheduler.run_due_at(&ctx, 750), vec!["three-ticks"]);
+    assert!(run_due_at(&mut scheduler, &ctx, 749).is_empty());
+    assert_eq!(run_due_at(&mut scheduler, &ctx, 750), vec!["three-ticks"]);
     assert_eq!(runs.load(Ordering::SeqCst), 1);
 }
 
@@ -210,12 +236,12 @@ fn a_named_force_kick_runs_a_task_on_the_next_tick() {
         PeriodicScheduler::with_handle(vec![task("slow", 10_000, &runs, false)], 0, handle.clone());
     let ctx = context();
 
-    assert!(scheduler.run_due_at(&ctx, 1_000).is_empty());
+    assert!(run_due_at(&mut scheduler, &ctx, 1_000).is_empty());
     handle.force_task_next_tick("slow");
-    assert_eq!(scheduler.run_due_at(&ctx, 1_001), vec!["slow"]);
+    assert_eq!(run_due_at(&mut scheduler, &ctx, 1_001), vec!["slow"]);
     assert_eq!(runs.load(Ordering::SeqCst), 1);
-    assert!(scheduler.run_due_at(&ctx, 10_000).is_empty());
-    assert_eq!(scheduler.run_due_at(&ctx, 11_001), vec!["slow"]);
+    assert!(run_due_at(&mut scheduler, &ctx, 10_000).is_empty());
+    assert_eq!(run_due_at(&mut scheduler, &ctx, 11_001), vec!["slow"]);
     assert_eq!(runs.load(Ordering::SeqCst), 2);
 }
 
@@ -227,7 +253,7 @@ fn a_runtime_event_kicks_the_loop_watcher_onto_the_next_tick() {
     let mut scheduler =
         PeriodicScheduler::with_handle(vec![task("loop-watcher", 60_000, &runs, false)], 0, handle);
 
-    assert!(scheduler.run_due_at(&ctx, 1_000).is_empty());
+    assert!(run_due_at(&mut scheduler, &ctx, 1_000).is_empty());
     let response = route_project_service_request(
         &ctx,
         "POST",
@@ -241,7 +267,10 @@ fn a_runtime_event_kicks_the_loop_watcher_onto_the_next_tick() {
         (200..300).contains(&response.status),
         "runtime event should be accepted"
     );
-    assert_eq!(scheduler.run_due_at(&ctx, 1_001), vec!["loop-watcher"]);
+    assert_eq!(
+        run_due_at(&mut scheduler, &ctx, 1_001),
+        vec!["loop-watcher"]
+    );
     assert_eq!(runs.load(Ordering::SeqCst), 1);
 }
 
@@ -258,12 +287,12 @@ fn a_panicking_task_does_not_stop_its_neighbour() {
     );
     let ctx = context();
 
-    let ran = scheduler.run_due_at(&ctx, 1_000);
+    let ran = run_due_at(&mut scheduler, &ctx, 1_000);
     assert_eq!(ran, vec!["bad".to_owned(), "good".to_owned()]);
     assert_eq!(good.load(Ordering::SeqCst), 1);
 
     // and it stays on the rail rather than being dropped after one failure
-    scheduler.run_due_at(&ctx, 2_000);
+    run_due_at(&mut scheduler, &ctx, 2_000);
     assert_eq!(bad.load(Ordering::SeqCst), 2);
     assert_eq!(good.load(Ordering::SeqCst), 2);
 }
@@ -284,8 +313,8 @@ fn an_absurd_interval_is_floored_so_the_rail_cannot_spin() {
     let mut scheduler = PeriodicScheduler::new(vec![task("hot", 0, &runs, false)], 0);
     let ctx = context();
 
-    assert!(scheduler.run_due_at(&ctx, 249).is_empty());
-    scheduler.run_due_at(&ctx, 250);
+    assert!(run_due_at(&mut scheduler, &ctx, 249).is_empty());
+    run_due_at(&mut scheduler, &ctx, 250);
     assert_eq!(runs.load(Ordering::SeqCst), 1);
 }
 
@@ -328,18 +357,18 @@ fn a_task_that_overruns_its_interval_still_gets_a_full_gap_afterwards() {
     let mut now = move || *reader.lock().unwrap();
 
     *clock.lock().unwrap() = 1_000;
-    scheduler.run_due(&ctx, &mut now);
+    run_due_with_clock(&mut scheduler, &ctx, &mut now);
     assert_eq!(runs.load(Ordering::SeqCst), 1);
     // finished at 6_000, so the next run is due at 7_000 — NOT at 2_000, which
     // is what rescheduling from the due time would have produced.
     assert_eq!(*clock.lock().unwrap(), 6_000);
 
     *clock.lock().unwrap() = 6_999;
-    assert!(scheduler.run_due(&ctx, &mut now).is_empty());
+    assert!(run_due_with_clock(&mut scheduler, &ctx, &mut now).is_empty());
     assert_eq!(runs.load(Ordering::SeqCst), 1);
 
     *clock.lock().unwrap() = 7_000;
-    scheduler.run_due(&ctx, &mut now);
+    run_due_with_clock(&mut scheduler, &ctx, &mut now);
     assert_eq!(runs.load(Ordering::SeqCst), 2);
 }
 
@@ -379,7 +408,10 @@ fn a_task_can_ask_to_run_at_startup_instead_of_one_interval_out() {
     );
     let ctx = context();
 
-    assert_eq!(scheduler.run_due_at(&ctx, 0), vec!["eager".to_owned()]);
+    assert_eq!(
+        run_due_at(&mut scheduler, &ctx, 0),
+        vec!["eager".to_owned()]
+    );
     assert_eq!(eager.load(Ordering::SeqCst), 1);
     assert_eq!(
         patient.load(Ordering::SeqCst),
@@ -471,7 +503,7 @@ fn scheduler_test_helper_is_for_instant_return_tasks() {
     let ctx = context();
 
     assert_eq!(
-        scheduler.run_due_at(&ctx, 1_000),
+        run_due_at(&mut scheduler, &ctx, 1_000),
         vec!["instant".to_owned()]
     );
     assert_eq!(runs.load(Ordering::SeqCst), 1);
