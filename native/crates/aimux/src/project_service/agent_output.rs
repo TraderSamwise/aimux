@@ -2,7 +2,8 @@ pub use crate::agent_prompt_delivery::normalize_submitted_prompt;
 use crate::agent_prompt_delivery::{
     DRAFT_CAPTURE_START_LINE, FIRST_POLL_MS, MAX_POLL_ATTEMPTS, POLL_MS, PromptSubmitRuntime,
     SETTLE_BEFORE_SUBMIT_MS, SIGNATURE_CAPTURE_START_LINE, VERIFY_AFTER_SUBMIT_MS,
-    pane_still_contains_prompt_draft, prompt_draft_signature, wait_for_prompt_submit,
+    composer_still_contains_prompt_draft, pane_still_contains_prompt_draft, prompt_draft_signature,
+    wait_for_prompt_submit,
 };
 use crate::async_subprocess::{AsyncCommand, command_task_name};
 use crate::daemon_state::load_metadata_state;
@@ -2357,7 +2358,7 @@ async fn submit_prompt_with_runtime_async(
         .capture(DRAFT_CAPTURE_START_LINE)
         .await
         .map_err(|error| format!("agent input submit verification failed after submit: {error}"))?;
-    if pane_still_contains_prompt_draft(&pane, draft) {
+    if composer_still_contains_prompt_draft(&pane, draft) {
         Err(
             "agent input submit verification failed: prompt draft remained visible after submit"
                 .to_owned(),
@@ -2755,6 +2756,30 @@ mod tests {
             wait_for_prompt_submit_with_runtime_async(&mut runtime, "hello from route")
                 .await
                 .expect("submit verified");
+        });
+
+        assert_eq!(runtime.carriage_returns, 1);
+    }
+
+    #[test]
+    fn async_prompt_submit_accepts_transcript_echo_after_submit() {
+        crate::async_runtime::init_process_runtime().expect("runtime initialized");
+        let mut runtime = FakeAsyncPromptSubmitRuntime {
+            captures: std::collections::VecDeque::from([
+                Ok("› echoed draft".to_owned()),
+                Ok("› echoed draft".to_owned()),
+                Ok("› echoed draft".to_owned()),
+                Ok("› echoed draft".to_owned()),
+                Ok("› echoed draft\n• Working\n› ".to_owned()),
+            ]),
+            ..FakeAsyncPromptSubmitRuntime::successful("echoed draft")
+        };
+
+        // aimux-async-seam: test - agent output unit test drives async submit verification
+        crate::async_runtime::block_on_named("agent-output:test-submit-transcript-echo", async {
+            wait_for_prompt_submit_with_runtime_async(&mut runtime, "echoed draft")
+                .await
+                .expect("submit echo verified");
         });
 
         assert_eq!(runtime.carriage_returns, 1);

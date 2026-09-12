@@ -3,8 +3,8 @@
 //! by a newer submit.
 
 use aimux::agent_prompt_delivery::{
-    PromptSubmitRuntime, pane_still_contains_prompt_draft, prompt_draft_signature,
-    wait_for_prompt_submit,
+    PromptSubmitRuntime, composer_still_contains_prompt_draft, pane_still_contains_prompt_draft,
+    prompt_draft_signature, wait_for_prompt_submit,
 };
 
 /// Replays a scripted sequence of pane captures and records what it was sent.
@@ -92,6 +92,21 @@ fn the_carriage_return_waits_for_the_draft_to_render_and_settle() {
 }
 
 #[test]
+fn transcript_echo_after_submit_does_not_count_as_uncleared_composer() {
+    let drawn = format!("› {DRAFT}");
+    let echoed_after_submit = format!("› {DRAFT}\n• Working\n› ");
+    let mut pane = FakePane::new(&[&drawn, &drawn, &drawn, &drawn, &echoed_after_submit]);
+
+    let submitted = wait_for_prompt_submit(&mut pane, DRAFT);
+
+    assert_eq!(pane.carriage_returns, 1);
+    assert!(
+        submitted,
+        "a submitted prompt echoed in transcript history must not look unsubmitted"
+    );
+}
+
+#[test]
 fn a_pane_that_never_renders_still_submits_rather_than_losing_the_prompt() {
     let mut pane = FakePane::new(&[""]);
 
@@ -160,6 +175,21 @@ fn a_codex_pasted_content_marker_counts_as_the_draft() {
         DRAFT
     ));
     assert!(!pane_still_contains_prompt_draft("› ", DRAFT));
+}
+
+#[test]
+fn only_the_current_composer_region_verifies_submit_clearance() {
+    let echoed_after_submit = format!("› {DRAFT}\n• Working\n› ");
+    let stuck_in_composer = format!("assistant output\n› {DRAFT}");
+
+    assert!(!composer_still_contains_prompt_draft(
+        &echoed_after_submit,
+        DRAFT
+    ));
+    assert!(composer_still_contains_prompt_draft(
+        &stuck_in_composer,
+        DRAFT
+    ));
 }
 
 #[test]
