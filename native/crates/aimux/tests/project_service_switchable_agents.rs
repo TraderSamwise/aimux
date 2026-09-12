@@ -1,7 +1,9 @@
 use aimux::daemon_state::{MetadataState, save_metadata_state};
 use aimux::project_service::agent_output::AgentOutputCaptureRuntime;
 use aimux::project_service::preview_snapshots::capture_preview_snapshot_with_tap;
-use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
+use aimux::project_service::router::{
+    OscOutputTap, ProjectServiceRequestContext, route_project_service_request,
+};
 use aimux::project_service::switchable_agents::{
     AgentListScope, ManagedWindowEntry, SwitchableContext, SwitchableListOptions,
     agent_status_chip, list_switchable_agent_items, resolve_next_agent, resolve_prev_agent,
@@ -703,6 +705,49 @@ fn route_switchable_agents_marks_preview_capture_failure() {
     assert_eq!(
         live["previewCapture"]["error"],
         "tmux capture-pane failed for @1"
+    );
+    cleanup(project);
+}
+
+#[test]
+fn async_route_switchable_agents_preview_does_not_start_sync_tap() {
+    let project = temp_project("route-switchable-async-preview-no-sync-tap");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).unwrap();
+    write(
+        runtime_topology_path(&state_dir),
+        serde_yaml::to_string(&topology_fixture()).unwrap(),
+    )
+    .unwrap();
+    let tap = OscOutputTap::counting_for_test();
+    let mut context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+        .with_live_window_ids(support::live_window_ids(&["@1", "@2", "@3"]));
+    context.osc_output_tap = tap.clone();
+
+    // aimux-async-seam: test - switchable-agents preview route must not call sync OSC tap
+    let response = aimux::async_runtime::block_on_named(
+        "test:switchable-agents-async-preview-no-sync-tap",
+        route_switchable_agent_request_async(
+            &context,
+            "GET",
+            "/control/switchable-agents?currentPath=/repo/wt&currentWindowId=%401&labelFormat=raw&expose=1&includePreview=1",
+        ),
+    )
+    .expect("switchable async preview route");
+
+    assert_eq!(response.status, 200);
+    let live = find(response.body["items"].as_array().unwrap(), "codex-live");
+    assert!(live.get("previewSnapshot").is_none());
+    assert_eq!(live["previewCapture"]["ok"], false);
+    assert!(
+        !live["previewCapture"]["error"].as_str().unwrap().is_empty(),
+        "expected a preview capture error marker, got {}",
+        live["previewCapture"]
+    );
+    assert_eq!(
+        tap.track_read_call_count(),
+        0,
+        "async preview enrichment must not enter sync OSC tap plumbing"
     );
     cleanup(project);
 }

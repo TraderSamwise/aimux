@@ -932,18 +932,10 @@ async fn attach_expose_preview_snapshot_async(
     else {
         return;
     };
-    let target = item.get("target").and_then(tmux_target_from_value);
-    let tap_snapshot = target.and_then(|target| {
-        context.osc_output_tap.track_and_read_snapshot(
-            string_field(item, "id").unwrap_or_default(),
-            target,
-            DEFAULT_PREVIEW_MAX_CHARS,
-        )
-    });
     let preview = match capture_preview_snapshot_with_tap_async(
         context,
         &window_id,
-        tap_snapshot.as_ref(),
+        None,
         DEFAULT_PREVIEW_CAPTURE_LINES,
         DEFAULT_PREVIEW_MAX_CHARS,
     )
