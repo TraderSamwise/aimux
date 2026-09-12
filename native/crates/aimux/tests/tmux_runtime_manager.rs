@@ -626,7 +626,7 @@ fn writes_window_metadata_and_agent_policy_options() {
 }
 
 #[test]
-fn async_named_runtime_methods_use_the_same_tmux_commands() {
+fn async_named_runtime_wrappers_use_the_same_tmux_commands() {
     let calls = Rc::new(RefCell::new(Vec::<(Vec<String>, Option<String>)>::new()));
     let calls_for_exec = calls.clone();
     let mut manager = TmuxRuntimeManager::with_exec(move |args, options| {
@@ -660,19 +660,8 @@ fn async_named_runtime_methods_use_the_same_tmux_commands() {
         .window_id,
         "@10"
     );
-    assert_eq!(
-        // aimux-async-seam: test - tmux runtime test drives async tmux method
-        block_on(manager.capture_target_async(
-            &target,
-            CapturePaneOptions {
-                start_line: Some(0),
-                end_line: Some(10),
-                include_escapes: false,
-            },
-        ))
-        .expect("capture async"),
-        "screen"
-    );
+    // capture_target_async is covered separately because it intentionally uses
+    // the Tokio subprocess path instead of the fake sync executor.
     // aimux-async-seam: test - tmux runtime test drives async tmux method
     block_on(manager.clear_target_history_async(&target)).expect("clear async");
     // aimux-async-seam: test - tmux runtime test drives async tmux method
@@ -720,18 +709,6 @@ fn async_named_runtime_methods_use_the_same_tmux_commands() {
                     "gpt-5".to_owned(),
                 ]
     }));
-    assert!(calls.iter().any(|(args, _)| args
-        == &vec![
-            "capture-pane".to_owned(),
-            "-p".to_owned(),
-            "-J".to_owned(),
-            "-t".to_owned(),
-            "@9".to_owned(),
-            "-S".to_owned(),
-            "0".to_owned(),
-            "-E".to_owned(),
-            "10".to_owned(),
-        ]));
     assert!(
         calls.iter().any(|(args, _)| args
             == &vec!["clear-history".to_owned(), "-t".to_owned(), "@9".to_owned(),])
