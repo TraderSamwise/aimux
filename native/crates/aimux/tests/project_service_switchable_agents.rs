@@ -504,6 +504,56 @@ fn route_switchable_agents_drops_sessions_without_live_tmux_windows() {
 }
 
 #[test]
+fn route_switchable_agents_preserves_live_sessions_when_tmux_liveness_query_is_unavailable() {
+    let project = temp_project("route-switchable-tmux-unavailable");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).unwrap();
+    write(
+        runtime_topology_path(&state_dir),
+        serde_yaml::to_string(&topology_fixture()).unwrap(),
+    )
+    .unwrap();
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::new(),
+        },
+    )
+    .unwrap();
+    let path =
+        "/control/switchable-agents?currentPath=/repo/wt&currentWindowId=%401&labelFormat=raw";
+
+    let empty_inventory_context =
+        ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+            .with_live_window_ids(support::live_window_ids(&[]));
+    let empty_inventory_response =
+        route_project_service_request(&empty_inventory_context, "GET", path, None);
+    let empty_inventory_items = empty_inventory_response.body["items"].as_array().unwrap();
+    assert!(
+        empty_inventory_items
+            .iter()
+            .all(|item| item["id"] != "codex-live"),
+        "a successful empty tmux inventory should remove dead sessions from switchable controls"
+    );
+
+    let unavailable_context =
+        ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir)
+            .with_live_window_ids_error("tmux list-windows timed out after 2s");
+    let unavailable_response =
+        route_project_service_request(&unavailable_context, "GET", path, None);
+    let unavailable_items = unavailable_response.body["items"].as_array().unwrap();
+    assert!(
+        unavailable_items
+            .iter()
+            .any(|item| item["id"] == "codex-live"),
+        "a tmux query timeout must not look like an empty switchable-agent list"
+    );
+
+    cleanup(project);
+}
+
+#[test]
 fn route_switchable_agents_attaches_expose_previews_through_capture_cache() {
     let project = temp_project("route-switchable-preview");
     let state_dir = project.join("state");
