@@ -160,7 +160,7 @@ pub(crate) async fn route_lifecycle_request_async_with_runtime(
     let started_at = Instant::now();
     let response =
         route_lifecycle_request_unqueued_async(context, pathname, body, runtime, progress).await;
-    permit.succeed(started_at);
+    finish_lifecycle_permit(&mut permit, started_at, response.as_ref());
     response
 }
 
@@ -177,16 +177,49 @@ pub fn route_lifecycle_request_with_runtime(
     let pathname = project_service_pathname(path);
     let body = body.unwrap_or(&Value::Null);
     let transition = lifecycle_transition_for_route(pathname, body);
-    let result = context.lifecycle_mutations.enqueue(transition, || {
-        Ok(route_lifecycle_request_unqueued(
-            context, pathname, body, runtime,
-        ))
-    });
-    Some(match result {
-        Ok(Ok(response)) => response?,
-        Ok(Err(error)) => return Some(lifecycle_queue_operation_error_response(error)),
-        Err(error) => lifecycle_queue_error_response(error),
-    })
+    let mut permit = match context.lifecycle_mutations.begin(transition) {
+        Ok(permit) => permit,
+        Err(error) => return Some(lifecycle_queue_error_response(error)),
+    };
+    let started_at = Instant::now();
+    let response = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        route_lifecycle_request_unqueued(context, pathname, body, runtime)
+    }));
+    match response {
+        Ok(response) => {
+            finish_lifecycle_permit(&mut permit, started_at, response.as_ref());
+            response
+        }
+        Err(payload) => {
+            permit.fail(started_at, "lifecycle mutation panicked".into());
+            std::panic::resume_unwind(payload);
+        }
+    }
+}
+
+fn finish_lifecycle_permit(
+    permit: &mut super::lifecycle_mutation_queue::LifecycleMutationPermit,
+    started_at: Instant,
+    response: Option<&ProjectServiceDispatchResponse>,
+) {
+    if let Some(response) = response
+        && response.status >= 400
+    {
+        permit.fail(started_at, lifecycle_response_error(response));
+        return;
+    }
+    permit.succeed(started_at);
+}
+
+fn lifecycle_response_error(response: &ProjectServiceDispatchResponse) -> String {
+    response
+        .body
+        .get("error")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|error| !error.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("lifecycle mutation returned HTTP {}", response.status))
 }
 
 fn route_lifecycle_request_unqueued(
@@ -270,8 +303,4 @@ fn lifecycle_queue_error_response(error: LifecycleMutationError) -> ProjectServi
         error.status(),
         serde_json::json!({ "ok": false, "error": error.message() }),
     )
-}
-
-fn lifecycle_queue_operation_error_response(error: String) -> ProjectServiceDispatchResponse {
-    ProjectServiceDispatchResponse::json(500, serde_json::json!({ "ok": false, "error": error }))
 }

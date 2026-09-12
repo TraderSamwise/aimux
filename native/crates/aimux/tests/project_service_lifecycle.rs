@@ -403,6 +403,78 @@ fn agent_kill_reports_tmux_kill_failure_instead_of_graveyard_success() {
         get_prompt_context_text(&state_dir, "codex-live"),
         Some("form=event".to_owned())
     );
+    let failures = list_dashboard_operation_failures(&state_dir);
+    assert_eq!(failures.len(), 1);
+    assert_eq!(failures[0]["targetKind"], "agent");
+    assert_eq!(failures[0]["operation"], "agent.kill");
+    assert_eq!(failures[0]["targetId"], "codex-live");
+    assert!(
+        failures[0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("tmux kill-window failed for session \"codex-live\"")
+    );
+    let desktop_state = route_project_service_request(&context, "GET", routes::DESKTOP_STATE, None);
+    let desktop_failures = desktop_state.body["operationFailures"]
+        .as_array()
+        .expect("desktop-state operation failures");
+    assert!(
+        desktop_failures.iter().any(|failure| {
+            failure["operation"] == "agent.kill" && failure["targetId"] == "codex-live"
+        }),
+        "kill failure must reach desktop-state operationFailures: {desktop_failures:#?}"
+    );
+    let diagnostics = context
+        .lifecycle_mutations
+        .diagnostics(&project.to_string_lossy());
+    assert_eq!(diagnostics["telemetry"]["failed"], 1);
+    assert_eq!(diagnostics["telemetry"]["succeeded"], 0);
+    assert!(
+        diagnostics["telemetry"]["lastError"]
+            .as_str()
+            .unwrap()
+            .contains("tmux kill-window failed for session \"codex-live\"")
+    );
+    cleanup(project);
+}
+
+#[test]
+fn agent_kill_without_live_window_is_successful_noop_not_operation_failure() {
+    let project = temp_project("agent-kill-no-window-noop");
+    let state_dir = project.join("state");
+    write_lifecycle_topology(&state_dir);
+    let mut topology = read_topology(&state_dir);
+    topology["bindings"] = json!([]);
+    write_runtime_topology(runtime_topology_path(&state_dir), &topology).unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime {
+        kill_window_result: Some(Err("must not be called".into())),
+        ..Default::default()
+    };
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::KILL,
+        Some(&json!({ "sessionId": "codex-live", "reason": "done" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["status"], "graveyard");
+    assert!(runtime.killed.is_empty());
+    let failures = list_dashboard_operation_failures(&state_dir);
+    assert!(
+        failures.is_empty(),
+        "no-window kill success must not record an operation failure: {failures:#?}"
+    );
+    let diagnostics = context
+        .lifecycle_mutations
+        .diagnostics(&project.to_string_lossy());
+    assert_eq!(diagnostics["telemetry"]["succeeded"], 1);
+    assert_eq!(diagnostics["telemetry"]["failed"], 0);
+    assert_eq!(diagnostics["telemetry"]["lastError"], Value::Null);
     cleanup(project);
 }
 
