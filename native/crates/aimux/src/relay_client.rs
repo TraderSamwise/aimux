@@ -6,6 +6,8 @@
 
 use serde_json::{Value, json};
 
+use crate::websocket::WebSocketError;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RelayStatus {
     Connected,
@@ -141,14 +143,15 @@ pub fn notification_push_frame(notification: &Value) -> Option<String> {
 pub enum CloseDecision {
     /// The relay refused these credentials. Stop; retrying cannot help.
     AuthFailed(String),
+    /// The relay refused the upgrade for a non-login reason. Stop and surface it.
+    Refused(String),
     Reconnect,
     /// `disconnect()` was called, so this close was expected.
     Stop,
 }
 
-/// 1008 and 4001 are the relay saying no. 1006 is an abnormal close, which is
-/// what a failed HTTP upgrade looks like from the client side — a few are
-/// normal, a run of them means the token is dead.
+/// 1008 and 4001 are the relay saying no. 1006 is an abnormal close after a
+/// socket attempt; a few are normal, a run of them means the token is suspect.
 pub fn decide_close(
     code: Option<u16>,
     handshake_failures: u32,
@@ -171,6 +174,30 @@ pub fn decide_close(
         CloseDecision::Stop
     } else {
         CloseDecision::Reconnect
+    }
+}
+
+pub fn decide_connect_error(error: &WebSocketError, stopped: bool) -> CloseDecision {
+    if stopped {
+        return CloseDecision::Stop;
+    }
+    let Some(status) = error.http_status() else {
+        return CloseDecision::Reconnect;
+    };
+    let message = relay_refusal_message(status, error.http_body().unwrap_or_default());
+    match status {
+        401 => CloseDecision::AuthFailed(format!("{message} — run `aimux login` again")),
+        400..=499 => CloseDecision::Refused(message),
+        _ => CloseDecision::Reconnect,
+    }
+}
+
+fn relay_refusal_message(status: u16, body: &str) -> String {
+    let body = body.trim();
+    if body.is_empty() {
+        format!("Relay websocket upgrade refused (HTTP {status})")
+    } else {
+        format!("Relay websocket upgrade refused (HTTP {status}): {body}")
     }
 }
 

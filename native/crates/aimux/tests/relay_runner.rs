@@ -355,10 +355,11 @@ fn repeated_connect_failures_escalate_the_backoff() {
 }
 
 #[test]
-fn five_refused_handshakes_stop_the_client() {
-    let scripts = (0..6)
-        .map(|_| Err(WebSocketError::Handshake("401".into())))
-        .collect();
+fn a_http_401_connect_refusal_stops_the_client_with_login_guidance() {
+    let scripts = vec![Err(WebSocketError::handshake_refused(
+        401,
+        "invalid relay token",
+    ))];
     let mut harness = harness(scripts, None);
     harness.run_until(10);
 
@@ -368,8 +369,49 @@ fn five_refused_handshakes_stop_the_client() {
     );
     assert_eq!(
         *harness.attempts.lock().unwrap(),
-        5,
-        "it must give up on the fifth refused handshake, not keep hammering"
+        1,
+        "an explicit HTTP 401 is enough to stop without hammering"
+    );
+    let auth_lost = harness.recorder.auth_lost.lock().unwrap().clone();
+    assert_eq!(auth_lost.len(), 1);
+    assert!(
+        auth_lost[0].contains("HTTP 401"),
+        "message was {auth_lost:?}"
+    );
+    assert!(
+        auth_lost[0].contains("invalid relay token"),
+        "message was {auth_lost:?}"
+    );
+    assert!(
+        auth_lost[0].contains("aimux login"),
+        "message was {auth_lost:?}"
+    );
+}
+
+#[test]
+fn relay_lockdown_refusal_stops_without_reporting_auth_loss() {
+    let scripts = vec![Err(WebSocketError::handshake_refused(
+        423,
+        "remote access locked",
+    ))];
+    let mut harness = harness(scripts, None);
+    harness.run_until(10);
+
+    let status = harness.runner.handle().status();
+    assert_eq!(status.status, Some(RelayStatus::Disconnected));
+    let last_error = status.last_error.unwrap_or_default();
+    assert!(last_error.contains("HTTP 423"), "message was {last_error}");
+    assert!(
+        last_error.contains("remote access locked"),
+        "message was {last_error}"
+    );
+    assert!(
+        !last_error.contains("aimux login"),
+        "lockdown must not tell the user to re-login: {last_error}"
+    );
+    assert!(
+        harness.recorder.auth_lost.lock().unwrap().is_empty(),
+        "lockdown is not an auth-lost notification"
     );
 }
 
@@ -429,8 +471,8 @@ fn a_handle_stopped_before_the_loop_starts_never_opens_a_socket() {
 #[test]
 fn a_flaky_network_never_looks_like_a_dead_token() {
     // Transport errors are the network, not the relay refusing us. Counting
-    // them toward the give-up limit would take a laptop off the relay after
-    // five seconds of bad wifi and require a manual `aimux login` to return.
+    // them as auth loss would take a laptop off the relay after five seconds
+    // of bad wifi and require a manual `aimux login` to return.
     let scripts = (0..8)
         .map(|_| Err(WebSocketError::Transport("connection reset".into())))
         .collect();
@@ -443,6 +485,35 @@ fn a_flaky_network_never_looks_like_a_dead_token() {
         "a run of network errors must not be treated as a bad token"
     );
     assert_eq!(*harness.attempts.lock().unwrap(), 8, "it must keep trying");
+}
+
+#[test]
+fn retryable_http_refusals_do_not_look_like_dead_tokens() {
+    let scripts = (0..6)
+        .map(|_| {
+            Err(WebSocketError::handshake_refused(
+                500,
+                "relay temporarily unavailable",
+            ))
+        })
+        .collect();
+    let mut harness = harness(scripts, None);
+    harness.run_until(6);
+
+    let status = harness.runner.handle().status();
+    assert_ne!(status.status, Some(RelayStatus::AuthFailed));
+    assert!(
+        status
+            .last_error
+            .as_deref()
+            .is_some_and(|message| message.contains("HTTP 500")),
+        "last error should preserve the relay status, got {status:?}"
+    );
+    assert!(
+        harness.recorder.auth_lost.lock().unwrap().is_empty(),
+        "a retryable relay outage must not notify auth loss"
+    );
+    assert_eq!(*harness.attempts.lock().unwrap(), 6, "it must retry");
 }
 
 #[test]
