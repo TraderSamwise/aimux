@@ -26,6 +26,7 @@ pub struct LoopSend {
 pub enum LoopSendKind {
     OverseerBriefing,
     DirectNudge,
+    PausedSummary,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,6 +47,21 @@ pub struct LoopDeliveryRecord {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoopAlertPause {
+    pub paused_at_ms: i64,
+    pub loop_key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub paused_by: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub paused_by_session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub paused_by_role: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
 /// Cross-scan state: who was nudged when, and when the overseer was last woken.
 #[derive(Debug, Default)]
 pub struct LoopWatcher {
@@ -57,6 +73,9 @@ pub struct LoopWatcher {
     last_overseer_attempted_signature: Option<String>,
     unchanged_candidate_ticks: u64,
     delivery_records: Vec<LoopDeliveryRecord>,
+    paused_loop_alerts: BTreeMap<String, LoopAlertPause>,
+    paused_summary_ticks: u64,
+    last_paused_summary_signature: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -102,7 +121,11 @@ impl LoopWatcher {
         let mut sends = Vec::new();
         let metadata = input.get("metadata").unwrap_or(&Value::Null);
         let overseer_id = find_overseer_session_id(metadata);
-        let raw_candidates = find_loop_candidates_with_overseer(input, overseer_id.as_deref());
+        self.gc_stale_pauses(input);
+        let mut raw_candidates = find_loop_candidates_with_overseer(input, overseer_id.as_deref());
+        let paused_candidates = self.extract_paused_candidates(&mut raw_candidates);
+        let paused_summary =
+            self.plan_paused_summary(&paused_candidates, overseer_id.as_deref(), input);
         let candidates = self.dwelled_candidates(
             raw_candidates,
             now_ms,
@@ -113,6 +136,9 @@ impl LoopWatcher {
             self.last_overseer_reported_signature = None;
             self.last_overseer_attempted_signature = None;
             self.unchanged_candidate_ticks = 0;
+            if let Some(send) = paused_summary {
+                sends.push(send);
+            }
             return sends;
         }
         let candidate_sig = candidate_signature(&candidates);
@@ -140,6 +166,9 @@ impl LoopWatcher {
                 cooldown,
             );
             if (already_reported || already_attempted) && !reminder_due {
+                if let Some(send) = paused_summary {
+                    sends.push(send);
+                }
                 return sends;
             }
             let send = LoopSend {
@@ -152,6 +181,9 @@ impl LoopWatcher {
                 kind: LoopSendKind::OverseerBriefing,
             };
             sends.push(send);
+            if let Some(send) = paused_summary {
+                sends.push(send);
+            }
             return sends;
         }
 
@@ -177,6 +209,9 @@ impl LoopWatcher {
             };
             sends.push(send);
         }
+        if let Some(send) = paused_summary {
+            sends.push(send);
+        }
         sends
     }
 
@@ -197,12 +232,41 @@ impl LoopWatcher {
             LoopSendKind::DirectNudge => {
                 self.last_nudge_at.insert(send.session_id.clone(), now_ms);
             }
+            LoopSendKind::PausedSummary => {}
         }
         self.record_delivery(send, now_ms, outcome);
     }
 
     pub fn last_delivery_record(&self) -> Option<&LoopDeliveryRecord> {
         self.delivery_records.last()
+    }
+
+    pub fn pause_loop_alerts(
+        &mut self,
+        session_id: &str,
+        loop_key: String,
+        paused_at_ms: i64,
+        provenance: LoopAlertPauseProvenance,
+    ) -> LoopAlertPause {
+        let pause = LoopAlertPause {
+            paused_at_ms,
+            loop_key,
+            paused_by: provenance.paused_by,
+            paused_by_session_id: provenance.paused_by_session_id,
+            paused_by_role: provenance.paused_by_role,
+            reason: provenance.reason,
+        };
+        self.paused_loop_alerts
+            .insert(session_id.to_owned(), pause.clone());
+        pause
+    }
+
+    pub fn unpause_loop_alerts(&mut self, session_id: &str) -> Option<LoopAlertPause> {
+        self.paused_loop_alerts.remove(session_id)
+    }
+
+    pub fn paused_loop_alert(&self, session_id: &str) -> Option<&LoopAlertPause> {
+        self.paused_loop_alerts.get(session_id)
     }
 
     fn record_delivery(&mut self, send: &LoopSend, now_ms: i64, outcome: LoopDeliveryOutcome) {
@@ -217,6 +281,7 @@ impl LoopWatcher {
             kind: match send.kind {
                 LoopSendKind::OverseerBriefing => "overseerBriefing",
                 LoopSendKind::DirectNudge => "directNudge",
+                LoopSendKind::PausedSummary => "pausedSummary",
             }
             .to_owned(),
             outcome,
@@ -253,7 +318,80 @@ impl LoopWatcher {
             })
             .collect()
     }
+
+    fn extract_paused_candidates(&self, candidates: &mut Vec<Value>) -> Vec<Value> {
+        let mut paused = Vec::new();
+        candidates.retain(|candidate| {
+            let id = str_field(candidate, "id");
+            let is_paused = loop_pause_key(candidate)
+                .as_deref()
+                .and_then(|key| {
+                    self.paused_loop_alerts
+                        .get(id)
+                        .map(|pause| pause.loop_key == key)
+                })
+                .unwrap_or(false);
+            if is_paused {
+                paused.push(candidate.clone());
+                false
+            } else {
+                true
+            }
+        });
+        paused
+    }
+
+    fn gc_stale_pauses(&mut self, input: &Value) {
+        if self.paused_loop_alerts.is_empty() {
+            return;
+        }
+        let current = active_loop_pause_keys(input);
+        self.paused_loop_alerts
+            .retain(|session_id, pause| current.get(session_id) == Some(&pause.loop_key));
+    }
+
+    fn plan_paused_summary(
+        &mut self,
+        paused_candidates: &[Value],
+        overseer_id: Option<&str>,
+        input: &Value,
+    ) -> Option<LoopSend> {
+        if paused_candidates.is_empty() {
+            self.paused_summary_ticks = 0;
+            self.last_paused_summary_signature = None;
+            return None;
+        }
+        let Some(overseer_id) = overseer_id.filter(|id| session_exists(input, id)) else {
+            return None;
+        };
+        self.paused_summary_ticks = self.paused_summary_ticks.saturating_add(1);
+        let signature = format!("paused:{}", candidate_signature(paused_candidates));
+        let due_by_cadence = self.paused_summary_ticks >= PAUSED_SUMMARY_TICK_CADENCE;
+        let due_by_change = self.last_paused_summary_signature.as_deref() != Some(&signature)
+            && self.last_paused_summary_signature.is_some();
+        if !due_by_cadence && !due_by_change {
+            return None;
+        }
+        self.paused_summary_ticks = 0;
+        self.last_paused_summary_signature = Some(signature.clone());
+        Some(LoopSend {
+            session_id: overseer_id.to_owned(),
+            text: build_paused_summary(paused_candidates),
+            signature,
+            kind: LoopSendKind::PausedSummary,
+        })
+    }
 }
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LoopAlertPauseProvenance {
+    pub paused_by: Option<String>,
+    pub paused_by_session_id: Option<String>,
+    pub paused_by_role: Option<String>,
+    pub reason: Option<String>,
+}
+
+const PAUSED_SUMMARY_TICK_CADENCE: u64 = 10;
 
 pub fn loop_watcher_state_path(project_state_dir: impl AsRef<Path>) -> PathBuf {
     project_state_dir.as_ref().join("loop-watcher-state.json")
@@ -288,6 +426,19 @@ pub fn save_loop_watcher_state(
     })
 }
 
+pub fn clear_loop_alert_pause_for_work(
+    project_state_dir: impl AsRef<Path>,
+    session_id: &str,
+) -> Result<Option<LoopAlertPause>, String> {
+    let state_path = loop_watcher_state_path(project_state_dir);
+    let mut watcher = load_loop_watcher_state(&state_path)?;
+    let cleared = watcher.unpause_loop_alerts(session_id);
+    if cleared.is_some() {
+        save_loop_watcher_state(&state_path, &watcher)?;
+    }
+    Ok(cleared)
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PersistentLoopWatcherState {
@@ -301,6 +452,12 @@ struct PersistentLoopWatcherState {
     unchanged_candidate_ticks: u64,
     #[serde(default)]
     delivery_records: Vec<LoopDeliveryRecord>,
+    #[serde(default)]
+    paused_loop_alerts: BTreeMap<String, LoopAlertPause>,
+    #[serde(default)]
+    paused_summary_ticks: u64,
+    #[serde(default)]
+    last_paused_summary_signature: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -335,6 +492,9 @@ impl PersistentLoopWatcherState {
             last_overseer_attempted_signature: watcher.last_overseer_attempted_signature.clone(),
             unchanged_candidate_ticks: watcher.unchanged_candidate_ticks,
             delivery_records: watcher.delivery_records.clone(),
+            paused_loop_alerts: watcher.paused_loop_alerts.clone(),
+            paused_summary_ticks: watcher.paused_summary_ticks,
+            last_paused_summary_signature: watcher.last_paused_summary_signature.clone(),
         }
     }
 
@@ -368,8 +528,26 @@ impl PersistentLoopWatcherState {
             last_overseer_attempted_signature: self.last_overseer_attempted_signature,
             unchanged_candidate_ticks: self.unchanged_candidate_ticks,
             delivery_records: self.delivery_records,
+            paused_loop_alerts: self.paused_loop_alerts,
+            paused_summary_ticks: self.paused_summary_ticks,
+            last_paused_summary_signature: self.last_paused_summary_signature,
         })
     }
+}
+
+pub fn loop_pause_key_from_loop_metadata(loop_meta: &Value) -> Option<String> {
+    let loop_meta = loop_meta.as_object()?;
+    if !loop_meta
+        .get("active")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return None;
+    }
+    let since = optional_str_value(loop_meta.get("since"));
+    let goal = optional_str_value(loop_meta.get("goal"));
+    let source = optional_str_value(loop_meta.get("source"));
+    Some(format!("{since}\n{goal}\n{source}"))
 }
 
 pub fn find_loop_candidates_with_overseer(input: &Value, overseer_id: Option<&str>) -> Vec<Value> {
@@ -442,6 +620,22 @@ pub fn find_loop_candidates_with_overseer(input: &Value, overseer_id: Option<&st
         .collect()
 }
 
+fn active_loop_pause_keys(input: &Value) -> BTreeMap<String, String> {
+    let metadata = input.get("metadata").unwrap_or(&Value::Null);
+    let metadata_sessions = match metadata.get("sessions").and_then(Value::as_object) {
+        Some(sessions) => sessions,
+        None => empty_object(),
+    };
+    array_field(input, "sessions")
+        .iter()
+        .filter_map(|session| {
+            let id = str_field(session, "id");
+            let loop_meta = metadata_sessions.get(id)?.get("loop")?;
+            loop_pause_key_from_loop_metadata(loop_meta).map(|key| (id.to_owned(), key))
+        })
+        .collect()
+}
+
 pub fn build_overseer_briefing(candidates: &[Value], template: Option<&str>) -> String {
     if let Some(template) = template
         .map(str::trim)
@@ -469,6 +663,14 @@ pub fn build_overseer_briefing(candidates: &[Value], template: Option<&str>) -> 
             "If it genuinely finished its goal or is blocked beyond repair, run `aimux loop remove <id>` and report back.",
         ),
     ]);
+    lines.join("\n")
+}
+
+fn build_paused_summary(candidates: &[Value]) -> String {
+    let mut lines = Vec::from([String::from(
+        "[aimux loop check] These agents have loop alerts paused; remove them from the loop if you are fully done:",
+    )]);
+    lines.extend(candidates.iter().map(describe_candidate));
     lines.join("\n")
 }
 
@@ -629,6 +831,16 @@ fn candidate_signature(candidates: &[Value]) -> String {
     ids.join("\u{1e}")
 }
 
+fn loop_pause_key(candidate: &Value) -> Option<String> {
+    let since = optional_str(candidate, "loopSince").unwrap_or_default();
+    if since.is_empty() {
+        return None;
+    }
+    let goal = optional_str(candidate, "goal").unwrap_or_default();
+    let source = optional_str(candidate, "loopSource").unwrap_or_default();
+    Some(format!("{since}\n{goal}\n{source}"))
+}
+
 fn dwell_key(candidate: &Value) -> Option<LoopDwellKey> {
     optional_str(candidate, "id").map(|session_id| LoopDwellKey {
         session_id: session_id.to_owned(),
@@ -640,6 +852,10 @@ fn dwell_key(candidate: &Value) -> Option<LoopDwellKey> {
             .unwrap_or_default()
             .to_owned(),
     })
+}
+
+fn optional_str_value(value: Option<&Value>) -> String {
+    value.and_then(Value::as_str).unwrap_or("").to_owned()
 }
 
 fn config_i64(input: &Value, field: &str, fallback: i64) -> i64 {

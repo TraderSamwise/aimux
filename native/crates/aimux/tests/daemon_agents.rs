@@ -129,6 +129,10 @@ impl DaemonAgentTextRuntime for FakeAgentRuntime {
                 "/repo",
                 json!({ "sessionId": body["sessionId"].clone(), "loop": { "goal": "canonical goal" } }),
             ),
+            project_routes::agents::LOOP_ALERTS => ProjectServiceJsonResult::ok(
+                "/repo",
+                json!({ "sessionId": body["sessionId"].clone(), "paused": body["paused"].clone() }),
+            ),
             project_routes::runtime::EVENT if self.fail_event => ProjectServiceJsonResult::error(
                 DaemonRouteResponse::json(502, json!({ "error": "event failed" })),
             ),
@@ -439,6 +443,42 @@ fn loop_routes_preserve_source_defaults_and_best_effort_event_write() {
             "source": "overseer",
             "active": false,
             "action": "remove"
+        })
+    );
+
+    let paused = route_agent_text_request(
+        &mut runtime,
+        "POST",
+        CORE_API_ROUTES.loop_pause_text,
+        Some(&json!({ "project": "/repo", "sessionId": "claude-1", "updatedBy": "sam", "reason": "human is intervening" })),
+    )
+    .expect("loop pause");
+    assert_eq!(text_body(paused), "loop alerts paused for claude-1\n");
+    assert_eq!(
+        runtime.calls.last().unwrap().body.as_ref().unwrap(),
+        &json!({
+            "sessionId": "claude-1",
+            "source": "human",
+            "updatedBy": "sam",
+            "reason": "human is intervening",
+            "paused": true
+        })
+    );
+
+    let unpaused = route_agent_text_request(
+        &mut runtime,
+        "POST",
+        CORE_API_ROUTES.loop_unpause_text,
+        Some(&json!({ "project": "/repo", "sessionId": "claude-1" })),
+    )
+    .expect("loop unpause");
+    assert_eq!(text_body(unpaused), "loop alerts unpaused for claude-1\n");
+    assert_eq!(
+        runtime.calls.last().unwrap().body.as_ref().unwrap(),
+        &json!({
+            "sessionId": "claude-1",
+            "source": "human",
+            "paused": false
         })
     );
 

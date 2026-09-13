@@ -707,7 +707,10 @@ pub fn is_core_cli_command<S: AsRef<str>>(args: &[S]) -> bool {
             parse_core_project_stop_args(args).is_some()
                 || stop_has_session_or_invalid_agent_shape(args)
         }
-        (Some("loop"), Some("add" | "remove" | "done" | "block" | "list")) => true,
+        (
+            Some("loop"),
+            Some("add" | "remove" | "pause" | "unpause" | "done" | "block" | "list"),
+        ) => true,
         (Some("overseer"), Some("start" | "clear" | "status")) => true,
         (Some("scribe"), Some("start" | "clear" | "status")) => true,
         (Some("team"), Some("show" | "init" | "add" | "default" | "remove")) => true,

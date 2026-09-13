@@ -140,7 +140,7 @@ impl PeriodicTask for AgentRestoreSnapshotTask {
                         "agent-restore",
                         Some(json!({ "reason": "topology unreadable", "error": error })),
                     );
-                    return;
+                    return Ok(());
                 }
             };
             // Topology status is durable, not live: a session whose window died
@@ -162,7 +162,7 @@ impl PeriodicTask for AgentRestoreSnapshotTask {
                         "agent-restore",
                         Some(json!({ "reason": "tmux live windows unavailable", "error": error })),
                     );
-                    return;
+                    return Ok(());
                 }
             };
             let metadata = load_metadata_state(&project_state_dir);
@@ -206,6 +206,7 @@ impl PeriodicTask for AgentRestoreSnapshotTask {
                     Some(json!({ "error": error })),
                 );
             }
+            Ok(())
         })
     }
 }

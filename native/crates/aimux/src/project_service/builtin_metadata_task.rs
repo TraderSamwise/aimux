@@ -77,6 +77,7 @@ impl PeriodicTask for BuiltinMetadataTask {
             let input = collect_watcher_sources(context, &budget);
             let effects = self.watchers.scan(&input);
             apply_effects(&self.context, &effects);
+            Ok(())
         })
     }
 }

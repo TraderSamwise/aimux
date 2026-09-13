@@ -73,14 +73,14 @@ impl PeriodicTask for TranscriptReconcilerTask {
             let project_state_dir = context.project_state_dir();
             let Ok(topology) = read_runtime_topology(runtime_topology_path(&project_state_dir))
             else {
-                return;
+                return Ok(());
             };
             let sessions = list_topology_session_states(&topology, Some(LIVE_SESSION_STATUSES))
                 .iter()
                 .filter_map(SessionView::from_value)
                 .collect::<Vec<_>>();
             if sessions.is_empty() {
-                return;
+                return Ok(());
             }
             let metadata = serde_json::to_value(load_metadata_state(&project_state_dir))
                 .unwrap_or_else(|_| json!({ "sessions": {} }));
@@ -101,6 +101,7 @@ impl PeriodicTask for TranscriptReconcilerTask {
                 budget: TickLoopBudget::new(SCAN_BUDGET),
             };
             self.reconciler.scan(&sessions, &metadata, &mut deps);
+            Ok(())
         })
     }
 }

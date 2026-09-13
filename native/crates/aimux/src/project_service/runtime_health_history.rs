@@ -92,6 +92,7 @@ impl PeriodicTask for RuntimeHealthRecorderTask {
     fn run<'a>(&'a mut self, context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
         Box::pin(async move {
             record_runtime_health_sample_at(context, scheduler_now_ms());
+            Ok(())
         })
     }
 }

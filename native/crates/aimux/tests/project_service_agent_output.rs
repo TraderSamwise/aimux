@@ -1,5 +1,9 @@
 use aimux::backlog_metrics::BacklogMetricStatus;
 use aimux::daemon_state::{MetadataState, load_metadata_state, save_metadata_state};
+use aimux::loop_watcher::{
+    LoopAlertPauseProvenance, LoopWatcher, load_loop_watcher_state,
+    loop_pause_key_from_loop_metadata, loop_watcher_state_path, save_loop_watcher_state,
+};
 use aimux::osc_notifications::OscNotificationParser;
 use aimux::project_api_contract::routes;
 use aimux::project_service::agent_input_delivery::{
@@ -1994,6 +1998,72 @@ fn agent_input_idle_codex_placeholder_is_genuine_unattended_no_data_path() {
         ]
     );
     assert!(!agent_input_delivery_queue_path(&state_dir).exists());
+    cleanup(project);
+}
+
+#[test]
+fn agent_input_auto_unpauses_loop_alerts_before_accepting_real_work() {
+    let project = temp_project("input-auto-unpauses-loop-alert");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    update_session_metadata(&state_dir, "codex-1", |current| {
+        let mut current = current.as_object().cloned().unwrap_or_default();
+        current.insert(
+            "loop".into(),
+            json!({
+                "active": true,
+                "since": "2026-09-09T00:00:00.000Z",
+                "goal": "ship",
+                "source": "human"
+            }),
+        );
+        Value::Object(current)
+    })
+    .expect("add loop metadata");
+    let metadata = load_metadata_state(&state_dir);
+    let pause_key = loop_pause_key_from_loop_metadata(&metadata.sessions["codex-1"]["loop"])
+        .expect("active loop pause key");
+    let mut watcher = LoopWatcher::new();
+    watcher.pause_loop_alerts(
+        "codex-1",
+        pause_key,
+        1_788_000_000_000,
+        LoopAlertPauseProvenance::default(),
+    );
+    let state_path = loop_watcher_state_path(&state_dir);
+    save_loop_watcher_state(&state_path, &watcher).expect("save paused watcher state");
+
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeActivityRuntime {
+        inner: FakeCaptureRuntime {
+            output: "Ready\n› \n\n  gpt-5.5 medium · ~/workspace/project".into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let response = route_agent_output_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::INPUT,
+        Some(&json!({ "sessionId": "codex-1", "text": "new work" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(
+        runtime.inner.actions,
+        vec![
+            FakeRuntimeAction::Text("@1".into(), "new work".into()),
+            FakeRuntimeAction::CarriageReturn("@1".into()),
+        ]
+    );
+    let watcher = load_loop_watcher_state(&state_path).expect("load watcher state");
+    assert!(
+        watcher.paused_loop_alert("codex-1").is_none(),
+        "ordinary input is real work and must auto-unpause loop alerts"
+    );
     cleanup(project);
 }
 

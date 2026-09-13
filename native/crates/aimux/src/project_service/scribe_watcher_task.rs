@@ -67,7 +67,7 @@ impl PeriodicTask for ScribeWatcherTask {
             let project_state_dir = context.project_state_dir();
             let Ok(topology) = read_runtime_topology(runtime_topology_path(&project_state_dir))
             else {
-                return;
+                return Ok(());
             };
             let metadata = serde_json::to_value(load_metadata_state(&project_state_dir))
                 .unwrap_or_else(|_| json!({ "sessions": {} }));
@@ -105,7 +105,7 @@ impl PeriodicTask for ScribeWatcherTask {
             let mut collect = |_briefing: &ScribeBriefing| false;
             let briefing = self.watcher.scan(&input, now_ms(), &mut read, &mut collect);
             let Some(briefing) = briefing else {
-                return;
+                return Ok(());
             };
             if deliver_agent_input_async(
                 Arc::clone(&deliver_context),
@@ -127,6 +127,7 @@ impl PeriodicTask for ScribeWatcherTask {
                 };
                 self.watcher.scan(&input, now_ms(), &mut read, &mut commit);
             }
+            Ok(())
         })
     }
 }

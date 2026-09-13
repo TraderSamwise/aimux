@@ -1,4 +1,5 @@
 use aimux::daemon_state::{MetadataState, load_metadata_state, save_metadata_state};
+use aimux::loop_watcher::{load_loop_watcher_state, loop_watcher_state_path};
 use aimux::project_api_contract::routes;
 use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
 use serde_json::json;
@@ -99,6 +100,95 @@ fn loop_provenance_truncates_like_javascript_utf16_slice() {
         .unwrap();
     assert_eq!(updated_by.encode_utf16().count(), 500);
     assert_eq!(reason.encode_utf16().count(), 2000);
+    cleanup(project);
+}
+
+#[test]
+fn loop_alert_pause_requires_active_loop_and_persists_under_watcher_state() {
+    let project = temp_project("loop-alert-pause");
+    let state_dir = project.join("state");
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([(
+                "worker-1".into(),
+                json!({
+                    "loop": {
+                        "active": true,
+                        "since": "2026-09-09T00:00:00.000Z",
+                        "goal": "ship",
+                        "source": "human"
+                    }
+                }),
+            )]),
+        },
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let pause = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::LOOP_ALERTS,
+        Some(&json!({
+            "sessionId": "worker-1",
+            "paused": true,
+            "updatedBy": "sam",
+            "reason": "human is intervening"
+        })),
+    );
+    assert_eq!(pause.status, 200);
+    assert_eq!(pause.body["paused"], true);
+    assert_eq!(pause.body["pause"]["pausedBy"], "sam");
+    assert_eq!(pause.body["pause"]["reason"], "human is intervening");
+
+    let watcher = load_loop_watcher_state(loop_watcher_state_path(&state_dir))
+        .expect("watcher state must load");
+    assert!(watcher.paused_loop_alert("worker-1").is_some());
+
+    let unpause = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::LOOP_ALERTS,
+        Some(&json!({ "sessionId": "worker-1", "paused": false })),
+    );
+    assert_eq!(unpause.status, 200);
+    assert_eq!(unpause.body["paused"], false);
+    assert_eq!(unpause.body["cleared"], true);
+    let watcher = load_loop_watcher_state(loop_watcher_state_path(&state_dir))
+        .expect("watcher state must load");
+    assert!(watcher.paused_loop_alert("worker-1").is_none());
+    cleanup(project);
+}
+
+#[test]
+fn loop_alert_pause_for_non_looping_agent_fails_loud_instead_of_creating_stale_pause() {
+    let project = temp_project("loop-alert-pause-missing-loop");
+    let state_dir = project.join("state");
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([("worker-1".into(), json!({}))]),
+        },
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let pause = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::LOOP_ALERTS,
+        Some(&json!({ "sessionId": "worker-1", "paused": true })),
+    );
+    assert_eq!(pause.status, 409);
+    assert!(
+        pause.body["error"]
+            .as_str()
+            .unwrap()
+            .contains("session is not in a loop")
+    );
     cleanup(project);
 }
 

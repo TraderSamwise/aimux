@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::config::load_config_for_project;
 use crate::daemon_state::load_metadata_state;
+use crate::loop_watcher::clear_loop_alert_pause_for_work;
 use crate::project_api_contract::routes;
 use crate::runtime_topology::{read_runtime_topology, runtime_topology_path};
 
@@ -1582,6 +1583,13 @@ fn deliver_prompt_to_recipients(
             now_ms,
             now_ms,
         );
+        if let Err(error) = clear_loop_alert_pause_for_work(context.project_state_dir(), recipient)
+        {
+            outcome.failures.push(format!(
+                "{recipient}: could not auto-unpause loop alerts before delivery: {error}"
+            ));
+            continue;
+        }
         if let AgentInputDeliveryDecision::Hold { reason, .. } = decision {
             match enqueue_agent_input_delivery(
                 context, recipient, &window_id, &prompt, &reason, now_ms,
