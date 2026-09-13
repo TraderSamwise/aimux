@@ -67,8 +67,8 @@ vi.mock("@/stores/projects", () => ({
   selectedSessionIdAtom: {},
 }));
 
-import type { WorktreeBucket } from "@/lib/desktop-state";
-import { WorktreeCard } from "@/components/WorktreeDashboard";
+import type { DesktopSession, WorktreeBucket } from "@/lib/desktop-state";
+import { AgentRow, WorktreeCard } from "@/components/WorktreeDashboard";
 
 const IPHONE_PRO_MAX_LOGICAL_WIDTH = 430;
 
@@ -104,6 +104,23 @@ function renderNode(node: ReactNode): HostNode[] {
   ];
 }
 
+function collectText(node: ReactNode): string {
+  if (node === null || node === undefined || typeof node === "boolean") return "";
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(collectText).join("");
+  if (!React.isValidElement(node)) return "";
+
+  if (node.type === React.Fragment) {
+    return collectText((node.props as { children?: ReactNode }).children);
+  }
+
+  if (typeof node.type === "function") {
+    return collectText((node.type as FunctionComponentNode)(node.props));
+  }
+
+  return collectText((node.props as { children?: ReactNode }).children);
+}
+
 function findNodes(root: HostNode[], predicate: (node: HostNode) => boolean): HostNode[] {
   const matches: HostNode[] = [];
   for (const node of root) {
@@ -122,6 +139,13 @@ function mainCheckoutBucket(): WorktreeBucket {
     isMainCheckout: true,
     sessions: [],
     services: [],
+  };
+}
+
+function session(input: Partial<DesktopSession> & Pick<DesktopSession, "id">): DesktopSession {
+  return {
+    status: "running",
+    ...input,
   };
 }
 
@@ -157,5 +181,31 @@ describe("WorktreeCard", () => {
     expect((cardContentViews[0]!.props.style as { minWidth: number }).minWidth).toBeGreaterThan(
       IPHONE_PRO_MAX_LOGICAL_WIDTH,
     );
+  });
+});
+
+describe("AgentRow", () => {
+  it("does not render non-coder roles as GUI badges", () => {
+    const text = collectText(
+      React.createElement(AgentRow, {
+        session: session({
+          id: "claude-overseer",
+          label: "boss",
+          command: "claude",
+          role: "overseer",
+        }),
+        digit: 1,
+        selected: false,
+        projectPath: "/repo",
+        endpoint: null,
+        token: null,
+        onPress: vi.fn(),
+        onKilled: vi.fn(),
+      }),
+    );
+
+    expect(text).toContain("boss");
+    expect(text).toContain("Running");
+    expect(text).not.toContain("overseer");
   });
 });

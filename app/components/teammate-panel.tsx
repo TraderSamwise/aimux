@@ -491,8 +491,7 @@ function IconButton({
   );
 }
 
-function displayTeammateName(teammate: Teammate): string {
+export function displayTeammateName(teammate: Pick<Teammate, "id" | "label" | "role">): string {
   const label = typeof teammate.label === "string" ? teammate.label.trim() : "";
-  const role = typeof teammate.role === "string" ? teammate.role.trim() : "";
-  return label || role || teammate.id;
+  return label || teammate.id;
 }
