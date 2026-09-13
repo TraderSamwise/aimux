@@ -58,7 +58,8 @@ fn real_task_and_buffer_metrics_reach_history_and_stability_doctor() {
         &history_path,
         10_000_000,
         5,
-    );
+    )
+    .expect("record first runtime-health sample");
 
     // aimux-async-seam: test - sync test drives async handler
     let ran = block_on_named(
@@ -74,7 +75,8 @@ fn real_task_and_buffer_metrics_reach_history_and_stability_doctor() {
         &history_path,
         10_000_000,
         5,
-    );
+    )
+    .expect("record second runtime-health sample");
 
     let report = build_stability_doctor_report("/repo", &state_dir);
     let rendered = render_stability_doctor_report(&report);
