@@ -136,7 +136,11 @@ impl SupervisorRoleError {
     pub fn details(&self) -> Value {
         match self {
             Self::UnsupportedRole(role) => json!({ "role": role }),
-            Self::TargetWorktreeRequired { session_id } => json!({ "sessionId": session_id }),
+            Self::TargetWorktreeRequired { session_id } => json!({
+                "sessionId": session_id,
+                "requiredField": "worktreePath",
+                "hint": "retry the demotion with a worktreePath, or let the project service derive it from session metadata"
+            }),
             Self::ActiveWatchBindings {
                 overseer_session_id,
                 watched_session_ids,

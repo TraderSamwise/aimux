@@ -22,6 +22,7 @@ daemon_json
 daemon_metadata
 daemon_notifications
 daemon_overseer
+daemon_scribe
 daemon_projects
 daemon_router
 daemon_server

@@ -341,6 +341,131 @@ fn overseer_route_promotes_agent_without_demoting_other_overseers() {
 }
 
 #[test]
+fn overseer_route_demotes_with_derived_worktree_target() {
+    let project = temp_project("overseer-demote-derived");
+    let state_dir = project.join("state");
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([(
+                "boss".into(),
+                json!({
+                    "overseer": true,
+                    "role": "overseer",
+                    "team": { "role": "overseer", "teamId": "overseer" },
+                    "effectiveLane": { "kind": "worktree", "worktreePath": "/repo/worktrees/boss" },
+                    "runtimeWorkingDirectory": "/repo/worktrees/boss",
+                    "updatedAt": "2026-09-05T00:00:00.000Z"
+                }),
+            )]),
+        },
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let clear = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::OVERSEER,
+        Some(&json!({ "sessionId": "boss", "active": false })),
+    );
+
+    assert_eq!(clear.status, 200);
+    assert_eq!(clear.body["overseer"], false);
+    let state = load_metadata_state(&state_dir);
+    assert_eq!(state.sessions["boss"]["overseer"], false);
+    assert_eq!(
+        state.sessions["boss"]["worktreePath"],
+        "/repo/worktrees/boss"
+    );
+    let registry = load_agent_role_registry(&state_dir).expect("role registry");
+    assert_eq!(
+        registry["sessions"]["boss"]["lane"],
+        json!({ "kind": "worktree", "worktreePath": "/repo/worktrees/boss" })
+    );
+    cleanup(project);
+}
+
+#[test]
+fn overseer_route_demotes_floating_supervisor_to_project_root() {
+    let project = temp_project("overseer-demote-root");
+    let state_dir = project.join("state");
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([(
+                "boss".into(),
+                json!({
+                    "overseer": true,
+                    "role": "overseer",
+                    "team": { "role": "overseer", "teamId": "overseer" },
+                    "updatedAt": "2026-09-05T00:00:00.000Z"
+                }),
+            )]),
+        },
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let clear = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::OVERSEER,
+        Some(&json!({ "sessionId": "boss", "active": false })),
+    );
+
+    assert_eq!(clear.status, 200);
+    let state = load_metadata_state(&state_dir);
+    assert_eq!(
+        state.sessions["boss"]["worktreePath"],
+        project.to_string_lossy().as_ref()
+    );
+    cleanup(project);
+}
+
+#[test]
+fn scribe_route_demotes_with_derived_worktree_target() {
+    let project = temp_project("scribe-demote-derived");
+    let state_dir = project.join("state");
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([(
+                "scribe".into(),
+                json!({
+                    "scribe": true,
+                    "role": "scribe",
+                    "team": { "role": "scribe", "teamId": "scribe" },
+                    "effectiveLane": { "kind": "worktree", "worktreePath": "/repo/worktrees/scribe" },
+                    "updatedAt": "2026-09-05T00:00:00.000Z"
+                }),
+            )]),
+        },
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let clear = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::SCRIBE,
+        Some(&json!({ "sessionId": "scribe", "active": false })),
+    );
+
+    assert_eq!(clear.status, 200);
+    assert_eq!(clear.body["scribe"], false);
+    let state = load_metadata_state(&state_dir);
+    assert_eq!(
+        state.sessions["scribe"]["worktreePath"],
+        "/repo/worktrees/scribe"
+    );
+    cleanup(project);
+}
+
+#[test]
 fn overseer_route_migrates_coder_to_supervisor_lane_until_relaunch() {
     let project = temp_project("overseer-migrate");
     let state_dir = project.join("state");
@@ -661,8 +786,7 @@ fn demoting_watching_overseer_requires_explicit_binding_release() {
         routes::agents::OVERSEER,
         Some(&json!({
             "sessionId": "boss",
-            "active": false,
-            "worktreePath": "/repo/worktrees/boss"
+            "active": false
         })),
     );
     assert_eq!(refused.status, 409);

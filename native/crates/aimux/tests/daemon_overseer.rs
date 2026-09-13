@@ -139,6 +139,36 @@ fn overseer_clear_matches_project_service_contract() {
 }
 
 #[test]
+fn overseer_clear_forwards_optional_worktree_target() {
+    let mut runtime = FakeOverseerRuntime::default();
+    let response = route_overseer_text_request(
+        &mut runtime,
+        "POST",
+        CORE_API_ROUTES.overseer_clear_text,
+        Some(&json!({
+            "project": "/repo",
+            "sessionId": "overseer-1",
+            "worktreePath": "/repo/worktrees/overseer-1"
+        })),
+    )
+    .expect("overseer clear");
+
+    assert_eq!(text_body(response), "overseer cleared overseer-1\n");
+    assert_eq!(
+        runtime.calls.last().unwrap(),
+        &Call {
+            project: "/repo".into(),
+            route_path: project_routes::agents::OVERSEER.into(),
+            body: json!({
+                "sessionId": "overseer-1",
+                "active": false,
+                "worktreePath": "/repo/worktrees/overseer-1"
+            }),
+        }
+    );
+}
+
+#[test]
 fn overseer_validation_and_unrelated_routes_match_daemon_split() {
     let missing = route_overseer_text_request(
         &mut FakeOverseerRuntime::default(),
