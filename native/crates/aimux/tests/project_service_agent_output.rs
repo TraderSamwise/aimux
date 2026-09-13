@@ -951,6 +951,7 @@ fn output_route_projects_ansi_capture_into_chat_message_spans() {
     .unwrap();
 
     assert_eq!(response.status, 200);
+    assert_eq!(response.body["output"], "› show diff\n\n+added\n-removed");
     let spans = response.body["messages"]
         .as_array()
         .and_then(|messages| {
@@ -966,6 +967,54 @@ fn output_route_projects_ansi_capture_into_chat_message_spans() {
     assert_eq!(spans[0]["foreground"]["value"], "#98c379");
     assert_eq!(spans[2]["text"], "-removed");
     assert_eq!(spans[2]["foreground"]["value"], "#e06c75");
+    cleanup(project);
+}
+
+#[test]
+fn output_route_drops_truncated_csi_fragment_from_chat_projection() {
+    let project = temp_project("truncated-csi-chat");
+    let state_dir = project.join("state");
+    write_state(&state_dir);
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeCaptureRuntime {
+        output: concat!(
+            "› report status\n\n",
+            ";2;0;0;0m",
+            "\u{1b}[1C",
+            "\u{1b}]2;ignored title\u{7}",
+            "\u{1b}Pignored payload\u{1b}\\",
+            "All clear"
+        )
+        .into(),
+        calls: Vec::new(),
+        actions: Vec::new(),
+        ..Default::default()
+    };
+
+    let response = route_agent_output_request_with_runtime(
+        &context,
+        "GET",
+        "/live-pane/output?sessionId=codex-1&purpose=poll",
+        None,
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["output"], "› report status\n\nAll clear");
+    let assistant_text = response.body["messages"]
+        .as_array()
+        .and_then(|messages| {
+            messages
+                .iter()
+                .find(|message| message["role"] == "assistant")
+        })
+        .and_then(|message| message["text"].as_str())
+        .expect("assistant chat text");
+    assert_eq!(assistant_text, "All clear");
+    assert!(!assistant_text.contains(";2;0;0;0m"));
+    assert!(!assistant_text.contains("[1C"));
+    assert!(!assistant_text.contains("ignored"));
     cleanup(project);
 }
 

@@ -687,20 +687,90 @@ pub fn strip_sgr(text: &str) -> String {
     let mut output = Vec::with_capacity(bytes.len());
     let mut index = 0;
     while index < bytes.len() {
-        if bytes[index] == 0x1b && bytes.get(index + 1) == Some(&b'[') {
-            let mut end = index + 2;
-            while matches!(bytes.get(end), Some(b'0'..=b'9' | b';' | b':')) {
-                end += 1;
-            }
-            if bytes.get(end) == Some(&b'm') {
-                index = end + 1;
-                continue;
-            }
+        if let Some(next) = terminal_control_sequence_end(bytes, index) {
+            index = next;
+            continue;
+        }
+        if at_capture_boundary(bytes, index)
+            && let Some(next) = truncated_csi_fragment_end(bytes, index)
+        {
+            index = next;
+            continue;
         }
         output.push(bytes[index]);
         index += 1;
     }
-    String::from_utf8(output).expect("removing ASCII SGR ranges from UTF-8 must preserve UTF-8")
+    String::from_utf8(output)
+        .expect("removing ASCII terminal control ranges from UTF-8 must preserve UTF-8")
+}
+
+fn terminal_control_sequence_end(bytes: &[u8], index: usize) -> Option<usize> {
+    if bytes.get(index) != Some(&0x1b) {
+        return None;
+    }
+    match bytes.get(index + 1).copied() {
+        Some(b'[') => Some(csi_sequence_end(bytes, index + 2).unwrap_or(bytes.len())),
+        Some(b']') | Some(b'P') | Some(b'^') | Some(b'_') | Some(b'X') => {
+            Some(string_control_sequence_end(bytes, index + 2).unwrap_or(bytes.len()))
+        }
+        Some(_) => Some((index + 2).min(bytes.len())),
+        None => Some(bytes.len()),
+    }
+}
+
+fn csi_sequence_end(bytes: &[u8], mut index: usize) -> Option<usize> {
+    while let Some(byte) = bytes.get(index).copied() {
+        if (0x40..=0x7e).contains(&byte) {
+            return Some(index + 1);
+        }
+        index += 1;
+    }
+    None
+}
+
+fn string_control_sequence_end(bytes: &[u8], mut index: usize) -> Option<usize> {
+    while index < bytes.len() {
+        if bytes[index] == 0x07 {
+            return Some(index + 1);
+        }
+        if bytes[index] == 0x1b && bytes.get(index + 1) == Some(&b'\\') {
+            return Some(index + 2);
+        }
+        index += 1;
+    }
+    None
+}
+
+fn at_capture_boundary(bytes: &[u8], index: usize) -> bool {
+    index == 0 || matches!(bytes.get(index.wrapping_sub(1)), Some(b'\n' | b'\r'))
+}
+
+fn truncated_csi_fragment_end(bytes: &[u8], index: usize) -> Option<usize> {
+    match bytes.get(index).copied()? {
+        b'[' => csi_sequence_end(bytes, index + 1),
+        b';' | b':' | b'?' | b'>' => csi_sequence_end(bytes, index + 1),
+        b'0'..=b'9' => {
+            let mut end = index;
+            let mut has_separator = false;
+            while matches!(
+                bytes.get(end),
+                Some(b'0'..=b'9' | b';' | b':' | b'?' | b'>')
+            ) {
+                has_separator |= matches!(bytes[end], b';' | b':' | b'?' | b'>');
+                end += 1;
+            }
+            if has_separator
+                && bytes
+                    .get(end)
+                    .is_some_and(|byte| (0x40..=0x7e).contains(byte))
+            {
+                Some(end + 1)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
 }
 
 pub fn project_agent_output_payload(
