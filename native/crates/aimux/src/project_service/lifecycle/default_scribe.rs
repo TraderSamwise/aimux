@@ -113,8 +113,7 @@ pub fn ensure_default_scribe_agent(
             suppress_startup_preamble: false,
             persist_args: None,
             allow_replace_session: false,
-            mark_overseer: false,
-            mark_scribe: true,
+            supervisor_role: Some("scribe".to_owned()),
         },
     ) {
         Ok(result) => json!({

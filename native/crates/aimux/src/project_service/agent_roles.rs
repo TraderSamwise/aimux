@@ -162,10 +162,10 @@ pub fn set_supervisor_role_with_options(
     options: SupervisorRoleOptions,
 ) -> Result<Value, SupervisorRoleError> {
     let project_state_dir = project_state_dir.as_ref();
-    let key = match role {
-        "overseer" | "scribe" => role,
-        _ => return Err(SupervisorRoleError::UnsupportedRole(role.to_owned())),
-    };
+    let key = role.trim();
+    if key.is_empty() || key == "coder" {
+        return Err(SupervisorRoleError::UnsupportedRole(role.to_owned()));
+    }
     let existing_registry =
         load_agent_role_registry(project_state_dir).map_err(SupervisorRoleError::Registry)?;
     let watched_before = watched_by(&existing_registry, session_id);
@@ -625,7 +625,7 @@ fn set_role_metadata_at(
                     current.remove(key);
                 }
             }
-            current.remove("projectControl");
+            current.insert("projectControl".into(), Value::Bool(true));
             current.insert("role".into(), Value::String(role.to_owned()));
             let team = current
                 .entry("team")
@@ -650,7 +650,9 @@ fn set_role_metadata_at(
             let previous = Value::Object(current.clone());
             let previous_role = agent_role(Some(&previous)).to_owned();
             let previous_lane = agent_lane(Some(&previous));
-            current.insert(role.into(), Value::Bool(false));
+            if matches!(role, "overseer" | "scribe") {
+                current.insert(role.into(), Value::Bool(false));
+            }
             if current.get("role").and_then(Value::as_str) == Some(role) {
                 current.remove("role");
             }
@@ -672,7 +674,15 @@ fn set_role_metadata_at(
                 || current
                     .get("scribe")
                     .and_then(Value::as_bool)
-                    .unwrap_or(false);
+                    .unwrap_or(false)
+                || current
+                    .get("projectControl")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+                    && current
+                        .get("role")
+                        .and_then(Value::as_str)
+                        .is_some_and(|role| !role.trim().is_empty() && role.trim() != "coder");
             if !has_supervisor_role {
                 current.insert("projectControl".into(), Value::Bool(false));
             }

@@ -46,11 +46,15 @@ pub fn team_from_value(value: Option<&Value>) -> Option<SessionTeam> {
 }
 
 pub fn overseer_team() -> Value {
-    serde_json::json!({ "teamId": "overseer", "parentSessionId": "", "role": "overseer" })
+    supervisor_team("overseer")
 }
 
 pub fn scribe_team() -> Value {
-    serde_json::json!({ "teamId": "scribe", "parentSessionId": "", "role": "scribe" })
+    supervisor_team("scribe")
+}
+
+pub fn supervisor_team(role: &str) -> Value {
+    serde_json::json!({ "teamId": role, "parentSessionId": "", "role": role })
 }
 
 pub fn compose_tool_args(

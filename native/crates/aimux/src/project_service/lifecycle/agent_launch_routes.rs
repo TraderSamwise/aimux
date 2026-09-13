@@ -18,11 +18,11 @@ use crate::runtime_topology::{
 };
 use crate::session_bootstrap::{
     build_codex_migration_continuity_preamble, build_fork_preamble,
-    build_tool_switch_continuity_preamble, overseer_team, read_fork_source_snapshot, scribe_team,
-    seed_fork_artifacts,
+    build_tool_switch_continuity_preamble, read_fork_source_snapshot, seed_fork_artifacts,
+    supervisor_team,
 };
 use crate::team_contract::{
-    is_overseer_session, is_scribe_session, session_with_stored_control_flags,
+    is_project_control_session, project_control_display_role, session_with_stored_control_flags,
 };
 use crate::tmux::project_session;
 use crate::tool_capabilities::restart_restore_warning;
@@ -132,8 +132,7 @@ pub(super) fn route_agent_migrate(
     }
     let target_worktree =
         (target_worktree_path != project_root).then_some(target_worktree_path.clone());
-    let source_is_overseer = is_overseer_session(Some(&source_session));
-    let source_is_scribe = is_scribe_session(Some(&source_session));
+    let source_supervisor_role = supervisor_role_for_session(&source_session);
     let result = launch_agent_session(
         context,
         runtime,
@@ -152,8 +151,7 @@ pub(super) fn route_agent_migrate(
             suppress_startup_preamble,
             persist_args: Some(persist_args),
             allow_replace_session: true,
-            mark_overseer: source_is_overseer,
-            mark_scribe: source_is_scribe,
+            supervisor_role: source_supervisor_role,
         },
     );
     match result {
@@ -215,15 +213,10 @@ pub(super) fn route_agent_spawn(
         .as_ref()
         .map(|launch| launch.env.clone())
         .unwrap_or_default();
-    let team = if body.get("overseer").and_then(Value::as_bool) == Some(true) {
-        env.push(("AIMUX_OVERSEER".into(), "1".into()));
-        Some(overseer_team())
-    } else if body.get("scribe").and_then(Value::as_bool) == Some(true) {
-        env.push(("AIMUX_SCRIBE".into(), "1".into()));
-        Some(scribe_team())
-    } else {
-        None
-    };
+    let supervisor_role = supervisor_role_from_spawn_body(body);
+    let team = supervisor_role
+        .as_deref()
+        .map(|role| supervisor_launch_team_and_env(role, &mut env));
     let topology = match read_runtime_topology(runtime_topology_path(context.project_state_dir())) {
         Ok(topology) => topology,
         Err(error) => {
@@ -277,8 +270,7 @@ pub(super) fn route_agent_spawn(
             suppress_startup_preamble: false,
             persist_args: None,
             allow_replace_session: false,
-            mark_overseer: body.get("overseer").and_then(Value::as_bool) == Some(true),
-            mark_scribe: body.get("scribe").and_then(Value::as_bool) == Some(true),
+            supervisor_role: supervisor_role.clone(),
         },
     );
     match result {
@@ -297,6 +289,9 @@ pub(super) fn route_agent_spawn(
                         "windowName": result.target.window_name,
                     }
                 });
+                if let Some(role) = supervisor_role {
+                    object_insert_mut(&mut payload, "role", Value::String(role));
+                }
                 if let Some(warning) = restore_warning {
                     object_insert_mut(&mut payload, "warning", Value::String(warning.clone()));
                     object_insert_mut(
@@ -374,15 +369,10 @@ pub(super) async fn route_agent_spawn_async(
         .as_ref()
         .map(|launch| launch.env.clone())
         .unwrap_or_default();
-    let team = if body.get("overseer").and_then(Value::as_bool) == Some(true) {
-        env.push(("AIMUX_OVERSEER".into(), "1".into()));
-        Some(overseer_team())
-    } else if body.get("scribe").and_then(Value::as_bool) == Some(true) {
-        env.push(("AIMUX_SCRIBE".into(), "1".into()));
-        Some(scribe_team())
-    } else {
-        None
-    };
+    let supervisor_role = supervisor_role_from_spawn_body(body);
+    let team = supervisor_role
+        .as_deref()
+        .map(|role| supervisor_launch_team_and_env(role, &mut env));
     let topology = match read_runtime_topology(runtime_topology_path(context.project_state_dir())) {
         Ok(topology) => topology,
         Err(error) => {
@@ -436,8 +426,7 @@ pub(super) async fn route_agent_spawn_async(
             suppress_startup_preamble: false,
             persist_args: None,
             allow_replace_session: false,
-            mark_overseer: body.get("overseer").and_then(Value::as_bool) == Some(true),
-            mark_scribe: body.get("scribe").and_then(Value::as_bool) == Some(true),
+            supervisor_role: supervisor_role.clone(),
         },
         progress,
     )
@@ -458,6 +447,9 @@ pub(super) async fn route_agent_spawn_async(
                         "windowName": result.target.window_name,
                     }
                 });
+                if let Some(role) = supervisor_role {
+                    object_insert_mut(&mut payload, "role", Value::String(role));
+                }
                 if let Some(warning) = restore_warning {
                     object_insert_mut(&mut payload, "warning", Value::String(warning.clone()));
                     object_insert_mut(
@@ -697,8 +689,7 @@ pub(super) fn route_agent_fork(
             suppress_startup_preamble: false,
             persist_args,
             allow_replace_session: false,
-            mark_overseer: false,
-            mark_scribe: false,
+            supervisor_role: None,
         },
     );
     match result {
@@ -786,8 +777,7 @@ pub(super) fn route_agent_switch_tool(
             .map(|launch| launch.args.clone())
             .unwrap_or_else(|| string_array_field(target_tool_config.get("args"))),
     );
-    let source_is_overseer = is_overseer_session(Some(&source_session));
-    let source_is_scribe = is_scribe_session(Some(&source_session));
+    let source_supervisor_role = supervisor_role_for_session(&source_session);
     let result = launch_agent_session(
         context,
         runtime,
@@ -806,8 +796,7 @@ pub(super) fn route_agent_switch_tool(
             suppress_startup_preamble: false,
             persist_args: Some(original_target_args),
             allow_replace_session: true,
-            mark_overseer: source_is_overseer,
-            mark_scribe: source_is_scribe,
+            supervisor_role: source_supervisor_role,
         },
     );
     match result {
@@ -932,8 +921,7 @@ pub(super) fn resume_agent_session(
     } else if use_backend_resume {
         settle_running_activity_to_idle(&project_state_dir, &session_id);
     }
-    let declared_supervisor =
-        is_overseer_session(Some(&session)) || is_scribe_session(Some(&session));
+    let declared_supervisor = is_project_control_session(Some(&session));
     let worktree_path = if declared_supervisor {
         if let Some(session) = session.as_object_mut() {
             session.remove("worktreePath");
@@ -1017,17 +1005,52 @@ pub(super) fn resume_agent_session(
 }
 
 fn supervisor_launch_env(session: &Value) -> Vec<(String, String)> {
-    if is_overseer_session(Some(session)) {
-        vec![("AIMUX_OVERSEER".into(), "1".into())]
-    } else if is_scribe_session(Some(session)) {
-        vec![("AIMUX_SCRIBE".into(), "1".into())]
-    } else {
-        Vec::new()
+    let mut env = Vec::new();
+    if let Some(role) = supervisor_role_for_session(session) {
+        push_supervisor_role_env(&mut env, &role);
     }
+    env
 }
 
 fn json_user_facing_error(status: u16, error: &str) -> ProjectServiceDispatchResponse {
     json_error(status, user_facing_error_message(error))
+}
+
+fn supervisor_role_from_spawn_body(body: &Value) -> Option<String> {
+    trimmed_string(body.get("role"))
+        .filter(|role| role != "coder")
+        .or_else(|| {
+            (body.get("overseer").and_then(Value::as_bool) == Some(true))
+                .then(|| "overseer".to_owned())
+        })
+        .or_else(|| {
+            (body.get("scribe").and_then(Value::as_bool) == Some(true)).then(|| "scribe".to_owned())
+        })
+}
+
+fn supervisor_role_for_session(session: &Value) -> Option<String> {
+    is_project_control_session(Some(session))
+        .then(|| project_control_display_role(Some(session)).map(str::to_owned))
+        .flatten()
+}
+
+fn supervisor_launch_team_and_env(role: &str, env: &mut Vec<(String, String)>) -> Value {
+    push_supervisor_role_env(env, role);
+    supervisor_team(role)
+}
+
+fn push_supervisor_role_env(env: &mut Vec<(String, String)>, role: &str) {
+    env.push(("AIMUX_AGENT_ROLE".into(), role.to_owned()));
+    if role == "overseer" {
+        env.push(("AIMUX_OVERSEER".into(), "1".into()));
+    }
+    if role == "scribe" {
+        env.push(("AIMUX_SCRIBE".into(), "1".into()));
+    }
+}
+
+fn is_supervisor_role(role: &str) -> bool {
+    !matches!(role.trim(), "" | "coder")
 }
 
 fn inherited_launch_team(source_session: &Value) -> Option<Value> {
@@ -1041,8 +1064,7 @@ fn inherited_launch_team(source_session: &Value) -> Option<Value> {
         .filter(|role| !role.is_empty())
         .map(str::to_owned);
     match role.as_deref() {
-        Some("overseer") if !is_overseer_session(Some(source_session)) => None,
-        Some("scribe") if !is_scribe_session(Some(source_session)) => None,
+        Some("overseer" | "scribe") if !is_project_control_session(Some(source_session)) => None,
         _ => {
             let parent_session_id = team
                 .get("parentSessionId")
@@ -1057,7 +1079,9 @@ fn inherited_launch_team(source_session: &Value) -> Option<Value> {
                 .filter(|team_id| !team_id.is_empty())
                 .map(str::to_owned);
             if parent_session_id.is_empty() && team_id.is_none() {
-                let Some(control_role @ ("overseer" | "scribe")) = role.as_deref() else {
+                let Some(control_role) = role.as_deref().filter(|role| {
+                    is_supervisor_role(role) && is_project_control_session(Some(source_session))
+                }) else {
                     return None;
                 };
                 team.insert("teamId".into(), Value::String(control_role.to_owned()));

@@ -533,7 +533,8 @@ pub fn teammate_api_record(session: &Value) -> Value {
         "label",
         team_string_field(session, "label").or_else(|| string_field(session, "label")),
     );
-    insert_optional(&mut record, "role", Some(agent_role(Some(session))));
+    let role = agent_role(Some(session));
+    insert_optional(&mut record, "role", Some(role.as_str()));
     record.insert("lane".into(), agent_lane(Some(session)));
     record.insert("roleState".into(), agent_role_state(Some(session)));
     for key in [
@@ -586,7 +587,8 @@ pub fn build_agent_list(
                 insert_value(&mut agent, key, session.get(key).cloned());
             }
             let control_probe = session_with_stored_control_flags(session, metadata);
-            insert_optional(&mut agent, "role", Some(agent_role(Some(&control_probe))));
+            let role = agent_role(Some(&control_probe));
+            insert_optional(&mut agent, "role", Some(role.as_str()));
             agent.insert("lane".into(), agent_lane(Some(&control_probe)));
             agent.insert("roleState".into(), agent_role_state(Some(&control_probe)));
             insert_value(

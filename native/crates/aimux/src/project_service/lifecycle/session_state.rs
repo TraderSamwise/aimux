@@ -102,8 +102,31 @@ pub(super) fn set_session_control_flags(
     overseer: bool,
     scribe: bool,
 ) {
-    if !overseer && !scribe {
+    let role = if overseer {
+        Some("overseer")
+    } else if scribe {
+        Some("scribe")
+    } else {
+        None
+    };
+    set_session_control_role(project_state_dir, session_id, role);
+}
+
+pub(super) fn set_session_control_role(
+    project_state_dir: &Path,
+    session_id: &str,
+    role: Option<&str>,
+) {
+    let Some(role) = role.map(str::trim).filter(|role| !role.is_empty()) else {
         return;
+    };
+    if role == "coder" {
+        return;
+    }
+    let overseer = role == "overseer";
+    let scribe = role == "scribe";
+    if !overseer && !scribe {
+        // Generic supervisor roles still need durable project-control metadata.
     }
     let now = now_iso();
     let _ = mutate_metadata_state(project_state_dir, |state| {
@@ -118,6 +141,10 @@ pub(super) fn set_session_control_flags(
                 if scribe && map.remove("scribe").is_some() {
                     map.insert("updatedAt".into(), Value::String(now.clone()));
                 }
+                if session_has_supervisor_role(map, role) {
+                    clear_supervisor_role(map, role);
+                    map.insert("updatedAt".into(), Value::String(now.clone()));
+                }
             }
         }
         let mut current = state
@@ -125,6 +152,19 @@ pub(super) fn set_session_control_flags(
             .remove(session_id)
             .map(object_value)
             .unwrap_or_default();
+        current.insert("projectControl".into(), Value::Bool(true));
+        current.insert("role".into(), Value::String(role.to_owned()));
+        let team = current
+            .entry("team")
+            .or_insert_with(|| Value::Object(serde_json::Map::new()));
+        if !team.is_object() {
+            *team = Value::Object(serde_json::Map::new());
+        }
+        if let Value::Object(team) = team {
+            team.insert("teamId".into(), Value::String(role.to_owned()));
+            team.insert("parentSessionId".into(), Value::String(String::new()));
+            team.insert("role".into(), Value::String(role.to_owned()));
+        }
         if overseer {
             current.insert("overseer".into(), Value::Bool(true));
         }
@@ -137,4 +177,33 @@ pub(super) fn set_session_control_flags(
             .insert(session_id.to_owned(), Value::Object(current));
         true
     });
+}
+
+fn session_has_supervisor_role(map: &serde_json::Map<String, Value>, role: &str) -> bool {
+    map.get("projectControl").and_then(Value::as_bool) == Some(true)
+        && (map.get("role").and_then(Value::as_str).map(str::trim) == Some(role)
+            || map
+                .get("team")
+                .and_then(|team| team.get("role"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                == Some(role))
+}
+
+fn clear_supervisor_role(map: &mut serde_json::Map<String, Value>, role: &str) {
+    if map.get("role").and_then(Value::as_str).map(str::trim) == Some(role) {
+        map.remove("role");
+    }
+    if let Some(Value::Object(team)) = map.get_mut("team") {
+        if team.get("role").and_then(Value::as_str).map(str::trim) == Some(role) {
+            team.remove("role");
+        }
+        if team.get("teamId").and_then(Value::as_str).map(str::trim) == Some(role) {
+            team.remove("teamId");
+        }
+        if team.is_empty() {
+            map.remove("team");
+        }
+    }
+    map.insert("projectControl".into(), Value::Bool(false));
 }

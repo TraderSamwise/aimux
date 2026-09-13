@@ -115,6 +115,7 @@ pub fn parse_core_lifecycle_spawn_args<S: AsRef<str>>(
     let mut tool = None;
     let mut project = None;
     let mut worktree = None;
+    let mut role = None;
     let mut extra_args = Vec::new();
     let mut open = true;
     let mut json = false;
@@ -186,12 +187,30 @@ pub fn parse_core_lifecycle_spawn_args<S: AsRef<str>>(
             index += 1;
             continue;
         }
+        if arg == "--role" {
+            let value = required_value(args, index)?;
+            if value.starts_with('-') {
+                return None;
+            }
+            role = Some(value.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--role=") {
+            if value.is_empty() || value.starts_with('-') {
+                return None;
+            }
+            role = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
         return None;
     }
     Some(CoreLifecycleSpawnArgs {
         tool: tool?,
         project,
         worktree,
+        role,
         extra_args,
         open,
         json,

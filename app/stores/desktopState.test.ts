@@ -118,6 +118,34 @@ describe("desktop state resource lifecycle", () => {
     expect(groups[1]?.sessions.map((session) => session.id)).toEqual(["stale-role", "agent"]);
   });
 
+  it("keeps configured project-control roles in the supervisor lane", () => {
+    const groups = groupByWorktree(
+      desktopState({
+        sessions: [
+          {
+            id: "qa-supervisor",
+            status: "running",
+            toolConfigKey: "codex",
+            projectControl: true,
+            role: "qa",
+            team: { role: "qa" },
+          },
+          {
+            id: "ordinary-qa-teammate",
+            status: "running",
+            toolConfigKey: "codex",
+            role: "qa",
+            team: { role: "qa" },
+          },
+        ],
+      }),
+    );
+
+    expect(groups[0]).toMatchObject({ isSupervisorLane: true });
+    expect(groups[0]?.sessions.map((session) => session.id)).toEqual(["qa-supervisor"]);
+    expect(groups[1]?.sessions.map((session) => session.id)).toEqual(["ordinary-qa-teammate"]);
+  });
+
   it("uses a future server supervisor lane when present", () => {
     const groups = groupByWorktree(
       desktopState({

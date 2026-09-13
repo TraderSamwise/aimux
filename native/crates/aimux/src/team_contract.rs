@@ -123,13 +123,21 @@ pub fn project_control_display_role(session: Option<&Value>) -> Option<&str> {
     }
 }
 
-pub fn agent_role(session: Option<&Value>) -> &'static str {
-    if is_overseer_session(session) {
-        "overseer"
-    } else if is_scribe_session(session) {
-        "scribe"
+pub fn agent_role(session: Option<&Value>) -> String {
+    let Some(session) = session else {
+        return "coder".to_owned();
+    };
+    if is_project_control_session(Some(session)) {
+        if let Some(role) = project_control_display_role(Some(session)) {
+            return role.to_owned();
+        }
+    }
+    if is_overseer_session(Some(session)) {
+        "overseer".to_owned()
+    } else if is_scribe_session(Some(session)) {
+        "scribe".to_owned()
     } else {
-        "coder"
+        "coder".to_owned()
     }
 }
 
@@ -156,14 +164,16 @@ pub fn agent_role_state(session: Option<&Value>) -> Value {
     let role = agent_role(Some(session));
     let lane = agent_lane(Some(session));
     if bool_field(session, "pendingRelaunchForRole") == Some(true) {
-        let effective_role = string_field(session, "effectiveRole").unwrap_or(role);
+        let effective_role = string_field(session, "effectiveRole")
+            .map(str::to_owned)
+            .unwrap_or_else(|| role.clone());
         let effective_lane = session
             .get("effectiveLane")
             .cloned()
             .unwrap_or_else(|| lane.clone());
         return json!({
             "status": "pending-relaunch",
-            "role": role,
+            "role": role.clone(),
             "lane": lane,
             "projectControl": is_project_control_session(Some(session)),
             "declaredRole": role,
@@ -420,5 +430,23 @@ mod tests {
                 "projectControl": true
             })
         );
+    }
+
+    #[test]
+    fn explicit_project_control_role_is_generic() {
+        let session = json!({
+            "id": "qa-1",
+            "projectControl": true,
+            "role": "qa",
+            "team": { "role": "qa", "teamId": "qa" },
+            "worktreePath": "/repo/wt"
+        });
+
+        assert!(!is_overseer_session(Some(&session)));
+        assert!(!is_scribe_session(Some(&session)));
+        assert!(is_project_control_session(Some(&session)));
+        assert_eq!(project_control_display_role(Some(&session)), Some("qa"));
+        assert_eq!(agent_role(Some(&session)), "qa");
+        assert_eq!(agent_lane(Some(&session)), json!({ "kind": "supervisor" }));
     }
 }

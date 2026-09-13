@@ -1701,6 +1701,8 @@ fn lifecycle_commands_plan_native_text_routes() {
             "./child",
             "--worktree",
             "feature",
+            "--role",
+            "qa",
             "--no-open",
             "--json",
             "--",
@@ -1715,11 +1717,12 @@ fn lifecycle_commands_plan_native_text_routes() {
     assert_eq!(
         spawn.action,
         CoreCliAction::TextRoute {
-            path: "/core/lifecycle/spawn-text?project=%2Fresolved%2F.%2Fchild&tool=claude&open=0&worktreePath=feature&json=1".into(),
+            path: "/core/lifecycle/spawn-text?project=%2Fresolved%2F.%2Fchild&tool=claude&open=0&worktreePath=feature&role=qa&json=1".into(),
             body: Some(json!({
                 "project": "/resolved/./child",
                 "tool": "claude",
                 "worktreePath": "feature",
+                "role": "qa",
                 "extraArgs": ["--model", "gpt-5"],
                 "open": false,
             })),

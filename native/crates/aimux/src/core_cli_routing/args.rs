@@ -97,6 +97,8 @@ pub struct CoreLifecycleSpawnArgs {
     pub project: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub worktree: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub extra_args: Vec<String>,
     pub open: bool,

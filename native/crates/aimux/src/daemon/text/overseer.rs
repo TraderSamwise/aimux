@@ -64,7 +64,7 @@ pub fn overseer_start_text_route(
         request.insert("worktreePath".into(), Value::String(worktree_path));
     }
     request.insert("open".into(), Value::Bool(open));
-    request.insert("overseer".into(), Value::Bool(true));
+    request.insert("role".into(), Value::String("overseer".into()));
     let result = runtime.post_project_service_json(
         &project_root,
         project_routes::agents::SPAWN,

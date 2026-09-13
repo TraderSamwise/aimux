@@ -327,6 +327,10 @@ pub(super) fn lifecycle_spawn_text_path(
         path.push_str("&worktreePath=");
         path.push_str(&encode_query_component(worktree));
     }
+    if let Some(role) = parsed.role.as_deref() {
+        path.push_str("&role=");
+        path.push_str(&encode_query_component(role));
+    }
     if parsed.json {
         path.push_str("&json=1");
     }

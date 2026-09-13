@@ -89,7 +89,7 @@ fn overseer_start_uses_default_tool_and_resolves_worktree() {
                 "tool": "claude",
                 "worktreePath": "/repo/wt",
                 "open": false,
-                "overseer": true
+                "role": "overseer"
             }),
         }]
     );
@@ -113,7 +113,7 @@ fn overseer_start_preserves_explicit_tool_and_json_payload() {
     assert_eq!(payload["tool"], "codex");
     assert_eq!(
         runtime.calls.last().unwrap().body,
-        json!({ "tool": "codex", "open": true, "overseer": true })
+        json!({ "tool": "codex", "open": true, "role": "overseer" })
     );
 }
 

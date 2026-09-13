@@ -910,7 +910,8 @@ fn dashboard_session(
         }
     }
     let role_probe = Value::Object(item.clone());
-    insert_string(&mut item, "role", agent_role(Some(&role_probe)));
+    let role = agent_role(Some(&role_probe));
+    insert_string(&mut item, "role", role.as_str());
     item.insert("lane".into(), agent_lane(Some(&role_probe)));
     item.insert("roleState".into(), agent_role_state(Some(&role_probe)));
     let thread = thread_stats.get(id).cloned().unwrap_or_default();

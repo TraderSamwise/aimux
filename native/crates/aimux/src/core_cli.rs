@@ -626,6 +626,9 @@ where
                 ("worktreePath".into(), json!(parsed.worktree)),
                 ("open".into(), json!(parsed.open)),
             ]);
+            if let Some(role) = parsed.role.clone() {
+                body.insert("role".into(), json!(role));
+            }
             if !parsed.extra_args.is_empty() {
                 body.insert("extraArgs".into(), json!(parsed.extra_args));
             }

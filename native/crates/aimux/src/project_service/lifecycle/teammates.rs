@@ -103,8 +103,7 @@ pub(super) fn route_agent_create_teammate(
             suppress_startup_preamble: false,
             persist_args: None,
             allow_replace_session: false,
-            mark_overseer: false,
-            mark_scribe: false,
+            supervisor_role: None,
         },
     ) {
         Ok(result) => result,

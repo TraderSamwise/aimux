@@ -33,7 +33,7 @@ use super::agent_topology::{
 use super::ids::{now_iso, pseudo_uuid_v4};
 use super::json_helpers::{find_by_id, string_array_field, string_field, trimmed_string};
 use super::runtime_adapter::{AsyncProjectLifecycleRuntime, ProjectLifecycleRuntime};
-use super::session_state::{clear_session_transcript_path, set_session_control_flags};
+use super::session_state::{clear_session_transcript_path, set_session_control_role};
 
 const AGENT_LAUNCH_WINDOW_VISIBLE_TIMEOUT: Duration = Duration::from_millis(500);
 
@@ -53,8 +53,7 @@ pub(super) struct AgentSessionLaunchInput {
     pub(super) suppress_startup_preamble: bool,
     pub(super) persist_args: Option<Vec<String>>,
     pub(super) allow_replace_session: bool,
-    pub(super) mark_overseer: bool,
-    pub(super) mark_scribe: bool,
+    pub(super) supervisor_role: Option<String>,
 }
 
 pub(super) struct AgentSessionLaunchResult {
@@ -271,12 +270,7 @@ pub(super) fn launch_agent_session(
     if let Some(worktree_path) = input.worktree_path.clone() {
         metadata_seed.insert("worktreePath".into(), Value::String(worktree_path));
     }
-    if input.mark_overseer {
-        metadata_seed.insert("overseer".into(), Value::Bool(true));
-    }
-    if input.mark_scribe {
-        metadata_seed.insert("scribe".into(), Value::Bool(true));
-    }
+    apply_supervisor_role_metadata(&mut metadata_seed, input.supervisor_role.as_deref());
     let mut metadata = agent_window_metadata(
         &Value::Object(metadata_seed),
         &input.session_id,
@@ -289,14 +283,7 @@ pub(super) fn launch_agent_session(
         backend_session_id.as_deref(),
     );
     if let Value::Object(map) = &mut metadata {
-        if input.mark_overseer {
-            map.insert("overseer".into(), Value::Bool(true));
-            map.insert("projectControl".into(), Value::Bool(true));
-        }
-        if input.mark_scribe {
-            map.insert("scribe".into(), Value::Bool(true));
-            map.insert("projectControl".into(), Value::Bool(true));
-        }
+        apply_supervisor_role_metadata(map, input.supervisor_role.as_deref());
     }
     if let Err(error) = runtime.set_window_metadata(&target.window_id, &metadata) {
         let first_pane_capture = runtime.capture_window(&target);
@@ -376,11 +363,10 @@ pub(super) fn launch_agent_session(
         visible: Some(true),
         first_pane_capture,
     });
-    set_session_control_flags(
+    set_session_control_role(
         &project_state_dir,
         &input.session_id,
-        input.mark_overseer,
-        input.mark_scribe,
+        input.supervisor_role.as_deref(),
     );
     Ok(AgentSessionLaunchResult {
         session_id: input.session_id,
@@ -602,12 +588,7 @@ pub(super) async fn launch_agent_session_async(
     if let Some(worktree_path) = input.worktree_path.clone() {
         metadata_seed.insert("worktreePath".into(), Value::String(worktree_path));
     }
-    if input.mark_overseer {
-        metadata_seed.insert("overseer".into(), Value::Bool(true));
-    }
-    if input.mark_scribe {
-        metadata_seed.insert("scribe".into(), Value::Bool(true));
-    }
+    apply_supervisor_role_metadata(&mut metadata_seed, input.supervisor_role.as_deref());
     let mut metadata = agent_window_metadata(
         &Value::Object(metadata_seed),
         &input.session_id,
@@ -620,14 +601,7 @@ pub(super) async fn launch_agent_session_async(
         backend_session_id.as_deref(),
     );
     if let Value::Object(map) = &mut metadata {
-        if input.mark_overseer {
-            map.insert("overseer".into(), Value::Bool(true));
-            map.insert("projectControl".into(), Value::Bool(true));
-        }
-        if input.mark_scribe {
-            map.insert("scribe".into(), Value::Bool(true));
-            map.insert("projectControl".into(), Value::Bool(true));
-        }
+        apply_supervisor_role_metadata(map, input.supervisor_role.as_deref());
     }
     if let Err(error) = runtime
         .set_window_metadata(&target.window_id, &metadata)
@@ -708,11 +682,10 @@ pub(super) async fn launch_agent_session_async(
         visible: Some(true),
         first_pane_capture: None,
     });
-    set_session_control_flags(
+    set_session_control_role(
         &project_state_dir,
         &input.session_id,
-        input.mark_overseer,
-        input.mark_scribe,
+        input.supervisor_role.as_deref(),
     );
     Ok(AgentSessionLaunchResult {
         session_id: input.session_id,
@@ -804,6 +777,20 @@ fn record_launch_outcome(outcome: LaunchOutcome<'_>) {
         && let Ok(line) = serde_json::to_string(&record)
     {
         let _ = writeln!(file, "{line}");
+    }
+}
+
+fn apply_supervisor_role_metadata(map: &mut Map<String, Value>, role: Option<&str>) {
+    let Some(role) = role.map(str::trim).filter(|role| !role.is_empty()) else {
+        return;
+    };
+    map.insert("projectControl".into(), Value::Bool(true));
+    map.insert("role".into(), Value::String(role.to_owned()));
+    if role == "overseer" {
+        map.insert("overseer".into(), Value::Bool(true));
+    }
+    if role == "scribe" {
+        map.insert("scribe".into(), Value::Bool(true));
     }
 }
 

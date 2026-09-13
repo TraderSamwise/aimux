@@ -385,7 +385,7 @@ export interface ProjectApiOk {
   ok: boolean;
 }
 
-export type AgentSupervisorRole = "overseer" | "scribe";
+export type AgentSupervisorRole = string;
 export type AgentRole = "coder" | AgentSupervisorRole;
 
 export type AgentLane =

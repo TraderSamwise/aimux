@@ -163,7 +163,7 @@ fn lifecycle_routes_match_agent_project_service_contracts() {
         &mut runtime,
         "POST",
         &format!(
-            "{}?project=.&tool=claude&worktreePath=wt&open=0",
+            "{}?project=.&tool=claude&worktreePath=wt&role=qa&open=0",
             CORE_API_ROUTES.lifecycle_spawn_text
         ),
         Some(&json!({ "extraArgs": ["--model", "gpt-5"] })),
@@ -179,6 +179,7 @@ fn lifecycle_routes_match_agent_project_service_contracts() {
         &json!({
             "tool": "claude",
             "worktreePath": "/repo/wt",
+            "role": "qa",
             "extraArgs": ["--model", "gpt-5"],
             "open": false
         })

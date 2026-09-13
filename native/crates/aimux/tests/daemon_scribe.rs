@@ -50,6 +50,35 @@ fn text_body(response: DaemonRouteResponse) -> String {
 }
 
 #[test]
+fn scribe_start_uses_generic_supervisor_role_body() {
+    let mut runtime = FakeScribeRuntime::default();
+    let response = route_scribe_text_request(
+        &mut runtime,
+        "POST",
+        &format!(
+            "{}?project=/repo&tool=codex&open=false",
+            CORE_API_ROUTES.scribe_start_text
+        ),
+        None,
+    )
+    .expect("scribe start");
+
+    assert_eq!(text_body(response), "scribe scribe-1\n");
+    assert_eq!(
+        runtime.calls.last().unwrap(),
+        &Call {
+            project: "/repo".into(),
+            route_path: project_routes::agents::SPAWN.into(),
+            body: json!({
+                "tool": "codex",
+                "open": false,
+                "role": "scribe"
+            }),
+        }
+    );
+}
+
+#[test]
 fn scribe_clear_forwards_optional_worktree_target() {
     let mut runtime = FakeScribeRuntime::default();
     let response = route_scribe_text_request(

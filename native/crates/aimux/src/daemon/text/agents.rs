@@ -298,6 +298,9 @@ pub fn lifecycle_spawn_text_route(
             Value::Array(extra_args.into_iter().map(Value::String).collect()),
         );
     }
+    if let Some(role) = string_param(route_url, body, "role").filter(|value| !value.is_empty()) {
+        request.insert("role".into(), Value::String(role));
+    }
     request.insert("open".into(), Value::Bool(open));
     let (json, project_root) = match unwrap_project_result(runtime.post_project_service_json(
         &project,
@@ -317,6 +320,7 @@ pub fn lifecycle_spawn_text_route(
         "projectRoot": project_root,
         "sessionId": session_id,
         "tool": tool,
+        "role": json.get("role").cloned().unwrap_or(Value::Null),
         "worktreePath": worktree_path.unwrap_or_else(|| project_root.clone()),
         "opened": open,
         "tmuxTarget": json.get("tmuxTarget").cloned().unwrap_or(Value::Null),

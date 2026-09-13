@@ -859,6 +859,105 @@ fn agent_spawn_ordinary_failure_keeps_bounded_diagnostic_lines() {
 }
 
 #[test]
+fn agent_spawn_accepts_generic_supervisor_role() {
+    let project = temp_project("agent-spawn-generic-role");
+    write_project_tool_config(&project);
+    let state_dir = project.join("state");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::SPAWN,
+        Some(&json!({
+            "tool": "mock",
+            "sessionId": "mock-qa",
+            "role": "qa",
+            "open": false
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["role"], "qa");
+    assert_eq!(runtime.created.len(), 1);
+    assert_eq!(runtime.created[0].cwd, project.to_string_lossy());
+    assert!(
+        runtime.created[0]
+            .args
+            .iter()
+            .any(|arg| arg == "AIMUX_AGENT_ROLE=qa"),
+        "missing generic role env in {:?}",
+        runtime.created[0].args
+    );
+    assert!(
+        !runtime.created[0]
+            .args
+            .iter()
+            .any(|arg| arg == "AIMUX_OVERSEER=1" || arg == "AIMUX_SCRIBE=1"),
+        "generic role should not use legacy supervisor env: {:?}",
+        runtime.created[0].args
+    );
+    let metadata = &runtime.metadata[0].1;
+    assert_eq!(metadata["projectControl"], true);
+    assert_eq!(metadata["role"], "qa");
+    assert_eq!(
+        metadata["team"],
+        json!({ "teamId": "qa", "parentSessionId": "", "role": "qa" })
+    );
+    assert!(metadata.get("overseer").is_none());
+    assert!(metadata.get("scribe").is_none());
+    let topology = read_topology(&state_dir);
+    let session = session(&topology, "mock-qa");
+    assert_eq!(session["role"], "qa");
+    assert_eq!(session["lane"], json!({ "kind": "supervisor" }));
+    assert_eq!(session["roleState"]["projectControl"], true);
+    cleanup(project);
+}
+
+#[test]
+fn agent_spawn_without_role_keeps_worktree_coder_default() {
+    let project = temp_project("agent-spawn-coder-default");
+    write_project_tool_config(&project);
+    let state_dir = project.join("state");
+    let worktree = project.join("wt");
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::SPAWN,
+        Some(&json!({
+            "tool": "mock",
+            "sessionId": "mock-coder",
+            "worktreePath": worktree,
+            "open": false
+        })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert!(response.body.get("role").is_none());
+    assert_eq!(runtime.created.len(), 1);
+    assert_eq!(runtime.created[0].cwd, worktree.to_string_lossy());
+    let metadata = &runtime.metadata[0].1;
+    assert!(metadata.get("projectControl").is_none());
+    assert!(metadata.get("role").is_none());
+    let topology = read_topology(&state_dir);
+    let session = session(&topology, "mock-coder");
+    assert_eq!(session["role"], "coder");
+    assert_eq!(
+        session["lane"],
+        json!({ "kind": "worktree", "worktreePath": worktree.to_string_lossy() })
+    );
+    cleanup(project);
+}
+
+#[test]
 fn default_scribe_startup_launches_configured_agent_and_marks_project_control() {
     let project = temp_project("default-scribe-create");
     write_project_scribe_config(&project);

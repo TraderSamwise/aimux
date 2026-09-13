@@ -482,12 +482,14 @@ fn lifecycle_parsers_match_spawn_stop_kill_and_fork_forms() {
         "--tool",
         "claude",
         "--worktree=feature",
+        "--role=qa",
         "--no-open",
         "--json",
     ])
     .expect("spawn args");
     assert_eq!(spawn.tool, "claude");
     assert_eq!(spawn.worktree.as_deref(), Some("feature"));
+    assert_eq!(spawn.role.as_deref(), Some("qa"));
     assert!(!spawn.open);
     assert!(spawn.json);
 
