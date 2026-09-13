@@ -23,11 +23,13 @@ impl TranscriptReconcilerDeps for TestDeps {
     fn has_pending_interaction(&mut self, _session_id: &str) -> bool {
         self.pending_interaction
     }
-    fn settle_activity(&mut self, session_id: &str) {
+    fn settle_activity(&mut self, session_id: &str) -> bool {
         self.settled.push(session_id.to_owned());
+        true
     }
-    fn clear_stale_response(&mut self, session_id: &str) {
+    fn clear_stale_response(&mut self, session_id: &str) -> bool {
         self.cleared.push(session_id.to_owned());
+        true
     }
     fn probe(&mut self, tool_config_key: &str, path: &str) -> Option<TranscriptProbe> {
         self.probed

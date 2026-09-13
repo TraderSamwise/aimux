@@ -13,6 +13,7 @@ use std::time::Duration;
 use serde_json::{Value, json};
 
 use crate::daemon_state::try_load_metadata_state;
+use crate::debug_logging::{LogLevel, log_at};
 use crate::project_api_contract::routes;
 use crate::runtime_topology::{
     list_topology_session_states, read_runtime_topology, runtime_topology_path,
@@ -25,6 +26,10 @@ use crate::transcript_turn_state::{
 };
 
 use super::interactions::pending_interactions_for_stream;
+use super::operation_failures::{
+    OperationFailureInput, OperationFailureMatch, WorktreePathMatch,
+    add_dashboard_operation_failure, clear_dashboard_operation_failures,
+};
 use super::router::{ProjectServiceRequestContext, route_project_service_request};
 use super::scheduler::{PeriodicTask, PeriodicTaskFuture};
 use super::watcher_delivery::TickLoopBudget;
@@ -116,8 +121,27 @@ struct ServiceDeps {
 }
 
 impl ServiceDeps {
-    fn post(&self, path: &str, body: Value) {
-        route_project_service_request(&self.context, "POST", path, Some(&body));
+    fn post(&self, path: &str, body: Value) -> bool {
+        let response = route_project_service_request(&self.context, "POST", path, Some(&body));
+        let operation = transcript_correction_operation(path);
+        let session_id = body.get("session").and_then(Value::as_str);
+        if (200..300).contains(&response.status) {
+            clear_transcript_reconciler_failure(&self.context, session_id, operation);
+            return true;
+        }
+        let message = format!(
+            "POST {path} failed with HTTP {}: {}",
+            response.status,
+            route_error_text(&response.body)
+        );
+        record_transcript_reconciler_failure(
+            &self.context,
+            session_id,
+            operation,
+            "Transcript correction failed",
+            message,
+        );
+        false
     }
 }
 
@@ -128,20 +152,20 @@ impl TranscriptReconcilerDeps for ServiceDeps {
 
     /// A correction, not a `task_done`: `/set-activity` only rewrites derived
     /// activity, so this cannot bump unseen counts or raise a completion alert.
-    fn settle_activity(&mut self, session_id: &str) {
+    fn settle_activity(&mut self, session_id: &str) -> bool {
         self.post(
             routes::runtime::SET_ACTIVITY,
             json!({ "session": session_id, "activity": "idle" }),
-        );
+        )
     }
 
     /// `notification_for_attention` returns nothing for "normal", so clearing a
     /// stranded response never raises an alert either.
-    fn clear_stale_response(&mut self, session_id: &str) {
+    fn clear_stale_response(&mut self, session_id: &str) -> bool {
         self.post(
             routes::runtime::SET_ATTENTION,
             json!({ "session": session_id, "attention": "normal" }),
-        );
+        )
     }
 
     fn probe(&mut self, tool_config_key: &str, path: &str) -> Option<TranscriptProbe> {
@@ -158,6 +182,71 @@ impl TranscriptReconcilerDeps for ServiceDeps {
         find_codex_transcript_path(backend_session_id, &self.codex_sessions_dir)
             .map(|path| path.to_string_lossy().into_owned())
     }
+}
+
+fn transcript_correction_operation(path: &str) -> &'static str {
+    match path {
+        routes::runtime::SET_ACTIVITY => "transcript-reconciler:set-activity",
+        routes::runtime::SET_ATTENTION => "transcript-reconciler:set-attention",
+        _ => "transcript-reconciler:correction",
+    }
+}
+
+fn route_error_text(body: &Value) -> String {
+    body.get("error")
+        .and_then(Value::as_str)
+        .filter(|error| !error.trim().is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| body.to_string())
+}
+
+fn record_transcript_reconciler_failure(
+    context: &ProjectServiceRequestContext,
+    session_id: Option<&str>,
+    operation: &str,
+    title: &str,
+    message: impl Into<String>,
+) {
+    let message = message.into();
+    log_at(
+        LogLevel::Error,
+        title,
+        "transcript-reconciler",
+        Some(json!({
+            "sessionId": session_id,
+            "operation": operation,
+            "message": message,
+        })),
+    );
+    let _ = add_dashboard_operation_failure(
+        context.project_state_dir(),
+        OperationFailureInput {
+            target_kind: "agent".into(),
+            operation: operation.into(),
+            title: title.into(),
+            message,
+            target_id: session_id.map(str::to_owned),
+            worktree_path: None,
+            worktree_name: None,
+            created_at: None,
+        },
+    );
+}
+
+fn clear_transcript_reconciler_failure(
+    context: &ProjectServiceRequestContext,
+    session_id: Option<&str>,
+    operation: &str,
+) {
+    let _ = clear_dashboard_operation_failures(
+        context.project_state_dir(),
+        OperationFailureMatch {
+            target_kind: Some("agent".into()),
+            operation: Some(operation.into()),
+            target_id: session_id.map(str::to_owned),
+            worktree_path: WorktreePathMatch::Any,
+        },
+    );
 }
 
 pub fn transcript_reconciler_task(

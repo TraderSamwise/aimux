@@ -28,9 +28,9 @@ pub trait TranscriptReconcilerDeps {
     /// Whether a live interaction request still backs a `needs_response`.
     fn has_pending_interaction(&mut self, session_id: &str) -> bool;
     /// Settle a stuck working agent to idle (label becomes "ready").
-    fn settle_activity(&mut self, session_id: &str);
+    fn settle_activity(&mut self, session_id: &str) -> bool;
     /// Clear a stranded `needs_response` attention back to normal.
-    fn clear_stale_response(&mut self, session_id: &str);
+    fn clear_stale_response(&mut self, session_id: &str) -> bool;
     fn probe(&mut self, tool_config_key: &str, path: &str) -> Option<TranscriptProbe>;
     fn find_codex_path(&mut self, backend_session_id: &str) -> Option<String>;
 }
@@ -111,8 +111,9 @@ impl TranscriptReconciler {
             // unbacked on a second tick.
             if attention == Some("needs_response") && !deps.has_pending_interaction(&session.id) {
                 if self.pending_clear.contains(&session.id) {
-                    deps.clear_stale_response(&session.id);
-                    self.pending_clear.remove(&session.id);
+                    if deps.clear_stale_response(&session.id) {
+                        self.pending_clear.remove(&session.id);
+                    }
                 } else {
                     self.pending_clear.insert(session.id.clone());
                 }
@@ -143,8 +144,9 @@ impl TranscriptReconciler {
 
             if self.pending.get(&session.id) == Some(&result) {
                 // Complete and quiescent across a full tick — the turn is over.
-                deps.settle_activity(&session.id);
-                self.pending.remove(&session.id);
+                if deps.settle_activity(&session.id) {
+                    self.pending.remove(&session.id);
+                }
             } else {
                 self.pending.insert(session.id.clone(), result);
             }
