@@ -47,7 +47,7 @@ import {
 // dashboard's card/dot/[n]/pill language. Palette: card #15161a · border
 // #26272d · hairline #202127 · text #edeef0 / muted #7c7e88 / faint #565862.
 const PRESS = "hover:bg-[#1f2025] active:bg-[#232733]";
-const WORKTREE_CARD_MIN_WIDTH = 420;
+const WORKTREE_CARD_MIN_WIDTH = 540;
 
 function worktreeHasChildren(bucket: WorktreeBucket): boolean {
   return bucket.sessions.length > 0 || bucket.services.length > 0;
@@ -410,7 +410,7 @@ function worktreeCountChips(bucket: WorktreeBucket): CountChip[] {
   return chips;
 }
 
-function WorktreeCard({
+export function WorktreeCard({
   bucket,
   projectPath,
   endpoint,
