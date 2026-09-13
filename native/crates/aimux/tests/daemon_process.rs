@@ -941,15 +941,22 @@ impl Drop for CountingWebhookServer {
 
 struct JsonOnceServer {
     port: u16,
+    stop: mpsc::Sender<()>,
     worker: Mutex<Option<thread::JoinHandle<()>>>,
 }
 
 impl JsonOnceServer {
     fn spawn(body: &'static str) -> Self {
         let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind json upstream");
+        listener
+            .set_nonblocking(true)
+            .expect("nonblocking json upstream");
         let port = listener.local_addr().expect("json upstream addr").port();
+        let (stop_tx, stop_rx) = mpsc::channel();
         let worker = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().expect("accept json upstream");
+            let Some((mut stream, _)) = accept_one(&listener, &stop_rx) else {
+                return;
+            };
             let _request = read_webhook_request(&mut stream);
             write!(
                 stream,
@@ -961,11 +968,13 @@ impl JsonOnceServer {
         });
         Self {
             port,
+            stop: stop_tx,
             worker: Mutex::new(Some(worker)),
         }
     }
 
     fn join(&self) {
+        let _ = self.stop.send(());
         if let Some(worker) = self.worker.lock().expect("json worker lock").take() {
             worker.join().expect("json upstream worker");
         }
@@ -1294,23 +1303,33 @@ fn runtime_mutex_wrapper_routes_owner_get_proxy_without_head_of_line_blocking() 
             .expect("send proxy response before lock release");
     });
 
-    let response = match response_rx.recv_timeout(Duration::from_millis(500)) {
+    let wait = Duration::from_millis(500);
+    let response = match response_rx.recv_timeout(wait) {
         Ok(response) => response,
         Err(error) => {
             drop(held);
             request_thread.join().expect("request thread");
-            panic!("GET proxy waited behind the daemon runtime mutex: {error}");
+            panic!(
+                "GET /proxy/.../desktop-state did not produce a stateless proxy response within {}ms while RealDaemonRuntime mutex was held: {error}",
+                wait.as_millis()
+            );
         }
     };
     drop(held);
     request_thread.join().expect("request thread");
-    upstream.join();
 
-    assert_eq!(response.status, 200);
+    assert_eq!(
+        response.status,
+        200,
+        "GET /proxy/.../desktop-state should be forwarded by the stateless proxy fast path; got status {} with body {}",
+        response.status,
+        String::from_utf8_lossy(&response.body)
+    );
     assert_eq!(
         json_body(&response),
         json!({ "ok": true, "project": "glyde" })
     );
+    upstream.join();
 }
 
 #[test]
@@ -1349,23 +1368,33 @@ fn runtime_mutex_wrapper_routes_owner_post_proxy_without_head_of_line_blocking()
             .expect("send proxy response before lock release");
     });
 
-    let response = match response_rx.recv_timeout(Duration::from_millis(500)) {
+    let wait = Duration::from_millis(500);
+    let response = match response_rx.recv_timeout(wait) {
         Ok(response) => response,
         Err(error) => {
             drop(held);
             request_thread.join().expect("request thread");
-            panic!("POST proxy waited behind the daemon runtime mutex: {error}");
+            panic!(
+                "POST /proxy/.../live-pane/input did not produce a stateless proxy response within {}ms while RealDaemonRuntime mutex was held: {error}",
+                wait.as_millis()
+            );
         }
     };
     drop(held);
     request_thread.join().expect("request thread");
-    upstream.join();
 
-    assert_eq!(response.status, 200);
+    assert_eq!(
+        response.status,
+        200,
+        "POST /proxy/.../live-pane/input should be forwarded by the stateless proxy fast path; got status {} with body {}",
+        response.status,
+        String::from_utf8_lossy(&response.body)
+    );
     assert_eq!(
         json_body(&response),
         json!({ "ok": true, "accepted": true })
     );
+    upstream.join();
 }
 
 #[test]
