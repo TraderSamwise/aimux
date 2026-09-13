@@ -133,7 +133,10 @@ import {
 import { chatFrozenNewMessageCount } from "@/lib/chat-new-message-badge";
 import { canUseChatSplitView, chatOutputPaneVisibility } from "@/lib/chat-output-mode";
 import { chatViewportKeyForRoute } from "@/lib/chat-viewport-key";
-import { CHAT_OUTPUT_CAPTURE_START_LINE } from "@/lib/chat-output-constants";
+import {
+  CHAT_OUTPUT_CAPTURE_START_LINE,
+  chatOutputHistoryStartLineForScroll,
+} from "@/lib/chat-output-constants";
 import {
   agentOutputModeForVisiblePane,
   chatTranscriptPlaceholderState,
@@ -726,6 +729,13 @@ export default function ChatScreen() {
     width: chatSplitWidth,
   });
   const agentOutputFeedMode = agentOutputModeForVisiblePane({ terminalViewVisible });
+  const [chatOutputHistoryStartLine, setChatOutputHistoryStartLine] = useState(
+    CHAT_OUTPUT_CAPTURE_START_LINE,
+  );
+  const [pendingChatOutputHistoryStartLine, setPendingChatOutputHistoryStartLine] = useState<
+    number | null
+  >(null);
+  const pendingChatOutputHistoryStartLineRef = useRef<number | null>(null);
   const composerDraftKey = useMemo(() => {
     if (!sessionId) return null;
     if (activeShareForRoute) {
@@ -740,6 +750,13 @@ export default function ChatScreen() {
     if (stateProjectPath) return ["project", stateProjectPath, sessionId].join(":");
     return ["session", sessionId].join(":");
   }, [activeShareForRoute, sessionId, stateProjectPath]);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- each route/session starts from the shallow live capture window
+    setChatOutputHistoryStartLine(CHAT_OUTPUT_CAPTURE_START_LINE);
+    pendingChatOutputHistoryStartLineRef.current = null;
+    setPendingChatOutputHistoryStartLine(null);
+  }, [sessionKey]);
 
   useEffect(() => {
     composerDraftSnapshotRef.current = {
@@ -980,6 +997,44 @@ export default function ChatScreen() {
     startLine: CHAT_OUTPUT_CAPTURE_START_LINE,
     token,
   });
+
+  const requestChatHistoryPage = useCallback(
+    (metrics: ChatScrollMetrics) => {
+      const nextStartLine = chatOutputHistoryStartLineForScroll({
+        currentStartLine: chatOutputHistoryStartLine,
+        enabled: chatViewVisible && heartbeatReady && !routeSessionMissing,
+        metrics,
+        pendingStartLine:
+          pendingChatOutputHistoryStartLineRef.current ?? pendingChatOutputHistoryStartLine,
+      });
+      if (nextStartLine === null) return;
+      pendingChatOutputHistoryStartLineRef.current = nextStartLine;
+      setPendingChatOutputHistoryStartLine(nextStartLine);
+      void refreshOutputSnapshot("history", { startLine: nextStartLine })
+        .then(() => {
+          setChatOutputHistoryStartLine((current) => Math.min(current, nextStartLine));
+        })
+        .catch(() => {
+          // History paging is opportunistic; the live feed and explicit Retry own visible errors.
+        })
+        .finally(() => {
+          if (pendingChatOutputHistoryStartLineRef.current === nextStartLine) {
+            pendingChatOutputHistoryStartLineRef.current = null;
+          }
+          setPendingChatOutputHistoryStartLine((current) =>
+            current === nextStartLine ? null : current,
+          );
+        });
+    },
+    [
+      chatOutputHistoryStartLine,
+      chatViewVisible,
+      heartbeatReady,
+      pendingChatOutputHistoryStartLine,
+      refreshOutputSnapshot,
+      routeSessionMissing,
+    ],
+  );
 
   const parsedMessages = useMemo<ChatMessage[]>(
     () =>
@@ -2541,6 +2596,7 @@ export default function ChatScreen() {
                       placeholderState={chatPlaceholderState}
                       ref={chatViewportRef}
                       onChromeVisibleChange={handleChatChromeVisibleChange}
+                      onRequestHistoryPage={requestChatHistoryPage}
                       onRetryTranscriptLoad={handleRetryTranscriptLoad}
                       serviceEndpoint={displayServiceEndpoint}
                       sessionKey={sessionKey}
@@ -2844,6 +2900,7 @@ type AgentChatSessionViewportProps = {
   dividerWidth: number;
   newMessageBadgeBottomOffset: number;
   onChromeVisibleChange: (visible: boolean) => void;
+  onRequestHistoryPage: (metrics: ChatScrollMetrics) => void;
   onRetryTranscriptLoad: (purpose?: AgentOutputFeedPurpose) => void;
   placeholderState: ChatTranscriptPlaceholderState;
   serviceEndpoint: ServiceEndpoint;
@@ -2860,6 +2917,7 @@ const AgentChatSessionViewport = React.memo(
         dividerWidth,
         newMessageBadgeBottomOffset,
         onChromeVisibleChange,
+        onRequestHistoryPage,
         onRetryTranscriptLoad,
         placeholderState,
         serviceEndpoint,
@@ -3089,9 +3147,11 @@ const AgentChatSessionViewport = React.memo(
             resetNewMessageBadge();
             showLiveChatTranscript();
           }
+          onRequestHistoryPage(metrics);
         },
         [
           cancelPendingChatScroll,
+          onRequestHistoryPage,
           onChromeVisibleChange,
           resetNewMessageBadge,
           showLiveChatTranscript,

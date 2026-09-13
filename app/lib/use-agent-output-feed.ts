@@ -7,6 +7,7 @@ import {
   type InitialAgentOutputFeedState,
   type InitialAgentOutputFeedStatus,
 } from "@/lib/agent-output-feed-state";
+import { agentOutputFeedRequestStartLines } from "@/lib/agent-output-feed-start-lines";
 import { getLivePaneOutput, type AgentOutputResponse } from "@/lib/api";
 import { paneOutputSnapshotSettlesInitialTranscript } from "@/lib/chat-loading";
 import type { ServiceEndpoint } from "@/lib/daemon-url";
@@ -21,6 +22,7 @@ export type AgentOutputFeedMode = "full" | "chat";
 export type AgentOutputFeedPurpose = NonNullable<LivePaneOutputInput["purpose"]>;
 export type AgentOutputFeedRefreshOptions = {
   surfaceError?: boolean;
+  startLine?: number;
 };
 
 const INITIAL_OUTPUT_TIMEOUT_MS = 12_000;
@@ -136,11 +138,20 @@ export function useAgentOutputFeed({
         setInitialStatusState({ key: feedKey, status: "loading" });
       }
       try {
-        const result = await getLivePaneOutput(stableEndpoint, sessionId, startLine, {
-          token,
-          mode,
-          purpose,
+        const requestStartLines = agentOutputFeedRequestStartLines({
+          liveStartLine: startLine,
+          snapshotStartLine: options.startLine,
         });
+        const result = await getLivePaneOutput(
+          stableEndpoint,
+          sessionId,
+          requestStartLines.snapshotStartLine,
+          {
+            token,
+            mode,
+            purpose,
+          },
+        );
         lastHttpOutputAtRef.current = Date.now();
         const loaded = applySnapshotResult(result);
         if (loaded) {
@@ -210,10 +221,11 @@ export function useAgentOutputFeed({
       setInitialStatusState((current) => initialAgentOutputFeedTimedOutState(current, feedKey));
     }, INITIAL_OUTPUT_TIMEOUT_MS);
 
+    const requestStartLines = agentOutputFeedRequestStartLines({ liveStartLine: startLine });
     streamHandle = startHeartbeat({
       serviceEndpoint: stableEndpoint,
       sessionId,
-      startLine,
+      startLine: requestStartLines.streamStartLine,
       intervalMs: STREAM_OUTPUT_INTERVAL_MS,
       mode,
       purpose: "stream",
