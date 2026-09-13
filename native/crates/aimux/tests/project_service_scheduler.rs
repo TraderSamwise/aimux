@@ -1,4 +1,5 @@
 use aimux::async_runtime::init_process_runtime;
+use aimux::loop_watcher::loop_watcher_state_path;
 use aimux::project_api_contract::routes;
 use aimux::project_service::loop_watcher_task::LoopWatcherTask;
 use aimux::project_service::router::ProjectServiceRequestContext;
@@ -44,6 +45,7 @@ impl PeriodicTask for CountingTask {
         Box::pin(async move {
             self.runs.fetch_add(1, Ordering::SeqCst);
             assert!(!self.panics, "task panicked on purpose");
+            Ok(())
         })
     }
 }
@@ -389,6 +391,79 @@ struct SlowTask {
     cost_ms: i64,
 }
 
+struct FailingTask;
+
+impl PeriodicTask for FailingTask {
+    fn name(&self) -> &str {
+        "failing-work"
+    }
+    fn interval_ms(&self) -> i64 {
+        1_000
+    }
+    fn run<'a>(&'a mut self, _context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
+        Box::pin(async { Err("state file could not be read".to_owned()) })
+    }
+}
+
+#[test]
+fn scheduler_health_records_task_reported_failures_as_unhealthy_runs() {
+    let mut scheduler = PeriodicScheduler::new(vec![Box::new(FailingTask)], 0);
+    let ctx = context();
+
+    run_due_at(&mut scheduler, &ctx, 1_000);
+
+    let health = scheduler
+        .try_health_snapshot()
+        .expect("scheduler health")
+        .into_iter()
+        .find(|task| task.name == "failing-work")
+        .expect("failing task health");
+    assert_eq!(health.total_runs, 1);
+    assert!(health.last_completed_at_ms.is_some());
+    assert!(health.last_duration_ms.is_some());
+    assert_eq!(health.consecutive_failures, 1);
+    assert_eq!(health.consecutive_timeouts, 0);
+    assert_eq!(
+        health.last_error.as_deref(),
+        Some("state file could not be read")
+    );
+}
+
+#[test]
+fn corrupt_loop_watcher_state_records_scheduler_visible_failure() {
+    let root = unique_temp_dir("aimux-loop-watcher-health-corrupt");
+    let project_root = root.join("project");
+    let state_dir = root.join("state");
+    fs::create_dir_all(&project_root).expect("project root");
+    fs::create_dir_all(&state_dir).expect("state dir");
+    fs::write(loop_watcher_state_path(&state_dir), "{ not json").expect("corrupt watcher state");
+    let handle = ProjectSchedulerHandle::default();
+    let context = Arc::new(
+        ProjectServiceRequestContext::with_project_state_dir(&project_root, &state_dir)
+            .with_scheduler(handle.clone()),
+    );
+    let mut scheduler = PeriodicScheduler::with_handle(
+        vec![Box::new(LoopWatcherTask::new(Arc::clone(&context)))],
+        0,
+        handle,
+    );
+
+    run_due_at(&mut scheduler, &context, 15_000);
+
+    let health = scheduler
+        .try_health_snapshot()
+        .expect("scheduler health")
+        .into_iter()
+        .find(|task| task.name == "loop-watcher")
+        .expect("loop watcher health");
+    assert_eq!(health.total_runs, 1);
+    assert_eq!(health.consecutive_failures, 1);
+    assert_eq!(health.consecutive_timeouts, 0);
+    let error = health.last_error.as_deref().expect("last error");
+    assert!(error.contains("read loop watcher state"), "{error}");
+    assert!(error.contains("loop-watcher-state.json"), "{error}");
+}
+
 impl PeriodicTask for SlowTask {
     fn name(&self) -> &str {
         "slow-work"
@@ -400,6 +475,7 @@ impl PeriodicTask for SlowTask {
         Box::pin(async move {
             self.runs.fetch_add(1, Ordering::SeqCst);
             *self.clock.lock().unwrap() += self.cost_ms;
+            Ok(())
         })
     }
 }
@@ -451,6 +527,7 @@ impl PeriodicTask for EagerTask {
     fn run<'a>(&'a mut self, _context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
         Box::pin(async move {
             self.runs.fetch_add(1, Ordering::SeqCst);
+            Ok(())
         })
     }
     fn run_immediately(&self) -> bool {
@@ -525,6 +602,7 @@ impl PeriodicTask for WedgeTask {
             started.fetch_add(1, Ordering::SeqCst);
             std::future::pending::<()>().await;
             completed.fetch_add(1, Ordering::SeqCst);
+            Ok(())
         })
     }
 }
@@ -642,6 +720,7 @@ impl PeriodicTask for BlockingStartupTask {
                     break;
                 }
             }
+            Ok(())
         })
     }
 }
@@ -697,6 +776,7 @@ impl PeriodicTask for KickTask {
     fn run<'a>(&'a mut self, _context: &'a ProjectServiceRequestContext) -> PeriodicTaskFuture<'a> {
         Box::pin(async move {
             self.started.send(()).expect("test receiver should be open");
+            Ok(())
         })
     }
 }

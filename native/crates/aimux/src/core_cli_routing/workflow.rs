@@ -9,11 +9,12 @@ pub fn parse_core_loop_mutation_args<S: AsRef<str>>(args: &[S]) -> Option<CoreLo
         return None;
     }
     let subcommand = args.get(1).map(AsRef::as_ref)?;
-    if !matches!(subcommand, "add" | "remove") {
+    if !matches!(subcommand, "add" | "remove" | "pause" | "unpause") {
         return None;
     }
     let mut session_id = None;
     let mut goal = None;
+    let mut reason = None;
     let mut project = None;
     let mut json = false;
     let mut index = 2;
@@ -54,6 +55,19 @@ pub fn parse_core_loop_mutation_args<S: AsRef<str>>(args: &[S]) -> Option<CoreLo
             index += 1;
             continue;
         }
+        if arg == "--reason" && matches!(subcommand, "pause" | "unpause") {
+            reason = Some(required_value(args, index)?.to_owned());
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--reason=") {
+            if !matches!(subcommand, "pause" | "unpause") {
+                return None;
+            }
+            reason = Some(value.to_owned());
+            index += 1;
+            continue;
+        }
         if arg.starts_with('-') || session_id.is_some() {
             return None;
         }
@@ -64,6 +78,7 @@ pub fn parse_core_loop_mutation_args<S: AsRef<str>>(args: &[S]) -> Option<CoreLo
         subcommand: subcommand.to_owned(),
         session_id: session_id?,
         goal,
+        reason,
         project,
         json,
     })

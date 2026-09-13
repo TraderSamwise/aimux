@@ -100,13 +100,13 @@ impl PeriodicTask for LoopWatcherTask {
                         "loop-watcher",
                         Some(json!({ "error": error })),
                     );
-                    return;
+                    return Err(error);
                 }
             };
             let delivery_context = Arc::clone(&self.context);
             let Ok(topology) = read_runtime_topology(runtime_topology_path(&project_state_dir))
             else {
-                return;
+                return Ok(());
             };
             let metadata = serde_json::to_value(load_metadata_state(&project_state_dir))
                 .unwrap_or_else(|_| json!({ "sessions": {} }));
@@ -146,7 +146,9 @@ impl PeriodicTask for LoopWatcherTask {
                     "loop-watcher",
                     Some(json!({ "error": error })),
                 );
+                return Err(error);
             }
+            Ok(())
         })
     }
 }

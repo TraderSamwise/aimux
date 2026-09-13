@@ -4,7 +4,8 @@ use crate::core_text::{
     render_core_agent_ps_lines, render_core_agent_rename_lines, render_core_lifecycle_fork_lines,
     render_core_lifecycle_kill_lines, render_core_lifecycle_spawn_lines,
     render_core_lifecycle_stop_lines, render_core_loop_add_lines, render_core_loop_block_lines,
-    render_core_loop_done_lines, render_core_loop_list_lines, render_core_loop_remove_lines,
+    render_core_loop_done_lines, render_core_loop_list_lines, render_core_loop_pause_lines,
+    render_core_loop_remove_lines, render_core_loop_unpause_lines,
     render_core_overseer_status_lines, render_core_scribe_status_lines,
 };
 use crate::daemon::routing::{
@@ -139,6 +140,28 @@ pub fn route_agent_text_request(
                 active: false,
                 source: None,
                 render: render_core_loop_remove_lines,
+            },
+        ));
+    }
+    if method == "POST" && pathname == CORE_API_ROUTES.loop_pause_text {
+        return Some(loop_alert_text_route(
+            runtime,
+            &route_url,
+            body,
+            LoopAlertInput {
+                paused: true,
+                render: render_core_loop_pause_lines,
+            },
+        ));
+    }
+    if method == "POST" && pathname == CORE_API_ROUTES.loop_unpause_text {
+        return Some(loop_alert_text_route(
+            runtime,
+            &route_url,
+            body,
+            LoopAlertInput {
+                paused: false,
+                render: render_core_loop_unpause_lines,
             },
         ));
     }
@@ -825,6 +848,55 @@ pub fn loop_exit_text_route(
     text_or_json_lines(route_url, payload.clone(), &(input.render)(&payload))
 }
 
+pub fn loop_alert_text_route(
+    runtime: &mut impl DaemonAgentTextRuntime,
+    route_url: &DaemonRouteUrl,
+    body: Option<&Value>,
+    input: LoopAlertInput,
+) -> DaemonRouteResponse {
+    let project = match required_param(route_url, body, "project") {
+        Ok(project) => project,
+        Err(response) => return response,
+    };
+    let session_id = match required_param(route_url, body, "sessionId") {
+        Ok(session_id) => session_id,
+        Err(response) => return response,
+    };
+    let mut request = loop_base_request(
+        route_url,
+        body,
+        session_id.clone(),
+        optional_string(route_url, body, "source").unwrap_or_else(|| "human".into()),
+    );
+    request.insert("paused".into(), Value::Bool(input.paused));
+    insert_string_if_some(
+        &mut request,
+        "reason",
+        optional_string(route_url, body, "reason"),
+    );
+    let (json, project_root) = match unwrap_project_result(runtime.post_project_service_json(
+        &project,
+        project_routes::agents::LOOP_ALERTS,
+        Value::Object(request),
+        ProjectServicePostOptions::ensure(),
+    )) {
+        Ok(result) => result,
+        Err(response) => return response,
+    };
+    let returned_session_id =
+        match required_project_service_string(&json, "loop alert", "sessionId") {
+            Ok(session_id) => session_id,
+            Err(response) => return response,
+        };
+    let mut payload = Map::new();
+    payload.insert("ok".into(), Value::Bool(true));
+    payload.insert("projectRoot".into(), Value::String(project_root));
+    payload.insert("sessionId".into(), Value::String(returned_session_id));
+    payload.insert("paused".into(), Value::Bool(input.paused));
+    let payload = Value::Object(payload);
+    text_or_json_lines(route_url, payload.clone(), &(input.render)(&payload))
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct LifecycleStatusInput {
     action: &'static str,
@@ -838,6 +910,12 @@ pub struct LifecycleStatusInput {
 pub struct LoopInput {
     active: bool,
     source: Option<&'static str>,
+    render: fn(&Value) -> Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct LoopAlertInput {
+    paused: bool,
     render: fn(&Value) -> Vec<String>,
 }
 

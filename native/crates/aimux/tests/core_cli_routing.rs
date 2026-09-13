@@ -634,6 +634,23 @@ fn loop_parsers_match_mutation_and_exit_forms() {
     assert_eq!(remove.subcommand, "remove");
     assert_eq!(remove.session_id, "claude-1");
 
+    let pause = parse_core_loop_mutation_args(&[
+        "loop",
+        "pause",
+        "claude-1",
+        "--reason",
+        "human is intervening",
+    ])
+    .expect("loop pause");
+    assert_eq!(pause.subcommand, "pause");
+    assert_eq!(pause.session_id, "claude-1");
+    assert_eq!(pause.reason.as_deref(), Some("human is intervening"));
+
+    let unpause =
+        parse_core_loop_mutation_args(&["loop", "unpause", "claude-1"]).expect("loop unpause");
+    assert_eq!(unpause.subcommand, "unpause");
+    assert_eq!(unpause.session_id, "claude-1");
+
     let done = parse_core_loop_exit_args(&[
         "loop",
         "done",
@@ -657,6 +674,7 @@ fn loop_parsers_match_mutation_and_exit_forms() {
     assert!(
         parse_core_loop_mutation_args(&["loop", "remove", "claude-1", "--goal", "x"]).is_none()
     );
+    assert!(parse_core_loop_mutation_args(&["loop", "add", "claude-1", "--reason", "x"]).is_none());
     assert!(parse_core_loop_exit_args(&["loop", "done", "--session"]).is_none());
 }
 

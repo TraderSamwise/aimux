@@ -212,7 +212,9 @@ pub fn set_supervisor_role_with_options(
             sync_migration_fields(entry, updated_session);
             entry.insert("updatedAt".into(), Value::String(now.to_owned()));
         }
-        if !active {
+        if active {
+            clear_watch_binding_for_watched(registry, session_id);
+        } else {
             clear_watch_bindings_for_overseer(registry, session_id);
         }
         Ok(true)
@@ -319,6 +321,29 @@ pub fn bind_watch(
     now: &str,
 ) -> Result<WatchBindingResult, WatchBindingError> {
     let project_state_dir = project_state_dir.as_ref();
+    let registry =
+        load_agent_role_registry(project_state_dir).map_err(WatchBindingError::Registry)?;
+    if !active
+        && registry
+            .get("watchBindings")
+            .and_then(Value::as_object)
+            .and_then(|bindings| bindings.get(watched_session_id))
+            .and_then(Value::as_str)
+            == Some(overseer_session_id)
+    {
+        let registry = mutate_agent_role_registry(project_state_dir, |registry| {
+            object_field_mut(registry, "watchBindings").remove(watched_session_id);
+            sync_watching_lists(registry);
+            Ok(true)
+        })
+        .map_err(WatchBindingError::Registry)?;
+        return Ok(WatchBindingResult {
+            active,
+            overseer_session_id: overseer_session_id.to_owned(),
+            watched_session_id: watched_session_id.to_owned(),
+            watched_session_ids: watched_by(&registry, overseer_session_id),
+        });
+    }
     let overseer = metadata.sessions.get(overseer_session_id).ok_or_else(|| {
         WatchBindingError::SessionNotFound {
             session_id: overseer_session_id.to_owned(),
@@ -344,21 +369,18 @@ pub fn bind_watch(
         });
     }
 
-    if active {
-        let registry =
-            load_agent_role_registry(project_state_dir).map_err(WatchBindingError::Registry)?;
-        if let Some(current) = registry
+    if active
+        && let Some(current) = registry
             .get("watchBindings")
             .and_then(Value::as_object)
             .and_then(|bindings| bindings.get(watched_session_id))
             .and_then(Value::as_str)
             .filter(|current| *current != overseer_session_id)
-        {
-            return Err(WatchBindingError::AlreadyWatched {
-                watched_session_id: watched_session_id.to_owned(),
-                overseer_session_id: current.to_owned(),
-            });
-        }
+    {
+        return Err(WatchBindingError::AlreadyWatched {
+            watched_session_id: watched_session_id.to_owned(),
+            overseer_session_id: current.to_owned(),
+        });
     }
 
     let registry = mutate_agent_role_registry(project_state_dir, |registry| {
@@ -505,6 +527,16 @@ fn clear_watch_bindings_for_overseer(registry: &mut Value, overseer_session_id: 
     sync_watching_lists(registry);
 }
 
+fn clear_watch_binding_for_watched(registry: &mut Value, watched_session_id: &str) {
+    if let Some(bindings) = registry
+        .get_mut("watchBindings")
+        .and_then(Value::as_object_mut)
+    {
+        bindings.remove(watched_session_id);
+    }
+    sync_watching_lists(registry);
+}
+
 fn sync_watching_lists(registry: &mut Value) {
     let mut by_overseer: Map<String, Value> = Map::new();
     if let Some(bindings) = registry.get("watchBindings").and_then(Value::as_object) {
@@ -552,9 +584,8 @@ fn watched_by(registry: &Value, overseer_session_id: &str) -> Vec<String> {
         .map(|bindings| {
             bindings
                 .iter()
-                .filter_map(|(watched, overseer)| {
-                    (overseer.as_str() == Some(overseer_session_id)).then(|| watched.clone())
-                })
+                .filter(|(_, overseer)| overseer.as_str() == Some(overseer_session_id))
+                .map(|(watched, _)| watched.clone())
                 .collect()
         })
         .unwrap_or_default()

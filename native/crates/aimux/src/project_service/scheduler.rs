@@ -142,7 +142,8 @@ impl ProjectSchedulerHandle {
     }
 }
 
-pub type PeriodicTaskFuture<'a> = Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
+pub type PeriodicTaskRunResult = Result<(), String>;
+pub type PeriodicTaskFuture<'a> = Pin<Box<dyn Future<Output = PeriodicTaskRunResult> + Send + 'a>>;
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -173,6 +174,7 @@ struct PeriodicTaskHealthRecord {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum PeriodicTaskRunOutcome {
     Completed,
+    Failed { error: String },
     Panicked,
     TimedOut { timeout_ms: i64 },
 }
@@ -206,6 +208,15 @@ impl PeriodicTaskHealthRecord {
                 self.push_duration_sample(duration_ms);
                 self.consecutive_failures = 0;
                 self.consecutive_timeouts = 0;
+                self.last_error = None;
+            }
+            PeriodicTaskRunOutcome::Failed { error } => {
+                self.last_completed_at_ms = Some(completed_at_ms);
+                self.last_duration_ms = Some(duration_ms);
+                self.push_duration_sample(duration_ms);
+                self.consecutive_failures = self.consecutive_failures.saturating_add(1);
+                self.consecutive_timeouts = 0;
+                self.last_error = Some(limit_last_error(&error));
             }
             PeriodicTaskRunOutcome::Panicked => {
                 self.last_completed_at_ms = Some(completed_at_ms);
@@ -413,15 +424,13 @@ impl PeriodicScheduler {
             }
             let task = &mut scheduled.task;
             let started = Instant::now();
-            let panicked = run_task_future(task.run(context)).await;
+            let task_result = run_task_future(task.run(context)).await;
             let elapsed_ms = started.elapsed().as_millis().min(i64::MAX as u128) as i64;
             let finished_ms = clock();
             let interval_ms = interval_of(scheduled.task.as_ref());
-            let outcome = if panicked {
-                PeriodicTaskRunOutcome::Panicked
-            } else {
-                PeriodicTaskRunOutcome::Completed
-            };
+            let outcome = run_outcome_from_result(&task_result);
+            let panicked = task_result.panicked;
+            let failed_error = task_result.error.clone();
             self.handle.record_run(&name, outcome, elapsed_ms);
             scheduled.next_due_ms = finished_ms.saturating_add(interval_ms);
             log_at(
@@ -435,6 +444,8 @@ impl PeriodicScheduler {
                     "tickMultiple": scheduled.task.tick_multiple(),
                     "forced": forced,
                     "panicked": panicked,
+                    "failed": failed_error.is_some(),
+                    "error": failed_error.clone(),
                 })),
             );
             if panicked {
@@ -445,6 +456,17 @@ impl PeriodicScheduler {
                         "task": name.clone(),
                         "elapsedMs": elapsed_ms,
                         "intervalMs": interval_ms,
+                    })),
+                );
+            } else if let Some(error) = failed_error {
+                log_lifecycle_always(
+                    "watcher tick loop task failed",
+                    "watcher",
+                    Some(json!({
+                        "task": name.clone(),
+                        "elapsedMs": elapsed_ms,
+                        "intervalMs": interval_ms,
+                        "error": error,
                     })),
                 );
             } else if elapsed_ms >= SLOW_TASK_WARNING_MS {
@@ -579,9 +601,9 @@ async fn run_task_once(
     let interval_ms = interval_of(task.as_ref());
     let timeout_after = task.timeout();
     let started = Instant::now();
-    let (panicked, timed_out) =
+    let (task_result, timed_out) =
         match timeout(timeout_after, run_task_future(task.run(&context))).await {
-            Ok(panicked) => (panicked, false),
+            Ok(task_result) => (task_result, false),
             Err(_) => {
                 log_lifecycle_always(
                     "watcher tick loop task timed out",
@@ -591,7 +613,7 @@ async fn run_task_once(
                         "timeoutMs": timeout_after.as_millis(),
                     })),
                 );
-                (false, true)
+                (TaskFutureResult::completed(), true)
             }
         };
     let elapsed_ms = started.elapsed().as_millis().min(i64::MAX as u128) as i64;
@@ -599,8 +621,10 @@ async fn run_task_once(
         PeriodicTaskRunOutcome::TimedOut {
             timeout_ms: timeout_after.as_millis().min(i64::MAX as u128) as i64,
         }
-    } else if panicked {
+    } else if task_result.panicked {
         PeriodicTaskRunOutcome::Panicked
+    } else if let Some(error) = task_result.error.clone() {
+        PeriodicTaskRunOutcome::Failed { error }
     } else {
         PeriodicTaskRunOutcome::Completed
     };
@@ -615,11 +639,13 @@ async fn run_task_once(
             "intervalMs": interval_ms,
             "tickMultiple": task.tick_multiple(),
             "forced": forced,
-            "panicked": panicked,
+            "panicked": task_result.panicked,
             "timedOut": timed_out,
+            "failed": task_result.error.is_some(),
+            "error": task_result.error.clone(),
         })),
     );
-    if panicked {
+    if task_result.panicked {
         log_lifecycle_always(
             "watcher tick loop task panicked",
             "watcher",
@@ -627,6 +653,17 @@ async fn run_task_once(
                 "task": name,
                 "elapsedMs": elapsed_ms,
                 "intervalMs": interval_ms,
+            })),
+        );
+    } else if let Some(error) = task_result.error {
+        log_lifecycle_always(
+            "watcher tick loop task failed",
+            "watcher",
+            Some(json!({
+                "task": name,
+                "elapsedMs": elapsed_ms,
+                "intervalMs": interval_ms,
+                "error": error,
             })),
         );
     } else if elapsed_ms >= SLOW_TASK_WARNING_MS {
@@ -643,13 +680,45 @@ async fn run_task_once(
     task
 }
 
-async fn run_task_future(future: PeriodicTaskFuture<'_>) -> bool {
+#[derive(Debug, Clone, Default)]
+struct TaskFutureResult {
+    panicked: bool,
+    error: Option<String>,
+}
+
+impl TaskFutureResult {
+    fn completed() -> Self {
+        Self {
+            panicked: false,
+            error: None,
+        }
+    }
+}
+
+fn run_outcome_from_result(result: &TaskFutureResult) -> PeriodicTaskRunOutcome {
+    if result.panicked {
+        PeriodicTaskRunOutcome::Panicked
+    } else if let Some(error) = result.error.clone() {
+        PeriodicTaskRunOutcome::Failed { error }
+    } else {
+        PeriodicTaskRunOutcome::Completed
+    }
+}
+
+async fn run_task_future(future: PeriodicTaskFuture<'_>) -> TaskFutureResult {
     let mut future = future;
     std::future::poll_fn(move |cx| {
         match catch_unwind(AssertUnwindSafe(|| future.as_mut().poll(cx))) {
-            Ok(Poll::Ready(())) => Poll::Ready(false),
+            Ok(Poll::Ready(Ok(()))) => Poll::Ready(TaskFutureResult::completed()),
+            Ok(Poll::Ready(Err(error))) => Poll::Ready(TaskFutureResult {
+                panicked: false,
+                error: Some(error),
+            }),
             Ok(Poll::Pending) => Poll::Pending,
-            Err(_) => Poll::Ready(true),
+            Err(_) => Poll::Ready(TaskFutureResult {
+                panicked: true,
+                error: None,
+            }),
         }
     })
     .await

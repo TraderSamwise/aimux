@@ -1,8 +1,13 @@
 use serde_json::{Map, Value, json};
+use std::fs;
 use std::path::Path;
 use std::time::Instant;
 
-use crate::daemon_state::{load_metadata_state, mutate_metadata_state};
+use crate::daemon_state::{MetadataState, metadata_state_path, mutate_metadata_state};
+use crate::loop_watcher::{
+    LoopAlertPauseProvenance, load_loop_watcher_state, loop_pause_key_from_loop_metadata,
+    loop_watcher_state_path, save_loop_watcher_state,
+};
 use crate::project_api_contract::routes;
 use crate::runtime_topology::{runtime_topology_path, update_runtime_topology};
 
@@ -39,11 +44,82 @@ pub fn route_agent_control_request(
     let body = body.unwrap_or(&Value::Null);
     match pathname {
         routes::agents::LOOP => Some(route_loop(context, body)),
+        routes::agents::LOOP_ALERTS => Some(route_loop_alerts(context, body)),
         routes::agents::OVERSEER => Some(route_overseer(context, body)),
         routes::agents::SCRIBE => Some(route_scribe(context, body)),
         routes::agents::WATCH => Some(route_watch(context, body)),
         _ => None,
     }
+}
+
+fn route_loop_alerts(
+    context: &ProjectServiceRequestContext,
+    body: &Value,
+) -> ProjectServiceDispatchResponse {
+    let Some(session_id) = body_trimmed_string(body, "sessionId").filter(|value| !value.is_empty())
+    else {
+        return json_error(400, "sessionId is required");
+    };
+    let Some(paused) = body.get("paused").and_then(Value::as_bool) else {
+        return json_error(400, "paused (boolean) is required");
+    };
+    let state_path = loop_watcher_state_path(context.project_state_dir());
+    let mut watcher = match load_loop_watcher_state(&state_path) {
+        Ok(watcher) => watcher,
+        Err(error) => return json_error(500, error),
+    };
+
+    if paused {
+        let metadata = match load_metadata_state_strict(&context.project_state_dir()) {
+            Ok(metadata) => metadata,
+            Err(error) => return metadata_unavailable_error(error),
+        };
+        let Some(loop_meta) = metadata
+            .sessions
+            .get(&session_id)
+            .and_then(|session| session.get("loop"))
+        else {
+            return json_error(
+                409,
+                format!("cannot pause loop alerts for {session_id}: session is not in a loop"),
+            );
+        };
+        let Some(loop_key) = loop_pause_key_from_loop_metadata(loop_meta) else {
+            return json_error(
+                409,
+                format!("cannot pause loop alerts for {session_id}: loop is not active"),
+            );
+        };
+        let pause = watcher.pause_loop_alerts(
+            &session_id,
+            loop_key,
+            super::scheduler::scheduler_now_ms(),
+            LoopAlertPauseProvenance {
+                paused_by: body_trimmed_string(body, "updatedBy"),
+                paused_by_session_id: body_trimmed_string(body, "updatedBySessionId"),
+                paused_by_role: body_trimmed_string(body, "updatedByRole"),
+                reason: body_trimmed_string(body, "reason"),
+            },
+        );
+        if let Err(error) = save_loop_watcher_state(&state_path, &watcher) {
+            return json_error(500, error);
+        }
+        return ProjectServiceDispatchResponse::json(
+            200,
+            json!({ "ok": true, "sessionId": session_id, "paused": true, "pause": pause }),
+        );
+    }
+
+    let cleared = watcher.unpause_loop_alerts(&session_id);
+    if cleared.is_some()
+        && let Err(error) = save_loop_watcher_state(&state_path, &watcher)
+    {
+        return json_error(500, error);
+    }
+    ProjectServiceDispatchResponse::json(
+        200,
+        json!({ "ok": true, "sessionId": session_id, "paused": false, "cleared": cleared.is_some() }),
+    )
 }
 
 pub fn set_session_loop_metadata_at(
@@ -552,7 +628,14 @@ fn route_watch(
         Err(error) => return lifecycle_watch_error_response(error),
     };
     let started_at = Instant::now();
-    let metadata = load_metadata_state(context.project_state_dir());
+    let metadata = match load_metadata_state_strict(&context.project_state_dir()) {
+        Ok(metadata) => metadata,
+        Err(error) => {
+            let error = WatchBindingError::Metadata(error);
+            permit.fail(started_at, error.message());
+            return watch_binding_error_response(error);
+        }
+    };
     match bind_watch(
         context.project_state_dir(),
         &metadata,
@@ -608,6 +691,25 @@ fn watch_binding_error_response(error: WatchBindingError) -> ProjectServiceDispa
     }
     body.insert("details".into(), details);
     ProjectServiceDispatchResponse::json(error.status(), Value::Object(body))
+}
+
+fn metadata_unavailable_error(error: impl Into<String>) -> ProjectServiceDispatchResponse {
+    ProjectServiceDispatchResponse::json(
+        500,
+        json!({
+            "ok": false,
+            "reason": "metadata-unavailable",
+            "error": error.into()
+        }),
+    )
+}
+
+fn load_metadata_state_strict(project_state_dir: &Path) -> Result<MetadataState, String> {
+    let path = metadata_state_path(project_state_dir);
+    let text = fs::read_to_string(&path)
+        .map_err(|error| format!("read metadata state {}: {error}", path.display()))?;
+    serde_json::from_str(&text)
+        .map_err(|error| format!("parse metadata state {}: {error}", path.display()))
 }
 
 fn lifecycle_watch_error_response(error: LifecycleMutationError) -> ProjectServiceDispatchResponse {

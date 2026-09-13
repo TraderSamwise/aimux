@@ -1,6 +1,6 @@
 use aimux::loop_watcher::{
-    LoopDeliveryOutcome, LoopSend, LoopWatcher, load_loop_watcher_state, loop_watcher_state_path,
-    save_loop_watcher_state,
+    LoopAlertPauseProvenance, LoopDeliveryOutcome, LoopSend, LoopWatcher, load_loop_watcher_state,
+    loop_pause_key_from_loop_metadata, loop_watcher_state_path, save_loop_watcher_state,
 };
 use serde_json::{Value, json};
 use std::fs;
@@ -386,6 +386,97 @@ fn unchanged_candidate_reminders_do_not_bypass_the_cooldown_floor() {
     );
     assert!(watcher.scan(&input, NOW + 45_000, &mut ok).is_empty());
     assert_eq!(watcher.scan(&input, NOW + 60_000, &mut ok).len(), 1);
+}
+
+#[test]
+fn paused_loop_agent_is_removed_from_stopped_reminders_but_summarized_by_cadence() {
+    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    boss_meta["overseer"] = json!(true);
+    let (worker, worker_meta) = looping_session("worker", "idle");
+    let input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta.clone() } }),
+        json!({ "nudgeCooldownMs": 0, "stoppedDwellMs": 0 }),
+    );
+    let pause_key =
+        loop_pause_key_from_loop_metadata(&worker_meta["loop"]).expect("active loop pause key");
+
+    let mut watcher = LoopWatcher::new();
+    watcher.pause_loop_alerts(
+        "worker",
+        pause_key,
+        NOW,
+        LoopAlertPauseProvenance::default(),
+    );
+    let mut ok = |_: &LoopSend| true;
+    for offset in 0..9 {
+        assert!(
+            watcher.scan(&input, NOW + offset, &mut ok).is_empty(),
+            "paused loop agents must not keep sending stopped-agent reminders"
+        );
+    }
+    let sends = watcher.scan(&input, NOW + 10, &mut ok);
+    assert_eq!(sends.len(), 1);
+    assert_eq!(sends[0].session_id, "boss");
+    assert!(sends[0].text.contains("loop alerts paused"));
+    assert!(sends[0].text.contains("worker"));
+}
+
+#[test]
+fn unpausing_loop_alerts_restores_stopped_agent_reminders() {
+    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    boss_meta["overseer"] = json!(true);
+    let (worker, worker_meta) = looping_session("worker", "idle");
+    let input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta.clone() } }),
+        json!({ "nudgeCooldownMs": 0, "stoppedDwellMs": 0 }),
+    );
+    let pause_key =
+        loop_pause_key_from_loop_metadata(&worker_meta["loop"]).expect("active loop pause key");
+
+    let mut watcher = LoopWatcher::new();
+    watcher.pause_loop_alerts(
+        "worker",
+        pause_key,
+        NOW,
+        LoopAlertPauseProvenance::default(),
+    );
+    assert!(watcher.unpause_loop_alerts("worker").is_some());
+    let mut ok = |_: &LoopSend| true;
+    assert_eq!(watcher.scan(&input, NOW + 1, &mut ok).len(), 1);
+}
+
+#[test]
+fn stale_pause_for_recycled_session_id_is_gc_d_and_does_not_mute_new_loop_episode() {
+    let (boss, mut boss_meta) = looping_session("boss", "idle");
+    boss_meta["overseer"] = json!(true);
+    let (worker, mut worker_meta) = looping_session("worker", "idle");
+    let old_pause_key =
+        loop_pause_key_from_loop_metadata(&worker_meta["loop"]).expect("active loop pause key");
+    worker_meta["loop"]["since"] = json!("2026-09-09T00:01:00.000Z");
+    worker_meta["loop"]["goal"] = json!("different work");
+    worker_meta["loop"]["source"] = json!("task");
+    let input = input_with_config(
+        vec![boss, worker],
+        json!({ "sessions": { "boss": boss_meta, "worker": worker_meta } }),
+        json!({ "nudgeCooldownMs": 0, "stoppedDwellMs": 0 }),
+    );
+
+    let mut watcher = LoopWatcher::new();
+    watcher.pause_loop_alerts(
+        "worker",
+        old_pause_key,
+        NOW,
+        LoopAlertPauseProvenance::default(),
+    );
+    let mut ok = |_: &LoopSend| true;
+    assert_eq!(
+        watcher.scan(&input, NOW + 1, &mut ok).len(),
+        1,
+        "a stale pause from an older loop episode must not mute a recycled session id"
+    );
+    assert!(watcher.paused_loop_alert("worker").is_none());
 }
 
 #[test]

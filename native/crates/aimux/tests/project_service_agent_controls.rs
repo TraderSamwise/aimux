@@ -1,10 +1,13 @@
-use aimux::daemon_state::{MetadataState, load_metadata_state, save_metadata_state};
+use aimux::daemon_state::{
+    MetadataState, load_metadata_state, metadata_state_path, save_metadata_state,
+};
+use aimux::loop_watcher::{load_loop_watcher_state, loop_watcher_state_path};
 use aimux::project_api_contract::routes;
 use aimux::project_service::agent_roles::load_agent_role_registry;
 use aimux::project_service::router::{ProjectServiceRequestContext, route_project_service_request};
 use serde_json::json;
 use std::collections::BTreeMap;
-use std::fs::remove_dir_all;
+use std::fs::{create_dir_all, remove_dir_all, write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -100,6 +103,127 @@ fn loop_provenance_truncates_like_javascript_utf16_slice() {
         .unwrap();
     assert_eq!(updated_by.encode_utf16().count(), 500);
     assert_eq!(reason.encode_utf16().count(), 2000);
+    cleanup(project);
+}
+
+#[test]
+fn loop_alert_pause_requires_active_loop_and_persists_under_watcher_state() {
+    let project = temp_project("loop-alert-pause");
+    let state_dir = project.join("state");
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([(
+                "worker-1".into(),
+                json!({
+                    "loop": {
+                        "active": true,
+                        "since": "2026-09-09T00:00:00.000Z",
+                        "goal": "ship",
+                        "source": "human"
+                    }
+                }),
+            )]),
+        },
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let pause = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::LOOP_ALERTS,
+        Some(&json!({
+            "sessionId": "worker-1",
+            "paused": true,
+            "updatedBy": "sam",
+            "reason": "human is intervening"
+        })),
+    );
+    assert_eq!(pause.status, 200);
+    assert_eq!(pause.body["paused"], true);
+    assert_eq!(pause.body["pause"]["pausedBy"], "sam");
+    assert_eq!(pause.body["pause"]["reason"], "human is intervening");
+
+    let watcher = load_loop_watcher_state(loop_watcher_state_path(&state_dir))
+        .expect("watcher state must load");
+    assert!(watcher.paused_loop_alert("worker-1").is_some());
+
+    let unpause = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::LOOP_ALERTS,
+        Some(&json!({ "sessionId": "worker-1", "paused": false })),
+    );
+    assert_eq!(unpause.status, 200);
+    assert_eq!(unpause.body["paused"], false);
+    assert_eq!(unpause.body["cleared"], true);
+    let watcher = load_loop_watcher_state(loop_watcher_state_path(&state_dir))
+        .expect("watcher state must load");
+    assert!(watcher.paused_loop_alert("worker-1").is_none());
+    cleanup(project);
+}
+
+#[test]
+fn loop_alert_pause_for_non_looping_agent_fails_loud_instead_of_creating_stale_pause() {
+    let project = temp_project("loop-alert-pause-missing-loop");
+    let state_dir = project.join("state");
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([("worker-1".into(), json!({}))]),
+        },
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let pause = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::LOOP_ALERTS,
+        Some(&json!({ "sessionId": "worker-1", "paused": true })),
+    );
+    assert_eq!(pause.status, 409);
+    assert!(
+        pause.body["error"]
+            .as_str()
+            .unwrap()
+            .contains("session is not in a loop")
+    );
+    cleanup(project);
+}
+
+#[test]
+fn loop_alert_pause_reports_metadata_unavailable_instead_of_not_in_loop_when_metadata_is_corrupt() {
+    let project = temp_project("loop-alert-pause-corrupt-metadata");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).unwrap();
+    write(metadata_state_path(&state_dir), "{not-json").unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let pause = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::LOOP_ALERTS,
+        Some(&json!({ "sessionId": "worker-1", "paused": true })),
+    );
+
+    assert_eq!(pause.status, 500);
+    assert_eq!(pause.body["reason"], "metadata-unavailable");
+    assert!(
+        pause.body["error"]
+            .as_str()
+            .unwrap()
+            .contains("parse metadata state")
+    );
+    assert!(
+        !pause.body["error"]
+            .as_str()
+            .unwrap()
+            .contains("session is not in a loop")
+    );
     cleanup(project);
 }
 
@@ -331,6 +455,128 @@ fn watch_route_binds_coder_to_one_overseer() {
 }
 
 #[test]
+fn watch_route_unbinds_existing_binding_even_after_roles_drift() {
+    let project = temp_project("watch-unbind-after-role-drift");
+    let state_dir = project.join("state");
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([
+                (
+                    "boss".into(),
+                    json!({ "overseer": true, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+                (
+                    "worker".into(),
+                    json!({ "tool": "codex", "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+            ]),
+        },
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let bind = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::WATCH,
+        Some(&json!({
+            "overseerSessionId": "boss",
+            "watchedSessionId": "worker",
+            "active": true
+        })),
+    );
+    assert_eq!(bind.status, 200);
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([
+                (
+                    "boss".into(),
+                    json!({ "tool": "codex", "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+                (
+                    "worker".into(),
+                    json!({ "scribe": true, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+            ]),
+        },
+    )
+    .unwrap();
+
+    let unbind = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::WATCH,
+        Some(&json!({
+            "overseerSessionId": "boss",
+            "watchedSessionId": "worker",
+            "active": false
+        })),
+    );
+
+    assert_eq!(unbind.status, 200);
+    assert_eq!(unbind.body["ok"], true);
+    assert_eq!(unbind.body["active"], false);
+    let registry = load_agent_role_registry(&state_dir).expect("role registry");
+    assert!(registry.pointer("/watchBindings/worker").is_none());
+    assert!(registry.pointer("/sessions/boss/watching").is_none());
+    cleanup(project);
+}
+
+#[test]
+fn supervisor_promotion_clears_existing_watched_binding_for_promoted_agent() {
+    let project = temp_project("watch-promote-clears-watched-binding");
+    let state_dir = project.join("state");
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([
+                (
+                    "boss".into(),
+                    json!({ "overseer": true, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+                (
+                    "worker".into(),
+                    json!({ "tool": "codex", "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+            ]),
+        },
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let bind = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::WATCH,
+        Some(&json!({
+            "overseerSessionId": "boss",
+            "watchedSessionId": "worker",
+            "active": true
+        })),
+    );
+    assert_eq!(bind.status, 200);
+
+    let promote = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::SCRIBE,
+        Some(&json!({ "sessionId": "worker", "active": true })),
+    );
+
+    assert_eq!(promote.status, 200);
+    let registry = load_agent_role_registry(&state_dir).expect("role registry");
+    assert!(registry.pointer("/watchBindings/worker").is_none());
+    assert!(registry.pointer("/sessions/boss/watching").is_none());
+    assert_eq!(registry["sessions"]["worker"]["role"], "scribe");
+    cleanup(project);
+}
+
+#[test]
 fn demoting_watching_overseer_requires_explicit_binding_release() {
     let project = temp_project("watch-demote");
     let state_dir = project.join("state");
@@ -445,11 +691,78 @@ fn watch_route_refuses_non_coder_watched_agent() {
     assert_eq!(response.body["reason"], "watched-agent-must-be-coder");
     assert_eq!(response.body["details"]["role"], "scribe");
     assert!(
-        !load_agent_role_registry(&state_dir)
+        load_agent_role_registry(&state_dir)
             .expect("role registry")
             .pointer("/watchBindings/scribe")
-            .is_some()
+            .is_none()
     );
+    cleanup(project);
+}
+
+#[test]
+fn watch_route_reports_metadata_unavailable_instead_of_session_not_found_when_metadata_is_corrupt()
+{
+    let project = temp_project("watch-corrupt-metadata");
+    let state_dir = project.join("state");
+    create_dir_all(&state_dir).unwrap();
+    write(metadata_state_path(&state_dir), "{not-json").unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let response = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::WATCH,
+        Some(&json!({
+            "overseerSessionId": "boss",
+            "watchedSessionId": "worker",
+            "active": true
+        })),
+    );
+
+    assert_eq!(response.status, 500);
+    assert_eq!(response.body["ok"], false);
+    assert_eq!(response.body["reason"], "metadata-unavailable");
+    assert!(
+        response.body["error"]
+            .as_str()
+            .unwrap()
+            .contains("parse metadata state")
+    );
+    cleanup(project);
+}
+
+#[test]
+fn watch_route_still_reports_session_not_found_for_genuinely_absent_session() {
+    let project = temp_project("watch-missing-session");
+    let state_dir = project.join("state");
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([(
+                "boss".into(),
+                json!({ "overseer": true, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+            )]),
+        },
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let response = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::WATCH,
+        Some(&json!({
+            "overseerSessionId": "boss",
+            "watchedSessionId": "worker",
+            "active": true
+        })),
+    );
+
+    assert_eq!(response.status, 404);
+    assert_eq!(response.body["ok"], false);
+    assert_eq!(response.body["reason"], "session-not-found");
+    assert_eq!(response.body["sessionId"], "worker");
     cleanup(project);
 }
 

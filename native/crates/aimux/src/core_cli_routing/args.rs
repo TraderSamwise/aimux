@@ -138,6 +138,8 @@ pub struct CoreLoopMutationArgs {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub goal: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub project: Option<String>,
     pub json: bool,
 }
