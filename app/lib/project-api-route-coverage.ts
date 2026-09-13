@@ -58,6 +58,7 @@ export const APP_PROJECT_ROUTE_COVERAGE = {
   "/agents/loop": "client-api",
   "/agents/overseer": "client-api",
   "/agents/scribe": "client-api",
+  "/agents/watch": "client-api",
   "/agents/teammates": "client-api",
   "/agents/teammates/create": "client-api",
   "/agents/teammates/tasks": "client-api",
