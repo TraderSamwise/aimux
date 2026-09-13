@@ -44,9 +44,7 @@ export function normalizeComposerDraft(draft: string): string | null {
 }
 
 export function shouldSubmitComposerKey(event: ComposerKeyEventLike): boolean {
-  return (
-    event.key === "Enter" && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey
-  );
+  return event.key === "Enter" && !event.ctrlKey && !event.metaKey && !event.altKey;
 }
 
 export function getComposerSendText(state: ComposerSendState): string | null {
