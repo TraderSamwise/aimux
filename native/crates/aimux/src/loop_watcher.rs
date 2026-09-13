@@ -361,9 +361,7 @@ impl LoopWatcher {
             self.last_paused_summary_signature = None;
             return None;
         }
-        let Some(overseer_id) = overseer_id.filter(|id| session_exists(input, id)) else {
-            return None;
-        };
+        let overseer_id = overseer_id.filter(|id| session_exists(input, id))?;
         self.paused_summary_ticks = self.paused_summary_ticks.saturating_add(1);
         let signature = format!("paused:{}", candidate_signature(paused_candidates));
         let due_by_cadence = self.paused_summary_ticks >= PAUSED_SUMMARY_TICK_CADENCE;

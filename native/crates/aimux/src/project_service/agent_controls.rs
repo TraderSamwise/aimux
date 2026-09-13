@@ -1,8 +1,9 @@
 use serde_json::{Map, Value, json};
+use std::fs;
 use std::path::Path;
 use std::time::Instant;
 
-use crate::daemon_state::{load_metadata_state, mutate_metadata_state};
+use crate::daemon_state::{MetadataState, metadata_state_path, mutate_metadata_state};
 use crate::loop_watcher::{
     LoopAlertPauseProvenance, load_loop_watcher_state, loop_pause_key_from_loop_metadata,
     loop_watcher_state_path, save_loop_watcher_state,
@@ -66,7 +67,10 @@ fn route_loop_alerts(
     };
 
     if paused {
-        let metadata = load_metadata_state(context.project_state_dir());
+        let metadata = match load_metadata_state_strict(&context.project_state_dir()) {
+            Ok(metadata) => metadata,
+            Err(error) => return metadata_unavailable_error(error),
+        };
         let Some(loop_meta) = metadata
             .sessions
             .get(&session_id)
@@ -564,7 +568,14 @@ fn route_watch(
         Err(error) => return lifecycle_watch_error_response(error),
     };
     let started_at = Instant::now();
-    let metadata = load_metadata_state(context.project_state_dir());
+    let metadata = match load_metadata_state_strict(&context.project_state_dir()) {
+        Ok(metadata) => metadata,
+        Err(error) => {
+            let error = WatchBindingError::Metadata(error);
+            permit.fail(started_at, error.message());
+            return watch_binding_error_response(error);
+        }
+    };
     match bind_watch(
         context.project_state_dir(),
         &metadata,
@@ -620,6 +631,25 @@ fn watch_binding_error_response(error: WatchBindingError) -> ProjectServiceDispa
     }
     body.insert("details".into(), details);
     ProjectServiceDispatchResponse::json(error.status(), Value::Object(body))
+}
+
+fn metadata_unavailable_error(error: impl Into<String>) -> ProjectServiceDispatchResponse {
+    ProjectServiceDispatchResponse::json(
+        500,
+        json!({
+            "ok": false,
+            "reason": "metadata-unavailable",
+            "error": error.into()
+        }),
+    )
+}
+
+fn load_metadata_state_strict(project_state_dir: &Path) -> Result<MetadataState, String> {
+    let path = metadata_state_path(project_state_dir);
+    let text = fs::read_to_string(&path)
+        .map_err(|error| format!("read metadata state {}: {error}", path.display()))?;
+    serde_json::from_str(&text)
+        .map_err(|error| format!("parse metadata state {}: {error}", path.display()))
 }
 
 fn lifecycle_watch_error_response(error: LifecycleMutationError) -> ProjectServiceDispatchResponse {
