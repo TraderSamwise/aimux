@@ -129,6 +129,7 @@ import { CORE_API_ROUTES } from "../../src/core-command-contract";
 export type {
   AgentLane,
   AgentRole,
+  AgentRoleMutationRefusalReason,
   AgentRoleState,
   AgentSupervisorRole,
   AgentWatchInput,

@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::atomic_write::write_json_atomic;
-use crate::daemon_state::MetadataState;
+use crate::daemon_state::{MetadataState, load_metadata_state};
 use crate::state_update_lock::acquire_state_update_lock;
 use crate::team_contract::{agent_lane, agent_role, agent_role_state};
 
@@ -65,13 +65,127 @@ pub fn set_supervisor_role(
     role: &str,
     active: bool,
     now: &str,
-) -> Result<Value, String> {
+) -> Result<Value, SupervisorRoleError> {
+    set_supervisor_role_with_options(
+        project_state_dir,
+        session_id,
+        role,
+        active,
+        now,
+        SupervisorRoleOptions::default(),
+    )
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SupervisorRoleOptions {
+    pub worktree_path: Option<String>,
+    pub release_bindings: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SupervisorRoleError {
+    UnsupportedRole(String),
+    TargetWorktreeRequired {
+        session_id: String,
+    },
+    ActiveWatchBindings {
+        overseer_session_id: String,
+        watched_session_ids: Vec<String>,
+    },
+    Metadata(String),
+    Registry(String),
+}
+
+impl SupervisorRoleError {
+    pub fn status(&self) -> u16 {
+        match self {
+            Self::UnsupportedRole(_) | Self::TargetWorktreeRequired { .. } => 400,
+            Self::ActiveWatchBindings { .. } => 409,
+            Self::Metadata(_) | Self::Registry(_) => 500,
+        }
+    }
+
+    pub fn message(&self) -> String {
+        match self {
+            Self::UnsupportedRole(role) => format!("unsupported supervisor role: {role}"),
+            Self::TargetWorktreeRequired { session_id } => {
+                format!("demoting supervisor {session_id} requires worktreePath")
+            }
+            Self::ActiveWatchBindings {
+                overseer_session_id,
+                watched_session_ids,
+            } => format!(
+                "supervisor {overseer_session_id} still watches {} agent(s): {}",
+                watched_session_ids.len(),
+                watched_session_ids.join(", ")
+            ),
+            Self::Metadata(error) | Self::Registry(error) => error.clone(),
+        }
+    }
+
+    pub fn reason(&self) -> &'static str {
+        match self {
+            Self::UnsupportedRole(_) => "unsupported-role",
+            Self::TargetWorktreeRequired { .. } => "target-worktree-required",
+            Self::ActiveWatchBindings { .. } => "active-watch-bindings",
+            Self::Metadata(_) => "metadata-unavailable",
+            Self::Registry(_) => "role-registry-unavailable",
+        }
+    }
+
+    pub fn details(&self) -> Value {
+        match self {
+            Self::UnsupportedRole(role) => json!({ "role": role }),
+            Self::TargetWorktreeRequired { session_id } => json!({ "sessionId": session_id }),
+            Self::ActiveWatchBindings {
+                overseer_session_id,
+                watched_session_ids,
+            } => json!({
+                "overseerSessionId": overseer_session_id,
+                "watchedSessionIds": watched_session_ids,
+            }),
+            Self::Metadata(error) | Self::Registry(error) => json!({ "error": error }),
+        }
+    }
+}
+
+pub fn set_supervisor_role_with_options(
+    project_state_dir: impl AsRef<Path>,
+    session_id: &str,
+    role: &str,
+    active: bool,
+    now: &str,
+    options: SupervisorRoleOptions,
+) -> Result<Value, SupervisorRoleError> {
     let project_state_dir = project_state_dir.as_ref();
     let key = match role {
         "overseer" | "scribe" => role,
-        _ => return Err(format!("unsupported supervisor role: {role}")),
+        _ => return Err(SupervisorRoleError::UnsupportedRole(role.to_owned())),
     };
-    set_role_metadata_at(project_state_dir, session_id, key, active, now)?;
+    let existing_registry =
+        load_agent_role_registry(project_state_dir).map_err(SupervisorRoleError::Registry)?;
+    let watched_before = watched_by(&existing_registry, session_id);
+    if !active && !watched_before.is_empty() && !options.release_bindings {
+        return Err(SupervisorRoleError::ActiveWatchBindings {
+            overseer_session_id: session_id.to_owned(),
+            watched_session_ids: watched_before,
+        });
+    }
+    if !active
+        && options
+            .worktree_path
+            .as_deref()
+            .unwrap_or_default()
+            .is_empty()
+    {
+        return Err(SupervisorRoleError::TargetWorktreeRequired {
+            session_id: session_id.to_owned(),
+        });
+    }
+    set_role_metadata_at(project_state_dir, session_id, key, active, now, &options)
+        .map_err(SupervisorRoleError::Metadata)?;
+    let updated_metadata_state = load_metadata_state(project_state_dir);
+    let updated_session = updated_metadata_state.sessions.get(session_id);
     mutate_agent_role_registry(project_state_dir, |registry| {
         {
             let sessions = object_field_mut(registry, "sessions");
@@ -86,9 +200,16 @@ pub fn set_supervisor_role(
                 entry.insert("lane".into(), json!({ "kind": "supervisor" }));
             } else {
                 entry.insert("role".into(), Value::String("coder".to_owned()));
-                entry.insert("lane".into(), json!({ "kind": "worktree" }));
+                entry.insert(
+                    "lane".into(),
+                    json!({
+                        "kind": "worktree",
+                        "worktreePath": options.worktree_path.as_deref().unwrap_or_default()
+                    }),
+                );
                 entry.remove("watching");
             }
+            sync_migration_fields(entry, updated_session);
             entry.insert("updatedAt".into(), Value::String(now.to_owned()));
         }
         if !active {
@@ -96,6 +217,7 @@ pub fn set_supervisor_role(
         }
         Ok(true)
     })
+    .map_err(SupervisorRoleError::Registry)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -272,6 +394,28 @@ pub fn bind_watch(
     })
 }
 
+pub fn sync_agent_role_registry_session_from_metadata(
+    project_state_dir: impl AsRef<Path>,
+    session_id: &str,
+) -> Result<(), String> {
+    let project_state_dir = project_state_dir.as_ref();
+    let metadata = load_metadata_state(project_state_dir);
+    let session = metadata.sessions.get(session_id);
+    mutate_agent_role_registry(project_state_dir, |registry| {
+        let Some(entry) = registry
+            .get_mut("sessions")
+            .and_then(Value::as_object_mut)
+            .and_then(|sessions| sessions.get_mut(session_id))
+            .and_then(Value::as_object_mut)
+        else {
+            return Ok(false);
+        };
+        sync_migration_fields(entry, session);
+        Ok(true)
+    })
+    .map(|_| ())
+}
+
 pub fn overlay_agent_role_registry(agent: &mut Map<String, Value>, registry: Option<&Value>) {
     let Some(id) = agent.get("id").and_then(Value::as_str).map(str::to_owned) else {
         return;
@@ -293,6 +437,16 @@ pub fn overlay_agent_role_registry(agent: &mut Map<String, Value>, registry: Opt
         }
         if let Some(watching) = entry.get("watching").cloned() {
             agent.insert("watching".into(), watching);
+        }
+        for key in [
+            "pendingRelaunchForRole",
+            "effectiveRole",
+            "effectiveLane",
+            "runtimeWorkingDirectory",
+        ] {
+            if let Some(value) = entry.get(key).cloned() {
+                agent.insert(key.into(), value);
+            }
         }
     }
     if let Some(watched_by) = registry
@@ -412,6 +566,7 @@ fn set_role_metadata_at(
     role: &str,
     active: bool,
     now: &str,
+    options: &SupervisorRoleOptions,
 ) -> Result<(), String> {
     update_session_metadata_at(project_state_dir, session_id, now, |current| {
         let mut current = match current {
@@ -419,6 +574,15 @@ fn set_role_metadata_at(
             _ => Map::new(),
         };
         if active {
+            let previous = Value::Object(current.clone());
+            let previous_role = agent_role(Some(&previous)).to_owned();
+            let previous_lane = agent_lane(Some(&previous));
+            let previous_worktree = current
+                .get("worktreePath")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned);
             for key in ["overseer", "scribe"] {
                 if key == role {
                     current.insert(key.into(), Value::Bool(true));
@@ -438,7 +602,19 @@ fn set_role_metadata_at(
                 team.insert("teamId".into(), Value::String(role.to_owned()));
                 team.insert("role".into(), Value::String(role.to_owned()));
             }
+            current.remove("worktreePath");
+            if previous_role != role || previous_worktree.is_some() {
+                current.insert("pendingRelaunchForRole".into(), Value::Bool(true));
+                current.insert("effectiveRole".into(), Value::String(previous_role));
+                current.insert("effectiveLane".into(), previous_lane);
+                if let Some(path) = previous_worktree {
+                    current.insert("runtimeWorkingDirectory".into(), Value::String(path));
+                }
+            }
         } else {
+            let previous = Value::Object(current.clone());
+            let previous_role = agent_role(Some(&previous)).to_owned();
+            let previous_lane = agent_lane(Some(&previous));
             current.insert(role.into(), Value::Bool(false));
             if current.get("role").and_then(Value::as_str) == Some(role) {
                 current.remove("role");
@@ -465,8 +641,34 @@ fn set_role_metadata_at(
             if !has_supervisor_role {
                 current.insert("projectControl".into(), Value::Bool(false));
             }
+            if let Some(path) = options.worktree_path.as_deref() {
+                current.insert("worktreePath".into(), Value::String(path.to_owned()));
+            }
+            if previous_role != "coder" {
+                current.insert("pendingRelaunchForRole".into(), Value::Bool(true));
+                current.insert("effectiveRole".into(), Value::String(previous_role));
+                current.insert("effectiveLane".into(), previous_lane);
+            }
         }
         Value::Object(current)
     })
     .map(|_| ())
+}
+
+fn sync_migration_fields(entry: &mut Map<String, Value>, session: Option<&Value>) {
+    for key in [
+        "pendingRelaunchForRole",
+        "effectiveRole",
+        "effectiveLane",
+        "runtimeWorkingDirectory",
+    ] {
+        match session.and_then(|session| session.get(key)).cloned() {
+            Some(value) => {
+                entry.insert(key.into(), value);
+            }
+            None => {
+                entry.remove(key);
+            }
+        }
+    }
 }

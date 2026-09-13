@@ -158,13 +158,72 @@ fn overseer_route_promotes_agent_without_demoting_other_overseers() {
         &context,
         "POST",
         routes::agents::OVERSEER,
-        Some(&json!({ "sessionId": "boss-2", "active": false })),
+        Some(&json!({
+            "sessionId": "boss-2",
+            "active": false,
+            "worktreePath": "/repo/supervisor-demoted"
+        })),
     );
     assert_eq!(clear.status, 200);
     assert_eq!(clear.body["overseer"], false);
     let state = load_metadata_state(&state_dir);
     assert_eq!(state.sessions["boss-2"]["overseer"], false);
     assert_eq!(state.sessions["boss-2"]["projectControl"], false);
+    cleanup(project);
+}
+
+#[test]
+fn overseer_route_migrates_coder_to_supervisor_lane_until_relaunch() {
+    let project = temp_project("overseer-migrate");
+    let state_dir = project.join("state");
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([(
+                "worker".into(),
+                json!({
+                    "tool": "codex",
+                    "worktreePath": "/repo/worktrees/worker",
+                    "updatedAt": "2026-09-05T00:00:00.000Z"
+                }),
+            )]),
+        },
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let response = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::OVERSEER,
+        Some(&json!({ "sessionId": "worker", "active": true })),
+    );
+
+    assert_eq!(response.status, 200);
+    assert_eq!(response.body["overseer"], true);
+    let state = load_metadata_state(&state_dir);
+    let worker = &state.sessions["worker"];
+    assert_eq!(worker["role"], "overseer");
+    assert_eq!(worker["overseer"], true);
+    assert!(worker.get("worktreePath").is_none());
+    assert_eq!(worker["pendingRelaunchForRole"], true);
+    assert_eq!(worker["effectiveRole"], "coder");
+    assert_eq!(
+        worker["effectiveLane"],
+        json!({ "kind": "worktree", "worktreePath": "/repo/worktrees/worker" })
+    );
+    assert_eq!(worker["runtimeWorkingDirectory"], "/repo/worktrees/worker");
+    let registry = load_agent_role_registry(&state_dir).expect("role registry");
+    assert_eq!(registry["sessions"]["worker"]["role"], "overseer");
+    assert_eq!(
+        registry["sessions"]["worker"]["lane"],
+        json!({ "kind": "supervisor" })
+    );
+    assert_eq!(
+        registry["sessions"]["worker"]["effectiveLane"],
+        json!({ "kind": "worktree", "worktreePath": "/repo/worktrees/worker" })
+    );
     cleanup(project);
 }
 
@@ -192,7 +251,11 @@ fn scribe_route_promotes_and_clear_sets_false_override() {
         &context,
         "POST",
         routes::agents::SCRIBE,
-        Some(&json!({ "sessionId": "scribe-2", "active": false })),
+        Some(&json!({
+            "sessionId": "scribe-2",
+            "active": false,
+            "worktreePath": "/repo/scribe-demoted"
+        })),
     );
     assert_eq!(clear.status, 200);
     assert_eq!(clear.body["scribe"], false);
@@ -264,6 +327,82 @@ fn watch_route_binds_coder_to_one_overseer() {
     assert_eq!(conflict.body["currentOverseerSessionId"], "boss-1");
     let registry = load_agent_role_registry(&state_dir).expect("role registry");
     assert_eq!(registry["watchBindings"]["worker"], "boss-1");
+    cleanup(project);
+}
+
+#[test]
+fn demoting_watching_overseer_requires_explicit_binding_release() {
+    let project = temp_project("watch-demote");
+    let state_dir = project.join("state");
+    save_metadata_state(
+        &state_dir,
+        &MetadataState {
+            version: 1,
+            sessions: BTreeMap::from([
+                (
+                    "boss".into(),
+                    json!({ "overseer": true, "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+                (
+                    "worker".into(),
+                    json!({ "tool": "codex", "updatedAt": "2026-09-05T00:00:00.000Z" }),
+                ),
+            ]),
+        },
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+
+    let bind = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::WATCH,
+        Some(&json!({
+            "overseerSessionId": "boss",
+            "watchedSessionId": "worker",
+            "active": true
+        })),
+    );
+    assert_eq!(bind.status, 200);
+
+    let refused = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::OVERSEER,
+        Some(&json!({
+            "sessionId": "boss",
+            "active": false,
+            "worktreePath": "/repo/worktrees/boss"
+        })),
+    );
+    assert_eq!(refused.status, 409);
+    assert_eq!(refused.body["ok"], false);
+    assert_eq!(refused.body["reason"], "active-watch-bindings");
+    assert_eq!(
+        refused.body["details"]["watchedSessionIds"],
+        json!(["worker"])
+    );
+    let registry = load_agent_role_registry(&state_dir).expect("role registry");
+    assert_eq!(registry["watchBindings"]["worker"], "boss");
+
+    let released = route_project_service_request(
+        &context,
+        "POST",
+        routes::agents::OVERSEER,
+        Some(&json!({
+            "sessionId": "boss",
+            "active": false,
+            "worktreePath": "/repo/worktrees/boss",
+            "releaseBindings": true
+        })),
+    );
+    assert_eq!(released.status, 200);
+    let registry = load_agent_role_registry(&state_dir).expect("role registry");
+    assert!(registry["watchBindings"].as_object().unwrap().is_empty());
+    assert_eq!(
+        registry["sessions"]["boss"]["lane"],
+        json!({ "kind": "worktree", "worktreePath": "/repo/worktrees/boss" })
+    );
     cleanup(project);
 }
 

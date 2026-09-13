@@ -39,6 +39,24 @@ pub(super) fn settle_running_activity_to_idle(project_state_dir: &Path, session_
     });
 }
 
+pub(super) fn settle_pending_role_relaunch(project_state_dir: &Path, session_id: &str) {
+    let _ = mutate_metadata_state(project_state_dir, |state| {
+        let Some(Value::Object(session)) = state.sessions.get_mut(session_id) else {
+            return false;
+        };
+        let mut changed = false;
+        for key in [
+            "pendingRelaunchForRole",
+            "effectiveRole",
+            "effectiveLane",
+            "runtimeWorkingDirectory",
+        ] {
+            changed |= session.remove(key).is_some();
+        }
+        changed
+    });
+}
+
 pub(super) fn agent_window_metadata(
     session: &Value,
     session_id: &str,
@@ -62,7 +80,17 @@ pub(super) fn agent_window_metadata(
             Value::String(backend_session_id.to_owned()),
         );
     }
-    for key in ["team", "worktreePath", "label", "headline", "createdAt"] {
+    for key in [
+        "team",
+        "worktreePath",
+        "label",
+        "headline",
+        "createdAt",
+        "role",
+        "overseer",
+        "scribe",
+        "projectControl",
+    ] {
         if let Some(value) = session.get(key).cloned().filter(|value| !value.is_null()) {
             metadata.insert(key.into(), value);
         }

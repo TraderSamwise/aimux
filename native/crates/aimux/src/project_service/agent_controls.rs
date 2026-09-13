@@ -6,7 +6,10 @@ use crate::daemon_state::{load_metadata_state, mutate_metadata_state};
 use crate::project_api_contract::routes;
 use crate::runtime_topology::{runtime_topology_path, update_runtime_topology};
 
-use super::agent_roles::{WatchBindingError, bind_watch, set_supervisor_role};
+use super::agent_roles::{
+    SupervisorRoleError, SupervisorRoleOptions, WatchBindingError, bind_watch,
+    set_supervisor_role_with_options,
+};
 use super::dispatcher::{ProjectServiceDispatchResponse, project_service_pathname};
 use super::lifecycle_mutation_queue::{LifecycleMutationError, LifecycleTransitionInput};
 use super::metadata::{update_session_metadata, update_session_metadata_at};
@@ -402,13 +405,20 @@ fn route_single_project_flag(
     let Some(active) = body.get("active").and_then(Value::as_bool) else {
         return json_error(400, "active (boolean) is required");
     };
+    let options = SupervisorRoleOptions {
+        worktree_path: body_trimmed_string(body, "worktreePath"),
+        release_bindings: body
+            .get("releaseBindings")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+    };
     let result = if active {
-        set_single_project_flag(context, &session_id, key, true)
+        set_single_project_flag(context, &session_id, key, true, options)
     } else {
-        clear_project_flag(context, &session_id, key)
+        clear_project_flag(context, &session_id, key, options)
     };
     if let Err(error) = result {
-        return json_error(500, error);
+        return role_error_response(error, &session_id, key);
     }
     ProjectServiceDispatchResponse::json(
         200,
@@ -421,15 +431,31 @@ fn set_single_project_flag(
     session_id: &str,
     key: &str,
     value: bool,
-) -> Result<(), String> {
+    options: SupervisorRoleOptions,
+) -> Result<(), SupervisorRoleError> {
     let now = now_iso();
     let transition = LifecycleTransitionInput::new("agent.role", "agent")
         .with_target_id(Some(session_id.to_owned()));
+    let mut role_error: Option<SupervisorRoleError> = None;
     match context.lifecycle_mutations.enqueue(Some(transition), || {
-        set_supervisor_role(context.project_state_dir(), session_id, key, value, &now).map(|_| ())
+        set_supervisor_role_with_options(
+            context.project_state_dir(),
+            session_id,
+            key,
+            value,
+            &now,
+            options,
+        )
+        .map(|_| ())
+        .map_err(|error| {
+            let message = error.message();
+            role_error = Some(error);
+            message
+        })
     }) {
-        Ok(result) => result,
-        Err(error) => Err(error.message()),
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => Err(role_error.unwrap_or(SupervisorRoleError::Registry(error))),
+        Err(error) => Err(SupervisorRoleError::Registry(error.message())),
     }
 }
 
@@ -437,16 +463,50 @@ fn clear_project_flag(
     context: &ProjectServiceRequestContext,
     session_id: &str,
     key: &str,
-) -> Result<(), String> {
+    options: SupervisorRoleOptions,
+) -> Result<(), SupervisorRoleError> {
     let now = now_iso();
     let transition = LifecycleTransitionInput::new("agent.role", "agent")
         .with_target_id(Some(session_id.to_owned()));
+    let mut role_error: Option<SupervisorRoleError> = None;
     match context.lifecycle_mutations.enqueue(Some(transition), || {
-        set_supervisor_role(context.project_state_dir(), session_id, key, false, &now).map(|_| ())
+        set_supervisor_role_with_options(
+            context.project_state_dir(),
+            session_id,
+            key,
+            false,
+            &now,
+            options,
+        )
+        .map(|_| ())
+        .map_err(|error| {
+            let message = error.message();
+            role_error = Some(error);
+            message
+        })
     }) {
-        Ok(result) => result,
-        Err(error) => Err(error.message()),
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => Err(role_error.unwrap_or(SupervisorRoleError::Registry(error))),
+        Err(error) => Err(SupervisorRoleError::Registry(error.message())),
     }
+}
+
+fn role_error_response(
+    error: SupervisorRoleError,
+    session_id: &str,
+    key: &str,
+) -> ProjectServiceDispatchResponse {
+    ProjectServiceDispatchResponse::json(
+        error.status(),
+        json!({
+            "ok": false,
+            "sessionId": session_id,
+            "role": key,
+            "reason": error.reason(),
+            "error": error.message(),
+            "details": error.details(),
+        }),
+    )
 }
 
 fn route_watch(

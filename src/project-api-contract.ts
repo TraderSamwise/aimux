@@ -411,6 +411,17 @@ export type AgentRoleState =
       supervisorRole?: AgentSupervisorRole;
     }
   | {
+      status: "pending-relaunch";
+      role: AgentRole;
+      lane: Exclude<AgentLane, { kind: "unknown" }>;
+      projectControl: boolean;
+      declaredRole: AgentRole;
+      declaredLane: Exclude<AgentLane, { kind: "unknown" }>;
+      effectiveRole: AgentRole;
+      effectiveLane: AgentLane;
+      runtimeWorkingDirectory?: string;
+    }
+  | {
       status: "unknown";
       reason: string;
       error?: string;
@@ -1306,6 +1317,10 @@ export interface AgentListItem {
   role?: AgentRole;
   lane?: AgentLane;
   roleState?: AgentRoleState;
+  pendingRelaunchForRole?: boolean;
+  effectiveRole?: AgentRole;
+  effectiveLane?: AgentLane;
+  runtimeWorkingDirectory?: string;
   projectControl?: boolean;
   status?: string;
   restoreState?: string;
@@ -1410,21 +1425,52 @@ export interface AgentLoopResponse extends ProjectApiOk {
 
 export interface AgentOverseerInput extends AgentSessionInput {
   active: boolean;
+  worktreePath?: string;
+  releaseBindings?: boolean;
 }
 
-export interface AgentOverseerResponse extends ProjectApiOk {
-  sessionId: string;
-  overseer: boolean;
-}
+export type AgentRoleMutationRefusalReason =
+  | "unsupported-role"
+  | "target-worktree-required"
+  | "active-watch-bindings"
+  | "metadata-unavailable"
+  | "role-registry-unavailable";
+
+export type AgentOverseerResponse =
+  | (ProjectApiOk & {
+      ok: true;
+      sessionId: string;
+      overseer: boolean;
+    })
+  | {
+      ok: false;
+      sessionId: string;
+      role: "overseer";
+      reason: AgentRoleMutationRefusalReason;
+      error: string;
+      details?: unknown;
+    };
 
 export interface AgentScribeInput extends AgentSessionInput {
   active: boolean;
+  worktreePath?: string;
+  releaseBindings?: boolean;
 }
 
-export interface AgentScribeResponse extends ProjectApiOk {
-  sessionId: string;
-  scribe: boolean;
-}
+export type AgentScribeResponse =
+  | (ProjectApiOk & {
+      ok: true;
+      sessionId: string;
+      scribe: boolean;
+    })
+  | {
+      ok: false;
+      sessionId: string;
+      role: "scribe";
+      reason: AgentRoleMutationRefusalReason;
+      error: string;
+      details?: unknown;
+    };
 
 export interface AgentWatchInput {
   overseerSessionId: string;

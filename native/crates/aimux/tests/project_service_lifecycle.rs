@@ -1791,6 +1791,14 @@ fn agent_resume_launches_exact_backend_resume_and_updates_topology_metadata() {
             .any(|arg| arg == "AIMUX_SESSION_ID=mock-offline")
     );
     assert!(
+        !created
+            .args
+            .iter()
+            .any(|arg| matches!(arg.as_str(), "AIMUX_OVERSEER=1" | "AIMUX_SCRIBE=1")),
+        "ordinary coder resume should not carry supervisor env: {:?}",
+        created.args
+    );
+    assert!(
         created
             .args
             .last()
@@ -1833,6 +1841,85 @@ fn agent_resume_launches_exact_backend_resume_and_updates_topology_metadata() {
         metadata["sessions"]["mock-offline"]["derived"]["activity"],
         "idle"
     );
+    cleanup(project);
+}
+
+#[test]
+fn agent_resume_relaunches_declared_overseer_in_supervisor_lane() {
+    let project = temp_project("agent-resume-overseer");
+    write_project_tool_config(&project);
+    let state_dir = project.join("state");
+    write_agent_resume_topology(
+        &state_dir,
+        json!({
+            "id": "mock-overseer",
+            "nodeId": "agent:mock-overseer",
+            "status": "offline",
+            "tool": "mock",
+            "command": "/bin/mock",
+            "args": ["--base"],
+            "backendSessionId": "backend-123",
+            "worktreePath": "/repo/worktree",
+            "label": "mock overseer",
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+        }),
+    );
+    std::fs::write(
+        state_dir.join("metadata.json"),
+        serde_json::to_string_pretty(&json!({
+            "version": 1,
+            "sessions": {
+                "mock-overseer": {
+                    "overseer": true,
+                    "role": "overseer",
+                    "team": { "role": "overseer", "teamId": "overseer" },
+                    "pendingRelaunchForRole": true,
+                    "effectiveRole": "coder",
+                    "effectiveLane": {
+                        "kind": "worktree",
+                        "worktreePath": "/repo/worktree"
+                    },
+                    "runtimeWorkingDirectory": "/repo/worktree"
+                }
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let context = ProjectServiceRequestContext::with_project_state_dir(&project, &state_dir);
+    let mut runtime = FakeLifecycleRuntime::default();
+
+    let response = route_lifecycle_request_with_runtime(
+        &context,
+        "POST",
+        routes::agents::RESUME,
+        Some(&json!({ "sessionId": "mock-overseer" })),
+        &mut runtime,
+    )
+    .unwrap();
+
+    assert_eq!(response.status, 200);
+    assert_eq!(runtime.created.len(), 1);
+    let created = &runtime.created[0];
+    assert_eq!(created.cwd, project.to_string_lossy());
+    assert!(
+        created.args.iter().any(|arg| arg == "AIMUX_OVERSEER=1"),
+        "missing overseer launch env in {:?}",
+        created.args
+    );
+    let metadata = &runtime.metadata[0].1;
+    assert_eq!(metadata["overseer"], true);
+    assert!(metadata.get("worktreePath").is_none());
+    let topology = read_topology(&state_dir);
+    let session = session(&topology, "mock-overseer");
+    assert_eq!(session["role"], "overseer");
+    assert_eq!(session["lane"], json!({ "kind": "supervisor" }));
+    assert!(session.get("worktreePath").is_none());
+    let metadata_state = load_metadata_state(&state_dir);
+    let stored = &metadata_state.sessions["mock-overseer"];
+    assert!(stored.get("pendingRelaunchForRole").is_none());
+    assert!(stored.get("effectiveRole").is_none());
     cleanup(project);
 }
 
