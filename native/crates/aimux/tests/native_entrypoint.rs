@@ -124,6 +124,26 @@ fn core_subcommand_help_and_bare_parent_usage_stay_command_scoped() {
             "Usage: aimux loop list [options]",
             "Usage: aimux [options] [command] [tool]",
         ),
+        (
+            vec!["loop", "--help"],
+            "pause <sessionId>           Pause loop alerts for an agent",
+            "Usage: aimux [options] [command] [tool]",
+        ),
+        (
+            vec!["loop", "--help"],
+            "unpause <sessionId>         Resume loop alerts for an agent",
+            "Usage: aimux [options] [command] [tool]",
+        ),
+        (
+            vec!["loop", "pause", "--help"],
+            "Usage: aimux loop pause <sessionId> [options]",
+            "Usage: aimux [options] [command] [tool]",
+        ),
+        (
+            vec!["loop", "unpause", "--help"],
+            "Usage: aimux loop unpause <sessionId> [options]",
+            "Usage: aimux [options] [command] [tool]",
+        ),
     ]
     .into_iter()
     {
