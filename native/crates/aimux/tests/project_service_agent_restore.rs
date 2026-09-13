@@ -124,7 +124,10 @@ fn a_crashed_agent_whose_row_still_reads_running_can_still_be_restored() {
 #[test]
 fn a_tmux_query_that_cannot_be_answered_records_nothing_and_offers_nothing() {
     let project = TestProject::new("tmux-unavailable");
-    project.run_task_with(FakeLiveWindows::unavailable());
+    let error = project
+        .run_task_with(FakeLiveWindows::unavailable())
+        .expect_err("tmux unavailable should fail the task");
+    assert!(error.contains("tmux live windows unavailable"), "{error}");
     assert!(
         project.snapshot().is_none(),
         "a failed liveness query is not an empty online set"
@@ -135,7 +138,10 @@ fn a_tmux_query_that_cannot_be_answered_records_nothing_and_offers_nothing() {
     project.simulate_process_death();
     project.seed_prompt_gates("boot-after-crash");
 
-    project.run_task_with(FakeLiveWindows::unavailable());
+    let error = project
+        .run_task_with(FakeLiveWindows::unavailable())
+        .expect_err("tmux unavailable should fail the task");
+    assert!(error.contains("tmux live windows unavailable"), "{error}");
     assert!(
         project.offer().is_none(),
         "a failed liveness query is not proof the agents are gone"
@@ -187,23 +193,24 @@ impl TestProject {
 
     /// A tick with both agent windows alive in tmux.
     fn run_task(&self) {
-        self.run_task_with(FakeLiveWindows::alive());
+        self.run_task_with(FakeLiveWindows::alive())
+            .expect("agent restore task should run");
     }
 
     /// A tick after the windows are gone, which is what the service sees when
     /// it comes back up after a crash.
     fn run_task_with_no_live_windows(&self) {
-        self.run_task_with(FakeLiveWindows::none());
+        self.run_task_with(FakeLiveWindows::none())
+            .expect("agent restore task should run");
     }
 
-    fn run_task_with(&self, live_windows: FakeLiveWindows) {
+    fn run_task_with(&self, live_windows: FakeLiveWindows) -> Result<(), String> {
         aimux::async_runtime::init_process_runtime().expect("runtime initialized");
         let context = self.context();
         let mut task =
             AgentRestoreSnapshotTask::with_live_window_source(&context, Box::new(live_windows));
         // aimux-async-seam: test - restore task test drives async PeriodicTask body
         aimux::async_runtime::block_on_named("agent-restore-test", task.run(&context))
-            .expect("agent restore task should run");
     }
 
     fn accept_restore_offer(&self) -> Value {
